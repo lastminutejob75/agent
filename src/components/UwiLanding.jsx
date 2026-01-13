@@ -35,6 +35,10 @@ import {
   Quote,
   User,
 } from "lucide-react";
+import SocialProof from "./SocialProof";
+import ComparisonSection from "./ComparisonSection";
+import ROICalculator from "./ROICalculator";
+import TrustSection from "./TrustSection";
 
 const fadeUp = {
   hidden: { opacity: 0, y: 30 },
@@ -287,40 +291,10 @@ export default function UwiLanding() {
       </section>
 
       {/* Social Proof */}
-      <section className="py-12 md:py-16 bg-white border-b border-[#E5E7EB]">
-        <Container>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
-            <div className="text-center">
-              <div className="inline-flex rounded-full bg-blue-100 p-4 mb-3">
-                <Trophy className="h-8 w-8 text-[#0066CC]" />
-              </div>
-              <div className="text-2xl font-bold text-[#111827]">+500 PME</div>
-              <div className="text-sm text-slate-600 mt-1">nous font confiance</div>
-            </div>
-            <div className="text-center">
-              <div className="inline-flex rounded-full bg-blue-100 p-4 mb-3">
-                <Star className="h-8 w-8 text-[#0066CC] fill-yellow-400" />
-              </div>
-              <div className="text-2xl font-bold text-[#111827]">Note 4.8/5</div>
-              <div className="text-sm text-slate-600 mt-1">satisfaction</div>
-            </div>
-            <div className="text-center">
-              <div className="inline-flex rounded-full bg-blue-100 p-4 mb-3">
-                <Phone className="h-8 w-8 text-[#0066CC]" />
-              </div>
-              <div className="text-2xl font-bold text-[#111827]">1500 RDV/jour</div>
-              <div className="text-sm text-slate-600 mt-1">automatisés</div>
-            </div>
-            <div className="text-center">
-              <div className="inline-flex rounded-full bg-blue-100 p-4 mb-3">
-                <Lock className="h-8 w-8 text-[#0066CC]" />
-              </div>
-              <div className="text-2xl font-bold text-[#111827]">Certifié</div>
-              <div className="text-sm text-slate-600 mt-1">RGPD</div>
-            </div>
-          </div>
-        </Container>
-      </section>
+      <SocialProof />
+
+      {/* Comparison Section */}
+      <ComparisonSection />
 
       {/* Problèmes */}
       <section className="py-20 md:py-28 bg-slate-50">
@@ -561,6 +535,9 @@ export default function UwiLanding() {
         </Container>
       </section>
 
+      {/* ROI Calculator */}
+      <ROICalculator />
+
       {/* Pricing */}
       <section id="pricing" className="py-20 md:py-28 bg-slate-50">
         <Container>
@@ -691,6 +668,9 @@ export default function UwiLanding() {
           </div>
         </Container>
       </section>
+
+      {/* Trust Section */}
+      <TrustSection />
 
       {/* FAQ */}
       <section id="faq" className="py-20 md:py-28 bg-white">
