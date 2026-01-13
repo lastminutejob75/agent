@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Agent IA Accueil & RDV</title>
+  <link rel="stylesheet" href="/frontend/widget.css" />
+</head>
+<body>
+  <main class="page">
+    <header class="header">
+      <div class="brand">
+        <div class="dot"></div>
+        <div>
+          <div class="title">Agent IA d'accueil</div>
+          <div class="subtitle">FAQ + RDV · 24/7 · transfert humain fail-safe</div>
+        </div>
+      </div>
+      <div class="pill" id="statusPill">Connecté</div>
+    </header>
+
+    <section class="card">
+      <div class="cardHeader">
+        <div class="agentBadge">Agent IA</div>
+        <button class="humanBtn" id="humanBtn" type="button">Parler à un humain</button>
+      </div>
+
+      <div class="chat" id="chat"></div>
+
+      <div class="typing" id="typing" aria-hidden="true">
+        <span class="spinner"></span>
+        <span>Agent répond…</span>
+      </div>
+
+      <div class="errorBox" id="errorBox" hidden></div>
+
+      <form class="composer" id="composer" autocomplete="off">
+        <div class="inputWrap">
+          <textarea
+            id="messageInput"
+            rows="2"
+            maxlength="500"
+            placeholder="Posez votre question ou demandez un RDV…"
+          ></textarea>
+          <div class="meta">
+            <div class="charCounter" id="charCounter">0/500</div>
+            <div class="hint" id="hint"></div>
+          </div>
+        </div>
+        <button class="sendBtn" id="sendBtn" type="submit">Envoyer</button>
+      </form>
+      <div id="terminalHint" class="terminal-hint hidden"></div>
+    </section>
+
+    <footer class="footer">
+      <span class="muted">V1 · Messages stricts · Source FAQ affichée · Confirmation RDV "oui 1/2/3"</span>
+    </footer>
+  </main>
+
+  <dialog class="modal" id="humanModal">
+    <div class="modalBody">
+      <h3>Contacter un humain</h3>
+      <p>Appelez le numéro ci-dessous ou laissez votre message.</p>
+      <div class="phoneRow">
+        <code id="phoneValue">+33 6 00 00 00 00</code>
+        <button class="copyBtn" id="copyPhoneBtn" type="button">Copier</button>
+      </div>
+      <div class="modalActions">
+        <button class="secondaryBtn" id="closeHumanModalBtn" type="button">Fermer</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="/frontend/widget.js"></script>
+</body>
+</html>

@@ -1,20 +1,33 @@
-# Dependencies
-node_modules/
-
-# Build output
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
 dist/
-frontend/landing/
+build/
 
-# Environment
-.env
-.env.local
+# Venv
+.venv/
+venv/
+
+# SQLite
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+
+# OS
+.DS_Store
 
 # IDE
 .vscode/
 .idea/
-*.swp
-*.swo
+.cursor/
 
-# OS
-.DS_Store
-Thumbs.db
+# Credentials
+credentials/
+*.json
+!package.json
