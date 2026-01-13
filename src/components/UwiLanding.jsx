@@ -32,6 +32,8 @@ import {
   ChevronDown,
   Mail,
   MapPin,
+  Quote,
+  User,
 } from "lucide-react";
 
 const fadeUp = {
@@ -51,11 +53,11 @@ const Badge = ({ children, className = "" }) => (
 
 const PrimaryButton = ({ children, onClick, href, className = "", variant = "default", ...props }) => {
   const Component = href ? 'a' : 'button';
-  const baseClasses = "group relative inline-flex items-center justify-center gap-2 overflow-hidden rounded-lg font-semibold shadow-lg transition-all duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2";
+  const baseClasses = "group relative inline-flex items-center justify-center gap-2 overflow-hidden rounded-lg font-semibold shadow-lg btn-interactive focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2";
   
   const variants = {
-    default: "bg-[#0066CC] text-white px-8 py-4 text-lg hover:bg-[#0052A3] hover:shadow-xl hover:scale-105 focus-visible:outline-blue-600",
-    large: "bg-[#0066CC] text-white px-10 py-5 text-xl hover:bg-[#0052A3] hover:shadow-2xl hover:scale-105 focus-visible:outline-blue-600",
+    default: "bg-[#0066CC] text-white px-8 py-4 text-lg hover:bg-[#0052A3] focus-visible:outline-blue-600",
+    large: "bg-[#0066CC] text-white px-10 py-5 text-xl hover:bg-[#0052A3] focus-visible:outline-blue-600",
     outline: "border-2 border-[#0066CC] text-[#0066CC] px-8 py-4 text-lg hover:bg-blue-50 focus-visible:outline-blue-600"
   };
   
@@ -132,6 +134,7 @@ const FAQ = ({ q, a, isOpen, onToggle }) => (
 export default function UwiLanding() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [openFaq, setOpenFaq] = useState(null);
+  const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
     document.querySelectorAll('a[href^="#"]').forEach(anchor => {
@@ -144,6 +147,13 @@ export default function UwiLanding() {
         }
       });
     });
+
+    // Header sticky intelligent
+    const handleScroll = () => {
+      setScrolled(window.scrollY > 50);
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
   return (
@@ -151,7 +161,11 @@ export default function UwiLanding() {
       <ScrollProgress />
 
       {/* Header */}
-      <header className="sticky top-0 z-50 border-b border-[#E5E7EB] bg-white/80 backdrop-blur-xl">
+      <header className={`sticky top-0 z-50 border-b transition-all duration-300 ${
+        scrolled 
+          ? 'bg-white shadow-medium border-[#E5E7EB]' 
+          : 'bg-white/80 backdrop-blur-xl border-[#E5E7EB]/50'
+      }`}>
         <Container>
           <div className="flex items-center justify-between py-4">
             <div className="flex items-center gap-3">
@@ -200,48 +214,73 @@ export default function UwiLanding() {
       </header>
 
       {/* Hero */}
-      <section className="relative overflow-hidden pt-20 pb-16 md:pt-28 md:pb-24 bg-gradient-to-b from-white to-blue-50/30">
+      <section className="relative overflow-hidden pt-20 pb-16 md:pt-28 md:pb-24 bg-gradient-light">
+        {/* Cercles décoratifs */}
+        <div className="absolute -top-40 -right-40 h-96 w-96 rounded-full bg-gradient-to-br from-blue-400/20 to-blue-600/10 blur-3xl animate-fade-in" />
+        <div className="absolute top-1/2 -left-40 h-96 w-96 rounded-full bg-gradient-to-br from-blue-300/20 to-blue-500/10 blur-3xl animate-fade-in delay-200" />
+        
         <Container>
-          <div className="mx-auto max-w-5xl text-center">
+          <div className="mx-auto max-w-5xl text-center relative z-10">
             <motion.div
               initial={{ opacity: 0, y: 30 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6 }}
+              className="animate-slide-up"
             >
-              <h1 className="text-4xl font-bold tracking-tight text-[#111827] md:text-5xl lg:text-6xl leading-tight">
+              <motion.h1 
+                className="text-4xl font-bold tracking-tight text-[#111827] md:text-5xl lg:text-6xl leading-tight animate-slide-up"
+                initial={{ opacity: 0, y: 30 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.6 }}
+              >
                 Votre IA d'accueil prend vos RDV
                 <br />
                 <span className="text-[#0066CC]">pendant que vous travaillez</span>
-              </h1>
+              </motion.h1>
 
-              <p className="mx-auto mt-6 max-w-3xl text-lg text-slate-600 md:text-xl leading-relaxed">
+              <motion.p 
+                className="mx-auto mt-6 max-w-3xl text-lg text-slate-600 md:text-xl leading-relaxed animate-slide-up delay-100"
+                initial={{ opacity: 0, y: 30 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.6, delay: 0.1 }}
+              >
                 Ne perdez plus de clients : votre assistant IA répond 24/7, prend les rendez-vous et les synchronise dans votre agenda en temps réel
-              </p>
+              </motion.p>
 
-              <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
+              <motion.div 
+                className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row animate-slide-up delay-200"
+                initial={{ opacity: 0, y: 30 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.6, delay: 0.2 }}
+              >
                 <PrimaryButton href="#contact" variant="large">
                   🚀 Essai gratuit 14 jours
                 </PrimaryButton>
-                <button className="inline-flex items-center gap-2 rounded-lg border-2 border-[#E5E7EB] bg-white px-6 py-4 text-lg font-semibold text-[#111827] transition-all hover:border-[#0066CC] hover:bg-blue-50">
+                <button className="btn-interactive inline-flex items-center gap-2 rounded-lg border-2 border-[#E5E7EB] bg-white px-6 py-4 text-lg font-semibold text-[#111827] hover:border-[#0066CC] hover:bg-blue-50">
                   <Play className="h-5 w-5 text-[#0066CC]" />
                   📅 Démo personnalisée
                 </button>
-              </div>
+              </motion.div>
 
-              <div className="mt-12 flex flex-wrap items-center justify-center gap-8 text-sm text-slate-600">
-                <div className="flex items-center gap-2">
+              <motion.div 
+                className="mt-12 flex flex-wrap items-center justify-center gap-8 text-sm text-slate-600 animate-slide-up delay-300"
+                initial={{ opacity: 0, y: 30 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.6, delay: 0.3 }}
+              >
+                <div className="glass-border rounded-full px-4 py-2 flex items-center gap-2">
                   <CheckCircle2 className="h-5 w-5 text-green-500" />
                   <span>✅ Disponible 24/7</span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="glass-border rounded-full px-4 py-2 flex items-center gap-2">
                   <CheckCircle2 className="h-5 w-5 text-green-500" />
                   <span>✅ Votre numéro</span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="glass-border rounded-full px-4 py-2 flex items-center gap-2">
                   <CheckCircle2 className="h-5 w-5 text-green-500" />
                   <span>✅ Setup 30min</span>
                 </div>
-              </div>
+              </motion.div>
             </motion.div>
           </div>
         </Container>
@@ -436,14 +475,17 @@ export default function UwiLanding() {
                   initial={{ opacity: 0, y: 20 }}
                   whileInView={{ opacity: 1, y: 0 }}
                   viewport={{ once: true }}
-                  transition={{ delay: idx * 0.05 }}
-                  className="group flex flex-col items-center gap-4 rounded-xl border border-slate-200 bg-white p-8 text-center shadow-sm transition-all hover:border-[#0066CC] hover:shadow-lg"
+                  transition={{ delay: idx * 0.1 }}
+                  className="card-hover group flex flex-col items-center gap-4 rounded-xl border border-slate-200 bg-white p-8 text-center shadow-soft hover:border-[#0066CC]"
                 >
                   <div className="text-4xl mb-2">{item.title.split(' ')[0]}</div>
                   <h3 className="text-lg font-semibold text-[#111827]">{item.title.split(' ').slice(1).join(' ')}</h3>
                   <p className="text-slate-600 text-sm">{item.desc}</p>
                   {item.href && (
-                    <ArrowRight className="h-5 w-5 text-[#0066CC] opacity-0 group-hover:opacity-100 transition-opacity" />
+                    <div className="flex items-center gap-2 text-[#0066CC] opacity-0 group-hover:opacity-100 transition-opacity">
+                      <span className="text-sm font-medium">En savoir plus</span>
+                      <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+                    </div>
                   )}
                 </motion.a>
               ))}
@@ -535,7 +577,7 @@ export default function UwiLanding() {
                 initial={{ opacity: 0, y: 20 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
-                className="rounded-xl border-2 border-slate-200 bg-white p-8 shadow-sm"
+                className="card-hover rounded-xl border-2 border-slate-200 bg-white p-8 shadow-medium"
               >
                 <h3 className="text-2xl font-bold text-[#111827] mb-2">STARTER</h3>
                 <div className="mb-6">
@@ -567,7 +609,7 @@ export default function UwiLanding() {
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ delay: 0.1 }}
-                className="rounded-xl border-2 border-[#0066CC] bg-white p-8 shadow-xl relative"
+                className="card-hover rounded-xl border-2 border-[#0066CC] bg-white p-8 shadow-medium relative scale-105"
               >
                 <div className="absolute -top-4 left-1/2 -translate-x-1/2">
                   <span className="inline-flex items-center gap-1 rounded-full bg-[#0066CC] px-4 py-1 text-sm font-semibold text-white">
@@ -613,7 +655,7 @@ export default function UwiLanding() {
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ delay: 0.2 }}
-                className="rounded-xl border-2 border-slate-200 bg-white p-8 shadow-sm"
+                className="card-hover rounded-xl border-2 border-slate-200 bg-white p-8 shadow-medium"
               >
                 <h3 className="text-2xl font-bold text-[#111827] mb-2">ENTERPRISE</h3>
                 <div className="mb-6">
@@ -703,8 +745,95 @@ export default function UwiLanding() {
         </Container>
       </section>
 
+      {/* Témoignages */}
+      <section className="py-20 md:py-28 bg-white">
+        <Container>
+          <div className="mx-auto max-w-6xl">
+            <div className="text-center mb-16">
+              <h2 className="text-3xl font-bold text-[#111827] md:text-4xl mb-4">
+                Ce que disent nos clients
+              </h2>
+              <div className="mt-6 flex items-center justify-center gap-6 text-sm text-slate-600">
+                <div className="glass-border rounded-full px-4 py-2 flex items-center gap-2">
+                  <Star className="h-5 w-5 text-yellow-400 fill-yellow-400" />
+                  <span className="font-semibold">4.9/5</span>
+                  <span>sur Google</span>
+                </div>
+                <div className="glass-border rounded-full px-4 py-2">
+                  <span className="font-semibold">500+</span> clients satisfaits
+                </div>
+                <div className="glass-border rounded-full px-4 py-2">
+                  <span className="font-semibold">50,000+</span> RDV gérés/mois
+                </div>
+              </div>
+            </div>
+
+            <div className="grid md:grid-cols-3 gap-8">
+              {[
+                {
+                  name: "Dr. Marie Dubois",
+                  role: "Médecin généraliste",
+                  avatar: "MD",
+                  quote: "UWI a transformé mon cabinet. Je gagne 3h par jour que je peux consacrer à mes patients. Plus jamais d'appels manqués !",
+                  roi: "3h gagnées/jour",
+                  rating: 5,
+                },
+                {
+                  name: "Thomas Laurent",
+                  role: "Plombier",
+                  avatar: "TL",
+                  quote: "Depuis UWI, je ne perds plus de clients. L'IA qualifie parfaitement les demandes et mon CA a augmenté de 30%.",
+                  roi: "+30% de CA",
+                  rating: 5,
+                },
+                {
+                  name: "Maître Sophie Martin",
+                  role: "Avocate",
+                  avatar: "SM",
+                  quote: "10h économisées par mois en gestion administrative. UWI prend tous mes rendez-vous et je garde le contrôle total.",
+                  roi: "10h/mois économisées",
+                  rating: 5,
+                },
+              ].map((testimonial, idx) => (
+                <motion.div
+                  key={idx}
+                  initial={{ opacity: 0, y: 20 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true }}
+                  transition={{ delay: idx * 0.1 }}
+                  className="card-hover rounded-xl border border-slate-200 bg-white p-6 shadow-soft"
+                >
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-primary text-white font-bold text-sm">
+                      {testimonial.avatar}
+                    </div>
+                    <div>
+                      <div className="font-semibold text-[#111827]">{testimonial.name}</div>
+                      <div className="text-sm text-slate-600">{testimonial.role}</div>
+                    </div>
+                  </div>
+                  <div className="flex gap-1 mb-4">
+                    {[...Array(testimonial.rating)].map((_, i) => (
+                      <Star key={i} className="h-4 w-4 text-yellow-400 fill-yellow-400" />
+                    ))}
+                  </div>
+                  <div className="relative">
+                    <Quote className="absolute -top-2 -left-2 h-8 w-8 text-blue-100" />
+                    <p className="text-slate-700 leading-relaxed relative z-10">{testimonial.quote}</p>
+                  </div>
+                  <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-green-50 px-3 py-1 text-sm font-medium text-green-700">
+                    <TrendingUp className="h-4 w-4" />
+                    {testimonial.roi}
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          </div>
+        </Container>
+      </section>
+
       {/* Contact */}
-      <section id="contact" className="py-20 md:py-28 bg-slate-50">
+      <section id="contact" className="py-20 md:py-28 bg-gradient-light">
         <Container>
           <div className="mx-auto max-w-3xl">
             <div className="text-center mb-12">
@@ -717,7 +846,7 @@ export default function UwiLanding() {
               initial={{ opacity: 0, y: 20 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
-              className="rounded-xl border border-slate-200 bg-white p-8 shadow-lg"
+              className="rounded-xl border-2 border-slate-200 bg-white p-8 shadow-medium"
             >
               <form onSubmit={(e) => e.preventDefault()} className="space-y-6">
                 <div>
@@ -728,7 +857,7 @@ export default function UwiLanding() {
                     type="text"
                     id="name"
                     required
-                    className="w-full rounded-lg border border-[#E5E7EB] px-4 py-3 focus:border-[#0066CC] focus:outline-none focus:ring-2 focus:ring-[#0066CC]/20"
+                    className="focus-ring w-full rounded-lg border-2 border-[#E5E7EB] px-4 py-3 transition-colors hover:border-[#0066CC]/50"
                   />
                 </div>
                 <div>
@@ -739,7 +868,7 @@ export default function UwiLanding() {
                     type="email"
                     id="email"
                     required
-                    className="w-full rounded-lg border border-[#E5E7EB] px-4 py-3 focus:border-[#0066CC] focus:outline-none focus:ring-2 focus:ring-[#0066CC]/20"
+                    className="focus-ring w-full rounded-lg border-2 border-[#E5E7EB] px-4 py-3 transition-colors hover:border-[#0066CC]/50"
                   />
                 </div>
                 <div>
@@ -750,7 +879,7 @@ export default function UwiLanding() {
                     type="tel"
                     id="phone"
                     required
-                    className="w-full rounded-lg border border-[#E5E7EB] px-4 py-3 focus:border-[#0066CC] focus:outline-none focus:ring-2 focus:ring-[#0066CC]/20"
+                    className="focus-ring w-full rounded-lg border-2 border-[#E5E7EB] px-4 py-3 transition-colors hover:border-[#0066CC]/50"
                   />
                 </div>
                 <div>
@@ -760,7 +889,7 @@ export default function UwiLanding() {
                   <select
                     id="profession"
                     required
-                    className="w-full rounded-lg border border-[#E5E7EB] px-4 py-3 focus:border-[#0066CC] focus:outline-none focus:ring-2 focus:ring-[#0066CC]/20"
+                    className="focus-ring w-full rounded-lg border-2 border-[#E5E7EB] px-4 py-3 transition-colors hover:border-[#0066CC]/50"
                   >
                     <option value="">Sélectionnez...</option>
                     <option value="medecin">Médecin</option>
@@ -776,7 +905,7 @@ export default function UwiLanding() {
                   <textarea
                     id="message"
                     rows={4}
-                    className="w-full rounded-lg border border-[#E5E7EB] px-4 py-3 focus:border-[#0066CC] focus:outline-none focus:ring-2 focus:ring-[#0066CC]/20"
+                    className="focus-ring w-full rounded-lg border-2 border-[#E5E7EB] px-4 py-3 transition-colors hover:border-[#0066CC]/50"
                   />
                 </div>
                 <PrimaryButton type="submit" variant="large" className="w-full justify-center">

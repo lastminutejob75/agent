@@ -14,23 +14,32 @@
       sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    @apply antialiased;
+  }
+  
+  /* Smooth transitions globales */
+  * {
+    transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, transform, box-shadow;
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    transition-duration: 150ms;
   }
   
   /* Focus visible pour l'accessibilité */
   *:focus-visible {
-    outline: 2px solid rgb(249 115 22);
+    outline: 2px solid #0066CC;
     outline-offset: 2px;
-  }
-  
-  /* Smooth transitions */
-  * {
-    transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
-    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-    transition-duration: 150ms;
   }
 }
 
 @layer utilities {
+  /* Variables CSS */
+  :root {
+    --primary: #0066CC;
+    --primary-dark: #0052A3;
+    --primary-light: #3385D6;
+    --gradient-primary: linear-gradient(135deg, #0066CC 0%, #3385D6 100%);
+  }
+
   /* Text gradient */
   .text-gradient {
     @apply bg-gradient-to-r from-blue-600 to-orange-500 bg-clip-text text-transparent;
@@ -40,9 +49,149 @@
   .glass {
     @apply bg-white/70 backdrop-blur-lg;
   }
+
+  /* Glass effect avec bordure */
+  .glass-border {
+    @apply bg-white/80 backdrop-blur-lg border border-white/20;
+  }
   
   /* Smooth scroll */
   .scroll-smooth {
     scroll-behavior: smooth;
+  }
+
+  /* Gradients modernes */
+  .bg-gradient-primary {
+    background: var(--gradient-primary);
+  }
+
+  .bg-gradient-light {
+    @apply bg-gradient-to-br from-white via-slate-50 to-blue-50/30;
+  }
+
+  /* Système de shadows professionnel */
+  .shadow-soft {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  }
+
+  .shadow-medium {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  }
+
+  .shadow-hard {
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.16);
+  }
+
+  /* Animations keyframes */
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes slideUp {
+    from {
+      opacity: 0;
+      transform: translateY(30px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes slideDown {
+    from {
+      opacity: 0;
+      transform: translateY(-30px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes scaleIn {
+    from {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  @keyframes shimmer {
+    0% {
+      background-position: -1000px 0;
+    }
+    100% {
+      background-position: 1000px 0;
+    }
+  }
+
+  /* Classes d'animations */
+  .animate-fade-in {
+    animation: fadeIn 0.6s ease-out forwards;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.6s ease-out forwards;
+  }
+
+  .animate-slide-down {
+    animation: slideDown 0.6s ease-out forwards;
+  }
+
+  .animate-scale-in {
+    animation: scaleIn 0.6s ease-out forwards;
+  }
+
+  /* Délais d'animation */
+  .delay-100 {
+    animation-delay: 100ms;
+  }
+
+  .delay-200 {
+    animation-delay: 200ms;
+  }
+
+  .delay-300 {
+    animation-delay: 300ms;
+  }
+
+  .delay-400 {
+    animation-delay: 400ms;
+  }
+
+  /* Micro-interactions sur boutons */
+  .btn-interactive {
+    @apply transition-all duration-300;
+  }
+
+  .btn-interactive:hover {
+    @apply scale-105 shadow-xl;
+  }
+
+  .btn-interactive:active {
+    @apply scale-95;
+  }
+
+  /* Card hover effect */
+  .card-hover {
+    @apply transition-all duration-300;
+  }
+
+  .card-hover:hover {
+    @apply -translate-y-2 shadow-2xl;
+  }
+
+  /* Focus ring amélioré */
+  .focus-ring {
+    @apply focus:outline-none focus:ring-2 focus:ring-[#0066CC] focus:ring-offset-2;
   }
 }
