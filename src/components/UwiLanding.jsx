@@ -458,7 +458,7 @@ export default function UwiLanding() {
               >
                 Voir comment ça marche
               </a>
-              <PrimaryButton>Demander une démo</PrimaryButton>
+              <PrimaryButton href="#contact" aria-label="Demander une démo">Demander une démo</PrimaryButton>
             </div>
           </div>
         </Container>
