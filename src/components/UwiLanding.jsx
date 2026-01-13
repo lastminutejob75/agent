@@ -55,29 +55,37 @@ const FloatingBadge = ({ icon: Icon, text, className = "", delay = 0 }) => (
   </motion.div>
 );
 
-const PrimaryButton = ({ children }) => (
-  <button className="group relative inline-flex items-center justify-center gap-2 overflow-hidden rounded-2xl bg-orange-500 px-6 py-3 text-base font-semibold text-white shadow-sm transition hover:brightness-95 active:brightness-90">
-    {/* shimmer */}
-    <motion.span
-      aria-hidden
-      className="pointer-events-none absolute inset-y-0 -left-1/2 w-1/2 rotate-12 bg-white/25 blur-xl opacity-0 group-hover:opacity-100"
-      initial={{ x: "-30%" }}
-      whileHover={{ x: "260%" }}
-      transition={{ duration: 0.9, ease: "linear" }}
-    />
+const PrimaryButton = ({ children, onClick, href, ...props }) => {
+  const Component = href ? 'a' : 'button';
+  return (
+    <Component
+      href={href}
+      onClick={onClick}
+      className="group relative inline-flex items-center justify-center gap-2 overflow-hidden rounded-2xl bg-orange-500 px-6 py-3 text-base font-semibold text-white shadow-sm transition hover:brightness-95 active:brightness-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-orange-500 focus-visible:outline-offset-2"
+      {...props}
+    >
+      {/* shimmer */}
+      <motion.span
+        aria-hidden
+        className="pointer-events-none absolute inset-y-0 -left-1/2 w-1/2 rotate-12 bg-white/25 blur-xl opacity-0 group-hover:opacity-100"
+        initial={{ x: "-30%" }}
+        whileHover={{ x: "260%" }}
+        transition={{ duration: 0.9, ease: "linear" }}
+      />
 
-    {/* subtle pulse ring */}
-    <span className="pointer-events-none absolute inset-0 rounded-2xl ring-0 ring-white/30 transition-all duration-300 group-hover:ring-2" />
+      {/* subtle pulse ring */}
+      <span className="pointer-events-none absolute inset-0 rounded-2xl ring-0 ring-white/30 transition-all duration-300 group-hover:ring-2" />
 
-    <span className="relative z-10">{children}</span>
-    <ArrowRight className="relative z-10 h-4 w-4 transition group-hover:translate-x-0.5" />
-  </button>
-);
+      <span className="relative z-10">{children}</span>
+      <ArrowRight className="relative z-10 h-4 w-4 transition group-hover:translate-x-0.5" />
+    </Component>
+  );
+};
 
 const SecondaryButton = ({ children, href = "#how" }) => (
   <a
     href={href}
-    className="inline-flex items-center justify-center rounded-2xl border bg-white px-6 py-3 text-base font-semibold text-slate-900 shadow-sm transition hover:bg-slate-50"
+    className="inline-flex items-center justify-center rounded-2xl border bg-white px-6 py-3 text-base font-semibold text-slate-900 shadow-sm transition hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-slate-900 focus-visible:outline-offset-2"
   >
     {children}
   </a>
@@ -378,6 +386,19 @@ const FAQ = ({ q, a }) => (
 );
 
 export default function UwiLanding() {
+  // Smooth scroll handler
+  useEffect(() => {
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+      anchor.addEventListener('click', function (e) {
+        e.preventDefault();
+        const target = document.querySelector(this.getAttribute('href'));
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      });
+    });
+  }, []);
+
   return (
     <div className="min-h-screen bg-white text-slate-900">
       <ScrollProgress />
@@ -409,23 +430,23 @@ export default function UwiLanding() {
               </div>
             </div>
 
-            <nav className="hidden items-center gap-6 text-sm text-slate-600 md:flex">
-              <a className="hover:text-slate-900" href="#promises">
+            <nav className="hidden items-center gap-6 text-sm text-slate-600 md:flex" aria-label="Navigation principale">
+              <a className="hover:text-slate-900 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-slate-900 focus-visible:outline-offset-2 rounded" href="#promises">
                 Promesses
               </a>
-              <a className="hover:text-slate-900" href="#integrations">
+              <a className="hover:text-slate-900 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-slate-900 focus-visible:outline-offset-2 rounded" href="#integrations">
                 Intégrations
               </a>
-              <a className="hover:text-slate-900" href="#how">
+              <a className="hover:text-slate-900 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-slate-900 focus-visible:outline-offset-2 rounded" href="#how">
                 Fonctionnement
               </a>
-              <a className="hover:text-slate-900" href="#testimonials">
+              <a className="hover:text-slate-900 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-slate-900 focus-visible:outline-offset-2 rounded" href="#testimonials">
                 Témoignages
               </a>
-              <a className="hover:text-slate-900" href="#trust">
+              <a className="hover:text-slate-900 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-slate-900 focus-visible:outline-offset-2 rounded" href="#trust">
                 Confiance
               </a>
-              <a className="hover:text-slate-900" href="#faq">
+              <a className="hover:text-slate-900 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-slate-900 focus-visible:outline-offset-2 rounded" href="#faq">
                 FAQ
               </a>
             </nav>
@@ -474,7 +495,7 @@ export default function UwiLanding() {
               </p>
 
               <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-                <PrimaryButton>Demander une démo</PrimaryButton>
+                <PrimaryButton href="#contact" aria-label="Demander une démo">Demander une démo</PrimaryButton>
                 <SecondaryButton href="#promises">Voir les promesses</SecondaryButton>
               </div>
 
@@ -905,6 +926,39 @@ export default function UwiLanding() {
         </Container>
       </section>
 
+      {/* Contact Section */}
+      <section id="contact" className="mt-16 md:mt-24">
+        <Container>
+          <div className="rounded-[2.75rem] border bg-gradient-to-br from-slate-50 to-white p-10 shadow-sm md:p-12">
+            <div className="mx-auto max-w-2xl text-center">
+              <Pill>
+                <Sparkles className="h-3.5 w-3.5" /> Prêt à démarrer
+              </Pill>
+              <h2 className="mt-6 text-3xl font-semibold tracking-tight md:text-4xl">
+                Essayez UWi gratuitement
+              </h2>
+              <p className="mt-4 text-lg text-slate-600">
+                Découvrez comment UWi peut transformer votre accueil client en quelques minutes.
+              </p>
+              <form className="mt-8 flex flex-col gap-4 sm:flex-row sm:justify-center" onSubmit={(e) => e.preventDefault()}>
+                <input
+                  type="email"
+                  placeholder="Votre email professionnel"
+                  className="flex-1 rounded-2xl border bg-white px-6 py-3 text-base shadow-sm transition focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/20 sm:max-w-md"
+                  aria-label="Email professionnel"
+                />
+                <PrimaryButton type="submit" aria-label="Demander une démo">
+                  Demander une démo
+                </PrimaryButton>
+              </form>
+              <p className="mt-4 text-sm text-slate-500">
+                Gratuit pendant 14 jours • Sans carte bancaire • Configuration en 5 minutes
+              </p>
+            </div>
+          </div>
+        </Container>
+      </section>
+
       {/* Final CTA */}
       <section className="mt-16 md:mt-24">
         <Container>
@@ -915,20 +969,12 @@ export default function UwiLanding() {
                 <p className="mt-3 text-white/80">UWi répond, qualifie et déclenche l'action — avec handoff humain.</p>
               </div>
               <div className="flex flex-col gap-3 sm:flex-row">
-                <button className="group relative inline-flex items-center justify-center gap-2 overflow-hidden rounded-2xl bg-white px-6 py-3 text-base font-semibold text-slate-900 shadow-sm transition hover:bg-slate-100">
-                  <motion.span
-                    aria-hidden
-                    className="pointer-events-none absolute inset-y-0 -left-1/2 w-1/2 rotate-12 bg-slate-900/10 blur-xl opacity-0 group-hover:opacity-100"
-                    initial={{ x: "-30%" }}
-                    whileHover={{ x: "260%" }}
-                    transition={{ duration: 0.9, ease: "linear" }}
-                  />
-                  <span className="relative z-10">Demander une démo</span>
-                  <ArrowRight className="relative z-10 h-4 w-4 transition group-hover:translate-x-0.5" />
-                </button>
+                <PrimaryButton href="#contact" className="bg-white text-slate-900 hover:bg-slate-100" aria-label="Demander une démo">
+                  Demander une démo
+                </PrimaryButton>
                 <a
                   href="#promises"
-                  className="inline-flex items-center justify-center rounded-2xl border border-white/30 bg-white/5 px-6 py-3 text-base font-semibold text-white shadow-sm transition hover:bg-white/10"
+                  className="inline-flex items-center justify-center rounded-2xl border border-white/30 bg-white/5 px-6 py-3 text-base font-semibold text-white shadow-sm transition hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white focus-visible:outline-offset-2"
                 >
                   Revoir les promesses
                 </a>
@@ -939,23 +985,51 @@ export default function UwiLanding() {
       </section>
 
       {/* Footer */}
-      <footer className="mt-16 border-t bg-white">
+      <footer className="mt-16 border-t bg-white" role="contentinfo">
         <Container>
-          <div className="flex flex-col gap-3 py-8 text-sm text-slate-500 md:flex-row md:items-center md:justify-between">
-            <div className="inline-flex items-center gap-2">
-              <div className="grid h-9 w-9 place-items-center rounded-2xl bg-blue-600 text-white">
-                <span className="text-xs font-semibold">UW<span className="text-orange-400">i</span></span>
+          <div className="grid gap-8 py-12 md:grid-cols-4">
+            <div className="md:col-span-2">
+              <div className="inline-flex items-center gap-2 mb-4">
+                <div className="grid h-10 w-10 place-items-center rounded-2xl bg-blue-600 text-white">
+                  <span className="text-sm font-semibold">UW<span className="text-orange-400">i</span></span>
+                </div>
+                <span className="text-base font-semibold text-slate-900">UWi</span>
               </div>
-              <span>© UWi</span>
+              <p className="text-sm text-slate-600 max-w-md">
+                Agent d'accueil IA multicanal pour les PME. Répond, qualifie et déclenche l'action — 24/7.
+              </p>
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900 mb-4">Produit</h3>
+              <ul className="space-y-2 text-sm text-slate-600">
+                <li><a href="#promises" className="hover:text-slate-900 transition-colors">Promesses</a></li>
+                <li><a href="#integrations" className="hover:text-slate-900 transition-colors">Intégrations</a></li>
+                <li><a href="#how" className="hover:text-slate-900 transition-colors">Fonctionnement</a></li>
+                <li><a href="#faq" className="hover:text-slate-900 transition-colors">FAQ</a></li>
+              </ul>
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900 mb-4">Légal</h3>
+              <ul className="space-y-2 text-sm text-slate-600">
+                <li><a href="#contact" className="hover:text-slate-900 transition-colors">Contact</a></li>
+                <li><a href="#" className="hover:text-slate-900 transition-colors">Mentions légales</a></li>
+                <li><a href="#" className="hover:text-slate-900 transition-colors">Confidentialité</a></li>
+                <li><a href="#" className="hover:text-slate-900 transition-colors">CGU</a></li>
+              </ul>
+            </div>
+          </div>
+          <div className="border-t pt-8 pb-8 flex flex-col gap-3 text-sm text-slate-500 md:flex-row md:items-center md:justify-between">
+            <div>
+              © {new Date().getFullYear()} UWi. Tous droits réservés.
             </div>
             <div className="flex flex-wrap gap-4">
-              <a className="hover:text-slate-700" href="#">
+              <a className="hover:text-slate-700 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-slate-700 focus-visible:outline-offset-2 rounded" href="#contact" aria-label="Contact">
                 Contact
               </a>
-              <a className="hover:text-slate-700" href="#">
+              <a className="hover:text-slate-700 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-slate-700 focus-visible:outline-offset-2 rounded" href="#" aria-label="Mentions légales">
                 Mentions légales
               </a>
-              <a className="hover:text-slate-700" href="#">
+              <a className="hover:text-slate-700 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-slate-700 focus-visible:outline-offset-2 rounded" href="#" aria-label="Confidentialité">
                 Confidentialité
               </a>
             </div>
@@ -970,9 +1044,9 @@ export default function UwiLanding() {
             <div className="font-semibold">UWi</div>
             <div className="text-xs text-slate-600">Accueil IA • RDV • Handoff</div>
           </div>
-          <button className="relative overflow-hidden inline-flex items-center justify-center rounded-2xl bg-orange-500 px-4 py-2 text-sm font-semibold text-white shadow-sm">
+          <PrimaryButton href="#contact" className="px-4 py-2 text-sm" aria-label="Demander une démo">
             Démo
-          </button>
+          </PrimaryButton>
         </div>
       </div>
     </div>
