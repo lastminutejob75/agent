@@ -1,6 +1,5 @@
 """
 Vercel serverless entry point for FastAPI backend
-Version simplifiée pour Vercel
 """
 import sys
 import os
@@ -12,8 +11,6 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 # Pour Vercel, on doit initialiser la DB différemment
-# SQLite en écriture ne fonctionne pas sur Vercel serverless
-# On va utiliser /tmp pour les fichiers temporaires
 os.environ.setdefault('DB_PATH', '/tmp/agent.db')
 
 try:
@@ -35,7 +32,7 @@ except ImportError as e:
     
     handler = Mangum(app, lifespan="off")
 
-# Vercel appelle cette fonction
+# Vercel appelle cette fonction - format requis
 def handler_wrapper(event, context):
     try:
         return handler(event, context)
@@ -47,3 +44,6 @@ def handler_wrapper(event, context):
             "statusCode": 500,
             "body": f"Internal server error: {str(e)}"
         }
+
+# Export pour Vercel (format requis)
+__all__ = ["handler_wrapper"]
