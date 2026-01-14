@@ -1,7 +1,7 @@
 {
   "version": 2,
   "functions": {
-    "api/index.py": {
+    "api/**/*.py": {
       "maxDuration": 30,
       "memory": 1024
     }
@@ -9,23 +9,23 @@
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "api/index.py"
+      "dest": "/api/index.py"
     },
     {
       "src": "/health",
-      "dest": "api/index.py"
+      "dest": "/api/index.py"
     },
     {
       "src": "/chat",
-      "dest": "api/index.py"
+      "dest": "/api/index.py"
     },
     {
       "src": "/stream/(.*)",
-      "dest": "api/index.py"
+      "dest": "/api/index.py"
     },
     {
       "src": "/debug/(.*)",
-      "dest": "api/index.py"
+      "dest": "/api/index.py"
     },
     {
       "src": "/(.*)",
