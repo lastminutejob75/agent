@@ -5,6 +5,7 @@ import {
   buildVapiResponseSay,
   buildVapiResponseTransfer,
   buildVapiResponseTool,
+  buildVapiResponseResults,
   handleVapiTurn,
 } from "@/lib/vapi";
 
@@ -68,11 +69,15 @@ export async function POST(request: NextRequest) {
     let response;
     if (turnResult.action === "transfer") {
       response = buildVapiResponseTransfer(turnResult.reason);
+    } else if (VAPI_MODE === "results") {
+      // Format compatible FastAPI (results array)
+      response = buildVapiResponseResults(turnResult.text || "");
     } else if (VAPI_MODE === "tool") {
       response = buildVapiResponseTool(turnResult.text || "", {
         confidence: 1.0,
       });
     } else {
+      // Mode simple (par défaut)
       response = buildVapiResponseSay(turnResult.text || "");
     }
     
