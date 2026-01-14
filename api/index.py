@@ -18,8 +18,8 @@ try:
     from mangum import Mangum
     from backend.main import app
     
-    # Créer handler pour Vercel
-    handler = Mangum(app, lifespan="off")
+    # Créer handler Mangum pour Vercel
+    mangum_handler = Mangum(app, lifespan="off")
     
 except ImportError as e:
     # Fallback si import échoue
@@ -31,12 +31,12 @@ except ImportError as e:
     async def root():
         return {"error": "Backend not properly configured", "details": str(e)}
     
-    handler = Mangum(app, lifespan="off")
+    mangum_handler = Mangum(app, lifespan="off")
 
 # Vercel appelle cette fonction - nom requis : handler
 def handler(event, context):
     try:
-        return handler(event, context)
+        return mangum_handler(event, context)
     except Exception as e:
         print(f"Handler error: {e}")
         import traceback
