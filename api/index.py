@@ -1,5 +1,6 @@
 """
 Vercel serverless entry point for FastAPI backend
+Format requis par Vercel : fonction handler() exportée
 """
 import sys
 import os
@@ -32,8 +33,8 @@ except ImportError as e:
     
     handler = Mangum(app, lifespan="off")
 
-# Vercel appelle cette fonction - format requis
-def handler_wrapper(event, context):
+# Vercel appelle cette fonction - nom requis : handler
+def handler(event, context):
     try:
         return handler(event, context)
     except Exception as e:
@@ -44,6 +45,3 @@ def handler_wrapper(event, context):
             "statusCode": 500,
             "body": f"Internal server error: {str(e)}"
         }
-
-# Export pour Vercel (format requis)
-__all__ = ["handler_wrapper"]
