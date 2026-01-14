@@ -1,11 +1,38 @@
 {
-  "buildCommand": "npm run build",
-  "outputDirectory": "dist",
-  "installCommand": "npm install",
-  "rewrites": [
+  "version": 2,
+  "builds": [
     {
-      "source": "/(.*)",
-      "destination": "/index.html"
+      "src": "api/index.py",
+      "use": "@vercel/python"
     }
-  ]
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "api/index.py"
+    },
+    {
+      "src": "/health",
+      "dest": "api/index.py"
+    },
+    {
+      "src": "/chat",
+      "dest": "api/index.py"
+    },
+    {
+      "src": "/stream/(.*)",
+      "dest": "api/index.py"
+    },
+    {
+      "src": "/debug/(.*)",
+      "dest": "api/index.py"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/landing/$1"
+    }
+  ],
+  "env": {
+    "PYTHON_VERSION": "3.11"
+  }
 }
