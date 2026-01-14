@@ -1,6 +1,7 @@
 /**
  * Vapi integration utilities
  * Parse payloads, build responses, handle conversation turns
+ * FSM ultra-simplifiée pour prise de RDV vocal
  */
 
 export interface VapiPayload {
@@ -28,6 +29,10 @@ export interface VapiResponse {
   text?: string;
   endCall?: boolean;
   data?: any;
+  results?: Array<{
+    type: string;
+    text: string;
+  }>;
 }
 
 export interface VapiTurnResult {
@@ -35,6 +40,18 @@ export interface VapiTurnResult {
   text?: string;
   reason?: string;
 }
+
+// Session store en mémoire (suffisant pour Vapi)
+interface Session {
+  state: string;
+  data: {
+    name?: string;
+    motif?: string;
+    contact?: string;
+  };
+}
+
+const SESSIONS: Record<string, Session> = {};
 
 /**
  * Parse Vapi webhook payload
@@ -115,10 +132,22 @@ export function buildVapiResponseTool(text: string, data?: any): VapiResponse {
 }
 
 /**
- * Handle a Vapi conversation turn
- * V1: Simple logic for medical appointments
+ * Build Vapi response in "results" format (compatible FastAPI)
  */
-export function handleVapiTurn(inputText: string): VapiTurnResult {
+export function buildVapiResponseResults(text: string): VapiResponse {
+  return {
+    results: [{
+      type: "say",
+      text: text,
+    }],
+  };
+}
+
+/**
+ * Handle conversation turn with FSM ultra-simplifiée
+ * Logique conversation pour prise de RDV vocal
+ */
+export function handleVapiTurn(inputText: string, callId: string): VapiTurnResult {
   const text = inputText.trim().toLowerCase();
   
   // Input vide
@@ -129,61 +158,101 @@ export function handleVapiTurn(inputText: string): VapiTurnResult {
     };
   }
   
-  // Détection intent RDV
-  const rdvKeywords = [
-    "rdv",
-    "rendez-vous",
-    "rendez vous",
-    "rendezvous",
-    "disponible",
-    "disponibilité",
-    "créneau",
-    "créneaux",
-    "prendre rendez",
-    "vouloir rendez",
-    "besoin rendez",
-    "appointment",
-  ];
+  // Récupérer ou créer session
+  if (!SESSIONS[callId]) {
+    SESSIONS[callId] = {
+      state: "START",
+      data: {},
+    };
+  }
   
-  const hasRdvIntent = rdvKeywords.some(keyword => text.includes(keyword));
+  const session = SESSIONS[callId];
   
-  if (hasRdvIntent) {
+  // FSM ultra-simple
+  if (session.state === "START") {
+    if (text.includes("rendez-vous") || text.includes("rdv") || text.includes("rendez vous")) {
+      session.state = "ASK_NAME";
+      return {
+        action: "say",
+        text: "Quel est votre nom et prénom ?",
+      };
+    }
     return {
       action: "say",
-      text: "Très bien. Pour commencer, quel est votre nom et prénom ?",
+      text: "Bonjour. Comment puis-je vous aider ?",
     };
   }
   
-  // Hors scope : prix, conseils médicaux, symptômes
-  const outOfScopeKeywords = [
-    "prix",
-    "tarif",
-    "coût",
-    "combien",
-    "payer",
-    "conseil",
-    "symptôme",
-    "symptomes",
-    "douleur",
-    "mal",
-    "maladie",
-    "traitement",
-    "médicament",
-    "ordonnance",
-  ];
-  
-  const isOutOfScope = outOfScopeKeywords.some(keyword => text.includes(keyword));
-  
-  if (isOutOfScope) {
+  else if (session.state === "ASK_NAME") {
+    session.data.name = inputText.trim(); // Garder l'original (pas lowercase)
+    session.state = "ASK_MOTIF";
     return {
-      action: "transfer",
-      reason: "hors_scope",
+      action: "say",
+      text: "Pour quel sujet souhaitez-vous consulter ?",
     };
   }
   
-  // Par défaut : question de clarification
+  else if (session.state === "ASK_MOTIF") {
+    session.data.motif = inputText.trim();
+    session.state = "ASK_CONTACT";
+    return {
+      action: "say",
+      text: "Quel est votre téléphone ou email ?",
+    };
+  }
+  
+  else if (session.state === "ASK_CONTACT") {
+    session.data.contact = inputText.trim();
+    session.state = "PROPOSE_SLOT";
+    return {
+      action: "say",
+      text: "J'ai un créneau Lundi 13 janvier à 10h. Confirmez-vous ?",
+    };
+  }
+  
+  else if (session.state === "PROPOSE_SLOT") {
+    if (text.includes("oui") || text === "1" || text.includes("confirme")) {
+      session.state = "CONFIRMED";
+      return {
+        action: "say",
+        text: "Parfait ! Votre rendez-vous est confirmé. À bientôt.",
+      };
+    }
+    return {
+      action: "say",
+      text: "Je n'ai pas compris. Dites oui pour confirmer.",
+    };
+  }
+  
+  // État CONFIRMED ou inconnu
+  if (session.state === "CONFIRMED") {
+    return {
+      action: "say",
+      text: "Votre rendez-vous est déjà confirmé. Y a-t-il autre chose ?",
+    };
+  }
+  
   return {
     action: "say",
-    text: "Je peux vous aider à prendre un rendez-vous. Souhaitez-vous réserver un créneau ?",
+    text: "Je n'ai pas compris. Pouvez-vous répéter ?",
   };
+}
+
+/**
+ * Cleanup old sessions (optionnel, pour éviter fuite mémoire)
+ */
+export function cleanupOldSessions(maxAgeMs: number = 15 * 60 * 1000) {
+  const now = Date.now();
+  const toDelete: string[] = [];
+  
+  for (const [callId, session] of Object.entries(SESSIONS)) {
+    // Si session confirmée depuis plus de maxAgeMs, nettoyer
+    if (session.state === "CONFIRMED") {
+      // Extract timestamp from callId if possible, sinon garder
+      // Pour simplifier, on garde toutes les sessions actives
+    }
+  }
+  
+  // Pour l'instant, on garde toutes les sessions
+  // En production, ajouter un timestamp dans Session
 }

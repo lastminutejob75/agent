@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
     let turnResult;
     
     try {
-      turnResult = handleVapiTurn(inputText);
+      turnResult = handleVapiTurn(inputText, callId);
     } catch (error) {
       console.error(`[${requestId}] Error in handleVapiTurn:`, error);
       turnResult = {
