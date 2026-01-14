@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "crypto";
 import {
   parseVapiPayload,
   buildVapiResponseSay,
@@ -16,7 +16,7 @@ const MAX_HANDLER_MS = 800;
  * Main webhook endpoint for Vapi
  */
 export async function POST(request: NextRequest) {
-  const requestId = uuidv4();
+  const requestId = randomUUID();
   const startTime = Date.now();
   
   try {
