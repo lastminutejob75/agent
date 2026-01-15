@@ -2,31 +2,8 @@
   "version": 2,
   "routes": [
     {
-      "src": "/api/(.*)",
-      "dest": "/api/index.py"
-    },
-    {
-      "src": "/health",
-      "dest": "/api/index.py"
-    },
-    {
-      "src": "/chat",
-      "dest": "/api/index.py"
-    },
-    {
-      "src": "/stream/(.*)",
-      "dest": "/api/index.py"
-    },
-    {
-      "src": "/debug/(.*)",
-      "dest": "/api/index.py"
-    },
-    {
       "src": "/(.*)",
       "dest": "/landing/$1"
     }
-  ],
-  "env": {
-    "DB_PATH": "/tmp/agent.db"
-  }
+  ]
 }
