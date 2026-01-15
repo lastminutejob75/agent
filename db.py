@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import sqlite3
+import os
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 
-DB_PATH = "agent.db"
+# Utiliser /tmp sur Vercel, sinon le répertoire courant
+DB_PATH = os.environ.get('DB_PATH', 'agent.db')
 
 SLOT_TIMES = ["10:00", "14:00", "16:00"]
 TARGET_MIN_SLOTS = 15  # 5 jours ouvrés * 3 slots
@@ -13,7 +15,7 @@ MAX_DAYS_AHEAD = 30  # Limite de sécurité pour éviter boucle infinie
 
 
 def get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -65,19 +67,9 @@ def cleanup_old_slots() -> None:
     """
     Supprime les slots passés et garantit au moins TARGET_MIN_SLOTS slots futurs
     (lundi-vendredi uniquement).
-    
-    Logique :
-    - Supprime tous les slots dont date < aujourd'hui
-    - Compte les slots futurs restants
-    - Crée de nouveaux slots (weekdays only) jusqu'à atteindre TARGET_MIN_SLOTS
-    - Utilise BEGIN IMMEDIATE pour éviter race conditions
-    
-    Raises:
-        Exception: Si erreur DB (rollback automatique)
     """
     conn = get_conn()
     try:
-        # Lock write transaction (évite race)
         conn.execute("BEGIN IMMEDIATE")
 
         today = datetime.now().strftime("%Y-%m-%d")
@@ -85,7 +77,7 @@ def cleanup_old_slots() -> None:
         # Supprimer les slots passés
         conn.execute("DELETE FROM slots WHERE date < ?", (today,))
 
-        # Compter les slots futurs (tous, pas seulement libres, car on veut garantir le nombre total)
+        # Compter les slots futurs
         cur = conn.execute("SELECT COUNT(*) as c FROM slots WHERE date >= ?", (today,))
         count = int(cur.fetchone()["c"])
 
@@ -98,7 +90,6 @@ def cleanup_old_slots() -> None:
         added = 0
 
         while added < missing:
-            # Sécurité : évite boucle infinie (ne devrait jamais arriver avec 15 slots max)
             if day_offset > MAX_DAYS_AHEAD:
                 break
 
@@ -117,7 +108,6 @@ def cleanup_old_slots() -> None:
                         "INSERT OR IGNORE INTO slots (date, time) VALUES (?, ?)",
                         (d, t),
                     )
-                    # On incrémente seulement si INSERT a vraiment changé qqch
                     if conn.total_changes > before:
                         added += 1
 
@@ -132,7 +122,7 @@ def cleanup_old_slots() -> None:
 
 
 def count_free_slots(limit: int = 1000) -> int:
-    cleanup_old_slots()  # Nettoyer avant de compter
+    cleanup_old_slots()
     conn = get_conn()
     try:
         today = datetime.now().strftime("%Y-%m-%d")
@@ -143,7 +133,6 @@ def count_free_slots(limit: int = 1000) -> int:
 
 
 def list_free_slots(limit: int = 3) -> List[Dict]:
-    # Nettoyer et régénérer si nécessaire
     cleanup_old_slots()
     
     conn = get_conn()
@@ -201,5 +190,50 @@ def book_slot_atomic(
     except Exception:
         conn.rollback()
         raise
+    finally:
+        conn.close()
+
+
+def load_faq() -> List[Dict]:
+    """Charge toutes les FAQ depuis la DB."""
+    conn = get_conn()
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS faq (
+                id TEXT PRIMARY KEY,
+                question TEXT NOT NULL,
+                answer TEXT NOT NULL
+            )
+        """)
+        rows = conn.execute("SELECT id, question, answer FROM faq").fetchall()
+        return [{"id": r["id"], "question": r["question"], "answer": r["answer"]} for r in rows]
+    finally:
+        conn.close()
+
+
+def seed_faq() -> None:
+    """Seed FAQ de base (V1)."""
+    conn = get_conn()
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS faq (
+                id TEXT PRIMARY KEY,
+                question TEXT NOT NULL,
+                answer TEXT NOT NULL
+            )
+        """)
+        faqs = [
+            ("FAQ_HORAIRES", "Quels sont vos horaires ?", "Nos horaires sont de 9h à 18h du lundi au vendredi."),
+            ("FAQ_ADRESSE", "Où êtes-vous situés ?", "Nous sommes situés au 123 rue de la République, 75001 Paris."),
+            ("FAQ_CONTACT", "Comment vous contacter ?", "Vous pouvez nous contacter par téléphone au 01 23 45 67 89 ou par email à contact@example.com."),
+        ]
+        
+        for faq_id, question, answer in faqs:
+            conn.execute("""
+                INSERT OR REPLACE INTO faq (id, question, answer)
+                VALUES (?, ?, ?)
+            """, (faq_id, question, answer))
+        
+        conn.commit()
     finally:
         conn.close()
