@@ -1,0 +1,19 @@
+# Ignorer pour Railway (backend uniquement)
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+landing/
+frontend/
+*.md
+!README.md
+tests/
+.git/
+.vscode/
+.idea/
+.cursor/
+credentials/
+*.db
+*.sqlite
+*.sqlite3
