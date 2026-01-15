@@ -15,58 +15,67 @@ router = APIRouter(prefix="/api/vapi", tags=["vapi"])
 @router.post("/webhook")
 async def vapi_webhook(request: Request):
     """
-    Webhook Vapi - Reçoit les transcripts et retourne les réponses.
+    Webhook Vapi - Gère différents types de messages Vapi.
     """
     try:
         payload = await request.json()
-        logger.info(f"Vapi webhook received: {payload}")
-        
-        # Extraire le message
         message = payload.get("message", {})
         message_type = message.get("type", "")
+        call = payload.get("call", {})
+        call_id = call.get("id", "")
         
-        # Ignorer certains events techniques
-        if message_type in ["speech-update", "function-call-result", "hang"]:
-            return {"status": "ignored"}
+        logger.info(f"Vapi webhook received: type={message_type}, call_id={call_id}")
         
-        # Extraire transcript utilisateur
-        transcript = message.get("content", "")
-        call_id = payload.get("call", {}).get("id", "")
+        # 1. Gérer les requêtes d'assistant (assistant-request)
+        if message_type == "assistant-request":
+            # Vapi demande un assistant - retourner une réponse vide
+            # L'assistant est déjà configuré dans Vapi Dashboard
+            logger.info("Assistant request - returning empty response")
+            return {"assistant": None}
         
-        if not transcript or not call_id:
-            logger.warning(f"Missing transcript or call_id: {payload}")
-            return {"status": "no_content"}
-        
-        logger.info(f"Processing call_id={call_id}, transcript='{transcript}'")
-        
-        # Récupérer ou créer session avec channel=vocal
-        session = ENGINE.session_store.get_or_create(call_id)
-        session.channel = "vocal"
-        
-        # Traiter le message via l'engine
-        events = ENGINE.handle_message(call_id, transcript)
-        
-        # Formater réponse pour Vapi
-        if events and len(events) > 0:
-            # Prendre le texte du premier event
-            response_text = events[0].text
+        # 2. Traiter uniquement les messages utilisateur avec transcript
+        if message_type == "user-message":
+            transcript = message.get("content", "")
             
-            logger.info(f"Responding to Vapi: {response_text}")
+            if not transcript or not call_id:
+                logger.warning(f"Missing transcript or call_id in user-message: {payload}")
+                return {"status": "no_content"}
             
+            logger.info(f"Processing user-message: call_id={call_id}, transcript='{transcript}'")
+            
+            # Récupérer ou créer session avec channel=vocal
+            session = ENGINE.session_store.get_or_create(call_id)
+            session.channel = "vocal"
+            
+            # Traiter le message via l'engine
+            events = ENGINE.handle_message(call_id, transcript)
+            
+            # Formater réponse pour Vapi
+            if events and len(events) > 0:
+                # Prendre le texte du premier event
+                response_text = events[0].text
+                
+                logger.info(f"Responding to Vapi: {response_text}")
+                
+                return {
+                    "results": [{
+                        "type": "say",
+                        "text": response_text
+                    }]
+                }
+            
+            # Fallback si pas d'event
             return {
                 "results": [{
                     "type": "say",
-                    "text": response_text
+                    "text": "Je n'ai pas bien compris. Pouvez-vous répéter ?"
                 }]
             }
         
-        # Fallback si pas d'event
-        return {
-            "results": [{
-                "type": "say",
-                "text": "Je n'ai pas bien compris. Pouvez-vous répéter ?"
-            }]
-        }
+        # 3. Ignorer les autres types de messages
+        # (status-update, conversation-update, assistant.started, end-of-call-report, etc.)
+        logger.debug(f"Ignoring message type: {message_type}")
+        return {"status": "ok"}
     
     except Exception as e:
         logger.error(f"Vapi webhook error: {e}", exc_info=True)
