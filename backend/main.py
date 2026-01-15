@@ -21,13 +21,20 @@ app = FastAPI()
 # Routers (avant les mounts pour éviter les conflits)
 app.include_router(vapi.router)
 
-# Static frontend
-app.mount("/frontend", StaticFiles(directory="frontend", html=True), name="frontend")
+# Static frontend (optionnel - peut ne pas exister)
+try:
+    import os
+    if os.path.exists("frontend"):
+        app.mount("/frontend", StaticFiles(directory="frontend", html=True), name="frontend")
+except Exception:
+    pass  # Frontend optionnel pour Railway
 
-# Init DB (V1)
+# Init DB (V1) - au démarrage, mais ne pas faire échouer l'app si ça échoue
 try:
     init_db()
-except Exception:
+except Exception as e:
+    import logging
+    logging.warning(f"DB init failed (non-critical): {e}")
     pass
 
 # SSE Streams
@@ -86,10 +93,16 @@ async def cleanup_old_conversations():
 
 @app.get("/health")
 async def health() -> dict:
+    """Health check - doit toujours répondre même en cas d'erreur DB"""
+    try:
+        free_slots = count_free_slots()
+    except Exception:
+        free_slots = -1  # Indique que la DB n'est pas accessible
+    
     return {
         "status": "ok",
         "streams": len(STREAMS),
-        "free_slots": count_free_slots(),
+        "free_slots": free_slots,
     }
 
 
