@@ -1,11 +1,72 @@
-# Ignorer les fichiers non nécessaires pour Vercel
+# Ignorer les fichiers non nécessaires pour Vercel (landing page uniquement)
+
+# Backend et Railway
+railway.json
+Dockerfile
+docker-compose.yml
+.railwayignore
+backend/
+api/
+requirements.txt
+pyproject.toml
+
+# Python
 .venv/
 venv/
 __pycache__/
 *.pyc
+*.py
 *.db
 *.sqlite
+*.sqlite3
+
+# Credentials et configs sensibles
 credentials/
+*.env
+*.env.local
+
+# Tests
 tests/
+test_*.py
+test_*.sh
+
+# Documentation (garder README.md)
 *.md
 !README.md
+
+# Node modules (sera installé par Vercel)
+node_modules/
+
+# Build et dist
+dist/
+build/
+.vercel/
+
+# Autres fichiers backend
+db.py
+engine.py
+fsm.py
+guards.py
+main.py
+prompts.py
+session.py
+tools_booking.py
+tools_faq.py
+vapi.py
+google_calendar.py
+config.py
+
+# Scripts
+*.sh
+scripts/
+
+# Frontend non-landing
+frontend/
+app/
+lib/
+src/
+
+# Fichiers temporaires
+*.log
+*.tmp
+.cache/
