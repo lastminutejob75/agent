@@ -12,9 +12,6 @@ import {
   Sparkles,
   Check,
 } from "lucide-react";
-import BeforeAfterSection from "./BeforeAfterSection";
-import WorkflowSection from "./WorkflowSection";
-import SolutionsVisualSection from "./SolutionsVisualSection";
 
 const fadeUp = {
   hidden: { opacity: 0, y: 16 },
@@ -766,15 +763,6 @@ export default function UwiLanding() {
           </div>
         </Container>
       </section>
-
-      {/* Before/After Section */}
-      <BeforeAfterSection />
-
-      {/* Workflow Section */}
-      <WorkflowSection />
-
-      {/* Solutions Visual Section */}
-      <SolutionsVisualSection />
 
       {/* How it works */}
       <section id="how" className="mt-16 md:mt-24">
