@@ -1,8 +1,9 @@
 {
   "version": 2,
-  "buildCommand": "cd landing && npm run build",
-  "outputDirectory": "landing/dist",
-  "devCommand": "cd landing && npm run dev",
-  "installCommand": "cd landing && npm install",
-  "framework": "vite"
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/landing/$1"
+    }
+  ]
 }
