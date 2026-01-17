@@ -10,3 +10,97 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+/* Utility classes */
+.section-padding {
+  @apply py-16 md:py-24;
+}
+
+.container-custom {
+  @apply max-w-7xl mx-auto px-6 lg:px-8;
+}
+
+.heading-lg {
+  @apply text-3xl md:text-4xl lg:text-5xl font-bold text-gray-900;
+}
+
+.btn-primary {
+  @apply inline-flex items-center justify-center gap-2 rounded-xl bg-[#0066CC] px-6 py-3 text-base font-semibold text-white shadow-lg hover:bg-[#0052A3] transition-all hover:scale-105 active:scale-95;
+}
+
+/* Shadows */
+.shadow-soft {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.shadow-medium {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
+.shadow-hard {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+}
+
+/* Card hover effect */
+.card-hover {
+  transition: all 0.3s ease;
+}
+
+.card-hover:hover {
+  transform: translateY(-4px);
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.6s ease-out forwards;
+}
+
+.animate-slide-up {
+  animation: slideUp 0.6s ease-out forwards;
+  opacity: 0;
+}
+
+.animate-slide-up.delay-100 {
+  animation-delay: 0.1s;
+}
+
+.animate-slide-up.delay-200 {
+  animation-delay: 0.2s;
+}
+
+.animate-slide-up.delay-300 {
+  animation-delay: 0.3s;
+}
+
+.animate-slide-up.delay-400 {
+  animation-delay: 0.4s;
+}
+
+.animate-slide-up.delay-500 {
+  animation-delay: 0.5s;
+}
+
+/* Gradient primary */
+.bg-gradient-primary {
+  background: linear-gradient(135deg, #0066CC 0%, #0052A3 100%);
+}

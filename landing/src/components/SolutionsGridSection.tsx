@@ -1,0 +1,164 @@
+import { Calendar, Headphones, MessageCircle, CheckCircle, ArrowRight } from "lucide-react";
+
+export default function SolutionsGridSection() {
+  const solutions = [
+    {
+      icon: Calendar,
+      title: "Prise de Rendez-vous",
+      description: "Optimisez votre agenda et diminuez vos rendez-vous manqués",
+      benefit: "Optimisez votre agenda et diminuez vos rendez-vous manqués",
+      image: "/images/solution-rdv.jpg",
+      color: "from-blue-500 to-blue-600",
+      bgGradient: "from-blue-100 to-blue-200",
+    },
+    {
+      icon: Headphones,
+      title: "SAV & Support",
+      description: "Libérez-vous des appels répétitifs, concentrez-vous sur votre métier",
+      benefit: "Libérez-vous des appels répétitifs, concentrez-vous sur votre métier",
+      image: "/images/solution-sav.jpg",
+      color: "from-green-500 to-green-600",
+      bgGradient: "from-green-100 to-green-200",
+    },
+    {
+      icon: MessageCircle,
+      title: "Questions Techniques",
+      description: "Offrez des réponses instantanées, contactez vos clients sur leur canal préféré",
+      benefit: "Contactez vos clients sur leur canal préféré",
+      image: "/images/solution-questions.jpg",
+      color: "from-purple-500 to-purple-600",
+      bgGradient: "from-purple-100 to-purple-200",
+    },
+  ];
+
+  return (
+    <section className="section-padding bg-gradient-to-br from-gray-50 to-white">
+      <div className="container-custom">
+        {/* Header */}
+        <div className="text-center mb-16 animate-slide-up">
+          <h2 className="heading-lg mb-4">
+            Comment <span className="text-[#0066CC]">UWI</span> Résout Vos Problèmes
+          </h2>
+          <p className="text-xl text-gray-600 max-w-3xl mx-auto">
+            3 solutions puissantes pour transformer votre relation client
+          </p>
+
+          {/* Icons flow */}
+          <div className="flex items-center justify-center gap-6 mt-8">
+            <div className="w-14 h-14 bg-[#0066CC]/10 rounded-2xl flex items-center justify-center">
+              <Calendar className="h-7 w-7 text-[#0066CC]" />
+            </div>
+            <ArrowRight className="h-6 w-6 text-gray-400" />
+            <div className="w-14 h-14 bg-[#0066CC]/10 rounded-2xl flex items-center justify-center">
+              <Headphones className="h-7 w-7 text-[#0066CC]" />
+            </div>
+            <ArrowRight className="h-6 w-6 text-gray-400" />
+            <div className="w-14 h-14 bg-[#0066CC]/10 rounded-2xl flex items-center justify-center">
+              <MessageCircle className="h-7 w-7 text-[#0066CC]" />
+            </div>
+          </div>
+        </div>
+
+        {/* 3 solutions grid */}
+        <div className="grid md:grid-cols-3 gap-8 max-w-7xl mx-auto">
+          {solutions.map((solution, index) => (
+            <div
+              key={index}
+              className="relative animate-slide-up card-hover"
+              style={{ animationDelay: `${index * 0.15}s` }}
+            >
+              <div className="rounded-2xl overflow-hidden shadow-lg hover:shadow-2xl transition-all bg-white">
+                {/* Image zone */}
+                <div className={`relative h-72 bg-gradient-to-br ${solution.bgGradient}`}>
+                  <div className="absolute inset-0 flex items-center justify-center p-4">
+                    <div className="text-center">
+                      <div className={`bg-gradient-to-br ${solution.color} rounded-2xl p-6 mx-auto w-32 h-32 flex items-center justify-center mb-4 shadow-lg`}>
+                        <solution.icon className="h-16 w-16 text-white" />
+                      </div>
+                      <p className="text-xs text-gray-600 font-medium px-2">
+                        📸 {solution.title}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Badge avec checkmark */}
+                  <div className="absolute top-4 left-4 bg-white rounded-full p-3 shadow-lg">
+                    <CheckCircle className="h-6 w-6 text-[#0066CC]" />
+                  </div>
+                </div>
+
+                {/* Content */}
+                <div className="p-6">
+                  <h3 className="font-bold text-xl text-gray-900 mb-3">{solution.title}</h3>
+
+                  <div className="flex items-start gap-2 mb-4">
+                    <span className="text-2xl text-[#0066CC] font-bold">+</span>
+                    <p className="text-gray-700">{solution.description}</p>
+                  </div>
+
+                  {/* Benefit */}
+                  <div className="pt-4 border-t border-gray-100">
+                    <div className="flex items-start gap-2">
+                      <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0 mt-0.5" />
+                      <span className="text-sm text-gray-600">{solution.benefit}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Bottom badges section */}
+        <div className="grid md:grid-cols-3 gap-6 max-w-6xl mx-auto mt-12 animate-slide-up delay-300">
+          <div className="bg-white rounded-xl p-5 shadow-soft border-2 border-blue-100 hover:border-blue-300 transition-all">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                <CheckCircle className="h-6 w-6 text-blue-600" />
+              </div>
+              <div>
+                <p className="font-bold text-gray-900 text-sm">Prise de Rendez-vous</p>
+                <p className="text-xs text-gray-600">Optimisez votre agenda et diminuez vos rendez-vous manqués</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl p-5 shadow-soft border-2 border-green-100 hover:border-green-300 transition-all">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                <CheckCircle className="h-6 w-6 text-green-600" />
+              </div>
+              <div>
+                <p className="font-bold text-gray-900 text-sm">SAV & Support</p>
+                <p className="text-xs text-gray-600">Libérez-vous des appels répétitifs, concentrez-vous sur votre métier</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl p-5 shadow-soft border-2 border-purple-100 hover:border-purple-300 transition-all">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                <CheckCircle className="h-6 w-6 text-purple-600" />
+              </div>
+              <div>
+                <p className="font-bold text-gray-900 text-sm">Questions Techniques</p>
+                <p className="text-xs text-gray-600">Contactez vos clients sur leur canal préféré</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* CTA */}
+        <div className="text-center mt-12 animate-slide-up delay-400">
+          <a
+            href="/#contact"
+            className="inline-flex items-center gap-2 btn-primary text-lg px-8 py-4"
+          >
+            Découvrir toutes les solutions
+            <ArrowRight className="h-5 w-5" />
+          </a>
+        </div>
+      </div>
+    </section>
+  );
+}
