@@ -1,0 +1,18 @@
+<svg width="1200" height="800" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="grad2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#bbf7d0;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#86efac;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="800" fill="url(#grad2)"/>
+  <text x="600" y="350" font-family="Arial, sans-serif" font-size="32" font-weight="bold" fill="#14532d" text-anchor="middle">
+    ✅ Professionnel serein
+  </text>
+  <text x="600" y="400" font-family="Arial, sans-serif" font-size="20" fill="#166534" text-anchor="middle">
+    Planning optimisé • Organisation • Gain de temps
+  </text>
+  <text x="600" y="450" font-family="Arial, sans-serif" font-size="16" fill="#16a34a" text-anchor="middle" font-style="italic">
+    Remplacer par: after-organized-professional.jpg
+  </text>
+</svg>

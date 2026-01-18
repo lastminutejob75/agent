@@ -39,9 +39,25 @@ export default function Hero({ title, subtitle }: HeroProps) {
 
           {/* Right side - Visual placeholder & stats */}
           <div>
-            {/* Visual placeholder - large box */}
-            <div className="bg-slate-100 rounded-2xl p-20 mb-6 flex items-center justify-center border-2 border-dashed border-slate-300">
-              <p className="text-slate-500 text-center font-medium">Placeholder visuel (hero)</p>
+            {/* Hero image - médecin avec tablette UWI (dernière photo envoyée) */}
+            <div className="relative rounded-2xl overflow-hidden shadow-lg mb-6 group h-[400px] bg-gradient-to-br from-blue-100 to-blue-200">
+              <img
+                src="/images/solution-rdv.jpg"
+                alt="Médecin serein avec tablette UWI - Interface montrant appels traités et RDV confirmés"
+                className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                loading="eager"
+                onError={(e) => {
+                  // Fallback vers SVG placeholder (solution-rdv.svg existe)
+                  const target = e.currentTarget;
+                  if (!target.src.includes('.svg') && !target.src.includes('unsplash')) {
+                    target.src = '/images/solution-rdv.svg';
+                  } else if (!target.src.includes('unsplash')) {
+                    target.src = 'https://images.unsplash.com/photo-1576091160399-112ba8d25d1f?w=1200&h=800&fit=crop&q=85';
+                  }
+                }}
+              />
+              {/* Overlay discret au hover pour montrer l'interface UWI */}
+              <div className="absolute inset-0 bg-gradient-to-t from-black/10 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"></div>
             </div>
 
             {/* Stats cards - 3 cards in a row below placeholder */}

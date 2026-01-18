@@ -157,6 +157,20 @@ MSG_MOTIF_HELP = (
     "Ex : renouvellement ordonnance, douleur, bilan, visiteur médical."
 )
 
+# Messages de redirection lors de qualification (si booking intent répété)
+MSG_QUALIF_NAME_RETRY = "Merci de me donner votre nom et prénom pour continuer."
+MSG_QUALIF_MOTIF_RETRY = "Merci de me donner le motif de votre demande pour continuer."
+MSG_QUALIF_PREF_RETRY = "Merci de me donner votre créneau préféré pour continuer."
+MSG_QUALIF_CONTACT_RETRY = "Merci de me donner votre email ou téléphone pour continuer."
+
+# Booking
+MSG_NO_SLOTS_AVAILABLE = "Désolé, nous n'avons plus de créneaux disponibles. Je vous mets en relation avec un humain."
+MSG_SLOT_ALREADY_BOOKED = "Désolé, ce créneau vient d'être pris. Je vous mets en relation avec un humain."
+
+# Vapi fallbacks
+MSG_VAPI_NO_UNDERSTANDING = "Je n'ai pas bien compris. Pouvez-vous répéter ?"
+MSG_VAPI_ERROR = "Désolé, une erreur s'est produite. Je vous transfère."
+
 # Terminal / clôture
 MSG_CONVERSATION_CLOSED = (
     "C'est terminé pour cette demande. "
@@ -223,12 +237,26 @@ class SlotDisplay:
     label: str  # ex: "Mardi 15/01 - 14:00"
     slot_id: int
 
-def format_slot_proposal(slots: List[SlotDisplay]) -> str:
+def format_slot_proposal(slots: List[SlotDisplay], include_instruction: bool = True, channel: str = "web") -> str:
+    """
+    Formate la proposition de créneaux.
+    
+    Args:
+        slots: Liste des créneaux à proposer
+        include_instruction: Si True, ajoute l'instruction de confirmation
+        channel: "web" ou "vocal" - utilisé pour choisir le bon message d'instruction
+    """
     lines = ["Créneaux disponibles :"]
     for s in slots:
         lines.append(f"{s.idx}. {s.label}")
-    lines.append("")
-    lines.append(MSG_CONFIRM_INSTRUCTION)
+    
+    if include_instruction:
+        lines.append("")
+        if channel == "vocal":
+            lines.append(MSG_CONFIRM_INSTRUCTION_VOCAL)
+        else:
+            lines.append(MSG_CONFIRM_INSTRUCTION_WEB)
+    
     return "\n".join(lines)
 
 def format_booking_confirmed(slot_label: str, name: str = "", motif: str = "") -> str:

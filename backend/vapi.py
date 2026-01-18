@@ -5,8 +5,8 @@ from typing import Dict, List, Optional
 import logging
 
 from backend.engine import ENGINE
-from backend.db import list_free_slots, book_slot_atomic
 from backend.session import Session
+from backend import prompts
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/vapi", tags=["vapi"])
@@ -68,7 +68,7 @@ async def vapi_webhook(request: Request):
             return {
                 "results": [{
                     "type": "say",
-                    "text": "Je n'ai pas bien compris. Pouvez-vous répéter ?"
+                    "text": prompts.MSG_VAPI_NO_UNDERSTANDING
                 }]
             }
         
@@ -82,7 +82,7 @@ async def vapi_webhook(request: Request):
         return {
             "results": [{
                 "type": "say",
-                "text": "Désolé, une erreur s'est produite. Je vous transfère."
+                "text": prompts.MSG_VAPI_ERROR
             }]
         }
 

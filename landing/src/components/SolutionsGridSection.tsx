@@ -64,43 +64,56 @@ export default function SolutionsGridSection() {
           {solutions.map((solution, index) => (
             <div
               key={index}
-              className="relative animate-slide-up card-hover"
+              className="relative animate-slide-up group"
               style={{ animationDelay: `${index * 0.15}s` }}
             >
-              <div className="rounded-2xl overflow-hidden shadow-lg hover:shadow-2xl transition-all bg-white">
-                {/* Image zone */}
-                <div className={`relative h-72 bg-gradient-to-br ${solution.bgGradient}`}>
-                  <div className="absolute inset-0 flex items-center justify-center p-4">
-                    <div className="text-center">
-                      <div className={`bg-gradient-to-br ${solution.color} rounded-2xl p-6 mx-auto w-32 h-32 flex items-center justify-center mb-4 shadow-lg`}>
-                        <solution.icon className="h-16 w-16 text-white" />
-                      </div>
-                      <p className="text-xs text-gray-600 font-medium px-2">
-                        📸 {solution.title}
-                      </p>
-                    </div>
+              <div className="rounded-2xl overflow-hidden shadow-lg hover:shadow-2xl transition-all duration-300 bg-white h-full flex flex-col">
+                {/* Image zone - améliorée */}
+                <div className={`relative h-80 bg-gradient-to-br ${solution.bgGradient} overflow-hidden`}>
+                  <img
+                    src={solution.image}
+                    alt={solution.title}
+                    className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                    loading="lazy"
+                    onError={(e) => {
+                      // Fallback vers SVG placeholder
+                      const svgFallback = solution.image.replace('.jpg', '.svg');
+                      e.currentTarget.src = svgFallback;
+                    }}
+                  />
+                  
+                  {/* Overlay gradient pour meilleure lisibilité */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+
+                  {/* Badge avec checkmark - position améliorée */}
+                  <div className="absolute top-4 left-4 bg-white/95 backdrop-blur-sm rounded-full p-3 shadow-lg transform group-hover:scale-110 transition-transform">
+                    <CheckCircle className="h-6 w-6 text-[#0066CC]" />
                   </div>
 
-                  {/* Badge avec checkmark */}
-                  <div className="absolute top-4 left-4 bg-white rounded-full p-3 shadow-lg">
-                    <CheckCircle className="h-6 w-6 text-[#0066CC]" />
+                  {/* Icon overlay au hover - plus discret */}
+                  <div className="absolute inset-0 flex items-center justify-center p-4 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
+                    <div className={`bg-gradient-to-br ${solution.color} rounded-2xl p-4 shadow-2xl transform group-hover:scale-100 scale-95 transition-transform`}>
+                      <solution.icon className="h-12 w-12 text-white" />
+                    </div>
                   </div>
                 </div>
 
-                {/* Content */}
-                <div className="p-6">
-                  <h3 className="font-bold text-xl text-gray-900 mb-3">{solution.title}</h3>
+                {/* Content - amélioré */}
+                <div className="p-6 flex-1 flex flex-col">
+                  <h3 className="font-bold text-xl text-gray-900 mb-3 group-hover:text-[#0066CC] transition-colors">
+                    {solution.title}
+                  </h3>
 
-                  <div className="flex items-start gap-2 mb-4">
-                    <span className="text-2xl text-[#0066CC] font-bold">+</span>
-                    <p className="text-gray-700">{solution.description}</p>
+                  <div className="flex items-start gap-2 mb-4 flex-1">
+                    <span className="text-2xl text-[#0066CC] font-bold flex-shrink-0">+</span>
+                    <p className="text-gray-700 leading-relaxed">{solution.description}</p>
                   </div>
 
-                  {/* Benefit */}
-                  <div className="pt-4 border-t border-gray-100">
+                  {/* Benefit - style amélioré */}
+                  <div className="pt-4 border-t border-gray-100 mt-auto">
                     <div className="flex items-start gap-2">
                       <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0 mt-0.5" />
-                      <span className="text-sm text-gray-600">{solution.benefit}</span>
+                      <span className="text-sm text-gray-600 font-medium">{solution.benefit}</span>
                     </div>
                   </div>
                 </div>
@@ -109,43 +122,36 @@ export default function SolutionsGridSection() {
           ))}
         </div>
 
-        {/* Bottom badges section */}
-        <div className="grid md:grid-cols-3 gap-6 max-w-6xl mx-auto mt-12 animate-slide-up delay-300">
-          <div className="bg-white rounded-xl p-5 shadow-soft border-2 border-blue-100 hover:border-blue-300 transition-all">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center flex-shrink-0">
-                <CheckCircle className="h-6 w-6 text-blue-600" />
-              </div>
-              <div>
-                <p className="font-bold text-gray-900 text-sm">Prise de Rendez-vous</p>
-                <p className="text-xs text-gray-600">Optimisez votre agenda et diminuez vos rendez-vous manqués</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl p-5 shadow-soft border-2 border-green-100 hover:border-green-300 transition-all">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center flex-shrink-0">
-                <CheckCircle className="h-6 w-6 text-green-600" />
-              </div>
-              <div>
-                <p className="font-bold text-gray-900 text-sm">SAV & Support</p>
-                <p className="text-xs text-gray-600">Libérez-vous des appels répétitifs, concentrez-vous sur votre métier</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl p-5 shadow-soft border-2 border-purple-100 hover:border-purple-300 transition-all">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center flex-shrink-0">
-                <CheckCircle className="h-6 w-6 text-purple-600" />
-              </div>
-              <div>
-                <p className="font-bold text-gray-900 text-sm">Questions Techniques</p>
-                <p className="text-xs text-gray-600">Contactez vos clients sur leur canal préféré</p>
+        {/* Bottom summary badges - améliorés */}
+        <div className="grid md:grid-cols-3 gap-6 max-w-6xl mx-auto mt-16 animate-slide-up delay-300">
+          {solutions.map((solution, index) => (
+            <div
+              key={index}
+              className={`bg-white rounded-xl p-5 shadow-soft border-2 ${
+                index === 0 ? 'border-blue-100 hover:border-blue-300' :
+                index === 1 ? 'border-green-100 hover:border-green-300' :
+                'border-purple-100 hover:border-purple-300'
+              } hover:shadow-medium transition-all duration-300 group cursor-default`}
+            >
+              <div className="flex items-start gap-3">
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-transform group-hover:scale-110 ${
+                  index === 0 ? 'bg-blue-100' :
+                  index === 1 ? 'bg-green-100' :
+                  'bg-purple-100'
+                }`}>
+                  <solution.icon className={`h-5 w-5 ${
+                    index === 0 ? 'text-blue-600' :
+                    index === 1 ? 'text-green-600' :
+                    'text-purple-600'
+                  }`} />
+                </div>
+                <div className="flex-1">
+                  <p className="font-bold text-gray-900 text-sm mb-1">{solution.title}</p>
+                  <p className="text-xs text-gray-600 leading-relaxed">{solution.description}</p>
+                </div>
               </div>
             </div>
-          </div>
+          ))}
         </div>
 
         {/* CTA */}

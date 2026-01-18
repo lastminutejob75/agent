@@ -34,6 +34,8 @@ venv/
 credentials/
 *.json
 !package.json
+!package-lock.json
+!vercel.json
 
 # Environment variables
 .env

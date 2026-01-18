@@ -47,19 +47,21 @@ export default function WorkflowArtisanSection() {
             >
               {/* Image placeholder */}
               <div className="relative h-64 bg-gradient-to-br from-blue-100 to-blue-200 rounded-2xl mb-6 overflow-hidden">
-                {/* 📸 PLACEHOLDER - Remplacer par vraie image */}
-                {/*
                 <img
                   src={step.image}
                   alt={step.title}
                   className="w-full h-full object-cover"
                   loading="lazy"
+                  onError={(e) => {
+                    // Fallback vers SVG placeholder
+                    const svgFallback = step.image.replace('.jpg', '.svg');
+                    e.currentTarget.src = svgFallback;
+                  }}
                 />
-                */}
-                <div className="absolute inset-0 flex items-center justify-center">
+                <div className="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
                   <div className="text-center p-4">
                     <step.icon className="h-20 w-20 mx-auto mb-4 text-blue-600 opacity-50" />
-                    <p className="text-sm font-medium text-blue-700">{step.image}</p>
+                    <p className="text-sm font-medium text-blue-700">{step.title}</p>
                   </div>
                 </div>
                 <div className="absolute top-4 left-4 bg-[#0066CC] text-white w-12 h-12 rounded-full flex items-center justify-center text-xl font-bold shadow-lg">

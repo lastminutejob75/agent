@@ -65,23 +65,21 @@ export default function ComparisonSection() {
           {/* Image AVANT - stressed professionals */}
           <div className="relative rounded-2xl overflow-hidden shadow-lg group">
             <div className="relative h-64 bg-gradient-to-br from-red-100 to-red-200">
-              {/* 📸 PLACEHOLDER - Remplacer par vraie image */}
-              {/*
               <img
                 src="/images/before-stressed-professional.jpg"
                 alt="Professionnel débordé par les appels"
                 className="w-full h-full object-cover"
                 loading="lazy"
+                onError={(e) => {
+                  // Fallback vers SVG placeholder
+                  e.currentTarget.src = '/images/before-stressed-professional.svg';
+                }}
               />
-              */}
-              <div className="absolute inset-0 flex items-center justify-center p-6 bg-black/5 group-hover:bg-black/10 transition-all">
+              <div className="absolute inset-0 flex items-center justify-center p-6 bg-black/5 group-hover:bg-black/10 transition-all opacity-0 group-hover:opacity-100">
                 <div className="text-center">
                   <p className="text-sm font-semibold text-gray-700 mb-2">📸 Illustration AVANT</p>
                   <p className="text-xs text-gray-600 px-4">
                     Professionnel débordé par les appels (médecin en consultation / artisan sur chantier)
-                  </p>
-                  <p className="text-xs text-gray-500 mt-2 italic">
-                    /images/before-stressed-professional.jpg
                   </p>
                 </div>
               </div>
@@ -94,23 +92,21 @@ export default function ComparisonSection() {
           {/* Image APRÈS - organized professional */}
           <div className="relative rounded-2xl overflow-hidden shadow-lg group">
             <div className="relative h-64 bg-gradient-to-br from-green-100 to-emerald-200">
-              {/* 📸 PLACEHOLDER - Remplacer par vraie image */}
-              {/*
               <img
                 src="/images/after-organized-professional.jpg"
                 alt="Professionnel serein avec planning optimisé"
                 className="w-full h-full object-cover"
                 loading="lazy"
+                onError={(e) => {
+                  // Fallback vers SVG placeholder
+                  e.currentTarget.src = '/images/after-organized-professional.svg';
+                }}
               />
-              */}
-              <div className="absolute inset-0 flex items-center justify-center p-6 bg-black/5 group-hover:bg-black/10 transition-all">
+              <div className="absolute inset-0 flex items-center justify-center p-6 bg-black/5 group-hover:bg-black/10 transition-all opacity-0 group-hover:opacity-100">
                 <div className="text-center">
                   <p className="text-sm font-semibold text-gray-700 mb-2">📸 Illustration APRÈS</p>
                   <p className="text-xs text-gray-600 px-4">
                     Professionnel serein consultant planning UWI optimisé sur tablette
-                  </p>
-                  <p className="text-xs text-gray-500 mt-2 italic">
-                    /images/after-organized-professional.jpg
                   </p>
                 </div>
               </div>

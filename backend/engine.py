@@ -261,7 +261,7 @@ class Engine:
         if current_step == "QUALIF_NAME":
             # Vérifier que ce n'est pas une répétition de la demande booking
             if _detect_booking_intent(user_text):
-                msg = "Merci de me donner votre nom et prénom pour continuer."
+                msg = prompts.MSG_QUALIF_NAME_RETRY
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
@@ -293,7 +293,7 @@ class Engine:
                     return [Event("final", msg, conv_state=session.state)]
                 
                 session.confirm_retry_count += 1
-                msg = "Merci de me donner le motif de votre demande pour continuer."
+                msg = prompts.MSG_QUALIF_MOTIF_RETRY
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
@@ -335,7 +335,7 @@ class Engine:
         elif current_step == "QUALIF_PREF":
             # Vérifier que ce n'est pas une répétition
             if _detect_booking_intent(user_text):
-                msg = "Merci de me donner votre créneau préféré pour continuer."
+                msg = prompts.MSG_QUALIF_PREF_RETRY
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
@@ -372,7 +372,7 @@ class Engine:
                     session.add_message("agent", msg)
                     return [Event("final", msg, conv_state=session.state)]
                 
-                msg = "Merci de me donner votre email ou téléphone pour continuer."
+                msg = prompts.MSG_QUALIF_CONTACT_RETRY
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
@@ -452,7 +452,7 @@ class Engine:
         
         if not slots:
             session.state = "TRANSFERRED"
-            msg = "Désolé, nous n'avons plus de créneaux disponibles. Je vous mets en relation avec un humain."
+            msg = prompts.MSG_NO_SLOTS_AVAILABLE
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
         
@@ -460,20 +460,10 @@ class Engine:
         tools_booking.store_pending_slots(session, slots)
         session.state = "WAIT_CONFIRM"
         
-        # Formatter message
-        msg = prompts.format_slot_proposal(slots)
-        session.add_message("agent", msg)
-        
-        # ✅ NOUVEAU : Instruction vocale après slots
+        # Formatter message avec instruction adaptée au channel
         channel = getattr(session, "channel", "web")
-        
-        if channel == "vocal":
-            instruction = prompts.MSG_CONFIRM_INSTRUCTION_VOCAL
-            session.add_message("agent", instruction)
-            return [
-                Event("final", msg, conv_state=session.state),
-                Event("final", instruction, conv_state=session.state),
-            ]
+        msg = prompts.format_slot_proposal(slots, include_instruction=True, channel=channel)
+        session.add_message("agent", msg)
         
         return [Event("final", msg, conv_state=session.state)]
     
@@ -492,10 +482,7 @@ class Engine:
 
             if not success:
                 session.state = "TRANSFERRED"
-                msg = (
-                    "Désolé, ce créneau vient d'être pris. "
-                    "Je vous mets en relation avec un humain."
-                )
+                msg = prompts.MSG_SLOT_ALREADY_BOOKED
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
 
