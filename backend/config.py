@@ -1,5 +1,7 @@
 # backend/config.py
 from __future__ import annotations
+import os
+import base64
 
 # Business
 BUSINESS_NAME = "Cabinet Dupont"
@@ -19,9 +21,39 @@ MAX_MESSAGE_LENGTH = 500
 MAX_SLOTS_PROPOSED = 3
 CONFIRM_RETRY_MAX = 1  # 1 redemande, puis transfer
 
-# Google Calendar
-GOOGLE_CALENDAR_ID = ""  # À configurer après création du calendar de test
-GOOGLE_SERVICE_ACCOUNT_FILE = "credentials/uwi-agent-service-account.json"
-
 # Performance
 TARGET_FIRST_RESPONSE_MS = 3000  # contrainte PRD (sans imposer SSE)
+
+
+# ==============================
+# GOOGLE CALENDAR CONFIGURATION
+# ==============================
+
+# Google Calendar Service Account
+if os.getenv("GOOGLE_SERVICE_ACCOUNT_BASE64"):
+    # Production (Railway) : décoder depuis base64
+    try:
+        decoded = base64.b64decode(os.getenv("GOOGLE_SERVICE_ACCOUNT_BASE64"))
+        service_account_path = "/tmp/service-account.json"
+        
+        with open(service_account_path, "wb") as f:
+            f.write(decoded)
+        
+        GOOGLE_SERVICE_ACCOUNT_FILE = service_account_path
+        print(f"✅ Google Service Account loaded from base64 → {service_account_path}")
+    except Exception as e:
+        print(f"⚠️ Warning: Could not decode GOOGLE_SERVICE_ACCOUNT_BASE64: {e}")
+        GOOGLE_SERVICE_ACCOUNT_FILE = None
+else:
+    # Local : fichier dans credentials/
+    GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv(
+        "GOOGLE_SERVICE_ACCOUNT_FILE",
+        "credentials/service-account.json"
+    )
+
+# Calendar ID (à configurer après création du calendrier)
+# Format : xxx@group.calendar.google.com
+GOOGLE_CALENDAR_ID = os.getenv(
+    "GOOGLE_CALENDAR_ID",
+    ""  # ← Sera configuré après création du calendrier
+)
