@@ -1,107 +1,108 @@
 # backend/channels/voice.py
 """
-Canal Voice pour Vapi.
-Gère les appels téléphoniques via l'intégration Vapi.
+Channel pour la voix via Vapi.
+
+Ce channel gère :
+- Les webhooks Vapi (assistant-request, user-message, etc.)
+- La transformation des transcripts en ChannelMessage
+- Le formatage des réponses pour Vapi
 """
 
-from __future__ import annotations
-from typing import Dict, Any, Optional
+from typing import Optional, Dict, Any
 import logging
-import os
 
-from fastapi import Request
+from fastapi import Request, HTTPException
 
 from backend.channels.base import BaseChannel, ChannelError
 from backend.models.message import ChannelMessage, AgentResponse
-from backend.engine import ENGINE
 from backend import prompts
 
 logger = logging.getLogger(__name__)
 
 
 class VoiceChannel(BaseChannel):
-    """
-    Implémentation du canal Voice (Vapi).
-    
-    Gère :
-    - assistant-request : retourne {} pour utiliser l'assistant Vapi
-    - user-message : traite via ENGINE et retourne la réponse
-    - autres types : ignore
-    """
+    """Channel pour les conversations vocales via Vapi"""
     
     def __init__(self):
-        super().__init__("vocal")
+        super().__init__(channel_name="vocal")
     
     async def parse_incoming(self, request: Request) -> Optional[ChannelMessage]:
         """
-        Parse un payload Vapi vers ChannelMessage.
+        Parse les webhooks Vapi.
         
-        Formats supportés :
-        - message.type = "user-message" + message.content
-        - message.type = "assistant-request" → retourne None (ignoré)
+        Vapi envoie plusieurs types de messages :
+        - assistant-request : Demande de config assistant (on retourne {})
+        - user-message : Message de l'utilisateur (on traite)
+        - status-update, end-of-call-report, etc. (on ignore)
+        
+        Returns:
+            ChannelMessage pour les user-message, None pour les autres types
         """
         try:
-            raw_payload = await request.json()
+            payload = await request.json()
         except Exception as e:
-            logger.error(f"VoiceChannel: Failed to parse JSON: {e}")
-            raise ChannelError("Invalid JSON payload", self.channel_name)
+            logger.error(f"Failed to parse Vapi webhook: {e}")
+            raise HTTPException(status_code=400, detail="Invalid JSON")
         
-        message = raw_payload.get("message", {})
+        message = payload.get("message", {})
         message_type = message.get("type", "")
-        call = raw_payload.get("call", {})
+        call = payload.get("call", {})
         call_id = call.get("id", "")
         
-        logger.info(f"VoiceChannel: type={message_type}, call_id={call_id}")
+        logger.info(f"Vapi webhook: type={message_type}, call_id={call_id}")
         
-        # assistant-request : on ne traite pas, juste signal pour Vapi
+        # assistant-request : Vapi demande la config, on retourne {}
         if message_type == "assistant-request":
-            return None
+            logger.info("Assistant request - using default Vapi assistant")
+            return None  # Signal pour retourner {} directement
         
-        # user-message : extraire le transcript
+        # user-message : Message utilisateur
         if message_type == "user-message":
             transcript = message.get("content", "")
             
             if not transcript or not call_id:
-                logger.warning(f"VoiceChannel: Missing transcript or call_id")
+                logger.warning(f"Missing transcript or call_id: {payload}")
                 return None
             
-            # Marquer la session comme vocale
-            session = ENGINE.session_store.get_or_create(call_id)
-            session.channel = "vocal"
+            logger.info(f"User message: call_id={call_id}, text='{transcript}'")
             
             return ChannelMessage(
-                channel=self.channel_name,
+                channel="vocal",
                 conversation_id=call_id,
                 user_text=transcript,
                 metadata={
-                    "from_number": call.get("from"),
-                    "to_number": call.get("to"),
-                    "raw_type": message_type,
-                    "raw_payload": raw_payload
+                    "call": call,
+                    "message_type": message_type,
+                    "raw_payload": payload
                 }
             )
         
-        # Autres types (status-update, conversation-update, etc.) → ignorer
-        logger.debug(f"VoiceChannel: Ignoring message type {message_type}")
+        # Autres types : on ignore (status-update, end-of-call-report, etc.)
+        logger.debug(f"Ignoring Vapi message type: {message_type}")
         return None
     
     async def format_response(self, response: AgentResponse) -> Dict[str, Any]:
         """
-        Formate une réponse pour Vapi.
+        Formate la réponse pour Vapi.
         
-        Format Vapi :
+        Vapi attend :
         {
-            "results": [{"type": "say", "text": "..."}]
+            "results": [
+                {"type": "say", "text": "..."}
+            ]
         }
-        """
-        if response.is_transfer:
-            return {
-                "results": [{
-                    "type": "transfer",
-                    "destination": response.metadata.get("destination", "")
-                }]
-            }
         
+        Args:
+            response: Réponse de l'agent
+            
+        Returns:
+            Payload Vapi
+        """
+        # Si transfert silencieux, ne rien dire
+        if response.silent:
+            return {"results": []}
+        
+        # Réponse normale
         return {
             "results": [{
                 "type": "say",
@@ -111,48 +112,41 @@ class VoiceChannel(BaseChannel):
     
     async def validate_webhook(self, request: Request) -> bool:
         """
-        Valide le webhook Vapi.
+        Valide que la requête provient de Vapi.
         
-        Pour l'instant, accepte tout. En production, vérifier :
-        - Header X-Vapi-Secret
-        - Signature HMAC
+        Pour le MVP, on accepte toutes les requêtes.
+        En production, on devrait :
+        - Vérifier une signature HMAC
+        - Valider l'IP source
+        - Checker un secret partagé
+        
+        Returns:
+            True (pour le MVP)
         """
-        # TODO: Implémenter validation avec VAPI_WEBHOOK_SECRET
-        secret = os.getenv("VAPI_WEBHOOK_SECRET")
-        if not secret:
-            # Pas de secret configuré, accepter tout
-            return True
-        
-        # Vérifier le header
-        request_secret = request.headers.get("X-Vapi-Secret", "")
-        return request_secret == secret
+        # TODO: Implémenter validation Vapi si nécessaire
+        return True
     
     def get_conversation_id(self, request_payload: dict) -> str:
-        """Extrait l'ID de conversation Vapi (call.id)"""
-        return request_payload.get("call", {}).get("id", "")
-    
-    def get_ignore_response(self) -> Dict[str, Any]:
-        """Réponse pour les messages ignorés (assistant-request, etc.)"""
-        return {}
-    
-    def get_error_response(self) -> Dict[str, Any]:
-        """Réponse en cas d'erreur"""
-        return {
-            "results": [{
-                "type": "say",
-                "text": prompts.MSG_VAPI_ERROR
-            }]
-        }
-    
-    def get_fallback_response(self) -> Dict[str, Any]:
-        """Réponse fallback si pas de réponse de l'engine"""
-        return {
-            "results": [{
-                "type": "say",
-                "text": prompts.MSG_VAPI_NO_UNDERSTANDING
-            }]
-        }
+        """Extrait call_id comme conversation_id"""
+        call = request_payload.get("call", {})
+        return call.get("id", "")
 
 
-# Instance singleton pour utilisation dans les routes
-voice_channel = VoiceChannel()
+def create_vapi_fallback_response(error_message: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Crée une réponse de fallback en cas d'erreur.
+    
+    Args:
+        error_message: Message d'erreur optionnel
+        
+    Returns:
+        Payload Vapi avec message d'erreur
+    """
+    text = error_message or prompts.MSG_VAPI_ERROR
+    
+    return {
+        "results": [{
+            "type": "say",
+            "text": text
+        }]
+    }

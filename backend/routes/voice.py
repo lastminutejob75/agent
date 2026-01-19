@@ -8,7 +8,7 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 import logging
 
-from backend.channels.voice import voice_channel
+from backend.channels.voice import VoiceChannel, create_vapi_fallback_response
 from backend.channels.base import ChannelError
 from backend.models.message import AgentResponse
 from backend.engine import ENGINE
@@ -16,6 +16,9 @@ from backend.engine import ENGINE
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/vapi", tags=["voice"])
+
+# Instance du channel
+voice_channel = VoiceChannel()
 
 
 @router.post("/webhook")
@@ -36,10 +39,14 @@ async def voice_webhook(request: Request):
         
         # Si None, c'est un message à ignorer (assistant-request, etc.)
         if message is None:
-            return JSONResponse(content=voice_channel.get_ignore_response())
+            return JSONResponse(content={})
         
         # Traiter via l'engine
         events = ENGINE.handle_message(message.conversation_id, message.user_text)
+        
+        # Marquer la session comme vocale
+        session = ENGINE.session_store.get_or_create(message.conversation_id)
+        session.channel = "vocal"
         
         # Construire la réponse
         if events and len(events) > 0:
@@ -63,13 +70,16 @@ async def voice_webhook(request: Request):
         formatted = await voice_channel.format_response(response)
         return JSONResponse(content=formatted)
         
+    except HTTPException:
+        raise
+        
     except ChannelError as e:
         logger.error(f"Voice channel error: {e.message}")
-        return JSONResponse(content=voice_channel.get_error_response())
+        return JSONResponse(content=create_vapi_fallback_response())
         
     except Exception as e:
         logger.error(f"Voice webhook error: {e}", exc_info=True)
-        return JSONResponse(content=voice_channel.get_error_response())
+        return JSONResponse(content=create_vapi_fallback_response())
 
 
 @router.get("/health")
