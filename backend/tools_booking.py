@@ -1,47 +1,310 @@
 # backend/tools_booking.py
+"""
+Outils de réservation - Version Google Calendar.
+
+Ce module gère les créneaux et réservations via Google Calendar API.
+Fallback vers SQLite si Google Calendar n'est pas configuré.
+"""
+
 from __future__ import annotations
 
-from typing import List, Optional
+from datetime import datetime, timedelta
+from typing import List, Optional, Dict, Any
+import logging
 
 from backend import prompts
-from backend.db import list_free_slots, book_slot_atomic
+from backend import config
 
+logger = logging.getLogger(__name__)
+
+# ============================================
+# GOOGLE CALENDAR SERVICE (lazy loading)
+# ============================================
+
+_calendar_service = None
+
+
+def _get_calendar_service():
+    """
+    Récupère le service Google Calendar (lazy loading).
+    
+    Returns:
+        GoogleCalendarService ou None si non configuré
+    """
+    global _calendar_service
+    
+    if _calendar_service is not None:
+        return _calendar_service
+    
+    # Vérifier si Google Calendar est configuré
+    if not config.GOOGLE_CALENDAR_ID:
+        logger.warning("GOOGLE_CALENDAR_ID non configuré - utilisation SQLite")
+        return None
+    
+    if not config.GOOGLE_SERVICE_ACCOUNT_FILE:
+        logger.warning("GOOGLE_SERVICE_ACCOUNT_FILE non configuré - utilisation SQLite")
+        return None
+    
+    try:
+        from backend.google_calendar import GoogleCalendarService
+        _calendar_service = GoogleCalendarService(config.GOOGLE_CALENDAR_ID)
+        logger.info("✅ Google Calendar service initialisé")
+        return _calendar_service
+    except Exception as e:
+        logger.error(f"❌ Erreur initialisation Google Calendar: {e}")
+        return None
+
+
+# ============================================
+# FONCTIONS PRINCIPALES
+# ============================================
 
 def get_slots_for_display(limit: int = 3) -> List[prompts.SlotDisplay]:
-    raw = list_free_slots(limit=limit)
-    out: List[prompts.SlotDisplay] = []
-    for i, r in enumerate(raw, start=1):
-        label = f"{r['date']} - {r['time']}"
-        out.append(prompts.SlotDisplay(idx=i, label=label, slot_id=int(r["id"])))
-    return out
+    """
+    Récupère les créneaux disponibles.
+    
+    Utilise Google Calendar si configuré, sinon SQLite.
+    
+    Args:
+        limit: Nombre max de créneaux à retourner
+        
+    Returns:
+        Liste de SlotDisplay pour affichage
+    """
+    calendar = _get_calendar_service()
+    
+    if calendar:
+        return _get_slots_from_google_calendar(calendar, limit)
+    else:
+        return _get_slots_from_sqlite(limit)
+
+
+def _get_slots_from_google_calendar(calendar, limit: int) -> List[prompts.SlotDisplay]:
+    """Récupère créneaux via Google Calendar."""
+    slots: List[prompts.SlotDisplay] = []
+    
+    # Chercher sur les 7 prochains jours
+    for day_offset in range(1, 8):  # Commencer à demain
+        if len(slots) >= limit:
+            break
+            
+        date = datetime.now() + timedelta(days=day_offset)
+        
+        # Skip weekends (optionnel)
+        if date.weekday() >= 5:  # Samedi = 5, Dimanche = 6
+            continue
+        
+        day_slots = calendar.get_free_slots(
+            date=date,
+            duration_minutes=15,
+            start_hour=9,
+            end_hour=18,
+            limit=limit - len(slots)
+        )
+        
+        for i, slot in enumerate(day_slots):
+            slots.append(prompts.SlotDisplay(
+                idx=len(slots) + 1,
+                label=slot['label'],
+                slot_id=len(slots)  # Index pour référence
+            ))
+            
+            if len(slots) >= limit:
+                break
+    
+    logger.info(f"Google Calendar: {len(slots)} créneaux trouvés")
+    return slots
+
+
+def _get_slots_from_sqlite(limit: int) -> List[prompts.SlotDisplay]:
+    """Fallback: récupère créneaux via SQLite."""
+    try:
+        from backend.db import list_free_slots
+        raw = list_free_slots(limit=limit)
+        out: List[prompts.SlotDisplay] = []
+        for i, r in enumerate(raw, start=1):
+            label = f"{r['date']} - {r['time']}"
+            out.append(prompts.SlotDisplay(idx=i, label=label, slot_id=int(r["id"])))
+        return out
+    except Exception as e:
+        logger.error(f"Erreur SQLite slots: {e}")
+        return []
 
 
 def store_pending_slots(session, slots: List[prompts.SlotDisplay]) -> None:
+    """
+    Stocke les créneaux proposés dans la session.
+    
+    Args:
+        session: Session utilisateur
+        slots: Liste des créneaux proposés
+    """
     session.pending_slot_ids = [s.slot_id for s in slots]
     session.pending_slot_labels = [s.label for s in slots]
+    
+    # Stocker aussi les données complètes pour Google Calendar
+    calendar = _get_calendar_service()
+    if calendar:
+        # Récupérer les slots complets pour le booking
+        _store_google_calendar_slots(session, slots)
+
+
+def _store_google_calendar_slots(session, slots: List[prompts.SlotDisplay]) -> None:
+    """Stocke les données Google Calendar pour le booking."""
+    calendar = _get_calendar_service()
+    if not calendar:
+        return
+    
+    # Récupérer les créneaux complets
+    full_slots: List[Dict[str, Any]] = []
+    
+    for day_offset in range(1, 8):
+        if len(full_slots) >= len(slots):
+            break
+            
+        date = datetime.now() + timedelta(days=day_offset)
+        
+        if date.weekday() >= 5:
+            continue
+        
+        day_slots = calendar.get_free_slots(
+            date=date,
+            duration_minutes=15,
+            start_hour=9,
+            end_hour=18,
+            limit=len(slots) - len(full_slots)
+        )
+        
+        full_slots.extend(day_slots)
+    
+    session.pending_google_slots = full_slots[:len(slots)]
 
 
 def book_slot_from_session(session, choice_index_1based: int) -> bool:
     """
-    Book le slot choisi.
+    Réserve le créneau choisi par l'utilisateur.
+    
+    Utilise Google Calendar si configuré, sinon SQLite.
+    
+    Args:
+        session: Session utilisateur avec les données de qualification
+        choice_index_1based: Index du créneau (1-based)
+        
+    Returns:
+        True si réservation réussie, False sinon
     """
     idx = choice_index_1based - 1
+    
     if idx < 0 or idx >= len(session.pending_slot_ids):
+        logger.warning(f"Index invalide: {choice_index_1based}")
         return False
+    
+    calendar = _get_calendar_service()
+    
+    if calendar:
+        return _book_via_google_calendar(session, idx)
+    else:
+        return _book_via_sqlite(session, idx)
 
-    slot_id = session.pending_slot_ids[idx]
 
-    return book_slot_atomic(
-        slot_id=slot_id,
-        name=session.qualif_data.name or "",
-        contact=session.qualif_data.contact or "",
-        contact_type=session.qualif_data.contact_type or "",
-        motif=session.qualif_data.motif or "",
+def _book_via_google_calendar(session, idx: int) -> bool:
+    """Réserve via Google Calendar."""
+    calendar = _get_calendar_service()
+    if not calendar:
+        return False
+    
+    # Récupérer le slot complet
+    if not hasattr(session, 'pending_google_slots') or not session.pending_google_slots:
+        logger.error("Pas de slots Google Calendar en session")
+        return False
+    
+    if idx >= len(session.pending_google_slots):
+        logger.error(f"Index {idx} hors limites Google slots")
+        return False
+    
+    slot = session.pending_google_slots[idx]
+    
+    # Créer le RDV
+    event_id = calendar.book_appointment(
+        start_time=slot['start'],
+        end_time=slot['end'],
+        patient_name=session.qualif_data.name or "Client",
+        patient_contact=session.qualif_data.contact or "",
+        motif=session.qualif_data.motif or "Consultation"
     )
+    
+    if event_id:
+        session.google_event_id = event_id
+        logger.info(f"✅ RDV Google Calendar créé: {event_id}")
+        return True
+    
+    logger.error("❌ Échec création RDV Google Calendar")
+    return False
+
+
+def _book_via_sqlite(session, idx: int) -> bool:
+    """Fallback: réserve via SQLite."""
+    try:
+        from backend.db import book_slot_atomic
+        
+        slot_id = session.pending_slot_ids[idx]
+        
+        return book_slot_atomic(
+            slot_id=slot_id,
+            name=session.qualif_data.name or "",
+            contact=session.qualif_data.contact or "",
+            contact_type=session.qualif_data.contact_type or "",
+            motif=session.qualif_data.motif or "",
+        )
+    except Exception as e:
+        logger.error(f"Erreur SQLite booking: {e}")
+        return False
 
 
 def get_label_for_choice(session, choice_index_1based: int) -> Optional[str]:
+    """
+    Récupère le label d'un créneau choisi.
+    
+    Args:
+        session: Session utilisateur
+        choice_index_1based: Index du créneau (1-based)
+        
+    Returns:
+        Label du créneau ou None si non trouvé
+    """
     idx = choice_index_1based - 1
+    
     if idx < 0 or idx >= len(session.pending_slot_labels):
         return None
+    
     return session.pending_slot_labels[idx]
+
+
+# ============================================
+# UTILITAIRES
+# ============================================
+
+def cancel_booking(session) -> bool:
+    """
+    Annule une réservation (si Google Calendar).
+    
+    Args:
+        session: Session avec google_event_id
+        
+    Returns:
+        True si annulation réussie
+    """
+    if not hasattr(session, 'google_event_id') or not session.google_event_id:
+        logger.warning("Pas d'event_id Google Calendar à annuler")
+        return False
+    
+    calendar = _get_calendar_service()
+    if not calendar:
+        return False
+    
+    return calendar.cancel_appointment(session.google_event_id)
+
+
+def is_google_calendar_enabled() -> bool:
+    """Vérifie si Google Calendar est configuré."""
+    return _get_calendar_service() is not None
