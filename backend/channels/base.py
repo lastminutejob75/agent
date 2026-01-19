@@ -1,99 +1,92 @@
 # backend/channels/base.py
 """
-Classe de base abstraite pour tous les canaux.
-Définit l'interface commune que chaque canal doit implémenter.
+Interface de base pour tous les canaux de communication.
+
+Tous les channels (VoiceChannel, WhatsAppChannel, etc.) héritent
+de cette classe et implémentent les méthodes abstraites.
 """
 
-from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Optional, Dict, Any
+from fastapi import Request
 
 from backend.models.message import ChannelMessage, AgentResponse
-from backend.engine import ENGINE
 
 
 class BaseChannel(ABC):
     """
-    Interface abstraite pour les canaux de communication.
+    Classe de base pour tous les channels.
     
-    Chaque canal (Voice, WhatsApp, Web, SMS) doit hériter de cette classe
-    et implémenter les méthodes abstraites.
+    Responsabilités :
+    - Parser le format d'entrée du canal (Vapi, WhatsApp, etc.)
+    - Normaliser en ChannelMessage
+    - Transformer AgentResponse dans le format de sortie du canal
     """
     
-    channel_name: str  # "vocal", "whatsapp", "google_business", "web"
+    def __init__(self, channel_name: str):
+        self.channel_name = channel_name
     
     @abstractmethod
-    def parse_incoming(self, raw_payload: Dict[str, Any]) -> Optional[ChannelMessage]:
+    async def parse_incoming(self, request: Request) -> Optional[ChannelMessage]:
         """
-        Parse le payload brut du canal vers un ChannelMessage normalisé.
+        Parse une requête HTTP entrante et la transforme en ChannelMessage.
         
         Args:
-            raw_payload: Données brutes reçues du webhook/API
+            request: Requête FastAPI brute
             
         Returns:
-            ChannelMessage normalisé ou None si le message doit être ignoré
+            ChannelMessage si le message est valide, None sinon
+            
+        Raises:
+            HTTPException si le format est invalide
         """
         pass
     
     @abstractmethod
-    def format_response(self, response: AgentResponse) -> Dict[str, Any]:
+    async def format_response(self, response: AgentResponse) -> Dict[str, Any]:
         """
-        Formate une AgentResponse vers le format spécifique du canal.
+        Transforme une AgentResponse dans le format attendu par le canal.
         
         Args:
-            response: Réponse normalisée à envoyer
+            response: Réponse de l'agent
             
         Returns:
-            Payload formaté pour le canal
+            Dict à retourner comme réponse HTTP (JSON)
         """
         pass
     
-    def process_message(self, raw_payload: Dict[str, Any]) -> Dict[str, Any]:
+    @abstractmethod
+    async def validate_webhook(self, request: Request) -> bool:
         """
-        Traite un message entrant et retourne la réponse formatée.
-        
-        Pipeline :
-        1. Parse le payload brut → ChannelMessage
-        2. Passe au moteur de conversation (ENGINE)
-        3. Formate la réponse → format canal
+        Valide que la requête provient bien du service (Vapi, WhatsApp, etc.)
         
         Args:
-            raw_payload: Données brutes du webhook
+            request: Requête à valider
             
         Returns:
-            Réponse formatée pour le canal
+            True si valide, False sinon
         """
-        # 1. Parser le message entrant
-        message = self.parse_incoming(raw_payload)
-        
-        if message is None:
-            # Message ignoré (status update, etc.)
-            return self.get_ignore_response()
-        
-        # 2. Traiter via l'engine
-        events = ENGINE.handle_message(message.conversation_id, message.user_text)
-        
-        # 3. Construire la réponse
-        if events and len(events) > 0:
-            event = events[0]
-            response = AgentResponse(
-                text=event.text,
-                conversation_id=message.conversation_id,
-                state=event.conv_state or "START",
-                event_type=event.type,
-                transfer_reason=event.transfer_reason,
-                silent=event.silent
-            )
-        else:
-            response = AgentResponse(
-                text="Je n'ai pas compris. Pouvez-vous répéter ?",
-                conversation_id=message.conversation_id,
-                state="START"
-            )
-        
-        # 4. Formater pour le canal
-        return self.format_response(response)
+        pass
     
-    def get_ignore_response(self) -> Dict[str, Any]:
-        """Réponse par défaut pour les messages ignorés"""
-        return {"status": "ok"}
+    def get_conversation_id(self, request_payload: dict) -> str:
+        """
+        Extrait l'ID de conversation depuis le payload.
+        Peut être overridé par les sous-classes.
+        
+        Args:
+            request_payload: Payload parsé de la requête
+            
+        Returns:
+            ID de conversation (unique et stable pour cette conversation)
+        """
+        raise NotImplementedError("Subclass must implement get_conversation_id")
+
+
+class ChannelError(Exception):
+    """Exception levée par les channels en cas d'erreur"""
+    
+    def __init__(self, message: str, channel: str, details: Optional[Dict[str, Any]] = None):
+        self.message = message
+        self.channel = channel
+        self.details = details or {}
+        super().__init__(self.message)

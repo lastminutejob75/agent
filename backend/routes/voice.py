@@ -1,19 +1,20 @@
 # backend/routes/voice.py
 """
 Routes API pour le canal Voice (Vapi).
-Utilise VoiceChannel pour traiter les webhooks.
 """
 
 from __future__ import annotations
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import JSONResponse
 import logging
 
 from backend.channels.voice import voice_channel
-from backend import prompts
+from backend.channels.base import ChannelError
+from backend.models.message import AgentResponse
+from backend.engine import ENGINE
 
 logger = logging.getLogger(__name__)
 
-# Router avec le même préfixe que l'ancien vapi.py pour rétrocompatibilité
 router = APIRouter(prefix="/api/vapi", tags=["voice"])
 
 
@@ -21,24 +22,59 @@ router = APIRouter(prefix="/api/vapi", tags=["voice"])
 async def voice_webhook(request: Request):
     """
     Webhook principal pour Vapi.
-    Délègue le traitement à VoiceChannel.
+    
+    Reçoit les événements Vapi et retourne les réponses.
     """
     try:
-        payload = await request.json()
+        # Valider le webhook
+        if not await voice_channel.validate_webhook(request):
+            logger.warning("Voice webhook validation failed")
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
         
-        # Utiliser VoiceChannel pour traiter
-        response = voice_channel.process_message(payload)
+        # Parser le message entrant
+        message = await voice_channel.parse_incoming(request)
         
-        return response
+        # Si None, c'est un message à ignorer (assistant-request, etc.)
+        if message is None:
+            return JSONResponse(content=voice_channel.get_ignore_response())
+        
+        # Traiter via l'engine
+        events = ENGINE.handle_message(message.conversation_id, message.user_text)
+        
+        # Construire la réponse
+        if events and len(events) > 0:
+            event = events[0]
+            response = AgentResponse(
+                text=event.text,
+                conversation_id=message.conversation_id,
+                state=event.conv_state or "START",
+                event_type=event.type,
+                transfer_reason=event.transfer_reason,
+                silent=event.silent
+            )
+        else:
+            response = AgentResponse(
+                text="Je n'ai pas compris. Pouvez-vous répéter ?",
+                conversation_id=message.conversation_id,
+                state="START"
+            )
+        
+        # Formater pour Vapi
+        formatted = await voice_channel.format_response(response)
+        return JSONResponse(content=formatted)
+        
+    except ChannelError as e:
+        logger.error(f"Voice channel error: {e.message}")
+        return JSONResponse(content=voice_channel.get_error_response())
         
     except Exception as e:
         logger.error(f"Voice webhook error: {e}", exc_info=True)
-        return voice_channel.get_error_response()
+        return JSONResponse(content=voice_channel.get_error_response())
 
 
 @router.get("/health")
 async def voice_health():
-    """Health check pour le canal Voice."""
+    """Health check pour le canal Voice"""
     return {
         "status": "ok",
         "service": "voice",
@@ -52,23 +88,12 @@ async def voice_test():
     """
     Endpoint de test pour vérifier la configuration.
     """
-    try:
-        from backend.engine import ENGINE
-        
-        # Tester que l'engine fonctionne
-        test_session = ENGINE.session_store.get_or_create("test_voice")
-        test_session.channel = "vocal"
-        
-        events = ENGINE.handle_message("test_voice", "bonjour")
-        
-        return {
-            "status": "ok",
-            "test_response": events[0].text if events else "No response",
-            "message": "Voice channel is working correctly"
+    return {
+        "status": "ok",
+        "channel": voice_channel.channel_name,
+        "engine": "ready",
+        "endpoints": {
+            "webhook": "/api/vapi/webhook",
+            "health": "/api/vapi/health"
         }
-    except Exception as e:
-        logger.error(f"Voice test failed: {e}", exc_info=True)
-        return {
-            "status": "error",
-            "error": str(e)
-        }
+    }

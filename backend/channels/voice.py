@@ -7,8 +7,11 @@ Gère les appels téléphoniques via l'intégration Vapi.
 from __future__ import annotations
 from typing import Dict, Any, Optional
 import logging
+import os
 
-from backend.channels.base import BaseChannel
+from fastapi import Request
+
+from backend.channels.base import BaseChannel, ChannelError
 from backend.models.message import ChannelMessage, AgentResponse
 from backend.engine import ENGINE
 from backend import prompts
@@ -26,9 +29,10 @@ class VoiceChannel(BaseChannel):
     - autres types : ignore
     """
     
-    channel_name = "vocal"
+    def __init__(self):
+        super().__init__("vocal")
     
-    def parse_incoming(self, raw_payload: Dict[str, Any]) -> Optional[ChannelMessage]:
+    async def parse_incoming(self, request: Request) -> Optional[ChannelMessage]:
         """
         Parse un payload Vapi vers ChannelMessage.
         
@@ -36,6 +40,12 @@ class VoiceChannel(BaseChannel):
         - message.type = "user-message" + message.content
         - message.type = "assistant-request" → retourne None (ignoré)
         """
+        try:
+            raw_payload = await request.json()
+        except Exception as e:
+            logger.error(f"VoiceChannel: Failed to parse JSON: {e}")
+            raise ChannelError("Invalid JSON payload", self.channel_name)
+        
         message = raw_payload.get("message", {})
         message_type = message.get("type", "")
         call = raw_payload.get("call", {})
@@ -66,7 +76,8 @@ class VoiceChannel(BaseChannel):
                 metadata={
                     "from_number": call.get("from"),
                     "to_number": call.get("to"),
-                    "raw_type": message_type
+                    "raw_type": message_type,
+                    "raw_payload": raw_payload
                 }
             )
         
@@ -74,7 +85,7 @@ class VoiceChannel(BaseChannel):
         logger.debug(f"VoiceChannel: Ignoring message type {message_type}")
         return None
     
-    def format_response(self, response: AgentResponse) -> Dict[str, Any]:
+    async def format_response(self, response: AgentResponse) -> Dict[str, Any]:
         """
         Formate une réponse pour Vapi.
         
@@ -97,6 +108,28 @@ class VoiceChannel(BaseChannel):
                 "text": response.text
             }]
         }
+    
+    async def validate_webhook(self, request: Request) -> bool:
+        """
+        Valide le webhook Vapi.
+        
+        Pour l'instant, accepte tout. En production, vérifier :
+        - Header X-Vapi-Secret
+        - Signature HMAC
+        """
+        # TODO: Implémenter validation avec VAPI_WEBHOOK_SECRET
+        secret = os.getenv("VAPI_WEBHOOK_SECRET")
+        if not secret:
+            # Pas de secret configuré, accepter tout
+            return True
+        
+        # Vérifier le header
+        request_secret = request.headers.get("X-Vapi-Secret", "")
+        return request_secret == secret
+    
+    def get_conversation_id(self, request_payload: dict) -> str:
+        """Extrait l'ID de conversation Vapi (call.id)"""
+        return request_payload.get("call", {}).get("id", "")
     
     def get_ignore_response(self) -> Dict[str, Any]:
         """Réponse pour les messages ignorés (assistant-request, etc.)"""

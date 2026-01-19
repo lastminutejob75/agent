@@ -4,11 +4,14 @@ Routes API pour le canal WhatsApp (Twilio).
 """
 
 from __future__ import annotations
-from fastapi import APIRouter, Request, Form
+from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import Response
 import logging
 
 from backend.channels.whatsapp import whatsapp_channel
+from backend.channels.base import ChannelError
+from backend.models.message import AgentResponse
+from backend.engine import ENGINE
 
 logger = logging.getLogger(__name__)
 
@@ -16,66 +19,103 @@ router = APIRouter(prefix="/api/whatsapp", tags=["whatsapp"])
 
 
 @router.post("/webhook")
-async def whatsapp_webhook(
-    Body: str = Form(""),
-    From: str = Form(""),
-    To: str = Form(""),
-    MessageSid: str = Form(""),
-    AccountSid: str = Form(""),
-    NumMedia: str = Form("0")
-):
+async def whatsapp_webhook(request: Request):
     """
     Webhook pour Twilio WhatsApp.
-    Reçoit les messages et répond en TwiML.
+    
+    Reçoit les messages WhatsApp et retourne du TwiML.
     """
     try:
-        payload = {
-            "Body": Body,
-            "From": From,
-            "To": To,
-            "MessageSid": MessageSid,
-            "AccountSid": AccountSid,
-            "NumMedia": NumMedia
-        }
+        # Valider le webhook (optionnel si TWILIO_AUTH_TOKEN configuré)
+        if not await whatsapp_channel.validate_webhook(request):
+            logger.warning("WhatsApp webhook validation failed")
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
         
-        logger.info(f"WhatsApp webhook received: from={From}")
+        # Parser le message entrant
+        message = await whatsapp_channel.parse_incoming(request)
         
-        # Ignorer les messages média pour l'instant
-        if int(NumMedia) > 0:
+        # Si None, c'est un message à ignorer (média uniquement, etc.)
+        if message is None:
             return Response(
-                content='''<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Message>Désolé, je ne peux pas traiter les images ou fichiers pour le moment. Envoyez-moi un message texte.</Message>
-</Response>''',
+                content=whatsapp_channel.get_media_response()["twiml"],
                 media_type="application/xml"
             )
         
-        # Traiter le message
-        response = whatsapp_channel.process_message(payload)
+        # Vérifier si c'est un message avec médias
+        if message.metadata.get("num_media", 0) > 0 and not message.user_text:
+            return Response(
+                content=whatsapp_channel.get_media_response()["twiml"],
+                media_type="application/xml"
+            )
         
-        # Retourner TwiML
+        # Traiter via l'engine
+        events = ENGINE.handle_message(message.conversation_id, message.user_text)
+        
+        # Construire la réponse
+        if events and len(events) > 0:
+            event = events[0]
+            response = AgentResponse(
+                text=event.text,
+                conversation_id=message.conversation_id,
+                state=event.conv_state or "START",
+                event_type=event.type,
+                transfer_reason=event.transfer_reason,
+                silent=event.silent
+            )
+        else:
+            response = AgentResponse(
+                text="Je n'ai pas compris. Pouvez-vous reformuler ?",
+                conversation_id=message.conversation_id,
+                state="START"
+            )
+        
+        # Formater pour TwiML
+        formatted = await whatsapp_channel.format_response(response)
+        
         return Response(
-            content=response.get("twiml", ""),
+            content=formatted["twiml"],
+            media_type="application/xml"
+        )
+        
+    except ChannelError as e:
+        logger.error(f"WhatsApp channel error: {e.message}")
+        return Response(
+            content=whatsapp_channel.get_error_response()["twiml"],
             media_type="application/xml"
         )
         
     except Exception as e:
         logger.error(f"WhatsApp webhook error: {e}", exc_info=True)
         return Response(
-            content='''<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Message>Désolé, une erreur s'est produite. Veuillez réessayer.</Message>
-</Response>''',
+            content=whatsapp_channel.get_error_response()["twiml"],
             media_type="application/xml"
         )
 
 
 @router.get("/health")
 async def whatsapp_health():
-    """Health check pour WhatsApp."""
+    """Health check pour le canal WhatsApp"""
     return {
         "status": "ok",
         "service": "whatsapp",
         "channel": "twilio",
         "message": "WhatsApp webhook is ready"
+    }
+
+
+@router.get("/test")
+async def whatsapp_test():
+    """
+    Endpoint de test pour vérifier la configuration.
+    """
+    import os
+    return {
+        "status": "ok",
+        "channel": whatsapp_channel.channel_name,
+        "engine": "ready",
+        "twilio_configured": bool(os.getenv("TWILIO_AUTH_TOKEN")),
+        "endpoints": {
+            "webhook": "/api/whatsapp/webhook",
+            "health": "/api/whatsapp/health"
+        }
     }
