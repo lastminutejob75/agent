@@ -51,9 +51,8 @@ else:
         "credentials/service-account.json"
     )
 
-# Calendar ID (à configurer après création du calendrier)
-# Format : xxx@group.calendar.google.com
+# Calendar ID
 GOOGLE_CALENDAR_ID = os.getenv(
     "GOOGLE_CALENDAR_ID",
-    ""  # ← Sera configuré après création du calendrier
+    "6fd8676f333bda53ea04d852eb72680d33dd567c7f286be401ed46d16b9f8659@group.calendar.google.com"
 )
