@@ -8,7 +8,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
 
-from backend.models.message import ChannelMessage, ChannelResponse, ChannelType
+from backend.models.message import ChannelMessage, AgentResponse
 from backend.engine import ENGINE
 
 
@@ -20,7 +20,7 @@ class BaseChannel(ABC):
     et implémenter les méthodes abstraites.
     """
     
-    channel_type: ChannelType
+    channel_name: str  # "vocal", "whatsapp", "google_business", "web"
     
     @abstractmethod
     def parse_incoming(self, raw_payload: Dict[str, Any]) -> Optional[ChannelMessage]:
@@ -36,9 +36,9 @@ class BaseChannel(ABC):
         pass
     
     @abstractmethod
-    def format_response(self, response: ChannelResponse) -> Dict[str, Any]:
+    def format_response(self, response: AgentResponse) -> Dict[str, Any]:
         """
-        Formate une ChannelResponse vers le format spécifique du canal.
+        Formate une AgentResponse vers le format spécifique du canal.
         
         Args:
             response: Réponse normalisée à envoyer
@@ -71,20 +71,24 @@ class BaseChannel(ABC):
             return self.get_ignore_response()
         
         # 2. Traiter via l'engine
-        events = ENGINE.handle_message(message.session_id, message.text)
+        events = ENGINE.handle_message(message.conversation_id, message.user_text)
         
         # 3. Construire la réponse
         if events and len(events) > 0:
-            response = ChannelResponse(
-                text=events[0].text,
-                action="transfer" if events[0].type == "transfer" else "say",
-                session_id=message.session_id,
-                end_conversation=events[0].conv_state in ["CONFIRMED", "TRANSFERRED"]
+            event = events[0]
+            response = AgentResponse(
+                text=event.text,
+                conversation_id=message.conversation_id,
+                state=event.conv_state or "START",
+                event_type=event.type,
+                transfer_reason=event.transfer_reason,
+                silent=event.silent
             )
         else:
-            response = ChannelResponse(
+            response = AgentResponse(
                 text="Je n'ai pas compris. Pouvez-vous répéter ?",
-                session_id=message.session_id
+                conversation_id=message.conversation_id,
+                state="START"
             )
         
         # 4. Formater pour le canal

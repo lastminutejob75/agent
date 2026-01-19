@@ -8,9 +8,8 @@ from typing import Dict, Any, Optional
 import logging
 
 from backend.channels.base import BaseChannel
-from backend.models.message import ChannelMessage, ChannelResponse, ChannelType
+from backend.models.message import ChannelMessage, AgentResponse
 from backend.engine import ENGINE
-from backend import prompts
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +23,7 @@ class WhatsAppChannel(BaseChannel):
     - Meta WhatsApp Business API (futur)
     """
     
-    channel_type = ChannelType.WHATSAPP
+    channel_name = "whatsapp"
     
     def parse_incoming(self, raw_payload: Dict[str, Any]) -> Optional[ChannelMessage]:
         """
@@ -46,28 +45,27 @@ class WhatsAppChannel(BaseChannel):
             logger.warning("WhatsAppChannel: Missing body or from_number")
             return None
         
-        # Utiliser le numéro comme session_id
-        session_id = f"wa_{from_number}"
+        # Utiliser le numéro comme conversation_id
+        conversation_id = f"wa_{from_number}"
         
         logger.info(f"WhatsAppChannel: from={from_number}, body={body[:50]}...")
         
         # Marquer la session comme WhatsApp
-        session = ENGINE.session_store.get_or_create(session_id)
+        session = ENGINE.session_store.get_or_create(conversation_id)
         session.channel = "whatsapp"
         
         return ChannelMessage(
-            channel=self.channel_type,
-            session_id=session_id,
-            text=body,
-            sender_id=from_number,
-            raw_payload=raw_payload,
+            channel=self.channel_name,
+            conversation_id=conversation_id,
+            user_text=body,
             metadata={
-                "to": to_number,
+                "from_number": from_number,
+                "to_number": to_number,
                 "message_sid": message_sid
             }
         )
     
-    def format_response(self, response: ChannelResponse) -> Dict[str, Any]:
+    def format_response(self, response: AgentResponse) -> Dict[str, Any]:
         """
         Formate pour TwiML (Twilio Messaging).
         

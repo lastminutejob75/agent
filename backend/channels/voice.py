@@ -9,7 +9,7 @@ from typing import Dict, Any, Optional
 import logging
 
 from backend.channels.base import BaseChannel
-from backend.models.message import ChannelMessage, ChannelResponse, ChannelType
+from backend.models.message import ChannelMessage, AgentResponse
 from backend.engine import ENGINE
 from backend import prompts
 
@@ -26,7 +26,7 @@ class VoiceChannel(BaseChannel):
     - autres types : ignore
     """
     
-    channel_type = ChannelType.VOICE
+    channel_name = "vocal"
     
     def parse_incoming(self, raw_payload: Dict[str, Any]) -> Optional[ChannelMessage]:
         """
@@ -60,18 +60,21 @@ class VoiceChannel(BaseChannel):
             session.channel = "vocal"
             
             return ChannelMessage(
-                channel=self.channel_type,
-                session_id=call_id,
-                text=transcript,
-                sender_id=call.get("from"),
-                raw_payload=raw_payload
+                channel=self.channel_name,
+                conversation_id=call_id,
+                user_text=transcript,
+                metadata={
+                    "from_number": call.get("from"),
+                    "to_number": call.get("to"),
+                    "raw_type": message_type
+                }
             )
         
         # Autres types (status-update, conversation-update, etc.) → ignorer
         logger.debug(f"VoiceChannel: Ignoring message type {message_type}")
         return None
     
-    def format_response(self, response: ChannelResponse) -> Dict[str, Any]:
+    def format_response(self, response: AgentResponse) -> Dict[str, Any]:
         """
         Formate une réponse pour Vapi.
         
@@ -80,7 +83,20 @@ class VoiceChannel(BaseChannel):
             "results": [{"type": "say", "text": "..."}]
         }
         """
-        return response.to_vapi_format()
+        if response.is_transfer:
+            return {
+                "results": [{
+                    "type": "transfer",
+                    "destination": response.metadata.get("destination", "")
+                }]
+            }
+        
+        return {
+            "results": [{
+                "type": "say",
+                "text": response.text
+            }]
+        }
     
     def get_ignore_response(self) -> Dict[str, Any]:
         """Réponse pour les messages ignorés (assistant-request, etc.)"""
