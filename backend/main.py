@@ -14,12 +14,14 @@ from fastapi.staticfiles import StaticFiles
 from backend.engine import ENGINE, Event
 from backend import config
 from backend.db import init_db, list_free_slots, count_free_slots
-from backend import vapi
+# Nouvelle architecture multi-canal
+from backend.routes import voice
 
 app = FastAPI()
 
 # Routers (avant les mounts pour éviter les conflits)
-app.include_router(vapi.router)
+# Utilise la nouvelle route voice (remplace vapi.py)
+app.include_router(voice.router)
 
 # Static frontend (optionnel - peut ne pas exister)
 try:
