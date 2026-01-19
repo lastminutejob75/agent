@@ -28,10 +28,9 @@ async def vapi_webhook(request: Request):
         
         # 1. Gérer les requêtes d'assistant (assistant-request)
         if message_type == "assistant-request":
-            # Vapi demande un assistant - retourner une réponse vide
-            # L'assistant est déjà configuré dans Vapi Dashboard
-            logger.info("Assistant request - returning empty response")
-            return {"assistant": None}
+            # Vapi demande un assistant - retourner {} pour utiliser l'assistant configuré dans Vapi
+            logger.info("Assistant request - using default assistant from Vapi")
+            return {}
         
         # 2. Traiter uniquement les messages utilisateur avec transcript
         if message_type == "user-message":

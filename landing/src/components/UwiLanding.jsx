@@ -32,12 +32,12 @@ export default function UwiLanding() {
         <UseCasesSection />
         <FeaturesSection />
         <ROICalculator />
+        <CTASection />
         <PricingSection />
         <TestimonialsSection />
         <TrustSection />
         <FAQSection />
         <ContactForm />
-        <CTASection />
       </main>
       <Footer />
     </>
