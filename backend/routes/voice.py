@@ -1,15 +1,17 @@
 # backend/routes/voice.py
 """
-Route pour le canal Voix (Vapi).
-Format de réponse : {"content": "..."} uniquement.
+Route pour le canal Voix (Vapi) - AVEC LOGS DÉTAILLÉS
 """
 
 from fastapi import APIRouter, Request
 import logging
+import json
 
 from backend.engine import ENGINE
 from backend import prompts
 
+# Configuration logging pour voir dans Railway
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/vapi", tags=["voice"])
@@ -18,43 +20,51 @@ router = APIRouter(prefix="/api/vapi", tags=["voice"])
 @router.post("/webhook")
 async def vapi_webhook(request: Request):
     """
-    Webhook Vapi - Retourne UNIQUEMENT le format {"content": "..."}
+    Webhook Vapi - LOGS DÉTAILLÉS POUR DEBUG
     """
     try:
         payload = await request.json()
-        logger.info(f"📞 Webhook: {payload}")
+        
+        # ===== LOGS DÉTAILLÉS =====
+        print(f"🔔🔔🔔 WEBHOOK APPELÉ 🔔🔔🔔")
+        print(f"📦 Payload complet: {json.dumps(payload, indent=2, ensure_ascii=False)}")
         
         message = payload.get("message", {})
-        message_type = message.get("type", "")
+        message_type = message.get("type", "UNKNOWN")
         call_id = payload.get("call", {}).get("id", "unknown")
         
-        logger.info(f"Type: {message_type}, Call: {call_id}")
+        print(f"📍 Type: {message_type}")
+        print(f"📍 Call ID: {call_id}")
+        print(f"📍 Message content: {message.get('content', 'N/A')}")
+        
+        logger.info(f"🔔 WEBHOOK: type={message_type}, call={call_id}")
         
         # ========================================
         # assistant-request → {}
         # ========================================
         if message_type == "assistant-request":
-            logger.info("✅ Assistant request")
+            print("✅ Returning {} for assistant-request")
             return {}
         
         # ========================================
         # conversation-start → Premier message
         # ========================================
         if message_type in ["conversation-start", "call-start"]:
-            logger.info("✅ Call started")
-            return {"content": prompts.MSG_WELCOME}
+            response = {"content": prompts.MSG_WELCOME}
+            print(f"✅ Conversation start, returning: {response}")
+            return response
         
         # ========================================
         # user-message / transcript → ENGINE
         # ========================================
         if message_type in ["user-message", "transcript"]:
             user_text = message.get("content", "") or message.get("transcript", "")
+            print(f"📝 User text: '{user_text}'")
             
             if not user_text:
-                logger.warning("⚠️ Empty message")
-                return {"content": "Je n'ai pas compris. Pouvez-vous répéter ?"}
-            
-            logger.info(f"📝 User: '{user_text}'")
+                response = {"content": "Je n'ai pas compris. Pouvez-vous répéter ?"}
+                print(f"⚠️ Empty text, returning: {response}")
+                return response
             
             # Session vocale
             session = ENGINE.session_store.get_or_create(call_id)
@@ -65,30 +75,34 @@ async def vapi_webhook(request: Request):
             
             if events and len(events) > 0:
                 response_text = events[0].text
-                logger.info(f"✅ Response: '{response_text[:50]}...'")
-                return {"content": response_text}
+                response = {"content": response_text}
+                print(f"✅ ENGINE response: {response}")
+                return response
             
-            logger.warning("⚠️ No events")
-            return {"content": "Je n'ai pas compris. Pouvez-vous reformuler ?"}
+            response = {"content": "Je n'ai pas compris. Pouvez-vous reformuler ?"}
+            print(f"⚠️ No events, returning: {response}")
+            return response
         
         # ========================================
-        # Autres → Ignorer
+        # Autres types → Log et ignorer
         # ========================================
-        logger.debug(f"Ignoring: {message_type}")
+        print(f"❓ Unknown type: {message_type}, returning {{}}")
         return {}
         
     except Exception as e:
+        print(f"❌ ERROR: {e}")
         logger.error(f"❌ Error: {e}", exc_info=True)
         return {"content": "Désolé, une erreur est survenue."}
 
 
 @router.get("/health")
 async def vapi_health():
-    return {"status": "ok", "service": "voice"}
+    return {"status": "ok", "service": "voice", "logging": "enabled"}
 
 
 @router.get("/test")
 async def vapi_test():
+    print("🧪 Test endpoint called")
     try:
         events = ENGINE.handle_message("test", "bonjour")
         if events:
