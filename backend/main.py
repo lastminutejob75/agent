@@ -68,8 +68,36 @@ def ensure_stream(conv_id: str) -> None:
 
 @app.on_event("startup")
 async def startup():
-    """Démarre le background task de cleanup"""
+    """Démarre les background tasks"""
     asyncio.create_task(cleanup_old_conversations())
+    asyncio.create_task(keep_alive())
+    print("🚀 Application started with keep-alive enabled")
+
+
+async def keep_alive():
+    """
+    Keep-alive: ping toutes les 30 secondes pour empêcher Railway de stopper le container.
+    """
+    import httpx
+    import os
+    
+    # URL de l'app (Railway ou local)
+    base_url = os.getenv("RAILWAY_PUBLIC_DOMAIN")
+    if base_url:
+        health_url = f"https://{base_url}/health"
+    else:
+        health_url = "http://localhost:8080/health"
+    
+    print(f"🔄 Keep-alive started, pinging: {health_url}")
+    
+    while True:
+        await asyncio.sleep(30)  # Ping toutes les 30 secondes
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(health_url, timeout=10)
+                print(f"💓 Keep-alive ping: {response.status_code}")
+        except Exception as e:
+            print(f"⚠️ Keep-alive ping failed: {e}")
 
 
 async def cleanup_old_conversations():
