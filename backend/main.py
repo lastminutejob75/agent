@@ -15,7 +15,7 @@ from backend.engine import ENGINE, Event
 from backend import config
 from backend.db import init_db, list_free_slots, count_free_slots
 # Nouvelle architecture multi-canal
-from backend.routes import voice, whatsapp
+from backend.routes import voice, whatsapp, bland
 
 app = FastAPI()
 
@@ -23,6 +23,7 @@ app = FastAPI()
 # Utilise la nouvelle architecture multi-canal
 app.include_router(voice.router)      # /api/vapi/*
 app.include_router(whatsapp.router)   # /api/whatsapp/*
+app.include_router(bland.router)      # /api/bland/*
 
 # Static frontend (optionnel - peut ne pas exister)
 try:
