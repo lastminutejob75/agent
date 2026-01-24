@@ -163,17 +163,35 @@ async def vapi_custom_llm(request: Request):
         # Si streaming demandé, retourner SSE
         if is_streaming:
             async def generate_stream():
-                # Premier chunk avec le rôle
-                chunk1 = {
+                import asyncio
+                
+                # Premier chunk : rôle assistant
+                chunk_role = {
                     "id": f"chatcmpl-{call_id}",
                     "object": "chat.completion.chunk",
                     "choices": [{
                         "index": 0,
-                        "delta": {"role": "assistant", "content": response_text},
+                        "delta": {"role": "assistant"},
                         "finish_reason": None
                     }]
                 }
-                yield f"data: {json.dumps(chunk1)}\n\n"
+                yield f"data: {json.dumps(chunk_role)}\n\n"
+                
+                # Envoyer le contenu mot par mot
+                words = response_text.split()
+                for i, word in enumerate(words):
+                    # Ajouter espace sauf pour le premier mot
+                    content = f" {word}" if i > 0 else word
+                    chunk = {
+                        "id": f"chatcmpl-{call_id}",
+                        "object": "chat.completion.chunk",
+                        "choices": [{
+                            "index": 0,
+                            "delta": {"content": content},
+                            "finish_reason": None
+                        }]
+                    }
+                    yield f"data: {json.dumps(chunk)}\n\n"
                 
                 # Chunk final
                 chunk_final = {
