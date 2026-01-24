@@ -73,6 +73,47 @@ async def vapi_webhook(request: Request):
         return {"content": "Désolé, une erreur est survenue."}
 
 
+@router.post("/tool")
+async def vapi_tool(request: Request):
+    """
+    Endpoint pour Vapi Tools/Functions.
+    Claude appelle ce tool pour obtenir les réponses.
+    """
+    try:
+        payload = await request.json()
+        
+        print(f"🔧🔧🔧 TOOL APPELÉ 🔧🔧🔧")
+        print(f"📦 Payload: {json.dumps(payload, indent=2, ensure_ascii=False)}")
+        
+        # Extraire le message utilisateur
+        user_message = payload.get("parameters", {}).get("user_message", "")
+        call_id = payload.get("call", {}).get("id", "unknown")
+        
+        print(f"📝 User message: '{user_message}'")
+        print(f"📞 Call ID: {call_id}")
+        
+        if not user_message:
+            return {"result": "Je n'ai pas compris. Pouvez-vous répéter ?"}
+        
+        # Session vocale
+        session = ENGINE.session_store.get_or_create(call_id)
+        session.channel = "vocal"
+        
+        # Traiter
+        events = ENGINE.handle_message(call_id, user_message)
+        response_text = events[0].text if events else "Je n'ai pas compris"
+        
+        print(f"✅ Tool response: '{response_text}'")
+        
+        return {"result": response_text}
+        
+    except Exception as e:
+        print(f"❌ Tool error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"result": "Désolé, une erreur est survenue."}
+
+
 @router.get("/health")
 async def vapi_health():
     return {"status": "ok", "service": "voice"}
