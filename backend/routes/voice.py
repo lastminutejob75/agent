@@ -119,7 +119,10 @@ async def vapi_custom_llm(request: Request):
     """
     Vapi Custom LLM endpoint
     Vapi envoie les messages ici au lieu d'utiliser Claude/GPT
+    Supporte le streaming (SSE) quand stream=true
     """
+    from fastapi.responses import StreamingResponse
+    
     try:
         payload = await request.json()
         
@@ -129,9 +132,11 @@ async def vapi_custom_llm(request: Request):
         # Vapi envoie un tableau de messages
         messages = payload.get("messages", [])
         call_id = payload.get("call", {}).get("id") or payload.get("call_id", "unknown")
+        is_streaming = payload.get("stream", False)
         
         print(f"📞 Call ID: {call_id}")
         print(f"📨 Messages count: {len(messages)}")
+        print(f"🌊 Streaming: {is_streaming}")
         
         # Récupère le dernier message utilisateur
         user_message = None
@@ -155,7 +160,44 @@ async def vapi_custom_llm(request: Request):
             response_text = events[0].text if events else "Je n'ai pas compris"
             print(f"✅ Response: {response_text}")
         
-        # Format OpenAI-compatible (ce que Vapi attend)
+        # Si streaming demandé, retourner SSE
+        if is_streaming:
+            async def generate_stream():
+                # Premier chunk avec le rôle
+                chunk1 = {
+                    "id": f"chatcmpl-{call_id}",
+                    "object": "chat.completion.chunk",
+                    "choices": [{
+                        "index": 0,
+                        "delta": {"role": "assistant", "content": response_text},
+                        "finish_reason": None
+                    }]
+                }
+                yield f"data: {json.dumps(chunk1)}\n\n"
+                
+                # Chunk final
+                chunk_final = {
+                    "id": f"chatcmpl-{call_id}",
+                    "object": "chat.completion.chunk",
+                    "choices": [{
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop"
+                    }]
+                }
+                yield f"data: {json.dumps(chunk_final)}\n\n"
+                yield "data: [DONE]\n\n"
+            
+            return StreamingResponse(
+                generate_stream(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive"
+                }
+            )
+        
+        # Format OpenAI-compatible (non-streaming)
         return {
             "id": f"chatcmpl-{call_id}",
             "object": "chat.completion",
