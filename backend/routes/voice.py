@@ -114,6 +114,75 @@ async def vapi_tool(request: Request):
         return {"result": "Désolé, une erreur est survenue."}
 
 
+@router.post("/custom-llm")
+async def vapi_custom_llm(request: Request):
+    """
+    Vapi Custom LLM endpoint
+    Vapi envoie les messages ici au lieu d'utiliser Claude/GPT
+    """
+    try:
+        payload = await request.json()
+        
+        print(f"🤖🤖🤖 CUSTOM LLM APPELÉ 🤖🤖🤖")
+        print(f"📦 Payload: {json.dumps(payload, indent=2, ensure_ascii=False)}")
+        
+        # Vapi envoie un tableau de messages
+        messages = payload.get("messages", [])
+        call_id = payload.get("call", {}).get("id") or payload.get("call_id", "unknown")
+        
+        print(f"📞 Call ID: {call_id}")
+        print(f"📨 Messages count: {len(messages)}")
+        
+        # Récupère le dernier message utilisateur
+        user_message = None
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                user_message = msg.get("content")
+                break
+        
+        print(f"💬 User message: '{user_message}'")
+        
+        if not user_message:
+            # Premier message ou pas de message user
+            response_text = prompts.MSG_WELCOME
+            print(f"✅ Welcome: {response_text}")
+        else:
+            # Traiter via ENGINE
+            session = ENGINE.session_store.get_or_create(call_id)
+            session.channel = "vocal"
+            
+            events = ENGINE.handle_message(call_id, user_message)
+            response_text = events[0].text if events else "Je n'ai pas compris"
+            print(f"✅ Response: {response_text}")
+        
+        # Format OpenAI-compatible (ce que Vapi attend)
+        return {
+            "id": f"chatcmpl-{call_id}",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": response_text
+                },
+                "finish_reason": "stop"
+            }]
+        }
+        
+    except Exception as e:
+        print(f"❌ Custom LLM error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Désolé, une erreur est survenue."
+                }
+            }]
+        }
+
+
 @router.get("/health")
 async def vapi_health():
     return {"status": "ok", "service": "voice"}
