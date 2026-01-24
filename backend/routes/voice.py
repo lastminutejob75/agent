@@ -114,7 +114,7 @@ async def vapi_tool(request: Request):
         return {"result": "Désolé, une erreur est survenue."}
 
 
-@router.post("/custom-llm")
+@router.post("/custom-llm/chat/completions")
 async def vapi_custom_llm(request: Request):
     """
     Vapi Custom LLM endpoint
