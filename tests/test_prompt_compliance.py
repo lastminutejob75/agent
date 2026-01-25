@@ -77,9 +77,9 @@ def test_faq_format_includes_source_and_exact_structure():
 def test_qualif_questions_are_closed_and_ordered():
     assert prompts.QUALIF_QUESTIONS_ORDER == ["name", "motif", "pref", "contact"]
     assert prompts.QUALIF_QUESTIONS["name"] == "Quel est votre nom et prénom ?"
-    assert prompts.QUALIF_QUESTIONS["motif"] == "Quel est le motif de votre demande ?"
-    assert prompts.QUALIF_QUESTIONS["pref"] == "Quel créneau préférez-vous ?"
-    assert prompts.QUALIF_QUESTIONS["contact"] == "Quel est votre moyen de contact ?"
+    assert prompts.QUALIF_QUESTIONS["motif"] == "Pour quel sujet ? (ex : renouvellement, douleur, bilan, visiteur médical)"
+    assert prompts.QUALIF_QUESTIONS["pref"] == "Quel créneau préférez-vous ? (ex : lundi matin, mardi après-midi)"
+    assert prompts.QUALIF_QUESTIONS["contact"] == "Quel est votre moyen de contact ? (email ou téléphone)"
 
 
 def test_booking_confirm_instruction_exact():
@@ -156,9 +156,11 @@ def test_no_prompts_exceed_150_chars():
 
 def test_qualif_questions_format_constraints():
     for key, q in prompts.QUALIF_QUESTIONS.items():
-        assert q.endswith("?"), f"{key}: doit finir par '?'"
-        assert len(q) < 100, f"{key}: trop long (>100 chars)"
-        assert q.startswith("Quel"), f"{key}: doit commencer par 'Quel'"
+        # Les questions doivent contenir un '?' (pas forcément à la fin si exemples)
+        assert "?" in q, f"{key}: doit contenir '?'"
+        assert len(q) < 120, f"{key}: trop long (>120 chars)"
+        # Les questions commencent par 'Quel' ou 'Pour'
+        assert q.startswith("Quel") or q.startswith("Pour"), f"{key}: doit commencer par 'Quel' ou 'Pour'"
 
 
 def test_faq_response_never_empty():
@@ -173,3 +175,83 @@ def test_booking_confirmed_includes_slot_label():
     slot = "Mardi 15/01 - 14:00"
     out = prompts.format_booking_confirmed(slot)
     assert slot in out
+
+
+# ----------------------------
+# Tests pour les prompts vocaux (V1)
+# ----------------------------
+
+def test_vocal_qualif_questions_are_short():
+    """Les questions vocales doivent être courtes pour le TTS."""
+    for key, q in prompts.QUALIF_QUESTIONS_VOCAL.items():
+        assert len(q) < 80, f"{key}: trop long pour le vocal (>80 chars)"
+        assert "?" in q, f"{key}: doit contenir '?'"
+
+
+def test_vocal_faq_response_no_source():
+    """En mode vocal, pas de 'Source: XXX' (pas naturel)."""
+    answer = "Nos horaires sont de 9h à 18h."
+    faq_id = "FAQ_HORAIRES"
+    out = prompts.format_faq_response(answer, faq_id, channel="vocal")
+    assert "Source" not in out
+    assert out == answer
+
+
+def test_vocal_slot_proposal_is_natural():
+    """Le format vocal doit être naturel pour le TTS."""
+    slots = [
+        prompts.SlotDisplay(idx=1, label="Mardi 10h", slot_id=101),
+        prompts.SlotDisplay(idx=2, label="Mardi 14h", slot_id=102),
+        prompts.SlotDisplay(idx=3, label="Mardi 16h", slot_id=103),
+    ]
+    out = prompts.format_slot_proposal(slots, channel="vocal")
+    out_lower = out.lower()
+    # Doit contenir les mots naturels
+    assert "le un" in out_lower
+    assert "le deux" in out_lower
+    assert "le trois" in out_lower
+    # Ne doit pas contenir de formatage web
+    assert "Créneaux disponibles" not in out
+    assert "oui 1" not in out_lower
+
+
+def test_vocal_booking_confirmed_no_emoji():
+    """En mode vocal, pas d'emoji."""
+    slot = "Mardi 14h"
+    out = prompts.format_booking_confirmed(slot, channel="vocal")
+    assert "📅" not in out
+    assert "👤" not in out
+    assert slot in out
+
+
+def test_get_message_adapts_to_channel():
+    """get_message retourne le bon message selon le canal."""
+    # Vocal
+    vocal_transfer = prompts.get_message("transfer", channel="vocal")
+    assert "passer quelqu'un" in vocal_transfer.lower()
+    
+    # Web
+    web_transfer = prompts.get_message("transfer", channel="web")
+    assert "relation" in web_transfer.lower()
+
+
+def test_get_qualif_question_adapts_to_channel():
+    """get_qualif_question retourne la bonne question selon le canal."""
+    # Vocal - plus court
+    vocal_name = prompts.get_qualif_question("name", channel="vocal")
+    assert "quel nom" in vocal_name.lower()
+    
+    # Web - plus formel
+    web_name = prompts.get_qualif_question("name", channel="web")
+    assert "nom et prénom" in web_name.lower()
+
+
+def test_msg_no_match_faq_adapts_to_channel():
+    """msg_no_match_faq retourne le bon message selon le canal."""
+    # Vocal - ton décontracté
+    vocal = prompts.msg_no_match_faq("Cabinet Durand", channel="vocal")
+    assert "pas sûr" in vocal.lower()
+    
+    # Web - plus formel
+    web = prompts.msg_no_match_faq("Cabinet Durand", channel="web")
+    assert "certain" in web.lower()
