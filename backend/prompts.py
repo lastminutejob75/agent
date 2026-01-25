@@ -112,12 +112,25 @@ MSG_CONTACT_FAIL_TRANSFER = (
 # ----------------------------
 
 # Salutation d'accueil (voix Jérémie - accent parisien)
+# Option 3 : "Je vous écoute" - neutre et professionnel
 VOCAL_SALUTATION = (
+    "Bonjour {business_name}, je vous écoute."
+)
+
+VOCAL_SALUTATION_LONG = (
     "Bonjour ! Bienvenue chez {business_name}. "
     "Je suis là pour vous aider. Qu'est-ce que je peux faire pour vous ?"
 )
 
 VOCAL_SALUTATION_SHORT = "Oui, je vous écoute ?"
+
+# Message d'accueil pour le First Message Vapi
+def get_vocal_greeting(business_name: str) -> str:
+    """
+    Retourne le message d'accueil pour Vapi.
+    Format court et naturel : "Bonjour Cabinet Dupont, je vous écoute."
+    """
+    return VOCAL_SALUTATION.format(business_name=business_name)
 
 # Contact
 VOCAL_CONTACT_ASK = (
