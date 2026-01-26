@@ -197,6 +197,7 @@ def store_pending_slots(session, slots: List[prompts.SlotDisplay]) -> None:
     """
     session.pending_slot_ids = [s.slot_id for s in slots]
     session.pending_slot_labels = [s.label for s in slots]
+    session.pending_slots = slots  # Stocker les objets complets
     
     # Stocker aussi les données complètes pour Google Calendar
     calendar = _get_calendar_service()
@@ -340,17 +341,25 @@ def get_label_for_choice(session, choice_index_1based: int) -> Optional[str]:
 # UTILITAIRES
 # ============================================
 
-def cancel_booking(session) -> bool:
+def cancel_booking(slot_or_session) -> bool:
     """
     Annule une réservation (si Google Calendar).
     
     Args:
-        session: Session avec google_event_id
+        slot_or_session: Soit un dict avec 'event_id', soit une session avec google_event_id
         
     Returns:
         True si annulation réussie
     """
-    if not hasattr(session, 'google_event_id') or not session.google_event_id:
+    # Déterminer l'event_id
+    event_id = None
+    
+    if isinstance(slot_or_session, dict):
+        event_id = slot_or_session.get('event_id')
+    elif hasattr(slot_or_session, 'google_event_id'):
+        event_id = slot_or_session.google_event_id
+    
+    if not event_id:
         logger.warning("Pas d'event_id Google Calendar à annuler")
         return False
     
@@ -358,7 +367,91 @@ def cancel_booking(session) -> bool:
     if not calendar:
         return False
     
-    return calendar.cancel_appointment(session.google_event_id)
+    return calendar.cancel_appointment(event_id)
+
+
+def find_booking_by_name(name: str) -> Optional[Dict[str, Any]]:
+    """
+    Recherche un RDV existant par nom du patient.
+    
+    Args:
+        name: Nom du patient
+        
+    Returns:
+        Dict avec les infos du RDV ou None si non trouvé
+        Format: {'event_id': str, 'label': str, 'start': datetime, 'end': datetime}
+    """
+    calendar = _get_calendar_service()
+    
+    if calendar:
+        return _find_booking_google_calendar(calendar, name)
+    else:
+        return _find_booking_sqlite(name)
+
+
+def _find_booking_google_calendar(calendar, name: str) -> Optional[Dict[str, Any]]:
+    """Recherche un RDV dans Google Calendar."""
+    try:
+        # Chercher dans les 30 prochains jours
+        events = calendar.list_upcoming_events(days=30)
+        
+        name_lower = name.lower()
+        
+        for event in events:
+            # Chercher le nom dans le summary ou la description
+            summary = event.get('summary', '').lower()
+            description = event.get('description', '').lower()
+            
+            if name_lower in summary or name_lower in description:
+                # Formater le label
+                start = event.get('start', {}).get('dateTime', '')
+                if start:
+                    try:
+                        dt = datetime.fromisoformat(start.replace('Z', '+00:00'))
+                        label = dt.strftime('%A %d %B à %Hh%M').replace('Monday', 'lundi').replace('Tuesday', 'mardi').replace('Wednesday', 'mercredi').replace('Thursday', 'jeudi').replace('Friday', 'vendredi')
+                        # Simplifier les mois
+                        for en, fr in [('January', 'janvier'), ('February', 'février'), ('March', 'mars'), ('April', 'avril'), ('May', 'mai'), ('June', 'juin'), ('July', 'juillet'), ('August', 'août'), ('September', 'septembre'), ('October', 'octobre'), ('November', 'novembre'), ('December', 'décembre')]:
+                            label = label.replace(en, fr)
+                    except:
+                        label = start
+                else:
+                    label = "votre rendez-vous"
+                
+                return {
+                    'event_id': event.get('id'),
+                    'label': label,
+                    'start': start,
+                    'end': event.get('end', {}).get('dateTime', ''),
+                    'summary': event.get('summary', ''),
+                }
+        
+        logger.info(f"Aucun RDV trouvé pour: {name}")
+        return None
+        
+    except Exception as e:
+        logger.error(f"Erreur recherche Google Calendar: {e}")
+        return None
+
+
+def _find_booking_sqlite(name: str) -> Optional[Dict[str, Any]]:
+    """Recherche un RDV dans SQLite (fallback)."""
+    try:
+        from backend.db import find_booking_by_name as db_find
+        
+        booking = db_find(name)
+        if booking:
+            return {
+                'event_id': None,
+                'slot_id': booking.get('id'),
+                'label': f"{booking.get('date', '')} à {booking.get('time', '')}",
+                'start': booking.get('date'),
+                'end': None,
+            }
+        return None
+        
+    except Exception as e:
+        logger.error(f"Erreur recherche SQLite: {e}")
+        return None
 
 
 def is_google_calendar_enabled() -> bool:

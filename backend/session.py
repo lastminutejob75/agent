@@ -52,6 +52,10 @@ class Session:
     # Booking pending
     pending_slot_ids: List[int] = field(default_factory=list)
     pending_slot_labels: List[str] = field(default_factory=list)
+    pending_slots: List = field(default_factory=list)  # SlotDisplay objects
+    
+    # CANCEL/MODIFY pending
+    pending_cancel_slot: Optional[Dict] = None  # RDV à annuler/modifier
 
     def touch(self) -> None:
         self.last_seen_at = datetime.utcnow()
@@ -64,7 +68,7 @@ class Session:
         self.state = "START"
         self.no_match_turns = 0
         self.confirm_retry_count = 0
-        self.contact_retry_count = 0  # ✅ NOUVEAU
+        self.contact_retry_count = 0
         self.qualif_step = "name"
         self.qualif_data = QualifData()
         self.motif_help_used = False
@@ -73,6 +77,8 @@ class Session:
         self.extracted_pref = False
         self.pending_slot_ids = []
         self.pending_slot_labels = []
+        self.pending_slots = []
+        self.pending_cancel_slot = None
 
     def add_message(self, role: str, text: str) -> None:
         self.messages.append(Message(role=role, text=text, ts=datetime.utcnow()))

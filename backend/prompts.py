@@ -112,8 +112,13 @@ MSG_CONTACT_FAIL_TRANSFER = (
 # ----------------------------
 
 # Salutation d'accueil (voix Jérémie - accent parisien)
-# Option 3 : "Je vous écoute" - neutre et professionnel
+# NOUVEAU : Question directe pour orienter rapidement
 VOCAL_SALUTATION = (
+    "Bonjour {business_name}, vous appelez pour un rendez-vous ?"
+)
+
+# Fallback si besoin
+VOCAL_SALUTATION_NEUTRAL = (
     "Bonjour {business_name}, je vous écoute."
 )
 
@@ -128,9 +133,129 @@ VOCAL_SALUTATION_SHORT = "Oui, je vous écoute ?"
 def get_vocal_greeting(business_name: str) -> str:
     """
     Retourne le message d'accueil pour Vapi.
-    Format court et naturel : "Bonjour Cabinet Dupont, je vous écoute."
+    Format: "Bonjour Cabinet Dupont, vous appelez pour un rendez-vous ?"
     """
     return VOCAL_SALUTATION.format(business_name=business_name)
+
+
+# ----------------------------
+# FLOW B: FAQ - Réponses et relances
+# ----------------------------
+
+VOCAL_FAQ_FOLLOWUP = "Je peux vous aider pour autre chose ?"
+
+VOCAL_FAQ_GOODBYE = "Parfait, bonne journée !"
+
+VOCAL_FAQ_TO_BOOKING = "Pas de souci. C'est à quel nom ?"
+
+
+# ----------------------------
+# FLOW C: CANCEL - Annulation de RDV
+# ----------------------------
+
+VOCAL_CANCEL_ASK_NAME = "Pas de problème. C'est à quel nom ?"
+
+VOCAL_CANCEL_NOT_FOUND = (
+    "Hmm, j'ai pas trouvé de rendez-vous à ce nom. "
+    "Vous pouvez me redonner votre nom complet ?"
+)
+
+VOCAL_CANCEL_CONFIRM = (
+    "Vous avez un rendez-vous {slot_label}. Je l'annule ?"
+)
+
+VOCAL_CANCEL_DONE = (
+    "C'est fait, votre rendez-vous est annulé. "
+    "Bonne journée !"
+)
+
+VOCAL_CANCEL_KEPT = (
+    "Pas de souci, votre rendez-vous est maintenu. "
+    "Bonne journée !"
+)
+
+
+# ----------------------------
+# FLOW D: MODIFY - Modification de RDV
+# ----------------------------
+
+VOCAL_MODIFY_ASK_NAME = "Pas de souci. C'est à quel nom ?"
+
+VOCAL_MODIFY_NOT_FOUND = (
+    "Hmm, j'ai pas trouvé de rendez-vous à ce nom. "
+    "Vous pouvez me redonner votre nom complet ?"
+)
+
+VOCAL_MODIFY_CONFIRM = (
+    "Vous avez un rendez-vous {slot_label}. Vous voulez le déplacer ?"
+)
+
+VOCAL_MODIFY_CANCELLED = (
+    "OK, j'ai annulé l'ancien. Plutôt le matin ou l'après-midi pour le nouveau ?"
+)
+
+
+# ----------------------------
+# FLOW E: UNCLEAR - Cas flou
+# ----------------------------
+
+VOCAL_CLARIFY = (
+    "Pas de problème. Vous avez une question ou vous souhaitez prendre rendez-vous ?"
+)
+
+VOCAL_STILL_UNCLEAR = (
+    "OK, je vais vous passer quelqu'un qui pourra mieux vous aider. Un instant."
+)
+
+
+# ----------------------------
+# FLOW F: TRANSFER - Transfert humain
+# ----------------------------
+
+VOCAL_TRANSFER_COMPLEX = (
+    "Je comprends. Je vais vous mettre en relation avec quelqu'un "
+    "qui pourra mieux vous aider. Un instant."
+)
+
+VOCAL_TRANSFER_CALLBACK = (
+    "Vous pouvez rappeler au {phone_number} aux horaires d'ouverture. "
+    "Bonne journée !"
+)
+
+
+# ----------------------------
+# Cas EDGE
+# ----------------------------
+
+VOCAL_NO_SLOTS_MORNING = (
+    "Désolé, rien de disponible le matin cette semaine. "
+    "L'après-midi ça vous va ?"
+)
+
+VOCAL_NO_SLOTS_AFTERNOON = (
+    "Désolé, rien de disponible l'après-midi non plus. "
+    "Je note votre demande. Votre numéro ?"
+)
+
+VOCAL_WAITLIST_ADDED = (
+    "C'est noté. On vous rappelle dès qu'un créneau se libère. "
+    "Bonne journée !"
+)
+
+VOCAL_USER_ABANDON = "Pas de problème. Bonne journée !"
+
+VOCAL_TAKE_TIME = "Prenez votre temps. Je vous écoute."
+
+VOCAL_INSULT_RESPONSE = (
+    "Je comprends que vous soyez frustré. "
+    "Pouvez-vous me dire le motif de votre appel ?"
+)
+
+# Motif invalide - aide
+VOCAL_MOTIF_HELP = (
+    "Désolé, j'ai pas bien compris. "
+    "C'est plutôt pour un contrôle, une consultation, ou autre chose ?"
+)
 
 # Contact
 VOCAL_CONTACT_ASK = (
@@ -221,6 +346,22 @@ MSG_CONTACT_RETRY_VOCAL = (
     "Pouvez-vous redire votre téléphone ou votre email, plus lentement ?"
 )
 
+# ----------------------------
+# VALIDATION MOTIFS
+# ----------------------------
+
+# Motifs VALIDES avec leurs variantes
+VALID_MOTIFS = {
+    "consultation": ["consultation", "consulter", "voir le docteur", "rendez-vous"],
+    "contrôle": ["controle", "contrôle", "check-up", "bilan", "suivi"],
+    "renouvellement": ["renouvellement", "renouveler", "ordonnance", "prescription"],
+    "douleur": ["douleur", "mal", "souffre", "j'ai mal", "dos", "tête", "ventre", "genou"],
+    "vaccination": ["vaccin", "vaccination", "rappel"],
+    "bilan": ["bilan", "analyses", "prise de sang", "bilan sanguin"],
+    "urgence": ["urgence", "urgent", "vite", "rapide"],
+    "résultats": ["résultats", "resultat", "analyses"],
+}
+
 # Motifs trop génériques (pas d'info utile)
 # Note: "consultation", "contrôle", etc. sont des motifs VALIDES, ne pas les mettre ici
 GENERIC_MOTIFS = {
@@ -228,6 +369,64 @@ GENERIC_MOTIFS = {
     "prendre un rdv", "rendez-vous médical",
     "voir le médecin", "un rendez vous",
     "je veux un rdv", "prendre rendez-vous",
+}
+
+
+# ----------------------------
+# INTENT DETECTION KEYWORDS
+# ----------------------------
+
+# Réponses OUI
+YES_PATTERNS = [
+    "oui", "ouais", "yes", "yep", "ok", "d'accord",
+    "exactement", "tout à fait", "absolument", "bien sûr",
+    "s'il vous plaît", "oui s'il vous plaît", "oui svp",
+    "c'est ça", "voilà", "affirmatif",
+]
+
+# Réponses NON
+NO_PATTERNS = [
+    "non", "nan", "no", "pas du tout", "pas vraiment",
+    "non merci", "non non",
+]
+
+# Intent CANCEL
+CANCEL_PATTERNS = [
+    "annuler", "annulation", "supprimer",
+    "je veux annuler", "annuler mon rendez-vous",
+    "annuler mon rdv", "annule mon rdv",
+]
+
+# Intent MODIFY
+MODIFY_PATTERNS = [
+    "modifier", "changer", "déplacer", "reporter",
+    "changer mon rendez-vous", "déplacer mon rdv",
+    "reporter mon rdv", "modifier mon rdv",
+]
+
+# Intent TRANSFER (cas complexes)
+TRANSFER_PATTERNS = [
+    "parler à quelqu'un", "un humain", "un conseiller",
+    "mes résultats", "résultats d'analyses",
+    "c'est urgent", "c'est grave",
+    "je veux parler", "passez-moi quelqu'un",
+]
+
+# Intent ABANDON
+ABANDON_PATTERNS = [
+    "je rappelle", "laissez tomber", "tant pis",
+    "oubliez", "je vais rappeler", "plus tard",
+]
+
+# Slot choice patterns (pour WAIT_CONFIRM)
+SLOT_CHOICE_FIRST = ["premier", "un", "1", "le premier", "le un"]
+SLOT_CHOICE_SECOND = ["deuxième", "deux", "2", "le deuxième", "le deux", "second"]
+SLOT_CHOICE_THIRD = ["troisième", "trois", "3", "le troisième", "le trois"]
+
+# Jour patterns
+DAY_PATTERNS = {
+    "lundi": 0, "mardi": 1, "mercredi": 2, "jeudi": 3,
+    "vendredi": 4, "samedi": 5, "dimanche": 6,
 }
 
 MSG_MOTIF_HELP = (
@@ -353,12 +552,33 @@ QUALIF_QUESTIONS: Dict[str, str] = {
 }
 
 # Questions Vocal - ton parisien naturel, phrases courtes pour TTS
+# Brief: "Parfait Jean. C'est pour quoi ?"
 QUALIF_QUESTIONS_VOCAL: Dict[str, str] = {
     "name": "C'est à quel nom ?",
-    "motif": "Et c'est pour quoi exactement ?",
-    "pref": "Vous préférez plutôt le matin ou l'après-midi ?",
-    "contact": "Pour vous rappeler, vous préférez qu'on vous envoie un SMS ou un email ?",
+    "motif": "C'est pour quoi ?",  # Court et direct
+    "pref": "OK. Plutôt le matin ou l'après-midi ?",
+    "contact": "Parfait. Votre numéro de téléphone ?",
 }
+
+# Questions avec nom inclus (après avoir reçu le nom)
+def get_qualif_question_with_name(field: str, name: str, channel: str = "web") -> str:
+    """
+    Retourne la question de qualification avec le nom du client (ton parisien).
+    Ex: "Parfait Jean. C'est pour quoi ?"
+    """
+    if channel != "vocal" or not name:
+        return get_qualif_question(field, channel)
+    
+    # Extraire le prénom
+    first_name = name.split()[0] if name else ""
+    
+    vocal_questions_with_name = {
+        "motif": f"Parfait {first_name}. C'est pour quoi ?",
+        "pref": f"OK {first_name}. Plutôt le matin ou l'après-midi ?",
+        "contact": f"Parfait. Votre numéro de téléphone ?",
+    }
+    
+    return vocal_questions_with_name.get(field, get_qualif_question(field, channel))
 
 def get_qualif_question(field: str, channel: str = "web") -> str:
     """
@@ -506,16 +726,19 @@ def format_booking_confirmed(slot_label: str, name: str = "", motif: str = "", c
 def format_booking_confirmed_vocal(slot_label: str, name: str = "") -> str:
     """
     Confirmation de RDV pour le vocal.
+    Ton Parisien : "Nickel. RDV confirmé..."
     Court, naturel, sans emojis.
     """
     if name:
+        # Extraire le prénom
+        first_name = name.split()[0] if name else ""
         return (
-            f"C'est tout bon {name} ! "
-            f"Rendez-vous confirmé pour {slot_label}. "
-            "On vous attend, à très bientôt !"
+            f"Nickel. Rendez-vous confirmé {slot_label} pour {first_name}. "
+            "Vous recevrez un SMS de confirmation. "
+            "Bonne journée !"
         )
     return (
-        f"Parfait, c'est noté ! "
-        f"Rendez-vous confirmé pour {slot_label}. "
-        "À très bientôt !"
+        f"Nickel, c'est noté ! "
+        f"Rendez-vous confirmé {slot_label}. "
+        "Bonne journée !"
     )
