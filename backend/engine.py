@@ -330,10 +330,15 @@ class Engine:
             "contact": session.qualif_data.contact,
         }
         
+        # DEBUG: Log context
+        print(f"🔍 _next_qualif_step: context={context}")
+        
         next_field = get_next_missing_field(context)
+        print(f"🔍 _next_qualif_step: next_field={next_field}")
         
         if not next_field:
             # Tout est rempli → proposer créneaux
+            print(f"🔍 _next_qualif_step: ALL FILLED → propose_slots")
             return self._propose_slots(session)
         
         # Mapper le champ vers l'état
@@ -347,6 +352,7 @@ class Engine:
         
         # Question adaptée au canal
         question = prompts.get_qualif_question(next_field, channel=channel)
+        print(f"🔍 _next_qualif_step: asking for {next_field} → '{question}'")
         session.add_message("agent", question)
         
         return [Event("final", question, conv_state=session.state)]
@@ -539,12 +545,28 @@ class Engine:
         """
         Propose 3 créneaux disponibles.
         """
-        channel = getattr(session, "channel", "web")
+        import time
+        t_start = time.time()
         
-        # Récupérer slots
-        slots = tools_booking.get_slots_for_display(limit=config.MAX_SLOTS_PROPOSED)
+        channel = getattr(session, "channel", "web")
+        print(f"🔍 _propose_slots: fetching slots...")
+        
+        try:
+            # Récupérer slots
+            slots = tools_booking.get_slots_for_display(limit=config.MAX_SLOTS_PROPOSED)
+            print(f"🔍 _propose_slots: got {len(slots) if slots else 0} slots in {(time.time() - t_start) * 1000:.0f}ms")
+        except Exception as e:
+            print(f"❌ _propose_slots ERROR: {e}")
+            import traceback
+            traceback.print_exc()
+            # Fallback: transfert
+            session.state = "TRANSFERRED"
+            msg = prompts.get_message("transfer", channel=channel)
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state=session.state)]
         
         if not slots:
+            print(f"⚠️ _propose_slots: NO SLOTS AVAILABLE")
             session.state = "TRANSFERRED"
             msg = prompts.get_message("no_slots", channel=channel)
             session.add_message("agent", msg)
@@ -556,6 +578,7 @@ class Engine:
         
         # Formatter message avec instruction adaptée au channel
         msg = prompts.format_slot_proposal(slots, include_instruction=True, channel=channel)
+        print(f"✅ _propose_slots: proposing {len(slots)} slots")
         session.add_message("agent", msg)
         
         return [Event("final", msg, conv_state=session.state)]
