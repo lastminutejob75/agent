@@ -1,6 +1,7 @@
 # backend/routes/voice.py
 """
 Route pour le canal Voix (Vapi) - DEBUG COMPLET + TIMERS
+Avec mémoire client et stats pour rapports.
 """
 
 from fastapi import APIRouter, Request
@@ -10,9 +11,15 @@ import time
 
 from backend.engine import ENGINE
 from backend import prompts
+from backend.client_memory import get_client_memory
+from backend.reports import get_report_generator
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Instances singleton
+client_memory = get_client_memory()
+report_generator = get_report_generator()
 
 
 def log_timer(label: str, start: float) -> float:
@@ -126,6 +133,10 @@ async def vapi_custom_llm(request: Request):
     Vapi Custom LLM endpoint
     Vapi envoie les messages ici au lieu d'utiliser Claude/GPT
     Supporte le streaming (SSE) quand stream=true
+    
+    Intégrations:
+    - Mémoire client (reconnaissance clients récurrents)
+    - Stats pour rapports quotidiens
     """
     from fastapi.responses import StreamingResponse
     
@@ -143,7 +154,14 @@ async def vapi_custom_llm(request: Request):
         call_id = payload.get("call", {}).get("id") or payload.get("call_id", "unknown")
         is_streaming = payload.get("stream", False)
         
+        # 📱 Extraire le numéro de téléphone du client (Vapi le fournit)
+        customer_phone = payload.get("call", {}).get("customer", {}).get("number")
+        if not customer_phone:
+            customer_phone = payload.get("customer", {}).get("number")
+        
         print(f"📞 Call ID: {call_id} | Messages: {len(messages)} | Stream: {is_streaming}")
+        if customer_phone:
+            print(f"📱 Customer phone: {customer_phone}")
         
         # Récupère le dernier message utilisateur
         user_message = None
@@ -163,13 +181,72 @@ async def vapi_custom_llm(request: Request):
             # Traiter via ENGINE
             session = ENGINE.session_store.get_or_create(call_id)
             session.channel = "vocal"
+            
+            # 🧠 Stocker le téléphone dans la session pour plus tard
+            if customer_phone:
+                session.customer_phone = customer_phone
+            
             t3 = log_timer("Session loaded", t2)
+            
+            # 🧠 Check si client récurrent (avant le premier message traité)
+            if customer_phone and session.state == "START" and len(messages) <= 1:
+                try:
+                    existing_client = client_memory.get_by_phone(customer_phone)
+                    if existing_client and existing_client.total_bookings > 0:
+                        # Client récurrent détecté !
+                        greeting = client_memory.get_personalized_greeting(existing_client, channel="vocal")
+                        if greeting:
+                            print(f"🧠 Returning client detected: {existing_client.name}")
+                            # On pourrait utiliser ce greeting, mais pour l'instant on log juste
+                            # Le flow normal continue
+                except Exception as e:
+                    print(f"⚠️ Client memory error: {e}")
             
             events = ENGINE.handle_message(call_id, user_message)
             t4 = log_timer("ENGINE processed", t3)
             
             response_text = events[0].text if events else "Je n'ai pas compris"
             print(f"✅ Response: '{response_text[:50]}...' ({len(response_text)} chars)")
+            
+            # 📊 Enregistrer stats pour rapport (si conversation terminée)
+            try:
+                if session.state in ["CONFIRMED", "TRANSFERRED"]:
+                    intent = "BOOKING" if session.state == "CONFIRMED" else "TRANSFER"
+                    outcome = "confirmed" if session.state == "CONFIRMED" else "transferred"
+                    duration_ms = int((time.time() - t_start) * 1000)
+                    
+                    report_generator.record_interaction(
+                        call_id=call_id,
+                        intent=intent,
+                        outcome=outcome,
+                        channel="vocal",
+                        duration_ms=duration_ms,
+                        motif=session.qualif_data.motif if hasattr(session, 'qualif_data') else None,
+                        client_name=session.qualif_data.name if hasattr(session, 'qualif_data') else None,
+                        client_phone=customer_phone
+                    )
+                    print(f"📊 Stats recorded: {intent} → {outcome}")
+                    
+                    # 🧠 Enregistrer le client si booking confirmé
+                    if session.state == "CONFIRMED" and session.qualif_data.name:
+                        try:
+                            client = client_memory.get_or_create(
+                                phone=customer_phone,
+                                name=session.qualif_data.name,
+                                email=session.qualif_data.contact if session.qualif_data.contact_type == "email" else None
+                            )
+                            # Enregistrer le booking dans l'historique client
+                            slot_label = session.pending_slot_labels[0] if session.pending_slot_labels else "RDV"
+                            client_memory.record_booking(
+                                client_id=client.id,
+                                slot_label=slot_label,
+                                motif=session.qualif_data.motif or "consultation"
+                            )
+                            print(f"🧠 Client saved: {client.name} (id={client.id})")
+                        except Exception as e:
+                            print(f"⚠️ Client save error: {e}")
+            except Exception as e:
+                print(f"⚠️ Stats recording error: {e}")
         
         # ⏱️ TIMING TOTAL
         total_ms = (time.time() - t_start) * 1000

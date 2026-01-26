@@ -31,6 +31,7 @@ class Session:
     conv_id: str
     state: str = "START"
     channel: str = "web"  # "web" | "vocal"
+    customer_phone: Optional[str] = None  # Téléphone du client (Vapi)
     last_seen_at: datetime = field(default_factory=datetime.utcnow)
     messages: Deque[Message] = field(default_factory=lambda: deque(maxlen=config.MAX_MESSAGES_HISTORY))
 
@@ -79,6 +80,7 @@ class Session:
         self.pending_slot_labels = []
         self.pending_slots = []
         self.pending_cancel_slot = None
+        # Note: on ne reset PAS customer_phone car c'est lié à l'appel
 
     def add_message(self, role: str, text: str) -> None:
         self.messages.append(Message(role=role, text=text, ts=datetime.utcnow()))
