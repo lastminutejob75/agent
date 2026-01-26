@@ -2,6 +2,29 @@
 Rapport quotidien automatique - inspiré du pattern Clawdbot.
 
 Ce module génère des rapports d'activité et les envoie au gérant.
+Supporte plusieurs canaux de notification (SMS, WhatsApp, Email, Telegram).
+
+Configuration via variables d'environnement:
+    REPORT_CHANNEL=telegram|sms|whatsapp|email
+    
+    Pour Telegram:
+        TELEGRAM_BOT_TOKEN=xxx
+        TELEGRAM_OWNER_ID=xxx
+    
+    Pour SMS/WhatsApp (Twilio):
+        TWILIO_ACCOUNT_SID=xxx
+        TWILIO_AUTH_TOKEN=xxx
+        TWILIO_PHONE_NUMBER=+33xxx (pour SMS)
+        TWILIO_WHATSAPP_NUMBER=+14155238886 (pour WhatsApp)
+        OWNER_PHONE_NUMBER=+33xxx
+    
+    Pour Email (SMTP):
+        SMTP_HOST=smtp.gmail.com
+        SMTP_PORT=587
+        SMTP_EMAIL=xxx
+        SMTP_PASSWORD=xxx
+        OWNER_EMAIL=xxx
+
 Peut être déclenché par cron job ou manuellement.
 """
 
@@ -9,11 +32,311 @@ from __future__ import annotations
 
 import os
 import logging
+import smtplib
+from abc import ABC, abstractmethod
 from datetime import datetime, date, timedelta
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================
+# Canaux de notification (multi-canal)
+# ============================================
+
+class NotificationChannel(ABC):
+    """Interface abstraite pour tous les canaux de notification."""
+    
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Nom du canal pour les logs."""
+        pass
+    
+    @abstractmethod
+    def send(self, message: str, subject: Optional[str] = None) -> bool:
+        """
+        Envoie un message via ce canal.
+        
+        Args:
+            message: Contenu du message
+            subject: Sujet (pour email uniquement)
+            
+        Returns:
+            True si envoyé avec succès
+        """
+        pass
+    
+    @abstractmethod
+    def is_configured(self) -> bool:
+        """Vérifie si le canal est correctement configuré."""
+        pass
+
+
+class TelegramChannel(NotificationChannel):
+    """Envoi par Telegram Bot."""
+    
+    def __init__(self):
+        self.bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+        self.chat_id = os.getenv("TELEGRAM_OWNER_ID")
+    
+    @property
+    def name(self) -> str:
+        return "telegram"
+    
+    def is_configured(self) -> bool:
+        return bool(self.bot_token and self.chat_id)
+    
+    def send(self, message: str, subject: Optional[str] = None) -> bool:
+        import requests
+        
+        if not self.is_configured():
+            logger.warning("Telegram not configured (missing TELEGRAM_BOT_TOKEN or TELEGRAM_OWNER_ID)")
+            return False
+        
+        try:
+            response = requests.post(
+                f"https://api.telegram.org/bot{self.bot_token}/sendMessage",
+                json={
+                    "chat_id": self.chat_id,
+                    "text": message,
+                    "parse_mode": "HTML"
+                },
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                print(f"📱 Telegram envoyé")
+                logger.info("Report sent via Telegram")
+                return True
+            else:
+                logger.error(f"Telegram error: {response.text}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Telegram failed: {e}")
+            return False
+
+
+class SMSChannel(NotificationChannel):
+    """Envoi par SMS via Twilio."""
+    
+    def __init__(self):
+        self.account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+        self.auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+        self.from_number = os.getenv("TWILIO_PHONE_NUMBER")
+        self.to_number = os.getenv("OWNER_PHONE_NUMBER")
+    
+    @property
+    def name(self) -> str:
+        return "sms"
+    
+    def is_configured(self) -> bool:
+        return bool(self.account_sid and self.auth_token and self.from_number and self.to_number)
+    
+    def send(self, message: str, subject: Optional[str] = None) -> bool:
+        if not self.is_configured():
+            logger.warning("SMS not configured (missing Twilio credentials)")
+            return False
+        
+        try:
+            from twilio.rest import Client
+            
+            client = Client(self.account_sid, self.auth_token)
+            
+            # Tronquer si trop long pour SMS (160 chars)
+            if len(message) > 1600:
+                message = message[:1550] + "\n\n[...tronqué]"
+            
+            msg = client.messages.create(
+                body=message,
+                from_=self.from_number,
+                to=self.to_number
+            )
+            
+            print(f"📱 SMS envoyé: {msg.sid}")
+            logger.info(f"Report sent via SMS: {msg.sid}")
+            return True
+            
+        except ImportError:
+            logger.error("Twilio not installed. Run: pip install twilio")
+            return False
+        except Exception as e:
+            logger.error(f"SMS failed: {e}")
+            return False
+
+
+class WhatsAppChannel(NotificationChannel):
+    """Envoi par WhatsApp via Twilio."""
+    
+    def __init__(self):
+        self.account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+        self.auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+        self.from_number = os.getenv("TWILIO_WHATSAPP_NUMBER", "+14155238886")  # Sandbox par défaut
+        self.to_number = os.getenv("OWNER_PHONE_NUMBER")
+    
+    @property
+    def name(self) -> str:
+        return "whatsapp"
+    
+    def is_configured(self) -> bool:
+        return bool(self.account_sid and self.auth_token and self.to_number)
+    
+    def send(self, message: str, subject: Optional[str] = None) -> bool:
+        if not self.is_configured():
+            logger.warning("WhatsApp not configured (missing Twilio credentials)")
+            return False
+        
+        try:
+            from twilio.rest import Client
+            
+            client = Client(self.account_sid, self.auth_token)
+            
+            msg = client.messages.create(
+                body=message,
+                from_=f"whatsapp:{self.from_number}",
+                to=f"whatsapp:{self.to_number}"
+            )
+            
+            print(f"💬 WhatsApp envoyé: {msg.sid}")
+            logger.info(f"Report sent via WhatsApp: {msg.sid}")
+            return True
+            
+        except ImportError:
+            logger.error("Twilio not installed. Run: pip install twilio")
+            return False
+        except Exception as e:
+            logger.error(f"WhatsApp failed: {e}")
+            return False
+
+
+class EmailChannel(NotificationChannel):
+    """Envoi par Email via SMTP."""
+    
+    def __init__(self):
+        self.smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        self.smtp_port = int(os.getenv("SMTP_PORT", "587"))
+        self.email_from = os.getenv("SMTP_EMAIL")
+        self.password = os.getenv("SMTP_PASSWORD")
+        self.email_to = os.getenv("OWNER_EMAIL")
+    
+    @property
+    def name(self) -> str:
+        return "email"
+    
+    def is_configured(self) -> bool:
+        return bool(self.email_from and self.password and self.email_to)
+    
+    def send(self, message: str, subject: Optional[str] = None) -> bool:
+        if not self.is_configured():
+            logger.warning("Email not configured (missing SMTP credentials)")
+            return False
+        
+        try:
+            msg = MIMEMultipart()
+            msg['From'] = self.email_from
+            msg['To'] = self.email_to
+            msg['Subject'] = subject or f"📊 Rapport UWI - {date.today().strftime('%d/%m/%Y')}"
+            
+            # Version texte simple
+            msg.attach(MIMEText(message, 'plain'))
+            
+            with smtplib.SMTP(self.smtp_host, self.smtp_port) as server:
+                server.starttls()
+                server.login(self.email_from, self.password)
+                server.send_message(msg)
+            
+            print(f"📧 Email envoyé à {self.email_to}")
+            logger.info(f"Report sent via Email to {self.email_to}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Email failed: {e}")
+            return False
+
+
+# Factory pour créer le bon canal
+def get_notification_channel(channel_type: Optional[str] = None) -> NotificationChannel:
+    """
+    Retourne le canal de notification configuré.
+    
+    Args:
+        channel_type: Type de canal (telegram, sms, whatsapp, email).
+                     Si None, utilise REPORT_CHANNEL env var.
+    
+    Returns:
+        Instance du canal approprié
+    """
+    if channel_type is None:
+        channel_type = os.getenv("REPORT_CHANNEL", "telegram").lower()
+    
+    channels = {
+        "telegram": TelegramChannel,
+        "sms": SMSChannel,
+        "whatsapp": WhatsAppChannel,
+        "email": EmailChannel,
+    }
+    
+    if channel_type not in channels:
+        logger.warning(f"Unknown channel '{channel_type}', falling back to telegram")
+        channel_type = "telegram"
+    
+    return channels[channel_type]()
+
+
+def send_with_fallback(message: str, preferred_order: Optional[List[str]] = None) -> bool:
+    """
+    Envoie un message en essayant plusieurs canaux en cas d'échec.
+    
+    Args:
+        message: Message à envoyer
+        preferred_order: Ordre de préférence des canaux
+                        (défaut: telegram, whatsapp, sms, email)
+    
+    Returns:
+        True si envoyé via au moins un canal
+    """
+    if preferred_order is None:
+        preferred_order = ["telegram", "whatsapp", "sms", "email"]
+    
+    for channel_type in preferred_order:
+        channel = get_notification_channel(channel_type)
+        
+        if not channel.is_configured():
+            logger.debug(f"Channel {channel_type} not configured, skipping")
+            continue
+        
+        if channel.send(message):
+            logger.info(f"Message sent via {channel_type}")
+            return True
+        else:
+            logger.warning(f"Channel {channel_type} failed, trying next...")
+    
+    logger.error("All notification channels failed!")
+    return False
+
+
+def send_multi_channel(message: str, channels: List[str]) -> Dict[str, bool]:
+    """
+    Envoie un message sur plusieurs canaux simultanément.
+    
+    Args:
+        message: Message à envoyer
+        channels: Liste des canaux à utiliser
+    
+    Returns:
+        Dict avec le résultat pour chaque canal
+    """
+    results = {}
+    
+    for channel_type in channels:
+        channel = get_notification_channel(channel_type)
+        results[channel_type] = channel.send(message)
+    
+    return results
 
 
 @dataclass
@@ -418,8 +741,34 @@ class ReportGenerator:
         return report
     
     # ============================================
-    # Envoi du rapport
+    # Envoi du rapport (multi-canal)
     # ============================================
+    
+    def send_report(
+        self,
+        message: str,
+        channel_type: Optional[str] = None,
+        subject: Optional[str] = None
+    ) -> bool:
+        """
+        Envoie un rapport via le canal configuré.
+        
+        Args:
+            message: Message à envoyer
+            channel_type: Canal à utiliser (défaut: REPORT_CHANNEL env)
+            subject: Sujet pour email
+            
+        Returns:
+            True si envoyé avec succès
+        """
+        channel = get_notification_channel(channel_type)
+        
+        if not channel.is_configured():
+            logger.warning(f"Channel {channel.name} not configured")
+            # Essayer avec fallback
+            return send_with_fallback(message)
+        
+        return channel.send(message, subject)
     
     def send_telegram(
         self,
@@ -428,7 +777,7 @@ class ReportGenerator:
         bot_token: Optional[str] = None
     ) -> bool:
         """
-        Envoie un message via Telegram.
+        Envoie un message via Telegram (méthode legacy pour compatibilité).
         
         Args:
             message: Message à envoyer
@@ -438,36 +787,13 @@ class ReportGenerator:
         Returns:
             True si envoyé avec succès
         """
-        import requests
-        
-        chat_id = chat_id or os.getenv("TELEGRAM_OWNER_ID")
-        bot_token = bot_token or os.getenv("TELEGRAM_BOT_TOKEN")
-        
-        if not chat_id or not bot_token:
-            logger.warning("Telegram credentials not configured")
-            return False
-        
-        try:
-            response = requests.post(
-                f"https://api.telegram.org/bot{bot_token}/sendMessage",
-                json={
-                    "chat_id": chat_id,
-                    "text": message,
-                    "parse_mode": "HTML"
-                },
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                logger.info("Daily report sent to Telegram")
-                return True
-            else:
-                logger.error(f"Telegram error: {response.text}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Failed to send Telegram message: {e}")
-            return False
+        # Utilise le nouveau système de canaux
+        channel = TelegramChannel()
+        if chat_id:
+            channel.chat_id = chat_id
+        if bot_token:
+            channel.bot_token = bot_token
+        return channel.send(message)
     
     def send_sms(
         self,
@@ -475,18 +801,61 @@ class ReportGenerator:
         phone: Optional[str] = None
     ) -> bool:
         """
-        Envoie un SMS via Twilio (si configuré).
+        Envoie un SMS via Twilio.
         
         Args:
             message: Message à envoyer
-            phone: Numéro destination
+            phone: Numéro destination (override OWNER_PHONE_NUMBER)
             
         Returns:
             True si envoyé avec succès
         """
-        # Placeholder - à implémenter avec Twilio
-        logger.warning("SMS sending not implemented yet")
-        return False
+        channel = SMSChannel()
+        if phone:
+            channel.to_number = phone
+        return channel.send(message)
+    
+    def send_whatsapp(
+        self,
+        message: str,
+        phone: Optional[str] = None
+    ) -> bool:
+        """
+        Envoie un message WhatsApp via Twilio.
+        
+        Args:
+            message: Message à envoyer
+            phone: Numéro destination (override OWNER_PHONE_NUMBER)
+            
+        Returns:
+            True si envoyé avec succès
+        """
+        channel = WhatsAppChannel()
+        if phone:
+            channel.to_number = phone
+        return channel.send(message)
+    
+    def send_email(
+        self,
+        message: str,
+        email: Optional[str] = None,
+        subject: Optional[str] = None
+    ) -> bool:
+        """
+        Envoie un email.
+        
+        Args:
+            message: Message à envoyer
+            email: Adresse email destination (override OWNER_EMAIL)
+            subject: Sujet de l'email
+            
+        Returns:
+            True si envoyé avec succès
+        """
+        channel = EmailChannel()
+        if email:
+            channel.email_to = email
+        return channel.send(message, subject)
 
 
 # ============================================
@@ -498,6 +867,7 @@ def setup_scheduler():
     Configure le scheduler pour les rapports automatiques.
     
     Utilise APScheduler pour envoyer le rapport à 18h chaque jour.
+    Le canal est déterminé par la variable REPORT_CHANNEL.
     """
     try:
         from apscheduler.schedulers.background import BackgroundScheduler
@@ -512,19 +882,22 @@ def setup_scheduler():
     # Rapport quotidien à 18h
     @scheduler.scheduled_job(CronTrigger(hour=18, minute=0))
     def send_daily_report():
-        logger.info("Sending daily report...")
+        channel_type = os.getenv("REPORT_CHANNEL", "telegram")
+        logger.info(f"Sending daily report via {channel_type}...")
         report = generator.generate_daily_report()
-        generator.send_telegram(report)
+        generator.send_report(report)
     
     # Rapport hebdomadaire le dimanche à 20h
     @scheduler.scheduled_job(CronTrigger(day_of_week='sun', hour=20, minute=0))
     def send_weekly_report():
-        logger.info("Sending weekly report...")
+        channel_type = os.getenv("REPORT_CHANNEL", "telegram")
+        logger.info(f"Sending weekly report via {channel_type}...")
         report = generator.generate_weekly_report()
-        generator.send_telegram(report)
+        generator.send_report(report)
     
     scheduler.start()
-    logger.info("Report scheduler started (daily at 18h, weekly on Sunday 20h)")
+    channel_type = os.getenv("REPORT_CHANNEL", "telegram")
+    logger.info(f"Report scheduler started (daily at 18h, weekly on Sunday 20h) via {channel_type}")
     
     return scheduler
 
@@ -551,16 +924,108 @@ def get_report_generator() -> ReportGenerator:
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description="Generate UWI reports")
+    parser = argparse.ArgumentParser(
+        description="Generate and send UWI reports",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python -m backend.reports --daily                    # Affiche le rapport
+  python -m backend.reports --daily --send             # Envoie via REPORT_CHANNEL
+  python -m backend.reports --daily --channel sms      # Envoie par SMS
+  python -m backend.reports --daily --channel whatsapp # Envoie par WhatsApp
+  python -m backend.reports --daily --channel email    # Envoie par email
+  python -m backend.reports --weekly --send            # Rapport hebdo
+  python -m backend.reports --test-channels            # Teste tous les canaux
+        """
+    )
     parser.add_argument("--daily", action="store_true", help="Generate daily report")
     parser.add_argument("--weekly", action="store_true", help="Generate weekly report")
-    parser.add_argument("--send", action="store_true", help="Send via Telegram")
+    parser.add_argument("--send", action="store_true", help="Send the report")
+    parser.add_argument("--channel", type=str, choices=["telegram", "sms", "whatsapp", "email"],
+                       help="Override REPORT_CHANNEL for this send")
     parser.add_argument("--date", type=str, help="Target date (YYYY-MM-DD)")
+    parser.add_argument("--test-channels", action="store_true", 
+                       help="Test all configured channels")
+    parser.add_argument("--list-channels", action="store_true",
+                       help="List all channels and their configuration status")
     
     args = parser.parse_args()
     
     generator = ReportGenerator()
     
+    # Test des canaux
+    if args.test_channels:
+        print("\n🧪 Test de tous les canaux de notification\n")
+        print("=" * 50)
+        
+        test_message = f"🧪 Test UWI - {datetime.now().strftime('%H:%M:%S')}\nCeci est un message de test."
+        channels_to_test = ["telegram", "sms", "whatsapp", "email"]
+        
+        results = {}
+        for channel_type in channels_to_test:
+            channel = get_notification_channel(channel_type)
+            print(f"\n📡 {channel_type.upper()}:")
+            print(f"   Configuré: {'✅ Oui' if channel.is_configured() else '❌ Non'}")
+            
+            if channel.is_configured():
+                print(f"   Envoi en cours...")
+                success = channel.send(test_message)
+                results[channel_type] = success
+                print(f"   Résultat: {'✅ Envoyé' if success else '❌ Échec'}")
+            else:
+                results[channel_type] = None
+                print(f"   ⏭️  Skippé (non configuré)")
+        
+        print("\n" + "=" * 50)
+        print("📊 Résumé:")
+        for ch, result in results.items():
+            if result is True:
+                print(f"   ✅ {ch}: OK")
+            elif result is False:
+                print(f"   ❌ {ch}: ÉCHEC")
+            else:
+                print(f"   ⚪ {ch}: Non configuré")
+        print()
+        exit(0)
+    
+    # Liste des canaux
+    if args.list_channels:
+        print("\n📡 Canaux de notification disponibles\n")
+        print("=" * 50)
+        
+        current_channel = os.getenv("REPORT_CHANNEL", "telegram")
+        
+        channels_info = [
+            ("telegram", "Telegram Bot", ["TELEGRAM_BOT_TOKEN", "TELEGRAM_OWNER_ID"]),
+            ("sms", "SMS (Twilio)", ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_PHONE_NUMBER", "OWNER_PHONE_NUMBER"]),
+            ("whatsapp", "WhatsApp (Twilio)", ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "OWNER_PHONE_NUMBER"]),
+            ("email", "Email (SMTP)", ["SMTP_EMAIL", "SMTP_PASSWORD", "OWNER_EMAIL"]),
+        ]
+        
+        for ch_type, ch_name, required_vars in channels_info:
+            channel = get_notification_channel(ch_type)
+            is_current = "← ACTIF" if ch_type == current_channel else ""
+            status = "✅" if channel.is_configured() else "❌"
+            
+            print(f"\n{status} {ch_name} ({ch_type}) {is_current}")
+            
+            for var in required_vars:
+                value = os.getenv(var)
+                if value:
+                    # Masquer les valeurs sensibles
+                    if "TOKEN" in var or "PASSWORD" in var or "AUTH" in var:
+                        display = value[:4] + "****"
+                    else:
+                        display = value[:15] + "..." if len(value) > 15 else value
+                    print(f"     {var}: {display}")
+                else:
+                    print(f"     {var}: ⚠️  Non défini")
+        
+        print(f"\n💡 Canal actif: REPORT_CHANNEL={current_channel}")
+        print()
+        exit(0)
+    
+    # Génération du rapport
     target_date = None
     if args.date:
         target_date = date.fromisoformat(args.date)
@@ -572,6 +1037,20 @@ if __name__ == "__main__":
     
     print(report)
     
+    # Envoi
     if args.send:
-        success = generator.send_telegram(report)
-        print(f"\n{'✅ Sent!' if success else '❌ Failed to send'}")
+        channel_type = args.channel or os.getenv("REPORT_CHANNEL", "telegram")
+        print(f"\n📤 Envoi via {channel_type}...")
+        
+        channel = get_notification_channel(channel_type)
+        
+        if not channel.is_configured():
+            print(f"❌ Canal {channel_type} non configuré!")
+            print(f"💡 Utilisez --list-channels pour voir les variables requises")
+            exit(1)
+        
+        success = channel.send(report)
+        if success:
+            print("✅ Envoyé!")
+        else:
+            print("❌ Échec de l'envoi")
