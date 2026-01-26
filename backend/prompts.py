@@ -222,10 +222,12 @@ MSG_CONTACT_RETRY_VOCAL = (
 )
 
 # Motifs trop génériques (pas d'info utile)
+# Note: "consultation", "contrôle", etc. sont des motifs VALIDES, ne pas les mettre ici
 GENERIC_MOTIFS = {
     "rdv", "rendez-vous", "rendez vous", "rendezvous",
-    "consultation", "prendre un rdv", "rendez-vous médical",
-    "voir le médecin", "un rendez vous"
+    "prendre un rdv", "rendez-vous médical",
+    "voir le médecin", "un rendez vous",
+    "je veux un rdv", "prendre rendez-vous",
 }
 
 MSG_MOTIF_HELP = (
