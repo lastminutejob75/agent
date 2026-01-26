@@ -127,6 +127,11 @@ def detect_intent(text: str) -> str:
     # NON - vérifier si c'est suivi d'une demande spécifique
     is_no = any(t == p or t.startswith(p + " ") or t.startswith(p + ",") for p in prompts.NO_PATTERNS)
     
+    # Si "non" mais contient des mots-clés FAQ → FAQ pas NO
+    faq_keywords = ["horaire", "adresse", "tarif", "prix", "parking", "accès", "ouvert", "fermé"]
+    if is_no and any(kw in t for kw in faq_keywords):
+        return "FAQ"
+    
     # 2. Intent CANCEL
     if any(p in t for p in prompts.CANCEL_PATTERNS):
         return "CANCEL"
