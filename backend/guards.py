@@ -43,11 +43,30 @@ def detect_language_fr(text: str) -> bool:
 # ----------------------------
 
 _SPAM_PATTERNS = [
+    # Anglais
     r"fuck",
     r"shit",
+    r"asshole",
+    r"bitch",
+    # Français - insultes
     r"connard",
+    r"connasse",
     r"enculé",
     r"salope",
+    r"pute",
+    r"putain",
+    r"niquer",
+    r"nique",
+    r"ta mère",
+    r"ta gueule",
+    r"fdp",
+    r"ntm",
+    r"fils de pute",
+    r"va te faire",
+    r"casse.?toi",
+    r"dégage",
+    r"batard",
+    r"bâtard",
 ]
 
 _SPAM_REGEX = re.compile("|".join(_SPAM_PATTERNS), re.IGNORECASE)
