@@ -1,11 +1,12 @@
 # backend/routes/voice.py
 """
-Route pour le canal Voix (Vapi) - DEBUG COMPLET
+Route pour le canal Voix (Vapi) - DEBUG COMPLET + TIMERS
 """
 
 from fastapi import APIRouter, Request
 import logging
 import json
+import time
 
 from backend.engine import ENGINE
 from backend import prompts
@@ -13,29 +14,33 @@ from backend import prompts
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+def log_timer(label: str, start: float) -> float:
+    """Log le temps écoulé et retourne le nouveau timestamp."""
+    now = time.time()
+    elapsed_ms = (now - start) * 1000
+    print(f"⏱️ {label}: {elapsed_ms:.0f}ms")
+    return now
+
 router = APIRouter(prefix="/api/vapi", tags=["voice"])
 
 
 @router.post("/webhook")
 async def vapi_webhook(request: Request):
     """
-    Webhook Vapi - DEBUG COMPLET
+    Webhook Vapi - DEBUG COMPLET + TIMERS
     """
+    t_start = time.time()
+    
     try:
         payload = await request.json()
-        
-        # LOG COMPLET
-        print(f"🔔🔔🔔 WEBHOOK REÇU 🔔🔔🔔")
-        print(f"📦 FULL PAYLOAD: {json.dumps(payload, indent=2, ensure_ascii=False)}")
+        t1 = log_timer("Payload parsed", t_start)
         
         message = payload.get("message", {})
         message_type = message.get("type", "NO_TYPE")
         call_id = payload.get("call", {}).get("id", "unknown")
         
-        print(f"📩 Message type: '{message_type}'")
-        print(f"📞 Call ID: {call_id}")
-        print(f"💬 Content: {message.get('content', 'N/A')}")
-        print(f"💬 Transcript: {message.get('transcript', 'N/A')}")
+        print(f"🔔 WEBHOOK | type={message_type} | call={call_id}")
         
         # assistant-request
         if message_type == "assistant-request":
@@ -44,26 +49,27 @@ async def vapi_webhook(request: Request):
         
         # ACCEPTE TOUS LES MESSAGES AVEC DU TEXTE
         user_text = message.get("content") or message.get("transcript") or ""
-        
-        print(f"🎯 User text extracted: '{user_text}'")
+        t2 = log_timer("Message extracted", t1)
         
         if user_text and user_text.strip():
-            print(f"✅ Processing message...")
+            print(f"💬 User: '{user_text}'")
             
             session = ENGINE.session_store.get_or_create(call_id)
             session.channel = "vocal"
+            t3 = log_timer("Session loaded", t2)
             
             events = ENGINE.handle_message(call_id, user_text)
+            t4 = log_timer("ENGINE processed", t3)
+            
             response_text = events[0].text if events else "Je n'ai pas compris"
             
-            print(f"✅ ENGINE response: '{response_text}'")
+            # ⏱️ TIMING TOTAL
+            total_ms = (time.time() - t_start) * 1000
+            print(f"✅ TOTAL: {total_ms:.0f}ms | Response: '{response_text[:50]}...'")
             
-            # FORMAT SIMPLE
-            response = {"content": response_text}
-            print(f"📤 Returning: {json.dumps(response, ensure_ascii=False)}")
-            return response
+            return {"content": response_text}
         
-        print(f"⚠️ No user text found, returning empty")
+        print(f"⚠️ No user text found")
         return {}
         
     except Exception as e:
@@ -123,20 +129,21 @@ async def vapi_custom_llm(request: Request):
     """
     from fastapi.responses import StreamingResponse
     
+    # ⏱️ TIMING START
+    t_start = time.time()
+    
     try:
         payload = await request.json()
+        t1 = log_timer("Payload parsed", t_start)
         
-        print(f"🤖🤖🤖 CUSTOM LLM APPELÉ 🤖🤖🤖")
-        print(f"📦 Payload: {json.dumps(payload, indent=2, ensure_ascii=False)}")
+        print(f"🤖 CUSTOM LLM | Payload size: {len(str(payload))} chars")
         
         # Vapi envoie un tableau de messages
         messages = payload.get("messages", [])
         call_id = payload.get("call", {}).get("id") or payload.get("call_id", "unknown")
         is_streaming = payload.get("stream", False)
         
-        print(f"📞 Call ID: {call_id}")
-        print(f"📨 Messages count: {len(messages)}")
-        print(f"🌊 Streaming: {is_streaming}")
+        print(f"📞 Call ID: {call_id} | Messages: {len(messages)} | Stream: {is_streaming}")
         
         # Récupère le dernier message utilisateur
         user_message = None
@@ -145,20 +152,28 @@ async def vapi_custom_llm(request: Request):
                 user_message = msg.get("content")
                 break
         
-        print(f"💬 User message: '{user_message}'")
+        t2 = log_timer("Message extracted", t1)
+        print(f"💬 User: '{user_message}'")
         
         if not user_message:
             # Premier message ou pas de message user
             response_text = prompts.MSG_WELCOME
-            print(f"✅ Welcome: {response_text}")
+            print(f"✅ Welcome message")
         else:
             # Traiter via ENGINE
             session = ENGINE.session_store.get_or_create(call_id)
             session.channel = "vocal"
+            t3 = log_timer("Session loaded", t2)
             
             events = ENGINE.handle_message(call_id, user_message)
+            t4 = log_timer("ENGINE processed", t3)
+            
             response_text = events[0].text if events else "Je n'ai pas compris"
-            print(f"✅ Response: {response_text}")
+            print(f"✅ Response: '{response_text[:50]}...' ({len(response_text)} chars)")
+        
+        # ⏱️ TIMING TOTAL
+        total_ms = (time.time() - t_start) * 1000
+        print(f"✅ TOTAL LATENCY: {total_ms:.0f}ms")
         
         # Si streaming demandé, retourner SSE
         if is_streaming:

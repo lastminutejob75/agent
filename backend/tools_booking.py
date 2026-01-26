@@ -23,6 +23,46 @@ logger = logging.getLogger(__name__)
 
 _calendar_service = None
 
+# ============================================
+# CACHE SLOTS (évite appels répétés Google Calendar)
+# ============================================
+
+_slots_cache: Dict[str, Any] = {
+    "slots": None,
+    "timestamp": 0,
+    "ttl_seconds": 60,  # Cache valide 60 secondes
+}
+
+
+def _get_cached_slots(limit: int) -> Optional[List[prompts.SlotDisplay]]:
+    """
+    Récupère les slots du cache si encore valides.
+    
+    Returns:
+        Liste de SlotDisplay ou None si cache expiré
+    """
+    import time
+    
+    if _slots_cache["slots"] is None:
+        return None
+    
+    age = time.time() - _slots_cache["timestamp"]
+    if age > _slots_cache["ttl_seconds"]:
+        logger.info(f"⏱️ Cache slots expiré ({age:.0f}s > {_slots_cache['ttl_seconds']}s)")
+        return None
+    
+    logger.info(f"⚡ Cache slots HIT ({age:.0f}s)")
+    return _slots_cache["slots"][:limit]
+
+
+def _set_cached_slots(slots: List[prompts.SlotDisplay]) -> None:
+    """Met à jour le cache de slots."""
+    import time
+    
+    _slots_cache["slots"] = slots
+    _slots_cache["timestamp"] = time.time()
+    logger.info(f"⚡ Cache slots SET ({len(slots)} slots)")
+
 
 def _get_calendar_service():
     """
@@ -64,6 +104,7 @@ def get_slots_for_display(limit: int = 3) -> List[prompts.SlotDisplay]:
     Récupère les créneaux disponibles.
     
     Utilise Google Calendar si configuré, sinon SQLite.
+    Cache les résultats pour 60 secondes (évite appels répétés).
     
     Args:
         limit: Nombre max de créneaux à retourner
@@ -71,12 +112,27 @@ def get_slots_for_display(limit: int = 3) -> List[prompts.SlotDisplay]:
     Returns:
         Liste de SlotDisplay pour affichage
     """
+    import time
+    t_start = time.time()
+    
+    # Vérifier le cache d'abord
+    cached = _get_cached_slots(limit)
+    if cached:
+        logger.info(f"⚡ get_slots_for_display: cache hit ({(time.time() - t_start) * 1000:.0f}ms)")
+        return cached
+    
     calendar = _get_calendar_service()
     
     if calendar:
-        return _get_slots_from_google_calendar(calendar, limit)
+        slots = _get_slots_from_google_calendar(calendar, limit)
     else:
-        return _get_slots_from_sqlite(limit)
+        slots = _get_slots_from_sqlite(limit)
+    
+    # Mettre en cache
+    _set_cached_slots(slots)
+    
+    logger.info(f"⏱️ get_slots_for_display: {(time.time() - t_start) * 1000:.0f}ms ({len(slots)} slots)")
+    return slots
 
 
 def _get_slots_from_google_calendar(calendar, limit: int) -> List[prompts.SlotDisplay]:
