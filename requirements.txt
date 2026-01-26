@@ -26,3 +26,9 @@ google-auth-oauthlib==1.2.0
 google-auth-httplib2==0.2.0
 google-api-python-client==2.110.0
 mangum==0.17.0
+
+# Notifications (SMS, WhatsApp)
+twilio==9.0.0
+
+# Scheduler (rapports automatiques)
+apscheduler==3.10.4
