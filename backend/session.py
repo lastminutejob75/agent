@@ -44,6 +44,11 @@ class Session:
     qualif_data: QualifData = field(default_factory=QualifData)
     motif_help_used: bool = False  # NEW: utilisé pour empêcher la boucle sur le motif
 
+    # Extraction (Option 2 - entités extraites du premier message)
+    extracted_name: bool = False
+    extracted_motif: bool = False
+    extracted_pref: bool = False
+
     # Booking pending
     pending_slot_ids: List[int] = field(default_factory=list)
     pending_slot_labels: List[str] = field(default_factory=list)
@@ -63,6 +68,9 @@ class Session:
         self.qualif_step = "name"
         self.qualif_data = QualifData()
         self.motif_help_used = False
+        self.extracted_name = False
+        self.extracted_motif = False
+        self.extracted_pref = False
         self.pending_slot_ids = []
         self.pending_slot_labels = []
 

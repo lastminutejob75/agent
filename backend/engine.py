@@ -12,6 +12,7 @@ import re
 from backend import config, prompts, guards, tools_booking
 from backend.session import Session, SessionStore
 from backend.tools_faq import FaqStore, FaqResult
+from backend.entity_extraction import extract_entities, get_next_missing_field
 
 
 @dataclass(frozen=True)
@@ -187,10 +188,7 @@ class Engine:
         if session.state == "START":
             # 1) Booking intent détecté → démarrer qualification
             if _detect_booking_intent(user_text):
-                session.state = "QUALIF_NAME"
-                question = prompts.QUALIF_QUESTIONS["name"]
-                session.add_message("agent", question)
-                return [Event("final", question, conv_state=session.state)]
+                return self._start_booking_with_extraction(session, user_text)
             
             # 2) Sinon → chercher FAQ (inclut low pour "bonjour" seul)
             return self._handle_faq(session, user_text, include_low=True)
@@ -201,10 +199,7 @@ class Engine:
             session.state = "START"
             # Relancer le routing
             if _detect_booking_intent(user_text):
-                session.state = "QUALIF_NAME"
-                question = prompts.QUALIF_QUESTIONS["name"]
-                session.add_message("agent", question)
-                return [Event("final", question, conv_state=session.state)]
+                return self._start_booking_with_extraction(session, user_text)
             return self._handle_faq(session, user_text, include_low=True)
         
         # ========================
@@ -228,10 +223,11 @@ class Engine:
         Args:
             include_low: Si False, exclut les FAQs priority="low"
         """
+        channel = getattr(session, "channel", "web")
         faq_result = self.faq_store.search(user_text, include_low=include_low)
 
         if faq_result.match:
-            response = prompts.format_faq_response(faq_result.answer, faq_result.faq_id)
+            response = prompts.format_faq_response(faq_result.answer, faq_result.faq_id, channel=channel)
             session.state = "FAQ_ANSWERED"
             session.add_message("agent", response)
             return [Event("final", response, conv_state=session.state)]
@@ -240,13 +236,120 @@ class Engine:
 
         if session.no_match_turns >= 2:
             session.state = "TRANSFERRED"
-            msg = prompts.MSG_TRANSFER
+            msg = prompts.get_message("transfer", channel=channel)
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
 
-        msg = prompts.msg_no_match_faq(config.BUSINESS_NAME)
+        msg = prompts.msg_no_match_faq(config.BUSINESS_NAME, channel=channel)
         session.add_message("agent", msg)
         return [Event("final", msg, conv_state=session.state)]
+    
+    def _start_booking_with_extraction(self, session: Session, user_text: str) -> List[Event]:
+        """
+        Démarre le flow de booking avec extraction d'entités.
+        
+        Extrait nom, motif, préférence du premier message si présents,
+        puis pose seulement les questions manquantes.
+        """
+        channel = getattr(session, "channel", "web")
+        
+        # Extraction conservatrice
+        entities = extract_entities(user_text)
+        
+        # Pré-remplir les champs extraits
+        if entities.name:
+            session.qualif_data.name = entities.name
+            session.extracted_name = True  # Flag pour confirmation implicite
+        
+        if entities.motif:
+            session.qualif_data.motif = entities.motif
+            session.extracted_motif = True
+        
+        if entities.pref:
+            session.qualif_data.pref = entities.pref
+            session.extracted_pref = True
+        
+        # Construire le contexte pour trouver le prochain champ manquant
+        context = {
+            "name": session.qualif_data.name,
+            "motif": session.qualif_data.motif,
+            "pref": session.qualif_data.pref,
+            "contact": session.qualif_data.contact,
+        }
+        
+        next_field = get_next_missing_field(context)
+        
+        if not next_field:
+            # Tout est rempli (rare mais possible) → proposer créneaux
+            return self._propose_slots(session)
+        
+        # Mapper le champ vers l'état
+        state_map = {
+            "name": "QUALIF_NAME",
+            "motif": "QUALIF_MOTIF",
+            "pref": "QUALIF_PREF",
+            "contact": "QUALIF_CONTACT",
+        }
+        session.state = state_map[next_field]
+        
+        # Construire la réponse avec confirmation implicite si extraction
+        response_parts = []
+        
+        # Confirmation implicite des entités extraites
+        if entities.has_any():
+            if entities.name and entities.motif:
+                response_parts.append(f"Parfait {entities.name}, pour {entities.motif}.")
+            elif entities.name:
+                response_parts.append(f"Très bien {entities.name}.")
+            elif entities.motif:
+                response_parts.append(f"D'accord, pour {entities.motif}.")
+            else:
+                response_parts.append("Très bien.")
+        
+        # Question suivante
+        question = prompts.get_qualif_question(next_field, channel=channel)
+        response_parts.append(question)
+        
+        response = " ".join(response_parts)
+        session.add_message("agent", response)
+        
+        return [Event("final", response, conv_state=session.state)]
+    
+    def _next_qualif_step(self, session: Session) -> List[Event]:
+        """
+        Détermine et pose la prochaine question de qualification.
+        Skip automatiquement les champs déjà remplis (par extraction ou réponse précédente).
+        """
+        channel = getattr(session, "channel", "web")
+        
+        # Construire le contexte actuel
+        context = {
+            "name": session.qualif_data.name,
+            "motif": session.qualif_data.motif,
+            "pref": session.qualif_data.pref,
+            "contact": session.qualif_data.contact,
+        }
+        
+        next_field = get_next_missing_field(context)
+        
+        if not next_field:
+            # Tout est rempli → proposer créneaux
+            return self._propose_slots(session)
+        
+        # Mapper le champ vers l'état
+        state_map = {
+            "name": "QUALIF_NAME",
+            "motif": "QUALIF_MOTIF",
+            "pref": "QUALIF_PREF",
+            "contact": "QUALIF_CONTACT",
+        }
+        session.state = state_map[next_field]
+        
+        # Question adaptée au canal
+        question = prompts.get_qualif_question(next_field, channel=channel)
+        session.add_message("agent", question)
+        
+        return [Event("final", question, conv_state=session.state)]
     
     def _handle_qualification(self, session: Session, user_text: str) -> List[Event]:
         """
@@ -259,41 +362,42 @@ class Engine:
         # QUALIF_NAME
         # ========================
         if current_step == "QUALIF_NAME":
+            channel = getattr(session, "channel", "web")
+            
             # Vérifier que ce n'est pas une répétition de la demande booking
             if _detect_booking_intent(user_text):
-                msg = prompts.MSG_QUALIF_NAME_RETRY
+                msg = prompts.get_qualif_retry("name", channel=channel)
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
             # Vérifier longueur minimale (un nom fait au moins 2 caractères)
             if len(user_text.strip()) < 2:
                 session.state = "TRANSFERRED"
-                msg = prompts.MSG_TRANSFER
+                msg = prompts.get_message("transfer", channel=channel)
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
-            # Réponse valide → continuer
+            # Réponse valide → trouver le prochain champ manquant
             session.qualif_data.name = user_text.strip()
-            session.state = "QUALIF_MOTIF"
-            question = prompts.QUALIF_QUESTIONS["motif"]
-            session.add_message("agent", question)
-            return [Event("final", question, conv_state=session.state)]
+            return self._next_qualif_step(session)
         
         # ========================
         # QUALIF_MOTIF
         # ========================
         elif current_step == "QUALIF_MOTIF":
+            channel = getattr(session, "channel", "web")
+            
             # Vérifier répétition booking intent
             if _detect_booking_intent(user_text):
                 # Vérifier AVANT d'incrémenter pour permettre 1 retry
                 if session.confirm_retry_count >= config.CONFIRM_RETRY_MAX:
                     session.state = "TRANSFERRED"
-                    msg = prompts.MSG_TRANSFER
+                    msg = prompts.get_message("transfer", channel=channel)
                     session.add_message("agent", msg)
                     return [Event("final", msg, conv_state=session.state)]
                 
                 session.confirm_retry_count += 1
-                msg = prompts.MSG_QUALIF_MOTIF_RETRY
+                msg = prompts.get_qualif_retry("motif", channel=channel)
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
@@ -302,7 +406,7 @@ class Engine:
                 # Vérifier AVANT d'incrémenter pour permettre 1 retry
                 if session.confirm_retry_count >= config.CONFIRM_RETRY_MAX:
                     session.state = "TRANSFERRED"
-                    msg = prompts.MSG_TRANSFER
+                    msg = prompts.get_message("transfer", channel=channel)
                     session.add_message("agent", msg)
                     return [Event("final", msg, conv_state=session.state)]
                 
@@ -318,42 +422,30 @@ class Engine:
             # Validation PRD
             if not guards.validate_qualif_motif(user_text):
                 session.state = "TRANSFERRED"
-                msg = prompts.MSG_TRANSFER
+                msg = prompts.get_message("transfer", channel=channel)
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
-            # Motif valide et utile → continuer
+            # Motif valide et utile → trouver le prochain champ manquant
             session.qualif_data.motif = user_text.strip()
-            session.state = "QUALIF_PREF"
-            question = prompts.QUALIF_QUESTIONS["pref"]
-            session.add_message("agent", question)
-            return [Event("final", question, conv_state=session.state)]
+            return self._next_qualif_step(session)
         
         # ========================
         # QUALIF_PREF
         # ========================
         elif current_step == "QUALIF_PREF":
+            channel = getattr(session, "channel", "web")
+            
             # Vérifier que ce n'est pas une répétition
             if _detect_booking_intent(user_text):
-                msg = prompts.MSG_QUALIF_PREF_RETRY
+                msg = prompts.get_qualif_retry("pref", channel=channel)
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
             # Pas de validation stricte sur le créneau (V1)
             # On accepte la réponse telle quelle
             session.qualif_data.pref = user_text.strip()
-            session.state = "QUALIF_CONTACT"
-            
-            # ✅ Question adaptée au canal
-            channel = getattr(session, "channel", "web")
-            
-            if channel == "vocal":
-                question = prompts.MSG_CONTACT_ASK_VOCAL
-            else:
-                question = prompts.QUALIF_QUESTIONS["contact"]
-            
-            session.add_message("agent", question)
-            return [Event("final", question, conv_state=session.state)]
+            return self._next_qualif_step(session)
         
         # ========================
         # QUALIF_CONTACT
@@ -368,11 +460,11 @@ class Engine:
                 
                 if session.confirm_retry_count >= config.CONFIRM_RETRY_MAX:
                     session.state = "TRANSFERRED"
-                    msg = prompts.MSG_TRANSFER
+                    msg = prompts.get_message("transfer", channel=channel)
                     session.add_message("agent", msg)
                     return [Event("final", msg, conv_state=session.state)]
                 
-                msg = prompts.MSG_QUALIF_CONTACT_RETRY
+                msg = prompts.get_qualif_retry("contact", channel=channel)
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
@@ -387,13 +479,13 @@ class Engine:
                 # Retry 1 fois (vocal) puis transfert
                 if channel == "vocal" and session.contact_retry_count < 1:
                     session.contact_retry_count += 1
-                    msg = prompts.MSG_CONTACT_RETRY_VOCAL
+                    msg = prompts.get_message("contact_retry", channel=channel)
                     session.add_message("agent", msg)
                     return [Event("final", msg, conv_state=session.state)]
 
                 # Transfer
                 session.state = "TRANSFERRED"
-                msg = prompts.MSG_TRANSFER
+                msg = prompts.get_message("transfer", channel=channel)
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
 
@@ -408,8 +500,9 @@ class Engine:
         # FALLBACK (état inconnu)
         # ========================
         # Si aucun des états précédents n'a matché, transfert
+        channel = getattr(session, "channel", "web")
         session.state = "TRANSFERRED"
-        msg = prompts.MSG_TRANSFER
+        msg = prompts.get_message("transfer", channel=channel)
         session.add_message("agent", msg)
         return [Event("final", msg, conv_state=session.state)]
     
@@ -446,13 +539,14 @@ class Engine:
         """
         Propose 3 créneaux disponibles.
         """
+        channel = getattr(session, "channel", "web")
         
         # Récupérer slots
         slots = tools_booking.get_slots_for_display(limit=config.MAX_SLOTS_PROPOSED)
         
         if not slots:
             session.state = "TRANSFERRED"
-            msg = prompts.MSG_NO_SLOTS_AVAILABLE
+            msg = prompts.get_message("no_slots", channel=channel)
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
         
@@ -461,7 +555,6 @@ class Engine:
         session.state = "WAIT_CONFIRM"
         
         # Formatter message avec instruction adaptée au channel
-        channel = getattr(session, "channel", "web")
         msg = prompts.format_slot_proposal(slots, include_instruction=True, channel=channel)
         session.add_message("agent", msg)
         
@@ -486,11 +579,11 @@ class Engine:
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
 
-            # Confirmer
+            # Confirmer avec message adapté au canal
             slot_label = tools_booking.get_label_for_choice(session, slot_idx) or ""
             name = session.qualif_data.name or ""
             motif = session.qualif_data.motif or ""
-            msg = prompts.format_booking_confirmed(slot_label, name=name, motif=motif)
+            msg = prompts.format_booking_confirmed(slot_label, name=name, motif=motif, channel=channel)
             
             session.state = "CONFIRMED"
             session.add_message("agent", msg)
@@ -501,7 +594,7 @@ class Engine:
 
         if session.confirm_retry_count >= config.CONFIRM_RETRY_MAX:
             session.state = "TRANSFERRED"
-            msg = prompts.MSG_TRANSFER
+            msg = prompts.get_message("transfer", channel=channel)
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
         
