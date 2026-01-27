@@ -33,7 +33,8 @@ def _reconstruct_session_from_history(session, messages: list):
     patterns = {
         "QUALIF_NAME": ["c'est à quel nom", "quel nom", "votre nom"],
         "QUALIF_PREF": ["matin ou l'après-midi", "matin ou après-midi", "préférez"],
-        "QUALIF_CONTACT": ["numéro de téléphone", "téléphone", "email"],
+        "QUALIF_CONTACT": ["numéro de téléphone", "téléphone pour vous rappeler", "redonner votre numéro"],
+        "CONTACT_CONFIRM": ["j'ai noté le", "c'est bien ça", "est-ce correct"],
         "WAIT_CONFIRM": ["créneaux disponibles", "premier choix", "lequel vous convient"],
         "CONFIRMED": ["rendez-vous est confirmé", "c'est tout bon"],
     }

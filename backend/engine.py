@@ -287,6 +287,10 @@ class Engine:
         if session.state == "CLARIFY":
             return self._handle_clarify(session, user_text, intent)
         
+        # Si en confirmation de contact
+        if session.state == "CONTACT_CONFIRM":
+            return self._handle_contact_confirm(session, user_text)
+        
         # --- NOUVEAU FLOW : First Message ---
         
         # Si START → le premier message après "Vous appelez pour un RDV ?"
@@ -659,6 +663,14 @@ class Engine:
             session.qualif_data.contact_type = contact_type
             session.contact_retry_count = 0
 
+            # Pour un téléphone en vocal → demander confirmation
+            if channel == "vocal" and contact_type == "phone":
+                session.state = "CONTACT_CONFIRM"
+                phone_formatted = prompts.format_phone_for_voice(contact_raw)
+                msg = prompts.VOCAL_CONTACT_CONFIRM.format(phone_formatted=phone_formatted)
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+
             return self._propose_slots(session)
         
         # ========================
@@ -943,6 +955,35 @@ class Engine:
                 return [Event("final", msg, conv_state=session.state)]
         
         return self._fallback_transfer(session)
+    
+    # ========================
+    # CONFIRMATION CONTACT
+    # ========================
+    
+    def _handle_contact_confirm(self, session: Session, user_text: str) -> List[Event]:
+        """Gère la confirmation du numéro de téléphone."""
+        channel = getattr(session, "channel", "web")
+        intent = detect_intent(user_text)
+        
+        if intent == "YES":
+            # Numéro confirmé → proposer créneaux
+            return self._propose_slots(session)
+        
+        elif intent == "NO":
+            # Numéro incorrect → redemander
+            session.state = "QUALIF_CONTACT"
+            session.qualif_data.contact = None
+            session.qualif_data.contact_type = None
+            msg = prompts.VOCAL_CONTACT_CONFIRM_RETRY
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state=session.state)]
+        
+        else:
+            # Pas compris → redemander confirmation
+            phone_formatted = prompts.format_phone_for_voice(session.qualif_data.contact or "")
+            msg = f"Excusez-moi, j'ai noté le {phone_formatted}. Est-ce correct ?"
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state=session.state)]
     
     # ========================
     # FLOW E: CLARIFY

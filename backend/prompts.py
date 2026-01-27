@@ -276,8 +276,8 @@ VOCAL_CONTACT_PHONE = (
 )
 
 VOCAL_CONTACT_RETRY = (
-    "Pardon, j'ai pas bien capté. "
-    "Vous pouvez me redonner votre email ou votre numéro ?"
+    "Excusez-moi, je n'ai pas bien compris. "
+    "Pouvez-vous me redonner votre numéro de téléphone ?"
 )
 
 # Créneaux
@@ -344,9 +344,47 @@ MSG_CONTACT_ASK_VOCAL = (
 )
 
 MSG_CONTACT_RETRY_VOCAL = (
-    "Je n'ai pas réussi à noter. "
-    "Pouvez-vous redire votre téléphone ou votre email, plus lentement ?"
+    "Excusez-moi, je n'ai pas bien noté. "
+    "Pouvez-vous me redonner votre numéro de téléphone ?"
 )
+
+# Confirmation du numéro de téléphone
+VOCAL_CONTACT_CONFIRM = (
+    "J'ai noté le {phone_formatted}. C'est bien ça ?"
+)
+
+VOCAL_CONTACT_CONFIRM_OK = (
+    "Parfait, c'est noté."
+)
+
+VOCAL_CONTACT_CONFIRM_RETRY = (
+    "D'accord, pouvez-vous me redonner votre numéro ?"
+)
+
+
+def format_phone_for_voice(phone: str) -> str:
+    """
+    Formate un numéro de téléphone pour lecture vocale.
+    Ex: "0612345678" → "06, 12, 34, 56, 78"
+    """
+    # Nettoyer le numéro
+    digits = ''.join(c for c in phone if c.isdigit())
+    
+    # Si numéro français (10 chiffres)
+    if len(digits) == 10:
+        # Format: 06 12 34 56 78
+        return f"{digits[0:2]}, {digits[2:4]}, {digits[4:6]}, {digits[6:8]}, {digits[8:10]}"
+    
+    # Format international ou autre
+    if len(digits) > 10:
+        # +33 6 12 34 56 78 → grouper par 2
+        formatted = []
+        for i in range(0, len(digits), 2):
+            formatted.append(digits[i:i+2])
+        return ", ".join(formatted)
+    
+    # Fallback: lire chiffre par chiffre
+    return ", ".join(list(digits))
 
 # ----------------------------
 # VALIDATION MOTIFS
