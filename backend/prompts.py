@@ -576,8 +576,8 @@ def get_qualif_question_with_name(field: str, name: str, channel: str = "web") -
     
     vocal_questions_with_name = {
         "motif": "",  # DÉSACTIVÉ
-        "pref": f"Super {first_name} ! Vous préférez plutôt le matin ou l'après-midi ?",
-        "contact": f"Parfait {first_name} ! Et votre numéro de téléphone pour vous rappeler ?",
+        "pref": f"Très bien {first_name}. Vous préférez plutôt le matin ou l'après-midi ?",
+        "contact": f"Parfait. Et votre numéro de téléphone pour vous rappeler ?",
     }
     
     return vocal_questions_with_name.get(field, get_qualif_question(field, channel))
@@ -728,20 +728,18 @@ def format_booking_confirmed(slot_label: str, name: str = "", motif: str = "", c
 def format_booking_confirmed_vocal(slot_label: str, name: str = "") -> str:
     """
     Confirmation de RDV pour le vocal.
-    Ton chaleureux et rassurant.
+    Ton professionnel et rassurant.
     """
     if name:
         # Extraire le prénom
         first_name = name.split()[0] if name else ""
         return (
-            f"Parfait {first_name}, c'est tout bon ! "
-            f"Votre rendez-vous est confirmé pour {slot_label}. "
-            "Vous recevrez un petit SMS de rappel. "
-            "On vous attend avec plaisir, bonne journée !"
+            f"Parfait. Votre rendez-vous est confirmé pour {slot_label}. "
+            "Vous recevrez un SMS de rappel. "
+            f"À bientôt {first_name} !"
         )
     return (
-        f"C'est tout bon ! "
-        f"Votre rendez-vous est confirmé pour {slot_label}. "
+        f"Parfait. Votre rendez-vous est confirmé pour {slot_label}. "
         "Vous recevrez un SMS de rappel. "
-        "À très bientôt !"
+        "À bientôt !"
     )
