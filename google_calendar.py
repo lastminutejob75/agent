@@ -137,10 +137,13 @@ class GoogleCalendarService:
             return []
     
     def _format_slot_label(self, dt: datetime) -> str:
-        """Formate un créneau en français."""
+        """
+        Formate un créneau en français pour TTS.
+        Format: "lundi 25 mars à 14 heures" (pas de chiffres complexes)
+        """
         days_fr = [
-            'Lundi', 'Mardi', 'Mercredi', 'Jeudi',
-            'Vendredi', 'Samedi', 'Dimanche'
+            'lundi', 'mardi', 'mercredi', 'jeudi',
+            'vendredi', 'samedi', 'dimanche'
         ]
         months_fr = [
             'janvier', 'février', 'mars', 'avril', 'mai', 'juin',
@@ -150,7 +153,19 @@ class GoogleCalendarService:
         day_name = days_fr[dt.weekday()]
         month_name = months_fr[dt.month - 1]
         
-        return f"{day_name} {dt.day} {month_name} à {dt.hour}h{dt.minute:02d}"
+        # Format heure pour TTS (éviter "14h00" qui peut être mal lu)
+        if dt.minute == 0:
+            time_str = f"{dt.hour} heures"
+        elif dt.minute == 30:
+            time_str = f"{dt.hour} heures trente"
+        elif dt.minute == 15:
+            time_str = f"{dt.hour} heures quinze"
+        elif dt.minute == 45:
+            time_str = f"{dt.hour} heures quarante-cinq"
+        else:
+            time_str = f"{dt.hour} heures {dt.minute}"
+        
+        return f"{day_name} {dt.day} {month_name} à {time_str}"
     
     def book_appointment(
         self,

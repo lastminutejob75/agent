@@ -671,27 +671,27 @@ def format_slot_proposal(slots: List[SlotDisplay], include_instruction: bool = T
 def format_slot_proposal_vocal(slots: List[SlotDisplay]) -> str:
     """
     Formate la proposition de créneaux pour le vocal.
-    Ton chaleureux et clair.
+    Ton chaleureux et clair, avec pauses pour le TTS.
     """
     if len(slots) == 1:
         return (
-            f"Alors j'ai un créneau disponible : {slots[0].label}. "
+            f"J'ai un créneau disponible : {slots[0].label}. "
             "Est-ce que ça vous convient ?"
         )
     elif len(slots) == 2:
         return (
-            f"Super, j'ai deux créneaux pour vous ! "
-            f"Le premier, c'est {slots[0].label}. "
-            f"Et le deuxième, {slots[1].label}. "
-            "Lequel vous arrange le mieux ?"
+            f"J'ai deux créneaux pour vous. "
+            f"Soit {slots[0].label}. "
+            f"Soit {slots[1].label}. "
+            "Lequel vous préférez ?"
         )
     else:
         # 3 créneaux (cas standard)
         return (
-            f"Super, j'ai trois créneaux pour vous ! "
-            f"Le un, c'est {slots[0].label}. "
-            f"Le deux, {slots[1].label}. "
-            f"Et le trois, {slots[2].label}. "
+            f"J'ai trois créneaux disponibles. "
+            f"Premier choix : {slots[0].label}. "
+            f"Deuxième choix : {slots[1].label}. "
+            f"Troisième choix : {slots[2].label}. "
             "Lequel vous convient le mieux ?"
         )
 

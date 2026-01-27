@@ -472,6 +472,7 @@ class Engine:
         """
         Détermine et pose la prochaine question de qualification.
         Skip automatiquement les champs déjà remplis (par extraction ou réponse précédente).
+        Utilise le prénom du client dans les questions si disponible.
         """
         channel = getattr(session, "channel", "web")
         
@@ -503,8 +504,13 @@ class Engine:
         }
         session.state = state_map[next_field]
         
-        # Question adaptée au canal
-        question = prompts.get_qualif_question(next_field, channel=channel)
+        # Question adaptée au canal AVEC prénom si disponible
+        client_name = session.qualif_data.name or ""
+        if client_name and channel == "vocal":
+            question = prompts.get_qualif_question_with_name(next_field, client_name, channel=channel)
+        else:
+            question = prompts.get_qualif_question(next_field, channel=channel)
+        
         print(f"🔍 _next_qualif_step: asking for {next_field} → '{question}'")
         session.add_message("agent", question)
         

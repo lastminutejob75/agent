@@ -179,12 +179,46 @@ def _get_slots_from_sqlite(limit: int) -> List[prompts.SlotDisplay]:
         raw = list_free_slots(limit=limit)
         out: List[prompts.SlotDisplay] = []
         for i, r in enumerate(raw, start=1):
-            label = f"{r['date']} - {r['time']}"
+            # Formater pour TTS
+            label = _format_slot_label_vocal(r['date'], r['time'])
             out.append(prompts.SlotDisplay(idx=i, label=label, slot_id=int(r["id"])))
         return out
     except Exception as e:
         logger.error(f"Erreur SQLite slots: {e}")
         return []
+
+
+def _format_slot_label_vocal(date_str: str, time_str: str) -> str:
+    """
+    Formate une date/heure pour le TTS.
+    Ex: "2026-01-25", "14:00" → "samedi 25 janvier à 14 heures"
+    """
+    from datetime import datetime
+    
+    days_fr = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
+    months_fr = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin',
+                 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre']
+    
+    try:
+        # Parser la date
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        day_name = days_fr[dt.weekday()]
+        month_name = months_fr[dt.month - 1]
+        
+        # Parser l'heure
+        hour, minute = map(int, time_str.split(':')[:2])
+        
+        if minute == 0:
+            time_vocal = f"{hour} heures"
+        elif minute == 30:
+            time_vocal = f"{hour} heures trente"
+        else:
+            time_vocal = f"{hour} heures {minute}"
+        
+        return f"{day_name} {dt.day} {month_name} à {time_vocal}"
+    except Exception:
+        # Fallback si parsing échoue
+        return f"{date_str} à {time_str}"
 
 
 def store_pending_slots(session, slots: List[prompts.SlotDisplay]) -> None:
