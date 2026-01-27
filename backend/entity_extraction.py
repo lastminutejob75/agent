@@ -323,17 +323,24 @@ def merge_entities(
     return result
 
 
-def get_missing_fields(context: Dict[str, Any]) -> List[str]:
+def get_missing_fields(context: Dict[str, Any], skip_motif: bool = True) -> List[str]:
     """
     Retourne la liste des champs manquants pour la qualification.
     
     Args:
         context: Contexte de la session
+        skip_motif: Si True, ne demande pas le motif (défaut pour médecin)
     
     Returns:
-        Liste des champs manquants dans l'ordre: ["name", "motif", "pref", "contact"]
+        Liste des champs manquants dans l'ordre
     """
-    required_fields = ["name", "motif", "pref", "contact"]
+    # Pour un médecin : name → pref → contact (pas de motif)
+    # Le motif n'apporte pas d'info utile pour un RDV médical
+    if skip_motif:
+        required_fields = ["name", "pref", "contact"]
+    else:
+        required_fields = ["name", "motif", "pref", "contact"]
+    
     missing = []
     
     for field in required_fields:

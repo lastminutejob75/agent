@@ -111,15 +111,15 @@ MSG_CONTACT_FAIL_TRANSFER = (
 # Messages vocaux (V1) - Ton Parisien naturel
 # ----------------------------
 
-# Salutation d'accueil (voix Jérémie - accent parisien)
-# NOUVEAU : Question directe pour orienter rapidement
+# Salutation d'accueil (voix chaleureuse)
+# Question directe mais accueillante
 VOCAL_SALUTATION = (
-    "Bonjour {business_name}, vous appelez pour un rendez-vous ?"
+    "Bonjour et bienvenue chez {business_name} ! Vous appelez pour prendre un rendez-vous ?"
 )
 
 # Fallback si besoin
 VOCAL_SALUTATION_NEUTRAL = (
-    "Bonjour {business_name}, je vous écoute."
+    "Bonjour ! Bienvenue chez {business_name}, je vous écoute."
 )
 
 VOCAL_SALUTATION_LONG = (
@@ -142,36 +142,37 @@ def get_vocal_greeting(business_name: str) -> str:
 # FLOW B: FAQ - Réponses et relances
 # ----------------------------
 
-VOCAL_FAQ_FOLLOWUP = "Je peux vous aider pour autre chose ?"
+VOCAL_FAQ_FOLLOWUP = "Est-ce que je peux vous aider pour autre chose ?"
 
-VOCAL_FAQ_GOODBYE = "Parfait, bonne journée !"
+VOCAL_FAQ_GOODBYE = "Avec plaisir ! Bonne journée et à bientôt !"
 
-VOCAL_FAQ_TO_BOOKING = "Pas de souci. C'est à quel nom ?"
+VOCAL_FAQ_TO_BOOKING = "Bien sûr ! C'est à quel nom ?"
 
 
 # ----------------------------
 # FLOW C: CANCEL - Annulation de RDV
 # ----------------------------
 
-VOCAL_CANCEL_ASK_NAME = "Pas de problème. C'est à quel nom ?"
+VOCAL_CANCEL_ASK_NAME = "Bien sûr, pas de problème ! C'est à quel nom ?"
 
 VOCAL_CANCEL_NOT_FOUND = (
-    "Hmm, j'ai pas trouvé de rendez-vous à ce nom. "
-    "Vous pouvez me redonner votre nom complet ?"
+    "Hmm, je ne trouve pas de rendez-vous à ce nom. "
+    "Vous pouvez me redonner votre nom complet s'il vous plaît ?"
 )
 
 VOCAL_CANCEL_CONFIRM = (
-    "Vous avez un rendez-vous {slot_label}. Je l'annule ?"
+    "J'ai trouvé ! Vous avez un rendez-vous {slot_label}. "
+    "Vous souhaitez l'annuler ?"
 )
 
 VOCAL_CANCEL_DONE = (
-    "C'est fait, votre rendez-vous est annulé. "
-    "Bonne journée !"
+    "C'est fait, votre rendez-vous est bien annulé. "
+    "N'hésitez pas à nous rappeler si besoin. Bonne journée !"
 )
 
 VOCAL_CANCEL_KEPT = (
-    "Pas de souci, votre rendez-vous est maintenu. "
-    "Bonne journée !"
+    "Pas de souci, votre rendez-vous est bien maintenu. "
+    "On vous attend ! Bonne journée !"
 )
 
 
@@ -200,11 +201,12 @@ VOCAL_MODIFY_CANCELLED = (
 # ----------------------------
 
 VOCAL_CLARIFY = (
-    "Pas de problème. Vous avez une question ou vous souhaitez prendre rendez-vous ?"
+    "Pas de souci ! Je peux vous renseigner si vous avez une question, "
+    "ou vous aider à prendre un rendez-vous. Qu'est-ce qui vous ferait plaisir ?"
 )
 
 VOCAL_STILL_UNCLEAR = (
-    "OK, je vais vous passer quelqu'un qui pourra mieux vous aider. Un instant."
+    "Pas de problème, je vais vous passer quelqu'un qui pourra mieux vous aider. Un instant."
 )
 
 
@@ -242,13 +244,13 @@ VOCAL_WAITLIST_ADDED = (
     "Bonne journée !"
 )
 
-VOCAL_USER_ABANDON = "Pas de problème. Bonne journée !"
+VOCAL_USER_ABANDON = "Pas de problème ! N'hésitez pas à rappeler. Bonne journée !"
 
-VOCAL_TAKE_TIME = "Prenez votre temps. Je vous écoute."
+VOCAL_TAKE_TIME = "Prenez votre temps, je vous écoute."
 
 VOCAL_INSULT_RESPONSE = (
     "Je comprends que vous soyez frustré. "
-    "Pouvez-vous me dire le motif de votre appel ?"
+    "Comment puis-je vous aider ?"
 )
 
 # Motif invalide - aide
@@ -551,20 +553,20 @@ QUALIF_QUESTIONS: Dict[str, str] = {
     "contact": "Quel est votre moyen de contact ? (email ou téléphone)",
 }
 
-# Questions Vocal - ton parisien naturel, phrases courtes pour TTS
-# Brief: "Parfait Jean. C'est pour quoi ?"
+# Questions Vocal - ton chaleureux et naturel, phrases courtes pour TTS
+# SANS question motif (supprimée - inutile pour médecin)
 QUALIF_QUESTIONS_VOCAL: Dict[str, str] = {
-    "name": "C'est à quel nom ?",
-    "motif": "C'est pour quoi ?",  # Court et direct
-    "pref": "OK. Plutôt le matin ou l'après-midi ?",
-    "contact": "Parfait. Votre numéro de téléphone ?",
+    "name": "Très bien ! C'est à quel nom ?",
+    "motif": "",  # DÉSACTIVÉ - on ne demande plus le motif
+    "pref": "Super. Vous préférez plutôt le matin ou l'après-midi ?",
+    "contact": "Parfait ! Et votre numéro de téléphone pour vous rappeler ?",
 }
 
 # Questions avec nom inclus (après avoir reçu le nom)
 def get_qualif_question_with_name(field: str, name: str, channel: str = "web") -> str:
     """
-    Retourne la question de qualification avec le nom du client (ton parisien).
-    Ex: "Parfait Jean. C'est pour quoi ?"
+    Retourne la question de qualification avec le nom du client (ton chaleureux).
+    Ex: "Super Jean ! Plutôt le matin ou l'après-midi ?"
     """
     if channel != "vocal" or not name:
         return get_qualif_question(field, channel)
@@ -573,9 +575,9 @@ def get_qualif_question_with_name(field: str, name: str, channel: str = "web") -
     first_name = name.split()[0] if name else ""
     
     vocal_questions_with_name = {
-        "motif": f"Parfait {first_name}. C'est pour quoi ?",
-        "pref": f"OK {first_name}. Plutôt le matin ou l'après-midi ?",
-        "contact": f"Parfait. Votre numéro de téléphone ?",
+        "motif": "",  # DÉSACTIVÉ
+        "pref": f"Super {first_name} ! Vous préférez plutôt le matin ou l'après-midi ?",
+        "contact": f"Parfait {first_name} ! Et votre numéro de téléphone pour vous rappeler ?",
     }
     
     return vocal_questions_with_name.get(field, get_qualif_question(field, channel))
@@ -669,28 +671,28 @@ def format_slot_proposal(slots: List[SlotDisplay], include_instruction: bool = T
 def format_slot_proposal_vocal(slots: List[SlotDisplay]) -> str:
     """
     Formate la proposition de créneaux pour le vocal.
-    Ton parisien naturel, phrases courtes pour TTS.
+    Ton chaleureux et clair.
     """
     if len(slots) == 1:
         return (
-            f"J'ai un créneau pour vous : {slots[0].label}. "
-            "Ça vous convient ?"
+            f"Alors j'ai un créneau disponible : {slots[0].label}. "
+            "Est-ce que ça vous convient ?"
         )
     elif len(slots) == 2:
         return (
-            f"Alors, j'ai deux créneaux. "
+            f"Super, j'ai deux créneaux pour vous ! "
             f"Le premier, c'est {slots[0].label}. "
-            f"Le deuxième, {slots[1].label}. "
-            "Lequel vous préférez, le un ou le deux ?"
+            f"Et le deuxième, {slots[1].label}. "
+            "Lequel vous arrange le mieux ?"
         )
     else:
         # 3 créneaux (cas standard)
         return (
-            f"OK, j'ai trois créneaux pour vous. "
+            f"Super, j'ai trois créneaux pour vous ! "
             f"Le un, c'est {slots[0].label}. "
             f"Le deux, {slots[1].label}. "
             f"Et le trois, {slots[2].label}. "
-            "Dites-moi juste : un, deux ou trois."
+            "Lequel vous convient le mieux ?"
         )
 
 def format_booking_confirmed(slot_label: str, name: str = "", motif: str = "", channel: str = "web") -> str:
@@ -726,19 +728,20 @@ def format_booking_confirmed(slot_label: str, name: str = "", motif: str = "", c
 def format_booking_confirmed_vocal(slot_label: str, name: str = "") -> str:
     """
     Confirmation de RDV pour le vocal.
-    Ton Parisien : "Nickel. RDV confirmé..."
-    Court, naturel, sans emojis.
+    Ton chaleureux et rassurant.
     """
     if name:
         # Extraire le prénom
         first_name = name.split()[0] if name else ""
         return (
-            f"Nickel. Rendez-vous confirmé {slot_label} pour {first_name}. "
-            "Vous recevrez un SMS de confirmation. "
-            "Bonne journée !"
+            f"Parfait {first_name}, c'est tout bon ! "
+            f"Votre rendez-vous est confirmé pour {slot_label}. "
+            "Vous recevrez un petit SMS de rappel. "
+            "On vous attend avec plaisir, bonne journée !"
         )
     return (
-        f"Nickel, c'est noté ! "
-        f"Rendez-vous confirmé {slot_label}. "
-        "Bonne journée !"
+        f"C'est tout bon ! "
+        f"Votre rendez-vous est confirmé pour {slot_label}. "
+        "Vous recevrez un SMS de rappel. "
+        "À très bientôt !"
     )
