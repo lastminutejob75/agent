@@ -22,6 +22,51 @@ client_memory = get_client_memory()
 report_generator = get_report_generator()
 
 
+def _reconstruct_session_from_history(session, messages: list):
+    """
+    Reconstruit l'état de la session depuis l'historique des messages.
+    Nécessaire si la session en mémoire a été perdue.
+    
+    Analyse les messages assistant pour déterminer où on en est.
+    """
+    # Patterns pour détecter l'état
+    patterns = {
+        "QUALIF_NAME": ["c'est à quel nom", "quel nom", "votre nom"],
+        "QUALIF_PREF": ["matin ou l'après-midi", "matin ou après-midi", "préférez"],
+        "QUALIF_CONTACT": ["numéro de téléphone", "téléphone", "email"],
+        "WAIT_CONFIRM": ["créneaux disponibles", "premier choix", "lequel vous convient"],
+        "CONFIRMED": ["rendez-vous est confirmé", "c'est tout bon"],
+    }
+    
+    # Parcourir les messages pour trouver le dernier état
+    last_assistant_msg = ""
+    for msg in reversed(messages):
+        if msg.get("role") == "assistant":
+            last_assistant_msg = msg.get("content", "").lower()
+            break
+    
+    # Extraire le nom si on l'a demandé puis reçu une réponse
+    for i, msg in enumerate(messages):
+        if msg.get("role") == "assistant":
+            content = msg.get("content", "").lower()
+            if any(p in content for p in patterns["QUALIF_NAME"]):
+                # Le message suivant devrait être le nom
+                if i + 1 < len(messages) and messages[i + 1].get("role") == "user":
+                    potential_name = messages[i + 1].get("content", "").strip()
+                    if len(potential_name) >= 2 and len(potential_name) <= 50:
+                        session.qualif_data.name = potential_name
+                        print(f"🔄 Extracted name from history: {potential_name}")
+    
+    # Déterminer l'état actuel basé sur le dernier message assistant
+    for state, state_patterns in patterns.items():
+        if any(p in last_assistant_msg for p in state_patterns):
+            session.state = state
+            print(f"🔄 Detected state from history: {state}")
+            break
+    
+    return session
+
+
 def log_timer(label: str, start: float) -> float:
     """Log le temps écoulé et retourne le nouveau timestamp."""
     now = time.time()
@@ -185,6 +230,12 @@ async def vapi_custom_llm(request: Request):
             # 🧠 Stocker le téléphone dans la session pour plus tard
             if customer_phone:
                 session.customer_phone = customer_phone
+            
+            # 🔄 RECONSTRUCTION DE L'ÉTAT depuis l'historique des messages
+            # Nécessaire si la session en mémoire a été perdue (redémarrage Railway, etc.)
+            if session.state == "START" and len(messages) > 1:
+                session = _reconstruct_session_from_history(session, messages)
+                print(f"🔄 Session reconstructed: state={session.state}, name={session.qualif_data.name}")
             
             t3 = log_timer("Session loaded", t2)
             
