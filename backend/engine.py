@@ -651,12 +651,19 @@ class Engine:
             if channel == "vocal" and guards.looks_like_dictated_email(contact_raw):
                 contact_raw = guards.parse_vocal_email_min(contact_raw)
 
+            # ✅ Parsing téléphone dicté (vocal)
+            if channel == "vocal" and any(c.isalpha() for c in contact_raw):
+                parsed_phone = guards.parse_vocal_phone(contact_raw)
+                if len(parsed_phone) >= 10:
+                    contact_raw = parsed_phone
+                    print(f"📞 Parsed vocal phone: {contact_raw}")
+
             # Validation
             is_valid, contact_type = guards.validate_qualif_contact(contact_raw)
 
             if not is_valid:
-                # Retry 1 fois (vocal) puis transfert
-                if channel == "vocal" and session.contact_retry_count < 1:
+                # Retry 2 fois (vocal) puis transfert
+                if channel == "vocal" and session.contact_retry_count < 2:
                     session.contact_retry_count += 1
                     msg = prompts.get_message("contact_retry", channel=channel)
                     session.add_message("agent", msg)
@@ -668,15 +675,25 @@ class Engine:
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
 
-            # ✅ Valide
-            session.qualif_data.contact = contact_raw
+            # ✅ Valide - nettoyer et stocker
+            if contact_type == "phone":
+                # Nettoyer le numéro
+                cleaned = re.sub(r"[\s\-\.\(\)]", "", contact_raw)
+                if cleaned.startswith("+33"):
+                    cleaned = "0" + cleaned[3:]
+                elif cleaned.startswith("33"):
+                    cleaned = "0" + cleaned[2:]
+                session.qualif_data.contact = cleaned
+            else:
+                session.qualif_data.contact = contact_raw
+            
             session.qualif_data.contact_type = contact_type
             session.contact_retry_count = 0
 
             # Pour un téléphone en vocal → demander confirmation
             if channel == "vocal" and contact_type == "phone":
                 session.state = "CONTACT_CONFIRM"
-                phone_formatted = prompts.format_phone_for_voice(contact_raw)
+                phone_formatted = prompts.format_phone_for_voice(session.qualif_data.contact)
                 msg = prompts.VOCAL_CONTACT_CONFIRM.format(phone_formatted=phone_formatted)
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]

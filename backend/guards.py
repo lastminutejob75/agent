@@ -279,15 +279,184 @@ def validate_email(email: str) -> bool:
     return bool(re.match(pattern, email.strip()))
 
 
+# Mapping des mots vers chiffres pour transcription vocale
+_WORD_TO_DIGIT = {
+    # Chiffres simples
+    "zéro": "0", "zero": "0", "0": "0",
+    "un": "1", "une": "1", "1": "1",
+    "deux": "2", "2": "2",
+    "trois": "3", "3": "3",
+    "quatre": "4", "4": "4",
+    "cinq": "5", "5": "5",
+    "six": "6", "6": "6",
+    "sept": "7", "7": "7",
+    "huit": "8", "8": "8",
+    "neuf": "9", "9": "9",
+    # Dizaines
+    "dix": "10", "10": "10",
+    "onze": "11", "11": "11",
+    "douze": "12", "12": "12",
+    "treize": "13", "13": "13",
+    "quatorze": "14", "14": "14",
+    "quinze": "15", "15": "15",
+    "seize": "16", "16": "16",
+    "dix-sept": "17", "dix sept": "17", "17": "17",
+    "dix-huit": "18", "dix huit": "18", "18": "18",
+    "dix-neuf": "19", "dix neuf": "19", "19": "19",
+    "vingt": "20", "20": "20",
+    "vingt-et-un": "21", "vingt et un": "21", "21": "21",
+    "vingt-deux": "22", "vingt deux": "22", "22": "22",
+    "vingt-trois": "23", "vingt trois": "23", "23": "23",
+    "vingt-quatre": "24", "vingt quatre": "24", "24": "24",
+    "vingt-cinq": "25", "vingt cinq": "25", "25": "25",
+    "vingt-six": "26", "vingt six": "26", "26": "26",
+    "vingt-sept": "27", "vingt sept": "27", "27": "27",
+    "vingt-huit": "28", "vingt huit": "28", "28": "28",
+    "vingt-neuf": "29", "vingt neuf": "29", "29": "29",
+    "trente": "30", "30": "30",
+    "trente-et-un": "31", "trente et un": "31", "31": "31",
+    "trente-deux": "32", "trente deux": "32", "32": "32",
+    "trente-trois": "33", "trente trois": "33", "33": "33",
+    "trente-quatre": "34", "trente quatre": "34", "34": "34",
+    "trente-cinq": "35", "trente cinq": "35", "35": "35",
+    "trente-six": "36", "trente six": "36", "36": "36",
+    "trente-sept": "37", "trente sept": "37", "37": "37",
+    "trente-huit": "38", "trente huit": "38", "38": "38",
+    "trente-neuf": "39", "trente neuf": "39", "39": "39",
+    "quarante": "40", "40": "40",
+    "quarante-et-un": "41", "quarante et un": "41", "41": "41",
+    "quarante-deux": "42", "quarante deux": "42", "42": "42",
+    "quarante-trois": "43", "quarante trois": "43", "43": "43",
+    "quarante-quatre": "44", "quarante quatre": "44", "44": "44",
+    "quarante-cinq": "45", "quarante cinq": "45", "45": "45",
+    "quarante-six": "46", "quarante six": "46", "46": "46",
+    "quarante-sept": "47", "quarante sept": "47", "47": "47",
+    "quarante-huit": "48", "quarante huit": "48", "48": "48",
+    "quarante-neuf": "49", "quarante neuf": "49", "49": "49",
+    "cinquante": "50", "50": "50",
+    "cinquante-et-un": "51", "cinquante et un": "51", "51": "51",
+    "cinquante-deux": "52", "cinquante deux": "52", "52": "52",
+    "cinquante-trois": "53", "cinquante trois": "53", "53": "53",
+    "cinquante-quatre": "54", "cinquante quatre": "54", "54": "54",
+    "cinquante-cinq": "55", "cinquante cinq": "55", "55": "55",
+    "cinquante-six": "56", "cinquante six": "56", "56": "56",
+    "cinquante-sept": "57", "cinquante sept": "57", "57": "57",
+    "cinquante-huit": "58", "cinquante huit": "58", "58": "58",
+    "cinquante-neuf": "59", "cinquante neuf": "59", "59": "59",
+    "soixante": "60", "60": "60",
+    "soixante-et-un": "61", "soixante et un": "61", "61": "61",
+    "soixante-deux": "62", "soixante deux": "62", "62": "62",
+    "soixante-trois": "63", "soixante trois": "63", "63": "63",
+    "soixante-quatre": "64", "soixante quatre": "64", "64": "64",
+    "soixante-cinq": "65", "soixante cinq": "65", "65": "65",
+    "soixante-six": "66", "soixante six": "66", "66": "66",
+    "soixante-sept": "67", "soixante sept": "67", "67": "67",
+    "soixante-huit": "68", "soixante huit": "68", "68": "68",
+    "soixante-neuf": "69", "soixante neuf": "69", "69": "69",
+    "soixante-dix": "70", "soixante dix": "70", "70": "70",
+    "soixante-et-onze": "71", "soixante et onze": "71", "soixante onze": "71", "71": "71",
+    "soixante-douze": "72", "soixante douze": "72", "72": "72",
+    "soixante-treize": "73", "soixante treize": "73", "73": "73",
+    "soixante-quatorze": "74", "soixante quatorze": "74", "74": "74",
+    "soixante-quinze": "75", "soixante quinze": "75", "75": "75",
+    "soixante-seize": "76", "soixante seize": "76", "76": "76",
+    "soixante-dix-sept": "77", "soixante dix sept": "77", "77": "77",
+    "soixante-dix-huit": "78", "soixante dix huit": "78", "78": "78",
+    "soixante-dix-neuf": "79", "soixante dix neuf": "79", "79": "79",
+    "quatre-vingt": "80", "quatre vingt": "80", "80": "80",
+    "quatre-vingt-un": "81", "quatre vingt un": "81", "81": "81",
+    "quatre-vingt-deux": "82", "quatre vingt deux": "82", "82": "82",
+    "quatre-vingt-trois": "83", "quatre vingt trois": "83", "83": "83",
+    "quatre-vingt-quatre": "84", "quatre vingt quatre": "84", "84": "84",
+    "quatre-vingt-cinq": "85", "quatre vingt cinq": "85", "85": "85",
+    "quatre-vingt-six": "86", "quatre vingt six": "86", "86": "86",
+    "quatre-vingt-sept": "87", "quatre vingt sept": "87", "87": "87",
+    "quatre-vingt-huit": "88", "quatre vingt huit": "88", "88": "88",
+    "quatre-vingt-neuf": "89", "quatre vingt neuf": "89", "89": "89",
+    "quatre-vingt-dix": "90", "quatre vingt dix": "90", "90": "90",
+    "quatre-vingt-onze": "91", "quatre vingt onze": "91", "91": "91",
+    "quatre-vingt-douze": "92", "quatre vingt douze": "92", "92": "92",
+    "quatre-vingt-treize": "93", "quatre vingt treize": "93", "93": "93",
+    "quatre-vingt-quatorze": "94", "quatre vingt quatorze": "94", "94": "94",
+    "quatre-vingt-quinze": "95", "quatre vingt quinze": "95", "95": "95",
+    "quatre-vingt-seize": "96", "quatre vingt seize": "96", "96": "96",
+    "quatre-vingt-dix-sept": "97", "quatre vingt dix sept": "97", "97": "97",
+    "quatre-vingt-dix-huit": "98", "quatre vingt dix huit": "98", "98": "98",
+    "quatre-vingt-dix-neuf": "99", "quatre vingt dix neuf": "99", "99": "99",
+}
+
+
+def parse_vocal_phone(text: str) -> str:
+    """
+    Parse un numéro de téléphone dicté vocalement.
+    
+    Exemples:
+        "zéro six douze trente quatre" → "0612304"
+        "06 12 34 56 78" → "0612345678"
+        "zero six un deux trois quatre cinq six sept huit" → "0612345678"
+    """
+    text = text.lower().strip()
+    
+    # Retirer les mots parasites
+    for word in ["c'est le", "c'est", "le", "mon numéro", "numéro", "téléphone", "portable"]:
+        text = text.replace(word, " ")
+    
+    # Nettoyer espaces multiples
+    text = " ".join(text.split())
+    
+    # Essayer d'abord de trouver des patterns de 2 chiffres (ex: "douze", "trente-quatre")
+    result = ""
+    
+    # Remplacer les patterns composés d'abord (ordre décroissant de longueur)
+    sorted_patterns = sorted(_WORD_TO_DIGIT.keys(), key=len, reverse=True)
+    
+    remaining = text
+    while remaining:
+        remaining = remaining.strip()
+        if not remaining:
+            break
+            
+        found = False
+        for pattern in sorted_patterns:
+            if remaining.startswith(pattern):
+                result += _WORD_TO_DIGIT[pattern]
+                remaining = remaining[len(pattern):]
+                found = True
+                break
+        
+        if not found:
+            # Passer au caractère suivant
+            if remaining[0].isdigit():
+                result += remaining[0]
+            remaining = remaining[1:]
+    
+    # Nettoyer le résultat - garder seulement les chiffres
+    digits = ''.join(c for c in result if c.isdigit())
+    
+    return digits
+
+
 def validate_phone(phone: str) -> bool:
     """
     Valide basiquement un numéro français.
+    Accepte les formats:
+    - 0612345678 (10 chiffres commençant par 06 ou 07)
+    - +33612345678
     """
-    cleaned = re.sub(r"[\s\-\.]", "", phone)
+    # D'abord essayer de parser si c'est du texte vocal
+    if any(c.isalpha() for c in phone):
+        phone = parse_vocal_phone(phone)
+    
+    cleaned = re.sub(r"[\s\-\.\(\)]", "", phone)
+    
+    # Accepter aussi +33 au début
+    if cleaned.startswith("+33"):
+        cleaned = "0" + cleaned[3:]
+    elif cleaned.startswith("33"):
+        cleaned = "0" + cleaned[2:]
     
     patterns = [
-        r"^0[67]\d{8}$",
-        r"^\+33[67]\d{8}$",
+        r"^0[1-9]\d{8}$",  # Tous les numéros français (01-09)
     ]
     
     return any(re.match(p, cleaned) for p in patterns)
@@ -305,7 +474,17 @@ def validate_qualif_contact(contact: str) -> tuple[bool, str]:
     if validate_email(contact):
         return True, "email"
     
-    if validate_phone(contact):
+    # Essayer de parser comme numéro vocal
+    parsed_phone = parse_vocal_phone(contact) if any(c.isalpha() for c in contact) else contact
+    cleaned_phone = re.sub(r"[\s\-\.\(\)]", "", parsed_phone)
+    
+    # Normaliser +33
+    if cleaned_phone.startswith("+33"):
+        cleaned_phone = "0" + cleaned_phone[3:]
+    elif cleaned_phone.startswith("33"):
+        cleaned_phone = "0" + cleaned_phone[2:]
+    
+    if validate_phone(cleaned_phone):
         return True, "phone"
     
     return False, "invalid"
