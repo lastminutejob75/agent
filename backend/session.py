@@ -38,7 +38,10 @@ class Session:
     # PRD counters
     no_match_turns: int = 0
     confirm_retry_count: int = 0
-    contact_retry_count: int = 0  # ✅ NOUVEAU
+    contact_retry_count: int = 0
+    
+    # Accumulation des chiffres du téléphone (vocal)
+    partial_phone_digits: str = ""
 
     # Qualification
     qualif_step: str = "name"
@@ -70,6 +73,7 @@ class Session:
         self.no_match_turns = 0
         self.confirm_retry_count = 0
         self.contact_retry_count = 0
+        self.partial_phone_digits = ""
         self.qualif_step = "name"
         self.qualif_data = QualifData()
         self.motif_help_used = False

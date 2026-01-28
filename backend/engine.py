@@ -658,31 +658,76 @@ class Engine:
             # ✅ Parsing email dicté (vocal)
             if channel == "vocal" and guards.looks_like_dictated_email(contact_raw):
                 contact_raw = guards.parse_vocal_email_min(contact_raw)
+                # Pour email, pas d'accumulation
+                is_valid, contact_type = guards.validate_qualif_contact(contact_raw)
+                if is_valid:
+                    session.qualif_data.contact = contact_raw
+                    session.qualif_data.contact_type = contact_type
+                    return self._propose_slots(session)
 
-            # ✅ Parsing téléphone dicté (vocal)
-            parsed_phone = guards.parse_vocal_phone(contact_raw)
-            print(f"📞 Parsed phone: '{contact_raw}' → '{parsed_phone}' ({len(parsed_phone)} digits)")
+            # ✅ ACCUMULATION des chiffres du téléphone (vocal)
+            new_digits = guards.parse_vocal_phone(contact_raw)
+            print(f"📞 New digits from '{contact_raw}': '{new_digits}' ({len(new_digits)} digits)")
             
-            # Si on a au moins 10 chiffres, utiliser le parsé
-            if len(parsed_phone) >= 10:
-                contact_raw = parsed_phone[:10]  # Garder les 10 premiers
-                print(f"📞 Using parsed phone: {contact_raw}")
-            elif len(parsed_phone) >= 2 and parsed_phone.startswith(("06", "07", "01", "02", "03", "04", "05", "09")):
-                # Numéro partiel qui commence bien - demander de compléter
-                session.contact_retry_count += 1
-                if session.contact_retry_count < 3:
-                    msg = "J'ai bien noté le début. Pouvez-vous me donner le numéro complet, les dix chiffres ?"
+            if channel == "vocal":
+                # Ajouter aux chiffres déjà accumulés
+                session.partial_phone_digits += new_digits
+                total_digits = session.partial_phone_digits
+                print(f"📞 Total accumulated: '{total_digits}' ({len(total_digits)} digits)")
+                
+                # Si on a 10 chiffres ou plus → on a le numéro complet
+                if len(total_digits) >= 10:
+                    contact_raw = total_digits[:10]
+                    session.partial_phone_digits = ""  # Reset
+                    print(f"📞 Got 10 digits! Phone: {contact_raw}")
+                    
+                    # Valider et continuer
+                    session.qualif_data.contact = contact_raw
+                    session.qualif_data.contact_type = "phone"
+                    session.contact_retry_count = 0
+                    
+                    # Demander confirmation
+                    session.state = "CONTACT_CONFIRM"
+                    phone_formatted = prompts.format_phone_for_voice(contact_raw)
+                    msg = prompts.VOCAL_CONTACT_CONFIRM.format(phone_formatted=phone_formatted)
                     session.add_message("agent", msg)
                     return [Event("final", msg, conv_state=session.state)]
-
-            # Validation
+                
+                else:
+                    # Pas encore 10 chiffres → demander la suite
+                    session.contact_retry_count += 1
+                    
+                    if session.contact_retry_count >= 6:
+                        # Trop de tentatives → transfert
+                        session.state = "TRANSFERRED"
+                        session.partial_phone_digits = ""
+                        msg = prompts.get_message("transfer", channel=channel)
+                        session.add_message("agent", msg)
+                        return [Event("final", msg, conv_state=session.state)]
+                    
+                    # Encourager à continuer
+                    missing = 10 - len(total_digits)
+                    if len(total_digits) == 0:
+                        msg = "Je vous écoute pour votre numéro."
+                    elif len(total_digits) <= 2:
+                        msg = "Continuez, j'écoute."
+                    elif len(total_digits) <= 6:
+                        formatted = ", ".join(total_digits[i:i+2] for i in range(0, len(total_digits), 2))
+                        msg = f"J'ai {formatted}. Continuez."
+                    else:
+                        formatted = ", ".join(total_digits[i:i+2] for i in range(0, len(total_digits), 2))
+                        msg = f"J'ai {formatted}. Plus que {missing} chiffres."
+                    
+                    session.add_message("agent", msg)
+                    return [Event("final", msg, conv_state=session.state)]
+            
+            # Web - validation directe
             is_valid, contact_type = guards.validate_qualif_contact(contact_raw)
             print(f"📞 Validation result: is_valid={is_valid}, type={contact_type}")
 
             if not is_valid:
-                # Retry 3 fois (vocal) puis transfert
-                if channel == "vocal" and session.contact_retry_count < 3:
-                    session.contact_retry_count += 1
+                session.contact_retry_count += 1
+                if session.contact_retry_count < 3:
                     msg = prompts.get_message("contact_retry", channel=channel)
                     session.add_message("agent", msg)
                     return [Event("final", msg, conv_state=session.state)]
@@ -693,28 +738,10 @@ class Engine:
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
 
-            # ✅ Valide - nettoyer et stocker
-            if contact_type == "phone":
-                # Nettoyer le numéro
-                cleaned = re.sub(r"[\s\-\.\(\)]", "", contact_raw)
-                if cleaned.startswith("+33"):
-                    cleaned = "0" + cleaned[3:]
-                elif cleaned.startswith("33"):
-                    cleaned = "0" + cleaned[2:]
-                session.qualif_data.contact = cleaned
-            else:
-                session.qualif_data.contact = contact_raw
-            
+            # ✅ Valide - stocker
+            session.qualif_data.contact = contact_raw
             session.qualif_data.contact_type = contact_type
             session.contact_retry_count = 0
-
-            # Pour un téléphone en vocal → demander confirmation
-            if channel == "vocal" and contact_type == "phone":
-                session.state = "CONTACT_CONFIRM"
-                phone_formatted = prompts.format_phone_for_voice(session.qualif_data.contact)
-                msg = prompts.VOCAL_CONTACT_CONFIRM.format(phone_formatted=phone_formatted)
-                session.add_message("agent", msg)
-                return [Event("final", msg, conv_state=session.state)]
 
             return self._propose_slots(session)
         
