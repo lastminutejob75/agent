@@ -12,6 +12,55 @@ from backend import config, prompts
 
 
 # ----------------------------
+# Nettoyage des noms (vocal)
+# ----------------------------
+
+_NAME_FILLER_PATTERNS = [
+    r"^c'est\s+",
+    r"^je\s+m'appelle\s+",
+    r"^je\s+suis\s+",
+    r"^mon\s+nom\s+c'est\s+",
+    r"^mon\s+nom\s+est\s+",
+    r"^moi\s+c'est\s+",
+    r"^euh\s+",
+    r"^ben\s+",
+    r"^alors\s+",
+    r"^donc\s+",
+    r"^oui\s+",
+    r"^oui,?\s*c'est\s+",
+    r"^bonjour\s+",
+    r"^bonjour,?\s*",
+    r"\s*s'il\s+vous\s+pla[iî]t\s*$",
+    r"\s*voilà\s*$",
+]
+
+def clean_name_from_vocal(raw_name: str) -> str:
+    """
+    Nettoie un nom de tous les mots parasites courants en vocal.
+    
+    Exemples:
+        "c'est Heni" → "Heni"
+        "je m'appelle Jean Dupont" → "Jean Dupont"
+        "euh ben c'est Marie" → "Marie"
+        "oui c'est Pierre" → "Pierre"
+    """
+    cleaned = raw_name.strip()
+    
+    # Appliquer tous les patterns de nettoyage
+    for pattern in _NAME_FILLER_PATTERNS:
+        cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE)
+    
+    # Nettoyer les espaces multiples
+    cleaned = " ".join(cleaned.split())
+    
+    # Capitaliser chaque mot (pour "heni" → "Heni")
+    if cleaned:
+        cleaned = cleaned.title()
+    
+    return cleaned
+
+
+# ----------------------------
 # Détection langue
 # ----------------------------
 
@@ -395,16 +444,31 @@ def parse_vocal_phone(text: str) -> str:
         "06 12 34 56 78" → "0612345678"
         "zero six un deux trois quatre cinq six sept huit" → "0612345678"
     """
+    original = text
     text = text.lower().strip()
     
-    # Retirer les mots parasites
-    for word in ["c'est le", "c'est", "le", "mon numéro", "numéro", "téléphone", "portable"]:
+    # Retirer les mots parasites courants
+    filler_words = [
+        "c'est le", "c'est", "le", "mon numéro", "numéro", "téléphone", "portable",
+        "mobile", "alors", "euh", "ben", "donc", "oui", "voilà", "bon",
+        "j'ai le", "mon", "ça fait", "virgule", "point"
+    ]
+    for word in filler_words:
         text = text.replace(word, " ")
     
     # Nettoyer espaces multiples
     text = " ".join(text.split())
     
-    # Essayer d'abord de trouver des patterns de 2 chiffres (ex: "douze", "trente-quatre")
+    print(f"📞 parse_vocal_phone: '{original}' → cleaned: '{text}'")
+    
+    # D'abord extraire tous les chiffres déjà présents dans le texte
+    existing_digits = ''.join(c for c in text if c.isdigit())
+    if len(existing_digits) >= 10:
+        # Le texte contient déjà des chiffres numériques
+        print(f"📞 Found existing digits: {existing_digits}")
+        return existing_digits[:10]  # Garder les 10 premiers
+    
+    # Sinon parser les mots en chiffres
     result = ""
     
     # Remplacer les patterns composés d'abord (ordre décroissant de longueur)
@@ -432,6 +496,8 @@ def parse_vocal_phone(text: str) -> str:
     
     # Nettoyer le résultat - garder seulement les chiffres
     digits = ''.join(c for c in result if c.isdigit())
+    
+    print(f"📞 parse_vocal_phone result: {digits}")
     
     return digits
 

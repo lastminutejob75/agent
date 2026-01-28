@@ -549,15 +549,19 @@ class Engine:
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
+            # Nettoyer le nom (enlever "c'est", "je m'appelle", etc.)
+            cleaned_name = guards.clean_name_from_vocal(user_text)
+            print(f"🔍 QUALIF_NAME: raw='{user_text}' → cleaned='{cleaned_name}'")
+            
             # Vérifier longueur minimale (un nom fait au moins 2 caractères)
-            if len(user_text.strip()) < 2:
-                session.state = "TRANSFERRED"
-                msg = prompts.get_message("transfer", channel=channel)
+            if len(cleaned_name) < 2:
+                # Redemander poliment
+                msg = "Excusez-moi, je n'ai pas bien entendu. Pouvez-vous me redonner votre nom ?"
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
-            # Réponse valide → trouver le prochain champ manquant
-            session.qualif_data.name = user_text.strip()
+            # Réponse valide → stocker et continuer
+            session.qualif_data.name = cleaned_name
             return self._next_qualif_step(session)
         
         # ========================
