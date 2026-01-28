@@ -28,6 +28,7 @@ def _reconstruct_session_from_history(session, messages: list):
     Nécessaire si la session en mémoire a été perdue.
     
     Analyse les messages assistant pour déterminer où on en est.
+    Extrait aussi les données de qualification déjà collectées.
     """
     # Patterns pour détecter l'état
     patterns = {
@@ -39,31 +40,55 @@ def _reconstruct_session_from_history(session, messages: list):
         "CONFIRMED": ["rendez-vous est confirmé", "c'est tout bon"],
     }
     
-    # Parcourir les messages pour trouver le dernier état
+    print(f"🔄 Reconstructing session from {len(messages)} messages")
+    
+    # Parcourir les messages pour extraire les données de qualification
+    for i, msg in enumerate(messages):
+        if msg.get("role") == "assistant":
+            content = msg.get("content", "").lower()
+            
+            # Si on a demandé le nom et qu'il y a une réponse user
+            if any(p in content for p in patterns["QUALIF_NAME"]):
+                if i + 1 < len(messages) and messages[i + 1].get("role") == "user":
+                    potential_name = messages[i + 1].get("content", "").strip()
+                    # Filtrer les réponses qui ne sont pas des noms
+                    if (len(potential_name) >= 2 and 
+                        len(potential_name) <= 50 and
+                        "matin" not in potential_name.lower() and
+                        "après" not in potential_name.lower()):
+                        session.qualif_data.name = potential_name
+                        print(f"🔄 Extracted name from history: {potential_name}")
+            
+            # Si on a demandé la préférence et qu'il y a une réponse user
+            if any(p in content for p in patterns["QUALIF_PREF"]):
+                if i + 1 < len(messages) and messages[i + 1].get("role") == "user":
+                    potential_pref = messages[i + 1].get("content", "").strip()
+                    if potential_pref and len(potential_pref) <= 50:
+                        session.qualif_data.pref = potential_pref
+                        print(f"🔄 Extracted pref from history: {potential_pref}")
+            
+            # Si on a demandé le contact et qu'il y a une réponse user
+            if any(p in content for p in patterns["QUALIF_CONTACT"]):
+                if i + 1 < len(messages) and messages[i + 1].get("role") == "user":
+                    potential_contact = messages[i + 1].get("content", "").strip()
+                    if potential_contact:
+                        session.qualif_data.contact = potential_contact
+                        print(f"🔄 Extracted contact from history: {potential_contact}")
+    
+    # Déterminer l'état actuel basé sur le dernier message assistant
     last_assistant_msg = ""
     for msg in reversed(messages):
         if msg.get("role") == "assistant":
             last_assistant_msg = msg.get("content", "").lower()
             break
     
-    # Extraire le nom si on l'a demandé puis reçu une réponse
-    for i, msg in enumerate(messages):
-        if msg.get("role") == "assistant":
-            content = msg.get("content", "").lower()
-            if any(p in content for p in patterns["QUALIF_NAME"]):
-                # Le message suivant devrait être le nom
-                if i + 1 < len(messages) and messages[i + 1].get("role") == "user":
-                    potential_name = messages[i + 1].get("content", "").strip()
-                    if len(potential_name) >= 2 and len(potential_name) <= 50:
-                        session.qualif_data.name = potential_name
-                        print(f"🔄 Extracted name from history: {potential_name}")
-    
-    # Déterminer l'état actuel basé sur le dernier message assistant
     for state, state_patterns in patterns.items():
         if any(p in last_assistant_msg for p in state_patterns):
             session.state = state
             print(f"🔄 Detected state from history: {state}")
             break
+    
+    print(f"🔄 Reconstruction complete: state={session.state}, name={session.qualif_data.name}, pref={session.qualif_data.pref}, contact={session.qualif_data.contact}")
     
     return session
 
@@ -254,10 +279,16 @@ async def vapi_custom_llm(request: Request):
                 except Exception as e:
                     print(f"⚠️ Client memory error: {e}")
             
-            events = ENGINE.handle_message(call_id, user_message)
-            t4 = log_timer("ENGINE processed", t3)
-            
-            response_text = events[0].text if events else "Je n'ai pas compris"
+            try:
+                events = ENGINE.handle_message(call_id, user_message)
+                t4 = log_timer("ENGINE processed", t3)
+                
+                response_text = events[0].text if events else "Je n'ai pas compris"
+            except Exception as e:
+                print(f"❌ ENGINE ERROR: {e}")
+                import traceback
+                traceback.print_exc()
+                response_text = "Excusez-moi, j'ai un petit souci technique. Je vous transfère à un collègue."
             print(f"✅ Response: '{response_text[:50]}...' ({len(response_text)} chars)")
             
             # 📊 Enregistrer stats pour rapport (si conversation terminée)

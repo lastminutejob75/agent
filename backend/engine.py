@@ -614,6 +614,7 @@ class Engine:
         # ========================
         elif current_step == "QUALIF_PREF":
             channel = getattr(session, "channel", "web")
+            print(f"🔍 QUALIF_PREF handler: user_text='{user_text}'")
             
             # Vérifier que ce n'est pas une répétition
             if _detect_booking_intent(user_text):
@@ -624,6 +625,7 @@ class Engine:
             # Pas de validation stricte sur le créneau (V1)
             # On accepte la réponse telle quelle
             session.qualif_data.pref = user_text.strip()
+            print(f"🔍 QUALIF_PREF: stored pref='{session.qualif_data.pref}', calling _next_qualif_step")
             return self._next_qualif_step(session)
         
         # ========================
