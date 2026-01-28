@@ -276,8 +276,8 @@ VOCAL_CONTACT_PHONE = (
 )
 
 VOCAL_CONTACT_RETRY = (
-    "Excusez-moi, je n'ai pas bien compris. "
-    "Pouvez-vous me redonner votre numéro de téléphone ?"
+    "Excusez-moi, je n'ai pas bien noté. "
+    "Pouvez-vous me donner votre numéro complet, chiffre par chiffre ?"
 )
 
 # Créneaux

@@ -638,6 +638,8 @@ class Engine:
         elif current_step == "QUALIF_CONTACT":
             channel = getattr(session, "channel", "web")
             contact_raw = user_text.strip()
+            
+            print(f"📞 QUALIF_CONTACT: received '{contact_raw}'")
 
             # Vérifier répétition booking intent
             if _detect_booking_intent(contact_raw):
@@ -658,18 +660,28 @@ class Engine:
                 contact_raw = guards.parse_vocal_email_min(contact_raw)
 
             # ✅ Parsing téléphone dicté (vocal)
-            if channel == "vocal" and any(c.isalpha() for c in contact_raw):
-                parsed_phone = guards.parse_vocal_phone(contact_raw)
-                if len(parsed_phone) >= 10:
-                    contact_raw = parsed_phone
-                    print(f"📞 Parsed vocal phone: {contact_raw}")
+            parsed_phone = guards.parse_vocal_phone(contact_raw)
+            print(f"📞 Parsed phone: '{contact_raw}' → '{parsed_phone}' ({len(parsed_phone)} digits)")
+            
+            # Si on a au moins 10 chiffres, utiliser le parsé
+            if len(parsed_phone) >= 10:
+                contact_raw = parsed_phone[:10]  # Garder les 10 premiers
+                print(f"📞 Using parsed phone: {contact_raw}")
+            elif len(parsed_phone) >= 2 and parsed_phone.startswith(("06", "07", "01", "02", "03", "04", "05", "09")):
+                # Numéro partiel qui commence bien - demander de compléter
+                session.contact_retry_count += 1
+                if session.contact_retry_count < 3:
+                    msg = "J'ai bien noté le début. Pouvez-vous me donner le numéro complet, les dix chiffres ?"
+                    session.add_message("agent", msg)
+                    return [Event("final", msg, conv_state=session.state)]
 
             # Validation
             is_valid, contact_type = guards.validate_qualif_contact(contact_raw)
+            print(f"📞 Validation result: is_valid={is_valid}, type={contact_type}")
 
             if not is_valid:
-                # Retry 2 fois (vocal) puis transfert
-                if channel == "vocal" and session.contact_retry_count < 2:
+                # Retry 3 fois (vocal) puis transfert
+                if channel == "vocal" and session.contact_retry_count < 3:
                     session.contact_retry_count += 1
                     msg = prompts.get_message("contact_retry", channel=channel)
                     session.add_message("agent", msg)
