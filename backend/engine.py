@@ -385,7 +385,13 @@ class Engine:
 
         if faq_result.match:
             response = prompts.format_faq_response(faq_result.answer, faq_result.faq_id, channel=channel)
+            
+            # En vocal, ajouter la question de suivi
+            if channel == "vocal":
+                response = response + " " + prompts.VOCAL_FAQ_FOLLOWUP
+            
             session.state = "FAQ_ANSWERED"
+            session.no_match_turns = 0  # Reset le compteur
             session.add_message("agent", response)
             return [Event("final", response, conv_state=session.state)]
 
@@ -397,7 +403,11 @@ class Engine:
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
 
-        msg = prompts.msg_no_match_faq(config.BUSINESS_NAME, channel=channel)
+        # Message plus doux pour le premier no-match
+        if channel == "vocal":
+            msg = "Je n'ai pas cette information. Souhaitez-vous prendre un rendez-vous ?"
+        else:
+            msg = prompts.msg_no_match_faq(config.BUSINESS_NAME, channel=channel)
         session.add_message("agent", msg)
         return [Event("final", msg, conv_state=session.state)]
     

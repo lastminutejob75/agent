@@ -83,17 +83,17 @@ def default_faq_store() -> FaqStore:
         FaqItem(
             faq_id="FAQ_HORAIRES",
             question="Quels sont vos horaires ?",
-            answer="Nos horaires sont de 9h à 18h du lundi au vendredi.",
+            answer="Nous sommes ouverts du lundi au vendredi, de 9 heures à 18 heures.",
         ),
         FaqItem(
             faq_id="FAQ_TARIFS",
             question="Quels sont vos tarifs ?",
-            answer="La consultation coûte 80€ et dure 30 minutes.",
+            answer="La consultation coûte 80 euros et dure 30 minutes.",
         ),
         FaqItem(
             faq_id="FAQ_ADRESSE",
             question="Quelle est votre adresse ?",
-            answer="Nous sommes au 10 Rue de la Santé, 75014 Paris (métro Denfert-Rochereau).",
+            answer="Nous sommes au 10 Rue de la Santé, dans le 14ème arrondissement de Paris, métro Denfert-Rochereau.",
         ),
         FaqItem(
             faq_id="FAQ_PAIEMENT",
