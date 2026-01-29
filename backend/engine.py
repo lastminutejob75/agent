@@ -11,6 +11,7 @@ import re
 
 from backend import config, prompts, guards, tools_booking
 from backend.session import Session, SessionStore
+from backend.session_store_sqlite import SQLiteSessionStore
 from backend.tools_faq import FaqStore, FaqResult
 from backend.entity_extraction import extract_entities, get_next_missing_field
 
@@ -197,9 +198,14 @@ class Engine:
     Applique strictement le PRD + SYSTEM_PROMPT.
     """
     
-    def __init__(self, session_store: SessionStore, faq_store: FaqStore):
+    def __init__(self, session_store, faq_store: FaqStore):
         self.session_store = session_store
         self.faq_store = faq_store
+    
+    def _save_session(self, session: Session) -> None:
+        """Sauvegarde la session (si le store le supporte)."""
+        if hasattr(self.session_store, 'save'):
+            self.session_store.save(session)
     
     def handle_message(self, conv_id: str, user_text: str) -> List[Event]:
         """
@@ -593,6 +599,7 @@ class Engine:
             # Réponse valide → stocker et continuer
             session.qualif_data.name = cleaned_name
             print(f"✅ QUALIF_NAME: stored name='{session.qualif_data.name}'")
+            self._save_session(session)
             return self._next_qualif_step(session)
         
         # ========================
@@ -661,6 +668,7 @@ class Engine:
             # On accepte la réponse telle quelle
             session.qualif_data.pref = user_text.strip()
             print(f"🔍 QUALIF_PREF: stored pref='{session.qualif_data.pref}', calling _next_qualif_step")
+            self._save_session(session)
             return self._next_qualif_step(session)
         
         # ========================
@@ -848,6 +856,9 @@ class Engine:
         print(f"✅ _propose_slots: proposing {len(slots)} slots")
         session.add_message("agent", msg)
         
+        # 💾 Sauvegarder IMMÉDIATEMENT (crucial pour ne pas perdre les pending_slots)
+        self._save_session(session)
+        
         return [Event("final", msg, conv_state=session.state)]
     
     def _handle_booking_confirm(self, session: Session, user_text: str) -> List[Event]:
@@ -889,6 +900,9 @@ class Engine:
             # Stocker temporairement le slot choisi (on bookera après confirmation du contact)
             session.pending_slot_choice = slot_idx
             print(f"📌 Stored pending_slot_choice={slot_idx}")
+            
+            # 💾 Sauvegarder le choix immédiatement
+            self._save_session(session)
             
             # 📱 Maintenant demander le contact (avec numéro auto si disponible)
             if channel == "vocal" and session.customer_phone:
@@ -1237,7 +1251,8 @@ def create_engine() -> Engine:
     """Factory pour créer l'engine avec ses dépendances"""
     from backend.tools_faq import default_faq_store
     
-    session_store = SessionStore()
+    # Utiliser SQLite pour persistance des sessions (robuste aux redémarrages)
+    session_store = SQLiteSessionStore()
     faq_store = default_faq_store()
     
     return Engine(session_store=session_store, faq_store=faq_store)
