@@ -1111,7 +1111,26 @@ class Engine:
             return self._propose_slots(session)
         
         elif intent == "NO":
-            # Numéro incorrect → redemander
+            # Numéro incorrect
+            # Vérifier si l'utilisateur donne une correction partielle (ex: "non c'est 8414")
+            digits = guards.parse_vocal_phone(user_text)
+            
+            if len(digits) >= 4 and len(digits) < 10 and session.qualif_data.contact:
+                # Correction partielle détectée - essayer de corriger les derniers chiffres
+                current_phone = session.qualif_data.contact
+                # Remplacer les derniers chiffres
+                corrected_phone = current_phone[:10-len(digits)] + digits
+                print(f"📞 Correction partielle: {current_phone} → {corrected_phone}")
+                
+                if len(corrected_phone) == 10:
+                    session.qualif_data.contact = corrected_phone
+                    phone_formatted = prompts.format_phone_for_voice(corrected_phone)
+                    msg = f"D'accord, donc c'est bien le {phone_formatted} ?"
+                    # Rester en CONTACT_CONFIRM pour re-confirmer
+                    session.add_message("agent", msg)
+                    return [Event("final", msg, conv_state=session.state)]
+            
+            # Sinon, redemander le numéro complet
             session.state = "QUALIF_CONTACT"
             session.qualif_data.contact = None
             session.qualif_data.contact_type = None
