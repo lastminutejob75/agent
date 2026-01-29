@@ -512,23 +512,27 @@ class Engine:
         
         # 📱 Si le prochain champ est "contact" ET qu'on a le numéro de l'appelant → l'utiliser directement
         if next_field == "contact" and channel == "vocal" and session.customer_phone:
-            phone = session.customer_phone
-            # Nettoyer le format (+33612345678 → 0612345678)
-            if phone.startswith("+33"):
-                phone = "0" + phone[3:]
-            elif phone.startswith("33"):
-                phone = "0" + phone[2:]
-            phone = phone.replace(" ", "").replace("-", "").replace(".", "")
-            
-            if len(phone) >= 10:
-                session.qualif_data.contact = phone[:10]
-                session.qualif_data.contact_type = "phone"
-                session.state = "CONTACT_CONFIRM"
-                phone_formatted = prompts.format_phone_for_voice(phone[:10])
-                msg = f"Votre numéro est bien le {phone_formatted} ?"
-                print(f"📱 Using caller ID directly: {phone[:10]}")
-                session.add_message("agent", msg)
-                return [Event("final", msg, conv_state=session.state)]
+            try:
+                phone = str(session.customer_phone)
+                # Nettoyer le format (+33612345678 → 0612345678)
+                if phone.startswith("+33"):
+                    phone = "0" + phone[3:]
+                elif phone.startswith("33"):
+                    phone = "0" + phone[2:]
+                phone = phone.replace(" ", "").replace("-", "").replace(".", "")
+                
+                if len(phone) >= 10:
+                    session.qualif_data.contact = phone[:10]
+                    session.qualif_data.contact_type = "phone"
+                    session.state = "CONTACT_CONFIRM"
+                    phone_formatted = prompts.format_phone_for_voice(phone[:10])
+                    msg = f"Votre numéro est bien le {phone_formatted} ?"
+                    print(f"📱 Using caller ID directly: {phone[:10]}")
+                    session.add_message("agent", msg)
+                    return [Event("final", msg, conv_state=session.state)]
+            except Exception as e:
+                print(f"⚠️ Error using caller ID: {e}")
+                # Continue avec le flow normal (demander le numéro)
         
         # Mapper le champ vers l'état
         state_map = {
@@ -866,23 +870,27 @@ class Engine:
             
             # 📱 Maintenant demander le contact (avec numéro auto si disponible)
             if channel == "vocal" and session.customer_phone:
-                phone = session.customer_phone
-                # Nettoyer le format
-                if phone.startswith("+33"):
-                    phone = "0" + phone[3:]
-                elif phone.startswith("33"):
-                    phone = "0" + phone[2:]
-                phone = phone.replace(" ", "").replace("-", "").replace(".", "")
-                
-                if len(phone) >= 10:
-                    session.qualif_data.contact = phone[:10]
-                    session.qualif_data.contact_type = "phone"
-                    session.state = "CONTACT_CONFIRM"
-                    phone_formatted = prompts.format_phone_for_voice(phone[:10])
-                    msg = f"Parfait, {slot_label} pour {name}. Votre numéro est bien le {phone_formatted} ?"
-                    print(f"📱 Using caller ID for confirmation: {phone[:10]}")
-                    session.add_message("agent", msg)
-                    return [Event("final", msg, conv_state=session.state)]
+                try:
+                    phone = str(session.customer_phone)
+                    # Nettoyer le format
+                    if phone.startswith("+33"):
+                        phone = "0" + phone[3:]
+                    elif phone.startswith("33"):
+                        phone = "0" + phone[2:]
+                    phone = phone.replace(" ", "").replace("-", "").replace(".", "")
+                    
+                    if len(phone) >= 10:
+                        session.qualif_data.contact = phone[:10]
+                        session.qualif_data.contact_type = "phone"
+                        session.state = "CONTACT_CONFIRM"
+                        phone_formatted = prompts.format_phone_for_voice(phone[:10])
+                        msg = f"Parfait, {slot_label} pour {name}. Votre numéro est bien le {phone_formatted} ?"
+                        print(f"📱 Using caller ID for confirmation: {phone[:10]}")
+                        session.add_message("agent", msg)
+                        return [Event("final", msg, conv_state=session.state)]
+                except Exception as e:
+                    print(f"⚠️ Error using caller ID in booking confirm: {e}")
+                    # Continue avec le flow normal
             
             # Sinon demander le contact normalement
             session.state = "QUALIF_CONTACT"

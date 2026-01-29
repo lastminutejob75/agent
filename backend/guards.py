@@ -17,20 +17,26 @@ from backend import config, prompts
 
 _NAME_FILLER_PATTERNS = [
     r"^c'est\s+",
+    r"^c\s+est\s+",  # "c est" sans apostrophe
     r"^je\s+m'appelle\s+",
+    r"^je\s+m\s+appelle\s+",  # "je m appelle" sans apostrophe
     r"^je\s+suis\s+",
     r"^mon\s+nom\s+c'est\s+",
+    r"^mon\s+nom\s+c\s+est\s+",  # sans apostrophe
     r"^mon\s+nom\s+est\s+",
     r"^moi\s+c'est\s+",
+    r"^moi\s+c\s+est\s+",  # sans apostrophe
     r"^euh\s+",
     r"^ben\s+",
     r"^alors\s+",
     r"^donc\s+",
-    r"^oui\s+",
     r"^oui,?\s*c'est\s+",
+    r"^oui,?\s*c\s+est\s+",  # sans apostrophe
+    r"^oui\s+",
     r"^bonjour\s+",
     r"^bonjour,?\s*",
     r"\s*s'il\s+vous\s+pla[iî]t\s*$",
+    r"\s*s\s+il\s+vous\s+pla[iî]t\s*$",  # sans apostrophe
     r"\s*voilà\s*$",
 ]
 
