@@ -211,6 +211,8 @@ class Engine:
         session = self.session_store.get_or_create(conv_id)
         session.add_message("user", user_text)
         
+        print(f"🔍 handle_message: conv_id={conv_id}, state={session.state}, user='{user_text[:50]}'")
+        
         # ========================
         # TERMINAL GATE (mourir proprement)
         # ========================
