@@ -545,6 +545,8 @@ class Engine:
         
         # Question adaptée au canal AVEC prénom si disponible
         client_name = session.qualif_data.name or ""
+        print(f"🔍 _next_qualif_step: client_name='{client_name}', channel={channel}")
+        
         if client_name and channel == "vocal":
             question = prompts.get_qualif_question_with_name(next_field, client_name, channel=channel)
         else:
@@ -587,6 +589,7 @@ class Engine:
             
             # Réponse valide → stocker et continuer
             session.qualif_data.name = cleaned_name
+            print(f"✅ QUALIF_NAME: stored name='{session.qualif_data.name}'")
             return self._next_qualif_step(session)
         
         # ========================
