@@ -855,6 +855,11 @@ class Engine:
         """
         channel = getattr(session, "channel", "web")
         
+        # 🔄 Si pas de slots en mémoire (session perdue) → re-proposer
+        if not session.pending_slots or len(session.pending_slots) == 0:
+            print(f"⚠️ WAIT_CONFIRM but no pending_slots → re-proposing")
+            return self._propose_slots(session)
+        
         # Essayer la nouvelle détection de slot
         slot_idx = detect_slot_choice(user_text, num_slots=len(session.pending_slots or []))
         
