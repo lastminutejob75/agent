@@ -112,8 +112,11 @@ class SQLiteSessionStore:
             # Partial data
             "partial_phone_digits": session.partial_phone_digits,
             
-            # Pending data (JSON)
-            "pending_slots_json": json.dumps(session.pending_slots) if session.pending_slots else None,
+            # Pending data (JSON) - convertir SlotDisplay en dict
+            "pending_slots_json": json.dumps([
+                {"idx": s.idx, "label": s.label, "slot_id": s.slot_id} 
+                for s in session.pending_slots
+            ]) if session.pending_slots else None,
             "pending_slot_choice": session.pending_slot_choice,
             "pending_cancel_slot_json": json.dumps(session.pending_cancel_slot) if session.pending_cancel_slot else None,
             
@@ -168,11 +171,20 @@ class SQLiteSessionStore:
         # Partial data
         session.partial_phone_digits = row[12] or ""
         
-        # Pending data (JSON)
+        # Pending data (JSON) - recréer les SlotDisplay
         if row[13]:  # pending_slots_json
             try:
-                session.pending_slots = json.loads(row[13])
-            except:
+                from backend.prompts import SlotDisplay
+                slots_data = json.loads(row[13])
+                session.pending_slots = [
+                    SlotDisplay(idx=s["idx"], label=s["label"], slot_id=s["slot_id"])
+                    for s in slots_data
+                ]
+                # Aussi remplir les pending_slot_ids et labels pour compatibilité
+                session.pending_slot_ids = [s.slot_id for s in session.pending_slots]
+                session.pending_slot_labels = [s.label for s in session.pending_slots]
+            except Exception as e:
+                print(f"⚠️ Error deserializing pending_slots: {e}")
                 session.pending_slots = []
         
         session.pending_slot_choice = row[14]
