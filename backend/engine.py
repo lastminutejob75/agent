@@ -501,12 +501,13 @@ class Engine:
         # DEBUG: Log context
         print(f"🔍 _next_qualif_step: context={context}")
         
-        next_field = get_next_missing_field(context)
+        # Skip contact pour le moment - sera demandé après le choix de créneau
+        next_field = get_next_missing_field(context, skip_contact=True)
         print(f"🔍 _next_qualif_step: next_field={next_field}")
         
         if not next_field:
-            # Tout est rempli → proposer créneaux
-            print(f"🔍 _next_qualif_step: ALL FILLED → propose_slots")
+            # name + pref remplis → proposer créneaux (contact viendra après)
+            print(f"🔍 _next_qualif_step: name+pref FILLED → propose_slots")
             return self._propose_slots(session)
         
         # 📱 Si le prochain champ est "contact" ET qu'on a le numéro de l'appelant → l'utiliser directement
@@ -685,11 +686,11 @@ class Engine:
                     session.qualif_data.contact_type = contact_type
                     return self._propose_slots(session)
 
-            # ✅ ACCUMULATION des chiffres du téléphone (vocal)
-            new_digits = guards.parse_vocal_phone(contact_raw)
-            print(f"📞 New digits from '{contact_raw}': '{new_digits}' ({len(new_digits)} digits)")
-            
-            if channel == "vocal":
+            # ✅ ACCUMULATION des chiffres du téléphone (vocal) - seulement si pas de numéro auto
+            if channel == "vocal" and not session.customer_phone:
+                new_digits = guards.parse_vocal_phone(contact_raw)
+                print(f"📞 New digits from '{contact_raw}': '{new_digits}' ({len(new_digits)} digits)")
+                
                 # Ajouter aux chiffres déjà accumulés
                 session.partial_phone_digits += new_digits
                 total_digits = session.partial_phone_digits
@@ -856,22 +857,40 @@ class Engine:
                 slot_idx = None
         
         if slot_idx is not None:
-            # Booker
-            success = tools_booking.book_slot_from_session(session, slot_idx)
-
-            if not success:
-                session.state = "TRANSFERRED"
-                msg = prompts.MSG_SLOT_ALREADY_BOOKED
-                session.add_message("agent", msg)
-                return [Event("final", msg, conv_state=session.state)]
-
-            # Confirmer avec message adapté au canal
+            # Stocker le choix de créneau
             slot_label = tools_booking.get_label_for_choice(session, slot_idx) or ""
             name = session.qualif_data.name or ""
-            motif = session.qualif_data.motif or ""
-            msg = prompts.format_booking_confirmed(slot_label, name=name, motif=motif, channel=channel)
             
-            session.state = "CONFIRMED"
+            # Stocker temporairement le slot choisi (on bookera après confirmation du contact)
+            session.pending_slot_choice = slot_idx
+            
+            # 📱 Maintenant demander le contact (avec numéro auto si disponible)
+            if channel == "vocal" and session.customer_phone:
+                phone = session.customer_phone
+                # Nettoyer le format
+                if phone.startswith("+33"):
+                    phone = "0" + phone[3:]
+                elif phone.startswith("33"):
+                    phone = "0" + phone[2:]
+                phone = phone.replace(" ", "").replace("-", "").replace(".", "")
+                
+                if len(phone) >= 10:
+                    session.qualif_data.contact = phone[:10]
+                    session.qualif_data.contact_type = "phone"
+                    session.state = "CONTACT_CONFIRM"
+                    phone_formatted = prompts.format_phone_for_voice(phone[:10])
+                    msg = f"Parfait, {slot_label} pour {name}. Votre numéro est bien le {phone_formatted} ?"
+                    print(f"📱 Using caller ID for confirmation: {phone[:10]}")
+                    session.add_message("agent", msg)
+                    return [Event("final", msg, conv_state=session.state)]
+            
+            # Sinon demander le contact normalement
+            session.state = "QUALIF_CONTACT"
+            first_name = name.split()[0] if name else ""
+            if first_name and channel == "vocal":
+                msg = f"Parfait, {slot_label} pour {first_name}. Et votre numéro de téléphone pour vous rappeler ?"
+            else:
+                msg = prompts.get_qualif_question("contact", channel=channel)
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
 
@@ -1051,7 +1070,32 @@ class Engine:
         intent = detect_intent(user_text)
         
         if intent == "YES":
-            # Numéro confirmé → proposer créneaux
+            # Numéro confirmé
+            
+            # Si on a déjà un slot choisi (nouveau flow) → booker et confirmer
+            if session.pending_slot_choice is not None:
+                slot_idx = session.pending_slot_choice
+                
+                # Booker le créneau
+                success = tools_booking.book_slot_from_session(session, slot_idx)
+                
+                if not success:
+                    session.state = "TRANSFERRED"
+                    msg = prompts.MSG_SLOT_ALREADY_BOOKED
+                    session.add_message("agent", msg)
+                    return [Event("final", msg, conv_state=session.state)]
+                
+                # Confirmer
+                slot_label = tools_booking.get_label_for_choice(session, slot_idx) or ""
+                name = session.qualif_data.name or ""
+                motif = session.qualif_data.motif or ""
+                msg = prompts.format_booking_confirmed(slot_label, name=name, motif=motif, channel=channel)
+                
+                session.state = "CONFIRMED"
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+            
+            # Sinon (ancien flow) → proposer créneaux
             return self._propose_slots(session)
         
         elif intent == "NO":
@@ -1059,6 +1103,7 @@ class Engine:
             session.state = "QUALIF_CONTACT"
             session.qualif_data.contact = None
             session.qualif_data.contact_type = None
+            session.partial_phone_digits = ""  # Reset accumulation
             msg = prompts.VOCAL_CONTACT_CONFIRM_RETRY
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]

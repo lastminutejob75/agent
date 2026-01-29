@@ -57,6 +57,7 @@ class Session:
     pending_slot_ids: List[int] = field(default_factory=list)
     pending_slot_labels: List[str] = field(default_factory=list)
     pending_slots: List = field(default_factory=list)  # SlotDisplay objects
+    pending_slot_choice: Optional[int] = None  # Slot choisi (avant confirmation contact)
     
     # CANCEL/MODIFY pending
     pending_cancel_slot: Optional[Dict] = None  # RDV à annuler/modifier
@@ -83,6 +84,7 @@ class Session:
         self.pending_slot_ids = []
         self.pending_slot_labels = []
         self.pending_slots = []
+        self.pending_slot_choice = None
         self.pending_cancel_slot = None
         # Note: on ne reset PAS customer_phone car c'est lié à l'appel
 
