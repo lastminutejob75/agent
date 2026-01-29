@@ -25,74 +25,83 @@ report_generator = get_report_generator()
 def _reconstruct_session_from_history(session, messages: list):
     """
     Reconstruit l'état de la session depuis l'historique des messages.
-    Nécessaire si la session en mémoire a été perdue.
+    Nécessaire si la session en mémoire a été perdue (redémarrage Railway).
     
-    Analyse les messages assistant pour déterminer où on en est.
-    Extrait aussi les données de qualification déjà collectées.
+    STRATÉGIE: Extraire TOUTES les données depuis l'historique
     """
+    from backend.guards import clean_name_from_vocal
+    
     # Patterns pour détecter l'état
     patterns = {
         "QUALIF_NAME": ["c'est à quel nom", "quel nom", "votre nom"],
         "QUALIF_PREF": ["matin ou l'après-midi", "matin ou après-midi", "préférez"],
         "QUALIF_CONTACT": ["numéro de téléphone", "téléphone pour vous rappeler", "redonner votre numéro"],
-        "CONTACT_CONFIRM": ["j'ai noté le", "c'est bien ça", "est-ce correct", "votre numéro est bien"],
-        "WAIT_CONFIRM": ["créneaux disponibles", "premier choix", "lequel vous convient", "j'ai trois créneaux", "j'ai deux créneaux", "dites un, deux ou trois", "dites un ou deux"],
-        "CONFIRMED": ["rendez-vous est confirmé", "c'est tout bon"],
+        "CONTACT_CONFIRM": ["votre numéro est bien", "j'ai noté le", "c'est bien ça", "est-ce correct"],
+        "WAIT_CONFIRM": ["j'ai trois créneaux", "j'ai deux créneaux", "j'ai un créneau", "dites un, deux ou trois", "dites un ou deux"],
+        "CONFIRMED": ["rendez-vous est confirmé", "c'est confirmé"],
     }
     
     print(f"🔄 Reconstructing session from {len(messages)} messages")
     
-    # Parcourir les messages pour extraire les données de qualification
+    # Parcourir TOUS les messages pour extraire les données
     for i, msg in enumerate(messages):
         if msg.get("role") == "assistant":
             content = msg.get("content", "").lower()
             
-            # Si on a demandé le nom et qu'il y a une réponse user
+            # Extraire le nom
             if any(p in content for p in patterns["QUALIF_NAME"]):
                 if i + 1 < len(messages) and messages[i + 1].get("role") == "user":
                     potential_name = messages[i + 1].get("content", "").strip()
-                    # Filtrer les réponses qui ne sont pas des noms
                     if (len(potential_name) >= 2 and 
                         len(potential_name) <= 50 and
                         "matin" not in potential_name.lower() and
                         "après" not in potential_name.lower()):
-                        # Nettoyer le nom (important !)
-                        from backend.guards import clean_name_from_vocal
                         cleaned_name = clean_name_from_vocal(potential_name)
                         if len(cleaned_name) >= 2:
                             session.qualif_data.name = cleaned_name
-                            print(f"🔄 Extracted name from history: '{potential_name}' → '{cleaned_name}'")
+                            print(f"🔄 Name: '{potential_name}' → '{cleaned_name}'")
             
-            # Si on a demandé la préférence et qu'il y a une réponse user
+            # Extraire la préférence
             if any(p in content for p in patterns["QUALIF_PREF"]):
                 if i + 1 < len(messages) and messages[i + 1].get("role") == "user":
                     potential_pref = messages[i + 1].get("content", "").strip()
                     if potential_pref and len(potential_pref) <= 50:
                         session.qualif_data.pref = potential_pref
-                        print(f"🔄 Extracted pref from history: {potential_pref}")
+                        print(f"🔄 Pref: {potential_pref}")
             
-            # Si on a demandé le contact et qu'il y a une réponse user
+            # Extraire le contact
             if any(p in content for p in patterns["QUALIF_CONTACT"]):
                 if i + 1 < len(messages) and messages[i + 1].get("role") == "user":
                     potential_contact = messages[i + 1].get("content", "").strip()
                     if potential_contact:
                         session.qualif_data.contact = potential_contact
-                        print(f"🔄 Extracted contact from history: {potential_contact}")
+                        print(f"🔄 Contact: {potential_contact}")
     
-    # Déterminer l'état actuel basé sur le dernier message assistant
+    # Déterminer l'état ACTUEL basé sur le dernier message assistant
     last_assistant_msg = ""
     for msg in reversed(messages):
         if msg.get("role") == "assistant":
             last_assistant_msg = msg.get("content", "").lower()
             break
     
+    detected_state = None
     for state, state_patterns in patterns.items():
         if any(p in last_assistant_msg for p in state_patterns):
-            session.state = state
-            print(f"🔄 Detected state from history: {state}")
+            detected_state = state
             break
     
-    print(f"🔄 Reconstruction complete: state={session.state}, name={session.qualif_data.name}, pref={session.qualif_data.pref}, contact={session.qualif_data.contact}")
+    # Si état détecté
+    if detected_state:
+        session.state = detected_state
+        print(f"🔄 State: {detected_state} (from: '{last_assistant_msg[:60]}...')")
+        
+        # Si WAIT_CONFIRM → on doit reproposer les créneaux (on ne peut pas les reconstruire)
+        if detected_state == "WAIT_CONFIRM":
+            print(f"⚠️ WAIT_CONFIRM detected - slots will be re-fetched on next handler call")
+    else:
+        print(f"⚠️ Could not detect state from: '{last_assistant_msg[:60]}...'")
+    
+    print(f"🔄 Reconstruction complete: state={session.state}, name={session.qualif_data.name}, pref={session.qualif_data.pref}")
     
     return session
 
