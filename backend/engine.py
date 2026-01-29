@@ -509,6 +509,26 @@ class Engine:
             print(f"🔍 _next_qualif_step: ALL FILLED → propose_slots")
             return self._propose_slots(session)
         
+        # 📱 Si le prochain champ est "contact" ET qu'on a le numéro de l'appelant → l'utiliser directement
+        if next_field == "contact" and channel == "vocal" and session.customer_phone:
+            phone = session.customer_phone
+            # Nettoyer le format (+33612345678 → 0612345678)
+            if phone.startswith("+33"):
+                phone = "0" + phone[3:]
+            elif phone.startswith("33"):
+                phone = "0" + phone[2:]
+            phone = phone.replace(" ", "").replace("-", "").replace(".", "")
+            
+            if len(phone) >= 10:
+                session.qualif_data.contact = phone[:10]
+                session.qualif_data.contact_type = "phone"
+                session.state = "CONTACT_CONFIRM"
+                phone_formatted = prompts.format_phone_for_voice(phone[:10])
+                msg = f"Votre numéro est bien le {phone_formatted} ?"
+                print(f"📱 Using caller ID directly: {phone[:10]}")
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+        
         # Mapper le champ vers l'état
         state_map = {
             "name": "QUALIF_NAME",
