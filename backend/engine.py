@@ -855,6 +855,8 @@ class Engine:
         """
         channel = getattr(session, "channel", "web")
         
+        print(f"🔍 _handle_booking_confirm: user_text='{user_text}', pending_slots={len(session.pending_slots or [])}")
+        
         # 🔄 Si pas de slots en mémoire (session perdue) → re-proposer
         if not session.pending_slots or len(session.pending_slots) == 0:
             print(f"⚠️ WAIT_CONFIRM but no pending_slots → re-proposing")
@@ -862,6 +864,7 @@ class Engine:
         
         # Essayer la nouvelle détection de slot
         slot_idx = detect_slot_choice(user_text, num_slots=len(session.pending_slots or []))
+        print(f"🔍 detect_slot_choice: '{user_text}' → slot_idx={slot_idx}")
         
         # Si pas trouvé avec la nouvelle méthode, fallback sur l'ancienne
         if slot_idx is None:
@@ -870,12 +873,20 @@ class Engine:
                 slot_idx = None
         
         if slot_idx is not None:
+            print(f"✅ Slot choice validated: slot_idx={slot_idx}")
+            
             # Stocker le choix de créneau
-            slot_label = tools_booking.get_label_for_choice(session, slot_idx) or ""
+            try:
+                slot_label = tools_booking.get_label_for_choice(session, slot_idx) or "votre créneau"
+            except Exception as e:
+                print(f"⚠️ Error getting slot label: {e}")
+                slot_label = "votre créneau"
+            
             name = session.qualif_data.name or ""
             
             # Stocker temporairement le slot choisi (on bookera après confirmation du contact)
             session.pending_slot_choice = slot_idx
+            print(f"📌 Stored pending_slot_choice={slot_idx}")
             
             # 📱 Maintenant demander le contact (avec numéro auto si disponible)
             if channel == "vocal" and session.customer_phone:
@@ -899,15 +910,19 @@ class Engine:
                         return [Event("final", msg, conv_state=session.state)]
                 except Exception as e:
                     print(f"⚠️ Error using caller ID in booking confirm: {e}")
+                    import traceback
+                    traceback.print_exc()
                     # Continue avec le flow normal
             
             # Sinon demander le contact normalement
+            print(f"📞 No caller ID, asking for contact normally")
             session.state = "QUALIF_CONTACT"
             first_name = name.split()[0] if name else ""
             if first_name and channel == "vocal":
                 msg = f"Parfait, {slot_label} pour {first_name}. Et votre numéro de téléphone pour vous rappeler ?"
             else:
                 msg = prompts.get_qualif_question("contact", channel=channel)
+            print(f"🔍 Asking for contact: '{msg}'")
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
 
