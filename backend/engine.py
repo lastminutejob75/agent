@@ -705,18 +705,11 @@ class Engine:
                         session.add_message("agent", msg)
                         return [Event("final", msg, conv_state=session.state)]
                     
-                    # Encourager à continuer
-                    missing = 10 - len(total_digits)
+                    # Messages ultra-courts pour pas ralentir
                     if len(total_digits) == 0:
-                        msg = "Je vous écoute pour votre numéro."
-                    elif len(total_digits) <= 2:
-                        msg = "Continuez, j'écoute."
-                    elif len(total_digits) <= 6:
-                        formatted = ", ".join(total_digits[i:i+2] for i in range(0, len(total_digits), 2))
-                        msg = f"J'ai {formatted}. Continuez."
-                    else:
-                        formatted = ", ".join(total_digits[i:i+2] for i in range(0, len(total_digits), 2))
-                        msg = f"J'ai {formatted}. Plus que {missing} chiffres."
+                        msg = "J'écoute."
+                    elif len(total_digits) < 10:
+                        msg = "Oui, continuez."
                     
                     session.add_message("agent", msg)
                     return [Event("final", msg, conv_state=session.state)]
