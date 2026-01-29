@@ -56,8 +56,12 @@ def _reconstruct_session_from_history(session, messages: list):
                         len(potential_name) <= 50 and
                         "matin" not in potential_name.lower() and
                         "après" not in potential_name.lower()):
-                        session.qualif_data.name = potential_name
-                        print(f"🔄 Extracted name from history: {potential_name}")
+                        # Nettoyer le nom (important !)
+                        from backend.guards import clean_name_from_vocal
+                        cleaned_name = clean_name_from_vocal(potential_name)
+                        if len(cleaned_name) >= 2:
+                            session.qualif_data.name = cleaned_name
+                            print(f"🔄 Extracted name from history: '{potential_name}' → '{cleaned_name}'")
             
             # Si on a demandé la préférence et qu'il y a une réponse user
             if any(p in content for p in patterns["QUALIF_PREF"]):
