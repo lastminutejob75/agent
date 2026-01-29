@@ -217,6 +217,7 @@ class SQLiteSessionStore:
         
         # Sauvegarder dans SQLite
         data = self._serialize_session(session)
+        print(f"💾 Saving session {session.conv_id}: state={session.state}, pending_slots={len(session.pending_slots or [])}")
         
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -256,6 +257,7 @@ class SQLiteSessionStore:
         """Récupère une session depuis SQLite."""
         # Check cache mémoire d'abord
         if conv_id in self._memory_cache:
+            print(f"💾 Loading session {conv_id} from MEMORY cache")
             return self._memory_cache[conv_id]
         
         # Sinon chercher dans SQLite
@@ -267,9 +269,11 @@ class SQLiteSessionStore:
         conn.close()
         
         if not row:
+            print(f"💾 Session {conv_id} NOT FOUND in SQLite")
             return None
         
         session = self._deserialize_session(row)
+        print(f"💾 Loaded session {conv_id} from SQLite: state={session.state}, pending_slots={len(session.pending_slots or [])}")
         self._memory_cache[conv_id] = session
         return session
     
