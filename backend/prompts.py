@@ -718,19 +718,19 @@ def format_slot_proposal_vocal(slots: List[SlotDisplay]) -> str:
         )
     elif len(slots) == 2:
         return (
-            f"J'ai deux créneaux pour vous. "
-            f"Soit {slots[0].label}. "
-            f"Soit {slots[1].label}. "
-            "Lequel vous préférez ?"
+            f"J'ai deux créneaux. "
+            f"Un : {slots[0].label}. "
+            f"Deux : {slots[1].label}. "
+            "Dites un ou deux."
         )
     else:
         # 3 créneaux (cas standard)
         return (
-            f"J'ai trois créneaux disponibles. "
-            f"Premier choix : {slots[0].label}. "
-            f"Deuxième choix : {slots[1].label}. "
-            f"Troisième choix : {slots[2].label}. "
-            "Lequel vous convient le mieux ?"
+            f"J'ai trois créneaux. "
+            f"Un : {slots[0].label}. "
+            f"Deux : {slots[1].label}. "
+            f"Trois : {slots[2].label}. "
+            "Dites un, deux ou trois."
         )
 
 def format_booking_confirmed(slot_label: str, name: str = "", motif: str = "", channel: str = "web") -> str:
