@@ -355,12 +355,16 @@ def get_missing_fields(context: Dict[str, Any], skip_motif: bool = True, skip_co
     return missing
 
 
-def get_next_missing_field(context: Dict[str, Any]) -> Optional[str]:
+def get_next_missing_field(context: Dict[str, Any], skip_contact: bool = False) -> Optional[str]:
     """
     Retourne le prochain champ manquant pour la qualification.
+    
+    Args:
+        context: Contexte de la session
+        skip_contact: Si True, ne demande pas le contact (sera demandé après le choix de créneau)
     
     Returns:
         Le prochain champ à demander, ou None si tout est rempli
     """
-    missing = get_missing_fields(context)
+    missing = get_missing_fields(context, skip_contact=skip_contact)
     return missing[0] if missing else None

@@ -444,10 +444,11 @@ class Engine:
             "contact": session.qualif_data.contact,
         }
         
-        next_field = get_next_missing_field(context)
+        # Skip contact pour le moment - sera demandé après le choix de créneau
+        next_field = get_next_missing_field(context, skip_contact=True)
         
         if not next_field:
-            # Tout est rempli (rare mais possible) → proposer créneaux
+            # name + pref remplis → proposer créneaux
             return self._propose_slots(session)
         
         # Mapper le champ vers l'état
