@@ -615,6 +615,14 @@ class Engine:
             cleaned_name = guards.clean_name_from_vocal(user_text)
             print(f"🔍 QUALIF_NAME: raw='{user_text}' → cleaned='{cleaned_name}'")
             
+            # Sécurité : si le nom commence par des mots-outils, prendre le dernier mot
+            bad_starts = ["je", "j", "m", "appelle", "suis", "c", "est", "mon", "nom"]
+            words = cleaned_name.split()
+            if len(words) > 1 and words[0].lower() in bad_starts:
+                # Prendre le dernier mot (le vrai prénom)
+                cleaned_name = words[-1]
+                print(f"🔧 QUALIF_NAME: corrected to last word: '{cleaned_name}'")
+            
             # Vérifier longueur minimale (un nom fait au moins 2 caractères)
             if len(cleaned_name) < 2:
                 # Redemander poliment
