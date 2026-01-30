@@ -120,10 +120,15 @@ def detect_intent(text: str) -> str:
         return "UNCLEAR"
     
     # 1. Réponses simples OUI/NON (prioritaire pour le first message)
-    # OUI
+    # OUI - matching ultra robuste pour gérer les variations de transcription
     for pattern in prompts.YES_PATTERNS:
-        if t == pattern or t.startswith(pattern + " ") or t.endswith(" " + pattern):
+        # Match avec word boundary pour éviter les faux positifs
+        if re.search(r'\b' + re.escape(pattern) + r'\b', t):
             return "YES"
+    
+    # Fallback pour "oui" seul même si mal transcrit
+    if t in ["oui", "ui", "wi", "oui.", "oui,", "ouais", "ouai"]:
+        return "YES"
     
     # NON - vérifier si c'est suivi d'une demande spécifique
     is_no = any(t == p or t.startswith(p + " ") or t.startswith(p + ",") for p in prompts.NO_PATTERNS)
