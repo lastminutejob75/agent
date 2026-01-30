@@ -261,12 +261,17 @@ class SQLiteSessionStore:
     
     def get(self, conv_id: str) -> Optional[Session]:
         """Récupère une session depuis SQLite."""
-        # Check cache mémoire d'abord
+        import time
+        t_start = time.time()
+        
+        # Check cache mémoire d'abord (RAPIDE)
         if conv_id in self._memory_cache:
-            print(f"💾 Loading session {conv_id} from MEMORY cache")
+            elapsed = (time.time() - t_start) * 1000
+            print(f"💾 Session {conv_id} from MEMORY cache ({elapsed:.0f}ms)")
             return self._memory_cache[conv_id]
         
-        # Sinon chercher dans SQLite
+        # Sinon chercher dans SQLite (LENT)
+        t_db_start = time.time()
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -274,12 +279,15 @@ class SQLiteSessionStore:
         row = cursor.fetchone()
         conn.close()
         
+        elapsed_db = (time.time() - t_db_start) * 1000
+        
         if not row:
-            print(f"💾 Session {conv_id} NOT FOUND in SQLite")
+            print(f"💾 Session {conv_id} NOT FOUND in SQLite ({elapsed_db:.0f}ms)")
             return None
         
         session = self._deserialize_session(row)
-        print(f"💾 Loaded session {conv_id} from SQLite: state={session.state}, pending_slots={len(session.pending_slots or [])}")
+        elapsed_total = (time.time() - t_start) * 1000
+        print(f"💾 Loaded {conv_id} from SQLite ({elapsed_total:.0f}ms): state={session.state}, name={session.qualif_data.name}, pending_slots={len(session.pending_slots or [])}")
         self._memory_cache[conv_id] = session
         return session
     

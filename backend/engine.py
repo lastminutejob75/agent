@@ -214,10 +214,16 @@ class Engine:
         Returns:
             Liste d'events à envoyer via SSE
         """
+        import time
+        t_load_start = time.time()
+        
         session = self.session_store.get_or_create(conv_id)
+        t_load_end = time.time()
+        print(f"⏱️ Session loaded in {(t_load_end - t_load_start) * 1000:.0f}ms")
+        
         session.add_message("user", user_text)
         
-        print(f"🔍 handle_message: conv_id={conv_id}, state={session.state}, user='{user_text[:50]}'")
+        print(f"🔍 handle_message: conv_id={conv_id}, state={session.state}, name={session.qualif_data.name}, pending_slots={len(session.pending_slots or [])}, user='{user_text[:50]}'")
         
         # ========================
         # TERMINAL GATE (mourir proprement)
