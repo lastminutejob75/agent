@@ -337,9 +337,15 @@ class Engine:
                 print(f"🤖 Returning: '{msg}'")
                 return [Event("final", msg, conv_state=session.state)]
             
-            # NO → Vérifier s'il y a un autre intent
+            # NO → Vérifier s'il y a un autre intent ou une question FAQ
             if intent == "NO":
-                # Juste "non" → demander clarification
+                # Essayer FAQ d'abord (ex: "Non, c'est où ?")
+                faq_result = self.faq_store.search(user_text, threshold=60)
+                if faq_result and faq_result.score >= 60:
+                    print(f"📚 FAQ match after NO: {faq_result.faq_id} (score={faq_result.score})")
+                    return self._handle_faq(session, user_text, include_low=False)
+                
+                # Sinon, juste "non" → demander clarification
                 session.state = "CLARIFY"
                 msg = prompts.VOCAL_CLARIFY if channel == "vocal" else "D'accord. Vous avez une question ou un autre besoin ?"
                 session.add_message("agent", msg)

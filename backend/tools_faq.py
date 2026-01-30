@@ -104,18 +104,26 @@ def default_faq_store() -> FaqStore:
         FaqItem(faq_id="FAQ_TARIFS", question="quels sont vos tarifs", answer=REPONSE_TARIFS),
         FaqItem(faq_id="FAQ_TARIFS", question="combien coûte une consultation", answer=REPONSE_TARIFS),
         FaqItem(faq_id="FAQ_TARIFS", question="c'est combien", answer=REPONSE_TARIFS),
+        FaqItem(faq_id="FAQ_TARIFS", question="c est combien", answer=REPONSE_TARIFS),
+        FaqItem(faq_id="FAQ_TARIFS", question="ça coûte combien", answer=REPONSE_TARIFS),
+        FaqItem(faq_id="FAQ_TARIFS", question="ça coute combien", answer=REPONSE_TARIFS),
+        FaqItem(faq_id="FAQ_TARIFS", question="combien", answer=REPONSE_TARIFS),
         FaqItem(faq_id="FAQ_TARIFS", question="quel est le prix", answer=REPONSE_TARIFS),
         FaqItem(faq_id="FAQ_TARIFS", question="tarif consultation", answer=REPONSE_TARIFS),
         FaqItem(faq_id="FAQ_TARIFS", question="prix de la consultation", answer=REPONSE_TARIFS),
+        FaqItem(faq_id="FAQ_TARIFS", question="le prix", answer=REPONSE_TARIFS),
         
         # ADRESSE - plusieurs variations
         FaqItem(faq_id="FAQ_ADRESSE", question="quelle est votre adresse", answer=REPONSE_ADRESSE),
         FaqItem(faq_id="FAQ_ADRESSE", question="où êtes-vous situé", answer=REPONSE_ADRESSE),
         FaqItem(faq_id="FAQ_ADRESSE", question="c'est où", answer=REPONSE_ADRESSE),
+        FaqItem(faq_id="FAQ_ADRESSE", question="c est où", answer=REPONSE_ADRESSE),
+        FaqItem(faq_id="FAQ_ADRESSE", question="où", answer=REPONSE_ADRESSE),
         FaqItem(faq_id="FAQ_ADRESSE", question="vous êtes où", answer=REPONSE_ADRESSE),
         FaqItem(faq_id="FAQ_ADRESSE", question="adresse du cabinet", answer=REPONSE_ADRESSE),
         FaqItem(faq_id="FAQ_ADRESSE", question="comment venir", answer=REPONSE_ADRESSE),
         FaqItem(faq_id="FAQ_ADRESSE", question="quel métro", answer=REPONSE_ADRESSE),
+        FaqItem(faq_id="FAQ_ADRESSE", question="c'est dans quel quartier", answer=REPONSE_ADRESSE),
         
         # PAIEMENT - plusieurs variations
         FaqItem(faq_id="FAQ_PAIEMENT", question="quels moyens de paiement", answer=REPONSE_PAIEMENT),
