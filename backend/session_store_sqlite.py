@@ -36,6 +36,11 @@ class SQLiteSessionStore:
     def _init_db(self):
         """Crée la table sessions si elle n'existe pas."""
         conn = sqlite3.connect(self.db_path)
+        
+        # Activer WAL mode pour meilleures performances en écriture
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")  # Plus rapide, toujours safe
+        
         cursor = conn.cursor()
         
         cursor.execute("""

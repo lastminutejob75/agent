@@ -272,6 +272,7 @@ class Engine:
         
         # Détecter l'intent
         intent = detect_intent(user_text)
+        print(f"🎯 Intent detected: '{intent}' from '{user_text}'")
         channel = getattr(session, "channel", "web")
         print(f"📞 State: {session.state} | Intent: {intent} | User: '{user_text[:50]}...'")
         
@@ -312,9 +313,12 @@ class Engine:
             
             # YES → Booking flow
             if intent == "YES":
+                print(f"✅ Intent YES detected → QUALIF_NAME")
                 session.state = "QUALIF_NAME"
                 msg = prompts.get_qualif_question("name", channel=channel)
                 session.add_message("agent", msg)
+                # Pas de save ici - on save quand le nom est reçu
+                print(f"🤖 Returning: '{msg}'")
                 return [Event("final", msg, conv_state=session.state)]
             
             # NO → Vérifier s'il y a un autre intent
@@ -605,7 +609,7 @@ class Engine:
             # Réponse valide → stocker et continuer
             session.qualif_data.name = cleaned_name
             print(f"✅ QUALIF_NAME: stored name='{session.qualif_data.name}'")
-            self._save_session(session)
+            # Pas de save ici - on save après _next_qualif_step
             return self._next_qualif_step(session)
         
         # ========================
@@ -674,7 +678,7 @@ class Engine:
             # On accepte la réponse telle quelle
             session.qualif_data.pref = user_text.strip()
             print(f"🔍 QUALIF_PREF: stored pref='{session.qualif_data.pref}', calling _next_qualif_step")
-            self._save_session(session)
+            # Pas de save ici - on save après _propose_slots
             return self._next_qualif_step(session)
         
         # ========================
