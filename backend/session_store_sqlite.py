@@ -212,12 +212,15 @@ class SQLiteSessionStore:
     
     def save(self, session: Session) -> None:
         """Sauvegarde une session dans SQLite."""
+        import time
+        t_start = time.time()
+        
         # Mettre à jour le cache mémoire
         self._memory_cache[session.conv_id] = session
         
         # Sauvegarder dans SQLite
         data = self._serialize_session(session)
-        print(f"💾 Saving session {session.conv_id}: state={session.state}, pending_slots={len(session.pending_slots or [])}")
+        print(f"💾 Saving session {session.conv_id}: state={session.state}, name={session.qualif_data.name}, pending_slots={len(session.pending_slots or [])}")
         
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -252,6 +255,9 @@ class SQLiteSessionStore:
         
         conn.commit()
         conn.close()
+        
+        elapsed_ms = (time.time() - t_start) * 1000
+        print(f"💾 Session saved in {elapsed_ms:.0f}ms")
     
     def get(self, conv_id: str) -> Optional[Session]:
         """Récupère une session depuis SQLite."""

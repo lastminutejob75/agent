@@ -271,10 +271,14 @@ async def vapi_custom_llm(request: Request):
                 session.customer_phone = customer_phone
             
             # 🔄 RECONSTRUCTION DE L'ÉTAT depuis l'historique des messages
-            # Nécessaire si la session en mémoire a été perdue (redémarrage Railway, etc.)
-            if session.state == "START" and len(messages) > 1:
+            # NOTE: Avec SQLite, cette reconstruction ne devrait plus être nécessaire
+            # On la garde en fallback si SQLite échoue
+            if session.state == "START" and len(messages) > 1 and not session.qualif_data.name:
+                print(f"⚠️ Session in START with history but no data → reconstruction needed")
                 session = _reconstruct_session_from_history(session, messages)
                 print(f"🔄 Session reconstructed: state={session.state}, name={session.qualif_data.name}")
+            else:
+                print(f"✅ Session loaded OK: state={session.state}, name={session.qualif_data.name}")
             
             t3 = log_timer("Session loaded", t2)
             
