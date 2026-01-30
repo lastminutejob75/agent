@@ -902,16 +902,22 @@ class Engine:
         """
         channel = getattr(session, "channel", "web")
         
-        print(f"🔍 _handle_booking_confirm: user_text='{user_text}', pending_slots={len(session.pending_slots or [])}")
+        print(f"🔍 _handle_booking_confirm: user_text='{user_text}', pending_slots={len(session.pending_slots or [])}, state={session.state}")
         
         # 🔄 Si pas de slots en mémoire (session perdue) → re-proposer
         if not session.pending_slots or len(session.pending_slots) == 0:
             print(f"⚠️ WAIT_CONFIRM but no pending_slots → re-proposing")
             return self._propose_slots(session)
         
+        print(f"📋 Pending slots: {[(s.idx, s.label) for s in session.pending_slots]}")
+        
         # Essayer la nouvelle détection de slot
         slot_idx = detect_slot_choice(user_text, num_slots=len(session.pending_slots or []))
         print(f"🔍 detect_slot_choice: '{user_text}' → slot_idx={slot_idx}")
+        
+        # Log fallback
+        if slot_idx is None:
+            print(f"⚠️ Trying fallback validation...")
         
         # Si pas trouvé avec la nouvelle méthode, fallback sur l'ancienne
         if slot_idx is None:
@@ -925,8 +931,11 @@ class Engine:
             # Stocker le choix de créneau
             try:
                 slot_label = tools_booking.get_label_for_choice(session, slot_idx) or "votre créneau"
+                print(f"📅 Slot label: '{slot_label}'")
             except Exception as e:
                 print(f"⚠️ Error getting slot label: {e}")
+                import traceback
+                traceback.print_exc()
                 slot_label = "votre créneau"
             
             name = session.qualif_data.name or ""
@@ -968,11 +977,14 @@ class Engine:
             print(f"📞 No caller ID, asking for contact normally")
             session.state = "QUALIF_CONTACT"
             first_name = name.split()[0] if name else ""
+            print(f"👤 name='{name}', first_name='{first_name}'")
+            
             if first_name and channel == "vocal":
                 msg = f"Parfait, {slot_label} pour {first_name}. Et votre numéro de téléphone pour vous rappeler ?"
             else:
                 msg = prompts.get_qualif_question("contact", channel=channel)
-            print(f"🔍 Asking for contact: '{msg}'")
+            
+            print(f"✅ Final message: '{msg}'")
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
 
