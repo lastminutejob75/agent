@@ -318,11 +318,22 @@ class Engine:
             
             # YES → Booking flow
             if intent == "YES":
-                print(f"✅ Intent YES detected → QUALIF_NAME")
+                print(f"✅ Intent YES detected")
+                
+                # Essayer d'extraire des infos supplémentaires du message
+                # Ex: "Oui je voudrais un RDV le matin" → extraire "matin"
+                # Ex: "Oui pour Jean Dupont" → extraire le nom
+                entities = extract_entities(user_text)
+                
+                if entities.has_any():
+                    # L'utilisateur a donné des infos en plus du "oui" → les utiliser
+                    print(f"📦 Extracted from YES message: name={entities.name}, pref={entities.pref}")
+                    return self._start_booking_with_extraction(session, user_text)
+                
+                # Sinon, simple "oui" → demander le nom
                 session.state = "QUALIF_NAME"
                 msg = prompts.get_qualif_question("name", channel=channel)
                 session.add_message("agent", msg)
-                # Pas de save ici - on save quand le nom est reçu
                 print(f"🤖 Returning: '{msg}'")
                 return [Event("final", msg, conv_state=session.state)]
             
