@@ -341,10 +341,13 @@ class Engine:
             if intent == "NO":
                 # Essayer FAQ d'abord (ex: "Non, c'est où ?")
                 # Threshold bas pour les questions courtes
-                faq_result = self.faq_store.search(user_text, threshold=50)
-                if faq_result and faq_result.score >= 50:
-                    print(f"📚 FAQ match after NO: {faq_result.faq_id} (score={faq_result.score})")
-                    return self._handle_faq(session, user_text, include_low=False)
+                try:
+                    faq_result = self.faq_store.search(user_text, threshold=50)
+                    if faq_result and faq_result.score >= 50:
+                        print(f"📚 FAQ match after NO: {faq_result.faq_id} (score={faq_result.score})")
+                        return self._handle_faq(session, user_text, include_low=False)
+                except Exception as e:
+                    print(f"⚠️ FAQ search error after NO: {e}")
                 
                 # Sinon, juste "non" → demander clarification
                 session.state = "CLARIFY"
