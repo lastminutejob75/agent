@@ -116,6 +116,45 @@ def log_timer(label: str, start: float) -> float:
 router = APIRouter(prefix="/api/vapi", tags=["voice"])
 
 
+@router.get("/test-calendar")
+async def test_calendar_connection():
+    """Test de connexion Google Calendar"""
+    from backend import tools_booking
+    from backend import config
+    
+    try:
+        # Test 1: Config
+        result = {
+            "calendar_id": config.GOOGLE_CALENDAR_ID,
+            "service_account_file": config.GOOGLE_SERVICE_ACCOUNT_FILE,
+            "file_exists": False,
+            "slots_available": False,
+            "error": None
+        }
+        
+        # Test 2: Fichier existe ?
+        import os
+        if config.GOOGLE_SERVICE_ACCOUNT_FILE and os.path.exists(config.GOOGLE_SERVICE_ACCOUNT_FILE):
+            result["file_exists"] = True
+        
+        # Test 3: Récupérer des créneaux
+        slots = tools_booking.get_slots_for_display(limit=3)
+        if slots and len(slots) > 0:
+            result["slots_available"] = True
+            result["slots"] = [{"idx": s.idx, "label": s.label} for s in slots]
+        
+        return result
+        
+    except Exception as e:
+        import traceback
+        return {
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+
+
+
 @router.post("/webhook")
 async def vapi_webhook(request: Request):
     """
