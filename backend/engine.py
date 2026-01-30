@@ -340,8 +340,9 @@ class Engine:
             # NO → Vérifier s'il y a un autre intent ou une question FAQ
             if intent == "NO":
                 # Essayer FAQ d'abord (ex: "Non, c'est où ?")
-                faq_result = self.faq_store.search(user_text, threshold=60)
-                if faq_result and faq_result.score >= 60:
+                # Threshold bas pour les questions courtes
+                faq_result = self.faq_store.search(user_text, threshold=50)
+                if faq_result and faq_result.score >= 50:
                     print(f"📚 FAQ match after NO: {faq_result.faq_id} (score={faq_result.score})")
                     return self._handle_faq(session, user_text, include_low=False)
                 
