@@ -87,6 +87,12 @@ async def startup():
     try:
         config.load_google_credentials()
         print(f"✅ Startup complete - Service Account ready")
+        
+        # Invalider le cache calendar service pour forcer rechargement
+        from backend import tools_booking
+        tools_booking._calendar_service = None
+        print(f"✅ Calendar service cache invalidated")
+        
     except Exception as e:
         print(f"⚠️ Warning: Cannot load credentials: {e}")
         print(f"⚠️ Using SQLite fallback for slots")
