@@ -69,7 +69,11 @@ def ensure_stream(conv_id: str) -> None:
 
 @app.on_event("startup")
 async def startup():
-    """Démarre les background tasks"""
+    """Démarre les background tasks et charge les credentials"""
+    # Charger Google Calendar credentials
+    config.load_google_credentials()
+    
+    # Background tasks
     asyncio.create_task(cleanup_old_conversations())
     asyncio.create_task(keep_alive())
     print("🚀 Application started with keep-alive enabled")
@@ -126,6 +130,8 @@ async def cleanup_old_conversations():
 @app.get("/health")
 async def health() -> dict:
     """Health check - doit toujours répondre même en cas d'erreur DB"""
+    import os
+    
     try:
         free_slots = count_free_slots()
     except Exception:
@@ -135,6 +141,11 @@ async def health() -> dict:
         "status": "ok",
         "streams": len(STREAMS),
         "free_slots": free_slots,
+        "google_calendar": {
+            "service_account_file": config.SERVICE_ACCOUNT_FILE,
+            "file_exists": bool(config.SERVICE_ACCOUNT_FILE and os.path.exists(config.SERVICE_ACCOUNT_FILE)),
+            "calendar_id_set": bool(config.GOOGLE_CALENDAR_ID),
+        }
     }
 
 
