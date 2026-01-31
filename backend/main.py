@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.engine import ENGINE, Event
-from backend import config
+import backend.config as config  # Import du MODULE (pas from import)
 from backend.db import init_db, list_free_slots, count_free_slots
 # Nouvelle architecture multi-canal
 from backend.routes import voice, whatsapp, bland
