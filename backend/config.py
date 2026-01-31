@@ -42,7 +42,10 @@ def load_google_credentials():
     global SERVICE_ACCOUNT_FILE, GOOGLE_CALENDAR_ID
     
     # 1. Charge Calendar ID
-    GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID")
+    GOOGLE_CALENDAR_ID = os.getenv(
+        "GOOGLE_CALENDAR_ID",
+        "6fd8676f333bda53ea04d852eb72680d33dd567c7f286be401ed46d16b9f8659@group.calendar.google.com"  # Fallback hardcodé
+    )
     
     # 2. Charge Service Account base64
     b64 = os.getenv("GOOGLE_SERVICE_ACCOUNT_BASE64")
