@@ -124,6 +124,19 @@ async def cleanup_old_conversations():
             ENGINE.session_store.delete(conv_id)
 
 
+@app.get("/debug/env-vars")
+async def debug_env_vars():
+    """DEBUG : Liste toutes les variables d'environnement Google"""
+    import os
+    google_vars = {k: v[:50] + "..." if len(v) > 50 else v 
+                   for k, v in os.environ.items() 
+                   if "GOOGLE" in k}
+    return {
+        "google_env_vars": google_vars,
+        "all_env_keys": [k for k in os.environ.keys() if "GOOGLE" in k or "CALENDAR" in k]
+    }
+
+
 @app.get("/health")
 async def health() -> dict:
     """Health check - doit toujours répondre même en cas d'erreur DB"""
