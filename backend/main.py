@@ -69,7 +69,28 @@ def ensure_stream(conv_id: str) -> None:
 
 @app.on_event("startup")
 async def startup():
-    """Démarre les background tasks"""
+    """Initialisation au RUNTIME (pas au build Docker)"""
+    import os
+    
+    # Debug: Vérifie l'environnement runtime
+    print("\n" + "="*60)
+    print("🚀 RUNTIME STARTUP")
+    print("="*60)
+    print(f"Environment vars count: {len(os.environ)}")
+    print(f"PORT present: {bool(os.getenv('PORT'))}")
+    print(f"RAILWAY_ENVIRONMENT present: {bool(os.getenv('RAILWAY_ENVIRONMENT'))}")
+    print(f"GOOGLE_SERVICE_ACCOUNT_BASE64 present: {bool(os.getenv('GOOGLE_SERVICE_ACCOUNT_BASE64'))}")
+    print(f"GOOGLE_CALENDAR_ID present: {bool(os.getenv('GOOGLE_CALENDAR_ID'))}")
+    print("="*60 + "\n")
+    
+    # Charge les credentials
+    try:
+        config.load_google_credentials()
+        print(f"✅ Startup complete - Service Account ready")
+    except Exception as e:
+        print(f"⚠️ Warning: Cannot load credentials: {e}")
+        print(f"⚠️ Using SQLite fallback for slots")
+    
     # Background tasks
     asyncio.create_task(cleanup_old_conversations())
     asyncio.create_task(keep_alive())
@@ -126,39 +147,43 @@ async def cleanup_old_conversations():
 
 @app.get("/debug/env-vars")
 async def debug_env_vars():
-    """DEBUG : Liste toutes les variables d'environnement Google"""
+    """
+    Debug endpoint - À SUPPRIMER après vérification
+    Vérifie que les variables d'environnement Railway sont accessibles
+    """
     import os
-    google_vars = {k: v[:50] + "..." if len(v) > 50 else v 
-                   for k, v in os.environ.items() 
-                   if "GOOGLE" in k}
+    
+    all_keys = sorted(list(os.environ.keys()))
+    google_keys = sorted([k for k in all_keys if "GOOGLE" in k])
+    
     return {
-        "google_env_vars": google_vars,
-        "all_env_keys": [k for k in os.environ.keys() if "GOOGLE" in k or "CALENDAR" in k]
+        "env_count": len(all_keys),
+        "sample_keys": all_keys[:25],  # Premiers 25 pour diagnostic
+        "google_keys": google_keys,
+        "google_values_present": {k: bool(os.environ.get(k)) for k in google_keys},
+        "port_present": bool(os.getenv("PORT")),
+        "railway_env_present": bool(os.getenv("RAILWAY_ENVIRONMENT")),
     }
 
 
 @app.get("/health")
 async def health() -> dict:
-    """Health check - doit toujours répondre même en cas d'erreur DB"""
+    """Health check avec vérification du fichier credentials"""
     import os
     
     try:
         free_slots = count_free_slots()
     except Exception:
-        free_slots = -1  # Indique que la DB n'est pas accessible
-    
-    # Lire dynamiquement
-    service_file = config.get_service_account_file()
+        free_slots = -1
     
     return {
         "status": "ok",
         "streams": len(STREAMS),
         "free_slots": free_slots,
-        "google_calendar": {
-            "service_account_file": service_file,
-            "file_exists": bool(service_file and os.path.exists(service_file)),
-            "calendar_id_set": bool(config.GOOGLE_CALENDAR_ID),
-        }
+        "service_account_file": config.SERVICE_ACCOUNT_FILE,
+        "file_exists": bool(config.SERVICE_ACCOUNT_FILE and os.path.exists(config.SERVICE_ACCOUNT_FILE)),
+        "calendar_id_set": bool(config.GOOGLE_CALENDAR_ID),
+        "runtime_env_count": len(os.environ)
     }
 
 

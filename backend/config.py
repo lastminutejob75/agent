@@ -29,35 +29,48 @@ TARGET_FIRST_RESPONSE_MS = 3000  # contrainte PRD (sans imposer SSE)
 # GOOGLE CALENDAR CONFIGURATION
 # ==============================
 
-# Calendar ID
-GOOGLE_CALENDAR_ID = os.getenv(
-    "GOOGLE_CALENDAR_ID",
-    "6fd8676f333bda53ea04d852eb72680d33dd567c7f286be401ed46d16b9f8659@group.calendar.google.com"
-)
+# Variables globales (remplies au startup RUNTIME uniquement)
+SERVICE_ACCOUNT_FILE = None
+GOOGLE_CALENDAR_ID = None
 
-def get_service_account_file():
+def load_google_credentials():
     """
-    Retourne le chemin du fichier credentials.
-    Le fichier est créé au build Docker depuis la variable Railway.
+    Charge les credentials Google au démarrage RUNTIME.
+    À appeler UNIQUEMENT dans @app.on_event("startup").
+    Ne JAMAIS appeler au module import.
     """
-    # Le Dockerfile crée credentials/service-account.json au build
-    build_path = "credentials/service-account.json"
-    if os.path.exists(build_path):
-        return build_path
+    global SERVICE_ACCOUNT_FILE, GOOGLE_CALENDAR_ID
     
-    # Fallback : mode local
-    local_path = "credentials/service-account.json"
-    if os.path.exists(local_path):
-        return local_path
+    # 1. Charge Calendar ID
+    GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID")
     
-    return None
+    # 2. Charge Service Account base64
+    b64 = os.getenv("GOOGLE_SERVICE_ACCOUNT_BASE64")
+    if not b64:
+        # Fallback local pour dev
+        local_path = "credentials/service-account.json"
+        if os.path.exists(local_path):
+            SERVICE_ACCOUNT_FILE = local_path
+            print(f"📁 Using local credentials: {local_path}")
+            return
+        raise RuntimeError("❌ GOOGLE_SERVICE_ACCOUNT_BASE64 missing at runtime")
+    
+    # 3. Décode et écrit le fichier
+    try:
+        decoded = base64.b64decode(b64)
+        path = "/tmp/service-account.json"
+        
+        with open(path, "wb") as f:
+            f.write(decoded)
+        
+        SERVICE_ACCOUNT_FILE = path
+        
+        # ✅ Logs sans données sensibles
+        print(f"✅ Google credentials loaded at RUNTIME")
+        print(f"   Service Account file: {path} ({len(decoded)} bytes)")
+        print(f"   Calendar ID set: {bool(GOOGLE_CALENDAR_ID)}")
+        
+    except Exception as e:
+        raise RuntimeError(f"❌ Failed to decode credentials: {e}")
 
-# Initialiser au démarrage pour les logs
-_init_path = get_service_account_file()
-if _init_path and "/tmp/" in _init_path:
-    print(f"✅✅✅ GOOGLE CALENDAR CONNECTED FROM BASE64 ✅✅✅")
-    print(f"✅ Service Account file: {_init_path}")
-elif _init_path:
-    print(f"📁 Using local credentials: {_init_path}")
-else:
-    print(f"⚠️ No Google credentials - using SQLite fallback")
+# ⚠️ NE RIEN EXÉCUTER ICI (sera appelé au startup FastAPI)
