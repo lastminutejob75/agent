@@ -28,12 +28,13 @@ class GoogleCalendarService:
     def _build_service(self):
         """Crée le service Google Calendar."""
         try:
-            # Utiliser cfg.SERVICE_ACCOUNT_FILE directement (toujours à jour)
-            if not cfg.SERVICE_ACCOUNT_FILE:
-                raise Exception("SERVICE_ACCOUNT_FILE not initialized - startup not called?")
+            # Lire dynamiquement les credentials
+            service_file = cfg.get_service_account_file()
+            if not service_file:
+                raise Exception("No service account file available")
             
             credentials = service_account.Credentials.from_service_account_file(
-                cfg.SERVICE_ACCOUNT_FILE,
+                service_file,
                 scopes=SCOPES
             )
             service = build('calendar', 'v3', credentials=credentials)

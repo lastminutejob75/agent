@@ -29,54 +29,47 @@ TARGET_FIRST_RESPONSE_MS = 3000  # contrainte PRD (sans imposer SSE)
 # GOOGLE CALENDAR CONFIGURATION
 # ==============================
 
-# Variables globales (initialisées au startup)
-SERVICE_ACCOUNT_FILE = None
+# Calendar ID
 GOOGLE_CALENDAR_ID = os.getenv(
     "GOOGLE_CALENDAR_ID",
     "6fd8676f333bda53ea04d852eb72680d33dd567c7f286be401ed46d16b9f8659@group.calendar.google.com"
 )
 
-def load_google_credentials():
+def get_service_account_file():
     """
-    Charge les credentials Google au démarrage de l'app.
-    À appeler UNIQUEMENT dans @app.on_event("startup").
-    
-    Multi-worker safe: chaque worker exécute son propre startup
-    et écrit son propre /tmp/service-account.json
+    Retourne le chemin du fichier credentials.
+    TOUJOURS lire depuis l'env - crée le fichier si nécessaire.
     """
-    global SERVICE_ACCOUNT_FILE
-    
     b64 = os.getenv("GOOGLE_SERVICE_ACCOUNT_BASE64")
-    if not b64:
-        # Mode local - essayer fichier credentials/
+    
+    if b64:
+        # Décoder et créer le fichier à chaque fois (idempotent)
+        try:
+            decoded = base64.b64decode(b64)
+            path = "/tmp/service-account.json"
+            
+            # Créer seulement si pas déjà là ou si différent
+            if not os.path.exists(path) or os.path.getsize(path) != len(decoded):
+                with open(path, "wb") as f:
+                    f.write(decoded)
+            
+            return path
+        except Exception as e:
+            print(f"❌ Error decoding credentials: {e}")
+            return None
+    else:
+        # Mode local
         local_path = "credentials/service-account.json"
         if os.path.exists(local_path):
-            SERVICE_ACCOUNT_FILE = local_path
-            print(f"📁 Using local Google credentials: {local_path}")
-            return
-        
-        print("⚠️ GOOGLE_SERVICE_ACCOUNT_BASE64 not set - Calendar disabled")
-        SERVICE_ACCOUNT_FILE = None
-        return
-    
-    # Décoder et créer le fichier
-    try:
-        decoded = base64.b64decode(b64)
-        path = "/tmp/service-account.json"
-        
-        with open(path, "wb") as f:
-            f.write(decoded)
-        
-        SERVICE_ACCOUNT_FILE = path
-        print(f"✅✅✅ GOOGLE CALENDAR CONNECTED FROM BASE64 ✅✅✅")
-        print(f"✅ Service Account file: {path} ({len(decoded)} bytes)")
-        
-    except Exception as e:
-        print(f"❌❌❌ ERROR DECODING GOOGLE_SERVICE_ACCOUNT_BASE64 ❌❌❌")
-        print(f"❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
-        SERVICE_ACCOUNT_FILE = None
+            return local_path
+        return None
 
-# IMPORTANT : Toujours utiliser SERVICE_ACCOUNT_FILE directement
-# Ne PAS créer de copie car elle ne sera pas mise à jour après le startup
+# Initialiser au démarrage pour les logs
+_init_path = get_service_account_file()
+if _init_path and "/tmp/" in _init_path:
+    print(f"✅✅✅ GOOGLE CALENDAR CONNECTED FROM BASE64 ✅✅✅")
+    print(f"✅ Service Account file: {_init_path}")
+elif _init_path:
+    print(f"📁 Using local credentials: {_init_path}")
+else:
+    print(f"⚠️ No Google credentials - using SQLite fallback")

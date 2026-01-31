@@ -69,10 +69,7 @@ def ensure_stream(conv_id: str) -> None:
 
 @app.on_event("startup")
 async def startup():
-    """Démarre les background tasks et charge les credentials"""
-    # Charger Google Calendar credentials
-    config.load_google_credentials()
-    
+    """Démarre les background tasks"""
     # Background tasks
     asyncio.create_task(cleanup_old_conversations())
     asyncio.create_task(keep_alive())
@@ -137,13 +134,16 @@ async def health() -> dict:
     except Exception:
         free_slots = -1  # Indique que la DB n'est pas accessible
     
+    # Lire dynamiquement
+    service_file = config.get_service_account_file()
+    
     return {
         "status": "ok",
         "streams": len(STREAMS),
         "free_slots": free_slots,
         "google_calendar": {
-            "service_account_file": config.SERVICE_ACCOUNT_FILE,
-            "file_exists": bool(config.SERVICE_ACCOUNT_FILE and os.path.exists(config.SERVICE_ACCOUNT_FILE)),
+            "service_account_file": service_file,
+            "file_exists": bool(service_file and os.path.exists(service_file)),
             "calendar_id_set": bool(config.GOOGLE_CALENDAR_ID),
         }
     }

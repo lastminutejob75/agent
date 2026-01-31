@@ -81,7 +81,8 @@ def _get_calendar_service():
         logger.warning("GOOGLE_CALENDAR_ID non configuré - utilisation SQLite")
         return None
     
-    if not config.SERVICE_ACCOUNT_FILE:
+    service_file = config.get_service_account_file()
+    if not service_file:
         logger.warning("SERVICE_ACCOUNT_FILE non configuré - utilisation SQLite")
         return None
     
