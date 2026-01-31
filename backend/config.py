@@ -40,16 +40,22 @@ if os.getenv("GOOGLE_SERVICE_ACCOUNT_BASE64"):
             f.write(decoded)
         
         GOOGLE_SERVICE_ACCOUNT_FILE = service_account_path
-        print(f"✅ Google Service Account loaded from base64 → {service_account_path}")
+        print(f"✅✅✅ GOOGLE CALENDAR CONNECTED FROM BASE64 ✅✅✅")
+        print(f"✅ Service Account file: {service_account_path}")
     except Exception as e:
-        print(f"⚠️ Warning: Could not decode GOOGLE_SERVICE_ACCOUNT_BASE64: {e}")
+        print(f"❌❌❌ ERROR DECODING GOOGLE_SERVICE_ACCOUNT_BASE64 ❌❌❌")
+        print(f"❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
         GOOGLE_SERVICE_ACCOUNT_FILE = None
 else:
+    print(f"⚠️ GOOGLE_SERVICE_ACCOUNT_BASE64 not found in env - using local file")
     # Local : fichier dans credentials/
     GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv(
         "GOOGLE_SERVICE_ACCOUNT_FILE",
         "credentials/service-account.json"
     )
+    print(f"📁 Using service account file: {GOOGLE_SERVICE_ACCOUNT_FILE}")
 
 # Calendar ID
 GOOGLE_CALENDAR_ID = os.getenv(
