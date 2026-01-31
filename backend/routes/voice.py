@@ -120,15 +120,21 @@ router = APIRouter(prefix="/api/vapi", tags=["voice"])
 async def test_calendar_connection():
     """Test de connexion Google Calendar"""
     from backend import tools_booking
-    from backend import config
+    import os
     
     try:
-        # Test 1: Config
-        import os
+        # Test 1: Variables d'environnement (lecture directe)
+        env_var = os.getenv("GOOGLE_SERVICE_ACCOUNT_BASE64")
+        calendar_id = os.getenv("GOOGLE_CALENDAR_ID", "6fd8676f...")
+        
+        # Vérifier quel fichier est réellement utilisé
+        from backend import config
+        
         result = {
-            "calendar_id": config.GOOGLE_CALENDAR_ID,
-            "service_account_file_config": config.GOOGLE_SERVICE_ACCOUNT_FILE,
-            "env_var_present": bool(os.getenv("GOOGLE_SERVICE_ACCOUNT_BASE64")),
+            "calendar_id": calendar_id,
+            "service_account_file_from_config": config.GOOGLE_SERVICE_ACCOUNT_FILE,
+            "env_var_present": bool(env_var),
+            "env_var_length": len(env_var) if env_var else 0,
             "file_exists": False,
             "slots_available": False,
             "error": None
