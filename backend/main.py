@@ -145,6 +145,35 @@ async def cleanup_old_conversations():
             ENGINE.session_store.delete(conv_id)
 
 
+@app.get("/debug/force-load-credentials")
+async def force_load_credentials():
+    """Force le chargement des credentials et affiche toutes les erreurs"""
+    import os
+    import traceback
+    
+    result = {
+        "google_service_account_base64_present": bool(os.getenv("GOOGLE_SERVICE_ACCOUNT_BASE64")),
+        "google_calendar_id_present": bool(os.getenv("GOOGLE_CALENDAR_ID")),
+        "google_service_account_base64_length": len(os.getenv("GOOGLE_SERVICE_ACCOUNT_BASE64", "")),
+        "google_calendar_id_value": os.getenv("GOOGLE_CALENDAR_ID"),
+        "error": None,
+        "traceback": None,
+        "success": False
+    }
+    
+    try:
+        # Forcer le chargement
+        config.load_google_credentials()
+        result["success"] = True
+        result["service_account_file"] = config.SERVICE_ACCOUNT_FILE
+        result["calendar_id"] = config.GOOGLE_CALENDAR_ID
+    except Exception as e:
+        result["error"] = str(e)
+        result["traceback"] = traceback.format_exc()
+    
+    return result
+
+
 @app.get("/debug/env-vars")
 async def debug_env_vars():
     """
