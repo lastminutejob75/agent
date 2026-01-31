@@ -38,31 +38,19 @@ GOOGLE_CALENDAR_ID = os.getenv(
 def get_service_account_file():
     """
     Retourne le chemin du fichier credentials.
-    TOUJOURS lire depuis l'env - crée le fichier si nécessaire.
+    Le fichier est créé au build Docker depuis la variable Railway.
     """
-    b64 = os.getenv("GOOGLE_SERVICE_ACCOUNT_BASE64")
+    # Le Dockerfile crée credentials/service-account.json au build
+    build_path = "credentials/service-account.json"
+    if os.path.exists(build_path):
+        return build_path
     
-    if b64:
-        # Décoder et créer le fichier à chaque fois (idempotent)
-        try:
-            decoded = base64.b64decode(b64)
-            path = "/tmp/service-account.json"
-            
-            # Créer seulement si pas déjà là ou si différent
-            if not os.path.exists(path) or os.path.getsize(path) != len(decoded):
-                with open(path, "wb") as f:
-                    f.write(decoded)
-            
-            return path
-        except Exception as e:
-            print(f"❌ Error decoding credentials: {e}")
-            return None
-    else:
-        # Mode local
-        local_path = "credentials/service-account.json"
-        if os.path.exists(local_path):
-            return local_path
-        return None
+    # Fallback : mode local
+    local_path = "credentials/service-account.json"
+    if os.path.exists(local_path):
+        return local_path
+    
+    return None
 
 # Initialiser au démarrage pour les logs
 _init_path = get_service_account_file()
