@@ -78,5 +78,5 @@ def load_google_credentials():
         traceback.print_exc()
         SERVICE_ACCOUNT_FILE = None
 
-# Pour compatibilité avec l'ancien code
-GOOGLE_SERVICE_ACCOUNT_FILE = SERVICE_ACCOUNT_FILE  # Sera None jusqu'au startup
+# IMPORTANT : Toujours utiliser SERVICE_ACCOUNT_FILE directement
+# Ne PAS créer de copie car elle ne sera pas mise à jour après le startup

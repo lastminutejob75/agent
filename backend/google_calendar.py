@@ -9,10 +9,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Configuration
-from backend import config
+import backend.config as cfg  # Import du MODULE (pas from import)
 
 SCOPES = ['https://www.googleapis.com/auth/calendar']
-SERVICE_ACCOUNT_FILE = config.GOOGLE_SERVICE_ACCOUNT_FILE
 
 
 class GoogleCalendarService:
@@ -29,8 +28,12 @@ class GoogleCalendarService:
     def _build_service(self):
         """Crée le service Google Calendar."""
         try:
+            # Utiliser cfg.SERVICE_ACCOUNT_FILE directement (toujours à jour)
+            if not cfg.SERVICE_ACCOUNT_FILE:
+                raise Exception("SERVICE_ACCOUNT_FILE not initialized - startup not called?")
+            
             credentials = service_account.Credentials.from_service_account_file(
-                SERVICE_ACCOUNT_FILE,
+                cfg.SERVICE_ACCOUNT_FILE,
                 scopes=SCOPES
             )
             service = build('calendar', 'v3', credentials=credentials)

@@ -132,7 +132,7 @@ async def test_calendar_connection():
         
         result = {
             "calendar_id": calendar_id,
-            "service_account_file_from_config": config.GOOGLE_SERVICE_ACCOUNT_FILE,
+            "service_account_file_from_config": config.SERVICE_ACCOUNT_FILE,
             "env_var_present": bool(env_var),
             "env_var_length": len(env_var) if env_var else 0,
             "file_exists": False,
@@ -142,12 +142,12 @@ async def test_calendar_connection():
         
         # Test 2: Fichier existe ?
         import os
-        result["service_account_file"] = config.GOOGLE_SERVICE_ACCOUNT_FILE
-        if config.GOOGLE_SERVICE_ACCOUNT_FILE and os.path.exists(config.GOOGLE_SERVICE_ACCOUNT_FILE):
+        result["service_account_file"] = config.SERVICE_ACCOUNT_FILE
+        if config.SERVICE_ACCOUNT_FILE and os.path.exists(config.SERVICE_ACCOUNT_FILE):
             result["file_exists"] = True
         else:
             result["file_exists"] = False
-            result["file_path_checked"] = config.GOOGLE_SERVICE_ACCOUNT_FILE
+            result["file_path_checked"] = config.SERVICE_ACCOUNT_FILE
         
         # Test 3: Récupérer des créneaux
         slots = tools_booking.get_slots_for_display(limit=3)
