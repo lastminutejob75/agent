@@ -62,6 +62,27 @@ class Session:
     # CANCEL/MODIFY pending
     pending_cancel_slot: Optional[Dict] = None  # RDV à annuler/modifier
 
+    # Production-grade V3 (PRODUCTION_GRADE_SPEC_V3)
+    last_intent: Optional[str] = None  # Anti-boucle intent override
+    consecutive_questions: int = 0  # Max 3 puis action concrète
+    last_question_asked: Optional[str] = None  # Rejouer si "attendez"
+    global_recovery_fails: int = 0  # Échecs globaux → INTENT_ROUTER si >= 2
+    correction_count: int = 0  # Corrections répétées → INTENT_ROUTER si >= 2
+    pending_preference: Optional[str] = None  # Préférence inférée (PREFERENCE_CONFIRM)
+    empty_message_count: int = 0  # IVR Principe 3 : messages vides répétés → INTENT_ROUTER si >= 2
+    turn_count: int = 0  # Nombre de tours (user+agent) → anti-loop si > 25 (spec V3)
+
+    # Recovery par contexte (analytics + tuning fin — AJOUT_COMPTEURS_RECOVERY)
+    slot_choice_fails: int = 0
+    name_fails: int = 0
+    phone_fails: int = 0
+    preference_fails: int = 0
+    contact_confirm_fails: int = 0
+
+    MAX_CONSECUTIVE_QUESTIONS = 3  # Limite cognitive (spec V3)
+    MAX_TURNS_ANTI_LOOP = 25  # Garde-fou : >25 tours sans DONE/TRANSFERRED → INTENT_ROUTER
+    MAX_CONTEXT_FAILS = 3  # Échecs sur un même contexte → escalade INTENT_ROUTER
+
     def touch(self) -> None:
         self.last_seen_at = datetime.utcnow()
 
@@ -86,6 +107,19 @@ class Session:
         self.pending_slots = []
         self.pending_slot_choice = None
         self.pending_cancel_slot = None
+        self.last_intent = None
+        self.consecutive_questions = 0
+        self.last_question_asked = None
+        self.global_recovery_fails = 0
+        self.correction_count = 0
+        self.pending_preference = None
+        self.empty_message_count = 0
+        self.turn_count = 0
+        self.slot_choice_fails = 0
+        self.name_fails = 0
+        self.phone_fails = 0
+        self.preference_fails = 0
+        self.contact_confirm_fails = 0
         # Note: on ne reset PAS customer_phone car c'est lié à l'appel
 
     def add_message(self, role: str, text: str) -> None:

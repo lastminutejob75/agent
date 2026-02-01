@@ -248,6 +248,47 @@ def extract_pref(message: str) -> Optional[str]:
     return None
 
 
+def infer_preference_from_context(message: str) -> Optional[str]:
+    """
+    Infère la préférence temporelle depuis une phrase contextuelle (spec V3).
+    
+    Exemples :
+    - "je travaille jusqu'à 16h" → "après-midi"
+    - "je finis à 18h" → "fin d'après-midi"
+    - "le matin je suis occupé" → "après-midi"
+    - "après 17h" → "soir"
+    - "en fin de matinée" → "matin"
+    
+    Returns:
+        Préférence inférée ("matin", "après-midi", "soir") ou None
+    """
+    msg_lower = message.lower().strip()
+    if not msg_lower:
+        return None
+
+    # Contraintes temporelles explicites → après le travail
+    if any(p in msg_lower for p in ["jusqu'à 16h", "jusqu'à 17h", "finis à", "travaille jusqu'à", "travail jusqu'à"]):
+        return "après-midi"
+    if any(p in msg_lower for p in ["je travaille jusqu'à", "je finis à", "finir à"]):
+        return "après-midi"
+
+    # Soir / fin de journée
+    if any(p in msg_lower for p in ["après 17h", "après 18h", "en soirée", "après le travail", "après le boulot"]):
+        return "soir"
+
+    # Matin explicite
+    if any(p in msg_lower for p in ["avant midi", "en matinée", "tôt le matin", "début de matinée"]):
+        return "matin"
+
+    # Exclusions (négatif) : "matin occupé" → après-midi
+    if "matin" in msg_lower and any(p in msg_lower for p in ["pas le", "jamais le", "occupé le", "occupée le"]):
+        return "après-midi"
+    if "après-midi" in msg_lower and any(p in msg_lower for p in ["pas l'", "jamais l'", "occupé l'", "occupée l'"]):
+        return "matin"
+
+    return None
+
+
 def extract_entities(message: str) -> ExtractedEntities:
     """
     Extraction principale - conservatrice.

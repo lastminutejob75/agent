@@ -176,6 +176,9 @@ class GoogleCalendarService:
         Returns:
             Event ID si succès, None si erreur
         """
+        # Log pour debug (sans données sensibles)
+        cal_mask = (self.calendar_id[:20] + "…") if self.calendar_id and len(self.calendar_id) > 20 else (self.calendar_id or "None")
+        logger.info(f"Booking: calendar_id={cal_mask} start={start_time} end={end_time} name={patient_name!r}")
         try:
             event = {
                 'summary': f'RDV - {patient_name}',
@@ -207,12 +210,16 @@ class GoogleCalendarService:
             ).execute()
             
             event_id = created_event.get('id')
-            logger.info(f"Appointment booked: {event_id}")
+            logger.info(f"Appointment booked: event_id={event_id} calendar_id={cal_mask}")
             
             return event_id
         
         except Exception as e:
-            logger.error(f"Error booking appointment: {e}")
+            from googleapiclient.errors import HttpError
+            if isinstance(e, HttpError):
+                logger.error(f"Error booking appointment: HTTP {e.resp.status} {e.resp.reason} - {e}")
+            else:
+                logger.error(f"Error booking appointment: {e}", exc_info=True)
             return None
     
     def cancel_appointment(self, event_id: str) -> bool:

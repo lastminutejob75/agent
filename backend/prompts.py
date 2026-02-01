@@ -209,6 +209,131 @@ VOCAL_STILL_UNCLEAR = (
     "Pas de problème, je vais vous passer quelqu'un qui pourra mieux vous aider. Un instant."
 )
 
+# ----------------------------
+# INTENT_ROUTER (spec V3 — menu reset universel)
+# ----------------------------
+
+MSG_INTENT_ROUTER = (
+    "Je vais simplifier. Dites : un, pour prendre un rendez-vous ; "
+    "deux, pour annuler ou modifier ; trois, pour poser une question ; "
+    "quatre, pour parler à quelqu'un. Dites simplement : un, deux, trois ou quatre."
+)
+
+MSG_INTENT_ROUTER_RETRY = (
+    "Dites juste le numéro. Par exemple : un pour rendez-vous."
+)
+
+MSG_PREFERENCE_CONFIRM = "D'accord, donc plutôt {pref}, c'est bien ça ?"
+
+# ----------------------------
+# IVR Principe 2 — Clarifications guidées (jamais bloquer sec)
+# ----------------------------
+
+class ClarificationMessages:
+    """
+    Messages de clarification guidée (jamais "Je n'ai pas compris" seul).
+    fail_count 1 = premier essai, 2 = deuxième, 3 = transfert si None.
+    """
+    SLOT_CHOICE_UNCLEAR = {
+        1: "Quand vous dites '{user_input}', vous pensez au créneau un, deux ou trois ?",
+        2: "Vous préférez le premier, le deuxième ou le troisième créneau ? Dites simplement : un, deux ou trois.",
+    }
+    PREFERENCE_UNCLEAR = {
+        1: "Vous préférez avant midi ou plutôt en début d'après-midi ?",
+        2: "Pour être sûr : le matin, c'est avant midi ; l'après-midi, c'est après midi. Vous préférez lequel ?",
+    }
+    NAME_UNCLEAR = {
+        1: "Pouvez-vous répéter votre nom en détachant les syllabes ?",
+        2: "Pouvez-vous épeler votre nom ? Par exemple : D, U, P, O, N, T.",
+    }
+    PHONE_UNCLEAR = {
+        1: "Je n'ai pas noté tous les chiffres. Redites votre numéro lentement, s'il vous plaît.",
+        2: "Dictez chiffre par chiffre. Par exemple : zéro, six, un, deux, trois, quatre...",
+        3: "Vous préférez donner un email à la place ?",
+    }
+    CANCEL_CONFIRM_UNCLEAR = {
+        1: "Voulez-vous annuler ce rendez-vous ? Répondez oui ou non.",
+        2: "Pour annuler, dites oui. Pour garder le rendez-vous, dites non.",
+    }
+    MODIFY_CONFIRM_UNCLEAR = {
+        1: "Voulez-vous déplacer ce rendez-vous ? Répondez oui ou non.",
+        2: "Pour déplacer, dites oui. Pour garder la date, dites non.",
+    }
+
+
+def get_clarification_message(
+    context: str,
+    fail_count: int,
+    user_input: str = "",
+    channel: str = "vocal",
+) -> str:
+    """
+    Retourne une clarification guidée (jamais un blocage sec).
+    
+    Args:
+        context: 'slot_choice' | 'preference' | 'name' | 'phone' | 'cancel_confirm' | 'modify_confirm'
+        fail_count: Nombre d'échecs (1, 2, 3...)
+        user_input: Message utilisateur (pour personnaliser)
+        channel: 'vocal' | 'web'
+    
+    Returns:
+        Message de clarification guidée
+    """
+    messages_map = {
+        "slot_choice": ClarificationMessages.SLOT_CHOICE_UNCLEAR,
+        "preference": ClarificationMessages.PREFERENCE_UNCLEAR,
+        "name": ClarificationMessages.NAME_UNCLEAR,
+        "phone": ClarificationMessages.PHONE_UNCLEAR,
+        "cancel_confirm": ClarificationMessages.CANCEL_CONFIRM_UNCLEAR,
+        "modify_confirm": ClarificationMessages.MODIFY_CONFIRM_UNCLEAR,
+    }
+    messages = messages_map.get(context, {})
+    user_input_safe = (user_input or "").strip()[:50]
+    if not user_input_safe:
+        user_input_safe = "ça"
+    template = messages.get(min(fail_count, len(messages)))
+    if not template:
+        return "Je vais vous mettre en relation. Un instant."
+    if "{user_input}" in template:
+        return template.format(user_input=user_input_safe)
+    return template
+
+
+# V3.1 — Confidence hint empathique après inférence
+INFERENCE_CONFIRM_TEMPLATES = {
+    "après-midi": "D'après ce que vous me dites, je comprends plutôt l'après-midi. C'est bien ça ?",
+    "matin": "Si je comprends bien, vous préférez le matin. C'est correct ?",
+    "soir": "Vous préférez donc en soirée, si je comprends bien ?",
+}
+
+
+def format_inference_confirmation(inferred_value: str) -> str:
+    """
+    Formulation empathique avec confidence hint (addendum V3.1).
+    """
+    return INFERENCE_CONFIRM_TEMPLATES.get(
+        inferred_value,
+        f"D'accord, donc plutôt {inferred_value}, c'est bien ça ?",
+    )
+
+
+# V3.1 — Mots-signaux de transition (structure mentale vocale)
+class TransitionSignals:
+    """Mots-signaux pour structurer la conversation vocale."""
+    VALIDATION = "Parfait."
+    PROGRESSION = "Très bien."
+    AGREEMENT = "D'accord."
+    PROCESSING = "Je regarde."
+    RESULT = "Voilà."
+
+    @staticmethod
+    def wrap_with_signal(message: str, signal_type: str = "PROGRESSION") -> str:
+        """Ajoute un mot-signal en début de message (un seul par message)."""
+        signal = getattr(TransitionSignals, signal_type, "")
+        if signal and message and not message.startswith(signal):
+            return f"{signal} {message}"
+        return message
+
 
 # ----------------------------
 # FLOW F: TRANSFER - Transfert humain

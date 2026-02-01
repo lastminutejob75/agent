@@ -199,4 +199,38 @@ Logs Railway montrant le démarrage avec "✅ GOOGLE CALENDAR CONNECTED" mais en
 
 ---
 
+## RDV créé par l’agent mais invisible dans Google Calendar
+
+Si l’agent confirme le RDV mais l’événement n’apparaît pas dans le calendrier « UWI - Rendez-vous » :
+
+### 1. Vérifier l’ID du calendrier
+
+- Ouvrir [Google Calendar](https://calendar.google.com) → calendrier « UWI - Rendez-vous »
+- Paramètres du calendrier (roue dentée) → **Intégrer le calendrier**
+- Copier l’**ID du calendrier** (ex. `xxx@group.calendar.google.com`)
+- La variable `GOOGLE_CALENDAR_ID` (Railway ou `.env`) doit être **exactement** cet ID
+
+### 2. Partager le calendrier avec le Service Account
+
+Le compte de service doit pouvoir **écrire** dans ce calendrier :
+
+1. Dans le JSON du Service Account, relever **`client_email`** (ex. `xxx@projet.iam.gserviceaccount.com`)
+2. Dans Google Calendar : Paramètres du calendrier « UWI - Rendez-vous » → **Partager avec des personnes**
+3. Ajouter cet email avec le droit **« Modifier les événements »** (Make changes to events)
+4. Enregistrer
+
+Sans ce partage, l’API peut renvoyer 403 ou l’événement peut être créé dans un autre calendrier.
+
+### 3. Vérifier les logs Railway
+
+Après un test de prise de RDV, consulter les logs du service. Vous devriez voir par exemple :
+
+- `Booking: calendar_id=... start=... end=...` (créneau envoyé à l’API)
+- Soit `Appointment booked: event_id=...` (succès)
+- Soit `Error booking appointment: HTTP 403 ...` (droits insuffisants ou mauvais calendrier)
+
+Cela permet de confirmer quel `calendar_id` est utilisé et si une erreur HTTP est renvoyée.
+
+---
+
 **Contact :** Transférer cette problématique à un expert Railway/Docker/FastAPI
