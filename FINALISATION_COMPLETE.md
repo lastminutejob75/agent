@@ -46,7 +46,17 @@ INTENT_ROUTER est un état de **stabilisation**, pas un flow fonctionnel.
 
 ---
 
-## 3. Logs = design signals (pas erreurs user)
+## 3. Privilégier comprendre (seuils effectifs)
+
+Pour éviter de transférer dès la première difficulté (ex. interruption, "attendez") :
+
+- **TRANSFER** : ne pas considérer comme demande de transfert un message **trop court** (< 14 caractères), ex. "humain", "quelqu'un" seuls → souvent une interruption.
+- **INTENT_ROUTER** : déclencher le menu seulement après **3** échecs (global_recovery_fails, correction_count, empty_message_count) ; **3** retries dans le menu avant transfert. Seuil `consecutive_questions` : 7.
+- En résumé : dégradation progressive (reformuler → exemple → choix fermé) avec **3** essais avant menu, puis **3** essais dans le menu avant transfert.
+
+---
+
+## 4. Logs = design signals (pas erreurs user)
 
 INTENT_ROUTER, anti-loop, transfert auto = **signaux de design** à analyser.
 
@@ -60,7 +70,7 @@ Logger en **INFO** (pas WARNING/ERROR), avec : raison, état précédent, slots 
 
 ---
 
-## 4. Prompt Cursor FINAL (tout-en-un)
+## 5. Prompt Cursor FINAL (tout-en-un)
 
 À copier-coller pour Cursor avec tous les ajustements :
 
@@ -72,10 +82,9 @@ Puis implémente UNIQUEMENT le Niveau 1 décrit dans PRODUCTION_GRADE_SPEC_V3.md
 Livrables attendus :
 1) process_message_v3() avec pipeline strict (ordre NON NÉGOCIABLE) :
    anti_loop_guard -> intent_override -> guards -> correction -> state_handler -> safe_reply
-2) INTENT_ROUTER universel (menu 4 choix) + triggers unifiés :
-   - >=2 incompréhensions (même contexte) -> INTENT_ROUTER
-   - intent ambigu répété -> INTENT_ROUTER
-   - correction répétée -> INTENT_ROUTER
+2) INTENT_ROUTER universel (menu 4 choix) + triggers unifiés (seuils hauts = privilégier comprendre) :
+   - >=3 incompréhensions / échecs (global_recovery_fails, correction_count, empty_message_count) -> INTENT_ROUTER
+   - 3 retries dans le menu avant transfert ; TRANSFER override seulement si phrase explicite (>=14 car.)
 3) Dégradation progressive (reformule -> exemple -> choix fermé -> transfert) avec compteur par contexte
 4) Override global à chaque message : CANCEL/MODIFY/TRANSFER/ABANDON
 5) No Hangup Policy + safe_reply() : aucun tour ne doit produire silence
@@ -118,7 +127,7 @@ Règles critiques additionnelles :
    - Ne collecte AUCUNE donnée métier
    - Ne pose AUCUNE question libre
    - Switch immédiat vers autre état après choix 1/2/3/4
-   - Max 2 tours (2 échecs -> transfert)
+   - Max 3 tours dans le menu (3 échecs -> transfert). Privilégier comprendre.
 
 3. Logging = design signals (pas erreurs user) :
    - INTENT_ROUTER / anti-loop / transfert auto en INFO
@@ -129,7 +138,7 @@ Ne crée pas de nouveaux fichiers ni de nouvelle architecture. Patch minimal, co
 
 ---
 
-## 5. Collection FINALE (ordre pour Cursor)
+## 6. Collection FINALE (ordre pour Cursor)
 
 **12 documents (~190 KB total)** — Production-ready.
 

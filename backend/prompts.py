@@ -219,6 +219,8 @@ MSG_INTENT_ROUTER = (
     "quatre, pour parler à quelqu'un. Dites simplement : un, deux, trois ou quatre."
 )
 
+MSG_INTENT_ROUTER_FAQ = "Quelle est votre question ?"
+
 MSG_INTENT_ROUTER_RETRY = (
     "Dites juste le numéro. Par exemple : un pour rendez-vous."
 )
@@ -644,6 +646,29 @@ MSG_CONVERSATION_CLOSED = (
     "C'est terminé pour cette demande. "
     "Si vous avez un nouveau besoin, ouvrez une nouvelle conversation ou parlez à un humain."
 )
+
+# Clarification (web) — doc SCRIPT_CONVERSATION_AGENT
+MSG_CLARIFY_WEB = "D'accord. Vous avez une question ou vous souhaitez prendre rendez-vous ?"
+MSG_CLARIFY_WEB_START = "D'accord. Vous avez une question ou un autre besoin ?"
+
+# Abandon / FAQ goodbye (web)
+MSG_ABANDON_WEB = "Pas de problème. Bonne journée !"
+MSG_FAQ_GOODBYE_WEB = "Parfait, bonne journée !"
+
+# FAQ no match premier échec (doc: 1er échec → message, 2e → transfert)
+MSG_FAQ_NO_MATCH_FIRST = "Je n'ai pas cette information. Souhaitez-vous prendre un rendez-vous ?"
+
+# Cancel / Modify (web fallbacks)
+MSG_CANCEL_ASK_NAME_WEB = "Pas de problème. C'est à quel nom ?"
+MSG_MODIFY_ASK_NAME_WEB = "Pas de souci. C'est à quel nom ?"
+MSG_CANCEL_NOT_FOUND_WEB = "Je n'ai pas trouvé de rendez-vous à ce nom. Pouvez-vous me redonner votre nom complet ?"
+MSG_CANCEL_DONE_WEB = "C'est fait, votre rendez-vous est annulé. Bonne journée !"
+MSG_CANCEL_KEPT_WEB = "Pas de souci, votre rendez-vous est maintenu. Bonne journée !"
+MSG_MODIFY_NOT_FOUND_WEB = "Je n'ai pas trouvé de rendez-vous à ce nom. Pouvez-vous me redonner votre nom complet ?"
+MSG_MODIFY_CONFIRM_WEB = "Vous avez un rendez-vous {slot_label}. Voulez-vous le déplacer ?"
+MSG_CANCEL_CONFIRM_WEB = "Vous avez un rendez-vous {slot_label}. Voulez-vous l'annuler ?"
+MSG_FAQ_TO_BOOKING_WEB = "Pas de souci. C'est à quel nom ?"
+MSG_MODIFY_CANCELLED_WEB = "J'ai annulé l'ancien. Plutôt le matin ou l'après-midi pour le nouveau ?"
 
 
 # ----------------------------

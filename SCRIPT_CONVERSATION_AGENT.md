@@ -155,7 +155,7 @@ Si pas de match FAQ :
   - **CANCEL** → flow annulation.
   - **MODIFY** → flow modification.
   - **TRANSFER** → transfert.
-  - Toujours pas clair : après 2 relances → `"Je vais vous mettre en relation avec quelqu'un qui pourra mieux vous aider."` (`VOCAL_STILL_UNCLEAR`) puis transfert.
+  - Toujours pas clair : après **3** relances → `"Je vais vous mettre en relation avec quelqu'un qui pourra mieux vous aider."` (`VOCAL_STILL_UNCLEAR`) puis transfert (aligné FINALISATION : privilégier comprendre).
 
 ---
 

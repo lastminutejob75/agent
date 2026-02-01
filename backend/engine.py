@@ -242,9 +242,13 @@ def should_override_current_flow_v3(session: Session, message: str) -> bool:
     """
     Intent override avec garde-fou anti-boucle (spec V3).
     Ne pas rerouter si déjà dans le bon flow ou si même intent consécutif.
+    TRANSFER : exiger une phrase explicite (éviter "humain" / "quelqu'un" seuls = interruption).
     """
     strong = detect_strong_intent(message)
     if not strong:
+        return False
+    # Ne pas transférer sur un mot court (interruption fréquente : "humain", "quelqu'un")
+    if strong == "TRANSFER" and len(message.strip()) < 14:
         return False
     if strong == "CANCEL" and session.state in ("CANCEL_NAME", "CANCEL_CONFIRM"):
         return False
@@ -272,17 +276,15 @@ def should_trigger_intent_router(session: Session, user_message: str) -> tuple[b
     """
     IVR Principe 3 — Un seul mécanisme de sortie universel.
     Détermine si on doit activer INTENT_ROUTER (menu 1/2/3/4).
-    
-    Returns:
-        (True, reason) si déclencher, (False, "") sinon.
+    Seuils volontairement hauts : privilégier comprendre plutôt que transférer.
     """
     if session.state in ("INTENT_ROUTER", "TRANSFERRED", "CONFIRMED"):
         return False, ""
-    if getattr(session, "global_recovery_fails", 0) >= 2:
-        return True, "global_fails_2"
-    if detect_correction_intent(user_message) and getattr(session, "correction_count", 0) >= 2:
+    if getattr(session, "global_recovery_fails", 0) >= 3:
+        return True, "global_fails_3"
+    if detect_correction_intent(user_message) and getattr(session, "correction_count", 0) >= 3:
         return True, "correction_repeated"
-    if getattr(session, "consecutive_questions", 0) >= 5:
+    if getattr(session, "consecutive_questions", 0) >= 7:
         return True, "blocked_state"
     return False, ""
 
@@ -405,7 +407,7 @@ class Engine:
         
         if not user_text or not user_text.strip():
             session.empty_message_count = getattr(session, "empty_message_count", 0) + 1
-            if session.empty_message_count >= 2:
+            if session.empty_message_count >= 3:
                 return safe_reply(
                     self._trigger_intent_router(session, "empty_repeated", user_text or ""),
                     session,
@@ -540,7 +542,7 @@ class Engine:
             # NO → demander clarification
             if intent == "NO":
                 session.state = "CLARIFY"
-                msg = prompts.VOCAL_CLARIFY if channel == "vocal" else "D'accord. Vous avez une question ou un autre besoin ?"
+                msg = prompts.VOCAL_CLARIFY if channel == "vocal" else prompts.MSG_CLARIFY_WEB_START
                 session.add_message("agent", msg)
                 return safe_reply([Event("final", msg, conv_state=session.state)], session)
             
@@ -552,17 +554,20 @@ class Engine:
             if intent == "MODIFY":
                 return safe_reply(self._start_modify(session), session)
             
-            # TRANSFER → Transfert direct
+            # TRANSFER → Transfert direct (doc: phrase explicite >=14 car., pas interruption courte)
             if intent == "TRANSFER":
-                session.state = "TRANSFERRED"
-                msg = prompts.VOCAL_TRANSFER_COMPLEX if channel == "vocal" else prompts.MSG_TRANSFER
-                session.add_message("agent", msg)
-                return safe_reply([Event("final", msg, conv_state=session.state)], session)
+                if len(user_text.strip()) >= 14:
+                    session.state = "TRANSFERRED"
+                    msg = prompts.VOCAL_TRANSFER_COMPLEX if channel == "vocal" else prompts.MSG_TRANSFER
+                    session.add_message("agent", msg)
+                    return safe_reply([Event("final", msg, conv_state=session.state)], session)
+                # Message court type "humain" → traiter comme unclear, pas transfert
+                return safe_reply(self._handle_faq(session, user_text, include_low=True), session)
             
             # ABANDON → Au revoir poli
             if intent == "ABANDON":
                 session.state = "CONFIRMED"  # Terminal
-                msg = prompts.VOCAL_USER_ABANDON if channel == "vocal" else "Pas de problème. Bonne journée !"
+                msg = prompts.VOCAL_USER_ABANDON if channel == "vocal" else prompts.MSG_ABANDON_WEB
                 session.add_message("agent", msg)
                 return safe_reply([Event("final", msg, conv_state=session.state)], session)
             
@@ -584,7 +589,7 @@ class Engine:
             # NON merci → Au revoir
             if intent == "NO" or intent == "ABANDON":
                 session.state = "CONFIRMED"
-                msg = prompts.VOCAL_FAQ_GOODBYE if channel == "vocal" else "Parfait, bonne journée !"
+                msg = prompts.VOCAL_FAQ_GOODBYE if channel == "vocal" else prompts.MSG_FAQ_GOODBYE_WEB
                 session.add_message("agent", msg)
                 return safe_reply([Event("final", msg, conv_state=session.state)], session)
             
@@ -637,7 +642,7 @@ class Engine:
 
         # Message plus doux pour le premier no-match
         if channel == "vocal":
-            msg = "Je n'ai pas cette information. Souhaitez-vous prendre un rendez-vous ?"
+            msg = prompts.MSG_FAQ_NO_MATCH_FIRST
         else:
             msg = prompts.msg_no_match_faq(config.BUSINESS_NAME, channel=channel)
         session.add_message("agent", msg)
@@ -1255,7 +1260,7 @@ class Engine:
         """Démarre le flow d'annulation."""
         channel = getattr(session, "channel", "web")
         session.state = "CANCEL_NAME"
-        msg = prompts.VOCAL_CANCEL_ASK_NAME if channel == "vocal" else "Pas de problème. C'est à quel nom ?"
+        msg = prompts.VOCAL_CANCEL_ASK_NAME if channel == "vocal" else prompts.MSG_CANCEL_ASK_NAME_WEB
         session.add_message("agent", msg)
         return [Event("final", msg, conv_state=session.state)]
     
@@ -1280,7 +1285,7 @@ class Engine:
                     session.add_message("agent", msg)
                     return [Event("final", msg, conv_state=session.state)]
                 
-                msg = prompts.VOCAL_CANCEL_NOT_FOUND if channel == "vocal" else "Je n'ai pas trouvé de rendez-vous à ce nom. Pouvez-vous me redonner votre nom complet ?"
+                msg = prompts.VOCAL_CANCEL_NOT_FOUND if channel == "vocal" else prompts.MSG_CANCEL_NOT_FOUND_WEB
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
@@ -1292,7 +1297,7 @@ class Engine:
             if channel == "vocal":
                 msg = prompts.VOCAL_CANCEL_CONFIRM.format(slot_label=slot_label)
             else:
-                msg = f"Vous avez un rendez-vous {slot_label}. Voulez-vous l'annuler ?"
+                msg = prompts.MSG_CANCEL_CONFIRM_WEB.format(slot_label=slot_label)
             
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
@@ -1305,14 +1310,14 @@ class Engine:
                 success = tools_booking.cancel_booking(session.pending_cancel_slot)
                 
                 session.state = "CONFIRMED"
-                msg = prompts.VOCAL_CANCEL_DONE if channel == "vocal" else "C'est fait, votre rendez-vous est annulé. Bonne journée !"
+                msg = prompts.VOCAL_CANCEL_DONE if channel == "vocal" else prompts.MSG_CANCEL_DONE_WEB
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
             elif intent == "NO":
                 # Garder le RDV
                 session.state = "CONFIRMED"
-                msg = prompts.VOCAL_CANCEL_KEPT if channel == "vocal" else "Pas de souci, votre rendez-vous est maintenu. Bonne journée !"
+                msg = prompts.VOCAL_CANCEL_KEPT if channel == "vocal" else prompts.MSG_CANCEL_KEPT_WEB
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
@@ -1338,7 +1343,7 @@ class Engine:
         """Démarre le flow de modification."""
         channel = getattr(session, "channel", "web")
         session.state = "MODIFY_NAME"
-        msg = prompts.VOCAL_MODIFY_ASK_NAME if channel == "vocal" else "Pas de souci. C'est à quel nom ?"
+        msg = prompts.VOCAL_MODIFY_ASK_NAME if channel == "vocal" else prompts.MSG_MODIFY_ASK_NAME_WEB
         session.add_message("agent", msg)
         return [Event("final", msg, conv_state=session.state)]
     
@@ -1360,7 +1365,7 @@ class Engine:
                     session.add_message("agent", msg)
                     return [Event("final", msg, conv_state=session.state)]
                 
-                msg = prompts.VOCAL_MODIFY_NOT_FOUND if channel == "vocal" else "Je n'ai pas trouvé de rendez-vous à ce nom. Pouvez-vous me redonner votre nom complet ?"
+                msg = prompts.VOCAL_MODIFY_NOT_FOUND if channel == "vocal" else prompts.MSG_MODIFY_NOT_FOUND_WEB
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
@@ -1372,7 +1377,7 @@ class Engine:
             if channel == "vocal":
                 msg = prompts.VOCAL_MODIFY_CONFIRM.format(slot_label=slot_label)
             else:
-                msg = f"Vous avez un rendez-vous {slot_label}. Voulez-vous le déplacer ?"
+                msg = prompts.MSG_MODIFY_CONFIRM_WEB.format(slot_label=slot_label)
             
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
@@ -1386,14 +1391,14 @@ class Engine:
                 
                 # Rerouter vers QUALIF_PREF
                 session.state = "QUALIF_PREF"
-                msg = prompts.VOCAL_MODIFY_CANCELLED if channel == "vocal" else "OK, j'ai annulé l'ancien. Plutôt le matin ou l'après-midi pour le nouveau ?"
+                msg = prompts.VOCAL_MODIFY_CANCELLED if channel == "vocal" else prompts.MSG_MODIFY_CANCELLED_WEB
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
             elif intent == "NO":
                 # Garder le RDV
                 session.state = "CONFIRMED"
-                msg = prompts.VOCAL_CANCEL_KEPT if channel == "vocal" else "Pas de souci, votre rendez-vous est maintenu. Bonne journée !"
+                msg = prompts.VOCAL_CANCEL_KEPT if channel == "vocal" else prompts.MSG_CANCEL_KEPT_WEB
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
@@ -1497,7 +1502,7 @@ class Engine:
         reason: str = "unknown",
         user_message: str = "",
     ) -> List[Event]:
-        """Menu 1/2/3/4 quand perdu ou après 2 échecs globaux. V3.1 : logging structuré."""
+        """Menu 1/2/3/4 quand perdu ou après 3 échecs (doc: privilégier comprendre). Logging structuré INFO."""
         import logging
         # Slots manquants au moment du menu (pour analytics)
         context = {
@@ -1512,6 +1517,7 @@ class Engine:
             "trigger_reason": reason,
             "previous_state": session.state,
             "missing_slots": missing,
+            "turn_count": getattr(session, "turn_count", 0),
             "consecutive_questions": getattr(session, "consecutive_questions", 0),
             "global_recovery_fails": getattr(session, "global_recovery_fails", 0),
             "no_match_turns": session.no_match_turns,
@@ -1567,7 +1573,7 @@ class Engine:
             return self._start_cancel(session)
         if any(p in msg_lower for p in ["trois", "3", "troisième", "question"]):
             session.state = "START"
-            msg = "Quelle est votre question ?"
+            msg = prompts.MSG_INTENT_ROUTER_FAQ
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
         if any(p in msg_lower for p in ["quatre", "4", "quatrième", "quelqu'un", "humain"]):
@@ -1577,7 +1583,7 @@ class Engine:
             return [Event("final", msg, conv_state=session.state)]
         
         session.global_recovery_fails = getattr(session, "global_recovery_fails", 0) + 1
-        if session.global_recovery_fails >= 2:
+        if session.global_recovery_fails >= 3:
             session.state = "TRANSFERRED"
             msg = prompts.VOCAL_STILL_UNCLEAR if channel == "vocal" else prompts.MSG_TRANSFER
             session.add_message("agent", msg)
@@ -1627,7 +1633,7 @@ class Engine:
         # Si l'utilisateur dit vouloir un RDV
         if intent == "YES" or intent == "BOOKING" or "rendez-vous" in user_text.lower() or "rdv" in user_text.lower():
             session.state = "QUALIF_NAME"
-            msg = prompts.VOCAL_FAQ_TO_BOOKING if channel == "vocal" else "Pas de souci. C'est à quel nom ?"
+            msg = prompts.VOCAL_FAQ_TO_BOOKING if channel == "vocal" else prompts.MSG_FAQ_TO_BOOKING_WEB
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
         
@@ -1654,23 +1660,23 @@ class Engine:
         if intent == "MODIFY":
             return self._start_modify(session)
         
-        # Intent TRANSFER
-        if intent == "TRANSFER":
+        # Intent TRANSFER (doc: phrase explicite >=14 car.)
+        if intent == "TRANSFER" and len(user_text.strip()) >= 14:
             session.state = "TRANSFERRED"
             msg = prompts.VOCAL_TRANSFER_COMPLEX if channel == "vocal" else prompts.MSG_TRANSFER
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
         
-        # Toujours pas clair → transfert
-        session.confirm_retry_count += 1
-        if session.confirm_retry_count >= 2:
+        # Toujours pas clair → transfert après 3 relances (doc: privilégier comprendre)
+        session.confirm_retry_count = getattr(session, "confirm_retry_count", 0) + 1
+        if session.confirm_retry_count >= 3:
             session.state = "TRANSFERRED"
             msg = prompts.VOCAL_STILL_UNCLEAR if channel == "vocal" else prompts.MSG_TRANSFER
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
         
         # Encore une chance
-        msg = prompts.VOCAL_CLARIFY if channel == "vocal" else "D'accord. Vous avez une question ou vous souhaitez prendre rendez-vous ?"
+        msg = prompts.VOCAL_CLARIFY if channel == "vocal" else prompts.MSG_CLARIFY_WEB
         session.add_message("agent", msg)
         return [Event("final", msg, conv_state=session.state)]
     

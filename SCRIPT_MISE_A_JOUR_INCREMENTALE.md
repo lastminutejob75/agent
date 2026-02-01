@@ -386,9 +386,9 @@ def handle_intent_router_response(session, user_message: str) -> dict:
         session.state = 'TRANSFERRED'
         return {'message': "Je vous mets en relation. Un instant.", 'state': 'TRANSFERRED'}
     
-    # Incompréhension → retry 1 fois puis transfert
+    # Incompréhension → retry 2 fois puis transfert (privilégier comprendre)
     session.global_recovery_fails += 1
-    if session.global_recovery_fails >= 2:
+    if session.global_recovery_fails >= 3:
         session.state = 'TRANSFERRED'
         return {'message': "Je vais vous passer quelqu'un. Un instant.", 'state': 'TRANSFERRED'}
     
@@ -396,21 +396,21 @@ def handle_intent_router_response(session, user_message: str) -> dict:
 
 
 def should_trigger_intent_router(session, user_message: str) -> bool:
-    """Détermine si on doit activer INTENT_ROUTER"""
-    # ≥2 échecs globaux
-    if session.global_recovery_fails >= 2:
+    """Détermine si on doit activer INTENT_ROUTER. Seuils hauts = privilégier comprendre."""
+    # ≥3 échecs globaux
+    if session.global_recovery_fails >= 3:
         return True
     
-    # Correction répétée
-    if session.correction_count >= 2:
+    # Correction répétée (3 fois)
+    if session.correction_count >= 3:
         return True
     
-    # Message vide répété
-    if session.empty_message_count >= 2:
+    # Message vide répété (3 fois)
+    if session.empty_message_count >= 3:
         return True
     
-    # >5 tours sans progression
-    if session.consecutive_questions >= 5:
+    # >7 tours sans progression
+    if session.consecutive_questions >= 7:
         return True
     
     return False
@@ -514,7 +514,7 @@ async def process_message(session, user_message: str):
     # ========================================
     if not user_message.strip():
         session.empty_message_count += 1
-        if session.empty_message_count >= 2:
+        if session.empty_message_count >= 3:
             return safe_reply(trigger_intent_router(session, 'empty_repeated', user_message), session)
         return safe_reply({'message': "Je n'ai rien entendu. Répétez ?"}, session)
     
@@ -526,7 +526,7 @@ async def process_message(session, user_message: str):
     # ========================================
     if detect_correction_intent(user_message) and session.last_question_asked:
         session.correction_count += 1
-        if session.correction_count >= 2:
+        if session.correction_count >= 3:
             return safe_reply(trigger_intent_router(session, 'correction_repeated', user_message), session)
         return safe_reply({'message': session.last_question_asked, 'state': session.state}, session)
     
@@ -705,7 +705,7 @@ Ce script a été copié dans le projet. Voici le **mapping** avec l’implémen
 | Élément du script | Dans ce dépôt |
 |-------------------|---------------|
 | **Session enrichie** | `backend/session.py` : `last_intent`, `last_question_asked`, `consecutive_questions`, `turn_count`, `correction_count`, `empty_message_count`, `global_recovery_fails`, `MAX_CONSECUTIVE_QUESTIONS`, `MAX_TURNS_ANTI_LOOP`. Pas de `slot_choice_fails` / `name_fails` / `phone_fails` / `preference_fails` ni de méthodes `increment_turn()`, `is_looping()`, `is_terminal_state()` (équivalent : test `turn_count > MAX_TURNS_ANTI_LOOP` dans engine). |
-| **Intent override** | `backend/engine.py` : `detect_strong_intent()`, `detect_correction_intent()`, `should_override_current_flow_v3()`. Patterns dans `backend/prompts.py` (CANCEL_PATTERNS, MODIFY_PATTERNS, TRANSFER_PATTERNS). Pas de fichier séparé `intent_override.py`. |
+| **Intent override** | `backend/engine.py` : `detect_strong_intent()`, `detect_correction_intent()`, `should_override_current_flow_v3()`. TRANSFER uniquement si message **≥14 caractères** (éviter "humain"/"quelqu'un" seuls = interruption). Seuils INTENT_ROUTER : **3** échecs (global_recovery_fails, correction_count, empty_message_count) ; **3** retries au menu avant transfert. |
 | **Recovery** | `backend/prompts.py` : `ClarificationMessages`, `get_clarification_message()`. Dégradation progressive dans `engine.py` (retry par contexte). Pas de fichier `recovery.py` ni de compteurs par contexte (slot_choice_fails, etc.). |
 | **INTENT_ROUTER** | `backend/prompts.py` : `MSG_INTENT_ROUTER`, `MSG_INTENT_ROUTER_RETRY`. `backend/engine.py` : `_trigger_intent_router()`, `_handle_intent_router()`, `should_trigger_intent_router()`. |
 | **Safe reply** | `backend/engine.py` : `safe_reply(events, session)` (signature List[Event], pas dict). |
