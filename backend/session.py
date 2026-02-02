@@ -78,6 +78,11 @@ class Session:
     phone_fails: int = 0
     preference_fails: int = 0
     contact_confirm_fails: int = 0
+    cancel_name_fails: int = 0  # Flow CANCEL : RDV non trouvé (vérifier/humain puis INTENT_ROUTER)
+    cancel_rdv_not_found_count: int = 0  # CANCEL : nb fois "RDV pas trouvé" (alternatives puis transfert)
+    modify_name_fails: int = 0  # Flow MODIFY : RDV non trouvé (vérifier/humain puis INTENT_ROUTER)
+    modify_rdv_not_found_count: int = 0  # MODIFY : nb fois "RDV pas trouvé"
+    faq_fails: int = 0  # FAQ : question pas comprise (reformulation → exemples → INTENT_ROUTER)
 
     MAX_CONSECUTIVE_QUESTIONS = 3  # Limite cognitive (spec V3)
     MAX_TURNS_ANTI_LOOP = 25  # Garde-fou : >25 tours sans DONE/TRANSFERRED → INTENT_ROUTER
@@ -119,6 +124,11 @@ class Session:
         self.name_fails = 0
         self.phone_fails = 0
         self.preference_fails = 0
+        self.cancel_name_fails = 0
+        self.cancel_rdv_not_found_count = 0
+        self.modify_name_fails = 0
+        self.modify_rdv_not_found_count = 0
+        self.faq_fails = 0
         self.contact_confirm_fails = 0
         # Note: on ne reset PAS customer_phone car c'est lié à l'appel
 

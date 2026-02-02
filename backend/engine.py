@@ -250,9 +250,9 @@ def should_override_current_flow_v3(session: Session, message: str) -> bool:
     # Ne pas transférer sur un mot court (interruption fréquente : "humain", "quelqu'un")
     if strong == "TRANSFER" and len(message.strip()) < 14:
         return False
-    if strong == "CANCEL" and session.state in ("CANCEL_NAME", "CANCEL_CONFIRM"):
+    if strong == "CANCEL" and session.state in ("CANCEL_NAME", "CANCEL_NO_RDV", "CANCEL_CONFIRM"):
         return False
-    if strong == "MODIFY" and session.state in ("MODIFY_NAME", "MODIFY_CONFIRM"):
+    if strong == "MODIFY" and session.state in ("MODIFY_NAME", "MODIFY_NO_RDV", "MODIFY_CONFIRM"):
         return False
     last = getattr(session, "last_intent", None)
     if strong == last:
@@ -496,11 +496,11 @@ class Engine:
             return safe_reply(self._handle_booking_confirm(session, user_text), session)
         
         # Si en flow CANCEL
-        if session.state in ["CANCEL_NAME", "CANCEL_CONFIRM"]:
+        if session.state in ["CANCEL_NAME", "CANCEL_NO_RDV", "CANCEL_CONFIRM"]:
             return safe_reply(self._handle_cancel(session, user_text), session)
         
         # Si en flow MODIFY
-        if session.state in ["MODIFY_NAME", "MODIFY_CONFIRM"]:
+        if session.state in ["MODIFY_NAME", "MODIFY_NO_RDV", "MODIFY_CONFIRM"]:
             return safe_reply(self._handle_modify(session, user_text), session)
         
         # Si en flow CLARIFY
@@ -629,22 +629,31 @@ class Engine:
                 response = response + " " + prompts.VOCAL_FAQ_FOLLOWUP
             
             session.state = "FAQ_ANSWERED"
-            session.no_match_turns = 0  # Reset le compteur
+            session.no_match_turns = 0
+            session.faq_fails = 0
             session.add_message("agent", response)
             return [Event("final", response, conv_state=session.state)]
 
         session.no_match_turns += 1
+        session.faq_fails = getattr(session, "faq_fails", 0) + 1
         session.global_recovery_fails = getattr(session, "global_recovery_fails", 0) + 1
 
-        # Spec V3 : 2 échecs → INTENT_ROUTER (menu) au lieu de transfert direct (V3.1 logging)
-        if session.no_match_turns >= 2:
-            return self._trigger_intent_router(session, "no_match_faq_2", user_text)
+        # Spec V3 : 3 niveaux — 1er reformulation, 2e exemples, 3e INTENT_ROUTER (menu)
+        if session.no_match_turns >= 3:
+            return self._trigger_intent_router(session, "no_match_faq_3", user_text)
 
-        # Message plus doux pour le premier no-match
-        if channel == "vocal":
-            msg = prompts.MSG_FAQ_NO_MATCH_FIRST
+        if session.no_match_turns == 1:
+            # 1er no-match : demander à reformuler
+            if channel == "vocal":
+                msg = getattr(prompts, "MSG_FAQ_REFORMULATE_VOCAL", prompts.MSG_FAQ_REFORMULATE)
+            else:
+                msg = prompts.MSG_FAQ_REFORMULATE
         else:
-            msg = prompts.msg_no_match_faq(config.BUSINESS_NAME, channel=channel)
+            # 2e no-match : donner exemples (horaires, tarifs, localisation)
+            if channel == "vocal":
+                msg = getattr(prompts, "MSG_FAQ_RETRY_EXEMPLES_VOCAL", prompts.MSG_FAQ_RETRY_EXEMPLES)
+            else:
+                msg = prompts.MSG_FAQ_RETRY_EXEMPLES
         session.add_message("agent", msg)
         return [Event("final", msg, conv_state=session.state)]
     
@@ -1257,48 +1266,95 @@ class Engine:
     # ========================
     
     def _start_cancel(self, session: Session) -> List[Event]:
-        """Démarre le flow d'annulation."""
+        """Démarre le flow d'annulation (reset des compteurs recovery du flow)."""
         channel = getattr(session, "channel", "web")
         session.state = "CANCEL_NAME"
+        session.name_fails = 0
+        session.cancel_name_fails = 0
+        session.cancel_rdv_not_found_count = 0
         msg = prompts.VOCAL_CANCEL_ASK_NAME if channel == "vocal" else prompts.MSG_CANCEL_ASK_NAME_WEB
         session.add_message("agent", msg)
         return [Event("final", msg, conv_state=session.state)]
     
     def _handle_cancel(self, session: Session, user_text: str) -> List[Event]:
-        """Gère le flow d'annulation."""
+        """Gère le flow d'annulation avec recovery progressive (nom pas compris, RDV non trouvé)."""
         channel = getattr(session, "channel", "web")
+        max_fails = getattr(Session, "MAX_CONTEXT_FAILS", 3)
+        
+        # État CANCEL_NO_RDV : user a dit un nom, RDV pas trouvé → proposer vérifier ou humain (ou oui/non)
+        if session.state == "CANCEL_NO_RDV":
+            intent = detect_intent(user_text)
+            msg_lower = user_text.strip().lower()
+            # Oui = ré-épeler le nom (redemander)
+            if intent == "YES" or any(p in msg_lower for p in ["vérifier", "verifier", "réessayer", "orthographe", "redonner", "redonne"]):
+                session.state = "CANCEL_NAME"
+                session.qualif_data.name = None
+                session.cancel_rdv_not_found_count = 0
+                msg = prompts.VOCAL_CANCEL_ASK_NAME if channel == "vocal" else prompts.MSG_CANCEL_ASK_NAME_WEB
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+            # Non = parler à quelqu'un → transfert
+            if intent == "NO" or any(p in msg_lower for p in ["humain", "quelqu'un", "parler à quelqu'un", "opérateur", "transfert"]):
+                session.state = "TRANSFERRED"
+                msg = prompts.get_message("transfer", channel=channel)
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+            # Nouveau nom fourni → rechercher à nouveau
+            session.qualif_data.name = user_text.strip()
+            existing_slot = tools_booking.find_booking_by_name(session.qualif_data.name)
+            if existing_slot:
+                session.state = "CANCEL_CONFIRM"
+                session.pending_cancel_slot = existing_slot
+                slot_label = existing_slot.get("label", "votre rendez-vous")
+                msg = prompts.VOCAL_CANCEL_CONFIRM.format(slot_label=slot_label) if channel == "vocal" else prompts.MSG_CANCEL_CONFIRM_WEB.format(slot_label=slot_label)
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+            # Toujours pas trouvé : utiliser cancel_rdv_not_found_count
+            session.cancel_rdv_not_found_count = getattr(session, "cancel_rdv_not_found_count", 0) + 1
+            session.cancel_name_fails = getattr(session, "cancel_name_fails", 0) + 1
+            if session.cancel_rdv_not_found_count >= max_fails or session.cancel_name_fails >= max_fails:
+                return self._trigger_intent_router(session, "cancel_not_found_3", user_text)
+            name = session.qualif_data.name or "?"
+            msg = prompts.VOCAL_CANCEL_NOT_FOUND_VERIFIER_HUMAN.format(name=name) if channel == "vocal" else prompts.MSG_CANCEL_NOT_FOUND_VERIFIER_HUMAN_WEB.format(name=name)
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state=session.state)]
         
         if session.state == "CANCEL_NAME":
-            # Stocker le nom et chercher le RDV
-            session.qualif_data.name = user_text.strip()
+            raw = user_text.strip()
+            # Nom pas compris (vide ou trop court)
+            if not raw or len(raw) < 2:
+                fail_count = increment_recovery_counter(session, "name")
+                if should_escalate_recovery(session, "name"):
+                    return self._trigger_intent_router(session, "cancel_name_fails_3", user_text)
+                if fail_count == 1:
+                    msg = prompts.VOCAL_CANCEL_NAME_RETRY_1 if channel == "vocal" else prompts.MSG_CANCEL_NAME_RETRY_1_WEB
+                else:
+                    msg = prompts.VOCAL_CANCEL_NAME_RETRY_2 if channel == "vocal" else prompts.MSG_CANCEL_NAME_RETRY_2_WEB
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
             
-            # TODO: Rechercher le RDV dans Google Calendar ou BDD
-            # Pour V1, on simule qu'on trouve toujours un RDV
+            # Nom valide → chercher le RDV
+            session.qualif_data.name = raw
+            session.name_fails = 0
             existing_slot = tools_booking.find_booking_by_name(session.qualif_data.name)
             
             if not existing_slot:
-                # Pas de RDV trouvé
-                session.confirm_retry_count += 1
-                if session.confirm_retry_count >= 2:
-                    session.state = "TRANSFERRED"
-                    msg = prompts.get_message("transfer", channel=channel)
-                    session.add_message("agent", msg)
-                    return [Event("final", msg, conv_state=session.state)]
-                
-                msg = prompts.VOCAL_CANCEL_NOT_FOUND if channel == "vocal" else prompts.MSG_CANCEL_NOT_FOUND_WEB
+                session.cancel_rdv_not_found_count = getattr(session, "cancel_rdv_not_found_count", 0) + 1
+                session.cancel_name_fails = getattr(session, "cancel_name_fails", 0) + 1
+                if session.cancel_rdv_not_found_count >= max_fails:
+                    return self._trigger_intent_router(session, "cancel_not_found_3", user_text)
+                session.state = "CANCEL_NO_RDV"
+                name = session.qualif_data.name
+                msg = prompts.VOCAL_CANCEL_NOT_FOUND_VERIFIER_HUMAN.format(name=name) if channel == "vocal" else prompts.MSG_CANCEL_NOT_FOUND_VERIFIER_HUMAN_WEB.format(name=name)
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
             # RDV trouvé → demander confirmation
+            session.cancel_rdv_not_found_count = 0
             session.state = "CANCEL_CONFIRM"
             session.pending_cancel_slot = existing_slot
             slot_label = existing_slot.get("label", "votre rendez-vous")
-            
-            if channel == "vocal":
-                msg = prompts.VOCAL_CANCEL_CONFIRM.format(slot_label=slot_label)
-            else:
-                msg = prompts.MSG_CANCEL_CONFIRM_WEB.format(slot_label=slot_label)
-            
+            msg = prompts.VOCAL_CANCEL_CONFIRM.format(slot_label=slot_label) if channel == "vocal" else prompts.MSG_CANCEL_CONFIRM_WEB.format(slot_label=slot_label)
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
         
@@ -1340,45 +1396,88 @@ class Engine:
     # ========================
     
     def _start_modify(self, session: Session) -> List[Event]:
-        """Démarre le flow de modification."""
+        """Démarre le flow de modification (reset des compteurs recovery du flow)."""
         channel = getattr(session, "channel", "web")
         session.state = "MODIFY_NAME"
+        session.name_fails = 0
+        session.modify_name_fails = 0
+        session.modify_rdv_not_found_count = 0
         msg = prompts.VOCAL_MODIFY_ASK_NAME if channel == "vocal" else prompts.MSG_MODIFY_ASK_NAME_WEB
         session.add_message("agent", msg)
         return [Event("final", msg, conv_state=session.state)]
     
     def _handle_modify(self, session: Session, user_text: str) -> List[Event]:
-        """Gère le flow de modification."""
+        """Gère le flow de modification avec recovery progressive (nom pas compris, RDV non trouvé)."""
         channel = getattr(session, "channel", "web")
+        max_fails = getattr(Session, "MAX_CONTEXT_FAILS", 3)
+        
+        # État MODIFY_NO_RDV : proposer vérifier ou humain (ou oui/non)
+        if session.state == "MODIFY_NO_RDV":
+            intent = detect_intent(user_text)
+            msg_lower = user_text.strip().lower()
+            if intent == "YES" or any(p in msg_lower for p in ["vérifier", "verifier", "réessayer", "orthographe", "redonner", "redonne"]):
+                session.state = "MODIFY_NAME"
+                session.qualif_data.name = None
+                session.modify_rdv_not_found_count = 0
+                msg = prompts.VOCAL_MODIFY_ASK_NAME if channel == "vocal" else prompts.MSG_MODIFY_ASK_NAME_WEB
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+            if intent == "NO" or any(p in msg_lower for p in ["humain", "quelqu'un", "parler à quelqu'un", "opérateur", "transfert"]):
+                session.state = "TRANSFERRED"
+                msg = prompts.get_message("transfer", channel=channel)
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+            session.qualif_data.name = user_text.strip()
+            existing_slot = tools_booking.find_booking_by_name(session.qualif_data.name)
+            if existing_slot:
+                session.state = "MODIFY_CONFIRM"
+                session.pending_cancel_slot = existing_slot
+                slot_label = existing_slot.get("label", "votre rendez-vous")
+                msg = prompts.VOCAL_MODIFY_CONFIRM.format(slot_label=slot_label) if channel == "vocal" else prompts.MSG_MODIFY_CONFIRM_WEB.format(slot_label=slot_label)
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+            session.modify_rdv_not_found_count = getattr(session, "modify_rdv_not_found_count", 0) + 1
+            session.modify_name_fails = getattr(session, "modify_name_fails", 0) + 1
+            if session.modify_rdv_not_found_count >= max_fails:
+                return self._trigger_intent_router(session, "modify_not_found_3", user_text)
+            name = session.qualif_data.name or "?"
+            msg = prompts.VOCAL_MODIFY_NOT_FOUND_VERIFIER_HUMAN.format(name=name) if channel == "vocal" else prompts.MSG_MODIFY_NOT_FOUND_VERIFIER_HUMAN_WEB.format(name=name)
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state=session.state)]
         
         if session.state == "MODIFY_NAME":
-            # Stocker le nom et chercher le RDV
-            session.qualif_data.name = user_text.strip()
-            
-            existing_slot = tools_booking.find_booking_by_name(session.qualif_data.name)
-            
-            if not existing_slot:
-                session.confirm_retry_count += 1
-                if session.confirm_retry_count >= 2:
-                    session.state = "TRANSFERRED"
-                    msg = prompts.get_message("transfer", channel=channel)
-                    session.add_message("agent", msg)
-                    return [Event("final", msg, conv_state=session.state)]
-                
-                msg = prompts.VOCAL_MODIFY_NOT_FOUND if channel == "vocal" else prompts.MSG_MODIFY_NOT_FOUND_WEB
+            raw = user_text.strip()
+            if not raw or len(raw) < 2:
+                fail_count = increment_recovery_counter(session, "name")
+                if should_escalate_recovery(session, "name"):
+                    return self._trigger_intent_router(session, "modify_name_fails_3", user_text)
+                if fail_count == 1:
+                    msg = prompts.VOCAL_MODIFY_NAME_RETRY_1 if channel == "vocal" else prompts.MSG_MODIFY_NAME_RETRY_1_WEB
+                else:
+                    msg = prompts.VOCAL_MODIFY_NAME_RETRY_2 if channel == "vocal" else prompts.MSG_MODIFY_NAME_RETRY_2_WEB
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
-            # RDV trouvé → demander confirmation
+            session.qualif_data.name = raw
+            session.name_fails = 0
+            existing_slot = tools_booking.find_booking_by_name(session.qualif_data.name)
+            
+            if not existing_slot:
+                session.modify_rdv_not_found_count = getattr(session, "modify_rdv_not_found_count", 0) + 1
+                session.modify_name_fails = getattr(session, "modify_name_fails", 0) + 1
+                if session.modify_rdv_not_found_count >= max_fails:
+                    return self._trigger_intent_router(session, "modify_not_found_3", user_text)
+                session.state = "MODIFY_NO_RDV"
+                name = session.qualif_data.name
+                msg = prompts.VOCAL_MODIFY_NOT_FOUND_VERIFIER_HUMAN.format(name=name) if channel == "vocal" else prompts.MSG_MODIFY_NOT_FOUND_VERIFIER_HUMAN_WEB.format(name=name)
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+            
+            session.modify_rdv_not_found_count = 0
             session.state = "MODIFY_CONFIRM"
             session.pending_cancel_slot = existing_slot
             slot_label = existing_slot.get("label", "votre rendez-vous")
-            
-            if channel == "vocal":
-                msg = prompts.VOCAL_MODIFY_CONFIRM.format(slot_label=slot_label)
-            else:
-                msg = prompts.MSG_MODIFY_CONFIRM_WEB.format(slot_label=slot_label)
-            
+            msg = prompts.VOCAL_MODIFY_CONFIRM.format(slot_label=slot_label) if channel == "vocal" else prompts.MSG_MODIFY_CONFIRM_WEB.format(slot_label=slot_label)
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
         
@@ -1552,6 +1651,11 @@ class Engine:
         session.phone_fails = 0
         session.preference_fails = 0
         session.contact_confirm_fails = 0
+        session.cancel_name_fails = 0
+        session.cancel_rdv_not_found_count = 0
+        session.modify_name_fails = 0
+        session.modify_rdv_not_found_count = 0
+        session.faq_fails = 0
         msg = prompts.MSG_INTENT_ROUTER
         session.last_question_asked = msg
         session.add_message("agent", msg)

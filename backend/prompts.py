@@ -155,9 +155,20 @@ VOCAL_FAQ_TO_BOOKING = "Bien sûr ! C'est à quel nom ?"
 
 VOCAL_CANCEL_ASK_NAME = "Bien sûr, pas de problème ! C'est à quel nom ?"
 
+# Recovery progressive : nom pas compris (CANCEL_NAME)
+VOCAL_CANCEL_NAME_RETRY_1 = "Je n'ai pas noté votre nom. Vous pouvez répéter ?"
+VOCAL_CANCEL_NAME_RETRY_2 = "Votre nom et prénom. Par exemple : Martin Dupont."
+
 VOCAL_CANCEL_NOT_FOUND = (
     "Hmm, je ne trouve pas de rendez-vous à ce nom. "
     "Vous pouvez me redonner votre nom complet s'il vous plaît ?"
+)
+
+# RDV non trouvé : proposer vérifier ou humain (pas transfert direct)
+VOCAL_CANCEL_NOT_FOUND_VERIFIER_HUMAN = (
+    "Je ne trouve pas de rendez-vous au nom de {name}. "
+    "Voulez-vous vérifier l'orthographe ou parler à quelqu'un ? "
+    "Dites : vérifier, ou : humain."
 )
 
 VOCAL_CANCEL_CONFIRM = (
@@ -182,9 +193,20 @@ VOCAL_CANCEL_KEPT = (
 
 VOCAL_MODIFY_ASK_NAME = "Pas de souci. C'est à quel nom ?"
 
+# Recovery progressive : nom pas compris (MODIFY_NAME)
+VOCAL_MODIFY_NAME_RETRY_1 = "Je n'ai pas noté votre nom. Vous pouvez répéter ?"
+VOCAL_MODIFY_NAME_RETRY_2 = "Votre nom et prénom. Par exemple : Martin Dupont."
+
 VOCAL_MODIFY_NOT_FOUND = (
     "Hmm, j'ai pas trouvé de rendez-vous à ce nom. "
     "Vous pouvez me redonner votre nom complet ?"
+)
+
+# RDV non trouvé : proposer vérifier ou humain (pas transfert direct)
+VOCAL_MODIFY_NOT_FOUND_VERIFIER_HUMAN = (
+    "Je ne trouve pas de rendez-vous au nom de {name}. "
+    "Voulez-vous vérifier l'orthographe ou parler à quelqu'un ? "
+    "Dites : vérifier, ou : humain."
 )
 
 VOCAL_MODIFY_CONFIRM = (
@@ -655,13 +677,36 @@ MSG_CLARIFY_WEB_START = "D'accord. Vous avez une question ou un autre besoin ?"
 MSG_ABANDON_WEB = "Pas de problème. Bonne journée !"
 MSG_FAQ_GOODBYE_WEB = "Parfait, bonne journée !"
 
-# FAQ no match premier échec (doc: 1er échec → message, 2e → transfert)
+# FAQ no match : reformulation puis menu (1er → reformulation, 2e → INTENT_ROUTER)
 MSG_FAQ_NO_MATCH_FIRST = "Je n'ai pas cette information. Souhaitez-vous prendre un rendez-vous ?"
+MSG_FAQ_REFORMULATE = "Je n'ai pas bien compris votre question. Pouvez-vous la reformuler ?"
+MSG_FAQ_REFORMULATE_VOCAL = "J'ai pas bien saisi. Vous pouvez reformuler votre question ?"
+# Retry 2 : donner exemples (horaires, tarifs, localisation)
+MSG_FAQ_RETRY_EXEMPLES = (
+    "Je peux répondre à des questions sur nos horaires, tarifs, ou localisation. "
+    "Posez votre question simplement."
+)
+MSG_FAQ_RETRY_EXEMPLES_VOCAL = (
+    "Je peux répondre sur les horaires, les tarifs, ou où on se trouve. "
+    "Posez votre question simplement."
+)
 
 # Cancel / Modify (web fallbacks)
 MSG_CANCEL_ASK_NAME_WEB = "Pas de problème. C'est à quel nom ?"
+MSG_CANCEL_NAME_RETRY_1_WEB = "Je n'ai pas noté votre nom. Répétez ?"
+MSG_CANCEL_NAME_RETRY_2_WEB = "Votre nom et prénom. Par exemple : Martin Dupont."
 MSG_MODIFY_ASK_NAME_WEB = "Pas de souci. C'est à quel nom ?"
+MSG_MODIFY_NAME_RETRY_1_WEB = "Je n'ai pas noté votre nom. Répétez ?"
+MSG_MODIFY_NAME_RETRY_2_WEB = "Votre nom et prénom. Par exemple : Martin Dupont."
 MSG_CANCEL_NOT_FOUND_WEB = "Je n'ai pas trouvé de rendez-vous à ce nom. Pouvez-vous me redonner votre nom complet ?"
+MSG_MODIFY_NOT_FOUND_VERIFIER_HUMAN_WEB = (
+    "Je ne trouve pas de rendez-vous au nom de {name}. "
+    "Voulez-vous vérifier l'orthographe ou parler à quelqu'un ? Dites : vérifier ou humain."
+)
+MSG_CANCEL_NOT_FOUND_VERIFIER_HUMAN_WEB = (
+    "Je ne trouve pas de rendez-vous au nom de {name}. "
+    "Voulez-vous vérifier l'orthographe ou parler à quelqu'un ? Dites : vérifier ou humain."
+)
 MSG_CANCEL_DONE_WEB = "C'est fait, votre rendez-vous est annulé. Bonne journée !"
 MSG_CANCEL_KEPT_WEB = "Pas de souci, votre rendez-vous est maintenu. Bonne journée !"
 MSG_MODIFY_NOT_FOUND_WEB = "Je n'ai pas trouvé de rendez-vous à ce nom. Pouvez-vous me redonner votre nom complet ?"

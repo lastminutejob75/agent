@@ -54,11 +54,12 @@ def test_annuler_pendant_booking():
 
 
 def test_deux_incomprehensions_intent_router():
-    """2 incompréhensions (no match FAQ) → INTENT_ROUTER (menu 4 choix : un/deux/trois/quatre)."""
+    """3 incompréhensions (no match FAQ) → INTENT_ROUTER (menu 4 choix : un/deux/trois/quatre)."""
     engine = create_engine()
     conv = "n1_2fail"
     engine.handle_message(conv, "xyzabc123nope")
-    events = engine.handle_message(conv, "nimportequoi456")
+    engine.handle_message(conv, "nimportequoi456")
+    events = engine.handle_message(conv, "encorebizarre789")
     assert len(events) >= 1 and events[0].type == "final"
     text = events[0].text.lower()
     # Menu utilise "un", "deux", "trois", "quatre" (mots)
@@ -125,15 +126,15 @@ def test_intent_override_transfer():
 
 
 def test_intent_router_choix_1_qualif_name():
-    """INTENT_ROUTER : choix 1 (ou 'un') → QUALIF_NAME, pas reste dans INTENT_ROUTER."""
+    """INTENT_ROUTER : choix 1 (ou 'un') → QUALIF_NAME (3 no-match FAQ puis 'un')."""
     engine = create_engine()
     conv = "n1_menu1"
     engine.handle_message(conv, "xyzabc")
     engine.handle_message(conv, "nimportequoi")
+    engine.handle_message(conv, "encorebizarre")
     events = engine.handle_message(conv, "un")
     assert len(events) >= 1 and events[0].type == "final"
     assert "nom" in events[0].text.lower() or "prénom" in events[0].text.lower()
-    # État doit être QUALIF_NAME (vérifié via conv_state si exposé)
     assert events[0].conv_state == "QUALIF_NAME"
 
 
