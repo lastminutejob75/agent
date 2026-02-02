@@ -235,6 +235,14 @@ VOCAL_STILL_UNCLEAR = (
 # INTENT_ROUTER (spec V3 — menu reset universel)
 # ----------------------------
 
+VOCAL_INTENT_ROUTER = (
+    "Dites : Un pour rendez-vous. Deux pour annuler. Trois pour une question. Quatre pour parler à quelqu'un."
+)
+# Échec 3 nom (test B1) : même menu avec intro stabilisante
+VOCAL_NAME_FAIL_3_INTENT_ROUTER = (
+    "Je vais simplifier. Dites : Un pour rendez-vous. Deux pour annuler. Trois pour une question. Quatre pour parler à quelqu'un."
+)
+
 MSG_INTENT_ROUTER = (
     "Je vais simplifier. Dites : un, pour prendre un rendez-vous ; "
     "deux, pour annuler ou modifier ; trois, pour poser une question ; "
@@ -250,6 +258,39 @@ MSG_INTENT_ROUTER_RETRY = (
 MSG_PREFERENCE_CONFIRM = "D'accord, donc plutôt {pref}, c'est bien ça ?"
 
 # ----------------------------
+# Recovery téléphone / préférence / créneau (VOCAL_* — cohérence B2/B3)
+# ----------------------------
+
+VOCAL_PHONE_FAIL_1 = "Je n'ai pas bien compris votre numéro. Pouvez-vous le redire ?"
+VOCAL_PHONE_FAIL_2 = (
+    "Dites-le comme ceci : zéro six, douze, trente-quatre, cinquante-six, soixante-dix-huit."
+)
+VOCAL_PHONE_FAIL_3 = "Je n'arrive pas à noter votre numéro. Pouvez-vous me donner un email ?"
+
+VOCAL_PHONE_CONFIRM = "Votre numéro est bien le {phone_spaced} ?"
+VOCAL_PHONE_CONFIRM_NO = "D'accord. Quel est votre numéro ?"
+
+VOCAL_PREF_ASK = "Vous préférez le matin ou l'après-midi ?"
+VOCAL_PREF_FAIL_1 = "Préférez-vous avant midi ou plutôt après midi ?"
+VOCAL_PREF_FAIL_2 = "Répondez simplement : matin ou après-midi."
+VOCAL_PREF_ANY = "Très bien. Je propose le matin. Ça vous va ?"
+VOCAL_PREF_ANY_NO = "D'accord. Alors plutôt l'après-midi ?"
+# Confirmation après inférence ("vers 14h" → afternoon)
+VOCAL_PREF_CONFIRM_MATIN = "D'accord, plutôt le matin. C'est bien ça ?"
+VOCAL_PREF_CONFIRM_APRES_MIDI = "D'accord, plutôt l'après-midi. C'est bien ça ?"
+# PREF_FAIL_3 → INTENT_ROUTER (dans engine)
+
+VOCAL_SLOT_FAIL_1 = "Je n'ai pas compris. Dites seulement : un, deux ou trois."
+VOCAL_SLOT_FAIL_2 = "Par exemple : 'je prends le deux'. Alors ?"
+# SLOT_FAIL_3 → INTENT_ROUTER (dans engine)
+
+# Recovery nom (QUALIF_NAME — test B1)
+VOCAL_NAME_ASK = "Très bien. C'est à quel nom ?"
+VOCAL_NAME_FAIL_1 = "Je n'ai pas bien noté votre nom. Pouvez-vous répéter ?"
+VOCAL_NAME_FAIL_2 = "Votre nom et prénom, par exemple : Martin Dupont."
+# NAME_FAIL_3 → INTENT_ROUTER (réutiliser VOCAL_INTENT_ROUTER)
+
+# ----------------------------
 # IVR Principe 2 — Clarifications guidées (jamais bloquer sec)
 # ----------------------------
 
@@ -259,21 +300,22 @@ class ClarificationMessages:
     fail_count 1 = premier essai, 2 = deuxième, 3 = transfert si None.
     """
     SLOT_CHOICE_UNCLEAR = {
-        1: "Quand vous dites '{user_input}', vous pensez au créneau un, deux ou trois ?",
-        2: "Vous préférez le premier, le deuxième ou le troisième créneau ? Dites simplement : un, deux ou trois.",
+        1: VOCAL_SLOT_FAIL_1,
+        2: VOCAL_SLOT_FAIL_2,
     }
     PREFERENCE_UNCLEAR = {
-        1: "Vous préférez avant midi ou plutôt en début d'après-midi ?",
-        2: "Pour être sûr : le matin, c'est avant midi ; l'après-midi, c'est après midi. Vous préférez lequel ?",
+        1: VOCAL_PREF_FAIL_1,
+        2: VOCAL_PREF_FAIL_2,
     }
+    # Recovery nom (test B1) : 2 reformulations, puis NAME_FAIL_3 → INTENT_ROUTER dans engine
     NAME_UNCLEAR = {
-        1: "Pouvez-vous répéter votre nom en détachant les syllabes ?",
-        2: "Pouvez-vous épeler votre nom ? Par exemple : D, U, P, O, N, T.",
+        1: VOCAL_NAME_FAIL_1,
+        2: VOCAL_NAME_FAIL_2,
     }
     PHONE_UNCLEAR = {
-        1: "Je n'ai pas noté tous les chiffres. Redites votre numéro lentement, s'il vous plaît.",
-        2: "Dictez chiffre par chiffre. Par exemple : zéro, six, un, deux, trois, quatre...",
-        3: "Vous préférez donner un email à la place ?",
+        1: VOCAL_PHONE_FAIL_1,
+        2: VOCAL_PHONE_FAIL_2,
+        3: VOCAL_PHONE_FAIL_3,
     }
     CANCEL_CONFIRM_UNCLEAR = {
         1: "Voulez-vous annuler ce rendez-vous ? Répondez oui ou non.",
@@ -354,9 +396,14 @@ class TransitionSignals:
     def wrap_with_signal(message: str, signal_type: str = "PROGRESSION") -> str:
         """Ajoute un mot-signal en début de message (un seul par message)."""
         signal = getattr(TransitionSignals, signal_type, "")
-        if signal and message and not message.startswith(signal):
-            return f"{signal} {message}"
-        return message
+        if not signal or not message:
+            return message
+        if message.startswith(signal):
+            return message
+        # Éviter doublon "Très bien." + "Très bien X." (ex: après confirmation du nom)
+        if signal == TransitionSignals.PROGRESSION and message.strip().lower().startswith("très bien"):
+            return message
+        return f"{signal} {message}"
 
 
 # ----------------------------
@@ -497,18 +544,12 @@ MSG_CONTACT_RETRY_VOCAL = (
     "Pouvez-vous me redonner votre numéro de téléphone ?"
 )
 
-# Confirmation du numéro de téléphone
+# Confirmation du numéro (VOCAL_PHONE_CONFIRM / VOCAL_PHONE_CONFIRM_NO en Recovery ci-dessus)
 VOCAL_CONTACT_CONFIRM = (
     "J'ai noté le {phone_formatted}. C'est bien ça ?"
 )
-
-VOCAL_CONTACT_CONFIRM_OK = (
-    "Parfait, c'est noté."
-)
-
-VOCAL_CONTACT_CONFIRM_RETRY = (
-    "D'accord, pouvez-vous me redonner votre numéro ?"
-)
+VOCAL_CONTACT_CONFIRM_OK = "Parfait, c'est noté."
+VOCAL_CONTACT_CONFIRM_RETRY = "D'accord, pouvez-vous me redonner votre numéro ?"
 
 
 def format_phone_for_voice(phone: str) -> str:
@@ -789,7 +830,7 @@ QUALIF_QUESTIONS: Dict[str, str] = {
 # Questions Vocal - ton chaleureux et naturel, phrases courtes pour TTS
 # SANS question motif (supprimée - inutile pour médecin)
 QUALIF_QUESTIONS_VOCAL: Dict[str, str] = {
-    "name": "Très bien ! C'est à quel nom ?",
+    "name": VOCAL_NAME_ASK,
     "motif": "",  # DÉSACTIVÉ - on ne demande plus le motif
     "pref": "Super. Vous préférez plutôt le matin ou l'après-midi ?",
     "contact": "Parfait ! Et votre numéro de téléphone pour vous rappeler ?",
@@ -875,6 +916,11 @@ class SlotDisplay:
     idx: int
     label: str  # ex: "Mardi 15/01 - 14:00"
     slot_id: int
+    # IVR pro : choix flexible par jour/heure ("celui de mardi", "vers 10h")
+    start: str = ""       # ISO datetime
+    day: str = ""         # "lundi", "mardi", ...
+    hour: int = 0         # 0-23
+    label_vocal: str = "" # ex: "lundi à 10h"
 
 def format_slot_proposal(slots: List[SlotDisplay], include_instruction: bool = True, channel: str = "web") -> str:
     """

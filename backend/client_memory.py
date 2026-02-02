@@ -439,6 +439,24 @@ class ClientMemory:
         return None
     
     # ============================================
+    # Rapports quotidiens (clients avec email)
+    # ============================================
+
+    def get_clients_with_email(self) -> List[tuple]:
+        """
+        Liste des clients ayant un email (pour envoi rapport quotidien).
+        Returns: List[(id, name, email), ...]
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, name, email FROM clients WHERE email IS NOT NULL AND email != ''"
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        return [(r[0], r[1], r[2]) for r in rows]
+
+    # ============================================
     # Stats pour rapports
     # ============================================
     

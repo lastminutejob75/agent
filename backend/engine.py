@@ -7,9 +7,11 @@ Aucune créativité, aucune improvisation.
 from __future__ import annotations
 from typing import List, Optional
 from dataclasses import dataclass
+import logging
 import re
 
 from backend import config, prompts, guards, tools_booking
+from backend import db as backend_db
 from backend.session import Session, SessionStore
 from backend.session_store_sqlite import SQLiteSessionStore
 from backend.tools_faq import FaqStore, FaqResult
@@ -19,6 +21,158 @@ from backend.entity_extraction import (
     extract_pref,
     infer_preference_from_context,
 )
+
+logger = logging.getLogger(__name__)
+
+
+def log_filler_detected(
+    logger_instance,
+    session: Session,
+    user_msg: str,
+    field: str,
+    detail: Optional[str] = None,
+) -> None:
+    """
+    Log dédié : reason="filler_detected" pour savoir où ça bloque et pourquoi, sans bruit.
+    À appeler juste avant de déclencher un recovery (name, preference, phone, slot_choice).
+    detail: optionnel (ex: "no_digits", "invalid_format", "too_repetitive" pour phone).
+    """
+    extra = {
+        "reason": "filler_detected",
+        "state": session.state,
+        "field": field,
+        "turn_count": getattr(session, "turn_count", 0),
+        "raw_user_msg": (user_msg or "")[:200],
+    }
+    if detail is not None:
+        extra["detail"] = detail
+    logger_instance.info("filler_detected", extra=extra)
+
+
+def _fail_count_for_context(session: Session, context: Optional[str]) -> int:
+    """Compte d'échecs pour un contexte (analytics)."""
+    if not context:
+        return 0
+    m = {
+        "name": getattr(session, "name_fails", 0),
+        "phone": getattr(session, "phone_fails", 0),
+        "slot_choice": getattr(session, "slot_choice_fails", 0),
+        "preference": getattr(session, "preference_fails", 0),
+        "contact_confirm": getattr(session, "contact_confirm_fails", 0),
+    }
+    return m.get(context, 0)
+
+
+def _persist_ivr_event(
+    session: Session,
+    event: str,
+    context: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> None:
+    """
+    Persiste un event dans ivr_events (rapport quotidien).
+    Skip si client_id manquant (évite polluer client #1).
+    Skip si call_id manquant pour booking_confirmed (qualité booking).
+    """
+    try:
+        client_id = getattr(session, "client_id", None)
+        if client_id is None:
+            logger.debug("persist_ivr_event skip: reason=missing_client_id event=%s", event)
+            return
+        call_id = session.conv_id or ""
+        if event == "booking_confirmed" and not call_id.strip():
+            logger.debug("persist_ivr_event skip: reason=missing_call_id event=booking_confirmed")
+            return
+        backend_db.create_ivr_event(
+            client_id=int(client_id),
+            call_id=call_id,
+            event=event,
+            context=context,
+            reason=reason,
+        )
+    except Exception as e:
+        logger.debug("persist_ivr_event skip: %s", e)
+
+
+def log_ivr_event(
+    logger_instance,
+    session: Session,
+    event: str,
+    context: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> None:
+    """
+    Log structuré pour tableau de bord produit (recovery, intent_router, override, safe_reply).
+    Persiste aussi en base pour les events canoniques (recovery_step, intent_router_trigger).
+    """
+    extra = {
+        "event": event,
+        "state": session.state,
+        "call_id": session.conv_id,
+        "client_id": getattr(session, "client_id", None) or session.conv_id,
+    }
+    if context is not None:
+        extra["context"] = context
+        extra["count"] = _fail_count_for_context(session, context)
+    if reason is not None:
+        extra["reason"] = reason
+    logger_instance.info("ivr_event", extra=extra)
+    if event in ("recovery_step", "intent_router_trigger"):
+        _persist_ivr_event(session, event, context=context, reason=reason)
+
+
+def log_preference_inferred(
+    logger_instance,
+    session: Session,
+    raw_input: str,
+    inferred: str,
+) -> None:
+    """Log design signal : préférence inférée (morning/afternoon/neutral)."""
+    logger_instance.info(
+        "preference_inferred",
+        extra={
+            "inferred": inferred,
+            "raw_input": (raw_input or "")[:200],
+            "state": session.state,
+        },
+    )
+
+
+def log_preference_failed(
+    logger_instance,
+    session: Session,
+    raw_input: str,
+    reason: str = "ambiguous_input",
+) -> None:
+    """Log design signal : préférence non reconnue (recovery)."""
+    logger_instance.info(
+        "preference_failed",
+        extra={
+            "reason": reason,
+            "raw_input": (raw_input or "")[:200],
+            "state": session.state,
+        },
+    )
+
+
+def log_name_rejected(
+    logger_instance,
+    session: Session,
+    raw_input: str,
+    reason: str,
+) -> None:
+    """
+    Log dédié : name_rejected pour design signals (filler_detected / not_plausible_name).
+    """
+    logger_instance.info(
+        "name_rejected",
+        extra={
+            "reason": reason,
+            "raw_input": (raw_input or "")[:200],
+            "state": session.state,
+            "turn_count": getattr(session, "turn_count", 0),
+        },
+    )
 
 
 @dataclass(frozen=True)
@@ -209,14 +363,20 @@ def safe_reply(events: List[Event], session: Session) -> List[Event]:
     """
     Dernière barrière anti-silence (spec V3).
     Aucun message utilisateur ne doit mener à zéro output.
+    Persiste transfer_human une seule fois par call (idempotence).
     """
+    if getattr(session, "state", None) == "TRANSFERRED" and not getattr(session, "transfer_logged", False):
+        _persist_ivr_event(session, "transfer_human")
+        session.transfer_logged = True
     if not events:
+        log_ivr_event(logger, session, "safe_reply")
         msg = SAFE_REPLY_FALLBACK
         session.add_message("agent", msg)
         return [Event("final", msg, conv_state=session.state)]
     for ev in events:
         if ev.text and ev.text.strip():
             return events
+    log_ivr_event(logger, session, "safe_reply")
     msg = SAFE_REPLY_FALLBACK
     session.add_message("agent", msg)
     return [Event("final", msg, conv_state=session.state)]
@@ -326,6 +486,33 @@ def should_escalate_recovery(session: Session, context: str) -> bool:
     return counters.get(context, getattr(session, "global_recovery_fails", 0)) >= max_fails
 
 
+def handle_no_contextual(session: Session) -> dict:
+    """
+    Routeur IVR pro : "non" n'est jamais terminal par défaut.
+    Retourne {"state": str, "message": str} selon l'état courant.
+    """
+    st = session.state
+    channel = getattr(session, "channel", "web")
+
+    if st == "CONTACT_CONFIRM":
+        return {"state": "QUALIF_CONTACT", "message": "D'accord. Quel est votre numéro de téléphone ?"}
+
+    if st == "WAIT_CONFIRM":
+        return {"state": "WAIT_CONFIRM", "message": "D'accord. Vous choisissez lequel : 1, 2 ou 3 ?"}
+
+    if st == "CANCEL_CONFIRM":
+        return {"state": "CONFIRMED", "message": "Très bien, je n'annule pas. Bonne journée !"}
+
+    if st == "MODIFY_CONFIRM":
+        return {"state": "CONFIRMED", "message": "Très bien, je ne le modifie pas. Bonne journée !"}
+
+    if st in {"QUALIF_NAME", "QUALIF_PREF", "QUALIF_CONTACT"}:
+        msg = prompts.VOCAL_INTENT_ROUTER if channel == "vocal" else prompts.MSG_INTENT_ROUTER
+        return {"state": "INTENT_ROUTER", "message": msg}
+
+    return {"state": "INTENT_ROUTER", "message": prompts.VOCAL_INTENT_ROUTER if channel == "vocal" else prompts.MSG_INTENT_ROUTER}
+
+
 # ========================
 # ENGINE
 # ========================
@@ -379,6 +566,7 @@ class Engine:
         session.turn_count = getattr(session, "turn_count", 0) + 1
         max_turns = getattr(Session, "MAX_TURNS_ANTI_LOOP", 25)
         if session.turn_count > max_turns:
+            _persist_ivr_event(session, "anti_loop_trigger")
             return safe_reply(
                 self._trigger_intent_router(session, "anti_loop_25", user_text or ""),
                 session,
@@ -391,6 +579,7 @@ class Engine:
         if should_override_current_flow_v3(session, user_text):
             strong = detect_strong_intent(user_text)
             session.last_intent = strong
+            log_ivr_event(logger, session, "intent_override")
             if strong == "CANCEL":
                 return safe_reply(self._start_cancel(session), session)
             if strong == "MODIFY":
@@ -407,6 +596,7 @@ class Engine:
         
         if not user_text or not user_text.strip():
             session.empty_message_count = getattr(session, "empty_message_count", 0) + 1
+            _persist_ivr_event(session, "empty_message")
             if session.empty_message_count >= 3:
                 return safe_reply(
                     self._trigger_intent_router(session, "empty_repeated", user_text or ""),
@@ -465,6 +655,19 @@ class Engine:
                 self._trigger_intent_router(session, trigger_reason, user_text),
                 session,
             )
+        
+        # --- NO contextuel : branche selon l'état (jamais terminal par défaut) ---
+        if intent == "NO" and session.state in (
+            "CONTACT_CONFIRM", "WAIT_CONFIRM", "CANCEL_CONFIRM", "MODIFY_CONFIRM",
+            "QUALIF_NAME", "QUALIF_PREF", "QUALIF_CONTACT",
+        ):
+            result = handle_no_contextual(session)
+            session.state = result["state"]
+            msg = result["message"]
+            session.add_message("agent", msg)
+            if result["state"] == "INTENT_ROUTER":
+                session.last_question_asked = msg
+            return safe_reply([Event("final", msg, conv_state=session.state)], session)
         
         # --- CORRECTION (spec V3) : rejouer dernière question ---
         if detect_correction_intent(user_text):
@@ -830,26 +1033,10 @@ class Engine:
         if current_step == "QUALIF_NAME":
             channel = getattr(session, "channel", "web")
             
-            # Vérifier que ce n'est pas une répétition de la demande booking
-            if _detect_booking_intent(user_text):
-                msg = prompts.get_qualif_retry("name", channel=channel)
-                session.add_message("agent", msg)
-                return [Event("final", msg, conv_state=session.state)]
-            
-            # Nettoyer le nom (enlever "c'est", "je m'appelle", etc.)
-            cleaned_name = guards.clean_name_from_vocal(user_text)
-            print(f"🔍 QUALIF_NAME: raw='{user_text}' → cleaned='{cleaned_name}'")
-            
-            # Sécurité : si le nom commence par des mots-outils, prendre le dernier mot
-            bad_starts = ["je", "j", "m", "appelle", "suis", "c", "est", "mon", "nom"]
-            words = cleaned_name.split()
-            if len(words) > 1 and words[0].lower() in bad_starts:
-                # Prendre le dernier mot (le vrai prénom)
-                cleaned_name = words[-1]
-                print(f"🔧 QUALIF_NAME: corrected to last word: '{cleaned_name}'")
-            
-            # Vérifier longueur minimale (un nom fait au moins 2 caractères)
-            if len(cleaned_name) < 2:
+            # Rejeter filler contextuel (euh, "oui" en QUALIF_NAME…) → recovery progressive
+            if guards.is_contextual_filler(user_text, session.state):
+                log_filler_detected(logger, session, user_text, field="name")
+                log_name_rejected(logger, session, user_text, reason="filler_detected")
                 fail_count = increment_recovery_counter(session, "name")
                 if should_escalate_recovery(session, "name"):
                     return self._trigger_intent_router(session, "name_fails_3", user_text)
@@ -862,11 +1049,37 @@ class Engine:
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
-            # Réponse valide → stocker et continuer (spec V3 : reset compteur)
-            session.qualif_data.name = cleaned_name
-            session.consecutive_questions = 0
-            print(f"✅ QUALIF_NAME: stored name='{session.qualif_data.name}'")
-            return self._next_qualif_step(session)
+            # Vérifier que ce n'est pas une répétition de la demande booking
+            if _detect_booking_intent(user_text):
+                msg = prompts.get_qualif_retry("name", channel=channel)
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+            
+            # Extraction du nom (préfixes FR, fillers, plausible) — on valide l’info extraite, pas le message
+            extracted_name, reject_reason = guards.extract_name_from_speech(user_text)
+            print(f"🔍 QUALIF_NAME: raw='{user_text}' → extracted='{extracted_name}', reject_reason={reject_reason}")
+            
+            if extracted_name is not None:
+                # Réponse valide → stocker et continuer (spec V3 : reset compteur)
+                session.qualif_data.name = extracted_name.title()
+                session.consecutive_questions = 0
+                print(f"✅ QUALIF_NAME: stored name='{session.qualif_data.name}'")
+                return self._next_qualif_step(session)
+            
+            # Rejet : filler_detected ou not_plausible_name
+            log_name_rejected(logger, session, user_text, reason=reject_reason or "filler_detected")
+            log_filler_detected(logger, session, user_text, field="name", detail=reject_reason)
+            fail_count = increment_recovery_counter(session, "name")
+            if should_escalate_recovery(session, "name"):
+                return self._trigger_intent_router(session, "name_fails_3", user_text)
+            msg = prompts.get_clarification_message(
+                "name",
+                min(fail_count, 3),
+                user_text,
+                channel=channel,
+            )
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state=session.state)]
         
         # ========================
         # QUALIF_MOTIF
@@ -925,20 +1138,27 @@ class Engine:
             channel = getattr(session, "channel", "web")
             print(f"🔍 QUALIF_PREF handler: user_text='{user_text}'")
             
+            # Rejeter filler contextuel (euh, "oui" en QUALIF_PREF…) → recovery préférence
+            if guards.is_contextual_filler(user_text, session.state):
+                log_filler_detected(logger, session, user_text, field="preference")
+                fail_count = increment_recovery_counter(session, "preference")
+                if should_escalate_recovery(session, "preference"):
+                    return self._trigger_intent_router(session, "preference_fails_3", user_text)
+                msg = prompts.get_clarification_message(
+                    "preference",
+                    min(fail_count, 3),
+                    user_text,
+                    channel=channel,
+                )
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+            
             if _detect_booking_intent(user_text):
                 msg = prompts.get_qualif_retry("pref", channel=channel)
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
-            # 1. Extraction directe (matin, après-midi, etc.)
-            direct_pref = extract_pref(user_text)
-            if direct_pref:
-                session.qualif_data.pref = direct_pref
-                session.consecutive_questions = 0
-                print(f"🔍 QUALIF_PREF: direct pref='{direct_pref}'")
-                return self._next_qualif_step(session)
-            
-            # 2. Inférence contextuelle (spec V3) + V3.1 confidence hint empathique
+            # 1. Inférence contextuelle (spec V3) — "je travaille jusqu'à 17h" → confirmation
             inferred_pref = infer_preference_from_context(user_text)
             if inferred_pref:
                 session.pending_preference = inferred_pref
@@ -948,11 +1168,74 @@ class Engine:
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
-            # 3. Fallback : accepter la réponse telle quelle
-            session.qualif_data.pref = user_text.strip()
-            session.consecutive_questions = 0
-            print(f"🔍 QUALIF_PREF: stored pref='{session.qualif_data.pref}'")
-            return self._next_qualif_step(session)
+            # 2. Inférence temporelle robuste ("vers 14h", "après le déjeuner", "peu importe", etc.)
+            time_pref = guards.infer_time_preference(user_text)
+            if time_pref == "morning":
+                log_preference_inferred(logger, session, user_text, inferred="morning")
+                session.pending_preference = "matin"
+                session.state = "PREFERENCE_CONFIRM"
+                msg = prompts.VOCAL_PREF_CONFIRM_MATIN
+                session.last_question_asked = msg
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+            if time_pref == "afternoon":
+                log_preference_inferred(logger, session, user_text, inferred="afternoon")
+                session.pending_preference = "après-midi"
+                session.state = "PREFERENCE_CONFIRM"
+                msg = prompts.VOCAL_PREF_CONFIRM_APRES_MIDI
+                session.last_question_asked = msg
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+            if time_pref == "neutral":
+                log_preference_inferred(logger, session, user_text, inferred="neutral")
+                session.pending_preference = "matin"
+                session.state = "PREFERENCE_CONFIRM"
+                msg = prompts.VOCAL_PREF_ANY
+                session.last_question_asked = msg
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+            
+            # 3. Fallback : infer_preference_plausible (mots directs + heures)
+            pref_plausible = guards.infer_preference_plausible(user_text)
+            if pref_plausible == "morning":
+                log_preference_inferred(logger, session, user_text, inferred="morning")
+                session.pending_preference = "matin"
+                session.state = "PREFERENCE_CONFIRM"
+                msg = prompts.VOCAL_PREF_CONFIRM_MATIN
+                session.last_question_asked = msg
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+            if pref_plausible == "afternoon":
+                log_preference_inferred(logger, session, user_text, inferred="afternoon")
+                session.pending_preference = "après-midi"
+                session.state = "PREFERENCE_CONFIRM"
+                msg = prompts.VOCAL_PREF_CONFIRM_APRES_MIDI
+                session.last_question_asked = msg
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+            if pref_plausible == "any":
+                log_preference_inferred(logger, session, user_text, inferred="neutral")
+                session.pending_preference = "matin"
+                session.state = "PREFERENCE_CONFIRM"
+                msg = prompts.VOCAL_PREF_ANY
+                session.last_question_asked = msg
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+            
+            # 4. Incompréhension → recovery progressive (fail 1, 2, 3 → INTENT_ROUTER)
+            log_preference_failed(logger, session, user_text, reason="ambiguous_input")
+            log_filler_detected(logger, session, user_text, field="preference")
+            fail_count = increment_recovery_counter(session, "preference")
+            if should_escalate_recovery(session, "preference"):
+                return self._trigger_intent_router(session, "preference_fails_3", user_text)
+            msg = prompts.get_clarification_message(
+                "preference",
+                min(fail_count, 3),
+                user_text,
+                channel=channel,
+            )
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state=session.state)]
         
         # ========================
         # QUALIF_CONTACT
@@ -962,6 +1245,19 @@ class Engine:
             contact_raw = user_text.strip()
             
             print(f"📞 QUALIF_CONTACT: received '{contact_raw}'")
+            
+            # Rejeter filler contextuel (euh, "oui" en QUALIF_CONTACT…) → recovery téléphone (3 niveaux, puis fallback email)
+            if guards.is_contextual_filler(contact_raw, session.state):
+                log_filler_detected(logger, session, contact_raw, field="phone")
+                fail_count = increment_recovery_counter(session, "phone")
+                msg = prompts.get_clarification_message(
+                    "phone",
+                    min(fail_count, 3),
+                    contact_raw,
+                    channel=channel,
+                )
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
 
             # Vérifier répétition booking intent
             if _detect_booking_intent(contact_raw):
@@ -997,21 +1293,30 @@ class Engine:
                 total_digits = session.partial_phone_digits
                 print(f"📞 Total accumulated: '{total_digits}' ({len(total_digits)} digits)")
                 
-                # Si on a 10 chiffres ou plus → on a le numéro complet
+                # Si on a 10 chiffres ou plus → validation plausible puis confirmation
                 if len(total_digits) >= 10:
-                    contact_raw = total_digits[:10]
+                    digits_10 = total_digits[:10]
+                    ok_phone, phone10, reason = guards.is_plausible_phone_input(digits_10)
+                    if not ok_phone:
+                        log_filler_detected(logger, session, contact_raw, field="phone", detail=reason)
+                        fail_count = increment_recovery_counter(session, "phone")
+                        msg = prompts.get_clarification_message(
+                            "phone",
+                            min(fail_count, 3),
+                            contact_raw,
+                            channel=channel,
+                        )
+                        session.add_message("agent", msg)
+                        return [Event("final", msg, conv_state=session.state)]
+                    contact_raw = phone10
                     session.partial_phone_digits = ""  # Reset
                     print(f"📞 Got 10 digits! Phone: {contact_raw}")
-                    
-                    # Valider et continuer
                     session.qualif_data.contact = contact_raw
                     session.qualif_data.contact_type = "phone"
                     session.contact_retry_count = 0
-                    
-                    # Demander confirmation
                     session.state = "CONTACT_CONFIRM"
-                    phone_formatted = prompts.format_phone_for_voice(contact_raw)
-                    msg = prompts.VOCAL_CONTACT_CONFIRM.format(phone_formatted=phone_formatted)
+                    phone_spaced = prompts.format_phone_for_voice(contact_raw)
+                    msg = prompts.VOCAL_PHONE_CONFIRM.format(phone_spaced=phone_spaced)
                     session.add_message("agent", msg)
                     return [Event("final", msg, conv_state=session.state)]
                 
@@ -1036,14 +1341,26 @@ class Engine:
                     session.add_message("agent", msg)
                     return [Event("final", msg, conv_state=session.state)]
             
-            # Web - validation directe
+            # Web / direct : phone plausible (FR + ASR) puis validation
+            if any(c.isdigit() for c in contact_raw) and not guards.validate_email(contact_raw.strip()):
+                ok_phone, phone10, reason = guards.is_plausible_phone_input(contact_raw)
+                if not ok_phone:
+                    log_filler_detected(logger, session, contact_raw, field="phone", detail=reason)
+                    fail_count = increment_recovery_counter(session, "phone")
+                    msg = prompts.get_clarification_message(
+                        "phone",
+                        min(fail_count, 3),
+                        contact_raw,
+                        channel=channel,
+                    )
+                    session.add_message("agent", msg)
+                    return [Event("final", msg, conv_state=session.state)]
+                contact_raw = phone10 or contact_raw
             is_valid, contact_type = guards.validate_qualif_contact(contact_raw)
             print(f"📞 Validation result: is_valid={is_valid}, type={contact_type}")
-
             if not is_valid:
+                log_filler_detected(logger, session, contact_raw, field="phone", detail="invalid_format")
                 fail_count = increment_recovery_counter(session, "phone")
-                if should_escalate_recovery(session, "phone"):
-                    return self._trigger_intent_router(session, "phone_fails_3", contact_raw)
                 msg = prompts.get_clarification_message(
                     "phone",
                     min(fail_count, 3),
@@ -1052,12 +1369,9 @@ class Engine:
                 )
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
-
-            # ✅ Valide - stocker
             session.qualif_data.contact = contact_raw
             session.qualif_data.contact_type = contact_type
             session.contact_retry_count = 0
-
             return self._propose_slots(session)
         
         # ========================
@@ -1113,9 +1427,10 @@ class Engine:
         print(f"🔍 _propose_slots: fetching slots...")
         
         try:
-            # Récupérer slots
-            slots = tools_booking.get_slots_for_display(limit=config.MAX_SLOTS_PROPOSED)
-            print(f"🔍 _propose_slots: got {len(slots) if slots else 0} slots in {(time.time() - t_start) * 1000:.0f}ms")
+            # Récupérer slots en cohérence avec la préférence (ne pas proposer 10h si "je finis à 17h")
+            pref = getattr(session.qualif_data, "pref", None) or None
+            slots = tools_booking.get_slots_for_display(limit=config.MAX_SLOTS_PROPOSED, pref=pref)
+            print(f"🔍 _propose_slots: got {len(slots) if slots else 0} slots (pref={pref}) in {(time.time() - t_start) * 1000:.0f}ms")
         except Exception as e:
             print(f"❌ _propose_slots ERROR: {e}")
             import traceback
@@ -1164,21 +1479,44 @@ class Engine:
             print(f"⚠️ WAIT_CONFIRM but no pending_slots → re-proposing")
             return self._propose_slots(session)
         
+        # Rejeter filler contextuel (euh, "oui" seul en WAIT_CONFIRM = redemander 1/2/3)
+        if guards.is_contextual_filler(user_text, session.state):
+            log_filler_detected(logger, session, user_text, field="slot_choice")
+            fail_count = increment_recovery_counter(session, "slot_choice")
+            log_ivr_event(logger, session, "recovery_step", context="slot_choice", reason="filler_detected")
+            if should_escalate_recovery(session, "slot_choice"):
+                return self._trigger_intent_router(session, "slot_choice_fails_3", user_text)
+            msg = prompts.get_clarification_message(
+                "slot_choice",
+                min(fail_count, 3),
+                user_text,
+                channel=channel,
+            )
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state=session.state)]
+        
         print(f"📋 Pending slots: {[(s.idx, s.label) for s in session.pending_slots]}")
         
-        # Essayer la nouvelle détection de slot
-        slot_idx = detect_slot_choice(user_text, num_slots=len(session.pending_slots or []))
-        print(f"🔍 detect_slot_choice: '{user_text}' → slot_idx={slot_idx}")
-        
-        # Log fallback
+        # IVR pro : choix flexible par numéro / jour / heure (ambiguïté → recovery)
+        proposed_slots = [
+            {
+                "start": getattr(s, "start", ""),
+                "label_vocal": getattr(s, "label_vocal", None) or s.label,
+                "day": getattr(s, "day", ""),
+                "hour": getattr(s, "hour", 0),
+            }
+            for s in (session.pending_slots or [])
+        ]
+        slot_idx = guards.detect_slot_choice_flexible(user_text, proposed_slots)
         if slot_idx is None:
-            print(f"⚠️ Trying fallback validation...")
-        
-        # Si pas trouvé avec la nouvelle méthode, fallback sur l'ancienne
+            slot_idx = detect_slot_choice(user_text, num_slots=len(session.pending_slots or []))
+            if slot_idx is not None:
+                slot_idx = slot_idx + 1  # convert 0-based → 1-based
         if slot_idx is None:
             is_valid, slot_idx = guards.validate_booking_confirm(user_text, channel=channel)
             if not is_valid:
                 slot_idx = None
+        print(f"🔍 slot_choice: '{user_text}' → slot_idx={slot_idx}")
         
         if slot_idx is not None:
             print(f"✅ Slot choice validated: slot_idx={slot_idx}")
@@ -1245,6 +1583,7 @@ class Engine:
 
         # ❌ Invalide → retry (compteur par contexte pour analytics)
         fail_count = increment_recovery_counter(session, "slot_choice")
+        log_ivr_event(logger, session, "recovery_step", context="slot_choice", reason="no_match")
         if should_escalate_recovery(session, "slot_choice"):
             return self._trigger_intent_router(session, "slot_choice_fails_3", user_text)
         if fail_count >= config.CONFIRM_RETRY_MAX:
@@ -1546,6 +1885,7 @@ class Engine:
                 msg = prompts.format_booking_confirmed(slot_label, name=name, motif=motif, channel=channel)
                 
                 session.state = "CONFIRMED"
+                _persist_ivr_event(session, "booking_confirmed")
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
@@ -1572,12 +1912,12 @@ class Engine:
                     session.add_message("agent", msg)
                     return [Event("final", msg, conv_state=session.state)]
             
-            # Sinon, redemander le numéro complet
+            # Sinon, redemander le numéro complet (PHONE_CONFIRM_NO)
             session.state = "QUALIF_CONTACT"
             session.qualif_data.contact = None
             session.qualif_data.contact_type = None
             session.partial_phone_digits = ""  # Reset accumulation
-            msg = prompts.VOCAL_CONTACT_CONFIRM_RETRY
+            msg = prompts.VOCAL_PHONE_CONFIRM_NO
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
         
@@ -1630,14 +1970,15 @@ class Engine:
                 "global": getattr(session, "global_recovery_fails", 0),
             },
         }
-        logger = logging.getLogger("uwi.intent_router")
-        logger.info(
+        logger_ir = logging.getLogger("uwi.intent_router")
+        logger_ir.info(
             "intent_router_triggered reason=%s previous_state=%s missing=%s",
             reason,
             session.state,
             missing,
             extra=log_data,
         )
+        log_ivr_event(logger, session, "intent_router_trigger", reason=reason)
         channel = getattr(session, "channel", "web")
         session.state = "INTENT_ROUTER"
         session.last_question_asked = None
@@ -1656,7 +1997,10 @@ class Engine:
         session.modify_name_fails = 0
         session.modify_rdv_not_found_count = 0
         session.faq_fails = 0
-        msg = prompts.MSG_INTENT_ROUTER
+        if channel == "vocal" and reason == "name_fails_3":
+            msg = prompts.VOCAL_NAME_FAIL_3_INTENT_ROUTER
+        else:
+            msg = prompts.VOCAL_INTENT_ROUTER if channel == "vocal" else prompts.MSG_INTENT_ROUTER
         session.last_question_asked = msg
         session.add_message("agent", msg)
         return [Event("final", msg, conv_state=session.state)]
@@ -1701,7 +2045,7 @@ class Engine:
     # ========================
     
     def _handle_preference_confirm(self, session: Session, user_text: str) -> List[Event]:
-        """Confirmation de la préférence inférée (oui/non)."""
+        """Confirmation de la préférence inférée (oui/non ou répétition = confirmation implicite)."""
         channel = getattr(session, "channel", "web")
         intent = detect_intent(user_text)
         pending = getattr(session, "pending_preference", None)
@@ -1718,7 +2062,21 @@ class Engine:
             session.last_question_asked = msg
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
-        # Pas oui/non clair → compteur preference pour analytics
+        # Ré-inférence : user répète une phrase qui mène à la MÊME préférence → confirmation implicite
+        inferred = infer_preference_from_context(user_text)
+        if inferred and pending and inferred == pending:
+            session.qualif_data.pref = pending
+            session.pending_preference = None
+            session.consecutive_questions = 0
+            return self._next_qualif_step(session)
+        # Ré-inférence vers une AUTRE préférence → mettre à jour et re-demander confirmation
+        if inferred and inferred != pending:
+            session.pending_preference = inferred
+            msg = prompts.format_inference_confirmation(inferred)
+            session.last_question_asked = msg
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state=session.state)]
+        # Vraie incompréhension (pas d'inférence) → recovery progressive
         fail_count = increment_recovery_counter(session, "preference")
         if should_escalate_recovery(session, "preference"):
             return self._trigger_intent_router(session, "preference_fails_3", user_text)

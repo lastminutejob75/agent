@@ -1,0 +1,20 @@
+# Rapport quotidien IVR – envoi email à 19h Paris (18h UTC)
+name: Daily IVR Report
+on:
+  schedule:
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+
+jobs:
+  send-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call daily report endpoint
+        env:
+          REPORT_URL: ${{ secrets.REPORT_URL }}
+          REPORT_SECRET: ${{ secrets.REPORT_SECRET }}
+        run: |
+          curl -s -X POST "${REPORT_URL}/api/reports/daily" \
+            -H "Content-Type: application/json" \
+            -H "X-Report-Secret: ${REPORT_SECRET}" \
+            -w "\nHTTP %{http_code}\n" || true

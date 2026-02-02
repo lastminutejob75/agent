@@ -117,9 +117,13 @@ class SQLiteSessionStore:
             # Partial data
             "partial_phone_digits": session.partial_phone_digits,
             
-            # Pending data (JSON) - convertir SlotDisplay en dict
+            # Pending data (JSON) - convertir SlotDisplay en dict (IVR pro: day, hour, start, label_vocal)
             "pending_slots_json": json.dumps([
-                {"idx": s.idx, "label": s.label, "slot_id": s.slot_id} 
+                {
+                    "idx": s.idx, "label": s.label, "slot_id": s.slot_id,
+                    "start": getattr(s, "start", ""), "day": getattr(s, "day", ""),
+                    "hour": getattr(s, "hour", 0), "label_vocal": getattr(s, "label_vocal", ""),
+                }
                 for s in session.pending_slots
             ]) if session.pending_slots else None,
             "pending_slot_choice": session.pending_slot_choice,
@@ -182,7 +186,11 @@ class SQLiteSessionStore:
                 from backend.prompts import SlotDisplay
                 slots_data = json.loads(row[13])
                 session.pending_slots = [
-                    SlotDisplay(idx=s["idx"], label=s["label"], slot_id=s["slot_id"])
+                    SlotDisplay(
+                        idx=s["idx"], label=s["label"], slot_id=s["slot_id"],
+                        start=s.get("start", ""), day=s.get("day", ""),
+                        hour=s.get("hour", 0), label_vocal=s.get("label_vocal", ""),
+                    )
                     for s in slots_data
                 ]
                 # Aussi remplir les pending_slot_ids et labels pour compatibilité

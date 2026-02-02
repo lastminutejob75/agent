@@ -334,16 +334,15 @@ async def vapi_custom_llm(request: Request):
             t3 = log_timer("Session loaded", t2)
             
             # 🧠 Check si client récurrent (avant le premier message traité)
-            if customer_phone and session.state == "START" and len(messages) <= 1:
+            if customer_phone:
                 try:
                     existing_client = client_memory.get_by_phone(customer_phone)
-                    if existing_client and existing_client.total_bookings > 0:
-                        # Client récurrent détecté !
-                        greeting = client_memory.get_personalized_greeting(existing_client, channel="vocal")
-                        if greeting:
-                            print(f"🧠 Returning client detected: {existing_client.name}")
-                            # On pourrait utiliser ce greeting, mais pour l'instant on log juste
-                            # Le flow normal continue
+                    if existing_client:
+                        session.client_id = existing_client.id  # pour ivr_events / rapport quotidien
+                        if existing_client.total_bookings > 0:
+                            greeting = client_memory.get_personalized_greeting(existing_client, channel="vocal")
+                            if greeting:
+                                print(f"🧠 Returning client detected: {existing_client.name}")
                 except Exception as e:
                     print(f"⚠️ Client memory error: {e}")
             

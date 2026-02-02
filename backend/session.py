@@ -32,6 +32,8 @@ class Session:
     state: str = "START"
     channel: str = "web"  # "web" | "vocal"
     customer_phone: Optional[str] = None  # Téléphone du client (Vapi)
+    client_id: Optional[int] = None  # ID client (clients.db) pour ivr_events / rapport
+    transfer_logged: bool = False  # idempotence: n'écrire qu'une fois transfer_human par call
     last_seen_at: datetime = field(default_factory=datetime.utcnow)
     messages: Deque[Message] = field(default_factory=lambda: deque(maxlen=config.MAX_MESSAGES_HISTORY))
 
@@ -130,6 +132,8 @@ class Session:
         self.modify_rdv_not_found_count = 0
         self.faq_fails = 0
         self.contact_confirm_fails = 0
+        self.client_id = None
+        self.transfer_logged = False
         # Note: on ne reset PAS customer_phone car c'est lié à l'appel
 
     def add_message(self, role: str, text: str) -> None:

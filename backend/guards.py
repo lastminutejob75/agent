@@ -6,7 +6,7 @@ Toute modification doit être accompagnée de tests.
 
 from __future__ import annotations
 import re
-from typing import Optional
+from typing import Optional, Tuple
 
 from backend import config, prompts
 
@@ -64,6 +64,460 @@ def clean_name_from_vocal(raw_name: str) -> str:
         cleaned = cleaned.title()
     
     return cleaned
+
+
+# ----------------------------
+# Extraction du nom (QUALIF_NAME — IVR pro : on valide l’info extraite, pas le message)
+# ----------------------------
+
+NAME_PREFIXES_FR = [
+    "mon nom est",
+    "je m'appelle",
+    "je m appelle",
+    "c'est",
+    "c est",
+    "moi c'est",
+    "moi c est",
+    "il s'appelle",
+    "elle s'appelle",
+    "nom",
+]
+# Ordre par longueur décroissante pour retirer le préfixe le plus long en premier
+NAME_PREFIXES_FR_SORTED = sorted(
+    (p.strip().lower() for p in NAME_PREFIXES_FR if p.strip()),
+    key=len,
+    reverse=True,
+)
+
+# Fillers à rejeter comme nom (contexte QUALIF_NAME)
+FILLERS_FR_NAME = frozenset({
+    "euh", "heu", "hum", "hmm", "mmh",
+    "bah", "ben", "bah euh", "euh bah",
+    "voilà", "voila",
+    "alors",
+    "attends", "attendez",
+    "oui", "non",
+    "hein",
+})
+
+
+def extract_name_from_speech(text: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Extrait un nom depuis la parole (QUALIF_NAME).
+    Retourne (name, None) si OK, (None, reason) si rejet.
+    reason = "filler_detected" | "not_plausible_name"
+    """
+    if not text or not text.strip():
+        return None, "filler_detected"
+    t = text.strip().lower()
+    # 1. Retirer les préfixes (un seul, le plus long qui matche)
+    for p in NAME_PREFIXES_FR_SORTED:
+        if t.startswith(p):
+            t = t[len(p) :].strip()
+            break
+    # 2. Supprimer ponctuation, garder lettres espaces tiret apostrophe
+    t = re.sub(r"[^\w\s\-']", " ", t, flags=re.IGNORECASE)
+    t = re.sub(r"\s+", " ", t).strip()
+    if not t:
+        return None, "filler_detected"
+    # 2b. Retirer les fillers en début de phrase ("euh jean dupont" → "jean dupont")
+    words = t.split()
+    while words and words[0] in FILLERS_FR_NAME:
+        words = words[1:]
+    t = " ".join(words).strip() if words else ""
+    if not t:
+        return None, "filler_detected"
+    # 3. Rejet si tout le reste est un filler
+    if t in FILLERS_FR_NAME:
+        return None, "filler_detected"
+    # 4. Validation minimale (plausible)
+    if not is_plausible_name(t):
+        return None, "not_plausible_name"
+    return t, None
+
+
+# ----------------------------
+# Validation heuristique du nom (plausibilité)
+# ----------------------------
+
+NAME_ALLOWED_CHARS_RE = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ' -]+$")  # lettres + apostrophe + espace + tiret
+VOWELS_RE = re.compile(r"[aeiouyàâäéèêëîïôöùûüÿ]", re.IGNORECASE)
+CONSONANTS_RE = re.compile(r"[bcdfghjklmnpqrstvwxzç]", re.IGNORECASE)
+
+
+def normalize_text(s: str) -> str:
+    return " ".join((s or "").strip().split())
+
+
+def is_plausible_name(text: str) -> bool:
+    """
+    Heuristique minimale:
+    - >= 2 caractères (après trim)
+    - uniquement caractères autorisés (lettres, apostrophe, espace, tiret)
+    - contient au moins 1 lettre
+    - contient au moins 1 consonne (évite 'aaa', 'iiii', 'ouii')
+    - pas uniquement voyelles ; rejette répétition 4+ même lettre (ex: "aaaaa")
+    """
+    if not text:
+        return False
+
+    s = normalize_text(text)
+
+    if len(s) < 2:
+        return False
+    if len(s) > 40:
+        return False  # Évite phrases (IVR safe)
+
+    # Autoriser "Dupont", "Jean Dupont", "O'Neill", "Le-Brun"
+    if not NAME_ALLOWED_CHARS_RE.match(s):
+        return False
+
+    # Doit contenir au moins 1 lettre
+    if not re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ]", s):
+        return False
+
+    # Consonne obligatoire (réduit les faux positifs)
+    if not CONSONANTS_RE.search(s):
+        return False
+
+    # Évite les suites absurdes (ex: "aaaaa" / "iiii")
+    letters_only = re.sub(r"[^A-Za-zÀ-ÖØ-öø-ÿ]", "", s)
+    if letters_only and len(set(letters_only.lower())) == 1 and len(letters_only) >= 4:
+        return False
+
+    return True
+
+
+# ----------------------------
+# Phone plausible (FR + ASR tolérant)
+# ----------------------------
+
+DIGITS_RE = re.compile(r"\d+")
+
+
+def extract_phone_digits(text: str) -> str:
+    """Extrait tous les chiffres d'un texte."""
+    if not text:
+        return ""
+    return "".join(DIGITS_RE.findall(text))
+
+
+def normalize_phone_fr(digits: str) -> Optional[str]:
+    """
+    Normalise en FR 10 chiffres (06xxxxxxxx).
+    Accepte: 10 digits commençant par 0 ; 11/12 digits avec indicatif 33.
+    """
+    if not digits:
+        return None
+    digits = "".join(c for c in digits if c.isdigit())
+    if not digits:
+        return None
+    # Cas +33 / 33
+    if digits.startswith("33"):
+        rest = digits[2:]
+        if rest.startswith("0"):
+            rest = rest[1:]
+        if len(rest) == 9 and rest[0] in "67":
+            return "0" + rest
+    # Cas national 10 chiffres (0x...)
+    if len(digits) == 10 and digits.startswith("0"):
+        return digits
+    return None
+
+
+def format_phone_fr(phone10: str) -> str:
+    """06XXXXXXXX -> '06 12 34 56 78'"""
+    s = "".join(c for c in phone10 if c.isdigit())[:10]
+    if len(s) != 10:
+        return phone10
+    return " ".join([s[i : i + 2] for i in range(0, 10, 2)])
+
+
+def is_plausible_phone_input(text: str) -> Tuple[bool, Optional[str], str]:
+    """
+    Retourne: (ok, normalized_phone10, reason).
+    reason utile pour logs (empty, no_digits, invalid_format, too_repetitive, ok).
+    Rejette: trop court/long, pas de chiffres, format invalide, 0000000000/1111111111.
+    """
+    if not text or not text.strip():
+        return False, None, "empty"
+    digits = extract_phone_digits(text)
+    if not digits:
+        return False, None, "no_digits"
+    normalized = normalize_phone_fr(digits)
+    if not normalized:
+        return False, None, "invalid_format"
+    # Heuristiques anti numéro bidon
+    if len(set(normalized)) <= 2:
+        return False, None, "too_repetitive"
+    return True, normalized, "ok"
+
+
+# ----------------------------
+# Préférence plausible (matin/après-midi + heuristiques heures)
+# IVR pro : on infère une intention temporelle, pas une réponse exacte.
+# ----------------------------
+
+HOUR_RE = re.compile(r"\b([01]?\d|2[0-3])\s*(?:h|:)?\s*([0-5]\d)?\b", re.IGNORECASE)
+
+
+def normalize_pref(text: str) -> str:
+    """Normalisation avant toute logique préférence (QUALIF_PREF)."""
+    if not text:
+        return ""
+    t = text.lower().strip()
+    t = re.sub(r"[^\w\s]", " ", t)
+    t = re.sub(r"\s+", " ", t)
+    return t.strip()
+
+
+# Table de mapping FR → intention simple (phrases réelles : "vers 14h", "après le déjeuner", etc.)
+MORNING_KEYWORDS = frozenset({
+    "matin", "ce matin", "demain matin",
+    "avant midi", "avant 12h", "avant 12", "avant douze",
+    "en fin de matinee", "en fin de matinée", "fin de matinee", "fin de matinée",
+    "debut de matinee", "début de matinée",
+    "10h", "9h", "11h", "matinee", "matinée",
+})
+
+AFTERNOON_KEYWORDS = frozenset({
+    "apres midi", "après midi", "apres-midi", "après-midi", "aprem", "aprèm",
+    "apres le dejeuner", "après le déjeuner", "apres le déjeuner",
+    "apres manger", "après manger",
+    "debut d apres midi", "début d'après-midi",
+    "14h", "15h", "16h", "17h", "apres 12", "après 12",
+    "en soiree", "en soirée", "soir",
+})
+
+NEUTRAL_KEYWORDS = frozenset({
+    "peu importe", "comme vous voulez", "n importe quand", "n'importe quand",
+    "quand vous voulez", "je sais pas", "je sais pas trop",
+    "aucune preference", "aucune préférence",
+    "indifferent", "indifférent", "n importe", "n'importe",
+})
+
+MORNING_WORDS = frozenset({
+    "matin", "matinee", "matinée",
+    "avant midi", "avant 12", "avant douze",
+    "debut de matinee", "début de matinée",
+    "fin de matinee", "fin de matinée",
+})
+
+AFTERNOON_WORDS = frozenset({
+    "apres-midi", "après-midi", "aprem", "aprèm",
+    "apres midi", "après midi",
+    "apres 12", "après 12",
+    "en debut d'apres-midi", "en début d'après-midi",
+    "fin d'apres-midi", "fin d'après-midi",
+    "soir", "en soiree", "en soirée",
+})
+
+ANY_WORDS = frozenset({
+    "peu importe", "comme vous voulez", "n'importe", "n'importe",
+    "quand vous voulez", "indifferent", "indifférent",
+})
+
+
+def infer_time_preference(text: str) -> Optional[str]:
+    """
+    Inférence temporelle simple (sans LLM).
+    Retourne: "morning" | "afternoon" | "neutral" | None.
+    Gère "vers 14h", "après le déjeuner", "en fin de matinée", "peu importe", "je sais pas trop".
+    """
+    if not text or not text.strip():
+        return None
+    t = normalize_pref(text)
+    if not t:
+        return None
+    if any(k in t for k in MORNING_KEYWORDS):
+        return "morning"
+    if any(k in t for k in AFTERNOON_KEYWORDS):
+        return "afternoon"
+    if any(k in t for k in NEUTRAL_KEYWORDS):
+        return "neutral"
+    hour = extract_hour(text)
+    if hour is not None:
+        if hour < 12:
+            return "morning"
+        return "afternoon"
+    if "jusqu" in t and ("h" in t or ":" in text):
+        h = extract_hour(text)
+        if h is not None and h >= 12:
+            return "afternoon"
+    return None
+
+
+def extract_hour(text: str) -> Optional[int]:
+    """Extrait une heure du texte (0-23)."""
+    if not text:
+        return None
+    m = HOUR_RE.search(text.lower())
+    if not m:
+        return None
+    return int(m.group(1))
+
+
+def infer_preference_plausible(text: str) -> Optional[str]:
+    """
+    Retourne: "morning" | "afternoon" | "any" | None.
+    Comprend: matin, après-midi, fin de matinée, vers 14h, après 17h, peu importe.
+    """
+    if not text:
+        return None
+    s = normalize_text(text).lower()
+    for w in ANY_WORDS:
+        if w in s:
+            return "any"
+    for w in MORNING_WORDS:
+        if w in s:
+            return "morning"
+    for w in AFTERNOON_WORDS:
+        if w in s:
+            return "afternoon"
+    hour = extract_hour(s)
+    if hour is not None:
+        if hour < 12:
+            return "morning"
+        return "afternoon"
+    if "jusqu" in s and ("h" in s or ":" in s):
+        h = extract_hour(s)
+        if h is not None and h >= 12:
+            return "afternoon"
+    return None
+
+
+# ----------------------------
+# Fillers — rejet systématique (QUALIF_NAME, QUALIF_PREF, QUALIF_CONTACT, WAIT_CONFIRM)
+# Une seule fonction is_filler_response() utilisée partout.
+# ----------------------------
+
+FILLER_WORDS_SIMPLE = frozenset({
+    "euh", "heu", "hum", "hmm", "mmm", "mmh",
+    "bah", "ben", "bha",
+    "hein",
+    "quoi",
+    "voilà",
+    "voila",
+    "bon",
+})
+
+FILLER_WORDS_COMPOSED = frozenset({
+    "je sais pas",
+    "je ne sais pas",
+    "aucune idée",
+    "je sais plus",
+    "je sais pas trop",
+    "ben je sais pas",
+    "euh je sais pas",
+    "bah je sais pas",
+    "attendez",
+    "attends",
+    "attendez un peu",
+    "une seconde",
+    "un instant",
+})
+
+FILLER_WORDS_STRESS = frozenset({
+    "désolé",
+    "désolée",
+    "pardon",
+    "excusez-moi",
+    "excusez moi",
+    "je comprends pas",
+    "j'ai pas compris",
+    "je suis pas sûr",
+    "je suis pas sure",
+    "je sais plus trop",
+})
+
+FILLER_WORDS_NOISE = frozenset({
+    "silence",
+    "bruit",
+    "respiration",
+    "souffle",
+})
+
+FILLER_WORDS_FR = (
+    FILLER_WORDS_SIMPLE
+    | FILLER_WORDS_COMPOSED
+    | FILLER_WORDS_STRESS
+    | FILLER_WORDS_NOISE
+)
+
+
+def is_too_short(text: str) -> bool:
+    """Règle structurelle : moins de 2 caractères = non informatif."""
+    return len((text or "").strip()) < 2
+
+
+def is_filler_response(text: str) -> bool:
+    """
+    True si la réponse doit être rejetée systématiquement (filler, hésitation, trop court).
+    Utilisée dans QUALIF_NAME, QUALIF_PREF, QUALIF_CONTACT, WAIT_CONFIRM.
+    """
+    if not text:
+        return True
+    clean = text.lower().strip()
+    if not clean:
+        return True
+    if clean in FILLER_WORDS_FR:
+        return True
+    if is_too_short(clean):
+        return True
+    return False
+
+
+def is_filler_or_hesitation(text: str) -> bool:
+    """Alias pour is_filler_response (rétrocompat)."""
+    return is_filler_response(text)
+
+
+# Fillers globaux (même liste FR)
+FILLER_GLOBAL = FILLER_WORDS_FR
+
+# Réponses courtes acceptées seulement dans certains états
+YES_WORDS = frozenset({"oui", "ouais", "ok", "d'accord", "dac", "c'est ça", "exact", "c est ça"})
+NO_WORDS = frozenset({"non", "nan", "pas du tout"})
+
+# États où "oui" / "non" sont acceptables (sinon = filler contextuel)
+YESNO_ALLOWED_STATES = frozenset({
+    "START",
+    "CONTACT_CONFIRM",
+    "CANCEL_CONFIRM",
+    "MODIFY_CONFIRM",
+    "WAIT_CONFIRM",  # "oui" seul ne suffit pas, on redemande 1/2/3
+    "FAQ_ANSWERED",
+    "CLARIFY",
+})
+
+
+def is_contextual_filler(text: str, state: str) -> bool:
+    """
+    True si la réponse doit être traitée comme filler / non-valide dans ce contexte.
+    Ex: en QUALIF_NAME, "oui" = filler ; en CONTACT_CONFIRM, "oui" = valide.
+    """
+    if not text:
+        return True
+
+    s = normalize_text(text).lower()
+    if not s:
+        return True
+
+    # 1) Fillers universels
+    if s in FILLER_GLOBAL:
+        return True
+
+    # 2) Oui/Non : autorisés uniquement dans certains états
+    if s in YES_WORDS or s in NO_WORDS:
+        if state not in YESNO_ALLOWED_STATES:
+            return True  # ex: en QUALIF_NAME, "oui" = filler
+        return False  # dans ces états, oui/non acceptables (pas forcément suffisants)
+
+    # 3) Trop court = filler
+    if is_too_short(s):
+        return True
+
+    return False
 
 
 # ----------------------------
@@ -162,6 +616,80 @@ def validate_length(text: str, max_length: Optional[int] = None) -> tuple[bool, 
 # ----------------------------
 # Validation confirmation RDV
 # ----------------------------
+
+# ============================================
+# CHOIX CRÉNEAU FLEXIBLE (IVR pro : jour / heure / numéro)
+# ============================================
+
+DAY_FR = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+
+SLOT_NUM_1 = {"1", "un", "premier", "la première", "le premier"}
+SLOT_NUM_2 = {"2", "deux", "deuxième", "second", "la deuxième", "le deuxième"}
+SLOT_NUM_3 = {"3", "trois", "troisième", "la troisième", "le troisième"}
+
+
+def detect_slot_choice_flexible(user_msg: str, proposed_slots: list) -> Optional[int]:
+    """
+    Détection du choix de créneau : numéro (1/2/3), jour ("mardi"), heure ("10h", "vers 14").
+    Si ambigu (2+ slots même jour ou même heure proche) → retourne None (recovery "Dites 1, 2 ou 3").
+    
+    proposed_slots: list of dict with keys start, label_vocal, day, hour (optionnels).
+    Returns: 1-based index (1, 2, 3) ou None.
+    """
+    if not proposed_slots:
+        return None
+    s = (user_msg or "").lower().strip()
+    if not s:
+        return None
+
+    # 1) Numéro (prioritaire, non ambigu)
+    words = set(s.split())
+    for w in (s, *list(words)):
+        if w in SLOT_NUM_1:
+            return 1
+        if w in SLOT_NUM_2 and len(proposed_slots) >= 2:
+            return 2
+        if w in SLOT_NUM_3 and len(proposed_slots) >= 3:
+            return 3
+    if any(w in s for w in SLOT_NUM_1):
+        return 1
+    if any(w in s for w in SLOT_NUM_2) and len(proposed_slots) >= 2:
+        return 2
+    if any(w in s for w in SLOT_NUM_3) and len(proposed_slots) >= 3:
+        return 3
+
+    # 2) Jour : si plusieurs slots ce jour → ambigu
+    day_candidates = []
+    for i, slot in enumerate(proposed_slots, 1):
+        day = (slot.get("day") or "").lower().strip()
+        if day and day in s:
+            day_candidates.append(i)
+    if len(day_candidates) == 1:
+        return day_candidates[0]
+    if len(day_candidates) > 1:
+        return None
+
+    # 3) Heure : slot le plus proche (≤1h), sinon ambigu si plusieurs à même distance
+    hour = extract_hour(s)
+    if hour is not None:
+        candidates = []
+        for i, slot in enumerate(proposed_slots, 1):
+            sh = slot.get("hour")
+            if sh is None:
+                continue
+            candidates.append((abs(sh - hour), i))
+        if not candidates:
+            return None
+        candidates.sort()
+        if candidates[0][0] <= 1:
+            # Un seul à distance min ?
+            best_dist = candidates[0][0]
+            best_indices = [c[1] for c in candidates if c[0] == best_dist]
+            if len(best_indices) == 1:
+                return best_indices[0]
+            return None
+    return None
+
 
 # ============================================
 # CONFIRMATION VOCALE (un/deux/trois)
