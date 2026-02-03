@@ -67,10 +67,12 @@ class Session:
     # Production-grade V3 (PRODUCTION_GRADE_SPEC_V3)
     last_intent: Optional[str] = None  # Anti-boucle intent override
     consecutive_questions: int = 0  # Max 3 puis action concrète
-    last_question_asked: Optional[str] = None  # Rejouer si "attendez"
+    last_agent_message: Optional[str] = None  # Dernier message complet (répétition)
+    last_question_asked: Optional[str] = None  # Dernière question (correction / rejouer)
     global_recovery_fails: int = 0  # Échecs globaux → INTENT_ROUTER si >= 2
     correction_count: int = 0  # Corrections répétées → INTENT_ROUTER si >= 2
     pending_preference: Optional[str] = None  # Préférence inférée (PREFERENCE_CONFIRM)
+    last_preference_user_text: Optional[str] = None  # Phrase user ayant mené à pending (répétition = confirmation)
     empty_message_count: int = 0  # IVR Principe 3 : messages vides répétés → INTENT_ROUTER si >= 2
     turn_count: int = 0  # Nombre de tours (user+agent) → anti-loop si > 25 (spec V3)
 
@@ -85,6 +87,9 @@ class Session:
     modify_name_fails: int = 0  # Flow MODIFY : RDV non trouvé (vérifier/humain puis INTENT_ROUTER)
     modify_rdv_not_found_count: int = 0  # MODIFY : nb fois "RDV pas trouvé"
     faq_fails: int = 0  # FAQ : question pas comprise (reformulation → exemples → INTENT_ROUTER)
+    # Flow ordonnance (conversation naturelle RDV vs message)
+    ordonnance_choice_fails: int = 0
+    ordonnance_choice_asked: bool = False
 
     MAX_CONSECUTIVE_QUESTIONS = 3  # Limite cognitive (spec V3)
     MAX_TURNS_ANTI_LOOP = 25  # Garde-fou : >25 tours sans DONE/TRANSFERRED → INTENT_ROUTER
@@ -116,6 +121,7 @@ class Session:
         self.pending_cancel_slot = None
         self.last_intent = None
         self.consecutive_questions = 0
+        self.last_agent_message = None
         self.last_question_asked = None
         self.global_recovery_fails = 0
         self.correction_count = 0
@@ -132,13 +138,21 @@ class Session:
         self.modify_rdv_not_found_count = 0
         self.faq_fails = 0
         self.contact_confirm_fails = 0
+        self.ordonnance_choice_fails = 0
+        self.ordonnance_choice_asked = False
         self.client_id = None
         self.transfer_logged = False
         # Note: on ne reset PAS customer_phone car c'est lié à l'appel
 
     def add_message(self, role: str, text: str) -> None:
+        """Ajoute un message et met à jour last_agent_message / last_question_asked."""
         self.messages.append(Message(role=role, text=text, ts=datetime.utcnow()))
         self.touch()
+        if role == "agent":
+            self.last_agent_message = text
+            # Dernière question posée (pour correction / "attendez")
+            if "?" in text or any(q in text.lower() for q in ["dites", "quel", "préférez"]):
+                self.last_question_asked = text
 
     def last_messages(self) -> List[Tuple[str, str]]:
         return [(m.role, m.text) for m in list(self.messages)]

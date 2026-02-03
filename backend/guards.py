@@ -93,6 +93,7 @@ NAME_PREFIXES_FR_SORTED = sorted(
 FILLERS_FR_NAME = frozenset({
     "euh", "heu", "hum", "hmm", "mmh",
     "bah", "ben", "bah euh", "euh bah",
+    "bof", "mouais",
     "voilà", "voila",
     "alors",
     "attends", "attendez",
@@ -394,6 +395,7 @@ def infer_preference_plausible(text: str) -> Optional[str]:
 FILLER_WORDS_SIMPLE = frozenset({
     "euh", "heu", "hum", "hmm", "mmm", "mmh",
     "bah", "ben", "bha",
+    "bof", "mouais",
     "hein",
     "quoi",
     "voilà",

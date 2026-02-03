@@ -154,6 +154,8 @@ VOCAL_FAQ_TO_BOOKING = "Bien sûr ! C'est à quel nom ?"
 # ----------------------------
 
 VOCAL_CANCEL_ASK_NAME = "Bien sûr, pas de problème ! C'est à quel nom ?"
+# Message envoyé immédiatement en vocal pendant la recherche du RDV (évite le "mmm" TTS)
+VOCAL_CANCEL_LOOKUP_HOLDING = "Un instant, je cherche votre rendez-vous."
 
 # Recovery progressive : nom pas compris (CANCEL_NAME)
 VOCAL_CANCEL_NAME_RETRY_1 = "Je n'ai pas noté votre nom. Vous pouvez répéter ?"
@@ -637,16 +639,29 @@ MODIFY_PATTERNS = [
 # Intent TRANSFER (cas complexes)
 TRANSFER_PATTERNS = [
     "parler à quelqu'un", "un humain", "un conseiller",
+    "quelqu'un", "standard", "secrétariat",
     "mes résultats", "résultats d'analyses",
     "c'est urgent", "c'est grave",
     "je veux parler", "passez-moi quelqu'un",
 ]
 
-# Intent ABANDON
+# Intent ORDONNANCE (conversation naturelle : RDV ou message)
+ORDONNANCE_PATTERNS = [
+    "ordonnance", "ordonnances",
+    "renouvellement", "renouveler",
+    "prescription", "prescrip",
+    "médicament", "médicaments",
+    "traitement",
+]
+
+# Intent ABANDON (override → END_POLITE)
 ABANDON_PATTERNS = [
     "je rappelle", "laissez tomber", "tant pis",
     "oubliez", "je vais rappeler", "plus tard",
+    "j'abandonne", "je rappellerai", "je vais raccrocher",
 ]
+# Message de clôture poli (spec END_POLITE)
+MSG_END_POLITE_ABANDON = "Pas de souci. N'hésitez pas à nous rappeler. Au revoir."
 
 # Slot choice patterns (pour WAIT_CONFIRM)
 SLOT_CHOICE_FIRST = ["premier", "un", "1", "le premier", "le un"]
@@ -735,6 +750,27 @@ MSG_FAQ_RETRY_EXEMPLES_VOCAL = (
 # Cancel / Modify (web fallbacks)
 MSG_CANCEL_ASK_NAME_WEB = "Pas de problème. C'est à quel nom ?"
 MSG_CANCEL_NAME_RETRY_1_WEB = "Je n'ai pas noté votre nom. Répétez ?"
+
+# Flow ORDONNANCE (conversation naturelle : RDV ou message, pas menu 1/2)
+VOCAL_ORDONNANCE_ASK_CHOICE = (
+    "Pour une ordonnance, vous voulez un rendez-vous ou que l'on transmette un message ?"
+)
+MSG_ORDONNANCE_ASK_CHOICE_WEB = (
+    "Pour une ordonnance, souhaitez-vous un rendez-vous ou que l'on transmette un message ?"
+)
+VOCAL_ORDONNANCE_CHOICE_RETRY_1 = "Je n'ai pas compris. Vous préférez un rendez-vous ou un message ?"
+VOCAL_ORDONNANCE_CHOICE_RETRY_2 = "Dites simplement : rendez-vous ou message."
+VOCAL_ORDONNANCE_ASK_NAME = "D'accord. C'est à quel nom ?"
+MSG_ORDONNANCE_ASK_NAME_WEB = "D'accord. C'est à quel nom ?"
+VOCAL_ORDONNANCE_NAME_RETRY_1 = "Je n'ai pas noté votre nom. Répétez ?"
+VOCAL_ORDONNANCE_NAME_RETRY_2 = "Votre nom et prénom, s'il vous plaît."
+VOCAL_ORDONNANCE_PHONE_ASK = "Quel est votre numéro de téléphone ?"
+VOCAL_ORDONNANCE_DONE = (
+    "Parfait. Votre demande d'ordonnance est enregistrée. On vous rappelle rapidement. Au revoir !"
+)
+MSG_ORDONNANCE_DONE_WEB = (
+    "Votre demande d'ordonnance est enregistrée. Nous vous rappellerons rapidement. Au revoir."
+)
 MSG_CANCEL_NAME_RETRY_2_WEB = "Votre nom et prénom. Par exemple : Martin Dupont."
 MSG_MODIFY_ASK_NAME_WEB = "Pas de souci. C'est à quel nom ?"
 MSG_MODIFY_NAME_RETRY_1_WEB = "Je n'ai pas noté votre nom. Répétez ?"

@@ -212,14 +212,21 @@ async def health() -> dict:
     except Exception:
         free_slots = -1
     
+    # Credentials: chargés depuis base64 (Railway) ou fichier local (dev)
+    service_account_file = config.SERVICE_ACCOUNT_FILE
+    file_exists = bool(service_account_file and os.path.exists(service_account_file))
+    has_base64_env = bool(os.getenv("GOOGLE_SERVICE_ACCOUNT_BASE64"))
+    
     return {
         "status": "ok",
         "streams": len(STREAMS),
         "free_slots": free_slots,
-        "service_account_file": config.SERVICE_ACCOUNT_FILE,
-        "file_exists": bool(config.SERVICE_ACCOUNT_FILE and os.path.exists(config.SERVICE_ACCOUNT_FILE)),
+        "service_account_file": service_account_file,
+        "file_exists": file_exists,
+        "credentials_loaded": file_exists,
         "calendar_id_set": bool(config.GOOGLE_CALENDAR_ID),
-        "runtime_env_count": len(os.environ)
+        "google_base64_set": has_base64_env,
+        "runtime_env_count": len(os.environ),
     }
 
 

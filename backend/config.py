@@ -24,6 +24,23 @@ CONFIRM_RETRY_MAX = 1  # 1 redemande, puis transfer
 # Performance
 TARGET_FIRST_RESPONSE_MS = 3000  # contrainte PRD (sans imposer SSE)
 
+# ==============================
+# PHILOSOPHIE UWI : RETRY, PAS TRANSFERT SYSTÉMATIQUE
+# ==============================
+# Privilégier : reformulation, clarification, plusieurs tentatives par champ.
+# Éviter : transfert humain ou raccrochage dès la 1ère incompréhension.
+# Après N échecs sur un même champ → INTENT_ROUTER (menu 1/2/3/4), pas transfert direct.
+# Transfert uniquement : demande explicite de l'utilisateur (humain, quelqu'un) ou après menu.
+
+# Recovery IVR : limites par contexte (spec test-terrain)
+# Après N échecs sur un même champ → escalade INTENT_ROUTER (menu), pas transfert
+RECOVERY_LIMITS = {
+    "name": 2,
+    "slot_choice": 3,
+    "phone": 2,
+    "silence": 2,  # empty_message_count
+}
+
 
 # ==============================
 # GOOGLE CALENDAR CONFIGURATION

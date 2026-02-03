@@ -59,6 +59,11 @@ def _fail_count_for_context(session: Session, context: Optional[str]) -> int:
         "slot_choice": getattr(session, "slot_choice_fails", 0),
         "preference": getattr(session, "preference_fails", 0),
         "contact_confirm": getattr(session, "contact_confirm_fails", 0),
+        "cancel_name": getattr(session, "cancel_name_fails", 0),
+        "modify_name": getattr(session, "modify_name_fails", 0),
+        "cancel_rdv_not_found": getattr(session, "cancel_rdv_not_found_count", 0),
+        "modify_rdv_not_found": getattr(session, "modify_rdv_not_found_count", 0),
+        "faq": getattr(session, "faq_fails", 0),
     }
     return m.get(context, 0)
 
@@ -313,6 +318,10 @@ def detect_intent(text: str) -> str:
     if any(p in t for p in prompts.ABANDON_PATTERNS):
         return "ABANDON"
     
+    # 5b. Intent ORDONNANCE
+    if any(p in t for p in prompts.ORDONNANCE_PATTERNS):
+        return "ORDONNANCE"
+    
     # 6. Si NON sans autre intent → probablement FAQ
     if is_no:
         return "NO"
@@ -384,7 +393,7 @@ def safe_reply(events: List[Event], session: Session) -> List[Event]:
 
 def detect_strong_intent(text: str) -> Optional[str]:
     """
-    Détecte les intents qui préemptent le flow en cours (CANCEL, MODIFY, TRANSFER).
+    Détecte les intents qui préemptent le flow en cours (CANCEL, MODIFY, TRANSFER, ABANDON).
     """
     t = text.strip().lower()
     if not t:
@@ -395,6 +404,37 @@ def detect_strong_intent(text: str) -> Optional[str]:
         return "MODIFY"
     if any(p in t for p in prompts.TRANSFER_PATTERNS):
         return "TRANSFER"
+    if any(p in t for p in prompts.ABANDON_PATTERNS):
+        return "ABANDON"
+    if any(p in t for p in prompts.ORDONNANCE_PATTERNS):
+        return "ORDONNANCE"
+    return None
+
+
+def detect_ordonnance_choice(user_text: str) -> Optional[str]:
+    """
+    Détecte si l'utilisateur veut RDV ou MESSAGE (langage naturel, pas menu 1/2).
+    Returns: 'rdv' | 'message' | None
+    """
+    if not user_text or not user_text.strip():
+        return None
+    msg_lower = user_text.lower().strip()
+    rdv_patterns = [
+        "rendez-vous", "rdv", "rendez vous",
+        "consultation", "consulter",
+        "voir le médecin", "voir le docteur",
+        "venir", "passer", "viens",
+    ]
+    message_patterns = [
+        "message", "transmett", "transmet",
+        "rappel", "rappelez", "rappeler",
+        "laiss", "laisser",
+        "contact", "contacter",
+    ]
+    if any(p in msg_lower for p in rdv_patterns):
+        return "rdv"
+    if any(p in msg_lower for p in message_patterns):
+        return "message"
     return None
 
 
@@ -414,6 +454,8 @@ def should_override_current_flow_v3(session: Session, message: str) -> bool:
         return False
     if strong == "MODIFY" and session.state in ("MODIFY_NAME", "MODIFY_NO_RDV", "MODIFY_CONFIRM"):
         return False
+    if strong == "ORDONNANCE" and session.state in ("ORDONNANCE_CHOICE", "ORDONNANCE_MESSAGE", "ORDONNANCE_PHONE_CONFIRM"):
+        return False
     last = getattr(session, "last_intent", None)
     if strong == last:
         return False
@@ -430,6 +472,38 @@ def detect_correction_intent(text: str) -> bool:
         "non c'est pas", "pas ça", "refaites", "recommencer",
     ]
     return any(w in t for w in correction_words)
+
+
+def detect_user_intent_repeat(message: str) -> Optional[str]:
+    """
+    Distingue correction (rejouer question) vs répétition (répéter message complet).
+    Returns:
+        'correction' : user veut corriger → rejouer last_question_asked
+        'repeat' : user veut répéter → répéter last_agent_message
+        None : autre
+    """
+    msg_lower = (message or "").strip().lower()
+    if not msg_lower:
+        return None
+    correction_patterns = [
+        "attendez", "attends",
+        "erreur", "trompé", "je me suis trompé",
+        "non attendez", "recommencez", "refaites", "recommence",
+        "non c'est pas", "pas ça",
+    ]
+    if any(p in msg_lower for p in correction_patterns):
+        return "correction"
+    repeat_patterns = [
+        "répét", "repet", "répète",
+        "redis", "redire", "encore une fois", "redire encore",
+        "vous pouvez répét", "pouvez-vous répét",
+        "j'ai pas compris", "pas compris",
+        "comprends pas", "comprend pas",
+        "pardon", "comment",
+    ]
+    if any(p in msg_lower for p in repeat_patterns):
+        return "repeat"
+    return None
 
 
 def should_trigger_intent_router(session: Session, user_message: str) -> tuple[bool, str]:
@@ -473,9 +547,18 @@ def increment_recovery_counter(session: Session, context: str) -> int:
     return session.global_recovery_fails
 
 
+def _recovery_limit_for(context: str) -> int:
+    """Limite d'échecs pour ce contexte (spec RECOVERY_LIMITS)."""
+    limits = getattr(config, "RECOVERY_LIMITS", None) or {}
+    return limits.get(context, getattr(Session, "MAX_CONTEXT_FAILS", 3))
+
+
 def should_escalate_recovery(session: Session, context: str) -> bool:
-    """True si ≥ MAX_CONTEXT_FAILS échecs sur ce contexte."""
-    max_fails = getattr(Session, "MAX_CONTEXT_FAILS", 3)
+    """True si ≥ limite du contexte (RECOVERY_LIMITS) échecs sur ce contexte."""
+    max_fails = _recovery_limit_for(context)
+    if context == "silence":
+        count = getattr(session, "empty_message_count", 0)
+        return count >= max_fails
     counters = {
         "slot_choice": getattr(session, "slot_choice_fails", 0),
         "name": getattr(session, "name_fails", 0),
@@ -589,6 +672,34 @@ class Engine:
                 msg = prompts.VOCAL_TRANSFER_COMPLEX if channel == "vocal" else prompts.MSG_TRANSFER
                 session.add_message("agent", msg)
                 return safe_reply([Event("final", msg, conv_state=session.state)], session)
+            if strong == "ABANDON":
+                session.state = "CONFIRMED"
+                msg = prompts.MSG_END_POLITE_ABANDON if hasattr(prompts, "MSG_END_POLITE_ABANDON") else (prompts.VOCAL_USER_ABANDON if channel == "vocal" else prompts.MSG_ABANDON_WEB)
+                session.add_message("agent", msg)
+                _persist_ivr_event(session, "abandon")
+                return safe_reply([Event("final", msg, conv_state=session.state)], session)
+            if strong == "ORDONNANCE":
+                return safe_reply(self._handle_ordonnance_flow(session, user_text), session)
+        
+        # ========================
+        # 2b. CORRECTION vs RÉPÉTITION (avant guards)
+        # ========================
+        repeat_intent = detect_user_intent_repeat(user_text)
+        if repeat_intent == "correction":
+            if getattr(session, "last_question_asked", None):
+                msg = session.last_question_asked
+                session.add_message("agent", msg)
+                return safe_reply([Event("final", msg, conv_state=session.state)], session)
+            msg = "D'accord. Que souhaitez-vous corriger ?"
+            session.add_message("agent", msg)
+            return safe_reply([Event("final", msg, conv_state=session.state)], session)
+        if repeat_intent == "repeat":
+            if getattr(session, "last_agent_message", None):
+                msg = session.last_agent_message
+                return safe_reply([Event("final", msg, conv_state=session.state)], session)
+            msg = "Désolé, je n'ai rien à répéter."
+            session.add_message("agent", msg)
+            return safe_reply([Event("final", msg, conv_state=session.state)], session)
         
         # ========================
         # 3. GUARDS BASIQUES (vide, langue, spam)
@@ -597,7 +708,8 @@ class Engine:
         if not user_text or not user_text.strip():
             session.empty_message_count = getattr(session, "empty_message_count", 0) + 1
             _persist_ivr_event(session, "empty_message")
-            if session.empty_message_count >= 3:
+            silence_limit = _recovery_limit_for("silence")
+            if session.empty_message_count >= silence_limit:
                 return safe_reply(
                     self._trigger_intent_router(session, "empty_repeated", user_text or ""),
                     session,
@@ -669,13 +781,6 @@ class Engine:
                 session.last_question_asked = msg
             return safe_reply([Event("final", msg, conv_state=session.state)], session)
         
-        # --- CORRECTION (spec V3) : rejouer dernière question ---
-        if detect_correction_intent(user_text):
-            last_q = getattr(session, "last_question_asked", None)
-            if last_q:
-                session.add_message("agent", last_q)
-                return safe_reply([Event("final", last_q, conv_state=session.state)], session)
-        
         # --- FLOWS EN COURS ---
         
         # INTENT_ROUTER (menu 1/2/3/4)
@@ -705,6 +810,14 @@ class Engine:
         # Si en flow MODIFY
         if session.state in ["MODIFY_NAME", "MODIFY_NO_RDV", "MODIFY_CONFIRM"]:
             return safe_reply(self._handle_modify(session, user_text), session)
+        
+        # Si en flow ORDONNANCE (conversation naturelle RDV vs message)
+        if session.state in ["ORDONNANCE_CHOICE"]:
+            return safe_reply(self._handle_ordonnance_flow(session, user_text), session)
+        if session.state == "ORDONNANCE_MESSAGE":
+            return safe_reply(self._handle_ordonnance_message(session, user_text), session)
+        if session.state == "ORDONNANCE_PHONE_CONFIRM":
+            return safe_reply(self._handle_ordonnance_phone_confirm(session, user_text), session)
         
         # Si en flow CLARIFY
         if session.state == "CLARIFY":
@@ -778,6 +891,10 @@ class Engine:
             if intent == "BOOKING":
                 return safe_reply(self._start_booking_with_extraction(session, user_text), session)
             
+            # ORDONNANCE → Flow ordonnance (RDV ou message, conversation naturelle)
+            if intent == "ORDONNANCE":
+                return safe_reply(self._handle_ordonnance_flow(session, user_text), session)
+            
             # FAQ ou UNCLEAR → Chercher dans FAQ
             return safe_reply(self._handle_faq(session, user_text, include_low=True), session)
         
@@ -843,15 +960,18 @@ class Engine:
 
         # Spec V3 : 3 niveaux — 1er reformulation, 2e exemples, 3e INTENT_ROUTER (menu)
         if session.no_match_turns >= 3:
+            log_ivr_event(logger, session, "recovery_step", context="faq", reason="escalate_intent_router")
             return self._trigger_intent_router(session, "no_match_faq_3", user_text)
 
         if session.no_match_turns == 1:
+            log_ivr_event(logger, session, "recovery_step", context="faq", reason="retry_1")
             # 1er no-match : demander à reformuler
             if channel == "vocal":
                 msg = getattr(prompts, "MSG_FAQ_REFORMULATE_VOCAL", prompts.MSG_FAQ_REFORMULATE)
             else:
                 msg = prompts.MSG_FAQ_REFORMULATE
         else:
+            log_ivr_event(logger, session, "recovery_step", context="faq", reason="retry_2")
             # 2e no-match : donner exemples (horaires, tarifs, localisation)
             if channel == "vocal":
                 msg = getattr(prompts, "MSG_FAQ_RETRY_EXEMPLES_VOCAL", prompts.MSG_FAQ_RETRY_EXEMPLES)
@@ -1162,6 +1282,7 @@ class Engine:
             inferred_pref = infer_preference_from_context(user_text)
             if inferred_pref:
                 session.pending_preference = inferred_pref
+                session.last_preference_user_text = user_text.strip()
                 session.state = "PREFERENCE_CONFIRM"
                 msg = prompts.format_inference_confirmation(inferred_pref)
                 session.last_question_asked = msg
@@ -1173,6 +1294,7 @@ class Engine:
             if time_pref == "morning":
                 log_preference_inferred(logger, session, user_text, inferred="morning")
                 session.pending_preference = "matin"
+                session.last_preference_user_text = user_text.strip()
                 session.state = "PREFERENCE_CONFIRM"
                 msg = prompts.VOCAL_PREF_CONFIRM_MATIN
                 session.last_question_asked = msg
@@ -1181,6 +1303,7 @@ class Engine:
             if time_pref == "afternoon":
                 log_preference_inferred(logger, session, user_text, inferred="afternoon")
                 session.pending_preference = "après-midi"
+                session.last_preference_user_text = user_text.strip()
                 session.state = "PREFERENCE_CONFIRM"
                 msg = prompts.VOCAL_PREF_CONFIRM_APRES_MIDI
                 session.last_question_asked = msg
@@ -1189,6 +1312,7 @@ class Engine:
             if time_pref == "neutral":
                 log_preference_inferred(logger, session, user_text, inferred="neutral")
                 session.pending_preference = "matin"
+                session.last_preference_user_text = user_text.strip()
                 session.state = "PREFERENCE_CONFIRM"
                 msg = prompts.VOCAL_PREF_ANY
                 session.last_question_asked = msg
@@ -1200,6 +1324,7 @@ class Engine:
             if pref_plausible == "morning":
                 log_preference_inferred(logger, session, user_text, inferred="morning")
                 session.pending_preference = "matin"
+                session.last_preference_user_text = user_text.strip()
                 session.state = "PREFERENCE_CONFIRM"
                 msg = prompts.VOCAL_PREF_CONFIRM_MATIN
                 session.last_question_asked = msg
@@ -1208,6 +1333,7 @@ class Engine:
             if pref_plausible == "afternoon":
                 log_preference_inferred(logger, session, user_text, inferred="afternoon")
                 session.pending_preference = "après-midi"
+                session.last_preference_user_text = user_text.strip()
                 session.state = "PREFERENCE_CONFIRM"
                 msg = prompts.VOCAL_PREF_CONFIRM_APRES_MIDI
                 session.last_question_asked = msg
@@ -1216,6 +1342,7 @@ class Engine:
             if pref_plausible == "any":
                 log_preference_inferred(logger, session, user_text, inferred="neutral")
                 session.pending_preference = "matin"
+                session.last_preference_user_text = user_text.strip()
                 session.state = "PREFERENCE_CONFIRM"
                 msg = prompts.VOCAL_PREF_ANY
                 session.last_question_asked = msg
@@ -1652,7 +1779,9 @@ class Engine:
             session.cancel_rdv_not_found_count = getattr(session, "cancel_rdv_not_found_count", 0) + 1
             session.cancel_name_fails = getattr(session, "cancel_name_fails", 0) + 1
             if session.cancel_rdv_not_found_count >= max_fails or session.cancel_name_fails >= max_fails:
+                log_ivr_event(logger, session, "recovery_step", context="cancel_rdv_not_found", reason="escalate_intent_router")
                 return self._trigger_intent_router(session, "cancel_not_found_3", user_text)
+            log_ivr_event(logger, session, "recovery_step", context="cancel_rdv_not_found", reason="offer_verify_or_human")
             name = session.qualif_data.name or "?"
             msg = prompts.VOCAL_CANCEL_NOT_FOUND_VERIFIER_HUMAN.format(name=name) if channel == "vocal" else prompts.MSG_CANCEL_NOT_FOUND_VERIFIER_HUMAN_WEB.format(name=name)
             session.add_message("agent", msg)
@@ -1660,28 +1789,34 @@ class Engine:
         
         if session.state == "CANCEL_NAME":
             raw = user_text.strip()
-            # Nom pas compris (vide ou trop court)
+            # Nom pas compris (vide ou trop court) — recovery progressive avec compteur dédié
             if not raw or len(raw) < 2:
-                fail_count = increment_recovery_counter(session, "name")
-                if should_escalate_recovery(session, "name"):
+                session.cancel_name_fails = getattr(session, "cancel_name_fails", 0) + 1
+                if session.cancel_name_fails >= 3:
+                    log_ivr_event(logger, session, "recovery_step", context="cancel_name", reason="escalate_intent_router")
                     return self._trigger_intent_router(session, "cancel_name_fails_3", user_text)
-                if fail_count == 1:
+                if session.cancel_name_fails == 1:
+                    log_ivr_event(logger, session, "recovery_step", context="cancel_name", reason="retry_1")
                     msg = prompts.VOCAL_CANCEL_NAME_RETRY_1 if channel == "vocal" else prompts.MSG_CANCEL_NAME_RETRY_1_WEB
                 else:
+                    log_ivr_event(logger, session, "recovery_step", context="cancel_name", reason="retry_2")
                     msg = prompts.VOCAL_CANCEL_NAME_RETRY_2 if channel == "vocal" else prompts.MSG_CANCEL_NAME_RETRY_2_WEB
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
-            # Nom valide → chercher le RDV
+            # Nom valide → chercher le RDV (reset compteur nom du flow cancel)
             session.qualif_data.name = raw
             session.name_fails = 0
+            session.cancel_name_fails = 0
             existing_slot = tools_booking.find_booking_by_name(session.qualif_data.name)
             
             if not existing_slot:
                 session.cancel_rdv_not_found_count = getattr(session, "cancel_rdv_not_found_count", 0) + 1
                 session.cancel_name_fails = getattr(session, "cancel_name_fails", 0) + 1
                 if session.cancel_rdv_not_found_count >= max_fails:
+                    log_ivr_event(logger, session, "recovery_step", context="cancel_rdv_not_found", reason="escalate_intent_router")
                     return self._trigger_intent_router(session, "cancel_not_found_3", user_text)
+                log_ivr_event(logger, session, "recovery_step", context="cancel_rdv_not_found", reason="offer_verify_or_human")
                 session.state = "CANCEL_NO_RDV"
                 name = session.qualif_data.name
                 msg = prompts.VOCAL_CANCEL_NOT_FOUND_VERIFIER_HUMAN.format(name=name) if channel == "vocal" else prompts.MSG_CANCEL_NOT_FOUND_VERIFIER_HUMAN_WEB.format(name=name)
@@ -1778,7 +1913,9 @@ class Engine:
             session.modify_rdv_not_found_count = getattr(session, "modify_rdv_not_found_count", 0) + 1
             session.modify_name_fails = getattr(session, "modify_name_fails", 0) + 1
             if session.modify_rdv_not_found_count >= max_fails:
+                log_ivr_event(logger, session, "recovery_step", context="modify_rdv_not_found", reason="escalate_intent_router")
                 return self._trigger_intent_router(session, "modify_not_found_3", user_text)
+            log_ivr_event(logger, session, "recovery_step", context="modify_rdv_not_found", reason="offer_verify_or_human")
             name = session.qualif_data.name or "?"
             msg = prompts.VOCAL_MODIFY_NOT_FOUND_VERIFIER_HUMAN.format(name=name) if channel == "vocal" else prompts.MSG_MODIFY_NOT_FOUND_VERIFIER_HUMAN_WEB.format(name=name)
             session.add_message("agent", msg)
@@ -1786,26 +1923,33 @@ class Engine:
         
         if session.state == "MODIFY_NAME":
             raw = user_text.strip()
+            # Nom pas compris (vide ou trop court) — recovery progressive avec compteur dédié
             if not raw or len(raw) < 2:
-                fail_count = increment_recovery_counter(session, "name")
-                if should_escalate_recovery(session, "name"):
+                session.modify_name_fails = getattr(session, "modify_name_fails", 0) + 1
+                if session.modify_name_fails >= 3:
+                    log_ivr_event(logger, session, "recovery_step", context="modify_name", reason="escalate_intent_router")
                     return self._trigger_intent_router(session, "modify_name_fails_3", user_text)
-                if fail_count == 1:
+                if session.modify_name_fails == 1:
+                    log_ivr_event(logger, session, "recovery_step", context="modify_name", reason="retry_1")
                     msg = prompts.VOCAL_MODIFY_NAME_RETRY_1 if channel == "vocal" else prompts.MSG_MODIFY_NAME_RETRY_1_WEB
                 else:
+                    log_ivr_event(logger, session, "recovery_step", context="modify_name", reason="retry_2")
                     msg = prompts.VOCAL_MODIFY_NAME_RETRY_2 if channel == "vocal" else prompts.MSG_MODIFY_NAME_RETRY_2_WEB
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
             session.qualif_data.name = raw
             session.name_fails = 0
+            session.modify_name_fails = 0
             existing_slot = tools_booking.find_booking_by_name(session.qualif_data.name)
             
             if not existing_slot:
                 session.modify_rdv_not_found_count = getattr(session, "modify_rdv_not_found_count", 0) + 1
                 session.modify_name_fails = getattr(session, "modify_name_fails", 0) + 1
                 if session.modify_rdv_not_found_count >= max_fails:
+                    log_ivr_event(logger, session, "recovery_step", context="modify_rdv_not_found", reason="escalate_intent_router")
                     return self._trigger_intent_router(session, "modify_not_found_3", user_text)
+                log_ivr_event(logger, session, "recovery_step", context="modify_rdv_not_found", reason="offer_verify_or_human")
                 session.state = "MODIFY_NO_RDV"
                 name = session.qualif_data.name
                 msg = prompts.VOCAL_MODIFY_NOT_FOUND_VERIFIER_HUMAN.format(name=name) if channel == "vocal" else prompts.MSG_MODIFY_NOT_FOUND_VERIFIER_HUMAN_WEB.format(name=name)
@@ -1852,6 +1996,146 @@ class Engine:
                 return [Event("final", msg, conv_state=session.state)]
         
         return self._fallback_transfer(session)
+    
+    # ========================
+    # FLOW ORDONNANCE (conversation naturelle : RDV ou message)
+    # ========================
+    
+    def _handle_ordonnance_flow(self, session: Session, user_text: str) -> List[Event]:
+        """Flow ordonnance : proposer RDV ou message (langage naturel, pas menu 1/2)."""
+        channel = getattr(session, "channel", "web")
+        if not getattr(session, "ordonnance_choice_asked", False):
+            session.ordonnance_choice_asked = True
+            msg = prompts.VOCAL_ORDONNANCE_ASK_CHOICE if channel == "vocal" else prompts.MSG_ORDONNANCE_ASK_CHOICE_WEB
+            session.add_message("agent", msg)
+            session.state = "ORDONNANCE_CHOICE"
+            return [Event("final", msg, conv_state=session.state)]
+        choice = detect_ordonnance_choice(user_text)
+        if choice == "rdv":
+            session.state = "QUALIF_NAME"
+            session.qualif_data.name = None
+            session.qualif_data.motif = None
+            session.qualif_data.pref = None
+            session.qualif_data.contact = None
+            session.name_fails = 0
+            msg = prompts.get_qualif_question("name", channel=channel)
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state=session.state)]
+        if choice == "message":
+            session.state = "ORDONNANCE_MESSAGE"
+            session.qualif_data.name = None
+            session.qualif_data.contact = None
+            session.name_fails = 0
+            msg = prompts.VOCAL_ORDONNANCE_ASK_NAME if channel == "vocal" else prompts.MSG_ORDONNANCE_ASK_NAME_WEB
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state=session.state)]
+        session.ordonnance_choice_fails = getattr(session, "ordonnance_choice_fails", 0) + 1
+        if session.ordonnance_choice_fails == 1:
+            msg = prompts.VOCAL_ORDONNANCE_CHOICE_RETRY_1
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state="ORDONNANCE_CHOICE")]
+        if session.ordonnance_choice_fails == 2:
+            msg = prompts.VOCAL_ORDONNANCE_CHOICE_RETRY_2
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state="ORDONNANCE_CHOICE")]
+        session.state = "TRANSFERRED"
+        msg = prompts.get_message("transfer", channel=channel)
+        session.add_message("agent", msg)
+        return [Event("final", msg, conv_state=session.state)]
+    
+    def _handle_ordonnance_message(self, session: Session, user_text: str) -> List[Event]:
+        """Collecte nom + téléphone pour demande ordonnance (message), puis notification."""
+        channel = getattr(session, "channel", "web")
+        if not session.qualif_data.name:
+            extracted_name, reject_reason = guards.extract_name_from_speech(user_text)
+            if extracted_name is None:
+                session.name_fails = getattr(session, "name_fails", 0) + 1
+                if session.name_fails == 1:
+                    msg = prompts.VOCAL_ORDONNANCE_NAME_RETRY_1
+                elif session.name_fails == 2:
+                    msg = prompts.VOCAL_ORDONNANCE_NAME_RETRY_2
+                else:
+                    session.state = "TRANSFERRED"
+                    msg = prompts.get_message("transfer", channel=channel)
+                    session.add_message("agent", msg)
+                    return [Event("final", msg, conv_state=session.state)]
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state="ORDONNANCE_MESSAGE")]
+            session.qualif_data.name = extracted_name.title()
+            session.name_fails = 0
+            # Demander le téléphone (ou confirmer Caller ID) au tour suivant
+            if channel == "vocal" and session.customer_phone:
+                phone = str(session.customer_phone).replace("+33", "0").replace(" ", "").replace("-", "")
+                if phone.startswith("33"):
+                    phone = "0" + phone[2:]
+                if len("".join(c for c in phone if c.isdigit())) >= 10:
+                    session.state = "ORDONNANCE_PHONE_CONFIRM"
+                    formatted = prompts.format_phone_for_voice(phone[:10])
+                    msg = f"Votre numéro est bien le {formatted} ?"
+                    session.add_message("agent", msg)
+                    return [Event("final", msg, conv_state=session.state)]
+            msg = prompts.VOCAL_ORDONNANCE_PHONE_ASK
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state="ORDONNANCE_MESSAGE")]
+        if not session.qualif_data.contact:
+            if channel == "vocal" and session.customer_phone:
+                phone = str(session.customer_phone).replace("+33", "0").replace(" ", "").replace("-", "")
+                if phone.startswith("33"):
+                    phone = "0" + phone[2:]
+                if len("".join(c for c in phone if c.isdigit())) >= 10:
+                    session.state = "ORDONNANCE_PHONE_CONFIRM"
+                    formatted = prompts.format_phone_for_voice(phone[:10])
+                    msg = f"Votre numéro est bien le {formatted} ?"
+                    session.add_message("agent", msg)
+                    return [Event("final", msg, conv_state=session.state)]
+            ok, normalized, _ = guards.is_plausible_phone_input(user_text)
+            if not ok:
+                session.phone_fails = getattr(session, "phone_fails", 0) + 1
+                if session.phone_fails >= 3:
+                    session.state = "TRANSFERRED"
+                    msg = prompts.get_message("transfer", channel=channel)
+                    session.add_message("agent", msg)
+                    return [Event("final", msg, conv_state=session.state)]
+                msg = prompts.VOCAL_ORDONNANCE_PHONE_ASK
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state="ORDONNANCE_MESSAGE")]
+            session.qualif_data.contact = normalized
+            session.qualif_data.contact_type = "phone"
+        from datetime import datetime
+        from backend.services.email_service import send_ordonnance_notification
+        req = {"type": "ordonnance", "name": session.qualif_data.name, "phone": session.qualif_data.contact or "?", "timestamp": datetime.utcnow().isoformat()}
+        send_ordonnance_notification(req)
+        session.state = "CONFIRMED"
+        msg = prompts.VOCAL_ORDONNANCE_DONE if channel == "vocal" else prompts.MSG_ORDONNANCE_DONE_WEB
+        session.add_message("agent", msg)
+        return [Event("final", msg, conv_state=session.state)]
+    
+    def _handle_ordonnance_phone_confirm(self, session: Session, user_text: str) -> List[Event]:
+        """Confirmation Caller ID pour ordonnance message."""
+        channel = getattr(session, "channel", "web")
+        intent = detect_intent(user_text)
+        if intent == "YES":
+            phone = str(session.customer_phone or "").replace("+33", "0").replace(" ", "").replace("-", "")
+            if phone.startswith("33"):
+                phone = "0" + phone[2:]
+            session.qualif_data.contact = phone[:10] if len("".join(c for c in phone if c.isdigit())) >= 10 else phone
+            session.qualif_data.contact_type = "phone"
+            from datetime import datetime
+            from backend.services.email_service import send_ordonnance_notification
+            req = {"type": "ordonnance", "name": session.qualif_data.name, "phone": session.qualif_data.contact or "?", "timestamp": datetime.utcnow().isoformat()}
+            send_ordonnance_notification(req)
+            session.state = "CONFIRMED"
+            msg = prompts.VOCAL_ORDONNANCE_DONE if channel == "vocal" else prompts.MSG_ORDONNANCE_DONE_WEB
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state=session.state)]
+        if intent == "NO":
+            msg = prompts.VOCAL_ORDONNANCE_PHONE_ASK
+            session.add_message("agent", msg)
+            session.state = "ORDONNANCE_MESSAGE"
+            return [Event("final", msg, conv_state=session.state)]
+        msg = "Dites oui ou non."
+        session.add_message("agent", msg)
+        return [Event("final", msg, conv_state="ORDONNANCE_PHONE_CONFIRM")]
     
     # ========================
     # CONFIRMATION CONTACT
@@ -2053,25 +2337,38 @@ class Engine:
         if intent == "YES" and pending:
             session.qualif_data.pref = pending
             session.pending_preference = None
+            session.last_preference_user_text = None
             session.consecutive_questions = 0
             return self._next_qualif_step(session)
         if intent == "NO":
             session.pending_preference = None
+            session.last_preference_user_text = None
             session.state = "QUALIF_PREF"
             msg = prompts.get_qualif_question("pref", channel=channel)
             session.last_question_asked = msg
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
+        # Répétition de la même phrase (ex: "je finis à 17h" redit) → confirmation implicite
+        last_txt = (getattr(session, "last_preference_user_text", None) or "").strip().lower()
+        current_txt = user_text.strip().lower()
+        if pending and last_txt and current_txt and last_txt == current_txt:
+            session.qualif_data.pref = pending
+            session.pending_preference = None
+            session.last_preference_user_text = None
+            session.consecutive_questions = 0
+            return self._next_qualif_step(session)
         # Ré-inférence : user répète une phrase qui mène à la MÊME préférence → confirmation implicite
         inferred = infer_preference_from_context(user_text)
         if inferred and pending and inferred == pending:
             session.qualif_data.pref = pending
             session.pending_preference = None
+            session.last_preference_user_text = None
             session.consecutive_questions = 0
             return self._next_qualif_step(session)
         # Ré-inférence vers une AUTRE préférence → mettre à jour et re-demander confirmation
         if inferred and inferred != pending:
             session.pending_preference = inferred
+            session.last_preference_user_text = user_text.strip()
             msg = prompts.format_inference_confirmation(inferred)
             session.last_question_asked = msg
             session.add_message("agent", msg)

@@ -164,3 +164,48 @@ def send_daily_report_email(to: str, client_name: str, date_str: str, data: Dict
         logger.info("report_failed", extra={"to": to[:50], "error": str(e)})
         logger.exception("send_daily_report_email failed")
         return False
+
+
+def send_ordonnance_notification(request: Dict[str, Any]) -> bool:
+    """
+    Envoie une notification au cabinet pour demande d'ordonnance (patient veut qu'on transmette un message).
+    request: {'type': 'ordonnance', 'name': str, 'phone': str, 'timestamp': str}
+    """
+    to = os.getenv("NOTIFICATION_EMAIL") or os.getenv("REPORT_EMAIL") or os.getenv("OWNER_EMAIL")
+    if not to or not to.strip():
+        logger.warning("send_ordonnance_notification: no NOTIFICATION_EMAIL/REPORT_EMAIL/OWNER_EMAIL, skip")
+        return False
+    name = request.get("name", "?")
+    phone = request.get("phone", "?")
+    ts = request.get("timestamp", "")
+    subject = f"Demande ordonnance – {name}"
+    body = f"""Nouvelle demande d'ordonnance :
+
+Patient : {name}
+Téléphone : {phone}
+Date/Heure : {ts}
+
+À rappeler pour ordonnance.
+"""
+    from_addr = os.getenv("SMTP_EMAIL")
+    password = os.getenv("SMTP_PASSWORD")
+    host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    port = int(os.getenv("SMTP_PORT", "587"))
+    if not from_addr or not password:
+        logger.warning("Email not configured (SMTP_EMAIL/SMTP_PASSWORD)")
+        return False
+    try:
+        msg = MIMEMultipart()
+        msg["From"] = from_addr
+        msg["To"] = to
+        msg["Subject"] = subject
+        msg.attach(MIMEText(body, "plain", "utf-8"))
+        with smtplib.SMTP(host, port) as server:
+            server.starttls()
+            server.login(from_addr, password)
+            server.sendmail(from_addr, [to], msg.as_string())
+        logger.info("ordonnance_notification_sent", extra={"name": name[:50], "phone": phone[:20]})
+        return True
+    except Exception as e:
+        logger.exception("send_ordonnance_notification failed: %s", e)
+        return False
