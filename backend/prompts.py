@@ -16,6 +16,17 @@ from typing import List, Dict
 import re
 
 
+# --- Silence vocal (RÈGLE 3) ---
+MSG_SILENCE_1 = "Je n'ai rien entendu. Pouvez-vous répéter ?"
+MSG_SILENCE_2 = "Êtes-vous toujours là ?"
+
+# --- Contrainte horaire (RÈGLE 7) ---
+MSG_TIME_CONSTRAINT_IMPOSSIBLE = (
+    "D'accord. Mais nous fermons à {closing}. "
+    "Je peux vous proposer un créneau plus tôt, ou je vous mets en relation avec quelqu'un. "
+    "Vous préférez : un créneau plus tôt, ou parler à quelqu'un ?"
+)
+
 # ----------------------------
 # Messages exacts (System Prompt)
 # ----------------------------
@@ -186,6 +197,18 @@ VOCAL_CANCEL_DONE = (
 VOCAL_CANCEL_KEPT = (
     "Pas de souci, votre rendez-vous est bien maintenu. "
     "On vous attend ! Bonne journée !"
+)
+
+# --- CANCEL (robustesse prod) ---
+# Si l'annulation échoue techniquement (pas d'event_id, erreur tool, etc.)
+CANCEL_FAILED_TRANSFER = (
+    "Je n'arrive pas à annuler automatiquement. Je vous mets en relation avec quelqu'un. Un instant."
+)
+
+# Si on détecte que le RDV vient d'une source non annulable (ex: SQLite sans event_id)
+CANCEL_NOT_SUPPORTED_TRANSFER = (
+    "Je peux vous aider, mais je ne peux pas annuler automatiquement dans ce système. "
+    "Je vous mets en relation avec quelqu'un. Un instant."
 )
 
 

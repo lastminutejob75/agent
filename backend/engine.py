@@ -13,6 +13,7 @@ import re
 from backend import config, prompts, guards, tools_booking
 from backend import db as backend_db
 from backend.session import Session, SessionStore
+from backend.time_constraints import extract_time_constraint
 from backend.session_store_sqlite import SQLiteSessionStore
 from backend.tools_faq import FaqStore, FaqResult
 from backend.entity_extraction import (
@@ -705,19 +706,27 @@ class Engine:
         # 3. GUARDS BASIQUES (vide, langue, spam)
         # ========================
         
+        # --- RÈGLE 3: SILENCE (2 messages distincts + 3e => INTENT_ROUTER) ---
         if not user_text or not user_text.strip():
             session.empty_message_count = getattr(session, "empty_message_count", 0) + 1
             _persist_ivr_event(session, "empty_message")
-            silence_limit = _recovery_limit_for("silence")
-            if session.empty_message_count >= silence_limit:
-                return safe_reply(
-                    self._trigger_intent_router(session, "empty_repeated", user_text or ""),
-                    session,
-                )
-            msg = prompts.MSG_EMPTY_MESSAGE
-            session.add_message("agent", msg)
-            return [Event("final", msg, conv_state=session.state)]
-        
+
+            if session.empty_message_count == 1:
+                msg = getattr(prompts, "MSG_SILENCE_1", "Je n'ai rien entendu. Pouvez-vous répéter ?")
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+
+            if session.empty_message_count == 2:
+                msg = getattr(prompts, "MSG_SILENCE_2", "Êtes-vous toujours là ?")
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+
+            # 3e fois => INTENT_ROUTER
+            return safe_reply(
+                self._trigger_intent_router(session, "empty_repeated_3", user_text or ""),
+                session,
+            )
+
         session.empty_message_count = 0  # Reset quand message non vide
         
         # Message trop long
@@ -958,25 +967,17 @@ class Engine:
         session.faq_fails = getattr(session, "faq_fails", 0) + 1
         session.global_recovery_fails = getattr(session, "global_recovery_fails", 0) + 1
 
-        # Spec V3 : 3 niveaux — 1er reformulation, 2e exemples, 3e INTENT_ROUTER (menu)
-        if session.no_match_turns >= 3:
+        # Philosophie "router avant transfert" : 1er no match → clarification, 2e → INTENT_ROUTER (menu)
+        if session.no_match_turns >= 2:
             log_ivr_event(logger, session, "recovery_step", context="faq", reason="escalate_intent_router")
-            return self._trigger_intent_router(session, "no_match_faq_3", user_text)
+            return self._trigger_intent_router(session, "faq_no_match_2", user_text)
 
-        if session.no_match_turns == 1:
-            log_ivr_event(logger, session, "recovery_step", context="faq", reason="retry_1")
-            # 1er no-match : demander à reformuler
-            if channel == "vocal":
-                msg = getattr(prompts, "MSG_FAQ_REFORMULATE_VOCAL", prompts.MSG_FAQ_REFORMULATE)
-            else:
-                msg = prompts.MSG_FAQ_REFORMULATE
+        # 1er no-match : clarification ("Pouvez-vous préciser ?")
+        log_ivr_event(logger, session, "recovery_step", context="faq", reason="retry_1")
+        if channel == "vocal":
+            msg = getattr(prompts, "MSG_FAQ_REFORMULATE_VOCAL", prompts.MSG_FAQ_REFORMULATE)
         else:
-            log_ivr_event(logger, session, "recovery_step", context="faq", reason="retry_2")
-            # 2e no-match : donner exemples (horaires, tarifs, localisation)
-            if channel == "vocal":
-                msg = getattr(prompts, "MSG_FAQ_RETRY_EXEMPLES_VOCAL", prompts.MSG_FAQ_RETRY_EXEMPLES)
-            else:
-                msg = prompts.MSG_FAQ_RETRY_EXEMPLES
+            msg = prompts.MSG_FAQ_REFORMULATE
         session.add_message("agent", msg)
         return [Event("final", msg, conv_state=session.state)]
     
@@ -1257,7 +1258,39 @@ class Engine:
         elif current_step == "QUALIF_PREF":
             channel = getattr(session, "channel", "web")
             print(f"🔍 QUALIF_PREF handler: user_text='{user_text}'")
-            
+
+            # --- RÈGLE 7: contrainte horaire explicite (ex: "je finis à 17h") ---
+            if getattr(config, "TIME_CONSTRAINT_ENABLED", False):
+                try:
+                    tc = extract_time_constraint(user_text)
+                except Exception:
+                    tc = None
+
+                if tc:
+                    session.time_constraint_type = tc.type
+                    session.time_constraint_minute = tc.minute_of_day
+                    log_ivr_event(logger, session, "time_constraint_detected")
+
+                    closing_minutes = (
+                        getattr(config, "CABINET_CLOSING_HOUR", 19) * 60
+                        + getattr(config, "CABINET_CLOSING_MINUTE", 0)
+                    )
+                    # Impossible si "after" >= closing
+                    if tc.type == "after" and tc.minute_of_day >= closing_minutes:
+                        closing_str = f"{getattr(config, 'CABINET_CLOSING_HOUR', 19)}h{getattr(config, 'CABINET_CLOSING_MINUTE', 0):02d}"
+                        msg_tpl = getattr(prompts, "MSG_TIME_CONSTRAINT_IMPOSSIBLE", None)
+                        if msg_tpl:
+                            msg = msg_tpl.format(closing=closing_str)
+                        else:
+                            msg = (
+                                f"D'accord. Mais nous fermons à {closing_str}. "
+                                "Je peux vous proposer un créneau plus tôt, ou je vous mets en relation avec quelqu'un. "
+                                "Vous préférez : un créneau plus tôt, ou parler à quelqu'un ?"
+                            )
+                        session.add_message("agent", msg)
+                        router_events = self._trigger_intent_router(session, "time_constraint_impossible", user_text)
+                        return safe_reply([Event("final", msg, conv_state=session.state)] + router_events, session)
+
             # Rejeter filler contextuel (euh, "oui" en QUALIF_PREF…) → recovery préférence
             if guards.is_contextual_filler(user_text, session.state):
                 log_filler_detected(logger, session, user_text, field="preference")
@@ -1408,6 +1441,12 @@ class Engine:
                 if is_valid:
                     session.qualif_data.contact = contact_raw
                     session.qualif_data.contact_type = contact_type
+                    # Si un créneau est déjà choisi → CONTACT_CONFIRM, sinon proposer slots
+                    if session.pending_slot_choice is not None:
+                        session.state = "CONTACT_CONFIRM"
+                        msg = prompts.VOCAL_EMAIL_CONFIRM.format(email=contact_raw) if getattr(prompts, "VOCAL_EMAIL_CONFIRM", None) else f"Votre email est bien {contact_raw} ?"
+                        session.add_message("agent", msg)
+                        return [Event("final", msg, conv_state=session.state)]
                     return self._propose_slots(session)
 
             # ✅ ACCUMULATION des chiffres du téléphone (vocal) - seulement si pas de numéro auto
@@ -1499,6 +1538,20 @@ class Engine:
             session.qualif_data.contact = contact_raw
             session.qualif_data.contact_type = contact_type
             session.contact_retry_count = 0
+            # Si un créneau est déjà choisi (on vient de WAIT_CONFIRM) → CONTACT_CONFIRM, pas re-proposer les slots
+            if session.pending_slot_choice is not None:
+                session.state = "CONTACT_CONFIRM"
+                if contact_type == "phone":
+                    phone_formatted = prompts.format_phone_for_voice(contact_raw)
+                    msg = prompts.VOCAL_PHONE_CONFIRM.format(phone_spaced=phone_formatted) if channel == "vocal" else f"Votre numéro est bien le {contact_raw} ?"
+                else:
+                    msg = getattr(prompts, "VOCAL_EMAIL_CONFIRM", None)
+                    if msg and channel == "vocal":
+                        msg = msg.format(email=contact_raw)
+                    else:
+                        msg = f"Votre email est bien {contact_raw} ?"
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
             return self._propose_slots(session)
         
         # ========================
@@ -1556,7 +1609,9 @@ class Engine:
         try:
             # Récupérer slots en cohérence avec la préférence (ne pas proposer 10h si "je finis à 17h")
             pref = getattr(session.qualif_data, "pref", None) or None
-            slots = tools_booking.get_slots_for_display(limit=config.MAX_SLOTS_PROPOSED, pref=pref)
+            slots = tools_booking.get_slots_for_display(
+                limit=config.MAX_SLOTS_PROPOSED, pref=pref, session=session
+            )
             print(f"🔍 _propose_slots: got {len(slots) if slots else 0} slots (pref={pref}) in {(time.time() - t_start) * 1000:.0f}ms")
         except Exception as e:
             print(f"❌ _propose_slots ERROR: {e}")
@@ -1574,7 +1629,14 @@ class Engine:
             msg = prompts.get_message("no_slots", channel=channel)
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
-        
+
+        # P0: source de vérité = slots affichés (évite re-fetch et mismatch index/slot)
+        try:
+            source = "google" if tools_booking._get_calendar_service() else "sqlite"
+            session.pending_slots_display = tools_booking.serialize_slots_for_session(slots, source)
+        except Exception:
+            session.pending_slots_display = []
+
         # Stocker slots
         tools_booking.store_pending_slots(session, slots)
         session.state = "WAIT_CONFIRM"
@@ -1738,6 +1800,8 @@ class Engine:
         session.name_fails = 0
         session.cancel_name_fails = 0
         session.cancel_rdv_not_found_count = 0
+        session.confirm_retry_count = 0
+        session.pending_cancel_slot = None
         msg = prompts.VOCAL_CANCEL_ASK_NAME if channel == "vocal" else prompts.MSG_CANCEL_ASK_NAME_WEB
         session.add_message("agent", msg)
         return [Event("final", msg, conv_state=session.state)]
@@ -1836,11 +1900,45 @@ class Engine:
             intent = detect_intent(user_text)
             
             if intent == "YES":
-                # Annuler le RDV
-                success = tools_booking.cancel_booking(session.pending_cancel_slot)
-                
-                session.state = "CONFIRMED"
-                msg = prompts.VOCAL_CANCEL_DONE if channel == "vocal" else prompts.MSG_CANCEL_DONE_WEB
+                # --- P0: Annulation Google (event_id) ou SQLite (slot_id) ---
+                slot = getattr(session, "pending_cancel_slot", None) or {}
+                event_id = None
+                slot_id = None
+                if isinstance(slot, dict):
+                    event_id = slot.get("event_id") or slot.get("google_event_id")
+                    slot_id = slot.get("slot_id")
+                else:
+                    event_id = getattr(slot, "event_id", None) or getattr(slot, "google_event_id", None)
+                    slot_id = getattr(slot, "slot_id", None)
+
+                if not event_id and slot_id is None:
+                    log_ivr_event(logger, session, "cancel_not_supported_no_event_id")
+                    _persist_ivr_event(session, "cancel_failed")
+                    session.state = "TRANSFERRED"
+                    msg = getattr(prompts, "CANCEL_NOT_SUPPORTED_TRANSFER", "Je vous mets en relation. Un instant.")
+                    session.add_message("agent", msg)
+                    return [Event("final", msg, conv_state=session.state)]
+
+                log_ivr_event(logger, session, "cancel_attempt")
+                ok = False
+                try:
+                    ok = bool(tools_booking.cancel_booking(slot))
+                except Exception:
+                    ok = False
+
+                if ok:
+                    log_ivr_event(logger, session, "cancel_success")
+                    _persist_ivr_event(session, "cancel_done")
+                    session.state = "CONFIRMED"
+                    msg = prompts.VOCAL_CANCEL_DONE if channel == "vocal" else prompts.MSG_CANCEL_DONE_WEB
+                    session.add_message("agent", msg)
+                    return [Event("final", msg, conv_state=session.state)]
+
+                # Annulation échouée (tool fail / event id invalide)
+                log_ivr_event(logger, session, "cancel_failed")
+                _persist_ivr_event(session, "cancel_failed")
+                session.state = "TRANSFERRED"
+                msg = getattr(prompts, "CANCEL_FAILED_TRANSFER", "Je vous mets en relation. Un instant.")
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
@@ -1852,15 +1950,26 @@ class Engine:
                 return [Event("final", msg, conv_state=session.state)]
             
             else:
-                session.confirm_retry_count += 1
-                msg = prompts.get_clarification_message(
-                    "cancel_confirm",
-                    min(session.confirm_retry_count, 2),
-                    user_text,
-                    channel=channel,
+                # --- P1: Anti-boucle CANCEL_CONFIRM ---
+                # unclear => clarification 1/2, puis 3e => INTENT_ROUTER
+                session.confirm_retry_count = getattr(session, "confirm_retry_count", 0) + 1
+                if session.confirm_retry_count == 1:
+                    msg = prompts.get_clarification_message(
+                        "cancel_confirm", 1, user_text, channel=channel,
+                    )
+                    session.add_message("agent", msg)
+                    return [Event("final", msg, conv_state=session.state)]
+                if session.confirm_retry_count == 2:
+                    msg = prompts.get_clarification_message(
+                        "cancel_confirm", 2, user_text, channel=channel,
+                    )
+                    session.add_message("agent", msg)
+                    return [Event("final", msg, conv_state=session.state)]
+                log_ivr_event(logger, session, "cancel_confirm_unclear_3")
+                return safe_reply(
+                    self._trigger_intent_router(session, "cancel_confirm_unclear_3", user_text),
+                    session,
                 )
-                session.add_message("agent", msg)
-                return [Event("final", msg, conv_state=session.state)]
         
         # Fallback
         return self._fallback_transfer(session)

@@ -3,6 +3,13 @@ from __future__ import annotations
 import os
 import base64
 
+# --- Cabinet / horaires (RÈGLE 7) ---
+# (Pour multi-clients plus tard : passer en config par tenant)
+CABINET_TIMEZONE = "Europe/Paris"
+CABINET_CLOSING_HOUR = 19
+CABINET_CLOSING_MINUTE = 0
+TIME_CONSTRAINT_ENABLED = True
+
 # Business
 BUSINESS_NAME = "Cabinet Dupont"
 TRANSFER_PHONE = "+33 6 00 00 00 00"  # V1 simple (affiché au besoin)
@@ -38,7 +45,7 @@ RECOVERY_LIMITS = {
     "name": 2,
     "slot_choice": 3,
     "phone": 2,
-    "silence": 2,  # empty_message_count
+    "silence": 3,  # RÈGLE 3 : 2 messages distincts + 3e => INTENT_ROUTER
 }
 
 

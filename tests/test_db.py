@@ -13,6 +13,9 @@ from backend.db import (
     list_free_slots,
     count_free_slots,
     get_conn,
+    book_slot_atomic,
+    find_booking_by_name,
+    cancel_booking_sqlite,
     TARGET_MIN_SLOTS,
 )
 
@@ -95,4 +98,36 @@ def test_cleanup_idempotent(clean_db):
 
     # Devrait être stable (ou proche, car dates changent)
     assert abs(count1 - count2) <= 1, "Cleanup should be roughly idempotent"
+
+
+def test_find_booking_by_name_and_cancel_sqlite(clean_db):
+    """find_booking_by_name trouve un RDV réservé ; cancel_booking_sqlite libère le slot."""
+    cleanup_old_slots()
+    slots = list_free_slots(limit=1)
+    assert slots, "need at least one free slot"
+    slot_id = slots[0]["id"]
+
+    ok = book_slot_atomic(
+        slot_id=slot_id,
+        name="Jean Dupont",
+        contact="jean@test.fr",
+        contact_type="email",
+        motif="Consultation",
+    )
+    assert ok is True
+
+    booking = find_booking_by_name("Jean Dupont")
+    assert booking is not None
+    assert booking["slot_id"] == slot_id
+    assert booking["name"] == "Jean Dupont"
+
+    ok_cancel = cancel_booking_sqlite(booking)
+    assert ok_cancel is True
+
+    # Après annulation, plus de RDV pour ce nom
+    assert find_booking_by_name("Jean Dupont") is None
+    # Le slot redevient libre
+    free = list_free_slots(limit=100)
+    free_ids = [s["id"] for s in free]
+    assert slot_id in free_ids
 

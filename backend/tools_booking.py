@@ -17,6 +17,66 @@ from backend import config
 
 logger = logging.getLogger(__name__)
 
+
+def _to_iso(dt: Any) -> Optional[str]:
+    if dt is None:
+        return None
+    if isinstance(dt, str):
+        return dt
+    if isinstance(dt, datetime):
+        return dt.isoformat()
+    return None
+
+
+def _start_plus_15min(start_iso: Optional[str]) -> Optional[str]:
+    """Retourne start_iso + 15 min en ISO (pour end_iso si absent)."""
+    if not start_iso:
+        return None
+    try:
+        dt = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+        end_dt = dt + timedelta(minutes=15)
+        return end_dt.isoformat()
+    except Exception:
+        return None
+
+
+def serialize_slots_for_session(slots: List[Any], source: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    P0: Sérialise EXACTEMENT les slots affichés pour que l'index 1/2/3
+    pointe sur le même slot au booking (sans re-fetch).
+    Compatible SlotDisplay ou dicts.
+    """
+    out: List[Dict[str, Any]] = []
+    for s in slots or []:
+        if isinstance(s, dict):
+            start_iso = s.get("start_iso") or s.get("start") or s.get("start_time")
+            end_iso = s.get("end_iso") or s.get("end") or s.get("end_time") or _start_plus_15min(start_iso)
+            out.append({
+                "source": s.get("source") or source,
+                "label": s.get("label") or s.get("display") or s.get("text", ""),
+                "start_iso": start_iso,
+                "end_iso": end_iso,
+                "event_id": s.get("event_id") or s.get("google_event_id"),
+                "slot_id": s.get("slot_id") or s.get("id"),
+            })
+            continue
+        label = getattr(s, "label", None) or getattr(s, "display", None) or getattr(s, "text", None) or ""
+        event_id = getattr(s, "event_id", None) or getattr(s, "google_event_id", None)
+        slot_id = getattr(s, "slot_id", None) or getattr(s, "id", None)
+        start_dt = getattr(s, "start_dt", None) or getattr(s, "start", None) or getattr(s, "start_time", None)
+        end_dt = getattr(s, "end_dt", None) or getattr(s, "end", None) or getattr(s, "end_time", None)
+        start_iso = _to_iso(start_dt)
+        end_iso = _to_iso(end_dt) or _start_plus_15min(start_iso)
+        out.append({
+            "source": getattr(s, "source", None) or source,
+            "label": label,
+            "start_iso": start_iso,
+            "end_iso": end_iso,
+            "event_id": event_id,
+            "slot_id": slot_id,
+        })
+    return out
+
 # ============================================
 # GOOGLE CALENDAR SERVICE (lazy loading)
 # ============================================
@@ -96,10 +156,64 @@ def _get_calendar_service():
 
 
 # ============================================
+# RÈGLE 7 : filtre créneaux par contrainte horaire
+# ============================================
+
+def _slot_minute_of_day(slot) -> int:
+    """
+    Retourne la minute du jour (0-1439) pour le slot.
+    SlotDisplay a .hour (int) et .start (str ISO) ; on déduit les minutes si possible.
+    """
+    # SlotDisplay : hour (int), start (str ISO)
+    dt = getattr(slot, "start_dt", None)
+    if dt is None and getattr(slot, "start", None):
+        try:
+            s = getattr(slot, "start", "") or ""
+            if "T" in s:
+                dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            elif s:
+                dt = datetime.fromisoformat(s)
+        except Exception:
+            dt = None
+    if dt is not None:
+        return dt.hour * 60 + dt.minute
+    hour = getattr(slot, "hour", 0) or 0
+    return hour * 60
+
+
+def filter_slots_by_time_constraint(slots: List, session) -> List:
+    """
+    RÈGLE 7: Filtre les créneaux selon la contrainte horaire explicite.
+    - after: garder slots >= constraint
+    - before: garder slots <= constraint
+    """
+    t = getattr(session, "time_constraint_type", "") or ""
+    m = getattr(session, "time_constraint_minute", -1)
+    if not t or m is None or m < 0:
+        return slots
+
+    out = []
+    for s in slots or []:
+        minute = _slot_minute_of_day(s)
+        if minute < 0:
+            out.append(s)
+            continue
+        if t == "after" and minute >= m:
+            out.append(s)
+        elif t == "before" and minute <= m:
+            out.append(s)
+    return out
+
+
+# ============================================
 # FONCTIONS PRINCIPALES
 # ============================================
 
-def get_slots_for_display(limit: int = 3, pref: Optional[str] = None) -> List[prompts.SlotDisplay]:
+def get_slots_for_display(
+    limit: int = 3,
+    pref: Optional[str] = None,
+    session: Optional[Any] = None,
+) -> List[prompts.SlotDisplay]:
     """
     Récupère les créneaux disponibles, filtrés par préférence si fournie.
     
@@ -136,7 +250,14 @@ def get_slots_for_display(limit: int = 3, pref: Optional[str] = None) -> List[pr
     
     if pref is None:
         _set_cached_slots(slots)
-    
+
+    # RÈGLE 7: filtrage selon contrainte horaire explicite (si présente)
+    if session is not None:
+        try:
+            slots = filter_slots_by_time_constraint(slots, session)
+        except Exception:
+            pass
+
     logger.info(f"⏱️ get_slots_for_display: {(time.time() - t_start) * 1000:.0f}ms ({len(slots)} slots, pref={pref})")
     return slots
 
@@ -272,11 +393,12 @@ def store_pending_slots(session, slots: List[prompts.SlotDisplay]) -> None:
     session.pending_slot_ids = [s.slot_id for s in slots]
     session.pending_slot_labels = [s.label for s in slots]
     session.pending_slots = slots  # Stocker les objets complets
-    
-    # Stocker aussi les données complètes pour Google Calendar
+
+    # P0: ne pas re-fetch Google si on a déjà les slots affichés (pending_slots_display)
+    if getattr(session, "pending_slots_display", None):
+        return
     calendar = _get_calendar_service()
     if calendar:
-        # Récupérer les slots complets pour le booking
         _store_google_calendar_slots(session, slots)
 
 
@@ -314,28 +436,75 @@ def _store_google_calendar_slots(session, slots: List[prompts.SlotDisplay]) -> N
 def book_slot_from_session(session, choice_index_1based: int) -> bool:
     """
     Réserve le créneau choisi par l'utilisateur.
-    
-    Utilise Google Calendar si configuré, sinon SQLite.
-    
-    Args:
-        session: Session utilisateur avec les données de qualification
-        choice_index_1based: Index du créneau (1-based)
-        
-    Returns:
-        True si réservation réussie, False sinon
+    P0: utilise pending_slots_display (slots affichés) si présent, sinon fallback legacy.
     """
     idx = choice_index_1based - 1
-    
-    if idx < 0 or idx >= len(session.pending_slot_ids):
+    slots = getattr(session, "pending_slots_display", None) or []
+
+    if slots and 1 <= choice_index_1based <= len(slots):
+        chosen = slots[choice_index_1based - 1]
+        src = (chosen.get("source") or "").lower()
+        if src == "google":
+            start_iso = chosen.get("start_iso")
+            end_iso = chosen.get("end_iso")
+            if not start_iso or not end_iso:
+                logger.warning("pending_slots_display: start_iso/end_iso manquants")
+                return False
+            return _book_google_by_iso(session, start_iso, end_iso)
+        if src == "sqlite":
+            slot_id = chosen.get("slot_id")
+            if slot_id is None:
+                logger.warning("pending_slots_display: slot_id manquant")
+                return False
+            return _book_sqlite_by_slot_id(session, int(slot_id))
+
+    # Fallback legacy
+    if idx < 0 or idx >= len(getattr(session, "pending_slot_ids", []) or []):
         logger.warning(f"Index invalide: {choice_index_1based}")
         return False
-    
     calendar = _get_calendar_service()
-    
     if calendar:
         return _book_via_google_calendar(session, idx)
-    else:
-        return _book_via_sqlite(session, idx)
+    return _book_via_sqlite(session, idx)
+
+
+def _book_google_by_iso(session, start_iso: str, end_iso: str) -> bool:
+    """Book Google Calendar à partir des timestamps ISO du slot affiché (sans re-fetch)."""
+    calendar = _get_calendar_service()
+    if not calendar:
+        return False
+    try:
+        event_id = calendar.book_appointment(
+            start_time=start_iso,
+            end_time=end_iso,
+            patient_name=session.qualif_data.name or "Client",
+            patient_contact=session.qualif_data.contact or "",
+            motif=session.qualif_data.motif or "Consultation",
+        )
+        if event_id:
+            session.google_event_id = event_id
+            logger.info(f"✅ RDV Google Calendar créé: {event_id}")
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"Erreur book_google_by_iso: {e}")
+        return False
+
+
+def _book_sqlite_by_slot_id(session, slot_id: int) -> bool:
+    """Book SQLite à partir du slot_id du slot affiché."""
+    try:
+        from backend.db import book_slot_atomic
+        return book_slot_atomic(
+            slot_id=slot_id,
+            name=session.qualif_data.name or "",
+            contact=session.qualif_data.contact or "",
+            contact_type=getattr(session.qualif_data, "contact_type", None) or "",
+            motif=session.qualif_data.motif or "",
+        )
+    except Exception as e:
+        logger.error(f"Erreur book_sqlite_by_slot_id: {e}")
+        return False
 
 
 def _book_via_google_calendar(session, idx: int) -> bool:
@@ -417,31 +586,41 @@ def get_label_for_choice(session, choice_index_1based: int) -> Optional[str]:
 
 def cancel_booking(slot_or_session) -> bool:
     """
-    Annule une réservation (si Google Calendar).
-    
+    Annule une réservation (Google Calendar ou SQLite).
     Args:
-        slot_or_session: Soit un dict avec 'event_id', soit une session avec google_event_id
-        
+        slot_or_session: Dict avec 'event_id' (Google) ou 'slot_id'/'id' (SQLite), ou objet avec attributs.
     Returns:
-        True si annulation réussie
+        True si annulation réussie.
     """
-    # Déterminer l'event_id
     event_id = None
-    
+    slot_id = None
+    appt_id = None
+
     if isinstance(slot_or_session, dict):
-        event_id = slot_or_session.get('event_id')
-    elif hasattr(slot_or_session, 'google_event_id'):
-        event_id = slot_or_session.google_event_id
-    
-    if not event_id:
-        logger.warning("Pas d'event_id Google Calendar à annuler")
-        return False
-    
-    calendar = _get_calendar_service()
-    if not calendar:
-        return False
-    
-    return calendar.cancel_appointment(event_id)
+        event_id = slot_or_session.get("event_id") or slot_or_session.get("google_event_id")
+        slot_id = slot_or_session.get("slot_id")
+        appt_id = slot_or_session.get("id")
+    else:
+        event_id = getattr(slot_or_session, "event_id", None) or getattr(slot_or_session, "google_event_id", None)
+        slot_id = getattr(slot_or_session, "slot_id", None)
+        appt_id = getattr(slot_or_session, "id", None)
+
+    if event_id:
+        calendar = _get_calendar_service()
+        if not calendar:
+            return False
+        return calendar.cancel_appointment(event_id)
+
+    if slot_id is not None or appt_id is not None:
+        try:
+            from backend.db import cancel_booking_sqlite
+            return cancel_booking_sqlite({"slot_id": slot_id, "id": appt_id})
+        except Exception as e:
+            logger.error(f"Erreur annulation SQLite: {e}")
+            return False
+
+    logger.warning("Pas d'event_id ni slot_id pour annuler")
+    return False
 
 
 def find_booking_by_name(name: str) -> Optional[Dict[str, Any]]:
@@ -511,18 +690,19 @@ def _find_booking_sqlite(name: str) -> Optional[Dict[str, Any]]:
     """Recherche un RDV dans SQLite (fallback)."""
     try:
         from backend.db import find_booking_by_name as db_find
-        
+
         booking = db_find(name)
         if booking:
             return {
-                'event_id': None,
-                'slot_id': booking.get('id'),
-                'label': f"{booking.get('date', '')} à {booking.get('time', '')}",
-                'start': booking.get('date'),
-                'end': None,
+                "event_id": None,
+                "slot_id": booking.get("slot_id"),
+                "id": booking.get("id"),
+                "label": f"{booking.get('date', '')} à {booking.get('time', '')}",
+                "start": booking.get("date"),
+                "end": None,
             }
         return None
-        
+
     except Exception as e:
         logger.error(f"Erreur recherche SQLite: {e}")
         return None

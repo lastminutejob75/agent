@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Deque, Dict, List, Optional, Tuple
+from typing import Any, Deque, Dict, List, Optional, Tuple
 from collections import deque
 
 from backend import config
@@ -60,7 +60,9 @@ class Session:
     pending_slot_labels: List[str] = field(default_factory=list)
     pending_slots: List = field(default_factory=list)  # SlotDisplay objects
     pending_slot_choice: Optional[int] = None  # Slot choisi (avant confirmation contact)
-    
+    # P0: Slots EXACTEMENT affichés (source de vérité pour booking = pas de re-fetch)
+    pending_slots_display: List[Dict[str, Any]] = field(default_factory=list)
+
     # CANCEL/MODIFY pending
     pending_cancel_slot: Optional[Dict] = None  # RDV à annuler/modifier
 
@@ -87,6 +89,9 @@ class Session:
     modify_name_fails: int = 0  # Flow MODIFY : RDV non trouvé (vérifier/humain puis INTENT_ROUTER)
     modify_rdv_not_found_count: int = 0  # MODIFY : nb fois "RDV pas trouvé"
     faq_fails: int = 0  # FAQ : question pas comprise (reformulation → exemples → INTENT_ROUTER)
+    # RÈGLE 7 : contrainte horaire explicite (ex: "après 17h")
+    time_constraint_type: str = ""  # "after" | "before" | ""
+    time_constraint_minute: int = -1  # minute_of_day (ex 17h00 -> 1020), -1 si absent
     # Flow ordonnance (conversation naturelle RDV vs message)
     ordonnance_choice_fails: int = 0
     ordonnance_choice_asked: bool = False
@@ -118,6 +123,7 @@ class Session:
         self.pending_slot_labels = []
         self.pending_slots = []
         self.pending_slot_choice = None
+        self.pending_slots_display = []
         self.pending_cancel_slot = None
         self.last_intent = None
         self.consecutive_questions = 0
@@ -140,6 +146,8 @@ class Session:
         self.contact_confirm_fails = 0
         self.ordonnance_choice_fails = 0
         self.ordonnance_choice_asked = False
+        self.time_constraint_type = ""
+        self.time_constraint_minute = -1
         self.client_id = None
         self.transfer_logged = False
         # Note: on ne reset PAS customer_phone car c'est lié à l'appel

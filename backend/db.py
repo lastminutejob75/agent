@@ -269,6 +269,82 @@ def book_slot_atomic(
         conn.close()
 
 
+def find_booking_by_name(name: str) -> Optional[Dict]:
+    """
+    Recherche un RDV SQLite par nom du patient (insensible à la casse).
+    Returns:
+        Dict avec id (appointment id), slot_id, date, time, name, contact, contact_type, motif
+        ou None si non trouvé.
+    """
+    if not name or not name.strip():
+        return None
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            """
+            SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif, s.date, s.time
+            FROM appointments a
+            JOIN slots s ON s.id = a.slot_id
+            WHERE LOWER(TRIM(a.name)) = LOWER(TRIM(?))
+            ORDER BY a.created_at DESC
+            LIMIT 1
+            """,
+            (name.strip(),),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "slot_id": row["slot_id"],
+            "name": row["name"],
+            "contact": row["contact"],
+            "contact_type": row["contact_type"],
+            "motif": row["motif"],
+            "date": row["date"],
+            "time": row["time"],
+        }
+    finally:
+        conn.close()
+
+
+def cancel_booking_sqlite(booking: Dict) -> bool:
+    """
+    Annule un RDV SQLite : supprime l'appointment et libère le slot.
+    booking doit contenir au moins slot_id (ou id de l'appointment).
+    Returns True si annulation effectuée.
+    """
+    slot_id = booking.get("slot_id")
+    appt_id = booking.get("id")
+    conn = get_conn()
+    try:
+        conn.execute("BEGIN")
+        if slot_id is not None:
+            conn.execute("DELETE FROM appointments WHERE slot_id = ?", (slot_id,))
+        elif appt_id is not None:
+            cur = conn.execute("SELECT slot_id FROM appointments WHERE id = ?", (appt_id,))
+            r = cur.fetchone()
+            if not r:
+                conn.rollback()
+                return False
+            slot_id = r["slot_id"]
+            conn.execute("DELETE FROM appointments WHERE id = ?", (appt_id,))
+        else:
+            conn.rollback()
+            return False
+        if conn.total_changes == 0:
+            conn.rollback()
+            return False
+        conn.execute("UPDATE slots SET is_booked = 0 WHERE id = ?", (slot_id,))
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def get_daily_report_data(client_id: int, date_str: str) -> Dict:
     """
     Métriques IVR pour le rapport quotidien (email).

@@ -52,15 +52,13 @@ def test_modify_name_incompris_recovery():
 
 
 def test_faq_incomprise_recovery():
-    """Question FAQ incomprise → reformulation (1), exemples (2), puis INTENT_ROUTER (3)."""
+    """Question FAQ incomprise → reformulation (1), puis INTENT_ROUTER (2) — pas transfert direct."""
     engine = create_engine()
     conv = "t_faq"
     events = engine.handle_message(conv, "bzzzz question bizarre")
-    assert "reformuler" in events[0].text.lower() or "reformul" in events[0].text.lower()
+    assert "reformuler" in events[0].text.lower() or "reformul" in events[0].text.lower() or "compris" in events[0].text.lower()
 
     events = engine.handle_message(conv, "bzzzz encore bizarre")
-    assert "horaires" in events[0].text.lower() or "tarifs" in events[0].text.lower() or "localisation" in events[0].text.lower() or "où" in events[0].text.lower()
-
-    events = engine.handle_message(conv, "bzzzz toujours bizarre")
+    assert events[0].conv_state == "INTENT_ROUTER"
     text = events[0].text.lower()
-    assert "un" in text and ("deux" in text or "rendez" in text or "2" in events[0].text or "trois" in text or "quatre" in text)
+    assert "dites" in text and ("un" in text or "1" in text) and ("deux" in text or "2" in text or "rendez" in text)
