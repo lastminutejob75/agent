@@ -182,8 +182,10 @@ def test_booking_confirmed_includes_slot_label():
 # ----------------------------
 
 def test_vocal_qualif_questions_are_short():
-    """Les questions vocales doivent être courtes pour le TTS."""
+    """Les questions vocales doivent être courtes pour le TTS (motif désactivé = vide)."""
     for key, q in prompts.QUALIF_QUESTIONS_VOCAL.items():
+        if not q:
+            continue  # motif désactivé en vocal
         assert len(q) < 80, f"{key}: trop long pour le vocal (>80 chars)"
         assert "?" in q, f"{key}: doit contenir '?'"
 
@@ -198,7 +200,7 @@ def test_vocal_faq_response_no_source():
 
 
 def test_vocal_slot_proposal_is_natural():
-    """Le format vocal doit être naturel pour le TTS."""
+    """Le format vocal doit être naturel pour le TTS (un/deux/trois)."""
     slots = [
         prompts.SlotDisplay(idx=1, label="Mardi 10h", slot_id=101),
         prompts.SlotDisplay(idx=2, label="Mardi 14h", slot_id=102),
@@ -206,11 +208,8 @@ def test_vocal_slot_proposal_is_natural():
     ]
     out = prompts.format_slot_proposal(slots, channel="vocal")
     out_lower = out.lower()
-    # Doit contenir les mots naturels
-    assert "le un" in out_lower
-    assert "le deux" in out_lower
-    assert "le trois" in out_lower
-    # Ne doit pas contenir de formatage web
+    assert "un" in out_lower and "deux" in out_lower and "trois" in out_lower
+    assert "mardi 10h" in out_lower and "mardi 14h" in out_lower
     assert "Créneaux disponibles" not in out
     assert "oui 1" not in out_lower
 

@@ -89,16 +89,17 @@ def _build_html(client_name: str, date_str: str, data: Dict[str, Any]) -> str:
     return f"""
 <!DOCTYPE html>
 <html>
-<head><meta charset="utf-8"><title>Rapport IVR – {client_name}</title></head>
+<head><meta charset="utf-8"><title>Rapport appels – {client_name}</title></head>
 <body style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 1rem;">
-  <h1 style="font-size: 1.2rem;">📊 Rapport IVR – {client_name} – {date_fr}</h1>
+  <h1 style="font-size: 1.2rem;">📊 Rapport des appels – {client_name} – {date_fr}</h1>
+  <p style="color: #555; font-size: 0.9rem;">Ce rapport recense les appels de la journée pour vous aider à améliorer le système (feedback : menés à bien, raccrochés, transferts).</p>
 
-  <h2 style="font-size: 1rem;">A) Résumé rapide</h2>
+  <h2 style="font-size: 1rem;">A) Résumé des appels</h2>
   <ul>
     <li>Appels reçus: <strong>{ct}</strong></li>
-    <li>RDV confirmés: <strong>{booked}</strong> ({pct_booked:.0f}%)</li>
-    <li>Transferts humains: <strong>{transfers}</strong> ({pct_transfers:.0f}%)</li>
-    <li>Abandons: <strong>{abandons}</strong> ({pct_abandons:.0f}%)</li>
+    <li>Menés à bien (RDV confirmé): <strong>{booked}</strong> ({pct_booked:.0f}%)</li>
+    <li>Transferts vers un humain: <strong>{transfers}</strong> ({pct_transfers:.0f}%)</li>
+    <li>Raccrochés / abandons: <strong>{abandons}</strong> ({pct_abandons:.0f}%)</li>
   </ul>
 
   <h2 style="font-size: 1rem;">B) Santé de l'agent</h2>
@@ -124,7 +125,7 @@ def _build_html(client_name: str, date_str: str, data: Dict[str, Any]) -> str:
   <h2 style="font-size: 1rem;">F) Recommandation du jour</h2>
   <p><strong>{reco}</strong></p>
 
-  <p style="color: #666; font-size: 0.85rem;">Rapport généré automatiquement.</p>
+  <p style="color: #666; font-size: 0.85rem;">Rapport généré automatiquement. Utilisez ces chiffres pour ajuster prompts, réglages ou formation.</p>
   <p style="color: #999; font-size: 0.75rem; margin-top: 1rem;">report_day={report_day} | calls={ct} | events={events_count} | db={db_name}</p>
 </body>
 </html>
@@ -139,7 +140,7 @@ def send_daily_report_email(to: str, client_name: str, date_str: str, data: Dict
     if not to or not to.strip():
         logger.warning("send_daily_report_email: to empty, skip")
         return False
-    subject = f"📊 Rapport IVR – {client_name} – {_date_fr(date_str)}"
+    subject = f"📊 Rapport des appels – {client_name} – {_date_fr(date_str)}"
     html = _build_html(client_name, date_str, data)
     from_addr = os.getenv("SMTP_EMAIL")
     password = os.getenv("SMTP_PASSWORD")

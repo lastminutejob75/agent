@@ -35,26 +35,37 @@ def post_daily_report(
     x_report_secret: Optional[str] = Header(None, alias="X-Report-Secret"),
 ):
     """
-    Génère et envoie le rapport quotidien IVR (un rapport par client, stats isolées par client_id).
-    Phase 1 : tous les rapports sont envoyés à l'admin uniquement (OWNER_EMAIL / REPORT_EMAIL).
-    Les clients finaux ne reçoivent rien — rapport = outil interne.
-    Retourne: {"status": "ok", "clients_notified": N}
+    Génère et envoie le rapport quotidien (appels, feedback). Phase 1 : admin uniquement.
+    Retourne toujours 200 avec {"status": "ok"|"error", "clients_notified": N, "error": "..." si erreur}.
     """
-    _check_report_secret(x_report_secret)
+    try:
+        _check_report_secret(x_report_secret)
+    except HTTPException:
+        raise
+
     today = date.today().isoformat()
     admin_email = os.getenv("REPORT_EMAIL") or os.getenv("OWNER_EMAIL")
     if not admin_email:
         logger.warning("REPORT_EMAIL and OWNER_EMAIL not set, cannot send report")
-        return {"status": "ok", "clients_notified": 0}
+        return {"status": "ok", "clients_notified": 0, "message": "REPORT_EMAIL not set"}
 
-    memory = get_client_memory()
-    clients = memory.get_clients_with_email()
+    try:
+        memory = get_client_memory()
+        clients = memory.get_clients_with_email()
+    except Exception as e:
+        logger.exception("report_daily: get_client_memory failed")
+        return {"status": "error", "clients_notified": 0, "error": str(e)}
+
     notified = 0
     if not clients:
-        data = get_daily_report_data(1, today)
-        if send_daily_report_email(admin_email, "Cabinet", today, data):
-            notified = 1
-            logger.info("report_sent admin only (no clients)", extra={"date": today})
+        try:
+            data = get_daily_report_data(1, today)
+            if send_daily_report_email(admin_email, "Cabinet", today, data):
+                notified = 1
+                logger.info("report_sent admin only (no clients)", extra={"date": today})
+        except Exception as e:
+            logger.exception("report_daily: get_daily_report_data or send_daily_report_email failed")
+            return {"status": "error", "clients_notified": 0, "error": str(e)}
         return {"status": "ok", "clients_notified": notified}
 
     for client_id, client_name, _ in clients:
@@ -63,5 +74,5 @@ def post_daily_report(
             if send_daily_report_email(admin_email, client_name or f"Client {client_id}", today, data):
                 notified += 1
         except Exception as e:
-            logger.info("report_failed", extra={"client_id": client_id, "error": str(e)})
+            logger.warning("report_failed client_id=%s: %s", client_id, e)
     return {"status": "ok", "clients_notified": notified}

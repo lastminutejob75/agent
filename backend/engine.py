@@ -1758,6 +1758,7 @@ class Engine:
             # Sinon demander le contact normalement
             print(f"📞 No caller ID, asking for contact normally")
             session.state = "QUALIF_CONTACT"
+            self._save_session(session)
             first_name = name.split()[0] if name else ""
             print(f"👤 name='{name}', first_name='{first_name}'")
             

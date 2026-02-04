@@ -1,4 +1,4 @@
-# Rapport quotidien IVR – envoi email à 19h Paris (18h UTC)
+# Rapport quotidien (appels / feedback) – 19h Paris (18h UTC)
 name: Daily IVR Report
 on:
   schedule:
@@ -14,7 +14,19 @@ jobs:
           REPORT_URL: ${{ secrets.REPORT_URL }}
           REPORT_SECRET: ${{ secrets.REPORT_SECRET }}
         run: |
-          curl -s -X POST "${REPORT_URL}/api/reports/daily" \
+          if [ -z "$REPORT_URL" ] || [ -z "$REPORT_SECRET" ]; then
+            echo "::error::REPORT_URL or REPORT_SECRET secret missing in GitHub"
+            exit 1
+          fi
+          resp=$(curl -s -w "\n%{http_code}" -X POST "${REPORT_URL}/api/reports/daily" \
             -H "Content-Type: application/json" \
-            -H "X-Report-Secret: ${REPORT_SECRET}" \
-            -w "\nHTTP %{http_code}\n" || true
+            -H "X-Report-Secret: ${REPORT_SECRET}")
+          body=$(echo "$resp" | head -n -1)
+          code=$(echo "$resp" | tail -n 1)
+          echo "Response: $body"
+          echo "HTTP $code"
+          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+            echo "::error::Backend returned HTTP $code - check Railway logs and REPORT_SECRET/REPORT_EMAIL/SMTP"
+            exit 1
+          fi
+          echo "$body" | grep -q '"status":"ok"' || echo "$body" | grep -q '"status": "ok"' || true

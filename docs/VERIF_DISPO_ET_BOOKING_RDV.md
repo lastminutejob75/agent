@@ -81,3 +81,16 @@ Vérification effectuée sur le code (comportement réel).
 | Pas de message « RDV confirmé » sans booking réussi | Oui | Message + `CONFIRMED` + `booking_confirmed` uniquement si `success` True ; sinon `TRANSFERRED` + `MSG_SLOT_ALREADY_BOOKED` |
 
 Donc : à chaque demande de RDV, il y a bien une **vérification de dispo** sur l’agenda au moment de proposer les créneaux, et un **booking réel** (Google ou SQLite) à la fin de l’appel, avec message de succès seulement si le booking a réussi.
+
+---
+
+## 5. Vérification automatisée (tests)
+
+| Test | Vérifie |
+|------|--------|
+| `tests/test_google_calendar_booking.py::test_book_appointment_calls_api_with_correct_body` | `GoogleCalendarService.book_appointment()` construit le bon body (summary, start/end Europe/Paris) et appelle `events().insert().execute()` |
+| `tests/test_google_slot_consistency.py::test_pending_slots_display_matches_booking` | Choix créneau 2 → `book_slot_from_session` appelle `_book_google_by_iso` avec les bons `start_iso` / `end_iso` du slot affiché |
+| `tests/test_engine.py::test_booking_flow_happy_path` | Parcours complet : intent RDV → qualif → proposition slots → choix → contact → confirmation → booking |
+| `tests/test_db.py::test_find_booking_by_name_and_cancel_sqlite` | Booking SQLite + annulation (fallback si Google non configuré) |
+
+Commande : `pytest tests/test_google_calendar_booking.py tests/test_google_slot_consistency.py tests/test_engine.py tests/test_db.py -v`
