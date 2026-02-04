@@ -8,11 +8,13 @@ from fastapi import APIRouter, Request
 import logging
 import json
 import time
+from typing import Optional
 
 from backend.engine import ENGINE
-from backend import prompts
+from backend import prompts, config
 from backend.client_memory import get_client_memory
 from backend.reports import get_report_generator
+from backend.stt_utils import normalize_transcript, is_filler_only
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -180,53 +182,142 @@ async def test_calendar_connection():
 
 
 
+def _maybe_reset_noise_on_terminal(session, events) -> None:
+    """P1-1 : Reset compteurs noise quand on entre en état terminal (session propre)."""
+    if not session or not events:
+        return
+    conv_state = getattr(events[0], "conv_state", None)
+    if conv_state in ("CONFIRMED", "TRANSFERRED"):
+        session.noise_detected_count = 0
+        session.last_noise_ts = None
+
+
+def _classify_stt_input(
+    raw_text: str,
+    confidence: Optional[float],
+    transcript_type: str,
+    message_type: Optional[str] = None,
+) -> tuple[str, str]:
+    """
+    Classifie l'entrée STT pour nova-2-phonecall.
+    Returns: ("NOISE" | "SILENCE" | "TEXT", text_to_use)
+    """
+    if transcript_type == "partial":
+        return "TEXT", raw_text  # fallback (ne devrait pas arriver ici si on filtre en amont)
+
+    normalized = normalize_transcript(raw_text)
+
+    # Transcript vide
+    if not normalized or not normalized.strip():
+        if confidence is not None and confidence < config.NOISE_CONFIDENCE_THRESHOLD:
+            return "NOISE", ""
+        # P1 : Parole détectée mais pas transcrite (pas de confidence) → bruit probable
+        if message_type:
+            mt_lower = message_type.lower()
+            if any(x in mt_lower for x in ("user-message", "audio", "speech", "detected")):
+                return "NOISE", ""
+        return "SILENCE", ""
+
+    # Transcript très court ou filler seul
+    if len(normalized) < config.MIN_TEXT_LENGTH or is_filler_only(normalized):
+        if confidence is not None and confidence < config.SHORT_TEXT_MIN_CONFIDENCE:
+            return "NOISE", normalized
+    return "TEXT", normalized
+
+
 @router.post("/webhook")
 async def vapi_webhook(request: Request):
     """
     Webhook Vapi - DEBUG COMPLET + TIMERS
+    Nova-2-phonecall : ignore partial, distingue NOISE vs SILENCE, normalise fillers.
     """
     t_start = time.time()
-    
     try:
         payload = await request.json()
         t1 = log_timer("Payload parsed", t_start)
-        
-        message = payload.get("message", {})
-        message_type = message.get("type", "NO_TYPE")
-        call_id = payload.get("call", {}).get("id", "unknown")
-        
-        print(f"🔔 WEBHOOK | type={message_type} | call={call_id}")
-        
-        # assistant-request
+
+        message = payload.get("message") or {}
+        message_type = message.get("type") or "NO_TYPE"
+        # P0-2 : fallback multi-champs pour transcriptType (certains providers envoient type / isFinal)
+        _tt = message.get("transcriptType") or message.get("transcript_type")
+        if _tt is None and message.get("type"):
+            _t = (message.get("type") or "").lower()
+            _tt = "partial" if "partial" in _t else ("final" if "final" in _t else None)
+        if _tt is None and "isFinal" in message:
+            _tt = "final" if message.get("isFinal") else "partial"
+        if _tt is None and "final" in message:
+            _tt = "final" if message.get("final") else "partial"
+        transcript_type = (_tt or "final").lower()
+        raw_text = message.get("transcript") or message.get("content") or message.get("text") or ""
+        confidence = message.get("confidence")
+        if confidence is not None and not isinstance(confidence, (int, float)):
+            confidence = None
+        call_id = (payload.get("call") or {}).get("id") or "unknown"
+
+        print(f"🔔 WEBHOOK | type={message_type} | transcriptType={transcript_type} | call={call_id}")
+
         if message_type == "assistant-request":
             print("✅ Returning {} for assistant-request")
             return {}
-        
-        # ACCEPTE TOUS LES MESSAGES AVEC DU TEXTE
-        user_text = message.get("content") or message.get("transcript") or ""
+
+        # Partial => no-op : même format que réponse normale, mais vide (compatible Vapi)
+        if transcript_type == "partial":
+            print("⏭️ Partial transcript, skipping")
+            return {"content": ""}
+
         t2 = log_timer("Message extracted", t1)
-        
-        if user_text and user_text.strip():
-            print(f"💬 User: '{user_text}'")
-            
+        kind, text_to_use = _classify_stt_input(
+            raw_text, confidence, transcript_type, message_type=message_type
+        )
+
+        if kind == "NOISE":
+            session = ENGINE.session_store.get_or_create(call_id)
+            session.channel = "vocal"
+            events = ENGINE.handle_noise(session)
+            if not events:
+                return {"content": ""}  # no-op cooldown : même format que normal
+            total_ms = (time.time() - t_start) * 1000
+            logger.info(
+                "stt_noise_detected",
+                extra={
+                    "call_id": call_id,
+                    "state": getattr(session, "state", ""),
+                    "confidence": confidence,
+                    "text_len": len(raw_text or ""),
+                    "normalized_len": len(normalize_transcript(raw_text or "")),
+                    "noise_count": getattr(session, "noise_detected_count", 0),
+                },
+            )
+            print(f"✅ NOISE response: {total_ms:.0f}ms | '{events[0].text[:50]}...'")
+            return {"content": events[0].text}
+
+        if kind == "SILENCE":
+            session = ENGINE.session_store.get_or_create(call_id)
+            session.channel = "vocal"
+            events = ENGINE.handle_message(call_id, "")
+            _maybe_reset_noise_on_terminal(session, events)
+            response_text = events[0].text if events else "Je n'ai pas compris"
+            total_ms = (time.time() - t_start) * 1000
+            print(f"✅ SILENCE response: {total_ms:.0f}ms | '{response_text[:50]}...'")
+            return {"content": response_text}
+
+        # TEXT
+        if text_to_use and text_to_use.strip():
+            print(f"💬 User: '{text_to_use}'")
             session = ENGINE.session_store.get_or_create(call_id)
             session.channel = "vocal"
             t3 = log_timer("Session loaded", t2)
-            
-            events = ENGINE.handle_message(call_id, user_text)
+            events = ENGINE.handle_message(call_id, text_to_use)
+            _maybe_reset_noise_on_terminal(session, events)
             t4 = log_timer("ENGINE processed", t3)
-            
             response_text = events[0].text if events else "Je n'ai pas compris"
-            
-            # ⏱️ TIMING TOTAL
             total_ms = (time.time() - t_start) * 1000
             print(f"✅ TOTAL: {total_ms:.0f}ms | Response: '{response_text[:50]}...'")
-            
             return {"content": response_text}
-        
-        print(f"⚠️ No user text found")
-        return {}
-        
+
+        print("⚠️ No user text after classification")
+        return {"content": ""}
+
     except Exception as e:
         print(f"❌ ERROR: {e}")
         import traceback

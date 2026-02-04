@@ -32,6 +32,17 @@ CONFIRM_RETRY_MAX = 1  # 1 redemande, puis transfer
 TARGET_FIRST_RESPONSE_MS = 3000  # contrainte PRD (sans imposer SSE)
 
 # ==============================
+# STT (nova-2-phonecall) — seuils et noise
+# ==============================
+# Surchargables via env (ex: NOISE_CONFIDENCE_THRESHOLD=0.35)
+STT_MODEL = os.getenv("STT_MODEL", "nova-2-phonecall")
+NOISE_CONFIDENCE_THRESHOLD = float(os.getenv("NOISE_CONFIDENCE_THRESHOLD", "0.35"))
+SHORT_TEXT_MIN_CONFIDENCE = float(os.getenv("SHORT_TEXT_MIN_CONFIDENCE", "0.50"))
+MIN_TEXT_LENGTH = int(os.getenv("MIN_TEXT_LENGTH", "5"))
+NOISE_COOLDOWN_SEC = float(os.getenv("NOISE_COOLDOWN_SEC", "2.0"))
+MAX_NOISE_BEFORE_ESCALATE = int(os.getenv("MAX_NOISE_BEFORE_ESCALATE", "3"))
+
+# ==============================
 # PHILOSOPHIE UWI : RETRY, PAS TRANSFERT SYSTÉMATIQUE
 # ==============================
 # Privilégier : reformulation, clarification, plusieurs tentatives par champ.

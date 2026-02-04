@@ -2381,6 +2381,8 @@ class Engine:
         session.correction_count = 0
         session.empty_message_count = 0
         session.turn_count = 0  # Redonner 25 tours après le menu (spec V3)
+        session.noise_detected_count = 0
+        session.last_noise_ts = None
         session.slot_choice_fails = 0
         session.name_fails = 0
         session.phone_fails = 0
@@ -2398,7 +2400,34 @@ class Engine:
         session.last_question_asked = msg
         session.add_message("agent", msg)
         return [Event("final", msg, conv_state=session.state)]
-    
+
+    def handle_noise(self, session: Session) -> List[Event]:
+        """
+        Gestion du bruit STT (nova-2-phonecall : transcript vide/court + faible confidence).
+        Cooldown anti-spam, 1er/2e => MSG_NOISE_1/2, 3e => INTENT_ROUTER.
+        N'incrémente pas empty_message_count.
+        """
+        import time
+        now = time.time()
+        last_ts = getattr(session, "last_noise_ts", None)
+        if last_ts is not None and (now - last_ts) < config.NOISE_COOLDOWN_SEC:
+            return []  # no-op (cooldown)
+        count = getattr(session, "noise_detected_count", 0) + 1
+        session.noise_detected_count = count
+        session.last_noise_ts = now
+        if count == 1:
+            msg = getattr(prompts, "MSG_NOISE_1", "Je n'ai pas bien entendu. Pouvez-vous répéter ?")
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state=session.state)]
+        if count == 2:
+            msg = getattr(prompts, "MSG_NOISE_2", "Il y a du bruit. Pouvez-vous répéter plus distinctement ?")
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state=session.state)]
+        return safe_reply(
+            self._trigger_intent_router(session, "noise_repeated", ""),
+            session,
+        )
+
     def _handle_intent_router(self, session: Session, user_text: str) -> List[Event]:
         """Gestion du menu 1/2/3/4."""
         channel = getattr(session, "channel", "web")

@@ -20,6 +20,10 @@ import re
 MSG_SILENCE_1 = "Je n'ai rien entendu. Pouvez-vous répéter ?"
 MSG_SILENCE_2 = "Êtes-vous toujours là ?"
 
+# --- Bruit STT (nova-2-phonecall : confidence faible, pas de vrai silence) ---
+MSG_NOISE_1 = "Je n'ai pas bien entendu. Pouvez-vous répéter ?"
+MSG_NOISE_2 = "Il y a du bruit. Pouvez-vous répéter plus distinctement ?"
+
 # --- Contrainte horaire (RÈGLE 7) ---
 MSG_TIME_CONSTRAINT_IMPOSSIBLE = (
     "D'accord. Mais nous fermons à {closing}. "
