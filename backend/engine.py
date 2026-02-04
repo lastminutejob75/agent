@@ -840,7 +840,11 @@ class Engine:
         
         # Si START → le premier message après "Vous appelez pour un RDV ?"
         if session.state == "START":
-            
+            # Robustesse vocal/STT : "oui"/"ok" seul = toujours YES (éviter "j'ai pas bien saisi")
+            t_lower = (user_text or "").strip().lower()
+            if t_lower in ("oui", "ui", "wi", "ouais", "ouai", "ok", "okay", "d'accord", "daccord"):
+                intent = "YES"
+
             # YES → Booking flow
             if intent == "YES":
                 print(f"✅ Intent YES detected")

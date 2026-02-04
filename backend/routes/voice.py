@@ -537,13 +537,23 @@ async def vapi_custom_llm(request: Request):
         if customer_phone:
             print(f"📱 Customer phone: {customer_phone}")
         
-        # Récupère le dernier message utilisateur
+        # Récupère le dernier message utilisateur (content peut être string ou liste OpenAI)
         user_message = None
         for msg in reversed(messages):
             if msg.get("role") == "user":
-                user_message = msg.get("content")
+                raw = msg.get("content")
+                if isinstance(raw, str):
+                    user_message = raw
+                elif isinstance(raw, list):
+                    user_message = ""
+                    for part in raw:
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            user_message = part.get("text") or ""
+                            break
+                else:
+                    user_message = str(raw) if raw is not None else ""
                 break
-        
+
         t2 = log_timer("Message extracted", t1)
         print(f"💬 User: '{user_message}'")
         

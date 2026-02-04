@@ -700,6 +700,8 @@ def detect_slot_choice_flexible(user_msg: str, proposed_slots: list) -> Optional
 # Mapping mots → chiffre (FR)
 _VOCAL_NUM_MAP = {
     "1": 1,
+    "1.": 1,
+    "1er": 1,
     "un": 1,
     "une": 1,
     "premier": 1,
@@ -707,6 +709,7 @@ _VOCAL_NUM_MAP = {
     "première": 1,
     
     "2": 2,
+    "2e": 2,
     "deux": 2,
     "second": 2,
     "seconde": 2,
@@ -714,6 +717,7 @@ _VOCAL_NUM_MAP = {
     "deuxième": 2,
     
     "3": 3,
+    "3e": 3,
     "trois": 3,
     "troisieme": 3,
     "troisième": 3,
@@ -743,6 +747,8 @@ def parse_vocal_choice_1_3(text: str) -> Optional[int]:
         return None
 
     raw = text.strip().lower()
+    # Enlever ponctuation finale (ex: "1.", "deux!")
+    raw = re.sub(r"[.,;:!?]+$", "", raw).strip()
 
     # Normalisation accents fréquents
     raw = (raw
@@ -763,19 +769,19 @@ def parse_vocal_choice_1_3(text: str) -> Optional[int]:
             continue
         
         core = m.group(1).strip()
-        
-        # Tokenize
+        # Trop verbeux (ex: "premier s'il vous plaît") → refuser
         tokens = [t for t in re.split(r"[\s\-]+", core) if t]
-        if not tokens:
+        if not tokens or len(tokens) > 2:
             continue
 
-        # Essaye chaque token
+        # Essaye chaque token (enlever ponctuation finale)
         for tok in tokens:
-            if tok in _VOCAL_NUM_MAP:
-                return _VOCAL_NUM_MAP[tok]
+            tok_clean = re.sub(r"[.,;:!?]+$", "", tok)
+            if tok_clean in _VOCAL_NUM_MAP:
+                return _VOCAL_NUM_MAP[tok_clean]
 
         # Dernier token
-        last = tokens[-1]
+        last = re.sub(r"[.,;:!?]+$", "", tokens[-1])
         if last in _VOCAL_NUM_MAP:
             return _VOCAL_NUM_MAP[last]
 

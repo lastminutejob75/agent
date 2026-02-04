@@ -47,7 +47,11 @@ def post_daily_report(
     admin_email = os.getenv("REPORT_EMAIL") or os.getenv("OWNER_EMAIL")
     if not admin_email:
         logger.warning("REPORT_EMAIL and OWNER_EMAIL not set, cannot send report")
-        return {"status": "ok", "clients_notified": 0, "message": "REPORT_EMAIL not set"}
+        return {
+            "status": "ok",
+            "clients_notified": 0,
+            "email_skipped": "REPORT_EMAIL ou OWNER_EMAIL non défini sur Railway",
+        }
 
     try:
         memory = get_client_memory()
@@ -57,22 +61,33 @@ def post_daily_report(
         return {"status": "error", "clients_notified": 0, "error": str(e)}
 
     notified = 0
+    email_skipped = None
     if not clients:
         try:
             data = get_daily_report_data(1, today)
             if send_daily_report_email(admin_email, "Cabinet", today, data):
                 notified = 1
                 logger.info("report_sent admin only (no clients)", extra={"date": today})
+            elif not os.getenv("SMTP_EMAIL") or not os.getenv("SMTP_PASSWORD"):
+                email_skipped = "SMTP non configuré (SMTP_EMAIL / SMTP_PASSWORD sur Railway)"
         except Exception as e:
             logger.exception("report_daily: get_daily_report_data or send_daily_report_email failed")
             return {"status": "error", "clients_notified": 0, "error": str(e)}
-        return {"status": "ok", "clients_notified": notified}
+        out = {"status": "ok", "clients_notified": notified}
+        if email_skipped:
+            out["email_skipped"] = email_skipped
+        return out
 
     for client_id, client_name, _ in clients:
         try:
             data = get_daily_report_data(client_id, today)
             if send_daily_report_email(admin_email, client_name or f"Client {client_id}", today, data):
                 notified += 1
+            elif notified == 0 and (not os.getenv("SMTP_EMAIL") or not os.getenv("SMTP_PASSWORD")):
+                email_skipped = "SMTP non configuré (SMTP_EMAIL / SMTP_PASSWORD sur Railway)"
         except Exception as e:
             logger.warning("report_failed client_id=%s: %s", client_id, e)
-    return {"status": "ok", "clients_notified": notified}
+    out = {"status": "ok", "clients_notified": notified}
+    if email_skipped:
+        out["email_skipped"] = email_skipped
+    return out

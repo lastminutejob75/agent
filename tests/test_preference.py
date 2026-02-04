@@ -7,10 +7,22 @@ Tests PREFERENCE_CONFIRM : inférence répétée = confirmation implicite (Bug #
 """
 import uuid
 import pytest
+from unittest.mock import patch
 from backend.engine import create_engine
+from backend import prompts
 
 
-def test_inference_repetee_confirmation_implicite():
+def _fake_slots(*args, **kwargs):
+    """3 créneaux factices pour éviter 'no slots' → TRANSFERRED en test."""
+    return [
+        prompts.SlotDisplay(idx=1, label="Mardi 15/01 - 14:00", slot_id=1, start="2026-01-15T14:00:00", day="mardi", hour=14),
+        prompts.SlotDisplay(idx=2, label="Mardi 15/01 - 16:00", slot_id=2, start="2026-01-15T16:00:00", day="mardi", hour=16),
+        prompts.SlotDisplay(idx=3, label="Jeudi 17/01 - 10:00", slot_id=3, start="2026-01-17T10:00:00", day="jeudi", hour=10),
+    ]
+
+
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+def test_inference_repetee_confirmation_implicite(mock_slots):
     """User répète la même phrase (je finis à 17h) → confirmation implicite, pas transfert."""
     engine = create_engine()
     conv = f"pref_repeat_{uuid.uuid4().hex[:8]}"
