@@ -80,6 +80,8 @@ class Session:
     # STT nova-2-phonecall : bruit (confidence faible) vs silence
     noise_detected_count: int = 0
     last_noise_ts: Optional[float] = None  # time.time() pour cooldown
+    # Custom LLM (chat/completions) : texte incompréhensible / garbage
+    unclear_text_count: int = 0
 
     # Recovery par contexte (analytics + tuning fin — AJOUT_COMPTEURS_RECOVERY)
     slot_choice_fails: int = 0
@@ -139,6 +141,7 @@ class Session:
         self.turn_count = 0
         self.noise_detected_count = 0
         self.last_noise_ts = None
+        self.unclear_text_count = 0
         self.slot_choice_fails = 0
         self.name_fails = 0
         self.phone_fails = 0

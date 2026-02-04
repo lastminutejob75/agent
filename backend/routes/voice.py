@@ -5,9 +5,12 @@ Avec mémoire client et stats pour rapports.
 """
 
 from fastapi import APIRouter, Request
+from fastapi.responses import Response
 import logging
 import json
+import re
 import time
+import uuid
 from typing import Optional
 
 from backend.engine import ENGINE
@@ -15,6 +18,7 @@ from backend import prompts, config
 from backend.client_memory import get_client_memory
 from backend.reports import get_report_generator
 from backend.stt_utils import normalize_transcript, is_filler_only
+from backend.stt_common import classify_text_only
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -182,14 +186,64 @@ async def test_calendar_connection():
 
 
 
+def _log_decision_out(
+    call_id: str,
+    session,
+    action_taken: str,
+    reply_text: str = "",
+) -> None:
+    """Log décisionnel sortie (sans PII)."""
+    logger.info(
+        "decision_out",
+        extra={
+            "call_id": call_id,
+            "action": action_taken,
+            "state_after": getattr(session, "state", "") if session else "",
+            "reply_len": len(reply_text or ""),
+        },
+    )
+
+
 def _maybe_reset_noise_on_terminal(session, events) -> None:
-    """P1-1 : Reset compteurs noise quand on entre en état terminal (session propre)."""
+    """P1-1 : Reset compteurs noise + unclear quand on entre en état terminal (session propre)."""
     if not session or not events:
         return
     conv_state = getattr(events[0], "conv_state", None)
     if conv_state in ("CONFIRMED", "TRANSFERRED"):
         session.noise_detected_count = 0
         session.last_noise_ts = None
+        session.unclear_text_count = 0
+
+
+# Tokens critiques : jamais NOISE même si confidence basse (confirmations, choix créneaux)
+CRITICAL_TOKENS = frozenset({
+    "oui", "non", "ok", "okay", "daccord", "d'accord",
+    "1", "2", "3", "un", "deux", "trois",
+    "premier", "deuxième", "troisième", "premiere", "deuxieme", "troisieme",
+    "ouais", "ouaip",
+    "le premier", "le deuxième", "le troisième",
+    "la première", "la deuxième", "la troisième",
+})
+
+
+def _is_critical_token(text: str) -> bool:
+    """
+    Vérifie si le texte est un token critique (jamais classé NOISE).
+    """
+    if not text:
+        return False
+    t = text.strip().lower()
+    t = re.sub(r"['']", "", t)  # d'accord → daccord
+    t = "".join(ch for ch in t if ch.isalnum() or ch.isspace()).strip()
+    if not t:
+        return False
+    if t in CRITICAL_TOKENS:
+        return True
+    parts = t.split()
+    if len(parts) == 2:
+        if parts[0] in {"oui", "ok", "non"} and parts[1] in {"1", "2", "3", "un", "deux", "trois"}:
+            return True
+    return False
 
 
 def _classify_stt_input(
@@ -206,6 +260,10 @@ def _classify_stt_input(
         return "TEXT", raw_text  # fallback (ne devrait pas arriver ici si on filtre en amont)
 
     normalized = normalize_transcript(raw_text)
+
+    # Whitelist : tokens critiques = TEXT même si confidence très basse
+    if _is_critical_token(normalized):
+        return "TEXT", normalized
 
     # Transcript vide
     if not normalized or not normalized.strip():
@@ -234,10 +292,22 @@ async def vapi_webhook(request: Request):
     t_start = time.time()
     try:
         payload = await request.json()
+        _call_id = (payload.get("call") or {}).get("id") or "unknown"
+        logger.info("WEBHOOK_HIT", extra={"call_id": _call_id})
         t1 = log_timer("Payload parsed", t_start)
 
         message = payload.get("message") or {}
         message_type = message.get("type") or "NO_TYPE"
+        message_role = message.get("role")
+
+        # Garde : ne traiter que les messages user (transcripts utilisateur)
+        if message_role is not None and message_role != "user":
+            logger.warning(
+                "non_user_message",
+                extra={"role": message_role, "type": message_type, "call_id": (payload.get("call") or {}).get("id")},
+            )
+            return Response(status_code=204)
+
         # P0-2 : fallback multi-champs pour transcriptType (certains providers envoient type / isFinal)
         _tt = message.get("transcriptType") or message.get("transcript_type")
         if _tt is None and message.get("type"):
@@ -260,22 +330,58 @@ async def vapi_webhook(request: Request):
             print("✅ Returning {} for assistant-request")
             return {}
 
-        # Partial => no-op : même format que réponse normale, mais vide (compatible Vapi)
+        session = ENGINE.session_store.get_or_create(call_id)
+        session.channel = "vocal"
+
+        # Partial => HTTP 204 No Content (vrai no-op, pas de tour)
         if transcript_type == "partial":
             print("⏭️ Partial transcript, skipping")
-            return {"content": ""}
+            _norm_len = len(normalize_transcript(raw_text or ""))
+            logger.info(
+                "decision_in",
+                extra={
+                    "call_id": call_id,
+                    "state_before": getattr(session, "state", ""),
+                    "transcript_type": transcript_type or "unknown",
+                    "confidence": confidence,
+                    "raw_len": len(raw_text or ""),
+                    "normalized_len": _norm_len,
+                    "stt_class": "PARTIAL",
+                    "noise_count": getattr(session, "noise_detected_count", 0),
+                    "empty_count": getattr(session, "empty_message_count", 0),
+                    "turn_count": getattr(session, "turn_count", 0),
+                },
+            )
+            _log_decision_out(call_id, session, "http_204", "")
+            return Response(status_code=204)
 
         t2 = log_timer("Message extracted", t1)
         kind, text_to_use = _classify_stt_input(
             raw_text, confidence, transcript_type, message_type=message_type
         )
+        normalized = normalize_transcript(raw_text or "")
+
+        logger.info(
+            "decision_in",
+            extra={
+                "call_id": call_id,
+                "state_before": getattr(session, "state", ""),
+                "transcript_type": transcript_type or "unknown",
+                "confidence": confidence,
+                "raw_len": len(raw_text or ""),
+                "normalized_len": len(normalized or ""),
+                "stt_class": kind,
+                "noise_count": getattr(session, "noise_detected_count", 0),
+                "empty_count": getattr(session, "empty_message_count", 0),
+                "turn_count": getattr(session, "turn_count", 0),
+            },
+        )
 
         if kind == "NOISE":
-            session = ENGINE.session_store.get_or_create(call_id)
-            session.channel = "vocal"
             events = ENGINE.handle_noise(session)
             if not events:
-                return {"content": ""}  # no-op cooldown : même format que normal
+                _log_decision_out(call_id, session, "http_204", "")
+                return Response(status_code=204)
             total_ms = (time.time() - t_start) * 1000
             logger.info(
                 "stt_noise_detected",
@@ -284,19 +390,34 @@ async def vapi_webhook(request: Request):
                     "state": getattr(session, "state", ""),
                     "confidence": confidence,
                     "text_len": len(raw_text or ""),
-                    "normalized_len": len(normalize_transcript(raw_text or "")),
+                    "normalized_len": len(normalized or ""),
                     "noise_count": getattr(session, "noise_detected_count", 0),
                 },
             )
-            print(f"✅ NOISE response: {total_ms:.0f}ms | '{events[0].text[:50]}...'")
-            return {"content": events[0].text}
+            reply_text = events[0].text
+            _action = "reply"
+            if getattr(session, "state", "") == "INTENT_ROUTER":
+                _action = "router"
+            elif getattr(session, "state", "") == "TRANSFERRED":
+                _action = "transfer"
+            elif getattr(session, "state", "") == "CONFIRMED":
+                _action = "confirmed"
+            _log_decision_out(call_id, session, _action, reply_text)
+            print(f"✅ NOISE response: {total_ms:.0f}ms | '{reply_text[:50]}...'")
+            return {"content": reply_text}
 
         if kind == "SILENCE":
-            session = ENGINE.session_store.get_or_create(call_id)
-            session.channel = "vocal"
             events = ENGINE.handle_message(call_id, "")
             _maybe_reset_noise_on_terminal(session, events)
             response_text = events[0].text if events else "Je n'ai pas compris"
+            _action = "reply"
+            if "INTENT_ROUTER" in getattr(session, "state", ""):
+                _action = "router"
+            elif getattr(session, "state", "") == "TRANSFERRED":
+                _action = "transfer"
+            elif getattr(session, "state", "") == "CONFIRMED":
+                _action = "confirmed"
+            _log_decision_out(call_id, session, _action, response_text)
             total_ms = (time.time() - t_start) * 1000
             print(f"✅ SILENCE response: {total_ms:.0f}ms | '{response_text[:50]}...'")
             return {"content": response_text}
@@ -304,18 +425,25 @@ async def vapi_webhook(request: Request):
         # TEXT
         if text_to_use and text_to_use.strip():
             print(f"💬 User: '{text_to_use}'")
-            session = ENGINE.session_store.get_or_create(call_id)
-            session.channel = "vocal"
             t3 = log_timer("Session loaded", t2)
             events = ENGINE.handle_message(call_id, text_to_use)
             _maybe_reset_noise_on_terminal(session, events)
             t4 = log_timer("ENGINE processed", t3)
             response_text = events[0].text if events else "Je n'ai pas compris"
+            _action = "reply"
+            if "INTENT_ROUTER" in getattr(session, "state", ""):
+                _action = "router"
+            elif getattr(session, "state", "") == "TRANSFERRED":
+                _action = "transfer"
+            elif getattr(session, "state", "") == "CONFIRMED":
+                _action = "confirmed"
+            _log_decision_out(call_id, session, _action, response_text)
             total_ms = (time.time() - t_start) * 1000
             print(f"✅ TOTAL: {total_ms:.0f}ms | Response: '{response_text[:50]}...'")
             return {"content": response_text}
 
         print("⚠️ No user text after classification")
+        _log_decision_out(call_id, session, "empty_reply", "")
         return {"content": ""}
 
     except Exception as e:
@@ -366,6 +494,12 @@ async def vapi_tool(request: Request):
         return {"result": "Désolé, une erreur est survenue."}
 
 
+@router.get("/_health")
+async def vapi_internal_health():
+    """Health check dédié Vapi (vérifier déploiement)."""
+    return {"status": "ok", "service": "vapi"}
+
+
 @router.post("/chat/completions")
 async def vapi_custom_llm(request: Request):
     """
@@ -378,14 +512,15 @@ async def vapi_custom_llm(request: Request):
     - Stats pour rapports quotidiens
     """
     from fastapi.responses import StreamingResponse
-    
-    # ⏱️ TIMING START
+
     t_start = time.time()
-    
     try:
         payload = await request.json()
+        _call_id = payload.get("call", {}).get("id") or payload.get("call_id") or "unknown"
+        _req_id = str(uuid.uuid4())[:8]
+        logger.info("CHAT_HIT", extra={"call_id": _call_id, "request_id": _req_id})
         t1 = log_timer("Payload parsed", t_start)
-        
+
         print(f"🤖 CUSTOM LLM | Payload size: {len(str(payload))} chars")
         
         # Vapi envoie un tableau de messages
@@ -450,6 +585,21 @@ async def vapi_custom_llm(request: Request):
                 except Exception as e:
                     print(f"⚠️ Client memory error: {e}")
             
+            # Input firewall (text-only) : SILENCE / UNCLEAR / TEXT — avant tout traitement
+            kind, normalized = classify_text_only(user_message or "")
+            unclear_count = getattr(session, "unclear_text_count", 0)
+            logger.info(
+                "decision_in",
+                extra={
+                    "call_id": call_id,
+                    "state_before": session.state,
+                    "kind": kind,
+                    "raw_len": len((user_message or "")),
+                    "normalized_len": len(normalized or ""),
+                    "unclear_count": unclear_count,
+                },
+            )
+
             # En annulation : si on va chercher le RDV par nom, envoyer d'abord un message de tenue
             # en stream pour éviter le "mmm" TTS pendant la latence (recherche Google Calendar).
             cancel_lookup_streaming = (
@@ -461,9 +611,40 @@ async def vapi_custom_llm(request: Request):
                 response_text = ""
             else:
                 try:
-                    events = ENGINE.handle_message(call_id, user_message)
+                    if kind == "SILENCE":
+                        events = ENGINE.handle_message(call_id, "")
+                        response_text = events[0].text if events else prompts.MSG_EMPTY_MESSAGE
+                        action_taken = "silence"
+                        _maybe_reset_noise_on_terminal(session, events or [])
+                    elif kind == "TEXT":
+                        events = ENGINE.handle_message(call_id, normalized)
+                        response_text = events[0].text if events else "Je n'ai pas compris"
+                        action_taken = "text"
+                        _maybe_reset_noise_on_terminal(session, events or [])
+                    else:  # UNCLEAR
+                        session.unclear_text_count = getattr(session, "unclear_text_count", 0) + 1
+                        count = session.unclear_text_count
+                        if count == 1:
+                            response_text = prompts.MSG_UNCLEAR_1
+                            session.add_message("agent", response_text)
+                            action_taken = "unclear_1"
+                        elif count == 2:
+                            events = ENGINE._trigger_intent_router(
+                                session, "unclear_text_2", user_message or ""
+                            )
+                            response_text = events[0].text if events else prompts.MSG_UNCLEAR_1
+                            action_taken = "unclear_2_intent_router"
+                        else:
+                            session.state = "TRANSFERRED"
+                            response_text = (
+                                prompts.VOCAL_TRANSFER_COMPLEX
+                                if getattr(session, "channel", "") == "vocal"
+                                else prompts.MSG_TRANSFER
+                            )
+                            session.add_message("agent", response_text)
+                            action_taken = "unclear_3_transfer"
                     t4 = log_timer("ENGINE processed", t3)
-                    response_text = events[0].text if events else "Je n'ai pas compris"
+                    _log_decision_out(call_id, session, action_taken, response_text)
                 except Exception as e:
                     print(f"❌ ENGINE ERROR: {e}")
                     import traceback

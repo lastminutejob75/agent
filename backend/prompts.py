@@ -24,6 +24,9 @@ MSG_SILENCE_2 = "Êtes-vous toujours là ?"
 MSG_NOISE_1 = "Je n'ai pas bien entendu. Pouvez-vous répéter ?"
 MSG_NOISE_2 = "Il y a du bruit. Pouvez-vous répéter plus distinctement ?"
 
+# --- Custom LLM (chat/completions) : texte incompréhensible / garbage ---
+MSG_UNCLEAR_1 = "Je vous entends mal. Pouvez-vous répéter ?"
+
 # --- Contrainte horaire (RÈGLE 7) ---
 MSG_TIME_CONSTRAINT_IMPOSSIBLE = (
     "D'accord. Mais nous fermons à {closing}. "

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from datetime import datetime
 from typing import Dict, Optional, Any
@@ -18,6 +19,21 @@ from backend.db import init_db, list_free_slots, count_free_slots
 from backend.routes import voice, whatsapp, bland, reports
 
 app = FastAPI()
+_logger = logging.getLogger(__name__)
+
+
+@app.middleware("http")
+async def log_vapi_requests(request: Request, call_next):
+    """Log path + status_code pour toute requête /api/vapi/* (sans body)."""
+    if not request.url.path.startswith("/api/vapi/"):
+        return await call_next(request)
+    response = await call_next(request)
+    _logger.info(
+        "vapi_request",
+        extra={"path": request.url.path, "method": request.method, "status_code": response.status_code},
+    )
+    return response
+
 
 # Routers (avant les mounts pour éviter les conflits)
 # Utilise la nouvelle architecture multi-canal
