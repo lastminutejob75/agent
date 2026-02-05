@@ -42,6 +42,15 @@ MIN_TEXT_LENGTH = int(os.getenv("MIN_TEXT_LENGTH", "5"))
 NOISE_COOLDOWN_SEC = float(os.getenv("NOISE_COOLDOWN_SEC", "2.0"))
 MAX_NOISE_BEFORE_ESCALATE = int(os.getenv("MAX_NOISE_BEFORE_ESCALATE", "3"))
 
+# Crosstalk (barge-in) : fenêtre après envoi réponse assistant pendant laquelle UNCLEAR = ignoré (pas d'escalade)
+# TTS peut durer 3–6 s ; si l'utilisateur parle pendant, on reste dans la fenêtre → pas transfert
+CROSSTALK_WINDOW_SEC = float(os.getenv("CROSSTALK_WINDOW_SEC", "5.0"))
+# Longueur max (car. bruts) pour considérer une entrée UNCLEAR comme crosstalk (ex. "euh", "attendez")
+CROSSTALK_MAX_RAW_LEN = int(os.getenv("CROSSTALK_MAX_RAW_LEN", "40"))
+
+# Overlap (user parle juste après envoi réponse agent) : UNCLEAR dans cette fenêtre = pas d'incrément unclear
+OVERLAP_WINDOW_SEC = float(os.getenv("OVERLAP_WINDOW_SEC", "1.2"))
+
 # ==============================
 # PHILOSOPHIE UWI : RETRY, PAS TRANSFERT SYSTÉMATIQUE
 # ==============================

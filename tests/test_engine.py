@@ -1,7 +1,18 @@
 # tests/test_engine.py
+import uuid
 import pytest
+from unittest.mock import patch
 from backend.engine import create_engine, _detect_booking_intent
 from backend import prompts
+
+
+def _fake_slots(*args, **kwargs):
+    """Slots factices pour atteindre CONTACT_CONFIRM / QUALIF_CONTACT."""
+    return [
+        prompts.SlotDisplay(idx=1, label="Mardi 15/01 - 14:00", slot_id=1, start="2026-01-15T14:00:00", day="mardi", hour=14),
+        prompts.SlotDisplay(idx=2, label="Mardi 15/01 - 16:00", slot_id=2, start="2026-01-15T16:00:00", day="mardi", hour=16),
+        prompts.SlotDisplay(idx=3, label="Jeudi 17/01 - 10:00", slot_id=3, start="2026-01-17T10:00:00", day="jeudi", hour=10),
+    ]
 
 
 def test_detect_booking_intent():
@@ -287,3 +298,158 @@ def test_qualif_name_martin_dupont_next_step():
     session = engine.session_store.get(conv)
     assert session is not None
     assert session.qualif_data.name is not None
+
+
+# ---------- QUALIF_PREF : répétition intention RDV (P0) ----------
+
+
+def test_qualif_pref_intent_phrase_guided_message():
+    """P0 : En QUALIF_PREF, 'je veux un rdv' → message guidé (INTENT_1), reste QUALIF_PREF, pas preference_fails."""
+    engine = create_engine()
+    conv = "conv_qualif_pref_intent"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Martin Dupont")
+    events = engine.handle_message(conv, "je veux un rendez-vous")
+    assert len(events) == 1
+    assert events[0].conv_state == "QUALIF_PREF"
+    assert "matin" in events[0].text.lower() or "après-midi" in events[0].text.lower()
+    session = engine.session_store.get(conv)
+    assert session is not None
+    assert session.preference_fails == 0
+    assert prompts.MSG_QUALIF_PREF_INTENT_1 in events[0].text
+
+
+def test_qualif_pref_intent_repeat_3_times_stays_qualif_pref():
+    """P0 : QUALIF_PREF + 'je veux un rendez-vous' x3 → toujours QUALIF_PREF, jamais INTENT_ROUTER."""
+    engine = create_engine()
+    conv = "conv_qualif_pref_intent_3"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Marie Martin")
+    for _ in range(3):
+        events = engine.handle_message(conv, "je veux un rendez-vous")
+        assert len(events) == 1
+        assert events[0].conv_state == "QUALIF_PREF"
+    session = engine.session_store.get(conv)
+    assert session is not None
+    assert session.state == "QUALIF_PREF"
+    assert session.preference_fails == 0
+
+
+def test_qualif_pref_invalid_input_escalates():
+    """P0 : QUALIF_PREF + vrais inputs invalides ('bof') au seuil → INTENT_ROUTER."""
+    from backend import config
+    engine = create_engine()
+    conv = "conv_qualif_pref_invalid"
+    limit = getattr(config, "RECOVERY_LIMITS", {}).get("preference", 3)
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Jean Dupont")
+    for _ in range(limit):
+        events = engine.handle_message(conv, "bof")
+        assert len(events) == 1
+    assert events[0].conv_state == "INTENT_ROUTER"
+    session = engine.session_store.get(conv)
+    assert session is not None
+    assert session.state == "INTENT_ROUTER"
+
+
+def test_qualif_pref_matin_next_step():
+    """P0 : QUALIF_PREF + 'matin' → passage à PREFERENCE_CONFIRM (étape suivante)."""
+    engine = create_engine()
+    conv = "conv_qualif_pref_matin"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Paul Martin")
+    events = engine.handle_message(conv, "matin")
+    assert len(events) == 1
+    assert events[0].conv_state == "PREFERENCE_CONFIRM"
+    session = engine.session_store.get(conv)
+    assert session is not None
+    assert session.pending_preference == "matin"
+
+
+# ---------- CONTACT_CONFIRM : répétition intention RDV (P0) ----------
+
+
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+def test_contact_confirm_intent_phrase_guided_message(mock_slots):
+    """P0 : En CONTACT_CONFIRM, 'je veux un rdv' → message guidé oui/non, reste CONTACT_CONFIRM, pas contact_confirm_fails."""
+    engine = create_engine()
+    conv = f"conv_contact_confirm_intent_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Martin Dupont")
+    engine.handle_message(conv, "matin")
+    engine.handle_message(conv, "oui")
+    engine.handle_message(conv, "oui 1")
+    engine.handle_message(conv, "0612345678")
+    events = engine.handle_message(conv, "je veux un rendez-vous")
+    assert len(events) == 1
+    assert events[0].conv_state == "CONTACT_CONFIRM"
+    assert "oui" in events[0].text.lower() and "non" in events[0].text.lower()
+    session = engine.session_store.get(conv)
+    assert session is not None
+    assert session.contact_confirm_fails == 0
+    assert prompts.MSG_CONTACT_CONFIRM_INTENT_1 in events[0].text
+
+
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+def test_contact_confirm_intent_repeat_3_times_stays_contact_confirm(mock_slots):
+    """P0 : CONTACT_CONFIRM + 'je veux un rendez-vous' x3 → toujours CONTACT_CONFIRM, pas INTENT_ROUTER."""
+    engine = create_engine()
+    conv = f"conv_contact_confirm_repeat_3_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Marie Martin")
+    engine.handle_message(conv, "matin")
+    engine.handle_message(conv, "oui")
+    engine.handle_message(conv, "oui 1")
+    engine.handle_message(conv, "0612345678")
+    for _ in range(3):
+        events = engine.handle_message(conv, "je veux un rendez-vous")
+        assert len(events) == 1
+        assert events[0].conv_state == "CONTACT_CONFIRM"
+    session = engine.session_store.get(conv)
+    assert session is not None
+    assert session.state == "CONTACT_CONFIRM"
+    assert session.contact_confirm_fails == 0
+
+
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+@patch("backend.tools_booking.book_slot_from_session", return_value=True)
+def test_contact_confirm_yes_no_resets_intent_counter(mock_book, mock_slots):
+    """P0 : Après phrase d'intention en CONTACT_CONFIRM, répondre 'oui' remet contact_confirm_intent_repeat_count à 0."""
+    engine = create_engine()
+    conv = f"conv_contact_confirm_reset_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Martin Dupont")
+    engine.handle_message(conv, "matin")
+    engine.handle_message(conv, "oui")
+    engine.handle_message(conv, "oui 1")
+    engine.handle_message(conv, "0612345678")
+    session = engine.session_store.get(conv)
+    assert session.state == "CONTACT_CONFIRM"
+    engine.handle_message(conv, "je veux un rdv")
+    session = engine.session_store.get(conv)
+    assert session.contact_confirm_intent_repeat_count == 1
+    events = engine.handle_message(conv, "oui")
+    session = engine.session_store.get(conv)
+    assert session.contact_confirm_intent_repeat_count == 0
+    assert events[0].conv_state == "CONFIRMED"
+
+
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+def test_qualif_contact_intent_phrase_does_not_increment_contact_fails(mock_slots):
+    """Optionnel : QUALIF_CONTACT + 'je veux un rdv' → message guidé, pas phone_fails ni transfert."""
+    engine = create_engine()
+    conv = f"conv_qualif_contact_intent_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Jean Dupont")
+    engine.handle_message(conv, "matin")
+    engine.handle_message(conv, "oui")
+    engine.handle_message(conv, "oui 1")
+    events = engine.handle_message(conv, "je veux un rendez-vous")
+    assert len(events) == 1
+    assert events[0].conv_state == "QUALIF_CONTACT"
+    assert "email" in events[0].text.lower() or "téléphone" in events[0].text.lower() or "numéro" in events[0].text.lower()
+    session = engine.session_store.get(conv)
+    assert session is not None
+    assert session.phone_fails == 0
+    assert session.state == "QUALIF_CONTACT"
+    assert prompts.MSG_QUALIF_CONTACT_INTENT in events[0].text

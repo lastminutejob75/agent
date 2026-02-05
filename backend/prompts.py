@@ -29,6 +29,10 @@ MSG_UNCLEAR_1 = "Je vous entends mal. Pouvez-vous répéter ?"
 
 # --- Crosstalk (barge-in) : user parle pendant TTS → no-op sans incrémenter unclear ---
 MSG_VOCAL_CROSSTALK_ACK = "Je vous écoute."
+# --- Overlap : UNCLEAR juste après réponse agent → pas d'incrément, demander de répéter ---
+MSG_OVERLAP_REPEAT = "Je vous ai entendu en même temps. Pouvez-vous répéter maintenant ?"
+# --- Semi-sourd : TEXT court pendant que l'agent parle ---
+MSG_OVERLAP_REPEAT_SHORT = "Pardon, pouvez-vous répéter ?"
 
 # --- Contrainte horaire (RÈGLE 7) ---
 MSG_TIME_CONSTRAINT_IMPOSSIBLE = (
@@ -726,7 +730,15 @@ MSG_QUALIF_NAME_INTENT_1 = "D'accord, j'ai bien compris. C'est à quel nom ?"
 MSG_QUALIF_NAME_INTENT_2 = "Votre nom et prénom, par exemple : Martin Dupont."
 MSG_QUALIF_MOTIF_RETRY_VOCAL = "Attendez, c'est pour quoi exactement ?"
 MSG_QUALIF_PREF_RETRY_VOCAL = "Vous préférez plutôt quel moment de la journée ?"
+# P0 : répétition d'intention RDV en QUALIF_PREF → message guidé, pas preference_fails
+MSG_QUALIF_PREF_INTENT_1 = "D'accord, j'ai bien compris. Vous préférez le matin ou l'après-midi ?"
+MSG_QUALIF_PREF_INTENT_2 = "Pour choisir le créneau : dites \"matin\" ou \"après-midi\"."
 MSG_QUALIF_CONTACT_RETRY_VOCAL = "Pour vous rappeler, c'est quoi le mieux ? Téléphone ou email ?"
+# P0 : répétition d'intention RDV en CONTACT_CONFIRM → message guidé oui/non, pas contact_confirm_fails
+MSG_CONTACT_CONFIRM_INTENT_1 = "D'accord. Juste pour confirmer : oui ou non ?"
+MSG_CONTACT_CONFIRM_INTENT_2 = "Dites \"oui\" pour confirmer, ou \"non\" pour corriger."
+# Optionnel : QUALIF_CONTACT quand l'utilisateur répond par une intention RDV
+MSG_QUALIF_CONTACT_INTENT = "D'accord. Pour finaliser, j'ai besoin de votre email ou numéro de téléphone."
 
 def get_qualif_retry(field: str, channel: str = "web") -> str:
     """

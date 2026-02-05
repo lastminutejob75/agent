@@ -13,8 +13,15 @@ from fastapi.testclient import TestClient
 from backend.main import app
 from backend import config
 from backend.stt_utils import normalize_transcript, is_filler_only
-from backend.stt_common import classify_text_only, is_critical_token, looks_like_garbage_or_wrong_language
-from backend.prompts import MSG_NOISE_1, MSG_NOISE_2, MSG_UNCLEAR_1
+from backend.stt_common import (
+    classify_text_only,
+    is_critical_token,
+    is_critical_overlap,
+    estimate_tts_duration,
+    looks_like_garbage_or_wrong_language,
+    looks_like_short_crosstalk,
+)
+from backend.prompts import MSG_NOISE_1, MSG_NOISE_2, MSG_UNCLEAR_1, MSG_VOCAL_CROSSTALK_ACK, MSG_OVERLAP_REPEAT
 from backend.routes.voice import _classify_stt_input, _is_critical_token
 
 
@@ -125,6 +132,14 @@ def test_classify_text_only_garbage_UNCLEAR():
     assert kind == "UNCLEAR"
     kind2, _ = classify_text_only("the and you would")
     assert kind2 == "UNCLEAR"
+
+
+def test_looks_like_short_crosstalk():
+    """Court + garbage => crosstalk; tokens critiques jamais crosstalk."""
+    assert looks_like_short_crosstalk("the you would") is True
+    assert looks_like_short_crosstalk("euh") is True
+    assert looks_like_short_crosstalk("oui") is False
+    assert looks_like_short_crosstalk("Believe you would have won") is False  # >= 20 chars
 
 
 def test_stt_common_critical_tokens():
@@ -430,3 +445,212 @@ def test_chat_completions_unclear_1():
     data = r.json()
     content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
     assert MSG_UNCLEAR_1 in content
+
+
+# ============== Crosstalk (barge-in) guard ==============
+
+def test_chat_completions_crosstalk_ignore_short_unclear():
+    """UNCLEAR court juste après réponse assistant → overlap_guard ou ignore_crosstalk, pas d'incrément unclear_text_count."""
+    from backend.engine import ENGINE
+    client = TestClient(app)
+    call_id = "call_crosstalk_" + str(time.time())
+    # 1) Premier message pour obtenir une réponse et mettre à jour last_agent_reply_ts / last_assistant_ts
+    r1 = client.post(
+        "/api/vapi/chat/completions",
+        json=_chat_completions_payload(call_id, "bonjour"),
+    )
+    assert r1.status_code == 200
+    content1 = r1.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+    # 2) Deuxième requête immédiate : court garbage → overlap_guard ("répéter") ou crosstalk ("Je vous écoute.")
+    messages2 = [
+        {"role": "assistant", "content": "Bonjour, que puis-je faire pour vous ?"},
+        {"role": "user", "content": "bonjour"},
+        {"role": "assistant", "content": content1},
+        {"role": "user", "content": "the you would"},
+    ]
+    r2 = client.post(
+        "/api/vapi/chat/completions",
+        json={"call": {"id": call_id}, "messages": messages2, "stream": False},
+    )
+    assert r2.status_code == 200
+    content2 = r2.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+    assert MSG_VOCAL_CROSSTALK_ACK in content2 or "répéter" in content2.lower()
+    session = ENGINE.session_store.get(call_id)
+    assert session is not None
+    assert getattr(session, "unclear_text_count", 0) == 0
+
+
+def test_chat_completions_oui_during_crosstalk_window_treated_as_text(caplog):
+    """'oui' pendant la fenêtre crosstalk → traité TEXT (token critique), pas ignoré."""
+    import logging
+    client = TestClient(app)
+    call_id = "call_crosstalk_oui_" + str(time.time())
+    r1 = client.post(
+        "/api/vapi/chat/completions",
+        json=_chat_completions_payload(call_id, "bonjour"),
+    )
+    assert r1.status_code == 200
+    content1 = r1.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+    messages2 = [
+        {"role": "assistant", "content": "Bonjour, que puis-je faire pour vous ?"},
+        {"role": "user", "content": "bonjour"},
+        {"role": "assistant", "content": content1},
+        {"role": "user", "content": "oui"},
+    ]
+    with caplog.at_level(logging.INFO):
+        r2 = client.post(
+            "/api/vapi/chat/completions",
+            json={"call": {"id": call_id}, "messages": messages2, "stream": False},
+        )
+    assert r2.status_code == 200
+    content2 = r2.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+    assert MSG_VOCAL_CROSSTALK_ACK not in content2
+    assert "nom" in content2.lower() or "quel" in content2.lower()
+
+
+# ============== Overlap guard (overlap ≠ unclear) ==============
+
+def test_overlap_unclear_does_not_increment_counter():
+    """UNCLEAR juste après réponse agent (overlap) → overlap_guard, pas d'incrément unclear_text_count, message 'répéter'."""
+    from backend.engine import ENGINE
+    client = TestClient(app)
+    call_id = "call_overlap_" + str(time.time())
+    r1 = client.post(
+        "/api/vapi/chat/completions",
+        json=_chat_completions_payload(call_id, "bonjour"),
+    )
+    assert r1.status_code == 200
+    content1 = r1.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+    messages2 = [
+        {"role": "assistant", "content": "Bonjour, que puis-je faire pour vous ?"},
+        {"role": "user", "content": "bonjour"},
+        {"role": "assistant", "content": content1},
+        {"role": "user", "content": "the you would"},
+    ]
+    r2 = client.post(
+        "/api/vapi/chat/completions",
+        json={"call": {"id": call_id}, "messages": messages2, "stream": False},
+    )
+    assert r2.status_code == 200
+    content2 = r2.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+    assert "répéter" in content2.lower() or "écoute" in content2.lower()
+    session = ENGINE.session_store.get(call_id)
+    assert session is not None
+    assert getattr(session, "unclear_text_count", 0) == 0
+
+
+def test_non_overlap_unclear_increments():
+    """UNCLEAR longtemps après dernière réponse agent → unclear_text_count incrémenté (pas overlap_guard)."""
+    from backend.engine import ENGINE
+    client = TestClient(app)
+    call_id = "call_non_overlap_" + str(time.time())
+    r1 = client.post(
+        "/api/vapi/chat/completions",
+        json=_chat_completions_payload(call_id, "bonjour"),
+    )
+    assert r1.status_code == 200
+    session = ENGINE.session_store.get(call_id)
+    assert session is not None
+    past = time.time() - 10.0
+    session.last_agent_reply_ts = past
+    session.last_assistant_ts = past
+    session.speaking_until_ts = past
+    if hasattr(ENGINE.session_store, "save"):
+        ENGINE.session_store.save(session)
+    messages2 = [
+        {"role": "assistant", "content": "Bonjour."},
+        {"role": "user", "content": "bonjour"},
+        {"role": "assistant", "content": "C'est à quel nom ?"},
+        {"role": "user", "content": "Believe you would have won't"},
+    ]
+    r2 = client.post(
+        "/api/vapi/chat/completions",
+        json={"call": {"id": call_id}, "messages": messages2, "stream": False},
+    )
+    assert r2.status_code == 200
+    session = ENGINE.session_store.get(call_id)
+    assert session is not None
+    assert getattr(session, "unclear_text_count", 0) == 1
+
+
+# ============== Semi-sourd (speaking_until_ts + estimate TTS) ==============
+
+def test_estimate_tts_duration():
+    """Estimation durée TTS : min 0.8s, max 4.0s, ~13 car/s."""
+    assert 0.8 <= estimate_tts_duration("Oui") <= 1.0
+    assert 1.0 <= estimate_tts_duration("C'est à quel nom ?") <= 2.5
+    assert estimate_tts_duration("x" * 200) == 4.0
+    assert estimate_tts_duration("") == 0.0
+
+
+def test_is_critical_overlap():
+    """Mots critiques pendant overlap → doivent passer."""
+    assert is_critical_overlap("oui") is True
+    assert is_critical_overlap("non") is True
+    assert is_critical_overlap("stop") is True
+    assert is_critical_overlap("humain") is True
+    assert is_critical_overlap("annuler") is True
+    assert is_critical_overlap("the you would") is False
+    assert is_critical_overlap("euh") is False
+
+
+def test_overlap_guard_ignores_unclear_when_speaking():
+    """UNCLEAR pendant que agent parle (speaking_until_ts dans le futur) → overlap_ignored, pas d'incrément."""
+    from backend.engine import ENGINE
+    from backend.routes.voice import _is_agent_speaking
+    client = TestClient(app)
+    call_id = "call_semideaf_" + str(time.time())
+    r1 = client.post(
+        "/api/vapi/chat/completions",
+        json=_chat_completions_payload(call_id, "bonjour"),
+    )
+    assert r1.status_code == 200
+    session = ENGINE.session_store.get(call_id)
+    assert session is not None
+    session.speaking_until_ts = time.time() + 2.0
+    if hasattr(ENGINE.session_store, "save"):
+        ENGINE.session_store.save(session)
+    messages2 = [
+        {"role": "assistant", "content": "Bonjour."},
+        {"role": "user", "content": "bonjour"},
+        {"role": "assistant", "content": r1.json().get("choices", [{}])[0].get("message", {}).get("content", "")},
+        {"role": "user", "content": "the you would"},
+    ]
+    r2 = client.post(
+        "/api/vapi/chat/completions",
+        json={"call": {"id": call_id}, "messages": messages2, "stream": False},
+    )
+    assert r2.status_code == 200
+    content2 = r2.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+    assert MSG_VOCAL_CROSSTALK_ACK in content2
+    session = ENGINE.session_store.get(call_id)
+    assert getattr(session, "unclear_text_count", 0) == 0
+
+
+def test_overlap_guard_allows_critical_word():
+    """'oui' pendant que agent parle → traité normalement (critical_overlap_allowed)."""
+    from backend.engine import ENGINE
+    client = TestClient(app)
+    call_id = "call_critical_overlap_" + str(time.time())
+    r1 = client.post(
+        "/api/vapi/chat/completions",
+        json=_chat_completions_payload(call_id, "bonjour"),
+    )
+    assert r1.status_code == 200
+    session = ENGINE.session_store.get(call_id)
+    session.speaking_until_ts = time.time() + 2.0
+    if hasattr(ENGINE.session_store, "save"):
+        ENGINE.session_store.save(session)
+    messages2 = [
+        {"role": "assistant", "content": "Bonjour."},
+        {"role": "user", "content": "bonjour"},
+        {"role": "assistant", "content": r1.json().get("choices", [{}])[0].get("message", {}).get("content", "")},
+        {"role": "user", "content": "oui"},
+    ]
+    r2 = client.post(
+        "/api/vapi/chat/completions",
+        json={"call": {"id": call_id}, "messages": messages2, "stream": False},
+    )
+    assert r2.status_code == 200
+    content2 = r2.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+    assert "nom" in content2.lower() or "quel" in content2.lower()

@@ -79,6 +79,54 @@ def looks_like_garbage_or_wrong_language(text: str) -> bool:
     return False
 
 
+def estimate_tts_duration(text: str) -> float:
+    """
+    Estime la durée TTS en secondes.
+    ~13 car/s en français ; min 0.8s, max 4.0s.
+    """
+    if not text or not text.strip():
+        return 0.0
+    chars_per_second = 13.0
+    duration = len(text) / chars_per_second
+    return max(0.8, min(4.0, duration))
+
+
+# Mots qui passent même pendant overlap (semi-sourd)
+CRITICAL_OVERLAP = frozenset({
+    "oui", "non", "ok", "okay",
+    "stop", "arrête", "arrêtez",
+    "humain", "personne", "quelqu'un", "quelquun",
+    "annuler", "annulation",
+    "transfert", "transférer", "transfere",
+})
+
+
+def is_critical_overlap(text: str) -> bool:
+    """True si le texte est un mot critique qui doit être traité même pendant que l'agent parle."""
+    if not text:
+        return False
+    normalized = normalize_transcript(text or "").strip().lower()
+    normalized = "".join(c for c in normalized if c.isalnum() or c.isspace()).strip()
+    if not normalized:
+        return False
+    return normalized in CRITICAL_OVERLAP
+
+
+def looks_like_short_crosstalk(text: str) -> bool:
+    """
+    Court + garbage => probable crosstalk (user parle pendant TTS).
+    Ne jamais considérer les tokens critiques comme crosstalk (ils sont déjà TEXT).
+    """
+    if not text or not text.strip():
+        return False
+    raw = (text or "").strip()
+    if len(raw) >= 20:
+        return False
+    if is_critical_token(normalize_transcript(raw)):
+        return False
+    return looks_like_garbage_or_wrong_language(raw) or is_filler_only(raw)
+
+
 def classify_text_only(text: str) -> Tuple[Literal["SILENCE", "UNCLEAR", "TEXT"], str]:
     """
     Classification text-only (sans partial/confidence).

@@ -1268,6 +1268,17 @@ class Engine:
             channel = getattr(session, "channel", "web")
             print(f"🔍 QUALIF_PREF handler: user_text='{user_text}'")
 
+            # --- P0: répétition intention RDV ("je veux un rdv") → message guidé, pas preference_fails ---
+            if _detect_booking_intent(user_text):
+                session.qualif_pref_intent_repeat_count += 1
+                msg = (
+                    prompts.MSG_QUALIF_PREF_INTENT_1
+                    if session.qualif_pref_intent_repeat_count == 1
+                    else prompts.MSG_QUALIF_PREF_INTENT_2
+                )
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+
             # --- RÈGLE 7: contrainte horaire explicite (ex: "je finis à 17h") ---
             if getattr(config, "TIME_CONSTRAINT_ENABLED", False):
                 try:
@@ -1314,15 +1325,11 @@ class Engine:
                 )
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
-            
-            if _detect_booking_intent(user_text):
-                msg = prompts.get_qualif_retry("pref", channel=channel)
-                session.add_message("agent", msg)
-                return [Event("final", msg, conv_state=session.state)]
-            
+
             # 1. Inférence contextuelle (spec V3) — "je travaille jusqu'à 17h" → confirmation
             inferred_pref = infer_preference_from_context(user_text)
             if inferred_pref:
+                session.qualif_pref_intent_repeat_count = 0
                 session.pending_preference = inferred_pref
                 session.last_preference_user_text = user_text.strip()
                 session.state = "PREFERENCE_CONFIRM"
@@ -1334,6 +1341,7 @@ class Engine:
             # 2. Inférence temporelle robuste ("vers 14h", "après le déjeuner", "peu importe", etc.)
             time_pref = guards.infer_time_preference(user_text)
             if time_pref == "morning":
+                session.qualif_pref_intent_repeat_count = 0
                 log_preference_inferred(logger, session, user_text, inferred="morning")
                 session.pending_preference = "matin"
                 session.last_preference_user_text = user_text.strip()
@@ -1343,6 +1351,7 @@ class Engine:
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             if time_pref == "afternoon":
+                session.qualif_pref_intent_repeat_count = 0
                 log_preference_inferred(logger, session, user_text, inferred="afternoon")
                 session.pending_preference = "après-midi"
                 session.last_preference_user_text = user_text.strip()
@@ -1352,6 +1361,7 @@ class Engine:
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             if time_pref == "neutral":
+                session.qualif_pref_intent_repeat_count = 0
                 log_preference_inferred(logger, session, user_text, inferred="neutral")
                 session.pending_preference = "matin"
                 session.last_preference_user_text = user_text.strip()
@@ -1364,6 +1374,7 @@ class Engine:
             # 3. Fallback : infer_preference_plausible (mots directs + heures)
             pref_plausible = guards.infer_preference_plausible(user_text)
             if pref_plausible == "morning":
+                session.qualif_pref_intent_repeat_count = 0
                 log_preference_inferred(logger, session, user_text, inferred="morning")
                 session.pending_preference = "matin"
                 session.last_preference_user_text = user_text.strip()
@@ -1373,6 +1384,7 @@ class Engine:
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             if pref_plausible == "afternoon":
+                session.qualif_pref_intent_repeat_count = 0
                 log_preference_inferred(logger, session, user_text, inferred="afternoon")
                 session.pending_preference = "après-midi"
                 session.last_preference_user_text = user_text.strip()
@@ -1382,6 +1394,7 @@ class Engine:
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             if pref_plausible == "any":
+                session.qualif_pref_intent_repeat_count = 0
                 log_preference_inferred(logger, session, user_text, inferred="neutral")
                 session.pending_preference = "matin"
                 session.last_preference_user_text = user_text.strip()
@@ -1428,20 +1441,12 @@ class Engine:
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
 
-            # Vérifier répétition booking intent
+            # P0 : répétition intention RDV → message guidé contact, pas phone_fails ni transfert
             if _detect_booking_intent(contact_raw):
-                session.confirm_retry_count += 1
-                
-                if session.confirm_retry_count >= config.CONFIRM_RETRY_MAX:
-                    session.state = "TRANSFERRED"
-                    msg = prompts.get_message("transfer", channel=channel)
-                    session.add_message("agent", msg)
-                    return [Event("final", msg, conv_state=session.state)]
-                
-                msg = prompts.get_qualif_retry("contact", channel=channel)
+                msg = prompts.MSG_QUALIF_CONTACT_INTENT
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
-            
+
             # ✅ Parsing email dicté (vocal)
             if channel == "vocal" and guards.looks_like_dictated_email(contact_raw):
                 contact_raw = guards.parse_vocal_email_min(contact_raw)
@@ -1695,25 +1700,35 @@ class Engine:
         
         print(f"📋 Pending slots: {[(s.idx, s.label) for s in session.pending_slots]}")
         
-        # IVR pro : choix flexible par numéro / jour / heure (ambiguïté → recovery)
-        proposed_slots = [
-            {
-                "start": getattr(s, "start", ""),
-                "label_vocal": getattr(s, "label_vocal", None) or s.label,
-                "day": getattr(s, "day", ""),
-                "hour": getattr(s, "hour", 0),
-            }
-            for s in (session.pending_slots or [])
-        ]
-        slot_idx = guards.detect_slot_choice_flexible(user_text, proposed_slots)
+        # Validation rapide (interruption) : "Oui !" / "Oui" seul = premier créneau
+        _t = (user_text or "").strip().lower()
+        _t = "".join(c for c in _t if c.isalnum() or c in " '\"-")
+        _t = _t.replace("'", "").replace("'", "").strip()
+        if _t in {"oui", "ouais", "ouaip", "daccord", "d'accord", "ok", "okay", "parfait"} and (session.pending_slots or []):
+            slot_idx = 1
+            print(f"✅ slot_choice: validation rapide '{user_text[:20]}' → slot 1")
+        else:
+            slot_idx = None
         if slot_idx is None:
-            slot_idx = detect_slot_choice(user_text, num_slots=len(session.pending_slots or []))
-            if slot_idx is not None:
-                slot_idx = slot_idx + 1  # convert 0-based → 1-based
-        if slot_idx is None:
-            is_valid, slot_idx = guards.validate_booking_confirm(user_text, channel=channel)
-            if not is_valid:
-                slot_idx = None
+            # IVR pro : choix flexible par numéro / jour / heure (ambiguïté → recovery)
+            proposed_slots = [
+                {
+                    "start": getattr(s, "start", ""),
+                    "label_vocal": getattr(s, "label_vocal", None) or s.label,
+                    "day": getattr(s, "day", ""),
+                    "hour": getattr(s, "hour", 0),
+                }
+                for s in (session.pending_slots or [])
+            ]
+            slot_idx = guards.detect_slot_choice_flexible(user_text, proposed_slots)
+            if slot_idx is None:
+                slot_idx = detect_slot_choice(user_text, num_slots=len(session.pending_slots or []))
+                if slot_idx is not None:
+                    slot_idx = slot_idx + 1  # convert 0-based → 1-based
+            if slot_idx is None:
+                is_valid, slot_idx = guards.validate_booking_confirm(user_text, channel=channel)
+                if not is_valid:
+                    slot_idx = None
         print(f"🔍 slot_choice: '{user_text}' → slot_idx={slot_idx}")
         
         if slot_idx is not None:
@@ -2263,9 +2278,22 @@ class Engine:
     def _handle_contact_confirm(self, session: Session, user_text: str) -> List[Event]:
         """Gère la confirmation du numéro de téléphone."""
         channel = getattr(session, "channel", "web")
+
+        # --- P0: répétition intention RDV ("je veux un rdv") → message guidé oui/non, pas contact_confirm_fails ---
+        if _detect_booking_intent(user_text):
+            session.contact_confirm_intent_repeat_count += 1
+            msg = (
+                prompts.MSG_CONTACT_CONFIRM_INTENT_1
+                if session.contact_confirm_intent_repeat_count == 1
+                else prompts.MSG_CONTACT_CONFIRM_INTENT_2
+            )
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state=session.state)]
+
         intent = detect_intent(user_text)
-        
+
         if intent == "YES":
+            session.contact_confirm_intent_repeat_count = 0
             # Numéro confirmé
             
             # Si on a déjà un slot choisi (nouveau flow) → booker et confirmer
@@ -2296,6 +2324,7 @@ class Engine:
             return self._propose_slots(session)
         
         elif intent == "NO":
+            session.contact_confirm_intent_repeat_count = 0
             # Numéro incorrect
             # Vérifier si l'utilisateur donne une correction partielle (ex: "non c'est 8414")
             digits = guards.parse_vocal_phone(user_text)

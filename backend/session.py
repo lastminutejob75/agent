@@ -84,6 +84,10 @@ class Session:
     unclear_text_count: int = 0
     # Crosstalk (barge-in) : timestamp dernière réponse assistant (time.time())
     last_assistant_ts: float = 0.0
+    # Overlap guard : timestamp envoi dernière réponse agent (overlap ≠ unclear)
+    last_agent_reply_ts: float = 0.0
+    # Semi-sourd : timestamp fin TTS estimée (agent "parle" jusqu'à ce moment)
+    speaking_until_ts: float = 0.0
 
     # Recovery par contexte (analytics + tuning fin — AJOUT_COMPTEURS_RECOVERY)
     slot_choice_fails: int = 0
@@ -91,7 +95,9 @@ class Session:
     qualif_name_intent_repeat_count: int = 0  # P0 : répétitions "je veux un rdv" en QUALIF_NAME (pas d'erreur, pas INTENT_ROUTER)
     phone_fails: int = 0
     preference_fails: int = 0
+    qualif_pref_intent_repeat_count: int = 0  # P0 : répétitions "je veux un rdv" en QUALIF_PREF (pas d'erreur, pas INTENT_ROUTER)
     contact_confirm_fails: int = 0
+    contact_confirm_intent_repeat_count: int = 0  # P0 : répétitions "je veux un rdv" en CONTACT_CONFIRM (pas contact_confirm_fails)
     cancel_name_fails: int = 0  # Flow CANCEL : RDV non trouvé (vérifier/humain puis INTENT_ROUTER)
     cancel_rdv_not_found_count: int = 0  # CANCEL : nb fois "RDV pas trouvé" (alternatives puis transfert)
     modify_name_fails: int = 0  # Flow MODIFY : RDV non trouvé (vérifier/humain puis INTENT_ROUTER)
@@ -146,16 +152,21 @@ class Session:
         self.last_noise_ts = None
         self.unclear_text_count = 0
         self.last_assistant_ts = 0.0
+        self.last_agent_reply_ts = 0.0
+        self.speaking_until_ts = 0.0
         self.slot_choice_fails = 0
         self.name_fails = 0
+        self.qualif_name_intent_repeat_count = 0
         self.phone_fails = 0
         self.preference_fails = 0
+        self.qualif_pref_intent_repeat_count = 0
         self.cancel_name_fails = 0
         self.cancel_rdv_not_found_count = 0
         self.modify_name_fails = 0
         self.modify_rdv_not_found_count = 0
         self.faq_fails = 0
         self.contact_confirm_fails = 0
+        self.contact_confirm_intent_repeat_count = 0
         self.ordonnance_choice_fails = 0
         self.ordonnance_choice_asked = False
         self.time_constraint_type = ""

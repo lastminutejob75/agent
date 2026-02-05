@@ -18,7 +18,7 @@ from backend import prompts, config
 from backend.client_memory import get_client_memory
 from backend.reports import get_report_generator
 from backend.stt_utils import normalize_transcript, is_filler_only
-from backend.stt_common import classify_text_only
+from backend.stt_common import classify_text_only, estimate_tts_duration, is_critical_overlap
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -184,6 +184,13 @@ async def test_calendar_connection():
         }
 
 
+
+
+def _is_agent_speaking(session) -> bool:
+    """Vrai si l'agent est en train de parler (TTS en cours, selon estimation)."""
+    now = time.time()
+    until = getattr(session, "speaking_until_ts", 0) or 0
+    return now < until
 
 
 def _log_decision_out(
@@ -633,6 +640,36 @@ async def vapi_custom_llm(request: Request):
                 },
             )
 
+            # Semi-sourd : overlap guard (UNCLEAR/SILENCE pendant TTS = ignoré ; mots critiques passent)
+            overlap_handled = False
+            response_text = ""
+            action_taken = ""
+            if _is_agent_speaking(session):
+                if is_critical_overlap(user_message or ""):
+                    logger.info(
+                        "critical_overlap_allowed",
+                        extra={"call_id": call_id, "text_len": len((user_message or "")[:20])},
+                    )
+                elif kind in ("UNCLEAR", "SILENCE"):
+                    response_text = prompts.MSG_VOCAL_CROSSTALK_ACK
+                    action_taken = "overlap_ignored"
+                    overlap_handled = True
+                    logger.info(
+                        "overlap_ignored",
+                        extra={"call_id": call_id, "classification": kind, "reason": "agent_speaking"},
+                    )
+                elif kind == "TEXT" and len((user_message or "").strip()) < 10:
+                    response_text = getattr(
+                        prompts, "MSG_OVERLAP_REPEAT_SHORT", "Pardon, pouvez-vous répéter ?"
+                    )
+                    session.add_message("agent", response_text)
+                    action_taken = "overlap_repeat"
+                    overlap_handled = True
+                    logger.info(
+                        "overlap_repeat",
+                        extra={"call_id": call_id, "text_len": len((user_message or "").strip())},
+                    )
+
             # En annulation : si on va chercher le RDV par nom, envoyer d'abord un message de tenue
             # en stream pour éviter le "mmm" TTS pendant la latence (recherche Google Calendar).
             cancel_lookup_streaming = (
@@ -643,64 +680,89 @@ async def vapi_custom_llm(request: Request):
             if cancel_lookup_streaming:
                 response_text = ""
             else:
-                try:
-                    if kind == "SILENCE":
-                        events = ENGINE.handle_message(call_id, "")
-                        response_text = events[0].text if events else prompts.MSG_EMPTY_MESSAGE
-                        action_taken = "silence"
-                        _maybe_reset_noise_on_terminal(session, events or [])
-                    elif kind == "TEXT":
-                        events = ENGINE.handle_message(call_id, normalized)
-                        response_text = events[0].text if events else "Je n'ai pas compris"
-                        action_taken = "text"
-                        _maybe_reset_noise_on_terminal(session, events or [])
-                    else:  # UNCLEAR — crosstalk guard : court + juste après TTS => ignorer sans incrémenter
-                        raw_len = len((user_message or ""))
-                        last_ts = getattr(session, "last_assistant_ts", 0) or 0
-                        within_crosstalk_window = (time.time() - last_ts) < getattr(
-                            config, "CROSSTALK_WINDOW_SEC", 1.2
-                        )
-                        if within_crosstalk_window and raw_len < 20:
-                            response_text = prompts.MSG_VOCAL_CROSSTALK_ACK
-                            action_taken = "ignore_crosstalk"
-                        else:
-                            session.unclear_text_count = getattr(session, "unclear_text_count", 0) + 1
-                            count = session.unclear_text_count
-                            if count == 1:
-                                response_text = prompts.MSG_UNCLEAR_1
-                                session.add_message("agent", response_text)
-                                action_taken = "unclear_1"
-                            elif count == 2:
-                                events = ENGINE._trigger_intent_router(
-                                    session, "unclear_text_2", user_message or ""
+                if not overlap_handled:
+                    try:
+                        if kind == "SILENCE":
+                            events = ENGINE.handle_message(call_id, "")
+                            response_text = events[0].text if events else prompts.MSG_EMPTY_MESSAGE
+                            action_taken = "silence"
+                            _maybe_reset_noise_on_terminal(session, events or [])
+                        elif kind == "TEXT":
+                            events = ENGINE.handle_message(call_id, normalized)
+                            response_text = events[0].text if events else "Je n'ai pas compris"
+                            action_taken = "text"
+                            _maybe_reset_noise_on_terminal(session, events or [])
+                        else:  # UNCLEAR — overlap guard puis crosstalk : ne pas compter overlap comme échec
+                            now = time.time()
+                            last_reply_ts = getattr(session, "last_agent_reply_ts", 0) or 0
+                            overlap_window = getattr(config, "OVERLAP_WINDOW_SEC", 1.2)
+                            recent_agent = (now - last_reply_ts) < overlap_window
+                            if recent_agent:
+                                response_text = getattr(
+                                    prompts, "MSG_OVERLAP_REPEAT", "Je vous ai entendu en même temps. Pouvez-vous répéter maintenant ?"
                                 )
-                                response_text = events[0].text if events else prompts.MSG_UNCLEAR_1
-                                action_taken = "unclear_2_intent_router"
+                                session.add_message("agent", response_text)
+                                action_taken = "overlap_guard"
                             else:
-                                session.state = "TRANSFERRED"
-                                response_text = (
-                                    prompts.VOCAL_TRANSFER_COMPLEX
-                                    if getattr(session, "channel", "") == "vocal"
-                                    else prompts.MSG_TRANSFER
+                                raw_len = len((user_message or ""))
+                                last_ts = getattr(session, "last_assistant_ts", 0) or 0
+                                within_crosstalk_window = (now - last_ts) < getattr(
+                                    config, "CROSSTALK_WINDOW_SEC", 5.0
                                 )
-                                session.add_message("agent", response_text)
-                                action_taken = "unclear_3_transfer"
-                    t4 = log_timer("ENGINE processed", t3)
-                    _log_decision_out(call_id, session, action_taken, response_text)
-                    if hasattr(ENGINE.session_store, "save"):
-                        ENGINE.session_store.save(session)
-                    logger.info(
-                        "decision_out_chat",
-                        extra={"call_id": call_id, "state_after": getattr(session, "state", "")},
-                    )
-                except Exception as e:
-                    print(f"❌ ENGINE ERROR: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    response_text = "Excusez-moi, j'ai un petit souci technique. Je vous transfère à un collègue."
+                                max_crosstalk_len = getattr(config, "CROSSTALK_MAX_RAW_LEN", 40)
+                                if within_crosstalk_window and raw_len <= max_crosstalk_len:
+                                    response_text = prompts.MSG_VOCAL_CROSSTALK_ACK
+                                    action_taken = "ignore_crosstalk"
+                                else:
+                                    session.unclear_text_count = getattr(session, "unclear_text_count", 0) + 1
+                                    count = session.unclear_text_count
+                                    if count == 1:
+                                        response_text = prompts.MSG_UNCLEAR_1
+                                        session.add_message("agent", response_text)
+                                        action_taken = "unclear_1"
+                                    elif count == 2:
+                                        events = ENGINE._trigger_intent_router(
+                                            session, "unclear_text_2", user_message or ""
+                                        )
+                                        response_text = events[0].text if events else prompts.MSG_UNCLEAR_1
+                                        action_taken = "unclear_2_intent_router"
+                                    else:
+                                        session.state = "TRANSFERRED"
+                                        response_text = (
+                                            prompts.VOCAL_TRANSFER_COMPLEX
+                                            if getattr(session, "channel", "") == "vocal"
+                                            else prompts.MSG_TRANSFER
+                                        )
+                                        session.add_message("agent", response_text)
+                                        action_taken = "unclear_3_transfer"
+                    except Exception as e:
+                        print(f"❌ ENGINE ERROR: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        response_text = "Excusez-moi, j'ai un petit souci technique. Je vous transfère à un collègue."
+                t4 = log_timer("ENGINE processed", t3)
+                _log_decision_out(call_id, session, action_taken, response_text)
+                if hasattr(ENGINE.session_store, "save"):
+                    ENGINE.session_store.save(session)
+                logger.info(
+                    "decision_out_chat",
+                    extra={"call_id": call_id, "state_after": getattr(session, "state", "")},
+                )
             if not cancel_lookup_streaming:
                 print(f"✅ Response: '{response_text[:50]}...' ({len(response_text)} chars)")
                 session.last_assistant_ts = time.time()
+                session.last_agent_reply_ts = time.time()
+                if response_text and response_text.strip():
+                    tts_duration = estimate_tts_duration(response_text)
+                    session.speaking_until_ts = time.time() + tts_duration
+                    logger.info(
+                        "agent_speaking",
+                        extra={
+                            "call_id": call_id,
+                            "tts_duration": round(tts_duration, 2),
+                            "speaking_until_ts": session.speaking_until_ts,
+                        },
+                    )
             
             # 📊 Enregistrer stats pour rapport (si conversation terminée) — pas en cancel_lookup_streaming (fait dans le stream)
             if not cancel_lookup_streaming:

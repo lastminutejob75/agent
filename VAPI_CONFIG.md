@@ -1,5 +1,74 @@
 # Configuration Vapi - Assistant Vocal
 
+## Snippet de configuration (API / Dashboard)
+
+Pour un agent fluide avec **interruptions** et **validations rapides** ("Oui !" = premier créneau), utilisez une config de ce type :
+
+```json
+{
+  "name": "UWI Booking Agent",
+  "model": {
+    "provider": "openai",
+    "model": "gpt-4",
+    "messages": [
+      {
+        "role": "system",
+        "content": "<SYSTEM_PROMPT avec business_name=[NOM_BUSINESS]>"
+      }
+    ],
+    "temperature": 0.7,
+    "maxTokens": 150
+  },
+  "voice": {
+    "provider": "11labs",
+    "voiceId": "21m00Tcm4TlvDq8ikWAM",
+    "stability": 0.5,
+    "similarityBoost": 0.75,
+    "interruptible": true,
+    "fillerInjectionEnabled": false
+  },
+  "transcriber": {
+    "provider": "deepgram",
+    "model": "nova-2",
+    "language": "fr",
+    "smartFormat": true,
+    "endpointing": 200,
+    "interimResults": true
+  },
+  "firstMessage": "Bonjour, {business_name}, je peux vous aider ?",
+  "endCallMessage": "Au revoir et bonne journée !",
+  "endCallPhrases": ["au revoir", "bonne journée", "merci au revoir"],
+  "serverUrl": "https://ton-backend.railway.app/webhook/vapi",
+  "serverUrlSecret": "ton_secret_webhook"
+}
+```
+
+### Points critiques
+
+| Paramètre | Valeur | Rôle |
+|-----------|--------|------|
+| **voice.interruptible** | `true` | Permet à l'utilisateur de couper la parole (barge-in) ; essentiel pour "Oui !" pendant l'énumération des créneaux. |
+| **voice.fillerInjectionEnabled** | `false` | Évite les "euh" pendant les interruptions. |
+| **transcriber.endpointing** | `200` | Détection rapide de fin de parole (ms). |
+| **transcriber.interimResults** | `true` | Réactivité en temps réel. |
+| **model.maxTokens** | `150` | Réponses courtes, adaptées au vocal. |
+
+Remplacez `serverUrl` et `serverUrlSecret` par vos valeurs (Railway, Vercel, etc.).
+
+### Test rapide après déploiement
+
+Scénario à valider :
+
+```
+Agent : "Voici les créneaux : Vendredi 5 à 14h, dites 1. Sam—"
+Toi  : "Oui !"
+→ L'agent doit répondre : "Parfait ! Je réserve vendredi 5 à 14h. Votre nom ?"
+```
+
+Si l'agent redemande "un, deux ou trois" ou clarifie au lieu de prendre le premier créneau, vérifier : `interruptible: true`, SYSTEM_PROMPT (section "DÉTECTION DES VALIDATIONS RAPIDES") et le handler WAIT_CONFIRM côté backend.
+
+---
+
 ## First Message (Message d'accueil)
 
 Dans le Dashboard Vapi, configurez le **First Message** :
