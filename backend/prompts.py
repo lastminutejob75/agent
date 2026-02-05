@@ -17,22 +17,22 @@ import re
 
 
 # --- Silence vocal (RÈGLE 3) ---
-MSG_SILENCE_1 = "Je n'ai rien entendu. Pouvez-vous répéter ?"
-MSG_SILENCE_2 = "Êtes-vous toujours là ?"
+MSG_SILENCE_1 = "Je n'ai pas entendu votre réponse. Pouvez-vous répéter, s'il vous plaît ?"
+MSG_SILENCE_2 = "Je vous écoute. Prenez votre temps."
 
 # --- Bruit STT (nova-2-phonecall : confidence faible, pas de vrai silence) ---
-MSG_NOISE_1 = "Je n'ai pas bien entendu. Pouvez-vous répéter ?"
-MSG_NOISE_2 = "Il y a du bruit. Pouvez-vous répéter plus distinctement ?"
+MSG_NOISE_1 = "Je vous entends, mais pas très clairement. Pouvez-vous répéter, s'il vous plaît ?"
+MSG_NOISE_2 = "Il y a un peu de bruit. Parlez près du téléphone, puis répétez, s'il vous plaît."
 
 # --- Custom LLM (chat/completions) : texte incompréhensible / garbage ---
-MSG_UNCLEAR_1 = "Je vous entends mal. Pouvez-vous répéter ?"
+MSG_UNCLEAR_1 = "La ligne n'est pas très claire. Pouvez-vous répéter, s'il vous plaît ?"
 
 # --- Crosstalk (barge-in) : user parle pendant TTS → no-op sans incrémenter unclear ---
 MSG_VOCAL_CROSSTALK_ACK = "Je vous écoute."
 # --- Overlap : UNCLEAR juste après réponse agent → pas d'incrément, demander de répéter ---
-MSG_OVERLAP_REPEAT = "Je vous ai entendu en même temps. Pouvez-vous répéter maintenant ?"
+MSG_OVERLAP_REPEAT = "Je vous ai entendu en même temps. Répétez maintenant, s'il vous plaît."
 # --- Semi-sourd : TEXT court pendant que l'agent parle ---
-MSG_OVERLAP_REPEAT_SHORT = "Pardon, pouvez-vous répéter ?"
+MSG_OVERLAP_REPEAT_SHORT = "Pardon. Répétez, s'il vous plaît."
 
 # --- Contrainte horaire (RÈGLE 7) ---
 MSG_TIME_CONSTRAINT_IMPOSSIBLE = (
@@ -51,10 +51,9 @@ def msg_no_match_faq(business_name: str, channel: str = "web") -> str:
     Ton différent selon le canal.
     """
     if channel == "vocal":
-        # Ton parisien naturel
         return (
-            f"Hmm, là je suis pas sûr de pouvoir vous répondre. "
-            f"Je vous passe quelqu'un de chez {business_name}, d'accord ?"
+            f"Je ne suis pas certaine de pouvoir répondre à cette question. "
+            f"Je vous mets en relation avec {business_name}. D'accord ?"
         )
     # Web - format texte standard
     return (
@@ -66,7 +65,7 @@ MSG_EMPTY_MESSAGE = "Je n'ai pas reçu votre message. Pouvez-vous réessayer ?"
 MSG_TOO_LONG = "Votre message est trop long. Pouvez-vous résumer ?"
 MSG_FRENCH_ONLY = "Je ne parle actuellement que français."
 MSG_SESSION_EXPIRED = "Votre session a expiré. Puis-je vous aider ?"
-MSG_TRANSFER = "Je vous mets en relation avec un humain pour vous aider."
+MSG_TRANSFER = "Je vous mets en relation avec un conseiller. Ne quittez pas, s'il vous plaît."
 MSG_ALREADY_TRANSFERRED = "Vous avez été transféré à un humain. Quelqu'un va vous répondre sous peu."
 
 # Booking
@@ -75,8 +74,7 @@ MSG_CONFIRM_INSTRUCTION = "Répondez par 'oui 1', 'oui 2' ou 'oui 3' pour confir
 
 # Instruction confirmation (Vocal)
 MSG_CONFIRM_INSTRUCTION_VOCAL = (
-    "Pour confirmer, dites : un, deux ou trois. "
-    "Vous pouvez aussi dire : oui un, oui deux, oui trois."
+    "Lequel vous convient ? Dites : un, deux, ou trois."
 )
 
 # Instruction confirmation (Web)
@@ -85,7 +83,7 @@ MSG_CONFIRM_INSTRUCTION_WEB = (
 )
 
 MSG_CONFIRM_RETRY_VOCAL = (
-    "Je n'ai pas compris. Dites seulement : un, deux ou trois."
+    "Je n'ai pas compris. Dites uniquement : un, deux, ou trois."
 )
 
 
@@ -137,22 +135,21 @@ MSG_CONTACT_FAIL_TRANSFER = (
 # ----------------------------
 
 # Salutation d'accueil (voix chaleureuse)
-# Question directe mais accueillante
 VOCAL_SALUTATION = (
-    "Bonjour et bienvenue chez {business_name} ! Vous appelez pour prendre un rendez-vous ?"
+    "Bonjour. Vous êtes bien chez {business_name}. Je vous écoute. Comment puis-je vous aider ?"
 )
 
 # Fallback si besoin
 VOCAL_SALUTATION_NEUTRAL = (
-    "Bonjour ! Bienvenue chez {business_name}, je vous écoute."
+    "Bonjour. {business_name}. Je vous écoute."
 )
 
 VOCAL_SALUTATION_LONG = (
-    "Bonjour ! Bienvenue chez {business_name}. "
-    "Je suis là pour vous aider. Qu'est-ce que je peux faire pour vous ?"
+    "Bonjour. Vous êtes bien chez {business_name}. "
+    "Je suis là pour vous aider. Que souhaitez-vous faire ?"
 )
 
-VOCAL_SALUTATION_SHORT = "Oui, je vous écoute ?"
+VOCAL_SALUTATION_SHORT = "Bonjour. Je vous écoute."
 
 # Message d'accueil pour le First Message Vapi
 def get_vocal_greeting(business_name: str) -> str:
@@ -167,11 +164,11 @@ def get_vocal_greeting(business_name: str) -> str:
 # FLOW B: FAQ - Réponses et relances
 # ----------------------------
 
-VOCAL_FAQ_FOLLOWUP = "Est-ce que je peux vous aider pour autre chose ?"
+VOCAL_FAQ_FOLLOWUP = "Avec plaisir. Puis-je vous aider sur autre chose ?"
 
-VOCAL_FAQ_GOODBYE = "Avec plaisir ! Bonne journée et à bientôt !"
+VOCAL_FAQ_GOODBYE = "Très bien. Bonne journée. À bientôt."
 
-VOCAL_FAQ_TO_BOOKING = "Bien sûr ! C'est à quel nom ?"
+VOCAL_FAQ_TO_BOOKING = "Bien sûr. Pour le rendez-vous, à quel nom, s'il vous plaît ?"
 
 
 # ----------------------------
@@ -267,7 +264,7 @@ VOCAL_CLARIFY = (
 )
 
 VOCAL_STILL_UNCLEAR = (
-    "Pas de problème, je vais vous passer quelqu'un qui pourra mieux vous aider. Un instant."
+    "D'accord. Je vous mets en relation avec un conseiller. Un instant, s'il vous plaît."
 )
 
 # ----------------------------
@@ -275,7 +272,7 @@ VOCAL_STILL_UNCLEAR = (
 # ----------------------------
 
 VOCAL_INTENT_ROUTER = (
-    "Dites : Un pour rendez-vous. Deux pour annuler. Trois pour une question. Quatre pour parler à quelqu'un."
+    "Je vous écoute. Dites un pour un rendez-vous. Dites deux pour annuler ou modifier. Dites trois pour une question. Ou dites quatre pour un conseiller."
 )
 # Échec 3 nom (test B1) : même menu avec intro stabilisante
 VOCAL_NAME_FAIL_3_INTENT_ROUTER = (
@@ -291,7 +288,7 @@ MSG_INTENT_ROUTER = (
 MSG_INTENT_ROUTER_FAQ = "Quelle est votre question ?"
 
 MSG_INTENT_ROUTER_RETRY = (
-    "Dites juste le numéro. Par exemple : un pour rendez-vous."
+    "Dites simplement : un, deux, trois, ou quatre."
 )
 
 MSG_PREFERENCE_CONFIRM = "D'accord, donc plutôt {pref}, c'est bien ça ?"
@@ -309,9 +306,9 @@ VOCAL_PHONE_FAIL_3 = "Je n'arrive pas à noter votre numéro. Pouvez-vous me don
 VOCAL_PHONE_CONFIRM = "Votre numéro est bien le {phone_spaced} ?"
 VOCAL_PHONE_CONFIRM_NO = "D'accord. Quel est votre numéro ?"
 
-VOCAL_PREF_ASK = "Vous préférez le matin ou l'après-midi ?"
-VOCAL_PREF_FAIL_1 = "Préférez-vous avant midi ou plutôt après midi ?"
-VOCAL_PREF_FAIL_2 = "Répondez simplement : matin ou après-midi."
+VOCAL_PREF_ASK = "Parfait. Plutôt le matin, ou l'après-midi ?"
+VOCAL_PREF_FAIL_1 = "Je vous ai entendu. Plutôt le matin, ou l'après-midi ?"
+VOCAL_PREF_FAIL_2 = "Dites simplement : matin. Ou après-midi."
 VOCAL_PREF_ANY = "Très bien. Je propose le matin. Ça vous va ?"
 VOCAL_PREF_ANY_NO = "D'accord. Alors plutôt l'après-midi ?"
 # Confirmation après inférence ("vers 14h" → afternoon)
@@ -324,9 +321,9 @@ VOCAL_SLOT_FAIL_2 = "Par exemple : 'je prends le deux'. Alors ?"
 # SLOT_FAIL_3 → INTENT_ROUTER (dans engine)
 
 # Recovery nom (QUALIF_NAME — test B1)
-VOCAL_NAME_ASK = "Très bien. C'est à quel nom ?"
-VOCAL_NAME_FAIL_1 = "Je n'ai pas bien noté votre nom. Pouvez-vous répéter ?"
-VOCAL_NAME_FAIL_2 = "Votre nom et prénom, par exemple : Martin Dupont."
+VOCAL_NAME_ASK = "Très bien. Quel est votre nom et prénom, s'il vous plaît ?"
+VOCAL_NAME_FAIL_1 = "Je n'ai pas bien saisi votre nom. Pouvez-vous répéter, s'il vous plaît ?"
+VOCAL_NAME_FAIL_2 = "Votre nom et prénom. Par exemple : Martin Dupont."
 # NAME_FAIL_3 → INTENT_ROUTER (réutiliser VOCAL_INTENT_ROUTER)
 
 # ----------------------------
@@ -450,8 +447,7 @@ class TransitionSignals:
 # ----------------------------
 
 VOCAL_TRANSFER_COMPLEX = (
-    "Je comprends. Je vais vous mettre en relation avec quelqu'un "
-    "qui pourra mieux vous aider. Un instant."
+    "Je comprends. Je vous mets en relation avec un conseiller. Un instant, s'il vous plaît."
 )
 
 VOCAL_TRANSFER_CALLBACK = (
@@ -479,7 +475,7 @@ VOCAL_WAITLIST_ADDED = (
     "Bonne journée !"
 )
 
-VOCAL_USER_ABANDON = "Pas de problème ! N'hésitez pas à rappeler. Bonne journée !"
+VOCAL_USER_ABANDON = "D'accord. N'hésitez pas à nous recontacter. Bonne journée."
 
 VOCAL_TAKE_TIME = "Prenez votre temps, je vous écoute."
 
@@ -496,23 +492,19 @@ VOCAL_MOTIF_HELP = (
 
 # Contact
 VOCAL_CONTACT_ASK = (
-    "Pour confirmer tout ça, vous préférez qu'on vous rappelle "
-    "ou qu'on vous envoie un email ?"
+    "Parfait. Pour finaliser, préférez-vous le téléphone, ou l'email ?"
 )
 
 VOCAL_CONTACT_EMAIL = (
-    "D'accord. Dictez-moi votre email, tranquillement. "
-    "Genre : jean point dupont arobase gmail point com."
+    "Très bien. Pouvez-vous m'épeler votre email ? Par exemple : jean point dupont arobase gmail point com."
 )
 
 VOCAL_CONTACT_PHONE = (
-    "Parfait. C'est quoi votre numéro ? "
-    "Allez-y doucement, je note."
+    "Très bien. Quel est votre numéro de téléphone ? Prenez votre temps. Je note."
 )
 
 VOCAL_CONTACT_RETRY = (
-    "Excusez-moi, je n'ai pas bien noté. "
-    "Pouvez-vous me donner votre numéro complet, chiffre par chiffre ?"
+    "Je n'ai pas bien noté. Pouvez-vous le redonner, chiffre par chiffre, s'il vous plaît ?"
 )
 
 # Créneaux
@@ -523,8 +515,7 @@ VOCAL_CONFIRM_SLOTS = (
 )
 
 VOCAL_BOOKING_CONFIRMED = (
-    "C'est noté pour {slot_label}. "
-    "On vous attend, à bientôt !"
+    "Parfait. Votre rendez-vous est confirmé pour {slot_label}. Vous recevrez un SMS. À très bientôt."
 )
 
 # Transitions naturelles
@@ -550,24 +541,22 @@ VOCAL_FILLERS = [
     "Eh bien,",
 ]
 
-# Erreurs et incompréhension - ton décontracté
+# Erreurs et incompréhension
 VOCAL_NOT_UNDERSTOOD = (
-    "Pardon, j'ai pas bien compris. Vous pouvez répéter ?"
+    "Je n'ai pas bien compris. Pouvez-vous reformuler, s'il vous plaît ?"
 )
 
 VOCAL_TRANSFER_HUMAN = (
-    "Bon, je vais vous passer quelqu'un qui pourra mieux vous aider. "
-    "Un instant."
+    "Très bien. Je vous mets en relation avec un conseiller. Un instant, s'il vous plaît."
 )
 
 VOCAL_NO_SLOTS = (
-    "Ah mince, on n'a plus de créneaux disponibles là. "
-    "Je vous passe quelqu'un pour trouver une solution."
+    "Je suis désolée. Nous n'avons plus de créneaux disponibles. Je vous mets en relation avec un conseiller."
 )
 
-VOCAL_GOODBYE = "Au revoir, bonne journée !"
+VOCAL_GOODBYE = "Merci de votre appel. Je vous souhaite une excellente journée."
 
-VOCAL_GOODBYE_AFTER_BOOKING = "Merci et à très bientôt !"
+VOCAL_GOODBYE_AFTER_BOOKING = "C'est parfait. Merci. À très bientôt, et bonne journée."
 
 # ============================================
 # CONTACT (Vocal)
@@ -726,9 +715,9 @@ MSG_QUALIF_PREF_RETRY = "Merci de me donner votre créneau préféré pour conti
 MSG_QUALIF_CONTACT_RETRY = "Merci de me donner votre email ou téléphone pour continuer."
 
 # Vocal - ton naturel
-MSG_QUALIF_NAME_RETRY_VOCAL = "Juste avant, c'est à quel nom ?"
+MSG_QUALIF_NAME_RETRY_VOCAL = "Je prends votre nom. Quel est votre nom et prénom, s'il vous plaît ?"
 # P0 : répétition d'intention RDV en QUALIF_NAME → message guidé, sans incrémenter name_fails
-MSG_QUALIF_NAME_INTENT_1 = "D'accord, j'ai bien compris. C'est à quel nom ?"
+MSG_QUALIF_NAME_INTENT_1 = "Très bien. Pour continuer, j'ai besoin de votre nom et prénom, s'il vous plaît."
 MSG_QUALIF_NAME_INTENT_2 = "Votre nom et prénom, par exemple : Martin Dupont."
 MSG_QUALIF_MOTIF_RETRY_VOCAL = "Attendez, c'est pour quoi exactement ?"
 MSG_QUALIF_PREF_RETRY_VOCAL = "Vous préférez plutôt quel moment de la journée ?"
@@ -767,7 +756,7 @@ MSG_SLOT_ALREADY_BOOKED = "Désolé, ce créneau vient d'être pris. Je vous met
 # Early commit (choix anticipé non ambigu) : confirmation avant de passer au contact
 MSG_SLOT_EARLY_CONFIRM = "Très bien, si j'ai bien compris vous choisissez le créneau {idx} : {label}. C'est bien ça ?"
 # P1.3 Vocal : une phrase courte (latence + clarté)
-MSG_SLOT_EARLY_CONFIRM_VOCAL = "Créneau {idx}, {label}, c'est bien ça ?"
+MSG_SLOT_EARLY_CONFIRM_VOCAL = "Très bien. Créneau {idx}. {label}. C'est bien ça ?"
 
 
 def format_slot_early_confirm(idx: int, label: str, channel: str = "web") -> str:
@@ -777,9 +766,9 @@ def format_slot_early_confirm(idx: int, label: str, channel: str = "web") -> str
     return MSG_SLOT_EARLY_CONFIRM.format(idx=idx, label=label)
 
 # P1.1 Barge-in : user parle pendant énumération créneaux → une phrase courte, pas d'incrément fails
-MSG_SLOT_BARGE_IN_HELP = "D'accord. Dites juste 1, 2 ou 3."
+MSG_SLOT_BARGE_IN_HELP = "D'accord. Dites simplement : un, deux, ou trois."
 # Validation vague (oui/ok/d'accord sans choix 1/2/3) en WAIT_CONFIRM → redemander sans pénalité (P0.5, A6)
-MSG_WAIT_CONFIRM_NEED_NUMBER = "D'accord. Pour confirmer, dites 1, 2 ou 3."
+MSG_WAIT_CONFIRM_NEED_NUMBER = "D'accord. Pour confirmer, dites : un, deux, ou trois."
 
 
 # Vapi fallbacks
@@ -803,15 +792,14 @@ MSG_FAQ_GOODBYE_WEB = "Parfait, bonne journée !"
 # FAQ no match : reformulation puis menu (1er → reformulation, 2e → INTENT_ROUTER)
 MSG_FAQ_NO_MATCH_FIRST = "Je n'ai pas cette information. Souhaitez-vous prendre un rendez-vous ?"
 MSG_FAQ_REFORMULATE = "Je n'ai pas bien compris votre question. Pouvez-vous la reformuler ?"
-MSG_FAQ_REFORMULATE_VOCAL = "J'ai pas bien saisi. Vous pouvez reformuler votre question ?"
+MSG_FAQ_REFORMULATE_VOCAL = "Je n'ai pas bien saisi. Pouvez-vous reformuler, s'il vous plaît ?"
 # Retry 2 : donner exemples (horaires, tarifs, localisation)
 MSG_FAQ_RETRY_EXEMPLES = (
     "Je peux répondre à des questions sur nos horaires, tarifs, ou localisation. "
     "Posez votre question simplement."
 )
 MSG_FAQ_RETRY_EXEMPLES_VOCAL = (
-    "Je peux répondre sur les horaires, les tarifs, ou où on se trouve. "
-    "Posez votre question simplement."
+    "Je peux vous répondre sur les horaires, les tarifs, ou l'adresse. Quelle est votre question ?"
 )
 
 # Cancel / Modify (web fallbacks)
@@ -1051,7 +1039,7 @@ def format_slot_proposal(slots: List[SlotDisplay], include_instruction: bool = T
 
 
 # P1.2 Lecture créneaux en 2 messages vocaux (réduit interruptions)
-MSG_SLOTS_PREFACE_VOCAL = "J'ai trois créneaux disponibles."
+MSG_SLOTS_PREFACE_VOCAL = "Très bien. Voici trois créneaux disponibles."
 
 
 def format_slot_list_vocal_only(slots: List[SlotDisplay]) -> str:

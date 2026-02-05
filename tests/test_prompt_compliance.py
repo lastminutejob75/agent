@@ -26,7 +26,7 @@ def test_session_expired_exact_wording():
 
 
 def test_transfer_exact_wording():
-    assert prompts.MSG_TRANSFER == "Je vous mets en relation avec un humain pour vous aider."
+    assert prompts.MSG_TRANSFER == "Je vous mets en relation avec un conseiller. Ne quittez pas, s'il vous plaît."
 
 
 def test_already_transferred_exact_wording():
@@ -227,7 +227,7 @@ def test_get_message_adapts_to_channel():
     """get_message retourne le bon message selon le canal."""
     # Vocal
     vocal_transfer = prompts.get_message("transfer", channel="vocal")
-    assert "passer quelqu'un" in vocal_transfer.lower()
+    assert "mets en relation" in vocal_transfer.lower() or "conseiller" in vocal_transfer.lower()
     
     # Web
     web_transfer = prompts.get_message("transfer", channel="web")
@@ -236,9 +236,9 @@ def test_get_message_adapts_to_channel():
 
 def test_get_qualif_question_adapts_to_channel():
     """get_qualif_question retourne la bonne question selon le canal."""
-    # Vocal - plus court
+    # Vocal - demande nom
     vocal_name = prompts.get_qualif_question("name", channel="vocal")
-    assert "quel nom" in vocal_name.lower()
+    assert "nom" in vocal_name.lower()
     
     # Web - plus formel
     web_name = prompts.get_qualif_question("name", channel="web")
@@ -247,9 +247,9 @@ def test_get_qualif_question_adapts_to_channel():
 
 def test_msg_no_match_faq_adapts_to_channel():
     """msg_no_match_faq retourne le bon message selon le canal."""
-    # Vocal - ton décontracté
+    # Vocal
     vocal = prompts.msg_no_match_faq("Cabinet Durand", channel="vocal")
-    assert "pas sûr" in vocal.lower()
+    assert "certain" in vocal.lower() or "mets en relation" in vocal.lower()
     
     # Web - plus formel
     web = prompts.msg_no_match_faq("Cabinet Durand", channel="web")

@@ -580,7 +580,9 @@ def test_wait_confirm_vague_ok_no_fail(mock_slots):
     assert session is not None
     assert session.pending_slot_choice is None
     assert getattr(session, "slot_choice_fails", 0) == 0
-    assert "dites" in events[0].text.lower() and ("1" in events[0].text or "2" in events[0].text)
+    assert "dites" in events[0].text.lower() and (
+        "1" in events[0].text or "2" in events[0].text or "un" in events[0].text.lower() or "deux" in events[0].text.lower()
+    )
 
 
 @patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
