@@ -13,6 +13,7 @@ import re
 from backend import config, prompts, guards, tools_booking
 from backend import db as backend_db
 from backend.session import Session, SessionStore
+from backend.slot_choice import detect_slot_choice_early
 from backend.time_constraints import extract_time_constraint
 from backend.session_store_sqlite import SQLiteSessionStore
 from backend.tools_faq import FaqStore, FaqResult
@@ -1682,35 +1683,53 @@ class Engine:
             print(f"⚠️ WAIT_CONFIRM but no pending_slots → re-proposing")
             return self._propose_slots(session)
         
-        # Rejeter filler contextuel (euh, "oui" seul en WAIT_CONFIRM = redemander 1/2/3)
-        if guards.is_contextual_filler(user_text, session.state):
-            log_filler_detected(logger, session, user_text, field="slot_choice")
-            fail_count = increment_recovery_counter(session, "slot_choice")
-            log_ivr_event(logger, session, "recovery_step", context="slot_choice", reason="filler_detected")
-            if should_escalate_recovery(session, "slot_choice"):
-                return self._trigger_intent_router(session, "slot_choice_fails_3", user_text)
-            msg = prompts.get_clarification_message(
-                "slot_choice",
-                min(fail_count, 3),
-                user_text,
-                channel=channel,
-            )
-            session.add_message("agent", msg)
-            return [Event("final", msg, conv_state=session.state)]
-        
-        print(f"📋 Pending slots: {[(s.idx, s.label) for s in session.pending_slots]}")
-        
-        # Validation rapide (interruption) : "Oui !" / "Oui" seul = premier créneau
-        _t = (user_text or "").strip().lower()
-        _t = "".join(c for c in _t if c.isalnum() or c in " '\"-")
-        _t = _t.replace("'", "").replace("'", "").strip()
-        if _t in {"oui", "ouais", "ouaip", "daccord", "d'accord", "ok", "okay", "parfait"} and (session.pending_slots or []):
-            slot_idx = 1
-            print(f"✅ slot_choice: validation rapide '{user_text[:20]}' → slot 1")
-        else:
-            slot_idx = None
+        slot_idx: Optional[int] = None
+
+        # Confirmation du créneau déjà choisi (après "c'est bien ça ?") : "oui" → on passe au contact
+        if session.pending_slot_choice is not None:
+            _t = (user_text or "").strip().lower()
+            _t = "".join(c for c in _t if c.isalnum() or c in " '\"-")
+            _t = _t.replace("'", "").replace("'", "").strip()
+            _confirm_words = guards.YES_WORDS | {"ouaip", "okay", "parfait", "daccord"}
+            if _t in _confirm_words:
+                slot_idx = session.pending_slot_choice
+                print(f"✅ slot_choice: confirmation du créneau {slot_idx} → passage au contact")
+
+        # Sinon : filler ou choix à détecter
         if slot_idx is None:
-            # IVR pro : choix flexible par numéro / jour / heure (ambiguïté → recovery)
+            if guards.is_contextual_filler(user_text, session.state):
+                log_filler_detected(logger, session, user_text, field="slot_choice")
+                fail_count = increment_recovery_counter(session, "slot_choice")
+                log_ivr_event(logger, session, "recovery_step", context="slot_choice", reason="filler_detected")
+                if should_escalate_recovery(session, "slot_choice"):
+                    return self._trigger_intent_router(session, "slot_choice_fails_3", user_text)
+                msg = prompts.get_clarification_message(
+                    "slot_choice",
+                    min(fail_count, 3),
+                    user_text,
+                    channel=channel,
+                )
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+
+        print(f"📋 Pending slots: {[(s.idx, s.label) for s in session.pending_slots]}")
+        # Early commit : choix non ambigu ("oui 1", "le premier", "1") → confirmation immédiate, pas "oui" seul
+        if slot_idx is None:
+            early_idx = detect_slot_choice_early(user_text, session.pending_slots)
+            if early_idx is not None:
+                session.pending_slot_choice = early_idx
+                self._save_session(session)
+                try:
+                    slot_label = tools_booking.get_label_for_choice(session, early_idx) or "votre créneau"
+                except Exception:
+                    slot_label = "votre créneau"
+                msg = prompts.format_slot_early_confirm(early_idx, slot_label)
+                session.add_message("agent", msg)
+                print(f"✅ early commit: choix {early_idx} → « C'est bien ça ? »")
+                return [Event("final", msg, conv_state=session.state)]
+
+        if slot_idx is None:
+            # IVR pro : choix flexible par numéro / jour / heure (ambiguïté → recovery). Pas "oui" seul.
             proposed_slots = [
                 {
                     "start": getattr(s, "start", ""),
@@ -1722,9 +1741,9 @@ class Engine:
             ]
             slot_idx = guards.detect_slot_choice_flexible(user_text, proposed_slots)
             if slot_idx is None:
-                slot_idx = detect_slot_choice(user_text, num_slots=len(session.pending_slots or []))
-                if slot_idx is not None:
-                    slot_idx = slot_idx + 1  # convert 0-based → 1-based
+                _raw = detect_slot_choice(user_text, num_slots=len(session.pending_slots or []))
+                if _raw is not None:
+                    slot_idx = _raw + 1  # 0-based → 1-based
             if slot_idx is None:
                 is_valid, slot_idx = guards.validate_booking_confirm(user_text, channel=channel)
                 if not is_valid:

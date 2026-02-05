@@ -762,6 +762,14 @@ def get_qualif_retry(field: str, channel: str = "web") -> str:
 # Booking
 MSG_NO_SLOTS_AVAILABLE = "Désolé, nous n'avons plus de créneaux disponibles. Je vous mets en relation avec un humain."
 MSG_SLOT_ALREADY_BOOKED = "Désolé, ce créneau vient d'être pris. Je vous mets en relation avec un humain."
+# Early commit (choix anticipé non ambigu) : confirmation avant de passer au contact
+MSG_SLOT_EARLY_CONFIRM = "Très bien, si j'ai bien compris vous choisissez le créneau {idx} : {label}. C'est bien ça ?"
+
+
+def format_slot_early_confirm(idx: int, label: str) -> str:
+    """Message de confirmation du slot choisi (early commit)."""
+    return MSG_SLOT_EARLY_CONFIRM.format(idx=idx, label=label)
+
 
 # Vapi fallbacks
 MSG_VAPI_NO_UNDERSTANDING = "Je n'ai pas bien compris. Pouvez-vous répéter ?"

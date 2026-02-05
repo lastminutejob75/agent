@@ -377,8 +377,9 @@ def test_contact_confirm_intent_phrase_guided_message(mock_slots):
     engine.handle_message(conv, "Je veux un rdv")
     engine.handle_message(conv, "Martin Dupont")
     engine.handle_message(conv, "matin")
-    engine.handle_message(conv, "oui")
-    engine.handle_message(conv, "oui 1")
+    engine.handle_message(conv, "oui")     # confirm pref → propose slots → WAIT_CONFIRM
+    engine.handle_message(conv, "oui 1")   # early commit → "c'est bien ça ?"
+    engine.handle_message(conv, "oui")     # confirm slot → QUALIF_CONTACT
     engine.handle_message(conv, "0612345678")
     events = engine.handle_message(conv, "je veux un rendez-vous")
     assert len(events) == 1
@@ -398,8 +399,9 @@ def test_contact_confirm_intent_repeat_3_times_stays_contact_confirm(mock_slots)
     engine.handle_message(conv, "Je veux un rdv")
     engine.handle_message(conv, "Marie Martin")
     engine.handle_message(conv, "matin")
-    engine.handle_message(conv, "oui")
+    engine.handle_message(conv, "oui")    # confirm pref → WAIT_CONFIRM
     engine.handle_message(conv, "oui 1")
+    engine.handle_message(conv, "oui")
     engine.handle_message(conv, "0612345678")
     for _ in range(3):
         events = engine.handle_message(conv, "je veux un rendez-vous")
@@ -420,8 +422,9 @@ def test_contact_confirm_yes_no_resets_intent_counter(mock_book, mock_slots):
     engine.handle_message(conv, "Je veux un rdv")
     engine.handle_message(conv, "Martin Dupont")
     engine.handle_message(conv, "matin")
-    engine.handle_message(conv, "oui")
+    engine.handle_message(conv, "oui")    # confirm pref → WAIT_CONFIRM
     engine.handle_message(conv, "oui 1")
+    engine.handle_message(conv, "oui")
     engine.handle_message(conv, "0612345678")
     session = engine.session_store.get(conv)
     assert session.state == "CONTACT_CONFIRM"
@@ -442,8 +445,9 @@ def test_qualif_contact_intent_phrase_does_not_increment_contact_fails(mock_slot
     engine.handle_message(conv, "Je veux un rdv")
     engine.handle_message(conv, "Jean Dupont")
     engine.handle_message(conv, "matin")
-    engine.handle_message(conv, "oui")
+    engine.handle_message(conv, "oui")    # confirm pref → WAIT_CONFIRM
     engine.handle_message(conv, "oui 1")
+    engine.handle_message(conv, "oui")
     events = engine.handle_message(conv, "je veux un rendez-vous")
     assert len(events) == 1
     assert events[0].conv_state == "QUALIF_CONTACT"
@@ -453,3 +457,77 @@ def test_qualif_contact_intent_phrase_does_not_increment_contact_fails(mock_slot
     assert session.phone_fails == 0
     assert session.state == "QUALIF_CONTACT"
     assert prompts.MSG_QUALIF_CONTACT_INTENT in events[0].text
+
+
+# ---------- Early commit (WAIT_CONFIRM) : choix non ambigu uniquement ----------
+
+
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+def test_early_commit_oui_1(mock_slots):
+    """En WAIT_CONFIRM, 'oui 1' → early commit : state WAIT_CONFIRM, pending_slot_choice=1, message « c'est bien ça ? »."""
+    engine = create_engine()
+    conv = f"conv_early_oui1_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Martin Dupont")
+    engine.handle_message(conv, "matin")
+    engine.handle_message(conv, "oui")   # confirm pref → WAIT_CONFIRM
+    events = engine.handle_message(conv, "oui 1")
+    assert len(events) == 1
+    assert events[0].conv_state == "WAIT_CONFIRM"
+    assert "créneau 1" in events[0].text
+    assert "c'est bien ça" in events[0].text.lower()
+    session = engine.session_store.get(conv)
+    assert session is not None
+    assert session.pending_slot_choice == 1
+
+
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+def test_early_commit_le_premier(mock_slots):
+    """En WAIT_CONFIRM, 'le premier' → early commit, pending_slot_choice=1."""
+    engine = create_engine()
+    conv = f"conv_early_premier_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Martin Dupont")
+    engine.handle_message(conv, "matin")
+    engine.handle_message(conv, "oui")   # confirm pref → WAIT_CONFIRM
+    events = engine.handle_message(conv, "le premier")
+    assert len(events) == 1
+    assert events[0].conv_state == "WAIT_CONFIRM"
+    session = engine.session_store.get(conv)
+    assert session is not None
+    assert session.pending_slot_choice == 1
+
+
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+def test_no_early_commit_ambiguous_oui(mock_slots):
+    """En WAIT_CONFIRM, 'oui' seul → pas de choix (pending_slot_choice reste None). Clarification ou transfert selon config."""
+    engine = create_engine()
+    conv = f"conv_no_early_oui_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Martin Dupont")
+    engine.handle_message(conv, "matin")
+    engine.handle_message(conv, "oui")   # confirm pref → WAIT_CONFIRM
+    events = engine.handle_message(conv, "oui")
+    assert len(events) == 1
+    session = engine.session_store.get(conv)
+    assert session is not None
+    assert session.pending_slot_choice is None  # pas d'early commit
+    assert events[0].conv_state in ("WAIT_CONFIRM", "TRANSFERRED")
+    assert "un" in events[0].text.lower() or "deux" in events[0].text.lower() or "trois" in events[0].text.lower() or "relation" in events[0].text.lower()
+
+
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+def test_no_early_commit_ambiguous_ce_creneau(mock_slots):
+    """En WAIT_CONFIRM, 'je veux ce créneau' (sans numéro) → pas d'early commit (pending_slot_choice reste None)."""
+    engine = create_engine()
+    conv = f"conv_no_early_ce_creneau_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Martin Dupont")
+    engine.handle_message(conv, "matin")
+    engine.handle_message(conv, "oui")   # confirm pref → WAIT_CONFIRM
+    events = engine.handle_message(conv, "je veux ce créneau")
+    assert len(events) == 1
+    session = engine.session_store.get(conv)
+    assert session is not None
+    assert session.pending_slot_choice is None
+    assert events[0].conv_state in ("WAIT_CONFIRM", "TRANSFERRED")
