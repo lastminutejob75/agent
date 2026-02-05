@@ -27,6 +27,9 @@ MSG_NOISE_2 = "Il y a du bruit. Pouvez-vous répéter plus distinctement ?"
 # --- Custom LLM (chat/completions) : texte incompréhensible / garbage ---
 MSG_UNCLEAR_1 = "Je vous entends mal. Pouvez-vous répéter ?"
 
+# --- Crosstalk (barge-in) : user parle pendant TTS → no-op sans incrémenter unclear ---
+MSG_VOCAL_CROSSTALK_ACK = "Je vous écoute."
+
 # --- Contrainte horaire (RÈGLE 7) ---
 MSG_TIME_CONSTRAINT_IMPOSSIBLE = (
     "D'accord. Mais nous fermons à {closing}. "
@@ -718,6 +721,8 @@ MSG_QUALIF_CONTACT_RETRY = "Merci de me donner votre email ou téléphone pour c
 
 # Vocal - ton naturel
 MSG_QUALIF_NAME_RETRY_VOCAL = "Juste avant, c'est à quel nom ?"
+# 1ère fois que l'utilisateur redit une intention (ex. "je veux un rdv") au lieu du nom
+MSG_QUALIF_NAME_INTENT_1 = "J'ai bien compris que vous voulez un rendez-vous. Pouvez-vous me donner votre nom et prénom ?"
 MSG_QUALIF_MOTIF_RETRY_VOCAL = "Attendez, c'est pour quoi exactement ?"
 MSG_QUALIF_PREF_RETRY_VOCAL = "Vous préférez plutôt quel moment de la journée ?"
 MSG_QUALIF_CONTACT_RETRY_VOCAL = "Pour vous rappeler, c'est quoi le mieux ? Téléphone ou email ?"

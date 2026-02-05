@@ -1158,7 +1158,25 @@ class Engine:
         if current_step == "QUALIF_NAME":
             channel = getattr(session, "channel", "web")
             
-            # Rejeter filler contextuel (euh, "oui" en QUALIF_NAME…) → recovery progressive
+            # AVANT le filler : rejeter les phrases d'intention ("Oui, je veux un rdv", "je veux un rendez-vous") → message dédié
+            if not guards.is_valid_name_input(user_text):
+                log_name_rejected(logger, session, user_text, reason="intent_phrase_as_name")
+                fail_count = increment_recovery_counter(session, "name")
+                if should_escalate_recovery(session, "name"):
+                    return self._trigger_intent_router(session, "name_fails_3", user_text)
+                if fail_count == 1 and _detect_booking_intent(user_text):
+                    msg = prompts.MSG_QUALIF_NAME_INTENT_1
+                else:
+                    msg = prompts.get_clarification_message(
+                        "name",
+                        min(fail_count, 3),
+                        user_text,
+                        channel=channel,
+                    )
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+            
+            # Rejeter filler contextuel (euh, "oui" seul en QUALIF_NAME)
             if guards.is_contextual_filler(user_text, session.state):
                 log_filler_detected(logger, session, user_text, field="name")
                 log_name_rejected(logger, session, user_text, reason="filler_detected")
@@ -1171,12 +1189,6 @@ class Engine:
                     user_text,
                     channel=channel,
                 )
-                session.add_message("agent", msg)
-                return [Event("final", msg, conv_state=session.state)]
-            
-            # Vérifier que ce n'est pas une répétition de la demande booking
-            if _detect_booking_intent(user_text):
-                msg = prompts.get_qualif_retry("name", channel=channel)
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
@@ -1858,8 +1870,8 @@ class Engine:
         
         if session.state == "CANCEL_NAME":
             raw = user_text.strip()
-            # Nom pas compris (vide ou trop court) — recovery progressive avec compteur dédié
-            if not raw or len(raw) < 2:
+            # Nom pas compris (vide, trop court, ou phrase d'intention type "annuler"/"je veux un rdv") — recovery progressive
+            if not raw or len(raw) < 2 or not guards.is_valid_name_input(user_text):
                 session.cancel_name_fails = getattr(session, "cancel_name_fails", 0) + 1
                 if session.cancel_name_fails >= 3:
                     log_ivr_event(logger, session, "recovery_step", context="cancel_name", reason="escalate_intent_router")

@@ -191,12 +191,14 @@ def _log_decision_out(
     session,
     action_taken: str,
     reply_text: str = "",
+    session_key: Optional[str] = None,
 ) -> None:
-    """Log décisionnel sortie (sans PII)."""
+    """Log décisionnel sortie (sans PII). session_key = clé de session stable (pour debug boucle)."""
     logger.info(
         "decision_out",
         extra={
             "call_id": call_id,
+            "session_key": session_key or call_id,
             "action": action_taken,
             "state_after": getattr(session, "state", "") if session else "",
             "reply_len": len(reply_text or ""),
@@ -516,16 +518,29 @@ async def vapi_custom_llm(request: Request):
     t_start = time.time()
     try:
         payload = await request.json()
-        _call_id = payload.get("call", {}).get("id") or payload.get("call_id") or "unknown"
+        headers = request.headers
+
+        # ✅ EXTRACTION STABLE call_id (ordre de priorité)
+        call_id = None
+        if payload.get("call") and payload["call"].get("id"):
+            call_id = payload["call"]["id"]
+        if not call_id:
+            call_id = headers.get("x-vapi-call-id")
+        if not call_id:
+            call_id = payload.get("conversation_id")
+        if not call_id:
+            call_id = f"chat-{payload.get('id', 'unknown')}"
+
         _req_id = str(uuid.uuid4())[:8]
-        logger.info("CHAT_HIT", extra={"call_id": _call_id, "request_id": _req_id})
+        _source = "body.call.id" if (payload.get("call") and payload["call"].get("id")) else ("header" if headers.get("x-vapi-call-id") else "conversation_id_or_fallback")
+        logger.info("session_key_debug", extra={"call_id": call_id, "source": _source})
+        logger.info("CHAT_HIT", extra={"call_id": call_id, "request_id": _req_id})
         t1 = log_timer("Payload parsed", t_start)
 
-        print(f"🤖 CUSTOM LLM | Payload size: {len(str(payload))} chars")
+        print(f"🤖 CUSTOM LLM | session_key={call_id} | source={_source}")
         
         # Vapi envoie un tableau de messages
         messages = payload.get("messages", [])
-        call_id = payload.get("call", {}).get("id") or payload.get("call_id", "unknown")
         is_streaming = payload.get("stream", False)
         
         # 📱 Extraire le numéro de téléphone du client (Vapi le fournit)
@@ -609,6 +624,14 @@ async def vapi_custom_llm(request: Request):
                     "unclear_count": unclear_count,
                 },
             )
+            logger.info(
+                "decision_in_chat",
+                extra={
+                    "call_id": call_id,
+                    "state_before": session.state,
+                    "turn_count": getattr(session, "turn_count", 0),
+                },
+            )
 
             # En annulation : si on va chercher le RDV par nom, envoyer d'abord un message de tenue
             # en stream pour éviter le "mmm" TTS pendant la latence (recherche Google Calendar).
@@ -631,30 +654,45 @@ async def vapi_custom_llm(request: Request):
                         response_text = events[0].text if events else "Je n'ai pas compris"
                         action_taken = "text"
                         _maybe_reset_noise_on_terminal(session, events or [])
-                    else:  # UNCLEAR
-                        session.unclear_text_count = getattr(session, "unclear_text_count", 0) + 1
-                        count = session.unclear_text_count
-                        if count == 1:
-                            response_text = prompts.MSG_UNCLEAR_1
-                            session.add_message("agent", response_text)
-                            action_taken = "unclear_1"
-                        elif count == 2:
-                            events = ENGINE._trigger_intent_router(
-                                session, "unclear_text_2", user_message or ""
-                            )
-                            response_text = events[0].text if events else prompts.MSG_UNCLEAR_1
-                            action_taken = "unclear_2_intent_router"
+                    else:  # UNCLEAR — crosstalk guard : court + juste après TTS => ignorer sans incrémenter
+                        raw_len = len((user_message or ""))
+                        last_ts = getattr(session, "last_assistant_ts", 0) or 0
+                        within_crosstalk_window = (time.time() - last_ts) < getattr(
+                            config, "CROSSTALK_WINDOW_SEC", 1.2
+                        )
+                        if within_crosstalk_window and raw_len < 20:
+                            response_text = prompts.MSG_VOCAL_CROSSTALK_ACK
+                            action_taken = "ignore_crosstalk"
                         else:
-                            session.state = "TRANSFERRED"
-                            response_text = (
-                                prompts.VOCAL_TRANSFER_COMPLEX
-                                if getattr(session, "channel", "") == "vocal"
-                                else prompts.MSG_TRANSFER
-                            )
-                            session.add_message("agent", response_text)
-                            action_taken = "unclear_3_transfer"
+                            session.unclear_text_count = getattr(session, "unclear_text_count", 0) + 1
+                            count = session.unclear_text_count
+                            if count == 1:
+                                response_text = prompts.MSG_UNCLEAR_1
+                                session.add_message("agent", response_text)
+                                action_taken = "unclear_1"
+                            elif count == 2:
+                                events = ENGINE._trigger_intent_router(
+                                    session, "unclear_text_2", user_message or ""
+                                )
+                                response_text = events[0].text if events else prompts.MSG_UNCLEAR_1
+                                action_taken = "unclear_2_intent_router"
+                            else:
+                                session.state = "TRANSFERRED"
+                                response_text = (
+                                    prompts.VOCAL_TRANSFER_COMPLEX
+                                    if getattr(session, "channel", "") == "vocal"
+                                    else prompts.MSG_TRANSFER
+                                )
+                                session.add_message("agent", response_text)
+                                action_taken = "unclear_3_transfer"
                     t4 = log_timer("ENGINE processed", t3)
                     _log_decision_out(call_id, session, action_taken, response_text)
+                    if hasattr(ENGINE.session_store, "save"):
+                        ENGINE.session_store.save(session)
+                    logger.info(
+                        "decision_out_chat",
+                        extra={"call_id": call_id, "state_after": getattr(session, "state", "")},
+                    )
                 except Exception as e:
                     print(f"❌ ENGINE ERROR: {e}")
                     import traceback
@@ -662,6 +700,7 @@ async def vapi_custom_llm(request: Request):
                     response_text = "Excusez-moi, j'ai un petit souci technique. Je vous transfère à un collègue."
             if not cancel_lookup_streaming:
                 print(f"✅ Response: '{response_text[:50]}...' ({len(response_text)} chars)")
+                session.last_assistant_ts = time.time()
             
             # 📊 Enregistrer stats pour rapport (si conversation terminée) — pas en cancel_lookup_streaming (fait dans le stream)
             if not cancel_lookup_streaming:

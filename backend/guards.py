@@ -190,6 +190,75 @@ def is_plausible_name(text: str) -> bool:
 
 
 # ----------------------------
+# Rejet des phrases d'intention comme "nom" (QUALIF_NAME / CANCEL_NAME)
+# ----------------------------
+
+# Patterns d'intention (pas des noms)
+INTENT_PATTERNS = {
+    "rdv",
+    "rendez-vous",
+    "rendez vous",
+    "rendezvous",
+    "annuler",
+    "annulation",
+    "modifier",
+    "changer",
+    "parler",
+    "humain",
+    "quelqu'un",
+    "transfert",
+    "transférer",
+    "transferer",
+    "je veux",
+    "je souhaite",
+    "j'aimerais",
+    "j aimerais",
+    "réserver",
+    "reserver",
+    "dispo",
+    "disponibilité",
+    "disponibilite",
+    "créneau",
+    "creneau",
+    "prendre rendez-vous",
+    "prendre rdv",
+    "un rendez-vous",
+    "un rdv",
+    "déplacer",
+    "deplacer",
+}
+
+
+def is_valid_name_input(text: str) -> bool:
+    """
+    Valide qu'un texte est un nom valide (pas une phrase d'intention).
+
+    - Refuse vide / trop court (< 2 chars)
+    - Refuse trop long (> 50 chars = probablement phrase)
+    - Refuse si contient un pattern d'intention (rdv, annuler, "je veux", etc.)
+    - Refuse trop de mots (> 4 = probablement phrase)
+
+    Returns:
+        True si valide comme nom (ex. "Martin Dupont"). False pour "je veux un rdv", "annuler", etc.
+    """
+    if not text or not text.strip():
+        return False
+    text_lower = text.strip().lower().replace("-", " ").replace("_", " ")
+    if len(text_lower) < 2:
+        return False
+    if len(text) > 50:
+        return False
+    for pattern in INTENT_PATTERNS:
+        if pattern in text_lower:
+            return False
+    words = text_lower.split()
+    # 6 mots max : noms composés / particules / sociétés (ex. "Marie de la Tour", "SAS Dupont et Fils")
+    if len(words) > 6:
+        return False
+    return True
+
+
+# ----------------------------
 # Phone plausible (FR + ASR tolérant)
 # ----------------------------
 
