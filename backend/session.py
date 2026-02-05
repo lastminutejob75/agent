@@ -82,10 +82,13 @@ class Session:
     last_noise_ts: Optional[float] = None  # time.time() pour cooldown
     # Custom LLM (chat/completions) : texte incompréhensible / garbage
     unclear_text_count: int = 0
+    # Crosstalk (barge-in) : timestamp dernière réponse assistant (time.time())
+    last_assistant_ts: float = 0.0
 
     # Recovery par contexte (analytics + tuning fin — AJOUT_COMPTEURS_RECOVERY)
     slot_choice_fails: int = 0
     name_fails: int = 0
+    qualif_name_intent_repeat_count: int = 0  # P0 : répétitions "je veux un rdv" en QUALIF_NAME (pas d'erreur, pas INTENT_ROUTER)
     phone_fails: int = 0
     preference_fails: int = 0
     contact_confirm_fails: int = 0
@@ -142,6 +145,7 @@ class Session:
         self.noise_detected_count = 0
         self.last_noise_ts = None
         self.unclear_text_count = 0
+        self.last_assistant_ts = 0.0
         self.slot_choice_fails = 0
         self.name_fails = 0
         self.phone_fails = 0

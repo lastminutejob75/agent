@@ -205,43 +205,61 @@ def test_is_valid_name_input_rejects_intent_phrases():
     assert is_valid_name_input("SAS Dupont et Fils") is True
 
 
-def test_qualif_name_rejects_intent_phrase():
-    """En QUALIF_NAME, 'je veux un rdv' reste rejeté comme nom → message nom/prénom, état reste QUALIF_NAME."""
+def test_qualif_name_intent_phrase_guided_message():
+    """P0 : En QUALIF_NAME, 'je veux un rdv' → message guidé (INTENT_1), reste QUALIF_NAME, pas name_fails."""
     engine = create_engine()
     conv = "conv_qualif_intent"
-    # Amener la session en QUALIF_NAME
     engine.handle_message(conv, "Je veux un rdv")
     events = engine.handle_message(conv, "je veux un rdv")
     assert len(events) == 1
     assert events[0].conv_state == "QUALIF_NAME"
-    assert "nom" in events[0].text.lower() or "prénom" in events[0].text.lower()
-    assert events[0].text.strip() == prompts.MSG_QUALIF_NAME_INTENT_1 or "nom" in events[0].text.lower()
+    assert "nom" in events[0].text.lower()
+    session = engine.session_store.get(conv)
+    assert session is not None
+    assert session.name_fails == 0
 
 
 def test_qualif_name_oui_je_veux_rendez_vous_intent_message():
-    """En QUALIF_NAME, 'Oui, je veux un rendez-vous' doit être rejeté comme intention → MSG_QUALIF_NAME_INTENT_1 (pas 'Juste avant, c'est à quel nom ?')."""
+    """P0 : QUALIF_NAME + 'Oui, je veux un rendez-vous' → message guidé nom (INTENT_1), pas INTENT_ROUTER."""
     engine = create_engine()
     conv = "conv_qualif_oui_rdv"
     engine.handle_message(conv, "Je veux un rdv")
     events = engine.handle_message(conv, "Oui, je veux un rendez-vous.")
     assert len(events) == 1
     assert events[0].conv_state == "QUALIF_NAME"
-    # Doit recevoir le message d'intention (pas le simple retry "Juste avant, c'est à quel nom ?")
-    assert prompts.MSG_QUALIF_NAME_INTENT_1 in events[0].text or ("bien compris" in events[0].text.lower() and "nom" in events[0].text.lower())
+    assert prompts.MSG_QUALIF_NAME_INTENT_1 in events[0].text or "quel nom" in events[0].text.lower()
 
 
-def test_qualif_name_intent_phrase_escalate_after_limit():
-    """Après N échecs (phrase d'intention comme nom), escalade vers INTENT_ROUTER (RECOVERY_LIMITS['name'])."""
-    from backend import config
-    from backend.engine import ENGINE
+def test_qualif_name_intent_repeat_3_times_stays_qualif_name():
+    """P0 : QUALIF_NAME + 'je veux un rendez-vous' x3 → toujours QUALIF_NAME, jamais INTENT_ROUTER."""
     engine = create_engine()
-    conv = "conv_qualif_escalate"
+    conv = "conv_qualif_intent_3"
+    engine.handle_message(conv, "Je veux un rdv")
+    for _ in range(3):
+        events = engine.handle_message(conv, "je veux un rendez-vous")
+        assert len(events) == 1
+        assert events[0].conv_state == "QUALIF_NAME"
+    session = engine.session_store.get(conv)
+    assert session is not None
+    assert session.state == "QUALIF_NAME"
+    assert session.name_fails == 0
+
+
+def test_qualif_name_invalid_input_escalate_to_intent_router():
+    """P0 : QUALIF_NAME + vrais inputs invalides (ex: 'x') → recovery normal → INTENT_ROUTER après seuil."""
+    from backend import config
+    engine = create_engine()
+    conv = "conv_qualif_invalid"
     limit = config.RECOVERY_LIMITS.get("name", 3)
     engine.handle_message(conv, "Je veux un rdv")
     for _ in range(limit):
-        events = engine.handle_message(conv, "je veux un rdv")
+        events = engine.handle_message(conv, "x")
         assert len(events) == 1
     assert events[0].conv_state == "INTENT_ROUTER"
+    session = engine.session_store.get(conv)
+    assert session is not None
+    assert session.state == "INTENT_ROUTER"
+    assert "dites" in events[0].text.lower() or "un" in events[0].text.lower()
 
 
 def test_name_accepts_valid_name():
@@ -258,17 +276,14 @@ def test_name_accepts_valid_name():
     assert events[0].conv_state != "QUALIF_NAME"
 
 
-def test_name_intent_3_times_router():
-    """Après N phrases d'intention en QUALIF_NAME (N = RECOVERY_LIMITS['name']) → INTENT_ROUTER (menu)."""
-    from backend import config
+def test_qualif_name_martin_dupont_next_step():
+    """P0 : QUALIF_NAME + 'Martin Dupont' → passage à l'étape suivante (state != QUALIF_NAME)."""
     engine = create_engine()
-    conv = "conv_name_intent_3"
-    limit = config.RECOVERY_LIMITS.get("name", 3)
+    conv = "conv_name_martin"
     engine.handle_message(conv, "Je veux un rdv")
-    for _ in range(limit - 1):
-        engine.handle_message(conv, "je veux un rdv")
-    events = engine.handle_message(conv, "prendre rendez-vous")
+    events = engine.handle_message(conv, "Martin Dupont")
+    assert len(events) == 1
+    assert events[0].conv_state != "QUALIF_NAME"
     session = engine.session_store.get(conv)
     assert session is not None
-    assert session.state == "INTENT_ROUTER"
-    assert "dites" in events[0].text.lower() or "1" in events[0].text or "2" in events[0].text
+    assert session.qualif_data.name is not None

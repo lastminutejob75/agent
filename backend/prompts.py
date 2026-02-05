@@ -721,8 +721,9 @@ MSG_QUALIF_CONTACT_RETRY = "Merci de me donner votre email ou téléphone pour c
 
 # Vocal - ton naturel
 MSG_QUALIF_NAME_RETRY_VOCAL = "Juste avant, c'est à quel nom ?"
-# 1ère fois que l'utilisateur redit une intention (ex. "je veux un rdv") au lieu du nom
-MSG_QUALIF_NAME_INTENT_1 = "J'ai bien compris que vous voulez un rendez-vous. Pouvez-vous me donner votre nom et prénom ?"
+# P0 : répétition d'intention RDV en QUALIF_NAME → message guidé, sans incrémenter name_fails
+MSG_QUALIF_NAME_INTENT_1 = "D'accord, j'ai bien compris. C'est à quel nom ?"
+MSG_QUALIF_NAME_INTENT_2 = "Votre nom et prénom, par exemple : Martin Dupont."
 MSG_QUALIF_MOTIF_RETRY_VOCAL = "Attendez, c'est pour quoi exactement ?"
 MSG_QUALIF_PREF_RETRY_VOCAL = "Vous préférez plutôt quel moment de la journée ?"
 MSG_QUALIF_CONTACT_RETRY_VOCAL = "Pour vous rappeler, c'est quoi le mieux ? Téléphone ou email ?"

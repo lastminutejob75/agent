@@ -1158,21 +1158,13 @@ class Engine:
         if current_step == "QUALIF_NAME":
             channel = getattr(session, "channel", "web")
             
-            # AVANT le filler : rejeter les phrases d'intention ("Oui, je veux un rdv", "je veux un rendez-vous") → message dédié
-            if not guards.is_valid_name_input(user_text):
-                log_name_rejected(logger, session, user_text, reason="intent_phrase_as_name")
-                fail_count = increment_recovery_counter(session, "name")
-                if should_escalate_recovery(session, "name"):
-                    return self._trigger_intent_router(session, "name_fails_3", user_text)
-                if fail_count == 1 and _detect_booking_intent(user_text):
+            # P0 : phrase d'intention RDV ("je veux un rdv", "je souhaite prendre rdv") → message guidé, NE PAS incrémenter name_fails, JAMAIS INTENT_ROUTER
+            if _detect_booking_intent(user_text):
+                session.qualif_name_intent_repeat_count = getattr(session, "qualif_name_intent_repeat_count", 0) + 1
+                if session.qualif_name_intent_repeat_count == 1:
                     msg = prompts.MSG_QUALIF_NAME_INTENT_1
                 else:
-                    msg = prompts.get_clarification_message(
-                        "name",
-                        min(fail_count, 3),
-                        user_text,
-                        channel=channel,
-                    )
+                    msg = prompts.MSG_QUALIF_NAME_INTENT_2
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
@@ -1197,9 +1189,10 @@ class Engine:
             print(f"🔍 QUALIF_NAME: raw='{user_text}' → extracted='{extracted_name}', reject_reason={reject_reason}")
             
             if extracted_name is not None:
-                # Réponse valide → stocker et continuer (spec V3 : reset compteur)
+                # Réponse valide → stocker et continuer (spec V3 : reset compteurs)
                 session.qualif_data.name = extracted_name.title()
                 session.consecutive_questions = 0
+                session.qualif_name_intent_repeat_count = 0
                 print(f"✅ QUALIF_NAME: stored name='{session.qualif_data.name}'")
                 return self._next_qualif_step(session)
             
