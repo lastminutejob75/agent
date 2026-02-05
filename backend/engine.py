@@ -707,6 +707,16 @@ class Engine:
         # 3. GUARDS BASIQUES (vide, langue, spam)
         # ========================
         
+        # --- Protection overlap pendant TTS (Règle 11) : silence pendant que l'agent parle → pas de pénalité ---
+        import time as _time
+        speaking_until = getattr(session, "speaking_until_ts", 0) or 0
+        if speaking_until and _time.time() < speaking_until:
+            if not user_text or not user_text.strip():
+                channel = getattr(session, "channel", "web")
+                msg = "Je vous écoute." if channel == "vocal" else getattr(prompts, "MSG_SILENCE_1", "Je n'ai rien entendu. Pouvez-vous répéter ?")
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+        
         # --- RÈGLE 3: SILENCE (2 messages distincts + 3e => INTENT_ROUTER) ---
         if not user_text or not user_text.strip():
             session.empty_message_count = getattr(session, "empty_message_count", 0) + 1
@@ -792,6 +802,19 @@ class Engine:
             return safe_reply([Event("final", msg, conv_state=session.state)], session)
         
         # --- FLOWS EN COURS ---
+        
+        # P2.1 FSM2 : QUALIF_NAME et WAIT_CONFIRM via dispatcher (si USE_FSM2=True)
+        if getattr(config, "USE_FSM2", False) and session.state in ("QUALIF_NAME", "WAIT_CONFIRM"):
+            from backend.fsm2 import dispatch_handle, InputEvent, InputKind
+            ev = InputEvent(
+                kind=InputKind.TEXT,
+                text=user_text or "",
+                text_normalized=(user_text or "").strip().lower(),
+                strong_intent=intent,
+            )
+            events = dispatch_handle(session, ev, self)
+            if events:
+                return safe_reply(events, session)
         
         # INTENT_ROUTER (menu 1/2/3/4)
         if session.state == "INTENT_ROUTER":
@@ -1159,9 +1182,11 @@ class Engine:
         if current_step == "QUALIF_NAME":
             channel = getattr(session, "channel", "web")
             
-            # P0 : phrase d'intention RDV ("je veux un rdv", "je souhaite prendre rdv") → message guidé, NE PAS incrémenter name_fails, JAMAIS INTENT_ROUTER
+            # P0 : phrase d'intention RDV ("je veux un rdv") → message guidé ; P1.4 : 3x → INTENT_ROUTER
             if _detect_booking_intent(user_text):
                 session.qualif_name_intent_repeat_count = getattr(session, "qualif_name_intent_repeat_count", 0) + 1
+                if session.qualif_name_intent_repeat_count >= 3:
+                    return self._trigger_intent_router(session, "booking_intent_repeat_3", user_text)
                 if session.qualif_name_intent_repeat_count == 1:
                     msg = prompts.MSG_QUALIF_NAME_INTENT_1
                 else:
@@ -1656,23 +1681,35 @@ class Engine:
         tools_booking.store_pending_slots(session, slots)
         session.state = "WAIT_CONFIRM"
         
-        # Formatter message avec instruction adaptée au channel
+        # P1.2 Vocal : message 1 = préface seule, message 2 = liste au prochain tour
+        if channel == "vocal" and not getattr(session, "slots_preface_sent", False):
+            session.slots_preface_sent = True
+            msg = getattr(prompts, "MSG_SLOTS_PREFACE_VOCAL", "J'ai trois créneaux disponibles.")
+            if msg:
+                msg = prompts.TransitionSignals.wrap_with_signal(msg, "PROCESSING")
+            session.add_message("agent", msg)
+            self._save_session(session)
+            print(f"✅ _propose_slots: preface vocal (liste au prochain message)")
+            return [Event("final", msg, conv_state=session.state)]
+        
+        # Web ou vocal (liste déjà préfacée) : message unique avec liste
         msg = prompts.format_slot_proposal(slots, include_instruction=True, channel=channel)
-        # V3.1 : mot-signal de traitement (vocal) — "Je regarde. J'ai trois créneaux..."
         if channel == "vocal" and msg:
             msg = prompts.TransitionSignals.wrap_with_signal(msg, "PROCESSING")
         print(f"✅ _propose_slots: proposing {len(slots)} slots")
         session.add_message("agent", msg)
-        
-        # 💾 Sauvegarder IMMÉDIATEMENT (crucial pour ne pas perdre les pending_slots)
+        session.is_reading_slots = True
+        if channel == "vocal":
+            session.slots_list_sent = True
         self._save_session(session)
-        
         return [Event("final", msg, conv_state=session.state)]
     
     def _handle_booking_confirm(self, session: Session, user_text: str) -> List[Event]:
         """
         Gère confirmation RDV (WAIT_CONFIRM).
-        Supporte: "oui 1", "1", "le premier", "lundi", etc.
+        P1 / P0.5 / A6 : choix explicite uniquement (1/2/3, "choix 2", "vendredi 14h").
+        - Choix explicite (detect_slot_choice_early) → confirmation immédiate, pas de ré-énumération.
+        - "oui"/"ok"/"d'accord" seul → jamais de choix implicite ; micro-question "Dites 1, 2 ou 3." sans incrémenter fails.
         """
         channel = getattr(session, "channel", "web")
         
@@ -1682,6 +1719,49 @@ class Engine:
         if not session.pending_slots or len(session.pending_slots) == 0:
             print(f"⚠️ WAIT_CONFIRM but no pending_slots → re-proposing")
             return self._propose_slots(session)
+
+        # P1.2 Vocal : préface déjà envoyée, liste pas encore → envoyer liste puis traiter le message user
+        if channel == "vocal" and getattr(session, "slots_preface_sent", False) and not getattr(session, "slots_list_sent", False):
+            session.slots_list_sent = True
+            session.is_reading_slots = True
+            list_msg = prompts.format_slot_list_vocal_only(session.pending_slots)
+            session.add_message("agent", list_msg)
+            self._save_session(session)
+            early_idx = detect_slot_choice_early(user_text, session.pending_slots)
+            if early_idx is not None:
+                session.is_reading_slots = False
+                session.pending_slot_choice = early_idx
+                try:
+                    slot_label = tools_booking.get_label_for_choice(session, early_idx) or "votre créneau"
+                except Exception:
+                    slot_label = "votre créneau"
+                confirm_msg = prompts.format_slot_early_confirm(early_idx, slot_label, channel=channel)
+                session.add_message("agent", confirm_msg)
+                return [Event("final", list_msg, conv_state=session.state), Event("final", confirm_msg, conv_state=session.state)]
+            help_msg = getattr(prompts, "MSG_SLOT_BARGE_IN_HELP", "D'accord. Dites juste 1, 2 ou 3.")
+            session.add_message("agent", help_msg)
+            return [Event("final", list_msg, conv_state=session.state), Event("final", help_msg, conv_state=session.state)]
+
+        # P1.1 Barge-in safe : user a parlé pendant l'énumération des créneaux
+        if getattr(session, "is_reading_slots", False):
+            early_idx = detect_slot_choice_early(user_text, session.pending_slots)
+            if early_idx is not None:
+                session.is_reading_slots = False
+                session.pending_slot_choice = early_idx
+                self._save_session(session)
+                try:
+                    slot_label = tools_booking.get_label_for_choice(session, early_idx) or "votre créneau"
+                except Exception:
+                    slot_label = "votre créneau"
+                msg = prompts.format_slot_early_confirm(early_idx, slot_label, channel=channel)
+                session.add_message("agent", msg)
+                print(f"✅ barge-in: choix clair {early_idx} → early confirm")
+                return [Event("final", msg, conv_state=session.state)]
+            # Pas un choix clair → une phrase courte, ne pas incrémenter les fails
+            session.is_reading_slots = False
+            msg = getattr(prompts, "MSG_SLOT_BARGE_IN_HELP", "D'accord. Dites juste 1, 2 ou 3.")
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state=session.state)]
         
         slot_idx: Optional[int] = None
 
@@ -1694,6 +1774,20 @@ class Engine:
             if _t in _confirm_words:
                 slot_idx = session.pending_slot_choice
                 print(f"✅ slot_choice: confirmation du créneau {slot_idx} → passage au contact")
+
+        # Validation vague (oui/ok/d'accord SANS choix explicite) → redemander 1/2/3 SANS incrémenter fails (P0.5, A6)
+        if slot_idx is None:
+            _vague = (user_text or "").strip().lower()
+            _vague = "".join(c for c in _vague if c.isalnum() or c in " '\"-")
+            _vague = _vague.replace("'", "").replace("'", "").strip()
+            _vague_set = frozenset({
+                "oui", "ouais", "ok", "okay", "d'accord", "daccord", "dac", "parfait",
+                "celui-la", "celui la", "ça marche", "ca marche", "c'est ça", "c est ça",
+            })
+            if _vague in _vague_set or _vague.startswith("je prends") or _vague.startswith("je veux"):
+                msg = getattr(prompts, "MSG_WAIT_CONFIRM_NEED_NUMBER", prompts.MSG_SLOT_BARGE_IN_HELP)
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
 
         # Sinon : filler ou choix à détecter
         if slot_idx is None:
@@ -1717,13 +1811,14 @@ class Engine:
         if slot_idx is None:
             early_idx = detect_slot_choice_early(user_text, session.pending_slots)
             if early_idx is not None:
+                session.is_reading_slots = False
                 session.pending_slot_choice = early_idx
                 self._save_session(session)
                 try:
                     slot_label = tools_booking.get_label_for_choice(session, early_idx) or "votre créneau"
                 except Exception:
                     slot_label = "votre créneau"
-                msg = prompts.format_slot_early_confirm(early_idx, slot_label)
+                msg = prompts.format_slot_early_confirm(early_idx, slot_label, channel=channel)
                 session.add_message("agent", msg)
                 print(f"✅ early commit: choix {early_idx} → « C'est bien ça ? »")
                 return [Event("final", msg, conv_state=session.state)]
@@ -1772,6 +1867,7 @@ class Engine:
             # 💾 Sauvegarder le choix immédiatement
             self._save_session(session)
             
+            session.is_reading_slots = False
             # 📱 Maintenant demander le contact (avec numéro auto si disponible)
             if channel == "vocal" and session.customer_phone:
                 try:
@@ -1788,7 +1884,7 @@ class Engine:
                         session.qualif_data.contact_type = "phone"
                         session.state = "CONTACT_CONFIRM"
                         phone_formatted = prompts.format_phone_for_voice(phone[:10])
-                        msg = f"Parfait, {slot_label} pour {name}. Votre numéro est bien le {phone_formatted} ?"
+                        msg = prompts.VOCAL_CONTACT_CONFIRM_SHORT.format(phone_formatted=phone_formatted) if channel == "vocal" else f"Parfait, {slot_label} pour {name}. Votre numéro est bien le {phone_formatted} ?"
                         print(f"📱 Using caller ID for confirmation: {phone[:10]}")
                         session.add_message("agent", msg)
                         return [Event("final", msg, conv_state=session.state)]
@@ -1818,8 +1914,10 @@ class Engine:
         fail_count = increment_recovery_counter(session, "slot_choice")
         log_ivr_event(logger, session, "recovery_step", context="slot_choice", reason="no_match")
         if should_escalate_recovery(session, "slot_choice"):
+            session.is_reading_slots = False
             return self._trigger_intent_router(session, "slot_choice_fails_3", user_text)
         if fail_count >= config.CONFIRM_RETRY_MAX:
+            session.is_reading_slots = False
             session.state = "TRANSFERRED"
             msg = prompts.get_message("transfer", channel=channel)
             session.add_message("agent", msg)
@@ -2378,7 +2476,7 @@ class Engine:
             if should_escalate_recovery(session, "contact_confirm"):
                 return self._trigger_intent_router(session, "contact_confirm_fails_3", user_text)
             phone_formatted = prompts.format_phone_for_voice(session.qualif_data.contact or "")
-            msg = f"Excusez-moi, j'ai noté le {phone_formatted}. Est-ce correct ?"
+            msg = prompts.VOCAL_CONTACT_CONFIRM_SHORT.format(phone_formatted=phone_formatted) if channel == "vocal" else f"Excusez-moi, j'ai noté le {phone_formatted}. Est-ce correct ?"
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
     

@@ -109,6 +109,11 @@ class Session:
     # Flow ordonnance (conversation naturelle RDV vs message)
     ordonnance_choice_fails: int = 0
     ordonnance_choice_asked: bool = False
+    # P1.1 Barge-in : agent en train d'énoncer la liste des créneaux (interruption safe)
+    is_reading_slots: bool = False
+    # P1.2 Lecture créneaux en 2 tours : preface envoyée, puis liste
+    slots_preface_sent: bool = False
+    slots_list_sent: bool = False
 
     MAX_CONSECUTIVE_QUESTIONS = 3  # Limite cognitive (spec V3)
     MAX_TURNS_ANTI_LOOP = 25  # Garde-fou : >25 tours sans DONE/TRANSFERRED → INTENT_ROUTER
@@ -169,6 +174,9 @@ class Session:
         self.contact_confirm_intent_repeat_count = 0
         self.ordonnance_choice_fails = 0
         self.ordonnance_choice_asked = False
+        self.is_reading_slots = False
+        self.slots_preface_sent = False
+        self.slots_list_sent = False
         self.time_constraint_type = ""
         self.time_constraint_minute = -1
         self.client_id = None

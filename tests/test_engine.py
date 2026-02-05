@@ -15,6 +15,15 @@ def _fake_slots(*args, **kwargs):
     ]
 
 
+def _fake_slots_vendredi(*args, **kwargs):
+    """Slots avec vendredi 14h (premier) pour test early commit par jour+heure. 2026-02-06 = vendredi."""
+    return [
+        prompts.SlotDisplay(idx=1, label="Vendredi 06/02 - 14:00", slot_id=1, start="2026-02-06T14:00:00", day="vendredi", hour=14),
+        prompts.SlotDisplay(idx=2, label="Lundi 09/02 - 09:00", slot_id=2, start="2026-02-09T09:00:00", day="lundi", hour=9),
+        prompts.SlotDisplay(idx=3, label="Mardi 10/02 - 16:00", slot_id=3, start="2026-02-10T16:00:00", day="mardi", hour=16),
+    ]
+
+
 def test_detect_booking_intent():
     assert _detect_booking_intent("Je veux un rdv")
     assert _detect_booking_intent("je veux un rendez-vous")
@@ -241,19 +250,22 @@ def test_qualif_name_oui_je_veux_rendez_vous_intent_message():
     assert prompts.MSG_QUALIF_NAME_INTENT_1 in events[0].text or "quel nom" in events[0].text.lower()
 
 
-def test_qualif_name_intent_repeat_3_times_stays_qualif_name():
-    """P0 : QUALIF_NAME + 'je veux un rendez-vous' x3 → toujours QUALIF_NAME, jamais INTENT_ROUTER."""
+def test_qualif_name_intent_repeat_3_times_intent_router():
+    """P1.4 : QUALIF_NAME + intent répété 3 fois → INTENT_ROUTER (menu 1/2/3/4)."""
     engine = create_engine()
     conv = "conv_qualif_intent_3"
     engine.handle_message(conv, "Je veux un rdv")
+    events = None
     for _ in range(3):
         events = engine.handle_message(conv, "je veux un rendez-vous")
         assert len(events) == 1
-        assert events[0].conv_state == "QUALIF_NAME"
+    assert events is not None
+    assert events[0].conv_state == "INTENT_ROUTER"
     session = engine.session_store.get(conv)
     assert session is not None
-    assert session.state == "QUALIF_NAME"
+    assert session.state == "INTENT_ROUTER"
     assert session.name_fails == 0
+    assert "prendre" in events[0].text.lower() or "un" in events[0].text.lower()
 
 
 def test_qualif_name_invalid_input_escalate_to_intent_router():
@@ -481,6 +493,24 @@ def test_early_commit_oui_1(mock_slots):
     assert session.pending_slot_choice == 1
 
 
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots_vendredi)
+def test_wait_confirm_interrupt_explicit_choice_vendredi_14h(mock_slots):
+    """P1 : Choix explicite pendant énonciation (jour+heure) → early confirm, pas de ré-énumération (P0.5, A6)."""
+    engine = create_engine()
+    conv = f"conv_vendredi14_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Martin Dupont")
+    engine.handle_message(conv, "matin")
+    engine.handle_message(conv, "oui")
+    events = engine.handle_message(conv, "vendredi 14h")
+    assert len(events) >= 1
+    assert events[0].conv_state == "WAIT_CONFIRM"
+    session = engine.session_store.get(conv)
+    assert session is not None
+    assert session.pending_slot_choice == 1
+    assert "bien ça" in events[0].text.lower() or "créneau" in events[0].text.lower()
+
+
 @patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
 def test_early_commit_le_premier(mock_slots):
     """En WAIT_CONFIRM, 'le premier' → early commit, pending_slot_choice=1."""
@@ -500,7 +530,7 @@ def test_early_commit_le_premier(mock_slots):
 
 @patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
 def test_no_early_commit_ambiguous_oui(mock_slots):
-    """En WAIT_CONFIRM, 'oui' seul → pas de choix (pending_slot_choice reste None). Clarification ou transfert selon config."""
+    """En WAIT_CONFIRM, 'oui' seul → pas de choix (pending_slot_choice reste None), redemande 1/2/3 SANS incrémenter fails (P0.5, A6)."""
     engine = create_engine()
     conv = f"conv_no_early_oui_{uuid.uuid4().hex[:8]}"
     engine.handle_message(conv, "Je veux un rdv")
@@ -512,8 +542,10 @@ def test_no_early_commit_ambiguous_oui(mock_slots):
     session = engine.session_store.get(conv)
     assert session is not None
     assert session.pending_slot_choice is None  # pas d'early commit
+    assert getattr(session, "slot_choice_fails", 0) == 0  # pas d'incrément
     assert events[0].conv_state in ("WAIT_CONFIRM", "TRANSFERRED")
-    assert "un" in events[0].text.lower() or "deux" in events[0].text.lower() or "trois" in events[0].text.lower() or "relation" in events[0].text.lower()
+    t = events[0].text.lower()
+    assert "1" in t or "2" in t or "3" in t or "un" in t or "deux" in t or "trois" in t or "relation" in t
 
 
 @patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
@@ -531,3 +563,39 @@ def test_no_early_commit_ambiguous_ce_creneau(mock_slots):
     assert session is not None
     assert session.pending_slot_choice is None
     assert events[0].conv_state in ("WAIT_CONFIRM", "TRANSFERRED")
+
+
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+def test_wait_confirm_vague_ok_no_fail(mock_slots):
+    """Validation vague 'ok' / 'd\'accord' en WAIT_CONFIRM → redemande 1/2/3 SANS incrémenter slot_choice_fails."""
+    engine = create_engine()
+    conv = f"conv_vague_ok_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Martin Dupont")
+    engine.handle_message(conv, "matin")
+    engine.handle_message(conv, "oui")
+    events = engine.handle_message(conv, "ok")
+    assert len(events) == 1
+    session = engine.session_store.get(conv)
+    assert session is not None
+    assert session.pending_slot_choice is None
+    assert getattr(session, "slot_choice_fails", 0) == 0
+    assert "dites" in events[0].text.lower() and ("1" in events[0].text or "2" in events[0].text)
+
+
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+def test_overlap_silence_during_tts_no_fail(mock_slots):
+    """Silence pendant TTS (speaking_until_ts) → 'Je vous écoute.' sans incrémenter empty_message_count (Règle 11)."""
+    import time
+    engine = create_engine()
+    conv = f"conv_overlap_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je veux un rdv")
+    session = engine.session_store.get(conv)
+    session.channel = "vocal"
+    session.speaking_until_ts = time.time() + 10.0
+    engine.session_store.save(session)
+    events = engine.handle_message(conv, "")
+    assert len(events) == 1
+    session2 = engine.session_store.get(conv)
+    assert "écoute" in events[0].text.lower()
+    assert getattr(session2, "empty_message_count", 0) == 0

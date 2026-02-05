@@ -587,6 +587,8 @@ MSG_CONTACT_RETRY_VOCAL = (
 VOCAL_CONTACT_CONFIRM = (
     "J'ai noté le {phone_formatted}. C'est bien ça ?"
 )
+# P1.3 Vocal : confirmation ultra courte
+VOCAL_CONTACT_CONFIRM_SHORT = "Le {phone_formatted}, c'est bien ça ?"
 VOCAL_CONTACT_CONFIRM_OK = "Parfait, c'est noté."
 VOCAL_CONTACT_CONFIRM_RETRY = "D'accord, pouvez-vous me redonner votre numéro ?"
 
@@ -764,11 +766,20 @@ MSG_NO_SLOTS_AVAILABLE = "Désolé, nous n'avons plus de créneaux disponibles. 
 MSG_SLOT_ALREADY_BOOKED = "Désolé, ce créneau vient d'être pris. Je vous mets en relation avec un humain."
 # Early commit (choix anticipé non ambigu) : confirmation avant de passer au contact
 MSG_SLOT_EARLY_CONFIRM = "Très bien, si j'ai bien compris vous choisissez le créneau {idx} : {label}. C'est bien ça ?"
+# P1.3 Vocal : une phrase courte (latence + clarté)
+MSG_SLOT_EARLY_CONFIRM_VOCAL = "Créneau {idx}, {label}, c'est bien ça ?"
 
 
-def format_slot_early_confirm(idx: int, label: str) -> str:
-    """Message de confirmation du slot choisi (early commit)."""
+def format_slot_early_confirm(idx: int, label: str, channel: str = "web") -> str:
+    """Message de confirmation du slot choisi (early commit). P1.3 : version courte en vocal."""
+    if channel == "vocal":
+        return MSG_SLOT_EARLY_CONFIRM_VOCAL.format(idx=idx, label=label)
     return MSG_SLOT_EARLY_CONFIRM.format(idx=idx, label=label)
+
+# P1.1 Barge-in : user parle pendant énumération créneaux → une phrase courte, pas d'incrément fails
+MSG_SLOT_BARGE_IN_HELP = "D'accord. Dites juste 1, 2 ou 3."
+# Validation vague (oui/ok/d'accord sans choix 1/2/3) en WAIT_CONFIRM → redemander sans pénalité (P0.5, A6)
+MSG_WAIT_CONFIRM_NEED_NUMBER = "D'accord. Pour confirmer, dites 1, 2 ou 3."
 
 
 # Vapi fallbacks
@@ -1037,6 +1048,22 @@ def format_slot_proposal(slots: List[SlotDisplay], include_instruction: bool = T
         lines.append(MSG_CONFIRM_INSTRUCTION_WEB)
     
     return "\n".join(lines)
+
+
+# P1.2 Lecture créneaux en 2 messages vocaux (réduit interruptions)
+MSG_SLOTS_PREFACE_VOCAL = "J'ai trois créneaux disponibles."
+
+
+def format_slot_list_vocal_only(slots: List[SlotDisplay]) -> str:
+    """Liste des 3 créneaux + instruction (sans preface). P1.2 message 2."""
+    if len(slots) < 3:
+        return format_slot_proposal_vocal(slots)
+    return (
+        f"Un : {slots[0].label}. "
+        f"Deux : {slots[1].label}. "
+        f"Trois : {slots[2].label}. "
+        "Dites un, deux ou trois."
+    )
 
 
 def format_slot_proposal_vocal(slots: List[SlotDisplay]) -> str:

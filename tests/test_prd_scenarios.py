@@ -32,8 +32,9 @@ def test_faq_no_match_twice_transfer():
 
 def test_booking_confirm_oui_deux():
     """
-    Test 7 : "oui 2" → Confirmation
-    Booking complet sans flow ordonnance (consultation + matin).
+    Test 7 : Choix créneau 2 puis contact puis "oui" → Confirmation
+    Booking complet : "oui 2" confirme la préférence (matin) → slots proposés,
+    puis choix explicite "2" (P0.5), puis email, puis "oui" pour confirmer.
     """
     engine = create_engine()
     conv = "test_confirm_oui_deux"
@@ -43,8 +44,8 @@ def test_booking_confirm_oui_deux():
     engine.handle_message(conv, "Jean Dupont")
     engine.handle_message(conv, "consultation")
     engine.handle_message(conv, "matin")
-    # Slots proposés → choix 2
-    engine.handle_message(conv, "oui 2")
+    engine.handle_message(conv, "oui 2")  # confirme préf → propose_slots (WAIT_CONFIRM)
+    engine.handle_message(conv, "2")     # choix explicite créneau 2 (pas "oui" seul)
     engine.handle_message(conv, "jean@example.com")
     e = engine.handle_message(conv, "oui")
     assert e[0].type == "final"
