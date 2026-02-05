@@ -1730,18 +1730,8 @@ class Engine:
         tools_booking.store_pending_slots(session, slots)
         session.state = "WAIT_CONFIRM"
         
-        # P1.2 Vocal : message 1 = préface seule, message 2 = liste au prochain tour
-        if channel == "vocal" and not getattr(session, "slots_preface_sent", False):
-            session.slots_preface_sent = True
-            msg = getattr(prompts, "MSG_SLOTS_PREFACE_VOCAL", "J'ai trois créneaux disponibles.")
-            if msg:
-                msg = prompts.TransitionSignals.wrap_with_signal(msg, "PROCESSING")
-            session.add_message("agent", msg)
-            self._save_session(session)
-            print(f"✅ _propose_slots: preface vocal (liste au prochain message)")
-            return [Event("final", msg, conv_state=session.state)]
-        
-        # Web ou vocal (liste déjà préfacée) : message unique avec liste
+        # Message unique avec liste (vocal + web). Le webhook vocal n'envoie que events[0].text,
+        # donc on envoie préface + liste en un seul message pour éviter que l'agent s'arrête à "Voici trois créneaux".
         msg = prompts.format_slot_proposal(slots, include_instruction=True, channel=channel)
         if channel == "vocal" and msg:
             msg = prompts.TransitionSignals.wrap_with_signal(msg, "PROCESSING")
