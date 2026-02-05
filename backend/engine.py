@@ -11,6 +11,13 @@ import logging
 import re
 
 from backend import config, prompts, guards, tools_booking
+from backend.guards_medical import is_medical_emergency  # legacy / tests
+from backend.guards_medical_triage import (
+    detect_medical_red_flag,
+    classify_medical_symptoms,
+    extract_symptom_motif_short,
+)
+from backend.log_events import MEDICAL_RED_FLAG_TRIGGERED
 from backend import db as backend_db
 from backend.session import Session, SessionStore
 from backend.slot_choice import detect_slot_choice_early
@@ -636,12 +643,54 @@ class Engine:
         print(f"🔍 handle_message: conv_id={conv_id}, state={session.state}, name={session.qualif_data.name}, pending_slots={len(session.pending_slots or [])}, user='{user_text[:50]}'")
         
         # ========================
+        # RÈGLE -1 : TRIAGE MÉDICAL (priorité absolue, avant tout le reste)
+        # ========================
+        # 1) Urgence vitale (red flags) → hard stop + log d'audit (catégorie uniquement, pas de symptôme)
+        red_flag_category = detect_medical_red_flag(user_text) if user_text else None
+        if red_flag_category:
+            logger.warning(
+                MEDICAL_RED_FLAG_TRIGGERED,
+                extra={
+                    "event": MEDICAL_RED_FLAG_TRIGGERED,
+                    "call_id": conv_id,
+                    "category": red_flag_category,
+                    "state": session.state,
+                    "action": "emergency_orientation",
+                    "channel": getattr(session, "channel", "web"),
+                },
+            )
+            session.state = "EMERGENCY"
+            self._save_session(session)
+            msg = prompts.VOCAL_MEDICAL_EMERGENCY
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state=session.state)]
+        
+        # 2) Non vital / escalade douce → note motif, enchaîne sur créneau (QUALIF_PREF)
+        if user_text:
+            medical_class = classify_medical_symptoms(user_text)
+            if medical_class:
+                motif = extract_symptom_motif_short(user_text)
+                setattr(session, "medical_motif", motif)
+                session.qualif_data.motif = motif
+                session.state = "QUALIF_PREF"
+                if medical_class == "CAUTION":
+                    reply = prompts.MSG_MEDICAL_CAUTION
+                else:
+                    reply = prompts.MSG_MEDICAL_NON_URGENT_ACK.format(motif=motif)
+                session.last_question_asked = reply
+                session.add_message("agent", reply)
+                self._save_session(session)
+                return safe_reply([Event("final", reply, conv_state=session.state)], session)
+        
+        # ========================
         # TERMINAL GATE (mourir proprement)
         # ========================
-        # Si la conversation est déjà terminée, on ne relance pas de flow.
-        if session.state in ["CONFIRMED", "TRANSFERRED"]:
-            # Option V1 la plus safe : message de clôture (pas de nouveau traitement)
-            msg = prompts.MSG_CONVERSATION_CLOSED
+        # Si la conversation est déjà terminée (ou urgence médicale), on ne relance pas de flow.
+        if session.state in ["CONFIRMED", "TRANSFERRED", "EMERGENCY"]:
+            if session.state == "EMERGENCY":
+                msg = prompts.VOCAL_MEDICAL_EMERGENCY
+            else:
+                msg = prompts.MSG_CONVERSATION_CLOSED
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
         

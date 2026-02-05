@@ -68,6 +68,30 @@ MSG_SESSION_EXPIRED = "Votre session a expiré. Puis-je vous aider ?"
 MSG_TRANSFER = "Je vous mets en relation avec un conseiller. Ne quittez pas, s'il vous plaît."
 MSG_ALREADY_TRANSFERRED = "Vous avez été transféré à un humain. Quelqu'un va vous répondre sous peu."
 
+# =========================
+# MÉDICAL — TRIAGE (urgence vitale + non vital + escalade douce)
+# =========================
+# Urgence vitale (hard stop, TTS-friendly — calme, non alarmiste, ferme)
+VOCAL_MEDICAL_EMERGENCY = (
+    "Je suis vraiment désolée, mais je ne peux pas gérer cette situation ici. "
+    "Appelez immédiatement le 15 ou le 112, ou faites-vous aider par une personne autour de vous."
+)
+
+# Non vital : accueil + proposition RDV
+MSG_MEDICAL_NON_URGENT_ACK = (
+    "D'accord. Je note pour le médecin : {motif}. "
+    "Si les symptômes s'aggravent ou vous inquiètent, contactez un professionnel de santé. "
+    "Je vous propose un rendez-vous : plutôt le matin ou l'après-midi ?"
+)
+
+# Inquiétude / escalade douce
+MSG_MEDICAL_CAUTION = (
+    "Merci. Je note votre demande. "
+    "Je ne peux pas évaluer la gravité à distance. "
+    "Si vous avez un doute ou si ça s'aggrave, appelez le 15 ou le 112. "
+    "Sinon, je vous propose un rendez-vous : matin ou après-midi ?"
+)
+
 # Booking
 # Instruction confirmation (Web - legacy)
 MSG_CONFIRM_INSTRUCTION = "Répondez par 'oui 1', 'oui 2' ou 'oui 3' pour confirmer."
