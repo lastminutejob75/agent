@@ -51,8 +51,8 @@ Document extrait de `backend/prompts.py` : **toutes les répliques que l’agent
 | Clé | Dialogue |
 |-----|----------|
 | VOCAL_FAQ_FOLLOWUP | Est-ce que je peux vous aider pour autre chose ? |
-| VOCAL_FAQ_GOODBYE | Avec plaisir ! Bonne journée et à bientôt ! |
-| VOCAL_FAQ_TO_BOOKING | Bien sûr ! C'est à quel nom ? |
+| VOCAL_FAQ_GOODBYE | Très bien. Merci de votre appel, et bonne journée ! |
+| VOCAL_FAQ_TO_BOOKING | Très bien. Pour le rendez-vous, à quel nom, s'il vous plaît ? |
 | MSG_FAQ_REFORMULATE_VOCAL | J'ai pas bien saisi. Vous pouvez reformuler votre question ? |
 | MSG_FAQ_RETRY_EXEMPLES_VOCAL | Je peux répondre sur les horaires, les tarifs, ou où on se trouve. Posez votre question simplement. |
 
@@ -232,15 +232,15 @@ Document extrait de `backend/prompts.py` : **toutes les répliques que l’agent
 
 ## 17. Mots-signaux (TransitionSignals)
 
-Utilisés en préfixe de certains messages : **Parfait.** / **Très bien.** / **D'accord.** / **Je regarde.** / **Voilà.**
+Utilisés en préfixe de certains messages : **Parfait.** / **Très bien.** / **D'accord.** / **Je regarde.** (RESULT = Très bien., pas Voilà — audit anti-formules flottantes.)
 
 ---
 
-## 18. Accusés de réception / fillers
+## 18. Accusés de réception (mini-bibliothèque TTS-friendly)
 
-- VOCAL_ACK_POSITIVE : D'accord. / Très bien. / Parfait. / OK. / Entendu.
-- VOCAL_ACK_UNDERSTANDING : Je comprends. / Je vois. / Ah oui, d'accord.
-- VOCAL_FILLERS : Alors, / Bon, / Donc, / Eh bien,
+- VOCAL_ACK_POSITIVE : Très bien. / D'accord. / Parfait.
+- VOCAL_ACK_UNDERSTANDING : Je comprends. / Je vois.
+- VOCAL_FILLERS : Très bien. / D'accord. (remplace Alors, Bon, Donc, Eh bien — évite ton sec en TTS)
 
 ---
 

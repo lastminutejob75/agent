@@ -26,11 +26,11 @@ def test_session_expired_exact_wording():
 
 
 def test_transfer_exact_wording():
-    assert prompts.MSG_TRANSFER == "Je vous mets en relation avec un conseiller. Ne quittez pas, s'il vous plaît."
+    assert prompts.MSG_TRANSFER == "Je vous transfère vers un conseiller. Ne quittez pas, s'il vous plaît."
 
 
 def test_already_transferred_exact_wording():
-    assert prompts.MSG_ALREADY_TRANSFERRED == "Vous avez été transféré à un humain. Quelqu'un va vous répondre sous peu."
+    assert prompts.MSG_ALREADY_TRANSFERRED == "Vous avez été transféré à un conseiller. Un instant, s'il vous plaît."
 
 
 def test_contact_invalid_exact_wording():
@@ -61,7 +61,7 @@ def test_no_match_faq_exact_wording():
     business = "Cabinet Dupont"
     expected = (
         "Je ne suis pas certain de pouvoir répondre précisément.\n"
-        "Puis-je vous mettre en relation avec Cabinet Dupont ?"
+        "Je peux vous mettre en relation avec Cabinet Dupont. Souhaitez-vous que je le fasse ?"
     )
     assert prompts.msg_no_match_faq(business) == expected
 
@@ -111,7 +111,7 @@ def test_booking_confirmed_format_is_exact():
         "\n"
         "📅 Date et heure : Mardi 15/01 - 14:00\n"
         "\n"
-        "À bientôt !"
+        "Merci. À très bientôt !"
     )
     assert out == expected
 
@@ -122,7 +122,7 @@ def test_booking_confirmed_with_name_and_motif():
     assert "📅 Date et heure : Mardi 15/01 - 14:00" in out
     assert "👤 Nom : Jean Dupont" in out
     assert "📋 Motif : Consultation" in out
-    assert "À bientôt !" in out
+    assert "À très bientôt" in out
 
 
 def test_all_prompts_are_strings_and_non_empty():
@@ -227,11 +227,10 @@ def test_get_message_adapts_to_channel():
     """get_message retourne le bon message selon le canal."""
     # Vocal
     vocal_transfer = prompts.get_message("transfer", channel="vocal")
-    assert "mets en relation" in vocal_transfer.lower() or "conseiller" in vocal_transfer.lower()
-    
+    assert "conseiller" in vocal_transfer.lower()
     # Web
     web_transfer = prompts.get_message("transfer", channel="web")
-    assert "relation" in web_transfer.lower()
+    assert "conseiller" in web_transfer.lower() or "transfère" in web_transfer.lower()
 
 
 def test_get_qualif_question_adapts_to_channel():
