@@ -188,11 +188,28 @@ def get_vocal_greeting(business_name: str) -> str:
 # FLOW B: FAQ - Réponses et relances
 # ----------------------------
 
-VOCAL_FAQ_FOLLOWUP = "Avec plaisir. Y a-t-il autre chose que je puisse faire pour vous ?"
+VOCAL_FAQ_FOLLOWUP = "Avec plaisir. Puis-je vous aider pour autre chose ?"
 
-VOCAL_FAQ_GOODBYE = "Avec plaisir. Je vous souhaite une bonne journée, à bientôt."
+VOCAL_FAQ_GOODBYE = "Très bien. Merci de votre appel, et bonne journée !"
 
 VOCAL_FAQ_TO_BOOKING = "Avec plaisir. Pour le rendez-vous, à quel nom, s'il vous plaît ?"
+
+# POST_FAQ : "oui" ambigu → une seule question de choix (A3)
+VOCAL_POST_FAQ_CHOICE = (
+    "Très bien. Souhaitez-vous prendre un rendez-vous, ou poser une autre question ?"
+)
+VOCAL_POST_FAQ_CHOICE_RETRY = "Dites : rendez-vous, ou : question."
+
+# POST_FAQ - Disambiguation "oui" seul (vocal + web)
+VOCAL_POST_FAQ_DISAMBIG = (
+    "D'accord. Souhaitez-vous prendre rendez-vous, "
+    "ou avez-vous une autre question ?"
+)
+MSG_POST_FAQ_DISAMBIG_WEB = (
+    "Que puis-je faire pour vous ?\n\n"
+    "• Prendre rendez-vous\n"
+    "• Poser une question"
+)
 
 
 # ----------------------------
@@ -777,6 +794,15 @@ def get_qualif_retry(field: str, channel: str = "web") -> str:
 # Booking
 MSG_NO_SLOTS_AVAILABLE = "Désolé, nous n'avons plus de créneaux disponibles. Je vous mets en relation avec un humain."
 MSG_SLOT_ALREADY_BOOKED = "Désolé, ce créneau vient d'être pris. Je vous mets en relation avec un humain."
+
+# Retry booking : créneau pris → reproposer (jusqu'à 2 fois), puis transfert
+MSG_SLOT_TAKEN_REPROPOSE = (
+    "Ce créneau vient d'être pris. Je vous propose d'autres disponibilités. "
+    "Le matin ou l'après-midi ?"
+)
+MSG_SLOT_TAKEN_TRANSFER = (
+    "Je suis désolée, les créneaux changent vite. Je vous mets en relation avec un conseiller."
+)
 # Early commit (choix anticipé non ambigu) : confirmation avant de passer au contact
 MSG_SLOT_EARLY_CONFIRM = "Très bien, si j'ai bien compris vous choisissez le créneau {idx} : {label}. C'est bien ça ?"
 # P1.3 Vocal : une phrase courte (latence + clarté), ton bienveillant
@@ -812,6 +838,8 @@ MSG_CLARIFY_WEB_START = "D'accord. Vous avez une question ou un autre besoin ?"
 # Abandon / FAQ goodbye (web)
 MSG_ABANDON_WEB = "Pas de problème. Bonne journée !"
 MSG_FAQ_GOODBYE_WEB = "Parfait, bonne journée !"
+# Relance après une réponse FAQ (web) : permettre de poser une autre question ou prendre RDV
+MSG_FAQ_FOLLOWUP_WEB = "Souhaitez-vous autre chose ?"
 
 # FAQ no match : reformulation puis menu (1er → reformulation, 2e → INTENT_ROUTER)
 MSG_FAQ_NO_MATCH_FIRST = "Je n'ai pas cette information. Souhaitez-vous prendre un rendez-vous ?"

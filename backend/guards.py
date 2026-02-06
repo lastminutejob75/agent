@@ -150,6 +150,28 @@ def normalize_text(s: str) -> str:
     return " ".join((s or "").strip().split())
 
 
+def is_yes_only(text: str) -> bool:
+    """
+    Vérifie si le texte est un "oui" isolé (sans contexte).
+
+    "Oui" seul est ambigu (RDV ou question) → nécessite clarification.
+    "Oui rdv" / "Oui l'adresse" sont explicites.
+
+    Returns:
+        True si "oui" seul (ambigu).
+    """
+    if not text:
+        return False
+    normalized = (text or "").strip().lower()
+    normalized = "".join(ch for ch in normalized if ch.isalnum() or ch.isspace()).strip()
+    normalized = " ".join(normalized.split())
+    YES_ONLY_PATTERNS = frozenset({
+        "oui", "ok", "okay", "d'accord", "daccord", "ouais", "ouaip",
+        "oui oui", "ok ok",
+    })
+    return len(normalized) <= 10 and normalized in YES_ONLY_PATTERNS
+
+
 def is_plausible_name(text: str) -> bool:
     """
     Heuristique minimale:
@@ -558,6 +580,7 @@ YESNO_ALLOWED_STATES = frozenset({
     "MODIFY_CONFIRM",
     "WAIT_CONFIRM",  # "oui" seul ne suffit pas, on redemande 1/2/3
     "FAQ_ANSWERED",
+    "POST_FAQ",  # relance après FAQ : "oui" → RDV, "non" → goodbye
     "CLARIFY",
 })
 

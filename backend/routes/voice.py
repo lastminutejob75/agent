@@ -45,6 +45,13 @@ def _reconstruct_session_from_history(session, messages: list):
         "CONTACT_CONFIRM": ["votre numéro est bien", "j'ai noté le", "c'est bien ça", "est-ce correct"],
         "WAIT_CONFIRM": ["j'ai trois créneaux", "j'ai deux créneaux", "j'ai un créneau", "dites un, deux ou trois", "dites un ou deux"],
         "CONFIRMED": ["rendez-vous est confirmé", "c'est confirmé"],
+        "POST_FAQ": ["puis-je vous aider pour autre chose", "autre chose pour vous", "souhaitez-vous autre chose"],
+        "POST_FAQ_CHOICE": [
+            "rendez-vous ou",
+            "souhaitez-vous prendre rendez-vous",
+            "ou avez-vous une autre question",
+            "rdv ou question",
+        ],
     }
     
     print(f"🔄 Reconstructing session from {len(messages)} messages")
@@ -645,7 +652,10 @@ async def vapi_custom_llm(request: Request):
             response_text = ""
             action_taken = ""
             if _is_agent_speaking(session):
-                if is_critical_overlap(user_message or ""):
+                # Interruption pendant énonciation des créneaux (WAIT_CONFIRM) : "un", "1", "deux" = choix valide → ne pas bloquer
+                if session.state == "WAIT_CONFIRM" and _is_critical_token(normalized):
+                    overlap_handled = False
+                elif is_critical_overlap(user_message or ""):
                     logger.info(
                         "critical_overlap_allowed",
                         extra={"call_id": call_id, "text_len": len((user_message or "")[:20])},

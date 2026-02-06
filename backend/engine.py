@@ -998,22 +998,59 @@ class Engine:
             # FAQ ou UNCLEAR → Chercher dans FAQ
             return safe_reply(self._handle_faq(session, user_text, include_low=True), session)
         
-        # Si FAQ_ANSWERED → permettre nouvelle interaction
-        if session.state == "FAQ_ANSWERED":
-            # Vérifier l'intent pour la suite
-            
-            # OUI pour un RDV → Booking
-            if intent == "YES" or intent == "BOOKING":
-                return safe_reply(self._start_booking_with_extraction(session, user_text), session)
-            
-            # NON merci → Au revoir
+        # POST_FAQ_CHOICE : après "oui" ambigu en POST_FAQ → rendez-vous ou question ?
+        if session.state == "POST_FAQ_CHOICE":
+            # 1) Non / abandon → au revoir
             if intent == "NO" or intent == "ABANDON":
                 session.state = "CONFIRMED"
                 msg = prompts.VOCAL_FAQ_GOODBYE if channel == "vocal" else prompts.MSG_FAQ_GOODBYE_WEB
                 session.add_message("agent", msg)
                 return safe_reply([Event("final", msg, conv_state=session.state)], session)
-            
-            # Autre question → FAQ
+            # 2) Rendez-vous explicite → démarrer booking
+            msg_lower = (user_text or "").strip().lower()
+            if intent == "BOOKING" or "rendez" in msg_lower or "rdv" in msg_lower:
+                return safe_reply(self._start_booking_with_extraction(session, user_text), session)
+            # 3) Question (explicite ou phrase type "et l'adresse ?") → re-FAQ
+            if intent == "FAQ" or "?" in (user_text or "") or "question" in msg_lower:
+                session.state = "START"
+                return safe_reply(self._handle_faq(session, user_text, include_low=True), session)
+            # 4) Sinon → une phrase de relance, rester en POST_FAQ_CHOICE
+            msg = getattr(prompts, "VOCAL_POST_FAQ_CHOICE_RETRY", "Dites : rendez-vous, ou : question.")
+            session.add_message("agent", msg)
+            return safe_reply([Event("final", msg, conv_state=session.state)], session)
+
+        # POST_FAQ : après réponse FAQ + relance "Puis-je vous aider pour autre chose ?"
+        if session.state == "POST_FAQ":
+            # 1) Non merci / c'est tout → Au revoir
+            if intent == "NO" or intent == "ABANDON":
+                session.state = "CONFIRMED"
+                msg = prompts.VOCAL_FAQ_GOODBYE if channel == "vocal" else prompts.MSG_FAQ_GOODBYE_WEB
+                session.add_message("agent", msg)
+                return safe_reply([Event("final", msg, conv_state=session.state)], session)
+            # 2) "Oui" seul (ambigu) → disambiguation (jamais booking direct)
+            if guards.is_yes_only(user_text or ""):
+                session.state = "POST_FAQ_CHOICE"
+                msg = (
+                    getattr(prompts, "VOCAL_POST_FAQ_DISAMBIG", prompts.VOCAL_POST_FAQ_CHOICE)
+                    if channel == "vocal"
+                    else getattr(prompts, "MSG_POST_FAQ_DISAMBIG_WEB", prompts.MSG_FAQ_FOLLOWUP_WEB)
+                )
+                session.add_message("agent", msg)
+                return safe_reply([Event("final", msg, conv_state=session.state)], session)
+            # 3) Rendez-vous explicite ("oui rdv", "je veux un rdv") → booking direct
+            if intent == "BOOKING" or _detect_booking_intent(user_text or ""):
+                return safe_reply(self._start_booking_with_extraction(session, user_text), session)
+            # 4) Intent YES restant (sans contexte) → disambiguation
+            if intent == "YES":
+                session.state = "POST_FAQ_CHOICE"
+                msg = (
+                    getattr(prompts, "VOCAL_POST_FAQ_DISAMBIG", prompts.VOCAL_POST_FAQ_CHOICE)
+                    if channel == "vocal"
+                    else getattr(prompts, "MSG_POST_FAQ_DISAMBIG_WEB", prompts.MSG_FAQ_FOLLOWUP_WEB)
+                )
+                session.add_message("agent", msg)
+                return safe_reply([Event("final", msg, conv_state=session.state)], session)
+            # 5) Autre (ex. nouvelle question) → re-FAQ
             session.state = "START"
             return safe_reply(self._handle_faq(session, user_text, include_low=True), session)
         
@@ -1044,11 +1081,13 @@ class Engine:
         if faq_result.match:
             response = prompts.format_faq_response(faq_result.answer, faq_result.faq_id, channel=channel)
             
-            # En vocal, ajouter la question de suivi
+            # Toujours ajouter une relance pour permettre autre question ou RDV
             if channel == "vocal":
                 response = response + " " + prompts.VOCAL_FAQ_FOLLOWUP
+            else:
+                response = response + "\n\n" + getattr(prompts, "MSG_FAQ_FOLLOWUP_WEB", "Souhaitez-vous autre chose ?")
             
-            session.state = "FAQ_ANSWERED"
+            session.state = "POST_FAQ"
             session.no_match_turns = 0
             session.faq_fails = 0
             session.add_message("agent", response)
@@ -1809,7 +1848,8 @@ class Engine:
                     slot_label = "votre créneau"
                 confirm_msg = prompts.format_slot_early_confirm(early_idx, slot_label, channel=channel)
                 session.add_message("agent", confirm_msg)
-                return [Event("final", list_msg, conv_state=session.state), Event("final", confirm_msg, conv_state=session.state)]
+                # Un seul event : le webhook vocal n'utilise que events[0].text → envoyer la confirmation, pas la liste
+                return [Event("final", confirm_msg, conv_state=session.state)]
             help_msg = getattr(prompts, "MSG_SLOT_BARGE_IN_HELP", "D'accord. Dites juste 1, 2 ou 3.")
             session.add_message("agent", help_msg)
             return [Event("final", list_msg, conv_state=session.state), Event("final", help_msg, conv_state=session.state)]

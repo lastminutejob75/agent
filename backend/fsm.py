@@ -11,7 +11,9 @@ from typing import Dict, Set
 
 class ConvState(str, Enum):
     START = "START"
-    FAQ_ANSWERED = "FAQ_ANSWERED"
+    FAQ_ANSWERED = "FAQ_ANSWERED"  # conservé pour compat
+    POST_FAQ = "POST_FAQ"  # après réponse FAQ, en attente de la relance (autre chose ?)
+    POST_FAQ_CHOICE = "POST_FAQ_CHOICE"  # "oui" ambigu → rendez-vous ou question ?
 
     QUALIF_NAME = "QUALIF_NAME"
     QUALIF_MOTIF = "QUALIF_MOTIF"
@@ -28,9 +30,11 @@ class ConvState(str, Enum):
 TERMINAL_STATES: Set[ConvState] = {ConvState.CONFIRMED, ConvState.TRANSFERRED}
 
 VALID_TRANSITIONS: Dict[ConvState, Set[ConvState]] = {
-    ConvState.START: {ConvState.FAQ_ANSWERED, ConvState.QUALIF_NAME, ConvState.TRANSFERRED},
+    ConvState.START: {ConvState.FAQ_ANSWERED, ConvState.POST_FAQ, ConvState.QUALIF_NAME, ConvState.TRANSFERRED},
 
-    ConvState.FAQ_ANSWERED: {ConvState.START, ConvState.TRANSFERRED},  # optionnel (si tu veux continuer)
+    ConvState.FAQ_ANSWERED: {ConvState.START, ConvState.TRANSFERRED},
+    ConvState.POST_FAQ: {ConvState.START, ConvState.CONFIRMED, ConvState.POST_FAQ_CHOICE, ConvState.QUALIF_NAME, ConvState.TRANSFERRED},
+    ConvState.POST_FAQ_CHOICE: {ConvState.START, ConvState.CONFIRMED, ConvState.QUALIF_NAME, ConvState.TRANSFERRED},
 
     ConvState.QUALIF_NAME: {ConvState.QUALIF_MOTIF, ConvState.TRANSFERRED},
 
