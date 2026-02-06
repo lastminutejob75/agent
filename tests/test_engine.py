@@ -580,8 +580,9 @@ def test_wait_confirm_vague_ok_no_fail(mock_slots):
     assert session is not None
     assert session.pending_slot_choice is None
     assert getattr(session, "slot_choice_fails", 0) == 0
-    assert "dites" in events[0].text.lower() and (
-        "1" in events[0].text or "2" in events[0].text or "un" in events[0].text.lower() or "deux" in events[0].text.lower()
+    text_lower = events[0].text.lower()
+    assert ("dites" in text_lower or "dire" in text_lower) and (
+        "1" in events[0].text or "2" in events[0].text or "un" in text_lower or "deux" in text_lower
     )
 
 
