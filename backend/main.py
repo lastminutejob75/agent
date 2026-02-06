@@ -5,8 +5,9 @@ import asyncio
 import json
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Optional, Any
+import sqlite3
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import StreamingResponse, RedirectResponse
@@ -216,6 +217,61 @@ async def debug_env_vars():
         "port_present": bool(os.getenv("PORT")),
         "railway_env_present": bool(os.getenv("RAILWAY_ENVIRONMENT")),
     }
+
+
+@app.get("/api/stats/bookings")
+async def get_booking_stats() -> dict:
+    """Stats des RDV des dernières 24h (sessions par état final)."""
+    try:
+        db_path = getattr(
+            getattr(ENGINE, "session_store", None), "db_path", "sessions.db"
+        )
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        yesterday = (datetime.utcnow() - timedelta(days=1)).isoformat()
+        cursor.execute(
+            """
+            SELECT
+                COUNT(*) AS total_sessions,
+                SUM(CASE WHEN state = 'CONFIRMED' THEN 1 ELSE 0 END) AS confirmed,
+                SUM(CASE WHEN state = 'TRANSFERRED' THEN 1 ELSE 0 END) AS transferred,
+                SUM(CASE WHEN state = 'INTENT_ROUTER' THEN 1 ELSE 0 END) AS router
+            FROM sessions
+            WHERE last_seen_at >= ?
+            """,
+            (yesterday,),
+        )
+        row = cursor.fetchone()
+        conn.close()
+        total = row[0] or 0
+        confirmed = row[1] or 0
+        transferred = row[2] or 0
+        router = row[3] or 0
+        return {
+            "period": "24h",
+            "total_sessions": total,
+            "confirmed_bookings": confirmed,
+            "transferred": transferred,
+            "intent_router": router,
+            "conversion_rate": round(confirmed / total * 100, 1) if total > 0 else 0,
+            "abandon_rate": round(
+                (total - confirmed - transferred) / total * 100, 1
+            )
+            if total > 0
+            else 0,
+        }
+    except Exception as e:
+        _logger.exception("get_booking_stats failed: %s", e)
+        return {
+            "period": "24h",
+            "total_sessions": 0,
+            "confirmed_bookings": 0,
+            "transferred": 0,
+            "intent_router": 0,
+            "conversion_rate": 0,
+            "abandon_rate": 0,
+            "error": str(e),
+        }
 
 
 @app.get("/health")
