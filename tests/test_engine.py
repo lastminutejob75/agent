@@ -587,6 +587,31 @@ def test_wait_confirm_vague_ok_no_fail(mock_slots):
 
 
 @patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+def test_interruption_flow_barge_in_un(mock_slots, caplog):
+    """Interruption pendant énonciation : client dit 'un' après réception des créneaux → early confirm, pas de ré-énumération."""
+    import logging
+    caplog.set_level(logging.INFO)
+    engine = create_engine()
+    conv = f"conv_interrupt_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Martin Dupont")
+    engine.handle_message(conv, "matin")
+    engine.handle_message(conv, "oui")   # → WAIT_CONFIRM, is_reading_slots=True
+    events = engine.handle_message(conv, "un")
+    assert len(events) >= 1
+    reply = events[0].text
+    assert "bien" in reply.lower() or "créneau" in reply.lower()
+    assert "1" in reply or "un" in reply.lower()
+    # Ne doit pas reproposer les autres créneaux (anti-pattern)
+    assert "samedi" not in reply.lower()
+    assert "lundi" not in reply.lower()
+    session = engine.session_store.get(conv)
+    assert session is not None
+    assert session.pending_slot_choice == 1
+    assert "[INTERRUPTION]" in caplog.text
+
+
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
 def test_overlap_silence_during_tts_no_fail(mock_slots):
     """Silence pendant TTS (speaking_until_ts) → 'Je vous écoute.' sans incrémenter empty_message_count (Règle 11)."""
     import time

@@ -54,6 +54,12 @@ CROSSTALK_MAX_RAW_LEN = int(os.getenv("CROSSTALK_MAX_RAW_LEN", "40"))
 # Overlap (user parle juste après envoi réponse agent) : UNCLEAR dans cette fenêtre = pas d'incrément unclear
 OVERLAP_WINDOW_SEC = float(os.getenv("OVERLAP_WINDOW_SEC", "1.2"))
 
+# === INTERRUPTION VOCALE (barge-in pendant énonciation des créneaux) ===
+VAPI_INTERRUPTION_ENABLED = os.getenv("VAPI_INTERRUPTION_ENABLED", "true").lower() in ("true", "1", "yes")
+VAPI_ENDPOINTING_MS = int(os.getenv("VAPI_ENDPOINTING_MS", "200"))  # Détection rapide fin de parole
+VAPI_FILLER_INJECTION = os.getenv("VAPI_FILLER_INJECTION", "false").lower() in ("true", "1", "yes")
+SLOT_ENUMERATION_TIMEOUT_SEC = int(os.getenv("SLOT_ENUMERATION_TIMEOUT_SEC", "15"))  # Max 15s pour énoncer 3 créneaux
+
 # ==============================
 # PHILOSOPHIE UWI : RETRY, PAS TRANSFERT SYSTÉMATIQUE
 # ==============================
@@ -67,7 +73,7 @@ OVERLAP_WINDOW_SEC = float(os.getenv("OVERLAP_WINDOW_SEC", "1.2"))
 RECOVERY_LIMITS = {
     "name": 2,
     "slot_choice": 3,
-    "phone": 2,
+    "phone": 3,  # 3 tentatives pour dicter le numéro (vocal)
     "silence": 3,  # RÈGLE 3 : 2 messages distincts + 3e => INTENT_ROUTER
 }
 

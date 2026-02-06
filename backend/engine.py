@@ -640,7 +640,15 @@ class Engine:
         
         session.add_message("user", user_text)
         
+        turn_count = getattr(session, "turn_count", 0)
         print(f"🔍 handle_message: conv_id={conv_id}, state={session.state}, name={session.qualif_data.name}, pending_slots={len(session.pending_slots or [])}, user='{user_text[:50]}'")
+        logger.info(
+            "[FLOW] conv_id=%s state=%s turn_count=%s user=%s",
+            conv_id,
+            session.state,
+            turn_count,
+            (user_text or "")[:50],
+        )
         
         # ========================
         # RÈGLE -1 : TRIAGE MÉDICAL (priorité absolue, avant tout le reste)
@@ -700,6 +708,12 @@ class Engine:
         session.turn_count = getattr(session, "turn_count", 0) + 1
         max_turns = getattr(Session, "MAX_TURNS_ANTI_LOOP", 25)
         if session.turn_count > max_turns:
+            logger.info(
+                "[ANTI_LOOP] conv_id=%s turn_count=%s max=%s",
+                conv_id,
+                session.turn_count,
+                max_turns,
+            )
             _persist_ivr_event(session, "anti_loop_trigger")
             return safe_reply(
                 self._trigger_intent_router(session, "anti_loop_25", user_text or ""),
@@ -1728,13 +1742,26 @@ class Engine:
 
         # Stocker slots
         tools_booking.store_pending_slots(session, slots)
+        old_state = session.state
         session.state = "WAIT_CONFIRM"
+        logger.info(
+            "[STATE_CHANGE] conv_id=%s %s -> WAIT_CONFIRM (slots proposed)",
+            session.conv_id,
+            old_state,
+        )
         
         # Message unique avec liste (vocal + web). Le webhook vocal n'envoie que events[0].text,
         # donc on envoie préface + liste en un seul message pour éviter que l'agent s'arrête à "Voici trois créneaux".
         msg = prompts.format_slot_proposal(slots, include_instruction=True, channel=channel)
         if channel == "vocal" and msg:
             msg = prompts.TransitionSignals.wrap_with_signal(msg, "PROCESSING")
+        logger.info(
+            "[SLOTS_SENT] conv_id=%s channel=%s len=%s preview=%s",
+            session.conv_id,
+            channel,
+            len(msg or ""),
+            (msg or "")[:200],
+        )
         print(f"✅ _propose_slots: proposing {len(slots)} slots")
         session.add_message("agent", msg)
         session.is_reading_slots = True
@@ -1768,6 +1795,12 @@ class Engine:
             self._save_session(session)
             early_idx = detect_slot_choice_early(user_text, session.pending_slots)
             if early_idx is not None:
+                logger.info(
+                    "[INTERRUPTION] conv_id=%s client chose slot %s during enumeration (preface just sent), slots_count=%s",
+                    session.conv_id,
+                    early_idx,
+                    len(session.pending_slots or []),
+                )
                 session.is_reading_slots = False
                 session.pending_slot_choice = early_idx
                 try:
@@ -1781,10 +1814,16 @@ class Engine:
             session.add_message("agent", help_msg)
             return [Event("final", list_msg, conv_state=session.state), Event("final", help_msg, conv_state=session.state)]
 
-        # P1.1 Barge-in safe : user a parlé pendant l'énumération des créneaux
+        # P1.1 Barge-in safe : user a parlé pendant l'énumération des créneaux (interruption positive)
         if getattr(session, "is_reading_slots", False):
             early_idx = detect_slot_choice_early(user_text, session.pending_slots)
             if early_idx is not None:
+                logger.info(
+                    "[INTERRUPTION] conv_id=%s client chose slot %s during enumeration, slots_count=%s",
+                    session.conv_id,
+                    early_idx,
+                    len(session.pending_slots or []),
+                )
                 session.is_reading_slots = False
                 session.pending_slot_choice = early_idx
                 self._save_session(session)
@@ -1850,6 +1889,13 @@ class Engine:
         if slot_idx is None:
             early_idx = detect_slot_choice_early(user_text, session.pending_slots)
             if early_idx is not None:
+                if getattr(session, "is_reading_slots", False):
+                    logger.info(
+                        "[INTERRUPTION] conv_id=%s client chose slot %s during enumeration, slots_count=%s",
+                        session.conv_id,
+                        early_idx,
+                        len(session.pending_slots or []),
+                    )
                 session.is_reading_slots = False
                 session.pending_slot_choice = early_idx
                 self._save_session(session)
@@ -2455,23 +2501,51 @@ class Engine:
             # Si on a déjà un slot choisi (nouveau flow) → booker et confirmer
             if session.pending_slot_choice is not None:
                 slot_idx = session.pending_slot_choice
-                
+                logger.info(
+                    "[BOOKING_ATTEMPT] conv_id=%s slot_idx=%s",
+                    session.conv_id,
+                    slot_idx,
+                )
                 # Booker le créneau
                 success = tools_booking.book_slot_from_session(session, slot_idx)
-                
+                logger.info(
+                    "[BOOKING_RESULT] conv_id=%s success=%s",
+                    session.conv_id,
+                    success,
+                )
                 if not success:
-                    session.state = "TRANSFERRED"
-                    msg = prompts.MSG_SLOT_ALREADY_BOOKED
+                    booking_retry = getattr(session, "booking_retry_count", 0) + 1
+                    setattr(session, "booking_retry_count", booking_retry)
+                    if booking_retry > 2:
+                        session.state = "TRANSFERRED"
+                        msg = prompts.MSG_SLOT_TAKEN_TRANSFER
+                        session.add_message("agent", msg)
+                        return [Event("final", msg, conv_state=session.state)]
+                    logger.warning(
+                        "[BOOKING_RETRY] slot taken, reproposing conv_id=%s retry=%s",
+                        session.conv_id,
+                        booking_retry,
+                    )
+                    session.pending_slots = []
+                    session.pending_slot_choice = None
+                    session.pending_slots_display = []
+                    session.state = "QUALIF_PREF"
+                    msg = prompts.MSG_SLOT_TAKEN_REPROPOSE
                     session.add_message("agent", msg)
+                    self._save_session(session)
                     return [Event("final", msg, conv_state=session.state)]
-                
                 # Confirmer
                 slot_label = tools_booking.get_label_for_choice(session, slot_idx) or ""
                 name = session.qualif_data.name or ""
                 motif = session.qualif_data.motif or ""
                 msg = prompts.format_booking_confirmed(slot_label, name=name, motif=motif, channel=channel)
-                
                 session.state = "CONFIRMED"
+                logger.info(
+                    "[RDV_CONFIRMED] conv_id=%s slot_label=%s name=%s",
+                    session.conv_id,
+                    slot_label,
+                    name,
+                )
                 _persist_ivr_event(session, "booking_confirmed")
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
