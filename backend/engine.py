@@ -1163,16 +1163,17 @@ class Engine:
         # Construire la réponse avec confirmation implicite si extraction
         response_parts = []
         
-        # Confirmation implicite des entités extraites
+        # Confirmation implicite des entités extraites (round-robin ACK)
         if entities.has_any():
+            ack = prompts.pick_ack(session.next_ack_index())
             if entities.name and entities.motif:
-                response_parts.append(f"Parfait {entities.name}, pour {entities.motif}.")
+                response_parts.append(f"{ack} Pour {entities.motif}.")
             elif entities.name:
-                response_parts.append(f"Très bien {entities.name}.")
+                response_parts.append(ack)
             elif entities.motif:
-                response_parts.append(f"D'accord, pour {entities.motif}.")
+                response_parts.append(f"{ack} Pour {entities.motif}.")
             else:
-                response_parts.append("Très bien.")
+                response_parts.append(ack)
         
         # Question suivante
         question = prompts.get_qualif_question(next_field, channel=channel)
@@ -1258,7 +1259,9 @@ class Engine:
         print(f"🔍 _next_qualif_step: client_name='{client_name}', channel={channel}, consecutive_questions={session.consecutive_questions}")
         
         if client_name and channel == "vocal":
-            question = prompts.get_qualif_question_with_name(next_field, client_name, channel=channel)
+            question = prompts.get_qualif_question_with_name(
+                next_field, client_name, channel=channel, ack_index=session.next_ack_index()
+            )
         else:
             question = prompts.get_qualif_question(next_field, channel=channel)
         # V3.1 : mot-signal de progression (vocal)
@@ -1883,15 +1886,24 @@ class Engine:
         
         slot_idx: Optional[int] = None
 
-        # Confirmation du créneau déjà choisi (après "c'est bien ça ?") : "oui" → on passe au contact
+        # Confirmation du créneau déjà choisi (après "c'est bien ça ?") : "oui" ou "oui c'est bien ça" → on passe au contact
         if session.pending_slot_choice is not None:
             _t = (user_text or "").strip().lower()
-            _t = "".join(c for c in _t if c.isalnum() or c in " '\"-")
-            _t = _t.replace("'", "").replace("'", "").strip()
+            _t_norm = "".join(c for c in _t if c.isalnum() or c in " '\"-")
+            _t_norm = _t_norm.replace("'", "").replace("'", "").strip()
             _confirm_words = guards.YES_WORDS | {"ouaip", "okay", "parfait", "daccord"}
-            if _t in _confirm_words:
+            if _t_norm in _confirm_words:
                 slot_idx = session.pending_slot_choice
                 print(f"✅ slot_choice: confirmation du créneau {slot_idx} → passage au contact")
+            else:
+                # Accepter les phrases du type "oui c'est bien ça", "c'est bien ça", "oui cest bien ca"
+                _norm_compact = _t_norm.replace(" ", "")
+                if "bienca" in _norm_compact or "bien ca" in _t_norm or "cestbienca" in _norm_compact:
+                    slot_idx = session.pending_slot_choice
+                    print(f"✅ slot_choice: confirmation phrase du créneau {slot_idx} → passage au contact")
+                elif _t_norm.startswith("oui") and len(_t_norm) <= 25 and ("bien" in _t_norm or "ca" in _t_norm or "ça" in _t):
+                    slot_idx = session.pending_slot_choice
+                    print(f"✅ slot_choice: confirmation oui+ du créneau {slot_idx} → passage au contact")
 
         # Validation vague (oui/ok/d'accord SANS choix explicite) → redemander 1/2/3 SANS incrémenter fails (P0.5, A6)
         if slot_idx is None:
@@ -2023,13 +2035,9 @@ class Engine:
             print(f"📞 No caller ID, asking for contact normally")
             session.state = "QUALIF_CONTACT"
             self._save_session(session)
-            first_name = name.split()[0] if name else ""
-            print(f"👤 name='{name}', first_name='{first_name}'")
+            print(f"👤 name='{name}'")
             
-            if first_name and channel == "vocal":
-                msg = f"Parfait, {slot_label} pour {first_name}. Et votre numéro de téléphone pour vous rappeler ?"
-            else:
-                msg = prompts.get_qualif_question("contact", channel=channel)
+            msg = prompts.get_qualif_question("contact", channel=channel)
             
             print(f"✅ Final message: '{msg}'")
             session.add_message("agent", msg)

@@ -253,3 +253,27 @@ def test_msg_no_match_faq_adapts_to_channel():
     # Web - plus formel
     web = prompts.msg_no_match_faq("Cabinet Durand", channel="web")
     assert "certain" in web.lower()
+
+
+def test_pick_ack_round_robin():
+    """pick_ack retourne les variantes en round-robin déterministe."""
+    assert prompts.pick_ack(0) == "Très bien."
+    assert prompts.pick_ack(1) == "D'accord."
+    assert prompts.pick_ack(2) == "Parfait."
+    assert prompts.pick_ack(3) == "Très bien."
+    assert prompts.pick_ack(4) == "D'accord."
+    assert prompts.pick_ack(5) == "Parfait."
+
+
+def test_qualif_with_name_ack_rotates():
+    """Deux appels successifs avec ack_index différent ne renvoient pas la même intro."""
+    q0 = prompts.get_qualif_question_with_name(
+        "pref", "Dupont", channel="vocal", ack_index=0
+    )
+    q1 = prompts.get_qualif_question_with_name(
+        "pref", "Dupont", channel="vocal", ack_index=1
+    )
+    # Préfixes différents (Très bien. vs D'accord.)
+    assert q0.startswith("Très bien.")
+    assert q1.startswith("D'accord.")
+    assert q0 != q1

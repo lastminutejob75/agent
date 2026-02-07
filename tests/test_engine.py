@@ -612,6 +612,24 @@ def test_interruption_flow_barge_in_un(mock_slots, caplog):
 
 
 @patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+def test_confirm_slot_oui_cest_bien_ca(mock_slots):
+    """Après « Le créneau X, c'est bien ça ? », « oui c'est bien ça » doit valider et passer au contact (pas transférer)."""
+    engine = create_engine()
+    conv = f"conv_oui_bien_ca_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Martin Dupont")
+    engine.handle_message(conv, "matin")
+    engine.handle_message(conv, "oui")
+    engine.handle_message(conv, "un")
+    events = engine.handle_message(conv, "oui c'est bien ça")
+    assert len(events) >= 1
+    session = engine.session_store.get(conv)
+    assert session is not None
+    assert session.state == "QUALIF_CONTACT"
+    assert "transfert" not in events[0].text.lower() and "conseiller" not in events[0].text.lower()
+
+
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
 def test_overlap_silence_during_tts_no_fail(mock_slots):
     """Silence pendant TTS (speaking_until_ts) → 'Je vous écoute.' sans incrémenter empty_message_count (Règle 11)."""
     import time

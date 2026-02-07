@@ -12,8 +12,37 @@ Ce fichier est la SOURCE DE VÉRITÉ pour le comportement de l'agent.
 
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import List, Dict
+from typing import List, Dict, Optional
 import re
+
+# --- ACK neutres (anti-répétition) — phrases TTS courtes, polies, déterministes ---
+ACK_VARIANTS_LIST: List[str] = [
+    "Très bien.",
+    "D'accord.",
+    "Parfait.",
+]
+
+
+def pick_ack(index: int) -> str:
+    """Retourne une variante d'ACK de façon déterministe (round-robin)."""
+    if not ACK_VARIANTS_LIST:
+        return "Très bien."
+    return ACK_VARIANTS_LIST[index % len(ACK_VARIANTS_LIST)]
+
+
+# Clôtures neutres (variantes pour fin d'appel, optionnel)
+CLOSE_VARIANTS: List[str] = [
+    "Merci pour votre appel. Bonne journée.",
+    "Parfait, c'est noté. Bonne journée.",
+    "Très bien. À bientôt. Bonne journée.",
+]
+
+
+def pick_close(index: int) -> str:
+    """Retourne une clôture neutre en round-robin."""
+    if not CLOSE_VARIANTS:
+        return "Merci pour votre appel. Bonne journée."
+    return CLOSE_VARIANTS[index % len(CLOSE_VARIANTS)]
 
 
 # --- Silence vocal (RÈGLE 3) — ton bienveillant, phrases courtes TTS ---
@@ -167,7 +196,7 @@ MSG_CONTACT_FAIL_TRANSFER = (
 
 # Salutation d'accueil (ton chaleureux, pas sec)
 VOCAL_SALUTATION = (
-    "Bonjour, vous êtes bien chez {business_name}. Comment puis-je vous aider ?"
+    "Bonjour, {business_name}. Comment puis-je vous aider ?"
 )
 
 # Fallback si besoin
@@ -186,7 +215,7 @@ VOCAL_SALUTATION_SHORT = "Bonjour, je vous écoute."
 def get_vocal_greeting(business_name: str) -> str:
     """
     Retourne le message d'accueil pour Vapi.
-    Format: "Bonjour Cabinet Dupont, vous appelez pour un rendez-vous ?"
+    Format: "Bonjour, Cabinet Dupont. Comment puis-je vous aider ?"
     """
     return VOCAL_SALUTATION.format(business_name=business_name)
 
@@ -199,7 +228,7 @@ VOCAL_FAQ_FOLLOWUP = (
     "Souhaitez-vous autre chose ?"
 )
 
-VOCAL_FAQ_GOODBYE = "Très bien. Merci de votre appel. Bonne journée."
+VOCAL_FAQ_GOODBYE = "Merci de votre appel. Bonne journée."
 
 VOCAL_FAQ_TO_BOOKING = "Très bien. Pour le rendez-vous, à quel nom, s'il vous plaît ?"
 
@@ -596,6 +625,15 @@ VOCAL_ACK_POSITIVE = [
     "Parfait.",
 ]
 
+# Alias pour compat (utiliser pick_ack + session.next_ack_index() dans l'engine)
+ACK_VARIANTS = tuple(ACK_VARIANTS_LIST)
+
+
+def get_ack_variant(step_index: int) -> str:
+    """Alias de pick_ack (conservé pour compat). Préférer pick_ack(session.next_ack_index())."""
+    return pick_ack(step_index)
+
+
 VOCAL_ACK_UNDERSTANDING = [
     "Je comprends.",
     "Je vois.",
@@ -623,9 +661,9 @@ VOCAL_NO_SLOTS = (
     "Je vous mets en relation avec un conseiller."
 )
 
-VOCAL_GOODBYE = "Merci de votre appel. Je vous souhaite une excellente journée, au revoir."
+VOCAL_GOODBYE = "Merci de votre appel. Bonne journée."
 
-VOCAL_GOODBYE_AFTER_BOOKING = "C'est parfait, merci à vous. À très bientôt, bonne journée."
+VOCAL_GOODBYE_AFTER_BOOKING = "Merci, à très bientôt. Bonne journée."
 
 # ============================================
 # CONTACT (Vocal)
@@ -1007,25 +1045,30 @@ QUALIF_QUESTIONS_VOCAL: Dict[str, str] = {
     "contact": "Parfait ! Et votre numéro de téléphone pour vous rappeler ?",
 }
 
-# Questions avec nom inclus (après avoir reçu le nom)
-def get_qualif_question_with_name(field: str, name: str, channel: str = "web") -> str:
+# Questions après avoir reçu le nom (sans prénom ; ack en round-robin via ack_index)
+def get_qualif_question_with_name(
+    field: str,
+    name: str,
+    channel: str = "web",
+    ack_index: Optional[int] = None,
+) -> str:
     """
-    Retourne la question de qualification avec le nom du client (ton chaleureux).
-    Ex: "Super Jean ! Plutôt le matin ou l'après-midi ?"
+    Retourne la question de qualification. Pas de prénom (politesse).
+    ack_index : index pour pick_ack (round-robin). Passer session.next_ack_index() depuis l'engine.
     """
     if channel != "vocal" or not name:
         return get_qualif_question(field, channel)
     
-    # Extraire le prénom
-    first_name = name.split()[0] if name else ""
-    
-    vocal_questions_with_name = {
-        "motif": "",  # DÉSACTIVÉ
-        "pref": f"Très bien {first_name}. Vous préférez plutôt le matin ou l'après-midi ?",
-        "contact": f"Parfait. Et votre numéro de téléphone pour vous rappeler ?",
+    vocal_rest = {
+        "motif": "",
+        "pref": "Vous préférez plutôt le matin ou l'après-midi ?",
+        "contact": "Et votre numéro de téléphone pour vous rappeler ?",
     }
-    
-    return vocal_questions_with_name.get(field, get_qualif_question(field, channel))
+    rest = vocal_rest.get(field)
+    if rest is None or rest == "":
+        return get_qualif_question(field, channel)
+    ack = pick_ack(ack_index if ack_index is not None else 0)
+    return f"{ack} {rest}"
 
 def get_qualif_question(field: str, channel: str = "web") -> str:
     """
@@ -1197,16 +1240,8 @@ def format_booking_confirmed(slot_label: str, name: str = "", motif: str = "", c
 def format_booking_confirmed_vocal(slot_label: str, name: str = "") -> str:
     """
     Confirmation de RDV pour le vocal.
-    Ton professionnel et rassurant. Phrases courtes pour TTS (R1).
+    Ton professionnel et rassurant. Pas de prénom (politesse monsieur/madame).
     """
-    if name:
-        first_name = name.split()[0] if name else ""
-        return (
-            "Parfait. "
-            f"Votre rendez-vous est confirmé pour {slot_label}. "
-            "Vous recevrez un SMS de rappel. "
-            f"À très bientôt, {first_name}."
-        )
     return (
         "Parfait. "
         f"Votre rendez-vous est confirmé pour {slot_label}. "

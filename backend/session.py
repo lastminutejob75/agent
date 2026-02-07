@@ -77,6 +77,8 @@ class Session:
     last_preference_user_text: Optional[str] = None  # Phrase user ayant mené à pending (répétition = confirmation)
     empty_message_count: int = 0  # IVR Principe 3 : messages vides répétés → INTENT_ROUTER si >= 2
     turn_count: int = 0  # Nombre de tours (user+agent) → anti-loop si > 25 (spec V3)
+    # Compteur ACK (round-robin Très bien / D'accord / Parfait) — persistant pendant l'appel
+    ack_idx: int = 0
     # STT nova-2-phonecall : bruit (confidence faible) vs silence
     noise_detected_count: int = 0
     last_noise_ts: Optional[float] = None  # time.time() pour cooldown
@@ -122,6 +124,12 @@ class Session:
     def touch(self) -> None:
         self.last_seen_at = datetime.utcnow()
 
+    def next_ack_index(self) -> int:
+        """Incrémente le compteur ACK et retourne l'index pour pick_ack (round-robin)."""
+        i = self.ack_idx
+        self.ack_idx += 1
+        return i
+
     def is_expired(self) -> bool:
         ttl = timedelta(minutes=config.SESSION_TTL_MINUTES)
         return datetime.utcnow() - self.last_seen_at > ttl
@@ -153,6 +161,7 @@ class Session:
         self.pending_preference = None
         self.empty_message_count = 0
         self.turn_count = 0
+        self.ack_idx = 0
         self.noise_detected_count = 0
         self.last_noise_ts = None
         self.unclear_text_count = 0
