@@ -42,8 +42,8 @@ def _reconstruct_session_from_history(session, messages: list):
         "QUALIF_NAME": ["c'est à quel nom", "quel nom", "votre nom"],
         "QUALIF_PREF": ["matin ou l'après-midi", "matin ou après-midi", "préférez"],
         "QUALIF_CONTACT": ["numéro de téléphone", "téléphone pour vous rappeler", "redonner votre numéro"],
-        "CONTACT_CONFIRM": ["votre numéro est bien", "j'ai noté le", "c'est bien ça", "est-ce correct"],
-        "WAIT_CONFIRM": ["j'ai trois créneaux", "j'ai deux créneaux", "j'ai un créneau", "dites un, deux ou trois", "dites un ou deux"],
+        "CONTACT_CONFIRM": ["votre numéro est bien", "j'ai noté le", "je confirme", "c'est bien ça", "est-ce correct"],
+        "WAIT_CONFIRM": ["j'ai trois créneaux", "voici trois créneaux", "j'ai deux créneaux", "j'ai un créneau", "dites un, deux ou trois", "dites simplement", "dites un ou deux"],
         "CONFIRMED": ["rendez-vous est confirmé", "c'est confirmé"],
         "POST_FAQ": ["puis-je vous aider pour autre chose", "autre chose pour vous", "souhaitez-vous autre chose"],
         "POST_FAQ_CHOICE": [
@@ -588,7 +588,7 @@ async def vapi_custom_llm(request: Request):
         
         if not user_message:
             # Premier message ou pas de message user
-            response_text = prompts.MSG_WELCOME
+            response_text = prompts.get_vocal_greeting(config.BUSINESS_NAME)
             print(f"✅ Welcome message")
         else:
             # Traiter via ENGINE

@@ -2091,7 +2091,7 @@ class Engine:
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             # Non = parler à quelqu'un → transfert
-            if intent == "NO" or any(p in msg_lower for p in ["humain", "quelqu'un", "parler à quelqu'un", "opérateur", "transfert"]):
+            if intent == "NO" or any(p in msg_lower for p in ["humain", "quelqu'un", "parler à quelqu'un", "opérateur", "transfert", "conseiller"]):
                 session.state = "TRANSFERRED"
                 msg = prompts.get_message("transfer", channel=channel)
                 session.add_message("agent", msg)
@@ -2272,7 +2272,7 @@ class Engine:
                 msg = prompts.VOCAL_MODIFY_ASK_NAME if channel == "vocal" else prompts.MSG_MODIFY_ASK_NAME_WEB
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
-            if intent == "NO" or any(p in msg_lower for p in ["humain", "quelqu'un", "parler à quelqu'un", "opérateur", "transfert"]):
+            if intent == "NO" or any(p in msg_lower for p in ["humain", "quelqu'un", "parler à quelqu'un", "opérateur", "transfert", "conseiller"]):
                 session.state = "TRANSFERRED"
                 msg = prompts.get_message("transfer", channel=channel)
                 session.add_message("agent", msg)
@@ -2755,7 +2755,7 @@ class Engine:
             msg = prompts.MSG_INTENT_ROUTER_FAQ
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
-        if any(p in msg_lower for p in ["quatre", "4", "quatrième", "quelqu'un", "humain"]):
+        if any(p in msg_lower for p in ["quatre", "4", "quatrième", "quelqu'un", "humain", "conseiller"]):
             session.state = "TRANSFERRED"
             msg = prompts.VOCAL_TRANSFER_COMPLEX if channel == "vocal" else prompts.MSG_TRANSFER
             session.add_message("agent", msg)
