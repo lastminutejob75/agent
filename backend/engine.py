@@ -934,8 +934,8 @@ class Engine:
 
             # YES → Booking flow
             if intent == "YES":
+                session.start_unclear_count = 0
                 print(f"✅ Intent YES detected")
-                
                 # Essayer d'extraire des infos supplémentaires du message
                 # Ex: "Oui je voudrais un RDV le matin" → extraire "matin"
                 # Ex: "Oui pour Jean Dupont" → extraire le nom
@@ -957,6 +957,7 @@ class Engine:
             
             # NO → demander clarification
             if intent == "NO":
+                session.start_unclear_count = 0
                 session.state = "CLARIFY"
                 msg = prompts.VOCAL_CLARIFY if channel == "vocal" else prompts.MSG_CLARIFY_WEB_START
                 session.add_message("agent", msg)
@@ -964,15 +965,18 @@ class Engine:
             
             # CANCEL → Flow annulation
             if intent == "CANCEL":
+                session.start_unclear_count = 0
                 return safe_reply(self._start_cancel(session), session)
             
             # MODIFY → Flow modification
             if intent == "MODIFY":
+                session.start_unclear_count = 0
                 return safe_reply(self._start_modify(session), session)
             
             # TRANSFER → Transfert direct (doc: phrase explicite >=14 car., pas interruption courte)
             if intent == "TRANSFER":
                 if len(user_text.strip()) >= 14:
+                    session.start_unclear_count = 0
                     session.state = "TRANSFERRED"
                     msg = prompts.VOCAL_TRANSFER_COMPLEX if channel == "vocal" else prompts.MSG_TRANSFER
                     session.add_message("agent", msg)
@@ -982,6 +986,7 @@ class Engine:
             
             # ABANDON → Au revoir poli
             if intent == "ABANDON":
+                session.start_unclear_count = 0
                 session.state = "CONFIRMED"  # Terminal
                 msg = prompts.VOCAL_USER_ABANDON if channel == "vocal" else prompts.MSG_ABANDON_WEB
                 session.add_message("agent", msg)
@@ -989,10 +994,12 @@ class Engine:
             
             # BOOKING → Démarrer qualification avec extraction
             if intent == "BOOKING":
+                session.start_unclear_count = 0
                 return safe_reply(self._start_booking_with_extraction(session, user_text), session)
             
             # ORDONNANCE → Flow ordonnance (RDV ou message, conversation naturelle)
             if intent == "ORDONNANCE":
+                session.start_unclear_count = 0
                 return safe_reply(self._handle_ordonnance_flow(session, user_text), session)
             
             # FAQ ou UNCLEAR → Chercher dans FAQ
@@ -1080,16 +1087,15 @@ class Engine:
 
         if faq_result.match:
             response = prompts.format_faq_response(faq_result.answer, faq_result.faq_id, channel=channel)
-            
             # Toujours ajouter une relance pour permettre autre question ou RDV
             if channel == "vocal":
                 response = response + " " + prompts.VOCAL_FAQ_FOLLOWUP
             else:
                 response = response + "\n\n" + getattr(prompts, "MSG_FAQ_FOLLOWUP_WEB", "Souhaitez-vous autre chose ?")
-            
             session.state = "POST_FAQ"
             session.no_match_turns = 0
             session.faq_fails = 0
+            session.start_unclear_count = 0  # Reset guidage START sur succès FAQ
             session.add_message("agent", response)
             return [Event("final", response, conv_state=session.state)]
 
@@ -1097,19 +1103,49 @@ class Engine:
         session.faq_fails = getattr(session, "faq_fails", 0) + 1
         session.global_recovery_fails = getattr(session, "global_recovery_fails", 0) + 1
 
-        # Philosophie "router avant transfert" : 1er no match → clarification, 2e → INTENT_ROUTER (menu)
-        if session.no_match_turns >= 2:
-            log_ivr_event(logger, session, "recovery_step", context="faq", reason="escalate_intent_router")
-            return self._trigger_intent_router(session, "faq_no_match_2", user_text)
+        # En START (question ouverte) : guidage proactif avec start_unclear_count
+        if session.state == "START":
+            session.start_unclear_count = getattr(session, "start_unclear_count", 0) + 1
+            # 1ère incompréhension → clarification générique (rendez-vous ou question)
+            if session.start_unclear_count == 1:
+                log_ivr_event(logger, session, "recovery_step", context="faq", reason="start_unclear_1")
+                msg = prompts.VOCAL_START_CLARIFY_1 if channel == "vocal" else prompts.MSG_START_CLARIFY_1_WEB
+                session.add_message("agent", msg)
+                self._save_session(session)
+                return [Event("final", msg, conv_state=session.state)]
+            # 2e incompréhension → guidage proactif (RDV, horaires, adresse, services)
+            if session.start_unclear_count == 2:
+                log_ivr_event(logger, session, "recovery_step", context="faq", reason="start_unclear_2_guidance")
+                msg = prompts.VOCAL_START_GUIDANCE if channel == "vocal" else prompts.MSG_START_GUIDANCE_WEB
+                session.add_message("agent", msg)
+                self._save_session(session)
+                return [Event("final", msg, conv_state=session.state)]
+            # 3e et plus → INTENT_ROUTER
+            log_ivr_event(logger, session, "recovery_step", context="faq", reason="start_unclear_3")
+            session.start_unclear_count = 0
+            return self._trigger_intent_router(session, "start_unclear_3", user_text)
 
-        # 1er no-match : clarification ("Pouvez-vous préciser ?")
-        log_ivr_event(logger, session, "recovery_step", context="faq", reason="retry_1")
-        if channel == "vocal":
-            msg = getattr(prompts, "MSG_FAQ_REFORMULATE_VOCAL", prompts.MSG_FAQ_REFORMULATE)
-        else:
-            msg = prompts.MSG_FAQ_REFORMULATE
-        session.add_message("agent", msg)
-        return [Event("final", msg, conv_state=session.state)]
+        # Hors START : comportement FAQ classique (no_match_turns)
+        if session.no_match_turns == 1:
+            log_ivr_event(logger, session, "recovery_step", context="faq", reason="retry_1")
+            if channel == "vocal":
+                msg = getattr(prompts, "MSG_FAQ_REFORMULATE_VOCAL", prompts.MSG_FAQ_REFORMULATE)
+            else:
+                msg = prompts.MSG_FAQ_REFORMULATE
+            session.add_message("agent", msg)
+            self._save_session(session)
+            return [Event("final", msg, conv_state=session.state)]
+        if session.no_match_turns == 2:
+            log_ivr_event(logger, session, "recovery_step", context="faq", reason="retry_2_options")
+            if channel == "vocal":
+                msg = getattr(prompts, "MSG_FAQ_RETRY_EXEMPLES_VOCAL", prompts.MSG_FAQ_REFORMULATE)
+            else:
+                msg = getattr(prompts, "MSG_FAQ_RETRY_EXEMPLES", prompts.MSG_FAQ_REFORMULATE)
+            session.add_message("agent", msg)
+            self._save_session(session)
+            return [Event("final", msg, conv_state=session.state)]
+        log_ivr_event(logger, session, "recovery_step", context="faq", reason="escalate_intent_router")
+        return self._trigger_intent_router(session, "faq_no_match_2", user_text)
     
     def _start_booking_with_extraction(self, session: Session, user_text: str) -> List[Event]:
         """
@@ -2696,6 +2732,7 @@ class Engine:
         session.global_recovery_fails = 0
         session.correction_count = 0
         session.empty_message_count = 0
+        session.start_unclear_count = 0
         session.turn_count = 0  # Redonner 25 tours après le menu (spec V3)
         session.noise_detected_count = 0
         session.last_noise_ts = None

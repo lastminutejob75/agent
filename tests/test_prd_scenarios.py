@@ -10,8 +10,8 @@ from backend.session import SessionStore
 
 def test_faq_no_match_twice_transfer():
     """
-    Test 5 : FAQ × 2 → Transfer
-    Sans match FAQ, 1er message → clarification, 2e → TRANSFERRED.
+    Test 5 : FAQ × 3 → INTENT_ROUTER
+    Sans match FAQ : 1er → clarification, 2e → reformulation avec options (RDV, horaires, conseiller), 3e → INTENT_ROUTER.
     """
     from backend.engine import Engine
     from backend.tools_faq import FaqStore
@@ -23,11 +23,16 @@ def test_faq_no_match_twice_transfer():
     assert e1[0].type == "final"
     assert "pas certain" in e1[0].text.lower() or "mettre en relation" in e1[0].text.lower() or "relation" in e1[0].text.lower() or "reformuler" in e1[0].text.lower() or "bien compris" in e1[0].text.lower()
 
-    # 2e message hors FAQ → INTENT_ROUTER (menu) ou TRANSFERRED selon spec
+    # 2e message hors FAQ → reformulation avec options (reste en START)
     e2 = engine.handle_message(conv, "Donnez-moi des infos sur vos services")
     assert e2[0].type == "final"
-    assert e2[0].conv_state in ("TRANSFERRED", "INTENT_ROUTER")
-    assert "mets en relation" in e2[0].text.lower() or "humain" in e2[0].text.lower() or "un, deux" in e2[0].text.lower() or "dites" in e2[0].text.lower()
+    assert "rendez-vous" in e2[0].text.lower() or "horaires" in e2[0].text.lower() or "conseiller" in e2[0].text.lower()
+
+    # 3e message hors FAQ → INTENT_ROUTER (menu) ou TRANSFERRED
+    e3 = engine.handle_message(conv, "Toujours pas clair")
+    assert e3[0].type == "final"
+    assert e3[0].conv_state in ("TRANSFERRED", "INTENT_ROUTER")
+    assert "mets en relation" in e3[0].text.lower() or "humain" in e3[0].text.lower() or "un, deux" in e3[0].text.lower() or "dites" in e3[0].text.lower()
 
 
 def test_booking_confirm_oui_deux():

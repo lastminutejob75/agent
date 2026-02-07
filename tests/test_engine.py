@@ -85,9 +85,14 @@ def test_faq_match_exact():
 
 
 def test_faq_no_match_twice_transfer():
-    """1er no match → clarification (reformuler/préciser), 2e → INTENT_ROUTER (pas transfert direct)."""
-    engine = create_engine()
-    conv = "conv5"
+    """1er no match → clarification, 2e → reformulation avec options (RDV, horaires, conseiller), 3e → INTENT_ROUTER."""
+    import uuid
+    from backend.engine import Engine
+    from backend.session import SessionStore
+    from backend.tools_faq import FaqStore
+    store = SessionStore()
+    engine = Engine(session_store=store, faq_store=FaqStore(items=[]))
+    conv = f"conv_faq_nomatch_{uuid.uuid4().hex[:8]}"
 
     # 1er no match → message de clarification
     e1 = engine.handle_message(conv, "xyzabc123def")
@@ -95,12 +100,19 @@ def test_faq_no_match_twice_transfer():
     assert e1[0].type == "final"
     assert "reformuler" in e1[0].text.lower() or "préciser" in e1[0].text.lower() or "compris" in e1[0].text.lower()
 
-    # 2e no match → INTENT_ROUTER (menu 1/2/3/4), pas MSG_TRANSFER
+    # 2e no match → reformulation avec les possibilités (rendez-vous, horaires, conseiller)
     e2 = engine.handle_message(conv, "test question 2")
     assert len(e2) == 1
     assert e2[0].type == "final"
-    assert e2[0].conv_state == "INTENT_ROUTER"
-    assert "dites" in e2[0].text.lower() and ("un" in e2[0].text.lower() or "1" in e2[0].text)
+    assert e2[0].conv_state == "START"
+    assert "rendez-vous" in e2[0].text.lower() or "horaires" in e2[0].text.lower() or "conseiller" in e2[0].text.lower()
+
+    # 3e no match → INTENT_ROUTER (menu 1/2/3/4) — message neutre (éviter "pas compris" → repeat)
+    e3 = engine.handle_message(conv, "autre chose")
+    assert len(e3) == 1
+    assert e3[0].type == "final"
+    assert e3[0].conv_state == "INTENT_ROUTER"
+    assert "dites" in e3[0].text.lower() and ("un" in e3[0].text.lower() or "1" in e3[0].text)
 
 
 def _reply_for_booking(agent_text: str) -> str:

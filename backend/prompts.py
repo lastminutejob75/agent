@@ -911,7 +911,41 @@ MSG_FAQ_FOLLOWUP_WEB = "Souhaitez-vous autre chose ?"
 MSG_FAQ_NO_MATCH_FIRST = "Je n'ai pas cette information. Souhaitez-vous prendre un rendez-vous ?"
 MSG_FAQ_REFORMULATE = "Je n'ai pas bien compris votre question. Pouvez-vous la reformuler ?"
 MSG_FAQ_REFORMULATE_VOCAL = "Excusez-moi. Je n'ai pas bien saisi. Pouvez-vous reformuler, s'il vous plaît ?"
-# Retry 2 : donner exemples (horaires, tarifs, localisation)
+
+# START - Guidage proactif après incompréhensions (question ouverte)
+# 1ère incompréhension : clarification générique
+VOCAL_START_CLARIFY_1 = (
+    "Je n'ai pas bien compris. Souhaitez-vous prendre rendez-vous, ou avez-vous une question ?"
+)
+MSG_START_CLARIFY_1_WEB = (
+    "Je n'ai pas bien compris. Souhaitez-vous prendre rendez-vous, ou avez-vous une question ?"
+)
+
+# 2e incompréhension : guidage proactif (exemples concrets)
+VOCAL_START_GUIDANCE = (
+    "Je peux vous aider à prendre rendez-vous, "
+    "répondre à vos questions sur nos horaires, notre adresse, "
+    "ou nos services. Que souhaitez-vous ?"
+)
+MSG_START_GUIDANCE_WEB = (
+    "Je peux vous aider avec :\n\n"
+    "• Prendre rendez-vous\n"
+    "• Horaires d'ouverture\n"
+    "• Adresse du cabinet\n"
+    "• Nos services\n\n"
+    "Que souhaitez-vous ?"
+)
+VOCAL_START_GUIDANCE_SHORT = (
+    "Je peux vous aider pour : un rendez-vous, "
+    "nos horaires, notre adresse, ou autre chose. "
+    "Que voulez-vous ?"
+)
+
+# Alias (rétrocompat)
+VOCAL_START_OPTIONS_REFORMULATE = VOCAL_START_GUIDANCE
+MSG_START_OPTIONS_REFORMULATE_WEB = MSG_START_GUIDANCE_WEB
+
+# Retry 2 (contexte FAQ classique) : donner exemples (horaires, tarifs, localisation)
 MSG_FAQ_RETRY_EXEMPLES = (
     "Je peux répondre à des questions sur nos horaires, tarifs, ou localisation. "
     "Posez votre question simplement."

@@ -77,6 +77,8 @@ class Session:
     last_preference_user_text: Optional[str] = None  # Phrase user ayant mené à pending (répétition = confirmation)
     empty_message_count: int = 0  # IVR Principe 3 : messages vides répétés → INTENT_ROUTER si >= 2
     turn_count: int = 0  # Nombre de tours (user+agent) → anti-loop si > 25 (spec V3)
+    # Guidage START (question ouverte) : incompréhensions consécutives avant guidage proactif
+    start_unclear_count: int = 0
     # Compteur ACK (round-robin Très bien / D'accord / Parfait) — persistant pendant l'appel
     ack_idx: int = 0
     # STT nova-2-phonecall : bruit (confidence faible) vs silence
@@ -161,6 +163,7 @@ class Session:
         self.pending_preference = None
         self.empty_message_count = 0
         self.turn_count = 0
+        self.start_unclear_count = 0
         self.ack_idx = 0
         self.noise_detected_count = 0
         self.last_noise_ts = None
