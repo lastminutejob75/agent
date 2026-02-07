@@ -70,6 +70,13 @@ class FaqStore:
 
         return FaqResult(match=False, score=score_norm)
 
+    def get_answer_by_faq_id(self, faq_id: str) -> Optional[Tuple[str, str]]:
+        """Retourne (answer, faq_id) pour le premier item avec ce faq_id, ou None."""
+        for item in self.items:
+            if item.faq_id == faq_id:
+                return (item.answer, item.faq_id)
+        return None
+
 
 def default_faq_store() -> FaqStore:
     """

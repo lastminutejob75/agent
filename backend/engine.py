@@ -24,6 +24,12 @@ from backend.slot_choice import detect_slot_choice_early
 from backend.time_constraints import extract_time_constraint
 from backend.session_store_sqlite import SQLiteSessionStore
 from backend.tools_faq import FaqStore, FaqResult
+from backend.llm_assist import (
+    llm_assist_classify,
+    LLMClient,
+    LLM_ASSIST_MIN_CONFIDENCE,
+    LLM_ASSIST_MAX_TEXT_LEN,
+)
 from backend.entity_extraction import (
     extract_entities,
     get_next_missing_field,
@@ -337,17 +343,35 @@ NO_CONTEXTUAL_STATES = YESNO_CONFIRM_STATES | frozenset({"QUALIF_CONTACT"})
 
 def _log_turn_debug(session: Session) -> None:
     """Log structuré (debug) par tour pour diagnostic d'appel sans rejeu.
-    Ne jamais logger téléphone/email en clair (même en DEBUG). turn_count aide à repérer les boucles."""
-    logger.debug(
-        "[TURN] conv_id=%s turn_count=%s state_before=%s intent_detected=%s strong_intent=%s state_after=%s last_say_key=%s",
-        getattr(session, "conv_id", ""),
-        getattr(session, "turn_count", None),
-        getattr(session, "_turn_state_before", None),
-        getattr(session, "last_intent", None),
-        getattr(session, "last_strong_intent", None),
-        getattr(session, "state", None),
-        getattr(session, "last_say_key", None),
-    )
+    Ne jamais logger téléphone/email en clair (même en DEBUG). turn_count aide à repérer les boucles.
+    llm_meta (si présent) : merger pour diagnostic LLM Assist."""
+    llm_meta = getattr(session, "_turn_llm_meta", None)
+    if llm_meta:
+        logger.debug(
+            "[TURN] conv_id=%s turn_count=%s state_before=%s intent_detected=%s strong_intent=%s state_after=%s last_say_key=%s llm_used=%s llm_intent=%s llm_confidence=%s llm_bucket=%s",
+            getattr(session, "conv_id", ""),
+            getattr(session, "turn_count", None),
+            getattr(session, "_turn_state_before", None),
+            getattr(session, "last_intent", None),
+            getattr(session, "last_strong_intent", None),
+            getattr(session, "state", None),
+            getattr(session, "last_say_key", None),
+            llm_meta.get("llm_used"),
+            llm_meta.get("llm_intent"),
+            llm_meta.get("llm_confidence"),
+            llm_meta.get("llm_bucket"),
+        )
+    else:
+        logger.debug(
+            "[TURN] conv_id=%s turn_count=%s state_before=%s intent_detected=%s strong_intent=%s state_after=%s last_say_key=%s",
+            getattr(session, "conv_id", ""),
+            getattr(session, "turn_count", None),
+            getattr(session, "_turn_state_before", None),
+            getattr(session, "last_intent", None),
+            getattr(session, "last_strong_intent", None),
+            getattr(session, "state", None),
+            getattr(session, "last_say_key", None),
+        )
 
 
 def safe_reply(events: List[Event], session: Session) -> List[Event]:
@@ -576,11 +600,13 @@ class Engine:
     """
     Moteur de conversation déterministe.
     Applique strictement le PRD + SYSTEM_PROMPT.
+    llm_client optionnel : zone grise START uniquement (LLM_ASSIST_ENABLED).
     """
     
-    def __init__(self, session_store, faq_store: FaqStore):
+    def __init__(self, session_store, faq_store: FaqStore, llm_client: Optional[LLMClient] = None):
         self.session_store = session_store
         self.faq_store = faq_store
+        self.llm_client = llm_client
     
     def _save_session(self, session: Session) -> None:
         """Sauvegarde la session (si le store le supporte)."""
@@ -997,6 +1023,7 @@ class Engine:
         
         # Si START → premier message (intent_parser : "oui" en START => UNCLEAR, jamais BOOKING)
         if session.state == "START":
+            strong_intent = detect_strong_intent(user_text)
             # UNCLEAR type "oui" seul → CLARIFY (disambiguation RDV / question). Autre UNCLEAR → _handle_faq (progression 1→2→3 vers INTENT_ROUTER).
             if intent == "UNCLEAR" and guards.is_yes_only(user_text or ""):
                 session.start_unclear_count = 0
@@ -1086,6 +1113,37 @@ class Engine:
                 self._save_session(session)
                 return safe_reply([Event("final", msg, conv_state=session.state)], session)
             
+            # Zone grise START : LLM Assist (si activé, UNCLEAR non filler)
+            llm_meta = None
+            if intent == "UNCLEAR" and self._should_try_llm_assist(user_text, intent, strong_intent):
+                assist = llm_assist_classify(
+                    text=user_text,
+                    state=session.state,
+                    channel=channel,
+                    client=self.llm_client,
+                )
+                if assist and assist.confidence >= LLM_ASSIST_MIN_CONFIDENCE:
+                    llm_meta = {
+                        "llm_used": True,
+                        "llm_intent": assist.intent,
+                        "llm_confidence": assist.confidence,
+                        "llm_bucket": assist.faq_bucket,
+                    }
+                    session._turn_llm_meta = llm_meta
+                    session.start_unclear_count = 0
+                    if assist.intent in ("CANCEL", "MODIFY", "TRANSFER", "ABANDON"):
+                        return safe_reply(
+                            self._route_strong_intent_from_start(session, assist.intent, user_text),
+                            session,
+                        )
+                    if assist.intent == "BOOKING":
+                        return safe_reply(self._start_booking_with_extraction(session, user_text), session)
+                    if assist.intent == "FAQ" and assist.faq_bucket:
+                        return safe_reply(
+                            self._handle_faq_bucket(session, assist.faq_bucket, user_text),
+                            session,
+                        )
+            
             # FAQ ou UNCLEAR (phrase réelle) → progression no-match 1→2→3 vers INTENT_ROUTER
             return safe_reply(self._handle_faq(session, user_text, include_low=True), session)
         
@@ -1161,6 +1219,87 @@ class Engine:
     # ========================
     # HANDLERS
     # ========================
+
+    def _should_try_llm_assist(
+        self, user_text: str, intent: str, strong_intent: Optional[str]
+    ) -> bool:
+        """Zone grise START : UNCLEAR, pas filler, pas strong, pas oui/d'accord, longueur cap."""
+        if strong_intent:
+            return False
+        if intent != "UNCLEAR":
+            return False
+        if intent_parser.is_unclear_filler(user_text or ""):
+            return False
+        t = (user_text or "").strip()
+        if len(t) < 3:
+            return False
+        if len(t) > LLM_ASSIST_MAX_TEXT_LEN:
+            return False
+        normalized = intent_parser.normalize_stt_text(t)
+        tokens = normalized.split() if normalized else []
+        if len(tokens) <= 1:
+            return False
+        yes_safe_refuse = frozenset({"oui", "ouais", "ouai", "ok", "okay", "d accord", "daccord", "dac", "okey"})
+        if normalized in yes_safe_refuse:
+            return False
+        return True
+
+    def _route_strong_intent_from_start(
+        self, session: Session, strong: str, user_text: str
+    ) -> List[Event]:
+        """Applique un strong intent (CANCEL/MODIFY/TRANSFER/ABANDON) depuis la zone grise LLM."""
+        channel = getattr(session, "channel", "web")
+        if strong == "CANCEL":
+            return self._start_cancel(session)
+        if strong == "MODIFY":
+            return self._start_modify(session)
+        if strong == "TRANSFER":
+            session.state = "TRANSFERRED"
+            msg = self._say(session, "transfer_complex")
+            if not msg:
+                msg = prompts.VOCAL_TRANSFER_COMPLEX if channel == "vocal" else prompts.MSG_TRANSFER
+                session.add_message("agent", msg)
+                session.last_say_key, session.last_say_kwargs = "transfer_complex", {}
+            self._save_session(session)
+            return [Event("final", msg, conv_state=session.state)]
+        if strong == "ABANDON":
+            session.state = "CONFIRMED"
+            msg = (
+                prompts.MSG_END_POLITE_ABANDON
+                if hasattr(prompts, "MSG_END_POLITE_ABANDON")
+                else (prompts.VOCAL_USER_ABANDON if channel == "vocal" else prompts.MSG_ABANDON_WEB)
+            )
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state=session.state)]
+        return self._handle_faq(session, user_text, include_low=True)
+
+    # Alias optionnel bucket → faq_id si la base n'a pas FAQ_ACCES / FAQ_CONTACT (ex. ACCES → FAQ_PAIEMENT).
+    BUCKET_FAQ_ALIAS: dict = {}
+
+    def _handle_faq_bucket(
+        self, session: Session, bucket: str, user_text: str
+    ) -> List[Event]:
+        """Réponse FAQ par bucket LLM. Si faq_id absent (None), fallback _handle_faq sans crash."""
+        channel = getattr(session, "channel", "web")
+        faq_id = f"FAQ_{bucket}"
+        result = self.faq_store.get_answer_by_faq_id(faq_id)
+        if not result and getattr(self, "BUCKET_FAQ_ALIAS", None):
+            faq_id = self.BUCKET_FAQ_ALIAS.get(bucket, faq_id)
+            result = self.faq_store.get_answer_by_faq_id(faq_id) if faq_id else None
+        if not result:
+            return self._handle_faq(session, user_text, include_low=True)
+        answer, fid = result
+        response = prompts.format_faq_response(answer, fid, channel=channel)
+        if channel == "vocal":
+            response = response + " " + prompts.VOCAL_FAQ_FOLLOWUP
+        else:
+            response = response + "\n\n" + getattr(prompts, "MSG_FAQ_FOLLOWUP_WEB", "Souhaitez-vous autre chose ?")
+        session.state = "POST_FAQ"
+        session.no_match_turns = 0
+        session.faq_fails = 0
+        session.start_unclear_count = 0
+        session.add_message("agent", response)
+        return [Event("final", response, conv_state=session.state)]
     
     def _handle_faq(self, session: Session, user_text: str, include_low: bool = True) -> List[Event]:
         """
@@ -3204,15 +3343,14 @@ class Engine:
 # FACTORY
 # ========================
 
-def create_engine() -> Engine:
-    """Factory pour créer l'engine avec ses dépendances"""
+def create_engine(llm_client: Optional[LLMClient] = None) -> Engine:
+    """Factory pour créer l'engine avec ses dépendances. llm_client optionnel (LLM Assist zone grise)."""
     from backend.tools_faq import default_faq_store
     
-    # Utiliser SQLite pour persistance des sessions (robuste aux redémarrages)
     session_store = SQLiteSessionStore()
     faq_store = default_faq_store()
     
-    return Engine(session_store=session_store, faq_store=faq_store)
+    return Engine(session_store=session_store, faq_store=faq_store, llm_client=llm_client)
 
 
 # Engine singleton (exporté pour vapi.py)

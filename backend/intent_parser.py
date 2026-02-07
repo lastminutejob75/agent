@@ -106,6 +106,11 @@ _REPEAT_SINGLE_WORDS = frozenset({
 
 # Filler / silence / bruit : UNCLEAR mais ne pas envoyer en _handle_faq (clarify/guidance à la place).
 UNCLEAR_FILLER_TOKENS = frozenset({"euh", "hein", "hum", "euhh", "mmh"})
+# « Je ne sais pas » à l'accueil = filler (pas une vraie demande) → clarification, pas FAQ paiement/espèces.
+FILLER_JE_SAIS_PAS = frozenset({
+    "je ne sais pas", "je sais pas", "j en sais pas", "j'en sais pas",
+    "ben je sais pas", "ben j en sais pas", "euh je sais pas", "bien je sais pas",
+})
 
 # États où YES/NO sont interprétés comme choix (confirmations). Ailleurs (START, POST_FAQ, CLARIFY…)
 # "oui"/"d'accord" → UNCLEAR pour éviter de déclencher un choix par erreur.
@@ -118,8 +123,9 @@ ALLOWED_YESNO_STATES = frozenset({
 
 def is_unclear_filler(text: str) -> bool:
     """
-    True si le texte est uniquement filler/silence/bruit (euh, hein, hum, très court).
+    True si le texte est uniquement filler/silence/bruit (euh, hein, hum) ou « je ne sais pas ».
     À utiliser en START : si UNCLEAR + is_unclear_filler → clarify/guidance, pas _handle_faq.
+    Évite le faux match FAQ « paiement en espèces » pour « je sais pas ».
     """
     if not text or not text.strip():
         return True
@@ -130,6 +136,11 @@ def is_unclear_filler(text: str) -> bool:
     if len(tokens) <= 1 and t in UNCLEAR_FILLER_TOKENS:
         return True
     if t in UNCLEAR_FILLER_TOKENS:
+        return True
+    if t in FILLER_JE_SAIS_PAS:
+        return True
+    # Variantes courtes « … sais pas » (évite FAQ paiement/espèces)
+    if len(tokens) <= 5 and "sais pas" in t:
         return True
     return False
 

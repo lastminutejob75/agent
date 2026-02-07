@@ -124,3 +124,5 @@ Si ces 3 cas se passent bien, le patch peut être considéré prêt.
   - **taux de TRANSFERRED** ;
   - **taux de CONFIRMED** (booking ou FAQ terminée) ;
   - **top 5 des states où ça décroche** (via `state_before` dans le log TURN).
+- **LLM Assist (canary)** : activer `LLM_ASSIST_ENABLED=true` sur 1 numéro ou ~5 % des conv_id, puis mesurer l’impact sur CONFIRMED, TRANSFERRED et la baisse des boucles START.
+  - **Recommandation** : démarrer par **1 numéro pendant 24–48 h** (lecture humaine facile), puis passer à **~5 % conv_id** si tout est stable. Premiers chiffres/logs → lecture rapide puis décision : élargir ou ajuster prompt/threshold.

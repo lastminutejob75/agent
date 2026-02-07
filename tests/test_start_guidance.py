@@ -12,6 +12,18 @@ def _engine_start():
     return Engine(session_store=SessionStore(), faq_store=FaqStore(items=[]))
 
 
+def test_start_je_sais_pas_clarification_not_faq_paiement():
+    """« Je sais pas » à l'accueil → clarification (pas FAQ paiement/espèces/chèque)."""
+    from backend.engine import create_engine
+    engine = create_engine()
+    conv = f"conv_jsaispas_{uuid.uuid4().hex[:8]}"
+    events = engine.handle_message(conv, "je sais pas")
+    assert len(events) >= 1
+    text = events[0].text.lower()
+    assert "chèque" not in text and "espèces" not in text and "carte bancaire" not in text
+    assert "rendez-vous" in text or "question" in text or "aide" in text
+
+
 def test_start_unclear_once_clarification():
     """1ère incompréhension (filler) en START → clarification générique (rendez-vous ou question)."""
     engine = _engine_start()
