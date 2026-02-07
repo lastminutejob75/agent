@@ -116,16 +116,21 @@ def detect_medical_red_flags(text: str) -> bool:
 def classify_medical_symptoms(text: str) -> Optional[str]:
     """
     Retourne:
-      - "CAUTION" si inquiétude
-      - "NON_URGENT" si symptômes non vitaux
-      - None sinon
+      - "CAUTION" si inquiétude ET au moins un indice de symptôme (contexte médical).
+      - "NON_URGENT" si symptômes non vitaux seuls.
+      - None sinon.
+
+    CAUTION n'est retourné que si les deux sont présents, pour éviter le faux positif
+    « je ne sais pas » à l'accueil (filler) → pas de message gravité.
     """
     if not text:
         return None
     t = text.lower()
-    if any(k in t for k in CAUTION_KEYWORDS):
+    has_caution = any(k in t for k in CAUTION_KEYWORDS)
+    has_symptom = any(k in t for k in NON_URGENT_KEYWORDS)
+    if has_caution and has_symptom:
         return "CAUTION"
-    if any(k in t for k in NON_URGENT_KEYWORDS):
+    if has_symptom:
         return "NON_URGENT"
     return None
 

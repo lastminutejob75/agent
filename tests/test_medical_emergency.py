@@ -132,6 +132,19 @@ def test_triage_red_flags_vs_non_urgent():
     assert "mal" in motif and "genou" in motif
 
 
+def test_je_ne_sais_pas_seul_pas_caution():
+    """« Je ne sais pas » seul (ex. à l'accueil) → pas CAUTION, évite message gravité."""
+    assert classify_medical_symptoms("je ne sais pas") is None
+    assert classify_medical_symptoms("ben j'en sais pas") is None
+    assert classify_medical_symptoms("euh je sais pas") is None
+
+
+def test_je_ne_sais_pas_avec_symptome_caution():
+    """« Je ne sais pas » + symptôme → CAUTION (contexte médical)."""
+    assert classify_medical_symptoms("je ne sais pas si c'est grave, j'ai mal de tête") == "CAUTION"
+    assert classify_medical_symptoms("j'ai de la fièvre et ça m'inquiète") == "CAUTION"
+
+
 def test_red_flag_category_audit():
     """Catégories d'audit : on log la catégorie, pas le symptôme (traçable, non médical)."""
     assert detect_medical_red_flag("douleur à la poitrine") == "cardio_respiratoire"
