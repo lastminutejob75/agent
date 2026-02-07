@@ -64,6 +64,7 @@ Rules:
   * AUTRE: autres questions factuelles
 - If user wants appointment (even implicit) => BOOKING
 - If user is unclear, hesitant, or too vague => UNCLEAR and should_clarify=true
+- If user's request is off-topic (nothing to do with appointments, contact, or this business; e.g. buying a car, ordering food) => UNCLEAR and should_clarify=true. Do NOT use FAQ or CANCEL for off-topic.
 
 IMPORTANT:
 - If intent is FAQ, faq_bucket MUST be one of HORAIRES|ADRESSE|TARIFS|ACCES|CONTACT|AUTRE and MUST NOT be null.

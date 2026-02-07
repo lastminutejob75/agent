@@ -1144,6 +1144,12 @@ class Engine:
                             self._handle_faq_bucket(session, assist.faq_bucket, user_text),
                             session,
                         )
+                    # UNCLEAR (hors-sujet ou vague) : pas de _handle_faq (évite faux match type "acheter une voiture" → annulation)
+                    if assist.intent == "UNCLEAR":
+                        return safe_reply(
+                            self._handle_start_unclear_no_faq(session, user_text),
+                            session,
+                        )
             
             # FAQ ou UNCLEAR (phrase réelle) → progression no-match 1→2→3 vers INTENT_ROUTER
             return safe_reply(self._handle_faq(session, user_text, include_low=True), session)
@@ -1290,6 +1296,7 @@ class Engine:
         if not result:
             return self._handle_faq(session, user_text, include_low=True)
         answer, fid = result
+
         response = prompts.format_faq_response(answer, fid, channel=channel)
         if channel == "vocal":
             response = response + " " + prompts.VOCAL_FAQ_FOLLOWUP
@@ -1302,10 +1309,32 @@ class Engine:
         session.add_message("agent", response)
         return [Event("final", response, conv_state=session.state)]
     
+    def _handle_start_unclear_no_faq(self, session: Session, user_text: str) -> List[Event]:
+        """Progression clarification START sans recherche FAQ (quand LLM a retourné UNCLEAR, ex. hors-sujet)."""
+        channel = getattr(session, "channel", "web")
+        session.start_unclear_count = getattr(session, "start_unclear_count", 0) + 1
+        if session.start_unclear_count == 1:
+            log_ivr_event(logger, session, "recovery_step", context="llm_unclear", reason="start_unclear_1")
+            msg = self._say(session, "start_clarify_1")
+            if not msg:
+                msg = prompts.VOCAL_START_CLARIFY_1 if channel == "vocal" else prompts.MSG_START_CLARIFY_1_WEB
+                session.add_message("agent", msg)
+                session.last_say_key, session.last_say_kwargs = "start_clarify_1", {}
+            self._save_session(session)
+            return [Event("final", msg, conv_state=session.state)]
+        if session.start_unclear_count == 2:
+            log_ivr_event(logger, session, "recovery_step", context="llm_unclear", reason="start_unclear_2_guidance")
+            msg = prompts.VOCAL_START_GUIDANCE if channel == "vocal" else prompts.MSG_START_GUIDANCE_WEB
+            session.add_message("agent", msg)
+            self._save_session(session)
+            return [Event("final", msg, conv_state=session.state)]
+        session.start_unclear_count = 0
+        return self._trigger_intent_router(session, "llm_unclear_3", user_text)
+
     def _handle_faq(self, session: Session, user_text: str, include_low: bool = True) -> List[Event]:
         """
         Cherche dans FAQ.
-        
+
         Args:
             include_low: Si False, exclut les FAQs priority="low"
         """

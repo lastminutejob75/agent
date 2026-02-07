@@ -108,6 +108,8 @@ async def startup():
     print(f"RAILWAY_ENVIRONMENT present: {bool(os.getenv('RAILWAY_ENVIRONMENT'))}")
     print(f"GOOGLE_SERVICE_ACCOUNT_BASE64 present: {bool(os.getenv('GOOGLE_SERVICE_ACCOUNT_BASE64'))}")
     print(f"GOOGLE_CALENDAR_ID present: {bool(os.getenv('GOOGLE_CALENDAR_ID'))}")
+    print(f"LLM_ASSIST_ENABLED: {os.getenv('LLM_ASSIST_ENABLED', 'non défini')}")
+    print(f"ANTHROPIC_API_KEY present: {bool(os.getenv('ANTHROPIC_API_KEY'))}")
     print("="*60 + "\n")
     
     # Charge les credentials
@@ -218,13 +220,18 @@ async def debug_env_vars():
     all_keys = sorted(list(os.environ.keys()))
     google_keys = sorted([k for k in all_keys if "GOOGLE" in k])
     
+    llm_enabled = (os.getenv("LLM_ASSIST_ENABLED") or "").lower() == "true"
+    anthropic_key_set = bool(os.getenv("ANTHROPIC_API_KEY"))
     return {
         "env_count": len(all_keys),
-        "sample_keys": all_keys[:25],  # Premiers 25 pour diagnostic
+        "sample_keys": all_keys[:25],
         "google_keys": google_keys,
         "google_values_present": {k: bool(os.environ.get(k)) for k in google_keys},
         "port_present": bool(os.getenv("PORT")),
         "railway_env_present": bool(os.getenv("RAILWAY_ENVIRONMENT")),
+        "llm_assist_enabled": llm_enabled,
+        "anthropic_api_key_set": anthropic_key_set,
+        "llm_ready": llm_enabled and anthropic_key_set,
     }
 
 
