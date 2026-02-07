@@ -95,6 +95,52 @@ class StubLLMClient:
         raise NotImplementedError("LLM client not configured")
 
 
+def get_default_llm_client() -> Optional[LLMClient]:
+    """Retourne un client LLM (Anthropic) si ANTHROPIC_API_KEY et LLM_ASSIST_ENABLED sont définis."""
+    if not LLM_ASSIST_ENABLED:
+        return None
+    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    if not api_key:
+        return None
+    try:
+        return AnthropicLLMClient(api_key=api_key)
+    except Exception as e:
+        logger.warning("llm_assist_anthropic_init_failed: %s", e)
+        return None
+
+
+class AnthropicLLMClient:
+    """Client Anthropic (Claude) pour LLM Assist. Conforme au protocole LLMClient."""
+
+    def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514"):
+        self._api_key = api_key
+        self._model = model
+
+    def complete(self, system: str, user: str, timeout_ms: int) -> str:
+        try:
+            from anthropic import Anthropic
+
+            client = Anthropic(api_key=self._api_key)
+            timeout_sec = timeout_ms / 1000.0 if timeout_ms else 30.0
+            msg = client.messages.create(
+                model=self._model,
+                max_tokens=256,
+                system=system,
+                messages=[{"role": "user", "content": user}],
+                timeout=timeout_sec,
+            )
+            # Réponse: content est une liste de blocs (text, etc.)
+            out = ""
+            for block in getattr(msg, "content", []):
+                if getattr(block, "type", None) == "text":
+                    out += getattr(block, "text", "") or ""
+            return out.strip() or ""
+        except Exception as e:
+            if "timeout" in str(e).lower() or "timed out" in str(e).lower():
+                raise TimeoutError from e
+            raise
+
+
 def _looks_like_pure_json(text: str) -> bool:
     """JSON strict : une seule ligne, { au début, } à la fin. Rejette markdown et pretty-print."""
     if not text:

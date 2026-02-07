@@ -1,6 +1,15 @@
 # backend/main.py
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
+# Charger .env à la racine du projet (pour ANTHROPIC_API_KEY, LLM_ASSIST_ENABLED, etc.)
+_env_path = Path(__file__).resolve().parent.parent / ".env"
+if _env_path.exists():
+    from dotenv import load_dotenv
+    load_dotenv(_env_path)
+
 import asyncio
 import json
 import logging

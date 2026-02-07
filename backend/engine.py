@@ -27,6 +27,7 @@ from backend.tools_faq import FaqStore, FaqResult
 from backend.llm_assist import (
     llm_assist_classify,
     LLMClient,
+    get_default_llm_client,
     LLM_ASSIST_MIN_CONFIDENCE,
     LLM_ASSIST_MAX_TEXT_LEN,
 )
@@ -3353,5 +3354,5 @@ def create_engine(llm_client: Optional[LLMClient] = None) -> Engine:
     return Engine(session_store=session_store, faq_store=faq_store, llm_client=llm_client)
 
 
-# Engine singleton (exporté pour vapi.py)
-ENGINE = create_engine()
+# Engine singleton (exporté pour vapi.py). Branché à un LLM si ANTHROPIC_API_KEY + LLM_ASSIST_ENABLED.
+ENGINE = create_engine(llm_client=get_default_llm_client())
