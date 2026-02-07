@@ -273,6 +273,9 @@ def is_valid_name_input(text: str) -> bool:
     for pattern in INTENT_PATTERNS:
         if pattern in text_lower:
             return False
+    # Test 3.3 — "c'est pour mon fils" / "pour ma femme" → pas un nom, clarification
+    if any(p in text_lower for p in ("c'est pour ", "pour mon ", "pour ma ", "pour ma femme", "pour mon fils", "c'est pour mon", "c'est pour ma")):
+        return False
     words = text_lower.split()
     # 6 mots max : noms composés / particules / sociétés (ex. "Marie de la Tour", "SAS Dupont et Fils")
     if len(words) > 6:
@@ -297,7 +300,7 @@ def extract_phone_digits(text: str) -> str:
 def normalize_phone_fr(digits: str) -> Optional[str]:
     """
     Normalise en FR 10 chiffres (06xxxxxxxx).
-    Accepte: 10 digits commençant par 0 ; 11/12 digits avec indicatif 33.
+    Accepte: 10 digits commençant par 0 ; 9 digits 6/7 → 0 prefix ; 11/12 digits avec indicatif 33.
     """
     if not digits:
         return None
@@ -314,6 +317,9 @@ def normalize_phone_fr(digits: str) -> Optional[str]:
     # Cas national 10 chiffres (0x...)
     if len(digits) == 10 and digits.startswith("0"):
         return digits
+    # 9 chiffres commençant par 6 ou 7 → préfixer 0 (mapping STT)
+    if len(digits) == 9 and digits[0] in "67":
+        return "0" + digits
     return None
 
 
@@ -674,12 +680,28 @@ _SPAM_PATTERNS = [
 
 _SPAM_REGEX = re.compile("|".join(_SPAM_PATTERNS), re.IGNORECASE)
 
+# Frustration légère / agacement (Test 10.1) → réponse calme, pas transfert silencieux
+_LIGHT_FRUSTRATION_PATTERNS = [
+    r"putain\s+ça", r"putain\s+c'est", r"merde\s+ça", r"ça\s+marche\s+pas",
+    r"ça\s+fonctionne\s+pas", r"c'est\s+nul", r"n'importe\s+quoi",
+]
+_LIGHT_FRUSTRATION_REGEX = re.compile("|".join(_LIGHT_FRUSTRATION_PATTERNS), re.IGNORECASE)
+
+
+def is_light_frustration(text: str) -> bool:
+    """
+    Détecte frustration/agacement léger (ex. "putain ça marche pas").
+    → Réponse calme (VOCAL_INSULT_RESPONSE), pas transfert silencieux.
+    """
+    if not text or not text.strip():
+        return False
+    return bool(_LIGHT_FRUSTRATION_REGEX.search(text))
+
+
 def is_spam_or_abuse(text: str) -> bool:
     """
-    Détecte spam ou contenu abusif.
-    
-    Returns:
-        True si spam/abus détecté
+    Détecte spam ou contenu abusif (insultes lourdes).
+    Insultes légères / frustration → is_light_frustration (réponse calme).
     """
     return bool(_SPAM_REGEX.search(text))
 
@@ -1162,6 +1184,24 @@ def validate_phone(phone: str) -> bool:
     return any(re.match(p, cleaned) for p in patterns)
 
 
+def detect_contact_type_preference(text: str) -> Optional[str]:
+    """
+    Détecte si l'utilisateur indique le type de contact (téléphone vs email).
+    Mapping STT : mel/mèl/mél → email.
+    Returns: "phone" | "email" | None
+    """
+    if not text or not text.strip():
+        return None
+    t = text.strip().lower()
+    phone_pats = getattr(prompts, "CONTACT_PHONE_PATTERNS", ["téléphone", "numéro", "portable", "mobile", "appel"])
+    email_pats = getattr(prompts, "CONTACT_EMAIL_PATTERNS", ["email", "mail", "courriel", "mel", "mèl", "mél"])
+    if any(p in t for p in phone_pats):
+        return "phone"
+    if any(p in t for p in email_pats):
+        return "email"
+    return None
+
+
 def validate_qualif_contact(contact: str) -> tuple[bool, str]:
     """
     Valide le contact (email OU téléphone).
@@ -1174,17 +1214,11 @@ def validate_qualif_contact(contact: str) -> tuple[bool, str]:
     if validate_email(contact):
         return True, "email"
     
-    # Essayer de parser comme numéro vocal
+    # Essayer de parser comme numéro vocal (mots → chiffres, +33, 9 digits 6/7 → 0)
     parsed_phone = parse_vocal_phone(contact) if any(c.isalpha() for c in contact) else contact
-    cleaned_phone = re.sub(r"[\s\-\.\(\)]", "", parsed_phone)
-    
-    # Normaliser +33
-    if cleaned_phone.startswith("+33"):
-        cleaned_phone = "0" + cleaned_phone[3:]
-    elif cleaned_phone.startswith("33"):
-        cleaned_phone = "0" + cleaned_phone[2:]
-    
-    if validate_phone(cleaned_phone):
+    digits = "".join(c for c in parsed_phone if c.isdigit())
+    normalized = normalize_phone_fr(digits)
+    if normalized and len(normalized) == 10 and normalized[0] == "0":
         return True, "phone"
     
     return False, "invalid"
@@ -1222,10 +1256,11 @@ def is_generic_motif(text: str) -> bool:
 def is_contact_selector_word(text: str) -> bool:
     """
     Détecte si l'utilisateur donne le TYPE de contact au lieu de la donnée.
+    STT : mel, mèl, mél → email.
     """
     t = (text or "").strip().lower()
     return t in {
-        "mail", "email", "e-mail", "e mail",
+        "mail", "email", "e-mail", "e mail", "mel", "mèl", "mél",
         "téléphone", "telephone", "tel", "phone",
-        "portable", "mobile", "fixe"
+        "portable", "mobile", "fixe",
     }

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import logging
 import re
 
-from backend import config, prompts, guards, tools_booking
+from backend import config, prompts, guards, tools_booking, intent_parser
 from backend.guards_medical import is_medical_emergency  # legacy / tests
 from backend.guards_medical_triage import (
     detect_medical_red_flag,
@@ -281,66 +281,14 @@ def _looks_like_booking_intent(text: str) -> bool:
 # DÉTECTION INTENT COMPLET
 # ========================
 
-def detect_intent(text: str) -> str:
+def detect_intent(text: str, state: str = "") -> str:
     """
-    Détecte l'intention de l'utilisateur.
-    
+    Détecte l'intention de l'utilisateur (délégation au module intent_parser).
+    Garde-fou : en state START, "oui" => UNCLEAR (jamais BOOKING).
     Returns:
-        str: "YES", "NO", "BOOKING", "FAQ", "CANCEL", "MODIFY", "TRANSFER", "ABANDON", "UNCLEAR"
+        str: "YES", "NO", "BOOKING", "FAQ", "CANCEL", "MODIFY", "TRANSFER", "ABANDON", "REPEAT", "UNCLEAR"
     """
-    t = text.strip().lower()
-    if not t:
-        return "UNCLEAR"
-    
-    # 1. Réponses simples OUI/NON (prioritaire pour le first message)
-    # OUI - matching ultra robuste pour gérer les variations de transcription
-    for pattern in prompts.YES_PATTERNS:
-        # Match avec word boundary pour éviter les faux positifs
-        if re.search(r'\b' + re.escape(pattern) + r'\b', t):
-            return "YES"
-    
-    # Fallback pour "oui" seul même si mal transcrit
-    if t in ["oui", "ui", "wi", "oui.", "oui,", "ouais", "ouai"]:
-        return "YES"
-    
-    # NON - vérifier si c'est suivi d'une demande spécifique
-    is_no = any(t == p or t.startswith(p + " ") or t.startswith(p + ",") for p in prompts.NO_PATTERNS)
-    
-    # Si "non" mais contient des mots-clés FAQ → FAQ pas NO
-    faq_keywords = ["horaire", "adresse", "tarif", "prix", "parking", "accès", "ouvert", "fermé"]
-    if is_no and any(kw in t for kw in faq_keywords):
-        return "FAQ"
-    
-    # 2. Intent CANCEL
-    if any(p in t for p in prompts.CANCEL_PATTERNS):
-        return "CANCEL"
-    
-    # 3. Intent MODIFY
-    if any(p in t for p in prompts.MODIFY_PATTERNS):
-        return "MODIFY"
-    
-    # 4. Intent TRANSFER (cas complexes)
-    if any(p in t for p in prompts.TRANSFER_PATTERNS):
-        return "TRANSFER"
-    
-    # 5. Intent ABANDON
-    if any(p in t for p in prompts.ABANDON_PATTERNS):
-        return "ABANDON"
-    
-    # 5b. Intent ORDONNANCE
-    if any(p in t for p in prompts.ORDONNANCE_PATTERNS):
-        return "ORDONNANCE"
-    
-    # 6. Si NON sans autre intent → probablement FAQ
-    if is_no:
-        return "NO"
-    
-    # 7. Intent BOOKING
-    if _detect_booking_intent(t):
-        return "BOOKING"
-    
-    # 8. Par défaut → FAQ (on laisse le FAQ handler décider)
-    return "FAQ"
+    return intent_parser.detect_intent(text or "", state).value
 
 
 def detect_slot_choice(text: str, num_slots: int = 3) -> Optional[int]:
@@ -376,6 +324,31 @@ def detect_slot_choice(text: str, num_slots: int = 3) -> Optional[int]:
 
 SAFE_REPLY_FALLBACK = "D'accord. Je vous écoute."
 
+# États où la question posée est explicitement oui/non (confirmations).
+YESNO_CONFIRM_STATES = frozenset({
+    "CONTACT_CONFIRM", "CANCEL_CONFIRM", "MODIFY_CONFIRM", "WAIT_CONFIRM",
+    "PREFERENCE_CONFIRM",
+})
+# États où YES/NO sont acceptés (confirmations + POST_FAQ disambiguation). Hors de ce set → override YES/NO en UNCLEAR.
+STATES_ACCEPTING_YESNO = YESNO_CONFIRM_STATES | frozenset({"POST_FAQ", "POST_FAQ_CHOICE"})
+# NO contextuel : handle_no_contextual s'applique à ces états (plus WAIT_CONFIRM géré plus bas en séquentiel).
+NO_CONTEXTUAL_STATES = YESNO_CONFIRM_STATES | frozenset({"QUALIF_CONTACT"})
+
+
+def _log_turn_debug(session: Session) -> None:
+    """Log structuré (debug) par tour pour diagnostic d'appel sans rejeu.
+    Ne jamais logger téléphone/email en clair (même en DEBUG). turn_count aide à repérer les boucles."""
+    logger.debug(
+        "[TURN] conv_id=%s turn_count=%s state_before=%s intent_detected=%s strong_intent=%s state_after=%s last_say_key=%s",
+        getattr(session, "conv_id", ""),
+        getattr(session, "turn_count", None),
+        getattr(session, "_turn_state_before", None),
+        getattr(session, "last_intent", None),
+        getattr(session, "last_strong_intent", None),
+        getattr(session, "state", None),
+        getattr(session, "last_say_key", None),
+    )
+
 
 def safe_reply(events: List[Event], session: Session) -> List[Event]:
     """
@@ -383,6 +356,7 @@ def safe_reply(events: List[Event], session: Session) -> List[Event]:
     Aucun message utilisateur ne doit mener à zéro output.
     Persiste transfer_human une seule fois par call (idempotence).
     """
+    _log_turn_debug(session)
     if getattr(session, "state", None) == "TRANSFERRED" and not getattr(session, "transfer_logged", False):
         _persist_ivr_event(session, "transfer_human")
         session.transfer_logged = True
@@ -402,22 +376,11 @@ def safe_reply(events: List[Event], session: Session) -> List[Event]:
 
 def detect_strong_intent(text: str) -> Optional[str]:
     """
-    Détecte les intents qui préemptent le flow en cours (CANCEL, MODIFY, TRANSFER, ABANDON).
+    Détecte les intents qui préemptent le flow (priorité: TRANSFER > CANCEL > MODIFY > ABANDON > ORDONNANCE > FAQ).
+    Délégation au module intent_parser (pur, testable).
     """
-    t = text.strip().lower()
-    if not t:
-        return None
-    if any(p in t for p in prompts.CANCEL_PATTERNS):
-        return "CANCEL"
-    if any(p in t for p in prompts.MODIFY_PATTERNS):
-        return "MODIFY"
-    if any(p in t for p in prompts.TRANSFER_PATTERNS):
-        return "TRANSFER"
-    if any(p in t for p in prompts.ABANDON_PATTERNS):
-        return "ABANDON"
-    if any(p in t for p in prompts.ORDONNANCE_PATTERNS):
-        return "ORDONNANCE"
-    return None
+    r = intent_parser.detect_strong_intent(text or "", "")
+    return r.value if r else None
 
 
 def detect_ordonnance_choice(user_text: str) -> Optional[str]:
@@ -623,6 +586,20 @@ class Engine:
         """Sauvegarde la session (si le store le supporte)."""
         if hasattr(self.session_store, 'save'):
             self.session_store.save(session)
+
+    def _say(self, session: Session, key: str, **kwargs) -> str:
+        """
+        Envoie un message agent à partir d'une clé prompts (get_message) et enregistre pour REPEAT.
+        Retourne le texte envoyé. Aucune string user-facing hors prompts.py.
+        """
+        channel = getattr(session, "channel", "web")
+        msg = prompts.get_message(key, channel=channel, **kwargs)
+        if not msg:
+            return ""
+        session.add_message("agent", msg)
+        session.last_say_key = key
+        session.last_say_kwargs = dict(kwargs)
+        return msg
     
     def handle_message(self, conv_id: str, user_text: str) -> List[Event]:
         """
@@ -637,7 +614,7 @@ class Engine:
         session = self.session_store.get_or_create(conv_id)
         t_load_end = time.time()
         print(f"⏱️ Session loaded in {(t_load_end - t_load_start) * 1000:.0f}ms")
-        
+        setattr(session, "_turn_state_before", session.state)
         session.add_message("user", user_text)
         
         turn_count = getattr(session, "turn_count", 0)
@@ -671,6 +648,7 @@ class Engine:
             self._save_session(session)
             msg = prompts.VOCAL_MEDICAL_EMERGENCY
             session.add_message("agent", msg)
+            _log_turn_debug(session)
             return [Event("final", msg, conv_state=session.state)]
         
         # 2) Non vital / escalade douce → note motif, enchaîne sur créneau (QUALIF_PREF)
@@ -697,9 +675,41 @@ class Engine:
         if session.state in ["CONFIRMED", "TRANSFERRED", "EMERGENCY"]:
             if session.state == "EMERGENCY":
                 msg = prompts.VOCAL_MEDICAL_EMERGENCY
-            else:
-                msg = prompts.MSG_CONVERSATION_CLOSED
+                session.add_message("agent", msg)
+                _log_turn_debug(session)
+                return [Event("final", msg, conv_state=session.state)]
+            # En TRANSFERRED/CONFIRMED, "répétez" relit le dernier message (transfer, etc.)
+            if session.state in ["TRANSFERRED", "CONFIRMED"]:
+                intent_terminal = detect_intent(user_text, session.state)
+                if intent_terminal == "REPEAT":
+                    # 1) last_say_key prioritaire (re-render fiable, notamment transfer/transfer_complex)
+                    last_key = getattr(session, "last_say_key", None)
+                    last_kw = getattr(session, "last_say_kwargs", None) or {}
+                    channel = getattr(session, "channel", "web")
+                    if last_key:
+                        try:
+                            msg = prompts.get_message(last_key, channel=channel, **last_kw)
+                            if msg:
+                                session.add_message("agent", msg)
+                                _log_turn_debug(session)
+                                return [Event("final", msg, conv_state=session.state)]
+                        except Exception:
+                            pass
+                    # 2) Dernier message agent dans l'historique (session.messages)
+                    last_msg = None
+                    if session.messages:
+                        agent_texts = [m.text for m in session.messages if m.role == "agent" and m.text and m.text.strip()]
+                        if agent_texts:
+                            last_msg = agent_texts[-1]
+                    if not last_msg:
+                        last_msg = getattr(session, "last_agent_message", None) or getattr(session, "last_question_asked", None)
+                    if last_msg:
+                        session.add_message("agent", last_msg)
+                        _log_turn_debug(session)
+                        return [Event("final", last_msg, conv_state=session.state)]
+            msg = prompts.MSG_CONVERSATION_CLOSED
             session.add_message("agent", msg)
+            _log_turn_debug(session)
             return [Event("final", msg, conv_state=session.state)]
         
         # ========================
@@ -727,6 +737,7 @@ class Engine:
         if should_override_current_flow_v3(session, user_text):
             strong = detect_strong_intent(user_text)
             session.last_intent = strong
+            setattr(session, "last_strong_intent", strong)
             log_ivr_event(logger, session, "intent_override")
             if strong == "CANCEL":
                 return safe_reply(self._start_cancel(session), session)
@@ -734,8 +745,12 @@ class Engine:
                 return safe_reply(self._start_modify(session), session)
             if strong == "TRANSFER":
                 session.state = "TRANSFERRED"
-                msg = prompts.VOCAL_TRANSFER_COMPLEX if channel == "vocal" else prompts.MSG_TRANSFER
-                session.add_message("agent", msg)
+                msg = self._say(session, "transfer_complex")
+                if not msg:
+                    msg = prompts.VOCAL_TRANSFER_COMPLEX if channel == "vocal" else prompts.MSG_TRANSFER
+                    session.add_message("agent", msg)
+                    session.last_say_key, session.last_say_kwargs = "transfer_complex", {}
+                self._save_session(session)
                 return safe_reply([Event("final", msg, conv_state=session.state)], session)
             if strong == "ABANDON":
                 session.state = "CONFIRMED"
@@ -815,7 +830,12 @@ class Engine:
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
         
-        # Spam/abuse → transfer silencieux
+        # Test 10.1 — Frustration légère (putain ça marche pas) → réponse calme, recentrer (pas transfert)
+        if getattr(session, "channel", "web") == "vocal" and guards.is_light_frustration(user_text):
+            msg = prompts.VOCAL_INSULT_RESPONSE
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state=session.state)]
+        # Spam/abus lourd → transfert silencieux
         if guards.is_spam_or_abuse(user_text):
             session.state = "TRANSFERRED"
             return [Event("transfer", "", transfer_reason="spam", silent=True)]
@@ -834,10 +854,39 @@ class Engine:
         # 3. ROUTING : Intent-based
         # ========================
         
-        # Détecter l'intent
-        intent = detect_intent(user_text)
+        # Détecter l'intent (state utilisé pour garde-fou START+YES => UNCLEAR)
+        intent = detect_intent(user_text, session.state)
+        # Garde-fou "rien" : ABANDON seulement en POST_FAQ / POST_FAQ_CHOICE, sinon UNCLEAR
+        if intent == "ABANDON" and (user_text or "").strip().lower() == "rien":
+            if session.state not in ("POST_FAQ", "POST_FAQ_CHOICE"):
+                intent = "UNCLEAR"
+        # YES/NO hors états acceptant oui/non => UNCLEAR (éviter "d'accord" = action directe)
+        if intent in ("YES", "NO") and session.state not in STATES_ACCEPTING_YESNO:
+            intent = "UNCLEAR"
         print(f"🎯 Intent detected: '{intent}' from '{user_text}'")
         print(f"📞 State: {session.state} | Intent: {intent} | User: '{user_text[:50]}...'")
+        
+        # REPEAT : relire le dernier prompt exact (pas re-router, pas d'escalade, état inchangé)
+        if intent == "REPEAT":
+            last_key = getattr(session, "last_say_key", None)
+            last_kw = getattr(session, "last_say_kwargs", None) or {}
+            if last_key:
+                try:
+                    msg = prompts.get_message(last_key, channel=channel, **last_kw)
+                    if msg:
+                        session.add_message("agent", msg)
+                        return safe_reply([Event("final", msg, conv_state=session.state)], session)
+                except Exception:
+                    pass
+            last_msg = getattr(session, "last_agent_message", None) or getattr(session, "last_question_asked", None)
+            if last_msg:
+                session.add_message("agent", last_msg)
+                return safe_reply([Event("final", last_msg, conv_state=session.state)], session)
+            msg = getattr(prompts, "VOCAL_NOT_UNDERSTOOD", "Je n'ai pas bien compris. Pouvez-vous répéter ?")
+            if channel != "vocal":
+                msg = getattr(prompts, "MSG_UNCLEAR_1", msg)
+            session.add_message("agent", msg)
+            return safe_reply([Event("final", msg, conv_state=session.state)], session)
         
         # --- CORRECTION : incrémenter avant should_trigger (IVR Principe 3) ---
         if detect_correction_intent(user_text):
@@ -851,11 +900,8 @@ class Engine:
                 session,
             )
         
-        # --- NO contextuel : branche selon l'état (jamais terminal par défaut) ---
-        if intent == "NO" and session.state in (
-            "CONTACT_CONFIRM", "WAIT_CONFIRM", "CANCEL_CONFIRM", "MODIFY_CONFIRM",
-            "QUALIF_NAME", "QUALIF_PREF", "QUALIF_CONTACT",
-        ):
+        # --- NO contextuel (sauf WAIT_CONFIRM séquentiel → géré plus bas) ---
+        if intent == "NO" and session.state in NO_CONTEXTUAL_STATES and session.state != "WAIT_CONFIRM":
             result = handle_no_contextual(session)
             session.state = result["state"]
             msg = result["message"]
@@ -865,6 +911,30 @@ class Engine:
             return safe_reply([Event("final", msg, conv_state=session.state)], session)
         
         # --- FLOWS EN COURS ---
+        
+        # P1.6 — Strong intents (CANCEL/MODIFY/TRANSFER/ABANDON/FAQ) préemptent même en plein booking
+        if session.state in ("QUALIF_NAME", "QUALIF_MOTIF", "QUALIF_PREF", "QUALIF_CONTACT", "WAIT_CONFIRM"):
+            strong = detect_strong_intent(user_text or "")
+            if strong == "CANCEL":
+                return safe_reply(self._start_cancel(session), session)
+            if strong == "MODIFY":
+                return safe_reply(self._start_modify(session), session)
+            if strong == "TRANSFER":  # "humain" seul = OK (mapping STT)
+                session.state = "TRANSFERRED"
+                msg = self._say(session, "transfer_complex")
+                if not msg:
+                    msg = prompts.VOCAL_TRANSFER_COMPLEX if channel == "vocal" else prompts.MSG_TRANSFER
+                    session.add_message("agent", msg)
+                    session.last_say_key, session.last_say_kwargs = "transfer_complex", {}
+                return safe_reply([Event("final", msg, conv_state=session.state)], session)
+            if strong == "ABANDON":
+                session.state = "CONFIRMED"
+                msg = prompts.VOCAL_USER_ABANDON if channel == "vocal" else prompts.MSG_ABANDON_WEB
+                session.add_message("agent", msg)
+                return safe_reply([Event("final", msg, conv_state=session.state)], session)
+            if strong == "FAQ":
+                session.state = "START"
+                return safe_reply(self._handle_faq(session, user_text, include_low=True), session)
         
         # P2.1 FSM2 : QUALIF_NAME et WAIT_CONFIRM via dispatcher (si USE_FSM2=True)
         if getattr(config, "USE_FSM2", False) and session.state in ("QUALIF_NAME", "WAIT_CONFIRM"):
@@ -925,34 +995,22 @@ class Engine:
         
         # --- NOUVEAU FLOW : First Message ---
         
-        # Si START → le premier message après "Vous appelez pour un RDV ?"
+        # Si START → premier message (intent_parser : "oui" en START => UNCLEAR, jamais BOOKING)
         if session.state == "START":
-            # Robustesse vocal/STT : "oui"/"ok" seul = toujours YES (éviter "j'ai pas bien saisi")
-            t_lower = (user_text or "").strip().lower()
-            if t_lower in ("oui", "ui", "wi", "ouais", "ouai", "ok", "okay", "d'accord", "daccord"):
-                intent = "YES"
+            # UNCLEAR type "oui" seul → CLARIFY (disambiguation RDV / question). Autre UNCLEAR → _handle_faq (progression 1→2→3 vers INTENT_ROUTER).
+            if intent == "UNCLEAR" and guards.is_yes_only(user_text or ""):
+                session.start_unclear_count = 0
+                session.state = "CLARIFY"
+                msg = prompts.VOCAL_CLARIFY_YES_START if channel == "vocal" else prompts.MSG_CLARIFY_YES_START
+                session.add_message("agent", msg)
+                return safe_reply([Event("final", msg, conv_state=session.state)], session)
 
-            # YES → Booking flow
+            # YES en START (rare si intent_parser utilisé) → clarification
             if intent == "YES":
                 session.start_unclear_count = 0
-                print(f"✅ Intent YES detected")
-                # Essayer d'extraire des infos supplémentaires du message
-                # Ex: "Oui je voudrais un RDV le matin" → extraire "matin"
-                # Ex: "Oui pour Jean Dupont" → extraire le nom
-                entities = extract_entities(user_text)
-                
-                if entities.has_any():
-                    # L'utilisateur a donné des infos en plus du "oui" → les utiliser
-                    print(f"📦 Extracted from YES message: name={entities.name}, pref={entities.pref}")
-                    return self._start_booking_with_extraction(session, user_text)
-                
-                # Sinon, simple "oui" → demander le nom
-                session.state = "QUALIF_NAME"
-                msg = prompts.get_qualif_question("name", channel=channel)
-                session.last_question_asked = msg
-                session.consecutive_questions = getattr(session, "consecutive_questions", 0) + 1
+                session.state = "CLARIFY"
+                msg = prompts.VOCAL_CLARIFY_YES_START if channel == "vocal" else prompts.MSG_CLARIFY_YES_START
                 session.add_message("agent", msg)
-                print(f"🤖 Returning: '{msg}'")
                 return safe_reply([Event("final", msg, conv_state=session.state)], session)
             
             # NO → demander clarification
@@ -1002,7 +1060,33 @@ class Engine:
                 session.start_unclear_count = 0
                 return safe_reply(self._handle_ordonnance_flow(session, user_text), session)
             
-            # FAQ ou UNCLEAR → Chercher dans FAQ
+            # UNCLEAR type filler (euh, hein, hum, silence) → progression 1 clarify → 2 guidance → 3 transfer ou INTENT_ROUTER
+            # Guard prod : si start_unclear_count >= 3 et user reste filler → transfert direct (évite boucle "silence + euh")
+            if intent == "UNCLEAR" and intent_parser.is_unclear_filler(user_text or ""):
+                session.start_unclear_count = getattr(session, "start_unclear_count", 0) + 1
+                if session.start_unclear_count == 1:
+                    msg = self._say(session, "start_clarify_1")
+                    if not msg:
+                        msg = getattr(prompts, "VOCAL_START_CLARIFY_1", prompts.MSG_START_CLARIFY_1_WEB) if channel == "vocal" else prompts.MSG_START_CLARIFY_1_WEB
+                        session.add_message("agent", msg)
+                        session.last_say_key, session.last_say_kwargs = "start_clarify_1", {}
+                    return safe_reply([Event("final", msg, conv_state=session.state)], session)
+                if session.start_unclear_count == 2:
+                    msg = prompts.VOCAL_START_GUIDANCE if channel == "vocal" else prompts.MSG_START_GUIDANCE_WEB
+                    session.add_message("agent", msg)
+                    return safe_reply([Event("final", msg, conv_state=session.state)], session)
+                # 3e et plus : transfert direct avec message UX dédié (pas "abandon")
+                session.start_unclear_count = 0
+                session.state = "TRANSFERRED"
+                msg = self._say(session, "transfer_filler_silence")
+                if not msg:
+                    msg = prompts.get_message("transfer_filler_silence", channel=channel) or prompts.MSG_TRANSFER_FILLER_SILENCE
+                    session.add_message("agent", msg)
+                    session.last_say_key, session.last_say_kwargs = "transfer_filler_silence", {}
+                self._save_session(session)
+                return safe_reply([Event("final", msg, conv_state=session.state)], session)
+            
+            # FAQ ou UNCLEAR (phrase réelle) → progression no-match 1→2→3 vers INTENT_ROUTER
             return safe_reply(self._handle_faq(session, user_text, include_low=True), session)
         
         # POST_FAQ_CHOICE : après "oui" ambigu en POST_FAQ → rendez-vous ou question ?
@@ -1067,8 +1151,11 @@ class Engine:
         
         # Si état inconnu ou non géré → transfer par sécurité
         session.state = "TRANSFERRED"
-        msg = prompts.MSG_TRANSFER
-        session.add_message("agent", msg)
+        msg = self._say(session, "transfer")
+        if not msg:
+            msg = prompts.get_message("transfer", channel=getattr(session, "channel", "web"))
+            session.add_message("agent", msg)
+            session.last_say_key, session.last_say_kwargs = "transfer", {}
         return safe_reply([Event("final", msg, conv_state=session.state)], session)
     
     # ========================
@@ -1109,8 +1196,11 @@ class Engine:
             # 1ère incompréhension → clarification générique (rendez-vous ou question)
             if session.start_unclear_count == 1:
                 log_ivr_event(logger, session, "recovery_step", context="faq", reason="start_unclear_1")
-                msg = prompts.VOCAL_START_CLARIFY_1 if channel == "vocal" else prompts.MSG_START_CLARIFY_1_WEB
-                session.add_message("agent", msg)
+                msg = self._say(session, "start_clarify_1")
+                if not msg:
+                    msg = prompts.VOCAL_START_CLARIFY_1 if channel == "vocal" else prompts.MSG_START_CLARIFY_1_WEB
+                    session.add_message("agent", msg)
+                    session.last_say_key, session.last_say_kwargs = "start_clarify_1", {}
                 self._save_session(session)
                 return [Event("final", msg, conv_state=session.state)]
             # 2e incompréhension → guidage proactif (RDV, horaires, adresse, services)
@@ -1389,8 +1479,11 @@ class Engine:
                 # Vérifier AVANT d'incrémenter pour permettre 1 retry
                 if session.confirm_retry_count >= config.CONFIRM_RETRY_MAX:
                     session.state = "TRANSFERRED"
-                    msg = prompts.get_message("transfer", channel=channel)
-                    session.add_message("agent", msg)
+                    msg = self._say(session, "transfer")
+                    if not msg:
+                        msg = prompts.get_message("transfer", channel=channel)
+                        session.add_message("agent", msg)
+                        session.last_say_key, session.last_say_kwargs = "transfer", {}
                     return [Event("final", msg, conv_state=session.state)]
                 
                 session.confirm_retry_count += 1
@@ -1403,8 +1496,11 @@ class Engine:
                 # Vérifier AVANT d'incrémenter pour permettre 1 retry
                 if session.confirm_retry_count >= config.CONFIRM_RETRY_MAX:
                     session.state = "TRANSFERRED"
-                    msg = prompts.get_message("transfer", channel=channel)
-                    session.add_message("agent", msg)
+                    msg = self._say(session, "transfer")
+                    if not msg:
+                        msg = prompts.get_message("transfer", channel=channel)
+                        session.add_message("agent", msg)
+                        session.last_say_key, session.last_say_kwargs = "transfer", {}
                     return [Event("final", msg, conv_state=session.state)]
                 
                 # 1ère fois générique → aide
@@ -1419,8 +1515,11 @@ class Engine:
             # Validation PRD
             if not guards.validate_qualif_motif(user_text):
                 session.state = "TRANSFERRED"
-                msg = prompts.get_message("transfer", channel=channel)
-                session.add_message("agent", msg)
+                msg = self._say(session, "transfer")
+                if not msg:
+                    msg = prompts.get_message("transfer", channel=channel)
+                    session.add_message("agent", msg)
+                    session.last_say_key, session.last_say_kwargs = "transfer", {}
                 return [Event("final", msg, conv_state=session.state)]
             
             # Motif valide et utile (spec V3 : reset compteur)
@@ -1675,8 +1774,11 @@ class Engine:
                         # Trop de tentatives → transfert
                         session.state = "TRANSFERRED"
                         session.partial_phone_digits = ""
-                        msg = prompts.get_message("transfer", channel=channel)
-                        session.add_message("agent", msg)
+                        msg = self._say(session, "transfer")
+                        if not msg:
+                            msg = prompts.get_message("transfer", channel=channel)
+                            session.add_message("agent", msg)
+                            session.last_say_key, session.last_say_kwargs = "transfer", {}
                         return [Event("final", msg, conv_state=session.state)]
                     
                     # Messages ultra-courts pour pas ralentir
@@ -1739,10 +1841,13 @@ class Engine:
         # FALLBACK (état inconnu)
         # ========================
         # Si aucun des états précédents n'a matché, transfert
-        channel = getattr(session, "channel", "web")
         session.state = "TRANSFERRED"
-        msg = prompts.get_message("transfer", channel=channel)
-        session.add_message("agent", msg)
+        msg = self._say(session, "transfer")
+        if not msg:
+            channel = getattr(session, "channel", "web")
+            msg = prompts.get_message("transfer", channel=channel)
+            session.add_message("agent", msg)
+            session.last_say_key, session.last_say_kwargs = "transfer", {}
         return [Event("final", msg, conv_state=session.state)]
     
     def _handle_aide_contact(self, session: Session, user_text: str) -> List[Event]:
@@ -1800,8 +1905,11 @@ class Engine:
             traceback.print_exc()
             # Fallback: transfert
             session.state = "TRANSFERRED"
-            msg = prompts.get_message("transfer", channel=channel)
-            session.add_message("agent", msg)
+            msg = self._say(session, "transfer")
+            if not msg:
+                msg = prompts.get_message("transfer", channel=channel)
+                session.add_message("agent", msg)
+                session.last_say_key, session.last_say_kwargs = "transfer", {}
             return [Event("final", msg, conv_state=session.state)]
         
         if not slots:
@@ -1828,9 +1936,18 @@ class Engine:
             old_state,
         )
         
-        # Message unique avec liste (vocal + web). Le webhook vocal n'envoie que events[0].text,
-        # donc on envoie préface + liste en un seul message pour éviter que l'agent s'arrête à "Voici trois créneaux".
-        msg = prompts.format_slot_proposal(slots, include_instruction=True, channel=channel)
+        # P0.2 — Vocal : 1 créneau à la fois (pas 3 dictés d'un coup). Web : liste complète.
+        if channel == "vocal":
+            session.slot_offer_index = 0
+            session.slot_proposal_sequential = True
+            session.slots_list_sent = True
+            slot0 = slots[0]
+            label0 = getattr(slot0, "label", None) or getattr(slot0, "label_vocal", None) or str(slot0)
+            msg = prompts.VOCAL_SLOT_ONE_PROPOSE.format(label=label0)
+            session.is_reading_slots = False
+        else:
+            msg = prompts.format_slot_proposal(slots, include_instruction=True, channel=channel)
+            session.is_reading_slots = True
         if channel == "vocal" and msg:
             msg = prompts.TransitionSignals.wrap_with_signal(msg, "PROCESSING")
         logger.info(
@@ -1840,11 +1957,11 @@ class Engine:
             len(msg or ""),
             (msg or "")[:200],
         )
-        print(f"✅ _propose_slots: proposing {len(slots)} slots")
+        print(f"✅ _propose_slots: proposing {'1 (sequential)' if channel == 'vocal' else len(slots)} slots")
         session.add_message("agent", msg)
-        session.is_reading_slots = True
-        if channel == "vocal":
-            session.slots_list_sent = True
+        if channel == "vocal" and slots:
+            label0 = getattr(slots[0], "label", None) or getattr(slots[0], "label_vocal", None) or str(slots[0])
+            session.last_say_key, session.last_say_kwargs = "slot_one_propose", {"label": label0}
         self._save_session(session)
         return [Event("final", msg, conv_state=session.state)]
     
@@ -1863,6 +1980,94 @@ class Engine:
         if not session.pending_slots or len(session.pending_slots) == 0:
             print(f"⚠️ WAIT_CONFIRM but no pending_slots → re-proposing")
             return self._propose_slots(session)
+
+        # P0.2 — Vocal séquentiel : 1 créneau à la fois. OUI = ce créneau, NON = suivant ou transfert. "répéter" = relire.
+        if channel == "vocal" and getattr(session, "slot_proposal_sequential", False) and session.pending_slots:
+            idx = getattr(session, "slot_offer_index", 0)
+            if idx < len(session.pending_slots):
+                slot_obj = session.pending_slots[idx]
+                label_cur = getattr(slot_obj, "label", None) or getattr(slot_obj, "label_vocal", None) or str(slot_obj)
+                _t = (user_text or "").strip().lower()
+                _t_norm = "".join(c for c in _t if c.isalnum() or c in " '\"-")
+                _t_norm = _t_norm.replace("'", "").replace("'", "").strip()
+                # "répéter" / "redire" / filler (euh, hein) → relire le créneau courant (Test 5.1)
+                if any(x in _t_norm for x in ("repeter", "répéter", "repetes", "redire", "reprendre", "reécoute")):
+                    msg = prompts.VOCAL_SLOT_ONE_PROPOSE.format(label=label_cur)
+                    session.add_message("agent", msg)
+                    session.last_say_key, session.last_say_kwargs = "slot_one_propose", {"label": label_cur}
+                    return [Event("final", msg, conv_state=session.state)]
+                if _t_norm in ("euh", "hein", "hum", "euhh") or _t_norm in getattr(guards, "FILLER_GLOBAL", frozenset()):
+                    msg = prompts.VOCAL_SLOT_ONE_PROPOSE.format(label=label_cur)
+                    session.add_message("agent", msg)
+                    session.last_say_key, session.last_say_kwargs = "slot_one_propose", {"label": label_cur}
+                    return [Event("final", msg, conv_state=session.state)]
+                # "le deuxième" / "le second" selon contexte (Test 5.2) : idx 0 → suivant (NO), idx 1 → ce créneau (YES)
+                if any(x in _t_norm for x in ("le deuxième", "le second", "deuxième", "second")) and len(_t_norm) <= 15:
+                    if idx == 0:
+                        session.slot_offer_index = 1
+                        if session.slot_offer_index >= len(session.pending_slots):
+                            session.state = "TRANSFERRED"
+                            msg = prompts.VOCAL_NO_SLOTS
+                            session.add_message("agent", msg)
+                            self._save_session(session)
+                            return [Event("final", msg, conv_state=session.state)]
+                        next_slot = session.pending_slots[session.slot_offer_index]
+                        next_label = getattr(next_slot, "label", None) or getattr(next_slot, "label_vocal", None) or str(next_slot)
+                        msg = prompts.VOCAL_SLOT_ONE_PROPOSE.format(label=next_label)
+                        session.add_message("agent", msg)
+                        session.last_say_key, session.last_say_kwargs = "slot_one_propose", {"label": next_label}
+                        self._save_session(session)
+                        return [Event("final", msg, conv_state=session.state)]
+                    if idx == 1:
+                        session.pending_slot_choice = 2
+                        session.slot_proposal_sequential = False
+                        try:
+                            slot_label = tools_booking.get_label_for_choice(session, 2) or label_cur
+                        except Exception:
+                            slot_label = label_cur
+                        msg = prompts.format_slot_early_confirm(2, slot_label, channel=channel)
+                        session.add_message("agent", msg)
+                        self._save_session(session)
+                        return [Event("final", msg, conv_state=session.state)]
+                # Test 5.3 — "oui de…" ambigu (oui deux ?) → clarification, ne pas planter
+                if _t_norm.startswith("oui de") or _t_norm == "oui de" or (_t_norm.startswith("oui") and " de " in _t_norm and len(_t_norm) < 20):
+                    msg = getattr(prompts, "VOCAL_SLOT_SEQUENTIAL_NEED_YES_NO", "Dites oui si ça vous convient, ou non pour un autre créneau.")
+                    session.add_message("agent", msg)
+                    return [Event("final", msg, conv_state=session.state)]
+                # OUI → accepter ce créneau (1-based choice = idx+1)
+                _yes_set = guards.YES_WORDS | {"ouaip", "okay", "parfait", "daccord"}
+                if _t_norm in _yes_set or (_t_norm.startswith("oui") and len(_t_norm) <= 12 and " de " not in _t_norm):
+                    session.pending_slot_choice = idx + 1
+                    session.slot_proposal_sequential = False
+                    try:
+                        slot_label = tools_booking.get_label_for_choice(session, idx + 1) or label_cur
+                    except Exception:
+                        slot_label = label_cur
+                    msg = prompts.format_slot_early_confirm(idx + 1, slot_label, channel=channel)
+                    session.add_message("agent", msg)
+                    self._save_session(session)
+                    return [Event("final", msg, conv_state=session.state)]
+                # NON → créneau suivant ou plus de dispo
+                _no_set = guards.NO_WORDS | {"pas celui la", "pas celui-la", "pas ca", "pas ça", "autre", "suivant", "non merci"}
+                if _t_norm in _no_set or _t_norm.startswith("non"):
+                    session.slot_offer_index = idx + 1
+                    if session.slot_offer_index >= len(session.pending_slots):
+                        session.state = "TRANSFERRED"
+                        msg = prompts.VOCAL_NO_SLOTS
+                        session.add_message("agent", msg)
+                        self._save_session(session)
+                        return [Event("final", msg, conv_state=session.state)]
+                    next_slot = session.pending_slots[session.slot_offer_index]
+                    next_label = getattr(next_slot, "label", None) or getattr(next_slot, "label_vocal", None) or str(next_slot)
+                    msg = prompts.VOCAL_SLOT_ONE_PROPOSE.format(label=next_label)
+                    session.add_message("agent", msg)
+                    session.last_say_key, session.last_say_kwargs = "slot_one_propose", {"label": next_label}
+                    self._save_session(session)
+                    return [Event("final", msg, conv_state=session.state)]
+                # Incompréhension → rappeler oui/non
+                msg = getattr(prompts, "VOCAL_SLOT_SEQUENTIAL_NEED_YES_NO", "Dites oui si ça vous convient, ou non pour un autre créneau.")
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
 
         # P1.2 Vocal : préface déjà envoyée, liste pas encore → envoyer liste puis traiter le message user
         if channel == "vocal" and getattr(session, "slots_preface_sent", False) and not getattr(session, "slots_list_sent", False):
@@ -2088,8 +2293,11 @@ class Engine:
         if fail_count >= config.CONFIRM_RETRY_MAX:
             session.is_reading_slots = False
             session.state = "TRANSFERRED"
-            msg = prompts.get_message("transfer", channel=channel)
-            session.add_message("agent", msg)
+            msg = self._say(session, "transfer")
+            if not msg:
+                msg = prompts.get_message("transfer", channel=channel)
+                session.add_message("agent", msg)
+                session.last_say_key, session.last_say_kwargs = "transfer", {}
             return [Event("final", msg, conv_state=session.state)]
         msg = prompts.get_clarification_message(
             "slot_choice",
@@ -2124,7 +2332,7 @@ class Engine:
         
         # État CANCEL_NO_RDV : user a dit un nom, RDV pas trouvé → proposer vérifier ou humain (ou oui/non)
         if session.state == "CANCEL_NO_RDV":
-            intent = detect_intent(user_text)
+            intent = detect_intent(user_text, session.state)
             msg_lower = user_text.strip().lower()
             # Oui = ré-épeler le nom (redemander)
             if intent == "YES" or any(p in msg_lower for p in ["vérifier", "verifier", "réessayer", "orthographe", "redonner", "redonne"]):
@@ -2137,8 +2345,11 @@ class Engine:
             # Non = parler à quelqu'un → transfert
             if intent == "NO" or any(p in msg_lower for p in ["humain", "quelqu'un", "parler à quelqu'un", "opérateur", "transfert", "conseiller"]):
                 session.state = "TRANSFERRED"
-                msg = prompts.get_message("transfer", channel=channel)
-                session.add_message("agent", msg)
+                msg = self._say(session, "transfer")
+                if not msg:
+                    msg = prompts.get_message("transfer", channel=channel)
+                    session.add_message("agent", msg)
+                    session.last_say_key, session.last_say_kwargs = "transfer", {}
                 return [Event("final", msg, conv_state=session.state)]
             # Nouveau nom fourni → rechercher à nouveau
             session.qualif_data.name = user_text.strip()
@@ -2208,7 +2419,7 @@ class Engine:
             return [Event("final", msg, conv_state=session.state)]
         
         elif session.state == "CANCEL_CONFIRM":
-            intent = detect_intent(user_text)
+            intent = detect_intent(user_text, session.state)
             
             if intent == "YES":
                 # --- P0: Annulation Google (event_id) ou SQLite (slot_id) ---
@@ -2307,7 +2518,7 @@ class Engine:
         
         # État MODIFY_NO_RDV : proposer vérifier ou humain (ou oui/non)
         if session.state == "MODIFY_NO_RDV":
-            intent = detect_intent(user_text)
+            intent = detect_intent(user_text, session.state)
             msg_lower = user_text.strip().lower()
             if intent == "YES" or any(p in msg_lower for p in ["vérifier", "verifier", "réessayer", "orthographe", "redonner", "redonne"]):
                 session.state = "MODIFY_NAME"
@@ -2318,8 +2529,11 @@ class Engine:
                 return [Event("final", msg, conv_state=session.state)]
             if intent == "NO" or any(p in msg_lower for p in ["humain", "quelqu'un", "parler à quelqu'un", "opérateur", "transfert", "conseiller"]):
                 session.state = "TRANSFERRED"
-                msg = prompts.get_message("transfer", channel=channel)
-                session.add_message("agent", msg)
+                msg = self._say(session, "transfer")
+                if not msg:
+                    msg = prompts.get_message("transfer", channel=channel)
+                    session.add_message("agent", msg)
+                    session.last_say_key, session.last_say_kwargs = "transfer", {}
                 return [Event("final", msg, conv_state=session.state)]
             session.qualif_data.name = user_text.strip()
             existing_slot = tools_booking.find_booking_by_name(session.qualif_data.name)
@@ -2385,15 +2599,12 @@ class Engine:
             return [Event("final", msg, conv_state=session.state)]
         
         elif session.state == "MODIFY_CONFIRM":
-            intent = detect_intent(user_text)
+            intent = detect_intent(user_text, session.state)
             
             if intent == "YES":
-                # Annuler l'ancien RDV et demander nouvelle préférence
-                tools_booking.cancel_booking(session.pending_cancel_slot)
-                
-                # Rerouter vers QUALIF_PREF
+                # P0.4 — Ne pas annuler l'ancien avant d'avoir sécurisé le nouveau (ordre : nouveau confirmé → puis annuler ancien)
                 session.state = "QUALIF_PREF"
-                msg = prompts.VOCAL_MODIFY_CANCELLED if channel == "vocal" else prompts.MSG_MODIFY_CANCELLED_WEB
+                msg = prompts.VOCAL_MODIFY_NEW_PREF if channel == "vocal" else prompts.MSG_MODIFY_NEW_PREF_WEB
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
@@ -2459,8 +2670,11 @@ class Engine:
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state="ORDONNANCE_CHOICE")]
         session.state = "TRANSFERRED"
-        msg = prompts.get_message("transfer", channel=channel)
-        session.add_message("agent", msg)
+        msg = self._say(session, "transfer")
+        if not msg:
+            msg = prompts.get_message("transfer", channel=channel)
+            session.add_message("agent", msg)
+            session.last_say_key, session.last_say_kwargs = "transfer", {}
         return [Event("final", msg, conv_state=session.state)]
     
     def _handle_ordonnance_message(self, session: Session, user_text: str) -> List[Event]:
@@ -2476,8 +2690,11 @@ class Engine:
                     msg = prompts.VOCAL_ORDONNANCE_NAME_RETRY_2
                 else:
                     session.state = "TRANSFERRED"
-                    msg = prompts.get_message("transfer", channel=channel)
-                    session.add_message("agent", msg)
+                    msg = self._say(session, "transfer")
+                    if not msg:
+                        msg = prompts.get_message("transfer", channel=channel)
+                        session.add_message("agent", msg)
+                        session.last_say_key, session.last_say_kwargs = "transfer", {}
                     return [Event("final", msg, conv_state=session.state)]
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state="ORDONNANCE_MESSAGE")]
@@ -2513,8 +2730,11 @@ class Engine:
                 session.phone_fails = getattr(session, "phone_fails", 0) + 1
                 if session.phone_fails >= 3:
                     session.state = "TRANSFERRED"
-                    msg = prompts.get_message("transfer", channel=channel)
-                    session.add_message("agent", msg)
+                    msg = self._say(session, "transfer")
+                    if not msg:
+                        msg = prompts.get_message("transfer", channel=channel)
+                        session.add_message("agent", msg)
+                        session.last_say_key, session.last_say_kwargs = "transfer", {}
                     return [Event("final", msg, conv_state=session.state)]
                 msg = prompts.VOCAL_ORDONNANCE_PHONE_ASK
                 session.add_message("agent", msg)
@@ -2533,7 +2753,7 @@ class Engine:
     def _handle_ordonnance_phone_confirm(self, session: Session, user_text: str) -> List[Event]:
         """Confirmation Caller ID pour ordonnance message."""
         channel = getattr(session, "channel", "web")
-        intent = detect_intent(user_text)
+        intent = detect_intent(user_text, session.state)
         if intent == "YES":
             phone = str(session.customer_phone or "").replace("+33", "0").replace(" ", "").replace("-", "")
             if phone.startswith("33"):
@@ -2576,7 +2796,7 @@ class Engine:
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
 
-        intent = detect_intent(user_text)
+        intent = detect_intent(user_text, session.state)
 
         if intent == "YES":
             session.contact_confirm_intent_repeat_count = 0
@@ -2618,11 +2838,18 @@ class Engine:
                     session.add_message("agent", msg)
                     self._save_session(session)
                     return [Event("final", msg, conv_state=session.state)]
-                # Confirmer
-                slot_label = tools_booking.get_label_for_choice(session, slot_idx) or ""
-                name = session.qualif_data.name or ""
-                motif = session.qualif_data.motif or ""
-                msg = prompts.format_booking_confirmed(slot_label, name=name, motif=motif, channel=channel)
+                # P0.4 — Si on vient d'un MODIFY : annuler l'ancien seulement après création du nouveau
+                old_slot = getattr(session, "pending_cancel_slot", None)
+                if old_slot:
+                    tools_booking.cancel_booking(old_slot)
+                    session.pending_cancel_slot = None
+                    slot_label = tools_booking.get_label_for_choice(session, slot_idx) or ""
+                    msg = prompts.VOCAL_MODIFY_MOVED.format(new_label=slot_label) if channel == "vocal" else prompts.MSG_MODIFY_MOVED_WEB.format(new_label=slot_label)
+                else:
+                    slot_label = tools_booking.get_label_for_choice(session, slot_idx) or ""
+                    name = session.qualif_data.name or ""
+                    motif = session.qualif_data.motif or ""
+                    msg = prompts.format_booking_confirmed(slot_label, name=name, motif=motif, channel=channel)
                 session.state = "CONFIRMED"
                 logger.info(
                     "[RDV_CONFIRMED] conv_id=%s slot_label=%s name=%s",
@@ -2726,7 +2953,15 @@ class Engine:
         )
         log_ivr_event(logger, session, "intent_router_trigger", reason=reason)
         channel = getattr(session, "channel", "web")
+        # P1.7 — Anti-boucle : >= 2 visites au router → transfert direct
+        session.intent_router_visits = getattr(session, "intent_router_visits", 0) + 1
+        if session.intent_router_visits >= 2:
+            session.state = "TRANSFERRED"
+            msg = getattr(prompts, "VOCAL_INTENT_ROUTER_LOOP", prompts.VOCAL_STILL_UNCLEAR) if channel == "vocal" else prompts.MSG_TRANSFER
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state=session.state)]
         session.state = "INTENT_ROUTER"
+        session.intent_router_unclear_count = 0
         session.last_question_asked = None
         session.consecutive_questions = 0
         session.global_recovery_fails = 0
@@ -2782,37 +3017,55 @@ class Engine:
         )
 
     def _handle_intent_router(self, session: Session, user_text: str) -> List[Event]:
-        """Gestion du menu 1/2/3/4."""
+        """Menu 1/2/3/4. Délégation à intent_parser.parse_router_choice (hein/de => None ; cat/catre=>4)."""
         channel = getattr(session, "channel", "web")
-        msg_lower = user_text.lower().strip()
+        choice = intent_parser.parse_router_choice(user_text or "")
         
-        if any(p in msg_lower for p in ["un", "1", "premier", "rendez-vous", "rdv"]):
+        # Ambiguïté (hein, de seul) => retry puis transfert après 2
+        if choice is None:
+            session.intent_router_unclear_count = getattr(session, "intent_router_unclear_count", 0) + 1
+            if session.intent_router_unclear_count >= 2:
+                session.state = "TRANSFERRED"
+                msg = prompts.VOCAL_STILL_UNCLEAR if channel == "vocal" else prompts.MSG_TRANSFER
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+            msg = getattr(prompts, "MSG_INTENT_ROUTER_RETRY", "Pouvez-vous répéter ?")
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state=session.state)]
+        
+        session.intent_router_unclear_count = 0  # choix valide reçu
+        
+        if choice == intent_parser.RouterChoice.ROUTER_4:
+            session.state = "TRANSFERRED"
+            msg = prompts.VOCAL_TRANSFER_COMPLEX if channel == "vocal" else prompts.MSG_TRANSFER
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state=session.state)]
+        
+        if choice == intent_parser.RouterChoice.ROUTER_1:
             session.state = "QUALIF_NAME"
             session.consecutive_questions = 0
             msg = prompts.get_qualif_question("name", channel=channel)
             session.last_question_asked = msg
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
-        if any(p in msg_lower for p in ["deux", "2", "deuxième", "annuler", "modifier"]):
+        
+        if choice == intent_parser.RouterChoice.ROUTER_2:
             return self._start_cancel(session)
-        if any(p in msg_lower for p in ["trois", "3", "troisième", "question"]):
+        
+        if choice == intent_parser.RouterChoice.ROUTER_3:
             session.state = "START"
-            msg = prompts.MSG_INTENT_ROUTER_FAQ
-            session.add_message("agent", msg)
-            return [Event("final", msg, conv_state=session.state)]
-        if any(p in msg_lower for p in ["quatre", "4", "quatrième", "quelqu'un", "humain", "conseiller"]):
-            session.state = "TRANSFERRED"
-            msg = prompts.VOCAL_TRANSFER_COMPLEX if channel == "vocal" else prompts.MSG_TRANSFER
+            msg = getattr(prompts, "MSG_INTENT_ROUTER_FAQ", prompts.MSG_EMPTY_MESSAGE)
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
         
-        session.global_recovery_fails = getattr(session, "global_recovery_fails", 0) + 1
-        if session.global_recovery_fails >= 3:
+        # Incompréhension (ne devrait pas arriver si parse_router_choice couvre 1-4)
+        session.intent_router_unclear_count = getattr(session, "intent_router_unclear_count", 0) + 1
+        if session.intent_router_unclear_count >= 2:
             session.state = "TRANSFERRED"
             msg = prompts.VOCAL_STILL_UNCLEAR if channel == "vocal" else prompts.MSG_TRANSFER
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
-        msg = prompts.MSG_INTENT_ROUTER_RETRY
+        msg = getattr(prompts, "MSG_INTENT_ROUTER_RETRY", "Pouvez-vous répéter ?")
         session.add_message("agent", msg)
         return [Event("final", msg, conv_state=session.state)]
     
@@ -2823,7 +3076,7 @@ class Engine:
     def _handle_preference_confirm(self, session: Session, user_text: str) -> List[Event]:
         """Confirmation de la préférence inférée (oui/non ou répétition = confirmation implicite)."""
         channel = getattr(session, "channel", "web")
-        intent = detect_intent(user_text)
+        intent = detect_intent(user_text, session.state)
         pending = getattr(session, "pending_preference", None)
         
         if intent == "YES" and pending:
@@ -2939,8 +3192,11 @@ class Engine:
         """Fallback vers transfert humain."""
         channel = getattr(session, "channel", "web")
         session.state = "TRANSFERRED"
-        msg = prompts.get_message("transfer", channel=channel)
-        session.add_message("agent", msg)
+        msg = self._say(session, "transfer")
+        if not msg:
+            msg = prompts.get_message("transfer", channel=channel)
+            session.add_message("agent", msg)
+            session.last_say_key, session.last_say_kwargs = "transfer", {}
         return [Event("final", msg, conv_state=session.state)]
 
 

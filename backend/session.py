@@ -71,6 +71,9 @@ class Session:
     consecutive_questions: int = 0  # Max 3 puis action concrète
     last_agent_message: Optional[str] = None  # Dernier message complet (répétition)
     last_question_asked: Optional[str] = None  # Dernière question (correction / rejouer)
+    # REPEAT fiable : re-say exact (clé + kwargs pour re-render si besoin)
+    last_say_key: Optional[str] = None
+    last_say_kwargs: Optional[Dict[str, Any]] = None
     global_recovery_fails: int = 0  # Échecs globaux → INTENT_ROUTER si >= 2
     correction_count: int = 0  # Corrections répétées → INTENT_ROUTER si >= 2
     pending_preference: Optional[str] = None  # Préférence inférée (PREFERENCE_CONFIRM)
@@ -118,6 +121,12 @@ class Session:
     # P1.2 Lecture créneaux en 2 tours : preface envoyée, puis liste
     slots_preface_sent: bool = False
     slots_list_sent: bool = False
+    # P0.2 — Vocal séquentiel : 1 créneau à la fois (pas 3 d'un coup)
+    slot_offer_index: int = 0
+    slot_proposal_sequential: bool = False
+    # P1.7 — Anti-boucle START <-> INTENT_ROUTER
+    intent_router_visits: int = 0
+    intent_router_unclear_count: int = 0
 
     MAX_CONSECUTIVE_QUESTIONS = 3  # Limite cognitive (spec V3)
     MAX_TURNS_ANTI_LOOP = 25  # Garde-fou : >25 tours sans DONE/TRANSFERRED → INTENT_ROUTER
@@ -189,10 +198,16 @@ class Session:
         self.is_reading_slots = False
         self.slots_preface_sent = False
         self.slots_list_sent = False
+        self.slot_offer_index = 0
+        self.slot_proposal_sequential = False
+        self.intent_router_visits = 0
+        self.intent_router_unclear_count = 0
         self.time_constraint_type = ""
         self.time_constraint_minute = -1
         self.client_id = None
         self.transfer_logged = False
+        self.last_say_key = None
+        self.last_say_kwargs = None
         # Note: on ne reset PAS customer_phone car c'est lié à l'appel
 
     def add_message(self, role: str, text: str) -> None:

@@ -21,7 +21,13 @@ def test_faq_no_match_twice_transfer():
 
     e1 = engine.handle_message(conv, "Je voudrais des informations")
     assert e1[0].type == "final"
-    assert "pas certain" in e1[0].text.lower() or "mettre en relation" in e1[0].text.lower() or "relation" in e1[0].text.lower() or "reformuler" in e1[0].text.lower() or "bien compris" in e1[0].text.lower()
+    assert (
+        "pas certain" in e1[0].text.lower() or "mettre en relation" in e1[0].text.lower()
+        or "relation" in e1[0].text.lower() or "reformuler" in e1[0].text.lower()
+        or "bien compris" in e1[0].text.lower()
+        or ("rendez-vous" in e1[0].text.lower() and "question" in e1[0].text.lower())
+        or "qu'est-ce que je peux faire" in e1[0].text.lower()
+    )
 
     # 2e message hors FAQ → reformulation avec options (reste en START)
     e2 = engine.handle_message(conv, "Donnez-moi des infos sur vos services")

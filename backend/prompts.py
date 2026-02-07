@@ -100,7 +100,7 @@ MSG_EMPTY_MESSAGE = "Je n'ai pas reçu votre message. Pouvez-vous réessayer ?"
 MSG_TOO_LONG = "Votre message est trop long. Pouvez-vous résumer ?"
 MSG_FRENCH_ONLY = "Je ne parle actuellement que français."
 MSG_SESSION_EXPIRED = "Votre session a expiré. Puis-je vous aider ?"
-MSG_TRANSFER = "Je vous transfère vers un conseiller. Ne quittez pas, s'il vous plaît."
+MSG_TRANSFER = "Je vous transfère vers un conseiller. Un instant, s'il vous plaît."
 MSG_ALREADY_TRANSFERRED = "Vous avez été transféré à un conseiller. Un instant, s'il vous plaît."
 
 # =========================
@@ -232,21 +232,16 @@ VOCAL_FAQ_GOODBYE = "Merci de votre appel. Bonne journée."
 
 VOCAL_FAQ_TO_BOOKING = "Très bien. Pour le rendez-vous, à quel nom, s'il vous plaît ?"
 
-# POST_FAQ : "oui" ambigu → une seule question de choix (A3)
+# P1.3 — Une seule phrase naturelle (pas "Dites :", pas ":" inaudible)
 VOCAL_POST_FAQ_CHOICE = (
-    "Très bien. Souhaitez-vous prendre un rendez-vous, ou poser une autre question ?"
+    "Vous voulez prendre rendez-vous, ou poser une question ?"
 )
-VOCAL_POST_FAQ_CHOICE_RETRY = "Dites : rendez-vous, ou : question."
-
-# POST_FAQ - Disambiguation "oui" seul (vocal + web)
+VOCAL_POST_FAQ_CHOICE_RETRY = "Rendez-vous, ou une question ?"
 VOCAL_POST_FAQ_DISAMBIG = (
-    "D'accord. Souhaitez-vous prendre rendez-vous, "
-    "ou avez-vous une autre question ?"
+    "Vous voulez prendre rendez-vous, ou poser une question ?"
 )
 MSG_POST_FAQ_DISAMBIG_WEB = (
-    "Que puis-je faire pour vous ?\n\n"
-    "• Prendre rendez-vous\n"
-    "• Poser une question"
+    "Vous voulez prendre rendez-vous, ou poser une question ?"
 )
 
 
@@ -267,11 +262,10 @@ VOCAL_CANCEL_NOT_FOUND = (
     "Pouvez-vous vérifier l'orthographe, s'il vous plaît ?"
 )
 
-# RDV non trouvé : proposer vérifier ou humain (pas transfert direct)
+# P1.4 — Message clair : redonner le nom ou conseiller (pas "Vérifier ou humain ?")
 VOCAL_CANCEL_NOT_FOUND_VERIFIER_HUMAN = (
-    "Je ne trouve pas de rendez-vous au nom de {name}. "
-    "Souhaitez-vous vérifier l'orthographe, ou parler à un conseiller ? "
-    "Dites : vérifier, ou : conseiller."
+    "Je n'ai pas de rendez-vous enregistré à ce nom. "
+    "Voulez-vous me redonner le nom exact, ou préférez-vous que je vous passe un conseiller ?"
 )
 
 VOCAL_CANCEL_CONFIRM = (
@@ -328,8 +322,19 @@ VOCAL_MODIFY_CONFIRM = (
     "Vous avez un rendez-vous {slot_label}. Vous voulez le déplacer ?"
 )
 
+# P0.4 — On ne dit plus "j'ai annulé" avant d'avoir sécurisé le nouveau créneau
+VOCAL_MODIFY_NEW_PREF = (
+    "Très bien. Je vous propose un autre créneau. Préférez-vous le matin ou l'après-midi ?"
+)
 VOCAL_MODIFY_CANCELLED = (
     "Très bien, j'ai annulé l'ancien. Plutôt le matin ou l'après-midi pour le nouveau ?"
+)
+# P0.4 — Après création du nouveau RDV : annuler l'ancien puis confirmer déplacement
+VOCAL_MODIFY_MOVED = (
+    "J'ai déplacé votre rendez-vous vers {new_label}. Merci, à très bientôt."
+)
+MSG_MODIFY_MOVED_WEB = (
+    "J'ai déplacé votre rendez-vous vers {new_label}. Merci, à très bientôt."
 )
 
 
@@ -337,35 +342,42 @@ VOCAL_MODIFY_CANCELLED = (
 # FLOW E: UNCLEAR - Cas flou
 # ----------------------------
 
+# Clarification après "non" en START (P1.1 : court, professionnel-chaleureux)
 VOCAL_CLARIFY = (
-    "Pas de souci ! Je peux vous renseigner si vous avez une question, "
-    "ou vous aider à prendre un rendez-vous. Qu'est-ce qui vous ferait plaisir ?"
+    "Pas de souci. C'est pour un rendez-vous, ou pour une question ?"
+)
+
+# P0.1 — START: "oui" seul = ambigu → clarification (pas booking direct)
+VOCAL_CLARIFY_YES_START = (
+    "Pas de souci. C'est pour un rendez-vous, ou pour une question ?"
+)
+MSG_CLARIFY_YES_START = (
+    "Pas de souci. C'est pour un rendez-vous, ou pour une question ?"
 )
 
 VOCAL_STILL_UNCLEAR = (
     "D'accord. Je vous mets en relation avec un conseiller. Un instant, s'il vous plaît."
+)
+# P1.7 — Anti-boucle START <-> INTENT_ROUTER (>= 2 visites → transfert direct)
+VOCAL_INTENT_ROUTER_LOOP = (
+    "Je vois que c'est compliqué. Je vous passe un conseiller. Un instant."
 )
 
 # ----------------------------
 # INTENT_ROUTER (spec V3 — menu reset universel)
 # ----------------------------
 
+# P1.5 — Un seul "Dites", court, robustesse STT
 VOCAL_INTENT_ROUTER = (
-    "Je vous écoute. "
-    "Dites un pour prendre rendez-vous. "
-    "Dites deux pour annuler ou modifier. "
-    "Dites trois pour poser une question. "
-    "Ou dites quatre pour parler à un conseiller."
+    "Dites un pour un rendez-vous, deux pour annuler ou modifier, trois pour une question, quatre pour un conseiller."
 )
 # Échec 3 nom (test B1) : même menu avec intro stabilisante
 VOCAL_NAME_FAIL_3_INTENT_ROUTER = (
-    "Je vais simplifier. Dites un pour rendez-vous. Dites deux pour annuler ou modifier. Dites trois pour une question. Ou dites quatre pour un conseiller."
+    "Pour aller plus vite, je vous propose quatre options. Dites un pour un rendez-vous, deux pour annuler ou modifier, trois pour une question, quatre pour un conseiller."
 )
 
 MSG_INTENT_ROUTER = (
-    "Je vais simplifier. Dites : un, pour prendre un rendez-vous ; "
-    "deux, pour annuler ou modifier ; trois, pour poser une question ; "
-    "quatre, pour parler à quelqu'un. Dites simplement : un, deux, trois ou quatre."
+    "Pour aller plus vite, je vous propose quatre options. Dites un pour un rendez-vous, deux pour annuler ou modifier, trois pour une question, quatre pour un conseiller."
 )
 
 MSG_INTENT_ROUTER_FAQ = "Quelle est votre question ?"
@@ -380,11 +392,12 @@ MSG_PREFERENCE_CONFIRM = "D'accord, donc plutôt {pref}, c'est bien ça ?"
 # Recovery téléphone / préférence / créneau (VOCAL_* — cohérence B2/B3)
 # ----------------------------
 
-VOCAL_PHONE_FAIL_1 = "Excusez-moi. Je n'ai pas bien noté votre numéro. Pouvez-vous le redire, s'il vous plaît ?"
+# P1.8 — Ladder téléphone + fallback email
+VOCAL_PHONE_FAIL_1 = "Je n'ai pas bien compris le numéro. Pouvez-vous le répéter lentement ?"
 VOCAL_PHONE_FAIL_2 = (
-    "Dites-le comme ceci : zéro six, douze, trente-quatre, cinquante-six, soixante-dix-huit."
+    "Dites les chiffres deux par deux. Par exemple : zéro six, douze, trente-quatre, cinquante-six, soixante-dix-huit."
 )
-VOCAL_PHONE_FAIL_3 = "Je n'arrive pas à noter votre numéro. Pouvez-vous me donner votre email, s'il vous plaît ?"
+VOCAL_PHONE_FAIL_3 = "Pas de souci. On peut aussi prendre votre email. Quelle est votre adresse email ?"
 
 VOCAL_PHONE_CONFIRM = "Je confirme : {phone_spaced}. C'est bien ça ?"
 VOCAL_PHONE_CONFIRM_NO = "D'accord. Quel est votre numéro ?"
@@ -409,6 +422,10 @@ VOCAL_PREF_CONFIRM_APRES_MIDI = "D'accord, plutôt l'après-midi. C'est bien ça
 VOCAL_SLOT_FAIL_1 = "Je n'ai pas bien saisi. Vous pouvez dire : un, deux ou trois, s'il vous plaît."
 VOCAL_SLOT_FAIL_2 = "Par exemple : je prends le deux. Lequel vous convient ?"
 # SLOT_FAIL_3 → INTENT_ROUTER (dans engine)
+
+# P0.2 — Vocal : proposition séquentielle (1 créneau à la fois, pas 3 d'un coup)
+VOCAL_SLOT_ONE_PROPOSE = "Le prochain créneau est {label}. Ça vous convient ?"
+VOCAL_SLOT_SEQUENTIAL_NEED_YES_NO = "Dites oui si ça vous convient, ou non pour un autre créneau."
 
 # Recovery nom (QUALIF_NAME — test B1)
 VOCAL_NAME_ASK = (
@@ -656,6 +673,14 @@ VOCAL_TRANSFER_HUMAN = (
     "Un instant, s'il vous plaît."
 )
 
+# Transfert après 3 fillers/silence (UX : message spécifique, pas "abandon")
+VOCAL_TRANSFER_FILLER_SILENCE = (
+    "Je ne vous entends pas bien. Je vous passe un conseiller. Un instant."
+)
+MSG_TRANSFER_FILLER_SILENCE = (
+    "Je ne vous entends pas bien. Je vous passe un conseiller. Un instant."
+)
+
 VOCAL_NO_SLOTS = (
     "Je suis désolée. Nous n'avons plus de créneaux disponibles. "
     "Je vous mets en relation avec un conseiller."
@@ -743,41 +768,107 @@ GENERIC_MOTIFS = {
 # INTENT DETECTION KEYWORDS
 # ----------------------------
 
-# Réponses OUI
+# Réponses OUI (jamais "oui" seul en START → BOOKING)
 YES_PATTERNS = [
-    "oui", "ouais", "yes", "yep", "ok", "d'accord",
+    "oui", "ouais", "yes", "yep", "ok", "okay", "d'accord", "dac",
     "exactement", "tout à fait", "absolument", "bien sûr",
+    "c'est bon", "ça marche", "exact", "parfait",
     "s'il vous plaît", "oui s'il vous plaît", "oui svp",
     "c'est ça", "voilà", "affirmatif",
 ]
 
-# Réponses NON
+# Réponses NON. "nom merci" = STT pour "non merci" → NO en POST_FAQ/confirm
 NO_PATTERNS = [
     "non", "nan", "no", "pas du tout", "pas vraiment",
-    "non merci", "non non",
+    "non merci", "nom merci", "non non",
+    "pas maintenant", "ça ne va pas", "pas possible",
 ]
 
-# Intent CANCEL
+# Intent CANCEL (strong override)
 CANCEL_PATTERNS = [
     "annuler", "annulation", "supprimer",
     "je veux annuler", "annuler mon rendez-vous",
-    "annuler mon rdv", "annule mon rdv",
+    "annuler mon rdv", "annule mon rdv", "supprimer mon rendez-vous",
 ]
 
-# Intent MODIFY
+# Intent MODIFY (strong override)
 MODIFY_PATTERNS = [
-    "modifier", "changer", "déplacer", "reporter",
+    "modifier", "changer", "déplacer", "reporter", "reprogrammer", "décaler", "avancer",
     "changer mon rendez-vous", "déplacer mon rdv",
     "reporter mon rdv", "modifier mon rdv",
 ]
 
-# Intent TRANSFER (cas complexes)
+# Intent TRANSFER — mapping STT large (phrase courte "humain" = OK)
 TRANSFER_PATTERNS = [
-    "parler à quelqu'un", "un humain", "un conseiller",
-    "quelqu'un", "standard", "secrétariat",
+    "conseiller", "quelqu'un", "humain", "une personne", "parler à quelqu'un",
+    "agent", "standard", "secrétariat", "secrétaire",
+    "je veux parler", "mettez-moi quelqu'un", "passez-moi quelqu'un",
+    "un humain", "un conseiller",
     "mes résultats", "résultats d'analyses",
     "c'est urgent", "c'est grave",
-    "je veux parler", "passez-moi quelqu'un",
+]
+
+# Intent ABANDON — "rien" en POST_FAQ = ABANDON ; ailleurs peut être UNCLEAR
+ABANDON_PATTERNS_BASE = [
+    "au revoir", "bye", "merci au revoir", "c'est tout",
+    "laisse tomber", "laissez tomber", "tant pis", "stop",
+    "annule tout", "j'abandonne", "oubliez", "je rappelle",
+    "je vais rappeler", "plus tard", "je rappellerai", "je vais raccrocher",
+]
+
+# Intent FAQ "fort" (P1.6 — sortie booking vers question)
+FAQ_STRONG_PATTERNS = [
+    "adresse", "où êtes-vous", "où est", "c'est où",
+    "horaires", "horaire", "heures d'ouverture", "ouvert",
+    "tarif", "tarifs", "prix", "combien coûte",
+    "parking", "accès", "téléphone du cabinet",
+    "service", "consultation", "pédiatre",
+]
+
+# REPEAT — relire dernier prompt / créneau courant
+REPEAT_PATTERNS = [
+    "répète", "répéter", "repete", "repeter",
+    "vous pouvez répéter", "encore", "redis", "redire",
+    "j'ai pas compris", "j ai pas compris", "pardon", "pardon ?",
+    "comment", "quoi", "hein",
+]
+
+# INTENT_ROUTER : ambiguïtés à ne pas mapper (hein seul, de seul → REPEAT/retry, pas 1 ou 2)
+ROUTER_AMBIGUOUS_STT = frozenset({"hein", "de"})
+
+# INTENT_ROUTER choix 1 (RDV)
+ROUTER_1_PATTERNS = [
+    "un", "1", "premier", "le premier", "première option",
+    "rendez-vous", "rdv", "prendre rendez-vous", "réserver", "booker", "je veux venir", "je voudrais un créneau",
+]
+
+# INTENT_ROUTER choix 2 (Annuler/Modifier)
+ROUTER_2_PATTERNS = [
+    "deux", "2", "deuxième", "le deuxième", "seconde option",
+    "annuler", "annulation", "modifier", "changer", "déplacer",
+]
+
+# INTENT_ROUTER choix 3 (Question)
+ROUTER_3_PATTERNS = [
+    "trois", "3", "troisième", "le troisième",
+    "question", "une question", "renseignement", "info", "informations",
+]
+
+# INTENT_ROUTER choix 4 (Conseiller) + tolérance STT
+ROUTER_4_PATTERNS = [
+    "quatre", "4", "quatrième", "le quatrième",
+    "conseiller", "humain", "quelqu'un", "une personne",
+]
+ROUTER_4_STT_TOLERANCE = ["cat", "catre", "quattre", "katr", "quatres"]
+
+# Contact : téléphone vs email (mel/mèl = email)
+CONTACT_PHONE_PATTERNS = [
+    "téléphone", "telephone", "numéro", "numero", "portable", "mobile",
+    "appel", "appelez-moi", "appelez moi",
+]
+CONTACT_EMAIL_PATTERNS = [
+    "email", "mail", "adresse mail", "courriel", "écrire", "par mail",
+    "mel", "mèl", "mél",  # STT prononcé "mèl"
 ]
 
 # Intent ORDONNANCE (conversation naturelle : RDV ou message)
@@ -789,12 +880,8 @@ ORDONNANCE_PATTERNS = [
     "traitement",
 ]
 
-# Intent ABANDON (override → END_POLITE)
-ABANDON_PATTERNS = [
-    "je rappelle", "laissez tomber", "tant pis",
-    "oubliez", "je vais rappeler", "plus tard",
-    "j'abandonne", "je rappellerai", "je vais raccrocher",
-]
+# Intent ABANDON (override → END_POLITE). "rien" traité en engine selon contexte (POST_FAQ → ABANDON).
+ABANDON_PATTERNS = list(ABANDON_PATTERNS_BASE)
 # Message de clôture poli (spec END_POLITE)
 MSG_END_POLITE_ABANDON = "Pas de souci. N'hésitez pas à nous rappeler. Au revoir."
 
@@ -913,15 +1000,15 @@ MSG_FAQ_REFORMULATE = "Je n'ai pas bien compris votre question. Pouvez-vous la r
 MSG_FAQ_REFORMULATE_VOCAL = "Excusez-moi. Je n'ai pas bien saisi. Pouvez-vous reformuler, s'il vous plaît ?"
 
 # START - Guidage proactif après incompréhensions (question ouverte)
-# 1ère incompréhension : clarification générique
+# 1ère incompréhension : reformulation douce (Test 1.2 / 1.3 — "ben je sais pas", "euh")
 VOCAL_START_CLARIFY_1 = (
-    "Je n'ai pas bien compris. Souhaitez-vous prendre rendez-vous, ou avez-vous une question ?"
+    "Je peux vous aider pour un rendez-vous, ou pour une question. Qu'est-ce que je peux faire pour vous ?"
 )
 MSG_START_CLARIFY_1_WEB = (
-    "Je n'ai pas bien compris. Souhaitez-vous prendre rendez-vous, ou avez-vous une question ?"
+    "Je peux vous aider pour un rendez-vous, ou pour une question. Qu'est-ce que je peux faire pour vous ?"
 )
 
-# 2e incompréhension : guidage proactif (exemples concrets)
+# 2e incompréhension : guidage clair (exemples concrets)
 VOCAL_START_GUIDANCE = (
     "Je peux vous aider à prendre rendez-vous, "
     "répondre à vos questions sur nos horaires, notre adresse, "
@@ -998,6 +1085,7 @@ MSG_MODIFY_CONFIRM_WEB = "Vous avez un rendez-vous {slot_label}. Voulez-vous le 
 MSG_CANCEL_CONFIRM_WEB = "Vous avez un rendez-vous {slot_label}. Voulez-vous l'annuler ?"
 MSG_FAQ_TO_BOOKING_WEB = "Pas de souci. C'est à quel nom ?"
 MSG_MODIFY_CANCELLED_WEB = "J'ai annulé l'ancien. Plutôt le matin ou l'après-midi pour le nouveau ?"
+MSG_MODIFY_NEW_PREF_WEB = "Très bien. Je vous propose un autre créneau. Préférez-vous le matin ou l'après-midi ?"
 
 
 # ----------------------------
@@ -1013,9 +1101,11 @@ def get_message(msg_key: str, channel: str = "web", **kwargs) -> str:
         get_message("no_slots", channel="vocal")
         get_message("salutation", channel="vocal", business_name="Cabinet Durand")
     """
-    # Mapping des messages vocaux (ton parisien naturel)
+    # Mapping des messages vocaux (ton parisien naturel) — utilisé pour REPEAT (re-say exact)
     vocal_messages = {
         "transfer": VOCAL_TRANSFER_HUMAN,
+        "transfer_complex": VOCAL_TRANSFER_COMPLEX,
+        "transfer_filler_silence": VOCAL_TRANSFER_FILLER_SILENCE,
         "no_slots": VOCAL_NO_SLOTS,
         "not_understood": VOCAL_NOT_UNDERSTOOD,
         "goodbye": VOCAL_GOODBYE,
@@ -1026,11 +1116,15 @@ def get_message(msg_key: str, channel: str = "web", **kwargs) -> str:
         "contact_retry": VOCAL_CONTACT_RETRY,
         "booking_confirmed": VOCAL_BOOKING_CONFIRMED,
         "salutation": VOCAL_SALUTATION,
+        "start_clarify_1": VOCAL_START_CLARIFY_1,
+        "slot_one_propose": VOCAL_SLOT_ONE_PROPOSE,
     }
     
     # Mapping des messages web (format texte standard)
     web_messages = {
         "transfer": MSG_TRANSFER,
+        "transfer_complex": MSG_TRANSFER,
+        "transfer_filler_silence": MSG_TRANSFER_FILLER_SILENCE,
         "no_slots": MSG_NO_SLOTS_AVAILABLE,
         "not_understood": MSG_VAPI_NO_UNDERSTANDING,
         "goodbye": MSG_CONVERSATION_CLOSED,
@@ -1041,6 +1135,8 @@ def get_message(msg_key: str, channel: str = "web", **kwargs) -> str:
         "contact_retry": MSG_CONTACT_RETRY,
         "booking_confirmed": "Votre rendez-vous est confirmé pour {slot_label}.",
         "salutation": "Bonjour ! Comment puis-je vous aider ?",
+        "start_clarify_1": MSG_START_CLARIFY_1_WEB,
+        "slot_one_propose": "Le prochain créneau est {label}. Ça vous convient ?",
     }
     
     messages = vocal_messages if channel == "vocal" else web_messages

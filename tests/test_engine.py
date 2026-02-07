@@ -98,7 +98,11 @@ def test_faq_no_match_twice_transfer():
     e1 = engine.handle_message(conv, "xyzabc123def")
     assert len(e1) == 1
     assert e1[0].type == "final"
-    assert "reformuler" in e1[0].text.lower() or "préciser" in e1[0].text.lower() or "compris" in e1[0].text.lower()
+    # 1ère incompréhension : reformulation ou guidage (VOCAL_START_CLARIFY_1)
+    assert (
+        "reformuler" in e1[0].text.lower() or "préciser" in e1[0].text.lower() or "compris" in e1[0].text.lower()
+        or ("rendez-vous" in e1[0].text.lower() and "question" in e1[0].text.lower())
+    )
 
     # 2e no match → reformulation avec les possibilités (rendez-vous, horaires, conseiller)
     e2 = engine.handle_message(conv, "test question 2")
@@ -113,6 +117,84 @@ def test_faq_no_match_twice_transfer():
     assert e3[0].type == "final"
     assert e3[0].conv_state == "INTENT_ROUTER"
     assert "dites" in e3[0].text.lower() and ("un" in e3[0].text.lower() or "1" in e3[0].text)
+
+
+def test_intent_router_two_visits_transfer():
+    """2 entrées dans INTENT_ROUTER → transfert direct (anti-boucle START↔ROUTER)."""
+    import uuid
+    from backend.engine import Engine
+    from backend.session import SessionStore
+    from backend.tools_faq import FaqStore
+    store = SessionStore()
+    engine = Engine(session_store=store, faq_store=FaqStore(items=[]))
+    conv = f"conv_router_loop_{uuid.uuid4().hex[:8]}"
+    # 1) Première entrée au router (3 no-match FAQ)
+    engine.handle_message(conv, "xyzabc1")
+    engine.handle_message(conv, "xyzabc2")
+    e1 = engine.handle_message(conv, "xyzabc3")
+    assert e1[0].conv_state == "INTENT_ROUTER"
+    # 2) Choisir "3" (question) → retour START
+    e2 = engine.handle_message(conv, "trois")
+    assert e2[0].conv_state == "START"
+    # 3) Re-déclencher le router (3 no-match)
+    engine.handle_message(conv, "abcfoo1")
+    engine.handle_message(conv, "abcfoo2")
+    e3 = engine.handle_message(conv, "abcfoo3")
+    # 2e entrée au router → transfert direct
+    assert e3[0].conv_state == "TRANSFERRED"
+
+
+def test_start_oui_goes_to_clarify_not_booking():
+    """P0.1 — En START, 'oui' seul = ambigu → CLARIFY (pas QUALIF_NAME). Critère d'acceptation mission."""
+    engine = create_engine()
+    conv = f"conv_start_oui_{uuid.uuid4().hex[:8]}"
+    session = engine.session_store.get_or_create(conv)
+    session.channel = "vocal"
+    session.state = "START"
+    engine._save_session(session)
+    events = engine.handle_message(conv, "oui")
+    assert len(events) >= 1
+    assert events[0].conv_state == "CLARIFY"
+    assert "rendez-vous" in events[0].text.lower() and "question" in events[0].text.lower()
+    # Ne doit pas demander le nom (pas de passage en QUALIF_NAME)
+    assert "nom" not in events[0].text.lower() or "prénom" not in events[0].text.lower()
+
+
+def test_wait_confirm_repeat_relit_creneau_courant():
+    """REPEAT en WAIT_CONFIRM : relit le créneau courant, pas de changement d'état."""
+    engine = create_engine()
+    conv = f"conv_repeat_slot_{uuid.uuid4().hex[:8]}"
+    engine.session_store.delete(conv)
+    session = engine.session_store.get_or_create(conv)
+    session.channel = "vocal"
+    engine._save_session(session)
+    with patch("backend.tools_booking.get_slots_for_display", _fake_slots):
+        engine.handle_message(conv, "je veux un rdv")
+        engine.handle_message(conv, "Jean Dupont")
+        engine.handle_message(conv, "consultation")
+        engine.handle_message(conv, "matin")
+        e_slots = engine.handle_message(conv, "oui")
+    assert e_slots and e_slots[0].conv_state == "WAIT_CONFIRM"
+    slot_msg = e_slots[0].text
+    e_repeat = engine.handle_message(conv, "répétez")
+    assert e_repeat and len(e_repeat) >= 1
+    assert e_repeat[0].conv_state == "WAIT_CONFIRM"
+    assert slot_msg in e_repeat[0].text or "14:00" in e_repeat[0].text or "créneau" in e_repeat[0].text.lower()
+
+
+def test_post_faq_daccord_goes_to_clarification_not_booking():
+    """POST_FAQ : user 'd'accord' → POST_FAQ_CHOICE / clarification, pas booking direct."""
+    engine = create_engine()
+    conv = f"conv_post_faq_{uuid.uuid4().hex[:8]}"
+    engine.session_store.delete(conv)
+    session = engine.session_store.get_or_create(conv)
+    session.channel = "vocal"
+    session.state = "POST_FAQ"
+    engine._save_session(session)
+    events = engine.handle_message(conv, "d'accord")
+    assert len(events) >= 1
+    assert events[0].conv_state == "POST_FAQ_CHOICE"
+    assert "rendez-vous" in events[0].text.lower() or "question" in events[0].text.lower()
 
 
 def _reply_for_booking(agent_text: str) -> str:

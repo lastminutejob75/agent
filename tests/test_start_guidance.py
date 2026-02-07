@@ -13,7 +13,7 @@ def _engine_start():
 
 
 def test_start_unclear_once_clarification():
-    """1ère incompréhension en START → clarification générique (rendez-vous ou question)."""
+    """1ère incompréhension (filler) en START → clarification générique (rendez-vous ou question)."""
     engine = _engine_start()
     conv = f"conv_guidance_1_{uuid.uuid4().hex[:8]}"
     events = engine.handle_message(conv, "euh...")
@@ -21,9 +21,9 @@ def test_start_unclear_once_clarification():
     assert events[0].type == "final"
     assert events[0].conv_state == "START"
     text = events[0].text.lower()
-    assert "pas bien compris" in text or "compris" in text
     assert "rendez-vous" in text
     assert "question" in text
+    assert "je peux vous aider" in text or "compris" in text or "qu'est-ce que je peux" in text
 
 
 def test_start_unclear_twice_guidance():
@@ -42,7 +42,7 @@ def test_start_unclear_twice_guidance():
 
 
 def test_start_unclear_thrice_router():
-    """3e incompréhension en START → INTENT_ROUTER (menu)."""
+    """3e incompréhension (phrase réelle, pas filler) en START → INTENT_ROUTER (menu)."""
     engine = _engine_start()
     conv = f"conv_guidance_3_{uuid.uuid4().hex[:8]}"
     engine.handle_message(conv, "euh")
@@ -52,6 +52,22 @@ def test_start_unclear_thrice_router():
     assert events[0].type == "final"
     assert events[0].conv_state == "INTENT_ROUTER"
     assert "dites" in events[0].text.lower() or "1" in events[0].text or "2" in events[0].text
+
+
+def test_start_three_fillers_transfer_direct():
+    """3 fillers consécutifs en START → TRANSFERRED (transfert direct, pas INTENT_ROUTER)."""
+    engine = _engine_start()
+    conv = f"conv_guidance_3f_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "euh")
+    engine.handle_message(conv, "euh")
+    events = engine.handle_message(conv, "euh")
+    assert len(events) == 1
+    assert events[0].type == "final"
+    assert events[0].conv_state == "TRANSFERRED"
+    text = events[0].text.lower()
+    assert "conseiller" in text or "pass" in text or "entends pas" in text
+    # Pas le menu 1/2/3/4
+    assert "dites 1" not in text and "dites 2" not in text
 
 
 def test_start_booking_resets_counter():

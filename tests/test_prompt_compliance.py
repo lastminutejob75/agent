@@ -26,7 +26,8 @@ def test_session_expired_exact_wording():
 
 
 def test_transfer_exact_wording():
-    assert prompts.MSG_TRANSFER == "Je vous transfère vers un conseiller. Ne quittez pas, s'il vous plaît."
+    # P1.1 — "Un instant" remplace "Ne quittez pas" (registre professionnel-chaleureux)
+    assert prompts.MSG_TRANSFER == "Je vous transfère vers un conseiller. Un instant, s'il vous plaît."
 
 
 def test_already_transferred_exact_wording():
