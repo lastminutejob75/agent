@@ -71,7 +71,7 @@ def conv_engine(faq_store, cabinet_data):
 @patch("backend.conversational_engine.config")
 def test_llm_start_generates_natural_then_booking(mock_config, conv_engine, faq_store, cabinet_data):
     mock_config.CONVERSATIONAL_MODE_ENABLED = True
-    mock_config.CANARY_PERCENT = 0
+    mock_config.CONVERSATIONAL_CANARY_PERCENT = 0
     conv_engine.llm_client = MockLLMConvClient(fixed_response=json.dumps({
         "response_text": "Bonjour ! Je peux vous aider. Souhaitez-vous prendre rendez-vous ? Donnez-moi votre nom.",
         "next_mode": "FSM_BOOKING",
@@ -102,7 +102,7 @@ def test_llm_start_generates_natural_then_booking(mock_config, conv_engine, faq_
 @patch("backend.conversational_engine.config")
 def test_llm_start_faq_placeholder_replaced(mock_config, conv_engine, faq_store, cabinet_data):
     mock_config.CONVERSATIONAL_MODE_ENABLED = True
-    mock_config.CANARY_PERCENT = 0
+    mock_config.CONVERSATIONAL_CANARY_PERCENT = 0
     # Réponse officielle horaires dans default_faq_store
     horaires_text = "Nous sommes ouverts du lundi au vendredi, de 9 heures à 18 heures."
     conv_engine.llm_client = MockLLMConvClient(fixed_response=json.dumps({
@@ -131,7 +131,7 @@ def test_llm_start_faq_placeholder_replaced(mock_config, conv_engine, faq_store,
 @patch("backend.conversational_engine.config")
 def test_llm_rejected_if_contains_digits(mock_config, conv_engine):
     mock_config.CONVERSATIONAL_MODE_ENABLED = True
-    mock_config.CANARY_PERCENT = 0
+    mock_config.CONVERSATIONAL_CANARY_PERCENT = 0
     # JSON valide mais response_text avec "9h" → validate_conv_result rejette
     conv_engine.llm_client = MockLLMConvClient(fixed_response=json.dumps({
         "response_text": "Nous sommes ouverts à 9h.",
@@ -170,7 +170,7 @@ def test_validate_conv_result_rejects_unknown_placeholder():
 @patch("backend.conversational_engine.config")
 def test_llm_rejected_if_unknown_placeholder(mock_config, conv_engine):
     mock_config.CONVERSATIONAL_MODE_ENABLED = True
-    mock_config.CANARY_PERCENT = 0
+    mock_config.CONVERSATIONAL_CANARY_PERCENT = 0
     conv_engine.llm_client = MockLLMConvClient(fixed_response=json.dumps({
         "response_text": "Voici : {FAQ_PIZZA}.",
         "next_mode": "FSM_FAQ",
@@ -194,7 +194,7 @@ def test_llm_rejected_if_unknown_placeholder(mock_config, conv_engine):
 @patch("backend.conversational_engine.config")
 def test_strong_intent_bypasses_llm(mock_config, conv_engine):
     mock_config.CONVERSATIONAL_MODE_ENABLED = True
-    mock_config.CANARY_PERCENT = 0
+    mock_config.CONVERSATIONAL_CANARY_PERCENT = 0
     mock_llm = MockLLMConvClient()
     conv_engine.llm_client = mock_llm
 
@@ -217,7 +217,7 @@ def test_strong_intent_bypasses_llm(mock_config, conv_engine):
 @patch("backend.conversational_engine.config")
 def test_llm_low_confidence_fallback(mock_config, conv_engine):
     mock_config.CONVERSATIONAL_MODE_ENABLED = True
-    mock_config.CANARY_PERCENT = 0
+    mock_config.CONVERSATIONAL_CANARY_PERCENT = 0
     conv_engine.llm_client = MockLLMConvClient(fixed_response=json.dumps({
         "response_text": "Bonjour ! Souhaitez-vous prendre rendez-vous ?",
         "next_mode": "FSM_BOOKING",
@@ -262,7 +262,42 @@ def test_replace_placeholders(faq_store, cabinet_data):
 
 def test_is_canary():
     with patch("backend.conversational_engine.config") as cfg:
-        cfg.CANARY_PERCENT = 0
+        cfg.CONVERSATIONAL_CANARY_PERCENT = 0
         assert _is_canary("any") is True
-        cfg.CANARY_PERCENT = 100
+        cfg.CONVERSATIONAL_CANARY_PERCENT = 100
         assert _is_canary("any") is True
+
+
+# --- 7) FSM_FALLBACK retourne la réponse LLM (pas delegation FSM) ---
+@patch("backend.conversational_engine.config")
+def test_fsm_fallback_returns_llm_response(mock_config, conv_engine):
+    """
+    Quand le LLM retourne FSM_FALLBACK avec une réponse naturelle,
+    cette réponse doit être retournée au lieu de déléguer à la FSM.
+    Ex: "pizza" → "Désolé, nous sommes un cabinet médical..."
+    """
+    mock_config.CONVERSATIONAL_MODE_ENABLED = True
+    mock_config.CONVERSATIONAL_CANARY_PERCENT = 0
+    natural_response = "Désolé, nous sommes un cabinet médical. Souhaitez-vous prendre rendez-vous ou avoir des informations ?"
+    conv_engine.llm_client = MockLLMConvClient(fixed_response=json.dumps({
+        "response_text": natural_response,
+        "next_mode": "FSM_FALLBACK",
+        "extracted": {},
+        "confidence": 0.9,
+    }, ensure_ascii=False))
+
+    conv_id = "test-fsm-fallback-response"
+    ENGINE.session_store.get_or_create(conv_id)
+    s = ENGINE.session_store.get(conv_id)
+    s.state = "START"
+    ENGINE.session_store.save(s)
+
+    events = conv_engine.handle_message(conv_id, "je veux une pizza")
+
+    # La réponse LLM naturelle doit être retournée
+    assert len(events) >= 1
+    assert "cabinet médical" in events[0].text.lower() or "cabinet" in events[0].text.lower()
+    # État reste START
+    session_after = ENGINE.session_store.get(conv_id)
+    assert session_after is not None
+    assert session_after.state == "START"

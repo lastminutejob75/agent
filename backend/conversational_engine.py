@@ -96,9 +96,15 @@ class ConversationalEngine:
         )
         next_mode = conv_result.next_mode
 
-        # FSM_FALLBACK : ne pas ajouter le message user ici, laisser la FSM le faire
+        # FSM_FALLBACK : répondre la phrase naturelle LLM (safe, déjà validée), rester en START
+        # Le LLM a généré une réponse appropriée (ex: "Désolé, nous sommes un cabinet médical...")
+        # On la retourne au lieu de déléguer à la FSM (qui retournerait une clarification générique)
         if next_mode == "FSM_FALLBACK":
-            return self.fsm_engine.handle_message(conv_id, user_text)
+            session.add_message("user", user_text)
+            session.add_message("agent", response_text)
+            session.last_agent_message = response_text
+            self.fsm_engine._save_session(session)
+            return [Event("final", response_text, conv_state=session.state)]
 
         session.add_message("user", user_text)
         session.add_message("agent", response_text)
