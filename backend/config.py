@@ -24,6 +24,22 @@ CONFIRM_RETRY_MAX = 1  # 1 redemande, puis transfer
 # Performance
 TARGET_FIRST_RESPONSE_MS = 3000  # contrainte PRD (sans imposer SSE)
 
+# ==============================
+# CONVERSATIONAL MODE (P0)
+# ==============================
+
+# Feature flag for conversational LLM mode
+# When enabled, uses natural LLM responses in START state
+# When disabled (default), uses deterministic FSM only
+CONVERSATIONAL_MODE_ENABLED = os.getenv("CONVERSATIONAL_MODE_ENABLED", "false").lower() == "true"
+
+# Canary percentage (0-100) for gradual rollout
+# Only applies if CONVERSATIONAL_MODE_ENABLED is True
+CONVERSATIONAL_CANARY_PERCENT = int(os.getenv("CONVERSATIONAL_CANARY_PERCENT", "0"))
+
+# Minimum confidence threshold for LLM responses
+CONVERSATIONAL_MIN_CONFIDENCE = float(os.getenv("CONVERSATIONAL_MIN_CONFIDENCE", "0.75"))
+
 
 # ==============================
 # GOOGLE CALENDAR CONFIGURATION
