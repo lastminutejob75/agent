@@ -15,7 +15,6 @@ from backend.llm_conversation import (
     ConvResult,
     StubLLMConvClient,
     complete_conversation,
-    CONV_CONFIDENCE_THRESHOLD,
 )
 from backend.conversational_engine import ConversationalEngine, _is_canary
 from backend.tools_faq import default_faq_store, FaqStore
@@ -424,3 +423,75 @@ def test_pizza_returns_llm_fallback_text_no_placeholders(mock_config, conv_engin
     session_after = ENGINE.session_store.get(conv_id)
     assert session_after is not None
     assert session_after.state in ("START", "POST_FAQ") or "TRANSFERRED" != session_after.state
+
+
+# --- Pizza : réponse = texte LLM FSM_FALLBACK, pas clarification FSM ---
+@patch("backend.conversational_engine.config")
+def test_pizza_fsm_fallback_returns_llm_text_not_fsm_clarification(mock_config, conv_engine):
+    """Force FSM_FALLBACK avec phrase 'cabinet médical' → la réponse doit être ce texte, pas une clarification FSM."""
+    mock_config.CONVERSATIONAL_MODE_ENABLED = True
+    mock_config.CONVERSATIONAL_CANARY_PERCENT = 100
+    mock_config.CONVERSATIONAL_MIN_CONFIDENCE = 0.75
+    llm_fallback = "Désolé, je suis l'assistant du Cabinet Dupont. Je peux vous aider pour un rendez-vous ou une question du cabinet. Souhaitez-vous prendre rendez-vous ?"
+    conv_engine.llm_client = MockLLMConvClient(fixed_response=json.dumps({
+        "response_text": llm_fallback,
+        "next_mode": "FSM_FALLBACK",
+        "extracted": {},
+        "confidence": 0.86,
+    }, ensure_ascii=False))
+    conv_id = "test-pizza-llm-not-fsm"
+    ENGINE.session_store.get_or_create(conv_id)
+    s = ENGINE.session_store.get(conv_id)
+    s.state = "START"
+    ENGINE.session_store.save(s)
+    events = conv_engine.handle_message(conv_id, "je veux une pizza")
+    assert len(events) >= 1
+    assert events[0].text == llm_fallback
+    assert "Cabinet Dupont" in events[0].text
+    assert "cabinet" in events[0].text.lower()
+
+
+# --- Pizza + RDV ⇒ FSM_BOOKING (pas fallback) ---
+@patch("backend.conversational_engine.config")
+def test_pizza_and_booking_routes_to_booking_not_fallback(mock_config, conv_engine):
+    """
+    Si la phrase contient du hors-scope + une intention RDV,
+    on DOIT partir en booking (FSM_BOOKING), pas en FSM_FALLBACK.
+    """
+    mock_config.CONVERSATIONAL_MODE_ENABLED = True
+    mock_config.CONVERSATIONAL_CANARY_PERCENT = 100
+    mock_config.CONVERSATIONAL_MIN_CONFIDENCE = 0.75
+
+    # LLM répond naturellement : il refuse la pizza MAIS comprend la demande de RDV
+    conv_engine.llm_client = MockLLMConvClient(
+        fixed_response=json.dumps({
+            "response_text": (
+                "Je ne peux pas vous aider pour une commande. "
+                "En revanche, je peux vous aider à prendre rendez-vous. "
+                "Quel est votre nom, s'il vous plaît ?"
+            ),
+            "next_mode": "FSM_BOOKING",
+            "extracted": {},
+            "confidence": 0.9,
+        }, ensure_ascii=False)
+    )
+
+    conv_id = "test-pizza-and-booking-routes-booking"
+
+    # Forcer session START
+    session = ENGINE.session_store.get_or_create(conv_id)
+    session.state = "START"
+    ENGINE.session_store.save(session)
+
+    events = conv_engine.handle_message(conv_id, "Je veux une pizza et aussi un rendez-vous")
+    assert events and events[0].text
+
+    # On doit bien être en booking
+    session_after = ENGINE.session_store.get(conv_id)
+    assert session_after is not None
+    assert session_after.state == "QUALIF_NAME"
+
+    # Vérifier que c'est bien la réponse LLM (pas une clarification FSM générique)
+    txt = events[0].text.lower()
+    assert "rendez-vous" in txt
+    assert "pizza" not in txt  # optionnel : l'agent n'a pas besoin de répéter "pizza"

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from typing import List
+from typing import List, Optional
 
 from backend import config, prompts
 from backend.cabinet_data import CabinetData
@@ -17,6 +17,12 @@ from backend.llm_conversation import complete_conversation
 from backend.session import Session
 
 logger = logging.getLogger(__name__)
+
+# Raisons pour métriques conv_p0_start (reason)
+REASON_LLM_OK = "LLM_OK"
+REASON_LOW_CONF = "LOW_CONF"
+REASON_STRONG_INTENT = "STRONG_INTENT"
+# INVALID_JSON, VALIDATION_REJECTED, LLM_ERROR viennent de llm_conversation
 
 
 def _stable_bucket(conv_id: str) -> int:
@@ -50,6 +56,32 @@ def _session_history_for_llm(session: Session, max_turns: int = 6) -> List[dict]
     return out
 
 
+def _start_turn(session: Session) -> int:
+    """Numéro du tour utilisateur courant (1-based)."""
+    return 1 + sum(1 for m in session.messages if getattr(m, "role", None) == "user")
+
+
+def _log_conv_p0_start(
+    conv_id: str,
+    session: Session,
+    reason: str,
+    *,
+    next_mode: Optional[str] = None,
+    start_turn: Optional[int] = None,
+    confidence: Optional[float] = None,
+    llm_used: bool = False,
+) -> None:
+    """Un log structuré par décision (ou non-décision) canary en START."""
+    extra = {"conv_id": conv_id, "reason": reason, "start_turn": start_turn if start_turn is not None else _start_turn(session)}
+    if next_mode is not None:
+        extra["next_mode"] = next_mode
+    if confidence is not None:
+        extra["confidence"] = round(confidence, 3)
+    if llm_used:
+        extra["llm_used"] = True
+    logger.info("conv_p0_start", extra=extra)
+
+
 class ConversationalEngine:
     """
     Enveloppe le moteur FSM : en START + flag + canary, tente une réponse LLM naturelle
@@ -81,11 +113,12 @@ class ConversationalEngine:
         # Strong intent → FSM direct (pas d'appel LLM)
         strong = detect_strong_intent(user_text or "")
         if strong in ("CANCEL", "MODIFY", "TRANSFER", "ABANDON", "ORDONNANCE"):
+            _log_conv_p0_start(conv_id, session, reason=REASON_STRONG_INTENT)
             logger.info("[CONV] strong_intent=%s → FSM", strong)
             return self.fsm_engine.handle_message(conv_id, user_text)
 
         history = _session_history_for_llm(session)
-        conv_result = complete_conversation(
+        conv_result, fail_reason = complete_conversation(
             self.cabinet_data,
             session.state,
             user_text or "",
@@ -93,12 +126,39 @@ class ConversationalEngine:
             self.llm_client,
         )
         min_conf = float(getattr(config, "CONVERSATIONAL_MIN_CONFIDENCE", 0.75) or 0.75)
-        if conv_result is None or conv_result.confidence < min_conf:
+        start_turn = 1 + sum(1 for m in session.messages if getattr(m, "role", None) == "user")
+
+        if conv_result is None:
+            _log_conv_p0_start(
+                conv_id,
+                session,
+                reason=fail_reason or "LLM_ERROR",
+                start_turn=start_turn,
+            )
+            logger.info("[CONV] no result or low confidence → FSM")
+            return self.fsm_engine.handle_message(conv_id, user_text)
+        if conv_result.confidence < min_conf:
+            _log_conv_p0_start(
+                conv_id,
+                session,
+                reason=REASON_LOW_CONF,
+                start_turn=start_turn,
+                confidence=conv_result.confidence,
+            )
             logger.info("[CONV] no result or low confidence → FSM")
             return self.fsm_engine.handle_message(conv_id, user_text)
 
         response_text = conv_result.response_text
         next_mode = conv_result.next_mode
+        _log_conv_p0_start(
+            conv_id,
+            session,
+            reason=REASON_LLM_OK,
+            next_mode=next_mode,
+            start_turn=start_turn,
+            confidence=conv_result.confidence,
+            llm_used=True,
+        )
 
         if next_mode == "FSM_FAQ":
             response_text = replace_placeholders(

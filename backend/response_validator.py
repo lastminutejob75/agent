@@ -30,8 +30,8 @@ VALID_NEXT_MODES = frozenset({
 # Maximum response length (vocal constraint)
 MAX_RESPONSE_LENGTH = 280
 
-# Minimum confidence threshold
-MIN_CONFIDENCE = 0.75
+# NOTE: confidence threshold is enforced by caller (conversational_engine / llm_conversation),
+# not here. This validator only checks shape/safety.
 
 # Forbidden words that indicate factual claims
 FORBIDDEN_WORDS = frozenset([
@@ -73,27 +73,28 @@ def validate_llm_json(raw_text: str) -> Optional[Dict[str, Any]]:
     """
     Parse and validate raw LLM output as strict JSON.
     Returns parsed dict if valid JSON, None otherwise.
+    STRICT: single-line JSON only, no markdown, no pretty-print.
     """
     if not raw_text:
         return None
 
-    text = raw_text.strip()
-
-    # Reject markdown code blocks
-    if text.startswith("```"):
+    # STRICT: reject any multiline / pretty-printed / markdown / tabbed output.
+    if ("\n" in raw_text) or ("\r" in raw_text) or ("\t" in raw_text):
+        return None
+    if "```" in raw_text:
         return None
 
-    # Must start with { and end with }
+    text = raw_text.strip()
     if not text.startswith("{") or not text.endswith("}"):
         return None
 
     try:
         data = json.loads(text)
-        if not isinstance(data, dict):
-            return None
-        return data
     except json.JSONDecodeError:
         return None
+    if not isinstance(data, dict):
+        return None
+    return data
 
 
 def validate_conv_result(data: Dict[str, Any]) -> bool:
@@ -131,6 +132,10 @@ def validate_conv_result(data: Dict[str, Any]) -> bool:
 
     # Validate response length
     if len(response_text) > MAX_RESPONSE_LENGTH:
+        return False
+
+    # Anti double-braces: LLM must output {FAQ_XXX} not {{FAQ_XXX}} (replace would leave orphan braces)
+    if "{{" in response_text or "}}" in response_text:
         return False
 
     # Check for digits (STRICT - no times, prices, numbers)

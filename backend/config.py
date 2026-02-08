@@ -45,7 +45,12 @@ CONVERSATIONAL_MODE_ENABLED = os.getenv("CONVERSATIONAL_MODE_ENABLED", "false").
 
 # Canary percentage: 0 = disabled (0%), 1-99 = % of conv_id (hash), 100 = full rollout
 # Convention explicite pour éviter en prod : 0 = désactivé (personne n'est éligible)
-CONVERSATIONAL_CANARY_PERCENT = int(os.getenv("CONVERSATIONAL_CANARY_PERCENT", "0"))
+_raw_canary = int(os.getenv("CONVERSATIONAL_CANARY_PERCENT", "0"))
+if _raw_canary < 0:
+    _raw_canary = 0
+if _raw_canary > 100:
+    _raw_canary = 100
+CONVERSATIONAL_CANARY_PERCENT = _raw_canary
 
 # Alias pour compatibilité
 CANARY_PERCENT = CONVERSATIONAL_CANARY_PERCENT
