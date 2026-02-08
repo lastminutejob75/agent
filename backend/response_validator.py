@@ -124,8 +124,14 @@ def validate_conv_result(data: Dict[str, Any]) -> bool:
     if CURRENCY_PATTERN.search(response_text):
         return False
 
-    # Validate placeholders - only allowed ones (check first, before stripping)
+    # Placeholder policy P0: lier placeholder ↔ intention (évite "pizza" → réponse annulation)
     found_placeholders = find_placeholders(response_text)
+    if next_mode == "FSM_FALLBACK" and found_placeholders:
+        return False  # FSM_FALLBACK = excuse + redirection, pas de faits
+    if next_mode != "FSM_FAQ" and found_placeholders:
+        return False  # Placeholders FAQ autorisés uniquement en FSM_FAQ
+    if next_mode == "FSM_FAQ" and len(found_placeholders) > 1:
+        return False  # P0 vocal: max 1 placeholder par réponse
     for placeholder in found_placeholders:
         if placeholder not in ALLOWED_PLACEHOLDERS:
             return False
