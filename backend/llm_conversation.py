@@ -22,6 +22,7 @@ CONV_RESPONSE_MAX_LEN = 280
 
 @dataclass
 class ConvResult:
+    """Result from conversational LLM."""
     response_text: str
     next_mode: str  # "FSM_BOOKING" | "FSM_FAQ" | "FSM_TRANSFER" | "FSM_FALLBACK"
     extracted: Dict[str, Any]  # {name?, pref?, contact?} optionnel

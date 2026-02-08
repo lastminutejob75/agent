@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 def _is_canary(conv_id: str) -> bool:
     """Canary : pour l'instant tout conv_id est éligible si flag activé (CANARY_PERCENT=0 = 100%)."""
-    percent = getattr(config, "CANARY_PERCENT", 0)
+    percent = getattr(config, "CONVERSATIONAL_CANARY_PERCENT", 0)
     if percent <= 0:
         return True
     if percent >= 100:
