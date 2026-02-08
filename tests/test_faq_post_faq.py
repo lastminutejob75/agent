@@ -110,3 +110,31 @@ def test_post_faq_choice_question_routes_to_faq():
     text = events[0].text or ""
     assert len(text) > 0
     assert "Source :" in text or "question" in text.lower() or "reformul" in text.lower() or "adresse" in text.lower() or "souhaitez" in text.lower()
+
+
+def test_post_faq_ca_sera_tout_merci_goodbye_state_confirmed():
+    """FAQ → 'ça sera tout merci' → réponse au revoir + state CONFIRMED (pas de relance rdv/horaires/adresse)."""
+    engine = create_engine()
+    conv = f"conv_post_faq_goodbye_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je voudrais l'adresse")
+    session = engine.session_store.get(conv)
+    assert session is not None
+    assert session.state == "POST_FAQ"
+    events = engine.handle_message(conv, "ça sera tout merci")
+    assert len(events) == 1
+    reply = (events[0].text or "").strip()
+    assert "au revoir" in reply.lower() or "bonne journée" in reply.lower()
+    assert reply.lower() != "ça sera tout merci"
+    session2 = engine.session_store.get(conv)
+    assert session2 is not None
+    assert session2.state == "CONFIRMED"
+
+
+def test_post_faq_abandon_lexicon_matches():
+    """'ça sera tout merci' (normalisé) est détecté comme ABANDON."""
+    from backend.intent_parser import detect_strong_intent, normalize_stt_text
+    t = normalize_stt_text("ça sera tout merci")
+    assert "ca" in t or "sera" in t
+    strong = detect_strong_intent("ça sera tout merci")
+    assert strong is not None
+    assert strong.value == "ABANDON"

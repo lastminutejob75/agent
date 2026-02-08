@@ -730,6 +730,8 @@ class Engine:
                             last_msg = agent_texts[-1]
                     if not last_msg:
                         last_msg = getattr(session, "last_agent_message", None) or getattr(session, "last_question_asked", None)
+                    if last_msg and (user_text or "").strip() and (last_msg.strip() or "").lower() == (user_text or "").strip().lower():
+                        last_msg = None  # anti-echo : ne jamais relire le message user
                     if last_msg:
                         session.add_message("agent", last_msg)
                         _log_turn_debug(session)
@@ -906,6 +908,9 @@ class Engine:
                 except Exception:
                     pass
             last_msg = getattr(session, "last_agent_message", None) or getattr(session, "last_question_asked", None)
+            # Anti-echo : ne jamais relire le message user (évite "ça sera tout merci" répété)
+            if last_msg and (user_text or "").strip() and (last_msg.strip() or "").lower() == (user_text or "").strip().lower():
+                last_msg = None
             if last_msg:
                 session.add_message("agent", last_msg)
                 return safe_reply([Event("final", last_msg, conv_state=session.state)], session)
@@ -1192,6 +1197,14 @@ class Engine:
 
         # POST_FAQ : après réponse FAQ + relance "Puis-je vous aider pour autre chose ?"
         if session.state == "POST_FAQ":
+            # 0) Priorité : fin d'appel (ABANDON) via strong intent pour éviter relance en boucle
+            strong_abandon = detect_strong_intent(user_text or "")
+            if strong_abandon == "ABANDON":
+                session.state = "CONFIRMED"
+                msg = prompts.VOCAL_FAQ_GOODBYE if channel == "vocal" else prompts.MSG_FAQ_GOODBYE_WEB
+                session.add_message("agent", msg)
+                self._save_session(session)
+                return safe_reply([Event("final", msg, conv_state=session.state)], session)
             # 1) Non merci / c'est tout → Au revoir
             if intent == "NO" or intent == "ABANDON":
                 session.state = "CONFIRMED"

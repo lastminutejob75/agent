@@ -69,8 +69,10 @@ _MODIFY_LEXICON = [
     "changer mon rendez vous", "deplacer mon rdv", "reporter mon rdv", "modifier mon rdv",
 ]
 _ABANDON_LEXICON = [
-    "au revoir", "bye", "merci au revoir", "c est tout",
-    "laisse tomber", "laissez tomber", "tant pis", "stop",
+    "au revoir", "bye", "merci au revoir", "c est tout", "c est tout merci",
+    "ca sera tout", "ca sera tout merci", "ce sera tout", "ce sera tout merci",
+    "non merci au revoir", "bonne journee", "stop",
+    "laisse tomber", "laissez tomber", "tant pis",
     "annule tout", "j abandonne", "oubliez", "je rappelle", "je vais rappeler", "plus tard",
 ]
 _ORDONNANCE_LEXICON = [

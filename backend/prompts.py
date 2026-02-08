@@ -228,7 +228,7 @@ VOCAL_FAQ_FOLLOWUP = (
     "Souhaitez-vous autre chose ?"
 )
 
-VOCAL_FAQ_GOODBYE = "Merci de votre appel. Bonne journée."
+VOCAL_FAQ_GOODBYE = "Très bien. Bonne journée, au revoir."
 
 VOCAL_FAQ_TO_BOOKING = "Très bien. Pour le rendez-vous, à quel nom, s'il vous plaît ?"
 

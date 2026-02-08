@@ -122,10 +122,14 @@ def default_faq_store() -> FaqStore:
         FaqItem(faq_id="FAQ_TARIFS", question="prix de la consultation", answer=REPONSE_TARIFS),
         FaqItem(faq_id="FAQ_TARIFS", question="le prix", answer=REPONSE_TARIFS),
         
-        # ADRESSE - plusieurs variations (dont réponses courtes après "rdv ou question ?")
+        # ADRESSE - nombreuses variations (START + CLARIFY ; STT peut donner "l adresse" sans apostrophe)
+        FaqItem(faq_id="FAQ_ADRESSE", question="adresse", answer=REPONSE_ADRESSE),
+        FaqItem(faq_id="FAQ_ADRESSE", question="l adresse", answer=REPONSE_ADRESSE),
         FaqItem(faq_id="FAQ_ADRESSE", question="quelle est votre adresse", answer=REPONSE_ADRESSE),
         FaqItem(faq_id="FAQ_ADRESSE", question="je voudrais l'adresse", answer=REPONSE_ADRESSE),
+        FaqItem(faq_id="FAQ_ADRESSE", question="je veux l'adresse", answer=REPONSE_ADRESSE),
         FaqItem(faq_id="FAQ_ADRESSE", question="l'adresse", answer=REPONSE_ADRESSE),
+        FaqItem(faq_id="FAQ_ADRESSE", question="où est le cabinet", answer=REPONSE_ADRESSE),
         FaqItem(faq_id="FAQ_ADRESSE", question="où êtes-vous situé", answer=REPONSE_ADRESSE),
         FaqItem(faq_id="FAQ_ADRESSE", question="c'est où", answer=REPONSE_ADRESSE),
         FaqItem(faq_id="FAQ_ADRESSE", question="c est où", answer=REPONSE_ADRESSE),

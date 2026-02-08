@@ -218,8 +218,27 @@ class ConversationalEngine:
                 self.cabinet_data,
             )
 
-        # FSM_FALLBACK (hors-sujet) : message + passage en CLARIFY pour que le prochain tour soit routé par la FSM (rdv/horaires/question).
+        # FSM_FALLBACK : si le message matche en fait une FAQ (ex. "adresse" en START), répondre par la FAQ au lieu du cadrage.
         if next_mode == "FSM_FALLBACK":
+            try:
+                strong = float(getattr(config, "FAQ_STRONG_MATCH_THRESHOLD", 0.90) or 0.90)
+            except (TypeError, ValueError):
+                strong = 0.90
+            faq_result = self.faq_store.search(user_text or "", include_low=False)
+            score_val = getattr(faq_result, "score", 0) if getattr(faq_result, "match", False) else 0
+            if isinstance(score_val, (int, float)) and faq_result.match and score_val >= strong:
+                channel = getattr(session, "channel", "web")
+                response = prompts.format_faq_response(faq_result.answer, faq_result.faq_id, channel=channel)
+                if channel == "vocal":
+                    response = response + " " + getattr(prompts, "VOCAL_FAQ_FOLLOWUP", "Souhaitez-vous autre chose ?")
+                else:
+                    response = response + "\n\n" + getattr(prompts, "MSG_FAQ_FOLLOWUP_WEB", "Souhaitez-vous autre chose ?")
+                session.add_message("user", user_text)
+                session.add_message("agent", response)
+                session.last_agent_message = response
+                session.state = "POST_FAQ"
+                self.fsm_engine._save_session(session)
+                return [Event("final", response, conv_state=session.state)]
             session.add_message("user", user_text)
             session.add_message("agent", response_text)
             session.last_agent_message = response_text
