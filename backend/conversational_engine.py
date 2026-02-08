@@ -119,6 +119,13 @@ class ConversationalEngine:
             return [Event("final", response_text, conv_state=session.state)]
 
         if next_mode == "FSM_FAQ":
+            # SÉCURITÉ: Vérifier que la question utilisateur matche réellement une FAQ
+            # Évite que le LLM route "pizza" vers FAQ_PAIEMENT
+            faq_result = self.faq_store.search(user_text or "", include_low=False)
+            if not faq_result.match:
+                # Pas de match FAQ réel → fallback FSM (clarification)
+                logger.warning("[CONV] FSM_FAQ rejected: no real FAQ match for '%s'", user_text[:50])
+                return self.fsm_engine.handle_message(conv_id, user_text)
             session.state = "POST_FAQ"
             self.fsm_engine._save_session(session)
             return [Event("final", response_text, conv_state=session.state)]
