@@ -1008,6 +1008,16 @@ MSG_START_CLARIFY_1_WEB = (
     "Je peux vous aider pour un rendez-vous, ou pour une question. Qu'est-ce que je peux faire pour vous ?"
 )
 
+# OUT_OF_SCOPE (hors-sujet : pizza, voiture, etc.) — réponse naturelle cabinet médical
+VOCAL_OUT_OF_SCOPE = (
+    "Désolé, nous sommes un cabinet médical. Je peux vous aider pour un rendez-vous, "
+    "ou répondre à une question comme nos horaires ou notre adresse. Que souhaitez-vous ?"
+)
+MSG_OUT_OF_SCOPE_WEB = (
+    "Désolé, nous sommes un cabinet médical. Je peux vous aider pour un rendez-vous, "
+    "ou pour une question (horaires, adresse). Que souhaitez-vous ?"
+)
+
 # 2e incompréhension : guidage clair (exemples concrets)
 VOCAL_START_GUIDANCE = (
     "Je peux vous aider à prendre rendez-vous, "
@@ -1117,6 +1127,7 @@ def get_message(msg_key: str, channel: str = "web", **kwargs) -> str:
         "booking_confirmed": VOCAL_BOOKING_CONFIRMED,
         "salutation": VOCAL_SALUTATION,
         "start_clarify_1": VOCAL_START_CLARIFY_1,
+        "out_of_scope": VOCAL_OUT_OF_SCOPE,
         "slot_one_propose": VOCAL_SLOT_ONE_PROPOSE,
     }
     
@@ -1136,6 +1147,7 @@ def get_message(msg_key: str, channel: str = "web", **kwargs) -> str:
         "booking_confirmed": "Votre rendez-vous est confirmé pour {slot_label}.",
         "salutation": "Bonjour ! Comment puis-je vous aider ?",
         "start_clarify_1": MSG_START_CLARIFY_1_WEB,
+        "out_of_scope": MSG_OUT_OF_SCOPE_WEB,
         "slot_one_propose": "Le prochain créneau est {label}. Ça vous convient ?",
     }
     

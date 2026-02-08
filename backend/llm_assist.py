@@ -2,7 +2,7 @@
 """
 LLM Assist classification (Option A minimale).
 Zone grise START uniquement. JSON strict, FSM garde la main.
-Aucune string user-facing générée par le LLM.
+Une seule exception user-facing : out_of_scope_response (OUT_OF_SCOPE), validée stricte (pas factuel).
 """
 from __future__ import annotations
 
@@ -18,19 +18,27 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class AssistResult:
     """Résultat classification LLM strict."""
-    intent: str  # BOOKING|FAQ|CANCEL|MODIFY|TRANSFER|ABANDON|UNCLEAR
+    intent: str  # BOOKING|FAQ|CANCEL|MODIFY|TRANSFER|ABANDON|UNCLEAR|OUT_OF_SCOPE
     confidence: float  # 0.0-1.0
     faq_bucket: Optional[str]  # HORAIRES|ADRESSE|TARIFS|ACCES|CONTACT|AUTRE|None
     should_clarify: bool
-    rationale: str  # Debug only, max 80 chars
+    rationale: str  # Debug only, max 80 chars (never logged)
+    out_of_scope_response: Optional[str] = None  # Uniquement si intent=OUT_OF_SCOPE, validé (pas factuel)
 
 
 ALLOWED_INTENTS = frozenset({
-    "BOOKING", "FAQ", "CANCEL", "MODIFY", "TRANSFER", "ABANDON", "UNCLEAR",
+    "BOOKING", "FAQ", "CANCEL", "MODIFY", "TRANSFER", "ABANDON", "UNCLEAR", "OUT_OF_SCOPE",
 })
 ALLOWED_FAQ_BUCKETS = frozenset({
     "HORAIRES", "ADRESSE", "TARIFS", "ACCES", "CONTACT", "AUTRE",
 })
+
+# OUT_OF_SCOPE : mots/chiffres interdits dans la réponse générée (0 risque factuel)
+OUT_OF_SCOPE_SENSITIVE_SUBSTRINGS = (
+    "ouvert", "fermé", "heure", "heures", "h", "€", "tarif", "prix", "rembourse",
+    "adresse", "rue", "avenue",
+)
+OUT_OF_SCOPE_MAX_LEN = 180
 
 # Config (default OFF)
 LLM_ASSIST_ENABLED = os.getenv("LLM_ASSIST_ENABLED", "false").lower() == "true"
@@ -64,18 +72,29 @@ Rules:
   * AUTRE: autres questions factuelles
 - If user wants appointment (even implicit) => BOOKING
 - If user is unclear, hesitant, or too vague => UNCLEAR and should_clarify=true
-- If user's request is off-topic (nothing to do with appointments, contact, or this business; e.g. buying a car, ordering food) => UNCLEAR and should_clarify=true. Do NOT use FAQ or CANCEL for off-topic.
+- If the request is unrelated to the business services (pizza, car, shopping, jokes, random), return intent=OUT_OF_SCOPE, should_clarify=true, and provide out_of_scope_response (see below). OUT_OF_SCOPE never uses faq_bucket (must be null).
+- If user is unclear, hesitant, or too vague (but not off-topic) => UNCLEAR and should_clarify=true.
+
+OUT_OF_SCOPE response (when intent=OUT_OF_SCOPE only):
+- out_of_scope_response: 1 phrase max, ton poli, mentionne "cabinet médical", redirige vers rendez-vous / horaires / adresse / parler à quelqu'un.
+- NE DONNE AUCUNE info factuelle: pas de chiffres, pas d'horaires précis, pas de prix, pas d'adresse. Max 180 caractères.
+- If intent is not OUT_OF_SCOPE, out_of_scope_response MUST be null.
 
 IMPORTANT:
 - If intent is FAQ, faq_bucket MUST be one of HORAIRES|ADRESSE|TARIFS|ACCES|CONTACT|AUTRE and MUST NOT be null.
-- If intent is not FAQ, faq_bucket MUST be null.
+- If intent is not FAQ (including OUT_OF_SCOPE), faq_bucket MUST be null.
 
-Output JSON schema (fields required):
+Output JSON schema:
+- Required: intent, confidence, faq_bucket, should_clarify, rationale
+- If intent=OUT_OF_SCOPE: out_of_scope_response required (string, max 180 chars, no factual info)
+- If intent!=OUT_OF_SCOPE: out_of_scope_response must be null or absent
+
 {{
-  "intent": "BOOKING|FAQ|CANCEL|MODIFY|TRANSFER|ABANDON|UNCLEAR",
+  "intent": "BOOKING|FAQ|CANCEL|MODIFY|TRANSFER|ABANDON|UNCLEAR|OUT_OF_SCOPE",
   "confidence": 0.0-1.0,
   "faq_bucket": "HORAIRES|ADRESSE|TARIFS|ACCES|CONTACT|AUTRE|null",
   "should_clarify": true/false,
+  "out_of_scope_response": "string only when intent=OUT_OF_SCOPE, else null",
   "rationale": "max 12 words explanation"
 }}
 
@@ -158,8 +177,26 @@ def _looks_like_pure_json(text: str) -> bool:
     return True
 
 
+def _validate_out_of_scope_response(value: str) -> bool:
+    """Valide out_of_scope_response : non vide, <= 180 chars, pas de chiffres ni mots factuels."""
+    if not value or not isinstance(value, str):
+        return False
+    s = value.strip()
+    if len(s) > OUT_OF_SCOPE_MAX_LEN:
+        return False
+    if any(c.isdigit() for c in s):
+        return False
+    if "€" in s:
+        return False
+    lower = s.lower()
+    for sub in OUT_OF_SCOPE_SENSITIVE_SUBSTRINGS:
+        if sub and sub in lower:
+            return False
+    return True
+
+
 def _validate_assist_result(data: dict) -> bool:
-    """Validation stricte : intent, confidence, faq_bucket si FAQ, should_clarify."""
+    """Validation stricte : intent, confidence, faq_bucket, should_clarify, rationale ; out_of_scope_response si OUT_OF_SCOPE."""
     try:
         required = {"intent", "confidence", "faq_bucket", "should_clarify", "rationale"}
         if not required.issubset(data.keys()):
@@ -185,6 +222,15 @@ def _validate_assist_result(data: dict) -> bool:
 
         if not isinstance(data["should_clarify"], bool):
             return False
+
+        # out_of_scope_response : si OUT_OF_SCOPE doit être présent (string non vide) ; si autre intent doit être null/absent
+        oos_resp = data.get("out_of_scope_response")
+        if intent == "OUT_OF_SCOPE":
+            if oos_resp is None or not isinstance(oos_resp, str) or not oos_resp.strip():
+                return False
+        else:
+            if oos_resp is not None and (not isinstance(oos_resp, str) or oos_resp.strip().lower() not in ("", "null")):
+                return False
 
         return True
     except Exception:
@@ -229,12 +275,19 @@ def llm_assist_classify(
         bucket = data["faq_bucket"]
         if bucket in (None, "null") or (isinstance(bucket, str) and bucket.lower() == "null"):
             bucket = None
+        oos_resp = data.get("out_of_scope_response")
+        if data["intent"] == "OUT_OF_SCOPE" and isinstance(oos_resp, str) and oos_resp.strip():
+            raw = oos_resp.strip()[:OUT_OF_SCOPE_MAX_LEN]
+            oos_final = raw if _validate_out_of_scope_response(raw) else None
+        else:
+            oos_final = None
         return AssistResult(
             intent=data["intent"],
             confidence=float(data["confidence"]),
             faq_bucket=bucket,
             should_clarify=bool(data["should_clarify"]),
             rationale=str(data.get("rationale", ""))[:80],
+            out_of_scope_response=oos_final,
         )
     except TimeoutError:
         logger.warning("llm_assist_timeout")

@@ -1131,12 +1131,27 @@ class Engine:
                         "llm_bucket": assist.faq_bucket,
                     }
                     session._turn_llm_meta = llm_meta
-                    session.start_unclear_count = 0
+                    # Reset start_unclear_count seulement quand on route (BOOKING/FAQ/CANCEL/…), pas pour UNCLEAR (progression 1→2→3)
+                    if assist.intent not in ("UNCLEAR",):
+                        session.start_unclear_count = 0
                     if assist.intent in ("CANCEL", "MODIFY", "TRANSFER", "ABANDON"):
                         return safe_reply(
                             self._route_strong_intent_from_start(session, assist.intent, user_text),
                             session,
                         )
+                    if assist.intent == "OUT_OF_SCOPE":
+                        session.start_unclear_count = 0
+                        msg = getattr(assist, "out_of_scope_response", None) if assist else None
+                        if msg:
+                            session.add_message("agent", msg)
+                            session.last_say_key, session.last_say_kwargs = "out_of_scope_llm", {}
+                        else:
+                            msg = self._say(session, "out_of_scope")
+                            if not msg:
+                                msg = prompts.get_message("out_of_scope", channel=getattr(session, "channel", "web"))
+                                session.add_message("agent", msg)
+                        self._save_session(session)
+                        return safe_reply([Event("final", msg, conv_state=session.state)], session)
                     if assist.intent == "BOOKING":
                         return safe_reply(self._start_booking_with_extraction(session, user_text), session)
                     if assist.intent == "FAQ" and assist.faq_bucket:
@@ -1310,7 +1325,8 @@ class Engine:
         return [Event("final", response, conv_state=session.state)]
     
     def _handle_start_unclear_no_faq(self, session: Session, user_text: str) -> List[Event]:
-        """Progression clarification START sans recherche FAQ (quand LLM a retourné UNCLEAR, ex. hors-sujet)."""
+        """Progression clarification START sans recherche FAQ (quand LLM a retourné UNCLEAR, ex. hors-sujet).
+        N'incrémente pas no_match_turns ni faq_fails : on utilise uniquement start_unclear_count (flux START)."""
         channel = getattr(session, "channel", "web")
         session.start_unclear_count = getattr(session, "start_unclear_count", 0) + 1
         if session.start_unclear_count == 1:
