@@ -104,6 +104,7 @@ def test_llm_start_faq_placeholder_replaced(mock_config, conv_engine, faq_store,
     mock_config.CONVERSATIONAL_MODE_ENABLED = True
     mock_config.CONVERSATIONAL_CANARY_PERCENT = 100
     mock_config.CONVERSATIONAL_MIN_CONFIDENCE = 0.75
+    mock_config.FAQ_STRONG_MATCH_THRESHOLD = 0.90
     # Réponse officielle horaires dans default_faq_store
     horaires_text = "Nous sommes ouverts du lundi au vendredi, de 9 heures à 18 heures."
     conv_engine.llm_client = MockLLMConvClient(fixed_response=json.dumps({
@@ -423,7 +424,7 @@ def test_pizza_returns_llm_fallback_text_no_placeholders(mock_config, conv_engin
     assert "pizza" not in events[0].text.lower()  # pas de répétition du hors-sujet
     session_after = ENGINE.session_store.get(conv_id)
     assert session_after is not None
-    assert session_after.state in ("START", "POST_FAQ") or "TRANSFERRED" != session_after.state
+    assert session_after.state == "CLARIFY"  # hors-sujet → CLARIFY pour que le prochain tour soit routé (rdv/horaires)
 
 
 # --- Pizza : réponse = texte LLM FSM_FALLBACK, pas clarification FSM ---
@@ -468,6 +469,65 @@ def test_pizza_llm_invalid_json_returns_conv_fallback_not_fsm(mock_config, conv_
     assert events and events[0].text
     assert "cabinet" in events[0].text.lower()
     assert "annul" not in events[0].text.lower()
+    s_after = ENGINE.session_store.get(conv_id)
+    assert s_after is not None and s_after.state == "CLARIFY"
+
+
+# --- Pizza puis "rdv" : pas de boucle, passage en booking (FALLBACK → CLARIFY) ---
+@patch("backend.conversational_engine.config")
+def test_pizza_then_rdv_goes_to_qualif_not_fallback_loop(mock_config, conv_engine):
+    """Tour 1: pizza → cabinet + state CLARIFY. Tour 2: rdv → QUALIF_NAME, plus le message cabinet."""
+    mock_config.CONVERSATIONAL_MODE_ENABLED = True
+    mock_config.CONVERSATIONAL_CANARY_PERCENT = 100
+    mock_config.CONVERSATIONAL_MIN_CONFIDENCE = 0.75
+    conv_engine.llm_client = MockLLMConvClient(fixed_response="not json at all")
+    conv_id = "test-pizza-then-rdv"
+    s = ENGINE.session_store.get_or_create(conv_id)
+    s.state = "START"
+    ENGINE.session_store.save(s)
+    events1 = conv_engine.handle_message(conv_id, "je veux une pizza")
+    assert events1 and "cabinet" in events1[0].text.lower()
+    s_mid = ENGINE.session_store.get(conv_id)
+    assert s_mid is not None and s_mid.state == "CLARIFY"
+    events2 = conv_engine.handle_message(conv_id, "rdv")
+    assert events2 and events2[0].text
+    assert "cabinet" not in events2[0].text.lower()
+    s_final = ENGINE.session_store.get(conv_id)
+    assert s_final is not None and s_final.state == "QUALIF_NAME"
+
+
+# --- Anti-boucle : pizza → MSG_CONV_FALLBACK + CLARIFY ; puis "adresse" → FAQ + POST_FAQ ---
+@patch("backend.conversational_engine.config")
+def test_pizza_then_adresse_returns_faq_adresse_and_post_faq(mock_config, conv_engine):
+    """
+    Test ultra simple anti-boucle :
+    Turn 1: user = "pizza" → agent renvoie MSG_CONV_FALLBACK et state = CLARIFY.
+    Turn 2: user = "je voudrais l'adresse" → agent renvoie FAQ_ADRESSE + follow-up et state = POST_FAQ.
+    Si ce test passe, la boucle "cabinet médical" est cassée pour de bon.
+    """
+    mock_config.CONVERSATIONAL_MODE_ENABLED = True
+    mock_config.CONVERSATIONAL_CANARY_PERCENT = 100
+    mock_config.CONVERSATIONAL_MIN_CONFIDENCE = 0.75
+    conv_engine.llm_client = MockLLMConvClient(fixed_response="not json at all")
+    conv_id = "test-pizza-then-adresse"
+    s = ENGINE.session_store.get_or_create(conv_id)
+    s.state = "START"
+    ENGINE.session_store.save(s)
+    # Turn 1: pizza → MSG_CONV_FALLBACK + state CLARIFY (et sauvegarde)
+    events1 = conv_engine.handle_message(conv_id, "je veux une pizza")
+    assert events1 and events1[0].text
+    assert "cabinet" in events1[0].text.lower() and ("rendez-vous" in events1[0].text.lower() or "question" in events1[0].text.lower())
+    s_mid = ENGINE.session_store.get(conv_id)
+    assert s_mid is not None and s_mid.state == "CLARIFY"
+    # Turn 2: adresse → FAQ + follow-up + POST_FAQ (pas de reprise "cabinet médical")
+    events2 = conv_engine.handle_message(conv_id, "je voudrais l'adresse")
+    assert events2 and events2[0].text
+    text = events2[0].text
+    assert "Rue de la Santé" in text or "10 " in text
+    assert "Souhaitez-vous autre chose" in text
+    assert "cabinet" not in text.lower()
+    s_final = ENGINE.session_store.get(conv_id)
+    assert s_final is not None and s_final.state == "POST_FAQ"
 
 
 # --- Pizza + confidence faible → fallback conv, PAS FSM ---

@@ -132,7 +132,29 @@ class ConversationalEngine:
         min_conf = float(getattr(config, "CONVERSATIONAL_MIN_CONFIDENCE", 0.75) or 0.75)
         start_turn = 1 + sum(1 for m in session.messages if getattr(m, "role", None) == "user")
 
-        # 1) LLM failed (invalid json / rejected / error) => DO NOT fallback to FSM in START
+        strong_threshold = float(getattr(config, "FAQ_STRONG_MATCH_THRESHOLD", 0.90) or 0.90)
+
+        def _fallback_or_fsm() -> List:
+            """Si le message matche fortement une FAQ ou une demande de RDV, déléguer à la FSM ; sinon fallback conv + CLARIFY."""
+            txt = (user_text or "").strip().lower()
+            faq_result = self.faq_store.search(txt, include_low=False)
+            if faq_result.match and faq_result.score >= strong_threshold:
+                logger.info("[CONV] LLM failed/low_conf but strong FAQ match (%.2f) → FSM", faq_result.score)
+                return self.fsm_engine.handle_message(conv_id, user_text)
+            # Réponse courte type "un rdv" / "rendez-vous" après la proposition → la FSM gère le booking
+            if any(m in txt for m in ("rdv", "rendez-vous", "réserver", "prendre rendez-vous")):
+                logger.info("[CONV] LLM failed/low_conf but booking cue → FSM")
+                return self.fsm_engine.handle_message(conv_id, user_text)
+            msg = prompts.MSG_CONV_FALLBACK
+            session.add_message("user", user_text)
+            session.add_message("agent", msg)
+            session.last_agent_message = msg
+            session.state = "CLARIFY"
+            session.confirm_retry_count = 0
+            self.fsm_engine._save_session(session)
+            return [Event("final", msg, conv_state=session.state)]
+
+        # 1) LLM failed (invalid json / rejected / error)
         if conv_result is None:
             _log_conv_p0_start(
                 conv_id,
@@ -143,15 +165,10 @@ class ConversationalEngine:
                 confidence=None,
                 next_mode=None,
             )
-            logger.info("[CONV] no result in START → safe fallback (no FSM)")
-            msg = prompts.MSG_CONV_FALLBACK
-            session.add_message("user", user_text)
-            session.add_message("agent", msg)
-            session.last_agent_message = msg
-            self.fsm_engine._save_session(session)
-            return [Event("final", msg, conv_state=session.state)]
+            logger.info("[CONV] no result in START → fallback or FSM (si forte FAQ)")
+            return _fallback_or_fsm()
 
-        # 2) LLM low confidence => same: do not fallback to FSM in START
+        # 2) LLM low confidence
         if float(conv_result.confidence) < float(min_conf):
             _log_conv_p0_start(
                 conv_id,
@@ -162,13 +179,8 @@ class ConversationalEngine:
                 next_mode=None,
                 llm_used=True,
             )
-            logger.info("[CONV] low confidence in START → safe fallback (no FSM)")
-            msg = prompts.MSG_CONV_FALLBACK
-            session.add_message("user", user_text)
-            session.add_message("agent", msg)
-            session.last_agent_message = msg
-            self.fsm_engine._save_session(session)
-            return [Event("final", msg, conv_state=session.state)]
+            logger.info("[CONV] low confidence in START → fallback or FSM (si forte FAQ)")
+            return _fallback_or_fsm()
 
         response_text = conv_result.response_text
         next_mode = conv_result.next_mode
@@ -177,11 +189,17 @@ class ConversationalEngine:
         # Évite faux positifs type "pizza" → paiement sans liste de mots en dur.
         if next_mode == "FSM_FAQ":
             faq_result = self.faq_store.search(user_text or "", include_low=False)
-            strong = getattr(config, "FAQ_STRONG_MATCH_THRESHOLD", 0.90) or 0.90
-            if not faq_result.match or faq_result.score < strong:
+            try:
+                strong = float(getattr(config, "FAQ_STRONG_MATCH_THRESHOLD", 0.90) or 0.90)
+            except (TypeError, ValueError):
+                strong = 0.90
+            score_val = getattr(faq_result, "score", 0)
+            if not isinstance(score_val, (int, float)):
+                score_val = 0.0
+            if not faq_result.match or score_val < strong:
                 next_mode = "FSM_FALLBACK"
                 response_text = prompts.MSG_CONV_FALLBACK
-                logger.info("[CONV] FSM_FAQ overridden to FSM_FALLBACK (score %.2f < %.2f)", getattr(faq_result, "score", 0), strong)
+                logger.info("[CONV] FSM_FAQ overridden to FSM_FALLBACK (score %.2f < %.2f)", score_val, strong)
 
         _log_conv_p0_start(
             conv_id,
@@ -200,11 +218,13 @@ class ConversationalEngine:
                 self.cabinet_data,
             )
 
-        # FSM_FALLBACK : on utilise la réponse du LLM (naturelle, contrainte par le prompt)
+        # FSM_FALLBACK (hors-sujet) : message + passage en CLARIFY pour que le prochain tour soit routé par la FSM (rdv/horaires/question).
         if next_mode == "FSM_FALLBACK":
             session.add_message("user", user_text)
             session.add_message("agent", response_text)
             session.last_agent_message = response_text
+            session.state = "CLARIFY"
+            session.confirm_retry_count = 0  # pas de compte de relance au premier choix
             self.fsm_engine._save_session(session)
             return [Event("final", response_text, conv_state=session.state)]
 

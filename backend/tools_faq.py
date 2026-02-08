@@ -95,8 +95,10 @@ def default_faq_store() -> FaqStore:
         # Salutation (low priority)
         FaqItem(faq_id="FAQ_SALUTATION", question="bonjour salut", answer="Bonjour. Comment puis-je vous aider ?", priority="low"),
         
-        # HORAIRES - plusieurs variations
+        # HORAIRES - plusieurs variations (dont réponses courtes après "question ou rdv ?")
         FaqItem(faq_id="FAQ_HORAIRES", question="quels sont vos horaires", answer=REPONSE_HORAIRES),
+        FaqItem(faq_id="FAQ_HORAIRES", question="les horaires", answer=REPONSE_HORAIRES),
+        FaqItem(faq_id="FAQ_HORAIRES", question="horaires", answer=REPONSE_HORAIRES),
         FaqItem(faq_id="FAQ_HORAIRES", question="horaires ouverture", answer=REPONSE_HORAIRES),
         FaqItem(faq_id="FAQ_HORAIRES", question="vous êtes ouvert quand", answer=REPONSE_HORAIRES),
         FaqItem(faq_id="FAQ_HORAIRES", question="c'est ouvert à quelle heure", answer=REPONSE_HORAIRES),
@@ -120,8 +122,10 @@ def default_faq_store() -> FaqStore:
         FaqItem(faq_id="FAQ_TARIFS", question="prix de la consultation", answer=REPONSE_TARIFS),
         FaqItem(faq_id="FAQ_TARIFS", question="le prix", answer=REPONSE_TARIFS),
         
-        # ADRESSE - plusieurs variations
+        # ADRESSE - plusieurs variations (dont réponses courtes après "rdv ou question ?")
         FaqItem(faq_id="FAQ_ADRESSE", question="quelle est votre adresse", answer=REPONSE_ADRESSE),
+        FaqItem(faq_id="FAQ_ADRESSE", question="je voudrais l'adresse", answer=REPONSE_ADRESSE),
+        FaqItem(faq_id="FAQ_ADRESSE", question="l'adresse", answer=REPONSE_ADRESSE),
         FaqItem(faq_id="FAQ_ADRESSE", question="où êtes-vous situé", answer=REPONSE_ADRESSE),
         FaqItem(faq_id="FAQ_ADRESSE", question="c'est où", answer=REPONSE_ADRESSE),
         FaqItem(faq_id="FAQ_ADRESSE", question="c est où", answer=REPONSE_ADRESSE),

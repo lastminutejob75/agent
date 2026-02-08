@@ -3340,15 +3340,21 @@ class Engine:
             session.state = "START"
             return self._handle_faq(session, user_text, include_low=True)
         
-        # Sinon essayer FAQ directement (ex: "c'est où ?", "combien ?")
+        # Sinon essayer FAQ directement (ex. "je voudrais l'adresse", "horaires", "c'est où ?")
         try:
-            faq_result = self.faq_store.search(user_text, threshold=50)
-            if faq_result and faq_result.score >= 50:
-                print(f"📚 FAQ match in CLARIFY: {faq_result.faq_id} (score={faq_result.score})")
-                session.state = "START"
-                return self._handle_faq(session, user_text, include_low=False)
+            faq_result = self.faq_store.search(user_text, include_low=True)
+            if faq_result.match:
+                session.state = "POST_FAQ"
+                response = prompts.format_faq_response(faq_result.answer, faq_result.faq_id, channel=channel)
+                if channel == "vocal":
+                    response = response + " " + prompts.VOCAL_FAQ_FOLLOWUP
+                else:
+                    response = response + "\n\n" + getattr(prompts, "MSG_FAQ_FOLLOWUP_WEB", "Souhaitez-vous autre chose ?")
+                session.add_message("agent", response)
+                self._save_session(session)
+                return [Event("final", response, conv_state=session.state)]
         except Exception as e:
-            print(f"⚠️ FAQ search error in CLARIFY: {e}")
+            logger.warning("FAQ search in CLARIFY: %s", e)
         
         # Intent CANCEL
         if intent == "CANCEL":
