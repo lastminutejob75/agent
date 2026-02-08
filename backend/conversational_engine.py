@@ -132,28 +132,43 @@ class ConversationalEngine:
         min_conf = float(getattr(config, "CONVERSATIONAL_MIN_CONFIDENCE", 0.75) or 0.75)
         start_turn = 1 + sum(1 for m in session.messages if getattr(m, "role", None) == "user")
 
+        # 1) LLM failed (invalid json / rejected / error) => DO NOT fallback to FSM in START
         if conv_result is None:
-            # INVALID_JSON / VALIDATION_REJECTED = on a appelé le LLM mais rejeté la sortie
-            llm_called_but_rejected = fail_reason in (FAIL_INVALID_JSON, FAIL_VALIDATION_REJECTED)
             _log_conv_p0_start(
                 conv_id,
                 session,
                 reason=fail_reason or "LLM_ERROR",
                 start_turn=start_turn,
-                llm_used=llm_called_but_rejected,
+                llm_used=fail_reason in (FAIL_INVALID_JSON, FAIL_VALIDATION_REJECTED),
+                confidence=None,
+                next_mode=None,
             )
-            logger.info("[CONV] no result or low confidence → FSM")
-            return self.fsm_engine.handle_message(conv_id, user_text)
-        if conv_result.confidence < min_conf:
+            logger.info("[CONV] no result in START → safe fallback (no FSM)")
+            msg = prompts.MSG_CONV_FALLBACK
+            session.add_message("user", user_text)
+            session.add_message("agent", msg)
+            session.last_agent_message = msg
+            self.fsm_engine._save_session(session)
+            return [Event("final", msg, conv_state=session.state)]
+
+        # 2) LLM low confidence => same: do not fallback to FSM in START
+        if float(conv_result.confidence) < float(min_conf):
             _log_conv_p0_start(
                 conv_id,
                 session,
                 reason=REASON_LOW_CONF,
                 start_turn=start_turn,
-                confidence=conv_result.confidence,
+                confidence=float(conv_result.confidence),
+                next_mode=None,
+                llm_used=True,
             )
-            logger.info("[CONV] no result or low confidence → FSM")
-            return self.fsm_engine.handle_message(conv_id, user_text)
+            logger.info("[CONV] low confidence in START → safe fallback (no FSM)")
+            msg = prompts.MSG_CONV_FALLBACK
+            session.add_message("user", user_text)
+            session.add_message("agent", msg)
+            session.last_agent_message = msg
+            self.fsm_engine._save_session(session)
+            return [Event("final", msg, conv_state=session.state)]
 
         response_text = conv_result.response_text
         next_mode = conv_result.next_mode

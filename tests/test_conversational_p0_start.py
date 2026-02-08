@@ -452,6 +452,47 @@ def test_pizza_fsm_fallback_returns_llm_text_not_fsm_clarification(mock_config, 
     assert "pizza" not in events[0].text.lower()  # pas de répétition du hors-sujet
 
 
+# --- Pizza + LLM invalide → fallback conv, PAS FSM (verrou anti-régression) ---
+@patch("backend.conversational_engine.config")
+def test_pizza_llm_invalid_json_returns_conv_fallback_not_fsm(mock_config, conv_engine):
+    """Pizza + LLM invalide (ex. JSON invalide) → MSG_CONV_FALLBACK, jamais FSM (évite CANCEL)."""
+    mock_config.CONVERSATIONAL_MODE_ENABLED = True
+    mock_config.CONVERSATIONAL_CANARY_PERCENT = 100
+    mock_config.CONVERSATIONAL_MIN_CONFIDENCE = 0.75
+    conv_engine.llm_client = MockLLMConvClient(fixed_response="not json at all")
+    conv_id = "test-pizza-invalid-json"
+    s = ENGINE.session_store.get_or_create(conv_id)
+    s.state = "START"
+    ENGINE.session_store.save(s)
+    events = conv_engine.handle_message(conv_id, "je veux une pizza")
+    assert events and events[0].text
+    assert "cabinet" in events[0].text.lower()
+    assert "annul" not in events[0].text.lower()
+
+
+# --- Pizza + confidence faible → fallback conv, PAS FSM ---
+@patch("backend.conversational_engine.config")
+def test_pizza_llm_low_confidence_returns_conv_fallback_not_fsm(mock_config, conv_engine):
+    """Pizza + LLM confidence < seuil → MSG_CONV_FALLBACK, pas délégation FSM."""
+    mock_config.CONVERSATIONAL_MODE_ENABLED = True
+    mock_config.CONVERSATIONAL_CANARY_PERCENT = 100
+    mock_config.CONVERSATIONAL_MIN_CONFIDENCE = 0.75
+    conv_engine.llm_client = MockLLMConvClient(fixed_response=json.dumps({
+        "response_text": "Nous sommes un cabinet.",
+        "next_mode": "FSM_FALLBACK",
+        "extracted": {},
+        "confidence": 0.2,
+    }, ensure_ascii=False))
+    conv_id = "test-pizza-low-conf"
+    s = ENGINE.session_store.get_or_create(conv_id)
+    s.state = "START"
+    ENGINE.session_store.save(s)
+    events = conv_engine.handle_message(conv_id, "je veux une pizza")
+    assert events and events[0].text
+    assert "cabinet" in events[0].text.lower()
+    assert "annul" not in events[0].text.lower()
+
+
 # --- Pizza + RDV ⇒ FSM_BOOKING (pas fallback) ---
 @patch("backend.conversational_engine.config")
 def test_pizza_and_booking_routes_to_booking_not_fallback(mock_config, conv_engine):
