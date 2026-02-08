@@ -127,13 +127,11 @@ Avec ces métriques, en **24–48 h** tu peux juger si le mode conv vaut le coup
 
 ---
 
-## Canary propre : 5% → 20% → 100%
-
-L’infra le permet déjà. Exemple de réglage :
+## Canary propre : 5% → 20% → 100% (commande mentale)
 
 - `CONVERSATIONAL_MODE_ENABLED=true`
 - `CONVERSATIONAL_CANARY_PERCENT=5` (puis 20, puis 100)
-- `CONVERSATIONAL_MIN_CONFIDENCE=0.75`
+- (optionnel mais utile) `CONVERSATIONAL_MIN_CONFIDENCE=0.75` au début, puis on ajuste si besoin.
 
 **Après 24–48 h à 5 % :**
 
@@ -149,7 +147,23 @@ L’infra le permet déjà. Exemple de réglage :
 | FSM_FALLBACK ↑ + **LOW_CONF** ↑ | Seuil trop haut ou prompt trop “timide” | Baisser un peu le seuil ou renforcer le prompt (routing RDV) |
 | FSM_FALLBACK ↑ + **VALIDATION_REJECTED** ↑ | Prompt pousse à écrire mots interdits / placeholders multiples / trop long | Audit prompt + validateur (règles trop strictes ?) |
 | **FSM_BOOKING** ↓ alors que les intents RDV existent | Règle “RDV first” pas assez appliquée ou validateur trop strict sur phrases RDV | Renforcer ROUTING PRIORITY dans le prompt |
-| **INVALID_JSON** ↑ | Sortie LLM mal formée (format, markdown, etc.) | Prompt “JSON only, single line” + éventuellement température |
+| **INVALID_JSON** ↑ | Sortie LLM mal formée (format, markdown, etc.) | Prompt “JSON only, single line” + “no newline/tab” + exemple JSON sur une ligne |
+| **LLM_ERROR** ↑ | Perf / provider / timeout | Ajuster timeout, retries (max 0–1), ou couper canary plus bas |
+| **STRONG_INTENT** ↑ | Normal | Les règles attrapent bien, rien à changer |
+
+### En 10–20 lignes conv_p0_start (champs only) : quoi faire
+
+**À partager pour avis :** uniquement les champs (`conv_id`, `reason`, `next_mode`, `confidence`, `start_turn`, `llm_used`) — **jamais** de texte user/agent (privacy). Un seul réglage à la fois (1 changement max) pour savoir ce qui améliore quoi.
+
+| Trop de… | Réglage le plus rentable (1 changement max) |
+|----------|---------------------------------------------|
+| **LOW_CONF** | Prompt trop timide/long → resserrer (moins d’ambiguïté, exemples courts). Ou baisser seuil 0.75 → 0.70 si VALIDATION_REJECTED reste faible. |
+| **VALIDATION_REJECTED** | LLM glisse chiffres/mots factuels → durcir le prompt sur les interdits + 1–2 exemples “pièges” (horaires/tarifs/adresse) avec le bon pattern placeholder. |
+| **INVALID_JSON** | Problème de format (multi-lignes / markdown) → 2 lignes “single-line JSON only” + “no newline/tab” + exemple JSON sur une ligne. |
+| **LLM_ERROR** | Perf / provider / timeout → timeout, retries (0–1), ou canary plus bas. |
+| **STRONG_INTENT** | Rien : comportement attendu. |
+
+Après 24–48 h à 5 %, coller ici 10–20 lignes (champs only) : on vous indiquera **quel unique réglage** faire (seuil, prompt ou guard) pour passer à 20 %, selon le mix des `reason`.
 
 ---
 

@@ -13,7 +13,11 @@ from backend import config, prompts
 from backend.cabinet_data import CabinetData
 from backend.engine import Event, detect_strong_intent
 from backend.placeholders import replace_placeholders
-from backend.llm_conversation import complete_conversation
+from backend.llm_conversation import (
+    FAIL_INVALID_JSON,
+    FAIL_VALIDATION_REJECTED,
+    complete_conversation,
+)
 from backend.session import Session
 
 logger = logging.getLogger(__name__)
@@ -129,11 +133,14 @@ class ConversationalEngine:
         start_turn = 1 + sum(1 for m in session.messages if getattr(m, "role", None) == "user")
 
         if conv_result is None:
+            # INVALID_JSON / VALIDATION_REJECTED = on a appelé le LLM mais rejeté la sortie
+            llm_called_but_rejected = fail_reason in (FAIL_INVALID_JSON, FAIL_VALIDATION_REJECTED)
             _log_conv_p0_start(
                 conv_id,
                 session,
                 reason=fail_reason or "LLM_ERROR",
                 start_turn=start_turn,
+                llm_used=llm_called_but_rejected,
             )
             logger.info("[CONV] no result or low confidence → FSM")
             return self.fsm_engine.handle_message(conv_id, user_text)
