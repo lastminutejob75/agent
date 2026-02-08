@@ -32,7 +32,10 @@ CONVERSATIONAL_CANARY_PERCENT=100
 CONVERSATIONAL_MIN_CONFIDENCE=0.75
 ```
 
-**Convention canary (important)** : `0` = désactivé (personne n'est éligible), `100` = rollout complet. En prod, mettre `100` pour activer, ou `1`-`99` pour un pourcentage.
+**Convention canary (noir sur blanc)** :
+- `CONVERSATIONAL_CANARY_PERCENT=0` => **désactivé** (0 % du trafic, personne n'est éligible au mode conversationnel).
+- `CONVERSATIONAL_CANARY_PERCENT=100` => **100 %** (rollout complet).
+- `1` à `99` => pourcentage du trafic (bucket stable par `conv_id` via SHA256).
 
 ### Railway / Production
 

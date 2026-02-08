@@ -52,6 +52,23 @@ DIGIT_PATTERN = re.compile(r"\d")
 CURRENCY_PATTERN = re.compile(r"[€$£¥]")
 
 
+def validate_placeholder_policy(next_mode: str, response_text: str) -> bool:
+    """
+    P0: placeholders autorisés uniquement si next_mode == FSM_FAQ.
+    FSM_FALLBACK = zéro placeholder (excuse + redirection, sans facts).
+    FSM_FAQ = max 1 placeholder (vocal, charge cognitive).
+    """
+    placeholders = find_placeholders(response_text or "")
+
+    if next_mode != "FSM_FAQ":
+        return len(placeholders) == 0
+
+    if len(placeholders) > 1:
+        return False
+
+    return True
+
+
 def validate_llm_json(raw_text: str) -> Optional[Dict[str, Any]]:
     """
     Parse and validate raw LLM output as strict JSON.
@@ -124,14 +141,10 @@ def validate_conv_result(data: Dict[str, Any]) -> bool:
     if CURRENCY_PATTERN.search(response_text):
         return False
 
-    # Placeholder policy P0: lier placeholder ↔ intention (évite "pizza" → réponse annulation)
+    if not validate_placeholder_policy(next_mode, response_text):
+        return False
+
     found_placeholders = find_placeholders(response_text)
-    if next_mode == "FSM_FALLBACK" and found_placeholders:
-        return False  # FSM_FALLBACK = excuse + redirection, pas de faits
-    if next_mode != "FSM_FAQ" and found_placeholders:
-        return False  # Placeholders FAQ autorisés uniquement en FSM_FAQ
-    if next_mode == "FSM_FAQ" and len(found_placeholders) > 1:
-        return False  # P0 vocal: max 1 placeholder par réponse
     for placeholder in found_placeholders:
         if placeholder not in ALLOWED_PLACEHOLDERS:
             return False

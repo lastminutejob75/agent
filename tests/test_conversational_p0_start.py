@@ -330,3 +330,97 @@ def test_is_canary():
         assert _is_canary("any") is True
         cfg.CONVERSATIONAL_CANARY_PERCENT = 50
         assert _is_canary("any") in (True, False)
+
+
+# --- Canary 0 désactive le mode conv ---
+def test_canary_zero_disables_conversational(conv_engine, monkeypatch):
+    """Canary 0 => engine route vers FSM sans appeler le LLM."""
+    import backend.config as config_module
+    monkeypatch.setattr(config_module, "CONVERSATIONAL_MODE_ENABLED", True)
+    monkeypatch.setattr(config_module, "CONVERSATIONAL_CANARY_PERCENT", 0)
+    mock_llm = MockLLMConvClient()
+    conv_engine.llm_client = mock_llm
+    conv_id = "test-canary-zero"
+    ENGINE.session_store.get_or_create(conv_id)
+    s = ENGINE.session_store.get(conv_id)
+    s.state = "START"
+    ENGINE.session_store.save(s)
+
+    conv_engine.handle_message(conv_id, "bonjour")
+
+    assert mock_llm.call_count == 0
+
+
+# --- Placeholder interdit en FALLBACK ---
+@patch("backend.conversational_engine.config")
+def test_placeholder_rejected_outside_faq(mock_config, conv_engine):
+    """LLM retourne FSM_FALLBACK avec {FAQ_ANNULATION} → validator reject → fallback FSM, pas d'expansion placeholder."""
+    mock_config.CONVERSATIONAL_MODE_ENABLED = True
+    mock_config.CONVERSATIONAL_CANARY_PERCENT = 100
+    mock_config.CONVERSATIONAL_MIN_CONFIDENCE = 0.75
+    conv_engine.llm_client = MockLLMConvClient(fixed_response=json.dumps({
+        "response_text": "Désolé, nous sommes un cabinet médical. {FAQ_ANNULATION} Puis-je vous aider ?",
+        "next_mode": "FSM_FALLBACK",
+        "extracted": {},
+        "confidence": 0.9,
+    }, ensure_ascii=False))
+    conv_id = "test-placeholder-fallback"
+    ENGINE.session_store.get_or_create(conv_id)
+    s = ENGINE.session_store.get(conv_id)
+    s.state = "START"
+    ENGINE.session_store.save(s)
+    events = conv_engine.handle_message(conv_id, "vous faites des pizzas ?")
+    assert len(events) >= 1
+    assert "{FAQ_ANNULATION}" not in events[0].text
+    assert "24 heures" not in events[0].text
+
+
+# --- FAQ: max 1 placeholder ---
+@patch("backend.conversational_engine.config")
+def test_faq_more_than_one_placeholder_rejected(mock_config, conv_engine):
+    """LLM retourne FSM_FAQ avec \"{FAQ_HORAIRES} {FAQ_ADRESSE}\" → reject → fallback FSM."""
+    mock_config.CONVERSATIONAL_MODE_ENABLED = True
+    mock_config.CONVERSATIONAL_CANARY_PERCENT = 100
+    mock_config.CONVERSATIONAL_MIN_CONFIDENCE = 0.75
+    conv_engine.llm_client = MockLLMConvClient(fixed_response=json.dumps({
+        "response_text": "Voici : {FAQ_HORAIRES} et {FAQ_ADRESSE}. Autre chose ?",
+        "next_mode": "FSM_FAQ",
+        "extracted": {},
+        "confidence": 0.9,
+    }, ensure_ascii=False))
+    conv_id = "test-faq-two-placeholders"
+    ENGINE.session_store.get_or_create(conv_id)
+    s = ENGINE.session_store.get(conv_id)
+    s.state = "START"
+    ENGINE.session_store.save(s)
+    events = conv_engine.handle_message(conv_id, "c'est quoi vos horaires et votre adresse ?")
+    assert len(events) >= 1
+    assert "{FAQ_HORAIRES}" not in events[0].text and "{FAQ_ADRESSE}" not in events[0].text
+
+
+# --- Pizza: fallback texte naturel sans placeholders ---
+@patch("backend.conversational_engine.config")
+def test_pizza_returns_llm_fallback_text_no_placeholders(mock_config, conv_engine):
+    """LLM retourne FSM_FALLBACK avec redirection polie (sans placeholders) → ce texte exact retourné, state safe."""
+    mock_config.CONVERSATIONAL_MODE_ENABLED = True
+    mock_config.CONVERSATIONAL_CANARY_PERCENT = 100
+    mock_config.CONVERSATIONAL_MIN_CONFIDENCE = 0.75
+    fallback_text = "Désolé, nous sommes un cabinet médical. Je peux vous aider pour un rendez-vous ou une question."
+    conv_engine.llm_client = MockLLMConvClient(fixed_response=json.dumps({
+        "response_text": fallback_text,
+        "next_mode": "FSM_FALLBACK",
+        "extracted": {},
+        "confidence": 0.9,
+    }, ensure_ascii=False))
+    conv_id = "test-pizza-fallback-text"
+    ENGINE.session_store.get_or_create(conv_id)
+    s = ENGINE.session_store.get(conv_id)
+    s.state = "START"
+    ENGINE.session_store.save(s)
+    events = conv_engine.handle_message(conv_id, "je veux une pizza")
+    assert len(events) >= 1
+    assert events[0].text == fallback_text
+    assert "cabinet" in events[0].text.lower()
+    session_after = ENGINE.session_store.get(conv_id)
+    assert session_after is not None
+    assert session_after.state in ("START", "POST_FAQ") or "TRANSFERRED" != session_after.state

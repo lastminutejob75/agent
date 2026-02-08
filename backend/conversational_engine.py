@@ -5,6 +5,7 @@ Réponse naturelle LLM avec placeholders, validation stricte, fallback FSM incha
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import List
 
@@ -18,18 +19,25 @@ from backend.session import Session
 logger = logging.getLogger(__name__)
 
 
+def _stable_bucket(conv_id: str) -> int:
+    """Bucket 0-99 déterministe et stable (SHA256) pour canary rollout."""
+    h = hashlib.sha256(conv_id.encode("utf-8")).hexdigest()
+    return int(h[:8], 16) % 100
+
+
 def _is_canary(conv_id: str) -> bool:
     """
-    Canary rollout : 0 = disabled (personne), 1-99 = % du trafic (hash conv_id), 100 = full.
-    Convention explicite pour éviter en prod : 0 = 0% (désactivé), pas 100%.
+    Canary:
+    - 0  => disabled
+    - 1..99 => percent rollout
+    - 100 => enabled for all
     """
-    percent = getattr(config, "CONVERSATIONAL_CANARY_PERCENT", 0)
+    percent = int(getattr(config, "CONVERSATIONAL_CANARY_PERCENT", 0) or 0)
     if percent <= 0:
         return False
     if percent >= 100:
         return True
-    h = hash(conv_id) % 100
-    return h < percent
+    return _stable_bucket(conv_id) < percent
 
 
 def _session_history_for_llm(session: Session, max_turns: int = 6) -> List[dict]:
@@ -84,22 +92,28 @@ class ConversationalEngine:
             history,
             self.llm_client,
         )
-        min_conf = getattr(config, "CONVERSATIONAL_MIN_CONFIDENCE", 0.75)
+        min_conf = float(getattr(config, "CONVERSATIONAL_MIN_CONFIDENCE", 0.75) or 0.75)
         if conv_result is None or conv_result.confidence < min_conf:
             logger.info("[CONV] no result or low confidence → FSM")
             return self.fsm_engine.handle_message(conv_id, user_text)
 
-        # Remplacer placeholders
-        response_text = replace_placeholders(
-            conv_result.response_text,
-            self.faq_store,
-            self.cabinet_data,
-        )
+        response_text = conv_result.response_text
         next_mode = conv_result.next_mode
 
-        # FSM_FALLBACK : ne pas ajouter le message user ici, laisser la FSM le faire
+        if next_mode == "FSM_FAQ":
+            response_text = replace_placeholders(
+                response_text,
+                self.faq_store,
+                self.cabinet_data,
+            )
+
+        # FSM_FALLBACK : réponse LLM validée (sans placeholder) → retourner ce texte, state reste START
         if next_mode == "FSM_FALLBACK":
-            return self.fsm_engine.handle_message(conv_id, user_text)
+            session.add_message("user", user_text)
+            session.add_message("agent", response_text)
+            session.last_agent_message = response_text
+            self.fsm_engine._save_session(session)
+            return [Event("final", response_text, conv_state=session.state)]
 
         session.add_message("user", user_text)
         session.add_message("agent", response_text)
