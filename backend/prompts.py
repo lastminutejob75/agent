@@ -1008,6 +1008,11 @@ MSG_START_CLARIFY_1_WEB = (
     "Je peux vous aider pour un rendez-vous, ou pour une question. Qu'est-ce que je peux faire pour vous ?"
 )
 
+# Mode conversationnel P0 : hors-sujet (pizza, etc.) — phrase fixe, pas de texte LLM
+MSG_CONV_FALLBACK = (
+    "Nous sommes un cabinet médical. Je peux vous aider pour un rendez-vous ou une question. Que souhaitez-vous ?"
+)
+
 # OUT_OF_SCOPE (hors-sujet : pizza, voiture, etc.) — réponse naturelle cabinet médical
 VOCAL_OUT_OF_SCOPE = (
     "Désolé, nous sommes un cabinet médical. Je peux vous aider pour un rendez-vous, "

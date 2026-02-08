@@ -174,7 +174,7 @@ class ConversationalEngine:
                 self.cabinet_data,
             )
 
-        # FSM_FALLBACK : réponse LLM validée (sans placeholder) → retourner ce texte, state reste START
+        # FSM_FALLBACK : on utilise la réponse du LLM (naturelle, contrainte par le prompt)
         if next_mode == "FSM_FALLBACK":
             session.add_message("user", user_text)
             session.add_message("agent", response_text)
@@ -186,7 +186,7 @@ class ConversationalEngine:
         session.add_message("agent", response_text)
         session.last_agent_message = response_text
 
-        if next_mode == "FSM_BOOKING":
+        if next_mode in ("FSM_BOOKING", "FSM_BOOKING_PRELUDE"):
             session.state = "QUALIF_NAME"
             extracted = conv_result.extracted or {}
             if isinstance(extracted.get("name"), str) and extracted["name"].strip():

@@ -22,6 +22,7 @@ from backend.placeholders import ALLOWED_PLACEHOLDERS, find_placeholders
 # Valid next_mode values for routing
 VALID_NEXT_MODES = frozenset({
     "FSM_BOOKING",
+    "FSM_BOOKING_PRELUDE",  # phrase naturelle LLM puis FSM prend la main (QUALIF_NAME)
     "FSM_FAQ",
     "FSM_TRANSFER",
     "FSM_FALLBACK",
@@ -33,11 +34,10 @@ MAX_RESPONSE_LENGTH = 280
 # NOTE: confidence threshold is enforced by caller (conversational_engine / llm_conversation),
 # not here. This validator only checks shape/safety.
 
-# Forbidden words that indicate factual claims
+# Forbidden words: faits précis ou chiffrables (on autorise "horaires/adresse/tarifs" comme catégories)
 FORBIDDEN_WORDS = frozenset([
-    "ouvert", "fermé", "horaire", "heures",
-    "prix", "tarif", "euro", "euros", "coûte", "coute", "rembourse", "remboursé",
-    "rue", "avenue", "boulevard", "adresse", "métro", "metro", "arrondissement",
+    "euro", "euros", "coûte", "coute", "rembourse", "remboursé",
+    "rue", "avenue", "boulevard", "métro", "metro", "arrondissement",
     "24/7",
 ])
 

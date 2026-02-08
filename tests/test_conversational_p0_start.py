@@ -397,14 +397,14 @@ def test_faq_more_than_one_placeholder_rejected(mock_config, conv_engine):
     assert "{FAQ_HORAIRES}" not in events[0].text and "{FAQ_ADRESSE}" not in events[0].text
 
 
-# --- Pizza: fallback texte naturel sans placeholders ---
+# --- Pizza: FSM_FALLBACK → on affiche le texte du LLM (naturel, avec cabinet médical) ---
 @patch("backend.conversational_engine.config")
 def test_pizza_returns_llm_fallback_text_no_placeholders(mock_config, conv_engine):
-    """LLM retourne FSM_FALLBACK avec redirection polie (sans placeholders) → ce texte exact retourné, state safe."""
+    """LLM retourne FSM_FALLBACK avec redirection polie → ce texte est affiché (pas de placeholder)."""
     mock_config.CONVERSATIONAL_MODE_ENABLED = True
     mock_config.CONVERSATIONAL_CANARY_PERCENT = 100
     mock_config.CONVERSATIONAL_MIN_CONFIDENCE = 0.75
-    fallback_text = "Désolé, nous sommes un cabinet médical. Je peux vous aider pour un rendez-vous ou une question."
+    fallback_text = "Nous sommes un cabinet médical. Je peux vous aider pour un rendez-vous ou une question. Que souhaitez-vous ?"
     conv_engine.llm_client = MockLLMConvClient(fixed_response=json.dumps({
         "response_text": fallback_text,
         "next_mode": "FSM_FALLBACK",
@@ -420,6 +420,7 @@ def test_pizza_returns_llm_fallback_text_no_placeholders(mock_config, conv_engin
     assert len(events) >= 1
     assert events[0].text == fallback_text
     assert "cabinet" in events[0].text.lower()
+    assert "pizza" not in events[0].text.lower()  # pas de répétition du hors-sujet
     session_after = ENGINE.session_store.get(conv_id)
     assert session_after is not None
     assert session_after.state in ("START", "POST_FAQ") or "TRANSFERRED" != session_after.state
@@ -428,11 +429,11 @@ def test_pizza_returns_llm_fallback_text_no_placeholders(mock_config, conv_engin
 # --- Pizza : réponse = texte LLM FSM_FALLBACK, pas clarification FSM ---
 @patch("backend.conversational_engine.config")
 def test_pizza_fsm_fallback_returns_llm_text_not_fsm_clarification(mock_config, conv_engine):
-    """Force FSM_FALLBACK avec phrase 'cabinet médical' → la réponse doit être ce texte, pas une clarification FSM."""
+    """FSM_FALLBACK → la réponse affichée est le texte du LLM (ex. cabinet médical), pas une clarification FSM."""
     mock_config.CONVERSATIONAL_MODE_ENABLED = True
     mock_config.CONVERSATIONAL_CANARY_PERCENT = 100
     mock_config.CONVERSATIONAL_MIN_CONFIDENCE = 0.75
-    llm_fallback = "Désolé, je suis l'assistant du Cabinet Dupont. Je peux vous aider pour un rendez-vous ou une question du cabinet. Souhaitez-vous prendre rendez-vous ?"
+    llm_fallback = "Désolé, je suis l'assistant du Cabinet Dupont. Je peux vous aider pour un rendez-vous ou une question. Que souhaitez-vous ?"
     conv_engine.llm_client = MockLLMConvClient(fixed_response=json.dumps({
         "response_text": llm_fallback,
         "next_mode": "FSM_FALLBACK",
@@ -447,8 +448,8 @@ def test_pizza_fsm_fallback_returns_llm_text_not_fsm_clarification(mock_config, 
     events = conv_engine.handle_message(conv_id, "je veux une pizza")
     assert len(events) >= 1
     assert events[0].text == llm_fallback
-    assert "Cabinet Dupont" in events[0].text
     assert "cabinet" in events[0].text.lower()
+    assert "pizza" not in events[0].text.lower()  # pas de répétition du hors-sujet
 
 
 # --- Pizza + RDV ⇒ FSM_BOOKING (pas fallback) ---
@@ -495,3 +496,31 @@ def test_pizza_and_booking_routes_to_booking_not_fallback(mock_config, conv_engi
     txt = events[0].text.lower()
     assert "rendez-vous" in txt
     assert "pizza" not in txt  # optionnel : l'agent n'a pas besoin de répéter "pizza"
+
+
+# --- FSM_BOOKING_PRELUDE : phrase naturelle LLM puis FSM (QUALIF_NAME) ---
+@patch("backend.conversational_engine.config")
+def test_booking_prelude_shows_llm_text_then_qualif_name(mock_config, conv_engine):
+    """FSM_BOOKING_PRELUDE → on affiche la phrase du LLM puis état QUALIF_NAME (FSM prend la main)."""
+    mock_config.CONVERSATIONAL_MODE_ENABLED = True
+    mock_config.CONVERSATIONAL_CANARY_PERCENT = 100
+    mock_config.CONVERSATIONAL_MIN_CONFIDENCE = 0.75
+    prelude_text = "Très bien. Je vais vous aider à prendre rendez-vous. Pouvez-vous me donner votre nom et prénom ?"
+    conv_engine.llm_client = MockLLMConvClient(
+        fixed_response=json.dumps({
+            "response_text": prelude_text,
+            "next_mode": "FSM_BOOKING_PRELUDE",
+            "extracted": {},
+            "confidence": 0.9,
+        }, ensure_ascii=False)
+    )
+    conv_id = "test-booking-prelude"
+    session = ENGINE.session_store.get_or_create(conv_id)
+    session.state = "START"
+    ENGINE.session_store.save(session)
+    events = conv_engine.handle_message(conv_id, "je voudrais prendre rendez-vous")
+    assert len(events) == 1, "pas de double-speak: un seul event après FSM_BOOKING_PRELUDE"
+    assert events[0].text == prelude_text
+    session_after = ENGINE.session_store.get(conv_id)
+    assert session_after is not None
+    assert session_after.state == "QUALIF_NAME"
