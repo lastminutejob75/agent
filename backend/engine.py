@@ -346,32 +346,33 @@ def _log_turn_debug(session: Session) -> None:
     """Log structuré (debug) par tour pour diagnostic d'appel sans rejeu.
     Ne jamais logger téléphone/email en clair (même en DEBUG). turn_count aide à repérer les boucles.
     llm_meta (si présent) : merger pour diagnostic LLM Assist."""
+    # Diagnostic fin d'appel "ça sera tout merci" : comparer state_before, assistant_text_sent, state_after.
+    # A) state_before != POST_FAQ → bug state/session. B) assistant_text_sent="au revoir" mais audio dit autre chose → bridge/TTS.
+    # C) tout OK mais tours suivants → manque hangup/endCall côté provider.
+    assistant_sent = (getattr(session, "_turn_assistant_text", None) or "")[:200]
     llm_meta = getattr(session, "_turn_llm_meta", None)
     if llm_meta:
-        logger.debug(
-            "[TURN] conv_id=%s turn_count=%s state_before=%s intent_detected=%s strong_intent=%s state_after=%s last_say_key=%s llm_used=%s llm_intent=%s llm_confidence=%s llm_bucket=%s",
+        logger.info(
+            "[TURN] conv_id=%s state_before=%s state_after=%s intent_detected=%s strong_intent=%s last_say_key=%s assistant_text_sent=%s llm_used=%s",
             getattr(session, "conv_id", ""),
-            getattr(session, "turn_count", None),
             getattr(session, "_turn_state_before", None),
+            getattr(session, "state", None),
             getattr(session, "last_intent", None),
             getattr(session, "last_strong_intent", None),
-            getattr(session, "state", None),
             getattr(session, "last_say_key", None),
+            assistant_sent or "(none)",
             llm_meta.get("llm_used"),
-            llm_meta.get("llm_intent"),
-            llm_meta.get("llm_confidence"),
-            llm_meta.get("llm_bucket"),
         )
     else:
-        logger.debug(
-            "[TURN] conv_id=%s turn_count=%s state_before=%s intent_detected=%s strong_intent=%s state_after=%s last_say_key=%s",
+        logger.info(
+            "[TURN] conv_id=%s state_before=%s state_after=%s intent_detected=%s strong_intent=%s last_say_key=%s assistant_text_sent=%s",
             getattr(session, "conv_id", ""),
-            getattr(session, "turn_count", None),
             getattr(session, "_turn_state_before", None),
+            getattr(session, "state", None),
             getattr(session, "last_intent", None),
             getattr(session, "last_strong_intent", None),
-            getattr(session, "state", None),
             getattr(session, "last_say_key", None),
+            assistant_sent or "(none)",
         )
 
 
@@ -381,6 +382,7 @@ def safe_reply(events: List[Event], session: Session) -> List[Event]:
     Aucun message utilisateur ne doit mener à zéro output.
     Persiste transfer_human une seule fois par call (idempotence).
     """
+    setattr(session, "_turn_assistant_text", (events[0].text if events and getattr(events[0], "text", None) else "") or "")
     _log_turn_debug(session)
     if getattr(session, "state", None) == "TRANSFERRED" and not getattr(session, "transfer_logged", False):
         _persist_ivr_event(session, "transfer_human")
@@ -703,10 +705,19 @@ class Engine:
             if session.state == "EMERGENCY":
                 msg = prompts.VOCAL_MEDICAL_EMERGENCY
                 session.add_message("agent", msg)
+                setattr(session, "_turn_assistant_text", msg)
                 _log_turn_debug(session)
                 return [Event("final", msg, conv_state=session.state)]
-            # En TRANSFERRED/CONFIRMED, "répétez" relit le dernier message (transfer, etc.)
+            # Anti-boucle terminale : en CONFIRMED/TRANSFERRED, si user dit ABANDON/merci/au revoir → "Au revoir." une fois max (évite écho STT).
             if session.state in ["TRANSFERRED", "CONFIRMED"]:
+                strong_terminal = detect_strong_intent(user_text or "")
+                if strong_terminal == "ABANDON":
+                    channel = getattr(session, "channel", "web")
+                    msg = prompts.VOCAL_FAQ_GOODBYE if channel == "vocal" else prompts.MSG_FAQ_GOODBYE_WEB
+                    session.add_message("agent", msg)
+                    setattr(session, "_turn_assistant_text", msg)
+                    _log_turn_debug(session)
+                    return [Event("final", msg, conv_state=session.state)]
                 intent_terminal = detect_intent(user_text, session.state)
                 if intent_terminal == "REPEAT":
                     # 1) last_say_key prioritaire (re-render fiable, notamment transfer/transfer_complex)
@@ -718,6 +729,7 @@ class Engine:
                             msg = prompts.get_message(last_key, channel=channel, **last_kw)
                             if msg:
                                 session.add_message("agent", msg)
+                                setattr(session, "_turn_assistant_text", msg)
                                 _log_turn_debug(session)
                                 return [Event("final", msg, conv_state=session.state)]
                         except Exception:
@@ -734,10 +746,12 @@ class Engine:
                         last_msg = None  # anti-echo : ne jamais relire le message user
                     if last_msg:
                         session.add_message("agent", last_msg)
+                        setattr(session, "_turn_assistant_text", last_msg)
                         _log_turn_debug(session)
                         return [Event("final", last_msg, conv_state=session.state)]
             msg = prompts.MSG_CONVERSATION_CLOSED
             session.add_message("agent", msg)
+            setattr(session, "_turn_assistant_text", msg)
             _log_turn_debug(session)
             return [Event("final", msg, conv_state=session.state)]
         
@@ -1200,6 +1214,8 @@ class Engine:
             # 0) Priorité : fin d'appel (ABANDON) via strong intent pour éviter relance en boucle
             strong_abandon = detect_strong_intent(user_text or "")
             if strong_abandon == "ABANDON":
+                setattr(session, "last_strong_intent", "ABANDON")
+                setattr(session, "last_intent", "ABANDON")
                 session.state = "CONFIRMED"
                 msg = prompts.VOCAL_FAQ_GOODBYE if channel == "vocal" else prompts.MSG_FAQ_GOODBYE_WEB
                 session.add_message("agent", msg)
