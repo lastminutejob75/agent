@@ -12,7 +12,7 @@ from backend import config, prompts
 from backend.cabinet_data import CabinetData
 from backend.engine import Event, detect_strong_intent
 from backend.placeholders import replace_placeholders
-from backend.llm_conversation import complete_conversation, CONV_CONFIDENCE_THRESHOLD
+from backend.llm_conversation import complete_conversation
 from backend.session import Session
 
 logger = logging.getLogger(__name__)
@@ -84,7 +84,8 @@ class ConversationalEngine:
             history,
             self.llm_client,
         )
-        if conv_result is None or conv_result.confidence < CONV_CONFIDENCE_THRESHOLD:
+        min_conf = getattr(config, "CONVERSATIONAL_MIN_CONFIDENCE", 0.75)
+        if conv_result is None or conv_result.confidence < min_conf:
             logger.info("[CONV] no result or low confidence → FSM")
             return self.fsm_engine.handle_message(conv_id, user_text)
 
