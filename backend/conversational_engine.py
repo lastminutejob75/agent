@@ -12,20 +12,20 @@ from backend import config, prompts
 from backend.cabinet_data import CabinetData
 from backend.engine import Event, detect_strong_intent
 from backend.placeholders import replace_placeholders
-from backend.llm_conversation import (
-    complete_conversation,
-    CONV_CONFIDENCE_THRESHOLD,
-)
+from backend.llm_conversation import complete_conversation, CONV_CONFIDENCE_THRESHOLD
 from backend.session import Session
 
 logger = logging.getLogger(__name__)
 
 
 def _is_canary(conv_id: str) -> bool:
-    """Canary : pour l'instant tout conv_id est éligible si flag activé (CANARY_PERCENT=0 = 100%)."""
+    """
+    Canary rollout : 0 = disabled (personne), 1-99 = % du trafic (hash conv_id), 100 = full.
+    Convention explicite pour éviter en prod : 0 = 0% (désactivé), pas 100%.
+    """
     percent = getattr(config, "CONVERSATIONAL_CANARY_PERCENT", 0)
     if percent <= 0:
-        return True
+        return False
     if percent >= 100:
         return True
     h = hash(conv_id) % 100

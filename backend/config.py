@@ -43,8 +43,8 @@ USE_FSM2 = os.getenv("USE_FSM2", "false").lower() in ("true", "1", "yes")
 # When disabled (default), uses deterministic FSM only
 CONVERSATIONAL_MODE_ENABLED = os.getenv("CONVERSATIONAL_MODE_ENABLED", "false").lower() in ("true", "1", "yes")
 
-# Canary percentage (0-100) for gradual rollout
-# 0 = 100% si activé, 1-99 = % des conv_id
+# Canary percentage: 0 = disabled (0%), 1-99 = % of conv_id (hash), 100 = full rollout
+# Convention explicite pour éviter en prod : 0 = désactivé (personne n'est éligible)
 CONVERSATIONAL_CANARY_PERCENT = int(os.getenv("CONVERSATIONAL_CANARY_PERCENT", "0"))
 
 # Alias pour compatibilité

@@ -17,8 +17,8 @@ Le mode conversationnel permet des réponses plus naturelles via LLM, tout en ga
 # Activer le mode conversationnel
 export CONVERSATIONAL_MODE_ENABLED=true
 
-# Optionnel: rollout canary (0-100%)
-export CONVERSATIONAL_CANARY_PERCENT=10
+# Rollout canary : 0 = disabled (0%), 1-99 = % du trafic, 100 = full (convention explicite, évite piège prod)
+export CONVERSATIONAL_CANARY_PERCENT=100
 
 # Optionnel: seuil de confiance (défaut: 0.75)
 export CONVERSATIONAL_MIN_CONFIDENCE=0.80
@@ -28,15 +28,17 @@ export CONVERSATIONAL_MIN_CONFIDENCE=0.80
 
 ```env
 CONVERSATIONAL_MODE_ENABLED=true
-CONVERSATIONAL_CANARY_PERCENT=0
+CONVERSATIONAL_CANARY_PERCENT=100
 CONVERSATIONAL_MIN_CONFIDENCE=0.75
 ```
+
+**Convention canary (important)** : `0` = désactivé (personne n'est éligible), `100` = rollout complet. En prod, mettre `100` pour activer, ou `1`-`99` pour un pourcentage.
 
 ### Railway / Production
 
 Dans les variables d'environnement Railway:
 1. `CONVERSATIONAL_MODE_ENABLED` = `true`
-2. `CONVERSATIONAL_CANARY_PERCENT` = `10` (pour tester sur 10% du trafic)
+2. `CONVERSATIONAL_CANARY_PERCENT` = `100` (full) ou `10` (10% du trafic pour test)
 
 ## Scope P0
 
