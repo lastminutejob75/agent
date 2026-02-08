@@ -16,6 +16,8 @@ TRANSFER_PHONE = "+33 6 00 00 00 00"  # V1 simple (affiché au besoin)
 
 # FAQ / RAG
 FAQ_THRESHOLD = 0.80  # score >= 0.80 => match
+# Seuil strict pour afficher une réponse FAQ (évite faux positifs type "pizza" → paiement). Pas de liste en dur.
+FAQ_STRONG_MATCH_THRESHOLD = 0.90  # n'afficher la FAQ que si score >= ce seuil
 
 # Session
 SESSION_TTL_MINUTES = 15

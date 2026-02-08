@@ -172,6 +172,17 @@ class ConversationalEngine:
 
         response_text = conv_result.response_text
         next_mode = conv_result.next_mode
+
+        # Ne faire confiance à FSM_FAQ que si le message matche vraiment une FAQ (score fort).
+        # Évite faux positifs type "pizza" → paiement sans liste de mots en dur.
+        if next_mode == "FSM_FAQ":
+            faq_result = self.faq_store.search(user_text or "", include_low=False)
+            strong = getattr(config, "FAQ_STRONG_MATCH_THRESHOLD", 0.90) or 0.90
+            if not faq_result.match or faq_result.score < strong:
+                next_mode = "FSM_FALLBACK"
+                response_text = prompts.MSG_CONV_FALLBACK
+                logger.info("[CONV] FSM_FAQ overridden to FSM_FALLBACK (score %.2f < %.2f)", getattr(faq_result, "score", 0), strong)
+
         _log_conv_p0_start(
             conv_id,
             session,

@@ -1358,6 +1358,15 @@ class Engine:
         faq_result = self.faq_store.search(user_text, include_low=include_low)
 
         if faq_result.match:
+            # N'afficher la FAQ que si le score est fort (évite "pizza" → paiement, sans liste en dur).
+            strong = getattr(config, "FAQ_STRONG_MATCH_THRESHOLD", 0.90) or 0.90
+            if faq_result.score < strong:
+                msg = getattr(prompts, "MSG_CONV_FALLBACK", prompts.MSG_OUT_OF_SCOPE_WEB)
+                if channel == "vocal":
+                    msg = getattr(prompts, "VOCAL_OUT_OF_SCOPE", msg)
+                session.add_message("agent", msg)
+                self._save_session(session)
+                return [Event("final", msg, conv_state=session.state)]
             response = prompts.format_faq_response(faq_result.answer, faq_result.faq_id, channel=channel)
             # Toujours ajouter une relance pour permettre autre question ou RDV
             if channel == "vocal":
