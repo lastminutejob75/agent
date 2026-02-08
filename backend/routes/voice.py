@@ -16,6 +16,7 @@ from typing import Optional
 from backend.engine import ENGINE
 from backend import prompts, config
 from backend.client_memory import get_client_memory
+from backend.conversational_engine import ConversationalEngine, _is_canary
 from backend.reports import get_report_generator
 from backend.stt_utils import normalize_transcript, is_filler_only
 from backend.stt_common import classify_text_only, estimate_tts_duration, is_critical_overlap
@@ -26,6 +27,25 @@ logger = logging.getLogger(__name__)
 # Instances singleton
 client_memory = get_client_memory()
 report_generator = get_report_generator()
+
+# Mode conversationnel P0 (lazy)
+_conversational_engine = None
+
+def _get_engine(call_id: str):
+    """Retourne l'engine à utiliser : conversationnel (si flag + canary) ou FSM."""
+    if config.CONVERSATIONAL_MODE_ENABLED and _is_canary(call_id):
+        global _conversational_engine
+        if _conversational_engine is None:
+            from backend.cabinet_data import CabinetData
+            from backend.llm_conversation import StubLLMConvClient
+            _conversational_engine = ConversationalEngine(
+                cabinet_data=CabinetData.default(config.BUSINESS_NAME),
+                faq_store=ENGINE.faq_store,
+                llm_client=StubLLMConvClient(),
+                fsm_engine=ENGINE,
+            )
+        return _conversational_engine
+    return ENGINE
 
 
 def _reconstruct_session_from_history(session, messages: list):
@@ -423,7 +443,7 @@ async def vapi_webhook(request: Request):
             return {"content": reply_text}
 
         if kind == "SILENCE":
-            events = ENGINE.handle_message(call_id, "")
+            events = _get_engine(call_id).handle_message(call_id, "")
             _maybe_reset_noise_on_terminal(session, events)
             response_text = events[0].text if events else "Je n'ai pas compris"
             _action = "reply"
@@ -442,7 +462,7 @@ async def vapi_webhook(request: Request):
         if text_to_use and text_to_use.strip():
             print(f"💬 User: '{text_to_use}'")
             t3 = log_timer("Session loaded", t2)
-            events = ENGINE.handle_message(call_id, text_to_use)
+            events = _get_engine(call_id).handle_message(call_id, text_to_use)
             _maybe_reset_noise_on_terminal(session, events)
             t4 = log_timer("ENGINE processed", t3)
             response_text = events[0].text if events else "Je n'ai pas compris"
@@ -496,7 +516,7 @@ async def vapi_tool(request: Request):
         session.channel = "vocal"
         
         # Traiter
-        events = ENGINE.handle_message(call_id, user_message)
+        events = _get_engine(call_id).handle_message(call_id, user_message)
         response_text = events[0].text if events else "Je n'ai pas compris"
         
         print(f"✅ Tool response: '{response_text}'")
@@ -693,12 +713,12 @@ async def vapi_custom_llm(request: Request):
                 if not overlap_handled:
                     try:
                         if kind == "SILENCE":
-                            events = ENGINE.handle_message(call_id, "")
+                            events = _get_engine(call_id).handle_message(call_id, "")
                             response_text = events[0].text if events else prompts.MSG_EMPTY_MESSAGE
                             action_taken = "silence"
                             _maybe_reset_noise_on_terminal(session, events or [])
                         elif kind == "TEXT":
-                            events = ENGINE.handle_message(call_id, normalized)
+                            events = _get_engine(call_id).handle_message(call_id, normalized)
                             response_text = events[0].text if events else "Je n'ai pas compris"
                             action_taken = "text"
                             _maybe_reset_noise_on_terminal(session, events or [])
@@ -840,7 +860,7 @@ async def vapi_custom_llm(request: Request):
                         }
                         yield f"data: {json.dumps(chunk)}\n\n"
                     # Recherche du RDV (bloquant → en thread)
-                    events = await asyncio.to_thread(ENGINE.handle_message, call_id, user_message)
+                    events = await asyncio.to_thread(_get_engine(call_id).handle_message, call_id, user_message)
                     session_after = ENGINE.session_store.get(call_id)
                     stream_response_text = events[0].text if events else "Je n'ai pas compris"
                     # Stats (même logique qu'en non-streaming)
@@ -930,7 +950,7 @@ async def vapi_health():
 @router.get("/test")
 async def vapi_test():
     try:
-        events = ENGINE.handle_message("test", "bonjour")
+        events = _get_engine("test").handle_message("test", "bonjour")
         if events:
             return {"status": "ok", "response": events[0].text}
         return {"status": "error"}
