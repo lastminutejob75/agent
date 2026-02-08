@@ -37,11 +37,11 @@ def _get_engine(call_id: str):
         global _conversational_engine
         if _conversational_engine is None:
             from backend.cabinet_data import CabinetData
-            from backend.llm_conversation import StubLLMConvClient
+            from backend.llm_conversation import get_default_conv_llm_client
             _conversational_engine = ConversationalEngine(
                 cabinet_data=CabinetData.default(config.BUSINESS_NAME),
                 faq_store=ENGINE.faq_store,
-                llm_client=StubLLMConvClient(),
+                llm_client=get_default_conv_llm_client(),
                 fsm_engine=ENGINE,
             )
         return _conversational_engine

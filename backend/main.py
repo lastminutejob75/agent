@@ -23,6 +23,7 @@ from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.engine import ENGINE, Event
+from backend.routes.voice import _get_engine
 import backend.config as config  # Import du MODULE (pas from import)
 from backend.db import init_db, list_free_slots, count_free_slots
 # Nouvelle architecture multi-canal
@@ -372,7 +373,8 @@ async def run_engine(conv_id: str, message: str, channel: str = "web") -> None:
             "timestamp": now_iso(),
         })
 
-        events = ENGINE.handle_message(conv_id, message)
+        engine = _get_engine(conv_id)
+        events = engine.handle_message(conv_id, message)
 
         for ev in events:
             await emit_event(conv_id, ev)

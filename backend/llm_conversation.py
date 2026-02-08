@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 
@@ -56,6 +57,48 @@ class StubLLMConvClient:
             "extracted": {},
             "confidence": 0.9,
         }, ensure_ascii=False)
+
+
+class AnthropicConvClient:
+    """Client Anthropic (Claude) pour le mode conversationnel P0. Conforme à LLMConvClient."""
+
+    def __init__(self, api_key: Optional[str] = None, model: str = "claude-sonnet-4-20250514", timeout_sec: float = 15.0):
+        self._api_key = (api_key or os.getenv("ANTHROPIC_API_KEY", "")).strip()
+        self._model = model
+        self._timeout_sec = timeout_sec
+
+    def complete(self, system_prompt: str, user_prompt: str) -> str:
+        if not self._api_key:
+            raise ValueError("ANTHROPIC_API_KEY required for AnthropicConvClient")
+        try:
+            from anthropic import Anthropic
+            client = Anthropic(api_key=self._api_key)
+            msg = client.messages.create(
+                model=self._model,
+                max_tokens=512,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_prompt}],
+                timeout=self._timeout_sec,
+            )
+            out = ""
+            for block in getattr(msg, "content", []):
+                if getattr(block, "type", None) == "text":
+                    out += getattr(block, "text", "") or ""
+            return (out.strip() or "").replace("\n", " ").replace("\r", " ")
+        except Exception as e:
+            logger.warning("AnthropicConvClient complete error: %s", e)
+            raise
+
+
+def get_default_conv_llm_client():  # -> LLMConvClient
+    """Retourne AnthropicConvClient si ANTHROPIC_API_KEY est défini, sinon StubLLMConvClient."""
+    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    if api_key:
+        try:
+            return AnthropicConvClient(api_key=api_key)
+        except Exception as e:
+            logger.warning("get_default_conv_llm_client: fallback to stub: %s", e)
+    return StubLLMConvClient()
 
 
 def _build_system_prompt(cabinet_data: CabinetData) -> str:
