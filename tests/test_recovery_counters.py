@@ -23,13 +23,14 @@ def test_increment_recovery_counter_slot_choice():
 
 
 def test_should_escalate_recovery_after_3_fails():
-    """should_escalate_recovery retourne True après 3 échecs sur un contexte."""
+    """should_escalate_recovery retourne True quand échecs >= RECOVERY_LIMITS (name=2)."""
+    from backend import config
     session = Session(conv_id="test_rec_esc")
+    limit = config.RECOVERY_LIMITS.get("name", 3)
     assert should_escalate_recovery(session, "name") is False
-    increment_recovery_counter(session, "name")
-    assert should_escalate_recovery(session, "name") is False
-    increment_recovery_counter(session, "name")
-    assert should_escalate_recovery(session, "name") is False
+    for i in range(limit - 1):
+        increment_recovery_counter(session, "name")
+        assert should_escalate_recovery(session, "name") is False
     increment_recovery_counter(session, "name")
     assert should_escalate_recovery(session, "name") is True
 

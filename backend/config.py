@@ -3,6 +3,13 @@ from __future__ import annotations
 import os
 import base64
 
+# --- Cabinet / horaires (RÈGLE 7) ---
+# (Pour multi-clients plus tard : passer en config par tenant)
+CABINET_TIMEZONE = "Europe/Paris"
+CABINET_CLOSING_HOUR = 19
+CABINET_CLOSING_MINUTE = 0
+TIME_CONSTRAINT_ENABLED = True
+
 # Business
 BUSINESS_NAME = "Cabinet Dupont"
 TRANSFER_PHONE = "+33 6 00 00 00 00"  # V1 simple (affiché au besoin)
@@ -24,6 +31,9 @@ CONFIRM_RETRY_MAX = 1  # 1 redemande, puis transfer
 # Performance
 TARGET_FIRST_RESPONSE_MS = 3000  # contrainte PRD (sans imposer SSE)
 
+# P2.1 FSM explicite : migration progressive (QUALIF_NAME, WAIT_CONFIRM via fsm2)
+USE_FSM2 = os.getenv("USE_FSM2", "false").lower() in ("true", "1", "yes")
+
 # ==============================
 # CONVERSATIONAL MODE (P0)
 # ==============================
@@ -31,14 +41,60 @@ TARGET_FIRST_RESPONSE_MS = 3000  # contrainte PRD (sans imposer SSE)
 # Feature flag for conversational LLM mode
 # When enabled, uses natural LLM responses in START state
 # When disabled (default), uses deterministic FSM only
-CONVERSATIONAL_MODE_ENABLED = os.getenv("CONVERSATIONAL_MODE_ENABLED", "false").lower() == "true"
+CONVERSATIONAL_MODE_ENABLED = os.getenv("CONVERSATIONAL_MODE_ENABLED", "false").lower() in ("true", "1", "yes")
 
 # Canary percentage (0-100) for gradual rollout
-# Only applies if CONVERSATIONAL_MODE_ENABLED is True
+# 0 = 100% si activé, 1-99 = % des conv_id
 CONVERSATIONAL_CANARY_PERCENT = int(os.getenv("CONVERSATIONAL_CANARY_PERCENT", "0"))
+
+# Alias pour compatibilité
+CANARY_PERCENT = CONVERSATIONAL_CANARY_PERCENT
 
 # Minimum confidence threshold for LLM responses
 CONVERSATIONAL_MIN_CONFIDENCE = float(os.getenv("CONVERSATIONAL_MIN_CONFIDENCE", "0.75"))
+
+# ==============================
+# STT (nova-2-phonecall) — seuils et noise
+# ==============================
+# Surchargables via env (ex: NOISE_CONFIDENCE_THRESHOLD=0.35)
+STT_MODEL = os.getenv("STT_MODEL", "nova-2-phonecall")
+NOISE_CONFIDENCE_THRESHOLD = float(os.getenv("NOISE_CONFIDENCE_THRESHOLD", "0.35"))
+SHORT_TEXT_MIN_CONFIDENCE = float(os.getenv("SHORT_TEXT_MIN_CONFIDENCE", "0.50"))
+MIN_TEXT_LENGTH = int(os.getenv("MIN_TEXT_LENGTH", "5"))
+NOISE_COOLDOWN_SEC = float(os.getenv("NOISE_COOLDOWN_SEC", "2.0"))
+MAX_NOISE_BEFORE_ESCALATE = int(os.getenv("MAX_NOISE_BEFORE_ESCALATE", "3"))
+
+# Crosstalk (barge-in) : fenêtre après envoi réponse assistant pendant laquelle UNCLEAR = ignoré (pas d'escalade)
+# TTS peut durer 3–6 s ; si l'utilisateur parle pendant, on reste dans la fenêtre → pas transfert
+CROSSTALK_WINDOW_SEC = float(os.getenv("CROSSTALK_WINDOW_SEC", "5.0"))
+# Longueur max (car. bruts) pour considérer une entrée UNCLEAR comme crosstalk (ex. "euh", "attendez")
+CROSSTALK_MAX_RAW_LEN = int(os.getenv("CROSSTALK_MAX_RAW_LEN", "40"))
+
+# Overlap (user parle juste après envoi réponse agent) : UNCLEAR dans cette fenêtre = pas d'incrément unclear
+OVERLAP_WINDOW_SEC = float(os.getenv("OVERLAP_WINDOW_SEC", "1.2"))
+
+# === INTERRUPTION VOCALE (barge-in pendant énonciation des créneaux) ===
+VAPI_INTERRUPTION_ENABLED = os.getenv("VAPI_INTERRUPTION_ENABLED", "true").lower() in ("true", "1", "yes")
+VAPI_ENDPOINTING_MS = int(os.getenv("VAPI_ENDPOINTING_MS", "200"))  # Détection rapide fin de parole
+VAPI_FILLER_INJECTION = os.getenv("VAPI_FILLER_INJECTION", "false").lower() in ("true", "1", "yes")
+SLOT_ENUMERATION_TIMEOUT_SEC = int(os.getenv("SLOT_ENUMERATION_TIMEOUT_SEC", "15"))  # Max 15s pour énoncer 3 créneaux
+
+# ==============================
+# PHILOSOPHIE UWI : RETRY, PAS TRANSFERT SYSTÉMATIQUE
+# ==============================
+# Privilégier : reformulation, clarification, plusieurs tentatives par champ.
+# Éviter : transfert humain ou raccrochage dès la 1ère incompréhension.
+# Après N échecs sur un même champ → INTENT_ROUTER (menu 1/2/3/4), pas transfert direct.
+# Transfert uniquement : demande explicite de l'utilisateur (humain, quelqu'un) ou après menu.
+
+# Recovery IVR : limites par contexte (spec test-terrain)
+# Après N échecs sur un même champ → escalade INTENT_ROUTER (menu), pas transfert
+RECOVERY_LIMITS = {
+    "name": 2,
+    "slot_choice": 3,
+    "phone": 3,  # 3 tentatives pour dicter le numéro (vocal)
+    "silence": 3,  # RÈGLE 3 : 2 messages distincts + 3e => INTENT_ROUTER
+}
 
 
 # ==============================
@@ -56,13 +112,13 @@ def load_google_credentials():
     Ne JAMAIS appeler au module import.
     """
     global SERVICE_ACCOUNT_FILE, GOOGLE_CALENDAR_ID
-    
+
     # 1. Charge Calendar ID
     GOOGLE_CALENDAR_ID = os.getenv(
         "GOOGLE_CALENDAR_ID",
         "6fd8676f333bda53ea04d852eb72680d33dd567c7f286be401ed46d16b9f8659@group.calendar.google.com"  # Fallback hardcodé
     )
-    
+
     # 2. Charge Service Account base64
     b64 = os.getenv("GOOGLE_SERVICE_ACCOUNT_BASE64")
     if not b64:
@@ -73,22 +129,22 @@ def load_google_credentials():
             print(f"📁 Using local credentials: {local_path}")
             return
         raise RuntimeError("❌ GOOGLE_SERVICE_ACCOUNT_BASE64 missing at runtime")
-    
+
     # 3. Décode et écrit le fichier
     try:
         decoded = base64.b64decode(b64)
         path = "/tmp/service-account.json"
-        
+
         with open(path, "wb") as f:
             f.write(decoded)
-        
+
         SERVICE_ACCOUNT_FILE = path
-        
+
         # ✅ Logs sans données sensibles
         print(f"✅ Google credentials loaded at RUNTIME")
         print(f"   Service Account file: {path} ({len(decoded)} bytes)")
         print(f"   Calendar ID set: {bool(GOOGLE_CALENDAR_ID)}")
-        
+
     except Exception as e:
         raise RuntimeError(f"❌ Failed to decode credentials: {e}")
 

@@ -26,11 +26,12 @@ def test_session_expired_exact_wording():
 
 
 def test_transfer_exact_wording():
-    assert prompts.MSG_TRANSFER == "Je vous mets en relation avec un humain pour vous aider."
+    # P1.1 — "Un instant" remplace "Ne quittez pas" (registre professionnel-chaleureux)
+    assert prompts.MSG_TRANSFER == "Je vous transfère vers un conseiller. Un instant, s'il vous plaît."
 
 
 def test_already_transferred_exact_wording():
-    assert prompts.MSG_ALREADY_TRANSFERRED == "Vous avez été transféré à un humain. Quelqu'un va vous répondre sous peu."
+    assert prompts.MSG_ALREADY_TRANSFERRED == "Vous avez été transféré à un conseiller. Un instant, s'il vous plaît."
 
 
 def test_contact_invalid_exact_wording():
@@ -61,7 +62,7 @@ def test_no_match_faq_exact_wording():
     business = "Cabinet Dupont"
     expected = (
         "Je ne suis pas certain de pouvoir répondre précisément.\n"
-        "Puis-je vous mettre en relation avec Cabinet Dupont ?"
+        "Je peux vous mettre en relation avec Cabinet Dupont. Souhaitez-vous que je le fasse ?"
     )
     assert prompts.msg_no_match_faq(business) == expected
 
@@ -111,7 +112,7 @@ def test_booking_confirmed_format_is_exact():
         "\n"
         "📅 Date et heure : Mardi 15/01 - 14:00\n"
         "\n"
-        "À bientôt !"
+        "Merci. À très bientôt !"
     )
     assert out == expected
 
@@ -122,7 +123,7 @@ def test_booking_confirmed_with_name_and_motif():
     assert "📅 Date et heure : Mardi 15/01 - 14:00" in out
     assert "👤 Nom : Jean Dupont" in out
     assert "📋 Motif : Consultation" in out
-    assert "À bientôt !" in out
+    assert "À très bientôt" in out
 
 
 def test_all_prompts_are_strings_and_non_empty():
@@ -182,8 +183,10 @@ def test_booking_confirmed_includes_slot_label():
 # ----------------------------
 
 def test_vocal_qualif_questions_are_short():
-    """Les questions vocales doivent être courtes pour le TTS."""
+    """Les questions vocales doivent être courtes pour le TTS (motif désactivé = vide)."""
     for key, q in prompts.QUALIF_QUESTIONS_VOCAL.items():
+        if not q:
+            continue  # motif désactivé en vocal
         assert len(q) < 80, f"{key}: trop long pour le vocal (>80 chars)"
         assert "?" in q, f"{key}: doit contenir '?'"
 
@@ -198,7 +201,7 @@ def test_vocal_faq_response_no_source():
 
 
 def test_vocal_slot_proposal_is_natural():
-    """Le format vocal doit être naturel pour le TTS."""
+    """Le format vocal doit être naturel pour le TTS (un/deux/trois)."""
     slots = [
         prompts.SlotDisplay(idx=1, label="Mardi 10h", slot_id=101),
         prompts.SlotDisplay(idx=2, label="Mardi 14h", slot_id=102),
@@ -206,11 +209,8 @@ def test_vocal_slot_proposal_is_natural():
     ]
     out = prompts.format_slot_proposal(slots, channel="vocal")
     out_lower = out.lower()
-    # Doit contenir les mots naturels
-    assert "le un" in out_lower
-    assert "le deux" in out_lower
-    assert "le trois" in out_lower
-    # Ne doit pas contenir de formatage web
+    assert "un" in out_lower and "deux" in out_lower and "trois" in out_lower
+    assert "mardi 10h" in out_lower and "mardi 14h" in out_lower
     assert "Créneaux disponibles" not in out
     assert "oui 1" not in out_lower
 
@@ -228,18 +228,17 @@ def test_get_message_adapts_to_channel():
     """get_message retourne le bon message selon le canal."""
     # Vocal
     vocal_transfer = prompts.get_message("transfer", channel="vocal")
-    assert "passer quelqu'un" in vocal_transfer.lower()
-    
+    assert "conseiller" in vocal_transfer.lower()
     # Web
     web_transfer = prompts.get_message("transfer", channel="web")
-    assert "relation" in web_transfer.lower()
+    assert "conseiller" in web_transfer.lower() or "transfère" in web_transfer.lower()
 
 
 def test_get_qualif_question_adapts_to_channel():
     """get_qualif_question retourne la bonne question selon le canal."""
-    # Vocal - plus court
+    # Vocal - demande nom
     vocal_name = prompts.get_qualif_question("name", channel="vocal")
-    assert "quel nom" in vocal_name.lower()
+    assert "nom" in vocal_name.lower()
     
     # Web - plus formel
     web_name = prompts.get_qualif_question("name", channel="web")
@@ -248,10 +247,34 @@ def test_get_qualif_question_adapts_to_channel():
 
 def test_msg_no_match_faq_adapts_to_channel():
     """msg_no_match_faq retourne le bon message selon le canal."""
-    # Vocal - ton décontracté
+    # Vocal
     vocal = prompts.msg_no_match_faq("Cabinet Durand", channel="vocal")
-    assert "pas sûr" in vocal.lower()
+    assert "certain" in vocal.lower() or "mets en relation" in vocal.lower()
     
     # Web - plus formel
     web = prompts.msg_no_match_faq("Cabinet Durand", channel="web")
     assert "certain" in web.lower()
+
+
+def test_pick_ack_round_robin():
+    """pick_ack retourne les variantes en round-robin déterministe."""
+    assert prompts.pick_ack(0) == "Très bien."
+    assert prompts.pick_ack(1) == "D'accord."
+    assert prompts.pick_ack(2) == "Parfait."
+    assert prompts.pick_ack(3) == "Très bien."
+    assert prompts.pick_ack(4) == "D'accord."
+    assert prompts.pick_ack(5) == "Parfait."
+
+
+def test_qualif_with_name_ack_rotates():
+    """Deux appels successifs avec ack_index différent ne renvoient pas la même intro."""
+    q0 = prompts.get_qualif_question_with_name(
+        "pref", "Dupont", channel="vocal", ack_index=0
+    )
+    q1 = prompts.get_qualif_question_with_name(
+        "pref", "Dupont", channel="vocal", ack_index=1
+    )
+    # Préfixes différents (Très bien. vs D'accord.)
+    assert q0.startswith("Très bien.")
+    assert q1.startswith("D'accord.")
+    assert q0 != q1

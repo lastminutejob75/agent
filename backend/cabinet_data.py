@@ -1,43 +1,43 @@
 # backend/cabinet_data.py
 """
-Ground truth data for the cabinet (business).
-Single source of truth for business information.
-
-Used by conversational engine to inject verified data via placeholders.
+Données cabinet (ground truth) — noms de placeholders autorisés pour le mode conversationnel.
+Les réponses brutes restent dans FAQ store / prompts.py.
 """
-
 from __future__ import annotations
-from dataclasses import dataclass, field
+
+from dataclasses import dataclass
 from typing import Dict
+
+# Placeholders autorisés - mapping vers FAQ IDs
+FAQ_IDS_MAP_DEFAULT: Dict[str, str] = {
+    "{FAQ_HORAIRES}": "FAQ_HORAIRES",
+    "{FAQ_ADRESSE}": "FAQ_ADRESSE",
+    "{FAQ_TARIFS}": "FAQ_TARIFS",
+    "{FAQ_ACCES}": "FAQ_ACCES",
+    "{FAQ_CONTACT}": "FAQ_CONTACT",
+    "{FAQ_PAIEMENT}": "FAQ_PAIEMENT",
+    "{FAQ_ANNULATION}": "FAQ_ANNULATION",
+    "{FAQ_DUREE}": "FAQ_DUREE",
+}
 
 
 @dataclass(frozen=True)
 class CabinetData:
-    """
-    Ground truth business data.
+    business_name: str
+    business_type: str  # "cabinet medical"
+    faq_ids_map: Dict[str, str]  # placeholder -> faq_id
 
-    FAQ_IDS_MAP maps placeholders to FAQ IDs.
-    The actual answers are retrieved from FaqStore at runtime.
-    """
-    business_name: str = "Cabinet Dupont"
-    business_type: str = "cabinet médical"
-
-    # Mapping placeholder -> FAQ ID
-    # The conversational engine uses this to know which placeholders are valid
-    faq_ids_map: Dict[str, str] = field(default_factory=lambda: {
-        "{FAQ_HORAIRES}": "FAQ_HORAIRES",
-        "{FAQ_ADRESSE}": "FAQ_ADRESSE",
-        "{FAQ_TARIFS}": "FAQ_TARIFS",
-        "{FAQ_ACCES}": "FAQ_ACCES",
-        "{FAQ_CONTACT}": "FAQ_CONTACT",
-        "{FAQ_PAIEMENT}": "FAQ_PAIEMENT",
-        "{FAQ_ANNULATION}": "FAQ_ANNULATION",
-        "{FAQ_DUREE}": "FAQ_DUREE",
-    })
+    @classmethod
+    def default(cls, business_name: str = "Cabinet Dupont") -> "CabinetData":
+        return cls(
+            business_name=business_name,
+            business_type="cabinet médical",
+            faq_ids_map=dict(FAQ_IDS_MAP_DEFAULT),
+        )
 
 
-# Default instance for use across the application
-DEFAULT_CABINET_DATA = CabinetData()
+# Instance par défaut pour compatibilité
+DEFAULT_CABINET_DATA = CabinetData.default()
 
 
 def get_allowed_placeholders() -> set[str]:

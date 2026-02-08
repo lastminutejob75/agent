@@ -18,91 +18,91 @@ def test_vocal_confirmations_chiffres():
 
 
 def test_vocal_confirmations_mots():
-    """Test mots français"""
-    ok, idx = guards.validate_booking_confirm("un")
+    """Test mots français (channel vocal)"""
+    ok, idx = guards.validate_booking_confirm("un", channel="vocal")
     assert ok and idx == 1
 
-    ok, idx = guards.validate_booking_confirm("deux")
+    ok, idx = guards.validate_booking_confirm("deux", channel="vocal")
     assert ok and idx == 2
 
-    ok, idx = guards.validate_booking_confirm("trois")
+    ok, idx = guards.validate_booking_confirm("trois", channel="vocal")
     assert ok and idx == 3
 
 
 def test_vocal_confirmations_oui():
-    """Test avec 'oui'"""
-    ok, idx = guards.validate_booking_confirm("oui 1")
+    """Test avec 'oui' (channel vocal)"""
+    ok, idx = guards.validate_booking_confirm("oui 1", channel="vocal")
     assert ok and idx == 1
 
-    ok, idx = guards.validate_booking_confirm("oui deux")
+    ok, idx = guards.validate_booking_confirm("oui deux", channel="vocal")
     assert ok and idx == 2
 
-    ok, idx = guards.validate_booking_confirm("oui trois")
+    ok, idx = guards.validate_booking_confirm("oui trois", channel="vocal")
     assert ok and idx == 3
 
 
 def test_vocal_confirmations_variantes():
-    """Test variantes communes"""
-    ok, idx = guards.validate_booking_confirm("premier")
+    """Test variantes communes (channel vocal)"""
+    ok, idx = guards.validate_booking_confirm("premier", channel="vocal")
     assert ok and idx == 1
 
-    ok, idx = guards.validate_booking_confirm("le deuxième")
+    ok, idx = guards.validate_booking_confirm("le deuxième", channel="vocal")
     assert ok and idx == 2
 
-    ok, idx = guards.validate_booking_confirm("troisième")
+    ok, idx = guards.validate_booking_confirm("troisième", channel="vocal")
     assert ok and idx == 3
     
-    ok, idx = guards.validate_booking_confirm("le premier")
+    ok, idx = guards.validate_booking_confirm("le premier", channel="vocal")
     assert ok and idx == 1
     
-    ok, idx = guards.validate_booking_confirm("le troisième")
+    ok, idx = guards.validate_booking_confirm("le troisième", channel="vocal")
     assert ok and idx == 3
     
-    ok, idx = guards.validate_booking_confirm("1er")
+    ok, idx = guards.validate_booking_confirm("1er", channel="vocal")
     assert ok and idx == 1
     
-    ok, idx = guards.validate_booking_confirm("le 1")
+    ok, idx = guards.validate_booking_confirm("le 1", channel="vocal")
     assert ok and idx == 1
     
-    ok, idx = guards.validate_booking_confirm("le 2")
+    ok, idx = guards.validate_booking_confirm("le 2", channel="vocal")
     assert ok and idx == 2
     
-    ok, idx = guards.validate_booking_confirm("le 3")
+    ok, idx = guards.validate_booking_confirm("le 3", channel="vocal")
     assert ok and idx == 3
 
 
 def test_vocal_confirmations_invalides():
     """Test rejets"""
-    ok, idx = guards.validate_booking_confirm("mardi")
+    ok, idx = guards.validate_booking_confirm("mardi", channel="vocal")
     assert not ok
 
-    ok, idx = guards.validate_booking_confirm("d'accord")
+    ok, idx = guards.validate_booking_confirm("d'accord", channel="vocal")
     assert not ok
 
-    ok, idx = guards.validate_booking_confirm("oui")
+    ok, idx = guards.validate_booking_confirm("oui", channel="vocal")
     assert not ok
 
-    ok, idx = guards.validate_booking_confirm("le premier s'il vous plaît")
+    ok, idx = guards.validate_booking_confirm("le premier s'il vous plaît", channel="vocal")
     assert not ok  # Trop verbeux, pas dans mapping
     
-    ok, idx = guards.validate_booking_confirm("celui de mardi")
+    ok, idx = guards.validate_booking_confirm("celui de mardi", channel="vocal")
     assert not ok
 
 
 def test_vocal_confirmations_normalisation():
-    """Test normalisation ponctuation"""
-    ok, idx = guards.validate_booking_confirm("1.")
+    """Test normalisation ponctuation (channel vocal)"""
+    ok, idx = guards.validate_booking_confirm("1.", channel="vocal")
     assert ok and idx == 1
 
-    ok, idx = guards.validate_booking_confirm("deux!")
+    ok, idx = guards.validate_booking_confirm("deux!", channel="vocal")
     assert ok and idx == 2
 
-    ok, idx = guards.validate_booking_confirm("Oui, trois")
+    ok, idx = guards.validate_booking_confirm("Oui, trois", channel="vocal")
     assert ok and idx == 3
     
-    ok, idx = guards.validate_booking_confirm("premier.")
+    ok, idx = guards.validate_booking_confirm("premier.", channel="vocal")
     assert ok and idx == 1
     
-    ok, idx = guards.validate_booking_confirm("le deuxième!")
+    ok, idx = guards.validate_booking_confirm("le deuxième!", channel="vocal")
     assert ok and idx == 2
 

@@ -1,192 +1,123 @@
 # backend/llm_conversation.py
 """
-LLM Client interface for conversational mode.
-
-Provides an injectable interface for LLM completion.
-Includes a stub implementation for testing.
+Mode conversationnel LLM (START uniquement) : réponse naturelle avec placeholders,
+validation stricte, fallback FSM. Le LLM ne doit jamais écrire de faits en clair.
 """
-
 from __future__ import annotations
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
 
-from backend.cabinet_data import CabinetData, DEFAULT_CABINET_DATA
-from backend.placeholders import ALLOWED_PLACEHOLDERS, get_placeholder_system_instructions
+import json
+import logging
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Protocol
+
+from backend.cabinet_data import CabinetData
+from backend.placeholders import ALLOWED_PLACEHOLDERS
+from backend.response_validator import validate_conv_result, validate_llm_json
+
+logger = logging.getLogger(__name__)
+
+CONV_CONFIDENCE_THRESHOLD = 0.75
+CONV_RESPONSE_MAX_LEN = 280
 
 
 @dataclass
 class ConvResult:
-    """
-    Result from conversational LLM.
-
-    Attributes:
-        response_text: Natural response (may contain placeholders)
-        next_mode: Where to route next (FSM_BOOKING, FSM_FAQ, FSM_TRANSFER, FSM_FALLBACK)
-        extracted: Optional extracted entities (name, pref, contact)
-        confidence: Model's confidence in the response (0.0 to 1.0)
-        raw_output: Raw LLM output for debugging
-    """
+    """Result from conversational LLM."""
     response_text: str
-    next_mode: str
-    extracted: Optional[Dict[str, str]]
+    next_mode: str  # "FSM_BOOKING" | "FSM_FAQ" | "FSM_TRANSFER" | "FSM_FALLBACK"
+    extracted: Dict[str, Any]  # {name?, pref?, contact?} optionnel
     confidence: float
-    raw_output: str = ""
 
 
-class LLMClient(ABC):
-    """
-    Abstract interface for LLM completion.
-    Allows dependency injection for testing.
-    """
+class LLMConvClient(Protocol):
+    """Interface injectable pour complétion conversationnelle (JSON strict)."""
 
-    @abstractmethod
-    def complete(
-        self,
-        user_message: str,
-        conversation_history: List[Tuple[str, str]],
-        state: str,
-        cabinet_data: CabinetData,
-    ) -> str:
-        """
-        Generate a completion from the LLM.
-
-        Args:
-            user_message: Current user message
-            conversation_history: List of (role, text) tuples (max 6 turns)
-            state: Current conversation state (e.g., "START")
-            cabinet_data: Business information
-
-        Returns:
-            Raw JSON string from LLM
-        """
-        pass
+    def complete(self, system_prompt: str, user_prompt: str) -> str:
+        """Retourne une chaîne JSON brute (une seule ligne, pas de markdown)."""
+        ...
 
 
-class StubLLMClient(LLMClient):
-    """
-    Stub LLM client for testing.
-    Returns predefined responses based on input patterns.
-    """
+class StubLLMConvClient:
+    """Stub pour tests : retourne un JSON fixe ou configurable."""
 
-    def __init__(self, responses: Optional[Dict[str, str]] = None):
-        """
-        Initialize with optional predefined responses.
+    def __init__(self, fixed_response: Optional[str] = None):
+        self.fixed_response = fixed_response
 
-        Args:
-            responses: Dict mapping user message patterns to JSON responses
-        """
-        self._responses = responses or {}
-        self._default_response = """{
-  "response_text": "Bonjour ! Je suis l'assistant du {business_name}. Comment puis-je vous aider ?",
-  "next_mode": "FSM_FALLBACK",
-  "extracted": null,
-  "confidence": 0.85
-}"""
-
-    def set_response(self, pattern: str, response: str) -> None:
-        """Set a response for a message pattern."""
-        self._responses[pattern] = response
-
-    def set_default_response(self, response: str) -> None:
-        """Set the default response."""
-        self._default_response = response
-
-    def complete(
-        self,
-        user_message: str,
-        conversation_history: List[Tuple[str, str]],
-        state: str,
-        cabinet_data: CabinetData,
-    ) -> str:
-        """Return predefined response based on user message."""
-        msg_lower = user_message.lower()
-
-        # Check for pattern matches
-        for pattern, response in self._responses.items():
-            if pattern.lower() in msg_lower:
-                return response
-
-        return self._default_response
+    def complete(self, system_prompt: str, user_prompt: str) -> str:
+        if self.fixed_response is not None:
+            return self.fixed_response
+        return json.dumps({
+            "response_text": "Bonjour ! Je peux vous aider pour un rendez-vous ou une question. Souhaitez-vous prendre rendez-vous ?",
+            "next_mode": "FSM_BOOKING",
+            "extracted": {},
+            "confidence": 0.9,
+        }, ensure_ascii=False)
 
 
-def build_system_prompt(cabinet_data: CabinetData, state: str) -> str:
-    """
-    Build the system prompt for conversational mode.
-
-    Args:
-        cabinet_data: Business information
-        state: Current conversation state
-
-    Returns:
-        Complete system prompt string
-    """
+def _build_system_prompt(cabinet_data: CabinetData) -> str:
     placeholders_list = ", ".join(sorted(ALLOWED_PLACEHOLDERS))
+    return f"""You are a friendly receptionist for {cabinet_data.business_name} ({cabinet_data.business_type}).
+You answer in French, naturally and concisely (max {CONV_RESPONSE_MAX_LEN} characters for voice).
 
-    return f"""Tu es l'assistant vocal du {cabinet_data.business_name} ({cabinet_data.business_type}).
+CRITICAL OUTPUT CONSTRAINTS:
+- response_text MUST NOT contain any digits (0-9), currency symbols (€, $), or specific times/prices/addresses.
+- If factual info is needed, use placeholders ONLY: {placeholders_list}
+- NEVER promise availability. If user asks availability: ask to take an appointment via FSM.
+- NEVER give medical advice. If asked: refuse politely and propose booking or transfer.
 
-RÔLE:
-- Accueillir chaleureusement les appelants
-- Répondre aux questions simples via placeholders
-- Orienter vers la prise de rendez-vous
-- Transférer si hors scope
+Output format: Return ONLY valid JSON. No markdown. No extra text. Single line.
 
-ÉTAT ACTUEL: {state}
+Example:
+{{"response_text": "Bonjour ! Je peux vous aider. {{FAQ_HORAIRES}} Souhaitez-vous prendre rendez-vous ?", "next_mode": "FSM_FAQ", "extracted": {{}}, "confidence": 0.86}}
 
-{get_placeholder_system_instructions()}
-
-FORMAT DE SORTIE (JSON STRICT):
-Retourne UNIQUEMENT du JSON valide. Pas de markdown. Pas de texte avant/après.
-
-{{
-  "response_text": "Texte naturel avec {{FAQ_HORAIRES}} si besoin",
-  "next_mode": "FSM_BOOKING" | "FSM_FAQ" | "FSM_TRANSFER" | "FSM_FALLBACK",
-  "extracted": {{"name": "..."}},  // ou null
-  "confidence": 0.85
-}}
-
-RÈGLES DE ROUTAGE (next_mode):
-- FSM_BOOKING: Si l'utilisateur veut un rendez-vous
-- FSM_FAQ: Si question simple répondue par placeholder
-- FSM_TRANSFER: Si hors scope, médical, ou complexe
-- FSM_FALLBACK: Si incertain
-
-TON:
-- Naturel, chaleureux, parisien
-- Phrases courtes (max 280 caractères)
-- Jamais de chiffres dans response_text
-"""
+Allowed next_mode: FSM_BOOKING, FSM_FAQ, FSM_TRANSFER, FSM_FALLBACK.
+extracted: optional {{"name": "...", "pref": "...", "contact": "..."}} if you can infer from user message."""
 
 
-def build_user_prompt(
-    user_message: str,
-    conversation_history: List[Tuple[str, str]],
-    max_history: int = 6,
+def _build_user_prompt(
+    state: str,
+    user_text: str,
+    history: List[Dict[str, str]],
 ) -> str:
+    lines = [f"state: {state}", f"user: {user_text}"]
+    if history:
+        lines.append("recent turns:")
+        for h in history[-6:]:
+            lines.append(f"  {h.get('role', '?')}: {h.get('text', '')[:100]}")
+    return "\n".join(lines)
+
+
+def complete_conversation(
+    cabinet_data: CabinetData,
+    state: str,
+    user_text: str,
+    history: List[Dict[str, str]],
+    client: LLMConvClient,
+) -> Optional[ConvResult]:
     """
-    Build the user prompt including conversation history.
-
-    Args:
-        user_message: Current user message
-        conversation_history: List of (role, text) tuples
-        max_history: Maximum number of history turns to include
-
-    Returns:
-        User prompt string
+    Appelle le LLM, parse le JSON, valide ConvResult.
+    Retourne ConvResult si valide, None sinon (fallback FSM).
     """
-    parts = []
-
-    # Add recent history
-    recent = conversation_history[-max_history:] if len(conversation_history) > max_history else conversation_history
-    if recent:
-        parts.append("Historique récent:")
-        for role, text in recent:
-            speaker = "Utilisateur" if role == "user" else "Assistant"
-            parts.append(f"- {speaker}: {text[:100]}...")
-        parts.append("")
-
-    parts.append(f"Message actuel: {user_message}")
-    parts.append("")
-    parts.append("Réponds en JSON uniquement.")
-
-    return "\n".join(parts)
+    system = _build_system_prompt(cabinet_data)
+    user = _build_user_prompt(state, user_text, history)
+    try:
+        raw = client.complete(system, user)
+    except Exception as e:
+        logger.warning("llm_conversation complete error: %s", e)
+        return None
+    data = validate_llm_json(raw)
+    if not data:
+        logger.info("llm_conversation: invalid JSON, fallback FSM")
+        return None
+    if not validate_conv_result(data):
+        logger.info("llm_conversation: validation failed (digits/forbidden/placeholder), fallback FSM")
+        return None
+    extracted = data.get("extracted") or {}
+    if not isinstance(extracted, dict):
+        extracted = {}
+    return ConvResult(
+        response_text=data["response_text"],
+        next_mode=data["next_mode"],
+        extracted=extracted,
+        confidence=float(data["confidence"]),
+    )

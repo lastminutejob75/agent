@@ -18,6 +18,58 @@ def get_conn() -> sqlite3.Connection:
     return conn
 
 
+def _ensure_ivr_tables(conn: sqlite3.Connection) -> None:
+    """Crée les tables ivr_events et calls si absentes (rapport quotidien IVR)."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS calls (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            client_id INTEGER NOT NULL,
+            call_id TEXT NOT NULL,
+            outcome TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ivr_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            client_id INTEGER NOT NULL,
+            call_id TEXT,
+            event TEXT NOT NULL,
+            context TEXT,
+            reason TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ivr_events_client_date ON ivr_events(client_id, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ivr_events_client_event_date ON ivr_events(client_id, event, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_calls_client_date ON calls(client_id, created_at)")
+
+
+def create_ivr_event(
+    client_id: int,
+    call_id: str,
+    event: str,
+    context: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> None:
+    """
+    Insertion simple dans ivr_events (persistance pour rapport quotidien).
+    Noms canoniques: booking_confirmed, transfer_human, abandon, intent_router_trigger,
+    recovery_step, anti_loop_trigger, empty_message.
+    """
+    conn = get_conn()
+    try:
+        _ensure_ivr_tables(conn)
+        conn.execute(
+            """INSERT INTO ivr_events (client_id, call_id, event, context, reason)
+               VALUES (?, ?, ?, ?, ?)""",
+            (client_id, call_id or "", event, context or None, reason or None),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def init_db(days: int = 7) -> None:
     conn = get_conn()
     try:
@@ -42,6 +94,7 @@ def init_db(days: int = 7) -> None:
                 FOREIGN KEY(slot_id) REFERENCES slots(id)
             )
         """)
+        _ensure_ivr_tables(conn)
         
         # Seed slots (SKIP WEEKENDS)
         for day in range(1, days + 1):
@@ -142,22 +195,33 @@ def count_free_slots(limit: int = 1000) -> int:
         conn.close()
 
 
-def list_free_slots(limit: int = 3) -> List[Dict]:
-    # Nettoyer et régénérer si nécessaire
+def list_free_slots(limit: int = 3, pref: Optional[str] = None) -> List[Dict]:
+    """
+    Liste les créneaux libres.
+    pref: "matin" (avant 12h), "après-midi" (14h-18h), "soir" (>=18h) — filtre pour cohérence avec la préférence user.
+    """
     cleanup_old_slots()
-    
     conn = get_conn()
     try:
         today = datetime.now().strftime("%Y-%m-%d")
+        # Filtre horaire selon préférence (éviter 10h quand user a dit "je finis à 17h")
+        time_condition = ""
+        if pref == "matin":
+            time_condition = " AND time < '12:00'"
+        elif pref == "après-midi":
+            time_condition = " AND time >= '14:00' AND time < '18:00'"
+        elif pref == "soir":
+            time_condition = " AND time >= '18:00'"
+        params = (today, limit)
         cur = conn.execute(
-            """
+            f"""
             SELECT id, date, time 
             FROM slots 
-            WHERE is_booked=0 AND date >= ? 
+            WHERE is_booked=0 AND date >= ?{time_condition}
             ORDER BY date ASC, time ASC 
             LIMIT ?
             """,
-            (today, limit)
+            params
         )
         out = []
         for r in cur.fetchall():
@@ -201,5 +265,270 @@ def book_slot_atomic(
     except Exception:
         conn.rollback()
         raise
+    finally:
+        conn.close()
+
+
+def find_booking_by_name(name: str) -> Optional[Dict]:
+    """
+    Recherche un RDV SQLite par nom du patient (insensible à la casse).
+    Returns:
+        Dict avec id (appointment id), slot_id, date, time, name, contact, contact_type, motif
+        ou None si non trouvé.
+    """
+    if not name or not name.strip():
+        return None
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            """
+            SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif, s.date, s.time
+            FROM appointments a
+            JOIN slots s ON s.id = a.slot_id
+            WHERE LOWER(TRIM(a.name)) = LOWER(TRIM(?))
+            ORDER BY a.created_at DESC
+            LIMIT 1
+            """,
+            (name.strip(),),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "slot_id": row["slot_id"],
+            "name": row["name"],
+            "contact": row["contact"],
+            "contact_type": row["contact_type"],
+            "motif": row["motif"],
+            "date": row["date"],
+            "time": row["time"],
+        }
+    finally:
+        conn.close()
+
+
+def cancel_booking_sqlite(booking: Dict) -> bool:
+    """
+    Annule un RDV SQLite : supprime l'appointment et libère le slot.
+    booking doit contenir au moins slot_id (ou id de l'appointment).
+    Returns True si annulation effectuée.
+    """
+    slot_id = booking.get("slot_id")
+    appt_id = booking.get("id")
+    conn = get_conn()
+    try:
+        conn.execute("BEGIN")
+        if slot_id is not None:
+            conn.execute("DELETE FROM appointments WHERE slot_id = ?", (slot_id,))
+        elif appt_id is not None:
+            cur = conn.execute("SELECT slot_id FROM appointments WHERE id = ?", (appt_id,))
+            r = cur.fetchone()
+            if not r:
+                conn.rollback()
+                return False
+            slot_id = r["slot_id"]
+            conn.execute("DELETE FROM appointments WHERE id = ?", (appt_id,))
+        else:
+            conn.rollback()
+            return False
+        if conn.total_changes == 0:
+            conn.rollback()
+            return False
+        conn.execute("UPDATE slots SET is_booked = 0 WHERE id = ?", (slot_id,))
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def get_daily_report_data(client_id: int, date_str: str) -> Dict:
+    """
+    Métriques IVR pour le rapport quotidien (email).
+    Source: ivr_events + calls uniquement (pas appointments: pas de client_id/status).
+    Booked = event 'booking_confirmed' dans ivr_events.
+
+    date_str: "YYYY-MM-DD"
+    Fenêtre: [day 00:00:00, day+1 00:00:00) pour éviter les soucis de format ISO.
+
+    Events attendus (à persister depuis l'engine): booking_confirmed, recovery_step,
+    intent_router_trigger, anti_loop_trigger, empty_message, transfer/transferred/transfer_human,
+    abandon/hangup/user_hangup.
+    """
+    conn = get_conn()
+    try:
+        _ensure_ivr_tables(conn)
+        day = date_str[:10]
+        start_ts = day + " 00:00:00"
+
+        # 1) Calls total (par client)
+        cur = conn.execute(
+            """SELECT COUNT(*) AS calls_total
+               FROM calls
+               WHERE client_id = ?
+                 AND created_at >= ?
+                 AND created_at < datetime(? || ' 00:00:00', '+1 day')""",
+            (client_id, start_ts, day),
+        )
+        row = cur.fetchone()
+        calls_total = row["calls_total"] or 0
+
+        # 2) Booked / Transfers / Abandons (ivr_events)
+        cur = conn.execute(
+            """SELECT COUNT(*) AS booked
+               FROM ivr_events
+               WHERE client_id = ? AND event = 'booking_confirmed'
+                 AND created_at >= ? AND created_at < datetime(? || ' 00:00:00', '+1 day')""",
+            (client_id, start_ts, day),
+        )
+        booked = cur.fetchone()["booked"] or 0
+
+        cur = conn.execute(
+            """SELECT COUNT(*) AS transfers
+               FROM ivr_events
+               WHERE client_id = ? AND event IN ('transfer', 'transferred', 'transfer_human')
+                 AND created_at >= ? AND created_at < datetime(? || ' 00:00:00', '+1 day')""",
+            (client_id, start_ts, day),
+        )
+        transfers = cur.fetchone()["transfers"] or 0
+
+        cur = conn.execute(
+            """SELECT COUNT(*) AS abandons
+               FROM ivr_events
+               WHERE client_id = ? AND event IN ('abandon', 'hangup', 'user_hangup')
+                 AND created_at >= ? AND created_at < datetime(? || ' 00:00:00', '+1 day')""",
+            (client_id, start_ts, day),
+        )
+        abandons = cur.fetchone()["abandons"] or 0
+
+        # 3) Santé agent: intent_router / recovery / anti_loop (une requête)
+        cur = conn.execute(
+            """SELECT
+                 SUM(CASE WHEN event = 'intent_router_trigger' THEN 1 ELSE 0 END) AS intent_router_count,
+                 SUM(CASE WHEN event = 'recovery_step'         THEN 1 ELSE 0 END) AS recovery_count,
+                 SUM(CASE WHEN event = 'anti_loop_trigger'   THEN 1 ELSE 0 END) AS anti_loop_count
+               FROM ivr_events
+               WHERE client_id = ?
+                 AND created_at >= ? AND created_at < datetime(? || ' 00:00:00', '+1 day')""",
+            (client_id, start_ts, day),
+        )
+        r = cur.fetchone()
+        intent_router_count = r["intent_router_count"] or 0
+        recovery_count = r["recovery_count"] or 0
+        anti_loop_count = r["anti_loop_count"] or 0
+
+        # 4) Silences répétés (empty_message >= 2 dans un call)
+        cur = conn.execute(
+            """SELECT COUNT(*) AS silent_calls
+               FROM (
+                 SELECT call_id
+                 FROM ivr_events
+                 WHERE client_id = ? AND event = 'empty_message'
+                   AND created_at >= ? AND created_at < datetime(? || ' 00:00:00', '+1 day')
+                   AND call_id IS NOT NULL AND call_id != ''
+                 GROUP BY call_id
+                 HAVING COUNT(*) >= 2
+               ) t""",
+            (client_id, start_ts, day),
+        )
+        empty_silence_calls = cur.fetchone()["silent_calls"] or 0
+
+        # 5) Top 3 contexts (recovery_step)
+        cur = conn.execute(
+            """SELECT COALESCE(context, 'unknown') AS context, COUNT(*) AS cnt
+               FROM ivr_events
+               WHERE client_id = ? AND event = 'recovery_step'
+                 AND created_at >= ? AND created_at < datetime(? || ' 00:00:00', '+1 day')
+               GROUP BY COALESCE(context, 'unknown')
+               ORDER BY cnt DESC
+               LIMIT 3""",
+            (client_id, start_ts, day),
+        )
+        top_contexts = [{"context": row["context"], "count": row["cnt"]} for row in cur.fetchall()]
+
+        # 6) Qualité booking: direct / after recovery / after intent_router
+        cur = conn.execute(
+            """SELECT COUNT(*) AS direct_booking
+               FROM (
+                 SELECT DISTINCT e.call_id
+                 FROM ivr_events e
+                 WHERE e.client_id = ? AND e.event = 'booking_confirmed'
+                   AND e.created_at >= ? AND e.created_at < datetime(? || ' 00:00:00', '+1 day')
+                   AND e.call_id IS NOT NULL AND e.call_id != ''
+                   AND NOT EXISTS (
+                     SELECT 1 FROM ivr_events r
+                     WHERE r.client_id = e.client_id AND r.call_id = e.call_id AND r.event = 'recovery_step'
+                   )
+                   AND NOT EXISTS (
+                     SELECT 1 FROM ivr_events ir
+                     WHERE ir.client_id = e.client_id AND ir.call_id = e.call_id AND ir.event = 'intent_router_trigger'
+                   )
+               ) t""",
+            (client_id, start_ts, day),
+        )
+        direct_booking = cur.fetchone()["direct_booking"] or 0
+
+        cur = conn.execute(
+            """SELECT COUNT(*) AS booking_after_recovery
+               FROM (
+                 SELECT DISTINCT e.call_id
+                 FROM ivr_events e
+                 WHERE e.client_id = ? AND e.event = 'booking_confirmed'
+                   AND e.created_at >= ? AND e.created_at < datetime(? || ' 00:00:00', '+1 day')
+                   AND e.call_id IS NOT NULL AND e.call_id != ''
+                   AND EXISTS (
+                     SELECT 1 FROM ivr_events r
+                     WHERE r.client_id = e.client_id AND r.call_id = e.call_id AND r.event = 'recovery_step'
+                   )
+               ) t""",
+            (client_id, start_ts, day),
+        )
+        booking_after_recovery = cur.fetchone()["booking_after_recovery"] or 0
+
+        cur = conn.execute(
+            """SELECT COUNT(*) AS booking_after_intent_router
+               FROM (
+                 SELECT DISTINCT e.call_id
+                 FROM ivr_events e
+                 WHERE e.client_id = ? AND e.event = 'booking_confirmed'
+                   AND e.created_at >= ? AND e.created_at < datetime(? || ' 00:00:00', '+1 day')
+                   AND e.call_id IS NOT NULL AND e.call_id != ''
+                   AND EXISTS (
+                     SELECT 1 FROM ivr_events ir
+                     WHERE ir.client_id = e.client_id AND ir.call_id = e.call_id AND ir.event = 'intent_router_trigger'
+                   )
+               ) t""",
+            (client_id, start_ts, day),
+        )
+        booking_after_intent_router = cur.fetchone()["booking_after_intent_router"] or 0
+
+        # Total events (pour footer debug admin)
+        cur = conn.execute(
+            """SELECT COUNT(*) AS events_count
+               FROM ivr_events
+               WHERE client_id = ?
+                 AND created_at >= ? AND created_at < datetime(? || ' 00:00:00', '+1 day')""",
+            (client_id, start_ts, day),
+        )
+        events_count = cur.fetchone()["events_count"] or 0
+
+        return {
+            "calls_total": calls_total,
+            "booked": booked,
+            "transfers": transfers,
+            "abandons": abandons,
+            "intent_router_count": intent_router_count,
+            "recovery_count": recovery_count,
+            "anti_loop_count": anti_loop_count,
+            "empty_silence_calls": empty_silence_calls,
+            "top_contexts": top_contexts,
+            "direct_booking": direct_booking,
+            "booking_after_recovery": booking_after_recovery,
+            "booking_after_intent_router": booking_after_intent_router,
+            "events_count": events_count,
+        }
     finally:
         conn.close()

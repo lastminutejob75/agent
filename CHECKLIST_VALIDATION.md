@@ -89,3 +89,40 @@ pytest tests/test_niveau1.py -v
 - `tests/test_niveau1.py` créé (10 scénarios Niveau 1).
 
 **Commande :** `pytest tests/test_niveau1.py -v` pour valider.
+
+---
+
+## Validation manuelle pré-prod — patch REPEAT / YES-NO contextualisé
+
+Avant de considérer le patch comme prêt pour la prod, 3 appels manuels recommandés :
+
+| # | Scénario | Attendu |
+|---|----------|---------|
+| 1 | **Transfert → « répétez »** | Message de transfert relu (conseiller / relation / transfère), pas la clôture. |
+| 2 | **Slot offert → « répétez » → « non » → slot suivant** | Répétition du créneau proposé, puis refus → proposition du slot suivant (ou menu). |
+| 3 | **START « oui »** | Clarification (pas de prise de RDV directe). |
+
+Si ces 3 cas se passent bien, le patch peut être considéré prêt.
+
+**Batterie complète (8 phrases STT) :** voir [docs/BATTERIE_STT_FINALE.md](docs/BATTERIE_STT_FINALE.md) — à rejouer dans l’ordre, en vocal si possible, pour valider REPEAT, YES/NO contextualisé, router et slots séquentiels.
+
+**En cas d’échec sur un scénario :** noter state au moment du souci + phrase STT transcrite + réponse agent → ajustement ciblé sans casser les tests (voir fin de `docs/BATTERIE_STT_FINALE.md`).
+
+---
+
+## Micro-recos prod (implémentées)
+
+- **Log structuré par tour (debug)** : à chaque tour, `logger.debug("[TURN] conv_id=... turn_count=... state_before=... intent_detected=... strong_intent=... state_after=... last_say_key=...")`. Activer en prod avec niveau log DEBUG pour diagnostiquer un appel sans rejeu.
+- **Guard anti-boucle filler** : si `start_unclear_count >= 3` et le message utilisateur est encore un filler (euh, hein, hum), transfert direct avec message dédié (« Je ne vous entends pas bien. Je vous passe un conseiller. ») au lieu d’INTENT_ROUTER.
+
+---
+
+## Déploiement / monitoring (conseils non bloquants)
+
+- **DEBUG en prod** : activer le niveau DEBUG seulement sur une **fenêtre courte** (ex. 5 min) ou sur **quelques conv_id** ciblés, sinon les logs sont noyés.
+- **Métriques à surveiller au début** :
+  - **taux de TRANSFERRED** ;
+  - **taux de CONFIRMED** (booking ou FAQ terminée) ;
+  - **top 5 des states où ça décroche** (via `state_before` dans le log TURN).
+- **LLM Assist (canary)** : activer `LLM_ASSIST_ENABLED=true` sur 1 numéro ou ~5 % des conv_id, puis mesurer l’impact sur CONFIRMED, TRANSFERRED et la baisse des boucles START.
+  - **Recommandation** : démarrer par **1 numéro pendant 24–48 h** (lecture humaine facile), puis passer à **~5 % conv_id** si tout est stable. Premiers chiffres/logs → lecture rapide puis décision : élargir ou ajuster prompt/threshold.

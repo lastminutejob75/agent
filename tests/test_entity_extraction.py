@@ -216,25 +216,24 @@ class TestExtractEntities:
 # ============================================
 
 class TestGetMissingFields:
-    """Tests pour get_missing_fields."""
+    """Tests pour get_missing_fields (défaut: skip_motif=True → name, pref, contact)."""
     
     def test_all_missing(self):
-        """Tous les champs manquent."""
+        """Tous les champs manquent (ordre par défaut: name, pref, contact)."""
         context = {}
         missing = get_missing_fields(context)
-        assert missing == ["name", "motif", "pref", "contact"]
+        assert missing == ["name", "pref", "contact"]
     
     def test_some_filled(self):
         """Certains champs remplis."""
-        context = {"name": "Jean Dupont", "motif": "contrôle"}
+        context = {"name": "Jean Dupont", "pref": "matin"}
         missing = get_missing_fields(context)
-        assert missing == ["pref", "contact"]
+        assert missing == ["contact"]
     
     def test_all_filled(self):
-        """Tous les champs remplis."""
+        """Tous les champs remplis (name, pref, contact)."""
         context = {
             "name": "Jean Dupont",
-            "motif": "contrôle",
             "pref": "matin",
             "contact": "0612345678",
         }
@@ -243,19 +242,18 @@ class TestGetMissingFields:
 
 
 class TestGetNextMissingField:
-    """Tests pour get_next_missing_field."""
+    """Tests pour get_next_missing_field (défaut: skip_motif=True)."""
     
     def test_first_missing(self):
-        """Retourne le premier champ manquant."""
+        """Retourne le premier champ manquant (name → pref → contact)."""
         assert get_next_missing_field({}) == "name"
-        assert get_next_missing_field({"name": "Jean"}) == "motif"
-        assert get_next_missing_field({"name": "Jean", "motif": "contrôle"}) == "pref"
+        assert get_next_missing_field({"name": "Jean"}) == "pref"
+        assert get_next_missing_field({"name": "Jean", "pref": "matin"}) == "contact"
     
     def test_none_missing(self):
         """Retourne None si tout est rempli."""
         context = {
             "name": "Jean",
-            "motif": "contrôle",
             "pref": "matin",
             "contact": "email@test.com",
         }

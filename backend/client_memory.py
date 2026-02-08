@@ -404,19 +404,17 @@ class ClientMemory:
         if not client or client.total_bookings == 0:
             return None
         
-        # Extraire le prénom
-        first_name = client.name.split()[0] if client.name else ""
-        
+        # Pas de prénom ; marqueur de reconnaissance pour client connu
         # Greeting selon le dernier motif
         if client.last_motif:
             if channel == "vocal":
-                return f"Rebonjour {first_name} ! Toujours pour {client.last_motif} ?"
-            return f"Bonjour {first_name} ! Vous souhaitez prendre un nouveau rendez-vous pour {client.last_motif} ?"
+                return f"Rebonjour. Je vous retrouve. Toujours pour {client.last_motif} ?"
+            return f"Bonjour ! Vous souhaitez prendre un nouveau rendez-vous pour {client.last_motif} ?"
         
-        # Greeting générique
+        # Greeting générique avec reconnaissance
         if channel == "vocal":
-            return f"Rebonjour {first_name} ! Qu'est-ce que je peux faire pour vous ?"
-        return f"Bonjour {first_name} ! Comment puis-je vous aider ?"
+            return "Rebonjour. Je vous retrouve, comment puis-je vous aider ?"
+        return "Bonjour ! Comment puis-je vous aider ?"
     
     def get_preferred_time_suggestion(self, client: Client) -> Optional[str]:
         """
@@ -438,6 +436,24 @@ class ClientMemory:
         
         return None
     
+    # ============================================
+    # Rapports quotidiens (clients avec email)
+    # ============================================
+
+    def get_clients_with_email(self) -> List[tuple]:
+        """
+        Liste des clients ayant un email (pour envoi rapport quotidien).
+        Returns: List[(id, name, email), ...]
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, name, email FROM clients WHERE email IS NOT NULL AND email != ''"
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        return [(r[0], r[1], r[2]) for r in rows]
+
     # ============================================
     # Stats pour rapports
     # ============================================

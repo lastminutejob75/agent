@@ -1,4 +1,5 @@
 # Core
+python-dotenv==1.0.0
 fastapi==0.109.0
 uvicorn[standard]==0.27.0
 python-multipart==0.0.6
@@ -8,6 +9,9 @@ sse-starlette==1.8.2
 
 # RAG
 rapidfuzz==3.6.1
+
+# LLM Assist (zone grise START, optionnel)
+anthropic>=0.39.0
 
 # DB (SQLite standard library - no external dependency needed)
 

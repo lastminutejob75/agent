@@ -1,11 +1,22 @@
 # backend/main.py
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
+# Charger .env à la racine du projet (pour ANTHROPIC_API_KEY, LLM_ASSIST_ENABLED, etc.)
+_env_path = Path(__file__).resolve().parent.parent / ".env"
+if _env_path.exists():
+    from dotenv import load_dotenv
+    load_dotenv(_env_path)
+
 import asyncio
 import json
+import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Optional, Any
+import sqlite3
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import StreamingResponse, RedirectResponse
@@ -15,15 +26,31 @@ from backend.engine import ENGINE, Event
 import backend.config as config  # Import du MODULE (pas from import)
 from backend.db import init_db, list_free_slots, count_free_slots
 # Nouvelle architecture multi-canal
-from backend.routes import voice, whatsapp, bland
+from backend.routes import voice, whatsapp, bland, reports
 
 app = FastAPI()
+_logger = logging.getLogger(__name__)
+
+
+@app.middleware("http")
+async def log_vapi_requests(request: Request, call_next):
+    """Log path + status_code pour toute requête /api/vapi/* (sans body)."""
+    if not request.url.path.startswith("/api/vapi/"):
+        return await call_next(request)
+    response = await call_next(request)
+    _logger.info(
+        "vapi_request",
+        extra={"path": request.url.path, "method": request.method, "status_code": response.status_code},
+    )
+    return response
+
 
 # Routers (avant les mounts pour éviter les conflits)
 # Utilise la nouvelle architecture multi-canal
 app.include_router(voice.router)      # /api/vapi/*
 app.include_router(whatsapp.router)   # /api/whatsapp/*
 app.include_router(bland.router)      # /api/bland/*
+app.include_router(reports.router)    # /api/reports/*
 
 # Static frontend (optionnel - peut ne pas exister)
 try:
@@ -81,6 +108,8 @@ async def startup():
     print(f"RAILWAY_ENVIRONMENT present: {bool(os.getenv('RAILWAY_ENVIRONMENT'))}")
     print(f"GOOGLE_SERVICE_ACCOUNT_BASE64 present: {bool(os.getenv('GOOGLE_SERVICE_ACCOUNT_BASE64'))}")
     print(f"GOOGLE_CALENDAR_ID present: {bool(os.getenv('GOOGLE_CALENDAR_ID'))}")
+    print(f"LLM_ASSIST_ENABLED: {os.getenv('LLM_ASSIST_ENABLED', 'non défini')}")
+    print(f"ANTHROPIC_API_KEY present: {bool(os.getenv('ANTHROPIC_API_KEY'))}")
     print("="*60 + "\n")
     
     # Charge les credentials
@@ -191,14 +220,74 @@ async def debug_env_vars():
     all_keys = sorted(list(os.environ.keys()))
     google_keys = sorted([k for k in all_keys if "GOOGLE" in k])
     
+    llm_enabled = (os.getenv("LLM_ASSIST_ENABLED") or "").lower() == "true"
+    anthropic_key_set = bool(os.getenv("ANTHROPIC_API_KEY"))
     return {
         "env_count": len(all_keys),
-        "sample_keys": all_keys[:25],  # Premiers 25 pour diagnostic
+        "sample_keys": all_keys[:25],
         "google_keys": google_keys,
         "google_values_present": {k: bool(os.environ.get(k)) for k in google_keys},
         "port_present": bool(os.getenv("PORT")),
         "railway_env_present": bool(os.getenv("RAILWAY_ENVIRONMENT")),
+        "llm_assist_enabled": llm_enabled,
+        "anthropic_api_key_set": anthropic_key_set,
+        "llm_ready": llm_enabled and anthropic_key_set,
     }
+
+
+@app.get("/api/stats/bookings")
+async def get_booking_stats() -> dict:
+    """Stats des RDV des dernières 24h (sessions par état final)."""
+    try:
+        db_path = getattr(
+            getattr(ENGINE, "session_store", None), "db_path", "sessions.db"
+        )
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        yesterday = (datetime.utcnow() - timedelta(days=1)).isoformat()
+        cursor.execute(
+            """
+            SELECT
+                COUNT(*) AS total_sessions,
+                SUM(CASE WHEN state = 'CONFIRMED' THEN 1 ELSE 0 END) AS confirmed,
+                SUM(CASE WHEN state = 'TRANSFERRED' THEN 1 ELSE 0 END) AS transferred,
+                SUM(CASE WHEN state = 'INTENT_ROUTER' THEN 1 ELSE 0 END) AS router
+            FROM sessions
+            WHERE last_seen_at >= ?
+            """,
+            (yesterday,),
+        )
+        row = cursor.fetchone()
+        conn.close()
+        total = row[0] or 0
+        confirmed = row[1] or 0
+        transferred = row[2] or 0
+        router = row[3] or 0
+        return {
+            "period": "24h",
+            "total_sessions": total,
+            "confirmed_bookings": confirmed,
+            "transferred": transferred,
+            "intent_router": router,
+            "conversion_rate": round(confirmed / total * 100, 1) if total > 0 else 0,
+            "abandon_rate": round(
+                (total - confirmed - transferred) / total * 100, 1
+            )
+            if total > 0
+            else 0,
+        }
+    except Exception as e:
+        _logger.exception("get_booking_stats failed: %s", e)
+        return {
+            "period": "24h",
+            "total_sessions": 0,
+            "confirmed_bookings": 0,
+            "transferred": 0,
+            "intent_router": 0,
+            "conversion_rate": 0,
+            "abandon_rate": 0,
+            "error": str(e),
+        }
 
 
 @app.get("/health")
@@ -211,14 +300,21 @@ async def health() -> dict:
     except Exception:
         free_slots = -1
     
+    # Credentials: chargés depuis base64 (Railway) ou fichier local (dev)
+    service_account_file = config.SERVICE_ACCOUNT_FILE
+    file_exists = bool(service_account_file and os.path.exists(service_account_file))
+    has_base64_env = bool(os.getenv("GOOGLE_SERVICE_ACCOUNT_BASE64"))
+    
     return {
         "status": "ok",
         "streams": len(STREAMS),
         "free_slots": free_slots,
-        "service_account_file": config.SERVICE_ACCOUNT_FILE,
-        "file_exists": bool(config.SERVICE_ACCOUNT_FILE and os.path.exists(config.SERVICE_ACCOUNT_FILE)),
+        "service_account_file": service_account_file,
+        "file_exists": file_exists,
+        "credentials_loaded": file_exists,
         "calendar_id_set": bool(config.GOOGLE_CALENDAR_ID),
-        "runtime_env_count": len(os.environ)
+        "google_base64_set": has_base64_env,
+        "runtime_env_count": len(os.environ),
     }
 
 

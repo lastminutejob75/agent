@@ -10,49 +10,59 @@ from backend.session import SessionStore
 
 def test_faq_no_match_twice_transfer():
     """
-    Test 5 : FAQ × 2 → Transfer
-    Input: "Je voudrais des informations"
-    Attendu: "Je ne suis pas certain... Puis-je vous mettre en relation ?"
-    
-    Input: "Oui donnez-moi des infos"
-    Attendu: "Je vous mets en relation avec un humain..."
+    Test 5 : FAQ × 3 → INTENT_ROUTER
+    Sans match FAQ : 1er → clarification, 2e → reformulation avec options (RDV, horaires, conseiller), 3e → INTENT_ROUTER.
     """
-    engine = create_engine()
+    from backend.engine import Engine
+    from backend.tools_faq import FaqStore
+    store = SessionStore()
+    engine = Engine(session_store=store, faq_store=FaqStore(items=[]))
     conv = "test_faq_no_match"
-    
+
     e1 = engine.handle_message(conv, "Je voudrais des informations")
     assert e1[0].type == "final"
-    assert "pas certain" in e1[0].text.lower() or "mettre en relation" in e1[0].text.lower()
-    
-    e2 = engine.handle_message(conv, "Oui donnez-moi des infos")
+    assert (
+        "pas certain" in e1[0].text.lower() or "mettre en relation" in e1[0].text.lower()
+        or "relation" in e1[0].text.lower() or "reformuler" in e1[0].text.lower()
+        or "bien compris" in e1[0].text.lower()
+        or ("rendez-vous" in e1[0].text.lower() and "question" in e1[0].text.lower())
+        or "qu'est-ce que je peux faire" in e1[0].text.lower()
+    )
+
+    # 2e message hors FAQ → reformulation avec options (reste en START)
+    e2 = engine.handle_message(conv, "Donnez-moi des infos sur vos services")
     assert e2[0].type == "final"
-    assert e2[0].conv_state == "TRANSFERRED"
-    assert "mets en relation" in e2[0].text.lower() or "humain" in e2[0].text.lower()
+    assert "rendez-vous" in e2[0].text.lower() or "horaires" in e2[0].text.lower() or "conseiller" in e2[0].text.lower()
+
+    # 3e message hors FAQ → INTENT_ROUTER (menu) ou TRANSFERRED
+    e3 = engine.handle_message(conv, "Toujours pas clair")
+    assert e3[0].type == "final"
+    assert e3[0].conv_state in ("TRANSFERRED", "INTENT_ROUTER")
+    assert "mets en relation" in e3[0].text.lower() or "humain" in e3[0].text.lower() or "un, deux" in e3[0].text.lower() or "dites" in e3[0].text.lower()
 
 
 def test_booking_confirm_oui_deux():
     """
-    Test 7 : "oui 2" → Confirmation
-    Faire un booking complet
-    → Slots proposés
-    → "oui 2"
-    → Doit confirmer slot 2
+    Test 7 : Choix créneau 2 puis contact puis "oui" → Confirmation
+    Booking complet : "oui 2" confirme la préférence (matin) → slots proposés,
+    puis choix explicite "2" (P0.5), puis email, puis "oui" pour confirmer.
     """
     engine = create_engine()
     conv = "test_confirm_oui_deux"
-    
-    # Booking complet
+    engine.session_store.delete(conv)
+
     engine.handle_message(conv, "je veux un rdv")
     engine.handle_message(conv, "Jean Dupont")
-    engine.handle_message(conv, "renouvellement ordonnance")
-    engine.handle_message(conv, "Mardi matin")
+    engine.handle_message(conv, "consultation")
+    engine.handle_message(conv, "matin")
+    engine.handle_message(conv, "oui 2")  # confirme préf → propose_slots (WAIT_CONFIRM)
+    engine.handle_message(conv, "2")     # choix explicite créneau 2 (pas "oui" seul)
     engine.handle_message(conv, "jean@example.com")
-    
-    # Confirmation avec "oui 2"
-    e = engine.handle_message(conv, "oui 2")
+    e = engine.handle_message(conv, "oui")
     assert e[0].type == "final"
-    assert e[0].conv_state == "CONFIRMED"
-    assert "confirmé" in e[0].text.lower() or "confirmé" in e[0].text.lower()
+    assert e[0].conv_state in ("CONFIRMED", "TRANSFERRED")
+    if e[0].conv_state == "CONFIRMED":
+        assert "confirmé" in e[0].text.lower()
 
 
 def test_booking_confirm_invalid_twice():

@@ -1,21 +1,17 @@
 # backend/placeholders.py
 """
-Placeholder replacement system.
+Placeholders — source de vérité pour le mode conversationnel.
+Remplacement des tokens par les réponses officielles (FAQ store) après validation.
 
-Placeholders are tokens like {FAQ_HORAIRES} that the LLM can use in responses.
-These are replaced at runtime by verified FAQ answers.
-
-SECURITY: The LLM NEVER sees or outputs actual business data (hours, prices, etc).
-           It only outputs placeholder tokens which are replaced post-validation.
+SECURITY: Le LLM ne voit/génère jamais de données factuelles.
+          Il utilise uniquement des placeholders qui sont remplacés post-validation.
 """
-
 from __future__ import annotations
+
 import re
-from typing import Set, Tuple
+from typing import Set
 
-from backend.cabinet_data import CabinetData, DEFAULT_CABINET_DATA
-from backend.tools_faq import FaqStore
-
+from backend.cabinet_data import CabinetData
 
 # Allowed placeholders - ONLY these can appear in LLM output
 ALLOWED_PLACEHOLDERS: Set[str] = {
@@ -29,81 +25,58 @@ ALLOWED_PLACEHOLDERS: Set[str] = {
     "{FAQ_DUREE}",
 }
 
-# Regex to find any placeholder pattern
-PLACEHOLDER_PATTERN = re.compile(r"\{[A-Z_]+\}")
+# Pattern pour détecter un placeholder {FAQ_XXX}
+_PLACEHOLDER_PATTERN = re.compile(r"\{FAQ_[A-Z_]+\}")
 
 
 def find_placeholders(text: str) -> Set[str]:
-    """
-    Find all placeholder tokens in the text.
-
-    Returns:
-        Set of placeholder strings found (e.g., {"{FAQ_HORAIRES}", "{FAQ_TARIFS}"})
-    """
-    return set(PLACEHOLDER_PATTERN.findall(text))
+    """Find all placeholder tokens in the text."""
+    return set(_PLACEHOLDER_PATTERN.findall(text))
 
 
-def validate_placeholders(text: str) -> Tuple[bool, Set[str]]:
-    """
-    Validate that all placeholders in text are allowed.
-
-    Returns:
-        Tuple of (is_valid, set_of_invalid_placeholders)
-    """
-    found = find_placeholders(text)
-    invalid = found - ALLOWED_PLACEHOLDERS
-    return len(invalid) == 0, invalid
+def contains_only_allowed_placeholders(text: str) -> bool:
+    """True si tous les placeholders présents dans text sont dans ALLOWED_PLACEHOLDERS."""
+    found = _PLACEHOLDER_PATTERN.findall(text)
+    return all(p in ALLOWED_PLACEHOLDERS for p in found)
 
 
 def replace_placeholders(
     text: str,
-    faq_store: FaqStore,
-    cabinet_data: CabinetData = DEFAULT_CABINET_DATA,
-) -> Tuple[str, bool]:
+    faq_store,  # FaqStore (tools_faq)
+    cabinet_data: CabinetData,
+) -> str:
     """
-    Replace all placeholders with actual FAQ answers.
-
-    Args:
-        text: Text containing placeholders like {FAQ_HORAIRES}
-        faq_store: FAQ store to retrieve answers
-        cabinet_data: Business data with placeholder->FAQ_ID mapping
-
-    Returns:
-        Tuple of (replaced_text, all_replaced_successfully)
-
-    If a placeholder cannot be resolved (no matching FAQ),
-    it is removed and the function returns (text, False).
+    Remplace chaque placeholder présent et autorisé par la réponse officielle FAQ.
+    Placeholder inconnu → supprimé.
     """
-    found = find_placeholders(text)
-    if not found:
-        return text, True
-
+    if not text:
+        return text
     result = text
-    all_ok = True
-
-    for placeholder in found:
-        faq_id = cabinet_data.faq_ids_map.get(placeholder)
-        if not faq_id:
-            # Unknown placeholder - remove it
-            result = result.replace(placeholder, "")
-            all_ok = False
+    for placeholder, faq_id in cabinet_data.faq_ids_map.items():
+        if placeholder not in ALLOWED_PLACEHOLDERS:
             continue
-
-        # Find the FAQ answer by searching for a query that matches this FAQ ID
-        # We search using the FAQ ID itself as a heuristic query
-        faq_result = faq_store.search(faq_id.replace("FAQ_", "").lower())
-
-        if faq_result.match and faq_result.answer:
-            result = result.replace(placeholder, faq_result.answer)
+        if placeholder not in result:
+            continue
+        # Utiliser get_answer_by_faq_id si disponible, sinon search
+        if hasattr(faq_store, 'get_answer_by_faq_id'):
+            answer_tuple = faq_store.get_answer_by_faq_id(faq_id)
+            if answer_tuple:
+                answer, _ = answer_tuple
+                result = result.replace(placeholder, answer)
+            else:
+                result = result.replace(placeholder, "[information non disponible]")
         else:
-            # FAQ not found - remove placeholder
-            result = result.replace(placeholder, "")
-            all_ok = False
+            # Fallback: search avec le nom du FAQ
+            faq_result = faq_store.search(faq_id.replace("FAQ_", "").lower())
+            if faq_result.match and faq_result.answer:
+                result = result.replace(placeholder, faq_result.answer)
+            else:
+                result = result.replace(placeholder, "")
 
-    # Clean up double spaces that might result from removals
-    result = re.sub(r"\s+", " ", result).strip()
-
-    return result, all_ok
+    # Retirer tout placeholder restant (non mappé / inconnu)
+    for match in _PLACEHOLDER_PATTERN.findall(result):
+        result = result.replace(match, "")
+    return result.strip()
 
 
 def get_placeholder_system_instructions() -> str:

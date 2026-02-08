@@ -8,7 +8,7 @@ import logging
 import json
 
 from backend.engine import ENGINE
-from backend import prompts
+from backend import prompts, config
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -44,7 +44,7 @@ async def bland_webhook(request: Request):
         
         # Si c'est le début de l'appel (pas de texte)
         if not user_text or not user_text.strip():
-            response = prompts.MSG_WELCOME
+            response = prompts.get_vocal_greeting(config.BUSINESS_NAME)
             print(f"✅ Welcome: {response}")
             return {"response": response, "text": response}
         

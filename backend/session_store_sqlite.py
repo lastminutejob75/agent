@@ -81,7 +81,9 @@ class SQLiteSessionStore:
                 created_at TEXT NOT NULL,
                 
                 -- Full session pickle (backup)
-                session_pickle TEXT
+                session_pickle TEXT,
+                -- P0: slots affichés (source de vérité booking), en fin pour migration ALTER
+                pending_slots_display_json TEXT
             )
         """)
         
@@ -91,7 +93,12 @@ class SQLiteSessionStore:
             ON sessions(last_seen_at)
         """)
         
-        conn.commit()
+        # Migration: ajouter colonne pending_slots_display_json si absente
+        try:
+            cursor.execute("ALTER TABLE sessions ADD COLUMN pending_slots_display_json TEXT")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # colonne déjà présente
         conn.close()
     
     def _serialize_session(self, session: Session) -> Dict[str, Any]:
@@ -117,13 +124,18 @@ class SQLiteSessionStore:
             # Partial data
             "partial_phone_digits": session.partial_phone_digits,
             
-            # Pending data (JSON) - convertir SlotDisplay en dict
+            # Pending data (JSON) - convertir SlotDisplay en dict (IVR pro: day, hour, start, label_vocal)
             "pending_slots_json": json.dumps([
-                {"idx": s.idx, "label": s.label, "slot_id": s.slot_id} 
+                {
+                    "idx": s.idx, "label": s.label, "slot_id": s.slot_id,
+                    "start": getattr(s, "start", ""), "day": getattr(s, "day", ""),
+                    "hour": getattr(s, "hour", 0), "label_vocal": getattr(s, "label_vocal", ""),
+                }
                 for s in session.pending_slots
             ]) if session.pending_slots else None,
             "pending_slot_choice": session.pending_slot_choice,
             "pending_cancel_slot_json": json.dumps(session.pending_cancel_slot) if session.pending_cancel_slot else None,
+            "pending_slots_display_json": json.dumps(getattr(session, "pending_slots_display", None) or []),
             
             # Flags
             "extracted_name": 1 if session.extracted_name else 0,
@@ -143,7 +155,7 @@ class SQLiteSessionStore:
         """Reconstruit une Session depuis une row SQLite."""
         # Essayer d'abord de restaurer depuis le pickle (plus fiable)
         try:
-            session_pickle = row[24]  # session_pickle column
+            session_pickle = row[22] if len(row) > 22 else None
             if session_pickle:
                 session = pickle.loads(base64.b64decode(session_pickle))
                 # Mettre à jour depuis le cache mémoire si disponible
@@ -182,7 +194,11 @@ class SQLiteSessionStore:
                 from backend.prompts import SlotDisplay
                 slots_data = json.loads(row[13])
                 session.pending_slots = [
-                    SlotDisplay(idx=s["idx"], label=s["label"], slot_id=s["slot_id"])
+                    SlotDisplay(
+                        idx=s["idx"], label=s["label"], slot_id=s["slot_id"],
+                        start=s.get("start", ""), day=s.get("day", ""),
+                        hour=s.get("hour", 0), label_vocal=s.get("label_vocal", ""),
+                    )
                     for s in slots_data
                 ]
                 # Aussi remplir les pending_slot_ids et labels pour compatibilité
@@ -193,26 +209,35 @@ class SQLiteSessionStore:
                 session.pending_slots = []
         
         session.pending_slot_choice = row[14]
-        
+
         if row[15]:  # pending_cancel_slot_json
             try:
                 session.pending_cancel_slot = json.loads(row[15])
-            except:
+            except Exception:
                 session.pending_cancel_slot = None
-        
+
         # Flags
         session.extracted_name = bool(row[16])
         session.extracted_motif = bool(row[17])
         session.extracted_pref = bool(row[18])
         session.motif_help_used = bool(row[19])
-        
+
         # Metadata
         if row[20]:  # last_seen_at
             try:
                 session.last_seen_at = datetime.fromisoformat(row[20])
-            except:
+            except Exception:
                 pass
-        
+
+        # P0: slots affichés (colonne en fin de table pour compat migration)
+        if len(row) > 23 and row[23]:
+            try:
+                session.pending_slots_display = json.loads(row[23])
+            except Exception:
+                session.pending_slots_display = []
+        else:
+            session.pending_slots_display = []
+
         return session
     
     def save(self, session: Session) -> None:
@@ -238,7 +263,7 @@ class SQLiteSessionStore:
                 partial_phone_digits,
                 pending_slots_json, pending_slot_choice, pending_cancel_slot_json,
                 extracted_name, extracted_motif, extracted_pref, motif_help_used,
-                last_seen_at, created_at, session_pickle
+                last_seen_at, created_at, session_pickle, pending_slots_display_json
             ) VALUES (
                 ?, ?, ?, ?,
                 ?, ?, ?, ?, ?,
@@ -246,7 +271,7 @@ class SQLiteSessionStore:
                 ?,
                 ?, ?, ?,
                 ?, ?, ?, ?,
-                ?, ?, ?
+                ?, ?, ?, ?
             )
         """, (
             data["conv_id"], data["state"], data["channel"], data["customer_phone"],
@@ -255,7 +280,7 @@ class SQLiteSessionStore:
             data["partial_phone_digits"],
             data["pending_slots_json"], data["pending_slot_choice"], data["pending_cancel_slot_json"],
             data["extracted_name"], data["extracted_motif"], data["extracted_pref"], data["motif_help_used"],
-            data["last_seen_at"], data["created_at"], data["session_pickle"]
+            data["last_seen_at"], data["created_at"], data["session_pickle"], data["pending_slots_display_json"]
         ))
         
         conn.commit()
