@@ -3118,14 +3118,14 @@ class Engine:
             return [Event("final", msg, conv_state=session.state)]
         
         else:
-            # Pas compris → redemander confirmation (compteur contact_confirm pour analytics)
-            fail_count = increment_recovery_counter(session, "contact_confirm")
-            if should_escalate_recovery(session, "contact_confirm"):
-                return self._trigger_intent_router(session, "contact_confirm_fails_3", user_text)
-            phone_formatted = prompts.format_phone_for_voice(session.qualif_data.contact or "")
-            msg = prompts.VOCAL_CONTACT_CONFIRM_SHORT.format(phone_formatted=phone_formatted) if channel == "vocal" else f"Excusez-moi, j'ai noté le {phone_formatted}. Est-ce correct ?"
-            session.add_message("agent", msg)
-            return [Event("final", msg, conv_state=session.state)]
+            # Intent None/UNCLEAR → micro-relance "Dites oui ou non" (1 retry max), puis escalade
+            fail_count = getattr(session, "contact_confirm_fails", 0)
+            if fail_count == 0:
+                session.contact_confirm_fails = 1
+                msg = prompts.MSG_CONTACT_CONFIRM_INTENT_1
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
+            return self._trigger_intent_router(session, "contact_confirm_fails_3", user_text)
     
     # ========================
     # INTENT_ROUTER (spec V3 — menu reset universel)

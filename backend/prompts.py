@@ -716,27 +716,20 @@ VOCAL_CONTACT_CONFIRM_RETRY = "D'accord, pouvez-vous me redonner votre numéro ?
 
 def format_phone_for_voice(phone: str) -> str:
     """
-    Formate un numéro de téléphone pour lecture vocale.
-    Ex: "0612345678" → "06, 12, 34, 56, 78"
+    Formate un numéro de téléphone pour lecture vocale (TTS-friendly).
+    Pas de virgules (prosodie "liste" / pauses longues) : espaces ou tirets courts.
+    Ex: "0612345678" → "06 12 34 56 78"
     """
-    # Nettoyer le numéro
-    digits = ''.join(c for c in phone if c.isdigit())
-    
-    # Si numéro français (10 chiffres)
+    digits = "".join(c for c in phone if c.isdigit())
+
     if len(digits) == 10:
-        # Format: 06 12 34 56 78
-        return f"{digits[0:2]}, {digits[2:4]}, {digits[4:6]}, {digits[6:8]}, {digits[8:10]}"
-    
-    # Format international ou autre
+        return f"{digits[0:2]} {digits[2:4]} {digits[4:6]} {digits[6:8]} {digits[8:10]}"
+
     if len(digits) > 10:
-        # +33 6 12 34 56 78 → grouper par 2
-        formatted = []
-        for i in range(0, len(digits), 2):
-            formatted.append(digits[i:i+2])
-        return ", ".join(formatted)
-    
-    # Fallback: lire chiffre par chiffre
-    return ", ".join(list(digits))
+        formatted = [digits[i : i + 2] for i in range(0, len(digits), 2)]
+        return " ".join(formatted)
+
+    return " ".join(list(digits))
 
 # ----------------------------
 # VALIDATION MOTIFS
