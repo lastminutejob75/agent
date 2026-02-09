@@ -1,12 +1,16 @@
-.PHONY: help install test run docker clean
+.PHONY: help install test run docker clean check-report-env
 
 help:
 	@echo "Commandes disponibles :"
-	@echo "  make install   - Install dependencies"
-	@echo "  make test      - Run all tests"
-	@echo "  make run       - Run dev server"
-	@echo "  make docker    - Build & run docker"
-	@echo "  make clean     - Clean cache & DB"
+	@echo "  make install         - Install dependencies"
+	@echo "  make test            - Run all tests"
+	@echo "  make run             - Run dev server"
+	@echo "  make docker          - Build & run docker"
+	@echo "  make check-report-env - Vérifier les variables rapport quotidien (email)"
+	@echo "  make clean           - Clean cache & DB"
+
+check-report-env:
+	python3 scripts/check_report_env.py
 
 install:
 	python -m venv .venv

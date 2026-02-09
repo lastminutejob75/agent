@@ -52,7 +52,7 @@ def test_daily_report_200_calls_send_email(monkeypatch):
 
     def _fake_send(to, client_name, date_str, data):
         sent.append({"to": to, "client_name": client_name, "date_str": date_str, "data_keys": list(data.keys())})
-        return True
+        return True, None
 
     monkeypatch.setenv("REPORT_SECRET", "test_secret_rapport")
     monkeypatch.setenv("REPORT_EMAIL", "admin@test.fr")
@@ -105,20 +105,23 @@ def test_send_daily_report_email_success(monkeypatch):
     monkeypatch.setattr("backend.services.email_service.smtplib.SMTP", FakeSMTP)
 
     data = {"calls_total": 2, "booked": 1, "transfers": 0, "abandons": 0, "events_count": 3}
-    ok = send_daily_report_email("dest@test.fr", "Cabinet", date.today().isoformat(), data)
+    ok, err = send_daily_report_email("dest@test.fr", "Cabinet", date.today().isoformat(), data)
 
     assert ok is True
+    assert err is None
     assert len(sendmail_calls) == 1
     assert sendmail_calls[0]["to"] == ["dest@test.fr"]
     assert sendmail_calls[0]["msg_len"] > 100
 
 
 def test_send_daily_report_email_skip_if_no_smtp(monkeypatch):
-    """Sans SMTP_EMAIL/SMTP_PASSWORD → False, pas d'envoi."""
+    """Sans SMTP_EMAIL/SMTP_PASSWORD → False + message, pas d'envoi."""
     monkeypatch.delenv("SMTP_EMAIL", raising=False)
     monkeypatch.delenv("SMTP_PASSWORD", raising=False)
-    ok = send_daily_report_email("dest@test.fr", "Cabinet", "2026-02-04", {"calls_total": 0})
+    ok, err = send_daily_report_email("dest@test.fr", "Cabinet", "2026-02-04", {"calls_total": 0})
     assert ok is False
+    assert err is not None
+    assert "SMTP" in err
 
 
 def test_build_html_contains_client_and_date():

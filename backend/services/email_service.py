@@ -10,7 +10,7 @@ import os
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -132,14 +132,15 @@ def _build_html(client_name: str, date_str: str, data: Dict[str, Any]) -> str:
 """
 
 
-def send_daily_report_email(to: str, client_name: str, date_str: str, data: Dict[str, Any]) -> bool:
+def send_daily_report_email(to: str, client_name: str, date_str: str, data: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
     """
     Envoie l'email du rapport quotidien IVR (HTML).
     Utilise SMTP (SMTP_HOST, SMTP_PORT, SMTP_EMAIL, SMTP_PASSWORD).
+    Returns (success, error_message). error_message is None on success.
     """
     if not to or not to.strip():
         logger.warning("send_daily_report_email: to empty, skip")
-        return False
+        return False, "Destinataire vide"
     subject = f"📊 Rapport des appels – {client_name} – {_date_fr(date_str)}"
     html = _build_html(client_name, date_str, data)
     from_addr = os.getenv("SMTP_EMAIL")
@@ -148,7 +149,7 @@ def send_daily_report_email(to: str, client_name: str, date_str: str, data: Dict
     port = int(os.getenv("SMTP_PORT", "587"))
     if not from_addr or not password:
         logger.warning("Email not configured (SMTP_EMAIL/SMTP_PASSWORD)")
-        return False
+        return False, "SMTP non configuré (SMTP_EMAIL / SMTP_PASSWORD sur Railway)"
     try:
         msg = MIMEMultipart("alternative")
         msg["From"] = from_addr
@@ -160,11 +161,12 @@ def send_daily_report_email(to: str, client_name: str, date_str: str, data: Dict
             server.login(from_addr, password)
             server.sendmail(from_addr, [to], msg.as_string())
         logger.info("report_sent", extra={"to": to[:50], "client_name": client_name, "date": date_str})
-        return True
+        return True, None
     except Exception as e:
-        logger.info("report_failed", extra={"to": to[:50], "error": str(e)})
+        err = str(e)
+        logger.info("report_failed", extra={"to": to[:50], "error": err})
         logger.exception("send_daily_report_email failed")
-        return False
+        return False, err
 
 
 def send_ordonnance_notification(request: Dict[str, Any]) -> bool:
