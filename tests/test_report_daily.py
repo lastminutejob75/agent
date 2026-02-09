@@ -46,8 +46,9 @@ def test_daily_report_503_no_secret_configured():
                 os.environ["REPORT_SECRET"] = old
 
 
-def test_daily_report_200_calls_send_email(monkeypatch):
-    """Bon secret + REPORT_EMAIL → 200, send_daily_report_email appelée."""
+def test_daily_report_202_accepted_and_send_email_in_background(monkeypatch):
+    """Bon secret + REPORT_EMAIL → 202 Accepted, send_daily_report_email appelée en arrière-plan."""
+    import time
     sent = []
 
     def _fake_send(to, client_name, date_str, data):
@@ -60,7 +61,6 @@ def test_daily_report_200_calls_send_email(monkeypatch):
         "backend.routes.reports.send_daily_report_email",
         _fake_send,
     )
-    # get_daily_report_data peut dépendre de la DB : on mock pour être déterministe
     monkeypatch.setattr(
         "backend.routes.reports.get_daily_report_data",
         lambda cid, d: {"calls_total": 0, "booked": 0, "transfers": 0, "abandons": 0, "events_count": 0},
@@ -69,10 +69,10 @@ def test_daily_report_200_calls_send_email(monkeypatch):
     client = TestClient(app)
     r = client.post("/api/reports/daily", headers={"X-Report-Secret": "test_secret_rapport"})
 
-    assert r.status_code == 200
+    assert r.status_code == 202
     body = r.json()
-    assert body.get("status") == "ok"
-    assert body.get("clients_notified") >= 0
+    assert body.get("status") == "accepted"
+    time.sleep(0.4)  # laisser le thread arrière-plan exécuter
     assert len(sent) >= 1
     assert sent[0]["to"] == "admin@test.fr"
     assert "calls_total" in sent[0]["data_keys"]

@@ -1,17 +1,18 @@
 """
 Endpoint rapport quotidien IVR (email).
-Protégé par X-Report-Secret. Timeout 25s pour éviter HTTP 000 côté client.
+Protégé par X-Report-Secret. Répond en 202 et traite le rapport en arrière-plan (évite HTTP 000).
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+import threading
 from datetime import date
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Header, HTTPException
+from fastapi.responses import JSONResponse
 
 from backend.db import get_daily_report_data
 from backend.client_memory import get_client_memory
@@ -20,8 +21,6 @@ from backend.services.email_service import send_daily_report_email
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["reports"])
-
-REPORT_TIMEOUT_SECONDS = 25
 
 
 def _check_report_secret(x_report_secret: Optional[str] = Header(None, alias="X-Report-Secret")) -> None:
@@ -96,26 +95,35 @@ def _run_daily_report() -> Dict[str, Any]:
     return out
 
 
+def _run_report_background() -> None:
+    """Exécute le rapport en arrière-plan et log le résultat."""
+    try:
+        out = _run_daily_report()
+        logger.info("report_daily background result: %s", out)
+    except Exception as e:
+        logger.exception("report_daily background failed: %s", e)
+
+
 @router.post("/reports/daily")
 def post_daily_report(
     x_report_secret: Optional[str] = Header(None, alias="X-Report-Secret"),
 ):
     """
-    Génère et envoie le rapport quotidien. Timeout 25s pour éviter HTTP 000 (cold start / SMTP lent).
+    Déclenche le rapport quotidien. Répond immédiatement en 202, génération et envoi en arrière-plan.
+    Évite HTTP 000 quand le proxy Railway ou SMTP est lent.
     """
     try:
         _check_report_secret(x_report_secret)
     except HTTPException:
         raise
 
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(_run_daily_report)
-        try:
-            return future.result(timeout=REPORT_TIMEOUT_SECONDS)
-        except FuturesTimeoutError:
-            logger.warning("report_daily: timeout après %ss", REPORT_TIMEOUT_SECONDS)
-            return {
-                "status": "ok",
-                "clients_notified": 0,
-                "email_error": f"Timeout après {REPORT_TIMEOUT_SECONDS}s (génération ou envoi SMTP). Réessayer ou vérifier logs Railway.",
-            }
+    logger.info("report_daily accepted, running in background")
+    thread = threading.Thread(target=_run_report_background, daemon=True)
+    thread.start()
+    return JSONResponse(
+        status_code=202,
+        content={
+            "status": "accepted",
+            "message": "Rapport en cours de génération et envoi. Consulter les logs Railway pour le résultat.",
+        },
+    )

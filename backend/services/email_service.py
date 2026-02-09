@@ -151,6 +151,7 @@ def send_daily_report_email(to: str, client_name: str, date_str: str, data: Dict
         logger.warning("Email not configured (SMTP_EMAIL/SMTP_PASSWORD)")
         return False, "SMTP non configuré (SMTP_EMAIL / SMTP_PASSWORD sur Railway)"
     try:
+        logger.info("report_daily: connecting SMTP %s:%s", host, port)
         msg = MIMEMultipart("alternative")
         msg["From"] = from_addr
         msg["To"] = to
