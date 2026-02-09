@@ -1,6 +1,6 @@
 """
 Envoi du rapport quotidien IVR par email (HTML).
-Ne jamais logger le contenu complet de GOOGLE_SERVICE_ACCOUNT_BASE64.
+Supporte Postmark (API HTTPS) ou SMTP. Ne jamais logger tokens / mots de passe.
 """
 
 from __future__ import annotations
@@ -13,6 +13,8 @@ from email.mime.text import MIMEText
 from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+POSTMARK_API_URL = "https://api.postmarkapp.com/email"
 
 CONTEXT_LABELS_FR = {
     "name": "Nom non compris",
@@ -132,10 +134,43 @@ def _build_html(client_name: str, date_str: str, data: Dict[str, Any]) -> str:
 """
 
 
+def _send_via_postmark(from_addr: str, to: str, subject: str, html: str, token: str) -> Tuple[bool, Optional[str]]:
+    """Envoi via API Postmark (HTTPS). Returns (success, error_message)."""
+    import httpx
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "X-Postmark-Server-Token": token,
+    }
+    payload = {
+        "From": from_addr,
+        "To": to,
+        "Subject": subject,
+        "HtmlBody": html,
+        "MessageStream": "outbound",
+    }
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            r = client.post(POSTMARK_API_URL, json=payload, headers=headers)
+        if r.status_code == 200:
+            return True, None
+        try:
+            body = r.json()
+            msg = body.get("Message", r.text) or r.text
+        except Exception:
+            msg = r.text or str(r.status_code)
+        logger.warning("postmark_failed status=%s message=%s", r.status_code, msg[:200])
+        return False, f"Postmark {r.status_code}: {msg}"
+    except Exception as e:
+        logger.exception("_send_via_postmark failed")
+        return False, str(e)
+
+
 def send_daily_report_email(to: str, client_name: str, date_str: str, data: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
     """
     Envoie l'email du rapport quotidien IVR (HTML).
-    Utilise SMTP (SMTP_HOST, SMTP_PORT, SMTP_EMAIL, SMTP_PASSWORD).
+    Si EMAIL_PROVIDER=postmark (ou POSTMARK_SERVER_TOKEN défini) : envoi via Postmark (EMAIL_FROM).
+    Sinon : SMTP (SMTP_HOST, SMTP_PORT, SMTP_EMAIL, SMTP_PASSWORD).
     Returns (success, error_message). error_message is None on success.
     """
     if not to or not to.strip():
@@ -143,6 +178,25 @@ def send_daily_report_email(to: str, client_name: str, date_str: str, data: Dict
         return False, "Destinataire vide"
     subject = f"📊 Rapport des appels – {client_name} – {_date_fr(date_str)}"
     html = _build_html(client_name, date_str, data)
+
+    use_postmark = (os.getenv("EMAIL_PROVIDER") or "").strip().lower() == "postmark" or bool(
+        (os.getenv("POSTMARK_SERVER_TOKEN") or "").strip()
+    )
+    if use_postmark:
+        token = (os.getenv("POSTMARK_SERVER_TOKEN") or "").strip()
+        from_addr = (os.getenv("EMAIL_FROM") or os.getenv("SMTP_EMAIL") or os.getenv("REPORT_EMAIL") or "").strip()
+        if not token:
+            logger.warning("Postmark demandé mais POSTMARK_SERVER_TOKEN manquant")
+            return False, "POSTMARK_SERVER_TOKEN non défini"
+        if not from_addr:
+            logger.warning("Postmark: EMAIL_FROM (ou SMTP_EMAIL/REPORT_EMAIL) manquant")
+            return False, "EMAIL_FROM non défini"
+        logger.info("report_daily: sending via Postmark to %s", to[:50])
+        ok, err = _send_via_postmark(from_addr, to, subject, html, token)
+        if ok:
+            logger.info("email_sent via postmark", extra={"to": to[:50], "client_name": client_name, "date": date_str})
+        return ok, err
+
     from_addr = os.getenv("SMTP_EMAIL")
     password = os.getenv("SMTP_PASSWORD")
     host = os.getenv("SMTP_HOST", "smtp.gmail.com")

@@ -30,7 +30,7 @@ def test_pending_slots_display_matches_booking(monkeypatch):
     def _capture_google(session, start_iso, end_iso):
         booked["start"] = start_iso
         booked["end"] = end_iso
-        return True
+        return True, None
 
     monkeypatch.setattr(tools_booking, "_book_google_by_iso", _capture_google)
 
@@ -42,7 +42,7 @@ def test_pending_slots_display_matches_booking(monkeypatch):
     session.qualif_data.name = "Jean Dupont"
     session.qualif_data.contact = "jean@example.com"
 
-    ok = tools_booking.book_slot_from_session(session, 2)
+    ok, _ = tools_booking.book_slot_from_session(session, 2)
     assert ok is True
     assert booked.get("start") == "2026-02-04T14:00:00"
     assert booked.get("end") == "2026-02-04T14:15:00"

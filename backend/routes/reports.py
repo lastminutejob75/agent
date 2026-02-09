@@ -62,8 +62,13 @@ def _run_daily_report() -> Dict[str, Any]:
                 logger.info("report_sent admin only (no clients)", extra={"date": today})
             else:
                 email_error = err
-                if not (os.getenv("SMTP_EMAIL") and os.getenv("SMTP_PASSWORD")):
-                    email_skipped = "SMTP non configuré (SMTP_EMAIL / SMTP_PASSWORD sur Railway)"
+                email_ok = (
+                    (os.getenv("EMAIL_PROVIDER") or "").strip().lower() == "postmark"
+                    and (os.getenv("POSTMARK_SERVER_TOKEN") or "").strip()
+                    and (os.getenv("EMAIL_FROM") or "").strip()
+                ) or (os.getenv("SMTP_EMAIL") and os.getenv("SMTP_PASSWORD"))
+                if not email_ok:
+                    email_skipped = "Email non configuré (Postmark: EMAIL_PROVIDER, POSTMARK_SERVER_TOKEN, EMAIL_FROM — ou SMTP)"
         except Exception as e:
             logger.exception("report_daily: get_daily_report_data or send_daily_report_email failed")
             return {"status": "error", "clients_notified": 0, "error": str(e)}
@@ -81,7 +86,12 @@ def _run_daily_report() -> Dict[str, Any]:
             if ok:
                 notified += 1
             else:
-                if not (os.getenv("SMTP_EMAIL") and os.getenv("SMTP_PASSWORD")):
+                email_ok = (
+                    (os.getenv("EMAIL_PROVIDER") or "").strip().lower() == "postmark"
+                    and (os.getenv("POSTMARK_SERVER_TOKEN") or "").strip()
+                    and (os.getenv("EMAIL_FROM") or "").strip()
+                ) or (os.getenv("SMTP_EMAIL") and os.getenv("SMTP_PASSWORD"))
+                if not email_ok:
                     email_skipped = email_skipped or err
                 email_error = email_error or err
         except Exception as e:

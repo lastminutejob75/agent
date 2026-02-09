@@ -520,7 +520,7 @@ def test_contact_confirm_intent_repeat_3_times_stays_contact_confirm(mock_slots)
 
 
 @patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
-@patch("backend.tools_booking.book_slot_from_session", return_value=True)
+@patch("backend.tools_booking.book_slot_from_session", return_value=(True, None))
 def test_contact_confirm_yes_no_resets_intent_counter(mock_book, mock_slots):
     """P0 : Après phrase d'intention en CONTACT_CONFIRM, répondre 'oui' remet contact_confirm_intent_repeat_count à 0."""
     engine = create_engine()

@@ -949,6 +949,10 @@ MSG_SLOT_TAKEN_REPROPOSE = (
 MSG_SLOT_TAKEN_TRANSFER = (
     "Je suis désolée, les créneaux changent vite. Je vous mets en relation avec un conseiller."
 )
+# Échec technique (pas "créneau pris") → éviter de se rétracter à tort
+MSG_BOOKING_TECHNICAL = (
+    "Un problème technique s'est produit. Je vous mets en relation avec un conseiller pour finaliser votre rendez-vous."
+)
 # Early commit (choix anticipé non ambigu) : confirmation avant de passer au contact
 MSG_SLOT_EARLY_CONFIRM = "Très bien. Si j'ai bien compris, vous choisissez le créneau {idx} : {label}. C'est bien ça ?"
 # P1.3 Vocal : une phrase courte (latence + clarté), ton bienveillant

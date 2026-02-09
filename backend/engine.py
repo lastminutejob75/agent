@@ -3034,13 +3034,20 @@ class Engine:
                     slot_idx,
                 )
                 # Booker le créneau
-                success = tools_booking.book_slot_from_session(session, slot_idx)
+                success, reason = tools_booking.book_slot_from_session(session, slot_idx)
                 logger.info(
-                    "[BOOKING_RESULT] conv_id=%s success=%s",
+                    "[BOOKING_RESULT] conv_id=%s success=%s reason=%s",
                     session.conv_id,
                     success,
+                    reason,
                 )
                 if not success:
+                    # Ne dire "créneau pris" que si on en est sûr (reason == "slot_taken")
+                    if reason == "technical":
+                        session.state = "TRANSFERRED"
+                        msg = prompts.MSG_BOOKING_TECHNICAL
+                        session.add_message("agent", msg)
+                        return [Event("final", msg, conv_state=session.state)]
                     booking_retry = getattr(session, "booking_retry_count", 0) + 1
                     setattr(session, "booking_retry_count", booking_retry)
                     if booking_retry > 2:

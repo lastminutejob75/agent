@@ -433,10 +433,14 @@ def _store_google_calendar_slots(session, slots: List[prompts.SlotDisplay]) -> N
     session.pending_google_slots = full_slots[:len(slots)]
 
 
-def book_slot_from_session(session, choice_index_1based: int) -> bool:
+def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str | None]:
     """
     Réserve le créneau choisi par l'utilisateur.
     P0: utilise pending_slots_display (slots affichés) si présent, sinon fallback legacy.
+    Returns (success, reason).
+    - success=True -> reason=None
+    - success=False, reason="slot_taken" -> créneau déjà pris (message adapté)
+    - success=False, reason="technical" -> erreur technique / slots manquants (évite "plus dispo" à tort)
     """
     idx = choice_index_1based - 1
     slots = getattr(session, "pending_slots_display", None) or []
@@ -449,31 +453,44 @@ def book_slot_from_session(session, choice_index_1based: int) -> bool:
             end_iso = chosen.get("end_iso")
             if not start_iso or not end_iso:
                 logger.warning("pending_slots_display: start_iso/end_iso manquants")
-                return False
+                return False, "technical"
             return _book_google_by_iso(session, start_iso, end_iso)
         if src == "sqlite":
             slot_id = chosen.get("slot_id")
             if slot_id is None:
                 logger.warning("pending_slots_display: slot_id manquant")
-                return False
-            return _book_sqlite_by_slot_id(session, int(slot_id))
+                return False, "technical"
+            ok = _book_sqlite_by_slot_id(session, int(slot_id))
+            return (ok, None if ok else "slot_taken")
+
+    # Pas de pending_slots_display alors qu'on confirme → ne pas dire "créneau pris"
+    if session.pending_slot_choice is not None and not slots:
+        logger.warning("book_slot_from_session: pending_slot_choice=%s mais pending_slots_display vide", choice_index_1based)
+        return False, "technical"
 
     # Fallback legacy
     if idx < 0 or idx >= len(getattr(session, "pending_slot_ids", []) or []):
-        logger.warning(f"Index invalide: {choice_index_1based}")
-        return False
+        logger.warning("Index invalide: %s", choice_index_1based)
+        return False, "technical"
     calendar = _get_calendar_service()
     if calendar:
-        return _book_via_google_calendar(session, idx)
-    return _book_via_sqlite(session, idx)
+        ok = _book_via_google_calendar(session, idx)
+        return (ok, None if ok else "slot_taken")
+    ok = _book_via_sqlite(session, idx)
+    return (ok, None if ok else "slot_taken")
 
 
-def _book_google_by_iso(session, start_iso: str, end_iso: str) -> bool:
-    """Book Google Calendar à partir des timestamps ISO du slot affiché (sans re-fetch)."""
+def _book_google_by_iso(session, start_iso: str, end_iso: str) -> tuple[bool, str | None]:
+    """
+    Book Google Calendar à partir des timestamps ISO du slot affiché (sans re-fetch).
+    Un retry est fait en cas d'échec (réseau / API) pour limiter les "plus dispo" à tort.
+    Returns (success, reason) with reason in ("slot_taken", "technical", None).
+    """
     calendar = _get_calendar_service()
     if not calendar:
-        return False
-    try:
+        return False, "technical"
+
+    def _try_once() -> bool:
         event_id = calendar.book_appointment(
             start_time=start_iso,
             end_time=end_iso,
@@ -483,12 +500,21 @@ def _book_google_by_iso(session, start_iso: str, end_iso: str) -> bool:
         )
         if event_id:
             session.google_event_id = event_id
-            logger.info(f"✅ RDV Google Calendar créé: {event_id}")
+            logger.info("RDV Google Calendar créé: %s", event_id)
             return True
         return False
+
+    try:
+        if _try_once():
+            return True, None
+        # Un seul retry pour erreurs transitoires (réseau, quota, etc.)
+        logger.info("Retry booking Google Calendar pour conv_id=%s", getattr(session, "conv_id", ""))
+        if _try_once():
+            return True, None
+        return False, "slot_taken"
     except Exception as e:
-        logger.error(f"Erreur book_google_by_iso: {e}")
-        return False
+        logger.error("Erreur book_google_by_iso: %s", e, exc_info=True)
+        return False, "technical"
 
 
 def _book_sqlite_by_slot_id(session, slot_id: int) -> bool:

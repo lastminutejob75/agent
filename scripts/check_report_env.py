@@ -32,15 +32,20 @@ if env_file.exists():
                     if key and key not in os.environ:
                         os.environ[key] = value
 
-# Variables requises pour le rapport quotidien
+# Variables pour le rapport quotidien
 REPORT_VARS = [
     ("REPORT_EMAIL", "Adresse qui reçoit le rapport"),
     ("OWNER_EMAIL", "Alternative à REPORT_EMAIL (reçoit le rapport)"),
     ("REPORT_SECRET", "Secret partagé avec GitHub Actions"),
-    ("SMTP_EMAIL", "Compte qui envoie l'email (ex. Gmail)"),
-    ("SMTP_PASSWORD", "Mot de passe d'application SMTP"),
-    ("SMTP_HOST", "Ex. smtp.gmail.com (défaut si vide)"),
-    ("SMTP_PORT", "Ex. 587 (défaut si vide)"),
+    # Postmark (prod recommandé : pas de blocage SMTP sur Railway)
+    ("EMAIL_PROVIDER", "postmark pour utiliser Postmark"),
+    ("POSTMARK_SERVER_TOKEN", "Token API Postmark (Server API Token)"),
+    ("EMAIL_FROM", "Expéditeur vérifié Postmark (ex. hello@uwiapp.com)"),
+    # SMTP (fallback)
+    ("SMTP_EMAIL", "Compte qui envoie (SMTP)"),
+    ("SMTP_PASSWORD", "Mot de passe SMTP"),
+    ("SMTP_HOST", "Ex. smtp.gmail.com"),
+    ("SMTP_PORT", "Ex. 587"),
 ]
 
 # Au moins une des deux pour la réception
@@ -61,7 +66,7 @@ def main() -> int:
         else:
             status = "MANQUANT"
             detail = ""
-        print(f"  {status:8}  {key:20}  {desc} {detail}")
+        print(f"  {status:8}  {key:22}  {desc} {detail}")
 
     # Règle métier : au moins un destinataire
     has_recipient = any(os.getenv(k) and os.getenv(k).strip() for k in RECIPIENT_VARS)
@@ -71,17 +76,26 @@ def main() -> int:
     else:
         print("  Destinataire rapport: MANQUANT — définir REPORT_EMAIL ou OWNER_EMAIL sur Railway")
 
-    # Envoi possible si SMTP configuré
+    # Envoi : Postmark prioritaire, sinon SMTP
+    postmark_ok = (
+        (os.getenv("EMAIL_PROVIDER") or "").strip().lower() == "postmark"
+        and (os.getenv("POSTMARK_SERVER_TOKEN") or "").strip()
+        and (os.getenv("EMAIL_FROM") or "").strip()
+    )
     smtp_ok = (os.getenv("SMTP_EMAIL") or "").strip() and (os.getenv("SMTP_PASSWORD") or "").strip()
-    if smtp_ok:
-        print("  Envoi SMTP: OK (SMTP_EMAIL + SMTP_PASSWORD définis)")
+    send_ok = postmark_ok or smtp_ok
+
+    if postmark_ok:
+        print("  Envoi: OK (Postmark — EMAIL_PROVIDER=postmark + POSTMARK_SERVER_TOKEN + EMAIL_FROM)")
+    elif smtp_ok:
+        print("  Envoi: OK (SMTP — SMTP_EMAIL + SMTP_PASSWORD)")
     else:
-        print("  Envoi SMTP: MANQUANT — définir SMTP_EMAIL et SMTP_PASSWORD sur Railway (mot de passe d'application Gmail)")
+        print("  Envoi: MANQUANT — Postmark (EMAIL_PROVIDER, POSTMARK_SERVER_TOKEN, EMAIL_FROM) ou SMTP")
 
     print()
-    if not has_recipient or not smtp_ok:
-        print("Rappel: sur Railway, ajouter les variables dans le service (Variables).")
-        print("Test après déploiement: curl -s -X POST \"https://TON_APP.railway.app/api/reports/daily\" -H \"X-Report-Secret: TON_SECRET\"")
+    if not has_recipient or not send_ok:
+        print("Rappel: sur Railway, Postmark évite les blocages SMTP.")
+        print("Test: curl -X POST \"https://TON_APP.railway.app/api/reports/daily\" -H \"X-Report-Secret: TON_SECRET\"")
         return 1
     print("Configuration minimale OK. Déploie et teste le curl pour confirmer l'envoi.")
     return 0
