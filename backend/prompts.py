@@ -704,7 +704,7 @@ VOCAL_CONTACT_CONFIRM = (
     "Je confirme votre numéro : {phone_formatted}. Dites oui ou non."
 )
 VOCAL_CONTACT_CONFIRM_SHORT = "Je confirme votre numéro : {phone_formatted}. Dites oui ou non."
-VOCAL_CONTACT_CONFIRM_OK = "Parfait, c'est noté."
+VOCAL_CONTACT_CONFIRM_OK = "C'est noté."
 VOCAL_CONTACT_CONFIRM_RETRY = "D'accord, pouvez-vous me redonner votre numéro ?"
 
 
@@ -949,8 +949,8 @@ MSG_BOOKING_TECHNICAL = (
 )
 # Early commit (choix anticipé non ambigu) : confirmation avant de passer au contact
 MSG_SLOT_EARLY_CONFIRM = "Parfait. Si j'ai bien compris, vous choisissez le créneau {idx} : {label}. C'est bien ça ?"
-# P1.3 Vocal : une phrase courte (latence + clarté), ton bienveillant
-MSG_SLOT_EARLY_CONFIRM_VOCAL = "Parfait. Le créneau {idx}, {label}. C'est bien ça ?"
+# P1.3 Vocal : une phrase courte (latence + clarté), ton bienveillant — pas "Parfait" (réservé au message final)
+MSG_SLOT_EARLY_CONFIRM_VOCAL = "C'est noté. Le créneau {idx}, {label}. C'est bien ça ?"
 
 
 def format_slot_early_confirm(idx: int, label: str, channel: str = "web") -> str:
@@ -1378,10 +1378,9 @@ def format_booking_confirmed(slot_label: str, name: str = "", motif: str = "", c
 def format_booking_confirmed_vocal(slot_label: str, name: str = "") -> str:
     """
     Confirmation de RDV pour le vocal.
-    Ton professionnel et rassurant. Pas de prénom (politesse monsieur/madame).
+    Ton professionnel et rassurant. Pas de "Parfait" en tête (déjà dit à la confirmation créneau).
     """
     return (
-        "Parfait. "
         f"Votre rendez-vous est confirmé pour {slot_label}. "
         "Vous recevrez un SMS de rappel. "
         "À très bientôt."
