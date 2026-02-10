@@ -583,10 +583,10 @@ def handle_no_contextual(session: Session) -> dict:
         return {"state": "WAIT_CONFIRM", "message": "D'accord. Vous choisissez lequel : 1, 2 ou 3 ?"}
 
     if st == "CANCEL_CONFIRM":
-        return {"state": "CONFIRMED", "message": "Très bien, je n'annule pas. Bonne journée !"}
+        return {"state": "CONFIRMED", "message": "Parfait, je n'annule pas. Bonne journée !"}
 
     if st == "MODIFY_CONFIRM":
-        return {"state": "CONFIRMED", "message": "Très bien, je ne le modifie pas. Bonne journée !"}
+        return {"state": "CONFIRMED", "message": "Parfait, je ne le modifie pas. Bonne journée !"}
 
     if st in {"QUALIF_NAME", "QUALIF_PREF", "QUALIF_CONTACT"}:
         msg = prompts.VOCAL_INTENT_ROUTER if channel == "vocal" else prompts.MSG_INTENT_ROUTER
@@ -1097,9 +1097,18 @@ class Engine:
                 session.add_message("agent", msg)
                 return safe_reply([Event("final", msg, conv_state=session.state)], session)
             
-            # BOOKING → Démarrer qualification avec extraction
+            # BOOKING → Démarrer qualification (start intent "rendez-vous" — audit)
             if intent == "BOOKING":
                 session.start_unclear_count = 0
+                raw = (user_text or "").strip()[:80]
+                normalized = (intent_parser.normalize_stt_text(user_text or "") or "")[:80]
+                logger.info(
+                    "[INTENT_START_KEYWORD] conv_id=%s state=%s intent=BOOKING_START_KEYWORD text=%s normalized=%s",
+                    session.conv_id,
+                    session.state,
+                    raw,
+                    normalized,
+                )
                 return safe_reply(self._start_booking_with_extraction(session, user_text), session)
             
             # ORDONNANCE → Flow ordonnance (RDV ou message, conversation naturelle)
@@ -1512,20 +1521,21 @@ class Engine:
         # Construire la réponse avec confirmation implicite si extraction
         response_parts = []
         
-        # Confirmation implicite des entités extraites (round-robin ACK)
-        if entities.has_any():
-            ack = prompts.pick_ack(session.next_ack_index())
-            if entities.name and entities.motif:
-                response_parts.append(f"{ack} Pour {entities.motif}.")
-            elif entities.name:
-                response_parts.append(ack)
-            elif entities.motif:
-                response_parts.append(f"{ack} Pour {entities.motif}.")
-            else:
-                response_parts.append(ack)
-        
         # Question suivante
         question = prompts.get_qualif_question(next_field, channel=channel)
+        # 1 acknowledgement max par étape : pas d'ACK si la question commence déjà par un (Très bien / Parfait / D'accord)
+        if entities.has_any():
+            ack = prompts.pick_ack(session.next_ack_index())
+            q_lower = question.strip().lower()
+            if not (q_lower.startswith("très bien") or q_lower.startswith("parfait") or q_lower.startswith("d'accord") or q_lower.startswith("d accord")):
+                if entities.name and entities.motif:
+                    response_parts.append(f"{ack} Pour {entities.motif}.")
+                elif entities.name:
+                    response_parts.append(ack)
+                elif entities.motif:
+                    response_parts.append(f"{ack} Pour {entities.motif}.")
+                else:
+                    response_parts.append(ack)
         response_parts.append(question)
         
         response = " ".join(response_parts)
@@ -3020,6 +3030,14 @@ class Engine:
             return [Event("final", msg, conv_state=session.state)]
 
         intent = detect_intent(user_text, session.state)
+        # Filet : affirmation sans négation ("c'est bien ça", "ok", "exact") → YES_IMPLICIT ; exclure "euh", "attends"
+        if intent != "YES" and (user_text or "").strip():
+            _raw = (user_text or "").strip().lower()
+            if not _raw.startswith(("non", "pas ")) and "attends" not in _raw and _raw not in ("euh", "euhh", "mmh"):
+                _norm = "".join(c for c in _raw if c.isalnum() or c in " ")
+                if "bienca" in _norm.replace(" ", "") or "bien ca" in _norm:
+                    logger.info("[YES_IMPLICIT] conv_id=%s reason=echo_cest_bien_ca user_text_len=%s", session.conv_id, len(_raw))
+                    intent = "YES"
 
         if intent == "YES":
             session.contact_confirm_intent_repeat_count = 0

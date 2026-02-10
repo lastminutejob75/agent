@@ -91,6 +91,7 @@ _YES_LEXICON = [
     "oui", "ouais", "ouai", "ok", "okay", "d accord", "daccord",
     "exactement", "tout a fait", "absolument", "bien sur",
     "c est bon", "ca marche", "exact", "parfait", "c est ca", "voila", "affirmatif",
+    "c est bien ca", "cest bien ca", "oui c est bien ca", "oui cest bien ca",
 ]
 _NO_LEXICON = [
     "non", "nan", "pas du tout", "pas vraiment",
@@ -266,14 +267,42 @@ def _is_repeat(text: str) -> bool:
     return False
 
 
+# Liste noire start intent : annulation / déplacement / négation / RDV existant → pas BOOKING
+# Priorité : strong intent (CANCEL/MODIFY) est déjà évalué avant _is_booking ; ceci est un garde-fou.
+_BOOKING_START_BLACKLIST = [
+    "annuler", "deplacer", "reporter", "changer mon rendez",
+    "pas de rendez", "pas de rdv", "pas un rendez", "pas un rdv",
+    " pas ", " plus ", " aucun ", " non ", "non ", " non",  # négation (avec espaces pour éviter faux positifs)
+    "deja un rendez", "deja un rdv", "j ai deja",
+    " mon rendez yous", "mon rendez yous ",  # "mon rendez-vous" / RDV existant ambigu
+]
+
+
+def _is_booking_blacklist(text: str) -> bool:
+    """True si on ne doit pas traiter comme INTENT_BOOKING (annulation, négation, déplacement, RDV existant)."""
+    t = normalize_stt_text(text)
+    if not t:
+        return False
+    if t == "non" or t.startswith("non "):
+        return True
+    return any(bl in t for bl in _BOOKING_START_BLACKLIST)
+
+
 def _is_booking(text: str) -> bool:
     t = normalize_stt_text(text)
     if not t:
         return False
+    if _is_booking_blacklist(text):
+        return False
+    # Mots-clés courts (start intent "rendez-vous" — liste blanche produit)
+    if t in ("rdv", "rendez vous", "rendezvous") or t.strip() in ("rdv", "rendez vous", "rendezvous"):
+        return True
     booking_markers = [
-        "rendez-vous", "rendez vous", "rdv", "prendre rendez-vous", "prendre rendez vous",
-        "réserver", "reserver", "booker", "je veux venir", "je voudrais un créneau",
-        "je voudrais un creneau",
+        "rendez-vous", "rendez vous", "rdv",
+        "prendre rendez-vous", "prendre rendez vous", "prendre rdv",
+        "prise de rendez vous", "rendez vous svp", "un rendez vous", "un rdv",
+        "réserver", "reserver", "booker", "je veux venir", "je veux un rendez", "je voudrais un rendez",
+        "je voudrais un créneau", "je voudrais un creneau",
     ]
     return any(m in t for m in booking_markers)
 

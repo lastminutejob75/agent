@@ -15,18 +15,16 @@ from dataclasses import dataclass
 from typing import List, Dict, Optional
 import re
 
-# --- ACK neutres (anti-répétition) — phrases TTS courtes, polies, déterministes ---
+# --- ACK neutres (1 seul par étape — pivot "Parfait." pour éviter sur-acknowledgement) ---
 ACK_VARIANTS_LIST: List[str] = [
-    "Très bien.",
-    "D'accord.",
     "Parfait.",
 ]
 
 
 def pick_ack(index: int) -> str:
-    """Retourne une variante d'ACK de façon déterministe (round-robin)."""
+    """Retourne un ACK unique (pivot Parfait.) — max 1 par étape."""
     if not ACK_VARIANTS_LIST:
-        return "Très bien."
+        return "Parfait."
     return ACK_VARIANTS_LIST[index % len(ACK_VARIANTS_LIST)]
 
 
@@ -34,7 +32,7 @@ def pick_ack(index: int) -> str:
 CLOSE_VARIANTS: List[str] = [
     "Merci pour votre appel. Bonne journée.",
     "Parfait, c'est noté. Bonne journée.",
-    "Très bien. À bientôt. Bonne journée.",
+    "Parfait. À bientôt. Bonne journée.",
 ]
 
 
@@ -174,8 +172,8 @@ MSG_CONTACT_HINT = (
     "ou un numéro de téléphone (ex : 06 12 34 56 78)."
 )
 
-MSG_CONTACT_CHOICE_ACK_EMAIL = "Très bien. Quelle adresse email puis-je utiliser ?"
-MSG_CONTACT_CHOICE_ACK_PHONE = "Très bien. Quel numéro de téléphone puis-je utiliser ?"
+MSG_CONTACT_CHOICE_ACK_EMAIL = "Parfait. Quelle adresse email puis-je utiliser ?"
+MSG_CONTACT_CHOICE_ACK_PHONE = "Parfait. Quel numéro de téléphone puis-je utiliser ?"
 
 # Utilisé après 1 erreur (et seulement 1)
 MSG_CONTACT_RETRY = (
@@ -228,9 +226,9 @@ VOCAL_FAQ_FOLLOWUP = (
     "Souhaitez-vous autre chose ?"
 )
 
-VOCAL_FAQ_GOODBYE = "Très bien. Bonne journée, au revoir."
+VOCAL_FAQ_GOODBYE = "Parfait. Bonne journée, au revoir."
 
-VOCAL_FAQ_TO_BOOKING = "Très bien. Pour le rendez-vous, à quel nom, s'il vous plaît ?"
+VOCAL_FAQ_TO_BOOKING = "Parfait. Pour le rendez-vous, à quel nom, s'il vous plaît ?"
 
 # P1.3 — Une seule phrase naturelle (pas "Dites :", pas ":" inaudible)
 VOCAL_POST_FAQ_CHOICE = (
@@ -279,7 +277,7 @@ VOCAL_CANCEL_DONE = (
 )
 
 VOCAL_CANCEL_KEPT = (
-    "Très bien. Votre rendez-vous est maintenu. "
+    "Parfait. Votre rendez-vous est maintenu. "
     "Bonne journée."
 )
 
@@ -300,7 +298,7 @@ CANCEL_NOT_SUPPORTED_TRANSFER = (
 # FLOW D: MODIFY - Modification de RDV
 # ----------------------------
 
-VOCAL_MODIFY_ASK_NAME = "Très bien. À quel nom est le rendez-vous, s'il vous plaît ?"
+VOCAL_MODIFY_ASK_NAME = "Parfait. À quel nom est le rendez-vous, s'il vous plaît ?"
 
 # Recovery progressive : nom pas compris (MODIFY_NAME)
 VOCAL_MODIFY_NAME_RETRY_1 = "Excusez-moi. Je n'ai pas noté votre nom. Pouvez-vous répéter, s'il vous plaît ?"
@@ -324,10 +322,10 @@ VOCAL_MODIFY_CONFIRM = (
 
 # P0.4 — On ne dit plus "j'ai annulé" avant d'avoir sécurisé le nouveau créneau
 VOCAL_MODIFY_NEW_PREF = (
-    "Très bien. Je vous propose un autre créneau. Préférez-vous le matin ou l'après-midi ?"
+    "Je vous propose un autre créneau. Préférez-vous le matin ou l'après-midi ?"
 )
 VOCAL_MODIFY_CANCELLED = (
-    "Très bien, j'ai annulé l'ancien. Plutôt le matin ou l'après-midi pour le nouveau ?"
+    "J'ai annulé l'ancien. Plutôt le matin ou l'après-midi pour le nouveau ?"
 )
 # P0.4 — Après création du nouveau RDV : annuler l'ancien puis confirmer déplacement
 VOCAL_MODIFY_MOVED = (
@@ -399,7 +397,7 @@ VOCAL_PHONE_FAIL_2 = (
 )
 VOCAL_PHONE_FAIL_3 = "Pas de souci. On peut aussi prendre votre email. Quelle est votre adresse email ?"
 
-VOCAL_PHONE_CONFIRM = "Je confirme : {phone_spaced}. C'est bien ça ?"
+VOCAL_PHONE_CONFIRM = "Je confirme votre numéro : {phone_spaced}. Dites oui ou non."
 VOCAL_PHONE_CONFIRM_NO = "D'accord. Quel est votre numéro ?"
 
 VOCAL_PREF_ASK = (
@@ -412,7 +410,7 @@ VOCAL_PREF_FAIL_2 = (
     "Le matin. "
     "Ou l'après-midi."
 )
-VOCAL_PREF_ANY = "Très bien. Je propose le matin. Ça vous va ?"
+VOCAL_PREF_ANY = "Je propose le matin. Ça vous va ?"
 VOCAL_PREF_ANY_NO = "D'accord. Plutôt l'après-midi ?"
 # Confirmation après inférence ("vers 14h" → afternoon)
 VOCAL_PREF_CONFIRM_MATIN = "D'accord, plutôt le matin. C'est bien ça ?"
@@ -427,10 +425,9 @@ VOCAL_SLOT_FAIL_2 = "Par exemple : je prends le deux. Lequel vous convient ?"
 VOCAL_SLOT_ONE_PROPOSE = "Le prochain créneau est {label}. Ça vous convient ?"
 VOCAL_SLOT_SEQUENTIAL_NEED_YES_NO = "Dites oui si ça vous convient, ou non pour un autre créneau."
 
-# Recovery nom (QUALIF_NAME — test B1)
+# Recovery nom (QUALIF_NAME — 1 acknowledgement max, variante pour éviter répétition "Très bien")
 VOCAL_NAME_ASK = (
-    "Très bien. "
-    "À quel nom, s'il vous plaît ?"
+    "Parfait. À quel nom, s'il vous plaît ?"
 )
 VOCAL_NAME_FAIL_1 = "Excusez-moi. Je n'ai pas bien saisi votre nom. Pouvez-vous répéter, s'il vous plaît ?"
 VOCAL_NAME_FAIL_2 = "Votre nom et prénom. Par exemple : Martin Dupont."
@@ -533,21 +530,21 @@ def format_inference_confirmation(inferred_value: str) -> str:
 class TransitionSignals:
     """Mots-signaux pour structurer la conversation vocale."""
     VALIDATION = "Parfait."
-    PROGRESSION = "Très bien."
+    PROGRESSION = "Parfait."
     AGREEMENT = "D'accord."
     PROCESSING = "Je regarde."
-    RESULT = "Très bien."
+    RESULT = "Parfait."
 
     @staticmethod
     def wrap_with_signal(message: str, signal_type: str = "PROGRESSION") -> str:
-        """Ajoute un mot-signal en début de message (un seul par message)."""
+        """Ajoute un mot-signal en début de message (1 acknowledgement max)."""
         signal = getattr(TransitionSignals, signal_type, "")
         if not signal or not message:
             return message
         if message.startswith(signal):
             return message
-        # Éviter doublon "Très bien." + "Très bien X." (ex: après confirmation du nom)
-        if signal == TransitionSignals.PROGRESSION and message.strip().lower().startswith("très bien"):
+        m_lower = message.strip().lower()
+        if m_lower.startswith("parfait") or m_lower.startswith("très bien") or m_lower.startswith("d'accord"):
             return message
         return f"{signal} {message}"
 
@@ -606,12 +603,12 @@ VOCAL_CONTACT_ASK = (
 )
 
 VOCAL_CONTACT_EMAIL = (
-    "Très bien. Pouvez-vous m'épeler votre email ? "
+    "Parfait. Pouvez-vous m'épeler votre email ? "
     "Par exemple : jean point dupont arobase gmail point com."
 )
 
 VOCAL_CONTACT_PHONE = (
-    "Très bien. Quel est votre numéro de téléphone ? "
+    "Parfait. Quel est votre numéro de téléphone ? "
     "Prenez votre temps, je note. "
     "Par exemple : zéro six, douze, trente-quatre, cinquante-six, soixante-dix-huit."
 )
@@ -623,7 +620,7 @@ VOCAL_CONTACT_RETRY = (
 
 # Créneaux
 VOCAL_CONFIRM_SLOTS = (
-    "Très bien. Voici trois créneaux.\n"
+    "Voici trois créneaux.\n"
     "Un : {slot1}. Deux : {slot2}. Trois : {slot3}.\n"
     "Dites simplement : un, deux, ou trois."
 )
@@ -637,8 +634,6 @@ VOCAL_BOOKING_CONFIRMED = (
 # Transitions TTS-friendly (mini-bibliothèque : répondent à une action du client)
 # À utiliser après validation d'étape / préférence / correction, pas en flottant.
 VOCAL_ACK_POSITIVE = [
-    "Très bien.",
-    "D'accord.",
     "Parfait.",
 ]
 
@@ -659,7 +654,7 @@ VOCAL_ACK_UNDERSTANDING = [
 # Anciens fillers (Alors, Bon, Donc, Eh bien) remplacés par transitions explicites
 # pour éviter ton sec / improvisé en TTS. Utiliser VOCAL_ACK_* ou "Pour continuer…".
 VOCAL_FILLERS = [
-    "Très bien.",
+    "Parfait.",
     "D'accord.",
 ]
 
@@ -704,12 +699,11 @@ MSG_CONTACT_RETRY_VOCAL = (
     "Pouvez-vous me redonner votre numéro de téléphone, s'il vous plaît ?"
 )
 
-# Confirmation du numéro (VOCAL_PHONE_CONFIRM / VOCAL_PHONE_CONFIRM_NO en Recovery ci-dessus)
+# Confirmation du numéro (guide explicite oui/non — pas de relecture après filet)
 VOCAL_CONTACT_CONFIRM = (
-    "J'ai noté le {phone_formatted}. C'est bien ça ?"
+    "Je confirme votre numéro : {phone_formatted}. Dites oui ou non."
 )
-# P1.3 Vocal : confirmation ultra courte
-VOCAL_CONTACT_CONFIRM_SHORT = "Le {phone_formatted}, c'est bien ça ?"
+VOCAL_CONTACT_CONFIRM_SHORT = "Je confirme votre numéro : {phone_formatted}. Dites oui ou non."
 VOCAL_CONTACT_CONFIRM_OK = "Parfait, c'est noté."
 VOCAL_CONTACT_CONFIRM_RETRY = "D'accord, pouvez-vous me redonner votre numéro ?"
 
@@ -902,9 +896,9 @@ MSG_QUALIF_PREF_RETRY = "Merci de me donner votre créneau préféré pour conti
 MSG_QUALIF_CONTACT_RETRY = "Merci de me donner votre email ou téléphone pour continuer."
 
 # Vocal - ton naturel
-MSG_QUALIF_NAME_RETRY_VOCAL = "Très bien. Quel est votre nom et prénom, s'il vous plaît ?"
+MSG_QUALIF_NAME_RETRY_VOCAL = "Parfait. Quel est votre nom et prénom, s'il vous plaît ?"
 # P0 : répétition d'intention RDV en QUALIF_NAME → message guidé, sans incrémenter name_fails
-MSG_QUALIF_NAME_INTENT_1 = "Très bien. Pour continuer, j'ai besoin de votre nom et prénom, s'il vous plaît."
+MSG_QUALIF_NAME_INTENT_1 = "Parfait. Pour continuer, j'ai besoin de votre nom et prénom, s'il vous plaît."
 MSG_QUALIF_NAME_INTENT_2 = "Votre nom et prénom, par exemple : Martin Dupont."
 MSG_QUALIF_MOTIF_RETRY_VOCAL = "Attendez, c'est pour quoi exactement ?"
 MSG_QUALIF_PREF_RETRY_VOCAL = "Vous préférez plutôt quel moment de la journée ?"
@@ -912,8 +906,8 @@ MSG_QUALIF_PREF_RETRY_VOCAL = "Vous préférez plutôt quel moment de la journé
 MSG_QUALIF_PREF_INTENT_1 = "D'accord, j'ai bien compris. Vous préférez le matin ou l'après-midi ?"
 MSG_QUALIF_PREF_INTENT_2 = "Pour choisir le créneau : dites \"matin\" ou \"après-midi\"."
 MSG_QUALIF_CONTACT_RETRY_VOCAL = "Pour vous rappeler, c'est quoi le mieux ? Téléphone ou email ?"
-# P0 : répétition d'intention RDV en CONTACT_CONFIRM → message guidé oui/non, pas contact_confirm_fails
-MSG_CONTACT_CONFIRM_INTENT_1 = "D'accord. Juste pour confirmer : oui ou non ?"
+# P0 : filet CONTACT_CONFIRM (1 relance max, pas de relecture du numéro)
+MSG_CONTACT_CONFIRM_INTENT_1 = "Juste pour confirmer : oui ou non ?"
 MSG_CONTACT_CONFIRM_INTENT_2 = "Dites \"oui\" pour confirmer, ou \"non\" pour corriger."
 # Optionnel : QUALIF_CONTACT quand l'utilisateur répond par une intention RDV
 MSG_QUALIF_CONTACT_INTENT = "D'accord. Pour finaliser, j'ai besoin de votre email ou numéro de téléphone."
@@ -954,7 +948,7 @@ MSG_BOOKING_TECHNICAL = (
     "Un problème technique s'est produit. Je vous mets en relation avec un conseiller pour finaliser votre rendez-vous."
 )
 # Early commit (choix anticipé non ambigu) : confirmation avant de passer au contact
-MSG_SLOT_EARLY_CONFIRM = "Très bien. Si j'ai bien compris, vous choisissez le créneau {idx} : {label}. C'est bien ça ?"
+MSG_SLOT_EARLY_CONFIRM = "Parfait. Si j'ai bien compris, vous choisissez le créneau {idx} : {label}. C'est bien ça ?"
 # P1.3 Vocal : une phrase courte (latence + clarté), ton bienveillant
 MSG_SLOT_EARLY_CONFIRM_VOCAL = "Parfait. Le créneau {idx}, {label}. C'est bien ça ?"
 
@@ -1097,7 +1091,7 @@ MSG_MODIFY_CONFIRM_WEB = "Vous avez un rendez-vous {slot_label}. Voulez-vous le 
 MSG_CANCEL_CONFIRM_WEB = "Vous avez un rendez-vous {slot_label}. Voulez-vous l'annuler ?"
 MSG_FAQ_TO_BOOKING_WEB = "Pas de souci. C'est à quel nom ?"
 MSG_MODIFY_CANCELLED_WEB = "J'ai annulé l'ancien. Plutôt le matin ou l'après-midi pour le nouveau ?"
-MSG_MODIFY_NEW_PREF_WEB = "Très bien. Je vous propose un autre créneau. Préférez-vous le matin ou l'après-midi ?"
+MSG_MODIFY_NEW_PREF_WEB = "Je vous propose un autre créneau. Préférez-vous le matin ou l'après-midi ?"
 
 
 # ----------------------------
@@ -1307,7 +1301,6 @@ def format_slot_proposal(slots: List[SlotDisplay], include_instruction: bool = T
 
 # P1.2 Lecture créneaux en 2 messages vocaux (réduit interruptions)
 MSG_SLOTS_PREFACE_VOCAL = (
-    "Très bien. "
     "Voici les créneaux disponibles."
 )
 
