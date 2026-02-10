@@ -1183,7 +1183,8 @@ QUALIF_QUESTIONS_VOCAL: Dict[str, str] = {
     "contact": "Parfait ! Et votre numéro de téléphone pour vous rappeler ?",
 }
 
-# Questions après avoir reçu le nom (sans prénom ; ack en round-robin via ack_index)
+# Questions après avoir reçu le nom (sans prénom)
+# Vocal : pas d'ack préfixé pour éviter double "Parfait" en start (règle 1 ack max par phase).
 def get_qualif_question_with_name(
     field: str,
     name: str,
@@ -1192,7 +1193,7 @@ def get_qualif_question_with_name(
 ) -> str:
     """
     Retourne la question de qualification. Pas de prénom (politesse).
-    ack_index : index pour pick_ack (round-robin). Passer session.next_ack_index() depuis l'engine.
+    En vocal, on ne préfixe pas d'ack pour éviter la répétition "Parfait" sur deux tours.
     """
     if channel != "vocal" or not name:
         return get_qualif_question(field, channel)
@@ -1205,8 +1206,8 @@ def get_qualif_question_with_name(
     rest = vocal_rest.get(field)
     if rest is None or rest == "":
         return get_qualif_question(field, channel)
-    ack = pick_ack(ack_index if ack_index is not None else 0)
-    return f"{ack} {rest}"
+    # Vocal : question seule, sans ack (déjà dit "Parfait" au tour précédent)
+    return rest
 
 def get_qualif_question(field: str, channel: str = "web") -> str:
     """
