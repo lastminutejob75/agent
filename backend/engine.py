@@ -3028,10 +3028,12 @@ class Engine:
             # Si on a déjà un slot choisi (nouveau flow) → booker et confirmer
             if session.pending_slot_choice is not None:
                 slot_idx = session.pending_slot_choice
+                pending_display_len = len(getattr(session, "pending_slots_display", None) or [])
                 logger.info(
-                    "[BOOKING_ATTEMPT] conv_id=%s slot_idx=%s",
+                    "[BOOKING_ATTEMPT] conv_id=%s slot_idx=%s pending_slots_display_len=%s",
                     session.conv_id,
                     slot_idx,
+                    pending_display_len,
                 )
                 # Booker le créneau
                 success, reason = tools_booking.book_slot_from_session(session, slot_idx)
