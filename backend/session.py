@@ -82,6 +82,10 @@ class Session:
     turn_count: int = 0  # Nombre de tours (user+agent) → anti-loop si > 25 (spec V3)
     # Guidage START (question ouverte) : incompréhensions consécutives avant guidage proactif
     start_unclear_count: int = 0
+    # UNCLEAR no_faq (LLM hors-sujet) : 2 → guidance, 3 → INTENT_ROUTER
+    start_no_faq_count: int = 0
+    # OUT_OF_SCOPE répété : >= 2 → transfert pour éviter spam hors-sujet
+    start_out_of_scope_count: int = 0
     # Compteur ACK (round-robin Très bien / D'accord / Parfait) — persistant pendant l'appel
     ack_idx: int = 0
     # STT nova-2-phonecall : bruit (confidence faible) vs silence

@@ -25,7 +25,6 @@ from backend.time_constraints import extract_time_constraint
 from backend.session_store_sqlite import SQLiteSessionStore
 from backend.tools_faq import FaqStore, FaqResult
 from backend.llm_assist import (
-    llm_assist_classify,
     LLMClient,
     get_default_llm_client,
     LLM_ASSIST_MIN_CONFIDENCE,
@@ -37,6 +36,7 @@ from backend.entity_extraction import (
     extract_pref,
     infer_preference_from_context,
 )
+from backend.start_router import route_start, FAQ_BUCKET_WHITELIST
 
 logger = logging.getLogger(__name__)
 
@@ -1040,10 +1040,82 @@ class Engine:
             return safe_reply(self._handle_contact_confirm(session, user_text), session)
         
         # --- NOUVEAU FLOW : First Message ---
-        
-        # Si START → premier message (intent_parser : "oui" en START => UNCLEAR, jamais BOOKING)
         if session.state == "START":
             strong_intent = detect_strong_intent(user_text)
+            r = route_start(
+                user_text,
+                state=session.state,
+                channel=channel,
+                llm_client=self.llm_client,
+                should_try_llm_assist=lambda text, intent, strong: self._should_try_llm_assist(text, intent, strong),
+                strong_intent=strong_intent,
+                llm_assist_min_confidence=LLM_ASSIST_MIN_CONFIDENCE,
+            )
+
+            # 3) reconcile routing
+            intent = r.intent
+            # strong intents ALWAYS override (sauf BOOKING avec très haute confiance)
+            if strong_intent in ("TRANSFER", "CANCEL", "MODIFY", "ABANDON", "ORDONNANCE"):
+                if not (intent == "BOOKING" and getattr(r, "confidence", 0.0) >= 0.80):
+                    intent = strong_intent
+                    r.source = f"{getattr(r, 'source', 'router')}+strong_override"
+                    r.confidence = max(getattr(r, "confidence", 0.0), 0.95)
+            # FAQ strong override (UNCLEAR -> FAQ si lexique fort)
+            if strong_intent == "FAQ" and intent == "UNCLEAR":
+                intent = "FAQ"
+                r.source = f"{getattr(r, 'source', 'router')}+strong_override"
+                r.confidence = max(getattr(r, "confidence", 0.0), 0.85)
+
+            why = ""
+            ent = getattr(r, "entities", None) or {}
+            if ent.get("heuristic_score") is not None:
+                why = f"heuristic_score={ent['heuristic_score']}"
+            elif ent.get("llm_bucket"):
+                why = f"llm_bucket={ent.get('llm_bucket')}"
+            decision_path = getattr(r, "source", "na")
+            logger.info(
+                "[TURN][START_ROUTE] decision_path=%s intent=%s conf=%.2f strong=%s why=%s text=%r",
+                decision_path,
+                intent,
+                float(getattr(r, "confidence", 0.0)),
+                strong_intent,
+                why,
+                (user_text or "")[:200],
+            )
+
+            # --- START: post-route special handling (ex-"Zone grise" via route_start) ---
+            if intent == "OUT_OF_SCOPE":
+                session.start_unclear_count = 0
+                session.start_out_of_scope_count = getattr(session, "start_out_of_scope_count", 0) + 1
+                if session.start_out_of_scope_count >= 2:
+                    session.start_out_of_scope_count = 0
+                    return safe_reply(
+                        self._trigger_intent_router(session, "out_of_scope_2", user_text),
+                        session,
+                    )
+                session.state = "START"  # pas terminal : relance structurée ("Que souhaitez-vous ?")
+                msg = None
+                if getattr(r, "entities", None):
+                    msg = r.entities.get("out_of_scope_response")
+                if msg:
+                    session.add_message("agent", msg)
+                    session.last_say_key, session.last_say_kwargs = "out_of_scope_llm", {}
+                else:
+                    msg = self._say(session, "out_of_scope")
+                    if not msg:
+                        msg = prompts.get_message("out_of_scope", channel=getattr(session, "channel", "web"))
+                        session.add_message("agent", msg)
+                self._save_session(session)
+                return safe_reply([Event("final", msg, conv_state=session.state)], session)
+            if intent == "FAQ" and getattr(r, "entities", None) and r.entities.get("faq_bucket"):
+                bucket = r.entities["faq_bucket"]
+                if bucket in FAQ_BUCKET_WHITELIST and bucket != "AUTRE":
+                    return safe_reply(
+                        self._handle_faq_bucket(session, bucket, user_text),
+                        session,
+                    )
+                return safe_reply(self._handle_faq(session, user_text, include_low=True), session)
+
             # UNCLEAR type "oui" seul → CLARIFY (disambiguation RDV / question). Autre UNCLEAR → _handle_faq (progression 1→2→3 vers INTENT_ROUTER).
             if intent == "UNCLEAR" and guards.is_yes_only(user_text or ""):
                 session.start_unclear_count = 0
@@ -1141,59 +1213,23 @@ class Engine:
                     session.last_say_key, session.last_say_kwargs = "transfer_filler_silence", {}
                 self._save_session(session)
                 return safe_reply([Event("final", msg, conv_state=session.state)], session)
-            
-            # Zone grise START : LLM Assist (si activé, UNCLEAR non filler)
-            llm_meta = None
-            if intent == "UNCLEAR" and self._should_try_llm_assist(user_text, intent, strong_intent):
-                assist = llm_assist_classify(
-                    text=user_text,
-                    state=session.state,
-                    channel=channel,
-                    client=self.llm_client,
-                )
-                if assist and assist.confidence >= LLM_ASSIST_MIN_CONFIDENCE:
-                    llm_meta = {
-                        "llm_used": True,
-                        "llm_intent": assist.intent,
-                        "llm_confidence": assist.confidence,
-                        "llm_bucket": assist.faq_bucket,
-                    }
-                    session._turn_llm_meta = llm_meta
-                    # Reset start_unclear_count seulement quand on route (BOOKING/FAQ/CANCEL/…), pas pour UNCLEAR (progression 1→2→3)
-                    if assist.intent not in ("UNCLEAR",):
-                        session.start_unclear_count = 0
-                    if assist.intent in ("CANCEL", "MODIFY", "TRANSFER", "ABANDON"):
-                        return safe_reply(
-                            self._route_strong_intent_from_start(session, assist.intent, user_text),
-                            session,
-                        )
-                    if assist.intent == "OUT_OF_SCOPE":
-                        session.start_unclear_count = 0
-                        msg = getattr(assist, "out_of_scope_response", None) if assist else None
-                        if msg:
-                            session.add_message("agent", msg)
-                            session.last_say_key, session.last_say_kwargs = "out_of_scope_llm", {}
-                        else:
-                            msg = self._say(session, "out_of_scope")
-                            if not msg:
-                                msg = prompts.get_message("out_of_scope", channel=getattr(session, "channel", "web"))
-                                session.add_message("agent", msg)
-                        self._save_session(session)
-                        return safe_reply([Event("final", msg, conv_state=session.state)], session)
-                    if assist.intent == "BOOKING":
-                        return safe_reply(self._start_booking_with_extraction(session, user_text), session)
-                    if assist.intent == "FAQ" and assist.faq_bucket:
-                        return safe_reply(
-                            self._handle_faq_bucket(session, assist.faq_bucket, user_text),
-                            session,
-                        )
-                    # UNCLEAR (hors-sujet ou vague) : pas de _handle_faq (évite faux match type "acheter une voiture" → annulation)
-                    if assist.intent == "UNCLEAR":
-                        return safe_reply(
-                            self._handle_start_unclear_no_faq(session, user_text),
-                            session,
-                        )
-            
+
+            # Si LLM Assist a classé UNCLEAR (vague/hors-sujet) => pas de _handle_faq ; 2 → guidance, 3 → INTENT_ROUTER
+            if intent == "UNCLEAR" and getattr(r, "entities", None) and r.entities.get("no_faq") is True:
+                session.start_no_faq_count = getattr(session, "start_no_faq_count", 0) + 1
+                if session.start_no_faq_count >= 3:
+                    session.start_no_faq_count = 0
+                    return safe_reply(
+                        self._trigger_intent_router(session, "no_faq_3", user_text),
+                        session,
+                    )
+                if session.start_no_faq_count == 2:
+                    session.start_unclear_count = 0
+                    msg = prompts.VOCAL_START_GUIDANCE if channel == "vocal" else prompts.MSG_START_GUIDANCE_WEB
+                    session.add_message("agent", msg)
+                    return safe_reply([Event("final", msg, conv_state=session.state)], session)
+                return safe_reply(self._handle_start_unclear_no_faq(session, user_text), session)
+
             # FAQ ou UNCLEAR (phrase réelle) → progression no-match 1→2→3 vers INTENT_ROUTER
             return safe_reply(self._handle_faq(session, user_text, include_low=True), session)
         

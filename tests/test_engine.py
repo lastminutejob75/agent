@@ -4,6 +4,8 @@ import pytest
 from unittest.mock import patch
 from backend.engine import create_engine, _detect_booking_intent
 from backend import prompts
+from backend.start_router import StartRoute
+from backend.intent_parser import Intent
 
 
 def _fake_slots(*args, **kwargs):
@@ -158,6 +160,47 @@ def test_start_oui_goes_to_clarify_not_booking():
     assert "rendez-vous" in events[0].text.lower() and "question" in events[0].text.lower()
     # Ne doit pas demander le nom (pas de passage en QUALIF_NAME)
     assert "nom" not in events[0].text.lower() or "prénom" not in events[0].text.lower()
+
+
+def test_oui_after_out_of_scope_goes_to_clarify_not_intent_router():
+    """
+    Après OUT_OF_SCOPE (reste START), 'oui' → CLARIFY (disambiguation RDV/question),
+    pas UNCLEAR/no_faq ni intent_router. Anti-régression START.
+    """
+    engine = create_engine()
+    conv = f"conv_oui_after_oos_{uuid.uuid4().hex[:8]}"
+    engine.session_store.delete(conv)
+    session = engine.session_store.get_or_create(conv)
+    session.channel = "vocal"
+    session.state = "START"
+    engine._save_session(session)
+
+    def route_start_side_effect(*args, **kwargs):
+        user_text = (args[0] if args else kwargs.get("user_text", "")) or ""
+        if "pizza" in user_text.lower() or user_text.strip() == "blabla":
+            return StartRoute(
+                intent=Intent.OUT_OF_SCOPE,
+                confidence=0.9,
+                entities={"out_of_scope_response": "Nous sommes un cabinet médical. Souhaitez-vous un rendez-vous ou une question ?"},
+                source="llm_assist",
+            )
+        if user_text.strip().lower() == "oui":
+            return StartRoute(intent=Intent.YES, confidence=0.9, source="parser")
+        # fallback
+        return StartRoute(intent=Intent.UNCLEAR, confidence=0.5, source="parser")
+
+    with patch("backend.engine.route_start", side_effect=route_start_side_effect):
+        e1 = engine.handle_message(conv, "pizza")
+    assert len(e1) >= 1
+    assert e1[0].conv_state == "START"
+    s = engine.session_store.get(conv)
+    assert s is not None and s.state == "START"
+
+    with patch("backend.engine.route_start", side_effect=route_start_side_effect):
+        e2 = engine.handle_message(conv, "oui")
+    assert len(e2) >= 1
+    assert e2[0].conv_state == "CLARIFY"
+    assert "rendez-vous" in e2[0].text.lower() and "question" in e2[0].text.lower()
 
 
 def test_wait_confirm_repeat_relit_creneau_courant():
