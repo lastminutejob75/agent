@@ -87,7 +87,8 @@ class GoogleCalendarService:
             ).execute()
             
             events = events_result.get('items', [])
-            
+            events_busy = len(events)
+
             # Créer liste de tous les créneaux possibles
             all_slots = []
             current = day_start
@@ -132,7 +133,14 @@ class GoogleCalendarService:
                 if len(free_slots) >= limit:
                     break
             
-            logger.info(f"Found {len(free_slots)} free slots for {date.date()}")
+            logger.info(
+                "get_free_slots: date=%s start_hour=%s end_hour=%s events_busy=%s free_slots=%s",
+                date.date(),
+                start_hour,
+                end_hour,
+                events_busy,
+                len(free_slots),
+            )
             return free_slots
         
         except Exception as e:
@@ -217,9 +225,24 @@ class GoogleCalendarService:
         except Exception as e:
             from googleapiclient.errors import HttpError
             if isinstance(e, HttpError):
-                logger.error(f"Error booking appointment: HTTP {e.resp.status} {e.resp.reason} - {e}")
+                status = e.resp.status
+                if status == 403:
+                    label = "permission"
+                elif status == 409:
+                    label = "conflict"
+                elif status == 400:
+                    label = "format"
+                else:
+                    label = "other"
+                logger.error(
+                    "Error booking appointment: HTTP %s (%s) %s - %s",
+                    status,
+                    label,
+                    e.resp.reason,
+                    e,
+                )
             else:
-                logger.error(f"Error booking appointment: {e}", exc_info=True)
+                logger.error("Error booking appointment: %s", e, exc_info=True)
             return None
     
     def cancel_appointment(self, event_id: str) -> bool:

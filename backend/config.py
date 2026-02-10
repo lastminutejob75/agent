@@ -111,6 +111,9 @@ RECOVERY_LIMITS = {
 # Variables globales (remplies au startup RUNTIME uniquement)
 SERVICE_ACCOUNT_FILE = None
 GOOGLE_CALENDAR_ID = None
+# Diagnostic prod : True après load_google_credentials() réussi, sinon False + raison
+GOOGLE_CALENDAR_ENABLED = False
+GOOGLE_CALENDAR_DISABLE_REASON = "not_loaded"
 
 def load_google_credentials():
     """
@@ -118,7 +121,7 @@ def load_google_credentials():
     À appeler UNIQUEMENT dans @app.on_event("startup").
     Ne JAMAIS appeler au module import.
     """
-    global SERVICE_ACCOUNT_FILE, GOOGLE_CALENDAR_ID
+    global SERVICE_ACCOUNT_FILE, GOOGLE_CALENDAR_ID, GOOGLE_CALENDAR_ENABLED, GOOGLE_CALENDAR_DISABLE_REASON
 
     # 1. Charge Calendar ID
     GOOGLE_CALENDAR_ID = os.getenv(
@@ -133,8 +136,13 @@ def load_google_credentials():
         local_path = "credentials/service-account.json"
         if os.path.exists(local_path):
             SERVICE_ACCOUNT_FILE = local_path
+            GOOGLE_CALENDAR_ENABLED = True
+            GOOGLE_CALENDAR_DISABLE_REASON = None
             print(f"📁 Using local credentials: {local_path}")
+            print(f"   Google Calendar enabled: true")
             return
+        GOOGLE_CALENDAR_ENABLED = False
+        GOOGLE_CALENDAR_DISABLE_REASON = "GOOGLE_SERVICE_ACCOUNT_BASE64 missing"
         raise RuntimeError("❌ GOOGLE_SERVICE_ACCOUNT_BASE64 missing at runtime")
 
     # 3. Décode et écrit le fichier
@@ -147,12 +155,17 @@ def load_google_credentials():
 
         SERVICE_ACCOUNT_FILE = path
 
-        # ✅ Logs sans données sensibles
+        # ✅ Logs sans données sensibles + flag pour /debug/config
+        GOOGLE_CALENDAR_ENABLED = True
+        GOOGLE_CALENDAR_DISABLE_REASON = None
         print(f"✅ Google credentials loaded at RUNTIME")
         print(f"   Service Account file: {path} ({len(decoded)} bytes)")
         print(f"   Calendar ID set: {bool(GOOGLE_CALENDAR_ID)}")
+        print(f"   Google Calendar enabled: true")
 
     except Exception as e:
+        GOOGLE_CALENDAR_ENABLED = False
+        GOOGLE_CALENDAR_DISABLE_REASON = f"decode_error: {e}"
         raise RuntimeError(f"❌ Failed to decode credentials: {e}")
 
 # ⚠️ NE RIEN EXÉCUTER ICI (sera appelé au startup FastAPI)

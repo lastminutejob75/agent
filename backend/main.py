@@ -117,14 +117,17 @@ async def startup():
     try:
         config.load_google_credentials()
         print(f"✅ Startup complete - Service Account ready")
-        
+        print(f"   Google Calendar enabled: true")
         # Invalider le cache calendar service pour forcer rechargement
         from backend import tools_booking
         tools_booking._calendar_service = None
         print(f"✅ Calendar service cache invalidated")
         
     except Exception as e:
+        config.GOOGLE_CALENDAR_ENABLED = False
+        config.GOOGLE_CALENDAR_DISABLE_REASON = str(e)
         print(f"⚠️ Warning: Cannot load credentials: {e}")
+        print(f"   Google Calendar enabled: false (reason: {e})")
         print(f"⚠️ Using SQLite fallback for slots")
     
     # Background tasks
@@ -208,6 +211,18 @@ async def force_load_credentials():
         result["traceback"] = traceback.format_exc()
     
     return result
+
+
+@app.get("/debug/config")
+async def debug_config():
+    """
+    Diagnostic prod : expose si Google Calendar est actif (sans secrets).
+    Permet de trancher A/B/C/D rapidement.
+    """
+    return {
+        "google_calendar_enabled": getattr(config, "GOOGLE_CALENDAR_ENABLED", False),
+        "reason": getattr(config, "GOOGLE_CALENDAR_DISABLE_REASON", None),
+    }
 
 
 @app.get("/debug/env-vars")

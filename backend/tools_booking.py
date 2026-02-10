@@ -454,6 +454,13 @@ def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str
             if not start_iso or not end_iso:
                 logger.warning("pending_slots_display: start_iso/end_iso manquants")
                 return False, "technical"
+            logger.info(
+                "[BOOKING_CHOSEN_SLOT] choice=%s start_iso=%s end_iso=%s source=google pending_slots_display_len=%s",
+                choice_index_1based,
+                start_iso,
+                end_iso,
+                len(slots),
+            )
             return _book_google_by_iso(session, start_iso, end_iso)
         if src == "sqlite":
             slot_id = chosen.get("slot_id")
