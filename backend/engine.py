@@ -1623,9 +1623,8 @@ class Engine:
             )
         else:
             question = prompts.get_qualif_question(next_field, channel=channel)
-        # V3.1 : mot-signal de progression (vocal)
-        if channel == "vocal" and question:
-            question = prompts.TransitionSignals.wrap_with_signal(question, "PROGRESSION")
+        # Vocal : pas de wrap_with_signal ici (évite 2e "Parfait" en start après le nom)
+        # Les questions sont déjà formulées sans ack redondant (get_qualif_question_with_name).
         
         session.last_question_asked = question
         print(f"🔍 _next_qualif_step: asking for {next_field} → '{question}'")

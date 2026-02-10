@@ -626,9 +626,8 @@ VOCAL_CONFIRM_SLOTS = (
 )
 
 VOCAL_BOOKING_CONFIRMED = (
-    "C'est parfait. Votre rendez-vous est confirmé pour {slot_label}. "
-    "Vous recevrez un SMS de rappel. "
-    "À très bientôt."
+    "Votre rendez-vous est confirmé pour {slot_label}, "
+    "vous recevrez un message de rappel. À très bientôt."
 )
 
 # Transitions TTS-friendly (mini-bibliothèque : répondent à une action du client)
@@ -1378,10 +1377,9 @@ def format_booking_confirmed(slot_label: str, name: str = "", motif: str = "", c
 def format_booking_confirmed_vocal(slot_label: str, name: str = "") -> str:
     """
     Confirmation de RDV pour le vocal.
-    Ton professionnel et rassurant. Pas de "Parfait" en tête (déjà dit à la confirmation créneau).
+    Formulation TTS-friendly : pas d'abréviation (SMS → message), virgules pour prosodie fluide.
     """
     return (
-        f"Votre rendez-vous est confirmé pour {slot_label}. "
-        "Vous recevrez un SMS de rappel. "
-        "À très bientôt."
+        f"Votre rendez-vous est confirmé pour {slot_label}, "
+        "vous recevrez un message de rappel. À très bientôt."
     )
