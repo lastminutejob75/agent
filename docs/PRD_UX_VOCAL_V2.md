@@ -189,4 +189,6 @@ Si l’input contient un des tokens :
 
 ---
 
-*Document de référence pour les évolutions UX vocal. Dernière mise à jour : alignée avec implémentation 1–3 (YES implicite, intent rendez-vous start, nettoyage verbal).*
+*Document de référence pour les évolutions UX vocal.*
+
+**Checklist d’audit (script par script) :** [CHECKLIST_AUDIT_UX_VOCAL.md](./CHECKLIST_AUDIT_UX_VOCAL.md) — sur-acknowledgement, sur-confirmation, densité, numéro, YES implicite, début de flow, règle des 30 %.
