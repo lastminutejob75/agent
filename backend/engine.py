@@ -3044,8 +3044,8 @@ class Engine:
                     reason,
                 )
                 if not success:
-                    # Ne dire "créneau pris" que si on en est sûr (reason == "slot_taken")
-                    if reason == "technical":
+                    # technical / permission → message technique + transfert (pas "créneau pris")
+                    if reason in ("technical", "permission"):
                         session.state = "TRANSFERRED"
                         msg = prompts.MSG_BOOKING_TECHNICAL
                         session.add_message("agent", msg)

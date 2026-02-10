@@ -14,6 +14,16 @@ import backend.config as cfg  # Import du MODULE (pas from import)
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 
 
+class GoogleCalendarPermissionError(Exception):
+    """
+    403 Forbidden : le compte de service n'a pas les droits writer sur le calendrier.
+    Levée pour que l'appelant distingue permission des autres erreurs (409, 400, timeouts).
+    """
+    def __init__(self, http_error):
+        self.http_error = http_error
+        super().__init__(f"403 permission: {getattr(http_error, 'resp', None)}")
+
+
 class GoogleCalendarService:
     """Service Google Calendar pour gérer les RDV."""
     
@@ -241,6 +251,9 @@ class GoogleCalendarService:
                     e.resp.reason,
                     e,
                 )
+                # 403 = droits insuffisants (writer) → exception typée pour raison "permission"
+                if status == 403:
+                    raise GoogleCalendarPermissionError(e)
             else:
                 logger.error("Error booking appointment: %s", e, exc_info=True)
             return None

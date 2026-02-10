@@ -149,13 +149,51 @@ cat .gitignore | grep credentials
 
 ---
 
+## ✅ CHECKLIST : Permissions writer (obligatoire pour la prise de RDV)
+
+La **lecture** du calendrier (créneaux libres) ne suffit pas : la **création d’événements** exige le droit **« Modifier les événements »** (writer). Sans cela, vous aurez en prod : `Error booking appointment: HTTP 403 (permission)` et le message "créneau pris" à tort.
+
+### Où trouver l’email du Service Account (`client_email`)
+
+1. Ouvrir le fichier JSON des credentials (ex. `credentials/uwi-agent-service-account.json` ou le contenu de `GOOGLE_SERVICE_ACCOUNT_BASE64` décodé).
+2. Repérer la clé **`client_email`** :  
+   `"client_email": "xxx@yyy.iam.gserviceaccount.com"`  
+   C’est cet email qu’il faut ajouter au partage du calendrier.
+
+### Étapes (à faire avec le compte propriétaire du calendrier)
+
+1. Ouvrir **Google Calendar** avec le compte qui possède le calendrier cible.
+2. **Paramètres du calendrier** (roue dentée) → **Partager avec des personnes spécifiques** (ou "Partager" selon l’interface).
+3. **Ajouter** l’email du Service Account (`client_email` ci‑dessus).
+4. Choisir **« Modifier les événements »** (Make changes to events) — **pas** seulement « Voir tous les détails ».
+5. **Enregistrer**.
+
+### Calendrier secondaire / groupe
+
+Si `GOOGLE_CALENDAR_ID` pointe vers un calendrier **secondaire** ou **groupe** (ex. `…@group.calendar.google.com`), c’est **ce** calendrier‑là qu’il faut partager avec le `client_email`, pas « Mon agenda » du compte principal.
+
+### Preuve que ça marche
+
+Après avoir donné les droits writer, refaire un appel complet et vérifier dans les logs :
+
+- `[BOOKING_CHOSEN_SLOT] ... pending_slots_display_len=3`
+- `RDV Google Calendar créé: <event_id>`
+- `[BOOKING_RESULT] success=True`
+
+Et dans Google Calendar : l’événement apparaît bien à la date/heure réservée.
+
+---
+
 ## 🐛 DÉPANNAGE
 
 ### Erreur : "FileNotFoundError: credentials/uwi-agent-service-account.json"
 → Vérifier que le fichier JSON est bien dans `credentials/` avec le bon nom
 
-### Erreur : "403 Forbidden" ou "Calendar not found"
-→ Vérifier que le Service Account a bien accès au calendar (partage)
+### Erreur : "403 Forbidden" ou "You need to have writer access to this calendar"
+→ Le Service Account n’a pas les droits **writer**. Suivre la **Checklist : Permissions writer** ci‑dessus (partager le calendrier avec `client_email` et « Modifier les événements »).
+
+### Erreur : "Calendar not found"
+→ Vérifier que le calendrier est bien partagé avec le Service Account (au moins en lecture) et que `GOOGLE_CALENDAR_ID` correspond à ce calendrier (ex. `…@group.calendar.google.com`).
 
 ### Erreur : "Invalid credentials"
 → Vérifier que le fichier JSON est valide et non corrompu

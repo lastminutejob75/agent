@@ -14,6 +14,7 @@ import logging
 
 from backend import prompts
 from backend import config
+from backend.google_calendar import GoogleCalendarPermissionError
 
 logger = logging.getLogger(__name__)
 
@@ -490,35 +491,49 @@ def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str
 def _book_google_by_iso(session, start_iso: str, end_iso: str) -> tuple[bool, str | None]:
     """
     Book Google Calendar à partir des timestamps ISO du slot affiché (sans re-fetch).
-    Un retry est fait en cas d'échec (réseau / API) pour limiter les "plus dispo" à tort.
-    Returns (success, reason) with reason in ("slot_taken", "technical", None).
+    Un retry est fait en cas d'échec (réseau / API) pour slot_taken/transitoire, pas pour 403.
+    Returns (success, reason) with reason in ("slot_taken", "technical", "permission", None).
+    - slot_taken : 409 / conflit
+    - permission : 403 (writer) → pas de retry, message technique
+    - technical : timeouts, 5xx, 400, DNS, etc.
     """
     calendar = _get_calendar_service()
     if not calendar:
         return False, "technical"
 
-    def _try_once() -> bool:
-        event_id = calendar.book_appointment(
-            start_time=start_iso,
-            end_time=end_iso,
-            patient_name=session.qualif_data.name or "Client",
-            patient_contact=session.qualif_data.contact or "",
-            motif=session.qualif_data.motif or "Consultation",
-        )
-        if event_id:
-            session.google_event_id = event_id
-            logger.info("RDV Google Calendar créé: %s", event_id)
-            return True
-        return False
+    def _try_once() -> tuple[bool, str | None]:
+        """Returns (success, reason). reason in ('slot_taken', 'technical', 'permission', None)."""
+        try:
+            event_id = calendar.book_appointment(
+                start_time=start_iso,
+                end_time=end_iso,
+                patient_name=session.qualif_data.name or "Client",
+                patient_contact=session.qualif_data.contact or "",
+                motif=session.qualif_data.motif or "Consultation",
+            )
+            if event_id:
+                session.google_event_id = event_id
+                logger.info("RDV Google Calendar créé: %s", event_id)
+                return True, None
+            return False, "slot_taken"
+        except GoogleCalendarPermissionError as e:
+            logger.error("Erreur book_google_by_iso: 403 permission (writer) - %s", e)
+            return False, "permission"
+        except Exception:
+            raise
 
     try:
-        if _try_once():
+        ok, reason = _try_once()
+        if ok:
             return True, None
-        # Un seul retry pour erreurs transitoires (réseau, quota, etc.)
+        # Pas de retry pour permission ni technical (403 / timeouts / 5xx / 400)
+        if reason in ("technical", "permission"):
+            return False, reason
         logger.info("Retry booking Google Calendar pour conv_id=%s", getattr(session, "conv_id", ""))
-        if _try_once():
+        ok2, reason2 = _try_once()
+        if ok2:
             return True, None
-        return False, "slot_taken"
+        return False, reason2 or "slot_taken"
     except Exception as e:
         logger.error("Erreur book_google_by_iso: %s", e, exc_info=True)
         return False, "technical"

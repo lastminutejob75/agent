@@ -373,7 +373,7 @@ CMD uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}
 | `ARCHITECTURE.md` | Architecture technique, FSM, API |
 | `PRODUCTION_GRADE_SPEC_V3.md` | Spec deploiement, NFRs |
 | `VAPI_CONFIG.md` | Configuration Vapi vocal |
-| `GOOGLE_CALENDAR_SETUP.md` | Setup Google Calendar |
+| `GOOGLE_CALENDAR_SETUP.md` | Setup Google Calendar + checklist permissions writer (client_email, partage) |
 
 ---
 
