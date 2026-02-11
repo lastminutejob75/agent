@@ -423,6 +423,8 @@ VOCAL_SLOT_FAIL_2 = "Par exemple : je prends le deux. Lequel vous convient ?"
 
 # P0.2 — Vocal : proposition séquentielle (1 créneau à la fois, pas 3 d'un coup)
 VOCAL_SLOT_ONE_PROPOSE = "Le prochain créneau est {label}. Ça vous convient ?"
+# Après 2–3 "non" consécutifs en séquentiel : demander préférence ouverte
+VOCAL_SLOT_REFUSE_PREF_PROMPT = "Vous préférez plutôt le matin, l'après-midi, ou un autre jour ?"
 VOCAL_SLOT_SEQUENTIAL_NEED_YES_NO = "Dites oui si ça vous convient, ou non pour un autre créneau."
 
 # Recovery nom (QUALIF_NAME — 1 acknowledgement max, variante pour éviter répétition "Très bien")

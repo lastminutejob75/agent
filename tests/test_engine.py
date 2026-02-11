@@ -203,6 +203,48 @@ def test_oui_after_out_of_scope_goes_to_clarify_not_intent_router():
     assert "rendez-vous" in e2[0].text.lower() and "question" in e2[0].text.lower()
 
 
+def test_sequential_non_skips_neighbor_proposes_14h():
+    """
+    Séquentiel : user refuse 9h → doit proposer 14h (pas 9h15).
+    Anti-régression : skip voisins ±90 min après un "non".
+    """
+    from datetime import datetime, timedelta
+    from backend.prompts import SlotDisplay
+
+    engine = create_engine()
+    conv = f"conv_seq_non_skip_{uuid.uuid4().hex[:8]}"
+    engine.session_store.delete(conv)
+    session = engine.session_store.get_or_create(conv)
+    session.channel = "vocal"
+    session.state = "WAIT_CONFIRM"
+    session.slot_proposal_sequential = True
+    session.slot_offer_index = 0
+    session.slots_list_sent = True
+    session.slots_preface_sent = True
+    base = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    session.pending_slots = [
+        SlotDisplay(1, "Lundi 9h00", 0, (base.replace(hour=9, minute=0)).isoformat(), "lundi", 9, "lundi à 9h"),
+        SlotDisplay(2, "Lundi 9h15", 1, (base.replace(hour=9, minute=15)).isoformat(), "lundi", 9, "lundi à 9h"),
+        SlotDisplay(3, "Lundi 14h00", 2, (base.replace(hour=14, minute=0)).isoformat(), "lundi", 14, "lundi à 14h"),
+    ]
+    session.qualif_data.name = "Test"
+    session.qualif_data.motif = "consultation"
+    engine._save_session(session)
+
+    events = engine.handle_message(conv, "non")
+    assert len(events) >= 1
+    msg = events[0].text
+    # Doit proposer 14h (pas 9h15) avec variante ACK après refus (round-robin)
+    assert "14" in msg or "14h" in msg.lower()
+    assert "9h15" not in msg and "9h15" not in msg.lower()
+    assert any(
+        p in msg.lower() for p in ["d'accord", "daccord", "très bien", "tres bien", "ok."]
+    )  # variante slot refusal
+    s = engine.session_store.get(conv)
+    assert s is not None
+    assert s.slot_offer_index == 2
+
+
 def test_wait_confirm_repeat_relit_creneau_courant():
     """REPEAT en WAIT_CONFIRM : relit le créneau courant, pas de changement d'état."""
     engine = create_engine()

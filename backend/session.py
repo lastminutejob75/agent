@@ -62,6 +62,12 @@ class Session:
     pending_slot_choice: Optional[int] = None  # Slot choisi (avant confirmation contact)
     # P0: Slots EXACTEMENT affichés (source de vérité pour booking = pas de re-fetch)
     pending_slots_display: List[Dict[str, Any]] = field(default_factory=list)
+    # Créneaux refusés (start ISO) : exclure ±90 min en re-proposition pour ne pas reproposer un voisin
+    rejected_slot_starts: List[str] = field(default_factory=list)
+    # (day, period) refusés : anti-spam matin/après-midi (ex. "lundi|MORNING")
+    rejected_day_periods: List[str] = field(default_factory=list)
+    # Séquentiel : "non" consécutifs → à 2, demander préférence ouverte
+    slot_sequential_refuse_count: int = 0
 
     # CANCEL/MODIFY pending
     pending_cancel_slot: Optional[Dict] = None  # RDV à annuler/modifier

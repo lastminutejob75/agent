@@ -40,6 +40,26 @@ from backend.start_router import route_start, FAQ_BUCKET_WHITELIST
 
 logger = logging.getLogger(__name__)
 
+# Round-robin ACK après refus de créneau (évite "D'accord" répété)
+# Vocal : question fermée pour clore le tour et éviter oui/non ambigus
+SLOT_REFUSAL_ACK_VARIANTS_VOCAL = [
+    "D'accord. Dans ce cas, plutôt {label}. Ça vous convient ?",
+    "Très bien. Je vous propose {label}. Ça vous convient ?",
+    "Ok. Alors plutôt {label}. Ça vous convient ?",
+]
+SLOT_REFUSAL_ACK_VARIANTS_WEB = [
+    "D'accord. Je vous propose {label}.",
+    "Très bien. Que pensez-vous de {label} ?",
+    "Je vous propose plutôt {label}.",
+]
+
+
+def pick_slot_refusal_message(session: Session, label: str, channel: str) -> str:
+    """Variante round-robin pour proposition après refus (ton naturel, pas robot)."""
+    variants = SLOT_REFUSAL_ACK_VARIANTS_VOCAL if channel == "vocal" else SLOT_REFUSAL_ACK_VARIANTS_WEB
+    idx = session.next_ack_index() % len(variants)
+    return variants[idx].format(label=label)
+
 
 def log_filler_detected(
     logger_instance,
@@ -2305,6 +2325,7 @@ class Engine:
                 # OUI → accepter ce créneau (1-based choice = idx+1)
                 _yes_set = guards.YES_WORDS | {"ouaip", "okay", "parfait", "daccord"}
                 if _t_norm in _yes_set or (_t_norm.startswith("oui") and len(_t_norm) <= 12 and " de " not in _t_norm):
+                    session.slot_sequential_refuse_count = 0
                     session.pending_slot_choice = idx + 1
                     session.slot_proposal_sequential = False
                     try:
@@ -2315,10 +2336,72 @@ class Engine:
                     session.add_message("agent", msg)
                     self._save_session(session)
                     return [Event("final", msg, conv_state=session.state)]
-                # NON → créneau suivant ou plus de dispo
+                # NON → créneau suivant ou plus de dispo (exclure ce créneau des futures re-propositions ±90 min)
                 _no_set = guards.NO_WORDS | {"pas celui la", "pas celui-la", "pas ca", "pas ça", "autre", "suivant", "non merci"}
                 if _t_norm in _no_set or _t_norm.startswith("non"):
-                    session.slot_offer_index = idx + 1
+                    cur_slot = session.pending_slots[idx] if idx < len(session.pending_slots or []) else None
+                    if cur_slot and getattr(cur_slot, "start", None):
+                        rejected = getattr(session, "rejected_slot_starts", None) or []
+                        if not isinstance(rejected, list):
+                            rejected = []
+                        session.rejected_slot_starts = rejected + [cur_slot.start]
+                        # Mémoire (day, period) refusé : anti-spam matin/après-midi
+                        day = getattr(cur_slot, "day", "") or ""
+                        period = tools_booking.slot_period(cur_slot)
+                        if day and period:
+                            rdp = getattr(session, "rejected_day_periods", None) or []
+                            key = f"{day}|{period}"
+                            if key not in rdp:
+                                session.rejected_day_periods = rdp + [key]
+                    session.slot_sequential_refuse_count = getattr(session, "slot_sequential_refuse_count", 0) + 1
+                    # Après 2 "non" consécutifs → demander préférence ouverte (matin / aprem / autre jour)
+                    if session.slot_sequential_refuse_count >= 2:
+                        session.slot_sequential_refuse_count = 0
+                        session.slot_proposal_sequential = False
+                        session.state = "QUALIF_PREF"
+                        session.pending_slots = []
+                        session.pending_slots_display = []
+                        session.slot_offer_index = 0
+                        # Reset refus pour le prochain pool (évite "il ne me propose plus rien" après préférence)
+                        session.rejected_slot_starts = []
+                        session.rejected_day_periods = []
+                        msg = getattr(prompts, "VOCAL_SLOT_REFUSE_PREF_PROMPT", "Vous préférez plutôt le matin, l'après-midi, ou un autre jour ?")
+                        session.add_message("agent", msg)
+                        _persist_ivr_event(session, "slot_refuse_pref_asked")  # Métrique : % refus x2 → QUALIF_PREF
+                        self._save_session(session)
+                        return [Event("final", msg, conv_state=session.state)]
+                    # Skip neighbor slots + (day, period) refusés dans la liste courante (évite 9h → 9h15)
+                    next_idx = idx + 1
+                    seq_skip = 0
+                    rejected_dp = set(getattr(session, "rejected_day_periods", None) or [])
+                    while next_idx < len(session.pending_slots or []):
+                        cand = session.pending_slots[next_idx]
+                        cand_start = getattr(cand, "start", None)
+                        cand_day = getattr(cand, "day", "") or ""
+                        cand_period = tools_booking.slot_period(cand)
+                        cand_key = f"{cand_day}|{cand_period}" if cand_day and cand_period else ""
+                        if not cand_start:
+                            break
+                        far = tools_booking.is_slot_far_from_rejected(
+                            cand_start,
+                            session.rejected_slot_starts,
+                            tools_booking.REJECTED_SLOT_WINDOW_MINUTES,
+                        )
+                        if cand_key and cand_key in rejected_dp:
+                            next_idx += 1
+                            seq_skip += 1
+                            continue
+                        if far:
+                            break
+                        next_idx += 1
+                        seq_skip += 1
+                    logger.info(
+                        "[SLOT_SEQUENTIAL] conv_id=%s non→skip seq_skip=%s next_idx=%s",
+                        session.conv_id,
+                        seq_skip,
+                        next_idx,
+                    )
+                    session.slot_offer_index = next_idx
                     if session.slot_offer_index >= len(session.pending_slots):
                         session.state = "TRANSFERRED"
                         msg = prompts.VOCAL_NO_SLOTS
@@ -2327,7 +2410,8 @@ class Engine:
                         return [Event("final", msg, conv_state=session.state)]
                     next_slot = session.pending_slots[session.slot_offer_index]
                     next_label = getattr(next_slot, "label", None) or getattr(next_slot, "label_vocal", None) or str(next_slot)
-                    msg = prompts.VOCAL_SLOT_ONE_PROPOSE.format(label=next_label)
+                    # Après refus : variante round-robin (évite "D'accord" répété, ton naturel)
+                    msg = pick_slot_refusal_message(session, next_label, channel)
                     session.add_message("agent", msg)
                     session.last_say_key, session.last_say_kwargs = "slot_one_propose", {"label": next_label}
                     self._save_session(session)
@@ -3115,6 +3199,16 @@ class Engine:
                         session.conv_id,
                         booking_retry,
                     )
+                    # Exclure ce créneau (±90 min) des prochaines propositions
+                    try:
+                        taken_slot = (session.pending_slots or [])[slot_idx - 1] if slot_idx and session.pending_slots else None
+                        if taken_slot and getattr(taken_slot, "start", None):
+                            rejected = getattr(session, "rejected_slot_starts", None) or []
+                            if not isinstance(rejected, list):
+                                rejected = []
+                            session.rejected_slot_starts = rejected + [taken_slot.start]
+                    except (IndexError, TypeError):
+                        pass
                     session.pending_slots = []
                     session.pending_slot_choice = None
                     session.pending_slots_display = []
@@ -3136,6 +3230,9 @@ class Engine:
                     motif = session.qualif_data.motif or ""
                     msg = prompts.format_booking_confirmed(slot_label, name=name, motif=motif, channel=channel)
                 session.state = "CONFIRMED"
+                session.rejected_slot_starts = []
+                session.rejected_day_periods = []
+                session.slot_sequential_refuse_count = 0
                 logger.info(
                     "[RDV_CONFIRMED] conv_id=%s slot_label=%s name=%s",
                     session.conv_id,
