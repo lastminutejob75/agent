@@ -224,6 +224,29 @@ def test_vocal_booking_confirmed_no_emoji():
     assert slot in out
 
 
+def test_vocal_booking_confirmed_tts_friendly():
+    """Message final vocal : pas d'abréviation SMS (TTS hachuré), utiliser 'message de rappel'."""
+    slot = "mardi 15 janvier à 14 heures"
+    out = prompts.format_booking_confirmed(slot, channel="vocal")
+    assert "SMS" not in out, "Éviter 'SMS' en vocal (TTS). Utiliser 'message de rappel'."
+    assert "message" in out.lower(), "Doit contenir 'message de rappel'."
+    assert "confirmé" in out.lower()
+    assert slot in out
+
+
+def test_vocal_no_double_parfait_after_name():
+    """Après le nom, la question (pref/contact) ne doit pas commencer par un ack (évite 2e Parfait en start)."""
+    for field in ("pref", "contact"):
+        q = prompts.get_qualif_question_with_name(field, "Dupont", channel="vocal")
+        assert q, f"Question {field} ne doit pas être vide"
+        q_lower = q.strip().lower()
+        assert not q_lower.startswith("parfait"), (
+            f"Vocal: pas d'ack en tête pour {field} (règle 1 ack max, pas 2 Parfait consécutifs)"
+        )
+        assert not q_lower.startswith("très bien"), f"Vocal: pas d'ack pour {field}"
+        assert not q_lower.startswith("d'accord"), f"Vocal: pas d'ack pour {field}"
+
+
 def test_get_message_adapts_to_channel():
     """get_message retourne le bon message selon le canal."""
     # Vocal
@@ -256,25 +279,14 @@ def test_msg_no_match_faq_adapts_to_channel():
     assert "certain" in web.lower()
 
 
-def test_pick_ack_round_robin():
-    """pick_ack retourne les variantes en round-robin déterministe."""
-    assert prompts.pick_ack(0) == "Très bien."
-    assert prompts.pick_ack(1) == "D'accord."
-    assert prompts.pick_ack(2) == "Parfait."
-    assert prompts.pick_ack(3) == "Très bien."
-    assert prompts.pick_ack(4) == "D'accord."
-    assert prompts.pick_ack(5) == "Parfait."
+def test_pick_ack_single_variant():
+    """pick_ack utilise le pivot unique 'Parfait.' (1 ack max par étape, pas de round-robin)."""
+    assert prompts.pick_ack(0) == "Parfait."
+    assert prompts.pick_ack(1) == "Parfait."
 
 
-def test_qualif_with_name_ack_rotates():
-    """Deux appels successifs avec ack_index différent ne renvoient pas la même intro."""
-    q0 = prompts.get_qualif_question_with_name(
-        "pref", "Dupont", channel="vocal", ack_index=0
-    )
-    q1 = prompts.get_qualif_question_with_name(
-        "pref", "Dupont", channel="vocal", ack_index=1
-    )
-    # Préfixes différents (Très bien. vs D'accord.)
-    assert q0.startswith("Très bien.")
-    assert q1.startswith("D'accord.")
-    assert q0 != q1
+def test_qualif_with_name_vocal_no_ack():
+    """En vocal, après le nom : pas d'ack préfixé (évite double Parfait en start)."""
+    q = prompts.get_qualif_question_with_name("pref", "Dupont", channel="vocal", ack_index=0)
+    assert "préférez" in q.lower() and "matin" in q.lower()
+    assert not q.strip().lower().startswith(("parfait", "très bien", "d'accord"))

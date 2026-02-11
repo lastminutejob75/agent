@@ -203,6 +203,50 @@ def test_oui_after_out_of_scope_goes_to_clarify_not_intent_router():
     assert "rendez-vous" in e2[0].text.lower() and "question" in e2[0].text.lower()
 
 
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+def test_sequential_non_x2_with_pref_reproposes_not_reask_pref(mock_slots):
+    """
+    Préférence déjà connue (matin) + 2 "non" → re-propose de nouveaux créneaux,
+    NE PAS re-demander "vous préférez matin ou après-midi".
+    """
+    from datetime import datetime, timedelta
+    from backend.prompts import SlotDisplay
+
+    engine = create_engine()
+    conv = f"conv_pref_repropose_{uuid.uuid4().hex[:8]}"
+    engine.session_store.delete(conv)
+    session = engine.session_store.get_or_create(conv)
+    session.channel = "vocal"
+    session.state = "WAIT_CONFIRM"
+    session.slot_proposal_sequential = True
+    session.slot_offer_index = 0
+    session.slots_list_sent = True
+    session.slots_preface_sent = True
+    session.qualif_data.pref = "matin"
+    session.qualif_data.name = "Test"
+    session.qualif_data.motif = "consultation"
+    base = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    session.pending_slots = [
+        SlotDisplay(1, "Lundi 9h00", 0, (base.replace(hour=9, minute=0)).isoformat(), "lundi", 9, "lundi à 9h"),
+        SlotDisplay(2, "Lundi 9h15", 1, (base.replace(hour=9, minute=15)).isoformat(), "lundi", 9, "lundi à 9h"),
+        SlotDisplay(3, "Lundi 14h00", 2, (base.replace(hour=14, minute=0)).isoformat(), "lundi", 14, "lundi à 14h"),
+    ]
+    engine._save_session(session)
+
+    events = engine.handle_message(conv, "non")  # 1er non → propose 14h
+    assert len(events) >= 1
+    events = engine.handle_message(conv, "non")  # 2e non → re-propose (pas re-demandée pref)
+    assert len(events) >= 1
+    msg = events[0].text
+    # Ne doit PAS envoyer le message qui redemande la préférence
+    refus_pref_msg = getattr(prompts, "VOCAL_SLOT_REFUSE_PREF_PROMPT", "")
+    assert refus_pref_msg not in msg
+    # Doit proposer des créneaux (ou transfer si plus rien)
+    s = engine.session_store.get(conv)
+    assert s is not None
+    assert s.state in ("WAIT_CONFIRM", "TRANSFERRED")
+
+
 def test_sequential_non_skips_neighbor_proposes_14h():
     """
     Séquentiel : user refuse 9h → doit proposer 14h (pas 9h15).

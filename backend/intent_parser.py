@@ -28,6 +28,7 @@ class Intent(str, Enum):
     REPEAT = "REPEAT"
     UNCLEAR = "UNCLEAR"
     ORDONNANCE = "ORDONNANCE"
+    OUT_OF_SCOPE = "OUT_OF_SCOPE"  # hors-sujet (ex. LLM Assist)
 
 
 class RouterChoice(str, Enum):

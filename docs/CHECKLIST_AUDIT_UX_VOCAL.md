@@ -160,3 +160,5 @@ Moins de mots = plus de confiance.
 ---
 
 *Document de référence pour l’audit des scripts vocaux. À utiliser tour par tour pour repérer sur-acknowledgements et sur-confirmations.*
+
+**Avant de modifier un prompt ou l’engine vocal** → voir [SCENARIOS_VOCAL_ET_IMPACT.md](./SCENARIOS_VOCAL_ET_IMPACT.md) (parcours, impact, tests à lancer).

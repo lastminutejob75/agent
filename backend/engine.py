@@ -2354,20 +2354,30 @@ class Engine:
                             if key not in rdp:
                                 session.rejected_day_periods = rdp + [key]
                     session.slot_sequential_refuse_count = getattr(session, "slot_sequential_refuse_count", 0) + 1
-                    # Après 2 "non" consécutifs → demander préférence ouverte (matin / aprem / autre jour)
+                    # Après 2 "non" consécutifs → re-proposer OU demander préférence (si déjà connue, ne pas re-demandée)
                     if session.slot_sequential_refuse_count >= 2:
                         session.slot_sequential_refuse_count = 0
+                        pref = getattr(session.qualif_data, "pref", None) or None
+                        if pref in ("matin", "après-midi", "soir"):
+                            # Préférence déjà connue : re-fetch avec rejected_slot_starts (pas de reset) → nouveaux créneaux
+                            session.slot_proposal_sequential = False
+                            session.pending_slots = []
+                            session.pending_slots_display = []
+                            session.slot_offer_index = 0
+                            session.slots_list_sent = False
+                            session.slots_preface_sent = False
+                            return self._propose_slots(session)
+                        # Pas de préférence connue → demander
                         session.slot_proposal_sequential = False
                         session.state = "QUALIF_PREF"
                         session.pending_slots = []
                         session.pending_slots_display = []
                         session.slot_offer_index = 0
-                        # Reset refus pour le prochain pool (évite "il ne me propose plus rien" après préférence)
                         session.rejected_slot_starts = []
                         session.rejected_day_periods = []
                         msg = getattr(prompts, "VOCAL_SLOT_REFUSE_PREF_PROMPT", "Vous préférez plutôt le matin, l'après-midi, ou un autre jour ?")
                         session.add_message("agent", msg)
-                        _persist_ivr_event(session, "slot_refuse_pref_asked")  # Métrique : % refus x2 → QUALIF_PREF
+                        _persist_ivr_event(session, "slot_refuse_pref_asked")
                         self._save_session(session)
                         return [Event("final", msg, conv_state=session.state)]
                     # Skip neighbor slots + (day, period) refusés dans la liste courante (évite 9h → 9h15)
