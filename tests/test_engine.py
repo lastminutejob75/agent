@@ -835,6 +835,99 @@ def test_interruption_flow_barge_in_un(mock_slots, caplog):
 
 
 @patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+def test_barge_in_le_deux_slot_choice(mock_slots):
+    """Barge-in pendant lecture : « le 2 » → slot_choice=2, is_reading_slots=False."""
+    engine = create_engine()
+    conv = f"conv_barge2_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Martin Dupont")
+    engine.handle_message(conv, "matin")
+    engine.handle_message(conv, "oui")
+    session = engine.session_store.get(conv)
+    assert session is not None
+    assert getattr(session, "is_reading_slots", False)
+    events = engine.handle_message(conv, "le 2")
+    assert len(events) >= 1
+    session = engine.session_store.get(conv)
+    assert session.pending_slot_choice == 2
+    assert getattr(session, "is_reading_slots", True) is False
+    assert "confirmez" in events[0].text.lower() or "créneau" in events[0].text.lower()
+
+
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+def test_barge_in_ordinal_deuxieme(mock_slots):
+    """Barge-in pendant lecture : « le deuxième » → choix 2."""
+    engine = create_engine()
+    conv = f"conv_barge_ord_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Martin Dupont")
+    engine.handle_message(conv, "matin")
+    engine.handle_message(conv, "oui")
+    events = engine.handle_message(conv, "le deuxième")
+    assert len(events) >= 1
+    session = engine.session_store.get(conv)
+    assert session.pending_slot_choice == 2
+
+
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+def test_barge_in_repeat_replays_list(mock_slots):
+    """Barge-in « répétez » pendant lecture → renvoie la liste, état inchangé."""
+    engine = create_engine()
+    conv = f"conv_barge_rep_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Martin Dupont")
+    engine.handle_message(conv, "matin")
+    engine.handle_message(conv, "oui")
+    session = engine.session_store.get(conv)
+    assert session is not None
+    assert session.state == "WAIT_CONFIRM"
+    events = engine.handle_message(conv, "Répétez")
+    assert len(events) >= 1
+    reply = events[0].text
+    assert "Mardi" in reply or "créneau" in reply.lower() or "1" in reply
+    session = engine.session_store.get(conv)
+    assert session.state == "WAIT_CONFIRM"
+    assert session.pending_slot_choice is None
+
+
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+def test_barge_in_le_dernier_slot_3(mock_slots):
+    """Barge-in « le dernier » pendant lecture 3 slots → choix 3."""
+    engine = create_engine()
+    conv = f"conv_dernier_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Martin Dupont")
+    engine.handle_message(conv, "matin")
+    engine.handle_message(conv, "oui")
+    events = engine.handle_message(conv, "le dernier")
+    assert len(events) >= 1
+    session = engine.session_store.get(conv)
+    assert session.pending_slot_choice == 3
+
+
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+def test_sequential_celui_la_confirms_current(mock_slots):
+    """Séquentiel : « celui-là » après proposition créneau → confirme le créneau en cours."""
+    engine = create_engine()
+    conv = f"conv_celui_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Martin Dupont")
+    engine.handle_message(conv, "matin")
+    session = engine.session_store.get(conv)
+    session.channel = "vocal"
+    engine.session_store.save(session)
+    engine.handle_message(conv, "oui")
+    session = engine.session_store.get(conv)
+    assert session.slot_proposal_sequential
+    assert session.slot_offer_index == 0
+    events = engine.handle_message(conv, "celui-là")
+    assert len(events) >= 1
+    session = engine.session_store.get(conv)
+    assert session.pending_slot_choice == 1
+    assert "confirmez" in events[0].text.lower() or "créneau" in events[0].text.lower()
+
+
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
 def test_confirm_slot_oui_cest_bien_ca(mock_slots):
     """Après « Le créneau X, vous confirmez ? », « oui c'est bien ça » doit valider et passer au contact (pas transférer)."""
     engine = create_engine()

@@ -881,6 +881,52 @@ class Engine:
 
         session.empty_message_count = 0  # Reset quand message non vide
         
+        # ========================
+        # Fast-path barge-in : choix créneau pendant lecture (prime sur REPEAT/UNCLEAR)
+        # Gate : is_reading_slots + pending non vide (pas state, pour couvrir 2 tours / QUALIF→slots)
+        # ========================
+        pending = session.pending_slots or getattr(session, "pending_slots_display", None) or []
+        num_slots = len(pending) if pending else 0
+        if getattr(session, "is_reading_slots", False) and num_slots > 0 and user_text and user_text.strip():
+            _t_ascii = intent_parser.normalize_stt_text(user_text or "")
+            
+            slot_choice = intent_parser.extract_slot_choice(_t_ascii, num_slots=num_slots)
+            if slot_choice and 1 <= slot_choice <= num_slots:
+                logger.info(
+                    "[INTERRUPTION] conv_id=%s client chose slot %s during enumeration (fast-path), slots_count=%s",
+                    session.conv_id,
+                    slot_choice,
+                    num_slots,
+                )
+                session.is_reading_slots = False
+                session.slots_preface_sent = False
+                session.slots_list_sent = False
+                return safe_reply(self._handle_booking_confirm(session, user_text), session)
+            
+            if intent_parser._is_no(user_text):
+                session.is_reading_slots = False
+                session.slots_preface_sent = False
+                session.slots_list_sent = False
+                msg = getattr(prompts, "MSG_SLOT_BARGE_IN_HELP", "D'accord. Dites juste 1, 2 ou 3.")
+                session.add_message("agent", msg)
+                return safe_reply([Event("final", msg, conv_state=session.state)], session)
+            
+            if intent_parser._is_repeat(user_text):
+                ch = getattr(session, "channel", "web")
+                slots = session.pending_slots or []
+                if ch == "vocal":
+                    list_msg = prompts.format_slot_list_vocal_only(slots) if len(slots) >= 3 else prompts.format_slot_proposal(slots, include_instruction=True, channel=ch)
+                else:
+                    list_msg = prompts.format_slot_proposal(slots, include_instruction=True, channel=ch)
+                session.add_message("agent", list_msg)
+                return safe_reply([Event("final", list_msg, conv_state=session.state)], session)
+            
+            if "attendez" in _t_ascii or "attends" in _t_ascii:
+                session.is_reading_slots = False
+                msg = getattr(prompts, "MSG_SLOT_BARGE_IN_HELP", "D'accord. Dites juste 1, 2 ou 3.")
+                session.add_message("agent", msg)
+                return safe_reply([Event("final", msg, conv_state=session.state)], session)
+        
         # Message trop long
         is_valid, error_msg = guards.validate_length(user_text)
         if not is_valid:
@@ -2364,6 +2410,20 @@ class Engine:
                 if _t_ascii.startswith("oui de") or _t_ascii == "oui de" or (_t_ascii.startswith("oui") and " de " in _t_ascii and len(_t_ascii) < 25):
                     msg = getattr(prompts, "VOCAL_SLOT_SEQUENTIAL_NEED_YES_NO", "Dites oui si ça vous convient, ou non pour un autre créneau.")
                     session.add_message("agent", msg)
+                    return [Event("final", msg, conv_state=session.state)]
+                # "celui-là" / "celui ci" → confirmer le créneau en cours (séquentiel)
+                if _t_ascii in ("celui la", "celui-la", "celui ci", "celui-ci"):
+                    session.slot_sequential_refuse_count = 0
+                    session.pending_slot_choice = idx + 1
+                    session.slot_proposal_sequential = False
+                    try:
+                        slot_label = tools_booking.get_label_for_choice(session, idx + 1) or label_cur
+                    except Exception:
+                        slot_label = label_cur
+                    msg = prompts.format_slot_early_confirm(idx + 1, slot_label, channel=channel)
+                    session.add_message("agent", msg)
+                    session.awaiting_confirmation = "CONFIRM_SLOT"
+                    self._save_session(session)
                     return [Event("final", msg, conv_state=session.state)]
                 # OUI → accepter ce créneau (1-based choice = idx+1). P0 : normaliser accents (ç→c) pour STT
                 _confirm_norm = frozenset(intent_parser.normalize_stt_text(w) for w in (guards.YES_WORDS | {"ouaip", "okay", "parfait", "daccord"}) if w)

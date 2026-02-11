@@ -91,9 +91,12 @@ def estimate_tts_duration(text: str) -> float:
     return max(0.8, min(4.0, duration))
 
 
-# Mots qui passent même pendant overlap (semi-sourd)
+# Mots qui passent même pendant overlap (semi-sourd / barge-in pendant lecture créneaux)
 CRITICAL_OVERLAP = frozenset({
     "oui", "non", "ok", "okay",
+    "1", "2", "3", "un", "deux", "trois",
+    "premier", "deuxième", "troisième", "deuxieme", "troisieme",
+    "le 1", "le 2", "le 3", "le premier", "le deuxième", "le troisième", "le dernier",
     "stop", "arrête", "arrêtez",
     "humain", "personne", "quelqu'un", "quelquun",
     "annuler", "annulation",

@@ -63,4 +63,4 @@ def test_fsm2_wait_confirm_early_commit(mock_slots):
         session = engine.session_store.get(conv)
         assert session is not None
         assert session.pending_slot_choice == 1
-        assert "bien ça" in events[0].text.lower() or "créneau" in events[0].text.lower()
+        assert "confirmez" in events[0].text.lower() or "créneau" in events[0].text.lower()

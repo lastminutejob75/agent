@@ -181,7 +181,11 @@ def detect_slot_choice_early(text: str, pending_slots: Optional[list] = None) ->
     if re.match(r"^(choix|option|creneau|créneau|numero|numéro)\s+(3|trois|troisième|troisieme)\s*$", t):
         return 3
 
-    # 5) Jour + heure (match unique sur pending_slots)
+    # 5) "dernier" / "le dernier" → 3 si 3 slots
+    if pending_slots and len(pending_slots) >= 3 and re.match(r"^(le\s+)?dernier\s*$", t):
+        return 3
+
+    # 6) Jour + heure (match unique sur pending_slots)
     if pending_slots:
         return detect_slot_choice_by_datetime(text, pending_slots)
 

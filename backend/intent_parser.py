@@ -255,6 +255,40 @@ def _is_no(text: str) -> bool:
     return False
 
 
+def extract_slot_choice(text: str, num_slots: int = 3) -> Optional[int]:
+    """
+    Extrait un choix de créneau 1/2/3 depuis une phrase courte (barge-in pendant lecture).
+    Utilise normalize_stt_text pour robustesse STT.
+    Retourne 1, 2 ou 3 uniquement ; None sinon.
+    num_slots : utilisé pour "dernier"/"le dernier" → 3 si num_slots >= 3.
+    """
+    if not text or not text.strip():
+        return None
+    t = normalize_stt_text(text)
+    if not t or len(t) > 50:
+        return None
+    # Chiffre seul
+    if t in ("1", "2", "3"):
+        return int(t)
+    # Ordinaux
+    if re.match(r"^(le\s+)?(premier|un)\s*$", t):
+        return 1
+    if re.match(r"^(le\s+)?(deuxième|deuxieme|deux|second)\s*$", t):
+        return 2
+    if re.match(r"^(le\s+)?(troisième|troisieme|trois)\s*$", t):
+        return 3
+    # "dernier" / "le dernier" → 3 si on a 3 slots
+    if re.match(r"^(le\s+)?dernier\s*$", t) and num_slots >= 3:
+        return 3
+    # Marqueur + chiffre : le 1, numero 2, choix 3, prends le 1
+    m = re.search(r"^(?:le|numero|choix|option|creneau|prends?\s+le)\s*([123])\s*$", t)
+    if m:
+        return int(m.group(1))
+    if re.match(r"^le\s*[123]\s*$", t):
+        return int(re.search(r"[123]", t).group(0))
+    return None
+
+
 def _is_repeat(text: str) -> bool:
     t = normalize_stt_text(text)
     if not t:
