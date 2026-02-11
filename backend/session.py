@@ -138,6 +138,10 @@ class Session:
     intent_router_visits: int = 0
     intent_router_unclear_count: int = 0
 
+    # Yes disambiguation : quoi confirme le user quand il dit "oui" ? (éviter oui ambigu)
+    awaiting_confirmation: Optional[str] = None  # CONFIRM_SLOT, CONFIRM_CONTACT, CONFIRM_PREFERENCE, CONFIRM_CANCEL, CONFIRM_MODIFY
+    yes_ambiguous_count: int = 0  # "oui" ambigu répétés → 2e → guidance options
+
     MAX_CONSECUTIVE_QUESTIONS = 3  # Limite cognitive (spec V3)
     MAX_TURNS_ANTI_LOOP = 25  # Garde-fou : >25 tours sans DONE/TRANSFERRED → INTENT_ROUTER
     MAX_CONTEXT_FAILS = 3  # Échecs sur un même contexte → escalade INTENT_ROUTER
@@ -212,6 +216,8 @@ class Session:
         self.slot_proposal_sequential = False
         self.intent_router_visits = 0
         self.intent_router_unclear_count = 0
+        self.awaiting_confirmation = None
+        self.yes_ambiguous_count = 0
         self.time_constraint_type = ""
         self.time_constraint_minute = -1
         self.client_id = None
@@ -226,6 +232,10 @@ class Session:
         self.touch()
         if role == "agent":
             self.last_agent_message = text
+            # Reset last_say_key : seuls _say()/get_message() le rétablissent. Évite qu'un dernier
+            # message "inline" (format_slot_early_confirm, etc.) laisse un last_say_key obsolète.
+            self.last_say_key = None
+            self.last_say_kwargs = {}
             # Dernière question posée (pour correction / "attendez")
             if "?" in text or any(q in text.lower() for q in ["dites", "quel", "préférez"]):
                 self.last_question_asked = text

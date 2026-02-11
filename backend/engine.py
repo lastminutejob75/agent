@@ -929,7 +929,8 @@ class Engine:
         print(f"🎯 Intent detected: '{intent}' from '{user_text}'")
         print(f"📞 State: {session.state} | Intent: {intent} | User: '{user_text[:50]}...'")
         
-        # REPEAT : relire le dernier prompt exact (pas re-router, pas d'escalade, état inchangé)
+        # REPEAT : relire le dernier prompt exact (pas re-router, pas d'escalade, état inchangé).
+        # Idempotent sur is_reading_slots / slots_preface_sent / slots_list_sent : ne pas les modifier.
         if intent == "REPEAT":
             last_key = getattr(session, "last_say_key", None)
             last_kw = getattr(session, "last_say_kwargs", None) or {}
@@ -975,6 +976,38 @@ class Engine:
             if result["state"] == "INTENT_ROUTER":
                 session.last_question_asked = msg
             return safe_reply([Event("final", msg, conv_state=session.state)], session)
+        
+        # --- Reset yes_ambiguous_count sur toute réponse non-YES (éviter escalade trop tôt) ---
+        if intent != "YES":
+            session.yes_ambiguous_count = 0
+
+        # --- YES disambiguation : éviter "oui" ambigu (créneau / préférence / contact / "ok j'écoute") ---
+        if intent == "YES" and session.state in YESNO_CONFIRM_STATES:
+            if getattr(session, "awaiting_confirmation", None):
+                session.yes_ambiguous_count = 0
+            else:
+                last_msg = getattr(session, "last_agent_message", None) or ""
+                last_q = getattr(session, "last_question_asked", None) or ""
+                has_question = "?" in last_msg or "?" in last_q or any(
+                    q in (last_msg + " " + last_q).lower() for q in ["dites", "quel", "préférez", "confirmez", "correct", "voulez"]
+                )
+                if not has_question:
+                    session.yes_ambiguous_count = getattr(session, "yes_ambiguous_count", 0) + 1
+                    _in_booking = session.state in (
+                        "QUALIF_NAME", "QUALIF_MOTIF", "QUALIF_PREF", "QUALIF_CONTACT",
+                        "WAIT_CONFIRM", "CONTACT_CONFIRM",
+                    )
+                    if session.yes_ambiguous_count >= 3:
+                        return safe_reply(self._trigger_intent_router(session, "yes_ambiguous_3", user_text), session)
+                    if session.yes_ambiguous_count >= 2 and _in_booking:
+                        msg = getattr(prompts, "CLARIFY_YES_BOOKING_TIGHT", "Pour être sûr : vous confirmez le créneau, oui ou non ?")
+                        session.add_message("agent", msg)
+                        return safe_reply([Event("final", msg, conv_state=session.state)], session)
+                    if session.yes_ambiguous_count >= 2:
+                        return safe_reply(self._trigger_intent_router(session, "yes_ambiguous_2", user_text), session)
+                    msg = getattr(prompts, "CLARIFY_YES_GENERIC", "Oui — vous confirmez le créneau, ou vous préférez autre chose ?")
+                    session.add_message("agent", msg)
+                    return safe_reply([Event("final", msg, conv_state=session.state)], session)
         
         # --- FLOWS EN COURS ---
         
@@ -1890,6 +1923,7 @@ class Engine:
                 msg = prompts.format_inference_confirmation(inferred_pref)
                 session.last_question_asked = msg
                 session.add_message("agent", msg)
+                session.awaiting_confirmation = "CONFIRM_PREFERENCE"
                 return [Event("final", msg, conv_state=session.state)]
             
             # 2. Inférence temporelle robuste ("vers 14h", "après le déjeuner", "peu importe", etc.)
@@ -1903,6 +1937,7 @@ class Engine:
                 msg = prompts.VOCAL_PREF_CONFIRM_MATIN
                 session.last_question_asked = msg
                 session.add_message("agent", msg)
+                session.awaiting_confirmation = "CONFIRM_PREFERENCE"
                 return [Event("final", msg, conv_state=session.state)]
             if time_pref == "afternoon":
                 session.qualif_pref_intent_repeat_count = 0
@@ -1913,6 +1948,7 @@ class Engine:
                 msg = prompts.VOCAL_PREF_CONFIRM_APRES_MIDI
                 session.last_question_asked = msg
                 session.add_message("agent", msg)
+                session.awaiting_confirmation = "CONFIRM_PREFERENCE"
                 return [Event("final", msg, conv_state=session.state)]
             if time_pref == "neutral":
                 session.qualif_pref_intent_repeat_count = 0
@@ -1923,6 +1959,7 @@ class Engine:
                 msg = prompts.VOCAL_PREF_ANY
                 session.last_question_asked = msg
                 session.add_message("agent", msg)
+                session.awaiting_confirmation = "CONFIRM_PREFERENCE"
                 return [Event("final", msg, conv_state=session.state)]
             
             # 3. Fallback : infer_preference_plausible (mots directs + heures)
@@ -1936,6 +1973,7 @@ class Engine:
                 msg = prompts.VOCAL_PREF_CONFIRM_MATIN
                 session.last_question_asked = msg
                 session.add_message("agent", msg)
+                session.awaiting_confirmation = "CONFIRM_PREFERENCE"
                 return [Event("final", msg, conv_state=session.state)]
             if pref_plausible == "afternoon":
                 session.qualif_pref_intent_repeat_count = 0
@@ -1946,6 +1984,7 @@ class Engine:
                 msg = prompts.VOCAL_PREF_CONFIRM_APRES_MIDI
                 session.last_question_asked = msg
                 session.add_message("agent", msg)
+                session.awaiting_confirmation = "CONFIRM_PREFERENCE"
                 return [Event("final", msg, conv_state=session.state)]
             if pref_plausible == "any":
                 session.qualif_pref_intent_repeat_count = 0
@@ -1956,6 +1995,7 @@ class Engine:
                 msg = prompts.VOCAL_PREF_ANY
                 session.last_question_asked = msg
                 session.add_message("agent", msg)
+                session.awaiting_confirmation = "CONFIRM_PREFERENCE"
                 return [Event("final", msg, conv_state=session.state)]
             
             # 4. Incompréhension → recovery progressive (fail 1, 2, 3 → INTENT_ROUTER)
@@ -2014,6 +2054,7 @@ class Engine:
                         session.state = "CONTACT_CONFIRM"
                         msg = prompts.VOCAL_EMAIL_CONFIRM.format(email=contact_raw) if getattr(prompts, "VOCAL_EMAIL_CONFIRM", None) else f"Votre email est bien {contact_raw} ?"
                         session.add_message("agent", msg)
+                        session.awaiting_confirmation = "CONFIRM_CONTACT"
                         return [Event("final", msg, conv_state=session.state)]
                     return self._propose_slots(session)
 
@@ -2052,6 +2093,7 @@ class Engine:
                     phone_spaced = prompts.format_phone_for_voice(contact_raw)
                     msg = prompts.VOCAL_PHONE_CONFIRM.format(phone_spaced=phone_spaced)
                     session.add_message("agent", msg)
+                    session.awaiting_confirmation = "CONFIRM_CONTACT"
                     return [Event("final", msg, conv_state=session.state)]
                 
                 else:
@@ -2122,6 +2164,7 @@ class Engine:
                     else:
                         msg = f"Votre email est bien {contact_raw} ?"
                 session.add_message("agent", msg)
+                session.awaiting_confirmation = "CONFIRM_CONTACT"
                 return [Event("final", msg, conv_state=session.state)]
             return self._propose_slots(session)
         
@@ -2276,21 +2319,20 @@ class Engine:
                 slot_obj = session.pending_slots[idx]
                 label_cur = getattr(slot_obj, "label", None) or getattr(slot_obj, "label_vocal", None) or str(slot_obj)
                 _t = (user_text or "").strip().lower()
-                _t_norm = "".join(c for c in _t if c.isalnum() or c in " '\"-")
-                _t_norm = _t_norm.replace("'", "").replace("'", "").strip()
+                _t_ascii = intent_parser.normalize_stt_text(_t)
                 # "répéter" / "redire" / filler (euh, hein) → relire le créneau courant (Test 5.1)
-                if any(x in _t_norm for x in ("repeter", "répéter", "repetes", "redire", "reprendre", "reécoute")):
+                if any(x in _t_ascii for x in ("repeter", "repetes", "redire", "reprendre", "reecoute")):
                     msg = prompts.VOCAL_SLOT_ONE_PROPOSE.format(label=label_cur)
                     session.add_message("agent", msg)
                     session.last_say_key, session.last_say_kwargs = "slot_one_propose", {"label": label_cur}
                     return [Event("final", msg, conv_state=session.state)]
-                if _t_norm in ("euh", "hein", "hum", "euhh") or _t_norm in getattr(guards, "FILLER_GLOBAL", frozenset()):
+                if _t_ascii in ("euh", "hein", "hum", "euhh") or _t_ascii in getattr(guards, "FILLER_GLOBAL", frozenset()):
                     msg = prompts.VOCAL_SLOT_ONE_PROPOSE.format(label=label_cur)
                     session.add_message("agent", msg)
                     session.last_say_key, session.last_say_kwargs = "slot_one_propose", {"label": label_cur}
                     return [Event("final", msg, conv_state=session.state)]
                 # "le deuxième" / "le second" selon contexte (Test 5.2) : idx 0 → suivant (NO), idx 1 → ce créneau (YES)
-                if any(x in _t_norm for x in ("le deuxième", "le second", "deuxième", "second")) and len(_t_norm) <= 15:
+                if any(x in _t_ascii for x in ("le deuxieme", "le second", "deuxieme", "second")) and len(_t_ascii) <= 20:
                     if idx == 0:
                         session.slot_offer_index = 1
                         if session.slot_offer_index >= len(session.pending_slots):
@@ -2315,16 +2357,19 @@ class Engine:
                             slot_label = label_cur
                         msg = prompts.format_slot_early_confirm(2, slot_label, channel=channel)
                         session.add_message("agent", msg)
+                        session.awaiting_confirmation = "CONFIRM_SLOT"
                         self._save_session(session)
                         return [Event("final", msg, conv_state=session.state)]
                 # Test 5.3 — "oui de…" ambigu (oui deux ?) → clarification, ne pas planter
-                if _t_norm.startswith("oui de") or _t_norm == "oui de" or (_t_norm.startswith("oui") and " de " in _t_norm and len(_t_norm) < 20):
+                if _t_ascii.startswith("oui de") or _t_ascii == "oui de" or (_t_ascii.startswith("oui") and " de " in _t_ascii and len(_t_ascii) < 25):
                     msg = getattr(prompts, "VOCAL_SLOT_SEQUENTIAL_NEED_YES_NO", "Dites oui si ça vous convient, ou non pour un autre créneau.")
                     session.add_message("agent", msg)
                     return [Event("final", msg, conv_state=session.state)]
-                # OUI → accepter ce créneau (1-based choice = idx+1)
-                _yes_set = guards.YES_WORDS | {"ouaip", "okay", "parfait", "daccord"}
-                if _t_norm in _yes_set or (_t_norm.startswith("oui") and len(_t_norm) <= 12 and " de " not in _t_norm):
+                # OUI → accepter ce créneau (1-based choice = idx+1). P0 : normaliser accents (ç→c) pour STT
+                _confirm_norm = frozenset(intent_parser.normalize_stt_text(w) for w in (guards.YES_WORDS | {"ouaip", "okay", "parfait", "daccord"}) if w)
+                _norm_compact = (_t_ascii or "").replace(" ", "")
+                _yes_implicit = _t_ascii in _confirm_norm or (_t_ascii.startswith("oui") and len(_t_ascii) <= 15 and " de " not in _t_ascii) or "bienca" in _norm_compact or "cestbienca" in _norm_compact or "cestcorrect" in _norm_compact
+                if _yes_implicit:
                     session.slot_sequential_refuse_count = 0
                     session.pending_slot_choice = idx + 1
                     session.slot_proposal_sequential = False
@@ -2334,11 +2379,12 @@ class Engine:
                         slot_label = label_cur
                     msg = prompts.format_slot_early_confirm(idx + 1, slot_label, channel=channel)
                     session.add_message("agent", msg)
+                    session.awaiting_confirmation = "CONFIRM_SLOT"
                     self._save_session(session)
                     return [Event("final", msg, conv_state=session.state)]
-                # NON → créneau suivant ou plus de dispo (exclure ce créneau des futures re-propositions ±90 min)
-                _no_set = guards.NO_WORDS | {"pas celui la", "pas celui-la", "pas ca", "pas ça", "autre", "suivant", "non merci"}
-                if _t_norm in _no_set or _t_norm.startswith("non"):
+                # NON → créneau suivant ou plus de dispo (exclure ce créneau des futures re-propositions ±90 min). P0 : normaliser
+                _no_norm = frozenset(intent_parser.normalize_stt_text(w) for w in (guards.NO_WORDS | {"pas celui la", "pas ca", "autre", "suivant", "non merci"}) if w)
+                if _t_ascii in _no_norm or _t_ascii.startswith("non"):
                     cur_slot = session.pending_slots[idx] if idx < len(session.pending_slots or []) else None
                     if cur_slot and getattr(cur_slot, "start", None):
                         rejected = getattr(session, "rejected_slot_starts", None) or []
@@ -2454,6 +2500,7 @@ class Engine:
                     slot_label = "votre créneau"
                 confirm_msg = prompts.format_slot_early_confirm(early_idx, slot_label, channel=channel)
                 session.add_message("agent", confirm_msg)
+                session.awaiting_confirmation = "CONFIRM_SLOT"
                 # Un seul event : le webhook vocal n'utilise que events[0].text → envoyer la confirmation, pas la liste
                 return [Event("final", confirm_msg, conv_state=session.state)]
             help_msg = getattr(prompts, "MSG_SLOT_BARGE_IN_HELP", "D'accord. Dites juste 1, 2 ou 3.")
@@ -2479,6 +2526,7 @@ class Engine:
                     slot_label = "votre créneau"
                 msg = prompts.format_slot_early_confirm(early_idx, slot_label, channel=channel)
                 session.add_message("agent", msg)
+                session.awaiting_confirmation = "CONFIRM_SLOT"
                 print(f"✅ barge-in: choix clair {early_idx} → early confirm")
                 return [Event("final", msg, conv_state=session.state)]
             # Pas un choix clair → une phrase courte, ne pas incrémenter les fails
@@ -2489,23 +2537,26 @@ class Engine:
         
         slot_idx: Optional[int] = None
 
-        # Confirmation du créneau déjà choisi (après "c'est bien ça ?") : "oui" ou "oui c'est bien ça" → on passe au contact
+        # Confirmation du créneau déjà choisi : "oui", "c'est bien ça", etc. → on passe au contact
+        # P0 : normaliser accents (ç→c) via normalize_stt_text pour toutes les variantes STT
         if session.pending_slot_choice is not None:
             _t = (user_text or "").strip().lower()
-            _t_norm = "".join(c for c in _t if c.isalnum() or c in " '\"-")
-            _t_norm = _t_norm.replace("'", "").replace("'", "").strip()
+            _t_ascii = intent_parser.normalize_stt_text(_t)
             _confirm_words = guards.YES_WORDS | {"ouaip", "okay", "parfait", "daccord"}
-            if _t_norm in _confirm_words:
+            _confirm_norm = frozenset(intent_parser.normalize_stt_text(w) for w in _confirm_words if w)
+            if _t_ascii in _confirm_norm:
                 slot_idx = session.pending_slot_choice
+                session.awaiting_confirmation = None
                 print(f"✅ slot_choice: confirmation du créneau {slot_idx} → passage au contact")
             else:
-                # Accepter les phrases du type "oui c'est bien ça", "c'est bien ça", "oui cest bien ca"
-                _norm_compact = _t_norm.replace(" ", "")
-                if "bienca" in _norm_compact or "bien ca" in _t_norm or "cestbienca" in _norm_compact:
+                _norm_compact = (_t_ascii or "").replace(" ", "")
+                if "bienca" in _norm_compact or "bien ca" in (_t_ascii or "") or "cestbienca" in _norm_compact:
                     slot_idx = session.pending_slot_choice
-                    print(f"✅ slot_choice: confirmation phrase du créneau {slot_idx} → passage au contact")
-                elif _t_norm.startswith("oui") and len(_t_norm) <= 25 and ("bien" in _t_norm or "ca" in _t_norm or "ça" in _t):
+                    session.awaiting_confirmation = None
+                    print(f"✅ slot_choice: confirmation phrase (c'est bien ça) du créneau {slot_idx} → passage au contact")
+                elif (_t_ascii or "").startswith("oui") and len(_t_ascii or "") <= 25 and ("bien" in (_t_ascii or "") or "ca" in (_t_ascii or "")):
                     slot_idx = session.pending_slot_choice
+                    session.awaiting_confirmation = None
                     print(f"✅ slot_choice: confirmation oui+ du créneau {slot_idx} → passage au contact")
 
         # Validation vague (oui/ok/d'accord SANS choix explicite) → redemander 1/2/3 SANS incrémenter fails (P0.5, A6)
@@ -2560,7 +2611,8 @@ class Engine:
                     slot_label = "votre créneau"
                 msg = prompts.format_slot_early_confirm(early_idx, slot_label, channel=channel)
                 session.add_message("agent", msg)
-                print(f"✅ early commit: choix {early_idx} → « C'est bien ça ? »")
+                session.awaiting_confirmation = "CONFIRM_SLOT"
+                print(f"✅ early commit: choix {early_idx} → « Vous confirmez ? »")
                 return [Event("final", msg, conv_state=session.state)]
 
         if slot_idx is None:
@@ -2587,6 +2639,7 @@ class Engine:
         
         if slot_idx is not None:
             print(f"✅ Slot choice validated: slot_idx={slot_idx}")
+            session.awaiting_confirmation = None
             
             # Stocker le choix de créneau
             try:
@@ -2627,6 +2680,7 @@ class Engine:
                         msg = prompts.VOCAL_CONTACT_CONFIRM_SHORT.format(phone_formatted=phone_formatted) if channel == "vocal" else f"Parfait, {slot_label} pour {name}. Votre numéro est bien le {phone_formatted} ?"
                         print(f"📱 Using caller ID for confirmation: {phone[:10]}")
                         session.add_message("agent", msg)
+                        session.awaiting_confirmation = "CONFIRM_CONTACT"
                         return [Event("final", msg, conv_state=session.state)]
                 except Exception as e:
                     print(f"⚠️ Error using caller ID in booking confirm: {e}")
@@ -2646,28 +2700,30 @@ class Engine:
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
 
-        # ❌ Invalide → retry (compteur par contexte pour analytics)
+        # ❌ Invalide → 1 clarification avant transfert (UX : pas de transfert brutal au 1er échec)
         fail_count = increment_recovery_counter(session, "slot_choice")
         log_ivr_event(logger, session, "recovery_step", context="slot_choice", reason="no_match")
         if should_escalate_recovery(session, "slot_choice"):
             session.is_reading_slots = False
             return self._trigger_intent_router(session, "slot_choice_fails_3", user_text)
-        if fail_count >= config.CONFIRM_RETRY_MAX:
-            session.is_reading_slots = False
-            session.state = "TRANSFERRED"
-            msg = self._say(session, "transfer")
-            if not msg:
-                msg = prompts.get_message("transfer", channel=channel)
-                session.add_message("agent", msg)
-                session.last_say_key, session.last_say_kwargs = "transfer", {}
+        if fail_count == 1:
+            # 1er échec : clarification, pas de transfert. Adapter au mode : séquentiel → oui/non, 3 slots → 1/2/3
+            use_yesno = (session.pending_slot_choice is not None) or getattr(session, "slot_proposal_sequential", False)
+            msg = (
+                getattr(prompts, "VOCAL_CONFIRM_CLARIFY_YESNO", "Dites oui ou non, s'il vous plaît.")
+                if use_yesno
+                else prompts.get_clarification_message("slot_choice", 1, user_text, channel=channel)
+            )
+            session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
-        msg = prompts.get_clarification_message(
-            "slot_choice",
-            fail_count,
-            user_text,
-            channel=channel,
-        )
-        session.add_message("agent", msg)
+        # 2e échec → transfert
+        session.is_reading_slots = False
+        session.state = "TRANSFERRED"
+        msg = self._say(session, "transfer")
+        if not msg:
+            msg = prompts.get_message("transfer", channel=channel)
+            session.add_message("agent", msg)
+            session.last_say_key, session.last_say_kwargs = "transfer", {}
         return [Event("final", msg, conv_state=session.state)]
     
     # ========================
@@ -2722,6 +2778,7 @@ class Engine:
                 slot_label = existing_slot.get("label", "votre rendez-vous")
                 msg = prompts.VOCAL_CANCEL_CONFIRM.format(slot_label=slot_label) if channel == "vocal" else prompts.MSG_CANCEL_CONFIRM_WEB.format(slot_label=slot_label)
                 session.add_message("agent", msg)
+                session.awaiting_confirmation = "CONFIRM_CANCEL"
                 return [Event("final", msg, conv_state=session.state)]
             # Toujours pas trouvé : utiliser cancel_rdv_not_found_count
             session.cancel_rdv_not_found_count = getattr(session, "cancel_rdv_not_found_count", 0) + 1
@@ -2778,12 +2835,14 @@ class Engine:
             slot_label = existing_slot.get("label", "votre rendez-vous")
             msg = prompts.VOCAL_CANCEL_CONFIRM.format(slot_label=slot_label) if channel == "vocal" else prompts.MSG_CANCEL_CONFIRM_WEB.format(slot_label=slot_label)
             session.add_message("agent", msg)
+            session.awaiting_confirmation = "CONFIRM_CANCEL"
             return [Event("final", msg, conv_state=session.state)]
         
         elif session.state == "CANCEL_CONFIRM":
             intent = detect_intent(user_text, session.state)
             
             if intent == "YES":
+                session.awaiting_confirmation = None
                 # --- P0: Annulation Google (event_id) ou SQLite (slot_id) ---
                 slot = getattr(session, "pending_cancel_slot", None) or {}
                 event_id = None
@@ -2827,6 +2886,7 @@ class Engine:
                 return [Event("final", msg, conv_state=session.state)]
             
             elif intent == "NO":
+                session.awaiting_confirmation = None
                 # Garder le RDV
                 session.state = "CONFIRMED"
                 msg = prompts.VOCAL_CANCEL_KEPT if channel == "vocal" else prompts.MSG_CANCEL_KEPT_WEB
@@ -2905,6 +2965,7 @@ class Engine:
                 slot_label = existing_slot.get("label", "votre rendez-vous")
                 msg = prompts.VOCAL_MODIFY_CONFIRM.format(slot_label=slot_label) if channel == "vocal" else prompts.MSG_MODIFY_CONFIRM_WEB.format(slot_label=slot_label)
                 session.add_message("agent", msg)
+                session.awaiting_confirmation = "CONFIRM_MODIFY"
                 return [Event("final", msg, conv_state=session.state)]
             session.modify_rdv_not_found_count = getattr(session, "modify_rdv_not_found_count", 0) + 1
             session.modify_name_fails = getattr(session, "modify_name_fails", 0) + 1
@@ -2958,12 +3019,14 @@ class Engine:
             slot_label = existing_slot.get("label", "votre rendez-vous")
             msg = prompts.VOCAL_MODIFY_CONFIRM.format(slot_label=slot_label) if channel == "vocal" else prompts.MSG_MODIFY_CONFIRM_WEB.format(slot_label=slot_label)
             session.add_message("agent", msg)
+            session.awaiting_confirmation = "CONFIRM_MODIFY"
             return [Event("final", msg, conv_state=session.state)]
         
         elif session.state == "MODIFY_CONFIRM":
             intent = detect_intent(user_text, session.state)
             
             if intent == "YES":
+                session.awaiting_confirmation = None
                 # P0.4 — Ne pas annuler l'ancien avant d'avoir sécurisé le nouveau (ordre : nouveau confirmé → puis annuler ancien)
                 session.state = "QUALIF_PREF"
                 msg = prompts.VOCAL_MODIFY_NEW_PREF if channel == "vocal" else prompts.MSG_MODIFY_NEW_PREF_WEB
@@ -2971,6 +3034,7 @@ class Engine:
                 return [Event("final", msg, conv_state=session.state)]
             
             elif intent == "NO":
+                session.awaiting_confirmation = None
                 # Garder le RDV
                 session.state = "CONFIRMED"
                 msg = prompts.VOCAL_CANCEL_KEPT if channel == "vocal" else prompts.MSG_CANCEL_KEPT_WEB
@@ -3159,17 +3223,18 @@ class Engine:
             return [Event("final", msg, conv_state=session.state)]
 
         intent = detect_intent(user_text, session.state)
-        # Filet : affirmation sans négation ("c'est bien ça", "ok", "exact") → YES_IMPLICIT ; exclure "euh", "attends"
+        # Filet : affirmation sans négation ("c'est bien ça", "c'est correct", "ok") → YES_IMPLICIT
         if intent != "YES" and (user_text or "").strip():
             _raw = (user_text or "").strip().lower()
             if not _raw.startswith(("non", "pas ")) and "attends" not in _raw and _raw not in ("euh", "euhh", "mmh"):
-                _norm = "".join(c for c in _raw if c.isalnum() or c in " ")
-                if "bienca" in _norm.replace(" ", "") or "bien ca" in _norm:
-                    logger.info("[YES_IMPLICIT] conv_id=%s reason=echo_cest_bien_ca user_text_len=%s", session.conv_id, len(_raw))
+                _norm = intent_parser.normalize_stt_text(_raw).replace(" ", "")
+                if "bienca" in _norm or "cestbienca" in _norm or "cestcorrect" in _norm or " correct" in (" " + intent_parser.normalize_stt_text(_raw)):
+                    logger.info("[YES_IMPLICIT] conv_id=%s reason=echo_confirm user_text_len=%s", session.conv_id, len(_raw))
                     intent = "YES"
 
         if intent == "YES":
             session.contact_confirm_intent_repeat_count = 0
+            session.awaiting_confirmation = None
             # Numéro confirmé
             
             # Si on a déjà un slot choisi (nouveau flow) → booker et confirmer
@@ -3492,6 +3557,7 @@ class Engine:
             session.qualif_data.pref = pending
             session.pending_preference = None
             session.last_preference_user_text = None
+            session.awaiting_confirmation = None
             session.consecutive_questions = 0
             return self._next_qualif_step(session)
         # Ré-inférence : user répète une phrase qui mène à la MÊME préférence → confirmation implicite
@@ -3500,6 +3566,7 @@ class Engine:
             session.qualif_data.pref = pending
             session.pending_preference = None
             session.last_preference_user_text = None
+            session.awaiting_confirmation = None
             session.consecutive_questions = 0
             return self._next_qualif_step(session)
         # Ré-inférence vers une AUTRE préférence → mettre à jour et re-demander confirmation
@@ -3509,6 +3576,7 @@ class Engine:
             msg = prompts.format_inference_confirmation(inferred)
             session.last_question_asked = msg
             session.add_message("agent", msg)
+            session.awaiting_confirmation = "CONFIRM_PREFERENCE"
             return [Event("final", msg, conv_state=session.state)]
         # Vraie incompréhension (pas d'inférence) → recovery progressive
         fail_count = increment_recovery_counter(session, "preference")
@@ -3516,6 +3584,7 @@ class Engine:
             return self._trigger_intent_router(session, "preference_fails_3", user_text)
         msg = prompts.format_inference_confirmation(pending) if pending else prompts.MSG_PREFERENCE_CONFIRM.format(pref="ce créneau")
         session.add_message("agent", msg)
+        session.awaiting_confirmation = "CONFIRM_PREFERENCE"
         return [Event("final", msg, conv_state=session.state)]
     
     # ========================

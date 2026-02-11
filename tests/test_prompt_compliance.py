@@ -58,6 +58,11 @@ def test_conversation_closed_exact_wording():
     assert prompts.MSG_CONVERSATION_CLOSED == expected
 
 
+def test_clarify_yes_booking_tight_exact_wording():
+    """P0 anti-friction : 2e oui ambigu en booking → resserrer, pas INTENT_ROUTER."""
+    assert prompts.CLARIFY_YES_BOOKING_TIGHT == "Pour être sûr : vous confirmez le créneau, oui ou non ?"
+
+
 def test_no_match_faq_exact_wording():
     business = "Cabinet Dupont"
     expected = (

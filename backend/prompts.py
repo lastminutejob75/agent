@@ -353,6 +353,11 @@ MSG_CLARIFY_YES_START = (
     "Pas de souci. C'est pour un rendez-vous, ou pour une question ?"
 )
 
+# Yes disambiguation : "oui" en contexte confirmation sans question claire (ex: après message informatif)
+CLARIFY_YES_GENERIC = "Oui — vous confirmez le créneau, ou vous préférez autre chose ?"
+# 2e oui ambigu en booking : resserrer avant INTENT_ROUTER (éviter de punir les gens pressés)
+CLARIFY_YES_BOOKING_TIGHT = "Pour être sûr : vous confirmez le créneau, oui ou non ?"
+
 VOCAL_STILL_UNCLEAR = (
     "D'accord. Je vous mets en relation avec un conseiller. Un instant, s'il vous plaît."
 )
@@ -384,7 +389,7 @@ MSG_INTENT_ROUTER_RETRY = (
     "Vous pouvez simplement dire : un, deux, trois ou quatre, s'il vous plaît."
 )
 
-MSG_PREFERENCE_CONFIRM = "D'accord, donc plutôt {pref}, c'est bien ça ?"
+MSG_PREFERENCE_CONFIRM = "D'accord, donc plutôt {pref}."
 
 # ----------------------------
 # Recovery téléphone / préférence / créneau (VOCAL_* — cohérence B2/B3)
@@ -412,13 +417,15 @@ VOCAL_PREF_FAIL_2 = (
 )
 VOCAL_PREF_ANY = "Je propose le matin. Ça vous va ?"
 VOCAL_PREF_ANY_NO = "D'accord. Plutôt l'après-midi ?"
-# Confirmation après inférence ("vers 14h" → afternoon)
-VOCAL_PREF_CONFIRM_MATIN = "D'accord, plutôt le matin. C'est bien ça ?"
-VOCAL_PREF_CONFIRM_APRES_MIDI = "D'accord, plutôt l'après-midi. C'est bien ça ?"
+# Confirmation après inférence — transition sans question (étape suivante prouve la compréhension)
+VOCAL_PREF_CONFIRM_MATIN = "D'accord, plutôt le matin."
+VOCAL_PREF_CONFIRM_APRES_MIDI = "D'accord, plutôt l'après-midi."
 # PREF_FAIL_3 → INTENT_ROUTER (dans engine)
 
 VOCAL_SLOT_FAIL_1 = "Je n'ai pas bien saisi. Vous pouvez dire : un, deux ou trois, s'il vous plaît."
 VOCAL_SLOT_FAIL_2 = "Par exemple : je prends le deux. Lequel vous convient ?"
+# Confirmation créneau (après "C'est bien ça ?") : 1er échec → clarification oui/non avant transfert
+VOCAL_CONFIRM_CLARIFY_YESNO = "Dites oui ou non, s'il vous plaît."
 # SLOT_FAIL_3 → INTENT_ROUTER (dans engine)
 
 # P0.2 — Vocal : proposition séquentielle (1 créneau à la fois, pas 3 d'un coup)
@@ -510,9 +517,9 @@ def get_clarification_message(
     return template
 
 
-# V3.1 — Confidence hint empathique après inférence
+# V3.1 — Confidence hint empathique après inférence (dédup : pas "c'est bien ça" répété)
 INFERENCE_CONFIRM_TEMPLATES = {
-    "après-midi": "D'après ce que vous me dites, je comprends plutôt l'après-midi. C'est bien ça ?",
+    "après-midi": "D'après ce que vous me dites, je comprends plutôt l'après-midi. C'est correct ?",
     "matin": "Si je comprends bien, vous préférez le matin. C'est correct ?",
     "soir": "Vous préférez donc en soirée, si je comprends bien ?",
 }
@@ -524,7 +531,7 @@ def format_inference_confirmation(inferred_value: str) -> str:
     """
     return INFERENCE_CONFIRM_TEMPLATES.get(
         inferred_value,
-        f"D'accord, donc plutôt {inferred_value}, c'est bien ça ?",
+        f"D'accord, donc plutôt {inferred_value}. C'est correct ?",
     )
 
 
@@ -700,11 +707,11 @@ MSG_CONTACT_RETRY_VOCAL = (
     "Pouvez-vous me redonner votre numéro de téléphone, s'il vous plaît ?"
 )
 
-# Confirmation du numéro (guide explicite oui/non — pas de relecture après filet)
+# Confirmation du numéro (dédup "c'est bien ça" : variante "c'est correct ?")
 VOCAL_CONTACT_CONFIRM = (
-    "Je confirme votre numéro : {phone_formatted}. Dites oui ou non."
+    "Je récapitule : {phone_formatted}. C'est correct ?"
 )
-VOCAL_CONTACT_CONFIRM_SHORT = "Je confirme votre numéro : {phone_formatted}. Dites oui ou non."
+VOCAL_CONTACT_CONFIRM_SHORT = "Je récapitule : {phone_formatted}. C'est correct ?"
 VOCAL_CONTACT_CONFIRM_OK = "C'est noté."
 VOCAL_CONTACT_CONFIRM_RETRY = "D'accord, pouvez-vous me redonner votre numéro ?"
 
@@ -949,9 +956,9 @@ MSG_BOOKING_TECHNICAL = (
     "Un problème technique s'est produit. Je vous mets en relation avec un conseiller pour finaliser votre rendez-vous."
 )
 # Early commit (choix anticipé non ambigu) : confirmation avant de passer au contact
-MSG_SLOT_EARLY_CONFIRM = "Parfait. Si j'ai bien compris, vous choisissez le créneau {idx} : {label}. C'est bien ça ?"
-# P1.3 Vocal : une phrase courte (latence + clarté), ton bienveillant — pas "Parfait" (réservé au message final)
-MSG_SLOT_EARLY_CONFIRM_VOCAL = "C'est noté. Le créneau {idx}, {label}. C'est bien ça ?"
+MSG_SLOT_EARLY_CONFIRM = "Parfait. Si j'ai bien compris, vous choisissez le créneau {idx} : {label}. Vous confirmez ?"
+# P1.3 Vocal : une phrase courte (latence + clarté), dédup "c'est bien ça"
+MSG_SLOT_EARLY_CONFIRM_VOCAL = "C'est noté. Le créneau {idx}, {label}. Vous confirmez ?"
 
 
 def format_slot_early_confirm(idx: int, label: str, channel: str = "web") -> str:

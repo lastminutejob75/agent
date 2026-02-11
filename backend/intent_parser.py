@@ -93,6 +93,7 @@ _YES_LEXICON = [
     "exactement", "tout a fait", "absolument", "bien sur",
     "c est bon", "ca marche", "exact", "parfait", "c est ca", "voila", "affirmatif",
     "c est bien ca", "cest bien ca", "oui c est bien ca", "oui cest bien ca",
+    "c est correct", "cest correct", "oui c est correct", "oui cest correct",
 ]
 _NO_LEXICON = [
     "non", "nan", "pas du tout", "pas vraiment",
@@ -100,12 +101,13 @@ _NO_LEXICON = [
 ]
 _REPEAT_LEXICON = [
     "repete", "repeter", "vous pouvez repeter", "encore", "redis", "redire",
-    "j ai pas compris", "pardon", "comment", "quoi",
+    "vous pouvez redire", "j ai pas compris", "jai pas compris", "pas compris",
+    "pardon", "comment", "quoi", "attendez", "reprenez", "recommencez",
 ]
 # Mots entiers uniquement (éviter "quoi" dans "nimportequoi", "encore" dans "encorebizarre")
 _REPEAT_SINGLE_WORDS = frozenset({
     "repete", "repeter", "repetes", "repetez", "encore", "redis", "redire", "pardon",
-    "comment", "quoi", "reprendre", "reécoute", "reecoute",
+    "comment", "quoi", "reprendre", "reécoute", "reecoute", "attendez", "reprenez",
 })
 
 # Filler / silence / bruit : UNCLEAR mais ne pas envoyer en _handle_faq (clarify/guidance à la place).

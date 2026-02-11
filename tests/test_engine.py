@@ -699,7 +699,7 @@ def test_qualif_contact_intent_phrase_does_not_increment_contact_fails(mock_slot
 
 @patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
 def test_early_commit_oui_1(mock_slots):
-    """En WAIT_CONFIRM, 'oui 1' → early commit : state WAIT_CONFIRM, pending_slot_choice=1, message « c'est bien ça ? »."""
+    """En WAIT_CONFIRM, 'oui 1' → early commit : state WAIT_CONFIRM, pending_slot_choice=1, message « Vous confirmez ? »."""
     engine = create_engine()
     conv = f"conv_early_oui1_{uuid.uuid4().hex[:8]}"
     engine.handle_message(conv, "Je veux un rdv")
@@ -710,7 +710,7 @@ def test_early_commit_oui_1(mock_slots):
     assert len(events) == 1
     assert events[0].conv_state == "WAIT_CONFIRM"
     assert "créneau 1" in events[0].text
-    assert "c'est bien ça" in events[0].text.lower()
+    assert "confirmez" in events[0].text.lower()
     session = engine.session_store.get(conv)
     assert session is not None
     assert session.pending_slot_choice == 1
@@ -731,7 +731,7 @@ def test_wait_confirm_interrupt_explicit_choice_vendredi_14h(mock_slots):
     session = engine.session_store.get(conv)
     assert session is not None
     assert session.pending_slot_choice == 1
-    assert "bien ça" in events[0].text.lower() or "créneau" in events[0].text.lower()
+    assert "confirmez" in events[0].text.lower() or "créneau" in events[0].text.lower()
 
 
 @patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
@@ -836,7 +836,7 @@ def test_interruption_flow_barge_in_un(mock_slots, caplog):
 
 @patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
 def test_confirm_slot_oui_cest_bien_ca(mock_slots):
-    """Après « Le créneau X, c'est bien ça ? », « oui c'est bien ça » doit valider et passer au contact (pas transférer)."""
+    """Après « Le créneau X, vous confirmez ? », « oui c'est bien ça » doit valider et passer au contact (pas transférer)."""
     engine = create_engine()
     conv = f"conv_oui_bien_ca_{uuid.uuid4().hex[:8]}"
     engine.handle_message(conv, "Je veux un rdv")
@@ -850,6 +850,188 @@ def test_confirm_slot_oui_cest_bien_ca(mock_slots):
     assert session is not None
     assert session.state == "QUALIF_CONTACT"
     assert "transfert" not in events[0].text.lower() and "conseiller" not in events[0].text.lower()
+
+
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+def test_confirm_slot_cest_bien_ca_cedilla(mock_slots):
+    """Anti-régression : « c'est bien ça » avec ç (STT) doit être reconnu comme confirmation."""
+    engine = create_engine()
+    conv = f"conv_cedilla_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Martin Dupont")
+    engine.handle_message(conv, "matin")
+    engine.handle_message(conv, "oui")
+    engine.handle_message(conv, "un")
+    events = engine.handle_message(conv, "c'est bien ça")
+    assert len(events) >= 1
+    session = engine.session_store.get(conv)
+    assert session is not None
+    assert session.state == "QUALIF_CONTACT"
+    assert "transfert" not in events[0].text.lower() and "conseiller" not in events[0].text.lower()
+
+
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+def test_yes_with_awaiting_confirm_slot_passes_to_contact(mock_slots):
+    """YES avec awaiting_confirmation=CONFIRM_SLOT → confirme le créneau, pas CLARIFY."""
+    engine = create_engine()
+    conv = f"conv_await_slot_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Martin Dupont")
+    engine.handle_message(conv, "matin")
+    engine.handle_message(conv, "oui")
+    engine.handle_message(conv, "un")
+    session = engine.session_store.get(conv)
+    assert session is not None
+    assert session.awaiting_confirmation == "CONFIRM_SLOT"
+    events = engine.handle_message(conv, "oui")
+    assert len(events) >= 1
+    session = engine.session_store.get(conv)
+    assert session.state == "QUALIF_CONTACT"
+    assert session.awaiting_confirmation is None
+
+
+def test_yes_in_start_goes_to_clarify():
+    """YES sans awaiting_confirmation en START → CLARIFY_YES_START (disambiguation RDV/question)."""
+    engine = create_engine()
+    conv = f"conv_yes_start_{uuid.uuid4().hex[:8]}"
+    events = engine.handle_message(conv, "oui")
+    assert len(events) == 1
+    assert "rendez-vous" in events[0].text.lower() or "question" in events[0].text.lower()
+    session = engine.session_store.get(conv)
+    assert session is not None
+    assert session.state == "CLARIFY"
+
+
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+def test_yes_after_informational_message_guidance(mock_slots):
+    """YES après message informatif (pas de '?') → CLARIFY_YES_GENERIC, pas changement d'état bizarre."""
+    engine = create_engine()
+    conv = f"conv_yes_info_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Martin Dupont")
+    engine.handle_message(conv, "matin")
+    engine.handle_message(conv, "oui")
+    engine.handle_message(conv, "un")
+    session = engine.session_store.get(conv)
+    assert session is not None
+    session.awaiting_confirmation = None
+    session.last_agent_message = "Parfait."
+    session.last_question_asked = None
+    engine.session_store.save(session)
+    events = engine.handle_message(conv, "oui")
+    assert len(events) >= 1
+    assert "confirmez" in events[0].text.lower() or "préférez" in events[0].text.lower() or "créneau" in events[0].text.lower()
+    session = engine.session_store.get(conv)
+    assert session.state == "WAIT_CONFIRM"
+
+
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+def test_yes_ambiguous_2_in_booking_gets_tight_clarification(mock_slots):
+    """2e oui ambigu en booking → CLARIFY_YES_BOOKING_TIGHT (pas INTENT_ROUTER)."""
+    engine = create_engine()
+    conv = f"conv_yes2_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Martin Dupont")
+    engine.handle_message(conv, "matin")
+    engine.handle_message(conv, "oui")
+    engine.handle_message(conv, "un")
+    session = engine.session_store.get(conv)
+    assert session is not None
+    session.awaiting_confirmation = None
+    session.last_agent_message = "Parfait."
+    session.last_question_asked = None
+    session.yes_ambiguous_count = 1
+    engine.session_store.save(session)
+    events = engine.handle_message(conv, "oui")
+    assert len(events) >= 1
+    assert "être sûr" in events[0].text.lower() or "confirmez" in events[0].text.lower()
+    assert "transfert" not in events[0].text.lower() and "conseiller" not in events[0].text.lower()
+    session = engine.session_store.get(conv)
+    assert session.state == "WAIT_CONFIRM"
+
+
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+def test_yes_ambiguous_3_in_booking_goes_to_router(mock_slots):
+    """3e oui ambigu en booking → INTENT_ROUTER."""
+    engine = create_engine()
+    conv = f"conv_yes3_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Martin Dupont")
+    engine.handle_message(conv, "matin")
+    engine.handle_message(conv, "oui")
+    engine.handle_message(conv, "un")
+    session = engine.session_store.get(conv)
+    assert session is not None
+    session.awaiting_confirmation = None
+    session.last_agent_message = "Parfait."
+    session.last_question_asked = None
+    session.yes_ambiguous_count = 2
+    engine.session_store.save(session)
+    events = engine.handle_message(conv, "oui")
+    assert len(events) >= 1
+    session = engine.session_store.get(conv)
+    assert session.state == "INTENT_ROUTER"
+
+
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+def test_yes_ambiguous_count_resets_on_non_yes(mock_slots):
+    """Oui ambigu → autre chose → oui : compteur reset, pas escalade trop tôt."""
+    engine = create_engine()
+    conv = f"conv_yes_reset_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Martin Dupont")
+    engine.handle_message(conv, "matin")
+    engine.handle_message(conv, "oui")
+    engine.handle_message(conv, "un")
+    session = engine.session_store.get(conv)
+    assert session is not None
+    session.awaiting_confirmation = None
+    session.last_agent_message = "Parfait."
+    session.last_question_asked = None
+    engine.session_store.save(session)
+    events1 = engine.handle_message(conv, "oui")
+    assert "confirmez" in events1[0].text.lower() or "préférez" in events1[0].text.lower()
+    session = engine.session_store.get(conv)
+    assert getattr(session, "yes_ambiguous_count", 0) == 1
+    engine.handle_message(conv, "euh non en fait")
+    session = engine.session_store.get(conv)
+    assert getattr(session, "yes_ambiguous_count", 0) == 0
+    session.awaiting_confirmation = None
+    session.last_agent_message = "Parfait."
+    session.last_question_asked = None
+    engine.session_store.save(session)
+    events2 = engine.handle_message(conv, "oui")
+    assert "confirmez" in events2[0].text.lower() or "préférez" in events2[0].text.lower()
+    session = engine.session_store.get(conv)
+    assert session.state == "WAIT_CONFIRM"
+
+
+@patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
+def test_repeat_after_slot_confirm_replays_exact_message(mock_slots):
+    """REPEAT après format_slot_early_confirm → rejoue le message exact (avec « Vous confirmez ? »)."""
+    engine = create_engine()
+    conv = f"conv_repeat_{uuid.uuid4().hex[:8]}"
+    engine.handle_message(conv, "Je veux un rdv")
+    engine.handle_message(conv, "Martin Dupont")
+    engine.handle_message(conv, "matin")
+    session = engine.session_store.get(conv)
+    session.channel = "vocal"
+    engine.session_store.save(session)
+    engine.handle_message(conv, "oui")
+    engine.handle_message(conv, "oui")
+    session = engine.session_store.get(conv)
+    assert session is not None
+    assert session.awaiting_confirmation == "CONFIRM_SLOT"
+    confirm_msg = session.last_agent_message or ""
+    assert "confirmez" in confirm_msg.lower() or "correct" in confirm_msg.lower()
+    events = engine.handle_message(conv, "Répétez")
+    assert len(events) >= 1
+    assert "confirmez" in events[0].text.lower() or "correct" in events[0].text.lower()
+    assert events[0].text.strip() == confirm_msg.strip()
+    events2 = engine.handle_message(conv, "oui")
+    assert len(events2) >= 1
+    session = engine.session_store.get(conv)
+    assert session.state == "QUALIF_CONTACT"
 
 
 @patch("backend.tools_booking.get_slots_for_display", side_effect=_fake_slots)
