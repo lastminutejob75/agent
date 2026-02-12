@@ -60,10 +60,9 @@ config.py
 *.sh
 scripts/
 
-# Frontend non-landing
+# Frontend non-landing (ne pas exclure src/lib/)
 frontend/
 app/
-lib/
 
 # Fichiers temporaires
 *.log

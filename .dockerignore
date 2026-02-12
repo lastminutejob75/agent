@@ -1,0 +1,51 @@
+# Monorepo : exclure tout ce qui n'est pas nécessaire au build backend
+# Évite d'envoyer landing/ au daemon Docker (build plus rapide)
+
+# Landing (Vercel s'en occupe)
+landing/
+src/
+
+# Node
+node_modules/
+**/node_modules/
+*.log
+npm-debug.log*
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+.cursor/
+
+# Docs et scripts non essentiels (garder PRD.md etc. pour Dockerfile)
+scripts/
+docs/
+tests/
+apply*.sh
+download*.sh
+extract*.sh
+install*.sh
+setup*.sh
+test_*.py
+test_*.sh
+
+# CSV, credentials
+*.csv
+credentials/
+.env
+.env.*
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# Build outputs
+dist/
+build/
+.vercel/
