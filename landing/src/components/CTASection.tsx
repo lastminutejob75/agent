@@ -1,4 +1,5 @@
 import React from "react";
+import { Link } from "react-router-dom";
 
 export default function CTASection() {
   return (
@@ -33,13 +34,13 @@ export default function CTASection() {
 
             {/* Boutons CTA */}
             <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
-              {/* Bouton 1 : Essai gratuit (fond blanc) */}
-              <a
-                href="#contact"
+              {/* Bouton 1 : Essayer → onboarding */}
+              <Link
+                to="/onboarding"
                 className="w-full sm:w-auto inline-flex items-center justify-center rounded-xl bg-white text-[#0066CC] px-8 py-4 text-base font-semibold shadow-lg hover:bg-gray-50 transition-all hover:scale-105 active:scale-95"
               >
-                Essai gratuit 14 jours
-              </a>
+                Essayer
+              </Link>
 
               {/* Bouton 2 : Parcourir la démo (fond bleu avec bordure blanche) */}
               <a
