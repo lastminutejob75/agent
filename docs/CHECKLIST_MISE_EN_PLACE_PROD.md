@@ -87,10 +87,24 @@ Code présent dans le repo ≠ feature en prod. Ce document liste ce qu'il faut 
 
 ---
 
+## Prérequis : Postgres sur Railway
+
+**DATABASE_URL absent ?** Le projet doit avoir une base Postgres.
+
+1. Railway → projet **cooperative-insight** → **+ New** → **Database** → **PostgreSQL**
+2. Une fois créé, Railway injecte `DATABASE_URL` dans les services liés
+3. Vérifier : **agent** → **Variables** → `DATABASE_URL` doit exister
+4. Si le Postgres est dans un autre service : **Variables** → **Add variable** → **Reference** → sélectionner `DATABASE_URL` du service Postgres
+
+Puis : `make migrate-railway`
+
+---
+
 ## Ordre recommandé
 
-1. **Migrations** : `make migrate-railway`
-2. **Backfill tenant_users** : `make backfill-tenant-users`
-3. **Email (Postmark/SMTP)** : pour envoyer les magic links
-4. **CORS + VITE_UWI_API_BASE_URL** : pour que uwiapp.com appelle le backend
-5. **Tester le flux complet** : login → dashboard → KPIs
+1. **Postgres** : créer la DB sur Railway si absente
+2. **Migrations** : `make migrate-railway`
+3. **Backfill tenant_users** : `make backfill-tenant-users`
+4. **Email (Postmark/SMTP)** : pour envoyer les magic links
+5. **CORS + VITE_UWI_API_BASE_URL** : pour que uwiapp.com appelle le backend
+6. **Tester le flux complet** : login → dashboard → KPIs
