@@ -2715,7 +2715,7 @@ class Engine:
         
         slot_idx: Optional[int] = None
 
-        # Confirmation du créneau déjà choisi : "oui", "c'est bien ça", etc. → on passe au contact
+        # Confirmation du créneau déjà choisi : "oui", "oui je confirme", "c'est bien ça", etc. → on passe au contact
         # P0 : normaliser accents (ç→c) via normalize_stt_text pour toutes les variantes STT
         if session.pending_slot_choice is not None:
             _t = (user_text or "").strip().lower()
@@ -2736,6 +2736,11 @@ class Engine:
                     slot_idx = session.pending_slot_choice
                     session.awaiting_confirmation = None
                     print(f"✅ slot_choice: confirmation oui+ du créneau {slot_idx} → passage au contact")
+                elif "confirme" in (_t_ascii or "") and len(_t_ascii or "") <= 30:
+                    # "oui je confirme", "je confirme", "confirme" (réponse à "Vous confirmez ?")
+                    slot_idx = session.pending_slot_choice
+                    session.awaiting_confirmation = None
+                    print(f"✅ slot_choice: confirmation explicite (« oui je confirme ») du créneau {slot_idx} → passage au contact")
 
         # Validation vague (oui/ok/d'accord SANS choix explicite) → redemander 1/2/3 SANS incrémenter fails (P0.5, A6)
         if slot_idx is None:
