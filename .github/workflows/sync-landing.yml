@@ -25,20 +25,25 @@ jobs:
 
       - name: Sync landing files
         run: |
+          set -e
           SRC="landing"
           DST="uwi-landing"
           rm -rf "$DST/src" && cp -r "$SRC/src" "$DST/"
           mkdir -p "$DST/public"
           [ -d "$SRC/public" ] && rm -rf "$DST/public" && cp -r "$SRC/public" "$DST/"
-          for f in index.html package.json package-lock.json vite.config.js tailwind.config.js postcss.config.js vercel.json netlify.toml .env.example .gitignore .nvmrc .node-version; do
+          for f in index.html package.json package-lock.json vite.config.js tailwind.config.js postcss.config.js vercel.json netlify.toml .env.example .gitignore .nvmrc .node-version .vercelignore; do
             [ -f "$SRC/$f" ] && cp "$SRC/$f" "$DST/$f"
           done
 
       - name: Commit and push
+        env:
+          PAT: ${{ secrets.UWI_LANDING_PAT }}
         run: |
+          set -e
           cd uwi-landing
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${PAT}@github.com/lastminutejob75/uwi-landing.git"
           git add -A
           if git diff --staged --quiet; then
             echo "No changes to commit"
