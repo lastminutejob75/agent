@@ -54,6 +54,12 @@
 |-------|------|-------------|
 | `/` | UwiLanding | Landing marketing (Hero, sections, CTA) |
 | `/onboarding` | Onboarding | Formulaire création tenant |
+| `/login` | Login | Magic link (email) |
+| `/auth/callback` | AuthCallback | Vérification token → JWT |
+| `/app` | AppDashboard | Dashboard client (JWT) + graphique 7j + trend |
+| `/app/status` | AppStatus | Statut technique |
+| `/app/rgpd` | AppRgpd | Consentement RGPD (7j + derniers) |
+| `/app/settings` | AppSettings | Paramètres |
 | `/admin` | Admin | Liste tenants (token requis) |
 | `/admin/tenants/:id` | AdminTenant | Détail + Statut technique |
 | `/admin/tenants/:id/dashboard` | AdminTenantDashboard | Dashboard temps réel |
@@ -86,6 +92,9 @@
 | `GET /api/admin/tenants/{id}` | Bearer | Détail tenant |
 | `GET /api/admin/tenants/{id}/dashboard` | Bearer | Snapshot dashboard |
 | `GET /api/admin/tenants/{id}/technical-status` | Bearer | Statut DID, calendrier, agent |
+| `POST /api/auth/request-link` | — | Magic link (email) |
+| `GET /api/auth/verify` | — | Vérifie token → JWT |
+| `GET /api/tenant/*` | Bearer JWT | Dashboard, KPIs 7j, statut, RGPD, params |
 | `POST /api/vapi/webhook` | — | Webhook Vapi (vocal) |
 | `POST /api/whatsapp/webhook` | — | Webhook Twilio (WhatsApp) |
 | `GET /health` | — | Health check |
@@ -95,6 +104,10 @@
 | Variable | Description |
 |----------|-------------|
 | `ADMIN_API_TOKEN` | Token Bearer pour `/api/admin/*` |
+| `JWT_SECRET` | Secret JWT (Magic link) |
+| `APP_BASE_URL` | URL base (ex. https://uwiapp.com) |
+| `POSTMARK_SERVER_TOKEN` | Envoi email Magic link |
+| `POSTMARK_FROM_EMAIL` | Expéditeur validé |
 | `DATABASE_URL` | Postgres (tenants, ivr_events) |
 | `GOOGLE_SERVICE_ACCOUNT_BASE64` | Service Account Google Calendar |
 | `GOOGLE_CALENDAR_ID` | Calendrier par défaut |
@@ -193,9 +206,12 @@ uwiapp.com (Vercel)                    Backend (Railway)
 
 ---
 
-## 6. Checklist migration
+## 6. Checklists
 
-Voir **`docs/CHECKLIST_MIGRATION_MONOREPO.md`** pour la checklist complète (Vercel, Railway, archivage uwi-landing).
+| Doc | Contenu |
+|-----|---------|
+| `docs/CHECKLIST_MIGRATION_MONOREPO.md` | Vercel, Railway, archivage uwi-landing |
+| `docs/CHECKLIST_PROD_AUTH.md` | Go-live Auth (migration 007, variables, Postmark, tests prod) |
 
 ---
 
@@ -210,4 +226,10 @@ cd landing && npm run dev
 
 # Build landing
 cd landing && npm run build
+
+# Migration auth (Railway)
+make migrate-railway
+
+# Backfill tenant_users (tenants existants)
+make backfill-tenant-users
 ```

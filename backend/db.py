@@ -106,6 +106,33 @@ def _ensure_ivr_tables(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_calls_client_date ON calls(client_id, created_at)")
 
 
+def consent_obtained_exists(client_id: int, call_id: str) -> bool:
+    """True si consent_obtained déjà persisté pour ce call (idempotence retry)."""
+    call_id_norm = (call_id or "").strip()
+    if not call_id_norm:
+        return False
+    try:
+        from backend import config
+        if config.USE_PG_EVENTS:
+            from backend.ivr_events_pg import consent_obtained_exists_pg
+            if consent_obtained_exists_pg(client_id, call_id_norm):
+                return True
+    except Exception:
+        pass
+    conn = get_conn()
+    try:
+        _ensure_ivr_tables(conn)
+        row = conn.execute(
+            "SELECT 1 FROM ivr_events WHERE client_id = ? AND call_id = ? AND event = 'consent_obtained' LIMIT 1",
+            (client_id, call_id_norm),
+        ).fetchone()
+        return row is not None
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
 def create_ivr_event(
     client_id: int,
     call_id: str,

@@ -224,6 +224,63 @@ def send_daily_report_email(to: str, client_name: str, date_str: str, data: Dict
         return False, err
 
 
+def send_magic_link_email(to: str, login_url: str, ttl_minutes: int = 15) -> Tuple[bool, Optional[str]]:
+    """
+    Envoie l'email magic link (connexion UWi).
+    Utilise POSTMARK_SERVER_TOKEN + POSTMARK_FROM_EMAIL (ou EMAIL_FROM).
+    Returns (success, error_message). error_message is None on success.
+    """
+    if not to or not to.strip():
+        logger.warning("send_magic_link_email: to empty, skip")
+        return False, "Destinataire vide"
+    if not login_url:
+        return False, "URL vide"
+    subject = "Votre lien de connexion UWi"
+    html = f"""
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Connexion UWi</title></head>
+<body style="font-family: sans-serif; max-width: 560px; margin: 0 auto; padding: 1rem;">
+  <h1 style="font-size: 1.2rem;">Connexion à votre tableau de bord UWi</h1>
+  <p>Bonjour,</p>
+  <p>Cliquez sur le bouton ci-dessous pour vous connecter :</p>
+  <p style="margin: 1.5rem 0;">
+    <a href="{login_url}" style="background:#2563eb;color:white;padding:0.75rem 1.5rem;text-decoration:none;border-radius:0.5rem;display:inline-block;">
+      Se connecter
+    </a>
+  </p>
+  <p style="color:#666;font-size:0.9rem;">
+    Ou copiez ce lien : <a href="{login_url}">{login_url}</a>
+  </p>
+  <p style="color:#888;font-size:0.85rem;">
+    Ce lien expire dans {ttl_minutes} minutes.
+  </p>
+  <p style="color:#888;font-size:0.85rem;">
+    Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.
+  </p>
+</body>
+</html>
+"""
+    token = (os.getenv("POSTMARK_SERVER_TOKEN") or "").strip()
+    from_addr = (
+        os.getenv("POSTMARK_FROM_EMAIL") or os.getenv("EMAIL_FROM") or os.getenv("SMTP_EMAIL") or ""
+    ).strip()
+    if not token:
+        logger.warning("send_magic_link_email: POSTMARK_SERVER_TOKEN manquant")
+        return False, "POSTMARK_SERVER_TOKEN non défini"
+    if not from_addr:
+        logger.warning("send_magic_link_email: POSTMARK_FROM_EMAIL / EMAIL_FROM manquant")
+        return False, "POSTMARK_FROM_EMAIL non défini"
+    try:
+        ok, err = _send_via_postmark(from_addr, to, subject, html, token)
+        if ok:
+            logger.info("magic_link_sent", extra={"to": to[:50]})
+        return ok, err
+    except Exception as e:
+        logger.exception("send_magic_link_email failed")
+        return False, str(e)
+
+
 def send_ordonnance_notification(request: Dict[str, Any]) -> bool:
     """
     Envoie une notification au cabinet pour demande d'ordonnance (patient veut qu'on transmette un message).

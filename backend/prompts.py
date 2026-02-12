@@ -60,6 +60,16 @@ MSG_NOISE_2 = "Il y a du bruit sur la ligne. Rapprochez-vous du téléphone et r
 # --- Custom LLM (chat/completions) : texte incompréhensible / garbage ---
 MSG_UNCLEAR_1 = "Excusez-moi. Je n'ai pas bien compris. Pouvez-vous répéter, s'il vous plaît ?"
 
+# --- P0.5 consent_mode explicit (vocal uniquement) ---
+VOCAL_CONSENT_PROMPT = (
+    "Avant de commencer, j'enregistre ce que vous dites pour traiter votre demande "
+    "et améliorer le service. Êtes-vous d'accord ?"
+)
+VOCAL_CONSENT_CLARIFY = (
+    "Dites oui pour continuer, ou non pour être mis en relation avec un humain."
+)
+VOCAL_CONSENT_DENIED_TRANSFER = "D'accord. Je vous mets en relation avec un humain."
+
 # --- Crosstalk (barge-in) : user parle pendant TTS → no-op sans incrémenter unclear ---
 MSG_VOCAL_CROSSTALK_ACK = "Je vous écoute."
 # --- Overlap : UNCLEAR juste après réponse agent → pas d'incrément, demander de répéter ---

@@ -93,6 +93,18 @@ def get_flags(tenant_id: Optional[int] = None) -> Dict[str, bool]:
         conn.close()
 
 
+def get_consent_mode(tenant_id: Optional[int] = None) -> str:
+    """
+    Retourne le mode consentement pour un tenant : "implicit" (défaut) ou "explicit".
+    Utilisé uniquement pour le canal vocal.
+    """
+    params = get_params(tenant_id)
+    raw = (params.get("consent_mode") or "").strip().lower()
+    if raw in ("implicit", "explicit"):
+        return raw
+    return "implicit"
+
+
 def get_params(tenant_id: Optional[int] = None) -> Dict[str, str]:
     """
     Retourne params_json pour un tenant (calendar_provider, calendar_id, etc.).
@@ -128,8 +140,8 @@ def get_params(tenant_id: Optional[int] = None) -> Dict[str, str]:
 
 
 def set_params(tenant_id: int, params: Dict[str, str]) -> None:
-    """Met à jour params_json d'un tenant (calendar_provider, calendar_id, contact_email, etc.)."""
-    allowed = ("calendar_provider", "calendar_id", "contact_email")
+    """Met à jour params_json d'un tenant (calendar_provider, calendar_id, contact_email, consent_mode, etc.)."""
+    allowed = ("calendar_provider", "calendar_id", "contact_email", "consent_mode")
     filtered = {k: str(v) for k, v in params.items() if k in allowed and v is not None}
     if not filtered:
         return

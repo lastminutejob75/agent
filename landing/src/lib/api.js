@@ -14,12 +14,32 @@ export function setAdminToken(token) {
   localStorage.setItem("uwi_admin_token", (token || "").trim());
 }
 
-async function request(path, { method = "GET", body, admin = false } = {}) {
+export function getTenantToken() {
+  return localStorage.getItem("uwi_tenant_token") || "";
+}
+
+export function setTenantToken(token) {
+  localStorage.setItem("uwi_tenant_token", (token || "").trim());
+}
+
+export function clearTenantToken() {
+  localStorage.removeItem("uwi_tenant_token");
+}
+
+export function isTenantUnauthorized(err) {
+  return err && (err.status === 401 || err.message?.includes("401") || err.message?.includes("Token"));
+}
+
+async function request(path, { method = "GET", body, admin = false, tenant = false } = {}) {
   const url = `${BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
 
   const headers = { "Content-Type": "application/json" };
   if (admin) {
     const tok = getAdminToken();
+    if (tok) headers["Authorization"] = `Bearer ${tok}`;
+  }
+  if (tenant) {
+    const tok = getTenantToken();
     if (tok) headers["Authorization"] = `Bearer ${tok}`;
   }
 
@@ -66,4 +86,23 @@ export const api = {
     request(`/api/admin/tenants/${tenantId}/dashboard`, { admin: true }),
   adminTechnicalStatus: (tenantId) =>
     request(`/api/admin/tenants/${tenantId}/technical-status`, { admin: true }),
+  adminAddTenantUser: (tenantId, payload) =>
+    request(`/api/admin/tenants/${tenantId}/users`, { method: "POST", body: payload, admin: true }),
+
+  // auth ( Magic Link )
+  authRequestLink: (email) =>
+    request("/api/auth/request-link", { method: "POST", body: { email } }),
+  authVerify: (token) =>
+    request(`/api/auth/verify?token=${encodeURIComponent(token)}`),
+
+  // tenant ( protégé JWT )
+  tenantMe: () => request("/api/tenant/me", { tenant: true }),
+  tenantDashboard: () => request("/api/tenant/dashboard", { tenant: true }),
+  tenantKpis: (days = 7) =>
+    request(`/api/tenant/kpis?days=${days}`, { tenant: true }),
+  tenantTechnicalStatus: () => request("/api/tenant/technical-status", { tenant: true }),
+  tenantKpis: (days = 7) => request(`/api/tenant/kpis?days=${days}`, { tenant: true }),
+  tenantRgpd: () => request("/api/tenant/rgpd", { tenant: true }),
+  tenantPatchParams: (params) =>
+    request("/api/tenant/params", { method: "PATCH", body: params, tenant: true }),
 };

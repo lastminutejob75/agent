@@ -148,6 +148,16 @@ class Session:
     awaiting_confirmation: Optional[str] = None  # CONFIRM_SLOT, CONFIRM_CONTACT, CONFIRM_PREFERENCE, CONFIRM_CANCEL, CONFIRM_MODIFY
     yes_ambiguous_count: int = 0  # "oui" ambigu répétés → 2e → guidance options
 
+    # P0.5 Consent mode explicit : demander oui/non avant de traiter
+    consent_prompted: bool = False
+    consent_obtained: bool = False
+    consent_fails: int = 0  # unclear répétés → max 1 clarification puis transfert
+
+    # P0.5 consent_mode explicit : flow vocal (demande avant traitement)
+    consent_prompted: bool = False
+    consent_obtained: bool = False
+    consent_fails: int = 0  # 1 clarification max puis transfert
+
     MAX_CONSECUTIVE_QUESTIONS = 3  # Limite cognitive (spec V3)
     MAX_TURNS_ANTI_LOOP = 25  # Garde-fou : >25 tours sans DONE/TRANSFERRED → INTENT_ROUTER
     MAX_CONTEXT_FAILS = 3  # Échecs sur un même contexte → escalade INTENT_ROUTER
@@ -226,6 +236,9 @@ class Session:
         self.intent_router_unclear_count = 0
         self.awaiting_confirmation = None
         self.yes_ambiguous_count = 0
+        self.consent_prompted = False
+        self.consent_obtained = False
+        self.consent_fails = 0
         self.time_constraint_type = ""
         self.time_constraint_minute = -1
         self.client_id = None

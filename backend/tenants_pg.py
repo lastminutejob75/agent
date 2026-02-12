@@ -203,6 +203,19 @@ def pg_create_tenant(
                     "INSERT INTO tenant_config (tenant_id, flags_json, params_json) VALUES (%s, %s, %s)",
                     (tid, "{}", json.dumps(params)),
                 )
+                # Créer tenant_user pour contact_email (permet magic link ensuite)
+                if contact_email and contact_email.strip():
+                    try:
+                        cur.execute(
+                            """
+                            INSERT INTO tenant_users (tenant_id, email, role)
+                            VALUES (%s, %s, 'owner')
+                            ON CONFLICT (email) DO UPDATE SET tenant_id = EXCLUDED.tenant_id
+                            """,
+                            (tid, contact_email.strip().lower()),
+                        )
+                    except Exception as eu:
+                        logger.debug("tenant_user create during onboarding: %s", eu)
                 conn.commit()
                 return tid
 
@@ -236,8 +249,8 @@ def pg_update_tenant_flags(tenant_id: int, flags: dict) -> bool:
 
 
 def pg_update_tenant_params(tenant_id: int, params: dict) -> bool:
-    """Met à jour params_json (merge). Champs autorisés: calendar_provider, calendar_id, contact_email."""
-    allowed = {"calendar_provider", "calendar_id", "contact_email"}
+    """Met à jour params_json (merge). Champs autorisés: calendar_provider, calendar_id, contact_email, timezone, consent_mode."""
+    allowed = {"calendar_provider", "calendar_id", "contact_email", "timezone", "consent_mode"}
     filtered = {k: str(v) for k, v in params.items() if k in allowed and v is not None}
     if not filtered:
         return True
@@ -248,12 +261,19 @@ def pg_update_tenant_params(tenant_id: int, params: dict) -> bool:
         import psycopg
         current, _ = pg_get_tenant_params(tenant_id) or ({}, "pg")
         merged = {**current, **filtered}
+        # timezone est dans tenants, pas params_json
+        tz_val = merged.pop("timezone", None)
         with psycopg.connect(url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "UPDATE tenant_config SET params_json = %s, updated_at = now() WHERE tenant_id = %s",
                     (json.dumps(merged), tenant_id),
                 )
+                if tz_val:
+                    cur.execute(
+                        "UPDATE tenants SET timezone = %s WHERE tenant_id = %s",
+                        (tz_val, tenant_id),
+                    )
                 conn.commit()
                 return cur.rowcount > 0
     except Exception as e:

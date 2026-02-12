@@ -33,6 +33,9 @@ CONFIRM_RETRY_MAX = 1  # 1 redemande, puis transfer
 # Performance
 TARGET_FIRST_RESPONSE_MS = 3000  # contrainte PRD (sans imposer SSE)
 
+# RGPD consent (version pour audit)
+CONSENT_VERSION = "2026-02-12_v1"  # format: YYYY-MM-DD_vN
+
 # P2.1 FSM explicite : migration progressive (QUALIF_NAME, WAIT_CONFIRM via fsm2)
 USE_FSM2 = os.getenv("USE_FSM2", "false").lower() in ("true", "1", "yes")
 

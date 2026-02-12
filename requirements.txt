@@ -37,5 +37,11 @@ mangum==0.17.0
 # Notifications (SMS, WhatsApp)
 twilio==9.0.0
 
+# Auth (JWT)
+PyJWT>=2.8.0
+
+# Auth (JWT)
+PyJWT>=2.8.0
+
 # Scheduler (rapports automatiques)
 apscheduler==3.10.4

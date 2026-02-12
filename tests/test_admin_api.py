@@ -2,6 +2,8 @@
 """Tests API admin / onboarding (POST /public/onboarding, GET /admin/*)."""
 
 import os
+from unittest.mock import patch
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -148,3 +150,115 @@ def test_admin_technical_status_404(client, admin_headers):
     """GET /api/admin/tenants/999999/technical-status → 404."""
     r = client.get("/api/admin/tenants/999999/technical-status", headers=admin_headers)
     assert r.status_code == 404
+
+
+@patch("backend.routes.admin.pg_add_tenant_user")
+def test_admin_add_user_creates_row(mock_add, client, admin_headers):
+    """POST /api/admin/tenants/1/users → crée tenant_user."""
+    mock_add.return_value = {
+        "ok": True,
+        "tenant_id": 1,
+        "email": "contact@client.com",
+        "role": "owner",
+        "created": True,
+    }
+    r = client.post(
+        "/api/admin/tenants/1/users",
+        headers=admin_headers,
+        json={"email": "contact@client.com", "role": "owner"},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["ok"] is True
+    assert data["tenant_id"] == 1
+    assert data["email"] == "contact@client.com"
+    assert data["role"] == "owner"
+    assert data["created"] is True
+
+
+@patch("backend.routes.admin.pg_add_tenant_user")
+def test_admin_add_user_idempotent_same_tenant(mock_add, client, admin_headers):
+    """POST /api/admin/tenants/1/users avec email déjà sur ce tenant → 200 (no-op)."""
+    mock_add.return_value = {
+        "ok": True,
+        "tenant_id": 1,
+        "email": "contact@client.com",
+        "role": "owner",
+        "created": False,
+    }
+    r = client.post(
+        "/api/admin/tenants/1/users",
+        headers=admin_headers,
+        json={"email": "contact@client.com", "role": "owner"},
+    )
+    assert r.status_code == 200
+    assert r.json()["created"] is False
+
+
+@patch("backend.routes.admin.pg_add_tenant_user")
+def test_admin_add_user_email_conflict_other_tenant_409(mock_add, client, admin_headers):
+    """POST /api/admin/tenants/2/users avec email déjà sur tenant 1 → 409."""
+    mock_add.side_effect = ValueError("Email déjà associé à un autre tenant")
+    r = client.post(
+        "/api/admin/tenants/2/users",
+        headers=admin_headers,
+        json={"email": "contact@client.com", "role": "owner"},
+    )
+    assert r.status_code == 409
+
+
+@patch("backend.routes.admin.pg_add_tenant_user")
+def test_admin_add_user_creates_row(mock_add, client, admin_headers):
+    """POST /api/admin/tenants/1/users → crée tenant_user."""
+    mock_add.return_value = {
+        "ok": True,
+        "tenant_id": 1,
+        "email": "contact@client.com",
+        "role": "owner",
+        "created": True,
+    }
+    r = client.post(
+        "/api/admin/tenants/1/users",
+        headers=admin_headers,
+        json={"email": "contact@client.com", "role": "owner"},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["ok"] is True
+    assert data["tenant_id"] == 1
+    assert data["email"] == "contact@client.com"
+    assert data["role"] == "owner"
+    assert data["created"] is True
+    mock_add.assert_called_once_with(1, "contact@client.com", "owner")
+
+
+@patch("backend.routes.admin.pg_add_tenant_user")
+def test_admin_add_user_idempotent_same_tenant(mock_add, client, admin_headers):
+    """POST /api/admin/tenants/1/users avec email déjà sur ce tenant → 200, created=False."""
+    mock_add.return_value = {
+        "ok": True,
+        "tenant_id": 1,
+        "email": "contact@client.com",
+        "role": "owner",
+        "created": False,
+    }
+    r = client.post(
+        "/api/admin/tenants/1/users",
+        headers=admin_headers,
+        json={"email": "contact@client.com", "role": "owner"},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["created"] is False
+
+
+@patch("backend.routes.admin.pg_add_tenant_user")
+def test_admin_add_user_email_conflict_other_tenant_409(mock_add, client, admin_headers):
+    """POST /api/admin/tenants/2/users avec email sur tenant 1 → 409."""
+    mock_add.side_effect = ValueError("Email déjà associé à un autre tenant")
+    r = client.post(
+        "/api/admin/tenants/2/users",
+        headers=admin_headers,
+        json={"email": "contact@client.com", "role": "owner"},
+    )
+    assert r.status_code == 409

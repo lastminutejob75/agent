@@ -17,6 +17,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from backend import config
+from backend.auth_pg import pg_add_tenant_user, pg_create_tenant_user
 from backend.tenants_pg import (
     pg_add_routing,
     pg_create_tenant,
@@ -73,6 +74,11 @@ class FlagsUpdate(BaseModel):
 
 class ParamsUpdate(BaseModel):
     params: Dict[str, str] = Field(default_factory=dict)
+
+
+class AdminTenantUserCreate(BaseModel):
+    email: str = Field(..., max_length=255)
+    role: str = Field(default="owner", pattern="^(owner|member)$")
 
 
 # --- Helpers ---
@@ -521,6 +527,116 @@ def _get_technical_status(tenant_id: int) -> Optional[dict]:
     }
 
 
+def _get_kpis_daily(tenant_id: int, days: int = 7) -> dict:
+    """
+    KPIs par jour + trend vs semaine précédente.
+    Returns: {days: [{date, calls, bookings, transfers}], current: {}, previous: {}, trend: {calls_pct, bookings_pct, transfers_pct}}
+    """
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    end_curr = now.strftime("%Y-%m-%d %H:%M:%S")
+    start_curr = (now - timedelta(days=days)).strftime("%Y-%m-%d 00:00:00")
+    start_prev = (now - timedelta(days=days * 2)).strftime("%Y-%m-%d 00:00:00")
+
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    days_data = []
+    current = {"calls": 0, "bookings": 0, "transfers": 0}
+    previous = {"calls": 0, "bookings": 0, "transfers": 0}
+
+    if url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            with psycopg.connect(url, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT DATE(created_at AT TIME ZONE 'UTC') as d,
+                               COUNT(DISTINCT CASE WHEN call_id != '' THEN call_id END) as calls,
+                               COUNT(*) FILTER (WHERE event = 'booking_confirmed') as bookings,
+                               COUNT(*) FILTER (WHERE event IN ('transferred_human', 'transferred')) as transfers
+                        FROM ivr_events
+                        WHERE client_id = %s AND created_at >= %s AND created_at < %s
+                        GROUP BY DATE(created_at AT TIME ZONE 'UTC')
+                        ORDER BY d
+                        """,
+                        (tenant_id, start_prev, end_curr),
+                    )
+                    for r in cur.fetchall():
+                        d = str(r["d"]) if r.get("d") else ""
+                        c = int(r["calls"] or 0)
+                        b = int(r["bookings"] or 0)
+                        t = int(r["transfers"] or 0)
+                        if d >= start_curr[:10]:
+                            days_data.append({"date": d, "calls": c, "bookings": b, "transfers": t})
+                            current["calls"] += c
+                            current["bookings"] += b
+                            current["transfers"] += t
+                        else:
+                            previous["calls"] += c
+                            previous["bookings"] += b
+                            previous["transfers"] += t
+        except Exception as e:
+            logger.warning("pg kpis_daily failed: %s", e)
+    else:
+        import backend.db as db
+        conn = db.get_conn()
+        try:
+            db._ensure_ivr_tables(conn)
+            rows = conn.execute(
+                """
+                SELECT date(created_at) as d,
+                       (SELECT COUNT(DISTINCT call_id) FROM ivr_events e2
+                        WHERE e2.client_id = ? AND date(e2.created_at) = date(ivr_events.created_at)
+                        AND e2.call_id != '' AND e2.call_id IS NOT NULL) as calls,
+                       SUM(CASE WHEN event = 'booking_confirmed' THEN 1 ELSE 0 END) as bookings,
+                       SUM(CASE WHEN event IN ('transferred_human', 'transferred') THEN 1 ELSE 0 END) as transfers
+                FROM ivr_events
+                WHERE client_id = ? AND created_at >= ? AND created_at < ?
+                GROUP BY date(created_at)
+                ORDER BY d
+                """,
+                (tenant_id, tenant_id, start_prev, end_curr),
+            ).fetchall()
+            for r in rows:
+                d = str(r[0]) if r[0] else ""
+                c = int(r[1] or 0)
+                b = int(r[2] or 0)
+                t = int(r[3] or 0)
+                if d >= start_curr[:10]:
+                    days_data.append({"date": d, "calls": c, "bookings": b, "transfers": t})
+                    current["calls"] += c
+                    current["bookings"] += b
+                    current["transfers"] += t
+                else:
+                    previous["calls"] += c
+                    previous["bookings"] += b
+                    previous["transfers"] += t
+        except Exception as e:
+            logger.warning("sqlite kpis_daily failed: %s", e)
+        finally:
+            conn.close()
+
+    # Remplir les jours manquants avec 0
+    for i in range(days):
+        d = (now - timedelta(days=days - 1 - i)).strftime("%Y-%m-%d")
+        if not any(x["date"] == d for x in days_data):
+            days_data.append({"date": d, "calls": 0, "bookings": 0, "transfers": 0})
+    days_data.sort(key=lambda x: x["date"])
+
+    def _pct(curr, prev):
+        if prev == 0:
+            return curr and 100 or 0
+        return round((curr - prev) / prev * 100)
+
+    trend = {
+        "calls_pct": _pct(current["calls"], previous["calls"]),
+        "bookings_pct": _pct(current["bookings"], previous["bookings"]),
+        "transfers_pct": _pct(current["transfers"], previous["transfers"]),
+    }
+    return {"days": days_data, "current": current, "previous": previous, "trend": trend}
+
+
 def _get_rgpd(tenant_id: int, start: str, end: str) -> dict:
     """RGPD: consent_obtained, consent_rate."""
     url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
@@ -573,6 +689,84 @@ def _get_rgpd(tenant_id: int, start: str, end: str) -> dict:
     }
 
 
+def _extract_consent_version_short(context: str) -> str:
+    """Extrait 'v1' depuis context JSON ou '2026-02-12_v1'."""
+    if not context or not context.strip():
+        return ""
+    ctx = context.strip()
+    if ctx.startswith("{"):
+        try:
+            data = json.loads(ctx)
+            consent_ver = data.get("consent_version") or ""
+            if "_" in consent_ver:
+                return consent_ver.split("_", 1)[-1]  # v1
+            return consent_ver or ""
+        except Exception:
+            pass
+    if "_" in ctx:
+        return ctx.split("_", 1)[-1]
+    return ctx
+
+
+def _get_rgpd_extended(tenant_id: int, start: str, end: str, last_n: int = 20) -> dict:
+    """RGPD étendu : consent_rate 7j + derniers consent_obtained (call_id, date, version)."""
+    base = _get_rgpd(tenant_id, start, end)
+    last_consents: list[dict] = []
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    if url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            with psycopg.connect(url, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT call_id, created_at, context
+                        FROM ivr_events
+                        WHERE client_id = %s AND event = 'consent_obtained'
+                        ORDER BY created_at DESC
+                        LIMIT %s
+                        """,
+                        (tenant_id, last_n),
+                    )
+                    for r in cur.fetchall():
+                        ctx = r.get("context") or ""
+                        version_short = _extract_consent_version_short(ctx)
+                        last_consents.append({
+                            "call_id": r["call_id"] or "",
+                            "at": str(r["created_at"]) if r.get("created_at") else "",
+                            "version": version_short or ctx or "",
+                        })
+        except Exception as e:
+            logger.warning("pg rgpd last_consents failed: %s", e)
+    else:
+        import backend.db as db
+        conn = db.get_conn()
+        try:
+            rows = conn.execute(
+                """
+                SELECT call_id, created_at, context
+                FROM ivr_events
+                WHERE client_id = ? AND event = 'consent_obtained'
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (tenant_id, last_n),
+            ).fetchall()
+            for r in rows:
+                ctx = r[2] or ""
+                version_short = _extract_consent_version_short(ctx)
+                last_consents.append({
+                    "call_id": r[0] or "",
+                    "at": str(r[1]) if r[1] else "",
+                    "version": version_short or ctx or "",
+                })
+        finally:
+            conn.close()
+    base["last_consents"] = last_consents
+    return base
+
+
 # --- Routes ---
 
 
@@ -588,6 +782,8 @@ def public_onboarding(body: OnboardingRequest):
             timezone="Europe/Paris",
         )
         if tid:
+            # Créer tenant_user pour magic link auth
+            pg_create_tenant_user(tid, body.email, role="owner")
             return OnboardingResponse(
                 tenant_id=tid,
                 message="Onboarding créé. Vous pouvez configurer le tenant depuis l'admin.",
@@ -674,6 +870,35 @@ def admin_get_technical_status(
     if not s:
         raise HTTPException(404, "Tenant not found")
     return s
+
+
+@router.post("/admin/tenants/{tenant_id}/users")
+def admin_add_tenant_user(
+    tenant_id: int,
+    body: AdminTenantUserCreate,
+    _: None = Depends(_verify_admin),
+):
+    """
+    Ajoute un tenant_user (owner ou member).
+    Idempotent si même tenant. 409 si email déjà sur un autre tenant.
+    """
+    d = _get_tenant_detail(tenant_id)
+    if not d:
+        raise HTTPException(404, "Tenant not found")
+    email = (body.email or "").strip().lower()
+    if not email:
+        raise HTTPException(400, "Email required")
+    role = (body.role or "owner").lower()
+    if role not in ("owner", "member"):
+        role = "owner"
+    try:
+        result = pg_add_tenant_user(tenant_id, email, role)
+        return result
+    except ValueError as e:
+        msg = str(e).lower()
+        if "autre tenant" in msg or "déjà associé" in msg:
+            raise HTTPException(409, str(e))
+        raise HTTPException(400, str(e))
 
 
 @router.patch("/admin/tenants/{tenant_id}/flags")

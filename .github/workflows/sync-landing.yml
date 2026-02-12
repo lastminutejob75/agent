@@ -1,0 +1,47 @@
+# Sync landing/ → uwi-landing (uwiapp.com) à chaque push sur main
+name: Sync landing to uwi-landing
+on:
+  push:
+    branches: [main]
+    paths:
+      - "landing/**"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout uwi-landing
+        uses: actions/checkout@v4
+        with:
+          repository: lastminutejob75/uwi-landing
+          token: ${{ secrets.UWI_LANDING_PAT }}
+          path: uwi-landing
+
+      - name: Sync landing files
+        run: |
+          SRC="landing"
+          DST="uwi-landing"
+          rm -rf "$DST/src" && cp -r "$SRC/src" "$DST/"
+          mkdir -p "$DST/public"
+          [ -d "$SRC/public" ] && rm -rf "$DST/public" && cp -r "$SRC/public" "$DST/"
+          for f in index.html package.json package-lock.json vite.config.js tailwind.config.js postcss.config.js vercel.json netlify.toml .env.example .gitignore .nvmrc .node-version; do
+            [ -f "$SRC/$f" ] && cp "$SRC/$f" "$DST/$f"
+          done
+
+      - name: Commit and push
+        run: |
+          cd uwi-landing
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: sync from agent (landing/)"
+            git push origin main
+          fi

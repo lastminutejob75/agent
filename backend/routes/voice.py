@@ -476,6 +476,15 @@ async def vapi_webhook(request: Request):
         # TEXT
         if text_to_use and text_to_use.strip():
             print(f"💬 User: '{text_to_use}'")
+            # P1: consent_obtained au premier message (consentement implicite uniquement)
+            from backend.tenant_config import get_consent_mode
+            if not getattr(session, "_consent_obtained_persisted", False) and get_consent_mode(getattr(session, "tenant_id", None)) == "implicit":
+                try:
+                    from backend.engine import persist_consent_obtained
+                    persist_consent_obtained(session, channel="vocal")
+                    session._consent_obtained_persisted = True
+                except Exception:
+                    pass
             t3 = log_timer("Session loaded", t2)
             events = _get_engine(call_id).handle_message(call_id, text_to_use)
             _maybe_reset_noise_on_terminal(session, events)

@@ -19,6 +19,7 @@ from typing import Dict, Optional, Any
 import sqlite3
 
 from fastapi import FastAPI, Request, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -27,10 +28,20 @@ from backend.routes.voice import _get_engine
 import backend.config as config  # Import du MODULE (pas from import)
 from backend.db import init_db, list_free_slots, count_free_slots
 # Nouvelle architecture multi-canal
-from backend.routes import voice, whatsapp, bland, reports, admin
+from backend.routes import voice, whatsapp, bland, reports, admin, auth, tenant
 
 app = FastAPI()
 _logger = logging.getLogger(__name__)
+
+# CORS pour front uwiapp.com (JWT localStorage)
+_cors_origins = (os.environ.get("CORS_ORIGINS") or "https://uwiapp.com,https://www.uwiapp.com,http://localhost:5173").split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in _cors_origins if o.strip()],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 
 @app.middleware("http")
@@ -53,6 +64,8 @@ app.include_router(whatsapp.router)   # /api/whatsapp/*
 app.include_router(bland.router)      # /api/bland/*
 app.include_router(reports.router)    # /api/reports/*
 app.include_router(admin.router)      # /api/public/onboarding, /api/admin/*
+app.include_router(auth.router)       # /api/auth/*
+app.include_router(tenant.router)     # /api/tenant/*
 
 # Static frontend (optionnel - peut ne pas exister)
 try:

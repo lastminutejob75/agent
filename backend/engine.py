@@ -38,6 +38,7 @@ from backend.entity_extraction import (
 )
 from backend.start_router import route_start, FAQ_BUCKET_WHITELIST
 from backend.tenant_flags_cache import get_tenant_flags
+from backend.tenant_config import get_consent_mode
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,34 @@ def _fail_count_for_context(session: Session, context: Optional[str]) -> int:
         "faq": getattr(session, "faq_fails", 0),
     }
     return m.get(context, 0)
+
+
+def persist_consent_obtained(session: Session, channel: str = "vocal") -> None:
+    """
+    Persiste consent_obtained avec context (version + channel).
+    Format: {"consent_version": "2026-02-12_v1", "channel": "vocal"}
+    À appeler quand le consentement est obtenu (ex: premier message utilisateur).
+    Idempotent : 1 par call_id (évite doublons sur retry webhook).
+    """
+    try:
+        scope_id = None
+        if getattr(session, "channel", "") == "vocal" and getattr(session, "tenant_id", None):
+            scope_id = session.tenant_id
+        if scope_id is None:
+            scope_id = getattr(session, "client_id", None)
+        if scope_id is None:
+            return
+        call_id = (session.conv_id or "").strip()
+        if not call_id:
+            return
+        if backend_db.consent_obtained_exists(int(scope_id), call_id):
+            logger.debug("persist_consent_obtained skip: already exists call_id=%s", call_id[:20])
+            return
+        import json
+        ctx = json.dumps({"consent_version": config.CONSENT_VERSION, "channel": channel})
+        _persist_ivr_event(session, "consent_obtained", context=ctx)
+    except Exception as e:
+        logger.debug("persist_consent_obtained skip: %s", e)
 
 
 def _persist_ivr_event(
@@ -796,6 +825,54 @@ class Engine:
             setattr(session, "_turn_assistant_text", msg)
             _log_turn_debug(session)
             return [Event("final", msg, conv_state=session.state)]
+        
+        # ========================
+        # P0.5 CONSENT MODE EXPLICIT (vocal uniquement, state START)
+        # ========================
+        channel = getattr(session, "channel", "web")
+        if channel == "vocal" and session.state == "START":
+            consent_mode = get_consent_mode(getattr(session, "tenant_id", None))
+            if consent_mode == "explicit":
+                if not getattr(session, "consent_prompted", False):
+                    # Premier message : demander le consentement (ignorer le contenu user)
+                    session.consent_prompted = True
+                    session.awaiting_confirmation = "CONFIRM_CONSENT"
+                    msg = prompts.VOCAL_CONSENT_PROMPT
+                    session.add_message("agent", msg)
+                    self._save_session(session)
+                    return safe_reply([Event("final", msg, conv_state=session.state)], session)
+                if getattr(session, "awaiting_confirmation", None) == "CONFIRM_CONSENT":
+                    # Réponse à la demande de consentement
+                    if intent_parser._is_yes(user_text or ""):
+                        try:
+                            persist_consent_obtained(session, channel="vocal")
+                            setattr(session, "_consent_obtained_persisted", True)
+                        except Exception:
+                            pass
+                        session.consent_obtained = True
+                        session.awaiting_confirmation = None
+                        # Continue le flow avec user_text (ex. "oui" → clarification)
+                    elif intent_parser._is_no(user_text or "") or (detect_strong_intent(user_text or "") == "ABANDON"):
+                        session.state = "TRANSFERRED"
+                        session.awaiting_confirmation = None
+                        msg = prompts.VOCAL_CONSENT_DENIED_TRANSFER
+                        session.add_message("agent", msg)
+                        self._save_session(session)
+                        return safe_reply([Event("final", msg, conv_state=session.state)], session)
+                    else:
+                        # UNCLEAR
+                        session.consent_fails = getattr(session, "consent_fails", 0) + 1
+                        if session.consent_fails >= 2:
+                            session.state = "TRANSFERRED"
+                            session.awaiting_confirmation = None
+                            msg = prompts.MSG_TRANSFER
+                            session.add_message("agent", msg)
+                            self._save_session(session)
+                            return safe_reply([Event("final", msg, conv_state=session.state)], session)
+                        msg = prompts.VOCAL_CONSENT_CLARIFY
+                        session.add_message("agent", msg)
+                        self._save_session(session)
+                        return safe_reply([Event("final", msg, conv_state=session.state)], session)
         
         # ========================
         # 1. ANTI-LOOP GUARD (spec V3 — ordre pipeline NON NÉGOCIABLE)

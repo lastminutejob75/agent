@@ -83,6 +83,24 @@ def create_ivr_event_pg(
         return False
 
 
+def consent_obtained_exists_pg(client_id: int, call_id: str) -> bool:
+    """True si consent_obtained déjà persisté pour ce call (idempotence retry)."""
+    url = _pg_url()
+    if not url:
+        return False
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM ivr_events WHERE client_id = %s AND call_id = %s AND event = 'consent_obtained' LIMIT 1",
+                    (client_id, call_id or ""),
+                )
+                return cur.fetchone() is not None
+    except Exception:
+        return False
+
+
 def is_pg_available() -> bool:
     """True si Postgres configuré et accessible."""
     url = _pg_url()
