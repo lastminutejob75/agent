@@ -42,13 +42,21 @@ export default function CTASection() {
                 Essayer
               </Link>
 
-              {/* Bouton 2 : Parcourir la démo (fond bleu avec bordure blanche) */}
+              {/* Bouton 2 : Parcourir la démo */}
               <a
                 href="#demo"
                 className="w-full sm:w-auto inline-flex items-center justify-center rounded-xl bg-[#0052A3] text-white border-2 border-white px-8 py-4 text-base font-semibold hover:bg-[#004080] transition-all hover:scale-105 active:scale-95"
               >
                 Parcourir la démo
               </a>
+
+              {/* Bouton 3 : Connexion (clients existants) */}
+              <Link
+                to="/login"
+                className="w-full sm:w-auto inline-flex items-center justify-center rounded-xl text-white border-2 border-white/80 px-8 py-4 text-base font-semibold hover:bg-white/10 transition-all hover:scale-105 active:scale-95"
+              >
+                Déjà client ? Connexion
+              </Link>
             </div>
           </div>
         </div>
