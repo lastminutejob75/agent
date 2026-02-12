@@ -49,6 +49,15 @@ make gh-secret-sync
 5. Génère et copie le token (`github_pat_...`)
 6. Met à jour le secret dans agent
 
+## Dépannage
+
+| Erreur | Cause | Solution |
+|--------|-------|----------|
+| **Bad credentials** | Token invalide, expiré ou mal collé | Recrée un token Classic (scope `repo`), copie-colle sans espace ni saut de ligne, met à jour le secret |
+| **403 Permission denied** | Token sans accès à uwi-landing | Classic : scope `repo` obligatoire. Fine-grained : ajouter `uwi-landing` + Contents Read and write |
+
+**Vérifier le secret** : Settings → Secrets → UWI_LANDING_PAT doit exister. Pour le modifier : "Update" et coller le nouveau token (sans espaces avant/après).
+
 ## Vérifier
 
 Après configuration, le prochain push qui modifie `landing/**` déclenchera le workflow. Consulte **Actions** sur le dépôt pour voir le résultat.
