@@ -35,6 +35,9 @@ export default function AdminTenant() {
     <div style={{ maxWidth: 800, margin: "40px auto", padding: 16 }}>
       <Link to="/admin">← Retour</Link>
       <h1>{tenant.name} (id={tenant.tenant_id})</h1>
+      <p style={{ marginTop: 8 }}>
+        <Link to={`/admin/tenants/${tenantId}/dashboard`} style={{ color: "#0066CC" }}>Voir le dashboard →</Link>
+      </p>
 
       <section style={{ marginTop: 24 }}>
         <h2>Params</h2>

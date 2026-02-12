@@ -39,7 +39,9 @@ async function request(path, { method = "GET", body, admin = false } = {}) {
 
   if (!res.ok) {
     const msg = (data && (data.detail || data.error || data.message)) || `HTTP ${res.status}`;
-    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+    const err = new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+    err.status = res.status;
+    throw err;
   }
   return data;
 }
