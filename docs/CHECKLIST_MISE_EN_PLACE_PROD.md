@@ -100,11 +100,21 @@ Puis : `make migrate-railway`
 
 ---
 
+## Migrations sans Railway CLI
+
+**Si `railway link` affiche des options bizarres** (zsh, menu confus) :
+
+Les migrations 007+008 s'exécutent **automatiquement au démarrage** du backend (Dockerfile). Dès que `DATABASE_URL` est configuré sur Railway et que tu redéploies, les tables sont créées.
+
+Pas besoin de `make migrate-railway` en local.
+
+---
+
 ## Ordre recommandé
 
 1. **Postgres** : créer la DB sur Railway si absente
-2. **Migrations** : `make migrate-railway`
-3. **Backfill tenant_users** : `make backfill-tenant-users`
+2. **Redéployer** : les migrations s'exécutent au startup
+3. **Backfill tenant_users** : `make backfill-tenant-users` (nécessite railway link ou DATABASE_URL en local)
 4. **Email (Postmark/SMTP)** : pour envoyer les magic links
 5. **CORS + VITE_UWI_API_BASE_URL** : pour que uwiapp.com appelle le backend
 6. **Tester le flux complet** : login → dashboard → KPIs

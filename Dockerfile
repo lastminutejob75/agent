@@ -11,6 +11,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ ./backend/
 COPY frontend/ ./frontend/
+COPY migrations/ ./migrations/
+COPY scripts/ ./scripts/
 COPY PRD.md SYSTEM_PROMPT.md ARCHITECTURE.md INSTRUCTIONS_CURSOR.md README.md ./
 
 # Créer dossier credentials (vide pour l'instant)
@@ -23,4 +25,6 @@ EXPOSE 8000
 # Railway gère son propre health check, pas besoin de HEALTHCHECK Docker
 # HEALTHCHECK désactivé pour éviter conflit avec Railway
 
-CMD sh -c "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"
+# Migrations au démarrage (si DATABASE_URL présent)
+# Puis démarrage du serveur
+CMD sh -c "python scripts/run_migration.py 007 2>/dev/null || true; python scripts/run_migration.py 008 2>/dev/null || true; uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"
