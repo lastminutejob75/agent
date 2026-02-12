@@ -26,20 +26,21 @@ function TrendBadge({ value }) {
 function MiniChart({ days }) {
   if (!days || days.length === 0) return null;
   const maxVal = Math.max(1, ...days.map((d) => d.calls + d.bookings + d.transfers));
+  const barMaxHeight = 64;
   return (
-    <div className="mt-4 flex items-end gap-1 h-20">
+    <div className="mt-4 flex items-end gap-1" style={{ height: barMaxHeight + 24 }}>
       {days.map((d) => {
         const total = d.calls + d.bookings + d.transfers;
-        const h = maxVal ? (total / maxVal) * 100 : 0;
+        const barHeight = maxVal ? Math.max((total / maxVal) * barMaxHeight, 2) : 2;
         const dayShort = d.date ? new Date(d.date + "T12:00:00").toLocaleDateString("fr-FR", { weekday: "short" }) : "";
         return (
-          <div key={d.date} className="flex-1 flex flex-col items-center gap-1">
+          <div key={d.date} className="flex-1 flex flex-col items-center justify-end gap-1">
             <div
               className="w-full bg-emerald-200 rounded-t min-h-[2px] transition-all"
-              style={{ height: `${Math.max(h, 2)}%` }}
+              style={{ height: `${barHeight}px` }}
               title={`${d.date}: ${d.calls} appels, ${d.bookings} RDV, ${d.transfers} transférés`}
             />
-            <span className="text-xs text-gray-500">{dayShort}</span>
+            <span className="text-xs text-gray-500 shrink-0">{dayShort}</span>
           </div>
         );
       })}

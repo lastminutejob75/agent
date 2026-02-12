@@ -98,10 +98,8 @@ export const api = {
   // tenant ( protégé JWT )
   tenantMe: () => request("/api/tenant/me", { tenant: true }),
   tenantDashboard: () => request("/api/tenant/dashboard", { tenant: true }),
-  tenantKpis: (days = 7) =>
-    request(`/api/tenant/kpis?days=${days}`, { tenant: true }),
-  tenantTechnicalStatus: () => request("/api/tenant/technical-status", { tenant: true }),
   tenantKpis: (days = 7) => request(`/api/tenant/kpis?days=${days}`, { tenant: true }),
+  tenantTechnicalStatus: () => request("/api/tenant/technical-status", { tenant: true }),
   tenantRgpd: () => request("/api/tenant/rgpd", { tenant: true }),
   tenantPatchParams: (params) =>
     request("/api/tenant/params", { method: "PATCH", body: params, tenant: true }),
