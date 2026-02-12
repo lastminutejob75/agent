@@ -21,7 +21,7 @@ npm-debug.log*
 .cursor/
 
 # Docs non essentiels (garder PRD.md etc. pour Dockerfile)
-# scripts/ requis pour run_migration.py au démarrage
+# run_migration.py dans backend/ (pas besoin de scripts/)
 docs/
 tests/
 apply*.sh

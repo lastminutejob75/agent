@@ -3,8 +3,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Pas de apt-get : évite broken pipe Railway. Python slim suffit.
-# curl non nécessaire (healthcheck HTTP externe).
-# scripts/ et migrations/ requis pour run_migration au démarrage.
+# run_migration.py dans backend/ (pas besoin de scripts/)
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -12,7 +11,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./backend/
 COPY frontend/ ./frontend/
 COPY migrations/ ./migrations/
-COPY scripts/ ./scripts/
 COPY PRD.md SYSTEM_PROMPT.md ARCHITECTURE.md INSTRUCTIONS_CURSOR.md README.md ./
 
 # Créer dossier credentials (vide pour l'instant)
@@ -27,4 +25,4 @@ EXPOSE 8000
 
 # Migrations au démarrage (si DATABASE_URL présent)
 # Puis démarrage du serveur
-CMD sh -c "echo 'Running migrations...'; python scripts/run_migration.py 007 || true; python scripts/run_migration.py 008 || true; echo 'Starting server...'; exec uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"
+CMD sh -c "echo 'Running migrations...'; python -m backend.run_migration 007 || true; python -m backend.run_migration 008 || true; echo 'Starting server...'; exec uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"

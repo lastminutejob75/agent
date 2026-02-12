@@ -1,9 +1,10 @@
-.PHONY: help install test run docker clean check-report-env export-kpis migrate migrate-007 migrate-008 migrate-railway railway-fix-vars onboard-tenant-users
+.PHONY: help install test run docker clean check-report-env export-kpis migrate migrate-007 migrate-008 migrate-railway railway-fix-vars onboard-tenant-users test-postgres
 
 help:
 	@echo "Commandes disponibles :"
 	@echo "  make install         - Install dependencies"
 	@echo "  make test            - Run all tests"
+	@echo "  make test-postgres   - Tester connexion Postgres (DATABASE_URL ou railway run)"
 	@echo "  make run             - Run dev server"
 	@echo "  make docker          - Build & run docker"
 	@echo "  make check-report-env - Vérifier les variables rapport quotidien (email)"
@@ -18,10 +19,10 @@ help:
 migrate: migrate-007 migrate-008
 
 migrate-007:
-	python3 scripts/run_migration.py 007
+	python3 -m backend.run_migration 007
 
 migrate-008:
-	python3 scripts/run_migration.py 008
+	python3 -m backend.run_migration 008
 
 # Migration sur Railway (DATABASE_URL injecté). Prérequis : npx, railway login + railway link
 migrate-railway:
@@ -33,6 +34,10 @@ railway-fix-vars:
 
 backfill-tenant-users:
 	python3 scripts/backfill_tenant_users.py
+
+# Tester Postgres (local avec .env ou railway run pour contexte Railway)
+test-postgres:
+	python3 scripts/test_postgres.py
 
 # Configurer le secret GitHub pour le sync landing → uwi-landing
 gh-secret-sync:
