@@ -1,4 +1,4 @@
-.PHONY: help install test run docker clean check-report-env
+.PHONY: help install test run docker clean check-report-env export-kpis
 
 help:
 	@echo "Commandes disponibles :"
@@ -7,7 +7,11 @@ help:
 	@echo "  make run             - Run dev server"
 	@echo "  make docker          - Build & run docker"
 	@echo "  make check-report-env - Vérifier les variables rapport quotidien (email)"
+	@echo "  make export-kpis     - Export KPIs semaine précédente (--last-week)"
 	@echo "  make clean           - Clean cache & DB"
+
+export-kpis:
+	python3 scripts/export_weekly_kpis.py --last-week --out_dir .
 
 check-report-env:
 	python3 scripts/check_report_env.py

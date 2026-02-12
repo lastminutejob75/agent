@@ -2,7 +2,7 @@
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 import logging
 
@@ -258,6 +258,30 @@ class GoogleCalendarService:
                 logger.error("Error booking appointment: %s", e, exc_info=True)
             return None
     
+    def list_upcoming_events(self, days: int = 30) -> List[Dict]:
+        """
+        Liste les events à venir (pour recherche par nom).
+        Args:
+            days: Nombre de jours à couvrir (défaut 30)
+        Returns:
+            Liste d'events (format API Google)
+        """
+        try:
+            now = datetime.now(timezone.utc)
+            time_min = now.isoformat()
+            time_max = (now + timedelta(days=days)).isoformat()
+            result = self.service.events().list(
+                calendarId=self.calendar_id,
+                timeMin=time_min,
+                timeMax=time_max,
+                singleEvents=True,
+                orderBy='startTime',
+            ).execute()
+            return result.get('items', [])
+        except Exception as e:
+            logger.error("list_upcoming_events: %s", e)
+            return []
+
     def cancel_appointment(self, event_id: str) -> bool:
         """
         Annule un RDV.

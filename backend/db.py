@@ -18,6 +18,67 @@ def get_conn() -> sqlite3.Connection:
     return conn
 
 
+def _ensure_tenants_tables(conn: sqlite3.Connection) -> None:
+    """Crée les tables tenants + tenant_config (feature flags par tenant)."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tenants (
+            tenant_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            timezone TEXT DEFAULT 'Europe/Paris',
+            status TEXT DEFAULT 'active',
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tenant_config (
+            tenant_id INTEGER PRIMARY KEY,
+            flags_json TEXT NOT NULL DEFAULT '{}',
+            params_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (tenant_id) REFERENCES tenants(tenant_id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tenant_status ON tenants(status)")
+
+    # Migration: ajouter params_json si absente (schéma legacy)
+    try:
+        cur = conn.execute("PRAGMA table_info(tenant_config)")
+        cols = [row[1] for row in cur.fetchall()]
+        if "params_json" not in cols:
+            conn.execute("ALTER TABLE tenant_config ADD COLUMN params_json TEXT NOT NULL DEFAULT '{}'")
+    except Exception:
+        pass
+
+    # Seed minimal (INSERT OR IGNORE = ne pas écraser config existant)
+    conn.execute("INSERT OR IGNORE INTO tenants (tenant_id, name) VALUES (1, 'DEFAULT')")
+    conn.execute(
+        "INSERT OR IGNORE INTO tenant_config (tenant_id, flags_json, params_json, updated_at) VALUES (1, '{}', '{}', datetime('now'))"
+    )
+
+    # tenant_routing (DID → tenant_id)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tenant_routing (
+            channel TEXT NOT NULL DEFAULT 'vocal',
+            did_key TEXT NOT NULL,
+            tenant_id INTEGER NOT NULL,
+            created_at TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (channel, did_key),
+            FOREIGN KEY (tenant_id) REFERENCES tenants(tenant_id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tenant_routing_lookup ON tenant_routing(channel, did_key)")
+
+
+def ensure_tenant_config() -> None:
+    """Garantit que les tables tenants/tenant_config existent."""
+    conn = get_conn()
+    try:
+        _ensure_tenants_tables(conn)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _ensure_ivr_tables(conn: sqlite3.Connection) -> None:
     """Crée les tables ivr_events et calls si absentes (rapport quotidien IVR)."""
     conn.execute("""
@@ -53,21 +114,35 @@ def create_ivr_event(
     reason: Optional[str] = None,
 ) -> None:
     """
-    Insertion simple dans ivr_events (persistance pour rapport quotidien).
-    Noms canoniques: booking_confirmed, transfer_human, abandon, intent_router_trigger,
-    recovery_step, anti_loop_trigger, empty_message.
+    Insertion dans ivr_events (rapport quotidien).
+    Dual-write : SQLite + Postgres si USE_PG_EVENTS=true.
+    created_at partagé pour idempotence PG (ON CONFLICT DO NOTHING sur retry).
     """
+    created_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")[:26]  # microsec
+    call_id_norm = call_id or ""
+
     conn = get_conn()
     try:
         _ensure_ivr_tables(conn)
         conn.execute(
-            """INSERT INTO ivr_events (client_id, call_id, event, context, reason)
-               VALUES (?, ?, ?, ?, ?)""",
-            (client_id, call_id or "", event, context or None, reason or None),
+            """INSERT INTO ivr_events (client_id, call_id, event, context, reason, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (client_id, call_id_norm, event, context or None, reason or None, created_at),
         )
         conn.commit()
     finally:
         conn.close()
+
+    # Dual-write Postgres (silencieux si échec)
+    try:
+        from backend import config
+        if config.USE_PG_EVENTS:
+            from backend.ivr_events_pg import create_ivr_event_pg
+            create_ivr_event_pg(
+                client_id, call_id_norm, event, context, reason, created_at=created_at
+            )
+    except Exception:
+        pass
 
 
 def init_db(days: int = 7) -> None:
@@ -95,7 +170,8 @@ def init_db(days: int = 7) -> None:
             )
         """)
         _ensure_ivr_tables(conn)
-        
+        _ensure_tenants_tables(conn)
+
         # Seed slots (SKIP WEEKENDS)
         for day in range(1, days + 1):
             target_date = datetime.now() + timedelta(days=day)
@@ -184,8 +260,19 @@ def cleanup_old_slots() -> None:
         conn.close()
 
 
-def count_free_slots(limit: int = 1000) -> int:
-    cleanup_old_slots()  # Nettoyer avant de compter
+def count_free_slots(limit: int = 1000, tenant_id: int = 1) -> int:
+    """PG-first puis SQLite. tenant_id pour isolation multi-tenant."""
+    from backend import config
+    if config.USE_PG_SLOTS:
+        try:
+            from backend.slots_pg import pg_cleanup_and_ensure_slots, pg_count_free_slots
+            pg_cleanup_and_ensure_slots(tenant_id)
+            n = pg_count_free_slots(tenant_id)
+            if n is not None:
+                return n
+        except Exception:
+            pass
+    cleanup_old_slots()
     conn = get_conn()
     try:
         today = datetime.now().strftime("%Y-%m-%d")
@@ -195,16 +282,25 @@ def count_free_slots(limit: int = 1000) -> int:
         conn.close()
 
 
-def list_free_slots(limit: int = 3, pref: Optional[str] = None) -> List[Dict]:
+def list_free_slots(limit: int = 3, pref: Optional[str] = None, tenant_id: int = 1) -> List[Dict]:
     """
-    Liste les créneaux libres.
-    pref: "matin" (avant 12h), "après-midi" (14h-18h), "soir" (>=18h) — filtre pour cohérence avec la préférence user.
+    Liste les créneaux libres. PG-first puis SQLite.
+    pref: "matin" (avant 12h), "après-midi" (14h-18h), "soir" (>=18h).
     """
+    from backend import config
+    if config.USE_PG_SLOTS:
+        try:
+            from backend.slots_pg import pg_cleanup_and_ensure_slots, pg_list_free_slots
+            pg_cleanup_and_ensure_slots(tenant_id)
+            raw = pg_list_free_slots(tenant_id, limit=limit, pref=pref)
+            if raw is not None:
+                return [{"id": r["id"], "date": r["date"], "time": r["time"]} for r in raw]
+        except Exception:
+            pass
     cleanup_old_slots()
     conn = get_conn()
     try:
         today = datetime.now().strftime("%Y-%m-%d")
-        # Filtre horaire selon préférence (éviter 10h quand user a dit "je finis à 17h")
         time_condition = ""
         if pref == "matin":
             time_condition = " AND time < '12:00'"
@@ -212,7 +308,6 @@ def list_free_slots(limit: int = 3, pref: Optional[str] = None) -> List[Dict]:
             time_condition = " AND time >= '14:00' AND time < '18:00'"
         elif pref == "soir":
             time_condition = " AND time >= '18:00'"
-        params = (today, limit)
         cur = conn.execute(
             f"""
             SELECT id, date, time 
@@ -221,7 +316,7 @@ def list_free_slots(limit: int = 3, pref: Optional[str] = None) -> List[Dict]:
             ORDER BY date ASC, time ASC 
             LIMIT ?
             """,
-            params
+            (today, limit),
         )
         out = []
         for r in cur.fetchall():
@@ -236,12 +331,22 @@ def book_slot_atomic(
     name: str,
     contact: str,
     contact_type: str,
-    motif: str
+    motif: str,
+    tenant_id: int = 1,
 ) -> bool:
     """
-    Book atomique.
+    Book atomique. PG-first puis SQLite.
     Returns False if slot already booked.
     """
+    from backend import config
+    if config.USE_PG_SLOTS:
+        try:
+            from backend.slots_pg import pg_book_slot_atomic
+            result = pg_book_slot_atomic(tenant_id, slot_id, name, contact, contact_type, motif)
+            if result is not None:
+                return result
+        except Exception:
+            pass
     conn = get_conn()
     try:
         conn.execute("BEGIN")
@@ -269,15 +374,21 @@ def book_slot_atomic(
         conn.close()
 
 
-def find_booking_by_name(name: str) -> Optional[Dict]:
+def find_booking_by_name(name: str, tenant_id: int = 1) -> Optional[Dict]:
     """
-    Recherche un RDV SQLite par nom du patient (insensible à la casse).
-    Returns:
-        Dict avec id (appointment id), slot_id, date, time, name, contact, contact_type, motif
-        ou None si non trouvé.
+    Recherche un RDV par nom. PG-first puis SQLite.
     """
     if not name or not name.strip():
         return None
+    from backend import config
+    if config.USE_PG_SLOTS:
+        try:
+            from backend.slots_pg import pg_find_booking_by_name
+            r = pg_find_booking_by_name(tenant_id, name.strip())
+            if r is not None:
+                return r
+        except Exception:
+            pass
     conn = get_conn()
     try:
         cur = conn.execute(
@@ -308,14 +419,21 @@ def find_booking_by_name(name: str) -> Optional[Dict]:
         conn.close()
 
 
-def cancel_booking_sqlite(booking: Dict) -> bool:
+def cancel_booking_sqlite(booking: Dict, tenant_id: int = 1) -> bool:
     """
-    Annule un RDV SQLite : supprime l'appointment et libère le slot.
-    booking doit contenir au moins slot_id (ou id de l'appointment).
-    Returns True si annulation effectuée.
+    Annule un RDV local : supprime l'appointment et libère le slot. PG-first puis SQLite.
     """
     slot_id = booking.get("slot_id")
     appt_id = booking.get("id")
+    from backend import config
+    if config.USE_PG_SLOTS:
+        try:
+            from backend.slots_pg import pg_cancel_booking
+            result = pg_cancel_booking(tenant_id, booking)
+            if result is not None:
+                return result
+        except Exception:
+            pass
     conn = get_conn()
     try:
         conn.execute("BEGIN")
@@ -348,15 +466,15 @@ def cancel_booking_sqlite(booking: Dict) -> bool:
 def get_daily_report_data(client_id: int, date_str: str) -> Dict:
     """
     Métriques IVR pour le rapport quotidien (email).
-    Source: ivr_events + calls uniquement (pas appointments: pas de client_id/status).
+    Source: ivr_events uniquement (table calls dépréciée: calls_total = COUNT DISTINCT call_id).
     Booked = event 'booking_confirmed' dans ivr_events.
 
     date_str: "YYYY-MM-DD"
     Fenêtre: [day 00:00:00, day+1 00:00:00) pour éviter les soucis de format ISO.
 
     Events attendus (à persister depuis l'engine): booking_confirmed, recovery_step,
-    intent_router_trigger, anti_loop_trigger, empty_message, transfer/transferred/transfer_human,
-    abandon/hangup/user_hangup.
+    intent_router_trigger, anti_loop_trigger, empty_message, transferred_human,
+    user_abandon, repeat_used, yes_ambiguous_router.
     """
     conn = get_conn()
     try:
@@ -364,10 +482,10 @@ def get_daily_report_data(client_id: int, date_str: str) -> Dict:
         day = date_str[:10]
         start_ts = day + " 00:00:00"
 
-        # 1) Calls total (par client)
+        # 1) Calls total = COUNT(DISTINCT call_id) dans ivr_events (dépréciation table calls)
         cur = conn.execute(
-            """SELECT COUNT(*) AS calls_total
-               FROM calls
+            """SELECT COUNT(DISTINCT COALESCE(NULLIF(TRIM(call_id), ''), 'UNKNOWN')) AS calls_total
+               FROM ivr_events
                WHERE client_id = ?
                  AND created_at >= ?
                  AND created_at < datetime(? || ' 00:00:00', '+1 day')""",
@@ -389,7 +507,7 @@ def get_daily_report_data(client_id: int, date_str: str) -> Dict:
         cur = conn.execute(
             """SELECT COUNT(*) AS transfers
                FROM ivr_events
-               WHERE client_id = ? AND event IN ('transfer', 'transferred', 'transfer_human')
+               WHERE client_id = ? AND event IN ('transfer', 'transferred', 'transfer_human', 'transferred_human')
                  AND created_at >= ? AND created_at < datetime(? || ' 00:00:00', '+1 day')""",
             (client_id, start_ts, day),
         )
@@ -398,7 +516,7 @@ def get_daily_report_data(client_id: int, date_str: str) -> Dict:
         cur = conn.execute(
             """SELECT COUNT(*) AS abandons
                FROM ivr_events
-               WHERE client_id = ? AND event IN ('abandon', 'hangup', 'user_hangup')
+               WHERE client_id = ? AND event IN ('abandon', 'hangup', 'user_hangup', 'user_abandon')
                  AND created_at >= ? AND created_at < datetime(? || ' 00:00:00', '+1 day')""",
             (client_id, start_ts, day),
         )

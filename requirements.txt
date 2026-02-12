@@ -13,7 +13,10 @@ rapidfuzz==3.6.1
 # LLM Assist (zone grise START, optionnel)
 anthropic>=0.39.0
 
-# DB (SQLite standard library - no external dependency needed)
+# DB
+# SQLite: standard library
+# Postgres (ivr_events dual-write): psycopg[binary]>=3.1
+psycopg[binary]>=3.1
 
 # Tests
 pytest==7.4.4

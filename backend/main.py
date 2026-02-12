@@ -130,6 +130,16 @@ async def startup():
         print(f"   Google Calendar enabled: false (reason: {e})")
         print(f"⚠️ Using SQLite fallback for slots")
     
+    # PG healthcheck (tenants + ivr_events)
+    try:
+        from backend.tenants_pg import check_pg_health
+        if check_pg_health(force=True):
+            print("✅ PG_HEALTH ok")
+        else:
+            print("⚠️ PG_HEALTH down -> tenant/events fallback sqlite")
+    except Exception as e:
+        _logger.debug("PG healthcheck skip: %s", e)
+
     # Background tasks
     asyncio.create_task(cleanup_old_conversations())
     asyncio.create_task(keep_alive())

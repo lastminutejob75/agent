@@ -36,6 +36,29 @@ TARGET_FIRST_RESPONSE_MS = 3000  # contrainte PRD (sans imposer SSE)
 # P2.1 FSM explicite : migration progressive (QUALIF_NAME, WAIT_CONFIRM via fsm2)
 USE_FSM2 = os.getenv("USE_FSM2", "false").lower() in ("true", "1", "yes")
 
+# Dual-write ivr_events vers Postgres (DATABASE_URL ou PG_EVENTS_URL)
+USE_PG_EVENTS = os.getenv("USE_PG_EVENTS", "false").lower() in ("true", "1", "yes")
+
+# PG-first read pour tenants/config/routing (DATABASE_URL) ; fallback SQLite
+USE_PG_TENANTS = os.getenv("USE_PG_TENANTS", "true").lower() in ("true", "1", "yes")
+
+# PG-first pour slots/appointments (local fallback quand pas Google Calendar)
+USE_PG_SLOTS = os.getenv("USE_PG_SLOTS", "true").lower() in ("true", "1", "yes")
+
+# ==============================
+# TENANT FLAGS (P0)
+# ==============================
+DEFAULT_TENANT_ID = 1
+DEFAULT_FLAGS = {
+    "ENABLE_LLM_ASSIST_START": False,
+    "ENABLE_BARGEIN_SLOT_CHOICE": True,
+    "ENABLE_SEQUENTIAL_SLOTS": True,
+    "ENABLE_NO_FAQ_GUARD": True,
+    "ENABLE_YES_AMBIGUOUS_ROUTER": True,
+}
+# Garde-fou : si True, numéro vocal non routé → log tenant_route_miss + transfert
+ENABLE_TENANT_ROUTE_MISS_GUARD = os.getenv("ENABLE_TENANT_ROUTE_MISS_GUARD", "false").lower() in ("true", "1", "yes")
+
 # ==============================
 # CONVERSATIONAL MODE (P0)
 # ==============================

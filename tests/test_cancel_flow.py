@@ -53,6 +53,7 @@ def test_cancel_yes_without_event_id_transfers(engine):
     session = engine.session_store.get_or_create(conv_id)
     session.state = "CANCEL_CONFIRM"
     session.pending_cancel_slot = {"event_id": None, "label": "lundi 10h"}
+    session.awaiting_confirmation = "CONFIRM_CANCEL"
     session.channel = "vocal"
 
     e = engine.handle_message(conv_id, "oui")
@@ -71,6 +72,7 @@ def test_cancel_yes_tool_fail_transfers(engine, monkeypatch):
     session = engine.session_store.get_or_create(conv_id)
     session.state = "CANCEL_CONFIRM"
     session.pending_cancel_slot = {"event_id": "evt_999", "label": "mercredi 9h"}
+    session.awaiting_confirmation = "CONFIRM_CANCEL"
     session.channel = "vocal"
 
     e = engine.handle_message(conv_id, "oui")
@@ -89,6 +91,7 @@ def test_cancel_yes_tool_success_confirms(engine, monkeypatch):
     session = engine.session_store.get_or_create(conv_id)
     session.state = "CANCEL_CONFIRM"
     session.pending_cancel_slot = {"event_id": "evt_ok", "label": "jeudi 11h"}
+    session.awaiting_confirmation = "CONFIRM_CANCEL"
     session.channel = "vocal"
 
     e = engine.handle_message(conv_id, "oui")
@@ -107,6 +110,7 @@ def test_cancel_yes_sqlite_slot_id_success(engine, monkeypatch):
     session = engine.session_store.get_or_create(conv_id)
     session.state = "CANCEL_CONFIRM"
     session.pending_cancel_slot = {"event_id": None, "slot_id": 42, "label": "lundi 10h"}
+    session.awaiting_confirmation = "CONFIRM_CANCEL"
     session.channel = "vocal"
 
     e = engine.handle_message(conv_id, "oui")

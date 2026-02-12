@@ -79,50 +79,40 @@ def serialize_slots_for_session(slots: List[Any], source: Optional[str] = None) 
     return out
 
 # ============================================
-# GOOGLE CALENDAR SERVICE (lazy loading)
+# CALENDAR ADAPTER (multi-tenant: google/none par tenant)
 # ============================================
 
-_calendar_service = None
+_calendar_service = None  # Legacy fallback (global)
 
 # ============================================
 # CACHE SLOTS (évite appels répétés Google Calendar)
 # ============================================
 
 _slots_cache: Dict[str, Any] = {
-    "slots": None,
-    "timestamp": 0,
-    "ttl_seconds": 60,  # Cache valide 60 secondes
+    "by_tenant": {},  # tenant_id -> {"slots": [...], "timestamp": float}
+    "ttl_seconds": 60,
 }
 
 
-def _get_cached_slots(limit: int) -> Optional[List[prompts.SlotDisplay]]:
-    """
-    Récupère les slots du cache si encore valides.
-    
-    Returns:
-        Liste de SlotDisplay ou None si cache expiré
-    """
+def _get_cached_slots(limit: int, tenant_id: int = 1) -> Optional[List[prompts.SlotDisplay]]:
+    """Récupère les slots du cache si encore valides (scopé par tenant)."""
     import time
-    
-    if _slots_cache["slots"] is None:
+    entry = _slots_cache["by_tenant"].get(tenant_id)
+    if not entry or entry.get("slots") is None:
         return None
-    
-    age = time.time() - _slots_cache["timestamp"]
+    age = time.time() - entry.get("timestamp", 0)
     if age > _slots_cache["ttl_seconds"]:
-        logger.info(f"⏱️ Cache slots expiré ({age:.0f}s > {_slots_cache['ttl_seconds']}s)")
+        _slots_cache["by_tenant"].pop(tenant_id, None)
         return None
-    
-    logger.info(f"⚡ Cache slots HIT ({age:.0f}s)")
-    return _slots_cache["slots"][:limit]
+    logger.info(f"⚡ Cache slots HIT tenant={tenant_id} ({age:.0f}s)")
+    return entry["slots"][:limit]
 
 
-def _set_cached_slots(slots: List[prompts.SlotDisplay]) -> None:
-    """Met à jour le cache de slots."""
+def _set_cached_slots(slots: List[prompts.SlotDisplay], tenant_id: int = 1) -> None:
+    """Met à jour le cache de slots (scopé par tenant)."""
     import time
-    
-    _slots_cache["slots"] = slots
-    _slots_cache["timestamp"] = time.time()
-    logger.info(f"⚡ Cache slots SET ({len(slots)} slots)")
+    _slots_cache["by_tenant"][tenant_id] = {"slots": slots, "timestamp": time.time()}
+    logger.info(f"⚡ Cache slots SET tenant={tenant_id} ({len(slots)} slots)")
 
 
 def _get_calendar_service():
@@ -415,30 +405,41 @@ def get_slots_for_display(
     """
     import time
     t_start = time.time()
-    
+    tenant_id = getattr(session, "tenant_id", None) or 1
+
+    # Adapter calendrier par tenant (google/none) — fallback config global
+    from backend.calendar_adapter import get_calendar_adapter
+    adapter = get_calendar_adapter(session)
+
+    # provider=none : pas de créneaux (collecte demande + transfert, flow séparé)
+    if adapter is not None and not adapter.can_propose_slots():
+        logger.info("get_slots_for_display: tenant_id=%s provider=none → 0 slots", tenant_id)
+        return []
+
     # Cache uniquement sans filtre préférence et sans refus en cours
     rejected = getattr(session, "rejected_slot_starts", None) if session else None
     if pref is None and not rejected:
-        cached = _get_cached_slots(limit)
+        cached = _get_cached_slots(limit, tenant_id)
         if cached:
             logger.info(f"⚡ get_slots_for_display: cache hit ({(time.time() - t_start) * 1000:.0f}ms)")
             return cached
-    
-    calendar = _get_calendar_service()
-    
+
+    # Source: adapter (google) ou legacy _get_calendar_service
+    calendar_or_adapter = adapter if adapter else _get_calendar_service()
+
     # Récupérer le pool brut (pas encore étalé) pour pouvoir filtrer refus puis étaler
-    if calendar:
-        pool = _get_slots_from_google_calendar(calendar, limit, pref=pref)
+    if calendar_or_adapter:
+        pool = _get_slots_from_google_calendar(calendar_or_adapter, limit, pref=pref)
     else:
-        pool = _get_slots_from_sqlite(limit, pref=pref)
-    
+        pool = _get_slots_from_sqlite(limit, pref=pref, tenant_id=tenant_id)
+
     # Si préférence demandée mais aucun créneau trouvé, fallback sans filtre (ne pas bloquer)
     if pref and (not pool or len(pool) == 0):
         logger.info(f"⚠️ Aucun créneau pour pref={pref}, fallback sans filtre")
-        if calendar:
-            pool = _get_slots_from_google_calendar(calendar, limit, pref=None)
+        if calendar_or_adapter:
+            pool = _get_slots_from_google_calendar(calendar_or_adapter, limit, pref=None)
         else:
-            pool = _get_slots_from_sqlite(limit, pref=None)
+            pool = _get_slots_from_sqlite(limit, pref=None, tenant_id=tenant_id)
 
     # Exclure créneaux "voisins" des refus (±90 min) pour ne pas reproposer la même plage
     if rejected:
@@ -458,7 +459,7 @@ def get_slots_for_display(
     slots = _spread_slots(pool, limit=limit, min_gap_minutes=MIN_SLOT_GAP_MINUTES)
     
     if pref is None and not rejected:
-        _set_cached_slots(slots)
+        _set_cached_slots(slots, tenant_id)
 
     log_extra = ""
     if filtered_by_time_constraint:
@@ -524,38 +525,67 @@ def _get_slots_from_google_calendar(calendar, limit: int, pref: Optional[str] = 
     return pool
 
 
-def _get_slots_from_sqlite(limit: int, pref: Optional[str] = None) -> List[prompts.SlotDisplay]:
-    """Fallback: récupère le pool de créneaux via SQLite (étalement dans get_slots_for_display)."""
+def _get_slots_from_local(
+    limit: int,
+    pref: Optional[str] = None,
+    tenant_id: int = 1,
+) -> List[prompts.SlotDisplay]:
+    """
+    PG-first puis SQLite fallback : récupère le pool de créneaux local.
+    Returns SlotDisplay avec source="pg" ou "sqlite".
+    """
+    days_fr = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
+
+    def _to_slot_display(r: dict, i: int, src: str) -> prompts.SlotDisplay:
+        label = _format_slot_label_vocal(r.get('date', ''), r.get('time', '09:00'))
+        day_fr, hour, start_iso, label_vocal = '', 0, '', ''
+        try:
+            dt = datetime.strptime(r.get('date', '')[:10], "%Y-%m-%d")
+            day_fr = days_fr[dt.weekday()]
+            hour, minute = map(int, (r.get('time') or '9:00').split(':')[:2])
+            start_iso = f"{r.get('date', '')}T{r.get('time', '09:00')}:00"
+            label_vocal = f"{day_fr} à {hour}h"
+        except Exception:
+            pass
+        return prompts.SlotDisplay(
+            idx=i,
+            label=label,
+            slot_id=int(r["id"]),
+            start=start_iso,
+            day=day_fr,
+            hour=hour,
+            label_vocal=label_vocal or label,
+            source=src,
+        )
+
+    # PG-first
+    if config.USE_PG_SLOTS:
+        try:
+            from backend.slots_pg import pg_list_free_slots, pg_cleanup_and_ensure_slots
+            pg_cleanup_and_ensure_slots(tenant_id)
+            raw = pg_list_free_slots(tenant_id, limit=SLOTS_POOL_SIZE, pref=pref)
+            if raw:
+                pool = [_to_slot_display(r, i, "pg") for i, r in enumerate(raw, start=1)]
+                logger.info("SLOTS_READ source=pg tenant_id=%s (%s créneaux)", tenant_id, len(pool))
+                return pool
+        except Exception as e:
+            logger.debug("SLOTS_READ pg failed: %s (fallback sqlite)", e)
+
+    # Fallback SQLite
     try:
         from backend.db import list_free_slots
         raw = list_free_slots(limit=SLOTS_POOL_SIZE, pref=pref)
-        pool: List[prompts.SlotDisplay] = []
-        days_fr = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
-        for i, r in enumerate(raw, start=1):
-            label = _format_slot_label_vocal(r['date'], r['time'])
-            day_fr, hour, start_iso, label_vocal = '', 0, '', ''
-            try:
-                dt = datetime.strptime(r['date'], "%Y-%m-%d")
-                day_fr = days_fr[dt.weekday()]
-                hour, minute = map(int, (r.get('time') or '9:00').split(':')[:2])
-                start_iso = f"{r['date']}T{r.get('time', '09:00')}:00"
-                label_vocal = f"{day_fr} à {hour}h"
-            except Exception:
-                pass
-            pool.append(prompts.SlotDisplay(
-                idx=i,
-                label=label,
-                slot_id=int(r["id"]),
-                start=start_iso,
-                day=day_fr,
-                hour=hour,
-                label_vocal=label_vocal or label,
-            ))
-        logger.info(f"SQLite: {len(pool)} créneaux en pool (pref={pref})")
+        pool = [_to_slot_display(dict(r), i, "sqlite") for i, r in enumerate(raw, start=1)]
+        logger.info("SLOTS_READ source=sqlite tenant_id=%s (%s créneaux)", tenant_id, len(pool))
         return pool
     except Exception as e:
-        logger.error(f"Erreur SQLite slots: {e}")
+        logger.error("Erreur SQLite slots: %s", e)
         return []
+
+
+def _get_slots_from_sqlite(limit: int, pref: Optional[str] = None, tenant_id: int = 1) -> List[prompts.SlotDisplay]:
+    """Alias pour _get_slots_from_local (rétrocompat)."""
+    return _get_slots_from_local(limit, pref, tenant_id)
 
 
 def _format_slot_label_vocal(date_str: str, time_str: str) -> str:
@@ -602,18 +632,23 @@ def store_pending_slots(session, slots: List[prompts.SlotDisplay]) -> None:
     session.pending_slot_ids = [s.slot_id for s in slots]
     session.pending_slot_labels = [s.label for s in slots]
     session.pending_slots = slots  # Stocker les objets complets
+    session._slots_source = slots[0].source if slots else "sqlite"
 
     # P0: ne pas re-fetch Google si on a déjà les slots affichés (pending_slots_display)
     if getattr(session, "pending_slots_display", None):
         return
-    calendar = _get_calendar_service()
+    from backend.calendar_adapter import get_calendar_adapter
+    adapter = get_calendar_adapter(session)
+    # provider=none → never use Google (éviter mélange tenant)
+    calendar = None if (adapter and not adapter.can_propose_slots()) else (adapter or _get_calendar_service())
     if calendar:
-        _store_google_calendar_slots(session, slots)
+        _store_google_calendar_slots(session, slots, calendar)
 
 
-def _store_google_calendar_slots(session, slots: List[prompts.SlotDisplay]) -> None:
-    """Stocke les données Google Calendar pour le booking."""
-    calendar = _get_calendar_service()
+def _store_google_calendar_slots(session, slots: List[prompts.SlotDisplay], calendar=None) -> None:
+    """Stocke les données Google Calendar pour le booking (calendar = adapter ou service)."""
+    if calendar is None:
+        calendar = _get_calendar_service()
     if not calendar:
         return
     
@@ -671,12 +706,12 @@ def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str
                 len(slots),
             )
             return _book_google_by_iso(session, start_iso, end_iso)
-        if src == "sqlite":
+        if src in ("sqlite", "pg"):
             slot_id = chosen.get("slot_id")
             if slot_id is None:
                 logger.warning("pending_slots_display: slot_id manquant")
                 return False, "technical"
-            ok = _book_sqlite_by_slot_id(session, int(slot_id))
+            ok = _book_local_by_slot_id(session, int(slot_id), source=src)
             return (ok, None if ok else "slot_taken")
 
     # Pas de pending_slots_display alors qu'on confirme → ne pas dire "créneau pris"
@@ -688,9 +723,12 @@ def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str
     if idx < 0 or idx >= len(getattr(session, "pending_slot_ids", []) or []):
         logger.warning("Index invalide: %s", choice_index_1based)
         return False, "technical"
-    calendar = _get_calendar_service()
+    from backend.calendar_adapter import get_calendar_adapter
+    adapter = get_calendar_adapter(session)
+    # provider=none → never use Google (éviter mélange tenant)
+    calendar = None if (adapter and not adapter.can_propose_slots()) else (adapter or _get_calendar_service())
     if calendar:
-        ok = _book_via_google_calendar(session, idx)
+        ok = _book_via_google_calendar(session, idx, calendar)
         return (ok, None if ok else "slot_taken")
     ok = _book_via_sqlite(session, idx)
     return (ok, None if ok else "slot_taken")
@@ -699,18 +737,18 @@ def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str
 def _book_google_by_iso(session, start_iso: str, end_iso: str) -> tuple[bool, str | None]:
     """
     Book Google Calendar à partir des timestamps ISO du slot affiché (sans re-fetch).
-    Un retry est fait en cas d'échec (réseau / API) pour slot_taken/transitoire, pas pour 403.
+    Utilise get_calendar_adapter(session) pour multi-tenant.
     Returns (success, reason) with reason in ("slot_taken", "technical", "permission", None).
-    - slot_taken : 409 / conflit
-    - permission : 403 (writer) → pas de retry, message technique
-    - technical : timeouts, 5xx, 400, DNS, etc.
     """
-    calendar = _get_calendar_service()
+    from backend.calendar_adapter import get_calendar_adapter
+    adapter = get_calendar_adapter(session)
+    if adapter is not None and not adapter.can_propose_slots():
+        return False, "technical"
+    calendar = adapter if adapter else _get_calendar_service()
     if not calendar:
         return False, "technical"
 
     def _try_once() -> tuple[bool, str | None]:
-        """Returns (success, reason). reason in ('slot_taken', 'technical', 'permission', None)."""
         try:
             event_id = calendar.book_appointment(
                 start_time=start_iso,
@@ -747,8 +785,24 @@ def _book_google_by_iso(session, start_iso: str, end_iso: str) -> tuple[bool, st
         return False, "technical"
 
 
-def _book_sqlite_by_slot_id(session, slot_id: int) -> bool:
-    """Book SQLite à partir du slot_id du slot affiché."""
+def _book_local_by_slot_id(session, slot_id: int, source: str = "sqlite") -> bool:
+    """Book local (PG ou SQLite) à partir du slot_id du slot affiché."""
+    tenant_id = getattr(session, "tenant_id", None) or 1
+    if source == "pg":
+        try:
+            from backend.slots_pg import pg_book_slot_atomic
+            result = pg_book_slot_atomic(
+                tenant_id=tenant_id,
+                slot_id=slot_id,
+                name=session.qualif_data.name or "",
+                contact=session.qualif_data.contact or "",
+                contact_type=getattr(session.qualif_data, "contact_type", None) or "",
+                motif=session.qualif_data.motif or "",
+            )
+            return result is True
+        except Exception as e:
+            logger.error("Erreur PG booking: %s", e)
+            return False
     try:
         from backend.db import book_slot_atomic
         return book_slot_atomic(
@@ -757,15 +811,17 @@ def _book_sqlite_by_slot_id(session, slot_id: int) -> bool:
             contact=session.qualif_data.contact or "",
             contact_type=getattr(session.qualif_data, "contact_type", None) or "",
             motif=session.qualif_data.motif or "",
+            tenant_id=tenant_id,
         )
     except Exception as e:
         logger.error(f"Erreur book_sqlite_by_slot_id: {e}")
         return False
 
 
-def _book_via_google_calendar(session, idx: int) -> bool:
-    """Réserve via Google Calendar."""
-    calendar = _get_calendar_service()
+def _book_via_google_calendar(session, idx: int, calendar=None) -> bool:
+    """Réserve via Google Calendar (calendar = adapter ou service)."""
+    if calendar is None:
+        calendar = _get_calendar_service()
     if not calendar:
         return False
     
@@ -799,21 +855,13 @@ def _book_via_google_calendar(session, idx: int) -> bool:
 
 
 def _book_via_sqlite(session, idx: int) -> bool:
-    """Fallback: réserve via SQLite."""
+    """Fallback: réserve via PG ou SQLite (selon source des slots)."""
     try:
-        from backend.db import book_slot_atomic
-        
         slot_id = session.pending_slot_ids[idx]
-        
-        return book_slot_atomic(
-            slot_id=slot_id,
-            name=session.qualif_data.name or "",
-            contact=session.qualif_data.contact or "",
-            contact_type=session.qualif_data.contact_type or "",
-            motif=session.qualif_data.motif or "",
-        )
+        source = getattr(session, "_slots_source", None) or "sqlite"
+        return _book_local_by_slot_id(session, int(slot_id), source=source)
     except Exception as e:
-        logger.error(f"Erreur SQLite booking: {e}")
+        logger.error("Erreur local booking: %s", e)
         return False
 
 
@@ -840,11 +888,12 @@ def get_label_for_choice(session, choice_index_1based: int) -> Optional[str]:
 # UTILITAIRES
 # ============================================
 
-def cancel_booking(slot_or_session) -> bool:
+def cancel_booking(slot_or_session, session: Any = None) -> bool:
     """
-    Annule une réservation (Google Calendar ou SQLite).
+    Annule une réservation (Google Calendar via adapter ou SQLite).
     Args:
         slot_or_session: Dict avec 'event_id' (Google) ou 'slot_id'/'id' (SQLite), ou objet avec attributs.
+        session: Session pour résoudre l'adapter tenant (calendar_id). Si None, fallback legacy global.
     Returns:
         True si annulation réussie.
     """
@@ -862,6 +911,11 @@ def cancel_booking(slot_or_session) -> bool:
         appt_id = getattr(slot_or_session, "id", None)
 
     if event_id:
+        from backend.calendar_adapter import get_calendar_adapter
+        adapter = get_calendar_adapter(session) if session else None
+        if adapter and adapter.can_propose_slots():
+            return adapter.cancel_booking(event_id)
+        # Legacy: pas de session ou adapter SQLite
         calendar = _get_calendar_service()
         if not calendar:
             return False
@@ -870,32 +924,37 @@ def cancel_booking(slot_or_session) -> bool:
     if slot_id is not None or appt_id is not None:
         try:
             from backend.db import cancel_booking_sqlite
-            return cancel_booking_sqlite({"slot_id": slot_id, "id": appt_id})
+            tenant_id = getattr(session, "tenant_id", None) or 1
+            return cancel_booking_sqlite({"slot_id": slot_id, "id": appt_id}, tenant_id=tenant_id)
         except Exception as e:
-            logger.error(f"Erreur annulation SQLite: {e}")
+            logger.error("Erreur annulation local: %s", e)
             return False
 
     logger.warning("Pas d'event_id ni slot_id pour annuler")
     return False
 
 
-def find_booking_by_name(name: str) -> Optional[Dict[str, Any]]:
+def find_booking_by_name(name: str, session: Any = None) -> Optional[Dict[str, Any]]:
     """
     Recherche un RDV existant par nom du patient.
     
     Args:
         name: Nom du patient
+        session: Session pour résoudre l'adapter tenant. Si None, fallback legacy (global ou SQLite).
         
     Returns:
-        Dict avec les infos du RDV ou None si non trouvé
-        Format: {'event_id': str, 'label': str, 'start': datetime, 'end': datetime}
+        Dict avec les infos du RDV, ou None si non trouvé,
+        ou PROVIDER_NONE_SENTINEL si provider=none (pas d'accès agenda).
     """
+    from backend.calendar_adapter import get_calendar_adapter, PROVIDER_NONE_SENTINEL
+    adapter = get_calendar_adapter(session) if session else None
+    if adapter is not None:
+        return adapter.find_booking_by_name(name)
+    # Legacy: pas de session
     calendar = _get_calendar_service()
-    
     if calendar:
         return _find_booking_google_calendar(calendar, name)
-    else:
-        return _find_booking_sqlite(name)
+    return _find_booking_sqlite(name, session)
 
 
 def _find_booking_google_calendar(calendar, name: str) -> Optional[Dict[str, Any]]:
@@ -942,12 +1001,13 @@ def _find_booking_google_calendar(calendar, name: str) -> Optional[Dict[str, Any
         return None
 
 
-def _find_booking_sqlite(name: str) -> Optional[Dict[str, Any]]:
-    """Recherche un RDV dans SQLite (fallback)."""
+def _find_booking_sqlite(name: str, session: Any = None) -> Optional[Dict[str, Any]]:
+    """Recherche un RDV dans PG ou SQLite (fallback)."""
     try:
         from backend.db import find_booking_by_name as db_find
 
-        booking = db_find(name)
+        tenant_id = getattr(session, "tenant_id", None) or 1
+        booking = db_find(name, tenant_id=tenant_id)
         if booking:
             return {
                 "event_id": None,

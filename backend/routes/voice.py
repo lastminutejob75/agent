@@ -366,8 +366,23 @@ async def vapi_webhook(request: Request):
             print("✅ Returning {} for assistant-request")
             return {}
 
+        # DID → tenant_id (avant tout event)
+        from backend.tenant_routing import (
+            extract_to_number_from_vapi_payload,
+            resolve_tenant_id_from_vocal_call,
+        )
+        to_number = extract_to_number_from_vapi_payload(payload)
+        resolved_tenant_id, route_source = resolve_tenant_id_from_vocal_call(to_number, channel="vocal")
+        logger.info("[TENANT_ROUTE] to=%s tenant_id=%s source=%s", to_number or "(none)", resolved_tenant_id, route_source)
+
+        # Garde-fou : numéro présent mais non routé → log (transfert via ENABLE_TENANT_ROUTE_MISS_GUARD si besoin)
+        if config.ENABLE_TENANT_ROUTE_MISS_GUARD and to_number and route_source == "default":
+            logger.warning("[TENANT_ROUTE_MISS] to=%s tenant_id=%s numéro non onboardé", to_number, resolved_tenant_id)
+            # TODO: transfert immédiat via tool/response si souhaité
+
         session = ENGINE.session_store.get_or_create(call_id)
         session.channel = "vocal"
+        session.tenant_id = resolved_tenant_id
 
         # Partial => HTTP 204 No Content (vrai no-op, pas de tour)
         if transcript_type == "partial":
@@ -510,11 +525,20 @@ async def vapi_tool(request: Request):
         
         if not user_message:
             return {"result": "Je n'ai pas compris. Pouvez-vous répéter ?"}
-        
+
+        # DID → tenant_id (tool utilise same payload)
+        from backend.tenant_routing import (
+            extract_to_number_from_vapi_payload,
+            resolve_tenant_id_from_vocal_call,
+        )
+        to_number = extract_to_number_from_vapi_payload(payload)
+        resolved_tenant_id, _ = resolve_tenant_id_from_vocal_call(to_number, channel="vocal")
+
         # Session vocale
         session = ENGINE.session_store.get_or_create(call_id)
         session.channel = "vocal"
-        
+        session.tenant_id = resolved_tenant_id
+
         # Traiter
         events = _get_engine(call_id).handle_message(call_id, user_message)
         response_text = events[0].text if events else "Je n'ai pas compris"
@@ -581,7 +605,23 @@ async def vapi_custom_llm(request: Request):
         customer_phone = payload.get("call", {}).get("customer", {}).get("number")
         if not customer_phone:
             customer_phone = payload.get("customer", {}).get("number")
-        
+
+        # 🎯 DID → tenant_id (avant tout event, pour scoping correct)
+        from backend.tenant_routing import (
+            extract_to_number_from_vapi_payload,
+            resolve_tenant_id_from_vocal_call,
+        )
+        to_number = extract_to_number_from_vapi_payload(payload)
+        resolved_tenant_id, route_source = resolve_tenant_id_from_vocal_call(to_number, channel="vocal")
+        logger.info(
+            "[TENANT_ROUTE] to=%s tenant_id=%s source=%s",
+            to_number or "(none)",
+            resolved_tenant_id,
+            route_source,
+        )
+        if config.ENABLE_TENANT_ROUTE_MISS_GUARD and to_number and route_source == "default":
+            logger.warning("[TENANT_ROUTE_MISS] to=%s tenant_id=%s numéro non onboardé", to_number, resolved_tenant_id)
+
         print(f"📞 Call ID: {call_id} | Messages: {len(messages)} | Stream: {is_streaming}")
         if customer_phone:
             print(f"📱 Customer phone: {customer_phone}")
@@ -614,7 +654,8 @@ async def vapi_custom_llm(request: Request):
             # Traiter via ENGINE
             session = ENGINE.session_store.get_or_create(call_id)
             session.channel = "vocal"
-            
+            session.tenant_id = resolved_tenant_id
+
             # 🧠 Stocker le téléphone dans la session pour plus tard
             if customer_phone:
                 session.customer_phone = customer_phone
