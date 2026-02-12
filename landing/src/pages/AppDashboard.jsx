@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { api } from "../lib/api.js";
 
-// Dashboard client tenant (KPIs 7j + mini chart)
+// Dashboard client (KPIs 7j + mini chart)
 const COUNTERS_DEFAULT = { calls_total: 0, bookings_confirmed: 0, transfers: 0, abandons: 0 };
 
 function formatDate(ts) {
