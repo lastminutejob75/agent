@@ -28,6 +28,7 @@ export default function UwiLanding() {
           subtitle="UWI répond à vos appels 24/7, gère votre agenda automatiquement, et ne manque jamais un client. Sans formation, sans matériel."
         />
         <SocialProof />
+        <CTASection />
         <ComparisonSection />
         <WorkflowArtisanSection />
         <CancellationManagementSection />
@@ -36,7 +37,6 @@ export default function UwiLanding() {
         <FeaturesSection />
         <MultiChannelSection />
         <ROICalculator />
-        <CTASection />
         <PricingSection />
         <TestimonialsSection />
         <TrustSection />
