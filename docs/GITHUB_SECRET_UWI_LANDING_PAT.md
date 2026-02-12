@@ -28,13 +28,26 @@ make gh-secret-sync
 
 ## Créer un PAT (Personal Access Token)
 
-1. **https://github.com/settings/tokens**
-2. **"Generate new token"** → **"Classic"** ou **"Fine-grained"**
-3. **Classic** : coche `repo` (accès complet aux dépôts)
-4. **Fine-grained** : dépôt `lastminutejob75/uwi-landing`, permission `Contents: Read and write`
-5. Génère et copie le token (commence par `ghp_` ou `github_pat_`)
+**Erreur 403 "Permission denied" ?** → Le token n'a pas accès à `uwi-landing`. Recrée-le avec les étapes ci-dessous.
 
-⚠️ Le token doit avoir accès en **écriture** au dépôt `uwi-landing`.
+### Classic (recommandé pour ce cas)
+
+1. **https://github.com/settings/tokens**
+2. **"Generate new token (classic)"**
+3. **Note** : `UWI sync uwi-landing`
+4. **Expiration** : 90 jours ou No expiration
+5. **Scopes** : coche **`repo`** (accès complet)
+6. Génère et copie le token (`ghp_...`)
+7. Met à jour le secret : https://github.com/lastminutejob75/agent/settings/secrets/actions
+
+### Fine-grained (alternative)
+
+1. **https://github.com/settings/tokens?type=beta**
+2. **"Generate new token (fine-grained)"**
+3. **Repository access** : **Only select repositories** → ajoute **`uwi-landing`**
+4. **Permissions** → **Repository permissions** → **Contents** : **Read and write**
+5. Génère et copie le token (`github_pat_...`)
+6. Met à jour le secret dans agent
 
 ## Vérifier
 
