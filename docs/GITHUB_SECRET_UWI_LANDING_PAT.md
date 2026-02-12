@@ -34,6 +34,8 @@ make gh-secret-sync
 4. **Fine-grained** : dépôt `lastminutejob75/uwi-landing`, permission `Contents: Read and write`
 5. Génère et copie le token (commence par `ghp_` ou `github_pat_`)
 
+⚠️ Le token doit avoir accès en **écriture** au dépôt `uwi-landing`.
+
 ## Vérifier
 
 Après configuration, le prochain push qui modifie `landing/**` déclenchera le workflow. Consulte **Actions** sur le dépôt pour voir le résultat.

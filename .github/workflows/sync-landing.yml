@@ -35,6 +35,15 @@ jobs:
             [ -f "$SRC/$f" ] && cp "$SRC/$f" "$DST/$f"
           done
 
+      - name: Cleanup obsolete files
+        run: |
+          set -e
+          cd uwi-landing
+          for dir in api app backend frontend lib tests; do [ -d "$dir" ] && rm -rf "$dir"; done
+          rm -f __init__.py config.py db.py engine.py fsm.py google_calendar.py guards.py main.py prompts.py session.py tools_booking.py tools_faq.py vapi.py 2>/dev/null || true
+          rm -f *.md Dockerfile docker-compose.yml Makefile next.config.js pyproject.toml requirements.txt 2>/dev/null || true
+          rm -f test_*.py apply_patch.sh apply_uwi_landing_patch.sh download_patch_from_github.sh extract_and_push_uwi_landing.sh install_ngrok.sh setup_google_calendar.sh test_ngrok.sh test_ngrok_webhook.sh test_vapi_complete.sh test_vapi_webhook.sh 2>/dev/null || true
+
       - name: Commit and push
         env:
           PAT: ${{ secrets.UWI_LANDING_PAT }}
@@ -45,9 +54,10 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:${PAT}@github.com/lastminutejob75/uwi-landing.git"
           git add -A
+          git status
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
             git commit -m "chore: sync from agent (landing/)"
-            git push origin main
+            git push -v origin main
           fi
