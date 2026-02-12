@@ -2,7 +2,7 @@
 builder = "dockerfile"
 dockerfilePath = "Dockerfile"
 # Ne déployer que si backend/frontend (widget) change, pas landing/
-watchPatterns = ["backend/**", "frontend/**", "requirements.txt", "Dockerfile", "railway.toml", "migrations/**"]
+watchPatterns = ["backend/**", "frontend/**", "requirements.txt", "Dockerfile", "railway.toml", "migrations/**", "scripts/**", ".dockerignore"]
 
 [deploy]
 healthcheckPath = "/health"

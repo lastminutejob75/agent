@@ -3,7 +3,8 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Pas de apt-get : évite broken pipe Railway. Python slim suffit.
-# curl non nécessaire (healthcheck HTTP externe)
+# curl non nécessaire (healthcheck HTTP externe).
+# scripts/ et migrations/ requis pour run_migration au démarrage.
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
