@@ -34,11 +34,21 @@ railway-fix-vars:
 backfill-tenant-users:
 	python3 scripts/backfill_tenant_users.py
 
-# Configurer le secret GitHub pour le sync landing → uwi-landing (gh CLI requis)
+# Configurer le secret GitHub pour le sync landing → uwi-landing
 gh-secret-sync:
-	@echo "Configuration de UWI_LANDING_PAT pour le workflow sync-landing..."
-	@echo "Entre le PAT (Settings > Developer settings > Personal access tokens) :"
-	@gh secret set UWI_LANDING_PAT
+	@if command -v gh >/dev/null 2>&1; then \
+		echo "Configuration de UWI_LANDING_PAT..."; \
+		gh secret set UWI_LANDING_PAT; \
+	else \
+		echo "gh CLI non installé. Option 1 :"; \
+		echo "  brew install gh && gh auth login && make gh-secret-sync"; \
+		echo ""; \
+		echo "Option 2 (manuel) :"; \
+		echo "  https://github.com/lastminutejob75/agent/settings/secrets/actions"; \
+		echo "  → New repository secret → Name: UWI_LANDING_PAT"; \
+		echo ""; \
+		echo "  Voir docs/GITHUB_SECRET_UWI_LANDING_PAT.md"; \
+	fi
 
 export-kpis:
 	python3 scripts/export_weekly_kpis.py --last-week --out_dir .
