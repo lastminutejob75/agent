@@ -20,8 +20,8 @@ npm-debug.log*
 .vscode/
 .cursor/
 
-# Docs et scripts non essentiels (garder PRD.md etc. pour Dockerfile)
-scripts/
+# Docs non essentiels (garder PRD.md etc. pour Dockerfile)
+# scripts/ requis pour run_migration.py au démarrage
 docs/
 tests/
 apply*.sh
