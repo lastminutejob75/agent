@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import logging
 import re
 
-from backend import config, prompts, guards, tools_booking, intent_parser
+from backend import config, prompts, guards, tools_booking, intent_parser, contact_parser
 from backend.guards_medical import is_medical_emergency  # legacy / tests
 from backend.guards_medical_triage import (
     detect_medical_red_flag,
@@ -37,6 +37,7 @@ from backend.entity_extraction import (
     infer_preference_from_context,
 )
 from backend.start_router import route_start, FAQ_BUCKET_WHITELIST
+from backend.tenant_flags_cache import get_tenant_flags
 
 logger = logging.getLogger(__name__)
 
@@ -112,20 +113,25 @@ def _persist_ivr_event(
 ) -> None:
     """
     Persiste un event dans ivr_events (rapport quotidien).
-    Skip si client_id manquant (évite polluer client #1).
+    Multi-tenant vocal : utilise tenant_id (DID routing) pour scoping.
+    Sinon : client_id (legacy).
     Skip si call_id manquant pour booking_confirmed (qualité booking).
     """
     try:
-        client_id = getattr(session, "client_id", None)
-        if client_id is None:
-            logger.debug("persist_ivr_event skip: reason=missing_client_id event=%s", event)
+        scope_id = None
+        if getattr(session, "channel", "") == "vocal" and getattr(session, "tenant_id", None):
+            scope_id = session.tenant_id  # DID routing : scope par tenant
+        if scope_id is None:
+            scope_id = getattr(session, "client_id", None)
+        if scope_id is None:
+            logger.debug("persist_ivr_event skip: reason=missing_scope event=%s", event)
             return
         call_id = session.conv_id or ""
         if event == "booking_confirmed" and not call_id.strip():
             logger.debug("persist_ivr_event skip: reason=missing_call_id event=booking_confirmed")
             return
         backend_db.create_ivr_event(
-            client_id=int(client_id),
+            client_id=int(scope_id),
             call_id=call_id,
             event=event,
             context=context,
@@ -400,12 +406,12 @@ def safe_reply(events: List[Event], session: Session) -> List[Event]:
     """
     Dernière barrière anti-silence (spec V3).
     Aucun message utilisateur ne doit mener à zéro output.
-    Persiste transfer_human une seule fois par call (idempotence).
+    Persiste transferred_human une seule fois par call (idempotence).
     """
     setattr(session, "_turn_assistant_text", (events[0].text if events and getattr(events[0], "text", None) else "") or "")
     _log_turn_debug(session)
     if getattr(session, "state", None) == "TRANSFERRED" and not getattr(session, "transfer_logged", False):
-        _persist_ivr_event(session, "transfer_human")
+        _persist_ivr_event(session, "transferred_human")
         session.transfer_logged = True
     if not events:
         log_ivr_event(logger, session, "safe_reply")
@@ -663,6 +669,22 @@ class Engine:
         session = self.session_store.get_or_create(conv_id)
         t_load_end = time.time()
         print(f"⏱️ Session loaded in {(t_load_end - t_load_start) * 1000:.0f}ms")
+
+        # Feature flags par tenant (P0) — cache TTL 60s, log 1x par call (premier tour)
+        turn_count = getattr(session, "turn_count", 0)
+        if turn_count == 0 or not getattr(session, "flags_effective", None):
+            tf = get_tenant_flags(getattr(session, "tenant_id", None))
+            session.flags_effective = tf.flags
+            session.tenant_id = tf.tenant_id
+            logger.info(
+                "[TENANT_FLAGS] conv_id=%s tenant_id=%s source=%s updated_at=%s flags_effective=%s",
+                conv_id,
+                tf.tenant_id,
+                tf.source,
+                tf.updated_at,
+                tf.flags,
+            )
+
         setattr(session, "_turn_state_before", session.state)
         session.add_message("user", user_text)
         
@@ -819,7 +841,7 @@ class Engine:
                 session.state = "CONFIRMED"
                 msg = prompts.MSG_END_POLITE_ABANDON if hasattr(prompts, "MSG_END_POLITE_ABANDON") else (prompts.VOCAL_USER_ABANDON if channel == "vocal" else prompts.MSG_ABANDON_WEB)
                 session.add_message("agent", msg)
-                _persist_ivr_event(session, "abandon")
+                _persist_ivr_event(session, "user_abandon")
                 return safe_reply([Event("final", msg, conv_state=session.state)], session)
             if strong == "ORDONNANCE":
                 return safe_reply(self._handle_ordonnance_flow(session, user_text), session)
@@ -978,6 +1000,7 @@ class Engine:
         # REPEAT : relire le dernier prompt exact (pas re-router, pas d'escalade, état inchangé).
         # Idempotent sur is_reading_slots / slots_preface_sent / slots_list_sent : ne pas les modifier.
         if intent == "REPEAT":
+            _persist_ivr_event(session, "repeat_used")
             last_key = getattr(session, "last_say_key", None)
             last_kw = getattr(session, "last_say_kwargs", None) or {}
             if last_key:
@@ -1044,12 +1067,14 @@ class Engine:
                         "WAIT_CONFIRM", "CONTACT_CONFIRM",
                     )
                     if session.yes_ambiguous_count >= 3:
+                        _persist_ivr_event(session, "yes_ambiguous_router", reason="yes_ambiguous_3")
                         return safe_reply(self._trigger_intent_router(session, "yes_ambiguous_3", user_text), session)
                     if session.yes_ambiguous_count >= 2 and _in_booking:
                         msg = getattr(prompts, "CLARIFY_YES_BOOKING_TIGHT", "Pour être sûr : vous confirmez le créneau, oui ou non ?")
                         session.add_message("agent", msg)
                         return safe_reply([Event("final", msg, conv_state=session.state)], session)
                     if session.yes_ambiguous_count >= 2:
+                        _persist_ivr_event(session, "yes_ambiguous_router", reason="yes_ambiguous_2")
                         return safe_reply(self._trigger_intent_router(session, "yes_ambiguous_2", user_text), session)
                     msg = getattr(prompts, "CLARIFY_YES_GENERIC", "Oui — vous confirmez le créneau, ou vous préférez autre chose ?")
                     session.add_message("agent", msg)
@@ -2087,84 +2112,96 @@ class Engine:
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
 
-            # ✅ Parsing email dicté (vocal)
-            if channel == "vocal" and guards.looks_like_dictated_email(contact_raw):
-                contact_raw = guards.parse_vocal_email_min(contact_raw)
-                # Pour email, pas d'accumulation
-                is_valid, contact_type = guards.validate_qualif_contact(contact_raw)
-                if is_valid:
-                    session.qualif_data.contact = contact_raw
-                    session.qualif_data.contact_type = contact_type
-                    # Si un créneau est déjà choisi → CONTACT_CONFIRM, sinon proposer slots
-                    if session.pending_slot_choice is not None:
-                        session.state = "CONTACT_CONFIRM"
-                        msg = prompts.VOCAL_EMAIL_CONFIRM.format(email=contact_raw) if getattr(prompts, "VOCAL_EMAIL_CONFIRM", None) else f"Votre email est bien {contact_raw} ?"
+            # ✅ P0 : Parsing email dicté (vocal) — contact_parser + detect_contact_channel
+            if channel == "vocal":
+                ch = contact_parser.detect_contact_channel(contact_raw)
+                if ch == "email" or guards.looks_like_dictated_email(contact_raw):
+                    email_val, email_conf = contact_parser.extract_email_vocal(contact_raw)
+                    if email_val and email_conf >= 0.5:
+                        session.qualif_data.contact = email_val
+                        session.qualif_data.contact_type = "email"
+                        session.contact_fails = 0
+                        session.contact_mode = "email"
+                        log_ivr_event(logger, session, "contact_captured_email")
+                        if session.pending_slot_choice is not None:
+                            session.state = "CONTACT_CONFIRM"
+                            msg = prompts.VOCAL_EMAIL_CONFIRM.format(email=email_val)
+                            session.add_message("agent", msg)
+                            session.awaiting_confirmation = "CONFIRM_CONTACT"
+                            return [Event("final", msg, conv_state=session.state)]
+                        return self._propose_slots(session)
+                    # Email invalide → guidance 1er échec, transfert 2e
+                    session.contact_fails = getattr(session, "contact_fails", 0) + 1
+                    if session.contact_fails >= 2:
+                        session.state = "TRANSFERRED"
+                        log_ivr_event(logger, session, "contact_failed_transfer", reason="email_invalid_2")
+                        msg = self._say(session, "transfer") or prompts.get_message("transfer", channel=channel)
                         session.add_message("agent", msg)
-                        session.awaiting_confirmation = "CONFIRM_CONTACT"
                         return [Event("final", msg, conv_state=session.state)]
-                    return self._propose_slots(session)
+                    msg = prompts.MSG_CONTACT_EMAIL_GUIDANCE_1
+                    log_ivr_event(logger, session, "contact_failed_1", reason="email_invalid")
+                    session.add_message("agent", msg)
+                    return [Event("final", msg, conv_state=session.state)]
 
-            # ✅ ACCUMULATION des chiffres du téléphone (vocal) - seulement si pas de numéro auto
+            # ✅ P0 : Téléphone vocal — contact_parser (double/triple) + contact_fails 2 max
             if channel == "vocal" and not session.customer_phone:
-                new_digits = guards.parse_vocal_phone(contact_raw)
-                print(f"📞 New digits from '{contact_raw}': '{new_digits}' ({len(new_digits)} digits)")
-                
-                # Ajouter aux chiffres déjà accumulés
+                digits, conf, is_partial = contact_parser.extract_phone_digits_vocal(contact_raw)
+                new_digits = digits  # contact_parser inclut déjà l'accumulation logique
+                if not new_digits and not session.partial_phone_digits:
+                    # Aucun chiffre extrait : filler ou invalide
+                    session.contact_fails = getattr(session, "contact_fails", 0) + 1
+                    if session.contact_fails >= 2:
+                        session.state = "TRANSFERRED"
+                        log_ivr_event(logger, session, "contact_failed_transfer", reason="phone_empty_2")
+                        msg = self._say(session, "transfer") or prompts.get_message("transfer", channel=channel)
+                        session.add_message("agent", msg)
+                        return [Event("final", msg, conv_state=session.state)]
+                    msg = prompts.MSG_CONTACT_PHONE_GUIDANCE_1 if session.contact_fails == 1 else prompts.get_clarification_message("phone", 1, contact_raw, channel=channel)
+                    log_ivr_event(logger, session, "contact_failed_1", reason="phone_empty")
+                    session.add_message("agent", msg)
+                    return [Event("final", msg, conv_state=session.state)]
+                # Accumuler ou utiliser extraction directe
                 session.partial_phone_digits += new_digits
                 total_digits = session.partial_phone_digits
-                print(f"📞 Total accumulated: '{total_digits}' ({len(total_digits)} digits)")
-                
-                # Si on a 10 chiffres ou plus → validation plausible puis confirmation
                 if len(total_digits) >= 10:
                     digits_10 = total_digits[:10]
                     ok_phone, phone10, reason = guards.is_plausible_phone_input(digits_10)
                     if not ok_phone:
-                        log_filler_detected(logger, session, contact_raw, field="phone", detail=reason)
-                        fail_count = increment_recovery_counter(session, "phone")
-                        msg = prompts.get_clarification_message(
-                            "phone",
-                            min(fail_count, 3),
-                            contact_raw,
-                            channel=channel,
-                        )
+                        session.contact_fails = getattr(session, "contact_fails", 0) + 1
+                        if session.contact_fails >= 2:
+                            session.state = "TRANSFERRED"
+                            session.partial_phone_digits = ""
+                            log_ivr_event(logger, session, "contact_failed_transfer", reason="phone_invalid_2")
+                            msg = self._say(session, "transfer") or prompts.get_message("transfer", channel=channel)
+                            session.add_message("agent", msg)
+                            return [Event("final", msg, conv_state=session.state)]
+                        msg = prompts.MSG_CONTACT_PHONE_GUIDANCE_1 if session.contact_fails == 1 else prompts.get_clarification_message("phone", 1, contact_raw, channel=channel)
                         session.add_message("agent", msg)
                         return [Event("final", msg, conv_state=session.state)]
-                    contact_raw = phone10
-                    session.partial_phone_digits = ""  # Reset
-                    print(f"📞 Got 10 digits! Phone: {contact_raw}")
-                    session.qualif_data.contact = contact_raw
+                    session.partial_phone_digits = ""
+                    session.qualif_data.contact = phone10
                     session.qualif_data.contact_type = "phone"
-                    session.contact_retry_count = 0
+                    session.contact_fails = 0
+                    session.contact_mode = "phone"
                     session.state = "CONTACT_CONFIRM"
-                    phone_spaced = prompts.format_phone_for_voice(contact_raw)
-                    msg = prompts.VOCAL_PHONE_CONFIRM.format(phone_spaced=phone_spaced)
+                    log_ivr_event(logger, session, "contact_captured_phone")
+                    phone_spaced = prompts.format_phone_for_voice(phone10)
+                    msg = prompts.VOCAL_CONTACT_CONFIRM_SHORT.format(phone_formatted=phone_spaced)
                     session.add_message("agent", msg)
                     session.awaiting_confirmation = "CONFIRM_CONTACT"
                     return [Event("final", msg, conv_state=session.state)]
-                
-                else:
-                    # Pas encore 10 chiffres → demander la suite
-                    session.contact_retry_count += 1
-                    
-                    if session.contact_retry_count >= 6:
-                        # Trop de tentatives → transfert
-                        session.state = "TRANSFERRED"
-                        session.partial_phone_digits = ""
-                        msg = self._say(session, "transfer")
-                        if not msg:
-                            msg = prompts.get_message("transfer", channel=channel)
-                            session.add_message("agent", msg)
-                            session.last_say_key, session.last_say_kwargs = "transfer", {}
-                        return [Event("final", msg, conv_state=session.state)]
-                    
-                    # Messages ultra-courts pour pas ralentir
-                    if len(total_digits) == 0:
-                        msg = "J'écoute."
-                    elif len(total_digits) < 10:
-                        msg = "Oui, continuez."
-                    
+                # Pas encore 10 chiffres → accumulation (6 tours max, pas contact_fails)
+                session.contact_retry_count = getattr(session, "contact_retry_count", 0) + 1
+                if session.contact_retry_count >= 6:
+                    session.state = "TRANSFERRED"
+                    session.partial_phone_digits = ""
+                    log_ivr_event(logger, session, "contact_failed_transfer", reason="phone_partial_6")
+                    msg = self._say(session, "transfer") or prompts.get_message("transfer", channel=channel)
                     session.add_message("agent", msg)
                     return [Event("final", msg, conv_state=session.state)]
+                msg = "Oui, continuez." if len(total_digits) > 0 else "J'écoute."
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
             
             # Web / direct : phone plausible (FR + ASR) puis validation
             if any(c.isdigit() for c in contact_raw) and not guards.validate_email(contact_raw.strip()):
@@ -2298,7 +2335,11 @@ class Engine:
 
         # P0: source de vérité = slots affichés (évite re-fetch et mismatch index/slot)
         try:
-            source = "google" if tools_booking._get_calendar_service() else "sqlite"
+            if tools_booking._get_calendar_service():
+                source = "google"
+            else:
+                source = getattr(slots[0], "source", None) if slots else "sqlite"
+                source = source or "sqlite"
             session.pending_slots_display = tools_booking.serialize_slots_for_session(slots, source)
         except Exception:
             session.pending_slots_display = []
@@ -2831,7 +2872,12 @@ class Engine:
                 return [Event("final", msg, conv_state=session.state)]
             # Nouveau nom fourni → rechercher à nouveau
             session.qualif_data.name = user_text.strip()
-            existing_slot = tools_booking.find_booking_by_name(session.qualif_data.name)
+            existing_slot = tools_booking.find_booking_by_name(session.qualif_data.name, session)
+            if isinstance(existing_slot, dict) and existing_slot.get("provider") == "none":
+                session.state = "TRANSFERRED"
+                msg = prompts.MSG_NO_AGENDA_TRANSFER
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
             if existing_slot:
                 session.state = "CANCEL_CONFIRM"
                 session.pending_cancel_slot = existing_slot
@@ -2873,8 +2919,12 @@ class Engine:
             session.qualif_data.name = raw
             session.name_fails = 0
             session.cancel_name_fails = 0
-            existing_slot = tools_booking.find_booking_by_name(session.qualif_data.name)
-            
+            existing_slot = tools_booking.find_booking_by_name(session.qualif_data.name, session)
+            if isinstance(existing_slot, dict) and existing_slot.get("provider") == "none":
+                session.state = "TRANSFERRED"
+                msg = prompts.MSG_NO_AGENDA_TRANSFER
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
             if not existing_slot:
                 session.cancel_rdv_not_found_count = getattr(session, "cancel_rdv_not_found_count", 0) + 1
                 session.cancel_name_fails = getattr(session, "cancel_name_fails", 0) + 1
@@ -2925,7 +2975,7 @@ class Engine:
                 log_ivr_event(logger, session, "cancel_attempt")
                 ok = False
                 try:
-                    ok = bool(tools_booking.cancel_booking(slot))
+                    ok = bool(tools_booking.cancel_booking(slot, session))
                 except Exception:
                     ok = False
 
@@ -3018,7 +3068,12 @@ class Engine:
                     session.last_say_key, session.last_say_kwargs = "transfer", {}
                 return [Event("final", msg, conv_state=session.state)]
             session.qualif_data.name = user_text.strip()
-            existing_slot = tools_booking.find_booking_by_name(session.qualif_data.name)
+            existing_slot = tools_booking.find_booking_by_name(session.qualif_data.name, session)
+            if isinstance(existing_slot, dict) and existing_slot.get("provider") == "none":
+                session.state = "TRANSFERRED"
+                msg = prompts.MSG_NO_AGENDA_TRANSFER
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
             if existing_slot:
                 session.state = "MODIFY_CONFIRM"
                 session.pending_cancel_slot = existing_slot
@@ -3058,8 +3113,12 @@ class Engine:
             session.qualif_data.name = raw
             session.name_fails = 0
             session.modify_name_fails = 0
-            existing_slot = tools_booking.find_booking_by_name(session.qualif_data.name)
-            
+            existing_slot = tools_booking.find_booking_by_name(session.qualif_data.name, session)
+            if isinstance(existing_slot, dict) and existing_slot.get("provider") == "none":
+                session.state = "TRANSFERRED"
+                msg = prompts.MSG_NO_AGENDA_TRANSFER
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
             if not existing_slot:
                 session.modify_rdv_not_found_count = getattr(session, "modify_rdv_not_found_count", 0) + 1
                 session.modify_name_fails = getattr(session, "modify_name_fails", 0) + 1
@@ -3295,8 +3354,9 @@ class Engine:
         if intent == "YES":
             session.contact_confirm_intent_repeat_count = 0
             session.awaiting_confirmation = None
+            log_ivr_event(logger, session, "contact_confirmed")
             # Numéro confirmé
-            
+
             # Si on a déjà un slot choisi (nouveau flow) → booker et confirmer
             if session.pending_slot_choice is not None:
                 slot_idx = session.pending_slot_choice
@@ -3355,7 +3415,7 @@ class Engine:
                 # P0.4 — Si on vient d'un MODIFY : annuler l'ancien seulement après création du nouveau
                 old_slot = getattr(session, "pending_cancel_slot", None)
                 if old_slot:
-                    tools_booking.cancel_booking(old_slot)
+                    tools_booking.cancel_booking(old_slot, session)
                     session.pending_cancel_slot = None
                     slot_label = tools_booking.get_label_for_choice(session, slot_idx) or ""
                     msg = prompts.VOCAL_MODIFY_MOVED.format(new_label=slot_label) if channel == "vocal" else prompts.MSG_MODIFY_MOVED_WEB.format(new_label=slot_label)

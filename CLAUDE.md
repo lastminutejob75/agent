@@ -4,6 +4,19 @@ Ce document explique la structure, les conventions et les workflows du projet **
 
 ---
 
+## ⚠️ RÈGLES DE MODIF (UWi voice agent)
+
+- Ne jamais hardcoder une phrase user-facing hors `prompts.py`
+- Toute nouvelle logique doit avoir :
+  1) tests pytest dédiés
+  2) logs structurés (`conv_id`, `tenant_id`, `state`, `intent`, `why`)
+  3) garde-fous anti-boucle (compteurs existants)
+- Ne jamais introduire un nouveau "router" parallèle : une seule source de décision par étape
+- Respecter les fallbacks multi-tenant (PG-first) et ne jamais toucher le calendrier global si `provider=none`
+- Si une modification touche `START` / `BOOKING` / `CONTACT` / `WAIT_CONFIRM` : ajouter au moins 1 test de non-régression
+
+---
+
 ## Apercu du Projet
 
 **UWi Agent** est un agent conversationnel multicanal (web, vocal, WhatsApp) qui:

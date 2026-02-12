@@ -33,6 +33,8 @@ class Session:
     channel: str = "web"  # "web" | "vocal"
     customer_phone: Optional[str] = None  # Téléphone du client (Vapi)
     client_id: Optional[int] = None  # ID client (clients.db) pour ivr_events / rapport
+    tenant_id: int = 1  # ID tenant (business) pour feature flags / tenant_config
+    flags_effective: Dict[str, bool] = field(default_factory=dict)  # Flags chargés au 1er tour
     transfer_logged: bool = False  # idempotence: n'écrire qu'une fois transfer_human par call
     last_seen_at: datetime = field(default_factory=datetime.utcnow)
     messages: Deque[Message] = field(default_factory=lambda: deque(maxlen=config.MAX_MESSAGES_HISTORY))
@@ -44,6 +46,10 @@ class Session:
     
     # Accumulation des chiffres du téléphone (vocal)
     partial_phone_digits: str = ""
+
+    # P0 Contact vocal : canal en cours, échecs (2 max puis transfert)
+    contact_mode: Optional[str] = None  # "phone" | "email"
+    contact_fails: int = 0
 
     # Qualification
     qualif_step: str = "name"
@@ -165,6 +171,8 @@ class Session:
         self.confirm_retry_count = 0
         self.contact_retry_count = 0
         self.partial_phone_digits = ""
+        self.contact_mode = None
+        self.contact_fails = 0
         self.qualif_step = "name"
         self.qualif_data = QualifData()
         self.motif_help_used = False

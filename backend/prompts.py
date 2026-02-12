@@ -100,6 +100,7 @@ MSG_FRENCH_ONLY = "Je ne parle actuellement que français."
 MSG_SESSION_EXPIRED = "Votre session a expiré. Puis-je vous aider ?"
 MSG_TRANSFER = "Je vous transfère vers un conseiller. Un instant, s'il vous plaît."
 MSG_ALREADY_TRANSFERRED = "Vous avez été transféré à un conseiller. Un instant, s'il vous plaît."
+MSG_NO_AGENDA_TRANSFER = "Je n'ai pas accès à l'agenda pour rechercher ou modifier votre rendez-vous. Je vous mets en relation avec quelqu'un qui pourra vous aider."
 
 # =========================
 # MÉDICAL — TRIAGE (urgence vitale + non vital + escalade douce)
@@ -404,6 +405,18 @@ VOCAL_PHONE_FAIL_3 = "Pas de souci. On peut aussi prendre votre email. Quelle es
 
 VOCAL_PHONE_CONFIRM = "Je confirme votre numéro : {phone_spaced}. Dites oui ou non."
 VOCAL_PHONE_CONFIRM_NO = "D'accord. Quel est votre numéro ?"
+
+# P0 Contact vocal — confirmation unique « Je récapitule : … C'est correct ? »
+VOCAL_EMAIL_CONFIRM = "Je récapitule : {email}. C'est correct ?"
+
+# P0 Contact vocal — guidance après 1er échec (2 tries max, puis transfert)
+MSG_CONTACT_PHONE_GUIDANCE_1 = (
+    "Dites les chiffres un par un. Exemple : zéro six, douze, trente-quatre, cinquante-six, soixante-dix-huit."
+)
+MSG_CONTACT_EMAIL_GUIDANCE_1 = (
+    "Dites : prenom point nom arobase domaine point fr. "
+    "Par exemple : jean point dupont arobase gmail point com."
+)
 
 VOCAL_PREF_ASK = (
     "Préférez-vous un rendez-vous le matin "
@@ -1282,6 +1295,7 @@ class SlotDisplay:
     day: str = ""         # "lundi", "mardi", ...
     hour: int = 0         # 0-23
     label_vocal: str = "" # ex: "lundi à 10h"
+    source: str = "sqlite"  # "google"|"pg"|"sqlite" pour booking
 
 def format_slot_proposal(slots: List[SlotDisplay], include_instruction: bool = True, channel: str = "web") -> str:
     """
