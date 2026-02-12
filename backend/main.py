@@ -27,7 +27,7 @@ from backend.routes.voice import _get_engine
 import backend.config as config  # Import du MODULE (pas from import)
 from backend.db import init_db, list_free_slots, count_free_slots
 # Nouvelle architecture multi-canal
-from backend.routes import voice, whatsapp, bland, reports
+from backend.routes import voice, whatsapp, bland, reports, admin
 
 app = FastAPI()
 _logger = logging.getLogger(__name__)
@@ -52,6 +52,7 @@ app.include_router(voice.router)      # /api/vapi/*
 app.include_router(whatsapp.router)   # /api/whatsapp/*
 app.include_router(bland.router)      # /api/bland/*
 app.include_router(reports.router)    # /api/reports/*
+app.include_router(admin.router)      # /api/public/onboarding, /api/admin/*
 
 # Static frontend (optionnel - peut ne pas exister)
 try:

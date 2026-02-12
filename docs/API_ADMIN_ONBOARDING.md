@@ -1,0 +1,88 @@
+# API Admin / Onboarding (uwiapp.com → agent)
+
+API pour centraliser onboarding + dashboard admin (Vite SPA → FastAPI backend).
+
+## Variables d'environnement
+
+| Variable | Description |
+|----------|-------------|
+| `ADMIN_API_TOKEN` | Token Bearer pour protéger `/api/admin/*`. **Obligatoire** en prod. |
+| `DATABASE_URL` | Postgres (tenants + ivr_events). Si absent, fallback SQLite. |
+
+## Endpoints
+
+### Public (sans auth)
+
+#### `POST /api/public/onboarding`
+
+Crée un tenant + config. Utilisé par le formulaire onboarding sur uwiapp.com.
+
+**Body:**
+```json
+{
+  "company_name": "Cabinet Dupont",
+  "email": "contact@cabinet.fr",
+  "calendar_provider": "google|none",
+  "calendar_id": "xxx@group.calendar.google.com",
+  "sector": "optionnel"
+}
+```
+
+**Response:**
+```json
+{
+  "tenant_id": 2,
+  "message": "Onboarding créé. Vous pouvez configurer le tenant depuis l'admin.",
+  "admin_setup_token": null
+}
+```
+
+---
+
+### Admin (Bearer `ADMIN_API_TOKEN`)
+
+Toutes les routes `/api/admin/*` exigent :
+```
+Authorization: Bearer <ADMIN_API_TOKEN>
+```
+
+#### `GET /api/admin/tenants`
+
+Liste des tenants.  
+`?include_inactive=true` pour inclure les inactifs.
+
+#### `GET /api/admin/tenants/{tenant_id}`
+
+Détail tenant : flags, params, routing.
+
+#### `PATCH /api/admin/tenants/{tenant_id}/flags`
+
+Met à jour les flags (merge).  
+Body: `{"flags": {"ENABLE_LLM_ASSIST_START": false}}`
+
+#### `PATCH /api/admin/tenants/{tenant_id}/params`
+
+Met à jour params (merge).  
+Champs autorisés : `calendar_provider`, `calendar_id`, `contact_email`.
+
+#### `POST /api/admin/routing`
+
+Ajoute une route DID → tenant.  
+Body: `{"channel": "vocal", "key": "+33123456789", "tenant_id": 1}`
+
+#### `GET /api/admin/kpis/weekly`
+
+KPIs hebdo.  
+Params: `tenant_id`, `start` (YYYY-MM-DD), `end` (YYYY-MM-DD).
+
+#### `GET /api/admin/rgpd`
+
+RGPD : consent_obtained, consent_rate.  
+Params: `tenant_id`, `start`, `end`.
+
+---
+
+## Front (uwi-landing)
+
+- `VITE_UWI_API_BASE_URL` : URL de l'API agent (ex: `https://xxx.railway.app`)
+- Token admin : saisi dans l'UI, stocké en localStorage (`uwi_admin_token`)

@@ -128,8 +128,8 @@ def get_params(tenant_id: Optional[int] = None) -> Dict[str, str]:
 
 
 def set_params(tenant_id: int, params: Dict[str, str]) -> None:
-    """Met à jour params_json d'un tenant (calendar_provider, calendar_id, etc.)."""
-    allowed = ("calendar_provider", "calendar_id")
+    """Met à jour params_json d'un tenant (calendar_provider, calendar_id, contact_email, etc.)."""
+    allowed = ("calendar_provider", "calendar_id", "contact_email")
     filtered = {k: str(v) for k, v in params.items() if k in allowed and v is not None}
     if not filtered:
         return
