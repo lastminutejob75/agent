@@ -91,12 +91,19 @@ Code présent dans le repo ≠ feature en prod. Ce document liste ce qu'il faut 
 
 **DATABASE_URL absent ?** Le projet doit avoir une base Postgres.
 
-1. Railway → projet **cooperative-insight** → **+ New** → **Database** → **PostgreSQL**
-2. Une fois créé, Railway injecte `DATABASE_URL` dans les services liés
-3. Vérifier : **agent** → **Variables** → `DATABASE_URL` doit exister
-4. Si le Postgres est dans un autre service : **Variables** → **Add variable** → **Reference** → sélectionner `DATABASE_URL` du service Postgres
+### Via le dashboard (sans CLI)
 
-Puis : `make migrate-railway`
+1. **railway.app** → projet **cooperative-insight**
+2. **+ New** → **Database** → **PostgreSQL**
+3. Railway crée le service Postgres et injecte `DATABASE_URL` dans **agent**
+4. **Redéployer** : Deployments → ⋮ → Redeploy (ou push un commit)
+
+**Les migrations s'exécutent automatiquement au démarrage** (Dockerfile CMD). Pas besoin de `railway link` ni `make migrate-railway`.
+
+### Si le CLI pose problème (menus bizarre, zsh errors)
+
+- Ignorer `railway link` : tout se fait via le dashboard
+- Pour `railway-fix-vars` : utiliser le dashboard → Variables
 
 ---
 

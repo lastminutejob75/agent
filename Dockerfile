@@ -27,4 +27,4 @@ EXPOSE 8000
 
 # Migrations au démarrage (si DATABASE_URL présent)
 # Puis démarrage du serveur
-CMD sh -c "python scripts/run_migration.py 007 2>/dev/null || true; python scripts/run_migration.py 008 2>/dev/null || true; uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"
+CMD sh -c "echo 'Running migrations...'; python scripts/run_migration.py 007 || true; python scripts/run_migration.py 008 || true; echo 'Starting server...'; exec uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"
