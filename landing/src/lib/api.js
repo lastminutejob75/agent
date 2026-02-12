@@ -60,4 +60,6 @@ export const api = {
     request(`/api/admin/kpis/weekly?tenant_id=${tenantId}&start=${start}&end=${end}`, { admin: true }),
   adminRgpd: (tenantId, start, end) =>
     request(`/api/admin/rgpd?tenant_id=${tenantId}&start=${start}&end=${end}`, { admin: true }),
+  adminDashboard: (tenantId) =>
+    request(`/api/admin/tenants/${tenantId}/dashboard`, { admin: true }),
 };

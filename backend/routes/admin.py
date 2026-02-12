@@ -189,6 +189,208 @@ def _get_kpis_weekly(tenant_id: int, start: str, end: str) -> dict:
     }
 
 
+def _get_dashboard_snapshot(tenant_id: int, tenant_name: str) -> dict:
+    """
+    Snapshot dashboard pour un tenant.
+    - service_status: online si dernier event < 15 min, sinon offline
+    - last_call: dernier call (7j) avec outcome prioritaire
+    - last_booking: depuis appointments PG si dispo, sinon ivr_events
+    - counters_7d: agrégats ivr_events
+    """
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    start_7d = (now - timedelta(days=7)).strftime("%Y-%m-%d 00:00:00")
+    end_7d = now.strftime("%Y-%m-%d %H:%M:%S")
+    cutoff_15min = (now - timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
+
+    url_events = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    url_slots = os.environ.get("DATABASE_URL") or os.environ.get("PG_SLOTS_URL")
+
+    service_status = {"status": "offline", "reason": "no_recent_events", "checked_at": now.strftime("%Y-%m-%dT%H:%M:%SZ")}
+    last_call = None
+    last_booking = None
+    counters_7d = {"calls_total": 0, "bookings_confirmed": 0, "transfers": 0, "abandons": 0}
+
+    if url_events:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            with psycopg.connect(url_events, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    # Dernier event pour service_status
+                    cur.execute(
+                        "SELECT MAX(created_at) as m FROM ivr_events WHERE client_id = %s",
+                        (tenant_id,),
+                    )
+                    row = cur.fetchone()
+                    last_ts = row["m"] if row and row["m"] else None
+                    if last_ts:
+                        try:
+                            ts = last_ts
+                            if hasattr(ts, "tzinfo") and ts.tzinfo:
+                                ts = ts.replace(tzinfo=None)
+                            elif isinstance(ts, str):
+                                ts = datetime.fromisoformat(ts.replace("Z", "+00:00")[:26])
+                                if hasattr(ts, "tzinfo") and ts.tzinfo:
+                                    ts = ts.replace(tzinfo=None)
+                            delta = now - ts
+                        except Exception:
+                            delta = timedelta(minutes=999)
+                        if delta.total_seconds() < 900:  # 15 min
+                            service_status = {"status": "online", "reason": None, "checked_at": now.strftime("%Y-%m-%dT%H:%M:%SZ")}
+
+                    # Counters 7d
+                    cur.execute(
+                        "SELECT event, COUNT(*) as cnt FROM ivr_events WHERE client_id = %s AND created_at >= %s AND created_at <= %s GROUP BY event",
+                        (tenant_id, start_7d, end_7d),
+                    )
+                    by_event = {r["event"]: r["cnt"] for r in cur.fetchall()}
+                    cur.execute(
+                        "SELECT COUNT(DISTINCT call_id) as n FROM ivr_events WHERE client_id = %s AND created_at >= %s AND created_at <= %s AND call_id != ''",
+                        (tenant_id, start_7d, end_7d),
+                    )
+                    r = cur.fetchone()
+                    calls_total = int(r["n"]) if r and r["n"] else 0
+                    if not calls_total and by_event:
+                        calls_total = sum(by_event.values())  # fallback
+                    counters_7d = {
+                        "calls_total": calls_total,
+                        "bookings_confirmed": by_event.get("booking_confirmed", 0),
+                        "transfers": by_event.get("transferred_human", 0) + by_event.get("transferred", 0),
+                        "abandons": by_event.get("user_abandon", 0),
+                    }
+
+                    # last_call: dernier call_id (7j), outcome par priorité
+                    cur.execute(
+                        "SELECT call_id, created_at FROM ivr_events WHERE client_id = %s AND created_at >= %s AND call_id != '' ORDER BY created_at DESC LIMIT 1",
+                        (tenant_id, start_7d),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        cid = row["call_id"]
+                        cur.execute(
+                            "SELECT event, created_at FROM ivr_events WHERE client_id = %s AND call_id = %s",
+                            (tenant_id, cid),
+                        )
+                        evts = cur.fetchall()
+                        outcome = None
+                        for e in evts:
+                            if e["event"] == "booking_confirmed":
+                                outcome = "booking_confirmed"
+                                break
+                            if e["event"] in ("transferred_human", "transferred"):
+                                outcome = outcome or "transferred_human"
+                            if e["event"] == "user_abandon":
+                                outcome = outcome or "user_abandon"
+                        outcome = outcome or "unknown"
+                        last_ts = max((e["created_at"] for e in evts), default=row["created_at"])
+                        last_call = {
+                            "call_id": cid,
+                            "created_at": str(last_ts),
+                            "name": None,
+                            "motif": None,
+                            "slot_label": None,
+                            "outcome": outcome,
+                        }
+        except Exception as e:
+            logger.warning("dashboard ivr_events failed: %s", e)
+    else:
+        # Fallback SQLite ivr_events
+        import backend.db as db
+        conn = db.get_conn()
+        try:
+            cur = conn.execute("SELECT MAX(created_at) FROM ivr_events WHERE client_id = ?", (tenant_id,))
+            row = cur.fetchone()
+            if row and row[0]:
+                from datetime import datetime as dt
+                try:
+                    last_ts = dt.fromisoformat(str(row[0]).replace("Z", "")[:19])
+                    delta = now - last_ts
+                    if delta.total_seconds() < 900:
+                        service_status = {"status": "online", "reason": None, "checked_at": now.strftime("%Y-%m-%dT%H:%M:%SZ")}
+                except Exception:
+                    pass
+            cur = conn.execute(
+                "SELECT event, COUNT(*) FROM ivr_events WHERE client_id = ? AND created_at >= ? AND created_at <= ? GROUP BY event",
+                (tenant_id, start_7d, end_7d),
+            )
+            by_event = {r[0]: r[1] for r in cur.fetchall()}
+            cur = conn.execute(
+                "SELECT COUNT(DISTINCT call_id) FROM ivr_events WHERE client_id = ? AND created_at >= ? AND created_at <= ? AND call_id != ''",
+                (tenant_id, start_7d, end_7d),
+            )
+            r = cur.fetchone()
+            calls_total = r[0] if r and r[0] else sum(by_event.values())
+            counters_7d = {
+                "calls_total": calls_total,
+                "bookings_confirmed": by_event.get("booking_confirmed", 0),
+                "transfers": by_event.get("transferred_human", 0) + by_event.get("transferred", 0),
+                "abandons": by_event.get("user_abandon", 0),
+            }
+            cur = conn.execute(
+                "SELECT call_id, created_at FROM ivr_events WHERE client_id = ? AND created_at >= ? AND call_id != '' ORDER BY created_at DESC LIMIT 1",
+                (tenant_id, start_7d),
+            )
+            row = cur.fetchone()
+            if row:
+                cur2 = conn.execute("SELECT event FROM ivr_events WHERE client_id = ? AND call_id = ?", (tenant_id, row[0]))
+                evts = [r[0] for r in cur2.fetchall()]
+                outcome = "booking_confirmed" if "booking_confirmed" in evts else ("transferred_human" if any(e in ("transferred_human", "transferred") for e in evts) else ("user_abandon" if "user_abandon" in evts else "unknown"))
+                last_call = {"call_id": row[0], "created_at": str(row[1]), "name": None, "motif": None, "slot_label": None, "outcome": outcome}
+        except Exception as e:
+            logger.warning("dashboard sqlite failed: %s", e)
+        finally:
+            conn.close()
+
+    # last_booking: appointments PG préféré (PG a tenant_id)
+    if url_slots and config.USE_PG_SLOTS:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            with psycopg.connect(url_slots, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT a.name, a.created_at, s.start_ts
+                        FROM appointments a
+                        JOIN slots s ON a.slot_id = s.id
+                        WHERE a.tenant_id = %s
+                        ORDER BY a.created_at DESC
+                        LIMIT 1
+                        """,
+                        (tenant_id,),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        start_ts = row["start_ts"]
+                        slot_label = str(start_ts)[:16].replace("T", " ") if start_ts else None
+                        last_booking = {
+                            "created_at": str(row["created_at"]),
+                            "name": row["name"],
+                            "slot_label": slot_label,
+                            "source": "postgres",
+                        }
+        except Exception as e:
+            logger.debug("dashboard appointments failed: %s", e)
+
+    if not last_booking and last_call and last_call.get("outcome") == "booking_confirmed":
+        last_booking = {
+            "created_at": last_call["created_at"],
+            "name": last_call.get("name"),
+            "slot_label": last_call.get("slot_label"),
+            "source": "ivr_events",
+        }
+
+    return {
+        "tenant_id": tenant_id,
+        "tenant_name": tenant_name,
+        "service_status": service_status,
+        "last_call": last_call,
+        "last_booking": last_booking,
+        "counters_7d": counters_7d,
+    }
+
+
 def _get_rgpd(tenant_id: int, start: str, end: str) -> dict:
     """RGPD: consent_obtained, consent_rate."""
     url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
@@ -318,6 +520,18 @@ def admin_get_tenant(
     if not d:
         raise HTTPException(404, "Tenant not found")
     return d
+
+
+@router.get("/admin/tenants/{tenant_id}/dashboard")
+def admin_get_dashboard(
+    tenant_id: int,
+    _: None = Depends(_verify_admin),
+):
+    """Snapshot dashboard: service_status, last_call, last_booking, counters_7d."""
+    d = _get_tenant_detail(tenant_id)
+    if not d:
+        raise HTTPException(404, "Tenant not found")
+    return _get_dashboard_snapshot(tenant_id, d.get("name", "N/A"))
 
 
 @router.patch("/admin/tenants/{tenant_id}/flags")

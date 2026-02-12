@@ -82,6 +82,50 @@ Params: `tenant_id`, `start`, `end`.
 
 ---
 
+#### `GET /api/admin/tenants/{tenant_id}/dashboard`
+
+Snapshot dashboard pour un tenant.
+
+**Response:**
+```json
+{
+  "tenant_id": 12,
+  "tenant_name": "Cabinet Dupont",
+  "service_status": {
+    "status": "online",
+    "reason": null,
+    "checked_at": "2026-02-12T18:20:00Z"
+  },
+  "last_call": {
+    "call_id": "abc123",
+    "created_at": "2026-02-12T17:55:10Z",
+    "name": null,
+    "motif": null,
+    "slot_label": null,
+    "outcome": "booking_confirmed"
+  },
+  "last_booking": {
+    "created_at": "2026-02-12T17:55:40Z",
+    "name": "Marie Martin",
+    "slot_label": "2026-02-17 14:00",
+    "source": "postgres"
+  },
+  "counters_7d": {
+    "calls_total": 42,
+    "bookings_confirmed": 14,
+    "transfers": 9,
+    "abandons": 3
+  }
+}
+```
+
+- `service_status`: online si dernier event < 15 min
+- `last_call`: dernier call (7j), outcome prioritaire (booking_confirmed > transferred_human > user_abandon)
+- `last_booking`: depuis appointments PG si dispo, sinon ivr_events
+- `counters_7d`: agrégats ivr_events
+
+---
+
 ## Front (uwi-landing)
 
 - `VITE_UWI_API_BASE_URL` : URL de l'API agent (ex: `https://xxx.railway.app`)
