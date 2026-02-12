@@ -12,6 +12,7 @@ help:
 	@echo "  make migrate-railway - Run migrations sur Railway"
 	@echo "  make railway-fix-vars - Réappliquer variables TWILIO/SMTP (depuis .env)"
 	@echo "  make backfill-tenant-users - Backfill tenant_users (tenants existants)"
+	@echo "  make gh-secret-sync   - Configurer UWI_LANDING_PAT (gh secret set)"
 	@echo "  make clean           - Clean cache & DB"
 
 migrate: migrate-007 migrate-008
@@ -32,6 +33,12 @@ railway-fix-vars:
 
 backfill-tenant-users:
 	python3 scripts/backfill_tenant_users.py
+
+# Configurer le secret GitHub pour le sync landing → uwi-landing (gh CLI requis)
+gh-secret-sync:
+	@echo "Configuration de UWI_LANDING_PAT pour le workflow sync-landing..."
+	@echo "Entre le PAT (Settings > Developer settings > Personal access tokens) :"
+	@gh secret set UWI_LANDING_PAT
 
 export-kpis:
 	python3 scripts/export_weekly_kpis.py --last-week --out_dir .

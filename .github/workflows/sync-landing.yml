@@ -1,5 +1,5 @@
 # Sync landing/ → uwi-landing (uwiapp.com) à chaque push sur main
-# Requiert: secret UWI_LANDING_PAT (Settings > Secrets > Actions)
+# Requiert: secret UWI_LANDING_PAT. Config: gh secret set UWI_LANDING_PAT (ou make gh-secret-sync)
 name: Sync landing to uwi-landing
 on:
   push:
