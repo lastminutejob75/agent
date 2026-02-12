@@ -391,6 +391,136 @@ def _get_dashboard_snapshot(tenant_id: int, tenant_name: str) -> dict:
     }
 
 
+def _format_ago(ts) -> str:
+    """Retourne 'il y a X min' ou 'jamais'."""
+    if not ts:
+        return "jamais"
+    try:
+        if hasattr(ts, "tzinfo") and ts.tzinfo:
+            ts = ts.replace(tzinfo=None)
+        elif isinstance(ts, str):
+            ts = datetime.fromisoformat(ts.replace("Z", "+00:00")[:26])
+            if hasattr(ts, "tzinfo") and ts.tzinfo:
+                ts = ts.replace(tzinfo=None)
+        delta = datetime.utcnow() - ts
+        s = int(delta.total_seconds())
+        if s < 60:
+            return "à l'instant"
+        if s < 3600:
+            return f"il y a {s // 60} min"
+        if s < 86400:
+            return f"il y a {s // 3600} h"
+        return f"il y a {s // 86400} j"
+    except Exception:
+        return "—"
+
+
+def _get_technical_status(tenant_id: int) -> Optional[dict]:
+    """
+    Statut technique pour affichage admin.
+    - did: numéro vocal (routing channel=vocal)
+    - routing_status: active | incomplete | not_configured
+    - calendar_provider, calendar_id, calendar_status
+    - service_agent: online | offline
+    - last_event_at, last_event_ago
+    """
+    d = _get_tenant_detail(tenant_id)
+    if not d:
+        return None
+
+    params = d.get("params") or {}
+    routing = d.get("routing") or []
+    vocal_routes = [r for r in routing if r.get("channel") == "vocal" and r.get("is_active", True)]
+    did = vocal_routes[0]["key"] if vocal_routes else None
+
+    # Routing status
+    if vocal_routes:
+        routing_status = "active"
+    else:
+        routing_status = "not_configured"
+
+    # Calendar
+    provider = (params.get("calendar_provider") or "none").lower()
+    cal_id = (params.get("calendar_id") or "").strip()
+    if provider == "google" and cal_id:
+        calendar_status = "connected"
+    elif provider == "google" and not cal_id:
+        calendar_status = "incomplete"
+    else:
+        calendar_status = "not_configured"
+
+    # Service agent + last event (réutilise logique dashboard)
+    now = datetime.utcnow()
+    service_agent = "offline"
+    last_event_at = None
+    last_event_ago = "jamais"
+
+    url_events = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    if url_events:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            with psycopg.connect(url_events, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT MAX(created_at) as m FROM ivr_events WHERE client_id = %s",
+                        (tenant_id,),
+                    )
+                    row = cur.fetchone()
+                    last_ts = row["m"] if row and row["m"] else None
+                    if last_ts:
+                        last_event_at = str(last_ts)
+                        last_event_ago = _format_ago(last_ts)
+                        try:
+                            ts = last_ts
+                            if hasattr(ts, "tzinfo") and ts.tzinfo:
+                                ts = ts.replace(tzinfo=None)
+                            elif isinstance(ts, str):
+                                ts = datetime.fromisoformat(ts.replace("Z", "+00:00")[:26])
+                                if hasattr(ts, "tzinfo") and ts.tzinfo:
+                                    ts = ts.replace(tzinfo=None)
+                            delta = now - ts
+                            if delta.total_seconds() < 900:
+                                service_agent = "online"
+                        except Exception:
+                            pass
+        except Exception as e:
+            logger.warning("technical_status ivr_events failed: %s", e)
+    else:
+        import backend.db as db
+        conn = db.get_conn()
+        try:
+            cur = conn.execute("SELECT MAX(created_at) FROM ivr_events WHERE client_id = ?", (tenant_id,))
+            row = cur.fetchone()
+            if row and row[0]:
+                from datetime import datetime as dt
+                last_ts = row[0]
+                last_event_at = str(last_ts)
+                last_event_ago = _format_ago(last_ts)
+                try:
+                    last_ts_parsed = dt.fromisoformat(str(last_ts).replace("Z", "")[:19])
+                    if (now - last_ts_parsed).total_seconds() < 900:
+                        service_agent = "online"
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning("technical_status sqlite failed: %s", e)
+        finally:
+            conn.close()
+
+    return {
+        "tenant_id": tenant_id,
+        "did": did,
+        "routing_status": routing_status,
+        "calendar_provider": provider or "none",
+        "calendar_id": cal_id or None,
+        "calendar_status": calendar_status,
+        "service_agent": service_agent,
+        "last_event_at": last_event_at,
+        "last_event_ago": last_event_ago,
+    }
+
+
 def _get_rgpd(tenant_id: int, start: str, end: str) -> dict:
     """RGPD: consent_obtained, consent_rate."""
     url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
@@ -532,6 +662,18 @@ def admin_get_dashboard(
     if not d:
         raise HTTPException(404, "Tenant not found")
     return _get_dashboard_snapshot(tenant_id, d.get("name", "N/A"))
+
+
+@router.get("/admin/tenants/{tenant_id}/technical-status")
+def admin_get_technical_status(
+    tenant_id: int,
+    _: None = Depends(_verify_admin),
+):
+    """Statut technique: DID, routing, calendrier, agent."""
+    s = _get_technical_status(tenant_id)
+    if not s:
+        raise HTTPException(404, "Tenant not found")
+    return s
 
 
 @router.patch("/admin/tenants/{tenant_id}/flags")

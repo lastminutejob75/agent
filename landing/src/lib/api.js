@@ -64,4 +64,6 @@ export const api = {
     request(`/api/admin/rgpd?tenant_id=${tenantId}&start=${start}&end=${end}`, { admin: true }),
   adminDashboard: (tenantId) =>
     request(`/api/admin/tenants/${tenantId}/dashboard`, { admin: true }),
+  adminTechnicalStatus: (tenantId) =>
+    request(`/api/admin/tenants/${tenantId}/technical-status`, { admin: true }),
 };

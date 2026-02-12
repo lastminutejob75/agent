@@ -129,3 +129,22 @@ def test_admin_rgpd(client, admin_headers):
     data = r.json()
     assert "consent_obtained" in data
     assert "consent_rate" in data
+
+
+def test_admin_technical_status(client, admin_headers):
+    """GET /api/admin/tenants/1/technical-status → statut technique."""
+    r = client.get("/api/admin/tenants/1/technical-status", headers=admin_headers)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["tenant_id"] == 1
+    assert "did" in data
+    assert data["routing_status"] in ("active", "not_configured")
+    assert data["calendar_status"] in ("connected", "incomplete", "not_configured")
+    assert data["service_agent"] in ("online", "offline")
+    assert "last_event_ago" in data
+
+
+def test_admin_technical_status_404(client, admin_headers):
+    """GET /api/admin/tenants/999999/technical-status → 404."""
+    r = client.get("/api/admin/tenants/999999/technical-status", headers=admin_headers)
+    assert r.status_code == 404

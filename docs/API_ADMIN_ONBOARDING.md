@@ -126,6 +126,32 @@ Snapshot dashboard pour un tenant.
 
 ---
 
+#### `GET /api/admin/tenants/{tenant_id}/technical-status`
+
+Statut technique pour démo/commercial (DID, routing, calendrier, service agent).
+
+**Response:**
+```json
+{
+  "tenant_id": 1,
+  "did": "+33123456789",
+  "routing_status": "active",
+  "calendar_provider": "google",
+  "calendar_id": "xxx@group.calendar.google.com",
+  "calendar_status": "connected",
+  "service_agent": "online",
+  "last_event_at": "2026-02-12T18:20:00Z",
+  "last_event_ago": "il y a 2 min"
+}
+```
+
+- `routing_status`: active | not_configured
+- `calendar_status`: connected | incomplete | not_configured
+- `service_agent`: online (dernier event < 15 min) | offline
+- `last_event_ago`: "il y a X min" | "jamais"
+
+---
+
 ## Front (uwi-landing)
 
 - `VITE_UWI_API_BASE_URL` : URL de l'API agent (ex: `https://xxx.railway.app`)
