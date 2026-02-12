@@ -1,6 +1,5 @@
 # Sync landing/ → uwi-landing (uwiapp.com) à chaque push sur main
 # Requiert: secret UWI_LANDING_PAT (Settings > Secrets > Actions)
-# Si absent: le job est ignoré, le push réussit
 name: Sync landing to uwi-landing
 on:
   push:
@@ -12,7 +11,6 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    if: ${{ secrets.UWI_LANDING_PAT != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
