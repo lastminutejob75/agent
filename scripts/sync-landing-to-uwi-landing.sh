@@ -25,15 +25,24 @@ else
   git pull origin main || true
 fi
 
-# Copier landing/ (exclure node_modules, .git, dist)
-echo "📂 Copie landing/..."
-rsync -av --delete \
-  --exclude 'node_modules' \
-  --exclude '.git' \
-  --exclude 'dist' \
-  --exclude '.env' \
-  --exclude '*.log' \
-  "$REPO_AGENT/landing/" "$REPO_LANDING/"
+# Copier uniquement ce dont Vercel a besoin (aligné sur .github/workflows/sync-landing.yml)
+echo "📂 Copie src/, public/, config..."
+SRC="$REPO_AGENT/landing"
+DST="$REPO_LANDING"
+rm -rf "$DST/src" && cp -r "$SRC/src" "$DST/"
+mkdir -p "$DST/public"
+[ -d "$SRC/public" ] && rm -rf "$DST/public" && cp -r "$SRC/public" "$DST/"
+for f in index.html package.json package-lock.json vite.config.js tailwind.config.js postcss.config.js vercel.json netlify.toml .env.example .gitignore .nvmrc .node-version .vercelignore; do
+  [ -f "$SRC/$f" ] && cp "$SRC/$f" "$DST/$f"
+done
+
+# Supprimer les dossiers/fichiers non nécessaires pour Vercel (backend, api, tests...)
+echo "🧹 Nettoyage fichiers obsolètes..."
+cd "$REPO_LANDING"
+for dir in api app backend frontend lib tests; do [ -d "$dir" ] && rm -rf "$dir"; done
+rm -f __init__.py config.py db.py engine.py fsm.py google_calendar.py guards.py main.py prompts.py session.py tools_booking.py tools_faq.py vapi.py 2>/dev/null || true
+rm -f *.md Dockerfile docker-compose.yml Makefile next.config.js pyproject.toml requirements.txt 2>/dev/null || true
+rm -f test_*.py apply_patch.sh apply_uwi_landing_patch.sh download_patch_from_github.sh extract_and_push_uwi_landing.sh install_ngrok.sh setup_google_calendar.sh test_ngrok.sh test_ngrok_webhook.sh test_vapi_complete.sh test_vapi_webhook.sh 2>/dev/null || true
 
 # Commit si changements
 if git diff --quiet && git diff --staged --quiet; then
