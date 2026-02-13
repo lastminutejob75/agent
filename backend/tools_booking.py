@@ -41,6 +41,32 @@ def _start_plus_15min(start_iso: Optional[str]) -> Optional[str]:
         return None
 
 
+def _resolve_slot_id_from_start_iso(
+    start_iso: str, source: str = "sqlite", tenant_id: int = 1
+) -> Optional[int]:
+    """
+    Fallback: retrouve slot_id à partir de start_iso quand slot_id manque (session perdue).
+    start_iso ex: "2026-02-16T09:00:00". Retourne None si non trouvé.
+    """
+    if not start_iso:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(start_iso).replace("Z", "+00:00"))
+        date_str = dt.strftime("%Y-%m-%d")
+        time_str = dt.strftime("%H:%M")
+        if source == "pg":
+            try:
+                from backend.slots_pg import pg_find_slot_id_by_datetime
+                return pg_find_slot_id_by_datetime(date_str, time_str, tenant_id=tenant_id)
+            except Exception:
+                pass
+        from backend.db import find_slot_id_by_datetime
+        return find_slot_id_by_datetime(date_str, time_str)
+    except Exception as e:
+        logger.debug("_resolve_slot_id_from_start_iso failed: %s", e)
+        return None
+
+
 def serialize_slots_for_session(slots: List[Any], source: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     P0: Sérialise EXACTEMENT les slots affichés pour que l'index 1/2/3
@@ -260,7 +286,7 @@ def _spread_slots(
             last_dt = dt
             last_day = day
 
-    # Ré-indexer idx 1..limit
+    # Ré-indexer idx 1..limit — P0: préserver source (évite sqlite par défaut sur slots Google)
     out = []
     for i, s in enumerate(picked, start=1):
         out.append(prompts.SlotDisplay(
@@ -271,6 +297,7 @@ def _spread_slots(
             day=getattr(s, "day", ""),
             hour=getattr(s, "hour", 0),
             label_vocal=getattr(s, "label_vocal", "") or s.label,
+            source=getattr(s, "source", "sqlite"),
         ))
     return out
 
@@ -741,6 +768,12 @@ def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str
             return _book_google_by_iso(session, start_iso, end_iso)
         if src in ("sqlite", "pg"):
             slot_id = chosen.get("slot_id")
+            # Fallback: slot_id manquant mais start_iso présent → lookup par date+time (session perdue)
+            if slot_id is None and chosen.get("start_iso"):
+                tenant_id = getattr(session, "tenant_id", None) or 1
+                slot_id = _resolve_slot_id_from_start_iso(
+                    chosen.get("start_iso"), source=src, tenant_id=tenant_id
+                )
             if slot_id is None:
                 logger.warning(
                     "[BOOKING_TECH_REASON] conv_id=%s reason=slot_id_missing chosen=%s",
