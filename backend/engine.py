@@ -2412,11 +2412,15 @@ class Engine:
 
         # P0: source de vérité = slots affichés (évite re-fetch et mismatch index/slot)
         try:
-            if tools_booking._get_calendar_service():
+            slot_src = getattr(slots[0], "source", None) if slots else None
+            if slot_src == "google":
+                source = "google"
+            elif tools_booking._get_calendar_service():
                 source = "google"
             else:
-                source = getattr(slots[0], "source", None) if slots else "sqlite"
-                source = source or "sqlite"
+                from backend.calendar_adapter import get_calendar_adapter
+                adapter = get_calendar_adapter(session)
+                source = "google" if (adapter and adapter.can_propose_slots()) else (slot_src or "sqlite")
             session.pending_slots_display = tools_booking.serialize_slots_for_session(slots, source)
         except Exception:
             session.pending_slots_display = []

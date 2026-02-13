@@ -520,6 +520,7 @@ def _get_slots_from_google_calendar(calendar, limit: int, pref: Optional[str] = 
                 day=day_fr,
                 hour=hour,
                 label_vocal=label_vocal or slot.get('label', ''),
+                source="google",
             ))
     logger.info(f"Google Calendar: {len(pool)} créneaux en pool (pref={pref})")
     return pool
