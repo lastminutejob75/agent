@@ -682,13 +682,41 @@ def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str
     """
     Réserve le créneau choisi par l'utilisateur.
     P0: utilise pending_slots_display (slots affichés) si présent, sinon fallback legacy.
+    Fallback: si pending_slots_display vide mais pending_slots présent → re-sérialiser
+    (évite "problème technique" quand session perdue/reconstruite entre requêtes).
     Returns (success, reason).
     - success=True -> reason=None
     - success=False, reason="slot_taken" -> créneau déjà pris (message adapté)
     - success=False, reason="technical" -> erreur technique / slots manquants (évite "plus dispo" à tort)
     """
+    conv_id = getattr(session, "conv_id", "")
     idx = choice_index_1based - 1
     slots = getattr(session, "pending_slots_display", None) or []
+    pending = getattr(session, "pending_slots", None) or []
+
+    logger.info(
+        "[BOOKING_ENTER] conv_id=%s choice=%s display_len=%s pending_len=%s first_keys=%s",
+        conv_id,
+        choice_index_1based,
+        len(slots),
+        len(pending),
+        list(slots[0].keys()) if slots else [],
+    )
+
+    # Fallback: pending_slots_display vide (session perdue/reconstruite) mais pending_slots présent
+    if not slots and session.pending_slot_choice is not None and (session.pending_slots or []):
+        pending = session.pending_slots or []
+        if 1 <= choice_index_1based <= len(pending):
+            from backend.calendar_adapter import get_calendar_adapter
+            adapter = get_calendar_adapter(session)
+            source = "google" if (adapter and adapter.can_propose_slots()) else "sqlite"
+            slots = serialize_slots_for_session(pending, source)
+            session.pending_slots_display = slots
+            logger.info(
+                "[BOOKING_FALLBACK] conv_id=%s rebuilt pending_slots_display from pending_slots len=%s",
+                getattr(session, "conv_id", ""),
+                len(slots),
+            )
 
     if slots and 1 <= choice_index_1based <= len(slots):
         chosen = slots[choice_index_1based - 1]
@@ -697,7 +725,11 @@ def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str
             start_iso = chosen.get("start_iso")
             end_iso = chosen.get("end_iso")
             if not start_iso or not end_iso:
-                logger.warning("pending_slots_display: start_iso/end_iso manquants")
+                logger.warning(
+                    "[BOOKING_TECH_REASON] conv_id=%s reason=start_iso_end_iso_missing chosen=%s",
+                    conv_id,
+                    {k: v for k, v in chosen.items() if k != "label"},
+                )
                 return False, "technical"
             logger.info(
                 "[BOOKING_CHOSEN_SLOT] choice=%s start_iso=%s end_iso=%s source=google pending_slots_display_len=%s",
@@ -710,14 +742,61 @@ def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str
         if src in ("sqlite", "pg"):
             slot_id = chosen.get("slot_id")
             if slot_id is None:
-                logger.warning("pending_slots_display: slot_id manquant")
+                logger.warning(
+                    "[BOOKING_TECH_REASON] conv_id=%s reason=slot_id_missing chosen=%s",
+                    conv_id,
+                    {k: v for k, v in chosen.items() if k != "label"},
+                )
                 return False, "technical"
             ok = _book_local_by_slot_id(session, int(slot_id), source=src)
             return (ok, None if ok else "slot_taken")
 
-    # Pas de pending_slots_display alors qu'on confirme → ne pas dire "créneau pris"
+    # Pas de slots : fallback dernier recours = re-fetch et book (session perdue entre requêtes)
+    fresh_slots = []
     if session.pending_slot_choice is not None and not slots:
-        logger.warning("book_slot_from_session: pending_slot_choice=%s mais pending_slots_display vide", choice_index_1based)
+        logger.warning(
+            "book_slot_from_session: conv_id=%s pending_slot_choice=%s mais slots vides (display=%s pending=%s) -> re-fetch",
+            conv_id,
+            choice_index_1based,
+            len(getattr(session, "pending_slots_display", None) or []),
+            len(getattr(session, "pending_slots", None) or []),
+        )
+        fresh_count = 0
+        try:
+            fresh_slots = get_slots_for_display(
+                limit=3,
+                pref=getattr(session.qualif_data, "pref", None),
+                session=session,
+            )
+            fresh_count = len(fresh_slots or [])
+            if fresh_slots and 1 <= choice_index_1based <= len(fresh_slots):
+                from backend.calendar_adapter import get_calendar_adapter
+                adapter = get_calendar_adapter(session)
+                source = "google" if (adapter and adapter.can_propose_slots()) else "sqlite"
+                slots = serialize_slots_for_session(fresh_slots, source)
+                session.pending_slots_display = slots
+                session.pending_slots = fresh_slots
+                logger.info("[BOOKING_REFETCH] conv_id=%s re-fetched %s slots, booking choice %s", conv_id, len(slots), choice_index_1based)
+                # Retenter le booking avec les slots fraîchement récupérés
+                chosen = slots[choice_index_1based - 1]
+                src = (chosen.get("source") or "").lower()
+                if src == "google":
+                    start_iso = chosen.get("start_iso")
+                    end_iso = chosen.get("end_iso")
+                    if start_iso and end_iso:
+                        return _book_google_by_iso(session, start_iso, end_iso)
+                if src in ("sqlite", "pg"):
+                    slot_id = chosen.get("slot_id")
+                    if slot_id is not None:
+                        ok = _book_local_by_slot_id(session, int(slot_id), source=src)
+                        return (ok, None if ok else "slot_taken")
+        except Exception as e:
+            logger.error("book_slot_from_session re-fetch failed: %s", e, exc_info=True)
+        logger.warning(
+            "[BOOKING_TECH_REASON] conv_id=%s reason=refetch_empty_or_failed fresh_len=%s",
+            conv_id,
+            len(fresh_slots),
+        )
         return False, "technical"
 
     # Fallback legacy
@@ -744,9 +823,11 @@ def _book_google_by_iso(session, start_iso: str, end_iso: str) -> tuple[bool, st
     from backend.calendar_adapter import get_calendar_adapter
     adapter = get_calendar_adapter(session)
     if adapter is not None and not adapter.can_propose_slots():
+        logger.warning("[BOOKING_TECH_REASON] adapter.can_propose_slots=False")
         return False, "technical"
     calendar = adapter if adapter else _get_calendar_service()
     if not calendar:
+        logger.warning("[BOOKING_TECH_REASON] no calendar service")
         return False, "technical"
 
     def _try_once() -> tuple[bool, str | None]:
@@ -782,7 +863,12 @@ def _book_google_by_iso(session, start_iso: str, end_iso: str) -> tuple[bool, st
             return True, None
         return False, reason2 or "slot_taken"
     except Exception as e:
-        logger.error("Erreur book_google_by_iso: %s", e, exc_info=True)
+        logger.error(
+            "[BOOKING_TECH_REASON] _book_google_by_iso exception type=%s msg=%s",
+            type(e).__name__,
+            str(e),
+            exc_info=True,
+        )
         return False, "technical"
 
 
