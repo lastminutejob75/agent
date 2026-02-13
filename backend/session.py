@@ -144,6 +144,9 @@ class Session:
     intent_router_visits: int = 0
     intent_router_unclear_count: int = 0
 
+    # P0 — Transfer budget : 2 "cartouches" avant transfert technique (unclear/no_match/out_of_scope)
+    transfer_budget_remaining: int = 2
+
     # Yes disambiguation : quoi confirme le user quand il dit "oui" ? (éviter oui ambigu)
     awaiting_confirmation: Optional[str] = None  # CONFIRM_SLOT, CONFIRM_CONTACT, CONFIRM_PREFERENCE, CONFIRM_CANCEL, CONFIRM_MODIFY
     yes_ambiguous_count: int = 0  # "oui" ambigu répétés → 2e → guidance options
@@ -152,11 +155,6 @@ class Session:
     consent_prompted: bool = False
     consent_obtained: bool = False
     consent_fails: int = 0  # unclear répétés → max 1 clarification puis transfert
-
-    # P0.5 consent_mode explicit : flow vocal (demande avant traitement)
-    consent_prompted: bool = False
-    consent_obtained: bool = False
-    consent_fails: int = 0  # 1 clarification max puis transfert
 
     MAX_CONSECUTIVE_QUESTIONS = 3  # Limite cognitive (spec V3)
     MAX_TURNS_ANTI_LOOP = 25  # Garde-fou : >25 tours sans DONE/TRANSFERRED → INTENT_ROUTER
@@ -234,6 +232,7 @@ class Session:
         self.slot_proposal_sequential = False
         self.intent_router_visits = 0
         self.intent_router_unclear_count = 0
+        self.transfer_budget_remaining = 2
         self.awaiting_confirmation = None
         self.yes_ambiguous_count = 0
         self.consent_prompted = False

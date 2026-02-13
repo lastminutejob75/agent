@@ -381,6 +381,20 @@ VOCAL_INTENT_ROUTER_LOOP = (
 # INTENT_ROUTER (spec V3 — menu reset universel)
 # ----------------------------
 
+# P0 — Menu safe default (réduit transferts inutiles)
+VOCAL_SAFE_DEFAULT_MENU_1 = (
+    "Je peux vous aider à prendre un rendez-vous, répondre à une question, annuler ou modifier un rendez-vous. Que souhaitez-vous ?"
+)
+VOCAL_SAFE_DEFAULT_MENU_2 = (
+    "Dites : rendez-vous, question, annuler, modifier, ou humain."
+)
+MSG_SAFE_DEFAULT_MENU_1_WEB = (
+    "Je peux vous aider à prendre un rendez-vous, répondre à une question, annuler ou modifier un rendez-vous. Que souhaitez-vous ?"
+)
+MSG_SAFE_DEFAULT_MENU_2_WEB = (
+    "Dites : rendez-vous, question, annuler, modifier, ou humain."
+)
+
 # P1.5 — Un seul "Dites", court, robustesse STT
 VOCAL_INTENT_ROUTER = (
     "Dites un pour un rendez-vous, deux pour annuler ou modifier, trois pour une question, quatre pour un conseiller."

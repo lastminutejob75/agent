@@ -7,6 +7,7 @@ Aucune créativité, aucune improvisation.
 from __future__ import annotations
 from typing import List, Optional
 from dataclasses import dataclass
+import json
 import logging
 import re
 
@@ -684,7 +685,95 @@ class Engine:
         session.last_say_key = key
         session.last_say_kwargs = dict(kwargs)
         return msg
-    
+
+    # P0 — Raisons techniques (budget s'applique) vs exemptées (transfert immédiat)
+    _TECHNICAL_REASONS = frozenset({
+        "start_unclear", "no_faq", "out_of_scope", "faq_no_match", "llm_unclear",
+        "intent_router_loop", "intent_router_unclear", "slot_choice_fails", "contact_failed",
+        "phone_invalid", "phone_empty", "phone_partial", "contact_confirm_fails",
+        "name_fails", "preference_fails", "cancel_name_fails", "modify_name_fails",
+        "consent_fails", "qualif_motif_invalid", "unknown_state", "exception_fallback",
+    })
+
+    def _trigger_transfer(
+        self,
+        session: Session,
+        channel: str,
+        reason: str,
+        user_text: str = "",
+        msg_key: Optional[str] = None,
+        custom_msg: Optional[str] = None,
+    ) -> List[Event]:
+        """
+        Centralise le transfert : state=TRANSFERRED, log, persist avec reason.
+        Ne pas appeler si _maybe_prevent_transfer a retourné une réponse.
+        """
+        state_before = getattr(session, "_turn_state_before", session.state)
+        budget = getattr(session, "transfer_budget_remaining", 2)
+        session.state = "TRANSFERRED"
+        session.transfer_logged = True
+        ctx = json.dumps({
+            "reason": reason,
+            "state_at_transfer": state_before,
+            "budget_remaining": budget,
+            "turn_count": getattr(session, "turn_count", 0),
+        })
+        _persist_ivr_event(session, "transferred_human", context=ctx, reason=reason)
+        logger.info(
+            "[TRANSFER] conv_id=%s tenant_id=%s state=%s reason=%s budget=%s",
+            session.conv_id,
+            getattr(session, "tenant_id", None),
+            state_before,
+            reason,
+            budget,
+        )
+        if custom_msg:
+            msg = custom_msg
+        elif msg_key:
+            msg = prompts.get_message(msg_key, channel=channel)
+        else:
+            msg = prompts.VOCAL_TRANSFER_COMPLEX if channel == "vocal" else prompts.MSG_TRANSFER
+        session.add_message("agent", msg)
+        self._save_session(session)
+        return [Event("final", msg, conv_state=session.state, transfer_reason=reason)]
+
+    def _maybe_prevent_transfer(
+        self,
+        session: Session,
+        channel: str,
+        reason: str,
+        user_text: str,
+    ) -> Optional[List[Event]]:
+        """
+        Si reason technique et budget > 0 : consomme 1, envoie menu safe default, pas de transfert.
+        Retourne None si transfert doit avoir lieu (budget épuisé ou reason exemptée).
+        """
+        if reason not in self._TECHNICAL_REASONS:
+            return None
+        budget = getattr(session, "transfer_budget_remaining", 2)
+        if budget <= 0:
+            return None
+        session.transfer_budget_remaining = budget - 1
+        remaining = session.transfer_budget_remaining
+        logger.info(
+            "[TRANSFER_BUDGET] conv_id=%s reason=%s remaining=%s",
+            session.conv_id,
+            reason,
+            remaining,
+        )
+        ctx = json.dumps({"reason": reason, "remaining": remaining})
+        _persist_ivr_event(session, "transfer_prevented", context=ctx, reason=reason)
+        channel = getattr(session, "channel", "web")
+        if remaining == 1:
+            msg = prompts.VOCAL_SAFE_DEFAULT_MENU_1 if channel == "vocal" else prompts.MSG_SAFE_DEFAULT_MENU_1_WEB
+        else:
+            msg = prompts.VOCAL_SAFE_DEFAULT_MENU_2 if channel == "vocal" else prompts.MSG_SAFE_DEFAULT_MENU_2_WEB
+        session.state = "INTENT_ROUTER"
+        session.intent_router_unclear_count = 0  # Redonner une chance de répondre au menu
+        session.add_message("agent", msg)
+        self._save_session(session)
+        return [Event("final", msg, conv_state=session.state)]
+
     def handle_message(self, conv_id: str, user_text: str) -> List[Event]:
         """
         Pipeline déterministe (ordre STRICT).
@@ -853,22 +942,23 @@ class Engine:
                         session.awaiting_confirmation = None
                         # Continue le flow avec user_text (ex. "oui" → clarification)
                     elif intent_parser._is_no(user_text or "") or (detect_strong_intent(user_text or "") == "ABANDON"):
-                        session.state = "TRANSFERRED"
                         session.awaiting_confirmation = None
-                        msg = prompts.VOCAL_CONSENT_DENIED_TRANSFER
-                        session.add_message("agent", msg)
-                        self._save_session(session)
-                        return safe_reply([Event("final", msg, conv_state=session.state)], session)
+                        evts = self._trigger_transfer(
+                            session, channel, "consent_denied",
+                            user_text=user_text or "",
+                            custom_msg=prompts.VOCAL_CONSENT_DENIED_TRANSFER,
+                        )
+                        return safe_reply(evts, session)
                     else:
                         # UNCLEAR
                         session.consent_fails = getattr(session, "consent_fails", 0) + 1
                         if session.consent_fails >= 2:
-                            session.state = "TRANSFERRED"
                             session.awaiting_confirmation = None
-                            msg = prompts.MSG_TRANSFER
-                            session.add_message("agent", msg)
-                            self._save_session(session)
-                            return safe_reply([Event("final", msg, conv_state=session.state)], session)
+                            prev = self._maybe_prevent_transfer(session, channel, "consent_fails", user_text or "")
+                            if prev is not None:
+                                return safe_reply(prev, session)
+                            evts = self._trigger_transfer(session, channel, "consent_fails", user_text=user_text or "")
+                            return safe_reply(evts, session)
                         msg = prompts.VOCAL_CONSENT_CLARIFY
                         session.add_message("agent", msg)
                         self._save_session(session)
@@ -906,14 +996,8 @@ class Engine:
             if strong == "MODIFY":
                 return safe_reply(self._start_modify(session), session)
             if strong == "TRANSFER":
-                session.state = "TRANSFERRED"
-                msg = self._say(session, "transfer_complex")
-                if not msg:
-                    msg = prompts.VOCAL_TRANSFER_COMPLEX if channel == "vocal" else prompts.MSG_TRANSFER
-                    session.add_message("agent", msg)
-                    session.last_say_key, session.last_say_kwargs = "transfer_complex", {}
-                self._save_session(session)
-                return safe_reply([Event("final", msg, conv_state=session.state)], session)
+                evts = self._trigger_transfer(session, channel, "user_requested", msg_key="transfer_complex")
+                return safe_reply(evts, session)
             if strong == "ABANDON":
                 session.state = "CONFIRMED"
                 msg = prompts.MSG_END_POLITE_ABANDON if hasattr(prompts, "MSG_END_POLITE_ABANDON") else (prompts.VOCAL_USER_ABANDON if channel == "vocal" else prompts.MSG_ABANDON_WEB)
@@ -1167,13 +1251,8 @@ class Engine:
             if strong == "MODIFY":
                 return safe_reply(self._start_modify(session), session)
             if strong == "TRANSFER":  # "humain" seul = OK (mapping STT)
-                session.state = "TRANSFERRED"
-                msg = self._say(session, "transfer_complex")
-                if not msg:
-                    msg = prompts.VOCAL_TRANSFER_COMPLEX if channel == "vocal" else prompts.MSG_TRANSFER
-                    session.add_message("agent", msg)
-                    session.last_say_key, session.last_say_kwargs = "transfer_complex", {}
-                return safe_reply([Event("final", msg, conv_state=session.state)], session)
+                evts = self._trigger_transfer(session, channel, "user_requested", msg_key="transfer_complex")
+                return safe_reply(evts, session)
             if strong == "ABANDON":
                 session.state = "CONFIRMED"
                 msg = prompts.VOCAL_USER_ABANDON if channel == "vocal" else prompts.MSG_ABANDON_WEB
@@ -1404,16 +1483,18 @@ class Engine:
                     msg = prompts.VOCAL_START_GUIDANCE if channel == "vocal" else prompts.MSG_START_GUIDANCE_WEB
                     session.add_message("agent", msg)
                     return safe_reply([Event("final", msg, conv_state=session.state)], session)
-                # 3e et plus : transfert direct avec message UX dédié (pas "abandon")
+                # 3e et plus : transfert (P0: budget peut prévenir)
                 session.start_unclear_count = 0
-                session.state = "TRANSFERRED"
+                prev = self._maybe_prevent_transfer(session, channel, "start_unclear", user_text or "")
+                if prev is not None:
+                    return safe_reply(prev, session)
                 msg = self._say(session, "transfer_filler_silence")
                 if not msg:
                     msg = prompts.get_message("transfer_filler_silence", channel=channel) or prompts.MSG_TRANSFER_FILLER_SILENCE
-                    session.add_message("agent", msg)
-                    session.last_say_key, session.last_say_kwargs = "transfer_filler_silence", {}
-                self._save_session(session)
-                return safe_reply([Event("final", msg, conv_state=session.state)], session)
+                return safe_reply(
+                    self._trigger_transfer(session, channel, "start_unclear", user_text=user_text or "", custom_msg=msg),
+                    session,
+                )
 
             # Si LLM Assist a classé UNCLEAR (vague/hors-sujet) => pas de _handle_faq ; 2 → guidance, 3 → INTENT_ROUTER
             if intent == "UNCLEAR" and getattr(r, "entities", None) and r.entities.get("no_faq") is True:
@@ -1504,14 +1585,18 @@ class Engine:
         # 5. FALLBACK TRANSFER
         # ========================
         
-        # Si état inconnu ou non géré → transfer par sécurité
-        session.state = "TRANSFERRED"
+        # Si état inconnu ou non géré → transfer (P0: budget peut prévenir)
+        channel = getattr(session, "channel", "web")
+        prev = self._maybe_prevent_transfer(session, channel, "unknown_state", user_text or "")
+        if prev is not None:
+            return safe_reply(prev, session)
         msg = self._say(session, "transfer")
         if not msg:
-            msg = prompts.get_message("transfer", channel=getattr(session, "channel", "web"))
-            session.add_message("agent", msg)
-            session.last_say_key, session.last_say_kwargs = "transfer", {}
-        return safe_reply([Event("final", msg, conv_state=session.state)], session)
+            msg = prompts.get_message("transfer", channel=channel)
+        return safe_reply(
+            self._trigger_transfer(session, channel, "unknown_state", user_text=user_text or "", custom_msg=msg),
+            session,
+        )
     
     # ========================
     # HANDLERS
@@ -1551,14 +1636,7 @@ class Engine:
         if strong == "MODIFY":
             return self._start_modify(session)
         if strong == "TRANSFER":
-            session.state = "TRANSFERRED"
-            msg = self._say(session, "transfer_complex")
-            if not msg:
-                msg = prompts.VOCAL_TRANSFER_COMPLEX if channel == "vocal" else prompts.MSG_TRANSFER
-                session.add_message("agent", msg)
-                session.last_say_key, session.last_say_kwargs = "transfer_complex", {}
-            self._save_session(session)
-            return [Event("final", msg, conv_state=session.state)]
+            return self._trigger_transfer(session, channel, "user_requested", msg_key="transfer_complex")
         if strong == "ABANDON":
             session.state = "CONFIRMED"
             msg = (
@@ -1981,15 +2059,15 @@ class Engine:
             # Reset compteur si motif valide
             session.confirm_retry_count = 0
             
-            # Validation PRD
+            # Validation PRD (P0: budget peut prévenir)
             if not guards.validate_qualif_motif(user_text):
-                session.state = "TRANSFERRED"
+                prev = self._maybe_prevent_transfer(session, channel, "qualif_motif_invalid", user_text)
+                if prev is not None:
+                    return prev
                 msg = self._say(session, "transfer")
                 if not msg:
                     msg = prompts.get_message("transfer", channel=channel)
-                    session.add_message("agent", msg)
-                    session.last_say_key, session.last_say_kwargs = "transfer", {}
-                return [Event("final", msg, conv_state=session.state)]
+                return self._trigger_transfer(session, channel, "qualif_motif_invalid", user_text=user_text, custom_msg=msg)
             
             # Motif valide et utile (spec V3 : reset compteur)
             session.qualif_data.motif = user_text.strip()
@@ -2207,14 +2285,15 @@ class Engine:
                             session.awaiting_confirmation = "CONFIRM_CONTACT"
                             return [Event("final", msg, conv_state=session.state)]
                         return self._propose_slots(session)
-                    # Email invalide → guidance 1er échec, transfert 2e
+                    # Email invalide → guidance 1er échec, transfert 2e (P0: budget peut prévenir)
                     session.contact_fails = getattr(session, "contact_fails", 0) + 1
                     if session.contact_fails >= 2:
-                        session.state = "TRANSFERRED"
                         log_ivr_event(logger, session, "contact_failed_transfer", reason="email_invalid_2")
+                        prev = self._maybe_prevent_transfer(session, channel, "contact_failed", contact_raw)
+                        if prev is not None:
+                            return prev
                         msg = self._say(session, "transfer") or prompts.get_message("transfer", channel=channel)
-                        session.add_message("agent", msg)
-                        return [Event("final", msg, conv_state=session.state)]
+                        return self._trigger_transfer(session, channel, "contact_failed", user_text=contact_raw, custom_msg=msg)
                     msg = prompts.MSG_CONTACT_EMAIL_GUIDANCE_1
                     log_ivr_event(logger, session, "contact_failed_1", reason="email_invalid")
                     session.add_message("agent", msg)
@@ -2225,14 +2304,15 @@ class Engine:
                 digits, conf, is_partial = contact_parser.extract_phone_digits_vocal(contact_raw)
                 new_digits = digits  # contact_parser inclut déjà l'accumulation logique
                 if not new_digits and not session.partial_phone_digits:
-                    # Aucun chiffre extrait : filler ou invalide
+                    # Aucun chiffre extrait : filler ou invalide (P0: budget peut prévenir)
                     session.contact_fails = getattr(session, "contact_fails", 0) + 1
                     if session.contact_fails >= 2:
-                        session.state = "TRANSFERRED"
                         log_ivr_event(logger, session, "contact_failed_transfer", reason="phone_empty_2")
+                        prev = self._maybe_prevent_transfer(session, channel, "contact_failed", contact_raw)
+                        if prev is not None:
+                            return prev
                         msg = self._say(session, "transfer") or prompts.get_message("transfer", channel=channel)
-                        session.add_message("agent", msg)
-                        return [Event("final", msg, conv_state=session.state)]
+                        return self._trigger_transfer(session, channel, "contact_failed", user_text=contact_raw, custom_msg=msg)
                     msg = prompts.MSG_CONTACT_PHONE_GUIDANCE_1 if session.contact_fails == 1 else prompts.get_clarification_message("phone", 1, contact_raw, channel=channel)
                     log_ivr_event(logger, session, "contact_failed_1", reason="phone_empty")
                     session.add_message("agent", msg)
@@ -2246,12 +2326,13 @@ class Engine:
                     if not ok_phone:
                         session.contact_fails = getattr(session, "contact_fails", 0) + 1
                         if session.contact_fails >= 2:
-                            session.state = "TRANSFERRED"
                             session.partial_phone_digits = ""
                             log_ivr_event(logger, session, "contact_failed_transfer", reason="phone_invalid_2")
+                            prev = self._maybe_prevent_transfer(session, channel, "contact_failed", contact_raw)
+                            if prev is not None:
+                                return prev
                             msg = self._say(session, "transfer") or prompts.get_message("transfer", channel=channel)
-                            session.add_message("agent", msg)
-                            return [Event("final", msg, conv_state=session.state)]
+                            return self._trigger_transfer(session, channel, "contact_failed", user_text=contact_raw, custom_msg=msg)
                         msg = prompts.MSG_CONTACT_PHONE_GUIDANCE_1 if session.contact_fails == 1 else prompts.get_clarification_message("phone", 1, contact_raw, channel=channel)
                         session.add_message("agent", msg)
                         return [Event("final", msg, conv_state=session.state)]
@@ -2270,12 +2351,13 @@ class Engine:
                 # Pas encore 10 chiffres → accumulation (6 tours max, pas contact_fails)
                 session.contact_retry_count = getattr(session, "contact_retry_count", 0) + 1
                 if session.contact_retry_count >= 6:
-                    session.state = "TRANSFERRED"
                     session.partial_phone_digits = ""
                     log_ivr_event(logger, session, "contact_failed_transfer", reason="phone_partial_6")
+                    prev = self._maybe_prevent_transfer(session, channel, "contact_failed", contact_raw)
+                    if prev is not None:
+                        return prev
                     msg = self._say(session, "transfer") or prompts.get_message("transfer", channel=channel)
-                    session.add_message("agent", msg)
-                    return [Event("final", msg, conv_state=session.state)]
+                    return self._trigger_transfer(session, channel, "contact_failed", user_text=contact_raw, custom_msg=msg)
                 msg = "Oui, continuez." if len(total_digits) > 0 else "J'écoute."
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
@@ -2903,15 +2985,15 @@ class Engine:
             )
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
-        # 2e échec → transfert
+        # 2e échec → transfert (P0: budget peut prévenir)
         session.is_reading_slots = False
-        session.state = "TRANSFERRED"
+        prev = self._maybe_prevent_transfer(session, channel, "slot_choice_fails", user_text)
+        if prev is not None:
+            return prev
         msg = self._say(session, "transfer")
         if not msg:
             msg = prompts.get_message("transfer", channel=channel)
-            session.add_message("agent", msg)
-            session.last_say_key, session.last_say_kwargs = "transfer", {}
-        return [Event("final", msg, conv_state=session.state)]
+        return self._trigger_transfer(session, channel, "slot_choice_fails", user_text=user_text, custom_msg=msg)
     
     # ========================
     # FLOW C: CANCEL
@@ -3623,13 +3705,14 @@ class Engine:
         )
         log_ivr_event(logger, session, "intent_router_trigger", reason=reason)
         channel = getattr(session, "channel", "web")
-        # P1.7 — Anti-boucle : >= 2 visites au router → transfert direct
+        # P1.7 — Anti-boucle : >= 2 visites au router → transfert (P0: budget peut prévenir)
         session.intent_router_visits = getattr(session, "intent_router_visits", 0) + 1
         if session.intent_router_visits >= 2:
-            session.state = "TRANSFERRED"
+            prev = self._maybe_prevent_transfer(session, channel, "intent_router_loop", user_message)
+            if prev is not None:
+                return prev
             msg = getattr(prompts, "VOCAL_INTENT_ROUTER_LOOP", prompts.VOCAL_STILL_UNCLEAR) if channel == "vocal" else prompts.MSG_TRANSFER
-            session.add_message("agent", msg)
-            return [Event("final", msg, conv_state=session.state)]
+            return self._trigger_transfer(session, channel, "intent_router_loop", user_text=user_message, custom_msg=msg)
         session.state = "INTENT_ROUTER"
         session.intent_router_unclear_count = 0
         session.last_question_asked = None
@@ -3691,14 +3774,17 @@ class Engine:
         channel = getattr(session, "channel", "web")
         choice = intent_parser.parse_router_choice(user_text or "")
         
-        # Ambiguïté (hein, de seul) => retry puis transfert après 2
+        # Ambiguïté (hein, de seul) => retry puis transfert après 2 (P0: budget peut prévenir)
         if choice is None:
             session.intent_router_unclear_count = getattr(session, "intent_router_unclear_count", 0) + 1
             if session.intent_router_unclear_count >= 2:
-                session.state = "TRANSFERRED"
-                msg = prompts.VOCAL_STILL_UNCLEAR if channel == "vocal" else prompts.MSG_TRANSFER
-                session.add_message("agent", msg)
-                return [Event("final", msg, conv_state=session.state)]
+                prev = self._maybe_prevent_transfer(session, channel, "intent_router_unclear", user_text)
+                if prev is not None:
+                    return prev
+                return self._trigger_transfer(
+                    session, channel, "intent_router_unclear", user_text=user_text,
+                    custom_msg=prompts.VOCAL_STILL_UNCLEAR if channel == "vocal" else prompts.MSG_TRANSFER,
+                )
             msg = getattr(prompts, "MSG_INTENT_ROUTER_RETRY", "Pouvez-vous répéter ?")
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
@@ -3728,13 +3814,16 @@ class Engine:
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
         
-        # Incompréhension (ne devrait pas arriver si parse_router_choice couvre 1-4)
+        # Incompréhension (ne devrait pas arriver si parse_router_choice couvre 1-4) — P0: budget peut prévenir
         session.intent_router_unclear_count = getattr(session, "intent_router_unclear_count", 0) + 1
         if session.intent_router_unclear_count >= 2:
-            session.state = "TRANSFERRED"
-            msg = prompts.VOCAL_STILL_UNCLEAR if channel == "vocal" else prompts.MSG_TRANSFER
-            session.add_message("agent", msg)
-            return [Event("final", msg, conv_state=session.state)]
+            prev = self._maybe_prevent_transfer(session, channel, "intent_router_unclear", user_text)
+            if prev is not None:
+                return prev
+            return self._trigger_transfer(
+                session, channel, "intent_router_unclear", user_text=user_text,
+                custom_msg=prompts.VOCAL_STILL_UNCLEAR if channel == "vocal" else prompts.MSG_TRANSFER,
+            )
         msg = getattr(prompts, "MSG_INTENT_ROUTER_RETRY", "Pouvez-vous répéter ?")
         session.add_message("agent", msg)
         return [Event("final", msg, conv_state=session.state)]
