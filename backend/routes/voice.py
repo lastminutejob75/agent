@@ -124,6 +124,17 @@ def _reconstruct_session_from_history(session, messages: list, call_id: str = ""
                     if potential_contact:
                         session.qualif_data.contact = potential_contact
                         logger.debug("reconstruct contact: %r", potential_contact)
+
+            # Extraire le choix de créneau (1/2/3) après proposition de slots
+            if any(p in content for p in patterns["WAIT_CONFIRM"]):
+                if i + 1 < len(messages) and messages[i + 1].get("role") == "user":
+                    choice_text = (messages[i + 1].get("content", "") or "").strip().lower()
+                    choice_map = {"un": 1, "1": 1, "une": 1, "deux": 2, "2": 2, "trois": 3, "3": 3}
+                    for k, v in choice_map.items():
+                        if k in choice_text or choice_text == k:
+                            session.pending_slot_choice = v
+                            logger.debug("reconstruct pending_slot_choice: %r -> %s", choice_text, v)
+                            break
     
     # Déterminer l'état ACTUEL basé sur le dernier message assistant
     last_assistant_msg = ""
@@ -144,6 +155,20 @@ def _reconstruct_session_from_history(session, messages: list, call_id: str = ""
         logger.debug("reconstruct state: %s", detected_state)
         if detected_state == "WAIT_CONFIRM":
             logger.debug("reconstruct WAIT_CONFIRM - slots will be re-fetched on next handler call")
+        # P0: CONTACT_CONFIRM sans slots → re-fetch pour éviter "problème technique"
+        if detected_state == "CONTACT_CONFIRM" and session.pending_slot_choice and not (getattr(session, "pending_slots_display", None) or []):
+            try:
+                from backend import tools_booking
+                from backend.calendar_adapter import get_calendar_adapter
+                fresh_slots = tools_booking.get_slots_for_display(limit=3, pref=getattr(session.qualif_data, "pref", None), session=session)
+                if fresh_slots:
+                    adapter = get_calendar_adapter(session)
+                    source = "google" if (adapter and adapter.can_propose_slots()) else "sqlite"
+                    session.pending_slots_display = tools_booking.serialize_slots_for_session(fresh_slots, source)
+                    session.pending_slots = fresh_slots
+                    logger.info("[RECONSTRUCT_SLOTS] conv_id=%s re-fetched %s slots for CONTACT_CONFIRM", call_id or getattr(session, "conv_id", ""), len(fresh_slots))
+            except Exception as e:
+                logger.warning("[RECONSTRUCT_SLOTS] failed: %s", e)
     else:
         logger.warning("reconstruct could not detect state from last assistant msg")
     logger.debug("reconstruct complete: state=%s name=%s pref=%s", session.state, session.qualif_data.name, session.qualif_data.pref)

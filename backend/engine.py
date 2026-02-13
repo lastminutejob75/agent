@@ -3553,7 +3553,30 @@ class Engine:
             # Si on a déjà un slot choisi (nouveau flow) → booker et confirmer
             if session.pending_slot_choice is not None:
                 slot_idx = session.pending_slot_choice
-                pending_display_len = len(getattr(session, "pending_slots_display", None) or [])
+                pending_display = getattr(session, "pending_slots_display", None) or []
+                pending_display_len = len(pending_display)
+                # P0: slots vides (session perdue/reconstruite) → re-fetch avant booking
+                if not pending_display and slot_idx and 1 <= slot_idx <= 3:
+                    try:
+                        fresh_slots = tools_booking.get_slots_for_display(
+                            limit=3,
+                            pref=getattr(session.qualif_data, "pref", None),
+                            session=session,
+                        )
+                        if fresh_slots:
+                            from backend.calendar_adapter import get_calendar_adapter
+                            adapter = get_calendar_adapter(session)
+                            source = "google" if (adapter and adapter.can_propose_slots()) else "sqlite"
+                            session.pending_slots_display = tools_booking.serialize_slots_for_session(fresh_slots, source)
+                            session.pending_slots = fresh_slots
+                            pending_display_len = len(session.pending_slots_display)
+                            logger.info(
+                                "[BOOKING_PREFETCH] conv_id=%s re-fetched %s slots before booking",
+                                session.conv_id,
+                                pending_display_len,
+                            )
+                    except Exception as e:
+                        logger.warning("[BOOKING_PREFETCH] failed: %s", e)
                 logger.info(
                     "[BOOKING_ATTEMPT] conv_id=%s slot_idx=%s pending_slots_display_len=%s",
                     session.conv_id,

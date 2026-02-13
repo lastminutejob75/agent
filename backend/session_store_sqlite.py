@@ -16,6 +16,17 @@ from backend.session import Session, QualifData
 from backend import config
 
 
+def _slot_start_to_iso(val) -> str:
+    """Convertit start (datetime ou str) en ISO pour JSON."""
+    if val is None:
+        return ""
+    if isinstance(val, str):
+        return val
+    if hasattr(val, "isoformat"):
+        return val.isoformat()
+    return str(val)
+
+
 class SQLiteSessionStore:
     """
     Session store persistant utilisant SQLite.
@@ -125,11 +136,14 @@ class SQLiteSessionStore:
             "partial_phone_digits": session.partial_phone_digits,
             
             # Pending data (JSON) - inclure source pour booking (google vs sqlite/pg)
+            # start: toujours ISO string (évite json.dumps(datetime) qui échoue)
             "pending_slots_json": json.dumps([
                 {
                     "idx": s.idx, "label": s.label, "slot_id": s.slot_id,
-                    "start": getattr(s, "start", ""), "day": getattr(s, "day", ""),
-                    "hour": getattr(s, "hour", 0), "label_vocal": getattr(s, "label_vocal", ""),
+                    "start": _slot_start_to_iso(getattr(s, "start", None)),
+                    "day": getattr(s, "day", ""),
+                    "hour": getattr(s, "hour", 0),
+                    "label_vocal": getattr(s, "label_vocal", ""),
                     "source": getattr(s, "source", "sqlite"),
                 }
                 for s in session.pending_slots
@@ -159,9 +173,8 @@ class SQLiteSessionStore:
             session_pickle = row[22] if len(row) > 22 else None
             if session_pickle:
                 session = pickle.loads(base64.b64decode(session_pickle))
-                # Mettre à jour depuis le cache mémoire si disponible
-                if session.conv_id in self._memory_cache:
-                    return self._memory_cache[session.conv_id]
+                # P0: Ne jamais préférer le cache au pickle DB — la DB est la source de vérité
+                # (évite session stale sans pending_slots_display → "problème technique")
                 return session
         except Exception as e:
             print(f"⚠️ Could not unpickle session: {e}")
