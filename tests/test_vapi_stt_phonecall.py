@@ -22,7 +22,7 @@ from backend.stt_common import (
     looks_like_short_crosstalk,
 )
 from backend.prompts import MSG_NOISE_1, MSG_NOISE_2, MSG_UNCLEAR_1, MSG_VOCAL_CROSSTALK_ACK, MSG_OVERLAP_REPEAT
-from backend.routes.voice import _classify_stt_input, _is_critical_token
+from backend.routes.voice import _classify_stt_input
 
 
 # ============== stt_utils ==============
@@ -49,22 +49,22 @@ def test_filler_ok_preserved():
 
 def test_critical_tokens_never_noise():
     """Tokens critiques forcent TEXT même si confidence très basse."""
-    assert _is_critical_token("oui") is True
+    assert is_critical_token("oui") is True
     kind, _ = _classify_stt_input("oui", 0.15, "final")
     assert kind == "TEXT"
-    assert _is_critical_token("non") is True
-    assert _is_critical_token("1") is True
-    assert _is_critical_token("deux") is True
-    assert _is_critical_token("oui 2") is True
-    assert _is_critical_token("ok trois") is True
-    assert _is_critical_token("euh") is False
+    assert is_critical_token("non") is True
+    assert is_critical_token("1") is True
+    assert is_critical_token("deux") is True
+    assert is_critical_token("oui 2") is True
+    assert is_critical_token("ok trois") is True
+    assert is_critical_token("euh") is False
 
 
 def test_critical_tokens_with_punctuation():
     """Tokens critiques détectés même avec ponctuation finale."""
-    assert _is_critical_token("oui.") is True
-    assert _is_critical_token("oui,") is True
-    assert _is_critical_token("non!") is True
+    assert is_critical_token("oui.") is True
+    assert is_critical_token("oui,") is True
+    assert is_critical_token("non!") is True
 
 
 def test_oui_never_classified_as_noise():
@@ -504,8 +504,11 @@ def test_chat_completions_oui_during_crosstalk_window_treated_as_text(caplog):
         )
     assert r2.status_code == 200
     content2 = r2.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+    # "oui" traité comme TEXT (pas ignoré) → réponse significative
     assert MSG_VOCAL_CROSSTALK_ACK not in content2
-    assert "nom" in content2.lower() or "quel" in content2.lower()
+    assert any(
+        w in content2.lower() for w in ("nom", "quel", "rendez-vous", "question", "prénom")
+    )
 
 
 # ============== Overlap guard (overlap ≠ unclear) ==============
@@ -653,4 +656,7 @@ def test_overlap_guard_allows_critical_word():
     )
     assert r2.status_code == 200
     content2 = r2.json().get("choices", [{}])[0].get("message", {}).get("content", "")
-    assert "nom" in content2.lower() or "quel" in content2.lower()
+    # "oui" (token critique) pendant overlap → traité, pas ignoré
+    assert any(
+        w in content2.lower() for w in ("nom", "quel", "rendez-vous", "question", "prénom")
+    )

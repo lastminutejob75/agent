@@ -3464,6 +3464,13 @@ class Engine:
                 if not success:
                     # technical / permission → message technique + transfert (pas "créneau pris")
                     if reason in ("technical", "permission"):
+                        logger.warning(
+                            "[BOOKING_TECHNICAL] conv_id=%s reason=%s pending_display_len=%s pending_slots_len=%s",
+                            session.conv_id,
+                            reason,
+                            len(getattr(session, "pending_slots_display", None) or []),
+                            len(getattr(session, "pending_slots", None) or []),
+                        )
                         session.state = "TRANSFERRED"
                         msg = prompts.MSG_BOOKING_TECHNICAL
                         session.add_message("agent", msg)

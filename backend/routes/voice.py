@@ -19,7 +19,12 @@ from backend.client_memory import get_client_memory
 from backend.conversational_engine import ConversationalEngine, _is_canary
 from backend.reports import get_report_generator
 from backend.stt_utils import normalize_transcript, is_filler_only
-from backend.stt_common import classify_text_only, estimate_tts_duration, is_critical_overlap
+from backend.stt_common import (
+    classify_text_only,
+    estimate_tts_duration,
+    is_critical_overlap,
+    is_critical_token,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -48,15 +53,27 @@ def _get_engine(call_id: str):
     return ENGINE
 
 
-def _reconstruct_session_from_history(session, messages: list):
+def _reconstruct_session_from_history(session, messages: list, call_id: str = ""):
     """
     Reconstruit l'état de la session depuis l'historique des messages.
     Nécessaire si la session en mémoire a été perdue (redémarrage Railway).
     
     STRATÉGIE: Extraire TOUTES les données depuis l'historique
+    Traçabilité: log WARN, ivr_event session_reconstruct_used
     """
     from backend.guards import clean_name_from_vocal
-    
+    from backend.engine import _persist_ivr_event
+
+    logger.warning(
+        "[SESSION_RECONSTRUCT] conv_id=%s reason=session_lost messages=%s",
+        call_id or getattr(session, "conv_id", ""),
+        len(messages),
+    )
+    try:
+        _persist_ivr_event(session, "session_reconstruct_used", reason="session_lost")
+    except Exception:
+        pass
+
     # Patterns pour détecter l'état
     patterns = {
         "QUALIF_NAME": ["c'est à quel nom", "quel nom", "votre nom"],
@@ -74,8 +91,6 @@ def _reconstruct_session_from_history(session, messages: list):
         ],
     }
     
-    print(f"🔄 Reconstructing session from {len(messages)} messages")
-    
     # Parcourir TOUS les messages pour extraire les données
     for i, msg in enumerate(messages):
         if msg.get("role") == "assistant":
@@ -92,7 +107,7 @@ def _reconstruct_session_from_history(session, messages: list):
                         cleaned_name = clean_name_from_vocal(potential_name)
                         if len(cleaned_name) >= 2:
                             session.qualif_data.name = cleaned_name
-                            print(f"🔄 Name: '{potential_name}' → '{cleaned_name}'")
+                            logger.debug("reconstruct name: %r -> %r", potential_name, cleaned_name)
             
             # Extraire la préférence
             if any(p in content for p in patterns["QUALIF_PREF"]):
@@ -100,7 +115,7 @@ def _reconstruct_session_from_history(session, messages: list):
                     potential_pref = messages[i + 1].get("content", "").strip()
                     if potential_pref and len(potential_pref) <= 50:
                         session.qualif_data.pref = potential_pref
-                        print(f"🔄 Pref: {potential_pref}")
+                        logger.debug("reconstruct pref: %r", potential_pref)
             
             # Extraire le contact
             if any(p in content for p in patterns["QUALIF_CONTACT"]):
@@ -108,7 +123,7 @@ def _reconstruct_session_from_history(session, messages: list):
                     potential_contact = messages[i + 1].get("content", "").strip()
                     if potential_contact:
                         session.qualif_data.contact = potential_contact
-                        print(f"🔄 Contact: {potential_contact}")
+                        logger.debug("reconstruct contact: %r", potential_contact)
     
     # Déterminer l'état ACTUEL basé sur le dernier message assistant
     last_assistant_msg = ""
@@ -126,15 +141,12 @@ def _reconstruct_session_from_history(session, messages: list):
     # Si état détecté
     if detected_state:
         session.state = detected_state
-        print(f"🔄 State: {detected_state} (from: '{last_assistant_msg[:60]}...')")
-        
-        # Si WAIT_CONFIRM → on doit reproposer les créneaux (on ne peut pas les reconstruire)
+        logger.debug("reconstruct state: %s", detected_state)
         if detected_state == "WAIT_CONFIRM":
-            print(f"⚠️ WAIT_CONFIRM detected - slots will be re-fetched on next handler call")
+            logger.debug("reconstruct WAIT_CONFIRM - slots will be re-fetched on next handler call")
     else:
-        print(f"⚠️ Could not detect state from: '{last_assistant_msg[:60]}...'")
-    
-    print(f"🔄 Reconstruction complete: state={session.state}, name={session.qualif_data.name}, pref={session.qualif_data.pref}")
+        logger.warning("reconstruct could not detect state from last assistant msg")
+    logger.debug("reconstruct complete: state=%s name=%s pref=%s", session.state, session.qualif_data.name, session.qualif_data.pref)
     
     return session
 
@@ -143,7 +155,7 @@ def log_timer(label: str, start: float) -> float:
     """Log le temps écoulé et retourne le nouveau timestamp."""
     now = time.time()
     elapsed_ms = (now - start) * 1000
-    print(f"⏱️ {label}: {elapsed_ms:.0f}ms")
+    logger.debug("%s: %.0fms", label, elapsed_ms)
     return now
 
 
@@ -251,37 +263,6 @@ def _maybe_reset_noise_on_terminal(session, events) -> None:
         session.unclear_text_count = 0
 
 
-# Tokens critiques : jamais NOISE même si confidence basse (confirmations, choix créneaux)
-CRITICAL_TOKENS = frozenset({
-    "oui", "non", "ok", "okay", "daccord", "d'accord",
-    "1", "2", "3", "un", "deux", "trois",
-    "premier", "deuxième", "troisième", "premiere", "deuxieme", "troisieme",
-    "ouais", "ouaip",
-    "le premier", "le deuxième", "le troisième",
-    "la première", "la deuxième", "la troisième",
-})
-
-
-def _is_critical_token(text: str) -> bool:
-    """
-    Vérifie si le texte est un token critique (jamais classé NOISE).
-    """
-    if not text:
-        return False
-    t = text.strip().lower()
-    t = re.sub(r"['']", "", t)  # d'accord → daccord
-    t = "".join(ch for ch in t if ch.isalnum() or ch.isspace()).strip()
-    if not t:
-        return False
-    if t in CRITICAL_TOKENS:
-        return True
-    parts = t.split()
-    if len(parts) == 2:
-        if parts[0] in {"oui", "ok", "non"} and parts[1] in {"1", "2", "3", "un", "deux", "trois"}:
-            return True
-    return False
-
-
 def _classify_stt_input(
     raw_text: str,
     confidence: Optional[float],
@@ -298,7 +279,7 @@ def _classify_stt_input(
     normalized = normalize_transcript(raw_text)
 
     # Whitelist : tokens critiques = TEXT même si confidence très basse
-    if _is_critical_token(normalized):
+    if is_critical_token(normalized):
         return "TEXT", normalized
 
     # Transcript vide
@@ -360,11 +341,11 @@ async def vapi_webhook(request: Request):
             confidence = None
         call_id = (payload.get("call") or {}).get("id") or "unknown"
 
-        print(f"🔔 WEBHOOK | type={message_type} | transcriptType={transcript_type} | call={call_id}")
+        logger.debug("webhook type=%s transcriptType=%s call_id=%s", message_type, transcript_type, call_id)
 
         if message_type == "assistant-request":
-            print("✅ Returning {} for assistant-request")
-            return {}
+            logger.info("[VAPI] assistant-request -> 204 no content")
+            return Response(status_code=204)
 
         # DID → tenant_id (avant tout event)
         from backend.tenant_routing import (
@@ -386,7 +367,7 @@ async def vapi_webhook(request: Request):
 
         # Partial => HTTP 204 No Content (vrai no-op, pas de tour)
         if transcript_type == "partial":
-            print("⏭️ Partial transcript, skipping")
+            logger.debug("partial transcript, skipping")
             _norm_len = len(normalize_transcript(raw_text or ""))
             logger.info(
                 "decision_in",
@@ -433,6 +414,8 @@ async def vapi_webhook(request: Request):
             if not events:
                 _log_decision_out(call_id, session, "http_204", "")
                 return Response(status_code=204)
+            if hasattr(ENGINE.session_store, "save"):
+                ENGINE.session_store.save(session)
             total_ms = (time.time() - t_start) * 1000
             logger.info(
                 "stt_noise_detected",
@@ -460,6 +443,8 @@ async def vapi_webhook(request: Request):
         if kind == "SILENCE":
             events = _get_engine(call_id).handle_message(call_id, "")
             _maybe_reset_noise_on_terminal(session, events)
+            if hasattr(ENGINE.session_store, "save"):
+                ENGINE.session_store.save(session)
             response_text = events[0].text if events else "Je n'ai pas compris"
             _action = "reply"
             if "INTENT_ROUTER" in getattr(session, "state", ""):
@@ -488,6 +473,8 @@ async def vapi_webhook(request: Request):
             t3 = log_timer("Session loaded", t2)
             events = _get_engine(call_id).handle_message(call_id, text_to_use)
             _maybe_reset_noise_on_terminal(session, events)
+            if hasattr(ENGINE.session_store, "save"):
+                ENGINE.session_store.save(session)
             t4 = log_timer("ENGINE processed", t3)
             response_text = events[0].text if events else "Je n'ai pas compris"
             _action = "reply"
@@ -653,14 +640,16 @@ async def vapi_custom_llm(request: Request):
                 break
 
         t2 = log_timer("Message extracted", t1)
-        print(f"💬 User: '{user_message}'")
+        logger.debug("user message: %r", (user_message or "")[:80])
         
         if not user_message:
             # Premier message ou pas de message user
             response_text = prompts.get_vocal_greeting(config.BUSINESS_NAME)
-            print(f"✅ Welcome message")
         else:
             # Traiter via ENGINE
+            overlap_handled = False
+            response_text = ""
+            action_taken = ""
             session = ENGINE.session_store.get_or_create(call_id)
             session.channel = "vocal"
             session.tenant_id = resolved_tenant_id
@@ -672,12 +661,22 @@ async def vapi_custom_llm(request: Request):
             # 🔄 RECONSTRUCTION DE L'ÉTAT depuis l'historique des messages
             # NOTE: Avec SQLite, cette reconstruction ne devrait plus être nécessaire
             # On la garde en fallback si SQLite échoue
-            if session.state == "START" and len(messages) > 1 and not session.qualif_data.name:
-                print(f"⚠️ Session in START with history but no data → reconstruction needed")
-                session = _reconstruct_session_from_history(session, messages)
-                print(f"🔄 Session reconstructed: state={session.state}, name={session.qualif_data.name}")
+            # Guard: si on VA reconstruire ET qu'on a déjà reconstruit 1 fois → transfert (évite boucle)
+            needs_reconstruct = session.state == "START" and len(messages) > 1 and not session.qualif_data.name
+            reconstruct_count = getattr(session, "reconstruct_count", 0)
+            if needs_reconstruct and reconstruct_count >= 1:
+                logger.warning("[SESSION_RECONSTRUCT] conv_id=%s reconstruct_count=%s -> transfer", call_id, reconstruct_count)
+                session.state = "TRANSFERRED"
+                response_text = prompts.VOCAL_TRANSFER_COMPLEX
+                session.add_message("agent", response_text)
+                action_taken = "reconstruct_loop_guard"
+                overlap_handled = True  # skip engine processing
+            elif needs_reconstruct:
+                logger.debug("session in START with history but no data -> reconstruction")
+                session = _reconstruct_session_from_history(session, messages, call_id=call_id)
+                session.reconstruct_count = 1
             else:
-                print(f"✅ Session loaded OK: state={session.state}, name={session.qualif_data.name}")
+                logger.debug("session loaded OK: state=%s name=%s", session.state, session.qualif_data.name)
             
             t3 = log_timer("Session loaded", t2)
             
@@ -690,9 +689,9 @@ async def vapi_custom_llm(request: Request):
                         if existing_client.total_bookings > 0:
                             greeting = client_memory.get_personalized_greeting(existing_client, channel="vocal")
                             if greeting:
-                                print(f"🧠 Returning client detected: {existing_client.name}")
+                                logger.debug("returning client detected: %s", existing_client.name)
                 except Exception as e:
-                    print(f"⚠️ Client memory error: {e}")
+                    logger.debug("client memory error: %s", e)
             
             # Input firewall (text-only) : SILENCE / UNCLEAR / TEXT — avant tout traitement
             kind, normalized = classify_text_only(user_message or "")
@@ -718,37 +717,38 @@ async def vapi_custom_llm(request: Request):
             )
 
             # Semi-sourd : overlap guard (UNCLEAR/SILENCE pendant TTS = ignoré ; mots critiques passent)
-            overlap_handled = False
-            response_text = ""
-            action_taken = ""
-            if _is_agent_speaking(session):
-                # Interruption pendant énonciation des créneaux (WAIT_CONFIRM) : "un", "1", "deux" = choix valide → ne pas bloquer
-                if session.state == "WAIT_CONFIRM" and _is_critical_token(normalized):
-                    overlap_handled = False
-                elif is_critical_overlap(user_message or ""):
-                    logger.info(
-                        "critical_overlap_allowed",
-                        extra={"call_id": call_id, "text_len": len((user_message or "")[:20])},
-                    )
-                elif kind in ("UNCLEAR", "SILENCE"):
-                    response_text = prompts.MSG_VOCAL_CROSSTALK_ACK
-                    action_taken = "overlap_ignored"
-                    overlap_handled = True
-                    logger.info(
-                        "overlap_ignored",
-                        extra={"call_id": call_id, "classification": kind, "reason": "agent_speaking"},
-                    )
-                elif kind == "TEXT" and len((user_message or "").strip()) < 10:
-                    response_text = getattr(
-                        prompts, "MSG_OVERLAP_REPEAT_SHORT", "Pardon, pouvez-vous répéter ?"
-                    )
-                    session.add_message("agent", response_text)
-                    action_taken = "overlap_repeat"
-                    overlap_handled = True
-                    logger.info(
-                        "overlap_repeat",
-                        extra={"call_id": call_id, "text_len": len((user_message or "").strip())},
-                    )
+            if action_taken != "reconstruct_loop_guard":
+                overlap_handled = False
+                response_text = ""
+                action_taken = ""
+                if _is_agent_speaking(session):
+                    # Interruption pendant énonciation des créneaux (WAIT_CONFIRM) : "un", "1", "deux" = choix valide
+                    if session.state == "WAIT_CONFIRM" and is_critical_token(normalized):
+                        overlap_handled = False
+                    elif is_critical_overlap(user_message or ""):
+                        logger.info(
+                            "critical_overlap_allowed",
+                            extra={"call_id": call_id, "text_len": len((user_message or "")[:20])},
+                        )
+                    elif kind in ("UNCLEAR", "SILENCE"):
+                        response_text = prompts.MSG_VOCAL_CROSSTALK_ACK
+                        action_taken = "overlap_ignored"
+                        overlap_handled = True
+                        logger.info(
+                            "overlap_ignored",
+                            extra={"call_id": call_id, "classification": kind, "reason": "agent_speaking"},
+                        )
+                    elif kind == "TEXT" and len((user_message or "").strip()) < 10:
+                        response_text = getattr(
+                            prompts, "MSG_OVERLAP_REPEAT_SHORT", "Pardon, pouvez-vous répéter ?"
+                        )
+                        session.add_message("agent", response_text)
+                        action_taken = "overlap_repeat"
+                        overlap_handled = True
+                        logger.info(
+                            "overlap_repeat",
+                            extra={"call_id": call_id, "text_len": len((user_message or "").strip())},
+                        )
 
             # En annulation : si on va chercher le RDV par nom, envoyer d'abord un message de tenue
             # en stream pour éviter le "mmm" TTS pendant la latence (recherche Google Calendar).

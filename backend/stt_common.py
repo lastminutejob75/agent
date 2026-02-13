@@ -11,7 +11,8 @@ from typing import Literal, Tuple
 
 from backend.stt_utils import normalize_transcript, is_filler_only
 
-# Tokens critiques : jamais UNCLEAR (oui/non/ok, 1/2/3, variantes)
+# Tokens critiques : jamais UNCLEAR/NOISE (oui/non/ok, 1/2/3, variantes)
+# Source unique de vérité pour webhook + chat/completions
 CRITICAL_TOKENS = frozenset({
     "oui", "non", "ok", "okay", "daccord", "d'accord",
     "1", "2", "3", "un", "deux", "trois",
@@ -19,6 +20,7 @@ CRITICAL_TOKENS = frozenset({
     "ouais", "ouaip",
     "le premier", "le deuxième", "le troisième",
     "la première", "la deuxième", "la troisième",
+    "confirme", "je confirme", "oui je confirme",  # Réponse à "Vous confirmez ?"
 })
 
 # Mots anglais fréquents (STT en anglais = garbage pour nous)
@@ -34,7 +36,10 @@ ENGLISH_STOPWORDS = frozenset({
 
 
 def is_critical_token(text: str) -> bool:
-    """Vrai si le texte est un token critique (jamais classé UNCLEAR)."""
+    """
+    Vrai si le texte est un token critique (jamais classé UNCLEAR/NOISE).
+    Utilisé par webhook (_classify_stt_input) et chat/completions (overlap).
+    """
     if not text:
         return False
     t = text.strip().lower()
@@ -42,7 +47,7 @@ def is_critical_token(text: str) -> bool:
     t = "".join(ch for ch in t if ch.isalnum() or ch.isspace()).strip()
     if not t:
         return False
-    if t in CRITICAL_TOKENS:
+    if t in CRITICAL_TOKENS or t in CRITICAL_OVERLAP:
         return True
     parts = t.split()
     if len(parts) == 2:
@@ -101,6 +106,7 @@ CRITICAL_OVERLAP = frozenset({
     "humain", "personne", "quelqu'un", "quelquun",
     "annuler", "annulation",
     "transfert", "transférer", "transfere",
+    "confirme", "je confirme", "oui je confirme",  # Réponse à "Vous confirmez ?" pendant overlap
 })
 
 
