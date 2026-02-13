@@ -388,6 +388,15 @@ VOCAL_SAFE_DEFAULT_MENU_1 = (
 VOCAL_SAFE_DEFAULT_MENU_2 = (
     "Dites : rendez-vous, question, annuler, modifier, ou humain."
 )
+# P0.6 — Menu contextuel (récupération dans le flow, pas reset global)
+VOCAL_SAFE_RECOVERY_WAIT_CONFIRM_123 = "Dites un, deux ou trois."
+VOCAL_SAFE_RECOVERY_WAIT_CONFIRM_YESNO = "Dites oui ou non, s'il vous plaît."
+VOCAL_SAFE_RECOVERY_QUALIF_CONTACT = "Plutôt téléphone ou email ?"
+VOCAL_SAFE_RECOVERY_CONTACT_CONFIRM = "Dites oui ou non, s'il vous plaît."
+MSG_SAFE_RECOVERY_WAIT_CONFIRM_123 = "Dites un, deux ou trois."
+MSG_SAFE_RECOVERY_WAIT_CONFIRM_YESNO = "Dites oui ou non, s'il vous plaît."
+MSG_SAFE_RECOVERY_QUALIF_CONTACT = "Préférez-vous le téléphone ou l'email ?"
+MSG_SAFE_RECOVERY_CONTACT_CONFIRM = "Dites oui ou non, s'il vous plaît."
 MSG_SAFE_DEFAULT_MENU_1_WEB = (
     "Je peux vous aider à prendre un rendez-vous, répondre à une question, annuler ou modifier un rendez-vous. Que souhaitez-vous ?"
 )

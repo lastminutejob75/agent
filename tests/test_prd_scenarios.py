@@ -60,9 +60,13 @@ def test_booking_confirm_oui_deux():
     engine.handle_message(conv, "jean@example.com")
     e = engine.handle_message(conv, "oui")
     assert e[0].type == "final"
-    assert e[0].conv_state in ("CONFIRMED", "TRANSFERRED")
+    # P0.6 : budget peut prévenir → WAIT_CONFIRM avec menu contextuel (user peut retry)
+    assert e[0].conv_state in ("CONFIRMED", "TRANSFERRED", "WAIT_CONFIRM")
     if e[0].conv_state == "CONFIRMED":
         assert "confirmé" in e[0].text.lower()
+    elif e[0].conv_state == "WAIT_CONFIRM":
+        # Menu contextuel P0.6 (Dites un, deux ou trois)
+        assert "un" in e[0].text.lower() and "deux" in e[0].text.lower()
 
 
 def test_booking_confirm_invalid_twice():

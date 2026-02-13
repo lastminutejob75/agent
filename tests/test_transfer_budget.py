@@ -7,8 +7,6 @@ Tests P0 transfer budget : réduction des transferts techniques.
 from __future__ import annotations
 
 import uuid
-import pytest
-from unittest.mock import patch
 
 from backend.engine import Engine, create_engine
 from backend.session import SessionStore
@@ -109,3 +107,40 @@ def test_abandon_strict_does_not_trigger_on_cest_bon():
     # Vrais abandons
     assert detect_strong_intent("au revoir") == Intent.ABANDON
     assert detect_strong_intent("laisse tomber") == Intent.ABANDON
+
+
+def test_contextual_menu_in_wait_confirm():
+    """P0.6 — En WAIT_CONFIRM, _maybe_prevent_transfer renvoie menu contextuel (1/2/3), pas menu global."""
+    store = SessionStore()
+    engine = Engine(session_store=store, faq_store=FaqStore(items=[]))
+    conv = f"conv_ctx_{uuid.uuid4().hex[:8]}"
+    session = store.get_or_create(conv)
+    session.channel = "vocal"
+    session.state = "WAIT_CONFIRM"
+    session.slot_proposal_sequential = False  # mode 1/2/3
+    session.transfer_budget_remaining = 1
+    engine._save_session(session)
+
+    prev = engine._maybe_prevent_transfer(session, "vocal", "slot_choice_fails", "nimportequoi")
+    assert prev is not None
+    assert prev[0].conv_state == "WAIT_CONFIRM"
+    assert "un" in prev[0].text.lower() and "deux" in prev[0].text.lower() and "trois" in prev[0].text.lower()
+    assert "rendez-vous" not in prev[0].text.lower()
+
+
+def test_contextual_menu_in_qualif_contact():
+    """P0.6 — En QUALIF_CONTACT, menu contextuel téléphone/email."""
+    store = SessionStore()
+    engine = Engine(session_store=store, faq_store=FaqStore(items=[]))
+    conv = f"conv_ctx2_{uuid.uuid4().hex[:8]}"
+    session = store.get_or_create(conv)
+    session.channel = "vocal"
+    session.state = "QUALIF_CONTACT"
+    session.transfer_budget_remaining = 1
+    engine._save_session(session)
+
+    prev = engine._maybe_prevent_transfer(session, "vocal", "contact_failed", "xxx")
+    assert prev is not None
+    assert prev[0].conv_state == "QUALIF_CONTACT"
+    assert "téléphone" in prev[0].text.lower() or "telephone" in prev[0].text.lower()
+    assert "email" in prev[0].text.lower()

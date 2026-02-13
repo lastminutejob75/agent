@@ -687,10 +687,17 @@ class Engine:
         return msg
 
     # P0 — Raisons techniques (budget s'applique) vs exemptées (transfert immédiat)
+    # P0.5bis : toutes les raisons passées à _trigger_intent_router (visits>=2 → budget)
     _TECHNICAL_REASONS = frozenset({
         "start_unclear", "no_faq", "out_of_scope", "faq_no_match", "llm_unclear",
-        "intent_router_loop", "intent_router_unclear", "slot_choice_fails", "contact_failed",
-        "phone_invalid", "phone_empty", "phone_partial", "contact_confirm_fails",
+        "start_unclear_3", "out_of_scope_2", "no_faq_3", "faq_no_match_2", "llm_unclear_3",
+        "intent_router_loop", "intent_router_unclear", "slot_choice_fails", "slot_choice_fails_3",
+        "contact_failed", "phone_invalid", "phone_empty", "phone_partial", "contact_confirm_fails",
+        "contact_confirm_fails_3", "noise_repeated", "anti_loop_25", "empty_repeated_3",
+        "yes_ambiguous_2", "yes_ambiguous_3", "booking_intent_repeat_3",
+        "name_fails_3", "preference_fails_3", "cancel_name_fails_3", "modify_name_fails_3",
+        "cancel_not_found_3", "modify_not_found_3", "cancel_confirm_unclear_3",
+        "time_constraint_impossible",
         "name_fails", "preference_fails", "cancel_name_fails", "modify_name_fails",
         "consent_fails", "qualif_motif_invalid", "unknown_state", "exception_fallback",
     })
@@ -745,7 +752,8 @@ class Engine:
         user_text: str,
     ) -> Optional[List[Event]]:
         """
-        Si reason technique et budget > 0 : consomme 1, envoie menu safe default, pas de transfert.
+        Si reason technique et budget > 0 : consomme 1, envoie menu (contextuel ou global), pas de transfert.
+        P0.6 : menu contextuel en WAIT_CONFIRM/QUALIF_CONTACT/CONTACT_CONFIRM → rester dans le flow.
         Retourne None si transfert doit avoir lieu (budget épuisé ou reason exemptée).
         """
         if reason not in self._TECHNICAL_REASONS:
@@ -756,20 +764,37 @@ class Engine:
         session.transfer_budget_remaining = budget - 1
         remaining = session.transfer_budget_remaining
         logger.info(
-            "[TRANSFER_BUDGET] conv_id=%s reason=%s remaining=%s",
+            "[TRANSFER_BUDGET] conv_id=%s reason=%s remaining=%s state=%s",
             session.conv_id,
             reason,
             remaining,
+            session.state,
         )
         ctx = json.dumps({"reason": reason, "remaining": remaining})
         _persist_ivr_event(session, "transfer_prevented", context=ctx, reason=reason)
         channel = getattr(session, "channel", "web")
-        if remaining == 1:
-            msg = prompts.VOCAL_SAFE_DEFAULT_MENU_1 if channel == "vocal" else prompts.MSG_SAFE_DEFAULT_MENU_1_WEB
+        # P0.6 — Menu contextuel : rester dans le flow, pas reset global
+        state = session.state
+        if state == "WAIT_CONFIRM":
+            if getattr(session, "slot_proposal_sequential", False):
+                msg = prompts.VOCAL_SAFE_RECOVERY_WAIT_CONFIRM_YESNO if channel == "vocal" else prompts.MSG_SAFE_RECOVERY_WAIT_CONFIRM_YESNO
+            else:
+                msg = prompts.VOCAL_SAFE_RECOVERY_WAIT_CONFIRM_123 if channel == "vocal" else prompts.MSG_SAFE_RECOVERY_WAIT_CONFIRM_123
+            # Rester en WAIT_CONFIRM pour que l'utilisateur puisse répondre 1/2/3 ou oui/non
+        elif state == "QUALIF_CONTACT":
+            msg = prompts.VOCAL_SAFE_RECOVERY_QUALIF_CONTACT if channel == "vocal" else prompts.MSG_SAFE_RECOVERY_QUALIF_CONTACT
+            # Rester en QUALIF_CONTACT
+        elif state == "CONTACT_CONFIRM":
+            msg = prompts.VOCAL_SAFE_RECOVERY_CONTACT_CONFIRM if channel == "vocal" else prompts.MSG_SAFE_RECOVERY_CONTACT_CONFIRM
+            # Rester en CONTACT_CONFIRM
         else:
-            msg = prompts.VOCAL_SAFE_DEFAULT_MENU_2 if channel == "vocal" else prompts.MSG_SAFE_DEFAULT_MENU_2_WEB
-        session.state = "INTENT_ROUTER"
-        session.intent_router_unclear_count = 0  # Redonner une chance de répondre au menu
+            # Menu global (START, INTENT_ROUTER, etc.)
+            if remaining == 1:
+                msg = prompts.VOCAL_SAFE_DEFAULT_MENU_1 if channel == "vocal" else prompts.MSG_SAFE_DEFAULT_MENU_1_WEB
+            else:
+                msg = prompts.VOCAL_SAFE_DEFAULT_MENU_2 if channel == "vocal" else prompts.MSG_SAFE_DEFAULT_MENU_2_WEB
+            session.state = "INTENT_ROUTER"
+            session.intent_router_unclear_count = 0
         session.add_message("agent", msg)
         self._save_session(session)
         return [Event("final", msg, conv_state=session.state)]
@@ -3706,13 +3731,14 @@ class Engine:
         log_ivr_event(logger, session, "intent_router_trigger", reason=reason)
         channel = getattr(session, "channel", "web")
         # P1.7 — Anti-boucle : >= 2 visites au router → transfert (P0: budget peut prévenir)
+        # P0.5bis : passer la raison réelle (out_of_scope_2, no_faq_3, etc.) pour analytics
         session.intent_router_visits = getattr(session, "intent_router_visits", 0) + 1
         if session.intent_router_visits >= 2:
-            prev = self._maybe_prevent_transfer(session, channel, "intent_router_loop", user_message)
+            prev = self._maybe_prevent_transfer(session, channel, reason, user_message)
             if prev is not None:
                 return prev
             msg = getattr(prompts, "VOCAL_INTENT_ROUTER_LOOP", prompts.VOCAL_STILL_UNCLEAR) if channel == "vocal" else prompts.MSG_TRANSFER
-            return self._trigger_transfer(session, channel, "intent_router_loop", user_text=user_message, custom_msg=msg)
+            return self._trigger_transfer(session, channel, reason, user_text=user_message, custom_msg=msg)
         session.state = "INTENT_ROUTER"
         session.intent_router_unclear_count = 0
         session.last_question_asked = None
