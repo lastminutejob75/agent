@@ -360,19 +360,27 @@ def _is_agent_speaking(session) -> bool:
     return now < until
 
 
-def _vapi_content_response(call_id: str, response_text: str, debug_trace: Optional[str] = None):
+def _vapi_content_response(
+    call_id: str,
+    response_text: str,
+    debug_trace: Optional[str] = None,
+    session=None,
+):
     """
     Réponse JSON explicite pour Vapi : strip/fallback, log [VAPI_OUT], Content-Type application/json.
+    Si session fourni : _debug = call_id[:6]|state (pour vérifier dans les logs Vapi que c'est cette route).
     """
     text = (response_text or "").strip()
     if not text:
         text = "Pouvez-vous répéter, s'il vous plaît ?"
     payload = {"content": text}
-    if debug_trace:
+    if session is not None:
+        payload["_debug"] = f"{call_id[:8]}|{getattr(session, 'state', '?')}"
+    elif debug_trace:
         payload["_debug"] = debug_trace
     logger.info(
-        "[VAPI_OUT] status=200 content_type=application/json content_len=%s call_id=%s",
-        len(text), call_id[:20] if call_id else "n/a",
+        "[VAPI_OUT] status=200 content_type=application/json content_len=%s call_id=%s _debug=%s",
+        len(text), call_id[:20] if call_id else "n/a", payload.get("_debug", ""),
     )
     return JSONResponse(payload, status_code=200)
 
@@ -488,7 +496,7 @@ async def vapi_webhook(request: Request):
                 last = getattr(session, "last_agent_message", None) or getattr(session, "last_question_asked", None)
                 if last and str(last).strip():
                     logger.info("[VAPI] assistant-request -> last_agent_message (len=%s)", len(last))
-                    return _vapi_content_response(call_id, last.strip(), debug_trace=f"assistant-request|last|{call_id[:8]}")
+                    return _vapi_content_response(call_id, last.strip(), session=session)
                 # START sans contenu → greeting complet (évite silence au début d'appel)
                 greeting = prompts.get_vocal_greeting(config.BUSINESS_NAME)
                 session.last_agent_message = greeting
@@ -497,11 +505,11 @@ async def vapi_webhook(request: Request):
                     ENGINE.session_store.save(session)
                     logger.info("[SESSION_SAVED] call_id=%s state=%s last_agent_len=%s", call_id[:20], getattr(session, "state", ""), len(session.last_agent_message or ""))
                 logger.info("[VAPI] assistant-request -> greeting (START)")
-                return _vapi_content_response(call_id, greeting, debug_trace=f"assistant-request|greeting|{call_id[:8]}")
+                return _vapi_content_response(call_id, greeting, session=session)
             except Exception as e:
                 logger.warning("[VAPI] assistant-request fallback: %s", e)
             logger.info("[VAPI] assistant-request -> fallback (no session/last)")
-            return _vapi_content_response(call_id, prompts.get_vocal_greeting(config.BUSINESS_NAME), debug_trace=f"assistant-request|fallback|{call_id[:8]}")
+            return _vapi_content_response(call_id, prompts.get_vocal_greeting(config.BUSINESS_NAME))
 
         # Garde : ne traiter que les messages user (transcripts utilisateur)
         # En START, ne pas renvoyer 204 → renvoyer le greeting pour éviter silence au début d'appel
@@ -520,7 +528,7 @@ async def vapi_webhook(request: Request):
                             ENGINE.session_store.save(session)
                             logger.info("[SESSION_SAVED] call_id=%s state=%s last_agent_len=%s", call_id[:20], getattr(session, "state", ""), len(session.last_agent_message or ""))
                         logger.info("[VAPI] non_user_message in START -> greeting (evite silence)")
-                        return _vapi_content_response(call_id, greeting)
+                        return _vapi_content_response(call_id, greeting, session=session)
             except Exception as e:
                 logger.debug("[VAPI] non_user_message session check: %s", e)
             logger.warning(
@@ -571,7 +579,7 @@ async def vapi_webhook(request: Request):
                     session.tenant_id = resolved_tenant_id
 
                     if session.state in ("TRANSFERRED", "CONFIRMED"):
-                        return _vapi_content_response(call_id, prompts.VOCAL_RESUME_ALREADY_TERMINATED)
+                        return _vapi_content_response(call_id, prompts.VOCAL_RESUME_ALREADY_TERMINATED, session=session)
 
                     if transcript_type == "partial":
                         logger.debug("partial transcript, skipping")
@@ -599,7 +607,7 @@ async def vapi_webhook(request: Request):
                         elif getattr(session, "state", "") == "TRANSFERRED": _action = "transfer"
                         elif getattr(session, "state", "") == "CONFIRMED": _action = "confirmed"
                         _log_decision_out(call_id, session, _action, reply_text)
-                        return _vapi_content_response(call_id, reply_text)
+                        return _vapi_content_response(call_id, reply_text, session=session)
 
                     if kind == "SILENCE":
                         events = _get_engine(call_id).handle_message(call_id, "")
@@ -613,7 +621,7 @@ async def vapi_webhook(request: Request):
                         elif getattr(session, "state", "") == "TRANSFERRED": _action = "transfer"
                         elif getattr(session, "state", "") == "CONFIRMED": _action = "confirmed"
                         _log_decision_out(call_id, session, _action, response_text)
-                        return _vapi_content_response(call_id, response_text)
+                        return _vapi_content_response(call_id, response_text, session=session)
 
                     if text_to_use and text_to_use.strip():
                         from backend.tenant_config import get_consent_mode
@@ -635,7 +643,7 @@ async def vapi_webhook(request: Request):
                         elif getattr(session, "state", "") == "TRANSFERRED": _action = "transfer"
                         elif getattr(session, "state", "") == "CONFIRMED": _action = "confirmed"
                         _log_decision_out(call_id, session, _action, response_text)
-                        return _vapi_content_response(call_id, response_text)
+                        return _vapi_content_response(call_id, response_text, session=session)
 
                     # Pas de texte utilisable → traiter comme silence (évite "plus ne se passe" après accueil)
                     events = _get_engine(call_id).handle_message(call_id, "")
@@ -645,9 +653,9 @@ async def vapi_webhook(request: Request):
                         logger.info("[SESSION_SAVED] call_id=%s state=%s last_agent_len=%s", call_id[:20], getattr(session, "state", ""), len(getattr(session, "last_agent_message", "") or ""))
                     response_text = events[0].text if events else "Je n'ai pas bien compris. Pouvez-vous répéter ?"
                     _log_decision_out(call_id, session, "reply", response_text)
-                    return _vapi_content_response(call_id, response_text)
+                    return _vapi_content_response(call_id, response_text, session=session)
             except LockTimeout:
-                logger.warning("[CALL_LOCK_TIMEOUT] tenant_id=%s call_id=%s", resolved_tenant_id, call_id[:20])
+                logger.warning("[CALL_LOCK_TIMEOUT] tenant_id=%s call_id=%s -> fallback contenu (évite 204)", resolved_tenant_id, call_id[:20])
                 try:
                     from backend.engine import _persist_ivr_event
                     _persist_ivr_event(
@@ -657,7 +665,8 @@ async def vapi_webhook(request: Request):
                     )
                 except Exception:
                     pass
-                return Response(status_code=204)
+                # Ne jamais renvoyer 204 au webhook → silence. Toujours du contenu.
+                return _vapi_content_response(call_id, "Un instant, s'il vous plaît.")
             except Exception as e:
                 logger.warning("[CALL_LOCK_WARN] err=%s", e, exc_info=True)
                 session = ENGINE.session_store.get_or_create(call_id)
@@ -670,7 +679,7 @@ async def vapi_webhook(request: Request):
 
         # Garde-fou Phase 2: session déjà terminée → ne pas rouvrir
         if session.state in ("TRANSFERRED", "CONFIRMED"):
-            return _vapi_content_response(call_id, prompts.VOCAL_RESUME_ALREADY_TERMINATED)
+            return _vapi_content_response(call_id, prompts.VOCAL_RESUME_ALREADY_TERMINATED, session=session)
 
         # Partial => HTTP 204 No Content (vrai no-op, pas de tour)
         if transcript_type == "partial":
@@ -746,7 +755,7 @@ async def vapi_webhook(request: Request):
                 _action = "confirmed"
             _log_decision_out(call_id, session, _action, reply_text)
             print(f"✅ NOISE response: {total_ms:.0f}ms | '{reply_text[:50]}...'")
-            return _vapi_content_response(call_id, reply_text)
+            return _vapi_content_response(call_id, reply_text, session=session)
 
         if kind == "SILENCE":
             events = _get_engine(call_id).handle_message(call_id, "")
@@ -765,7 +774,7 @@ async def vapi_webhook(request: Request):
             _log_decision_out(call_id, session, _action, response_text)
             total_ms = (time.time() - t_start) * 1000
             print(f"✅ SILENCE response: {total_ms:.0f}ms | '{response_text[:50]}...'")
-            return _vapi_content_response(call_id, response_text)
+            return _vapi_content_response(call_id, response_text, session=session)
 
         # TEXT
         if text_to_use and text_to_use.strip():
@@ -799,7 +808,7 @@ async def vapi_webhook(request: Request):
                 logger.info("[SESSION_SAVED] call_id=%s state=%s last_agent_len=%s", call_id[:20], getattr(session, "state", ""), len(getattr(session, "last_agent_message", "") or ""))
             total_ms = (time.time() - t_start) * 1000
             print(f"✅ TOTAL: {total_ms:.0f}ms | Response: '{response_text[:50]}...'")
-            return _vapi_content_response(call_id, response_text)
+            return _vapi_content_response(call_id, response_text, session=session)
 
         # Pas de texte utilisable après classification → traiter comme silence (évite "plus ne se passe" après accueil)
         print("⚠️ No user text after classification, treating as silence")
@@ -810,7 +819,7 @@ async def vapi_webhook(request: Request):
             logger.info("[SESSION_SAVED] call_id=%s state=%s last_agent_len=%s", call_id[:20], getattr(session, "state", ""), len(getattr(session, "last_agent_message", "") or ""))
         response_text = events[0].text if events else "Je n'ai pas bien compris. Pouvez-vous répéter ?"
         _log_decision_out(call_id, session, "reply", response_text)
-        return _vapi_content_response(call_id, response_text)
+        return _vapi_content_response(call_id, response_text, session=session)
 
     except Exception as e:
         print(f"❌ ERROR: {e}")
@@ -870,7 +879,7 @@ async def vapi_tool(request: Request):
                     print(f"✅ Tool response: '{response_text}'")
                     return {"result": response_text}
             except LockTimeout:
-                logger.warning("[CALL_LOCK_TIMEOUT] tenant_id=%s call_id=%s", resolved_tenant_id, call_id[:20])
+                logger.warning("[CALL_LOCK_TIMEOUT] tenant_id=%s call_id=%s -> fallback result (évite 204)", resolved_tenant_id, call_id[:20])
                 try:
                     from backend.engine import _persist_ivr_event
                     _persist_ivr_event(
@@ -880,7 +889,8 @@ async def vapi_tool(request: Request):
                     )
                 except Exception:
                     pass
-                return Response(status_code=204)
+                # Ne jamais renvoyer 204 à Vapi sur /tool → silence.
+                return JSONResponse({"result": "Un instant, s'il vous plaît."}, status_code=200)
             except Exception as e:
                 logger.warning("[CALL_LOCK_WARN] err=%s", e, exc_info=True)
                 pass
@@ -1015,7 +1025,7 @@ async def vapi_custom_llm(request: Request):
                         session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
                         state_before_turn = getattr(session, "state", "START")
                 except LockTimeout:
-                    logger.warning("[CALL_LOCK_TIMEOUT] tenant_id=%s call_id=%s", resolved_tenant_id, call_id[:20])
+                    logger.warning("[CALL_LOCK_TIMEOUT] tenant_id=%s call_id=%s -> retour greeting (évite 204/silence)", resolved_tenant_id, call_id[:20])
                     try:
                         from backend.engine import _persist_ivr_event
                         s = ENGINE.session_store.get_or_create(call_id)
@@ -1023,7 +1033,19 @@ async def vapi_custom_llm(request: Request):
                         _persist_ivr_event(s, "call_lock_timeout", reason="concurrent_webhook")
                     except Exception:
                         pass
-                    return Response(status_code=204)
+                    # Ne jamais renvoyer 204 à Vapi sur chat/completions → silence. Toujours du contenu.
+                    fallback_text = (prompts.get_vocal_greeting(config.BUSINESS_NAME) or "Je vous écoute.").strip() or "Pouvez-vous répéter, s'il vous plaît ?"
+                    body = {
+                        "id": f"chatcmpl-{call_id}",
+                        "object": "chat.completion",
+                        "choices": [{
+                            "index": 0,
+                            "message": {"role": "assistant", "content": fallback_text},
+                            "finish_reason": "stop"
+                        }]
+                    }
+                    logger.info("[VAPI_OUT] chat/completions LockTimeout fallback content_len=%s", len(fallback_text))
+                    return JSONResponse(body, status_code=200)
                 except Exception as e:
                     logger.warning("[CALL_LOCK_WARN] err=%s", e, exc_info=True)
                     session = _get_or_resume_voice_session(resolved_tenant_id, call_id)

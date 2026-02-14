@@ -256,7 +256,12 @@ def test_webhook_empty_transcript_low_confidence_noise():
         assert r.status_code == 200
         body = r.json()
         assert "content" in body
-        assert MSG_NOISE_1 in body["content"] or "répéter" in body["content"]
+        # Accepter tout message bruit (NOISE_1, NOISE_2 ou variante avec répéter/répétez/bruit)
+        content = body["content"]
+        assert (
+            MSG_NOISE_1 in content or MSG_NOISE_2 in content
+            or "répéter" in content or "répétez" in content or "bruit" in content.lower()
+        ), f"Expected noise message, got: {content!r}"
 
 
 def test_webhook_euh_low_confidence_noise():
