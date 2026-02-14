@@ -444,12 +444,29 @@ async def vapi_webhook(request: Request):
         message = payload.get("message") or {}
         message_type = message.get("type") or "NO_TYPE"
         message_role = message.get("role")
+        call_id = (payload.get("call") or {}).get("id") or "unknown"
+
+        # assistant-request AVANT la garde message_role (Vapi envoie role != user → sinon on renvoyait 204 et "plus rien")
+        if message_type == "assistant-request":
+            try:
+                from backend.tenant_routing import extract_to_number_from_vapi_payload, resolve_tenant_id_from_vocal_call
+                to_number = extract_to_number_from_vapi_payload(payload)
+                resolved_tenant_id, _ = resolve_tenant_id_from_vocal_call(to_number or "", channel="vocal")
+                session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
+                last = getattr(session, "last_agent_message", None) or getattr(session, "last_question_asked", None)
+                if last and str(last).strip():
+                    logger.info("[VAPI] assistant-request -> last_agent_message (len=%s)", len(last))
+                    return {"content": last.strip()}
+            except Exception as e:
+                logger.warning("[VAPI] assistant-request fallback: %s", e)
+            logger.info("[VAPI] assistant-request -> fallback (no session/last)")
+            return {"content": "Je vous écoute."}
 
         # Garde : ne traiter que les messages user (transcripts utilisateur)
         if message_role is not None and message_role != "user":
             logger.warning(
                 "non_user_message",
-                extra={"role": message_role, "type": message_type, "call_id": (payload.get("call") or {}).get("id")},
+                extra={"role": message_role, "type": message_type, "call_id": call_id},
             )
             return Response(status_code=204)
 
@@ -467,13 +484,8 @@ async def vapi_webhook(request: Request):
         confidence = message.get("confidence")
         if confidence is not None and not isinstance(confidence, (int, float)):
             confidence = None
-        call_id = (payload.get("call") or {}).get("id") or "unknown"
 
         logger.debug("webhook type=%s transcriptType=%s call_id=%s", message_type, transcript_type, call_id)
-
-        if message_type == "assistant-request":
-            logger.info("[VAPI] assistant-request -> 204 no content")
-            return Response(status_code=204)
 
         # DID → tenant_id (avant tout event)
         from backend.tenant_routing import (
