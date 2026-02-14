@@ -111,53 +111,47 @@ def ensure_stream(conv_id: str) -> None:
 
 @app.on_event("startup")
 async def startup():
-    """Initialisation au RUNTIME (pas au build Docker)"""
+    """
+    Initialisation au RUNTIME.
+    L'init lourde (credentials, PG) tourne en arrière-plan pour que /health
+    réponde immédiatement (healthcheck Railway).
+    """
+    # Démarre les tâches de fond immédiatement
+    asyncio.create_task(cleanup_old_conversations())
+    asyncio.create_task(keep_alive())
+    asyncio.create_task(_init_heavy())
+    print("🚀 Server ready (heavy init in background)")
+
+
+async def _init_heavy():
+    """Init lourde en arrière-plan (credentials, PG) — ne bloque pas le healthcheck."""
+    await asyncio.to_thread(_init_heavy_sync)
+
+
+def _init_heavy_sync():
+    """Partie synchrone de l'init (credentials, PG)."""
     import os
-    
-    # Debug: Vérifie l'environnement runtime
-    print("\n" + "="*60)
-    print("🚀 RUNTIME STARTUP")
-    print("="*60)
-    print(f"Environment vars count: {len(os.environ)}")
-    print(f"PORT present: {bool(os.getenv('PORT'))}")
-    print(f"RAILWAY_ENVIRONMENT present: {bool(os.getenv('RAILWAY_ENVIRONMENT'))}")
-    print(f"GOOGLE_SERVICE_ACCOUNT_BASE64 present: {bool(os.getenv('GOOGLE_SERVICE_ACCOUNT_BASE64'))}")
-    print(f"GOOGLE_CALENDAR_ID present: {bool(os.getenv('GOOGLE_CALENDAR_ID'))}")
-    print(f"LLM_ASSIST_ENABLED: {os.getenv('LLM_ASSIST_ENABLED', 'non défini')}")
-    print(f"ANTHROPIC_API_KEY present: {bool(os.getenv('ANTHROPIC_API_KEY'))}")
-    print("="*60 + "\n")
-    
-    # Charge les credentials
+    print("🔄 Heavy init started...")
+    # Credentials Google
     try:
         config.load_google_credentials()
-        print(f"✅ Startup complete - Service Account ready")
-        print(f"   Google Calendar enabled: true")
-        # Invalider le cache calendar service pour forcer rechargement
+        print("✅ Google credentials loaded")
         from backend import tools_booking
         tools_booking._calendar_service = None
-        print(f"✅ Calendar service cache invalidated")
-        
     except Exception as e:
         config.GOOGLE_CALENDAR_ENABLED = False
         config.GOOGLE_CALENDAR_DISABLE_REASON = str(e)
-        print(f"⚠️ Warning: Cannot load credentials: {e}")
-        print(f"   Google Calendar enabled: false (reason: {e})")
-        print(f"⚠️ Using SQLite fallback for slots")
-    
-    # PG healthcheck (tenants + ivr_events)
+        print(f"⚠️ Google Calendar disabled: {e}")
+    # PG healthcheck
     try:
         from backend.tenants_pg import check_pg_health
         if check_pg_health(force=True):
             print("✅ PG_HEALTH ok")
         else:
-            print("⚠️ PG_HEALTH down -> tenant/events fallback sqlite")
+            print("⚠️ PG_HEALTH down -> sqlite fallback")
     except Exception as e:
         _logger.debug("PG healthcheck skip: %s", e)
-
-    # Background tasks
-    asyncio.create_task(cleanup_old_conversations())
-    asyncio.create_task(keep_alive())
-    print("🚀 Application started with keep-alive enabled")
+    print("✅ Heavy init done")
 
 
 async def keep_alive():
@@ -332,19 +326,33 @@ async def get_booking_stats() -> dict:
 
 @app.get("/health")
 async def health() -> dict:
-    """Health check avec vérification du fichier credentials"""
+    """Health check avec vérification credentials + Postgres"""
     import os
-    
+
     try:
         free_slots = count_free_slots()
     except Exception:
         free_slots = -1
-    
+
     # Credentials: chargés depuis base64 (Railway) ou fichier local (dev)
     service_account_file = config.SERVICE_ACCOUNT_FILE
     file_exists = bool(service_account_file and os.path.exists(service_account_file))
     has_base64_env = bool(os.getenv("GOOGLE_SERVICE_ACCOUNT_BASE64"))
-    
+
+    # Postgres: test connexion si DATABASE_URL présent
+    postgres_ok = False
+    postgres_error = None
+    db_url = os.getenv("DATABASE_URL") or os.getenv("PG_TENANTS_URL")
+    if db_url:
+        try:
+            import psycopg
+            with psycopg.connect(db_url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+            postgres_ok = True
+        except Exception as e:
+            postgres_error = str(e)[:100]
+
     return {
         "status": "ok",
         "streams": len(STREAMS),
@@ -354,6 +362,9 @@ async def health() -> dict:
         "credentials_loaded": file_exists,
         "calendar_id_set": bool(config.GOOGLE_CALENDAR_ID),
         "google_base64_set": has_base64_env,
+        "postgres_ok": postgres_ok,
+        "postgres_error": postgres_error,
+        "database_url_set": bool(db_url),
         "runtime_env_count": len(os.environ),
     }
 

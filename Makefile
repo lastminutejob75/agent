@@ -1,4 +1,4 @@
-.PHONY: help install test run docker clean check-report-env export-kpis migrate migrate-007 migrate-008 migrate-railway railway-fix-vars onboard-tenant-users test-postgres
+.PHONY: help install test run docker clean check-report-env export-kpis migrate migrate-007 migrate-008 migrate-railway railway-fix-vars onboard-tenant-users backfill-tenant-users add-tenant-user test-postgres
 
 help:
 	@echo "Commandes disponibles :"
@@ -13,6 +13,7 @@ help:
 	@echo "  make migrate-railway - Run migrations sur Railway"
 	@echo "  make railway-fix-vars - Réappliquer variables TWILIO/SMTP (depuis .env)"
 	@echo "  make backfill-tenant-users - Backfill tenant_users (tenants existants)"
+	@echo "  make add-tenant-user EMAIL=x@y.com - Ajouter un email pour connexion dashboard"
 	@echo "  make gh-secret-sync   - Configurer UWI_LANDING_PAT (gh secret set)"
 	@echo "  make clean           - Clean cache & DB"
 
@@ -34,6 +35,11 @@ railway-fix-vars:
 
 backfill-tenant-users:
 	python3 scripts/backfill_tenant_users.py
+
+# Ajouter un tenant_user pour connexion Magic Link (tenant_id=1 par défaut)
+add-tenant-user:
+	@test -n "$(EMAIL)" || (echo "Usage: make add-tenant-user EMAIL=ton@email.com"; exit 1)
+	python3 scripts/add_tenant_user.py $(EMAIL)
 
 # Tester Postgres (local avec .env ou railway run pour contexte Railway)
 test-postgres:

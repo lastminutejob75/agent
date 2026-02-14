@@ -43,7 +43,7 @@ def check_pg_health(force: bool = False) -> bool:
         return False
     try:
         import psycopg
-        with psycopg.connect(url) as conn:
+        with psycopg.connect(url, connect_timeout=5) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1")
         _PG_OK = True

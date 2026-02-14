@@ -48,6 +48,10 @@ USE_PG_TENANTS = os.getenv("USE_PG_TENANTS", "true").lower() in ("true", "1", "y
 # PG-first pour slots/appointments (local fallback quand pas Google Calendar)
 USE_PG_SLOTS = os.getenv("USE_PG_SLOTS", "true").lower() in ("true", "1", "yes")
 
+# P0 Option B: Journal + checkpoints sessions vocales (dual-write Phase 1)
+# Si PG down: log WARN, continue (pas de crash)
+USE_PG_CALL_JOURNAL = os.getenv("USE_PG_CALL_JOURNAL", "true").lower() in ("true", "1", "yes")
+
 # ==============================
 # TENANT FLAGS (P0)
 # ==============================

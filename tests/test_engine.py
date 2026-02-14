@@ -122,7 +122,7 @@ def test_faq_no_match_twice_transfer():
 
 
 def test_intent_router_two_visits_transfer():
-    """2 entrées dans INTENT_ROUTER → transfert direct (anti-boucle START↔ROUTER)."""
+    """2 entrées dans INTENT_ROUTER → P0 budget prévient 1x (menu safe default), pas transfert direct."""
     import uuid
     from backend.engine import Engine
     from backend.session import SessionStore
@@ -142,8 +142,8 @@ def test_intent_router_two_visits_transfer():
     engine.handle_message(conv, "abcfoo1")
     engine.handle_message(conv, "abcfoo2")
     e3 = engine.handle_message(conv, "abcfoo3")
-    # 2e entrée au router → transfert direct
-    assert e3[0].conv_state == "TRANSFERRED"
+    # P0 : 2e entrée → budget prévient, menu safe default (INTENT_ROUTER)
+    assert e3[0].conv_state == "INTENT_ROUTER"
 
 
 def test_start_oui_goes_to_clarify_not_booking():

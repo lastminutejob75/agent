@@ -76,6 +76,9 @@ _ABANDON_LEXICON = [
     "laisse tomber", "laissez tomber", "tant pis",
     "annule tout", "j abandonne", "oubliez", "je rappelle", "je vais rappeler", "plus tard",
 ]
+# P0.4 — ABANDON strict : longueur min, exclure confirmations courtes (éviter faux positifs STT)
+_ABANDON_MIN_LEN = 8
+_ABANDON_EXCLUDED = frozenset({"c est bon", "cest bon", "ok", "okay", "bon", "oui", "ouais"})
 _ORDONNANCE_LEXICON = [
     "ordonnance", "ordonnances", "renouvellement", "renouveler",
     "prescription", "prescrip", "medicament", "medicaments", "traitement",
@@ -221,6 +224,10 @@ def detect_strong_intent(text: str, state: str = "") -> Optional[Intent]:
     if _pattern_in_text(t, _MODIFY_LEXICON):
         return Intent.MODIFY
     if _pattern_in_text(t, _ABANDON_LEXICON):
+        if len(t) < _ABANDON_MIN_LEN:
+            return None
+        if t in _ABANDON_EXCLUDED:
+            return None
         return Intent.ABANDON
     if _pattern_in_text(t, _ORDONNANCE_LEXICON):
         return Intent.ORDONNANCE

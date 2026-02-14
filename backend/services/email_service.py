@@ -227,7 +227,7 @@ def send_daily_report_email(to: str, client_name: str, date_str: str, data: Dict
 def send_magic_link_email(to: str, login_url: str, ttl_minutes: int = 15) -> Tuple[bool, Optional[str]]:
     """
     Envoie l'email magic link (connexion UWi).
-    Utilise POSTMARK_SERVER_TOKEN + POSTMARK_FROM_EMAIL (ou EMAIL_FROM).
+    Priorité : Postmark (POSTMARK_SERVER_TOKEN) puis SMTP (SMTP_EMAIL/SMTP_PASSWORD).
     Returns (success, error_message). error_message is None on success.
     """
     if not to or not to.strip():
@@ -265,20 +265,42 @@ def send_magic_link_email(to: str, login_url: str, ttl_minutes: int = 15) -> Tup
     from_addr = (
         os.getenv("POSTMARK_FROM_EMAIL") or os.getenv("EMAIL_FROM") or os.getenv("SMTP_EMAIL") or ""
     ).strip()
-    if not token:
-        logger.warning("send_magic_link_email: POSTMARK_SERVER_TOKEN manquant")
-        return False, "POSTMARK_SERVER_TOKEN non défini"
-    if not from_addr:
-        logger.warning("send_magic_link_email: POSTMARK_FROM_EMAIL / EMAIL_FROM manquant")
-        return False, "POSTMARK_FROM_EMAIL non défini"
-    try:
-        ok, err = _send_via_postmark(from_addr, to, subject, html, token)
-        if ok:
-            logger.info("magic_link_sent", extra={"to": to[:50]})
-        return ok, err
-    except Exception as e:
-        logger.exception("send_magic_link_email failed")
-        return False, str(e)
+
+    # Option 1 : Postmark
+    if token and from_addr:
+        try:
+            ok, err = _send_via_postmark(from_addr, to, subject, html, token)
+            if ok:
+                logger.info("magic_link_sent via postmark", extra={"to": to[:50]})
+            return ok, err
+        except Exception as e:
+            logger.exception("send_magic_link_email postmark failed")
+            return False, str(e)
+
+    # Option 2 : SMTP (fallback)
+    smtp_user = (os.getenv("SMTP_EMAIL") or "").strip()
+    smtp_pass = (os.getenv("SMTP_PASSWORD") or "").strip()
+    if smtp_user and smtp_pass:
+        host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        port = int(os.getenv("SMTP_PORT", "587"))
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["From"] = smtp_user
+            msg["To"] = to
+            msg["Subject"] = subject
+            msg.attach(MIMEText(html, "html", "utf-8"))
+            with smtplib.SMTP(host, port) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, [to], msg.as_string())
+            logger.info("magic_link_sent via smtp", extra={"to": to[:50]})
+            return True, None
+        except Exception as e:
+            logger.exception("send_magic_link_email smtp failed")
+            return False, str(e)
+
+    logger.warning("send_magic_link_email: POSTMARK_SERVER_TOKEN+POSTMARK_FROM_EMAIL ou SMTP_EMAIL+SMTP_PASSWORD requis")
+    return False, "Email non configuré (Postmark ou SMTP)"
 
 
 def send_ordonnance_notification(request: Dict[str, Any]) -> bool:

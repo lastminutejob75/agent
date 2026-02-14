@@ -353,6 +353,23 @@ def list_free_slots(limit: int = 3, pref: Optional[str] = None, tenant_id: int =
         conn.close()
 
 
+def find_slot_id_by_datetime(date_str: str, time_str: str) -> Optional[int]:
+    """
+    Trouve l'id d'un slot libre par date et heure (ex: "2026-02-16", "09:00").
+    Retourne None si non trouvé ou déjà réservé.
+    """
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "SELECT id FROM slots WHERE date=? AND time=? AND is_booked=0 LIMIT 1",
+            (date_str[:10], time_str[:5] if time_str else "09:00"),
+        )
+        row = cur.fetchone()
+        return int(row["id"]) if row else None
+    finally:
+        conn.close()
+
+
 def book_slot_atomic(
     slot_id: int,
     name: str,

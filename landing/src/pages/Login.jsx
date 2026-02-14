@@ -30,6 +30,9 @@ export default function Login() {
   }
 
   if (sent) {
+    const debugUrl = err?.startsWith("Mode debug: lien = ")
+      ? err.replace("Mode debug: lien = ", "").trim()
+      : null;
     return (
       <div className="mx-auto max-w-md p-8">
         <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
@@ -37,7 +40,25 @@ export default function Login() {
           <p className="mt-2 text-gray-600">
             Si un compte existe pour cet email, vous recevrez un lien de connexion.
           </p>
-          {err && <p className="mt-2 text-amber-600 text-sm">{err}</p>}
+          {debugUrl ? (
+            <div className="mt-4 rounded-lg bg-amber-50 p-3">
+              <p className="text-sm text-amber-800 font-medium">Mode debug — lien direct :</p>
+              <a
+                href={debugUrl}
+                className="mt-2 block truncate text-sm text-blue-600 hover:underline"
+              >
+                {debugUrl}
+              </a>
+              <a
+                href={debugUrl}
+                className="mt-2 inline-block rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                Se connecter
+              </a>
+            </div>
+          ) : err ? (
+            <p className="mt-2 text-amber-600 text-sm">{err}</p>
+          ) : null}
           <Link to="/login" className="mt-4 inline-block text-blue-600 hover:underline">
             Nouvelle demande
           </Link>

@@ -115,13 +115,18 @@ Les migrations 007+008 s'exécutent **automatiquement au démarrage** du backend
 
 Pas besoin de `make migrate-railway` en local.
 
+**Alternative manuelle** (si tu veux lancer les migrations avant le premier déploiement) :
+1. Railway Dashboard → Variables → copier `DATABASE_URL`
+2. `DATABASE_URL="postgresql://..." python3 scripts/run_migration.py 007`
+3. `DATABASE_URL="postgresql://..." python3 scripts/run_migration.py 008`
+
 ---
 
 ## Ordre recommandé
 
 1. **Postgres** : créer la DB sur Railway si absente
 2. **Redéployer** : les migrations s'exécutent au startup
-3. **Backfill tenant_users** : `make backfill-tenant-users` (nécessite railway link ou DATABASE_URL en local)
+3. **Backfill tenant_users** : `make backfill-tenant-users` ou `DATABASE_URL="..." python3 scripts/backfill_tenant_users.py`
 4. **Email (Postmark/SMTP)** : pour envoyer les magic links
 5. **CORS + VITE_UWI_API_BASE_URL** : pour que uwiapp.com appelle le backend
 6. **Tester le flux complet** : login → dashboard → KPIs

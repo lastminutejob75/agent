@@ -926,6 +926,9 @@ ABANDON_PATTERNS = list(ABANDON_PATTERNS_BASE)
 # Message de clôture poli (spec END_POLITE)
 MSG_END_POLITE_ABANDON = "Pas de souci. N'hésitez pas à nous rappeler. Au revoir."
 
+# Phase 2 PG-first: session reprise mais déjà terminée (CONFIRMED/TRANSFERRED) → ne pas rouvrir
+VOCAL_RESUME_ALREADY_TERMINATED = "Votre demande a déjà été traitée. Au revoir."
+
 # Slot choice patterns (pour WAIT_CONFIRM)
 SLOT_CHOICE_FIRST = ["premier", "un", "1", "le premier", "le un"]
 SLOT_CHOICE_SECOND = ["deuxième", "deux", "2", "le deuxième", "le deux", "second"]

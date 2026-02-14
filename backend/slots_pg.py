@@ -100,6 +100,40 @@ def pg_list_free_slots(
         return None
 
 
+def pg_find_slot_id_by_datetime(
+    date_str: str,
+    time_str: str,
+    tenant_id: int = 1,
+) -> Optional[int]:
+    """
+    Trouve l'id d'un slot libre par date et heure (ex: "2026-02-16", "09:00").
+    Retourne None si non trouvé ou déjà réservé.
+    """
+    url = _pg_url()
+    if not url:
+        return None
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                # start_ts format: timestamp, on compare date+time
+                cur.execute(
+                    """
+                    SELECT id FROM slots
+                    WHERE tenant_id = %s AND is_booked = FALSE
+                      AND start_ts::date = %s::date
+                      AND to_char(start_ts, 'HH24:MI') = %s
+                    LIMIT 1
+                    """,
+                    (tenant_id, date_str[:10], (time_str or "09:00")[:5]),
+                )
+                row = cur.fetchone()
+                return int(row[0]) if row else None
+    except Exception as e:
+        logger.debug("pg_find_slot_id_by_datetime failed: %s", e)
+        return None
+
+
 def pg_count_free_slots(tenant_id: int) -> Optional[int]:
     """Compte les créneaux libres (après cleanup)."""
     url = _pg_url()
