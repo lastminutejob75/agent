@@ -89,6 +89,47 @@ def _get_engine(call_id: str):
     return ENGINE
 
 
+def _parse_stream_flag(payload: dict) -> bool:
+    """
+    Détection robuste de stream: true (Vapi Custom LLM).
+    - bool → ok
+    - string "true"/"1"/"yes" (case-insensitive) → True
+    - string "false"/"0"/"no" → False
+    - int 1 → True, 0 → False
+    - sinon → bool(val) pour compat
+    """
+    for key in ("stream", "streaming"):
+        val = payload.get(key)
+        if val is None:
+            continue
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, str):
+            low = val.strip().lower()
+            if low in ("true", "1", "yes"):
+                return True
+            if low in ("false", "0", "no"):
+                return False
+        if isinstance(val, int):
+            return val != 0
+        return bool(val)
+    return False
+
+
+def _make_chat_response(call_id: str, text: str, is_streaming: bool):
+    """
+    Point de sortie unique pour /chat/completions : SSE si stream demandé, sinon JSON.
+    Contrat Vapi : stream=true → Content-Type text/event-stream + data: ... + data: [DONE].
+    """
+    if is_streaming:
+        return StreamingResponse(
+            _sse_stream_for_text(call_id, text or ""),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        )
+    return _chat_completion_response(call_id, text, _stream_requested=False)
+
+
 def _sse_stream_for_text(call_id: str, text: str):
     """
     Générateur SSE au format OpenAI chat.completion.chunk pour un texte complet.
@@ -389,12 +430,56 @@ def _is_agent_speaking(session) -> bool:
     return now < until
 
 
-def _chat_completion_response(call_id: str, content: str):
+def _parse_stream_flag(payload: dict) -> bool:
     """
-    Réponse OpenAI-like robuste pour /api/vapi/chat/completions.
+    Détection robuste de stream/streaming dans le payload Vapi.
+    - bool → tel quel
+    - string → "true"/"1"/"yes" (case-insensitive) = True, "false"/"0"/"no" = False
+    - int → 1 = True, 0 = False
+    - sinon → bool(val) pour éviter "false" string → True
+    """
+    for key in ("stream", "streaming"):
+        val = payload.get(key)
+        if val is None:
+            continue
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, str):
+            if val.strip().lower() in ("true", "1", "yes"):
+                return True
+            if val.strip().lower() in ("false", "0", "no"):
+                return False
+        if isinstance(val, int):
+            return val != 0
+    return False
+
+
+def _make_chat_response(call_id: str, text: str, is_streaming: bool):
+    """
+    Point de sortie unique pour /chat/completions : SSE si stream demandé, sinon JSON.
+    Contrat Vapi : stream=true → Content-Type: text/event-stream + data: ... + data: [DONE].
+    """
+    if is_streaming:
+        return StreamingResponse(
+            _sse_stream_for_text(call_id, text),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        )
+    return _chat_completion_response(call_id, text, _stream_requested=False)
+
+
+def _chat_completion_response(call_id: str, content: str, _stream_requested: bool = False):
+    """
+    Réponse OpenAI-like robuste pour /api/vapi/chat/completions (JSON uniquement).
     Compatibilité max : id, object, created, model, usage, content à la racine, choices[0].text.
     Si VAPI_DEBUG_TEST_AUDIO=1 : force content = "TEST AUDIO 123" pour tester le pipeline TTS.
+    _stream_requested: si True, log [STREAM_MISMATCH_GUARD] (chemin aurait dû renvoyer du SSE).
     """
+    if _stream_requested:
+        logger.warning(
+            "[STREAM_MISMATCH_GUARD] call_id=%s route=chat/completions reason=json_returned_while_stream_requested",
+            call_id[:24] if call_id else "n/a",
+        )
     if getattr(config, "VAPI_DEBUG_TEST_AUDIO", False):
         content = "TEST AUDIO 123"
         logger.info("[VAPI_DEBUG] TEST AUDIO 123 forced for TTS check")
@@ -1025,7 +1110,7 @@ async def vapi_custom_llm(request: Request):
         
         # Vapi envoie un tableau de messages (stream: true = SSE obligatoire côté backend)
         messages = payload.get("messages", [])
-        is_streaming = bool(payload.get("stream", False) or payload.get("streaming", False))
+        is_streaming = _parse_stream_flag(payload)
         
         # 📱 Extraire le numéro de téléphone du client (Vapi le fournit)
         customer_phone = payload.get("call", {}).get("customer", {}).get("number")
@@ -1109,13 +1194,7 @@ async def vapi_custom_llm(request: Request):
                         _persist_ivr_event(s, "call_lock_timeout", reason="concurrent_webhook")
                     except Exception as e:
                         logger.warning("[LOCK_TIMEOUT_SAVE_FAIL] call_id=%s err=%s", call_id[:20], e)
-                    if is_streaming:
-                        return StreamingResponse(
-                            _sse_stream_for_text(call_id, greeting),
-                            media_type="text/event-stream",
-                            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
-                        )
-                    return _chat_completion_response(call_id, greeting)
+                    return _make_chat_response(call_id, greeting, is_streaming)
                 except Exception as e:
                     logger.warning("[CALL_LOCK_WARN] err=%s", e, exc_info=True)
                     session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
@@ -1466,7 +1545,7 @@ async def vapi_custom_llm(request: Request):
             )
         
         # Format OpenAI-compatible (non-streaming), compatibilité max + Content-Type strict
-        return _chat_completion_response(call_id, response_text)
+        return _make_chat_response(call_id, response_text, is_streaming)
 
     except Exception as e:
         print(f"❌ Custom LLM error: {e}")
@@ -1474,20 +1553,12 @@ async def vapi_custom_llm(request: Request):
         traceback.print_exc()
         try:
             _err_cid = (payload.get("call") or {}).get("id") or "unknown"
-        except NameError:
+            _err_stream = _parse_stream_flag(payload)
+        except (NameError, KeyError, TypeError, AttributeError):
             _err_cid = "unknown"
-        try:
-            _err_stream = bool(payload.get("stream", False) or payload.get("streaming", False))
-        except Exception:
             _err_stream = False
         _err_msg = "Désolé, une erreur est survenue."
-        if _err_stream:
-            return StreamingResponse(
-                _sse_stream_for_text(_err_cid, _err_msg),
-                media_type="text/event-stream",
-                headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
-            )
-        return _chat_completion_response(_err_cid, _err_msg)
+        return _make_chat_response(_err_cid, _err_msg, _err_stream)
 
 
 @router.get("/health")
