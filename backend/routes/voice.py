@@ -606,6 +606,8 @@ async def vapi_webhook(request: Request):
     """
     Webhook Vapi - DEBUG COMPLET + TIMERS
     Nova-2-phonecall : ignore partial, distingue NOISE vs SILENCE, normalise fillers.
+    Règle critique : événements informatifs (status/speech/conversation-update, end-of-call)
+    → 200 immédiat (< 500 ms), sans lock ni traitement lourd, pour éviter timeout 20s → 500.
     """
     t_start = time.time()
     try:
@@ -628,6 +630,12 @@ async def vapi_webhook(request: Request):
             "[VAPI_IN] type=%s role=%s call_id=%s tenant=%s text_len=%s",
             message_type, message_role, call_id[:20] if call_id else "n/a", _resolved_tenant_id, len(raw_text_for_log or ""),
         )
+
+        # Webhooks informatifs (fire-and-forget) : répondre 200 immédiatement pour éviter timeout 20s → 500.
+        # Ne jamais bloquer sur lock/DB pour ces types ; seul assistant-request / user transcript ont besoin d'un corps.
+        _informative_types = frozenset({"status-update", "speech-update", "conversation-update", "end-of-call-report"})
+        if message_type in _informative_types:
+            return Response(status_code=200)
 
         # assistant-request AVANT la garde message_role (Vapi envoie role != user → sinon on renvoyait 204 et "plus rien")
         if message_type == "assistant-request":
