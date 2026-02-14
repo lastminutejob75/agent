@@ -81,7 +81,7 @@ def main() -> int:
         return 1
 
     try:
-        with psycopg.connect(args.pg_url) as conn:
+        with psycopg.connect(args.pg_url, connect_timeout=5) as conn:
             with conn.cursor() as cur:
                 cur.execute(sql)
             conn.commit()
