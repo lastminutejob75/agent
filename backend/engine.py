@@ -20,7 +20,7 @@ from backend.guards_medical_triage import (
 )
 from backend.log_events import MEDICAL_RED_FLAG_TRIGGERED
 from backend import db as backend_db
-from backend.session import Session, SessionStore
+from backend.session import Session, SessionStore, reset_slots_reading, set_reading_slots
 from backend.slot_choice import detect_slot_choice_early
 from backend.time_constraints import extract_time_constraint
 from backend.session_store_sqlite import SQLiteSessionStore
@@ -778,6 +778,7 @@ class Engine:
         """
         state_before = getattr(session, "_turn_state_before", session.state)
         budget = getattr(session, "transfer_budget_remaining", 2)
+        reset_slots_reading(session)  # Fix #4: sortie WAIT_CONFIRM
         session.state = "TRANSFERRED"
         session.transfer_logged = True
         ctx = json.dumps({
@@ -905,6 +906,11 @@ class Engine:
             turn_count,
             (user_text or "")[:50],
         )
+
+        # Fix #4: invariant — hors WAIT_CONFIRM ⇒ is_reading_slots False (correction si checkpoint incohérent)
+        if session.state != "WAIT_CONFIRM" and getattr(session, "is_reading_slots", False):
+            logger.warning("[SLOTS_READING] conv_id=%s state=%s reset is_reading_slots (invariant)", conv_id, session.state)
+            reset_slots_reading(session)
         
         # ========================
         # RÈGLE -1 : TRIAGE MÉDICAL (priorité absolue, avant tout le reste)
@@ -1090,8 +1096,16 @@ class Engine:
             if strong == "MODIFY":
                 return safe_reply(self._start_modify(session), session)
             if strong == "TRANSFER":
-                evts = self._trigger_transfer(session, channel, "user_requested", msg_key="transfer_complex")
-                return safe_reply(evts, session)
+                from backend.transfer_policy import classify_transfer_request
+                kind = classify_transfer_request(user_text or "")
+                if kind == "SHORT":
+                    session.state = "CLARIFY"
+                    msg = prompts.VOCAL_CLARIFY if channel == "vocal" else prompts.MSG_CLARIFY_WEB
+                    session.add_message("agent", msg)
+                    return safe_reply([Event("final", msg, conv_state=session.state)], session)
+                if kind == "EXPLICIT":
+                    return safe_reply(self._trigger_transfer(session, channel, "user_requested", msg_key="transfer_complex"), session)
+                # NONE: ne pas override, laisser le pipeline continuer
             if strong == "ABANDON":
                 session.state = "CONFIRMED"
                 msg = prompts.MSG_END_POLITE_ABANDON if hasattr(prompts, "MSG_END_POLITE_ABANDON") else (prompts.VOCAL_USER_ABANDON if channel == "vocal" else prompts.MSG_ABANDON_WEB)
@@ -1169,12 +1183,21 @@ class Engine:
             # Fix 5: strong intent AVANT slot_choice (annuler/humain pendant énumération → route direct)
             strong = detect_strong_intent(user_text or "")
             if strong in ("CANCEL", "MODIFY", "TRANSFER", "ABANDON"):
-                session.is_reading_slots = False
+                reset_slots_reading(session)
                 if strong == "CANCEL":
                     return safe_reply(self._start_cancel(session), session)
                 if strong == "MODIFY":
                     return safe_reply(self._start_modify(session), session)
                 if strong == "TRANSFER":
+                    from backend.transfer_policy import classify_transfer_request
+                    kind = classify_transfer_request(user_text or "")
+                    if kind == "SHORT":
+                        msg = prompts.VOCAL_CLARIFY if channel == "vocal" else prompts.MSG_CLARIFY_WEB
+                        session.add_message("agent", msg)
+                        return safe_reply([Event("final", msg, conv_state=session.state)], session)
+                    if kind == "EXPLICIT":
+                        return safe_reply(self._trigger_transfer(session, channel, "user_requested", msg_key="transfer_complex"), session)
+                    # NONE: fallback transfer (comportement conservateur)
                     return safe_reply(self._trigger_transfer(session, channel, "user_requested", msg_key="transfer_complex"), session)
                 if strong == "ABANDON":
                     session.state = "CONFIRMED"
@@ -1190,13 +1213,13 @@ class Engine:
                     slot_choice,
                     num_slots,
                 )
-                session.is_reading_slots = False
+                reset_slots_reading(session)
                 session.slots_preface_sent = False
                 session.slots_list_sent = False
                 return safe_reply(self._handle_booking_confirm(session, user_text), session)
             
             if intent_parser._is_no(user_text):
-                session.is_reading_slots = False
+                reset_slots_reading(session)
                 session.slots_preface_sent = False
                 session.slots_list_sent = False
                 msg = getattr(prompts, "MSG_SLOT_BARGE_IN_HELP", "D'accord. Dites juste 1, 2 ou 3.")
@@ -1214,7 +1237,7 @@ class Engine:
                 return safe_reply([Event("final", list_msg, conv_state=session.state)], session)
             
             if "attendez" in _t_ascii or "attends" in _t_ascii:
-                session.is_reading_slots = False
+                reset_slots_reading(session)
                 msg = getattr(prompts, "MSG_SLOT_BARGE_IN_HELP", "D'accord. Dites juste 1, 2 ou 3.")
                 session.add_message("agent", msg)
                 return safe_reply([Event("final", msg, conv_state=session.state)], session)
@@ -1358,9 +1381,16 @@ class Engine:
                 return safe_reply(self._start_cancel(session), session)
             if strong == "MODIFY":
                 return safe_reply(self._start_modify(session), session)
-            if strong == "TRANSFER":  # "humain" seul = OK (mapping STT)
-                evts = self._trigger_transfer(session, channel, "user_requested", msg_key="transfer_complex")
-                return safe_reply(evts, session)
+            if strong == "TRANSFER":
+                from backend.transfer_policy import classify_transfer_request
+                kind = classify_transfer_request(user_text or "")
+                if kind == "SHORT":
+                    session.state = "CLARIFY"
+                    msg = prompts.VOCAL_CLARIFY if channel == "vocal" else prompts.MSG_CLARIFY_WEB
+                    session.add_message("agent", msg)
+                    return safe_reply([Event("final", msg, conv_state=session.state)], session)
+                if kind in ("EXPLICIT", "NONE"):
+                    return safe_reply(self._trigger_transfer(session, channel, "user_requested", msg_key="transfer_complex"), session)
             if strong == "ABANDON":
                 session.state = "CONFIRMED"
                 msg = prompts.VOCAL_USER_ABANDON if channel == "vocal" else prompts.MSG_ABANDON_WEB
@@ -1538,15 +1568,22 @@ class Engine:
                 session.start_unclear_count = 0
                 return safe_reply(self._start_modify(session), session)
             
-            # TRANSFER → Transfert direct (doc: phrase explicite >=14 car., pas interruption courte)
+            # Fix #6: TRANSFER → politique courte (clarify) vs explicite (transfert direct)
             if intent == "TRANSFER":
-                if len(user_text.strip()) >= 14:
+                from backend.transfer_policy import classify_transfer_request
+                kind = classify_transfer_request(user_text)
+                if kind == "SHORT":
                     session.start_unclear_count = 0
-                    session.state = "TRANSFERRED"
+                    session.state = "CLARIFY"
+                    return safe_reply(self._handle_clarify(session, user_text, "TRANSFER"), session)
+                if kind == "EXPLICIT":
+                    session.start_unclear_count = 0
                     msg = prompts.VOCAL_TRANSFER_COMPLEX if channel == "vocal" else prompts.MSG_TRANSFER
-                    session.add_message("agent", msg)
-                    return safe_reply([Event("final", msg, conv_state=session.state)], session)
-                # Message court type "humain" → traiter comme unclear, pas transfert
+                    return safe_reply(
+                        self._trigger_transfer(session, channel, "explicit_transfer_request", user_text=user_text or "", custom_msg=msg),
+                        session,
+                    )
+                # NONE → laisser le routeur (FAQ/booking)
                 return safe_reply(self._handle_faq(session, user_text, include_low=True), session)
             
             # ABANDON → Au revoir poli
@@ -1744,6 +1781,13 @@ class Engine:
         if strong == "MODIFY":
             return self._start_modify(session)
         if strong == "TRANSFER":
+            from backend.transfer_policy import classify_transfer_request
+            kind = classify_transfer_request(user_text or "")
+            if kind == "SHORT":
+                session.state = "CLARIFY"
+                msg = prompts.VOCAL_CLARIFY if channel == "vocal" else prompts.MSG_CLARIFY_WEB
+                session.add_message("agent", msg)
+                return [Event("final", msg, conv_state=session.state)]
             return self._trigger_transfer(session, channel, "user_requested", msg_key="transfer_complex")
         if strong == "ABANDON":
             session.state = "CONFIRMED"
@@ -2640,10 +2684,10 @@ class Engine:
             # Patch B: préfixe "je consulte l'agenda" → zéro silence perçu (même réponse que proposition)
             agenda_lookup = getattr(prompts, "VOCAL_AGENDA_LOOKUP", "")
             msg = f"{agenda_lookup} {msg}".strip() if agenda_lookup else msg
-            session.is_reading_slots = False
+            reset_slots_reading(session)
         else:
             msg = prompts.format_slot_proposal(slots, include_instruction=True, channel=channel)
-            session.is_reading_slots = True
+            set_reading_slots(session, True, "propose_slots")
         # Vocal: pas de wrap "Je regarde" si déjà VOCAL_AGENDA_LOOKUP (évite redondance)
         if channel == "vocal" and msg and not getattr(prompts, "VOCAL_AGENDA_LOOKUP", ""):
             msg = prompts.TransitionSignals.wrap_with_signal(msg, "PROCESSING")
@@ -2860,7 +2904,7 @@ class Engine:
         # P1.2 Vocal : préface déjà envoyée, liste pas encore → un seul message (liste + help ou confirmation)
         if channel == "vocal" and getattr(session, "slots_preface_sent", False) and not getattr(session, "slots_list_sent", False):
             session.slots_list_sent = True
-            session.is_reading_slots = True
+            set_reading_slots(session, True, "wait_confirm_list")
             list_msg = prompts.format_slot_list_vocal_only(session.pending_slots)
             early_idx = detect_slot_choice_early(user_text, session.pending_slots)
             if early_idx is not None:
@@ -2870,7 +2914,7 @@ class Engine:
                     early_idx,
                     len(session.pending_slots or []),
                 )
-                session.is_reading_slots = False
+                reset_slots_reading(session)
                 session.pending_slot_choice = early_idx
                 try:
                     slot_label = tools_booking.get_label_for_choice(session, early_idx) or "votre créneau"
@@ -2893,7 +2937,7 @@ class Engine:
                     early_idx,
                     len(session.pending_slots or []),
                 )
-                session.is_reading_slots = False
+                reset_slots_reading(session)
                 session.pending_slot_choice = early_idx
                 self._save_session(session)
                 try:
@@ -2906,7 +2950,7 @@ class Engine:
                 logger.info("[BOOKING_CONFIRM] conv_id=%s barge_in early_confirm idx=%s", session.conv_id, early_idx)
                 return [Event("final", msg, conv_state=session.state)]
             # Pas un choix clair → une phrase courte, ne pas incrémenter les fails
-            session.is_reading_slots = False
+            reset_slots_reading(session)
             msg = getattr(prompts, "MSG_SLOT_BARGE_IN_HELP", "D'accord. Dites juste 1, 2 ou 3.")
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
@@ -2981,9 +3025,9 @@ class Engine:
                         "[INTERRUPTION] conv_id=%s client chose slot %s during enumeration, slots_count=%s",
                         session.conv_id,
                         early_idx,
-                        len(session.pending_slots or []),
-                    )
-                session.is_reading_slots = False
+                    len(session.pending_slots or []),
+                )
+                reset_slots_reading(session)
                 session.pending_slot_choice = early_idx
                 self._save_session(session)
                 try:
@@ -3039,7 +3083,7 @@ class Engine:
             # 💾 Sauvegarder le choix immédiatement
             self._save_session(session)
             
-            session.is_reading_slots = False
+            reset_slots_reading(session)
             # 📱 Maintenant demander le contact (avec numéro auto si disponible)
             if channel == "vocal" and session.customer_phone:
                 try:
@@ -3082,7 +3126,7 @@ class Engine:
         fail_count = increment_recovery_counter(session, "slot_choice")
         log_ivr_event(logger, session, "recovery_step", context="slot_choice", reason="no_match")
         if should_escalate_recovery(session, "slot_choice"):
-            session.is_reading_slots = False
+            reset_slots_reading(session)
             return self._trigger_intent_router(session, "slot_choice_fails_3", user_text)
         if fail_count == 1:
             # 1er échec : clarification, pas de transfert. Adapter au mode : séquentiel → oui/non, 3 slots → 1/2/3
@@ -3095,7 +3139,7 @@ class Engine:
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
         # 2e échec → transfert (P0: budget peut prévenir)
-        session.is_reading_slots = False
+        reset_slots_reading(session)
         prev = self._maybe_prevent_transfer(session, channel, "slot_choice_fails", user_text)
         if prev is not None:
             return prev
@@ -4067,12 +4111,12 @@ class Engine:
         if intent == "MODIFY":
             return self._start_modify(session)
         
-        # Intent TRANSFER (doc: phrase explicite >=14 car.)
-        if intent == "TRANSFER" and len(user_text.strip()) >= 14:
-            session.state = "TRANSFERRED"
-            msg = prompts.VOCAL_TRANSFER_COMPLEX if channel == "vocal" else prompts.MSG_TRANSFER
-            session.add_message("agent", msg)
-            return [Event("final", msg, conv_state=session.state)]
+        # Fix #6: Intent TRANSFER → politique courte (clarify) vs explicite (transfert)
+        if intent == "TRANSFER":
+            from backend.transfer_policy import classify_transfer_request
+            kind = classify_transfer_request(user_text)
+            if kind == "EXPLICIT":
+                return self._trigger_transfer(session, channel, "explicit_transfer_request", user_text=user_text, custom_msg=prompts.VOCAL_TRANSFER_COMPLEX if channel == "vocal" else prompts.MSG_TRANSFER)
         
         # Toujours pas clair → transfert après 3 relances (doc: privilégier comprendre)
         session.confirm_retry_count = getattr(session, "confirm_retry_count", 0) + 1

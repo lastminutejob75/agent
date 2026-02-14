@@ -14,6 +14,7 @@ from pathlib import Path
 
 from backend.session import Session, QualifData
 from backend import config
+from backend.recovery import migrate_recovery_from_legacy
 
 
 def _pending_slots_to_jsonable(slots) -> list:
@@ -174,6 +175,7 @@ class SQLiteSessionStore:
                 session = pickle.loads(base64.b64decode(session_pickle))
                 # P0: Ne jamais préférer le cache au pickle DB — la DB est la source de vérité
                 # (évite session stale sans pending_slots_display → "problème technique")
+                migrate_recovery_from_legacy(session)
                 return session
         except Exception as e:
             print(f"⚠️ Could not unpickle session: {e}")
@@ -245,6 +247,7 @@ class SQLiteSessionStore:
             except Exception:
                 pass
 
+        migrate_recovery_from_legacy(session)
         return session
     
     def save(self, session: Session) -> None:

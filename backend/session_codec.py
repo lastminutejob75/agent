@@ -2,12 +2,14 @@
 """
 P0 Option B: Sérialisation Session <-> dict pour checkpoints.
 Aucun secret dans state_json (token, credentials).
+Fix #9: recovery sérialisé pour cohérence Postgres (partial_phone_digits, contact_mode).
 """
 from __future__ import annotations
 
 from typing import Any, Dict
 
 from backend.session import Session, QualifData
+from backend.recovery import migrate_recovery_from_legacy
 
 
 def session_to_dict(session: Session) -> Dict[str, Any]:
@@ -55,6 +57,8 @@ def session_to_dict(session: Session) -> Dict[str, Any]:
         "extracted_motif": getattr(session, "extracted_motif", False),
         "extracted_pref": getattr(session, "extracted_pref", False),
         "pending_cancel_slot": getattr(session, "pending_cancel_slot", None),
+        # Fix #9: recovery (Postgres-friendly, inclut phone.partial / contact.mode)
+        "recovery": getattr(session, "recovery", None) or {},
     }
 
 
@@ -118,4 +122,7 @@ def session_from_dict(conv_id: str, d: Dict[str, Any]) -> Session:
     session.extracted_motif = d.get("extracted_motif", False)
     session.extracted_pref = d.get("extracted_pref", False)
     session.pending_cancel_slot = d.get("pending_cancel_slot")
+    # Fix #9: recovery (nouveaux checkpoints) ; sinon migration legacy ci-dessous
+    session.recovery = d.get("recovery") or {}
+    migrate_recovery_from_legacy(session)
     return session

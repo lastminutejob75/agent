@@ -42,8 +42,11 @@ def test_session_from_dict_restores_key_fields():
     assert session.qualif_data.name == "Henri"
     assert session.qualif_data.contact == "0612345678"
     assert session.pending_slot_choice == 1
-    assert len(session.pending_slots_display) == 1
+    # Fix 3: source de vérité = pending_slots (restauré depuis pending_slots_display si besoin)
+    assert len(session.pending_slots) == 1
     assert session.transfer_budget_remaining == 2
+    # Fix #9: recovery présent après from_dict
+    assert hasattr(session, "recovery") and isinstance(session.recovery, dict)
 
 
 def test_session_to_dict_excludes_secrets():

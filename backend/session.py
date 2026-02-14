@@ -9,6 +9,19 @@ from collections import deque
 from backend import config
 
 
+def _default_recovery() -> Dict[str, Any]:
+    """Fix #9: structure recovery JSON-friendly (compteurs unifiés)."""
+    return {
+        "contact": {"fails": 0, "retry": 0, "mode": None},
+        "phone": {"partial": "", "turns": 0},
+        "confirm_contact": {"fails": 0, "intent_repeat": 0},
+        "slot_choice": {"fails": 0},
+        "name": {"fails": 0},
+        "preference": {"fails": 0},
+        "confirm_slot": {"retry": 0},
+    }
+
+
 @dataclass
 class Message:
     role: str  # "user" | "agent"
@@ -145,6 +158,9 @@ class Session:
     intent_router_visits: int = 0
     intent_router_unclear_count: int = 0
 
+    # Fix #9 — Compteurs unifiés (recovery) : source de vérité pour contact/phone/slot/confirm
+    recovery: Dict[str, Any] = field(default_factory=_default_recovery)
+
     # P0 — Transfer budget : 2 "cartouches" avant transfert technique (unclear/no_match/out_of_scope)
     transfer_budget_remaining: int = 2
 
@@ -253,6 +269,9 @@ class Session:
         self.transfer_logged = False
         self.last_say_key = None
         self.last_say_kwargs = None
+        # Fix #9: reset recovery (namespace unifié)
+        from backend.recovery import _RECOVERY_DEFAULT
+        self.recovery = {k: (dict(v) if isinstance(v, dict) else v) for k, v in _RECOVERY_DEFAULT.items()}
         # Note: on ne reset PAS customer_phone car c'est lié à l'appel
 
     def add_message(self, role: str, text: str) -> None:
@@ -271,6 +290,18 @@ class Session:
 
     def last_messages(self) -> List[Tuple[str, str]]:
         return [(m.role, m.text) for m in list(self.messages)]
+
+
+# Fix #4: reset centralisé is_reading_slots (invariant: hors WAIT_CONFIRM ⇒ False)
+def set_reading_slots(session: Session, on: bool, reason: str = "") -> None:
+    """Met is_reading_slots à on (True = en train d'énoncer les créneaux)."""
+    session.is_reading_slots = on
+
+
+def reset_slots_reading(session: Session) -> None:
+    """Remet is_reading_slots à False (appelé en sortie de WAIT_CONFIRM ou si invariant violé)."""
+    if getattr(session, "is_reading_slots", False):
+        set_reading_slots(session, False, "reset")
 
 
 class SessionStore:
