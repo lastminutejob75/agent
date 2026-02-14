@@ -343,6 +343,10 @@ class SQLiteSessionStore:
             session = Session(conv_id=conv_id)
             self.save(session)
         return session
+
+    def set_for_resume(self, session: Session) -> None:
+        """Injecte une session reprise depuis PG (Phase 2). Met en cache sans persister."""
+        self._memory_cache[session.conv_id] = session
     
     def delete(self, conv_id: str) -> None:
         """Supprime une session."""

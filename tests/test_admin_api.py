@@ -152,6 +152,27 @@ def test_admin_technical_status_404(client, admin_headers):
     assert r.status_code == 404
 
 
+def test_admin_transfer_reasons(client, admin_headers):
+    """GET /api/admin/tenants/1/transfer-reasons → top_transferred, top_prevented."""
+    r = client.get("/api/admin/tenants/1/transfer-reasons", headers=admin_headers)
+    assert r.status_code == 200
+    data = r.json()
+    assert "top_transferred" in data
+    assert "top_prevented" in data
+    assert "days" in data
+    assert isinstance(data["top_transferred"], list)
+    assert isinstance(data["top_prevented"], list)
+    for item in data["top_transferred"]:
+        assert "reason" in item
+        assert "count" in item
+
+
+def test_admin_transfer_reasons_404(client, admin_headers):
+    """GET /api/admin/tenants/999999/transfer-reasons → 404."""
+    r = client.get("/api/admin/tenants/999999/transfer-reasons", headers=admin_headers)
+    assert r.status_code == 404
+
+
 @patch("backend.routes.admin.pg_add_tenant_user")
 def test_admin_add_user_creates_row(mock_add, client, admin_headers):
     """POST /api/admin/tenants/1/users → crée tenant_user."""

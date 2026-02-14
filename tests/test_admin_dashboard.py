@@ -62,6 +62,9 @@ def test_dashboard_structure(client, admin_headers):
     for k in ("calls_total", "bookings_confirmed", "transfers", "abandons"):
         assert k in data["counters_7d"]
         assert isinstance(data["counters_7d"][k], (int, float))
+    assert "transfer_reasons" in data
+    assert "top_transferred" in data["transfer_reasons"]
+    assert "top_prevented" in data["transfer_reasons"]
 
 
 def test_dashboard_last_call_structure(client, admin_headers):

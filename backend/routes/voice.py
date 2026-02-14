@@ -11,11 +11,12 @@ import json
 import re
 import time
 import uuid
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from backend.engine import ENGINE
 from backend import prompts, config
 from backend.client_memory import get_client_memory
+from backend.session_codec import session_to_dict
 from backend.conversational_engine import ConversationalEngine, _is_canary
 from backend.reports import get_report_generator
 from backend.stt_utils import normalize_transcript, is_filler_only
@@ -35,6 +36,41 @@ report_generator = get_report_generator()
 
 # Mode conversationnel P0 (lazy)
 _conversational_engine = None
+
+def _get_or_resume_voice_session(tenant_id: int, call_id: str):
+    """
+    Phase 2: PG-first read pour reprise après restart/multi-instance.
+    Si session absente en mémoire → tenter load depuis PG, sinon get_or_create.
+    """
+    session = ENGINE.session_store.get(call_id)
+    if session is None and config.USE_PG_CALL_JOURNAL:
+        try:
+            from backend.session_pg import load_session_pg_first
+            result = load_session_pg_first(tenant_id, call_id)
+            if result:
+                s_pg, ck_seq, last_seq = result
+                if hasattr(ENGINE.session_store, "set_for_resume"):
+                    ENGINE.session_store.set_for_resume(s_pg)
+                else:
+                    cache = getattr(ENGINE.session_store, "_memory_cache", None)
+                    if cache is not None:
+                        cache[call_id] = s_pg
+                logger.info(
+                    "[CALL_RESUME] source=pg tenant_id=%s call_id=%s state=%s ck_seq=%s last_seq=%s",
+                    tenant_id, call_id[:20], s_pg.state, ck_seq, last_seq,
+                )
+                try:
+                    from backend.engine import _persist_ivr_event
+                    _persist_ivr_event(s_pg, "resume_from_pg", reason=f"ck_seq={ck_seq}")
+                except Exception:
+                    pass
+                session = s_pg
+        except Exception as e:
+            logger.warning("[CALL_RESUME_WARN] pg_down/err=%s", e, exc_info=True)
+    if session is None:
+        session = ENGINE.session_store.get_or_create(call_id)
+    return session
+
 
 def _get_engine(call_id: str):
     """Retourne l'engine à utiliser : conversationnel (si flag + canary) ou FSM."""
@@ -174,6 +210,74 @@ def _reconstruct_session_from_history(session, messages: list, call_id: str = ""
     logger.debug("reconstruct complete: state=%s name=%s pref=%s", session.state, session.qualif_data.name, session.qualif_data.pref)
     
     return session
+
+
+def _pg_lock_ok() -> bool:
+    """Phase 2.1: PG journal activé et URL présente."""
+    if not getattr(config, "USE_PG_CALL_JOURNAL", True):
+        return False
+    try:
+        from backend.session_pg import _pg_url
+        return _pg_url() is not None
+    except Exception:
+        return False
+
+
+def _call_journal_ensure(tenant_id: int, call_id: str, initial_state: str = "START") -> None:
+    """Phase 1 dual-write: assure call_sessions existe. Si PG down: log WARN, continue."""
+    if not getattr(config, "USE_PG_CALL_JOURNAL", True):
+        return
+    try:
+        from backend.session_pg import pg_ensure_call_session
+        ok = pg_ensure_call_session(tenant_id, call_id, initial_state)
+        if not ok:
+            logger.debug("[CALL_JOURNAL] pg_ensure_call_session skipped (no PG)")
+    except Exception as e:
+        logger.warning("[CALL_JOURNAL_WARN] pg_down reason=ensure %s", e)
+
+
+def _call_journal_user_message(tenant_id: int, call_id: str, text: str) -> None:
+    """Phase 1 dual-write: log message user. Si PG down: log WARN, continue."""
+    if not getattr(config, "USE_PG_CALL_JOURNAL", True):
+        return
+    try:
+        from backend.session_pg import pg_ensure_call_session, pg_add_message
+        pg_ensure_call_session(tenant_id, call_id)
+        pg_add_message(tenant_id, call_id, "user", text or "")
+    except Exception as e:
+        logger.warning("[CALL_JOURNAL_WARN] pg_down reason=user_msg %s", e)
+
+
+def _call_journal_agent_response(
+    tenant_id: int,
+    call_id: str,
+    session,
+    response_text: str,
+    state_before: str,
+    should_checkpoint: bool,
+) -> None:
+    """
+    Phase 1 dual-write: log message agent, update state, optionnel checkpoint.
+    should_checkpoint: True si state changé OU pending_slots_display critique OU toutes les N écritures.
+    """
+    if not getattr(config, "USE_PG_CALL_JOURNAL", True):
+        return
+    try:
+        from backend.session_pg import (
+            pg_ensure_call_session,
+            pg_add_message,
+            pg_update_last_state,
+            pg_write_checkpoint,
+        )
+        from backend.session_codec import session_to_dict
+        pg_ensure_call_session(tenant_id, call_id)
+        seq = pg_add_message(tenant_id, call_id, "agent", response_text or "")
+        pg_update_last_state(tenant_id, call_id, getattr(session, "state", "START"))
+        if should_checkpoint and seq is not None:
+            state_json = session_to_dict(session)
+            pg_write_checkpoint(tenant_id, call_id, seq, state_json)
+    except Exception as e:
+        logger.warning("[CALL_JOURNAL_WARN] pg_down reason=agent_response %s", e)
 
 
 def log_timer(label: str, start: float) -> float:
@@ -386,9 +490,107 @@ async def vapi_webhook(request: Request):
             logger.warning("[TENANT_ROUTE_MISS] to=%s tenant_id=%s numéro non onboardé", to_number, resolved_tenant_id)
             # TODO: transfert immédiat via tool/response si souhaité
 
-        session = ENGINE.session_store.get_or_create(call_id)
-        session.channel = "vocal"
-        session.tenant_id = resolved_tenant_id
+        # Phase 2.1: lock PG anti webhooks simultanés
+        if _pg_lock_ok():
+            try:
+                from backend.session_pg import pg_lock_call_session, LockTimeout
+                _call_journal_ensure(resolved_tenant_id, call_id)
+                with pg_lock_call_session(resolved_tenant_id, call_id, timeout_seconds=2):
+                    session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
+                    session.channel = "vocal"
+                    session.tenant_id = resolved_tenant_id
+
+                    if session.state in ("TRANSFERRED", "CONFIRMED"):
+                        return {"content": prompts.VOCAL_RESUME_ALREADY_TERMINATED}
+
+                    if transcript_type == "partial":
+                        logger.debug("partial transcript, skipping")
+                        _norm_len = len(normalize_transcript(raw_text or ""))
+                        logger.info("decision_in", extra={"call_id": call_id, "state_before": getattr(session, "state", ""), "transcript_type": transcript_type or "unknown", "confidence": confidence, "raw_len": len(raw_text or ""), "normalized_len": _norm_len, "stt_class": "PARTIAL", "noise_count": getattr(session, "noise_detected_count", 0), "empty_count": getattr(session, "empty_message_count", 0), "turn_count": getattr(session, "turn_count", 0)})
+                        _log_decision_out(call_id, session, "http_204", "")
+                        return Response(status_code=204)
+
+                    t2 = log_timer("Message extracted", t1)
+                    kind, text_to_use = _classify_stt_input(raw_text, confidence, transcript_type, message_type=message_type)
+                    normalized = normalize_transcript(raw_text or "")
+                    logger.info("decision_in", extra={"call_id": call_id, "state_before": getattr(session, "state", ""), "transcript_type": transcript_type or "unknown", "confidence": confidence, "raw_len": len(raw_text or ""), "normalized_len": len(normalized or ""), "stt_class": kind, "noise_count": getattr(session, "noise_detected_count", 0), "empty_count": getattr(session, "empty_message_count", 0), "turn_count": getattr(session, "turn_count", 0)})
+
+                    if kind == "NOISE":
+                        events = ENGINE.handle_noise(session)
+                        if not events:
+                            _log_decision_out(call_id, session, "http_204", "")
+                            return Response(status_code=204)
+                        if hasattr(ENGINE.session_store, "save"):
+                            ENGINE.session_store.save(session)
+                        reply_text = events[0].text
+                        _action = "reply"
+                        if getattr(session, "state", "") == "INTENT_ROUTER": _action = "router"
+                        elif getattr(session, "state", "") == "TRANSFERRED": _action = "transfer"
+                        elif getattr(session, "state", "") == "CONFIRMED": _action = "confirmed"
+                        _log_decision_out(call_id, session, _action, reply_text)
+                        return {"content": reply_text}
+
+                    if kind == "SILENCE":
+                        events = _get_engine(call_id).handle_message(call_id, "")
+                        _maybe_reset_noise_on_terminal(session, events)
+                        if hasattr(ENGINE.session_store, "save"):
+                            ENGINE.session_store.save(session)
+                        response_text = events[0].text if events else "Je n'ai pas compris"
+                        _action = "reply"
+                        if "INTENT_ROUTER" in getattr(session, "state", ""): _action = "router"
+                        elif getattr(session, "state", "") == "TRANSFERRED": _action = "transfer"
+                        elif getattr(session, "state", "") == "CONFIRMED": _action = "confirmed"
+                        _log_decision_out(call_id, session, _action, response_text)
+                        return {"content": response_text}
+
+                    if text_to_use and text_to_use.strip():
+                        from backend.tenant_config import get_consent_mode
+                        if not getattr(session, "_consent_obtained_persisted", False) and get_consent_mode(getattr(session, "tenant_id", None)) == "implicit":
+                            try:
+                                from backend.engine import persist_consent_obtained
+                                persist_consent_obtained(session, channel="vocal")
+                                session._consent_obtained_persisted = True
+                            except Exception:
+                                pass
+                        events = _get_engine(call_id).handle_message(call_id, text_to_use)
+                        _maybe_reset_noise_on_terminal(session, events)
+                        if hasattr(ENGINE.session_store, "save"):
+                            ENGINE.session_store.save(session)
+                        response_text = events[0].text if events else "Je n'ai pas compris"
+                        _action = "reply"
+                        if "INTENT_ROUTER" in getattr(session, "state", ""): _action = "router"
+                        elif getattr(session, "state", "") == "TRANSFERRED": _action = "transfer"
+                        elif getattr(session, "state", "") == "CONFIRMED": _action = "confirmed"
+                        _log_decision_out(call_id, session, _action, response_text)
+                        return {"content": response_text}
+
+                    _log_decision_out(call_id, session, "empty_reply", "")
+                    return {"content": ""}
+            except LockTimeout:
+                logger.warning("[CALL_LOCK_TIMEOUT] tenant_id=%s call_id=%s", resolved_tenant_id, call_id[:20])
+                try:
+                    from backend.engine import _persist_ivr_event
+                    _persist_ivr_event(
+                        ENGINE.session_store.get_or_create(call_id),
+                        "call_lock_timeout",
+                        reason="concurrent_webhook",
+                    )
+                except Exception:
+                    pass
+                return Response(status_code=204)
+            except Exception as e:
+                logger.warning("[CALL_LOCK_WARN] err=%s", e, exc_info=True)
+                session = ENGINE.session_store.get_or_create(call_id)
+                session.channel = "vocal"
+                session.tenant_id = resolved_tenant_id
+        else:
+            session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
+            session.channel = "vocal"
+            session.tenant_id = resolved_tenant_id
+
+        # Garde-fou Phase 2: session déjà terminée → ne pas rouvrir
+        if session.state in ("TRANSFERRED", "CONFIRMED"):
+            return {"content": prompts.VOCAL_RESUME_ALREADY_TERMINATED}
 
         # Partial => HTTP 204 No Content (vrai no-op, pas de tour)
         if transcript_type == "partial":
@@ -555,17 +757,45 @@ async def vapi_tool(request: Request):
         to_number = extract_to_number_from_vapi_payload(payload)
         resolved_tenant_id, _ = resolve_tenant_id_from_vocal_call(to_number, channel="vocal")
 
-        # Session vocale
-        session = ENGINE.session_store.get_or_create(call_id)
+        # Phase 2.1: lock PG anti webhooks simultanés
+        if _pg_lock_ok():
+            try:
+                from backend.session_pg import pg_lock_call_session, LockTimeout
+                _call_journal_ensure(resolved_tenant_id, call_id)
+                with pg_lock_call_session(resolved_tenant_id, call_id, timeout_seconds=2):
+                    session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
+                    session.channel = "vocal"
+                    session.tenant_id = resolved_tenant_id
+                    if session.state in ("TRANSFERRED", "CONFIRMED"):
+                        return {"result": prompts.VOCAL_RESUME_ALREADY_TERMINATED}
+                    events = _get_engine(call_id).handle_message(call_id, user_message)
+                    response_text = events[0].text if events else "Je n'ai pas compris"
+                    print(f"✅ Tool response: '{response_text}'")
+                    return {"result": response_text}
+            except LockTimeout:
+                logger.warning("[CALL_LOCK_TIMEOUT] tenant_id=%s call_id=%s", resolved_tenant_id, call_id[:20])
+                try:
+                    from backend.engine import _persist_ivr_event
+                    _persist_ivr_event(
+                        ENGINE.session_store.get_or_create(call_id),
+                        "call_lock_timeout",
+                        reason="concurrent_webhook",
+                    )
+                except Exception:
+                    pass
+                return Response(status_code=204)
+            except Exception as e:
+                logger.warning("[CALL_LOCK_WARN] err=%s", e, exc_info=True)
+                pass
+
+        session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
         session.channel = "vocal"
         session.tenant_id = resolved_tenant_id
-
-        # Traiter
+        if session.state in ("TRANSFERRED", "CONFIRMED"):
+            return {"result": prompts.VOCAL_RESUME_ALREADY_TERMINATED}
         events = _get_engine(call_id).handle_message(call_id, user_message)
         response_text = events[0].text if events else "Je n'ai pas compris"
-        
         print(f"✅ Tool response: '{response_text}'")
-        
         return {"result": response_text}
         
     except Exception as e:
@@ -675,9 +905,48 @@ async def vapi_custom_llm(request: Request):
             overlap_handled = False
             response_text = ""
             action_taken = ""
-            session = ENGINE.session_store.get_or_create(call_id)
+
+            # Phase 2: PG-first read — recharger depuis PG si session absente (restart/multi-instance)
+            # Phase 2.1: lock chat/completions — lock court sur get_or_resume uniquement
+            # (journal appelle pg_add_message qui UPDATE call_sessions → on ne peut pas tenir le lock pendant)
+            state_before_turn = "START"
+            if _pg_lock_ok():
+                try:
+                    from backend.session_pg import pg_lock_call_session, LockTimeout
+                    _call_journal_ensure(resolved_tenant_id, call_id)
+                    with pg_lock_call_session(resolved_tenant_id, call_id, timeout_seconds=2):
+                        session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
+                        state_before_turn = getattr(session, "state", "START")
+                except LockTimeout:
+                    logger.warning("[CALL_LOCK_TIMEOUT] tenant_id=%s call_id=%s", resolved_tenant_id, call_id[:20])
+                    try:
+                        from backend.engine import _persist_ivr_event
+                        s = ENGINE.session_store.get_or_create(call_id)
+                        s.tenant_id = resolved_tenant_id
+                        _persist_ivr_event(s, "call_lock_timeout", reason="concurrent_webhook")
+                    except Exception:
+                        pass
+                    return Response(status_code=204)
+                except Exception as e:
+                    logger.warning("[CALL_LOCK_WARN] err=%s", e, exc_info=True)
+                    session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
+                    state_before_turn = getattr(session, "state", "START")
+            else:
+                session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
+                state_before_turn = getattr(session, "state", "START")
+
             session.channel = "vocal"
             session.tenant_id = resolved_tenant_id
+
+            # Garde-fou Phase 2: session déjà terminée (CONFIRMED/TRANSFERRED) → ne pas rouvrir
+            if session.state in ("TRANSFERRED", "CONFIRMED"):
+                response_text = prompts.VOCAL_RESUME_ALREADY_TERMINATED
+                action_taken = "resume_terminal_guard"
+                overlap_handled = True
+
+            # P0 Option B: dual-write journal PG (Phase 1)
+            _call_journal_ensure(resolved_tenant_id, call_id, state_before_turn)
+            _call_journal_user_message(resolved_tenant_id, call_id, user_message or "")
 
             # 🧠 Stocker le téléphone dans la session pour plus tard
             if customer_phone:
@@ -717,7 +986,7 @@ async def vapi_custom_llm(request: Request):
                                 logger.debug("returning client detected: %s", existing_client.name)
                 except Exception as e:
                     logger.debug("client memory error: %s", e)
-            
+
             # Input firewall (text-only) : SILENCE / UNCLEAR / TEXT — avant tout traitement
             kind, normalized = classify_text_only(user_message or "")
             unclear_count = getattr(session, "unclear_text_count", 0)
@@ -742,7 +1011,8 @@ async def vapi_custom_llm(request: Request):
             )
 
             # Semi-sourd : overlap guard (UNCLEAR/SILENCE pendant TTS = ignoré ; mots critiques passent)
-            if action_taken != "reconstruct_loop_guard":
+            # Ne pas réinitialiser si déjà géré (reconstruct_loop_guard, resume_terminal_guard)
+            if action_taken not in ("reconstruct_loop_guard", "resume_terminal_guard"):
                 overlap_handled = False
                 response_text = ""
                 action_taken = ""
@@ -849,6 +1119,23 @@ async def vapi_custom_llm(request: Request):
                 _log_decision_out(call_id, session, action_taken, response_text)
                 if hasattr(ENGINE.session_store, "save"):
                     ENGINE.session_store.save(session)
+                # P0 Option B: dual-write — message agent + checkpoint
+                state_after = getattr(session, "state", "START")
+                # Checkpoint sur: changement état, pending_slots_display, awaiting_confirmation, états critiques
+                should_cp = (
+                    state_before_turn != state_after
+                    or bool(getattr(session, "pending_slots_display", None))
+                    or getattr(session, "awaiting_confirmation", None) is not None
+                    or state_after in ("QUALIF_CONTACT", "WAIT_CONFIRM", "CONTACT_CONFIRM")
+                )
+                _call_journal_agent_response(
+                    resolved_tenant_id,
+                    call_id,
+                    session,
+                    response_text,
+                    state_before_turn,
+                    should_checkpoint=should_cp,
+                )
                 logger.info(
                     "decision_out_chat",
                     extra={"call_id": call_id, "state_after": getattr(session, "state", "")},

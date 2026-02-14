@@ -94,9 +94,12 @@ export default function AdminTenantDashboard() {
   }
   if (!data) return null;
 
-  const { tenant_name, service_status, last_call, last_booking, counters_7d } = data;
+  const { tenant_name, service_status, last_call, last_booking, counters_7d, transfer_reasons } = data;
   const counters = { ...COUNTERS_DEFAULT, ...(counters_7d || {}) };
   const status = ["online", "offline", "unknown"].includes(service_status?.status) ? service_status.status : "unknown";
+  const topTransferred = transfer_reasons?.top_transferred ?? [];
+  const transferTotal = topTransferred.reduce((s, x) => s + x.count, 0);
+  const needsPriority = transferTotal > 0;
 
   return (
     <div className="mx-auto max-w-4xl p-6 md:p-8">
@@ -169,6 +172,28 @@ export default function AdminTenantDashboard() {
             <p><span className="text-gray-600">Abandons</span> <span className="font-semibold">{counters.abandons}</span></p>
           </div>
         </div>
+      </div>
+
+      {/* Top 5 raisons de transfert */}
+      <div className="mt-6 rounded-xl border border-amber-100 bg-amber-50/50 p-6 shadow-sm">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-amber-800">Top 5 raisons de transfert (7 jours)</h2>
+          {needsPriority && (
+            <span className="rounded-full bg-amber-200 px-3 py-1 text-xs font-medium text-amber-900">À traiter en priorité</span>
+          )}
+        </div>
+        {topTransferred.length > 0 ? (
+          <div className="space-y-2 text-sm">
+            {topTransferred.map((item, i) => (
+              <div key={item.reason} className="flex items-center justify-between">
+                <span className="font-mono text-gray-700">{item.reason}</span>
+                <span className="font-semibold text-amber-800">{item.count}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-amber-700/70">Aucun transfert sur la période</p>
+        )}
       </div>
     </div>
   );

@@ -387,6 +387,8 @@ def _get_dashboard_snapshot(tenant_id: int, tenant_name: str) -> dict:
             "source": "ivr_events",
         }
 
+    transfer_reasons = _get_transfer_reasons(tenant_id, days=7)
+
     return {
         "tenant_id": tenant_id,
         "tenant_name": tenant_name,
@@ -394,6 +396,7 @@ def _get_dashboard_snapshot(tenant_id: int, tenant_name: str) -> dict:
         "last_call": last_call,
         "last_booking": last_booking,
         "counters_7d": counters_7d,
+        "transfer_reasons": transfer_reasons,
     }
 
 
@@ -514,6 +517,33 @@ def _get_technical_status(tenant_id: int) -> Optional[dict]:
         finally:
             conn.close()
 
+    # KPI call_lock_timeout_rate (Phase 2.1) — si > 0.5% → Vapi doublons ou latence DB
+    call_lock_timeout_rate = None
+    if url_events:
+        try:
+            from datetime import timedelta
+            start_7d = (now - timedelta(days=7)).strftime("%Y-%m-%d 00:00:00")
+            import psycopg
+            from psycopg.rows import dict_row
+            with psycopg.connect(url_events, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT
+                            COUNT(DISTINCT CASE WHEN call_id != '' THEN call_id END) as calls,
+                            COUNT(*) FILTER (WHERE event = 'call_lock_timeout') as lock_timeouts
+                        FROM ivr_events
+                        WHERE client_id = %s AND created_at >= %s
+                        """,
+                        (tenant_id, start_7d),
+                    )
+                    row = cur.fetchone()
+                    if row and row.get("calls", 0) > 0:
+                        rate = (row.get("lock_timeouts") or 0) / row["calls"]
+                        call_lock_timeout_rate = round(rate * 100, 2)
+        except Exception as e:
+            logger.debug("call_lock_timeout_rate failed: %s", e)
+
     return {
         "tenant_id": tenant_id,
         "did": did,
@@ -524,6 +554,8 @@ def _get_technical_status(tenant_id: int) -> Optional[dict]:
         "service_agent": service_agent,
         "last_event_at": last_event_at,
         "last_event_ago": last_event_ago,
+        "call_lock_timeout_rate_pct": call_lock_timeout_rate,
+        "call_lock_timeout_alert": call_lock_timeout_rate is not None and call_lock_timeout_rate > 0.5,
     }
 
 
@@ -858,6 +890,110 @@ def admin_get_dashboard(
     if not d:
         raise HTTPException(404, "Tenant not found")
     return _get_dashboard_snapshot(tenant_id, d.get("name", "N/A"))
+
+
+def _get_transfer_reasons(tenant_id: int, days: int = 7) -> dict:
+    """
+    Top 5 raisons de transfert (transferred_human) + transfer_prevented pour comparaison.
+    Returns: {top_transferred: [{reason, count}], top_prevented: [{reason, count}]}
+    """
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    start = (now - timedelta(days=days)).strftime("%Y-%m-%d 00:00:00")
+    end = now.strftime("%Y-%m-%d %H:%M:%S")
+
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    top_transferred = []
+    top_prevented = []
+
+    if url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            with psycopg.connect(url, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT COALESCE(reason, 'unknown') as reason, COUNT(*) as cnt
+                        FROM ivr_events
+                        WHERE client_id = %s AND created_at >= %s AND created_at <= %s
+                        AND event IN ('transferred_human', 'transferred')
+                        GROUP BY COALESCE(reason, 'unknown')
+                        ORDER BY cnt DESC
+                        LIMIT 5
+                        """,
+                        (tenant_id, start, end),
+                    )
+                    top_transferred = [{"reason": r["reason"], "count": int(r["cnt"])} for r in cur.fetchall()]
+                    cur.execute(
+                        """
+                        SELECT COALESCE(reason, 'unknown') as reason, COUNT(*) as cnt
+                        FROM ivr_events
+                        WHERE client_id = %s AND created_at >= %s AND created_at <= %s
+                        AND event = 'transfer_prevented'
+                        GROUP BY COALESCE(reason, 'unknown')
+                        ORDER BY cnt DESC
+                        LIMIT 5
+                        """,
+                        (tenant_id, start, end),
+                    )
+                    top_prevented = [{"reason": r["reason"], "count": int(r["cnt"])} for r in cur.fetchall()]
+        except Exception as e:
+            logger.warning("transfer_reasons failed: %s", e)
+    else:
+        import backend.db as db
+        conn = db.get_conn()
+        try:
+            db._ensure_ivr_tables(conn)
+            rows = conn.execute(
+                """
+                SELECT COALESCE(reason, 'unknown') as reason, COUNT(*) as cnt
+                FROM ivr_events
+                WHERE client_id = ? AND created_at >= ? AND created_at <= ?
+                AND event IN ('transferred_human', 'transferred')
+                GROUP BY COALESCE(reason, 'unknown')
+                ORDER BY cnt DESC
+                LIMIT 5
+                """,
+                (tenant_id, start, end),
+            ).fetchall()
+            top_transferred = [{"reason": r[0], "count": int(r[1])} for r in rows]
+            rows = conn.execute(
+                """
+                SELECT COALESCE(reason, 'unknown') as reason, COUNT(*) as cnt
+                FROM ivr_events
+                WHERE client_id = ? AND created_at >= ? AND created_at <= ?
+                AND event = 'transfer_prevented'
+                GROUP BY COALESCE(reason, 'unknown')
+                ORDER BY cnt DESC
+                LIMIT 5
+                """,
+                (tenant_id, start, end),
+            ).fetchall()
+            top_prevented = [{"reason": r[0], "count": int(r[1])} for r in rows]
+        except Exception as e:
+            logger.warning("transfer_reasons sqlite failed: %s", e)
+        finally:
+            conn.close()
+
+    return {
+        "top_transferred": top_transferred,
+        "top_prevented": top_prevented,
+        "days": days,
+    }
+
+
+@router.get("/admin/tenants/{tenant_id}/transfer-reasons")
+def admin_get_transfer_reasons(
+    tenant_id: int,
+    days: int = Query(7, ge=1, le=90),
+    _: None = Depends(_verify_admin),
+):
+    """Top 5 raisons de transfert (7j) — pour prioriser les corrections."""
+    d = _get_tenant_detail(tenant_id)
+    if not d:
+        raise HTTPException(404, "Tenant not found")
+    return _get_transfer_reasons(tenant_id, days)
 
 
 @router.get("/admin/tenants/{tenant_id}/technical-status")
