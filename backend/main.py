@@ -429,6 +429,13 @@ async def run_engine(conv_id: str, message: str, channel: str = "web") -> None:
         for ev in events:
             await emit_event(conv_id, ev)
 
+        # Sécurité : si aucun event "final" avec texte (ex. liste vide), le client reste sur "…"
+        if not events or not any(getattr(ev, "type", None) == "final" and (getattr(ev, "text", None) or "").strip() for ev in events):
+            from backend.engine import Event as Evt
+            from backend import prompts
+            fallback = getattr(prompts, "MSG_UNCLEAR_1", "Je n'ai pas bien compris. Pouvez-vous répéter ?")
+            await emit_event(conv_id, Evt("final", fallback, conv_state="START"))
+
     except Exception:
         await push_event(conv_id, {
             "type": "error",

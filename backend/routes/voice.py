@@ -563,8 +563,14 @@ async def vapi_webhook(request: Request):
                         _log_decision_out(call_id, session, _action, response_text)
                         return {"content": response_text}
 
-                    _log_decision_out(call_id, session, "empty_reply", "")
-                    return {"content": ""}
+                    # Pas de texte utilisable → traiter comme silence (évite "plus ne se passe" après accueil)
+                    events = _get_engine(call_id).handle_message(call_id, "")
+                    _maybe_reset_noise_on_terminal(session, events)
+                    if hasattr(ENGINE.session_store, "save"):
+                        ENGINE.session_store.save(session)
+                    response_text = events[0].text if events else "Je n'ai pas bien compris. Pouvez-vous répéter ?"
+                    _log_decision_out(call_id, session, "reply", response_text)
+                    return {"content": response_text}
             except LockTimeout:
                 logger.warning("[CALL_LOCK_TIMEOUT] tenant_id=%s call_id=%s", resolved_tenant_id, call_id[:20])
                 try:
@@ -715,9 +721,15 @@ async def vapi_webhook(request: Request):
             print(f"✅ TOTAL: {total_ms:.0f}ms | Response: '{response_text[:50]}...'")
             return {"content": response_text}
 
-        print("⚠️ No user text after classification")
-        _log_decision_out(call_id, session, "empty_reply", "")
-        return {"content": ""}
+        # Pas de texte utilisable après classification → traiter comme silence (évite "plus ne se passe" après accueil)
+        print("⚠️ No user text after classification, treating as silence")
+        events = _get_engine(call_id).handle_message(call_id, "")
+        _maybe_reset_noise_on_terminal(session, events)
+        if hasattr(ENGINE.session_store, "save"):
+            ENGINE.session_store.save(session)
+        response_text = events[0].text if events else "Je n'ai pas bien compris. Pouvez-vous répéter ?"
+        _log_decision_out(call_id, session, "reply", response_text)
+        return {"content": response_text}
 
     except Exception as e:
         print(f"❌ ERROR: {e}")
