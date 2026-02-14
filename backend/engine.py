@@ -44,6 +44,33 @@ from backend.tenant_config import get_consent_mode
 logger = logging.getLogger(__name__)
 
 
+def _assert_pending_slots_invariants(session: Session, state: str) -> None:
+    """
+    Anti-régression Fix 3: invariants pending_slots (dev only, logs warning).
+    Appelé à l'entrée de WAIT_CONFIRM / CONTACT_CONFIRM quand pending_slots est utilisé.
+    """
+    pending = getattr(session, "pending_slots", None) or []
+    if not pending:
+        return
+    conv_id = getattr(session, "conv_id", "")[:20]
+    if len(pending) > config.MAX_SLOTS_PROPOSED:
+        logger.warning(
+            "[PENDING_SLOTS_INVARIANT] conv_id=%s state=%s len=%s > MAX=%s",
+            conv_id, state, len(pending), config.MAX_SLOTS_PROPOSED,
+        )
+    for i, s in enumerate(pending):
+        slot_id = tools_booking._slot_get(s, "id") or tools_booking._slot_get(s, "slot_id")
+        start = tools_booking._slot_get(s, "start") or tools_booking._slot_get(s, "start_iso")
+        label = tools_booking._slot_get(s, "label_vocal") or tools_booking._slot_get(s, "label")
+        src = tools_booking._slot_get(s, "source")
+        has_id_or_start = slot_id is not None or (start and str(start).strip())
+        if not (has_id_or_start and label and src):
+            logger.warning(
+                "[PENDING_SLOTS_INVARIANT] conv_id=%s state=%s slot_idx=%s missing id/start=%s label=%s source=%s",
+                conv_id, state, i, has_id_or_start, bool(label), src,
+            )
+
+
 def _mask_for_log(text: str, max_len: int = 50) -> str:
     """Fix 12: masque téléphone/email dans les logs (évite fuite données)."""
     if not text or not isinstance(text, str):
@@ -2616,7 +2643,8 @@ class Engine:
         - "oui"/"ok"/"d'accord" seul → jamais de choix implicite ; micro-question "Dites 1, 2 ou 3." sans incrémenter fails.
         """
         channel = getattr(session, "channel", "web")
-        
+        _assert_pending_slots_invariants(session, session.state)
+
         logger.info("[BOOKING_CONFIRM] conv_id=%s user=%s pending_len=%s state=%s", session.conv_id, _mask_for_log(user_text or ""), len(session.pending_slots or []), session.state)
         
         # 🔄 Si pas de slots en mémoire (session perdue) → re-proposer
@@ -2830,7 +2858,9 @@ class Engine:
                 return [Event("final", confirm_msg, conv_state=session.state)]
             help_msg = getattr(prompts, "MSG_SLOT_BARGE_IN_HELP", "D'accord. Dites juste 1, 2 ou 3.")
             session.add_message("agent", help_msg)
-            return [Event("final", list_msg, conv_state=session.state), Event("final", help_msg, conv_state=session.state)]
+            # Fix 7: un seul Event final en vocal (webhook n'utilise que events[0].text)
+            combined = f"{list_msg} {help_msg}".strip()
+            return [Event("final", combined, conv_state=session.state)]
 
         # P1.1 Barge-in safe : user a parlé pendant l'énumération des créneaux (interruption positive)
         if getattr(session, "is_reading_slots", False):
@@ -3554,6 +3584,8 @@ class Engine:
     def _handle_contact_confirm(self, session: Session, user_text: str) -> List[Event]:
         """Gère la confirmation du numéro de téléphone."""
         channel = getattr(session, "channel", "web")
+        if getattr(session, "pending_slot_choice", None) is not None:
+            _assert_pending_slots_invariants(session, "CONTACT_CONFIRM")
 
         # --- P0: répétition intention RDV ("je veux un rdv") → message guidé oui/non, pas contact_confirm_fails ---
         if _detect_booking_intent(user_text):

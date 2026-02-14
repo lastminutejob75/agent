@@ -740,8 +740,18 @@ def store_pending_slots(session, slots: List[Any]) -> None:
     if slots:
         s0 = slots[0]
         source = (s0.get("source") if isinstance(s0, dict) else getattr(s0, "source", None)) or "sqlite"
-    session.pending_slots = to_canonical_slots(slots, source)
+    canonical = to_canonical_slots(slots, source)
+    session.pending_slots = canonical
     session._slots_source = source or "sqlite"
+    # Instrumentation slot lifecycle (debug prod)
+    ids_preview = [_slot_get(s, "id") or _slot_get(s, "slot_id") for s in canonical[:3]]
+    logger.info(
+        "[SLOTS_SET] conv_id=%s count=%s source=%s ids=%s",
+        getattr(session, "conv_id", "")[:20],
+        len(canonical),
+        session._slots_source,
+        ids_preview,
+    )
 
     from backend.calendar_adapter import get_calendar_adapter
     adapter = get_calendar_adapter(session)
@@ -809,6 +819,13 @@ def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str
 
     if slots and 1 <= choice_index_1based <= len(slots):
         chosen = slots[choice_index_1based - 1]
+        slot_id_val = chosen.get("id") or chosen.get("slot_id")
+        logger.info(
+            "[SLOT_CHOSEN] conv_id=%s choice=%s slot_id=%s",
+            conv_id[:20],
+            choice_index_1based,
+            slot_id_val,
+        )
         src = (chosen.get("source") or "").lower()
         if src == "google":
             start_iso = chosen.get("start_iso") or chosen.get("start")
@@ -819,6 +836,7 @@ def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str
                     conv_id,
                     {k: v for k, v in chosen.items() if k != "label"},
                 )
+                logger.info("[SLOT_BOOK_RESULT] conv_id=%s success=False reason=technical slot_id=%s", conv_id[:20], slot_id_val)
                 return False, "technical"
             logger.info(
                 "[BOOKING_CHOSEN_SLOT] choice=%s start_iso=%s end_iso=%s source=google pending_len=%s",
@@ -827,7 +845,9 @@ def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str
                 end_iso,
                 len(slots),
             )
-            return _book_google_by_iso(session, start_iso, end_iso)
+            ok, reason = _book_google_by_iso(session, start_iso, end_iso)
+            logger.info("[SLOT_BOOK_RESULT] conv_id=%s success=%s reason=%s slot_id=%s", conv_id[:20], ok, reason, slot_id_val)
+            return (ok, reason)
         if src in ("sqlite", "pg"):
             slot_id = chosen.get("id") or chosen.get("slot_id")
             # Fallback: slot_id manquant mais start présent → lookup par date+time (session perdue)
@@ -841,8 +861,10 @@ def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str
                     conv_id,
                     {k: v for k, v in chosen.items() if k != "label"},
                 )
+                logger.info("[SLOT_BOOK_RESULT] conv_id=%s success=False reason=technical slot_id=missing", conv_id[:20])
                 return False, "technical"
             ok = _book_local_by_slot_id(session, int(slot_id), source=src)
+            logger.info("[SLOT_BOOK_RESULT] conv_id=%s success=%s reason=%s slot_id=%s", conv_id[:20], ok, None if ok else "slot_taken", slot_id)
             return (ok, None if ok else "slot_taken")
 
     # Pas de slots : fallback dernier recours = re-fetch et book (session perdue entre requêtes)
@@ -875,11 +897,14 @@ def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str
                     start_iso = chosen.get("start_iso") or chosen.get("start")
                     end_iso = chosen.get("end_iso") or chosen.get("end")
                     if start_iso and end_iso:
-                        return _book_google_by_iso(session, start_iso, end_iso)
+                        ok, reason = _book_google_by_iso(session, start_iso, end_iso)
+                        logger.info("[SLOT_BOOK_RESULT] conv_id=%s success=%s reason=%s (refetch)", conv_id[:20], ok, reason)
+                        return (ok, reason)
                 if src in ("sqlite", "pg"):
                     slot_id = chosen.get("id") or chosen.get("slot_id")
                     if slot_id is not None:
                         ok = _book_local_by_slot_id(session, int(slot_id), source=src)
+                        logger.info("[SLOT_BOOK_RESULT] conv_id=%s success=%s reason=%s slot_id=%s (refetch)", conv_id[:20], ok, None if ok else "slot_taken", slot_id)
                         return (ok, None if ok else "slot_taken")
         except Exception as e:
             logger.error("book_slot_from_session re-fetch failed: %s", e, exc_info=True)
@@ -899,11 +924,14 @@ def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str
         calendar = None if (adapter and not adapter.can_propose_slots()) else (adapter or _get_calendar_service())
         if calendar:
             ok = _book_via_google_calendar(session, idx, calendar)
+            logger.info("[SLOT_BOOK_RESULT] conv_id=%s success=%s reason=%s (legacy)", conv_id[:20], ok, None if ok else "slot_taken")
             return (ok, None if ok else "slot_taken")
         ok = _book_via_sqlite(session, idx)
+        logger.info("[SLOT_BOOK_RESULT] conv_id=%s success=%s reason=%s (legacy)", conv_id[:20], ok, None if ok else "slot_taken")
         return (ok, None if ok else "slot_taken")
 
     logger.warning("[BOOKING_TECH_REASON] conv_id=%s reason=no_slots_or_invalid_index choice=%s", conv_id, choice_index_1based)
+    logger.info("[SLOT_BOOK_RESULT] conv_id=%s success=False reason=technical", conv_id[:20])
     return False, "technical"
 
 
