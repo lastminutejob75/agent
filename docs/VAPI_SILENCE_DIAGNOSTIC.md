@@ -66,6 +66,28 @@ En mode Custom LLM, Vapi peut être configuré de 2 façons :
 
 ---
 
+## Checklist validation prod (après deploy)
+
+Une fois le backend déployé (Railway), valider le contrat SSE **sans** appeler Vapi :
+
+1. **Exécuter**  
+   `BASE_URL=https://agent-production-xxx.up.railway.app ./scripts/curl_vapi_stream.sh`
+
+2. **Relever 3 choses dans la sortie :**
+   - `HTTP/1.1 200`
+   - `Content-Type: text/event-stream`
+   - présence de `data: [DONE]`
+
+3. **Dans les logs Railway** pendant ce curl : vérifier qu’**aucune** ligne `[STREAM_MISMATCH_GUARD]` n’apparaît.
+
+**Puis** : refaire un **appel Vapi réel**. Séquence attendue :
+- call → `POST /api/vapi/chat/completions` (avec `stream: true`) → réponse SSE
+- Vapi lit/consomme le flux → TTS parle (plus de HANG/silence au début)
+
+**Si silence persiste** après cette validation : la cause est quasi certainement côté **config Vapi** (outil async, champ lu, URL, etc.), pas le backend. Pour trancher sur un appel précis : fournir un extrait des logs Railway (lignes autour de `/chat/completions` + call_id tronqué) pour vérifier que le backend a bien renvoyé du SSE sur cet appel.
+
+---
+
 ### Diagnostic express (trancher en ~60 secondes)
 
 1. Mettre **`VAPI_DEBUG_TEST_AUDIO=true`** (Railway), déployer.
