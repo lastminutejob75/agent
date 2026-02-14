@@ -5,7 +5,7 @@ Avec mémoire client et stats pour rapports.
 """
 
 from fastapi import APIRouter, Request
-from fastapi.responses import Response, JSONResponse
+from fastapi.responses import Response, JSONResponse, StreamingResponse
 import logging
 import json
 import re
@@ -87,6 +87,35 @@ def _get_engine(call_id: str):
             )
         return _conversational_engine
     return ENGINE
+
+
+def _sse_stream_for_text(call_id: str, text: str):
+    """
+    Générateur SSE au format OpenAI chat.completion.chunk pour un texte complet.
+    Utilisé quand stream=true pour LockTimeout, erreur, ou réponse courte.
+    """
+    chunk_role = {
+        "id": f"chatcmpl-{call_id}",
+        "object": "chat.completion.chunk",
+        "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+    }
+    yield f"data: {json.dumps(chunk_role)}\n\n"
+    words = (text or "").strip().split()
+    for i, word in enumerate(words):
+        content = f" {word}" if i > 0 else word
+        chunk = {
+            "id": f"chatcmpl-{call_id}",
+            "object": "chat.completion.chunk",
+            "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": None}],
+        }
+        yield f"data: {json.dumps(chunk)}\n\n"
+    chunk_final = {
+        "id": f"chatcmpl-{call_id}",
+        "object": "chat.completion.chunk",
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+    }
+    yield f"data: {json.dumps(chunk_final)}\n\n"
+    yield "data: [DONE]\n\n"
 
 
 def _reconstruct_session_from_history(session, messages: list, call_id: str = ""):
@@ -970,8 +999,6 @@ async def vapi_custom_llm(request: Request):
     - Mémoire client (reconnaissance clients récurrents)
     - Stats pour rapports quotidiens
     """
-    from fastapi.responses import StreamingResponse
-
     t_start = time.time()
     try:
         payload = await request.json()
@@ -996,9 +1023,9 @@ async def vapi_custom_llm(request: Request):
 
         print(f"🤖 CUSTOM LLM | session_key={call_id} | source={_source}")
         
-        # Vapi envoie un tableau de messages
+        # Vapi envoie un tableau de messages (stream: true = SSE obligatoire côté backend)
         messages = payload.get("messages", [])
-        is_streaming = payload.get("stream", False)
+        is_streaming = bool(payload.get("stream", False) or payload.get("streaming", False))
         
         # 📱 Extraire le numéro de téléphone du client (Vapi le fournit)
         customer_phone = payload.get("call", {}).get("customer", {}).get("number")
@@ -1082,6 +1109,12 @@ async def vapi_custom_llm(request: Request):
                         _persist_ivr_event(s, "call_lock_timeout", reason="concurrent_webhook")
                     except Exception as e:
                         logger.warning("[LOCK_TIMEOUT_SAVE_FAIL] call_id=%s err=%s", call_id[:20], e)
+                    if is_streaming:
+                        return StreamingResponse(
+                            _sse_stream_for_text(call_id, greeting),
+                            media_type="text/event-stream",
+                            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+                        )
                     return _chat_completion_response(call_id, greeting)
                 except Exception as e:
                     logger.warning("[CALL_LOCK_WARN] err=%s", e, exc_info=True)
@@ -1443,7 +1476,18 @@ async def vapi_custom_llm(request: Request):
             _err_cid = (payload.get("call") or {}).get("id") or "unknown"
         except NameError:
             _err_cid = "unknown"
-        return _chat_completion_response(_err_cid, "Désolé, une erreur est survenue.")
+        try:
+            _err_stream = bool(payload.get("stream", False) or payload.get("streaming", False))
+        except Exception:
+            _err_stream = False
+        _err_msg = "Désolé, une erreur est survenue."
+        if _err_stream:
+            return StreamingResponse(
+                _sse_stream_for_text(_err_cid, _err_msg),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+            )
+        return _chat_completion_response(_err_cid, _err_msg)
 
 
 @router.get("/health")
