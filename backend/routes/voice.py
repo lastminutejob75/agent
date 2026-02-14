@@ -360,6 +360,40 @@ def _is_agent_speaking(session) -> bool:
     return now < until
 
 
+def _chat_completion_response(call_id: str, content: str):
+    """
+    Réponse OpenAI-like robuste pour /api/vapi/chat/completions.
+    Compatibilité max : id, object, created, model, usage, content à la racine, choices[0].text.
+    Si VAPI_DEBUG_TEST_AUDIO=1 : force content = "TEST AUDIO 123" pour tester le pipeline TTS.
+    """
+    if getattr(config, "VAPI_DEBUG_TEST_AUDIO", False):
+        content = "TEST AUDIO 123"
+        logger.info("[VAPI_DEBUG] TEST AUDIO 123 forced for TTS check")
+    text = (content or "").strip() or "Pouvez-vous répéter, s'il vous plaît ?"
+    body = {
+        "id": f"chatcmpl-{call_id}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": "uwi-agent",
+        "content": text,
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": text},
+                "text": text,
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+    }
+    logger.info("[VAPI_OUT] chat/completions content_len=%s", len(text))
+    return JSONResponse(
+        body,
+        status_code=200,
+        headers={"Content-Type": "application/json; charset=utf-8"},
+    )
+
+
 def _vapi_content_response(
     call_id: str,
     response_text: str,
@@ -655,18 +689,25 @@ async def vapi_webhook(request: Request):
                     _log_decision_out(call_id, session, "reply", response_text)
                     return _vapi_content_response(call_id, response_text, session=session)
             except LockTimeout:
-                logger.warning("[CALL_LOCK_TIMEOUT] tenant_id=%s call_id=%s -> fallback contenu (évite 204)", resolved_tenant_id, call_id[:20])
+                logger.warning("[CALL_LOCK_TIMEOUT] tenant_id=%s call_id=%s -> fallback greeting + persistance session", resolved_tenant_id, call_id[:20])
+                greeting = (prompts.get_vocal_greeting(config.BUSINESS_NAME) or "Un instant, s'il vous plaît.").strip() or "Pouvez-vous répéter, s'il vous plaît ?"
+                s = None
                 try:
+                    s = ENGINE.session_store.get_or_create(call_id)
+                    s.channel = "vocal"
+                    s.tenant_id = resolved_tenant_id
+                    s.last_agent_message = greeting
+                    s.last_question_asked = greeting
+                    s.add_message("agent", greeting)
+                    if hasattr(ENGINE.session_store, "save"):
+                        ENGINE.session_store.save(s)
+                        logger.info("[SESSION_SAVED] call_id=%s state=%s last_agent_len=%s", call_id[:20], getattr(s, "state", "START"), len(greeting))
+                    logger.warning("[LOCK_TIMEOUT_SAVED] call_id=%s tenant=%s state=%s", call_id[:20], resolved_tenant_id, getattr(s, "state", "START"))
                     from backend.engine import _persist_ivr_event
-                    _persist_ivr_event(
-                        ENGINE.session_store.get_or_create(call_id),
-                        "call_lock_timeout",
-                        reason="concurrent_webhook",
-                    )
-                except Exception:
-                    pass
-                # Ne jamais renvoyer 204 au webhook → silence. Toujours du contenu.
-                return _vapi_content_response(call_id, "Un instant, s'il vous plaît.")
+                    _persist_ivr_event(s, "call_lock_timeout", reason="concurrent_webhook")
+                except Exception as e:
+                    logger.warning("[LOCK_TIMEOUT_SAVE_FAIL] call_id=%s err=%s", call_id[:20], e)
+                return _vapi_content_response(call_id, greeting, session=s)
             except Exception as e:
                 logger.warning("[CALL_LOCK_WARN] err=%s", e, exc_info=True)
                 session = ENGINE.session_store.get_or_create(call_id)
@@ -1025,27 +1066,23 @@ async def vapi_custom_llm(request: Request):
                         session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
                         state_before_turn = getattr(session, "state", "START")
                 except LockTimeout:
-                    logger.warning("[CALL_LOCK_TIMEOUT] tenant_id=%s call_id=%s -> retour greeting (évite 204/silence)", resolved_tenant_id, call_id[:20])
+                    logger.warning("[CALL_LOCK_TIMEOUT] tenant_id=%s call_id=%s -> retour greeting + persistance session", resolved_tenant_id, call_id[:20])
+                    greeting = (prompts.get_vocal_greeting(config.BUSINESS_NAME) or "Je vous écoute.").strip() or "Pouvez-vous répéter, s'il vous plaît ?"
                     try:
-                        from backend.engine import _persist_ivr_event
                         s = ENGINE.session_store.get_or_create(call_id)
+                        s.channel = "vocal"
                         s.tenant_id = resolved_tenant_id
+                        s.last_agent_message = greeting
+                        s.last_question_asked = greeting
+                        s.add_message("agent", greeting)
+                        if hasattr(ENGINE.session_store, "save"):
+                            ENGINE.session_store.save(s)
+                        logger.warning("[LOCK_TIMEOUT_SAVED] call_id=%s tenant=%s state=%s", call_id[:20], resolved_tenant_id, getattr(s, "state", "START"))
+                        from backend.engine import _persist_ivr_event
                         _persist_ivr_event(s, "call_lock_timeout", reason="concurrent_webhook")
-                    except Exception:
-                        pass
-                    # Ne jamais renvoyer 204 à Vapi sur chat/completions → silence. Toujours du contenu.
-                    fallback_text = (prompts.get_vocal_greeting(config.BUSINESS_NAME) or "Je vous écoute.").strip() or "Pouvez-vous répéter, s'il vous plaît ?"
-                    body = {
-                        "id": f"chatcmpl-{call_id}",
-                        "object": "chat.completion",
-                        "choices": [{
-                            "index": 0,
-                            "message": {"role": "assistant", "content": fallback_text},
-                            "finish_reason": "stop"
-                        }]
-                    }
-                    logger.info("[VAPI_OUT] chat/completions LockTimeout fallback content_len=%s", len(fallback_text))
-                    return JSONResponse(body, status_code=200)
+                    except Exception as e:
+                        logger.warning("[LOCK_TIMEOUT_SAVE_FAIL] call_id=%s err=%s", call_id[:20], e)
+                    return _chat_completion_response(call_id, greeting)
                 except Exception as e:
                     logger.warning("[CALL_LOCK_WARN] err=%s", e, exc_info=True)
                     session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
@@ -1395,32 +1432,18 @@ async def vapi_custom_llm(request: Request):
                 }
             )
         
-        # Format OpenAI-compatible (non-streaming)
-        return {
-            "id": f"chatcmpl-{call_id}",
-            "object": "chat.completion",
-            "choices": [{
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": response_text
-                },
-                "finish_reason": "stop"
-            }]
-        }
-        
+        # Format OpenAI-compatible (non-streaming), compatibilité max + Content-Type strict
+        return _chat_completion_response(call_id, response_text)
+
     except Exception as e:
         print(f"❌ Custom LLM error: {e}")
         import traceback
         traceback.print_exc()
-        return {
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": "Désolé, une erreur est survenue."
-                }
-            }]
-        }
+        try:
+            _err_cid = (payload.get("call") or {}).get("id") or "unknown"
+        except NameError:
+            _err_cid = "unknown"
+        return _chat_completion_response(_err_cid, "Désolé, une erreur est survenue.")
 
 
 @router.get("/health")

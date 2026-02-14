@@ -90,6 +90,9 @@ CANARY_PERCENT = CONVERSATIONAL_CANARY_PERCENT
 # Minimum confidence threshold for LLM responses
 CONVERSATIONAL_MIN_CONFIDENCE = float(os.getenv("CONVERSATIONAL_MIN_CONFIDENCE", "0.75"))
 
+# Debug Vapi TTS : si True, /chat/completions renvoie "TEST AUDIO 123" pour trancher (endpoint/format)
+VAPI_DEBUG_TEST_AUDIO = os.getenv("VAPI_DEBUG_TEST_AUDIO", "false").lower() in ("true", "1", "yes")
+
 # ==============================
 # STT (nova-2-phonecall) — seuils et noise
 # ==============================
