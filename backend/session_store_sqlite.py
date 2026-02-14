@@ -16,6 +16,14 @@ from backend.session import Session, QualifData
 from backend import config
 
 
+def _pending_slots_to_jsonable(slots) -> list:
+    """Convertit pending_slots (SlotDisplay ou dict) en list de dicts JSON-serializable. Fix 3."""
+    if not slots:
+        return []
+    from backend import tools_booking
+    return tools_booking.to_canonical_slots(slots)
+
+
 def _slot_start_to_iso(val) -> str:
     """Convertit start (datetime ou str) en ISO pour JSON."""
     if val is None:
@@ -135,22 +143,13 @@ class SQLiteSessionStore:
             # Partial data
             "partial_phone_digits": session.partial_phone_digits,
             
-            # Pending data (JSON) - inclure source pour booking (google vs sqlite/pg)
-            # start: toujours ISO string (évite json.dumps(datetime) qui échoue)
-            "pending_slots_json": json.dumps([
-                {
-                    "idx": s.idx, "label": s.label, "slot_id": s.slot_id,
-                    "start": _slot_start_to_iso(getattr(s, "start", None)),
-                    "day": getattr(s, "day", ""),
-                    "hour": getattr(s, "hour", 0),
-                    "label_vocal": getattr(s, "label_vocal", ""),
-                    "source": getattr(s, "source", "sqlite"),
-                }
-                for s in session.pending_slots
-            ]) if session.pending_slots else None,
+            # Pending data (JSON) - Fix 3: format canonique (list of dicts)
+            "pending_slots_json": json.dumps(_pending_slots_to_jsonable(session.pending_slots)) if session.pending_slots else None,
             "pending_slot_choice": session.pending_slot_choice,
             "pending_cancel_slot_json": json.dumps(session.pending_cancel_slot) if session.pending_cancel_slot else None,
-            "pending_slots_display_json": json.dumps(getattr(session, "pending_slots_display", None) or []),
+            "pending_slots_display_json": json.dumps(
+                _pending_slots_to_jsonable(session.pending_slots),
+            ),
             
             # Flags
             "extracted_name": 1 if session.extracted_name else 0,
@@ -202,27 +201,19 @@ class SQLiteSessionStore:
         # Partial data
         session.partial_phone_digits = row[12] or ""
         
-        # Pending data (JSON) - recréer les SlotDisplay
+        # Pending data (JSON) - Fix 3: format canonique (list of dicts)
         if row[13]:  # pending_slots_json
             try:
-                from backend.prompts import SlotDisplay
+                from backend import tools_booking
                 slots_data = json.loads(row[13])
-                session.pending_slots = [
-                    SlotDisplay(
-                        idx=s["idx"], label=s["label"], slot_id=s["slot_id"],
-                        start=s.get("start", ""), day=s.get("day", ""),
-                        hour=s.get("hour", 0), label_vocal=s.get("label_vocal", ""),
-                        source=s.get("source", "sqlite"),
-                    )
-                    for s in slots_data
-                ]
-                # Aussi remplir les pending_slot_ids et labels pour compatibilité
-                session.pending_slot_ids = [s.slot_id for s in session.pending_slots]
-                session.pending_slot_labels = [s.label for s in session.pending_slots]
+                if slots_data:
+                    session.pending_slots = tools_booking.to_canonical_slots(slots_data)
+                else:
+                    session.pending_slots = []
             except Exception as e:
                 print(f"⚠️ Error deserializing pending_slots: {e}")
                 session.pending_slots = []
-        
+
         session.pending_slot_choice = row[14]
 
         if row[15]:  # pending_cancel_slot_json
@@ -244,14 +235,15 @@ class SQLiteSessionStore:
             except Exception:
                 pass
 
-        # P0: slots affichés (colonne en fin de table pour compat migration)
+        # P0: pending_slots_display (legacy) - si pending_slots vide, utiliser display comme fallback
         if len(row) > 23 and row[23]:
             try:
-                session.pending_slots_display = json.loads(row[23])
+                display_data = json.loads(row[23])
+                if display_data and not session.pending_slots:
+                    from backend import tools_booking
+                    session.pending_slots = tools_booking.to_canonical_slots(display_data)
             except Exception:
-                session.pending_slots_display = []
-        else:
-            session.pending_slots_display = []
+                pass
 
         return session
     

@@ -43,6 +43,19 @@ from backend.tenant_config import get_consent_mode
 
 logger = logging.getLogger(__name__)
 
+
+def _mask_for_log(text: str, max_len: int = 50) -> str:
+    """Fix 12: masque téléphone/email dans les logs (évite fuite données)."""
+    if not text or not isinstance(text, str):
+        return ""
+    t = text.strip()[:max_len]
+    # Masquer email (prenom@domaine)
+    t = re.sub(r"\S+@\S+\.\S+", "[EMAIL]", t)
+    # Masquer séquences 8+ chiffres (numéros)
+    t = re.sub(r"\d[\d\s\-\.]{7,}", "[TEL]", t)
+    return t
+
+
 # Round-robin ACK après refus de créneau (évite "D'accord" répété)
 # Vocal : question fermée pour clore le tour et éviter oui/non ambigus
 SLOT_REFUSAL_ACK_VARIANTS_VOCAL = [
@@ -273,7 +286,7 @@ def _detect_booking_intent(text: str) -> bool:
     # Normaliser les espaces/tirets
     text_normalized = text_lower.replace("-", " ").replace("_", " ")
     
-    # Keywords avec variantes
+    # Keywords avec variantes. Fix 11: pas "prendre" seul (je prends note, je prends le 1er)
     keywords = [
         "rdv",
         "rendez vous",  # Après normalisation, "rendez-vous" devient "rendez vous"
@@ -283,7 +296,6 @@ def _detect_booking_intent(text: str) -> bool:
         "créneau",
         "réserver",
         "réservation",
-        "prendre",
     ]
     
     # Patterns plus flexibles
@@ -639,10 +651,10 @@ def handle_no_contextual(session: Session) -> dict:
         return {"state": "WAIT_CONFIRM", "message": "D'accord. Vous choisissez lequel : 1, 2 ou 3 ?"}
 
     if st == "CANCEL_CONFIRM":
-        return {"state": "CONFIRMED", "message": "Parfait, je n'annule pas. Bonne journée !"}
+        return {"state": "CONFIRMED", "message": "Très bien, je garde le rendez-vous. Bonne journée."}
 
     if st == "MODIFY_CONFIRM":
-        return {"state": "CONFIRMED", "message": "Parfait, je ne le modifie pas. Bonne journée !"}
+        return {"state": "CONFIRMED", "message": "Très bien, je garde la date. Bonne journée."}
 
     if st in {"QUALIF_NAME", "QUALIF_PREF", "QUALIF_CONTACT"}:
         msg = prompts.VOCAL_INTENT_ROUTER if channel == "vocal" else prompts.MSG_INTENT_ROUTER
@@ -811,7 +823,7 @@ class Engine:
         
         session = self.session_store.get_or_create(conv_id)
         t_load_end = time.time()
-        print(f"⏱️ Session loaded in {(t_load_end - t_load_start) * 1000:.0f}ms")
+        logger.debug("[SESSION] conv_id=%s loaded in %.0fms", conv_id, (t_load_end - t_load_start) * 1000)
 
         # Feature flags par tenant (P0) — cache TTL 60s, log 1x par call (premier tour)
         turn_count = getattr(session, "turn_count", 0)
@@ -832,7 +844,11 @@ class Engine:
         session.add_message("user", user_text)
         
         turn_count = getattr(session, "turn_count", 0)
-        print(f"🔍 handle_message: conv_id={conv_id}, state={session.state}, name={session.qualif_data.name}, pending_slots={len(session.pending_slots or [])}, user='{user_text[:50]}'")
+        logger.debug(
+            "[FLOW] conv_id=%s state=%s name=%s pending=%s user=%s",
+            conv_id, session.state, (session.qualif_data.name or "")[:20],
+            len(session.pending_slots or []), _mask_for_log(user_text or ""),
+        )
         logger.info(
             "[FLOW] conv_id=%s state=%s turn_count=%s user=%s",
             conv_id,
@@ -993,12 +1009,16 @@ class Engine:
         # 1. ANTI-LOOP GUARD (spec V3 — ordre pipeline NON NÉGOCIABLE)
         # ========================
         session.turn_count = getattr(session, "turn_count", 0) + 1
+        session.router_epoch_turns = getattr(session, "router_epoch_turns", 0) + 1
         max_turns = getattr(Session, "MAX_TURNS_ANTI_LOOP", 25)
-        if session.turn_count > max_turns:
+        # Anti-loop: router_epoch_turns (depuis dernier menu) ou turn_count total
+        epoch = getattr(session, "router_epoch_turns", 0)
+        if epoch > max_turns or session.turn_count > max_turns * 2:
             logger.info(
-                "[ANTI_LOOP] conv_id=%s turn_count=%s max=%s",
+                "[ANTI_LOOP] conv_id=%s turn_count=%s router_epoch=%s max=%s",
                 conv_id,
                 session.turn_count,
+                epoch,
                 max_turns,
             )
             _persist_ivr_event(session, "anti_loop_trigger")
@@ -1093,11 +1113,26 @@ class Engine:
         # Fast-path barge-in : choix créneau pendant lecture (prime sur REPEAT/UNCLEAR)
         # Gate : is_reading_slots + pending non vide (pas state, pour couvrir 2 tours / QUALIF→slots)
         # ========================
-        pending = session.pending_slots or getattr(session, "pending_slots_display", None) or []
+        pending = session.pending_slots or []
         num_slots = len(pending) if pending else 0
         if getattr(session, "is_reading_slots", False) and num_slots > 0 and user_text and user_text.strip():
             _t_ascii = intent_parser.normalize_stt_text(user_text or "")
-            
+            # Fix 5: strong intent AVANT slot_choice (annuler/humain pendant énumération → route direct)
+            strong = detect_strong_intent(user_text or "")
+            if strong in ("CANCEL", "MODIFY", "TRANSFER", "ABANDON"):
+                session.is_reading_slots = False
+                if strong == "CANCEL":
+                    return safe_reply(self._start_cancel(session), session)
+                if strong == "MODIFY":
+                    return safe_reply(self._start_modify(session), session)
+                if strong == "TRANSFER":
+                    return safe_reply(self._trigger_transfer(session, channel, "user_requested", msg_key="transfer_complex"), session)
+                if strong == "ABANDON":
+                    session.state = "CONFIRMED"
+                    msg = prompts.MSG_END_POLITE_ABANDON if hasattr(prompts, "MSG_END_POLITE_ABANDON") else (prompts.VOCAL_USER_ABANDON if channel == "vocal" else prompts.MSG_ABANDON_WEB)
+                    session.add_message("agent", msg)
+                    _persist_ivr_event(session, "user_abandon")
+                    return safe_reply([Event("final", msg, conv_state=session.state)], session)
             slot_choice = intent_parser.extract_slot_choice(_t_ascii, num_slots=num_slots)
             if slot_choice and 1 <= slot_choice <= num_slots:
                 logger.info(
@@ -1180,8 +1215,7 @@ class Engine:
         # YES/NO hors états acceptant oui/non => UNCLEAR (éviter "d'accord" = action directe)
         if intent in ("YES", "NO") and session.state not in STATES_ACCEPTING_YESNO:
             intent = "UNCLEAR"
-        print(f"🎯 Intent detected: '{intent}' from '{user_text}'")
-        print(f"📞 State: {session.state} | Intent: {intent} | User: '{user_text[:50]}...'")
+        logger.debug("[INTENT] conv_id=%s intent=%s user=%s", session.conv_id, intent, _mask_for_log(user_text or ""))
         
         # REPEAT : relire le dernier prompt exact (pas re-router, pas d'escalade, état inchangé).
         # Idempotent sur is_reading_slots / slots_preface_sent / slots_list_sent : ne pas les modifier.
@@ -1900,23 +1934,22 @@ class Engine:
         }
         
         # DEBUG: Log context
-        print(f"🔍 _next_qualif_step: context={context}")
+        logger.debug("[QUALIF] conv_id=%s context=%s", session.conv_id, context)
         
         # Skip contact pour le moment - sera demandé après le choix de créneau
         next_field = get_next_missing_field(context, skip_contact=True)
-        print(f"🔍 _next_qualif_step: next_field={next_field}")
+        logger.debug("[QUALIF] conv_id=%s next_field=%s", session.conv_id, next_field)
         
         if not next_field:
             # name + pref remplis → proposer créneaux (contact viendra après)
-            print(f"🔍 _next_qualif_step: name+pref FILLED → propose_slots")
-            session.consecutive_questions = 0
+            session.reset_questions()
             return self._propose_slots(session)
         
         # Spec V3 : max 3 questions consécutives → action concrète (proposer créneaux si name+pref)
         max_q = getattr(Session, "MAX_CONSECUTIVE_QUESTIONS", 3)
         if session.consecutive_questions >= max_q and context.get("name") and context.get("pref"):
-            print(f"🔍 _next_qualif_step: consecutive_questions={session.consecutive_questions} → propose_slots (fatigue cognitive)")
-            session.consecutive_questions = 0
+            logger.info("[QUALIF] conv_id=%s fatigue_cognitive consecutive=%s → propose_slots", session.conv_id, session.consecutive_questions)
+            session.reset_questions()
             return self._propose_slots(session)
         
         # 📱 Si le prochain champ est "contact" ET qu'on a le numéro de l'appelant → l'utiliser directement
@@ -1936,11 +1969,11 @@ class Engine:
                     session.state = "CONTACT_CONFIRM"
                     phone_formatted = prompts.format_phone_for_voice(phone[:10])
                     msg = f"Votre numéro est bien le {phone_formatted} ?"
-                    print(f"📱 Using caller ID directly: {phone[:10]}")
+                    logger.info("[QUALIF] conv_id=%s using_caller_id", session.conv_id)
                     session.add_message("agent", msg)
                     return [Event("final", msg, conv_state=session.state)]
             except Exception as e:
-                print(f"⚠️ Error using caller ID: {e}")
+                logger.warning("[QUALIF] conv_id=%s caller_id_error=%s", session.conv_id, str(e)[:80])
                 # Continue avec le flow normal (demander le numéro)
         
         # Mapper le champ vers l'état
@@ -1951,11 +1984,11 @@ class Engine:
             "contact": "QUALIF_CONTACT",
         }
         session.state = state_map[next_field]
-        session.consecutive_questions = getattr(session, "consecutive_questions", 0) + 1
+        session.bump_questions()
         
         # Question adaptée au canal AVEC prénom si disponible
         client_name = session.qualif_data.name or ""
-        print(f"🔍 _next_qualif_step: client_name='{client_name}', channel={channel}, consecutive_questions={session.consecutive_questions}")
+        logger.info("[QUALIF] conv_id=%s asking=%s consecutive=%s", session.conv_id, next_field, session.consecutive_questions)
         
         if client_name and channel == "vocal":
             question = prompts.get_qualif_question_with_name(
@@ -1967,7 +2000,13 @@ class Engine:
         # Les questions sont déjà formulées sans ack redondant (get_qualif_question_with_name).
         
         session.last_question_asked = question
-        print(f"🔍 _next_qualif_step: asking for {next_field} → '{question}'")
+        logger.info("[QUALIF] conv_id=%s asking=%s", session.conv_id, next_field)
+        # Patch A: précharger créneaux pendant que l'utilisateur réfléchit (vocal)
+        if next_field == "pref" and channel == "vocal":
+            try:
+                tools_booking.prefetch_slots_for_pref_question(session=session)
+            except Exception:
+                pass
         session.add_message("agent", question)
         
         return [Event("final", question, conv_state=session.state)]
@@ -2015,14 +2054,14 @@ class Engine:
             
             # Extraction du nom (préfixes FR, fillers, plausible) — on valide l’info extraite, pas le message
             extracted_name, reject_reason = guards.extract_name_from_speech(user_text)
-            print(f"🔍 QUALIF_NAME: raw='{user_text}' → extracted='{extracted_name}', reject_reason={reject_reason}")
+            logger.debug("[QUALIF_NAME] conv_id=%s extracted=%s reject=%s", session.conv_id, extracted_name, reject_reason)
             
             if extracted_name is not None:
                 # Réponse valide → stocker et continuer (spec V3 : reset compteurs)
                 session.qualif_data.name = extracted_name.title()
-                session.consecutive_questions = 0
+                session.reset_questions()
                 session.qualif_name_intent_repeat_count = 0
-                print(f"✅ QUALIF_NAME: stored name='{session.qualif_data.name}'")
+                logger.debug("[QUALIF_NAME] conv_id=%s stored", session.conv_id)
                 return self._next_qualif_step(session)
             
             # Rejet : filler_detected ou not_plausible_name
@@ -2096,7 +2135,7 @@ class Engine:
             
             # Motif valide et utile (spec V3 : reset compteur)
             session.qualif_data.motif = user_text.strip()
-            session.consecutive_questions = 0
+            session.reset_questions()
             return self._next_qualif_step(session)
         
         # ========================
@@ -2104,7 +2143,7 @@ class Engine:
         # ========================
         elif current_step == "QUALIF_PREF":
             channel = getattr(session, "channel", "web")
-            print(f"🔍 QUALIF_PREF handler: user_text='{user_text}'")
+            logger.info("[QUALIF_PREF] conv_id=%s user=%s", session.conv_id, _mask_for_log(user_text or ""))
 
             # --- P0: répétition intention RDV ("je veux un rdv") → message guidé, pas preference_fails ---
             if _detect_booking_intent(user_text):
@@ -2146,8 +2185,11 @@ class Engine:
                                 "Vous préférez : un créneau plus tôt, ou parler à quelqu'un ?"
                             )
                         session.add_message("agent", msg)
-                        router_events = self._trigger_intent_router(session, "time_constraint_impossible", user_text)
-                        return safe_reply([Event("final", msg, conv_state=session.state)] + router_events, session)
+                        # Fix 10: 1 seul final (msg contient la question). state=INTENT_ROUTER pour prochain tour.
+                        session.state = "INTENT_ROUTER"
+                        session.intent_router_visits = getattr(session, "intent_router_visits", 0) + 1
+                        _persist_ivr_event(session, "time_constraint_impossible")
+                        return safe_reply([Event("final", msg, conv_state=session.state)], session)
 
             # Rejeter filler contextuel (euh, "oui" en QUALIF_PREF…) → recovery préférence
             if guards.is_contextual_filler(user_text, session.state):
@@ -2271,7 +2313,7 @@ class Engine:
             channel = getattr(session, "channel", "web")
             contact_raw = user_text.strip()
             
-            print(f"📞 QUALIF_CONTACT: received '{contact_raw}'")
+            logger.info("[QUALIF_CONTACT] conv_id=%s received=%s", session.conv_id, _mask_for_log(contact_raw or ""))
             
             # Rejeter filler contextuel (euh, "oui" en QUALIF_CONTACT…) → recovery téléphone (3 niveaux, puis fallback email)
             if guards.is_contextual_filler(contact_raw, session.state):
@@ -2403,7 +2445,7 @@ class Engine:
                     return [Event("final", msg, conv_state=session.state)]
                 contact_raw = phone10 or contact_raw
             is_valid, contact_type = guards.validate_qualif_contact(contact_raw)
-            print(f"📞 Validation result: is_valid={is_valid}, type={contact_type}")
+            logger.info("[QUALIF_CONTACT] conv_id=%s validation is_valid=%s type=%s", session.conv_id, is_valid, contact_type)
             if not is_valid:
                 log_filler_detected(logger, session, contact_raw, field="phone", detail="invalid_format")
                 fail_count = increment_recovery_counter(session, "phone")
@@ -2483,56 +2525,47 @@ class Engine:
     def _propose_slots(self, session: Session) -> List[Event]:
         """
         Propose 3 créneaux disponibles.
+        Patch A: utilise prefetch si dispo. Patch B: préfixe "je consulte l'agenda" en vocal.
         """
         import time
         t_start = time.time()
         
         channel = getattr(session, "channel", "web")
-        print(f"🔍 _propose_slots: fetching slots...")
+        pref = getattr(session.qualif_data, "pref", None) or None
+        logger.info("[PROPOSE_SLOTS] conv_id=%s pref=%s", session.conv_id, pref)
         
-        try:
-            # Récupérer slots en cohérence avec la préférence (ne pas proposer 10h si "je finis à 17h")
-            pref = getattr(session.qualif_data, "pref", None) or None
-            slots = tools_booking.get_slots_for_display(
-                limit=config.MAX_SLOTS_PROPOSED, pref=pref, session=session
-            )
-            print(f"🔍 _propose_slots: got {len(slots) if slots else 0} slots (pref={pref}) in {(time.time() - t_start) * 1000:.0f}ms")
-        except Exception as e:
-            print(f"❌ _propose_slots ERROR: {e}")
-            import traceback
-            traceback.print_exc()
-            # Fallback: transfert
-            session.state = "TRANSFERRED"
-            msg = self._say(session, "transfer")
-            if not msg:
-                msg = prompts.get_message("transfer", channel=channel)
-                session.add_message("agent", msg)
-                session.last_say_key, session.last_say_kwargs = "transfer", {}
-            return [Event("final", msg, conv_state=session.state)]
+        # Patch A: utiliser prefetch si disponible (évite blanc après "le matin"/"l'après-midi")
+        slots = None
+        if channel == "vocal" and pref in ("matin", "après-midi"):
+            prefetched = getattr(session, "_prefetch_morning", None) if pref == "matin" else getattr(session, "_prefetch_afternoon", None)
+            if prefetched and len(prefetched) > 0:
+                slots = prefetched
+                logger.info("[PROPOSE_SLOTS] conv_id=%s prefetch hit len=%s pref=%s ms=%.0f", session.conv_id, len(slots), pref, (time.time() - t_start) * 1000)
         
         if not slots:
-            print(f"⚠️ _propose_slots: NO SLOTS AVAILABLE")
+            try:
+                slots = tools_booking.get_slots_for_display(
+                    limit=config.MAX_SLOTS_PROPOSED, pref=pref, session=session
+                )
+                logger.info("[PROPOSE_SLOTS] conv_id=%s fetched len=%s pref=%s ms=%.0f", session.conv_id, len(slots) if slots else 0, pref, (time.time() - t_start) * 1000)
+            except Exception as e:
+                logger.warning("[PROPOSE_SLOTS] conv_id=%s error=%s", session.conv_id, str(e)[:100], exc_info=True)
+                session.state = "TRANSFERRED"
+                msg = self._say(session, "transfer")
+                if not msg:
+                    msg = prompts.get_message("transfer", channel=channel)
+                    session.add_message("agent", msg)
+                    session.last_say_key, session.last_say_kwargs = "transfer", {}
+                return [Event("final", msg, conv_state=session.state)]
+        
+        if not slots:
+            logger.info("[PROPOSE_SLOTS] conv_id=%s no_slots", session.conv_id)
             session.state = "TRANSFERRED"
             msg = prompts.get_message("no_slots", channel=channel)
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
 
-        # P0: source de vérité = slots affichés (évite re-fetch et mismatch index/slot)
-        try:
-            slot_src = getattr(slots[0], "source", None) if slots else None
-            if slot_src == "google":
-                source = "google"
-            elif tools_booking._get_calendar_service():
-                source = "google"
-            else:
-                from backend.calendar_adapter import get_calendar_adapter
-                adapter = get_calendar_adapter(session)
-                source = "google" if (adapter and adapter.can_propose_slots()) else (slot_src or "sqlite")
-            session.pending_slots_display = tools_booking.serialize_slots_for_session(slots, source)
-        except Exception:
-            session.pending_slots_display = []
-
-        # Stocker slots
+        # Stocker slots (Fix 3: pending_slots = seule source de vérité)
         tools_booking.store_pending_slots(session, slots)
         old_state = session.state
         session.state = "WAIT_CONFIRM"
@@ -2548,13 +2581,17 @@ class Engine:
             session.slot_proposal_sequential = True
             session.slots_list_sent = True
             slot0 = slots[0]
-            label0 = getattr(slot0, "label", None) or getattr(slot0, "label_vocal", None) or str(slot0)
+            label0 = tools_booking._slot_get(slot0, "label_vocal") or tools_booking._slot_get(slot0, "label") or str(slot0)
             msg = prompts.VOCAL_SLOT_ONE_PROPOSE.format(label=label0)
+            # Patch B: préfixe "je consulte l'agenda" → zéro silence perçu (même réponse que proposition)
+            agenda_lookup = getattr(prompts, "VOCAL_AGENDA_LOOKUP", "")
+            msg = f"{agenda_lookup} {msg}".strip() if agenda_lookup else msg
             session.is_reading_slots = False
         else:
             msg = prompts.format_slot_proposal(slots, include_instruction=True, channel=channel)
             session.is_reading_slots = True
-        if channel == "vocal" and msg:
+        # Vocal: pas de wrap "Je regarde" si déjà VOCAL_AGENDA_LOOKUP (évite redondance)
+        if channel == "vocal" and msg and not getattr(prompts, "VOCAL_AGENDA_LOOKUP", ""):
             msg = prompts.TransitionSignals.wrap_with_signal(msg, "PROCESSING")
         logger.info(
             "[SLOTS_SENT] conv_id=%s channel=%s len=%s preview=%s",
@@ -2563,10 +2600,10 @@ class Engine:
             len(msg or ""),
             (msg or "")[:200],
         )
-        print(f"✅ _propose_slots: proposing {'1 (sequential)' if channel == 'vocal' else len(slots)} slots")
+        logger.info("[PROPOSE_SLOTS] conv_id=%s proposing mode=%s", session.conv_id, "sequential" if channel == "vocal" else len(slots))
         session.add_message("agent", msg)
         if channel == "vocal" and slots:
-            label0 = getattr(slots[0], "label", None) or getattr(slots[0], "label_vocal", None) or str(slots[0])
+            label0 = tools_booking._slot_get(slots[0], "label_vocal") or tools_booking._slot_get(slots[0], "label") or str(slots[0])
             session.last_say_key, session.last_say_kwargs = "slot_one_propose", {"label": label0}
         self._save_session(session)
         return [Event("final", msg, conv_state=session.state)]
@@ -2580,11 +2617,11 @@ class Engine:
         """
         channel = getattr(session, "channel", "web")
         
-        print(f"🔍 _handle_booking_confirm: user_text='{user_text}', pending_slots={len(session.pending_slots or [])}, state={session.state}")
+        logger.info("[BOOKING_CONFIRM] conv_id=%s user=%s pending_len=%s state=%s", session.conv_id, _mask_for_log(user_text or ""), len(session.pending_slots or []), session.state)
         
         # 🔄 Si pas de slots en mémoire (session perdue) → re-proposer
         if not session.pending_slots or len(session.pending_slots) == 0:
-            print(f"⚠️ WAIT_CONFIRM but no pending_slots → re-proposing")
+            logger.info("[BOOKING_CONFIRM] conv_id=%s no_pending_slots re_proposing", session.conv_id)
             return self._propose_slots(session)
 
         # P0.2 — Vocal séquentiel : 1 créneau à la fois. OUI = ce créneau, NON = suivant ou transfert. "répéter" = relire.
@@ -2592,7 +2629,7 @@ class Engine:
             idx = getattr(session, "slot_offer_index", 0)
             if idx < len(session.pending_slots):
                 slot_obj = session.pending_slots[idx]
-                label_cur = getattr(slot_obj, "label", None) or getattr(slot_obj, "label_vocal", None) or str(slot_obj)
+                label_cur = tools_booking._slot_get(slot_obj, "label_vocal") or tools_booking._slot_get(slot_obj, "label") or str(slot_obj)
                 _t = (user_text or "").strip().lower()
                 _t_ascii = intent_parser.normalize_stt_text(_t)
                 # "répéter" / "redire" / filler (euh, hein) → relire le créneau courant (Test 5.1)
@@ -2617,7 +2654,7 @@ class Engine:
                             self._save_session(session)
                             return [Event("final", msg, conv_state=session.state)]
                         next_slot = session.pending_slots[session.slot_offer_index]
-                        next_label = getattr(next_slot, "label", None) or getattr(next_slot, "label_vocal", None) or str(next_slot)
+                        next_label = tools_booking._slot_get(next_slot, "label_vocal") or tools_booking._slot_get(next_slot, "label") or str(next_slot)
                         msg = prompts.VOCAL_SLOT_ONE_PROPOSE.format(label=next_label)
                         session.add_message("agent", msg)
                         session.last_say_key, session.last_say_kwargs = "slot_one_propose", {"label": next_label}
@@ -2675,13 +2712,14 @@ class Engine:
                 _no_norm = frozenset(intent_parser.normalize_stt_text(w) for w in (guards.NO_WORDS | {"pas celui la", "pas ca", "autre", "suivant", "non merci"}) if w)
                 if _t_ascii in _no_norm or _t_ascii.startswith("non"):
                     cur_slot = session.pending_slots[idx] if idx < len(session.pending_slots or []) else None
-                    if cur_slot and getattr(cur_slot, "start", None):
+                    cur_start = tools_booking._slot_get(cur_slot, "start") if cur_slot else None
+                    if cur_slot and cur_start:
                         rejected = getattr(session, "rejected_slot_starts", None) or []
                         if not isinstance(rejected, list):
                             rejected = []
-                        session.rejected_slot_starts = rejected + [cur_slot.start]
+                        session.rejected_slot_starts = rejected + [cur_start]
                         # Mémoire (day, period) refusé : anti-spam matin/après-midi
-                        day = getattr(cur_slot, "day", "") or ""
+                        day = tools_booking._slot_get(cur_slot, "day") or ""
                         period = tools_booking.slot_period(cur_slot)
                         if day and period:
                             rdp = getattr(session, "rejected_day_periods", None) or []
@@ -2697,7 +2735,6 @@ class Engine:
                             # Préférence déjà connue : re-fetch avec rejected_slot_starts (pas de reset) → nouveaux créneaux
                             session.slot_proposal_sequential = False
                             session.pending_slots = []
-                            session.pending_slots_display = []
                             session.slot_offer_index = 0
                             session.slots_list_sent = False
                             session.slots_preface_sent = False
@@ -2706,7 +2743,6 @@ class Engine:
                         session.slot_proposal_sequential = False
                         session.state = "QUALIF_PREF"
                         session.pending_slots = []
-                        session.pending_slots_display = []
                         session.slot_offer_index = 0
                         session.rejected_slot_starts = []
                         session.rejected_day_periods = []
@@ -2721,8 +2757,8 @@ class Engine:
                     rejected_dp = set(getattr(session, "rejected_day_periods", None) or [])
                     while next_idx < len(session.pending_slots or []):
                         cand = session.pending_slots[next_idx]
-                        cand_start = getattr(cand, "start", None)
-                        cand_day = getattr(cand, "day", "") or ""
+                        cand_start = tools_booking._slot_get(cand, "start")
+                        cand_day = tools_booking._slot_get(cand, "day") or ""
                         cand_period = tools_booking.slot_period(cand)
                         cand_key = f"{cand_day}|{cand_period}" if cand_day and cand_period else ""
                         if not cand_start:
@@ -2816,7 +2852,7 @@ class Engine:
                 msg = prompts.format_slot_early_confirm(early_idx, slot_label, channel=channel)
                 session.add_message("agent", msg)
                 session.awaiting_confirmation = "CONFIRM_SLOT"
-                print(f"✅ barge-in: choix clair {early_idx} → early confirm")
+                logger.info("[BOOKING_CONFIRM] conv_id=%s barge_in early_confirm idx=%s", session.conv_id, early_idx)
                 return [Event("final", msg, conv_state=session.state)]
             # Pas un choix clair → une phrase courte, ne pas incrémenter les fails
             session.is_reading_slots = False
@@ -2836,22 +2872,22 @@ class Engine:
             if _t_ascii in _confirm_norm:
                 slot_idx = session.pending_slot_choice
                 session.awaiting_confirmation = None
-                print(f"✅ slot_choice: confirmation du créneau {slot_idx} → passage au contact")
+                logger.info("[BOOKING_CONFIRM] conv_id=%s slot_confirmed idx=%s → contact", session.conv_id, slot_idx)
             else:
                 _norm_compact = (_t_ascii or "").replace(" ", "")
                 if "bienca" in _norm_compact or "bien ca" in (_t_ascii or "") or "cestbienca" in _norm_compact:
                     slot_idx = session.pending_slot_choice
                     session.awaiting_confirmation = None
-                    print(f"✅ slot_choice: confirmation phrase (c'est bien ça) du créneau {slot_idx} → passage au contact")
+                    logger.info("[BOOKING_CONFIRM] conv_id=%s slot_confirmed_phrase idx=%s", session.conv_id, slot_idx)
                 elif (_t_ascii or "").startswith("oui") and len(_t_ascii or "") <= 25 and ("bien" in (_t_ascii or "") or "ca" in (_t_ascii or "")):
                     slot_idx = session.pending_slot_choice
                     session.awaiting_confirmation = None
-                    print(f"✅ slot_choice: confirmation oui+ du créneau {slot_idx} → passage au contact")
+                    logger.info("[BOOKING_CONFIRM] conv_id=%s slot_confirmed_oui idx=%s", session.conv_id, slot_idx)
                 elif "confirme" in (_t_ascii or "") and len(_t_ascii or "") <= 30:
                     # "oui je confirme", "je confirme", "confirme" (réponse à "Vous confirmez ?")
                     slot_idx = session.pending_slot_choice
                     session.awaiting_confirmation = None
-                    print(f"✅ slot_choice: confirmation explicite (« oui je confirme ») du créneau {slot_idx} → passage au contact")
+                    logger.info("[BOOKING_CONFIRM] conv_id=%s slot_confirmed_explicit idx=%s", session.conv_id, slot_idx)
 
         # Validation vague (oui/ok/d'accord SANS choix explicite) → redemander 1/2/3 SANS incrémenter fails (P0.5, A6)
         if slot_idx is None:
@@ -2884,7 +2920,7 @@ class Engine:
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
 
-        print(f"📋 Pending slots: {[(s.idx, s.label) for s in session.pending_slots]}")
+        logger.debug("[BOOKING_CONFIRM] conv_id=%s pending_len=%s", session.conv_id, len(session.pending_slots or []))
         # Early commit : choix non ambigu ("oui 1", "le premier", "1") → confirmation immédiate, pas "oui" seul
         if slot_idx is None:
             early_idx = detect_slot_choice_early(user_text, session.pending_slots)
@@ -2906,17 +2942,17 @@ class Engine:
                 msg = prompts.format_slot_early_confirm(early_idx, slot_label, channel=channel)
                 session.add_message("agent", msg)
                 session.awaiting_confirmation = "CONFIRM_SLOT"
-                print(f"✅ early commit: choix {early_idx} → « Vous confirmez ? »")
+                logger.info("[BOOKING_CONFIRM] conv_id=%s early_commit idx=%s", session.conv_id, early_idx)
                 return [Event("final", msg, conv_state=session.state)]
 
         if slot_idx is None:
             # IVR pro : choix flexible par numéro / jour / heure (ambiguïté → recovery). Pas "oui" seul.
             proposed_slots = [
                 {
-                    "start": getattr(s, "start", ""),
-                    "label_vocal": getattr(s, "label_vocal", None) or s.label,
-                    "day": getattr(s, "day", ""),
-                    "hour": getattr(s, "hour", 0),
+                    "start": tools_booking._slot_get(s, "start"),
+                    "label_vocal": tools_booking._slot_get(s, "label_vocal") or tools_booking._slot_get(s, "label"),
+                    "day": tools_booking._slot_get(s, "day"),
+                    "hour": tools_booking._slot_get(s, "hour", 0),
                 }
                 for s in (session.pending_slots or [])
             ]
@@ -2929,27 +2965,25 @@ class Engine:
                 is_valid, slot_idx = guards.validate_booking_confirm(user_text, channel=channel)
                 if not is_valid:
                     slot_idx = None
-        print(f"🔍 slot_choice: '{user_text}' → slot_idx={slot_idx}")
+        logger.info("[BOOKING_CONFIRM] conv_id=%s slot_choice user=%s idx=%s", session.conv_id, _mask_for_log(user_text or ""), slot_idx)
         
         if slot_idx is not None:
-            print(f"✅ Slot choice validated: slot_idx={slot_idx}")
+            logger.info("[BOOKING_CONFIRM] conv_id=%s slot_validated idx=%s", session.conv_id, slot_idx)
             session.awaiting_confirmation = None
             
             # Stocker le choix de créneau
             try:
                 slot_label = tools_booking.get_label_for_choice(session, slot_idx) or "votre créneau"
-                print(f"📅 Slot label: '{slot_label}'")
+                logger.debug("[BOOKING_CONFIRM] conv_id=%s slot_label=%s", session.conv_id, (slot_label or "")[:40])
             except Exception as e:
-                print(f"⚠️ Error getting slot label: {e}")
-                import traceback
-                traceback.print_exc()
+                logger.warning("[BOOKING_CONFIRM] conv_id=%s slot_label_error=%s", session.conv_id, str(e)[:80], exc_info=True)
                 slot_label = "votre créneau"
             
             name = session.qualif_data.name or ""
             
             # Stocker temporairement le slot choisi (on bookera après confirmation du contact)
             session.pending_slot_choice = slot_idx
-            print(f"📌 Stored pending_slot_choice={slot_idx}")
+            logger.info("[BOOKING_CONFIRM] conv_id=%s stored_choice=%s", session.conv_id, slot_idx)
             
             # 💾 Sauvegarder le choix immédiatement
             self._save_session(session)
@@ -2972,25 +3006,23 @@ class Engine:
                         session.state = "CONTACT_CONFIRM"
                         phone_formatted = prompts.format_phone_for_voice(phone[:10])
                         msg = prompts.VOCAL_CONTACT_CONFIRM_SHORT.format(phone_formatted=phone_formatted) if channel == "vocal" else f"Parfait, {slot_label} pour {name}. Votre numéro est bien le {phone_formatted} ?"
-                        print(f"📱 Using caller ID for confirmation: {phone[:10]}")
+                        logger.info("[BOOKING_CONFIRM] conv_id=%s using_caller_id", session.conv_id)
                         session.add_message("agent", msg)
                         session.awaiting_confirmation = "CONFIRM_CONTACT"
                         return [Event("final", msg, conv_state=session.state)]
                 except Exception as e:
-                    print(f"⚠️ Error using caller ID in booking confirm: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    logger.warning("[BOOKING_CONFIRM] conv_id=%s caller_id_error=%s", session.conv_id, str(e)[:80], exc_info=True)
                     # Continue avec le flow normal
             
             # Sinon demander le contact normalement
-            print(f"📞 No caller ID, asking for contact normally")
+            logger.info("[BOOKING_CONFIRM] conv_id=%s no_caller_id asking_contact", session.conv_id)
             session.state = "QUALIF_CONTACT"
             self._save_session(session)
-            print(f"👤 name='{name}'")
+            logger.info("[BOOKING_CONFIRM] conv_id=%s name=%s", session.conv_id, _mask_for_log(name or ""))
             
             msg = prompts.get_qualif_question("contact", channel=channel)
             
-            print(f"✅ Final message: '{msg}'")
+            logger.debug("[BOOKING_CONFIRM] conv_id=%s final_msg_len=%s", session.conv_id, len(msg or ""))
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
 
@@ -3553,10 +3585,10 @@ class Engine:
             # Si on a déjà un slot choisi (nouveau flow) → booker et confirmer
             if session.pending_slot_choice is not None:
                 slot_idx = session.pending_slot_choice
-                pending_display = getattr(session, "pending_slots_display", None) or []
-                pending_display_len = len(pending_display)
+                pending = getattr(session, "pending_slots", None) or []
+                pending_len = len(pending)
                 # P0: slots vides (session perdue/reconstruite) → re-fetch avant booking
-                if not pending_display and slot_idx and 1 <= slot_idx <= 3:
+                if not pending and slot_idx and 1 <= slot_idx <= 3:
                     try:
                         fresh_slots = tools_booking.get_slots_for_display(
                             limit=3,
@@ -3567,21 +3599,20 @@ class Engine:
                             from backend.calendar_adapter import get_calendar_adapter
                             adapter = get_calendar_adapter(session)
                             source = "google" if (adapter and adapter.can_propose_slots()) else "sqlite"
-                            session.pending_slots_display = tools_booking.serialize_slots_for_session(fresh_slots, source)
-                            session.pending_slots = fresh_slots
-                            pending_display_len = len(session.pending_slots_display)
+                            session.pending_slots = tools_booking.to_canonical_slots(fresh_slots, source)
+                            pending_len = len(session.pending_slots)
                             logger.info(
                                 "[BOOKING_PREFETCH] conv_id=%s re-fetched %s slots before booking",
                                 session.conv_id,
-                                pending_display_len,
+                                pending_len,
                             )
                     except Exception as e:
                         logger.warning("[BOOKING_PREFETCH] failed: %s", e)
                 logger.info(
-                    "[BOOKING_ATTEMPT] conv_id=%s slot_idx=%s pending_slots_display_len=%s",
+                    "[BOOKING_ATTEMPT] conv_id=%s slot_idx=%s pending_len=%s",
                     session.conv_id,
                     slot_idx,
-                    pending_display_len,
+                    pending_len,
                 )
                 # Booker le créneau
                 success, reason = tools_booking.book_slot_from_session(session, slot_idx)
@@ -3595,10 +3626,9 @@ class Engine:
                     # technical / permission → message technique + transfert (pas "créneau pris")
                     if reason in ("technical", "permission"):
                         logger.warning(
-                            "[BOOKING_TECHNICAL] conv_id=%s reason=%s pending_display_len=%s pending_slots_len=%s",
+                            "[BOOKING_TECHNICAL] conv_id=%s reason=%s pending_len=%s",
                             session.conv_id,
                             reason,
-                            len(getattr(session, "pending_slots_display", None) or []),
                             len(getattr(session, "pending_slots", None) or []),
                         )
                         session.state = "TRANSFERRED"
@@ -3620,16 +3650,16 @@ class Engine:
                     # Exclure ce créneau (±90 min) des prochaines propositions
                     try:
                         taken_slot = (session.pending_slots or [])[slot_idx - 1] if slot_idx and session.pending_slots else None
-                        if taken_slot and getattr(taken_slot, "start", None):
+                        taken_start = tools_booking._slot_get(taken_slot, "start") if taken_slot else None
+                        if taken_slot and taken_start:
                             rejected = getattr(session, "rejected_slot_starts", None) or []
                             if not isinstance(rejected, list):
                                 rejected = []
-                            session.rejected_slot_starts = rejected + [taken_slot.start]
+                            session.rejected_slot_starts = rejected + [taken_start]
                     except (IndexError, TypeError):
                         pass
                     session.pending_slots = []
                     session.pending_slot_choice = None
-                    session.pending_slots_display = []
                     session.state = "QUALIF_PREF"
                     msg = prompts.MSG_SLOT_TAKEN_REPROPOSE
                     session.add_message("agent", msg)
@@ -3675,7 +3705,7 @@ class Engine:
                 current_phone = session.qualif_data.contact
                 # Remplacer les derniers chiffres
                 corrected_phone = current_phone[:10-len(digits)] + digits
-                print(f"📞 Correction partielle: {current_phone} → {corrected_phone}")
+                logger.info("[CONTACT] conv_id=%s partial_correction", session.conv_id)
                 
                 if len(corrected_phone) == 10:
                     session.qualif_data.contact = corrected_phone
@@ -3765,12 +3795,13 @@ class Engine:
         session.state = "INTENT_ROUTER"
         session.intent_router_unclear_count = 0
         session.last_question_asked = None
-        session.consecutive_questions = 0
+        session.reset_questions()
         session.global_recovery_fails = 0
         session.correction_count = 0
         session.empty_message_count = 0
         session.start_unclear_count = 0
-        session.turn_count = 0  # Redonner 25 tours après le menu (spec V3)
+        # Fix 1: Ne jamais reset turn_count (compteur total appel). router_epoch_turns pour analytics.
+        session.router_epoch_turns = 0
         session.noise_detected_count = 0
         session.last_noise_ts = None
         session.slot_choice_fails = 0
@@ -3848,7 +3879,7 @@ class Engine:
         
         if choice == intent_parser.RouterChoice.ROUTER_1:
             session.state = "QUALIF_NAME"
-            session.consecutive_questions = 0
+            session.reset_questions()
             msg = prompts.get_qualif_question("name", channel=channel)
             session.last_question_asked = msg
             session.add_message("agent", msg)
@@ -3891,7 +3922,7 @@ class Engine:
             session.qualif_data.pref = pending
             session.pending_preference = None
             session.last_preference_user_text = None
-            session.consecutive_questions = 0
+            session.reset_questions()
             return self._next_qualif_step(session)
         if intent == "NO":
             session.pending_preference = None
@@ -3909,7 +3940,7 @@ class Engine:
             session.pending_preference = None
             session.last_preference_user_text = None
             session.awaiting_confirmation = None
-            session.consecutive_questions = 0
+            session.reset_questions()
             return self._next_qualif_step(session)
         # Ré-inférence : user répète une phrase qui mène à la MÊME préférence → confirmation implicite
         inferred = infer_preference_from_context(user_text)
@@ -3918,7 +3949,7 @@ class Engine:
             session.pending_preference = None
             session.last_preference_user_text = None
             session.awaiting_confirmation = None
-            session.consecutive_questions = 0
+            session.reset_questions()
             return self._next_qualif_step(session)
         # Ré-inférence vers une AUTRE préférence → mettre à jour et re-demander confirmation
         if inferred and inferred != pending:

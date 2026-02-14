@@ -192,7 +192,7 @@ def _reconstruct_session_from_history(session, messages: list, call_id: str = ""
         if detected_state == "WAIT_CONFIRM":
             logger.debug("reconstruct WAIT_CONFIRM - slots will be re-fetched on next handler call")
         # P0: CONTACT_CONFIRM sans slots → re-fetch pour éviter "problème technique"
-        if detected_state == "CONTACT_CONFIRM" and session.pending_slot_choice and not (getattr(session, "pending_slots_display", None) or []):
+        if detected_state == "CONTACT_CONFIRM" and session.pending_slot_choice and not (getattr(session, "pending_slots", None) or []):
             try:
                 from backend import tools_booking
                 from backend.calendar_adapter import get_calendar_adapter
@@ -200,8 +200,7 @@ def _reconstruct_session_from_history(session, messages: list, call_id: str = ""
                 if fresh_slots:
                     adapter = get_calendar_adapter(session)
                     source = "google" if (adapter and adapter.can_propose_slots()) else "sqlite"
-                    session.pending_slots_display = tools_booking.serialize_slots_for_session(fresh_slots, source)
-                    session.pending_slots = fresh_slots
+                    session.pending_slots = tools_booking.to_canonical_slots(fresh_slots, source)
                     logger.info("[RECONSTRUCT_SLOTS] conv_id=%s re-fetched %s slots for CONTACT_CONFIRM", call_id or getattr(session, "conv_id", ""), len(fresh_slots))
             except Exception as e:
                 logger.warning("[RECONSTRUCT_SLOTS] failed: %s", e)
@@ -258,7 +257,7 @@ def _call_journal_agent_response(
 ) -> None:
     """
     Phase 1 dual-write: log message agent, update state, optionnel checkpoint.
-    should_checkpoint: True si state changé OU pending_slots_display critique OU toutes les N écritures.
+    should_checkpoint: True si state changé OU pending_slots critique OU toutes les N écritures.
     """
     if not getattr(config, "USE_PG_CALL_JOURNAL", True):
         return
@@ -1121,10 +1120,10 @@ async def vapi_custom_llm(request: Request):
                     ENGINE.session_store.save(session)
                 # P0 Option B: dual-write — message agent + checkpoint
                 state_after = getattr(session, "state", "START")
-                # Checkpoint sur: changement état, pending_slots_display, awaiting_confirmation, états critiques
+                # Checkpoint sur: changement état, pending_slots, awaiting_confirmation, états critiques
                 should_cp = (
                     state_before_turn != state_after
-                    or bool(getattr(session, "pending_slots_display", None))
+                    or bool(getattr(session, "pending_slots", None))
                     or getattr(session, "awaiting_confirmation", None) is not None
                     or state_after in ("QUALIF_CONTACT", "WAIT_CONFIRM", "CONTACT_CONFIRM")
                 )
@@ -1181,7 +1180,7 @@ async def vapi_custom_llm(request: Request):
                                     name=session.qualif_data.name,
                                     email=session.qualif_data.contact if session.qualif_data.contact_type == "email" else None
                                 )
-                                slot_label = session.pending_slot_labels[0] if session.pending_slot_labels else "RDV"
+                                slot_label = tools_booking.get_label_for_choice(session, session.pending_slot_choice or 1) or "RDV"
                                 client_memory.record_booking(
                                     client_id=client.id,
                                     slot_label=slot_label,
@@ -1243,7 +1242,7 @@ async def vapi_custom_llm(request: Request):
                                     name=session_after.qualif_data.name,
                                     email=session_after.qualif_data.contact if getattr(session_after.qualif_data, "contact_type", None) == "email" else None
                                 )
-                                slot_label = session_after.pending_slot_labels[0] if session_after.pending_slot_labels else "RDV"
+                                slot_label = tools_booking.get_label_for_choice(session_after, session_after.pending_slot_choice or 1) or "RDV"
                                 client_memory.record_booking(client_id=client.id, slot_label=slot_label, motif=session_after.qualif_data.motif or "consultation")
                         except Exception:
                             pass

@@ -91,7 +91,8 @@ class Session:
     pending_preference: Optional[str] = None  # Préférence inférée (PREFERENCE_CONFIRM)
     last_preference_user_text: Optional[str] = None  # Phrase user ayant mené à pending (répétition = confirmation)
     empty_message_count: int = 0  # IVR Principe 3 : messages vides répétés → INTENT_ROUTER si >= 2
-    turn_count: int = 0  # Nombre de tours (user+agent) → anti-loop si > 25 (spec V3)
+    turn_count: int = 0  # Nombre de tours total (jamais reset). Anti-loop si > 25.
+    router_epoch_turns: int = 0  # Tours depuis dernier INTENT_ROUTER (analytics)
     # Guidage START (question ouverte) : incompréhensions consécutives avant guidage proactif
     start_unclear_count: int = 0
     # UNCLEAR no_faq (LLM hors-sujet) : 2 → guidance, 3 → INTENT_ROUTER
@@ -168,6 +169,14 @@ class Session:
         i = self.ack_idx
         self.ack_idx += 1
         return i
+
+    def bump_questions(self) -> None:
+        """Fix 2: centralise l'incrément consecutive_questions."""
+        self.consecutive_questions = getattr(self, "consecutive_questions", 0) + 1
+
+    def reset_questions(self) -> None:
+        """Fix 2: centralise le reset consecutive_questions."""
+        self.consecutive_questions = 0
 
     def is_expired(self) -> bool:
         ttl = timedelta(minutes=config.SESSION_TTL_MINUTES)

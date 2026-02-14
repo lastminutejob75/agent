@@ -59,49 +59,19 @@ def session_to_dict(session: Session) -> Dict[str, Any]:
 
 
 def _deserialize_pending_slots(data: Any) -> list:
-    """Désérialise pending_slots depuis le checkpoint (Option A snapshot)."""
+    """Désérialise pending_slots depuis le checkpoint. Fix 3: retourne format canonique (list of dicts)."""
     if not data or not isinstance(data, list):
         return []
-    from backend.prompts import SlotDisplay
-    out = []
-    for s in data:
-        if isinstance(s, dict):
-            out.append(SlotDisplay(
-                idx=s.get("idx", 0),
-                label=s.get("label", ""),
-                slot_id=s.get("slot_id") or 0,
-                start=s.get("start", "") or s.get("start_iso", ""),
-                day=s.get("day", ""),
-                hour=s.get("hour", 0),
-                label_vocal=s.get("label_vocal", ""),
-                source=s.get("source", "sqlite"),
-            ))
-    return out
+    from backend import tools_booking
+    return tools_booking.to_canonical_slots(data)
 
 
 def _serialize_pending_slots(slots: Any) -> list:
-    """Sérialise pending_slots (SlotDisplay) en list de dicts sans secrets."""
+    """Sérialise pending_slots en format canonique (list de dicts). Fix 3."""
     if not slots:
         return []
-    out = []
-    for s in slots:
-        if isinstance(s, dict):
-            out.append({
-                "idx": s.get("idx"),
-                "label": s.get("label", ""),
-                "slot_id": s.get("slot_id"),
-                "start": s.get("start") or s.get("start_iso", ""),
-                "source": s.get("source", "sqlite"),
-            })
-        else:
-            out.append({
-                "idx": getattr(s, "idx", 0),
-                "label": getattr(s, "label", ""),
-                "slot_id": getattr(s, "slot_id", None),
-                "start": getattr(s, "start", ""),
-                "source": getattr(s, "source", "sqlite"),
-            })
-    return out
+    from backend import tools_booking
+    return tools_booking.to_canonical_slots(slots)
 
 
 def session_from_dict(conv_id: str, d: Dict[str, Any]) -> Session:
@@ -123,9 +93,8 @@ def session_from_dict(conv_id: str, d: Dict[str, Any]) -> Session:
         contact=qd.get("contact"),
         contact_type=qd.get("contact_type"),
     )
-    session.pending_slots_display = d.get("pending_slots_display") or []
     session.pending_slot_choice = d.get("pending_slot_choice")
-    session.pending_slots = _deserialize_pending_slots(d.get("pending_slots"))
+    session.pending_slots = _deserialize_pending_slots(d.get("pending_slots") or d.get("pending_slots_display"))
     session.awaiting_confirmation = d.get("awaiting_confirmation")
     session.rejected_slot_starts = d.get("rejected_slot_starts") or []
     session.rejected_day_periods = d.get("rejected_day_periods") or []

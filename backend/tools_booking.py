@@ -8,6 +8,8 @@ Fallback vers SQLite si Google Calendar n'est pas configuré.
 
 from __future__ import annotations
 
+import threading
+import time
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 import logging
@@ -41,6 +43,13 @@ def _start_plus_15min(start_iso: Optional[str]) -> Optional[str]:
         return None
 
 
+def _slot_get(slot: Any, key: str, default: Any = None) -> Any:
+    """Accès unifié slot (dict ou objet) pour label, start, day, etc."""
+    if isinstance(slot, dict):
+        return slot.get(key, default)
+    return getattr(slot, key, default)
+
+
 def _resolve_slot_id_from_start_iso(
     start_iso: str, source: str = "sqlite", tenant_id: int = 1
 ) -> Optional[int]:
@@ -67,42 +76,83 @@ def _resolve_slot_id_from_start_iso(
         return None
 
 
+def _derive_day_from_start(start_iso: Optional[str]) -> str:
+    """Dérive le jour en français (lundi, mardi...) depuis start ISO."""
+    if not start_iso:
+        return ""
+    try:
+        dt = datetime.fromisoformat(str(start_iso).replace("Z", "+00:00"))
+        days_fr = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+        return days_fr[dt.weekday()]
+    except Exception:
+        return ""
+
+
+# Format canonique unique (Fix 3) : source de vérité pour pending_slots
+# {"id": event_id|slot_id, "start": iso, "end": iso, "label": str, "label_vocal": str, "day": str, "source": "google"|"sqlite"|"pg"}
+def to_canonical_slot(slot: Any, source: Optional[str] = None) -> Dict[str, Any]:
+    """Convertit SlotDisplay ou dict → format canonique."""
+    if isinstance(slot, dict):
+        start_iso = slot.get("start_iso") or slot.get("start") or slot.get("start_time")
+        end_iso = slot.get("end_iso") or slot.get("end") or slot.get("end_time") or _start_plus_15min(start_iso)
+        src = (slot.get("source") or source or "sqlite").lower()
+        event_id = slot.get("event_id") or slot.get("google_event_id")
+        slot_id = slot.get("slot_id") or slot.get("id")
+        slot_id_val = event_id if src == "google" else slot_id
+        label = slot.get("label") or slot.get("display") or slot.get("text", "")
+        label_vocal = slot.get("label_vocal") or label
+        day = slot.get("day") or _derive_day_from_start(start_iso)
+        return {
+            "id": slot_id_val,
+            "start": start_iso,
+            "end": end_iso,
+            "start_iso": start_iso,
+            "end_iso": end_iso,
+            "slot_id": slot_id,
+            "event_id": event_id,
+            "label": label,
+            "label_vocal": label_vocal,
+            "day": day,
+            "source": src,
+        }
+    label = getattr(slot, "label", None) or getattr(slot, "display", None) or getattr(slot, "text", None) or ""
+    label_vocal = getattr(slot, "label_vocal", None) or label
+    event_id = getattr(slot, "event_id", None) or getattr(slot, "google_event_id", None)
+    slot_id = getattr(slot, "slot_id", None) or getattr(slot, "id", None)
+    src = (getattr(slot, "source", None) or source or "sqlite").lower()
+    slot_id_val = event_id if src == "google" else slot_id
+    start_dt = getattr(slot, "start_dt", None) or getattr(slot, "start", None) or getattr(slot, "start_time", None)
+    end_dt = getattr(slot, "end_dt", None) or getattr(slot, "end", None) or getattr(slot, "end_time", None)
+    start_iso = _to_iso(start_dt)
+    end_iso = _to_iso(end_dt) or _start_plus_15min(start_iso)
+    day = getattr(slot, "day", None) or _derive_day_from_start(start_iso)
+    return {
+        "id": slot_id_val,
+        "start": start_iso,
+        "end": end_iso,
+        "start_iso": start_iso,
+        "end_iso": end_iso,
+        "slot_id": slot_id,
+        "event_id": event_id,
+        "label": label,
+        "label_vocal": label_vocal,
+        "day": day,
+        "source": src,
+    }
+
+
+def to_canonical_slots(slots: List[Any], source: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Convertit une liste de slots (SlotDisplay ou dict) en format canonique."""
+    return [to_canonical_slot(s, source) for s in (slots or [])]
+
+
 def serialize_slots_for_session(slots: List[Any], source: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     P0: Sérialise EXACTEMENT les slots affichés pour que l'index 1/2/3
     pointe sur le même slot au booking (sans re-fetch).
-    Compatible SlotDisplay ou dicts.
+    Compatible SlotDisplay ou dicts. Retourne format canonique (Fix 3).
     """
-    out: List[Dict[str, Any]] = []
-    for s in slots or []:
-        if isinstance(s, dict):
-            start_iso = s.get("start_iso") or s.get("start") or s.get("start_time")
-            end_iso = s.get("end_iso") or s.get("end") or s.get("end_time") or _start_plus_15min(start_iso)
-            out.append({
-                "source": s.get("source") or source,
-                "label": s.get("label") or s.get("display") or s.get("text", ""),
-                "start_iso": start_iso,
-                "end_iso": end_iso,
-                "event_id": s.get("event_id") or s.get("google_event_id"),
-                "slot_id": s.get("slot_id") or s.get("id"),
-            })
-            continue
-        label = getattr(s, "label", None) or getattr(s, "display", None) or getattr(s, "text", None) or ""
-        event_id = getattr(s, "event_id", None) or getattr(s, "google_event_id", None)
-        slot_id = getattr(s, "slot_id", None) or getattr(s, "id", None)
-        start_dt = getattr(s, "start_dt", None) or getattr(s, "start", None) or getattr(s, "start_time", None)
-        end_dt = getattr(s, "end_dt", None) or getattr(s, "end", None) or getattr(s, "end_time", None)
-        start_iso = _to_iso(start_dt)
-        end_iso = _to_iso(end_dt) or _start_plus_15min(start_iso)
-        out.append({
-            "source": getattr(s, "source", None) or source,
-            "label": label,
-            "start_iso": start_iso,
-            "end_iso": end_iso,
-            "event_id": event_id,
-            "slot_id": slot_id,
-        })
-    return out
+    return to_canonical_slots(slots, source)
 
 # ============================================
 # CALENDAR ADAPTER (multi-tenant: google/none par tenant)
@@ -416,6 +466,38 @@ def filter_slots_by_time_constraint(slots: List, session) -> List:
 # FONCTIONS PRINCIPALES
 # ============================================
 
+def prefetch_slots_for_pref_question(session: Any) -> None:
+    """
+    Précharge les créneaux matin/après-midi en arrière-plan pendant que l'utilisateur
+    réfléchit à la question "matin ou après-midi". Fire-and-forget, ne bloque pas.
+    """
+    now = time.time()
+    ts = getattr(session, "_prefetch_slots_ts", 0) or 0
+    if now - ts < 60:
+        return
+    session._prefetch_slots_ts = now
+
+    def _run() -> None:
+        try:
+            session._prefetch_morning = get_slots_for_display(
+                limit=3, pref="matin", session=session
+            )
+            session._prefetch_afternoon = get_slots_for_display(
+                limit=3, pref="après-midi", session=session
+            )
+            logger.info(
+                "prefetch_slots: morning=%s afternoon=%s",
+                len(session._prefetch_morning or []),
+                len(session._prefetch_afternoon or []),
+            )
+        except Exception as e:
+            logger.debug("prefetch_slots failed: %s", e)
+            session._prefetch_morning = None
+            session._prefetch_afternoon = None
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def get_slots_for_display(
     limit: int = 3,
     pref: Optional[str] = None,
@@ -649,27 +731,22 @@ def _format_slot_label_vocal(date_str: str, time_str: str) -> str:
         return f"{date_str} à {time_str}"
 
 
-def store_pending_slots(session, slots: List[prompts.SlotDisplay]) -> None:
+def store_pending_slots(session, slots: List[Any]) -> None:
     """
-    Stocke les créneaux proposés dans la session.
-    
-    Args:
-        session: Session utilisateur
-        slots: Liste des créneaux proposés
+    Stocke les créneaux proposés dans la session (Fix 3: format canonique unique).
+    slots: SlotDisplay ou dicts → convertis en format canonique.
     """
-    session.pending_slot_ids = [s.slot_id for s in slots]
-    session.pending_slot_labels = [s.label for s in slots]
-    session.pending_slots = slots  # Stocker les objets complets
-    session._slots_source = slots[0].source if slots else "sqlite"
+    source = None
+    if slots:
+        s0 = slots[0]
+        source = (s0.get("source") if isinstance(s0, dict) else getattr(s0, "source", None)) or "sqlite"
+    session.pending_slots = to_canonical_slots(slots, source)
+    session._slots_source = source or "sqlite"
 
-    # P0: ne pas re-fetch Google si on a déjà les slots affichés (pending_slots_display)
-    if getattr(session, "pending_slots_display", None):
-        return
     from backend.calendar_adapter import get_calendar_adapter
     adapter = get_calendar_adapter(session)
-    # provider=none → never use Google (éviter mélange tenant)
     calendar = None if (adapter and not adapter.can_propose_slots()) else (adapter or _get_calendar_service())
-    if calendar:
+    if calendar and slots:
         _store_google_calendar_slots(session, slots, calendar)
 
 
@@ -708,49 +785,34 @@ def _store_google_calendar_slots(session, slots: List[prompts.SlotDisplay], cale
 def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str | None]:
     """
     Réserve le créneau choisi par l'utilisateur.
-    P0: utilise pending_slots_display (slots affichés) si présent, sinon fallback legacy.
-    Fallback: si pending_slots_display vide mais pending_slots présent → re-sérialiser
-    (évite "problème technique" quand session perdue/reconstruite entre requêtes).
+    Fix 3: utilise pending_slots (format canonique) comme seule source de vérité.
     Returns (success, reason).
     - success=True -> reason=None
     - success=False, reason="slot_taken" -> créneau déjà pris (message adapté)
     - success=False, reason="technical" -> erreur technique / slots manquants (évite "plus dispo" à tort)
     """
     conv_id = getattr(session, "conv_id", "")
-    idx = choice_index_1based - 1
-    slots = getattr(session, "pending_slots_display", None) or []
-    pending = getattr(session, "pending_slots", None) or []
+    slots = getattr(session, "pending_slots", None) or []
 
     logger.info(
-        "[BOOKING_ENTER] conv_id=%s choice=%s display_len=%s pending_len=%s first_keys=%s",
+        "[BOOKING_ENTER] conv_id=%s choice=%s pending_len=%s first_keys=%s",
         conv_id,
         choice_index_1based,
         len(slots),
-        len(pending),
         list(slots[0].keys()) if slots else [],
     )
 
-    # Fallback: pending_slots_display vide (session perdue/reconstruite) mais pending_slots présent
-    if not slots and session.pending_slot_choice is not None and (session.pending_slots or []):
-        pending = session.pending_slots or []
-        if 1 <= choice_index_1based <= len(pending):
-            from backend.calendar_adapter import get_calendar_adapter
-            adapter = get_calendar_adapter(session)
-            source = "google" if (adapter and adapter.can_propose_slots()) else "sqlite"
-            slots = serialize_slots_for_session(pending, source)
-            session.pending_slots_display = slots
-            logger.info(
-                "[BOOKING_FALLBACK] conv_id=%s rebuilt pending_slots_display from pending_slots len=%s",
-                getattr(session, "conv_id", ""),
-                len(slots),
-            )
+    # Normaliser: si pending_slots contient des SlotDisplay (legacy), convertir en canonique
+    if slots and not isinstance(slots[0], dict):
+        slots = to_canonical_slots(slots)
+        session.pending_slots = slots
 
     if slots and 1 <= choice_index_1based <= len(slots):
         chosen = slots[choice_index_1based - 1]
         src = (chosen.get("source") or "").lower()
         if src == "google":
-            start_iso = chosen.get("start_iso")
-            end_iso = chosen.get("end_iso")
+            start_iso = chosen.get("start_iso") or chosen.get("start")
+            end_iso = chosen.get("end_iso") or chosen.get("end")
             if not start_iso or not end_iso:
                 logger.warning(
                     "[BOOKING_TECH_REASON] conv_id=%s reason=start_iso_end_iso_missing chosen=%s",
@@ -759,7 +821,7 @@ def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str
                 )
                 return False, "technical"
             logger.info(
-                "[BOOKING_CHOSEN_SLOT] choice=%s start_iso=%s end_iso=%s source=google pending_slots_display_len=%s",
+                "[BOOKING_CHOSEN_SLOT] choice=%s start_iso=%s end_iso=%s source=google pending_len=%s",
                 choice_index_1based,
                 start_iso,
                 end_iso,
@@ -767,13 +829,12 @@ def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str
             )
             return _book_google_by_iso(session, start_iso, end_iso)
         if src in ("sqlite", "pg"):
-            slot_id = chosen.get("slot_id")
-            # Fallback: slot_id manquant mais start_iso présent → lookup par date+time (session perdue)
-            if slot_id is None and chosen.get("start_iso"):
+            slot_id = chosen.get("id") or chosen.get("slot_id")
+            # Fallback: slot_id manquant mais start présent → lookup par date+time (session perdue)
+            start_val = chosen.get("start_iso") or chosen.get("start")
+            if slot_id is None and start_val:
                 tenant_id = getattr(session, "tenant_id", None) or 1
-                slot_id = _resolve_slot_id_from_start_iso(
-                    chosen.get("start_iso"), source=src, tenant_id=tenant_id
-                )
+                slot_id = _resolve_slot_id_from_start_iso(start_val, source=src, tenant_id=tenant_id)
             if slot_id is None:
                 logger.warning(
                     "[BOOKING_TECH_REASON] conv_id=%s reason=slot_id_missing chosen=%s",
@@ -788,10 +849,9 @@ def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str
     fresh_slots = []
     if session.pending_slot_choice is not None and not slots:
         logger.warning(
-            "book_slot_from_session: conv_id=%s pending_slot_choice=%s mais slots vides (display=%s pending=%s) -> re-fetch",
+            "book_slot_from_session: conv_id=%s pending_slot_choice=%s mais slots vides (pending=%s) -> re-fetch",
             conv_id,
             choice_index_1based,
-            len(getattr(session, "pending_slots_display", None) or []),
             len(getattr(session, "pending_slots", None) or []),
         )
         fresh_count = 0
@@ -806,20 +866,18 @@ def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str
                 from backend.calendar_adapter import get_calendar_adapter
                 adapter = get_calendar_adapter(session)
                 source = "google" if (adapter and adapter.can_propose_slots()) else "sqlite"
-                slots = serialize_slots_for_session(fresh_slots, source)
-                session.pending_slots_display = slots
-                session.pending_slots = fresh_slots
+                slots = to_canonical_slots(fresh_slots, source)
+                session.pending_slots = slots
                 logger.info("[BOOKING_REFETCH] conv_id=%s re-fetched %s slots, booking choice %s", conv_id, len(slots), choice_index_1based)
-                # Retenter le booking avec les slots fraîchement récupérés
                 chosen = slots[choice_index_1based - 1]
                 src = (chosen.get("source") or "").lower()
                 if src == "google":
-                    start_iso = chosen.get("start_iso")
-                    end_iso = chosen.get("end_iso")
+                    start_iso = chosen.get("start_iso") or chosen.get("start")
+                    end_iso = chosen.get("end_iso") or chosen.get("end")
                     if start_iso and end_iso:
                         return _book_google_by_iso(session, start_iso, end_iso)
                 if src in ("sqlite", "pg"):
-                    slot_id = chosen.get("slot_id")
+                    slot_id = chosen.get("id") or chosen.get("slot_id")
                     if slot_id is not None:
                         ok = _book_local_by_slot_id(session, int(slot_id), source=src)
                         return (ok, None if ok else "slot_taken")
@@ -832,19 +890,21 @@ def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str
         )
         return False, "technical"
 
-    # Fallback legacy
-    if idx < 0 or idx >= len(getattr(session, "pending_slot_ids", []) or []):
-        logger.warning("Index invalide: %s", choice_index_1based)
-        return False, "technical"
-    from backend.calendar_adapter import get_calendar_adapter
-    adapter = get_calendar_adapter(session)
-    # provider=none → never use Google (éviter mélange tenant)
-    calendar = None if (adapter and not adapter.can_propose_slots()) else (adapter or _get_calendar_service())
-    if calendar:
-        ok = _book_via_google_calendar(session, idx, calendar)
+    # Fallback legacy (sessions très anciennes avec pending_slot_ids)
+    legacy_ids = getattr(session, "pending_slot_ids", None) or []
+    if legacy_ids and 1 <= choice_index_1based <= len(legacy_ids):
+        idx = choice_index_1based - 1
+        from backend.calendar_adapter import get_calendar_adapter
+        adapter = get_calendar_adapter(session)
+        calendar = None if (adapter and not adapter.can_propose_slots()) else (adapter or _get_calendar_service())
+        if calendar:
+            ok = _book_via_google_calendar(session, idx, calendar)
+            return (ok, None if ok else "slot_taken")
+        ok = _book_via_sqlite(session, idx)
         return (ok, None if ok else "slot_taken")
-    ok = _book_via_sqlite(session, idx)
-    return (ok, None if ok else "slot_taken")
+
+    logger.warning("[BOOKING_TECH_REASON] conv_id=%s reason=no_slots_or_invalid_index choice=%s", conv_id, choice_index_1based)
+    return False, "technical"
 
 
 def _book_google_by_iso(session, start_iso: str, end_iso: str) -> tuple[bool, str | None]:
@@ -975,33 +1035,43 @@ def _book_via_google_calendar(session, idx: int, calendar=None) -> bool:
 
 
 def _book_via_sqlite(session, idx: int) -> bool:
-    """Fallback: réserve via PG ou SQLite (selon source des slots)."""
+    """Fallback: réserve via PG ou SQLite (selon source des slots). Fix 3: utilise pending_slots si disponible."""
     try:
-        slot_id = session.pending_slot_ids[idx]
-        source = getattr(session, "_slots_source", None) or "sqlite"
-        return _book_local_by_slot_id(session, int(slot_id), source=source)
+        pending = getattr(session, "pending_slots", None) or []
+        if 0 <= idx < len(pending):
+            slot = pending[idx]
+            slot_id = _slot_get(slot, "id") or _slot_get(slot, "slot_id")
+            source = (_slot_get(slot, "source") or getattr(session, "_slots_source", None) or "sqlite").lower()
+            if slot_id is not None:
+                return _book_local_by_slot_id(session, int(slot_id), source=source)
+        # Legacy: pending_slot_ids
+        legacy_ids = getattr(session, "pending_slot_ids", None) or []
+        if 0 <= idx < len(legacy_ids):
+            slot_id = legacy_ids[idx]
+            source = getattr(session, "_slots_source", None) or "sqlite"
+            return _book_local_by_slot_id(session, int(slot_id), source=source)
     except Exception as e:
         logger.error("Erreur local booking: %s", e)
-        return False
+    return False
 
 
 def get_label_for_choice(session, choice_index_1based: int) -> Optional[str]:
     """
     Récupère le label d'un créneau choisi.
-    
-    Args:
-        session: Session utilisateur
-        choice_index_1based: Index du créneau (1-based)
-        
-    Returns:
-        Label du créneau ou None si non trouvé
+    Fix 3: utilise pending_slots (format canonique) comme source principale.
     """
     idx = choice_index_1based - 1
-    
-    if idx < 0 or idx >= len(session.pending_slot_labels):
-        return None
-    
-    return session.pending_slot_labels[idx]
+    pending = getattr(session, "pending_slots", None) or []
+
+    if 0 <= idx < len(pending):
+        slot = pending[idx]
+        return _slot_get(slot, "label_vocal") or _slot_get(slot, "label")
+
+    # Fallback legacy
+    labels = getattr(session, "pending_slot_labels", None) or []
+    if 0 <= idx < len(labels):
+        return labels[idx]
+    return None
 
 
 # ============================================

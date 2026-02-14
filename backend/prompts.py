@@ -475,6 +475,7 @@ VOCAL_CONFIRM_CLARIFY_YESNO = "Dites oui ou non, s'il vous plaît."
 # SLOT_FAIL_3 → INTENT_ROUTER (dans engine)
 
 # P0.2 — Vocal : proposition séquentielle (1 créneau à la fois, pas 3 d'un coup)
+VOCAL_AGENDA_LOOKUP = "Un instant s'il vous plaît, je consulte l'agenda."
 VOCAL_SLOT_ONE_PROPOSE = "Le prochain créneau est {label}. Ça vous convient ?"
 # Après 2–3 "non" consécutifs en séquentiel : demander préférence ouverte
 VOCAL_SLOT_REFUSE_PREF_PROMPT = "Vous préférez plutôt le matin, l'après-midi, ou un autre jour ?"
