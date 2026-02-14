@@ -735,6 +735,10 @@ async def vapi_custom_llm(request: Request):
         # Vapi envoie un tableau de messages (stream: true = SSE obligatoire côté backend)
         messages = payload.get("messages", [])
         is_streaming = _parse_stream_flag(payload)
+        logger.info(
+            "[CHAT_COMPLETIONS] call_id=%s messages_count=%s stream=%s",
+            call_id[:24] if call_id else "n/a", len(messages), is_streaming,
+        )
         
         # 📱 Extraire le numéro de téléphone du client (Vapi le fournit)
         customer_phone = payload.get("call", {}).get("customer", {}).get("number")
@@ -779,6 +783,10 @@ async def vapi_custom_llm(request: Request):
                 break
 
         t2 = log_timer("Message extracted", t1)
+        logger.info(
+            "[CHAT_COMPLETIONS] user_message len=%s preview=%s",
+            len(user_message or ""), (user_message or "")[:80],
+        )
         logger.debug("user message: %r", (user_message or "")[:80])
         
         if not user_message:
@@ -790,51 +798,12 @@ async def vapi_custom_llm(request: Request):
             response_text = ""
             action_taken = ""
 
-            # Phase 2: PG-first read — recharger depuis PG si session absente (restart/multi-instance)
-            # Phase 2.1: lock chat/completions — lock court sur get_or_resume uniquement.
-            # Si LockTimeout (1er tour tient le lock, 2e tour arrive trop tôt) : retry 1x après 0.5s
-            # pour laisser le 1er tour libérer, puis traiter la vraie réponse au lieu du greeting.
-            state_before_turn = "START"
-            session = None
-            if _pg_lock_ok():
-                from backend.session_pg import pg_lock_call_session, LockTimeout
-                _call_journal_ensure(resolved_tenant_id, call_id)
-                for attempt in range(2):
-                    try:
-                        with pg_lock_call_session(resolved_tenant_id, call_id, timeout_seconds=2):
-                            session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
-                            state_before_turn = getattr(session, "state", "START")
-                        break
-                    except LockTimeout:
-                        if attempt == 0:
-                            logger.info("[CALL_LOCK_RETRY] tenant_id=%s call_id=%s wait 0.5s then retry", resolved_tenant_id, call_id[:20])
-                            time.sleep(0.5)
-                        else:
-                            logger.warning("[CALL_LOCK_TIMEOUT] tenant_id=%s call_id=%s -> retour greeting + persistance session", resolved_tenant_id, call_id[:20])
-                            greeting = (prompts.get_vocal_greeting(config.BUSINESS_NAME) or "Je vous écoute.").strip() or "Pouvez-vous répéter, s'il vous plaît ?"
-                            try:
-                                s = ENGINE.session_store.get_or_create(call_id)
-                                s.channel = "vocal"
-                                s.tenant_id = resolved_tenant_id
-                                s.last_agent_message = greeting
-                                s.last_question_asked = greeting
-                                s.add_message("agent", greeting)
-                                if hasattr(ENGINE.session_store, "save"):
-                                    ENGINE.session_store.save(s)
-                                logger.warning("[LOCK_TIMEOUT_SAVED] call_id=%s tenant=%s state=%s", call_id[:20], resolved_tenant_id, getattr(s, "state", "START"))
-                                from backend.engine import _persist_ivr_event
-                                _persist_ivr_event(s, "call_lock_timeout", reason="concurrent_webhook")
-                            except Exception as e:
-                                logger.warning("[LOCK_TIMEOUT_SAVE_FAIL] call_id=%s err=%s", call_id[:20], e)
-                            return _make_chat_response(call_id, greeting, is_streaming)
-                    except Exception as e:
-                        logger.warning("[CALL_LOCK_WARN] err=%s", e, exc_info=True)
-                        session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
-                        state_before_turn = getattr(session, "state", "START")
-                        break
-            if session is None:
-                session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
-                state_before_turn = getattr(session, "state", "START")
+            # Phase 2: PG-first read — pas de lock sur /chat/completions.
+            # Vapi envoie les tours de façon séquentielle (attend la réponse avant le tour suivant).
+            # Un lock bloquait le 2e tour (LockTimeout → greeting au lieu de la vraie réponse).
+            _call_journal_ensure(resolved_tenant_id, call_id)
+            session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
+            state_before_turn = getattr(session, "state", "START")
 
             session.channel = "vocal"
             session.tenant_id = resolved_tenant_id
@@ -1186,10 +1155,16 @@ async def vapi_custom_llm(request: Request):
         traceback.print_exc()
         try:
             _err_cid = (payload.get("call") or {}).get("id") or "unknown"
-            _err_stream = _parse_stream_flag(payload)
-        except (NameError, KeyError, TypeError, AttributeError):
+        except NameError:
             _err_cid = "unknown"
+        try:
+            _err_stream = _parse_stream_flag(payload)
+        except Exception:
             _err_stream = False
+        logger.warning(
+            "[CHAT_COMPLETIONS] exception call_id=%s stream=%s err=%s",
+            _err_cid[:24] if _err_cid else "n/a", _err_stream, str(e),
+        )
         _err_msg = "Désolé, une erreur est survenue."
         return _make_chat_response(_err_cid, _err_msg, _err_stream)
 
