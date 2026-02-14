@@ -1365,14 +1365,21 @@ MSG_SLOTS_PREFACE_VOCAL = (
 )
 
 
+def _slot_label(slot) -> str:
+    """Label d'un slot (SlotDisplay ou dict canonique Fix 3)."""
+    if isinstance(slot, dict):
+        return (slot.get("label_vocal") or slot.get("label") or "").strip() or "créneau"
+    return getattr(slot, "label_vocal", None) or getattr(slot, "label", None) or "créneau"
+
+
 def format_slot_list_vocal_only(slots: List[SlotDisplay]) -> str:
-    """Liste des 3 créneaux + instruction (sans preface). P1.2 message 2."""
+    """Liste des 3 créneaux + instruction (sans preface). P1.2 message 2. Accepte SlotDisplay ou dict (Fix 3)."""
     if len(slots) < 3:
         return format_slot_proposal_vocal(slots)
     return (
-        f"Un : {slots[0].label}. "
-        f"Deux : {slots[1].label}. "
-        f"Trois : {slots[2].label}. "
+        f"Un : {_slot_label(slots[0])}. "
+        f"Deux : {_slot_label(slots[1])}. "
+        f"Trois : {_slot_label(slots[2])}. "
         "Vous pouvez dire un, deux ou trois, s'il vous plaît."
     )
 

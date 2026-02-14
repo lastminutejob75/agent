@@ -476,17 +476,28 @@ def safe_reply(events: List[Event], session: Session) -> List[Event]:
     Dernière barrière anti-silence (spec V3).
     Aucun message utilisateur ne doit mener à zéro output.
     Persiste transferred_human une seule fois par call (idempotence).
+    Fix 7: en vocal, un seul Event final (webhook n'utilise que events[0].text) → garder le premier si plusieurs.
     """
-    setattr(session, "_turn_assistant_text", (events[0].text if events and getattr(events[0], "text", None) else "") or "")
-    _log_turn_debug(session)
-    if getattr(session, "state", None) == "TRANSFERRED" and not getattr(session, "transfer_logged", False):
-        _persist_ivr_event(session, "transferred_human")
-        session.transfer_logged = True
     if not events:
         log_ivr_event(logger, session, "safe_reply")
         msg = SAFE_REPLY_FALLBACK
         session.add_message("agent", msg)
         return [Event("final", msg, conv_state=session.state)]
+    channel = getattr(session, "channel", "web")
+    if channel == "vocal":
+        finals = [e for e in events if getattr(e, "type", None) == "final"]
+        if len(finals) > 1:
+            logger.warning(
+                "[FIX7] vocal: %s final events (webhook uses only first), conv_id=%s",
+                len(finals),
+                getattr(session, "conv_id", "")[:20],
+            )
+            events = [events[0]]
+    setattr(session, "_turn_assistant_text", (events[0].text if events and getattr(events[0], "text", None) else "") or "")
+    _log_turn_debug(session)
+    if getattr(session, "state", None) == "TRANSFERRED" and not getattr(session, "transfer_logged", False):
+        _persist_ivr_event(session, "transferred_human")
+        session.transfer_logged = True
     for ev in events:
         if ev.text and ev.text.strip():
             return events
@@ -710,6 +721,17 @@ class Engine:
         """Sauvegarde la session (si le store le supporte)."""
         if hasattr(self.session_store, 'save'):
             self.session_store.save(session)
+
+    def _final(self, session: Session, msg: str, *, state: Optional[str] = None) -> List[Event]:
+        """
+        Fix 7: un seul Event final par tour (critique vocal : webhook n'utilise que events[0].text).
+        Ajoute le message à l'historique, sauvegarde, retourne [Event("final", ...)].
+        """
+        if state is not None:
+            session.state = state
+        session.add_message("agent", msg)
+        self._save_session(session)
+        return [Event("final", msg, conv_state=session.state)]
 
     def _say(self, session: Session, key: str, **kwargs) -> str:
         """
@@ -1997,6 +2019,8 @@ class Engine:
                     phone_formatted = prompts.format_phone_for_voice(phone[:10])
                     msg = f"Votre numéro est bien le {phone_formatted} ?"
                     logger.info("[QUALIF] conv_id=%s using_caller_id", session.conv_id)
+                    session.awaiting_confirmation = "CONFIRM_CONTACT"
+                    session.last_question_asked = msg
                     session.add_message("agent", msg)
                     return [Event("final", msg, conv_state=session.state)]
             except Exception as e:
@@ -2375,8 +2399,9 @@ class Engine:
                         if session.pending_slot_choice is not None:
                             session.state = "CONTACT_CONFIRM"
                             msg = prompts.VOCAL_EMAIL_CONFIRM.format(email=email_val)
-                            session.add_message("agent", msg)
                             session.awaiting_confirmation = "CONFIRM_CONTACT"
+                            session.last_question_asked = msg
+                            session.add_message("agent", msg)
                             return [Event("final", msg, conv_state=session.state)]
                         return self._propose_slots(session)
                     # Email invalide → guidance 1er échec, transfert 2e (P0: budget peut prévenir)
@@ -2441,6 +2466,7 @@ class Engine:
                     msg = prompts.VOCAL_CONTACT_CONFIRM_SHORT.format(phone_formatted=phone_spaced)
                     session.add_message("agent", msg)
                     session.awaiting_confirmation = "CONFIRM_CONTACT"
+                    session.last_question_asked = msg
                     return [Event("final", msg, conv_state=session.state)]
                 # Pas encore 10 chiffres → accumulation (6 tours max, pas contact_fails)
                 session.contact_retry_count = getattr(session, "contact_retry_count", 0) + 1
@@ -2501,6 +2527,7 @@ class Engine:
                         msg = f"Votre email est bien {contact_raw} ?"
                 session.add_message("agent", msg)
                 session.awaiting_confirmation = "CONFIRM_CONTACT"
+                session.last_question_asked = msg
                 return [Event("final", msg, conv_state=session.state)]
             return self._propose_slots(session)
         
@@ -2830,13 +2857,11 @@ class Engine:
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
 
-        # P1.2 Vocal : préface déjà envoyée, liste pas encore → envoyer liste puis traiter le message user
+        # P1.2 Vocal : préface déjà envoyée, liste pas encore → un seul message (liste + help ou confirmation)
         if channel == "vocal" and getattr(session, "slots_preface_sent", False) and not getattr(session, "slots_list_sent", False):
             session.slots_list_sent = True
             session.is_reading_slots = True
             list_msg = prompts.format_slot_list_vocal_only(session.pending_slots)
-            session.add_message("agent", list_msg)
-            self._save_session(session)
             early_idx = detect_slot_choice_early(user_text, session.pending_slots)
             if early_idx is not None:
                 logger.info(
@@ -2852,15 +2877,11 @@ class Engine:
                 except Exception:
                     slot_label = "votre créneau"
                 confirm_msg = prompts.format_slot_early_confirm(early_idx, slot_label, channel=channel)
-                session.add_message("agent", confirm_msg)
                 session.awaiting_confirmation = "CONFIRM_SLOT"
-                # Un seul event : le webhook vocal n'utilise que events[0].text → envoyer la confirmation, pas la liste
-                return [Event("final", confirm_msg, conv_state=session.state)]
+                return self._final(session, confirm_msg)
             help_msg = getattr(prompts, "MSG_SLOT_BARGE_IN_HELP", "D'accord. Dites juste 1, 2 ou 3.")
-            session.add_message("agent", help_msg)
-            # Fix 7: un seul Event final en vocal (webhook n'utilise que events[0].text)
             combined = f"{list_msg} {help_msg}".strip()
-            return [Event("final", combined, conv_state=session.state)]
+            return self._final(session, combined)
 
         # P1.1 Barge-in safe : user a parlé pendant l'énumération des créneaux (interruption positive)
         if getattr(session, "is_reading_slots", False):
@@ -3039,6 +3060,7 @@ class Engine:
                         logger.info("[BOOKING_CONFIRM] conv_id=%s using_caller_id", session.conv_id)
                         session.add_message("agent", msg)
                         session.awaiting_confirmation = "CONFIRM_CONTACT"
+                        session.last_question_asked = msg
                         return [Event("final", msg, conv_state=session.state)]
                 except Exception as e:
                     logger.warning("[BOOKING_CONFIRM] conv_id=%s caller_id_error=%s", session.conv_id, str(e)[:80], exc_info=True)
