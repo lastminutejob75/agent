@@ -1,0 +1,2 @@
+week_start,week_end,tenant_id,event_type,reason,n
+2026-02-10 00:00:00,2026-02-18 00:00:00,1,intent_router_trigger,cancel_confirm_unclear_3,5

@@ -1,0 +1,2 @@
+week_start,week_end,tenant_id,tenant_name,calls_total,bookings_confirmed,booking_rate,transfers,transfer_rate,abandons,abandon_rate,repeat_used_calls,repeat_rate,yes_ambiguous_router_calls,yes_ambiguous_router_rate,slot_refuse_pref_asked_calls,slot_refuse_pref_rate,convert_after_refuse_pref_num,convert_after_refuse_pref_den,convert_after_refuse_pref_rate,empty_message_calls,anti_loop_calls,intent_router_calls,cancel_done_calls,cancel_failed_calls
+2026-02-10 00:00:00,2026-02-18 00:00:00,1,DEFAULT,5,0,0.0,2,0.4,0,0.0,0,0.0,0,0.0,0,0.0,0,0,0.0,0,0,1,2,2
