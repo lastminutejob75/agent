@@ -347,6 +347,7 @@ def _is_booking(text: str) -> bool:
         "prise de rendez vous", "rendez vous svp", "un rendez vous", "un rdv",
         "réserver", "reserver", "booker", "je veux venir", "je veux un rendez", "je voudrais un rendez",
         "je voudrais un créneau", "je voudrais un creneau",
+        "je voudrais rdv", "je voudrais une rendez", "je voudrais un rendez vous", "voudrais un rdv",
     ]
     return any(m in t for m in booking_markers)
 

@@ -58,7 +58,8 @@ def _heuristic_route(text: str) -> Optional[StartRoute]:
     if _TIME_HINTS.search(t):
         score += 1
 
-    if score >= 3:
+    # Seuil 2 : "Je voudrais un rendez-vous" (booking hints seulement) → BOOKING (évite OUT_OF_SCOPE/UNCLEAR)
+    if score >= 2:
         return StartRoute(
             intent=Intent.BOOKING,
             confidence=min(0.85, 0.55 + 0.1 * score),

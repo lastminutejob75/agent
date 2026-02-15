@@ -1459,6 +1459,8 @@ class Engine:
         
         # --- NOUVEAU FLOW : First Message ---
         if session.state == "START":
+            # Source unique pour START : route_start (heuristique + parser + LLM). Évite incohérence
+            # entre intent global et route_start (ex. "Je voudrais un rendez-vous" → BOOKING, pas TRANSFERRED).
             strong_intent = detect_strong_intent(user_text)
             r = route_start(
                 user_text,
