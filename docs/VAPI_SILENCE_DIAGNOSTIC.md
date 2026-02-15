@@ -121,6 +121,31 @@ Si le **curl** vers `/chat/completions` avec `stream: true` renvoie bien du SSE 
 
 ---
 
+### Mesure latence et trace décisionnelle (debug HANG + mauvais routage)
+
+Pour trancher sur un appel raté (HANG ou START → TRANSFERRED à tort), utiliser les logs suivants.
+
+**A) Latence « avant 1er token » (objectif : t1 − t0 < 3000 ms)**
+
+- **`LATENCY_FIRST_TOKEN_MS`** : temps entre réception de la requête et premier chunk SSE avec `delta.content` (ex. « Un instant. »).  
+  Grep : `LATENCY_FIRST_TOKEN_MS` ou `First SSE content token`.  
+  Si > 3000 ms → risque HANG Vapi (~5 s).
+
+- **`LATENCY_STREAM_END_MS`** : temps total jusqu’à la fin du stream (t2 − t0).  
+  Grep : `LATENCY_STREAM_END_MS` ou `STREAMING END total`.
+
+**B) Trace décisionnelle unique (pour START → TRANSFERRED)**
+
+- **`DECISION_TRACE`** : une ligne par transfert avec  
+  `state_before`, `intent_detected`, `guard_triggered`, `state_after=TRANSFERRED`, `text=...`  
+  Grep : `DECISION_TRACE`  
+  Exemple : `state_before=START intent_detected=OUT_OF_SCOPE guard_triggered=out_of_scope_2` → la règle à assouplir ou à rendre prioritaire après booking.
+
+**Extrait utile pour un appel raté :**  
+`state=START` + `decision_in` / `decision_in_chat` + `LATENCY_FIRST_TOKEN_MS` ou `TOTAL LATENCY` + `DECISION_TRACE` (si transfert).
+
+---
+
 ### Diagnostic express (trancher en ~60 secondes)
 
 1. Mettre **`VAPI_DEBUG_TEST_AUDIO=true`** (Railway), déployer.

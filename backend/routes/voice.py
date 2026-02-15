@@ -1000,6 +1000,8 @@ async def vapi_custom_llm(request: Request):
             _call_journal_ensure(resolved_tenant_id, call_id)
             _call_journal_user_message(resolved_tenant_id, call_id, user_message or "")
 
+            t0 = t_start  # request reçue (déjà défini plus haut)
+
             async def _stream_with_early_token():
                 chunk_role = {
                     "id": f"chatcmpl-{call_id}",
@@ -1015,14 +1017,33 @@ async def vapi_custom_llm(request: Request):
                     "choices": [{"index": 0, "delta": {"content": first_content}, "finish_reason": None}],
                 }
                 yield f"data: {json.dumps(chunk_first)}\n\n"
-                response_text, cancel_lookup_streaming = await asyncio.to_thread(
-                    _compute_voice_response_sync,
-                    resolved_tenant_id,
-                    call_id,
-                    user_message,
-                    customer_phone,
-                    messages,
+                t1 = time.time()
+                latency_first_token_ms = (t1 - t0) * 1000
+                logger.info(
+                    "LATENCY_FIRST_TOKEN_MS",
+                    extra={
+                        "call_id": call_id[:24] if call_id else "",
+                        "t1_minus_t0_ms": round(latency_first_token_ms, 0),
+                        "target_max_ms": 3000,
+                    },
                 )
+                print(f"⏱️ First SSE content token: {latency_first_token_ms:.0f}ms (target <3000ms)")
+                try:
+                    response_text, cancel_lookup_streaming = await asyncio.to_thread(
+                        _compute_voice_response_sync,
+                        resolved_tenant_id,
+                        call_id,
+                        user_message,
+                        customer_phone,
+                        messages,
+                    )
+                except Exception as e:
+                    logger.exception("_compute_voice_response_sync failed in stream: %s", e)
+                    response_text = getattr(
+                        prompts, "MSG_VOCAL_TECHNICAL_FALLBACK",
+                        "Excusez-moi, un problème est survenu. Je vous transfère à un collègue.",
+                    ) or "Excusez-moi, un problème est survenu."
+                    cancel_lookup_streaming = False
                 if cancel_lookup_streaming:
                     holding = getattr(prompts, "VOCAL_CANCEL_LOOKUP_HOLDING", "Je cherche votre rendez-vous...")
                     for i, word in enumerate(holding.split()):
@@ -1037,6 +1058,13 @@ async def vapi_custom_llm(request: Request):
                     yield f"data: {json.dumps({'id': f'chatcmpl-{call_id}', 'object': 'chat.completion.chunk', 'choices': [{'index': 0, 'delta': {'content': content}, 'finish_reason': None}]})}\n\n"
                 yield f"data: {json.dumps({'id': f'chatcmpl-{call_id}', 'object': 'chat.completion.chunk', 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]})}\n\n"
                 yield "data: [DONE]\n\n"
+                t2 = time.time()
+                total_ms = (t2 - t0) * 1000
+                logger.info(
+                    "LATENCY_STREAM_END_MS",
+                    extra={"call_id": call_id[:24] if call_id else "", "t2_minus_t0_ms": round(total_ms, 0)},
+                )
+                print(f"✅ STREAMING END total: {total_ms:.0f}ms")
 
             total_ms = (time.time() - t_start) * 1000
             print(f"✅ STREAMING START (first token < 3s) latency: {total_ms:.0f}ms")
@@ -1233,6 +1261,7 @@ async def vapi_custom_llm(request: Request):
                                         response_text = events[0].text if events else prompts.MSG_UNCLEAR_1
                                         action_taken = "unclear_2_intent_router"
                                     else:
+                                        state_before = getattr(session, "state", "START")
                                         session.state = "TRANSFERRED"
                                         response_text = (
                                             prompts.VOCAL_TRANSFER_COMPLEX
@@ -1241,6 +1270,17 @@ async def vapi_custom_llm(request: Request):
                                         )
                                         session.add_message("agent", response_text)
                                         action_taken = "unclear_3_transfer"
+                                        logger.info(
+                                            "DECISION_TRACE state_before=%s intent_detected=n/a guard_triggered=unclear_3_transfer state_after=TRANSFERRED text=%r",
+                                            state_before,
+                                            (user_message or "")[:200],
+                                            extra={
+                                                "call_id": call_id[:24] if call_id else "",
+                                                "state_before": state_before,
+                                                "guard_triggered": "unclear_3_transfer",
+                                                "state_after": "TRANSFERRED",
+                                            },
+                                        )
                     except Exception as e:
                         print(f"❌ ENGINE ERROR: {e}")
                         import traceback

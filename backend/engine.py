@@ -781,6 +781,22 @@ class Engine:
         reset_slots_reading(session)  # Fix #4: sortie WAIT_CONFIRM
         session.state = "TRANSFERRED"
         session.transfer_logged = True
+        # Trace décisionnelle unique pour debug (ex: START → TRANSFERRED sur "je voudrais un rdv")
+        intent_detected = getattr(session, "last_intent_before_trigger", None)
+        logger.info(
+            "DECISION_TRACE state_before=%s intent_detected=%s guard_triggered=%s state_after=TRANSFERRED text=%r",
+            state_before,
+            intent_detected,
+            reason,
+            (user_text or "")[:200],
+            extra={
+                "call_id": getattr(session, "conv_id", "")[:24],
+                "state_before": state_before,
+                "intent_detected": str(intent_detected) if intent_detected is not None else None,
+                "guard_triggered": reason,
+                "state_after": "TRANSFERRED",
+            },
+        )
         ctx = json.dumps({
             "reason": reason,
             "state_at_transfer": state_before,
@@ -1474,6 +1490,7 @@ class Engine:
 
             # 3) reconcile routing
             intent = r.intent
+            setattr(session, "last_intent_before_trigger", intent)  # pour DECISION_TRACE si transfert
             # strong intents ALWAYS override (sauf BOOKING avec très haute confiance)
             if strong_intent in ("TRANSFER", "CANCEL", "MODIFY", "ABANDON", "ORDONNANCE"):
                 if not (intent == "BOOKING" and getattr(r, "confidence", 0.0) >= 0.80):
