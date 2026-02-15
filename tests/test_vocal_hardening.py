@@ -56,11 +56,11 @@ def test_critical_tokens_and_overlap_defined():
     assert "oui" in CRITICAL_TOKENS or "oui" in CRITICAL_OVERLAP
 
 
-# --- P2 : assistant-request retourne 204 ---
+# --- P2 : webhook Vapi retourne 200 (Option A : pas de traitement, évite saturation worker) ---
 
 
-def test_assistant_request_returns_204():
-    """message_type == assistant-request doit retourner HTTP 204 No Content."""
+def test_assistant_request_returns_200():
+    """Webhook Vapi : retourne 200 immédiat (fire-and-forget, pas de lecture du body)."""
     client = TestClient(app)
     payload = {
         "call": {"id": "test-assistant-request"},
@@ -72,4 +72,4 @@ def test_assistant_request_returns_204():
         },
     }
     response = client.post("/api/vapi/webhook", json=payload)
-    assert response.status_code == 204
+    assert response.status_code == 200

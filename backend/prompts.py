@@ -1183,6 +1183,9 @@ def get_message(msg_key: str, channel: str = "web", **kwargs) -> str:
         "start_clarify_1": VOCAL_START_CLARIFY_1,
         "out_of_scope": VOCAL_OUT_OF_SCOPE,
         "slot_one_propose": VOCAL_SLOT_ONE_PROPOSE,
+        "technical_transfer": MSG_BOOKING_TECHNICAL,
+        "no_slots_transfer": VOCAL_NO_SLOTS,
+        "permission_error_transfer": MSG_NO_AGENDA_TRANSFER,
     }
     
     # Mapping des messages web (format texte standard)
@@ -1203,6 +1206,9 @@ def get_message(msg_key: str, channel: str = "web", **kwargs) -> str:
         "start_clarify_1": MSG_START_CLARIFY_1_WEB,
         "out_of_scope": MSG_OUT_OF_SCOPE_WEB,
         "slot_one_propose": "Le prochain créneau est {label}. Ça vous convient ?",
+        "technical_transfer": MSG_BOOKING_TECHNICAL,
+        "no_slots_transfer": MSG_NO_SLOTS_AVAILABLE,
+        "permission_error_transfer": MSG_NO_AGENDA_TRANSFER,
     }
     
     messages = vocal_messages if channel == "vocal" else web_messages

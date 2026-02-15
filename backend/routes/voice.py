@@ -20,6 +20,7 @@ from backend.client_memory import get_client_memory
 from backend.session_codec import session_to_dict
 from backend.conversational_engine import ConversationalEngine, _is_canary
 from backend.reports import get_report_generator
+from backend.validation import validate_response as validate_response_tts
 from backend.stt_utils import normalize_transcript, is_filler_only
 from backend.stt_common import (
     classify_text_only,
@@ -991,16 +992,14 @@ async def vapi_custom_llm(request: Request):
             len(user_message or ""), (user_message or "")[:80],
         )
         logger.debug("user message: %r", (user_message or "")[:80])
-        
+        cancel_lookup_streaming = False
         if not user_message:
             # Premier message ou pas de message user
             response_text = prompts.get_vocal_greeting(config.BUSINESS_NAME)
         elif is_streaming:
-            # Streaming : premier token SSE < 3s (évite HANG Vapi). Retour immédiat, calcul en thread dans le générateur.
-            _call_journal_ensure(resolved_tenant_id, call_id)
-            _call_journal_user_message(resolved_tenant_id, call_id, user_message or "")
-
-            t0 = t_start  # request reçue (déjà défini plus haut)
+            # Streaming : retour HTTP immédiat, premier token dans le corps < 1s. Pas de journal/DB avant return
+            # (sinon Vapi ne reçoit pas la connexion à temps → silence). Journal fait dans _compute_voice_response_sync.
+            t0 = t_start  # request reçue
 
             async def _stream_with_early_token():
                 chunk_role = {
@@ -1052,6 +1051,13 @@ async def vapi_custom_llm(request: Request):
                     events = await asyncio.to_thread(_get_engine(call_id).handle_message, call_id, user_message)
                     session_after = ENGINE.session_store.get(call_id)
                     response_text = events[0].text if events else "Je n'ai pas compris"
+                # Validation avant TTS (pare-feu) : si échec → fallback technical_transfer
+                session_for_validation = ENGINE.session_store.get(call_id)
+                state_after = getattr(session_for_validation, "state", "START")
+                valid, text_to_stream = validate_response_tts(
+                    state_after, response_text or "", channel="vocal"
+                )
+                response_text = text_to_stream if not valid else (response_text or "")
                 words = (response_text or "").strip().split()
                 for i, word in enumerate(words):
                     content = f" {word}" if i > 0 else word
@@ -1071,7 +1077,11 @@ async def vapi_custom_llm(request: Request):
             return StreamingResponse(
                 _stream_with_early_token(),
                 media_type="text/event-stream",
-                headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
             )
         else:
             # Traiter via ENGINE (non-streaming)
