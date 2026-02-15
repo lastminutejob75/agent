@@ -94,6 +94,8 @@ Bonjour Cabinet Dupont, vous appelez pour un rendez-vous ?
 | **Language** | French |
 | **Model** | Custom LLM (recommandé) |
 
+**Prompt / System instructions** : pour un ton **médical professionnel** (sans "Nickel", "Super", ton décontracté), utiliser le prompt décrit dans **[docs/VAPI_PROMPT_ASSISTANT.md](docs/VAPI_PROMPT_ASSISTANT.md)**.
+
 ### 2. Server URL (Webhook)
 
 ```
@@ -105,7 +107,23 @@ Exemple avec ngrok :
 https://abc123.ngrok-free.app/api/vapi/webhook
 ```
 
-### 3. Voix recommandée
+### 3. Reconnaissance du numéro (caller ID)
+
+Le backend utilise le **numéro de l’appelant** pour :
+- Proposer en vocal : *« Votre numéro est bien le 06 12 34 56 78 ? »* (sans le redemander),
+- Alimenter la mémoire client et les rapports.
+
+**Où c’est fait :**
+- Extraction : `backend/tenant_routing.py` → `extract_customer_phone_from_vapi_payload(payload)` (plusieurs chemins : `call.customer.number`, `call.from`, `messages[].customer`, etc.).
+- Utilisation : `backend/routes/voice.py` (stocké en session → `session.customer_phone`), puis `backend/engine.py` en QUALIF_CONTACT / CONTACT_CONFIRM.
+
+**Si le numéro n’apparaît plus :**
+- Vérifier dans les logs : `CUSTOMER_PHONE_RECOGNITION` avec `has_number: false` indique que le payload reçu ne contient pas le caller ID.
+- Côté Vapi : s’assurer que le provider téléphonique (Twilio, Vonage, etc.) envoie bien le numéro dans le webhook (ex. `call.customer.number` ou `call.from` selon la doc Vapi / provider).
+- Extraction : `extract_customer_phone_from_vapi_payload` teste `call.customer.number`, `call.customer.phone`, `call.from`, `customerNumber`, `callerNumber`, et `messages[].customer`.
+- En dev : logger temporairement `payload.get("call")` (sans PII) pour voir la structure réelle du body.
+
+### 4. Voix recommandée
 
 Pour un accent parisien naturel, utilisez :
 - **Provider** : ElevenLabs ou PlayHT
@@ -139,18 +157,18 @@ Pour un accent parisien naturel, utilisez :
 👤 "Non, je voudrais savoir vos horaires"
 🤖 "Nous sommes ouverts du lundi au vendredi, de 9h à 18h. Je peux vous aider pour autre chose ?"
 👤 "Non merci"
-🤖 "Parfait, bonne journée !"
+🤖 "Parfait. Bonne journée."
 ```
 
 ### FLOW C : Annulation (3% des appels)
 ```
 🤖 "Bonjour Cabinet Dupont, vous appelez pour un rendez-vous ?"
 👤 "Non, je veux annuler mon rendez-vous"
-🤖 "Pas de problème. C'est à quel nom ?"
+🤖 "D'accord. À quel nom est le rendez-vous, s'il vous plaît ?"
 👤 "Jean Dupont"
-🤖 "Vous avez un rendez-vous lundi 27 janvier à 9h. Je l'annule ?"
+🤖 "Vous avez un rendez-vous lundi 27 janvier à 9h. Souhaitez-vous que je l'annule ?"
 👤 "Oui"
-🤖 "C'est fait, votre rendez-vous est annulé. Bonne journée !"
+🤖 "Votre rendez-vous est annulé. Bonne journée."
 ```
 
 ### FLOW D : Modification (2% des appels)
@@ -169,7 +187,7 @@ Pour un accent parisien naturel, utilisez :
 ```
 🤖 "Bonjour Cabinet Dupont, vous appelez pour un rendez-vous ?"
 👤 "Euh... je sais pas"
-🤖 "Pas de problème. Vous avez une question ou vous souhaitez prendre rendez-vous ?"
+🤖 "D'accord. Avez-vous une question ou souhaitez-vous prendre rendez-vous ?"
 👤 "Prendre rendez-vous"
 → FLOW A
 ```

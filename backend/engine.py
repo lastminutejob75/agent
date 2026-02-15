@@ -2079,9 +2079,9 @@ class Engine:
                     session.qualif_data.contact = phone[:10]
                     session.qualif_data.contact_type = "phone"
                     session.state = "CONTACT_CONFIRM"
-                    phone_formatted = prompts.format_phone_for_voice(phone[:10])
-                    msg = f"Votre numéro est bien le {phone_formatted} ?"
-                    logger.info("[QUALIF] conv_id=%s using_caller_id", session.conv_id)
+                    last_two = prompts.last_two_digits_for_confirmation(phone[:10])
+                    msg = prompts.VOCAL_CONTACT_CONFIRM_CALLER_ID.format(last_two=last_two)
+                    logger.info("[QUALIF] conv_id=%s using_caller_id contact_confirm_short", session.conv_id)
                     session.awaiting_confirmation = "CONFIRM_CONTACT"
                     session.last_question_asked = msg
                     session.add_message("agent", msg)
@@ -2089,6 +2089,13 @@ class Engine:
             except Exception as e:
                 logger.warning("[QUALIF] conv_id=%s caller_id_error=%s", session.conv_id, str(e)[:80])
                 # Continue avec le flow normal (demander le numéro)
+        
+        # Si prochain champ = contact et pas de caller_id → log diagnostic (cause 2 ou 1)
+        if next_field == "contact" and channel == "vocal" and not session.customer_phone:
+            logger.info(
+                "[QUALIF] conv_id=%s no_caller_id → QUALIF_CONTACT (numéro non disponible ou non persisté)",
+                session.conv_id,
+            )
         
         # Mapper le champ vers l'état
         state_map = {
@@ -3118,9 +3125,9 @@ class Engine:
                         session.qualif_data.contact = phone[:10]
                         session.qualif_data.contact_type = "phone"
                         session.state = "CONTACT_CONFIRM"
-                        phone_formatted = prompts.format_phone_for_voice(phone[:10])
-                        msg = prompts.VOCAL_CONTACT_CONFIRM_SHORT.format(phone_formatted=phone_formatted) if channel == "vocal" else f"Parfait, {slot_label} pour {name}. Votre numéro est bien le {phone_formatted} ?"
-                        logger.info("[BOOKING_CONFIRM] conv_id=%s using_caller_id", session.conv_id)
+                        last_two = prompts.last_two_digits_for_confirmation(phone[:10])
+                        msg = prompts.VOCAL_CONTACT_CONFIRM_CALLER_ID.format(last_two=last_two)
+                        logger.info("[BOOKING_CONFIRM] conv_id=%s using_caller_id contact_confirm_short", session.conv_id)
                         session.add_message("agent", msg)
                         session.awaiting_confirmation = "CONFIRM_CONTACT"
                         session.last_question_asked = msg

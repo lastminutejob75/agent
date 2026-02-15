@@ -944,16 +944,24 @@ async def vapi_custom_llm(request: Request):
             call_id[:24] if call_id else "n/a", len(messages), is_streaming,
         )
         
-        # 📱 Extraire le numéro de téléphone du client (Vapi le fournit)
-        customer_phone = payload.get("call", {}).get("customer", {}).get("number")
-        if not customer_phone:
-            customer_phone = payload.get("customer", {}).get("number")
-
-        # 🎯 DID → tenant_id (avant tout event, pour scoping correct)
+        # 📱 Reconnaissance du numéro : extraire le caller ID (Vapi) pour proposer "Votre numéro est bien le X ?"
         from backend.tenant_routing import (
             extract_to_number_from_vapi_payload,
+            extract_customer_phone_from_vapi_payload,
             resolve_tenant_id_from_vocal_call,
         )
+        customer_phone = extract_customer_phone_from_vapi_payload(payload)
+        logger.info(
+            "CUSTOMER_PHONE_RECOGNITION",
+            extra={
+                "call_id": call_id[:24] if call_id else "n/a",
+                "has_number": bool(customer_phone),
+            },
+        )
+        if not customer_phone:
+            logger.debug("CUSTOMER_PHONE_MISSING call_id=%s (Vapi peut envoyer call.customer.number ou call.from)", call_id[:24] if call_id else "n/a")
+
+        # 🎯 DID → tenant_id (avant tout event, pour scoping correct)
         to_number = extract_to_number_from_vapi_payload(payload)
         resolved_tenant_id, route_source = resolve_tenant_id_from_vocal_call(to_number, channel="vocal")
         logger.info(

@@ -4,6 +4,7 @@ from backend.tenant_routing import (
     normalize_did,
     resolve_tenant_id_from_vocal_call,
     extract_to_number_from_vapi_payload,
+    extract_customer_phone_from_vapi_payload,
     add_route,
 )
 from backend import config, db
@@ -57,3 +58,26 @@ def test_extract_to_number_from_vapi_payload():
     # fallback
     assert extract_to_number_from_vapi_payload({}) is None
     assert extract_to_number_from_vapi_payload({"call": {}}) is None
+
+
+def test_extract_customer_phone_from_vapi_payload():
+    """Reconnaissance du numéro appelant (caller ID) pour QUALIF_CONTACT."""
+    # call.customer.number
+    p = {"call": {"customer": {"number": "+33612345678"}}}
+    assert extract_customer_phone_from_vapi_payload(p) == "+33612345678"
+
+    # customer.number (racine)
+    p = {"customer": {"number": "0612345678"}}
+    assert extract_customer_phone_from_vapi_payload(p) == "0612345678"
+
+    # call.from
+    p = {"call": {"from": "+33698765432"}}
+    assert extract_customer_phone_from_vapi_payload(p) == "+33698765432"
+
+    # customerNumber / callerNumber (racine)
+    p = {"callerNumber": "0611223344"}
+    assert extract_customer_phone_from_vapi_payload(p) == "0611223344"
+
+    # fallback: aucun numéro valide (longueur >= 10)
+    assert extract_customer_phone_from_vapi_payload({}) is None
+    assert extract_customer_phone_from_vapi_payload({"call": {}}) is None

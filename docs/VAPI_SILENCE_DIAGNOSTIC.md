@@ -1,3 +1,4 @@
+
 # Diagnostic silence vocal Vapi — checklist de correction
 
 ## Cause identifiée

@@ -761,6 +761,16 @@ VOCAL_CONTACT_CONFIRM = (
 VOCAL_CONTACT_CONFIRM_SHORT = "Je récapitule : {phone_formatted}. C'est correct ?"
 VOCAL_CONTACT_CONFIRM_OK = "C'est noté."
 VOCAL_CONTACT_CONFIRM_RETRY = "D'accord, pouvez-vous me redonner votre numéro ?"
+# UX médical pro : confirmation courte quand Caller ID disponible (ne pas lire tout le numéro à voix haute)
+VOCAL_CONTACT_CONFIRM_CALLER_ID = (
+    "J'ai le numéro qui s'affiche, il se termine par {last_two}. C'est bien le vôtre ? Dites oui ou non."
+)
+
+
+def last_two_digits_for_confirmation(phone: str) -> str:
+    """Derniers 2 chiffres du numéro (pour confirmation courte Caller ID, ex. « il se termine par 78 »)."""
+    digits = "".join(c for c in (phone or "") if c.isdigit())
+    return digits[-2:] if len(digits) >= 2 else (digits or "??")
 
 
 def format_phone_for_voice(phone: str) -> str:
@@ -1243,8 +1253,8 @@ QUALIF_QUESTIONS: Dict[str, str] = {
 QUALIF_QUESTIONS_VOCAL: Dict[str, str] = {
     "name": VOCAL_NAME_ASK,
     "motif": "",  # DÉSACTIVÉ - on ne demande plus le motif
-    "pref": "Super. Vous préférez plutôt le matin ou l'après-midi ?",
-    "contact": "Parfait ! Et votre numéro de téléphone pour vous rappeler ?",
+    "pref": "Vous préférez plutôt le matin ou l'après-midi ?",
+    "contact": "Parfait. Quel est votre numéro de téléphone pour vous rappeler ?",
 }
 
 # Questions après avoir reçu le nom (sans prénom)
@@ -1428,7 +1438,7 @@ def format_booking_confirmed(slot_label: str, name: str = "", motif: str = "", c
     
     # Format web - structuré avec emojis
     parts = [
-        "Parfait ! Votre rendez-vous est confirmé.",
+        "Parfait. Votre rendez-vous est confirmé.",
         "",
         f"📅 Date et heure : {slot_label}",
     ]
