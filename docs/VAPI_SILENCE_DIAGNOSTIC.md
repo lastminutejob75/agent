@@ -88,6 +88,39 @@ Une fois le backend déployé (Railway), valider le contrat SSE **sans** appeler
 
 ---
 
+### Backend jamais sollicité (logs = uniquement health checks)
+
+Si les logs Railway ne montrent **aucun** `POST /api/vapi/chat/completions`, **aucun** `POST /api/vapi/webhook` — uniquement des health checks — le backend n’a pas reçu l’appel.
+
+**Deux causes possibles :**
+
+1. **L’appel n’a pas abouti**  
+   Avez-vous bien entendu le greeting (« Bonjour, Cabinet Dupont… ») ? Si non, l’appel peut avoir échoué côté Vapi/réseau avant d’atteindre votre backend.
+
+2. **Redéploiement Railway en cours**  
+   Après un push (fix lock, workers 2, etc.), Railway peut router l’appel vers l’**ancien** conteneur (déjà arrêté) pendant que le nouveau démarre → requêtes perdues.  
+   **À faire :** attendre que le déploiement soit **terminé** (statut « Success » / vert dans Railway), puis refaire un appel test. Vérifier éventuellement que l’URL répond (curl `/health` ou `./scripts/curl_vapi_stream.sh`) avant de passer l’appel.
+
+---
+
+### Cold start / timeout Railway (HANG alors que curl SSE OK)
+
+Si le **curl** vers `/chat/completions` avec `stream: true` renvoie bien du SSE valide + `data: [DONE]`, mais un **2ᵉ curl** (ou un appel Vapi) timeout (ex. 15s sans réponse), la cause probable est le **cold start** ou le **scale-down** Railway : l’instance met trop longtemps à répondre, Vapi n’attend pas assez → HANG.
+
+**Actions immédiates :**
+
+1. Attendre que Railway soit **vert** (déploiement terminé, pas en scale-down).
+2. **Warm-up** juste avant de tester :
+   ```bash
+   curl -s https://agent-production-c246.up.railway.app/health
+   ```
+   Puis enchaîner **tout de suite** avec l’appel Vapi (ou un 2ᵉ curl vers `/chat/completions`) pendant que le serveur est chaud.
+3. Script de warm-up (optionnel) : `scripts/warmup_railway.sh` — appelle `/health` puis optionnellement un curl court vers `/chat/completions`.
+
+**Solution pérenne :** dans les **paramètres Railway** du service, configurer un **minimum d’1 instance toujours active** (pas de scale to zero), pour éviter que le premier appel après une période d’inactivité tombe en cold start.
+
+---
+
 ### Diagnostic express (trancher en ~60 secondes)
 
 1. Mettre **`VAPI_DEBUG_TEST_AUDIO=true`** (Railway), déployer.

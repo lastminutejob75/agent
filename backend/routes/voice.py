@@ -733,8 +733,14 @@ async def vapi_custom_llm(request: Request):
         print(f"🤖 CUSTOM LLM | session_key={call_id} | source={_source}")
         
         # Vapi envoie un tableau de messages (stream: true = SSE obligatoire côté backend)
+        # ⚠️ NE JAMAIS ajouter pg_lock_call_session ici : Vapi envoie les tours séquentiellement,
+        # un lock bloquerait le 2e tour → LockTimeout → greeting au lieu de la vraie réponse.
         messages = payload.get("messages", [])
         is_streaming = _parse_stream_flag(payload)
+        logger.info(
+            "[CHAT_COMPLETIONS_ENTER] NO_LOCK call_id=%s messages=%s stream=%s",
+            call_id[:24] if call_id else "n/a", len(messages), is_streaming,
+        )
         logger.info(
             "[CHAT_COMPLETIONS] call_id=%s messages_count=%s stream=%s",
             call_id[:24] if call_id else "n/a", len(messages), is_streaming,
