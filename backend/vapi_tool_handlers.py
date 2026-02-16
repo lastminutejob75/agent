@@ -96,18 +96,21 @@ def handle_book(
 
     if success:
         patient = patient_name or session.qualif_data.name or "le patient"
+        slot_str = str(slot_label) if slot_label else ""
+        patient_str = str(patient).strip() or "le patient"
+        motif_str = str(motif or session.qualif_data.motif or "consultation").strip()
+        message = f"Rendez-vous confirmé pour {patient_str} le {slot_str}."
         logger.info(
             "BOOKING_CONFIRMED",
-            extra={"call_id": call_id[:24] if call_id else "", "slot": slot_label[:40], "name": (patient_name or "")[:20]},
+            extra={"call_id": call_id[:24] if call_id else "", "slot": slot_str[:40], "name": patient_str[:20]},
         )
-        message = f"Rendez-vous confirmé pour {patient} le {slot_label}."
         return (
             True,
             {
                 "status": "confirmed",
-                "slot": slot_label,
-                "patient": patient,
-                "motif": (motif or session.qualif_data.motif or "consultation"),
+                "slot": slot_str,
+                "patient": patient_str,
+                "motif": motif_str,
                 "message": message,
             },
             "",

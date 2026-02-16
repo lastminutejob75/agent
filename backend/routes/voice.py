@@ -995,10 +995,24 @@ async def vapi_tool(request: Request):
                     ENGINE.session_store.save(session)
             except Exception as save_err:
                 logger.warning("Tool book: save session failed (booking already done): %s", save_err)
-            return JSONResponse(
-                th.build_vapi_tool_response(tool_call_id, result_dict, None),
-                status_code=200,
-            )
+            try:
+                logger.info("TOOL_BOOK_SUCCESS call_id=%s returning results", (call_id or "")[:24])
+                body = th.build_vapi_tool_response(tool_call_id, result_dict, None)
+                return JSONResponse(body, status_code=200)
+            except Exception as build_err:
+                logger.warning(
+                    "TOOL_BOOK_RESPONSE_FALLBACK call_id=%s err=%s",
+                    (call_id or "")[:24],
+                    build_err,
+                    exc_info=True,
+                )
+                fallback_msg = (result_dict or {}).get("message") or "Rendez-vous confirmé."
+                safe_body = th.build_vapi_tool_response(
+                    tool_call_id,
+                    {"status": "confirmed", "message": str(fallback_msg)},
+                    None,
+                )
+                return JSONResponse(safe_body, status_code=200)
 
         # --- cancel / modify : déléguer à l'engine avec user_message ---
         if action in ("cancel", "modify"):
