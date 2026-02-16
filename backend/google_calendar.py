@@ -6,6 +6,13 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 import logging
 
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    ZoneInfo = None  # type: ignore
+
+CALENDAR_TZ = "Europe/Paris"
+
 logger = logging.getLogger(__name__)
 
 # Configuration
@@ -83,26 +90,32 @@ class GoogleCalendarService:
             ]
         """
         try:
-            # Définir plage horaire du jour
+            # Fuseau calendrier (comparaison slot vs event cohérente)
+            tz = ZoneInfo(CALENDAR_TZ) if ZoneInfo else timezone(timedelta(hours=1))
             day_start = date.replace(hour=start_hour, minute=0, second=0, microsecond=0)
             day_end = date.replace(hour=end_hour, minute=0, second=0, microsecond=0)
-            
-            # Récupérer events existants
+            if day_start.tzinfo is None:
+                day_start = day_start.replace(tzinfo=tz)
+                day_end = day_end.replace(tzinfo=tz)
+
+            # Récupérer events existants (API attend ISO avec timezone)
+            time_min = day_start.isoformat().replace('+00:00', 'Z') if day_start.tzinfo else day_start.isoformat() + 'Z'
+            time_max = day_end.isoformat().replace('+00:00', 'Z') if day_end.tzinfo else day_end.isoformat() + 'Z'
             events_result = self.service.events().list(
                 calendarId=self.calendar_id,
-                timeMin=day_start.isoformat() + 'Z',
-                timeMax=day_end.isoformat() + 'Z',
+                timeMin=time_min,
+                timeMax=time_max,
                 singleEvents=True,
                 orderBy='startTime'
             ).execute()
-            
+
             events = events_result.get('items', [])
             events_busy = len(events)
 
             # Créer liste de tous les créneaux possibles
             all_slots = []
             current = day_start
-            
+
             while current < day_end:
                 slot_end = current + timedelta(minutes=duration_minutes)
                 if slot_end <= day_end:
@@ -111,21 +124,24 @@ class GoogleCalendarService:
                         'end': slot_end
                     })
                 current += timedelta(minutes=duration_minutes)
-            
-            # Filtrer créneaux occupés
+
+            # Filtrer créneaux occupés (normaliser TZ event pour comparaison)
             free_slots = []
-            
+
             for slot in all_slots:
                 is_free = True
-                
+
                 for event in events:
-                    event_start = datetime.fromisoformat(
-                        event['start'].get('dateTime', event['start'].get('date'))
-                    )
-                    event_end = datetime.fromisoformat(
-                        event['end'].get('dateTime', event['end'].get('date'))
-                    )
-                    
+                    raw_start = event['start'].get('dateTime', event['start'].get('date', ''))
+                    raw_end = event['end'].get('dateTime', event['end'].get('date', ''))
+                    event_start = datetime.fromisoformat(raw_start.replace('Z', '+00:00'))
+                    event_end = datetime.fromisoformat(raw_end.replace('Z', '+00:00'))
+                    if event_start.tzinfo is not None:
+                        event_start = event_start.astimezone(tz)
+                        event_end = event_end.astimezone(tz)
+                    else:
+                        event_start = event_start.replace(tzinfo=tz)
+                        event_end = event_end.replace(tzinfo=tz)
                     # Check si overlap
                     if (slot['start'] < event_end and slot['end'] > event_start):
                         is_free = False
