@@ -95,17 +95,20 @@ def handle_book(
     slot_label = tools_booking.get_label_for_choice(session, choice) or (selected_slot or "")
 
     if success:
+        patient = patient_name or session.qualif_data.name or "le patient"
         logger.info(
             "BOOKING_CONFIRMED",
             extra={"call_id": call_id[:24] if call_id else "", "slot": slot_label[:40], "name": (patient_name or "")[:20]},
         )
+        message = f"Rendez-vous confirmé pour {patient} le {slot_label}."
         return (
             True,
             {
                 "status": "confirmed",
                 "slot": slot_label,
-                "patient": (patient_name or session.qualif_data.name or ""),
+                "patient": patient,
                 "motif": (motif or session.qualif_data.motif or "consultation"),
+                "message": message,
             },
             "",
         )

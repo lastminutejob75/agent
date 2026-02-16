@@ -985,13 +985,16 @@ async def vapi_tool(request: Request):
             session.channel = "vocal"
             session.tenant_id = resolved_tenant_id
             ok, result_dict, err = th.handle_book(session, selected_slot, patient_name, motif, call_id)
-            if hasattr(ENGINE.session_store, "save"):
-                ENGINE.session_store.save(session)
             if err:
                 return JSONResponse(
                     th.build_vapi_tool_response(tool_call_id, None, err),
                     status_code=200,
                 )
+            try:
+                if hasattr(ENGINE.session_store, "save"):
+                    ENGINE.session_store.save(session)
+            except Exception as save_err:
+                logger.warning("Tool book: save session failed (booking already done): %s", save_err)
             return JSONResponse(
                 th.build_vapi_tool_response(tool_call_id, result_dict, None),
                 status_code=200,
@@ -1060,7 +1063,16 @@ async def vapi_tool(request: Request):
 
     except Exception as e:
         logger.exception("Tool error: %s", e)
-        return JSONResponse({"result": "Désolé, une erreur est survenue."}, status_code=200)
+        err_msg = "Désolé, une erreur est survenue."
+        payload = locals().get("payload")
+        tid = _tool_extract_tool_call_id(payload) if payload else None
+        if tid:
+            from backend import vapi_tool_handlers as th
+            return JSONResponse(
+                th.build_vapi_tool_response(tid, None, err_msg),
+                status_code=200,
+            )
+        return JSONResponse({"result": err_msg}, status_code=200)
 
 
 @router.get("/_health")
