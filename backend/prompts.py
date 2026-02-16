@@ -756,15 +756,24 @@ MSG_CONTACT_RETRY_VOCAL = (
 
 # Confirmation du numéro (dédup "c'est bien ça" : variante "c'est correct ?")
 VOCAL_CONTACT_CONFIRM = (
-    "Je récapitule : {phone_formatted}. C'est correct ?"
+    "Je confirme votre numéro : {phone_spaced}. Dites oui ou non."
 )
 VOCAL_CONTACT_CONFIRM_SHORT = "Je récapitule : {phone_formatted}. C'est correct ?"
 VOCAL_CONTACT_CONFIRM_OK = "C'est noté."
 VOCAL_CONTACT_CONFIRM_RETRY = "D'accord, pouvez-vous me redonner votre numéro ?"
-# UX médical pro : confirmation courte quand Caller ID disponible (ne pas lire tout le numéro à voix haute)
-VOCAL_CONTACT_CONFIRM_CALLER_ID = (
-    "J'ai le numéro qui s'affiche, il se termine par {last_two}. C'est bien le vôtre ? Dites oui ou non."
-)
+# --- Caller ID RGPD-safe + TTS-friendly (say_key dans validation) ---
+# A) Confirmation courte (state CONTACT_CONFIRM_CALLERID) — ne jamais lire le numéro complet
+CONFIRM_CALLERID_LAST2 = "J'ai un numéro qui s'affiche et qui se termine par {last2}. Est-ce bien le vôtre ? Dites oui ou non."
+VOCAL_CONTACT_CONFIRM_CALLER_ID = CONFIRM_CALLERID_LAST2  # alias
+# B) Caller ID absent ou masqué (state QUALIF_CONTACT / CONTACT_COLLECT)
+ASK_CONTACT = "Je n'ai pas votre numéro qui s'affiche. Pouvez-vous me le donner, s'il vous plaît ?"
+VOCAL_CONTACT_NO_CALLER_ID = ASK_CONTACT  # alias
+# C) Confirmation après saisie (state CONTACT_CONFIRM)
+CONFIRM_CONTACT_YESNO = "Je confirme votre numéro : {phone_spaced}. Dites oui ou non."
+# D) Filet réponse ambiguë (CONTACT_CONFIRM / CONTACT_CONFIRM_CALLERID)
+CONFIRM_YESNO_RETRY = "Juste pour confirmer : oui ou non ?"
+# Confirmation négative (user dit non au numéro proposé)
+VOCAL_CONTACT_CONFIRM_NO = "Pas de souci. Quel est le meilleur numéro pour vous joindre ?"
 
 
 def last_two_digits_for_confirmation(phone: str) -> str:

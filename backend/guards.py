@@ -575,13 +575,14 @@ def is_filler_or_hesitation(text: str) -> bool:
 FILLER_GLOBAL = FILLER_WORDS_FR
 
 # Réponses courtes acceptées seulement dans certains états
-YES_WORDS = frozenset({"oui", "ouais", "ok", "d'accord", "dac", "c'est ça", "exact", "c est ça"})
-NO_WORDS = frozenset({"non", "nan", "pas du tout"})
+YES_WORDS = frozenset({"oui", "ouais", "ok", "d'accord", "dac", "c'est ça", "c'est bien ça", "exact", "tout à fait", "c est ça", "c est bien ça"})
+NO_WORDS = frozenset({"non", "nan", "pas du tout", "non ce n'est pas ça", "non c est pas ça"})
 
 # États où "oui" / "non" sont acceptables (sinon = filler contextuel)
 YESNO_ALLOWED_STATES = frozenset({
     "START",
     "CONTACT_CONFIRM",
+    "CONTACT_CONFIRM_CALLERID",  # confirmation 2 derniers chiffres (caller ID)
     "CANCEL_CONFIRM",
     "MODIFY_CONFIRM",
     "WAIT_CONFIRM",  # "oui" seul ne suffit pas, on redemande 1/2/3

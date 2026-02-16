@@ -21,6 +21,8 @@ class ConvState(str, Enum):
     AIDE_MOTIF = "AIDE_MOTIF"  # <-- NEW
     QUALIF_PREF = "QUALIF_PREF"
     QUALIF_CONTACT = "QUALIF_CONTACT"
+    CONTACT_CONFIRM_CALLERID = "CONTACT_CONFIRM_CALLERID"  # confirmation courte (2 derniers chiffres), RGPD-safe
+    CONTACT_CONFIRM = "CONTACT_CONFIRM"  # confirmation après saisie (relecture numéro complet)
 
     WAIT_CONFIRM = "WAIT_CONFIRM"
     CONFIRMED = "CONFIRMED"
@@ -44,8 +46,10 @@ VALID_TRANSITIONS: Dict[ConvState, Set[ConvState]] = {
     ConvState.QUALIF_MOTIF: {ConvState.QUALIF_PREF, ConvState.AIDE_MOTIF, ConvState.TRANSFERRED},
     ConvState.AIDE_MOTIF: {ConvState.QUALIF_PREF, ConvState.TRANSFERRED},
 
-    ConvState.QUALIF_PREF: {ConvState.QUALIF_CONTACT, ConvState.TRANSFERRED},
-    ConvState.QUALIF_CONTACT: {ConvState.WAIT_CONFIRM, ConvState.TRANSFERRED},
+    ConvState.QUALIF_PREF: {ConvState.QUALIF_CONTACT, ConvState.CONTACT_CONFIRM_CALLERID, ConvState.TRANSFERRED},
+    ConvState.QUALIF_CONTACT: {ConvState.CONTACT_CONFIRM, ConvState.WAIT_CONFIRM, ConvState.TRANSFERRED},
+    ConvState.CONTACT_CONFIRM_CALLERID: {ConvState.WAIT_CONFIRM, ConvState.QUALIF_CONTACT, ConvState.CONTACT_CONFIRM, ConvState.TRANSFERRED},
+    ConvState.CONTACT_CONFIRM: {ConvState.WAIT_CONFIRM, ConvState.QUALIF_CONTACT, ConvState.TRANSFERRED},
 
     ConvState.WAIT_CONFIRM: {ConvState.CONFIRMED, ConvState.TRANSFERRED},
     ConvState.CONFIRMED: set(),

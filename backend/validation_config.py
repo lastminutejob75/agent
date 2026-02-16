@@ -77,6 +77,7 @@ STATE_VALIDATION_RULES: Dict[str, StateValidationConfig] = {
     "PROPOSE_SLOTS": StateValidationConfig(message_type="template", strict=True),
     "WAIT_CONFIRM": StateValidationConfig(message_type="template", strict=True),
     "CONTACT_CONFIRM": StateValidationConfig(message_type="template", strict=True),
+    "CONTACT_CONFIRM_CALLERID": StateValidationConfig(message_type="template", strict=True),
     "CONFIRM_BOOKING": StateValidationConfig(message_type="template", strict=True),
 
     # ----- AI flexible (motif) -----

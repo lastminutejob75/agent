@@ -196,6 +196,7 @@ def _reconstruct_session_from_history(session, messages: list, call_id: str = ""
         "QUALIF_PREF": ["matin ou l'après-midi", "matin ou après-midi", "préférez"],
         "QUALIF_CONTACT": ["numéro de téléphone", "téléphone pour vous rappeler", "redonner votre numéro"],
         "CONTACT_CONFIRM": ["votre numéro est bien", "j'ai noté le", "je confirme", "c'est bien ça", "est-ce correct"],
+        "CONTACT_CONFIRM_CALLERID": ["numéro qui s'affiche", "se termine par", "est-ce bien le vôtre"],
         "WAIT_CONFIRM": ["j'ai trois créneaux", "voici trois créneaux", "j'ai deux créneaux", "j'ai un créneau", "dites un, deux ou trois", "dites simplement", "dites un ou deux"],
         "CONFIRMED": ["rendez-vous est confirmé", "c'est confirmé"],
         "POST_FAQ": ["puis-je vous aider pour autre chose", "autre chose pour vous", "souhaitez-vous autre chose"],
@@ -272,7 +273,7 @@ def _reconstruct_session_from_history(session, messages: list, call_id: str = ""
         if detected_state == "WAIT_CONFIRM":
             logger.debug("reconstruct WAIT_CONFIRM - slots will be re-fetched on next handler call")
         # P0: CONTACT_CONFIRM sans slots → re-fetch pour éviter "problème technique"
-        if detected_state == "CONTACT_CONFIRM" and session.pending_slot_choice and not (getattr(session, "pending_slots", None) or []):
+        if detected_state in ("CONTACT_CONFIRM", "CONTACT_CONFIRM_CALLERID") and session.pending_slot_choice and not (getattr(session, "pending_slots", None) or []):
             try:
                 from backend import tools_booking
                 from backend.calendar_adapter import get_calendar_adapter
@@ -722,7 +723,7 @@ def _compute_voice_response_sync(
             state_before_turn != state_after
             or bool(getattr(session, "pending_slots", None))
             or getattr(session, "awaiting_confirmation", None) is not None
-            or state_after in ("QUALIF_CONTACT", "WAIT_CONFIRM", "CONTACT_CONFIRM")
+            or state_after in ("QUALIF_CONTACT", "WAIT_CONFIRM", "CONTACT_CONFIRM", "CONTACT_CONFIRM_CALLERID")
         )
         _call_journal_agent_response(
             resolved_tenant_id, call_id, session, response_text, state_before_turn, should_checkpoint=should_cp,
@@ -820,8 +821,8 @@ async def vapi_webhook(request: Request):
         return Response(status_code=200)
     message = payload.get("message") or {}
     msg_type = message.get("type") or message.get("event") or ""
-    # Persister customer_phone dès qu'un webhook contient message.call.customer.number
-    # (assistant.started = 1er webhook ; status-update in-progress ; conversation-update en secours)
+    # Persister customer_phone uniquement sur les webhooks qui contiennent call.customer.number
+    # (conversation-update / speech-update ne le contiennent pas — source: rapport Vapi)
     from backend.tenant_routing import (
         extract_customer_phone_from_vapi_payload,
         extract_to_number_from_vapi_payload,
@@ -830,27 +831,32 @@ async def vapi_webhook(request: Request):
     call_id = _webhook_extract_call_id(payload)
     customer_phone = extract_customer_phone_from_vapi_payload(payload)
     if call_id and customer_phone:
-        # Éviter de persister sur chaque conversation-update : seulement si pas déjà en session
-        should_persist = msg_type in ("assistant.started", "status-update", "status_update", "conversation-update")
+        status = message.get("status") or message.get("call", {}).get("status") or ""
+        should_persist = (
+            (msg_type == "status-update" and status == "in-progress")
+            or msg_type in ("assistant.started", "assistant-request", "status_update")
+            or (msg_type == "end-of-call-report")
+        )
         if should_persist:
-            status = message.get("status") or message.get("call", {}).get("status") or ""
-            if msg_type in ("assistant.started", "conversation-update") or status == "in-progress":
-                try:
-                    to_number = extract_to_number_from_vapi_payload(payload)
-                    resolved_tenant_id, _ = resolve_tenant_id_from_vocal_call(to_number or "", channel="vocal")
-                    session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
-                    if not session.customer_phone:
-                        session.customer_phone = customer_phone
-                        session.channel = "vocal"
-                        session.tenant_id = resolved_tenant_id
-                        if hasattr(ENGINE.session_store, "save"):
-                            ENGINE.session_store.save(session)
-                        logger.info(
-                            "CALLER_ID_PERSISTED_FROM_WEBHOOK",
-                            extra={"call_id": call_id[:24] if call_id else "", "msg_type": msg_type},
-                        )
-                except Exception as e:
-                    logger.warning("CALLER_ID_WEBHOOK_SAVE_FAILED call_id=%s err=%s", call_id[:24] if call_id else "", str(e)[:80])
+            try:
+                to_number = extract_to_number_from_vapi_payload(payload)
+                resolved_tenant_id, _ = resolve_tenant_id_from_vocal_call(to_number or "", channel="vocal")
+                session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
+                if not session.customer_phone:
+                    session.customer_phone = customer_phone
+                    session.channel = "vocal"
+                    session.tenant_id = resolved_tenant_id
+                    if hasattr(ENGINE.session_store, "save"):
+                        ENGINE.session_store.save(session)
+                    # Masquer numéro en log (RGPD) : garder 2 derniers chiffres
+                    _digits = "".join(c for c in str(customer_phone) if c.isdigit())
+                    _masked = f"+33XXXXXX{_digits[-2:]}" if len(_digits) >= 10 else "+33XXXX"
+                    logger.info(
+                        "CALLER_ID_PERSISTED",
+                        extra={"call_id": call_id[:24] if call_id else "", "msg_type": msg_type, "phone_masked": _masked},
+                    )
+            except Exception as e:
+                logger.warning("CALLER_ID_WEBHOOK_SAVE_FAILED call_id=%s err=%s", call_id[:24] if call_id else "", str(e)[:80])
     return Response(status_code=200)
 
 
@@ -1374,7 +1380,7 @@ async def vapi_custom_llm(request: Request):
                     state_before_turn != state_after
                     or bool(getattr(session, "pending_slots", None))
                     or getattr(session, "awaiting_confirmation", None) is not None
-                    or state_after in ("QUALIF_CONTACT", "WAIT_CONFIRM", "CONTACT_CONFIRM")
+                    or state_after in ("QUALIF_CONTACT", "WAIT_CONFIRM", "CONTACT_CONFIRM", "CONTACT_CONFIRM_CALLERID")
                 )
                 _call_journal_agent_response(
                     resolved_tenant_id,

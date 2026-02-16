@@ -428,7 +428,7 @@ SAFE_REPLY_FALLBACK = "D'accord. Je vous écoute."
 
 # États où la question posée est explicitement oui/non (confirmations).
 YESNO_CONFIRM_STATES = frozenset({
-    "CONTACT_CONFIRM", "CANCEL_CONFIRM", "MODIFY_CONFIRM", "WAIT_CONFIRM",
+    "CONTACT_CONFIRM", "CONTACT_CONFIRM_CALLERID", "CANCEL_CONFIRM", "MODIFY_CONFIRM", "WAIT_CONFIRM",
     "PREFERENCE_CONFIRM",
 })
 # États où YES/NO sont acceptés (confirmations + POST_FAQ disambiguation). Hors de ce set → override YES/NO en UNCLEAR.
@@ -682,7 +682,7 @@ def handle_no_contextual(session: Session) -> dict:
     st = session.state
     channel = getattr(session, "channel", "web")
 
-    if st == "CONTACT_CONFIRM":
+    if st in ("CONTACT_CONFIRM", "CONTACT_CONFIRM_CALLERID"):
         return {"state": "QUALIF_CONTACT", "message": "D'accord. Quel est votre numéro de téléphone ?"}
 
     if st == "WAIT_CONFIRM":
@@ -831,7 +831,7 @@ class Engine:
     ) -> Optional[List[Event]]:
         """
         Si reason technique et budget > 0 : consomme 1, envoie menu (contextuel ou global), pas de transfert.
-        P0.6 : menu contextuel en WAIT_CONFIRM/QUALIF_CONTACT/CONTACT_CONFIRM → rester dans le flow.
+        P0.6 : menu contextuel en WAIT_CONFIRM/QUALIF_CONTACT/CONTACT_CONFIRM/CONTACT_CONFIRM_CALLERID → rester dans le flow.
         Retourne None si transfert doit avoir lieu (budget épuisé ou reason exemptée).
         """
         if reason not in self._TECHNICAL_REASONS:
@@ -862,9 +862,9 @@ class Engine:
         elif state == "QUALIF_CONTACT":
             msg = prompts.VOCAL_SAFE_RECOVERY_QUALIF_CONTACT if channel == "vocal" else prompts.MSG_SAFE_RECOVERY_QUALIF_CONTACT
             # Rester en QUALIF_CONTACT
-        elif state == "CONTACT_CONFIRM":
+        elif state in ("CONTACT_CONFIRM", "CONTACT_CONFIRM_CALLERID"):
             msg = prompts.VOCAL_SAFE_RECOVERY_CONTACT_CONFIRM if channel == "vocal" else prompts.MSG_SAFE_RECOVERY_CONTACT_CONFIRM
-            # Rester en CONTACT_CONFIRM
+            # Rester en CONTACT_CONFIRM / CONTACT_CONFIRM_CALLERID
         else:
             # Menu global (START, INTENT_ROUTER, etc.)
             if remaining == 1:
@@ -1372,7 +1372,7 @@ class Engine:
                     session.yes_ambiguous_count = getattr(session, "yes_ambiguous_count", 0) + 1
                     _in_booking = session.state in (
                         "QUALIF_NAME", "QUALIF_MOTIF", "QUALIF_PREF", "QUALIF_CONTACT",
-                        "WAIT_CONFIRM", "CONTACT_CONFIRM",
+                        "WAIT_CONFIRM", "CONTACT_CONFIRM", "CONTACT_CONFIRM_CALLERID",
                     )
                     if session.yes_ambiguous_count >= 3:
                         _persist_ivr_event(session, "yes_ambiguous_router", reason="yes_ambiguous_3")
@@ -1469,7 +1469,10 @@ class Engine:
         if session.state == "CLARIFY":
             return safe_reply(self._handle_clarify(session, user_text, intent), session)
         
-        # Si en confirmation de contact
+        # Si en confirmation contact (caller_id : 2 derniers chiffres)
+        if session.state == "CONTACT_CONFIRM_CALLERID":
+            return safe_reply(self._handle_contact_confirm_callerid(session, user_text), session)
+        # Si en confirmation contact (après saisie utilisateur)
         if session.state == "CONTACT_CONFIRM":
             return safe_reply(self._handle_contact_confirm(session, user_text), session)
         
@@ -2076,12 +2079,14 @@ class Engine:
                 phone = phone.replace(" ", "").replace("-", "").replace(".", "")
                 
                 if len(phone) >= 10:
-                    session.qualif_data.contact = phone[:10]
-                    session.qualif_data.contact_type = "phone"
-                    session.state = "CONTACT_CONFIRM"
+                    # Ne pas remplir qualif_data.contact ici : on le fait au YES dans _handle_contact_confirm_callerid
+                    session.state = "CONTACT_CONFIRM_CALLERID"
                     last_two = prompts.last_two_digits_for_confirmation(phone[:10])
-                    msg = prompts.VOCAL_CONTACT_CONFIRM_CALLER_ID.format(last_two=last_two)
-                    logger.info("[QUALIF] conv_id=%s using_caller_id contact_confirm_short", session.conv_id)
+                    msg = getattr(prompts, "CONFIRM_CALLERID_LAST2", prompts.VOCAL_CONTACT_CONFIRM_CALLER_ID).format(last2=last_two)
+                    logger.info(
+                        "CALLER_ID_FOUND",
+                        extra={"call_id": session.conv_id[:24] if session.conv_id else "", "last2": last_two, "next": "CONTACT_CONFIRM_CALLERID"},
+                    )
                     session.awaiting_confirmation = "CONFIRM_CONTACT"
                     session.last_question_asked = msg
                     session.add_message("agent", msg)
@@ -2090,11 +2095,11 @@ class Engine:
                 logger.warning("[QUALIF] conv_id=%s caller_id_error=%s", session.conv_id, str(e)[:80])
                 # Continue avec le flow normal (demander le numéro)
         
-        # Si prochain champ = contact et pas de caller_id → log diagnostic (cause 2 ou 1)
+        # Si prochain champ = contact et pas de caller_id → CONTACT_COLLECT + message dédié + log
         if next_field == "contact" and channel == "vocal" and not session.customer_phone:
             logger.info(
-                "[QUALIF] conv_id=%s no_caller_id → QUALIF_CONTACT (numéro non disponible ou non persisté)",
-                session.conv_id,
+                "CALLER_ID_NOT_FOUND",
+                extra={"call_id": session.conv_id[:24] if session.conv_id else "", "next": "QUALIF_CONTACT"},
             )
         
         # Mapper le champ vers l'état
@@ -2107,11 +2112,13 @@ class Engine:
         session.state = state_map[next_field]
         session.bump_questions()
         
-        # Question adaptée au canal AVEC prénom si disponible
+        # Question adaptée : vocal sans caller_id → message RGPD dédié
         client_name = session.qualif_data.name or ""
         logger.info("[QUALIF] conv_id=%s asking=%s consecutive=%s", session.conv_id, next_field, session.consecutive_questions)
         
-        if client_name and channel == "vocal":
+        if next_field == "contact" and channel == "vocal" and not session.customer_phone:
+            question = getattr(prompts, "VOCAL_CONTACT_NO_CALLER_ID", prompts.get_qualif_question("contact", channel))
+        elif client_name and channel == "vocal":
             question = prompts.get_qualif_question_with_name(
                 next_field, client_name, channel=channel, ack_index=session.next_ack_index()
             )
@@ -3122,12 +3129,13 @@ class Engine:
                     phone = phone.replace(" ", "").replace("-", "").replace(".", "")
                     
                     if len(phone) >= 10:
-                        session.qualif_data.contact = phone[:10]
-                        session.qualif_data.contact_type = "phone"
-                        session.state = "CONTACT_CONFIRM"
+                        session.state = "CONTACT_CONFIRM_CALLERID"
                         last_two = prompts.last_two_digits_for_confirmation(phone[:10])
-                        msg = prompts.VOCAL_CONTACT_CONFIRM_CALLER_ID.format(last_two=last_two)
-                        logger.info("[BOOKING_CONFIRM] conv_id=%s using_caller_id contact_confirm_short", session.conv_id)
+                        msg = getattr(prompts, "CONFIRM_CALLERID_LAST2", prompts.VOCAL_CONTACT_CONFIRM_CALLER_ID).format(last2=last_two)
+                        logger.info(
+                            "CALLER_ID_FOUND",
+                            extra={"call_id": session.conv_id[:24] if session.conv_id else "", "last2": last_two, "next": "CONTACT_CONFIRM_CALLERID", "context": "booking_confirm"},
+                        )
                         session.add_message("agent", msg)
                         session.awaiting_confirmation = "CONFIRM_CONTACT"
                         session.last_question_asked = msg
@@ -3672,9 +3680,65 @@ class Engine:
     # ========================
     # CONFIRMATION CONTACT
     # ========================
-    
+
+    def _handle_contact_confirm_callerid(self, session: Session, user_text: str) -> List[Event]:
+        """Confirmation courte (2 derniers chiffres). YES → qualif_data.contact = customer_phone puis flow booking ; NO → QUALIF_CONTACT."""
+        channel = getattr(session, "channel", "web")
+        # Répétition intention RDV → filet oui/non
+        if _detect_booking_intent(user_text):
+            session.contact_confirm_intent_repeat_count = getattr(session, "contact_confirm_intent_repeat_count", 0) + 1
+            msg = (
+                getattr(prompts, "CONFIRM_YESNO_RETRY", prompts.MSG_CONTACT_CONFIRM_INTENT_1)
+                if session.contact_confirm_intent_repeat_count == 1
+                else prompts.MSG_CONTACT_CONFIRM_INTENT_2
+            )
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state=session.state)]
+
+        intent = detect_intent(user_text, session.state)
+        # "c'est bien ça", "exact", "tout à fait" → YES (guards.YES_WORDS déjà étendu)
+        if intent != "YES" and (user_text or "").strip():
+            _raw = (user_text or "").strip().lower()
+            if not _raw.startswith(("non", "pas ")) and "attends" not in _raw:
+                _norm = intent_parser.normalize_stt_text(_raw).replace(" ", "")
+                if "bienca" in _norm or "cestbienca" in _norm or "cestcorrect" in _norm or "exact" in _norm or "toutafait" in _norm:
+                    intent = "YES"
+
+        if intent == "YES":
+            session.contact_confirm_intent_repeat_count = 0
+            session.awaiting_confirmation = None
+            phone = str(session.customer_phone or "")
+            for prefix in ("+33", "33"):
+                if phone.startswith(prefix):
+                    phone = "0" + phone[len(prefix):]
+                    break
+            phone = "".join(c for c in phone if c.isdigit())[:10]
+            if len(phone) >= 10:
+                session.qualif_data.contact = phone
+                session.qualif_data.contact_type = "phone"
+            session.state = "CONTACT_CONFIRM"
+            log_ivr_event(logger, session, "contact_confirmed_callerid")
+            return self._handle_contact_confirm(session, "oui")
+
+        if intent == "NO":
+            session.contact_confirm_intent_repeat_count = 0
+            session.awaiting_confirmation = None
+            session.state = "QUALIF_CONTACT"
+            msg = getattr(prompts, "VOCAL_CONTACT_CONFIRM_NO", prompts.ASK_CONTACT)
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state=session.state)]
+
+        # UNCLEAR : 1er → "Juste pour confirmer : oui ou non ?", 2e → intent router
+        fail_count = getattr(session, "contact_confirm_fails", 0)
+        if fail_count == 0:
+            session.contact_confirm_fails = 1
+            msg = getattr(prompts, "CONFIRM_YESNO_RETRY", prompts.MSG_CONTACT_CONFIRM_INTENT_1)
+            session.add_message("agent", msg)
+            return [Event("final", msg, conv_state=session.state)]
+        return self._trigger_intent_router(session, "contact_confirm_fails_3", user_text)
+
     def _handle_contact_confirm(self, session: Session, user_text: str) -> List[Event]:
-        """Gère la confirmation du numéro de téléphone."""
+        """Gère la confirmation du numéro de téléphone (après saisie = relecture complète)."""
         channel = getattr(session, "channel", "web")
         if getattr(session, "pending_slot_choice", None) is not None:
             _assert_pending_slots_invariants(session, "CONTACT_CONFIRM")
@@ -3839,12 +3903,12 @@ class Engine:
                     session.add_message("agent", msg)
                     return [Event("final", msg, conv_state=session.state)]
             
-            # Sinon, redemander le numéro complet (PHONE_CONFIRM_NO)
+            # Sinon, redemander le numéro (wording RGPD)
             session.state = "QUALIF_CONTACT"
             session.qualif_data.contact = None
             session.qualif_data.contact_type = None
             session.partial_phone_digits = ""  # Reset accumulation
-            msg = prompts.VOCAL_PHONE_CONFIRM_NO
+            msg = getattr(prompts, "VOCAL_CONTACT_CONFIRM_NO", prompts.VOCAL_PHONE_CONFIRM_NO)
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
         

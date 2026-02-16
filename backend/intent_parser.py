@@ -101,6 +101,7 @@ _YES_LEXICON = [
 _NO_LEXICON = [
     "non", "nan", "pas du tout", "pas vraiment",
     "non merci", "nom merci", "pas maintenant", "ca ne va pas", "pas possible",
+    "non c est pas ca", "non ce n est pas ca", "non cest pas ca",
 ]
 _REPEAT_LEXICON = [
     "repete", "repeter", "vous pouvez repeter", "encore", "redis", "redire",
@@ -125,7 +126,7 @@ FILLER_JE_SAIS_PAS = frozenset({
 # "oui"/"d'accord" → UNCLEAR pour éviter de déclencher un choix par erreur.
 # États où "oui"/"d'accord" est interprété comme YES (confirmations explicites + POST_FAQ disambiguation).
 ALLOWED_YESNO_STATES = frozenset({
-    "CONTACT_CONFIRM", "CANCEL_CONFIRM", "MODIFY_CONFIRM", "WAIT_CONFIRM",
+    "CONTACT_CONFIRM", "CONTACT_CONFIRM_CALLERID", "CANCEL_CONFIRM", "MODIFY_CONFIRM", "WAIT_CONFIRM",
     "PREFERENCE_CONFIRM", "POST_FAQ", "POST_FAQ_CHOICE",
 })
 

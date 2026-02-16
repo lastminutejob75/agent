@@ -1,69 +1,96 @@
-# Récupération du numéro client (Caller ID) — Vapi
+# Récupération du numéro client (Caller ID) — Stratégie définitive
 
-## Contexte
+## Problème
 
-- L’assistant utilise **OpenAI GPT-4o** (plus de Custom LLM).
-- Le **numéro client** n’est **pas** envoyé dans les requêtes Chat Completions : il est **uniquement** présent dans les **webhooks** Vapi (`/api/vapi/webhook`).
+L’agent ne doit pas redemander le numéro lorsque Vapi le fournit déjà via les webhooks.
 
-## Structure des webhooks Vapi
+## Diagnostic Vapi (confirmé par analyse des webhooks)
 
-Tous les webhooks reçus ont la forme :
+### Webhooks qui **contiennent** `call.customer.number`
 
-```json
-{
-  "message": {
-    "type": "assistant.started" | "status-update" | "conversation-update" | ...,
-    "call": {
-      "id": "<call_id>",
-      "customer": { "number": "+33652398414" },
-      "phoneNumber": { "number": "+33939240575" }
-    }
-  }
-}
-```
+| Type | Moment | Usage |
+|------|--------|--------|
+| `status-update` (status: `in-progress`) | Début d’appel | **Source principale** — le plus fiable, arrive en premier |
+| `assistant.started` | Début d’appel | Alternative selon config |
+| `assistant-request` | Si configuré | Idem |
+| `end-of-call-report` | Fin d’appel | Trop tard pour le flow ; utile pour logs |
 
-**Chemin d’extraction du numéro client :** `payload["message"]["call"]["customer"]["number"]`.
+### Webhooks qui **ne contiennent pas** `call.customer.number`
 
-## Implémentation côté backend
+- `conversation-update` — seulement `message.conversation[]`
+- `speech-update` — seulement `message.artifact`
+- `tool-calls` — pas de call customer
 
-### 1. Extraction
+### Extraction
 
-- **Fichier :** `backend/tenant_routing.py`
-- **Fonction :** `extract_customer_phone_from_vapi_payload(payload)`
-- **Ordre des chemins testés :**
-  1. `message.call.customer.number` / `message.call.customer.phone` (webhooks)
-  2. `message.customer.number` (certains formats)
-  3. `call.customer.number` (racine, ancien format)
-  4. `call.from`, `customerNumber`, `callerNumber`, `messages[].customer`
+**Chemin :** `payload["message"]["call"]["customer"]["number"]`  
+**Fallback :** `payload["message"]["customer"]["number"]`
 
-### 2. Persistance au webhook
+Implémentation : `backend/tenant_routing.py` → `extract_customer_phone_from_vapi_payload(payload)`.
 
-- **Fichier :** `backend/routes/voice.py`
-- **Route :** `POST /api/vapi/webhook`
-- **Comportement :** Dès qu’un webhook contient `message.call.customer.number` et un `call_id` :
-  - Types concernés : `assistant.started`, `status-update` (status `in-progress`), `conversation-update`
-  - On charge ou crée la session pour ce `call_id`, on met `session.customer_phone`, on sauvegarde.
-  - On ne met à jour que si `session.customer_phone` est encore vide (évite d’écraser).
+---
 
-Log émis en cas de succès : `CALLER_ID_PERSISTED_FROM_WEBHOOK` avec `call_id` et `msg_type`.
+## Implémentation backend
 
-### 3. Utilisation en conversation
+### 1. Persistance (webhook)
 
-- Les requêtes **Chat Completions** (ou **Tool**) n’ont pas le numéro dans le body.
-- Elles utilisent le **même `call_id`** que les webhooks.
-- Au chargement de la session (`_get_or_resume_voice_session`), `session.customer_phone` est donc déjà renseigné si le webhook a été traité avant.
-- Dans **engine** : en `QUALIF_CONTACT`, si `session.customer_phone` est présent → passage direct en **CONTACT_CONFIRM** avec la phrase courte (2 derniers chiffres) : *« J’ai le numéro qui s’affiche, il se termine par XX. C’est bien le vôtre ? »*.
+- **Fichier :** `backend/routes/voice.py` — `POST /api/vapi/webhook`
+- **Types ciblés (uniquement ceux qui ont le numéro) :**
+  - `status-update` avec `status == "in-progress"`
+  - `assistant.started`, `assistant-request`, `status_update`
+  - `end-of-call-report` (optionnel)
+- **Règle :** idempotent — on ne remplit que si `session.customer_phone` est encore vide.
+- **Log :** `CALLER_ID_PERSISTED` avec `call_id`, `msg_type`, `phone_masked` (ex. `+33XXXXXX14`).
 
-## Diagnostic
+### 2. State engine
+
+- **Si `session.customer_phone`** → **CONTACT_CONFIRM** avec phrase courte (2 derniers chiffres).
+- **Sinon** → **QUALIF_CONTACT** (CONTACT_COLLECT) avec message dédié.
+
+### 3. Wording TTS (RGPD — ne jamais lire le numéro complet)
+
+| Situation | Message (`backend/prompts.py`) |
+|-----------|-------------------------------|
+| Caller ID connu | `VOCAL_CONTACT_CONFIRM_CALLER_ID` : « J'ai un numéro qui se termine par {last_two}. C'est bien le vôtre ? Dites oui ou non. » |
+| Caller ID absent / masqué | `VOCAL_CONTACT_NO_CALLER_ID` : « Je n'ai pas votre numéro qui s'affiche. Pouvez-vous me le donner ? » |
+| Confirmation positive | « Parfait, c'est noté. » / `VOCAL_CONTACT_CONFIRM_OK` |
+| Confirmation négative | `VOCAL_CONTACT_CONFIRM_NO` : « Pas de souci. Quel est le meilleur numéro pour vous joindre ? » |
+
+### 4. Logs de diagnostic
 
 | Log | Signification |
 |-----|----------------|
-| `CALLER_ID_PERSISTED_FROM_WEBHOOK` | Le numéro a été extrait du webhook et sauvegardé en session pour ce `call_id`. |
-| `CUSTOMER_PHONE_RECOGNITION` (has_number, payload_has_call, call_keys) | Vu dans les requêtes Chat Completions : indique si le payload contient un `call` (souvent non en Custom LLM / OpenAI). |
-| `[QUALIF] using_caller_id contact_confirm_short` | L’engine a utilisé le caller ID pour proposer la confirmation courte. |
-| `[QUALIF] no_caller_id → QUALIF_CONTACT` | Pas de numéro en session → l’agent demande le numéro. |
+| `CALLER_ID_PERSISTED` | Numéro extrait du webhook et persisté en session ; `phone_masked` = 2 derniers chiffres visibles. |
+| `CALLER_ID_FOUND` | Engine utilise le caller ID → CONTACT_CONFIRM ; `last2`, `next`, `context` (optionnel). |
+| `CALLER_ID_NOT_FOUND` | Pas de numéro en session → CONTACT_COLLECT (QUALIF_CONTACT). |
+
+---
+
+## Fallback UX (optionnel) — Prompt Vapi
+
+Dans le **system prompt** de l’assistant Vapi (dashboard), on peut ajouter :
+
+```text
+Le numéro de l'appelant est : {{customer.number}}
+Si ce numéro est disponible et non masqué, ne le redemande pas.
+```
+
+Ceci n’est **pas** la source de vérité (le backend webhook l’est) ; c’est un filet de sécurité UX.
+
+---
+
+## Checklist
+
+- [x] Capturer le caller ID dès `status-update` (in-progress) dans le handler webhook
+- [x] Persister en session (idempotent)
+- [x] State engine : `session.customer_phone` → CONTACT_CONFIRM, sinon → QUALIF_CONTACT
+- [x] Wording RGPD : 2 derniers chiffres uniquement en TTS
+- [x] Logs : CALLER_ID_PERSISTED (masqué), CALLER_ID_FOUND, CALLER_ID_NOT_FOUND
+- [ ] Tester avec un appel entrant et vérifier les logs Railway
+- [ ] (Optionnel) Ajouter `{{customer.number}}` dans le prompt Vapi
+
+---
 
 ## Référence
 
-- Rapport détaillé : voir le message utilisateur « RAPPORT CURSOR — Récupération customer_phone depuis les webhooks Vapi » (structure payload, chemins, solution recommandée).
-- Config / diagnostic général : `VAPI_CONFIG.md` section « 3. Reconnaissance du numéro (caller ID) ».
+- Config / diagnostic : `VAPI_CONFIG.md` section « 3. Reconnaissance du numéro (caller ID) ».
