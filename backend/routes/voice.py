@@ -860,83 +860,170 @@ async def vapi_webhook(request: Request):
     return Response(status_code=200)
 
 
+def _tool_extract_call_id(payload: dict) -> str:
+    """Extrait call_id depuis payload tool Vapi."""
+    call = payload.get("call") or {}
+    if call.get("id"):
+        return str(call["id"])
+    msg = payload.get("message") or {}
+    call = msg.get("call") or {}
+    if call.get("id"):
+        return str(call["id"])
+    return payload.get("conversation_id") or "unknown"
+
+
+def _tool_extract_tool_call_id(payload: dict) -> Optional[str]:
+    """Extrait toolCallId pour la réponse Vapi (message.toolCalls[0].id)."""
+    msg = payload.get("message") or {}
+    calls = msg.get("toolCalls") or payload.get("toolCalls") or []
+    if calls and isinstance(calls, list) and len(calls) > 0 and isinstance(calls[0], dict):
+        return calls[0].get("id")
+    return payload.get("toolCallId")
+
+
 @router.post("/tool")
 async def vapi_tool(request: Request):
     """
-    Endpoint pour Vapi Tools/Functions.
-    Claude appelle ce tool pour obtenir les réponses.
+    Endpoint pour Vapi function_tool (OpenAI direct + tool obligatoire).
+    Actions : get_slots, book, cancel, modify, faq.
+    Réponse Vapi : { "results": [ { "toolCallId", "result" | "error": string } ] }.
     """
     try:
         payload = await request.json()
+        params = payload.get("parameters") or {}
+        action = (params.get("action") or "").strip().lower()
+        user_message = (params.get("user_message") or "").strip()
+        patient_name = (params.get("patient_name") or "").strip() or None
+        motif = (params.get("motif") or "").strip() or None
+        preference = (params.get("preference") or "").strip() or None
+        selected_slot = (params.get("selected_slot") or "").strip() or None
 
-        print(f"🔧🔧🔧 TOOL APPELÉ 🔧🔧🔧")
-        print(f"📦 Payload: {json.dumps(payload, indent=2, ensure_ascii=False)}")
+        call_id = _tool_extract_call_id(payload)
+        tool_call_id = _tool_extract_tool_call_id(payload)
 
-        # Extraire le message utilisateur
-        user_message = payload.get("parameters", {}).get("user_message", "")
-        call_id = payload.get("call", {}).get("id", "unknown")
+        logger.info(
+            "TOOL_CALL",
+            extra={"call_id": call_id[:24] if call_id else "", "action": action or "(legacy)", "tool_call_id": (tool_call_id or "")[:24]},
+        )
 
-        print(f"📝 User message: '{user_message}'")
-        print(f"📞 Call ID: {call_id}")
-
-        if not user_message:
-            return {"result": "Je n'ai pas compris. Pouvez-vous répéter ?"}
-
-        # DID → tenant_id (tool utilise same payload)
         from backend.tenant_routing import (
             extract_to_number_from_vapi_payload,
             resolve_tenant_id_from_vocal_call,
         )
-        to_number = extract_to_number_from_vapi_payload(payload)
-        resolved_tenant_id, _ = resolve_tenant_id_from_vocal_call(to_number, channel="vocal")
+        from backend import vapi_tool_handlers as th
 
-        # Phase 2.1: lock PG anti webhooks simultanés
+        to_number = extract_to_number_from_vapi_payload(payload)
+        resolved_tenant_id, _ = resolve_tenant_id_from_vocal_call(to_number or "", channel="vocal")
+
+        def _get_session():
+            return _get_or_resume_voice_session(resolved_tenant_id, call_id)
+
+        # --- get_slots : créneaux 100% backend (Google Calendar) ---
+        if action == "get_slots":
+            session = _get_session()
+            session.channel = "vocal"
+            session.tenant_id = resolved_tenant_id
+            if patient_name:
+                session.qualif_data.name = patient_name
+            if motif:
+                session.qualif_data.motif = motif
+            if preference:
+                session.qualif_data.pref = preference
+            slots_list, source, err = th.handle_get_slots(session, preference, call_id)
+            if hasattr(ENGINE.session_store, "save"):
+                ENGINE.session_store.save(session)
+            if err:
+                return JSONResponse(
+                    th.build_vapi_tool_response(tool_call_id, None, err),
+                    status_code=200,
+                )
+            return JSONResponse(
+                th.build_vapi_tool_response(tool_call_id, {"slots": slots_list or [], "source": source or "google_calendar"}, None),
+                status_code=200,
+            )
+
+        # --- book : réservation ---
+        if action == "book":
+            session = _get_session()
+            session.channel = "vocal"
+            session.tenant_id = resolved_tenant_id
+            ok, result_dict, err = th.handle_book(session, selected_slot, patient_name, motif, call_id)
+            if hasattr(ENGINE.session_store, "save"):
+                ENGINE.session_store.save(session)
+            if err:
+                return JSONResponse(
+                    th.build_vapi_tool_response(tool_call_id, None, err),
+                    status_code=200,
+                )
+            return JSONResponse(
+                th.build_vapi_tool_response(tool_call_id, result_dict, None),
+                status_code=200,
+            )
+
+        # --- cancel / modify : déléguer à l'engine avec user_message ---
+        if action in ("cancel", "modify"):
+            text = user_message or ("Je souhaite annuler mon rendez-vous" if action == "cancel" else "Je souhaite modifier mon rendez-vous")
+            session = _get_session()
+            session.channel = "vocal"
+            session.tenant_id = resolved_tenant_id
+            events = _get_engine(call_id).handle_message(call_id, text)
+            response_text = events[0].text if events else "Je n'ai pas compris."
+            if tool_call_id:
+                return JSONResponse(th.build_vapi_tool_response(tool_call_id, {"message": response_text}, None), status_code=200)
+            return JSONResponse({"result": response_text}, status_code=200)
+
+        # --- faq ou legacy : message utilisateur → engine ---
+        if not user_message and not action:
+            return JSONResponse({"result": "Je n'ai pas compris. Pouvez-vous répéter ?"}, status_code=200)
+
+        session = _get_session()
+        session.channel = "vocal"
+        session.tenant_id = resolved_tenant_id
+        if session.state in ("TRANSFERRED", "CONFIRMED"):
+            out = prompts.VOCAL_RESUME_ALREADY_TERMINATED
+            if tool_call_id:
+                return JSONResponse(th.build_vapi_tool_response(tool_call_id, {"message": out}, None), status_code=200)
+            return JSONResponse({"result": out}, status_code=200)
+
+        message_to_use = user_message or ""
         if _pg_lock_ok():
             try:
                 from backend.session_pg import pg_lock_call_session, LockTimeout
                 _call_journal_ensure(resolved_tenant_id, call_id)
                 with pg_lock_call_session(resolved_tenant_id, call_id, timeout_seconds=2):
-                    session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
+                    session = _get_session()
                     session.channel = "vocal"
                     session.tenant_id = resolved_tenant_id
-                    if session.state in ("TRANSFERRED", "CONFIRMED"):
-                        return {"result": prompts.VOCAL_RESUME_ALREADY_TERMINATED}
-                    events = _get_engine(call_id).handle_message(call_id, user_message)
+                    events = _get_engine(call_id).handle_message(call_id, message_to_use)
                     response_text = events[0].text if events else "Je n'ai pas compris"
-                    print(f"✅ Tool response: '{response_text}'")
-                    return {"result": response_text}
+                    if hasattr(ENGINE.session_store, "save"):
+                        ENGINE.session_store.save(session)
+                    if tool_call_id:
+                        return JSONResponse(th.build_vapi_tool_response(tool_call_id, {"message": response_text}, None), status_code=200)
+                    return JSONResponse({"result": response_text}, status_code=200)
             except LockTimeout:
-                logger.warning("[CALL_LOCK_TIMEOUT] tenant_id=%s call_id=%s -> fallback result (évite 204)", resolved_tenant_id, call_id[:20])
-                try:
-                    from backend.engine import _persist_ivr_event
-                    _persist_ivr_event(
-                        ENGINE.session_store.get_or_create(call_id),
-                        "call_lock_timeout",
-                        reason="concurrent_webhook",
-                    )
-                except Exception:
-                    pass
-                # Ne jamais renvoyer 204 à Vapi sur /tool → silence.
-                return JSONResponse({"result": "Un instant, s'il vous plaît."}, status_code=200)
+                logger.warning("[CALL_LOCK_TIMEOUT] tenant_id=%s call_id=%s", resolved_tenant_id, call_id[:20])
+                fallback = "Un instant, s'il vous plaît."
+                if tool_call_id:
+                    return JSONResponse(th.build_vapi_tool_response(tool_call_id, {"message": fallback}, None), status_code=200)
+                return JSONResponse({"result": fallback}, status_code=200)
             except Exception as e:
                 logger.warning("[CALL_LOCK_WARN] err=%s", e, exc_info=True)
-                pass
 
-        session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
+        session = _get_session()
         session.channel = "vocal"
         session.tenant_id = resolved_tenant_id
-        if session.state in ("TRANSFERRED", "CONFIRMED"):
-            return {"result": prompts.VOCAL_RESUME_ALREADY_TERMINATED}
-        events = _get_engine(call_id).handle_message(call_id, user_message)
+        events = _get_engine(call_id).handle_message(call_id, message_to_use)
         response_text = events[0].text if events else "Je n'ai pas compris"
-        print(f"✅ Tool response: '{response_text}'")
-        return {"result": response_text}
-        
+        if hasattr(ENGINE.session_store, "save"):
+            ENGINE.session_store.save(session)
+        if tool_call_id:
+            return JSONResponse(th.build_vapi_tool_response(tool_call_id, {"message": response_text}, None), status_code=200)
+        return JSONResponse({"result": response_text}, status_code=200)
+
     except Exception as e:
-        print(f"❌ Tool error: {e}")
-        import traceback
-        traceback.print_exc()
-        return {"result": "Désolé, une erreur est survenue."}
+        logger.exception("Tool error: %s", e)
+        return JSONResponse({"result": "Désolé, une erreur est survenue."}, status_code=200)
 
 
 @router.get("/_health")

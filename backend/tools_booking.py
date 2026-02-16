@@ -731,6 +731,26 @@ def _format_slot_label_vocal(date_str: str, time_str: str) -> str:
         return f"{date_str} à {time_str}"
 
 
+def slot_to_vocal_label(slot: Any) -> str:
+    """
+    Retourne le libellé vocal complet pour un slot (format TTS).
+    Ex: "jeudi 20 février à 14 heures".
+    slot: dict canonique ou SlotDisplay (start_iso / start attendu).
+    """
+    start_iso = None
+    if isinstance(slot, dict):
+        start_iso = slot.get("start_iso") or slot.get("start") or slot.get("start_time")
+    else:
+        start_iso = getattr(slot, "start_iso", None) or getattr(slot, "start", None) or getattr(slot, "start_time", None)
+    if not start_iso:
+        return getattr(slot, "label_vocal", None) or (slot.get("label_vocal") if isinstance(slot, dict) else None) or ""
+    # start_iso type "2026-01-25T14:00:00" ou "2026-01-25 14:00:00"
+    parts = str(start_iso).replace(" ", "T").split("T")
+    date_str = parts[0] if parts else ""
+    time_str = (parts[1][:5] if len(parts) > 1 and parts[1] else "") or "09:00"  # HH:MM
+    return _format_slot_label_vocal(date_str, time_str)
+
+
 def store_pending_slots(session, slots: List[Any]) -> None:
     """
     Stocke les créneaux proposés dans la session (Fix 3: format canonique unique).
