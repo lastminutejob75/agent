@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from backend import tools_booking
 
@@ -124,19 +124,22 @@ def handle_book(
 
 def build_vapi_tool_response(
     tool_call_id: Optional[str],
-    result_body: Optional[Dict[str, Any]],
+    result_body: Optional[Union[Dict[str, Any], str]],
     error_message: Optional[str],
 ) -> Dict[str, Any]:
     """
     Construit la réponse au format Vapi.
     result et error doivent être des strings (Vapi).
+    Si result_body est une str, elle est utilisée telle quelle (TTS lisible).
+    Si c'est un dict, il est JSON stringifié (legacy).
     """
     if tool_call_id is None:
         tool_call_id = "call_default"
     if error_message:
         return {"results": [{"toolCallId": tool_call_id, "error": error_message}]}
     if result_body is not None:
-        return {"results": [{"toolCallId": tool_call_id, "result": _vapi_result_string(result_body)}]}
+        result = result_body if isinstance(result_body, str) else _vapi_result_string(result_body)
+        return {"results": [{"toolCallId": tool_call_id, "result": result}]}
     return {"results": [{"toolCallId": tool_call_id, "result": _vapi_result_string({"status": "ok"})}]}
 
 

@@ -974,8 +974,17 @@ async def vapi_tool(request: Request):
                     th.build_vapi_tool_response(tool_call_id, None, err),
                     status_code=200,
                 )
+            slots = slots_list or []
+            if slots:
+                if len(slots) == 1:
+                    slots_text = slots[0]
+                else:
+                    slots_text = ", ".join(slots[:-1]) + " et " + slots[-1]
+                result_text = f"Créneaux disponibles : {slots_text}."
+            else:
+                result_text = "Aucun créneau disponible pour le moment."
             return JSONResponse(
-                th.build_vapi_tool_response(tool_call_id, {"slots": slots_list or [], "source": source or "google_calendar"}, None),
+                th.build_vapi_tool_response(tool_call_id, result_text, None),
                 status_code=200,
             )
 
@@ -997,7 +1006,8 @@ async def vapi_tool(request: Request):
                 logger.warning("Tool book: save session failed (booking already done): %s", save_err)
             try:
                 logger.info("TOOL_BOOK_SUCCESS call_id=%s returning results", (call_id or "")[:24])
-                body = th.build_vapi_tool_response(tool_call_id, result_dict, None)
+                message = (result_dict or {}).get("message") or "Rendez-vous confirmé."
+                body = th.build_vapi_tool_response(tool_call_id, str(message), None)
                 return JSONResponse(body, status_code=200)
             except Exception as build_err:
                 logger.warning(
@@ -1007,11 +1017,7 @@ async def vapi_tool(request: Request):
                     exc_info=True,
                 )
                 fallback_msg = (result_dict or {}).get("message") or "Rendez-vous confirmé."
-                safe_body = th.build_vapi_tool_response(
-                    tool_call_id,
-                    {"status": "confirmed", "message": str(fallback_msg)},
-                    None,
-                )
+                safe_body = th.build_vapi_tool_response(tool_call_id, str(fallback_msg), None)
                 return JSONResponse(safe_body, status_code=200)
 
         # --- cancel / modify : déléguer à l'engine avec user_message ---
@@ -1023,7 +1029,7 @@ async def vapi_tool(request: Request):
             events = _get_engine(call_id).handle_message(call_id, text)
             response_text = events[0].text if events else "Je n'ai pas compris."
             if tool_call_id:
-                return JSONResponse(th.build_vapi_tool_response(tool_call_id, {"message": response_text}, None), status_code=200)
+                return JSONResponse(th.build_vapi_tool_response(tool_call_id, response_text, None), status_code=200)
             return JSONResponse({"result": response_text}, status_code=200)
 
         # --- faq ou legacy : message utilisateur → engine ---
@@ -1036,7 +1042,7 @@ async def vapi_tool(request: Request):
         if session.state in ("TRANSFERRED", "CONFIRMED"):
             out = prompts.VOCAL_RESUME_ALREADY_TERMINATED
             if tool_call_id:
-                return JSONResponse(th.build_vapi_tool_response(tool_call_id, {"message": out}, None), status_code=200)
+                return JSONResponse(th.build_vapi_tool_response(tool_call_id, out, None), status_code=200)
             return JSONResponse({"result": out}, status_code=200)
 
         message_to_use = user_message or ""
@@ -1053,13 +1059,13 @@ async def vapi_tool(request: Request):
                     if hasattr(ENGINE.session_store, "save"):
                         ENGINE.session_store.save(session)
                     if tool_call_id:
-                        return JSONResponse(th.build_vapi_tool_response(tool_call_id, {"message": response_text}, None), status_code=200)
+                        return JSONResponse(th.build_vapi_tool_response(tool_call_id, response_text, None), status_code=200)
                     return JSONResponse({"result": response_text}, status_code=200)
             except LockTimeout:
                 logger.warning("[CALL_LOCK_TIMEOUT] tenant_id=%s call_id=%s", resolved_tenant_id, call_id[:20])
                 fallback = "Un instant, s'il vous plaît."
                 if tool_call_id:
-                    return JSONResponse(th.build_vapi_tool_response(tool_call_id, {"message": fallback}, None), status_code=200)
+                    return JSONResponse(th.build_vapi_tool_response(tool_call_id, fallback, None), status_code=200)
                 return JSONResponse({"result": fallback}, status_code=200)
             except Exception as e:
                 logger.warning("[CALL_LOCK_WARN] err=%s", e, exc_info=True)
@@ -1072,7 +1078,7 @@ async def vapi_tool(request: Request):
         if hasattr(ENGINE.session_store, "save"):
             ENGINE.session_store.save(session)
         if tool_call_id:
-            return JSONResponse(th.build_vapi_tool_response(tool_call_id, {"message": response_text}, None), status_code=200)
+            return JSONResponse(th.build_vapi_tool_response(tool_call_id, response_text, None), status_code=200)
         return JSONResponse({"result": response_text}, status_code=200)
 
     except Exception as e:
