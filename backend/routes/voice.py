@@ -873,12 +873,49 @@ def _tool_extract_call_id(payload: dict) -> str:
 
 
 def _tool_extract_tool_call_id(payload: dict) -> Optional[str]:
-    """Extrait toolCallId pour la réponse Vapi (message.toolCalls[0].id)."""
+    """Extrait toolCallId pour la réponse Vapi (message.toolCalls[0].id ou message.toolCallList[0].id)."""
     msg = payload.get("message") or {}
-    calls = msg.get("toolCalls") or payload.get("toolCalls") or []
+    calls = msg.get("toolCalls") or msg.get("toolCallList") or payload.get("toolCalls") or payload.get("toolCallList") or []
     if calls and isinstance(calls, list) and len(calls) > 0 and isinstance(calls[0], dict):
         return calls[0].get("id")
     return payload.get("toolCallId")
+
+
+def _tool_extract_parameters(payload: dict) -> dict:
+    """
+    Extrait les paramètres du tool-call depuis le payload Vapi.
+    Vapi peut envoyer :
+    - payload.parameters (legacy)
+    - message.toolCallList[0].function.arguments (objet ou JSON string)
+    - message.toolCalls[0].function.arguments (objet ou JSON string)
+    """
+    params = payload.get("parameters")
+    if isinstance(params, dict) and params:
+        return params
+
+    msg = payload.get("message") or {}
+    for key in ("toolCalls", "toolCallList"):
+        calls = msg.get(key) or payload.get(key) or []
+        if not calls or not isinstance(calls, list) or len(calls) == 0:
+            continue
+        first = calls[0]
+        if not isinstance(first, dict):
+            continue
+        fn = first.get("function") or first.get("functionCall") or {}
+        raw = fn.get("arguments")
+        if raw is None:
+            continue
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, str):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                return json.loads(raw)
+            except Exception:
+                pass
+    return {}
 
 
 @router.post("/tool")
@@ -890,7 +927,7 @@ async def vapi_tool(request: Request):
     """
     try:
         payload = await request.json()
-        params = payload.get("parameters") or {}
+        params = _tool_extract_parameters(payload)
         action = (params.get("action") or "").strip().lower()
         user_message = (params.get("user_message") or "").strip()
         patient_name = (params.get("patient_name") or "").strip() or None
