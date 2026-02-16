@@ -341,7 +341,7 @@ Date/Heure : {ts}
             server.starttls()
             server.login(from_addr, password)
             server.sendmail(from_addr, [to], msg.as_string())
-        logger.info("ordonnance_notification_sent", extra={"name": name[:50], "phone": phone[:20]})
+        logger.info("ordonnance_notification_sent", extra={"patient_name": name[:50], "phone": phone[:20]})
         return True
     except Exception as e:
         logger.exception("send_ordonnance_notification failed: %s", e)

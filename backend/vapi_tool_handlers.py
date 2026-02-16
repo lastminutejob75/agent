@@ -102,7 +102,7 @@ def handle_book(
         message = f"Rendez-vous confirmé pour {patient_str} le {slot_str}."
         logger.info(
             "BOOKING_CONFIRMED",
-            extra={"call_id": call_id[:24] if call_id else "", "slot": slot_str[:40], "name": patient_str[:20]},
+            extra={"call_id": call_id[:24] if call_id else "", "slot": slot_str[:40], "patient_name": patient_str[:20]},
         )
         return (
             True,
