@@ -89,9 +89,18 @@ def add_route(channel: str, did_key: str, tenant_id: int) -> None:
 def extract_to_number_from_vapi_payload(payload: dict) -> Optional[str]:
     """
     Extrait le numéro appelé (DID) du payload Vapi.
-    Ordre de priorité: phoneNumber.number, call.phoneNumber.number, call.to
+    Ordre de priorité: message.call (webhook), phoneNumber, call.phoneNumber, call.to
     """
-    # Vapi common metadata: phoneNumber
+    # Webhook Vapi : message.call.phoneNumber.number / message.call.to
+    message = payload.get("message") or {}
+    call = message.get("call") or {}
+    pn = call.get("phoneNumber")
+    if isinstance(pn, dict) and pn.get("number"):
+        return str(pn["number"])
+    if call.get("to"):
+        return str(call["to"])
+
+    # Chat Completions / racine
     pn = payload.get("phoneNumber")
     if isinstance(pn, dict) and pn.get("number"):
         return str(pn["number"])
@@ -126,7 +135,23 @@ def extract_customer_phone_from_vapi_payload(payload: dict) -> Optional[str]:
         s = re.sub(r"[\s\-\.]", "", s.strip())
         return s if s else None
 
-    # 1) call.customer.number (documentation courante)
+    # 0) Webhook Vapi : message.call.customer.number (assistant.started, status-update, etc.)
+    message = payload.get("message") or {}
+    call = message.get("call") or {}
+    customer = call.get("customer") or message.get("customer") or {}
+    for key in ("number", "phone"):
+        val = customer.get(key)
+        if val:
+            n = _norm(str(val))
+            if n and len(n) >= 10:
+                return str(val).strip()
+    from_val = call.get("from")
+    if from_val:
+        n = _norm(str(from_val))
+        if n and len(n) >= 10:
+            return str(from_val).strip()
+
+    # 1) Racine : call.customer.number (Chat Completions / ancien format)
     call = payload.get("call") or {}
     customer = call.get("customer") or payload.get("customer") or {}
     for key in ("number", "phone"):

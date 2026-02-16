@@ -800,13 +800,57 @@ def _classify_stt_input(
     return "TEXT", normalized
 
 
+def _webhook_extract_call_id(payload: dict) -> Optional[str]:
+    """Extrait call_id depuis un payload webhook Vapi (message.call.id)."""
+    message = payload.get("message") or {}
+    call = message.get("call") or {}
+    return call.get("id") or payload.get("call", {}).get("id")
+
+
 @router.post("/webhook")
 async def vapi_webhook(request: Request):
     """
-    Webhook Vapi — Option A : 200 immédiat, zéro traitement.
-    Évite la saturation du worker Railway : pas de request.json(), pas de log, pas de DB.
-    Les events Vapi sont fire-and-forget ; le flux conversationnel passe par /chat/completions.
+    Webhook Vapi — Réception assistant.started, status-update, conversation-update, etc.
+    On persiste le caller ID (message.call.customer.number) dès assistant.started ou
+    status-update in-progress pour que /chat/completions ait session.customer_phone.
     """
+    try:
+        payload = await request.json()
+    except Exception:
+        return Response(status_code=200)
+    message = payload.get("message") or {}
+    msg_type = message.get("type") or message.get("event") or ""
+    # Persister customer_phone dès qu'un webhook contient message.call.customer.number
+    # (assistant.started = 1er webhook ; status-update in-progress ; conversation-update en secours)
+    from backend.tenant_routing import (
+        extract_customer_phone_from_vapi_payload,
+        extract_to_number_from_vapi_payload,
+        resolve_tenant_id_from_vocal_call,
+    )
+    call_id = _webhook_extract_call_id(payload)
+    customer_phone = extract_customer_phone_from_vapi_payload(payload)
+    if call_id and customer_phone:
+        # Éviter de persister sur chaque conversation-update : seulement si pas déjà en session
+        should_persist = msg_type in ("assistant.started", "status-update", "status_update", "conversation-update")
+        if should_persist:
+            status = message.get("status") or message.get("call", {}).get("status") or ""
+            if msg_type in ("assistant.started", "conversation-update") or status == "in-progress":
+                try:
+                    to_number = extract_to_number_from_vapi_payload(payload)
+                    resolved_tenant_id, _ = resolve_tenant_id_from_vocal_call(to_number or "", channel="vocal")
+                    session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
+                    if not session.customer_phone:
+                        session.customer_phone = customer_phone
+                        session.channel = "vocal"
+                        session.tenant_id = resolved_tenant_id
+                        if hasattr(ENGINE.session_store, "save"):
+                            ENGINE.session_store.save(session)
+                        logger.info(
+                            "CALLER_ID_PERSISTED_FROM_WEBHOOK",
+                            extra={"call_id": call_id[:24] if call_id else "", "msg_type": msg_type},
+                        )
+                except Exception as e:
+                    logger.warning("CALLER_ID_WEBHOOK_SAVE_FAILED call_id=%s err=%s", call_id[:24] if call_id else "", str(e)[:80])
     return Response(status_code=200)
 
 
@@ -951,11 +995,17 @@ async def vapi_custom_llm(request: Request):
             resolve_tenant_id_from_vocal_call,
         )
         customer_phone = extract_customer_phone_from_vapi_payload(payload)
+        # Diagnostic : structure du payload (sans PII) pour savoir où Vapi envoie le caller ID
+        _call = payload.get("call") or {}
         logger.info(
             "CUSTOMER_PHONE_RECOGNITION",
             extra={
                 "call_id": call_id[:24] if call_id else "n/a",
                 "has_number": bool(customer_phone),
+                "payload_has_call": "call" in payload,
+                "call_has_customer": "customer" in _call,
+                "call_has_from": "from" in _call,
+                "call_keys": list(_call.keys()) if _call else [],
             },
         )
         if not customer_phone:
@@ -1002,7 +1052,16 @@ async def vapi_custom_llm(request: Request):
         logger.debug("user message: %r", (user_message or "")[:80])
         cancel_lookup_streaming = False
         if not user_message:
-            # Premier message ou pas de message user
+            # Premier message ou pas de message user (greeting) : persister le Caller ID dès maintenant
+            # pour que les tours suivants aient session.customer_phone même si le payload ne le renvoie plus
+            session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
+            session.channel = "vocal"
+            session.tenant_id = resolved_tenant_id
+            if customer_phone:
+                session.customer_phone = customer_phone
+                logger.info("[CALLER_ID] conv_id=%s persisted_on_greeting", call_id[:24] if call_id else "n/a")
+            if hasattr(ENGINE.session_store, "save"):
+                ENGINE.session_store.save(session)
             response_text = prompts.get_vocal_greeting(config.BUSINESS_NAME)
         elif is_streaming:
             # Streaming : retour HTTP immédiat, premier token dans le corps < 1s. Pas de journal/DB avant return

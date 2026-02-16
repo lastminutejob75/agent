@@ -114,14 +114,17 @@ Le backend utilise le **numéro de l’appelant** pour :
 - Alimenter la mémoire client et les rapports.
 
 **Où c’est fait :**
-- Extraction : `backend/tenant_routing.py` → `extract_customer_phone_from_vapi_payload(payload)` (plusieurs chemins : `call.customer.number`, `call.from`, `messages[].customer`, etc.).
-- Utilisation : `backend/routes/voice.py` (stocké en session → `session.customer_phone`), puis `backend/engine.py` en QUALIF_CONTACT / CONTACT_CONFIRM.
+- **Webhook** (`/api/vapi/webhook`) : Vapi envoie `assistant.started` et `status-update` avec **`message.call.customer.number`**. Le backend persiste ce numéro en session dès réception (pour que les requêtes Chat Completions, qui ne reçoivent pas `call`, aient quand même `session.customer_phone`).
+- Extraction : `backend/tenant_routing.py` → `extract_customer_phone_from_vapi_payload(payload)` — chemins **webhook** : `message.call.customer.number`, `message.customer.number` ; chemins **Chat Completions** : `call.customer.number`, `call.from`, etc.
+- Utilisation : `backend/routes/voice.py` (webhook → persistance ; chat/completions → lecture session), puis `backend/engine.py` en QUALIF_CONTACT / CONTACT_CONFIRM.
 
-**Si le numéro n’apparaît plus :**
-- Vérifier dans les logs : `CUSTOMER_PHONE_RECOGNITION` avec `has_number: false` indique que le payload reçu ne contient pas le caller ID.
-- Côté Vapi : s’assurer que le provider téléphonique (Twilio, Vonage, etc.) envoie bien le numéro dans le webhook (ex. `call.customer.number` ou `call.from` selon la doc Vapi / provider).
-- Extraction : `extract_customer_phone_from_vapi_payload` teste `call.customer.number`, `call.customer.phone`, `call.from`, `customerNumber`, `callerNumber`, et `messages[].customer`.
-- En dev : logger temporairement `payload.get("call")` (sans PII) pour voir la structure réelle du body.
+**Si le numéro n’apparaît plus (diagnostic) :**
+1. **Logs à regarder (Railway / stdout) :**
+   - `CUSTOMER_PHONE_RECOGNITION` : `has_number` (true/false), `payload_has_call`, `call_has_customer`, `call_has_from`, `call_keys` (liste des clés dans `payload.call`). Si `has_number: false` et `payload_has_call: false` → Vapi n’envoie pas l’objet `call` dans le webhook Custom LLM.
+   - `[CALLER_ID] persisted_on_greeting` : le numéro a été persisté au premier tour (greeting).
+   - `[QUALIF] no_caller_id → QUALIF_CONTACT` : on demande le numéro car `session.customer_phone` est vide (numéro absent du payload ou non persisté).
+2. **Causes possibles :** (1) Le numéro n’est pas envoyé par Vapi/Twilio (numéro masqué, config provider, ou payload Custom LLM sans `call`). (2) Le numéro est envoyé mais on ne le persistait pas au premier tour → désormais on persiste au greeting si présent. (3) Session rechargée sans `customer_phone` → vérifier que `session_store` sauvegarde bien `customer_phone` (SQLite/pickle).
+3. **Côté Vapi / provider :** s’assurer que le webhook reçoit bien `call.customer.number` ou `call.from` (Twilio/Vonage envoie le caller ID selon la doc du provider).
 
 ### 4. Voix recommandée
 
