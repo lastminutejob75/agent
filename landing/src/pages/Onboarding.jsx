@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../lib/api.js";
 
 export default function Onboarding() {
@@ -67,10 +68,27 @@ export default function Onboarding() {
       {err && <p style={{ color: "crimson" }}>{err}</p>}
 
       {result && (
-        <div style={{ marginTop: 16, padding: 12, border: "1px solid #ddd" }}>
-          <div><b>Tenant créé</b></div>
-          <div>tenant_id: {result.tenant_id}</div>
-          <div>{result.message}</div>
+        <div style={{ marginTop: 24, padding: 20, border: "1px solid #0d9488", borderRadius: 12, background: "#f0fdfa" }}>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>Compte créé</div>
+          <p style={{ margin: "8px 0", color: "#334155" }}>{result.message}</p>
+          <p style={{ marginTop: 12, fontSize: 14, color: "#64748b" }}>
+            Numéro de démo : <strong>09 39 24 05 75</strong> — démo partagée pour tester l'IA en voix.
+          </p>
+          <Link
+            to="/login"
+            style={{
+              display: "inline-block",
+              marginTop: 16,
+              padding: "10px 20px",
+              background: "#0d9488",
+              color: "white",
+              borderRadius: 8,
+              fontWeight: 600,
+              textDecoration: "none",
+            }}
+          >
+            Se connecter au dashboard →
+          </Link>
         </div>
       )}
     </div>

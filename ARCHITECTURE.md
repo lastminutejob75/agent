@@ -192,3 +192,9 @@ agent-accueil-pme/
   docker-compose.yml
   README.md
 ```
+
+---
+
+## Voir aussi
+
+- **Vocal & multi-tenant** : [docs/ARCHITECTURE_VOCAL_TENANTS.md](docs/ARCHITECTURE_VOCAL_TENANTS.md) — numéro test → TENANT_TEST, clients = DID dédié, aucun lien onboarding ↔ numéro démo.

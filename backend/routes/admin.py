@@ -800,12 +800,36 @@ def _get_rgpd_extended(tenant_id: int, start: str, end: str, last_n: int = 20) -
     return base
 
 
+# --- Helpers ---
+
+
+def _link_demo_vocal_number(tenant_id: int) -> bool:
+    """Admin only: enregistre la route numéro démo → tenant_id. Non utilisé par l'onboarding (numéro démo = TENANT_TEST fixe). Voir docs/ARCHITECTURE_VOCAL_TENANTS.md."""
+    demo = getattr(config, "ONBOARDING_DEMO_VOCAL_NUMBER", None)
+    if not demo:
+        return False
+    from backend.tenant_routing import normalize_did
+    key = normalize_did(demo)
+    if not key:
+        return False
+    try:
+        if config.USE_PG_TENANTS:
+            from backend.tenants_pg import pg_add_routing
+            return bool(pg_add_routing("vocal", key, tenant_id))
+        from backend.tenant_routing import add_route
+        add_route("vocal", key, tenant_id)
+        return True
+    except Exception as e:
+        logger.warning("link demo vocal number failed: %s", e)
+        return False
+
+
 # --- Routes ---
 
 
 @router.post("/public/onboarding", response_model=OnboardingResponse)
 def public_onboarding(body: OnboardingRequest):
-    """Crée un tenant + config. Public (pas de auth)."""
+    """Crée un tenant + config. Public (pas de auth). Aucun lien avec le numéro démo (voir docs/ARCHITECTURE_VOCAL_TENANTS.md)."""
     if config.USE_PG_TENANTS:
         tid = pg_create_tenant(
             name=body.company_name,
@@ -815,11 +839,10 @@ def public_onboarding(body: OnboardingRequest):
             timezone="Europe/Paris",
         )
         if tid:
-            # Créer tenant_user pour magic link auth
             pg_create_tenant_user(tid, body.email, role="owner")
             return OnboardingResponse(
                 tenant_id=tid,
-                message="Onboarding créé. Vous pouvez configurer le tenant depuis l'admin.",
+                message="Compte créé. Connectez-vous avec cet email pour accéder à votre dashboard. Pour tester l'IA en voix, appelez le numéro de démo 09 39 24 05 75 (démo partagée).",
                 admin_setup_token=ADMIN_TOKEN if ADMIN_TOKEN else None,
             )
     # Fallback SQLite
@@ -848,7 +871,7 @@ def public_onboarding(body: OnboardingRequest):
         conn.commit()
         return OnboardingResponse(
             tenant_id=tid,
-            message="Onboarding créé.",
+            message="Compte créé. Connectez-vous avec cet email pour accéder à votre dashboard. Pour tester l'IA en voix, appelez le numéro de démo 09 39 24 05 75 (démo partagée).",
             admin_setup_token=ADMIN_TOKEN if ADMIN_TOKEN else None,
         )
     except Exception as e:
@@ -1075,14 +1098,22 @@ def admin_add_routing(
     body: RoutingCreate,
     _: None = Depends(_verify_admin),
 ):
-    """Ajoute une route DID → tenant."""
-    if config.USE_PG_TENANTS:
-        ok = pg_add_routing(body.channel, body.key, body.tenant_id)
-        if ok:
-            return {"ok": True}
-    from backend.tenant_routing import add_route
-    add_route(body.channel, body.key, body.tenant_id)
-    return {"ok": True}
+    """Ajoute une route DID → tenant. Rejette la réassignation du numéro démo vers un autre tenant (409)."""
+    try:
+        if config.USE_PG_TENANTS:
+            ok = pg_add_routing(body.channel, body.key, body.tenant_id)
+            if ok:
+                return {"ok": True}
+        from backend.tenant_routing import add_route
+        add_route(body.channel, body.key, body.tenant_id)
+        return {"ok": True}
+    except ValueError as e:
+        if "TEST_TENANT_ID" in str(e) or "Forbidden" in str(e) or "démo vocal" in str(e):
+            raise HTTPException(
+                status_code=409,
+                detail={"detail": str(e), "error_code": "TEST_NUMBER_IMMUTABLE"},
+            ) from e
+        raise
 
 
 @router.get("/admin/kpis/weekly")

@@ -82,8 +82,8 @@ export default function UwiLanding() {
                     <Phone className="relative w-5 h-5 group-hover:rotate-12 transition-transform" />
                   </div>
                   <div className="flex flex-col items-start">
-                    <span className="text-xs text-teal-300/80 font-semibold uppercase tracking-wider">Essayez maintenant</span>
-                    <span className="text-base text-white font-black">09 39 24 05 75</span>
+                    <span className="text-xs text-teal-300/80 font-semibold uppercase tracking-wider">📞 Écouter la démo vocale : 09 39 24 05 75</span>
+                    <span className="text-base text-white font-black">Numéro de démonstration (public).</span>
                   </div>
                 </a>
 
@@ -292,10 +292,10 @@ export default function UwiLanding() {
                     <span className="block mt-2 bg-gradient-to-r from-teal-400 to-cyan-300 bg-clip-text text-transparent">en temps réel</span>
                   </h3>
                   <p className="text-slate-300 text-lg leading-relaxed mb-8">
-                    Appelez notre numéro de démonstration pour découvrir comment UWi Medical répond à vos patients.
+                    Appelez notre numéro de démonstration public pour découvrir comment UWi Medical répond à vos patients.
                   </p>
                   <div className="bg-white/5 backdrop-blur-sm rounded-2xl p-6 border border-white/10 mb-8">
-                    <div className="text-sm text-slate-400 font-semibold uppercase tracking-wide mb-3">Numéro de démonstration</div>
+                    <div className="text-sm text-slate-400 font-semibold uppercase tracking-wide mb-3">Numéro de démonstration public</div>
                     <div className="flex items-center gap-4">
                       <div className="bg-gradient-to-br from-teal-500 to-cyan-400 rounded-xl p-3 shadow-lg">
                         <Phone className="w-6 h-6 text-slate-950" />
@@ -845,7 +845,7 @@ export default function UwiLanding() {
             <p className="text-xl text-teal-100 max-w-2xl mx-auto">Rejoignez les 300+ praticiens qui retrouvent du temps pour soigner avec UWi Medical</p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center pt-4">
               <button className="bg-white text-teal-600 px-10 py-4 rounded-xl font-semibold hover:bg-teal-50 transition-colors text-base">Essai gratuit 14 jours</button>
-              <a href="tel:+33939240575" className="bg-teal-500/30 backdrop-blur text-white px-10 py-4 rounded-xl font-semibold border border-white/30 hover:bg-teal-500/40 transition-colors text-base inline-block">Voir une démo</a>
+              <a href="tel:+33939240575" className="bg-teal-500/30 backdrop-blur text-white px-10 py-4 rounded-xl font-semibold border border-white/30 hover:bg-teal-500/40 transition-colors text-base inline-block">📞 Écouter la démo vocale : 09 39 24 05 75</a>
             </div>
           </div>
         </section>

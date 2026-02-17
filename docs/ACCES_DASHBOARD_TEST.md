@@ -1,10 +1,21 @@
 # Accéder au tableau de bord (test)
 
-Pour voir le dashboard connecté avec ton numéro/tenant de test.
+Pour accéder au dashboard. Le numéro de démo 09 39 24 05 75 est partagé (routé vers le tenant TEST interne). **Aucun lien entre onboarding et numéro démo** — voir [ARCHITECTURE_VOCAL_TENANTS.md](./ARCHITECTURE_VOCAL_TENANTS.md).
 
 ---
 
-## 1. Ajouter ton email au tenant
+## Option A : Créer un compte
+
+1. Aller sur **uwiapp.com/onboarding** (ou cliquer « Démarrer » sur la landing).
+2. Remplir le formulaire : nom entreprise, **email** (celui que tu utiliseras pour te connecter), agenda.
+3. Cliquer **Créer**. Le backend crée un tenant. Le **numéro de démo 09 39 24 05 75** reste une démo partagée (routé vers un tenant DEMO fixe, pas réassigné à chaque onboarding).
+4. Cliquer **Se connecter au dashboard** (ou aller sur **/login**).
+5. Saisir le même email → envoyer le lien → cliquer le Magic Link (ou en mode debug le lien s’affiche).
+6. Tu arrives sur **/app** (dashboard de ton tenant). Pour tester la voix : appelez le 09 39 24 05 75 (démo partagée).
+
+---
+
+## Option B : Ajouter ton email à un tenant existant
 
 Ton email doit être dans `tenant_users` pour pouvoir te connecter.
 
@@ -41,7 +52,7 @@ Remplace par l’URL réelle de ton backend Railway.
 
 ---
 
-## 4. Connexion
+## 4. Connexion (Magic Link)
 
 1. Va sur `/login` (landing)
 2. Entre ton email (celui ajouté en étape 1)

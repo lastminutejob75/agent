@@ -288,12 +288,14 @@ def pg_update_tenant_params(tenant_id: int, params: dict) -> bool:
 
 
 def pg_add_routing(channel: str, key: str, tenant_id: int) -> bool:
-    """Ajoute ou met à jour une route DID → tenant."""
+    """Ajoute ou met à jour une route DID → tenant. Rejette la réassignation du numéro démo (voir tenant_routing.guard_demo_number_routing)."""
     key = key.strip().replace(" ", "")
     if not key:
         return False
     if key.startswith("00"):
         key = "+" + key[2:]
+    from backend.tenant_routing import guard_demo_number_routing
+    guard_demo_number_routing(channel=channel, did_key=key, tenant_id=tenant_id)
     url = _pg_url()
     if not url:
         return False

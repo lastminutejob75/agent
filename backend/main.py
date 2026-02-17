@@ -135,6 +135,11 @@ def _init_heavy_sync():
     """Partie synchrone de l'init (validation multi-tenant, credentials, PG)."""
     import os
     print("🔄 Heavy init started...")
+    # En prod : TEST_TENANT_ID doit être défini explicitement (pas de fallback silencieux)
+    _env = (os.environ.get("ENV") or os.environ.get("RAILWAY_ENVIRONMENT") or "").lower()
+    if _env == "production" and os.environ.get("TEST_TENANT_ID") is None:
+        _logger.error("TEST_TENANT_ID must be set in production (no silent fallback). Set env TEST_TENANT_ID.")
+        raise RuntimeError("TEST_TENANT_ID must be set in production. See docs/ARCHITECTURE_VOCAL_TENANTS.md.")
     # Validation multi-tenant (ne bloque plus le startup → healthcheck OK)
     try:
         config.validate_multi_tenant_config()
@@ -158,9 +163,20 @@ def _init_heavy_sync():
         if check_pg_health(force=True):
             print("✅ PG_HEALTH ok")
         else:
+            _logger.warning("PG_HEALTH down -> sqlite fallback")
             print("⚠️ PG_HEALTH down -> sqlite fallback")
     except Exception as e:
-        _logger.debug("PG healthcheck skip: %s", e)
+        _logger.warning("PG healthcheck failed: %s", e)
+    # Route démo test → TEST_TENANT_ID (idempotent). Si PG down : SQLite seul, log WARN pour PG.
+    try:
+        from backend.tenant_routing import ensure_test_number_route
+        if ensure_test_number_route():
+            print("✅ ensure_test_number_route OK")
+        else:
+            print("⚠️ ensure_test_number_route skipped (no TEST_VOCAL_NUMBER)")
+    except Exception as e:
+        _logger.warning("ensure_test_number_route failed: %s", e)
+        print("⚠️ ensure_test_number_route: %s", e)
     print("✅ Heavy init done")
 
 

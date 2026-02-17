@@ -96,6 +96,9 @@ def validate_multi_tenant_config() -> None:
 # TENANT FLAGS (P0)
 # ==============================
 DEFAULT_TENANT_ID = 1
+# Tenant et numéro de démo (vitrine vocale). Règle : DID test → TEST_TENANT_ID uniquement (guard_demo_number_routing).
+TEST_TENANT_ID = int(os.getenv("TEST_TENANT_ID", str(DEFAULT_TENANT_ID)))
+TEST_VOCAL_NUMBER = (os.getenv("TEST_VOCAL_NUMBER") or os.getenv("ONBOARDING_DEMO_VOCAL_NUMBER", "+33939240575") or "").strip() or None
 DEFAULT_FLAGS = {
     "ENABLE_LLM_ASSIST_START": False,
     "ENABLE_BARGEIN_SLOT_CHOICE": True,
@@ -105,6 +108,11 @@ DEFAULT_FLAGS = {
 }
 # Garde-fou : si True, numéro vocal non routé → log tenant_route_miss + transfert
 ENABLE_TENANT_ROUTE_MISS_GUARD = os.getenv("ENABLE_TENANT_ROUTE_MISS_GUARD", "false").lower() in ("true", "1", "yes")
+
+# Numéro de démo vocal (public). Utilisé pour affichage landing ; guard utilise TEST_VOCAL_NUMBER (même valeur).
+ONBOARDING_DEMO_VOCAL_NUMBER = (os.getenv("ONBOARDING_DEMO_VOCAL_NUMBER", "+33939240575") or "").strip() or None
+if TEST_VOCAL_NUMBER is None:
+    TEST_VOCAL_NUMBER = ONBOARDING_DEMO_VOCAL_NUMBER
 
 # ==============================
 # CONVERSATIONAL MODE (P0)

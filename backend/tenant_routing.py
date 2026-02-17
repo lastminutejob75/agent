@@ -29,6 +29,27 @@ def normalize_did(raw: str) -> str:
     return s
 
 
+def normalize_did_canonical(raw: str) -> str:
+    """
+    Forme canonique pour comparaison (guard) : 09... → +33..., espaces/00 normalisés.
+    Garantit que "09 39 24 05 75" et "+33939240575" matchent.
+    """
+    if not raw or not isinstance(raw, str):
+        return ""
+    s = re.sub(r"[\s\-\.]", "", raw.strip())
+    if not s or not s.isdigit() and not s.startswith("+"):
+        return normalize_did(raw)  # fallback
+    if s.startswith("00"):
+        s = "+" + s[2:]
+    elif s.startswith("0") and len(s) == 10 and s.isdigit():
+        s = "+33" + s[1:]
+    elif s.isdigit() and len(s) >= 10:
+        s = "+" + s
+    elif not s.startswith("+"):
+        return normalize_did(raw)
+    return s
+
+
 def resolve_tenant_id_from_vocal_call(to_number: Optional[str], channel: str = "vocal") -> tuple[int, str]:
     """
     Résout tenant_id à partir du numéro appelé (DID).
@@ -156,8 +177,30 @@ def resolve_tenant_from_api_key(api_key: Optional[str]) -> int:
     raise HTTPException(status_code=401, detail="Invalid or unknown X-Tenant-Key")
 
 
+def guard_demo_number_routing(*, channel: str = "", did_key: str, tenant_id: int) -> None:
+    """
+    Lève ValueError si le DID test est routé vers un tenant_id ≠ TEST_TENANT_ID.
+    Comparaison en forme canonique E.164 (09... et +33... matchent).
+    """
+    did_norm = normalize_did_canonical(did_key or "")
+    if not did_norm or channel != "vocal":
+        return
+    test_did_key = normalize_did_canonical((getattr(config, "TEST_VOCAL_NUMBER", None) or "") or "")
+    if not test_did_key or did_norm != test_did_key:
+        return
+    test_tid = getattr(config, "TEST_TENANT_ID", config.DEFAULT_TENANT_ID)
+    if int(tenant_id) != int(test_tid):
+        msg = (
+            f"Forbidden: test number {did_norm} must stay routed to TEST_TENANT_ID={test_tid}, "
+            f"got tenant_id={tenant_id}"
+        )
+        logger.error("[guard_demo_number_routing] %s", msg)
+        raise ValueError(msg)
+
+
 def add_route(channel: str, did_key: str, tenant_id: int) -> None:
-    """Ajoute ou met à jour une route."""
+    """Ajoute ou met à jour une route (UPSERT). Rejette la réassignation du numéro démo (guard_demo_number_routing)."""
+    guard_demo_number_routing(channel=channel, did_key=did_key, tenant_id=tenant_id)
     key = normalize_did(did_key)
     if not key:
         return
@@ -174,6 +217,27 @@ def add_route(channel: str, did_key: str, tenant_id: int) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def ensure_test_number_route() -> bool:
+    """
+    Pose la route DID test → TEST_TENANT_ID (idempotent UPSERT).
+    À appeler au boot ou en migration pour garantir un environnement test propre.
+    """
+    test_number = getattr(config, "TEST_VOCAL_NUMBER", None) or getattr(config, "ONBOARDING_DEMO_VOCAL_NUMBER", None)
+    if not test_number:
+        return False
+    test_tid = getattr(config, "TEST_TENANT_ID", config.DEFAULT_TENANT_ID)
+    add_route("vocal", test_number, test_tid)
+    if config.USE_PG_TENANTS:
+        try:
+            from backend.tenants_pg import pg_add_routing
+            key = normalize_did(test_number)
+            if key and pg_add_routing("vocal", key, test_tid):
+                logger.info("ensure_test_number_route: vocal %s → tenant_id=%s (pg)", key, test_tid)
+        except Exception as e:
+            logger.warning("ensure_test_number_route pg: %s", e)
+    return True
 
 
 def extract_to_number_from_vapi_payload(payload: dict) -> Optional[str]:
