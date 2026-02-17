@@ -70,7 +70,7 @@ def _resolve_slot_id_from_start_iso(
             except Exception:
                 pass
         from backend.db import find_slot_id_by_datetime
-        return find_slot_id_by_datetime(date_str, time_str)
+        return find_slot_id_by_datetime(date_str, time_str, tenant_id=tenant_id)
     except Exception as e:
         logger.debug("_resolve_slot_id_from_start_iso failed: %s", e)
         return None

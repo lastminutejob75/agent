@@ -172,22 +172,36 @@ def create_ivr_event(
         pass
 
 
+def _migrate_sqlite_add_tenant_id(conn: sqlite3.Connection) -> None:
+    """Migration: ajoute tenant_id aux tables slots/appointments si absente (DB existantes)."""
+    for table, col in [("slots", "tenant_id"), ("appointments", "tenant_id")]:
+        try:
+            cur = conn.execute(f"PRAGMA table_info({table})")
+            if any(r[1] == col for r in cur.fetchall()):
+                continue
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} INTEGER NOT NULL DEFAULT 1")
+        except Exception:
+            pass
+
+
 def init_db(days: int = 7) -> None:
     conn = get_conn()
     try:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS slots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant_id INTEGER NOT NULL DEFAULT 1,
                 date TEXT NOT NULL,
                 time TEXT NOT NULL,
                 is_booked INTEGER DEFAULT 0,
-                UNIQUE(date, time)
+                UNIQUE(tenant_id, date, time)
             )
         """)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS appointments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 slot_id INTEGER NOT NULL,
+                tenant_id INTEGER NOT NULL DEFAULT 1,
                 name TEXT NOT NULL,
                 contact TEXT NOT NULL,
                 contact_type TEXT NOT NULL,
@@ -196,19 +210,18 @@ def init_db(days: int = 7) -> None:
                 FOREIGN KEY(slot_id) REFERENCES slots(id)
             )
         """)
+        _migrate_sqlite_add_tenant_id(conn)
         _ensure_ivr_tables(conn)
         _ensure_tenants_tables(conn)
 
-        # Seed slots (SKIP WEEKENDS)
+        # Seed slots (SKIP WEEKENDS) — tenant_id=1 par défaut
         for day in range(1, days + 1):
             target_date = datetime.now() + timedelta(days=day)
-            
-            # Skip weekends
             if target_date.weekday() < 5:  # Lundi-Vendredi
                 d = target_date.strftime("%Y-%m-%d")
                 for t in SLOT_TIMES:
                     conn.execute(
-                        "INSERT OR IGNORE INTO slots (date, time) VALUES (?, ?)",
+                        "INSERT OR IGNORE INTO slots (tenant_id, date, time) VALUES (1, ?, ?)",
                         (d, t)
                     )
 
@@ -217,61 +230,46 @@ def init_db(days: int = 7) -> None:
         conn.close()
 
 
-def cleanup_old_slots() -> None:
+def cleanup_old_slots(tenant_id: int = 1) -> None:
     """
     Supprime les slots passés et garantit au moins TARGET_MIN_SLOTS slots futurs
-    (lundi-vendredi uniquement). SQLite uniquement.
+    (lundi-vendredi uniquement). SQLite uniquement. Scopé par tenant_id.
     """
     from backend import config
     config._sqlite_guard("db.cleanup_old_slots")
     conn = get_conn()
     try:
-        # Lock write transaction (évite race)
         conn.execute("BEGIN IMMEDIATE")
-
         today = datetime.now().strftime("%Y-%m-%d")
-
-        # Supprimer les slots passés
-        conn.execute("DELETE FROM slots WHERE date < ?", (today,))
-
-        # Compter les slots futurs (tous, pas seulement libres, car on veut garantir le nombre total)
-        cur = conn.execute("SELECT COUNT(*) as c FROM slots WHERE date >= ?", (today,))
+        conn.execute("DELETE FROM slots WHERE tenant_id = ? AND date < ?", (tenant_id, today))
+        cur = conn.execute(
+            "SELECT COUNT(*) as c FROM slots WHERE tenant_id = ? AND date >= ?",
+            (tenant_id, today),
+        )
         count = int(cur.fetchone()["c"])
-
         missing = max(0, TARGET_MIN_SLOTS - count)
         if missing == 0:
             conn.commit()
             return
-
         day_offset = 1
         added = 0
-
         while added < missing:
-            # Sécurité : évite boucle infinie (ne devrait jamais arriver avec 15 slots max)
             if day_offset > MAX_DAYS_AHEAD:
                 break
-
             target_date = datetime.now() + timedelta(days=day_offset)
-
-            # Weekdays only
             if target_date.weekday() < 5:
                 d = target_date.strftime("%Y-%m-%d")
-
                 for t in SLOT_TIMES:
                     if added >= missing:
                         break
-
                     before = conn.total_changes
                     conn.execute(
-                        "INSERT OR IGNORE INTO slots (date, time) VALUES (?, ?)",
-                        (d, t),
+                        "INSERT OR IGNORE INTO slots (tenant_id, date, time) VALUES (?, ?, ?)",
+                        (tenant_id, d, t),
                     )
-                    # On incrémente seulement si INSERT a vraiment changé qqch
                     if conn.total_changes > before:
                         added += 1
-
             day_offset += 1
-
         conn.commit()
     except Exception:
         conn.rollback()
@@ -293,11 +291,14 @@ def count_free_slots(limit: int = 1000, tenant_id: int = 1) -> int:
         except Exception:
             pass
     config._sqlite_guard("db.count_free_slots")
-    cleanup_old_slots()
+    cleanup_old_slots(tenant_id)
     conn = get_conn()
     try:
         today = datetime.now().strftime("%Y-%m-%d")
-        cur = conn.execute("SELECT COUNT(*) AS c FROM slots WHERE is_booked=0 AND date >= ?", (today,))
+        cur = conn.execute(
+            "SELECT COUNT(*) AS c FROM slots WHERE tenant_id = ? AND is_booked=0 AND date >= ?",
+            (tenant_id, today),
+        )
         return int(cur.fetchone()["c"])
     finally:
         conn.close()
@@ -319,7 +320,7 @@ def list_free_slots(limit: int = 3, pref: Optional[str] = None, tenant_id: int =
         except Exception:
             pass
     config._sqlite_guard("db.list_free_slots")
-    cleanup_old_slots()
+    cleanup_old_slots(tenant_id)
     conn = get_conn()
     try:
         today = datetime.now().strftime("%Y-%m-%d")
@@ -334,11 +335,11 @@ def list_free_slots(limit: int = 3, pref: Optional[str] = None, tenant_id: int =
             f"""
             SELECT id, date, time 
             FROM slots 
-            WHERE is_booked=0 AND date >= ?{time_condition}
+            WHERE tenant_id = ? AND is_booked=0 AND date >= ?{time_condition}
             ORDER BY date ASC, time ASC 
             LIMIT ?
             """,
-            (today, limit),
+            (tenant_id, today, limit),
         )
         out = []
         for r in cur.fetchall():
@@ -348,7 +349,7 @@ def list_free_slots(limit: int = 3, pref: Optional[str] = None, tenant_id: int =
         conn.close()
 
 
-def find_slot_id_by_datetime(date_str: str, time_str: str) -> Optional[int]:
+def find_slot_id_by_datetime(date_str: str, time_str: str, tenant_id: int = 1) -> Optional[int]:
     """
     Trouve l'id d'un slot libre par date et heure (ex: "2026-02-16", "09:00").
     Retourne None si non trouvé ou déjà réservé. SQLite uniquement (pas de branche PG).
@@ -358,8 +359,8 @@ def find_slot_id_by_datetime(date_str: str, time_str: str) -> Optional[int]:
     conn = get_conn()
     try:
         cur = conn.execute(
-            "SELECT id FROM slots WHERE date=? AND time=? AND is_booked=0 LIMIT 1",
-            (date_str[:10], time_str[:5] if time_str else "09:00"),
+            "SELECT id FROM slots WHERE tenant_id = ? AND date=? AND time=? AND is_booked=0 LIMIT 1",
+            (tenant_id, date_str[:10], time_str[:5] if time_str else "09:00"),
         )
         row = cur.fetchone()
         return int(row["id"]) if row else None
@@ -393,8 +394,8 @@ def book_slot_atomic(
     try:
         conn.execute("BEGIN")
         conn.execute(
-            "UPDATE slots SET is_booked=1 WHERE id=? AND is_booked=0",
-            (slot_id,)
+            "UPDATE slots SET is_booked=1 WHERE id=? AND tenant_id=? AND is_booked=0",
+            (slot_id, tenant_id),
         )
         if conn.total_changes == 0:
             conn.rollback()
@@ -402,10 +403,10 @@ def book_slot_atomic(
 
         conn.execute(
             """
-            INSERT INTO appointments (slot_id, name, contact, contact_type, motif, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO appointments (tenant_id, slot_id, name, contact, contact_type, motif, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (slot_id, name, contact, contact_type, motif, datetime.utcnow().isoformat())
+            (tenant_id, slot_id, name, contact, contact_type, motif, datetime.utcnow().isoformat()),
         )
         conn.commit()
         return True
@@ -438,12 +439,12 @@ def find_booking_by_name(name: str, tenant_id: int = 1) -> Optional[Dict]:
             """
             SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif, s.date, s.time
             FROM appointments a
-            JOIN slots s ON s.id = a.slot_id
-            WHERE LOWER(TRIM(a.name)) = LOWER(TRIM(?))
+            JOIN slots s ON s.id = a.slot_id AND s.tenant_id = a.tenant_id
+            WHERE a.tenant_id = ? AND LOWER(TRIM(a.name)) = LOWER(TRIM(?))
             ORDER BY a.created_at DESC
             LIMIT 1
             """,
-            (name.strip(),),
+            (tenant_id, name.strip()),
         )
         row = cur.fetchone()
         if not row:
@@ -482,22 +483,22 @@ def cancel_booking_sqlite(booking: Dict, tenant_id: int = 1) -> bool:
     try:
         conn.execute("BEGIN")
         if slot_id is not None:
-            conn.execute("DELETE FROM appointments WHERE slot_id = ?", (slot_id,))
+            conn.execute("DELETE FROM appointments WHERE slot_id = ? AND tenant_id = ?", (slot_id, tenant_id))
         elif appt_id is not None:
-            cur = conn.execute("SELECT slot_id FROM appointments WHERE id = ?", (appt_id,))
+            cur = conn.execute("SELECT slot_id FROM appointments WHERE id = ? AND tenant_id = ?", (appt_id, tenant_id))
             r = cur.fetchone()
             if not r:
                 conn.rollback()
                 return False
             slot_id = r["slot_id"]
-            conn.execute("DELETE FROM appointments WHERE id = ?", (appt_id,))
+            conn.execute("DELETE FROM appointments WHERE id = ? AND tenant_id = ?", (appt_id, tenant_id))
         else:
             conn.rollback()
             return False
         if conn.total_changes == 0:
             conn.rollback()
             return False
-        conn.execute("UPDATE slots SET is_booked = 0 WHERE id = ?", (slot_id,))
+        conn.execute("UPDATE slots SET is_booked = 0 WHERE id = ? AND tenant_id = ?", (slot_id, tenant_id))
         conn.commit()
         return True
     except Exception:

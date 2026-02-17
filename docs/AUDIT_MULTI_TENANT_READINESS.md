@@ -90,8 +90,8 @@ Toutes les requêtes **PG** (slots_pg, tenants_pg, session_pg) passent par `tena
 
 ## 🔴 Bloquants (à corriger avant production multi-tenant)
 
-1. **backend/db.py (schéma SQLite slots/appointments)**  
-   Tables `slots` et `appointments` sans `tenant_id`. Dès que `USE_PG_SLOTS=false` ou fallback SQLite, tous les tenants partagent les mêmes créneaux et RDV.  
+1. **backend/db.py (schéma SQLite slots/appointments)** — ✅ **Résolu (Jour 6)**  
+   Tables `slots` et `appointments` ont désormais `tenant_id` (DEFAULT 1). Migration `_migrate_sqlite_add_tenant_id` pour DB existantes. Requêtes SQLite (count_free_slots, list_free_slots, find_slot_id_by_datetime, book_slot_atomic, find_booking_by_name, cancel_booking_sqlite, cleanup_old_slots) filtrent par `tenant_id`. UNIQUE(slots) = (tenant_id, date, time). *(Ancien : sans tenant_id.)* Dès que `USE_PG_SLOTS=false` ou fallback SQLite, tous les tenants partagent les mêmes créneaux et RDV.  
    **Fix :** Ajouter `tenant_id` aux tables SQLite, à toutes les requêtes (SELECT/UPDATE/INSERT/DELETE), et à l’index. Ou désactiver complètement le chemin SQLite en prod multi-tenant.
 
 2. **backend/session_store_sqlite.py** — ✅ **Résolu (Jour 4)**  
