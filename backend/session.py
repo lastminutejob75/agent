@@ -88,6 +88,9 @@ class Session:
     # Séquentiel : "non" consécutifs → à 2, demander préférence ouverte
     slot_sequential_refuse_count: int = 0
 
+    # V3 Hardening: retry slot_taken (2 puis fallback_transfer)
+    booking_failures: int = 0  # incrémenté à chaque slot_taken, reset à 0 si confirmed
+
     # CANCEL/MODIFY pending
     pending_cancel_slot: Optional[Dict] = None  # RDV à annuler/modifier
 

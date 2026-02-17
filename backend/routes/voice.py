@@ -940,6 +940,8 @@ async def vapi_tool(request: Request):
         motif = (params.get("motif") or "").strip() or None
         preference = (params.get("preference") or "").strip() or None
         selected_slot = (params.get("selected_slot") or "").strip() or None
+        exclude_start_iso = (params.get("exclude_start_iso") or "").strip() or None
+        exclude_end_iso = (params.get("exclude_end_iso") or "").strip() or None
 
         call_id = _tool_extract_call_id(payload)
         tool_call_id = _tool_extract_tool_call_id(payload)
@@ -975,7 +977,11 @@ async def vapi_tool(request: Request):
                 session.qualif_data.motif = motif
             if preference:
                 session.qualif_data.pref = preference
-            slots_list, source, err = th.handle_get_slots(session, preference, call_id)
+            slots_list, source, err = th.handle_get_slots(
+                session, preference, call_id,
+                exclude_start_iso=exclude_start_iso,
+                exclude_end_iso=exclude_end_iso,
+            )
             if hasattr(ENGINE.session_store, "save"):
                 ENGINE.session_store.save(session)
             if err:
@@ -997,12 +1003,12 @@ async def vapi_tool(request: Request):
                 status_code=200,
             )
 
-        # --- book : réservation ---
+        # --- book : réservation (payload JSON strict V3) ---
         if action == "book":
             session = _get_session()
             session.channel = "vocal"
             session.tenant_id = resolved_tenant_id
-            ok, result_dict, err = th.handle_book(session, selected_slot, patient_name, motif, call_id)
+            payload, err = th.handle_book(session, selected_slot, patient_name, motif, call_id)
             if err:
                 return JSONResponse(
                     th.build_vapi_tool_response(tool_call_id, None, err),
@@ -1013,21 +1019,10 @@ async def vapi_tool(request: Request):
                     ENGINE.session_store.save(session)
             except Exception as save_err:
                 logger.warning("Tool book: save session failed (booking already done): %s", save_err)
-            try:
-                logger.info("TOOL_BOOK_SUCCESS call_id=%s returning results", (call_id or "")[:24])
-                message = (result_dict or {}).get("message") or "Rendez-vous confirmé."
-                body = th.build_vapi_tool_response(tool_call_id, str(message), None)
-                return JSONResponse(body, status_code=200)
-            except Exception as build_err:
-                logger.warning(
-                    "TOOL_BOOK_RESPONSE_FALLBACK call_id=%s err=%s",
-                    (call_id or "")[:24],
-                    build_err,
-                    exc_info=True,
-                )
-                fallback_msg = (result_dict or {}).get("message") or "Rendez-vous confirmé."
-                safe_body = th.build_vapi_tool_response(tool_call_id, str(fallback_msg), None)
-                return JSONResponse(safe_body, status_code=200)
+            result_str = json.dumps(payload or {}, ensure_ascii=False)
+            logger.info("[VAPI_TOOL_RESPONSE] payload=%s result=%s", payload, result_str)
+            body = th.build_vapi_tool_response(tool_call_id, result_str, None)
+            return JSONResponse(body, status_code=200)
 
         # --- cancel / modify : déléguer à l'engine avec user_message ---
         if action in ("cancel", "modify"):

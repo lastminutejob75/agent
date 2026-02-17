@@ -57,6 +57,7 @@ def session_to_dict(session: Session) -> Dict[str, Any]:
         "extracted_motif": getattr(session, "extracted_motif", False),
         "extracted_pref": getattr(session, "extracted_pref", False),
         "pending_cancel_slot": getattr(session, "pending_cancel_slot", None),
+        "booking_failures": getattr(session, "booking_failures", 0),
         # Fix #9: recovery (Postgres-friendly, inclut phone.partial / contact.mode)
         "recovery": getattr(session, "recovery", None) or {},
     }
@@ -118,6 +119,7 @@ def session_from_dict(conv_id: str, d: Dict[str, Any]) -> Session:
     session.contact_confirm_fails = d.get("contact_confirm_fails", 0)
     session.turn_count = d.get("turn_count", 0)
     session.intent_router_visits = d.get("intent_router_visits", 0)
+    session.booking_failures = d.get("booking_failures", 0)
     session.extracted_name = d.get("extracted_name", False)
     session.extracted_motif = d.get("extracted_motif", False)
     session.extracted_pref = d.get("extracted_pref", False)

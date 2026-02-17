@@ -498,16 +498,31 @@ def prefetch_slots_for_pref_question(session: Any) -> None:
     threading.Thread(target=_run, daemon=True).start()
 
 
+def _normalize_iso(s: Optional[str]) -> str:
+    """Normalise un timestamp ISO pour comparaison (strip, Z -> +00:00)."""
+    if not s:
+        return ""
+    s = (s or "").strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    return s
+
+
 def get_slots_for_display(
     limit: int = 3,
     pref: Optional[str] = None,
     session: Optional[Any] = None,
+    exclude_start_iso: Optional[str] = None,
+    exclude_end_iso: Optional[str] = None,
 ) -> List[prompts.SlotDisplay]:
     """
     Récupère les créneaux disponibles, filtrés par préférence si fournie.
     
     pref: "matin" (9h-12h), "après-midi" (14h-18h), "soir" (18h+) — pour ne pas proposer
     un créneau à 10h quand l'utilisateur a dit "je finis à 17h".
+    
+    exclude_start_iso / exclude_end_iso: si fournis, le créneau (start_iso, end_iso) égal
+    est exclu du résultat (V3 retry après slot_taken).
     
     Utilise Google Calendar si configuré, sinon SQLite.
     Cache utilisé seulement si pref est None (sinon filtre spécifique).
@@ -566,7 +581,23 @@ def get_slots_for_display(
             pass
     # Étaler : 1 par (jour, période) + max 2/jour, fallback 2h
     slots = _spread_slots(pool, limit=limit, min_gap_minutes=MIN_SLOT_GAP_MINUTES)
-    
+
+    # V3: exclure le créneau (start_iso, end_iso) si fourni (retry après slot_taken)
+    if exclude_start_iso or exclude_end_iso:
+        ex_start = _normalize_iso(exclude_start_iso)
+        ex_end = _normalize_iso(exclude_end_iso)
+        out = []
+        for s in slots:
+            d = s if isinstance(s, dict) else getattr(s, "__dict__", {})
+            start = _normalize_iso(d.get("start_iso") or d.get("start"))
+            end = _normalize_iso(d.get("end_iso") or d.get("end"))
+            if ex_start and ex_end and start == ex_start and end == ex_end:
+                continue
+            out.append(s)
+        slots = out
+        if ex_start or ex_end:
+            logger.info("get_slots_for_display: excluded slot %s..%s → %s slots", ex_start[:19], ex_end[:19], len(slots))
+
     if pref is None and not rejected:
         _set_cached_slots(slots, tenant_id)
 

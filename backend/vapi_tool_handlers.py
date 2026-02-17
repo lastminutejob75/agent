@@ -30,20 +30,35 @@ def handle_get_slots(
     session: Any,
     preference: Optional[str],
     call_id: str,
+    exclude_start_iso: Optional[str] = None,
+    exclude_end_iso: Optional[str] = None,
 ) -> Tuple[Optional[List[str]], Optional[str], str]:
     """
     Récupère les créneaux depuis Google Calendar (ou SQLite).
+    exclude_start_iso / exclude_end_iso : créneau à exclure (ex. après slot_taken).
     Returns: (slots_list, source, error_message).
-    Si error_message non vide, slots_list peut être None.
     """
-    logger.info("CALENDAR_FETCH", extra={"call_id": call_id[:24] if call_id else "", "preference": preference or "any"})
+    logger.info(
+        "CALENDAR_FETCH",
+        extra={
+            "call_id": call_id[:24] if call_id else "",
+            "preference": preference or "any",
+            "exclude": bool(exclude_start_iso or exclude_end_iso),
+        },
+    )
     try:
         pref = (preference or "").strip().lower()
         if pref not in ("matin", "après-midi", "apres-midi", "soir", ""):
             pref = None
         if pref == "apres-midi":
             pref = "après-midi"
-        slots = tools_booking.get_slots_for_display(limit=3, pref=pref or None, session=session)
+        slots = tools_booking.get_slots_for_display(
+            limit=3,
+            pref=pref or None,
+            session=session,
+            exclude_start_iso=exclude_start_iso or None,
+            exclude_end_iso=exclude_end_iso or None,
+        )
         tools_booking.store_pending_slots(session, slots)
         labels = [_slot_to_vocal_label(s) for s in slots]
         _src = getattr(session, "_slots_source", None) or ""
@@ -58,16 +73,30 @@ def handle_get_slots(
         return (None, None, "Impossible de consulter l'agenda pour le moment.")
 
 
+def _chosen_slot_iso(session: Any, choice: int) -> Tuple[Optional[str], Optional[str]]:
+    """Retourne (start_iso, end_iso) du créneau choisi depuis session.pending_slots."""
+    pending = getattr(session, "pending_slots", None) or []
+    if not pending or not (1 <= choice <= len(pending)):
+        return None, None
+    slots = tools_booking.to_canonical_slots(pending) if pending and not isinstance(pending[0], dict) else list(pending)
+    chosen = slots[choice - 1] if choice <= len(slots) else {}
+    start = chosen.get("start_iso") or chosen.get("start") or ""
+    end = chosen.get("end_iso") or chosen.get("end") or ""
+    return (start or None, end or None)
+
+
 def handle_book(
     session: Any,
     selected_slot: Optional[str],
     patient_name: Optional[str],
     motif: Optional[str],
     call_id: str,
-) -> Tuple[bool, Optional[Dict[str, Any]], str]:
+) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     """
-    Réserve le créneau choisi (1, 2 ou 3, ou libellé).
-    Returns: (success, result_dict, error_message).
+    Réserve le créneau choisi. Retourne un payload standard V3 (JSON strict).
+    Returns: (payload_dict, error_message).
+    error_message utilisé uniquement pour réponse error côté Vapi si besoin; pour book on renvoie toujours payload.
+    Payload: status in ("confirmed", "slot_taken", "technical_error", "fallback_transfer").
     """
     if patient_name:
         session.qualif_data.name = patient_name.strip()
@@ -91,35 +120,49 @@ def handle_book(
                 break
 
     session.pending_slot_choice = choice
+    start_iso, end_iso = _chosen_slot_iso(session, choice)
+
     success, reason = tools_booking.book_slot_from_session(session, choice)
-    slot_label = tools_booking.get_label_for_choice(session, choice) or (selected_slot or "")
 
     if success:
-        patient = patient_name or session.qualif_data.name or "le patient"
-        slot_str = str(slot_label) if slot_label else ""
-        patient_str = str(patient).strip() or "le patient"
-        motif_str = str(motif or session.qualif_data.motif or "consultation").strip()
-        message = f"Rendez-vous confirmé pour {patient_str} le {slot_str}."
+        session.booking_failures = 0
+        event_id = getattr(session, "google_event_id", None) or ""
+        if not start_iso or not end_iso:
+            start_iso, end_iso = _chosen_slot_iso(session, choice)
+        start_iso = start_iso or ""
+        end_iso = end_iso or ""
         logger.info(
             "BOOKING_CONFIRMED",
-            extra={"call_id": call_id[:24] if call_id else "", "slot": slot_str[:40], "patient_name": patient_str[:20]},
+            extra={"call_id": (call_id or "")[:24], "event_id": (event_id or "")[:24]},
         )
         return (
-            True,
             {
                 "status": "confirmed",
-                "slot": slot_str,
-                "patient": patient_str,
-                "motif": motif_str,
-                "message": message,
+                "event_id": event_id,
+                "start_iso": start_iso,
+                "end_iso": end_iso,
             },
-            "",
+            None,
         )
-    if reason == "technical":
-        return (False, None, "Impossible de consulter l'agenda pour le moment.")
+
+    if reason == "slot_taken":
+        failures = getattr(session, "booking_failures", 0) + 1
+        session.booking_failures = failures
+        if failures >= 2:
+            return ({"status": "fallback_transfer"}, None)
+        return (
+            {
+                "status": "slot_taken",
+                "start_iso": start_iso or "",
+                "end_iso": end_iso or "",
+            },
+            None,
+        )
+
     if reason == "permission":
-        return (False, None, "Problème d'accès à l'agenda.")
-    return (False, None, "Ce créneau n'est plus disponible.")
+        return ({"status": "technical_error", "code": "permission"}, None)
+    # technical ou autre
+    return ({"status": "technical_error", "code": "calendar_unavailable"}, None)
 
 
 def build_vapi_tool_response(

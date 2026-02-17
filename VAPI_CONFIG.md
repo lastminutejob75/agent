@@ -94,7 +94,7 @@ Bonjour Cabinet Dupont, vous appelez pour un rendez-vous ?
 | **Language** | French |
 | **Model** | Custom LLM (recommandé) |
 
-**Prompt / System instructions** : pour un ton **médical professionnel** (sans "Nickel", "Super", ton décontracté), utiliser le prompt décrit dans **[docs/VAPI_PROMPT_ASSISTANT.md](docs/VAPI_PROMPT_ASSISTANT.md)**.
+**Prompt / System instructions** : pour un ton **médical professionnel** (sans "Nickel", "Super", ton décontracté), utiliser le prompt décrit dans **[docs/VAPI_PROMPT_ASSISTANT.md](docs/VAPI_PROMPT_ASSISTANT.md)**. Pour la gestion des **statuts de réservation** (confirmed, slot_taken, technical_error, fallback_transfer), ajouter le bloc **[docs/VAPI_PROMPT_BOOKING_STATUS.md](docs/VAPI_PROMPT_BOOKING_STATUS.md)**.
 
 ### 2. Server URL (Webhook)
 
