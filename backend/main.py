@@ -20,7 +20,7 @@ import sqlite3
 
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, RedirectResponse
+from fastapi.responses import JSONResponse, StreamingResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.engine import ENGINE, Event
@@ -37,13 +37,32 @@ _logger = logging.getLogger(__name__)
 
 # CORS pour front uwiapp.com (JWT localStorage)
 _cors_origins = (os.environ.get("CORS_ORIGINS") or "https://uwiapp.com,https://www.uwiapp.com,http://localhost:5173").split(",")
+_cors_origins_list = [o.strip() for o in _cors_origins if o.strip()]
+# Admin : mêmes origines par défaut ; optionnel ADMIN_CORS_ORIGINS pour liste plus stricte
+_admin_cors_origins = (os.environ.get("ADMIN_CORS_ORIGINS") or "").strip()
+_admin_origins_list = [o.strip() for o in _admin_cors_origins.split(",") if o.strip()] if _admin_cors_origins else _cors_origins_list
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in _cors_origins if o.strip()],
+    allow_origins=_cors_origins_list,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Tenant-Key"],
 )
+
+
+@app.middleware("http")
+async def admin_cors_guard(request: Request, call_next):
+    """Refuse /api/admin/* si Origin présente et non autorisée (réduit la surface d'attaque)."""
+    if not request.url.path.startswith("/api/admin/"):
+        return await call_next(request)
+    origin = (request.headers.get("origin") or "").strip()
+    if not origin:
+        return await call_next(request)
+    if origin in _admin_origins_list:
+        return await call_next(request)
+    _logger.warning("admin_cors_reject path=%s origin=%s", request.url.path, origin[:80])
+    return JSONResponse(status_code=403, content={"detail": "Origin not allowed for admin API"})
 
 
 @app.middleware("http")

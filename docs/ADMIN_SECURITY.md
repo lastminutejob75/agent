@@ -38,7 +38,7 @@ Aujourd’hui : un seul token admin (ADMIN_API_TOKEN) → tout ce qui n’est pa
   - **401** : Bearer manquant, vide, ou token invalide/expiré.
   - **403** : réservé pour usage futur (token valide mais role ≠ admin).
 - **Rotation** : `ADMIN_API_TOKENS=tok1,tok2` permet plusieurs tokens valides en parallèle (sans coupure pendant la rotation).
-- **Audit** : chaque accès admin est loggé (path, client IP, user-agent) pour traçabilité même sans user.
+- **Audit** : chaque accès admin est loggé (path, client IP, user-agent, `token_fp` = 8 premiers caractères du sha256 du token). Le Bearer n'est jamais loggé en clair ; l'empreinte permet de diagnostiquer une fuite sans exposer le secret. **CORS** : refuser `/api/admin/*` depuis des origines inattendues ; optionnel : allowlist IP (plus tard).
 
 Aucune route admin n’accepte le JWT client : seuls les tokens admin ouvrent l’accès.
 
@@ -70,4 +70,10 @@ Aucune route admin n’accepte le JWT client : seuls les tokens admin ouvrent l�
 ## V3 — Enterprise (optionnel)
 
 7. 2FA admin (TOTP / passkey).
-8. Admin limité à une allowlist IP ou domaine dédié.
+8. Admin limité à une allowlist IP ou domaine dédié (voir `ADMIN_ALLOWED_IPS` dans `docs/AUTH_V2_ADMIN_USERS.md`).
+
+---
+
+## Auth admin par utilisateur (spec)
+
+Voir **`docs/AUTH_V2_ADMIN_USERS.md`** : admin en magic link, JWT en cookie HttpOnly, `require_admin()` → 403 si non admin, migration en 2 étapes avec legacy `ADMIN_API_TOKENS` puis retrait.

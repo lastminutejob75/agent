@@ -6,6 +6,7 @@ API admin / onboarding pour uwi-landing (Vite SPA).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -61,12 +62,14 @@ def require_admin(
     token = credentials.credentials.strip()
     if token not in _ADMIN_VALID_TOKENS:
         raise HTTPException(401, "Invalid or expired token")
-    # Audit minimal : route + ip + user-agent (sans user, token partagé)
+    # Audit minimal : route, ip, user-agent, empreinte token (jamais le token en clair)
+    token_fingerprint = hashlib.sha256(token.encode()).hexdigest()[:8]
     logger.info(
-        "admin_access path=%s client=%s user_agent=%s",
+        "admin_access path=%s client=%s user_agent=%s token_fp=%s",
         request.url.path,
         request.client.host if request.client else None,
         (request.headers.get("user-agent") or "")[:200],
+        token_fingerprint,
     )
 
 
