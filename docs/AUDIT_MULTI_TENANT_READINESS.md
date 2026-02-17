@@ -6,9 +6,9 @@
 
 ---
 
-## Score global : **6/10**
+## Score global : **6/10** → **8/10** (post Jours 1–5)
 
-PostgreSQL est bien structuré pour le multi-tenant (slots, appointments, tenant_routing, tenant_config). Le fallback SQLite et plusieurs couches (sessions, client_memory, rapports) ne sont pas isolés par tenant. Résolution tenant uniquement sur le canal vocal (DID).
+PostgreSQL structuré pour le multi-tenant. **Mise à jour (Jours 1–5)** : résolution tenant **Vocal**, **WhatsApp** (To → tenant_routing), **Web** (X-Tenant-Key → tenant_routing channel=web). Session store web en PG (`web_sessions` scopé `tenant_id, conv_id`). ClientMemory en PG (`tenant_clients`, `tenant_booking_history`). Rapports quotidiens acceptent `?tenant_id=` pour scope. En mode `MULTI_TENANT_MODE=true`, chemins SQLite (slots, sessions, client_memory) sont bloqués (_sqlite_guard).
 
 ---
 
@@ -29,8 +29,8 @@ PostgreSQL est bien structuré pour le multi-tenant (slots, appointments, tenant
 | Canal | Mécanisme | Fichier | Statut |
 |-------|-----------|---------|--------|
 | **Vocal (Vapi)** | Numéro appelé (DID) → `tenant_routing` (channel=`vocal`, key=E.164). PG-first, fallback SQLite. | `tenant_routing.py`, `tenants_pg.pg_resolve_tenant_id` | ✅ |
-| **WhatsApp** | — | `routes/whatsapp.py` | ❌ Aucun `resolve_tenant_id` ou équivalent (pas de tenant_id dans le flux). |
-| **Web** | — | — | ❌ Pas d’API key / identifiant tenant trouvé pour le widget. |
+| **WhatsApp** | Numéro destinataire (To) → `tenant_routing` (channel=`whatsapp`, key=E.164). `resolve_tenant_from_whatsapp(to_number)`. | `tenant_routing.py`, `routes/whatsapp.py` | ✅ |
+| **Web** | Header `X-Tenant-Key` → `tenant_routing` (channel=`web`, key=api_key). `resolve_tenant_from_api_key(api_key)`. Défaut si absent ; 401 si clé invalide. | `tenant_routing.py`, `main.py` (/chat, /stream) | ✅ |
 
 Le tenant n’est pas injecté via FastAPI `Depends()` ni `ContextVar` : il est résolu dans chaque route (ex. voice) et passé à la session / engine.
 
@@ -42,7 +42,7 @@ Le tenant n’est pas injecté via FastAPI `Depends()` ni `ContextVar` : il est 
 |-------|--------|--------|
 | Engine reçoit un tenant explicite | ✅ | `session.tenant_id` est fixé par la route (vocal) ; engine utilise `getattr(session, "tenant_id", None)` pour scope ivr_events et `get_tenant_flags`. |
 | Services (Calendar, Twilio) par tenant | 🟡 | **Calendar** : `get_calendar_adapter(session)` utilise `tenant_config.params_json` (calendar_id par tenant) ; credentials Google = **global** (`SERVICE_ACCOUNT_FILE`). **Twilio** : pas de mapping numéro → tenant vu dans le code. |
-| Variables globales / singletons | 🟡 | `ENGINE` (engine global), `get_client_memory()` singleton, `session_store` partagé. Le store résout la session par `conv_id` uniquement (pas de clé tenant). |
+| Variables globales / singletons | 🟡 | `ENGINE` (engine global), `get_client_memory()` singleton. **Session store** : `HybridSessionStore` — sessions web en PG (`web_sessions` par `tenant_id`, `conv_id`), cache `conv_id` → `tenant_id` pour GET /stream. **ClientMemory** : `HybridClientMemory` — PG `tenant_clients` / `tenant_booking_history` quand `tenant_id` connu (ContextVar ou param). |
 | Prompts paramétrés par tenant | ❌ | `config.BUSINESS_NAME`, `config.TRANSFER_PHONE`, horaires = globaux. Commentaire config : « Pour multi-clients plus tard : passer en config par tenant ». |
 
 ---
@@ -83,7 +83,7 @@ Toutes les requêtes **PG** (slots_pg, tenants_pg, session_pg) passent par `tena
 
 | Point | Statut | Détail |
 |-------|--------|--------|
-| Rapports quotidiens scopés par tenant | 🟡 | `get_daily_report_data(client_id, date)` : le scope est `client_id`. En pratique, la boucle rapports utilise `get_clients_with_email()` de **ClientMemory** (patients avec email), pas la liste des tenants — incohérent pour un rapport “par cabinet”. Sans clients avec email, rapport envoyé avec `get_daily_report_data(1, today)` (tenant 1 en dur). |
+| Rapports quotidiens scopés par tenant | ✅ | `POST /api/reports/daily?tenant_id=` optionnel ; `get_clients_with_email(tenant_id=...)` restreint au tenant. `get_daily_report_data(client_id, date)` : scope `client_id`. En pratique, la boucle rapports utilise `get_clients_with_email()` de **ClientMemory** (patients avec email), pas la liste des tenants — incohérent pour un rapport “par cabinet”. Sans clients avec email, rapport envoyé avec `get_daily_report_data(1, today)` (tenant 1 en dur). |
 | Tracking consommation (tokens, minutes) | ❌ | Aucun tracking par tenant vu dans le code. |
 
 ---
@@ -94,21 +94,17 @@ Toutes les requêtes **PG** (slots_pg, tenants_pg, session_pg) passent par `tena
    Tables `slots` et `appointments` sans `tenant_id`. Dès que `USE_PG_SLOTS=false` ou fallback SQLite, tous les tenants partagent les mêmes créneaux et RDV.  
    **Fix :** Ajouter `tenant_id` aux tables SQLite, à toutes les requêtes (SELECT/UPDATE/INSERT/DELETE), et à l’index. Ou désactiver complètement le chemin SQLite en prod multi-tenant.
 
-2. **backend/session_store_sqlite.py**  
-   Table `sessions` sans `tenant_id`, clé = `conv_id` seul. Risque de mélange de sessions entre tenants si `conv_id` réutilisé.  
-   **Fix :** Clé composite `(tenant_id, conv_id)` ou colonne `tenant_id` + index, et toujours filtrer par tenant à la lecture/écriture.
+2. **backend/session_store_sqlite.py** — ✅ **Résolu (Jour 4)**  
+   En prod multi-tenant avec PG : `HybridSessionStore` utilise `web_sessions` (PG) scopé `(tenant_id, conv_id)` pour le web ; cache `conv_id` → `tenant_id` pour GET /stream. Chemin SQLite bloqué par `_sqlite_guard` si `MULTI_TENANT_MODE=true`.
 
-3. **backend/client_memory.py**  
-   Une base SQLite globale, sans `tenant_id`. En multi-tenant, tous les “clients” (patients) seraient mélangés.  
-   **Fix :** Soit ajouter `tenant_id` partout (tables, requêtes), soit une base / schéma par tenant, soit migrer cette couche vers PG avec `tenant_id`.
+3. **backend/client_memory.py** — ✅ **Résolu (Jour 5)**  
+   `HybridClientMemory` + `client_memory_pg` : tables PG `tenant_clients`, `tenant_booking_history` scopées par `tenant_id`. Voice et rapports passent `tenant_id` ; fallback SQLite bloqué en multi-tenant. *(Ancien : base SQLite globale sans tenant_id.)*
 
-4. **backend/routes/whatsapp.py**  
-   Aucune résolution de tenant (numéro WhatsApp, identifiant, etc.).  
-   **Fix :** Introduire un mapping (ex. numéro WhatsApp Business → tenant_id) et passer `tenant_id` dans la session / engine.
+4. **backend/routes/whatsapp.py** — ✅ **Résolu (Jour 2)**  
+   `resolve_tenant_from_whatsapp(to_number)` (numéro destinataire → `tenant_routing` channel=whatsapp) ; `tenant_id` injecté dans la session et `current_tenant_id`.
 
-5. **Web / widget**  
-   Aucun mécanisme identifié pour associer une conversation web à un tenant (API key, domaine, tenant_id en paramètre).  
-   **Fix :** Définir un mécanisme (ex. API key par tenant, ou `tenant_id` dans l’URL/config du widget) et l’utiliser dans la route chat/stream.
+5. **Web / widget** — ✅ **Résolu (Jour 3)**  
+   Header `X-Tenant-Key` → `resolve_tenant_from_api_key(api_key)` ; `/chat` et `/stream` fixent `session.tenant_id` et `current_tenant_id`. Admin : `channel=web` dans `POST /api/admin/routing`. *(Ancien : aucun mécanisme identifié.)*
 
 ---
 

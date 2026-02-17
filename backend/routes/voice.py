@@ -625,7 +625,7 @@ def _compute_voice_response_sync(
             session.reconstruct_count = 1
         if customer_phone:
             try:
-                existing_client = client_memory.get_by_phone(customer_phone)
+                existing_client = client_memory.get_by_phone(customer_phone, tenant_id=getattr(session, "tenant_id", None))
                 if existing_client and existing_client.total_bookings > 0:
                     greeting = client_memory.get_personalized_greeting(existing_client, channel="vocal")
                     if greeting:
@@ -752,12 +752,14 @@ def _compute_voice_response_sync(
                         phone=customer_phone,
                         name=session.qualif_data.name,
                         email=session.qualif_data.contact if getattr(session.qualif_data, "contact_type", None) == "email" else None,
+                        tenant_id=getattr(session, "tenant_id", None),
                     )
                     slot_label = tools_booking.get_label_for_choice(session, session.pending_slot_choice or 1) or "RDV"
                     client_memory.record_booking(
                         client_id=client.id,
                         slot_label=slot_label,
                         motif=session.qualif_data.motif or "consultation",
+                        tenant_id=getattr(session, "tenant_id", None),
                     )
             except Exception:
                 pass
@@ -1378,7 +1380,7 @@ async def vapi_custom_llm(request: Request):
             # 🧠 Check si client récurrent (avant le premier message traité)
             if customer_phone:
                 try:
-                    existing_client = client_memory.get_by_phone(customer_phone)
+                    existing_client = client_memory.get_by_phone(customer_phone, tenant_id=getattr(session, "tenant_id", None))
                     if existing_client:
                         session.client_id = existing_client.id  # pour ivr_events / rapport quotidien
                         if existing_client.total_bookings > 0:
@@ -1595,13 +1597,15 @@ async def vapi_custom_llm(request: Request):
                                 client = client_memory.get_or_create(
                                     phone=customer_phone,
                                     name=session.qualif_data.name,
-                                    email=session.qualif_data.contact if session.qualif_data.contact_type == "email" else None
+                                    email=session.qualif_data.contact if session.qualif_data.contact_type == "email" else None,
+                                    tenant_id=getattr(session, "tenant_id", None),
                                 )
                                 slot_label = tools_booking.get_label_for_choice(session, session.pending_slot_choice or 1) or "RDV"
                                 client_memory.record_booking(
                                     client_id=client.id,
                                     slot_label=slot_label,
-                                    motif=session.qualif_data.motif or "consultation"
+                                    motif=session.qualif_data.motif or "consultation",
+                                    tenant_id=getattr(session, "tenant_id", None),
                                 )
                                 print(f"🧠 Client saved: {client.name} (id={client.id})")
                             except Exception as e:
@@ -1657,10 +1661,16 @@ async def vapi_custom_llm(request: Request):
                                 client = client_memory.get_or_create(
                                     phone=customer_phone,
                                     name=session_after.qualif_data.name,
-                                    email=session_after.qualif_data.contact if getattr(session_after.qualif_data, "contact_type", None) == "email" else None
+                                    email=session_after.qualif_data.contact if getattr(session_after.qualif_data, "contact_type", None) == "email" else None,
+                                    tenant_id=getattr(session_after, "tenant_id", None),
                                 )
                                 slot_label = tools_booking.get_label_for_choice(session_after, session_after.pending_slot_choice or 1) or "RDV"
-                                client_memory.record_booking(client_id=client.id, slot_label=slot_label, motif=session_after.qualif_data.motif or "consultation")
+                                client_memory.record_booking(
+                                    client_id=client.id,
+                                    slot_label=slot_label,
+                                    motif=session_after.qualif_data.motif or "consultation",
+                                    tenant_id=getattr(session_after, "tenant_id", None),
+                                )
                         except Exception:
                             pass
                 

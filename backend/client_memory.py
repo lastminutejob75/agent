@@ -592,15 +592,133 @@ class ClientMemory:
 
 
 # ============================================
+# Hybride PG / SQLite (multi-tenant)
+# ============================================
+
+class HybridClientMemory:
+    """
+    Délègue à PG (tenant_clients / tenant_booking_history) quand USE_PG_TENANTS
+    et tenant_id connu, sinon à ClientMemory SQLite.
+    Toutes les méthodes CRUD acceptent tenant_id optionnel (sinon lu depuis current_tenant_id).
+    """
+
+    def __init__(self) -> None:
+        self._sqlite = ClientMemory()
+
+    def _resolve_tenant(self, tenant_id: Optional[int]) -> Optional[int]:
+        if tenant_id is not None:
+            return tenant_id
+        try:
+            from backend.tenant_routing import current_tenant_id
+            t = current_tenant_id.get()
+            if t and str(t).strip():
+                return int(t)
+        except Exception:
+            pass
+        return None
+
+    def _use_pg(self, tenant_id: Optional[int]) -> bool:
+        from backend import config
+        if not config.USE_PG_TENANTS or tenant_id is None:
+            return False
+        try:
+            from backend import client_memory_pg
+            return bool(client_memory_pg._pg_url())
+        except Exception:
+            return False
+
+    def get_by_phone(self, phone: str, tenant_id: Optional[int] = None) -> Optional[Client]:
+        tid = self._resolve_tenant(tenant_id)
+        if self._use_pg(tid):
+            from backend import client_memory_pg
+            return client_memory_pg.pg_get_client_by_phone(tid, phone)
+        return self._sqlite.get_by_phone(phone)
+
+    def get_by_name(self, name: str, tenant_id: Optional[int] = None) -> Optional[Client]:
+        tid = self._resolve_tenant(tenant_id)
+        if self._use_pg(tid):
+            from backend import client_memory_pg
+            return client_memory_pg.pg_get_client_by_name(tid, name)
+        return self._sqlite.get_by_name(name)
+
+    def get_or_create(
+        self,
+        phone: Optional[str] = None,
+        name: str = "",
+        email: Optional[str] = None,
+        tenant_id: Optional[int] = None,
+    ) -> Client:
+        tid = self._resolve_tenant(tenant_id)
+        if self._use_pg(tid):
+            from backend import client_memory_pg
+            return client_memory_pg.pg_get_or_create_client(tid, phone=phone, name=name, email=email)
+        return self._sqlite.get_or_create(phone=phone, name=name, email=email)
+
+    def record_booking(
+        self,
+        client_id: int,
+        slot_label: str,
+        motif: str,
+        status: str = "confirmed",
+        tenant_id: Optional[int] = None,
+    ) -> int:
+        tid = self._resolve_tenant(tenant_id)
+        if self._use_pg(tid):
+            from backend import client_memory_pg
+            return client_memory_pg.pg_record_booking(tid, client_id, slot_label, motif, status)
+        return self._sqlite.record_booking(client_id, slot_label, motif, status)
+
+    def get_history(
+        self,
+        client_id: int,
+        limit: int = 10,
+        tenant_id: Optional[int] = None,
+    ) -> List[BookingHistory]:
+        tid = self._resolve_tenant(tenant_id)
+        if self._use_pg(tid):
+            from backend import client_memory_pg
+            return client_memory_pg.pg_get_history(tid, client_id, limit)
+        return self._sqlite.get_history(client_id, limit)
+
+    def is_returning_client(self, phone: str, tenant_id: Optional[int] = None) -> bool:
+        client = self.get_by_phone(phone, tenant_id=tenant_id)
+        return client is not None and client.total_bookings >= 1
+
+    def get_personalized_greeting(
+        self,
+        client: Client,
+        channel: str = "vocal",
+    ) -> Optional[str]:
+        return self._sqlite.get_personalized_greeting(client, channel=channel)
+
+    def get_preferred_time_suggestion(self, client: Client) -> Optional[str]:
+        return self._sqlite.get_preferred_time_suggestion(client)
+
+    def get_clients_with_email(self, tenant_id: Optional[int] = None) -> List[tuple]:
+        tid = self._resolve_tenant(tenant_id)
+        if self._use_pg(tid):
+            from backend import client_memory_pg
+            return client_memory_pg.pg_get_clients_with_email(tid)
+        return self._sqlite.get_clients_with_email()
+
+    def get_stats(self, days: int = 30, tenant_id: Optional[int] = None) -> Dict[str, Any]:
+        tid = self._resolve_tenant(tenant_id)
+        if self._use_pg(tid):
+            from backend import client_memory_pg
+            return client_memory_pg.pg_get_stats(tid, days)
+        return self._sqlite.get_stats(days)
+
+
+# ============================================
 # Singleton pour usage global
 # ============================================
 
-_memory_instance: Optional[ClientMemory] = None
+_memory_instance: Optional[HybridClientMemory] = None
 
 
-def get_client_memory() -> ClientMemory:
-    """Récupère l'instance singleton de ClientMemory."""
+def get_client_memory() -> HybridClientMemory:
+    """Récupère l'instance singleton (HybridClientMemory : PG si tenant_id, sinon SQLite)."""
     global _memory_instance
     if _memory_instance is None:
-        _memory_instance = ClientMemory()
+        _memory_instance = HybridClientMemory()
     return _memory_instance

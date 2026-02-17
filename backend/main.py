@@ -114,11 +114,11 @@ def ensure_stream(conv_id: str) -> None:
 async def startup():
     """
     Initialisation au RUNTIME.
-    L'init lourde (credentials, PG) tourne en arrière-plan pour que /health
-    réponde immédiatement (healthcheck Railway).
+    L'init lourde (validation multi-tenant, credentials, PG) tourne en arrière-plan
+    pour que /health réponde immédiatement (healthcheck Railway).
     """
-    config.validate_multi_tenant_config()
-    # Démarre les tâches de fond immédiatement
+    # Ne pas bloquer le démarrage : validation multi-tenant déplacée en arrière-plan
+    # (évite crash au boot si MULTI_TENANT_MODE=true sans USE_PG_SLOTS → healthcheck fail)
     asyncio.create_task(cleanup_old_conversations())
     asyncio.create_task(keep_alive())
     asyncio.create_task(_init_heavy())
@@ -131,9 +131,16 @@ async def _init_heavy():
 
 
 def _init_heavy_sync():
-    """Partie synchrone de l'init (credentials, PG)."""
+    """Partie synchrone de l'init (validation multi-tenant, credentials, PG)."""
     import os
     print("🔄 Heavy init started...")
+    # Validation multi-tenant (ne bloque plus le startup → healthcheck OK)
+    try:
+        config.validate_multi_tenant_config()
+        print("✅ Multi-tenant config OK")
+    except RuntimeError as e:
+        _logger.critical("MULTI_TENANT config invalid: %s", e)
+        print(f"⚠️ MULTI_TENANT: {e}")
     # Credentials Google
     try:
         config.load_google_credentials()

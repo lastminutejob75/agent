@@ -11,7 +11,7 @@ import threading
 from datetime import date
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 from backend.db import get_daily_report_data
@@ -32,8 +32,8 @@ def _check_report_secret(x_report_secret: Optional[str] = Header(None, alias="X-
         raise HTTPException(status_code=403, detail="Invalid secret")
 
 
-def _run_daily_report() -> Dict[str, Any]:
-    """Logique rapport (exécutée dans un thread pour timeout)."""
+def _run_daily_report(tenant_id: Optional[int] = None) -> Dict[str, Any]:
+    """Logique rapport (exécutée dans un thread pour timeout). tenant_id optionnel pour multi-tenant."""
     today = date.today().isoformat()
     admin_email = os.getenv("REPORT_EMAIL") or os.getenv("OWNER_EMAIL")
     if not admin_email:
@@ -45,7 +45,7 @@ def _run_daily_report() -> Dict[str, Any]:
 
     try:
         memory = get_client_memory()
-        clients = memory.get_clients_with_email()
+        clients = memory.get_clients_with_email(tenant_id=tenant_id)
     except Exception as e:
         logger.exception("report_daily: get_client_memory failed")
         return {"status": "error", "clients_notified": 0, "error": str(e)}
@@ -105,10 +105,10 @@ def _run_daily_report() -> Dict[str, Any]:
     return out
 
 
-def _run_report_background() -> None:
+def _run_report_background(tenant_id: Optional[int] = None) -> None:
     """Exécute le rapport en arrière-plan et log le résultat."""
     try:
-        out = _run_daily_report()
+        out = _run_daily_report(tenant_id=tenant_id)
         logger.info("report_daily background result: %s", out)
     except Exception as e:
         logger.exception("report_daily background failed: %s", e)
@@ -117,6 +117,7 @@ def _run_report_background() -> None:
 @router.post("/reports/daily")
 def post_daily_report(
     x_report_secret: Optional[str] = Header(None, alias="X-Report-Secret"),
+    tenant_id: Optional[int] = Query(None, description="Multi-tenant: ID du tenant pour le rapport"),
 ):
     """
     Déclenche le rapport quotidien. Répond immédiatement en 202, génération et envoi en arrière-plan.
@@ -127,8 +128,8 @@ def post_daily_report(
     except HTTPException:
         raise
 
-    logger.info("report_daily accepted, running in background")
-    thread = threading.Thread(target=_run_report_background, daemon=True)
+    logger.info("report_daily accepted, running in background", extra={"tenant_id": tenant_id})
+    thread = threading.Thread(target=_run_report_background, args=(tenant_id,), daemon=True)
     thread.start()
     return JSONResponse(
         status_code=202,
