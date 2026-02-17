@@ -11,7 +11,7 @@ Référence pour la barrière admin sans casser le magic link client.
 | **Admin** | `Authorization: Bearer <ADMIN_API_TOKEN>` (header) | Toutes les routes `/api/admin/*`. Token partagé (env). |
 | **Client** | Magic link → JWT en localStorage → `Authorization: Bearer <JWT>` | Routes `/api/tenant/*`, `/app`. |
 
-Un client qui envoie son JWT sur une route admin reçoit **403 Forbidden** (pas 401), car le backend distingue "pas de token" (401) et "token présent mais pas admin" (403).
+Un client qui envoie un token invalide ou son JWT reçoit **401 Unauthorized** (comme si le token manquait), pour ne pas révéler si le token est "valide mais pas admin". Le **403** est réservé pour plus tard : "token valide mais role ≠ admin".
 
 ---
 
@@ -20,8 +20,8 @@ Un client qui envoie son JWT sur une route admin reçoit **403 Forbidden** (pas 
 - **Dépendance** : `require_admin` (alias `_verify_admin`) dans `backend/routes/admin.py`.
 - **Codes** :
   - **503** : `ADMIN_API_TOKEN` non défini (config manquante).
-  - **401** : pas de Bearer ou Bearer vide → "Missing admin credentials".
-  - **403** : Bearer présent mais différent de `ADMIN_API_TOKEN` (ex. JWT client) → "Forbidden: admin access required".
+  - **401** : Bearer manquant, vide, ou token invalide/expiré (ne pas révéler "valide mais pas admin").
+  - **403** : réservé pour usage futur (token valide mais role ≠ admin).
 
 Aucune route admin n’accepte le JWT client : seul le token admin ouvre l’accès.
 

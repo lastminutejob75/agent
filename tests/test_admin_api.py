@@ -46,6 +46,13 @@ def test_admin_tenants_requires_auth(client):
     assert r.status_code == 401
 
 
+def test_admin_tenants_401_without_token(client):
+    """Verrouille la règle : Bearer manquant → 401 (évite régression)."""
+    r = client.get("/api/admin/tenants")
+    assert r.status_code == 401
+    assert "token" in (r.json().get("detail") or "").lower() or "credential" in (r.json().get("detail") or "").lower()
+
+
 def test_admin_create_tenant_requires_auth(client):
     """POST /api/admin/tenants sans token → 401."""
     r = client.post(
@@ -55,13 +62,13 @@ def test_admin_create_tenant_requires_auth(client):
     assert r.status_code == 401
 
 
-def test_admin_tenants_forbidden_with_wrong_token(client):
-    """GET /api/admin/tenants avec Bearer invalide (ex. JWT client) → 403."""
+def test_admin_tenants_401_with_invalid_token(client):
+    """GET /api/admin/tenants avec Bearer invalide → 401 (pas 403, ne pas révéler validité token)."""
     r = client.get(
         "/api/admin/tenants",
         headers={"Authorization": "Bearer wrong-token-or-client-jwt"},
     )
-    assert r.status_code == 403
+    assert r.status_code == 401
 
 
 @patch("backend.routes.admin.config.USE_PG_TENANTS", False)

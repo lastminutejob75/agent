@@ -46,15 +46,15 @@ def require_admin(
     """
     Dépendance FastAPI : accès réservé à l'admin.
     - 503 : ADMIN_API_TOKEN non configuré
-    - 401 : pas de Bearer (non authentifié)
-    - 403 : Bearer présent mais invalide (ex. JWT client) → pas les droits admin
+    - 401 : pas authentifié (Bearer manquant ou token invalide/expiré)
+    - 403 : authentifié mais pas autorisé (token valide, role != admin) — réservé pour usage futur
     """
     if not ADMIN_TOKEN:
         raise HTTPException(503, "Admin API not configured (ADMIN_API_TOKEN missing)")
     if not credentials or not (credentials.credentials or "").strip():
-        raise HTTPException(401, "Missing admin credentials (Bearer token required)")
+        raise HTTPException(401, "Missing credentials (Bearer token required)")
     if credentials.credentials.strip() != ADMIN_TOKEN:
-        raise HTTPException(403, "Forbidden: admin access required")
+        raise HTTPException(401, "Invalid or expired token")
 
 
 # Alias pour compatibilité existante
