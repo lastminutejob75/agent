@@ -614,9 +614,14 @@ VOCAL_TRANSFER_COMPLEX = (
 )
 
 VOCAL_TRANSFER_CALLBACK = (
-    "Vous pouvez rappeler au {phone_number} aux horaires d'ouverture. "
+    "Vous pouvez rappeler au {phone_number} ({horaires}). "
     "Bonne journée !"
 )
+
+
+def format_transfer_callback(phone_number: str, horaires: str = "horaires d'ouverture") -> str:
+    """Message de clôture après transfert : rappel possible avec horaires (par tenant)."""
+    return VOCAL_TRANSFER_CALLBACK.format(phone_number=phone_number, horaires=horaires)
 
 
 # ----------------------------
@@ -1447,7 +1452,7 @@ def format_booking_confirmed(slot_label: str, name: str = "", motif: str = "", c
     
     # Format web - structuré avec emojis
     parts = [
-        "Parfait. Votre rendez-vous est confirmé.",
+        "Parfait ! Votre rendez-vous est confirmé.",
         "",
         f"📅 Date et heure : {slot_label}",
     ]

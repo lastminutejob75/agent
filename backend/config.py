@@ -16,6 +16,7 @@ TIME_CONSTRAINT_ENABLED = True
 # Business
 BUSINESS_NAME = "Cabinet Dupont"
 TRANSFER_PHONE = "+33 6 00 00 00 00"  # V1 simple (affiché au besoin)
+OPENING_HOURS_DEFAULT = "Lundi au vendredi 9h-19h"  # Repli si non défini par tenant (params_json.horaires)
 
 # FAQ / RAG
 FAQ_THRESHOLD = 0.80  # score >= 0.80 => match

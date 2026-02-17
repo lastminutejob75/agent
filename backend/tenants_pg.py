@@ -249,8 +249,8 @@ def pg_update_tenant_flags(tenant_id: int, flags: dict) -> bool:
 
 
 def pg_update_tenant_params(tenant_id: int, params: dict) -> bool:
-    """Met à jour params_json (merge). Champs autorisés: calendar_provider, calendar_id, contact_email, timezone, consent_mode."""
-    allowed = {"calendar_provider", "calendar_id", "contact_email", "timezone", "consent_mode"}
+    """Met à jour params_json (merge). Champs autorisés: calendar_provider, calendar_id, contact_email, timezone, consent_mode, business_name, transfer_phone, horaires."""
+    allowed = {"calendar_provider", "calendar_id", "contact_email", "timezone", "consent_mode", "business_name", "transfer_phone", "horaires"}
     filtered = {k: str(v) for k, v in params.items() if k in allowed and v is not None}
     if not filtered:
         return True

@@ -105,6 +105,22 @@ def get_consent_mode(tenant_id: Optional[int] = None) -> str:
     return "implicit"
 
 
+def get_tenant_display_config(tenant_id: Optional[int] = None) -> Dict[str, str]:
+    """
+    Retourne {business_name, transfer_phone, horaires} pour affichage / prompts.
+    Lecture depuis params_json avec repli sur config (OPENING_HOURS_DEFAULT pour horaires).
+    """
+    params = get_params(tenant_id)
+    horaires = (params.get("horaires") or "").strip()
+    if not horaires and hasattr(config, "OPENING_HOURS_DEFAULT"):
+        horaires = config.OPENING_HOURS_DEFAULT
+    return {
+        "business_name": (params.get("business_name") or "").strip() or config.BUSINESS_NAME,
+        "transfer_phone": (params.get("transfer_phone") or "").strip() or config.TRANSFER_PHONE,
+        "horaires": horaires or "horaires d'ouverture",
+    }
+
+
 def get_params(tenant_id: Optional[int] = None) -> Dict[str, str]:
     """
     Retourne params_json pour un tenant (calendar_provider, calendar_id, etc.).
@@ -140,8 +156,8 @@ def get_params(tenant_id: Optional[int] = None) -> Dict[str, str]:
 
 
 def set_params(tenant_id: int, params: Dict[str, str]) -> None:
-    """Met à jour params_json d'un tenant (calendar_provider, calendar_id, contact_email, consent_mode, etc.)."""
-    allowed = ("calendar_provider", "calendar_id", "contact_email", "consent_mode")
+    """Met à jour params_json d'un tenant (calendar_provider, calendar_id, contact_email, consent_mode, business_name, transfer_phone, horaires, etc.)."""
+    allowed = ("calendar_provider", "calendar_id", "contact_email", "consent_mode", "business_name", "transfer_phone", "horaires")
     filtered = {k: str(v) for k, v in params.items() if k in allowed and v is not None}
     if not filtered:
         return

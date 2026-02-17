@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Optional, Any
 import sqlite3
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -27,7 +27,8 @@ from backend.engine import ENGINE, Event
 from backend.routes.voice import _get_engine
 import backend.config as config  # Import du MODULE (pas from import)
 from backend.db import init_db, list_free_slots, count_free_slots
-from backend.tenant_routing import resolve_tenant_from_api_key, current_tenant_id
+from backend.tenant_routing import current_tenant_id
+from backend.deps import require_tenant_web, TenantIdWeb
 # Nouvelle architecture multi-canal
 from backend.routes import voice, whatsapp, bland, reports, admin, auth, tenant
 
@@ -391,18 +392,18 @@ async def debug_slots() -> dict:
 
 
 @app.post("/chat")
-async def chat(payload: dict, request: Request) -> dict:
+async def chat(
+    payload: dict,
+    request: Request,
+    tenant_id: TenantIdWeb = Depends(require_tenant_web),
+) -> dict:
+    """Résolution tenant via Depends(require_tenant_web) — X-Tenant-Key → tenant_id, current_tenant_id déjà posé."""
     message = (payload.get("message") or "")
     conv_id = payload.get("conversation_id") or str(uuid.uuid4())
     channel = payload.get("channel", "web")
 
-    # Résolution tenant Web (header X-Tenant-Key) ; défaut si absent
-    api_key = request.headers.get("X-Tenant-Key") or ""
-    tenant_id = resolve_tenant_from_api_key(api_key)
     session = ENGINE.session_store.get_or_create(conv_id)
     session.tenant_id = tenant_id
-    request.state.tenant_id = tenant_id
-    current_tenant_id.set(str(tenant_id))
 
     ensure_stream(conv_id)
 

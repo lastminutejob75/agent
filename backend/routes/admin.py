@@ -17,6 +17,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from backend import config
+from backend.deps import validate_tenant_id
 from backend.auth_pg import pg_add_tenant_user, pg_create_tenant_user
 from backend.tenants_pg import (
     pg_add_routing,
@@ -870,7 +871,7 @@ def admin_list_tenants(
 
 @router.get("/admin/tenants/{tenant_id}")
 def admin_get_tenant(
-    tenant_id: int,
+    tenant_id: int = Depends(validate_tenant_id),
     _: None = Depends(_verify_admin),
 ):
     """Détail tenant (config + routing)."""
@@ -882,7 +883,7 @@ def admin_get_tenant(
 
 @router.get("/admin/tenants/{tenant_id}/dashboard")
 def admin_get_dashboard(
-    tenant_id: int,
+    tenant_id: int = Depends(validate_tenant_id),
     _: None = Depends(_verify_admin),
 ):
     """Snapshot dashboard: service_status, last_call, last_booking, counters_7d."""
@@ -985,7 +986,7 @@ def _get_transfer_reasons(tenant_id: int, days: int = 7) -> dict:
 
 @router.get("/admin/tenants/{tenant_id}/transfer-reasons")
 def admin_get_transfer_reasons(
-    tenant_id: int,
+    tenant_id: int = Depends(validate_tenant_id),
     days: int = Query(7, ge=1, le=90),
     _: None = Depends(_verify_admin),
 ):
@@ -998,7 +999,7 @@ def admin_get_transfer_reasons(
 
 @router.get("/admin/tenants/{tenant_id}/technical-status")
 def admin_get_technical_status(
-    tenant_id: int,
+    tenant_id: int = Depends(validate_tenant_id),
     _: None = Depends(_verify_admin),
 ):
     """Statut technique: DID, routing, calendrier, agent."""
@@ -1010,8 +1011,8 @@ def admin_get_technical_status(
 
 @router.post("/admin/tenants/{tenant_id}/users")
 def admin_add_tenant_user(
-    tenant_id: int,
-    body: AdminTenantUserCreate,
+    tenant_id: int = Depends(validate_tenant_id),
+    body: AdminTenantUserCreate = ...,
     _: None = Depends(_verify_admin),
 ):
     """
@@ -1039,8 +1040,8 @@ def admin_add_tenant_user(
 
 @router.patch("/admin/tenants/{tenant_id}/flags")
 def admin_patch_flags(
-    tenant_id: int,
-    body: FlagsUpdate,
+    tenant_id: int = Depends(validate_tenant_id),
+    body: FlagsUpdate = ...,
     _: None = Depends(_verify_admin),
 ):
     """Met à jour les flags (merge)."""
@@ -1055,8 +1056,8 @@ def admin_patch_flags(
 
 @router.patch("/admin/tenants/{tenant_id}/params")
 def admin_patch_params(
-    tenant_id: int,
-    body: ParamsUpdate,
+    tenant_id: int = Depends(validate_tenant_id),
+    body: ParamsUpdate = ...,
     _: None = Depends(_verify_admin),
 ):
     """Met à jour les params (merge)."""

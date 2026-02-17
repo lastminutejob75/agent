@@ -16,6 +16,7 @@ from typing import Optional, TYPE_CHECKING
 
 from backend.engine import ENGINE
 from backend import prompts, config
+from backend.tenant_config import get_tenant_display_config
 from backend.client_memory import get_client_memory
 from backend.session_codec import session_to_dict
 from backend.conversational_engine import ConversationalEngine, _is_canary
@@ -1232,7 +1233,8 @@ async def vapi_custom_llm(request: Request):
                 logger.info("[CALLER_ID] conv_id=%s persisted_on_greeting", call_id[:24] if call_id else "n/a")
             if hasattr(ENGINE.session_store, "save"):
                 ENGINE.session_store.save(session)
-            response_text = prompts.get_vocal_greeting(config.BUSINESS_NAME)
+            display = get_tenant_display_config(resolved_tenant_id)
+            response_text = prompts.get_vocal_greeting(display["business_name"])
         elif is_streaming:
             # Streaming : retour HTTP immédiat, premier token dans le corps < 1s. Pas de journal/DB avant return
             # (sinon Vapi ne reçoit pas la connexion à temps → silence). Journal fait dans _compute_voice_response_sync.

@@ -2,13 +2,15 @@
 
 **Contexte :** Agent IA d'accueil et prise de RDV pour PME. Base principale **PostgreSQL** (migration depuis SQLite). Isolation multi-tenant requise par canal (vocal, WhatsApp, web).
 
+**Dashboard clients :** Les clients (tenants) ont leur **dashboard sur uwiapp.com** (appels, RDV). Les APIs admin/dashboard doivent rester scopées par `tenant_id` pour alimenter ce frontend (ex. `GET /api/admin/tenants/{tenant_id}/dashboard`, transfer-reasons, technical-status).
+
 **Date audit :** 2025-02
 
 ---
 
-## Score global : **6/10** → **8/10** (post Jours 1–5)
+## Score global : **6/10** → **8/10** (post Jours 1–7)
 
-PostgreSQL structuré pour le multi-tenant. **Mise à jour (Jours 1–5)** : résolution tenant **Vocal**, **WhatsApp** (To → tenant_routing), **Web** (X-Tenant-Key → tenant_routing channel=web). Session store web en PG (`web_sessions` scopé `tenant_id, conv_id`). ClientMemory en PG (`tenant_clients`, `tenant_booking_history`). Rapports quotidiens acceptent `?tenant_id=` pour scope. En mode `MULTI_TENANT_MODE=true`, chemins SQLite (slots, sessions, client_memory) sont bloqués (_sqlite_guard).
+PostgreSQL structuré pour le multi-tenant. **Jours 1–5** : résolution tenant Vocal, WhatsApp, Web ; session store web en PG ; ClientMemory en PG ; rapports `?tenant_id=` ; SQLite bloqué en multi-tenant. **Jour 6** : SQLite slots/appointments avec `tenant_id`. **Jour 7** : Depends `require_tenant_web` / `require_tenant_from_header` / `validate_tenant_id` (`backend/deps.py`) ; helper `get_tenant_display_config(tenant_id)` (business_name, transfer_phone depuis `params_json`) ; greeting vocal utilise le nom du tenant ; tests deps + config + intégration web.
 
 ---
 
@@ -17,7 +19,7 @@ PostgreSQL structuré pour le multi-tenant. **Mise à jour (Jours 1–5)** : ré
 | Point | Statut | Détail |
 |-------|--------|--------|
 | Table `tenants` | ✅ | Présente (SQLite `db.py` + PG `tenants_pg`). PG : `tenants`, `tenant_config`, `tenant_routing`. |
-| `tenant_id` + FK sur tables métier | ✅ PG / ❌ SQLite | **PG** : `slots`, `appointments` ont `tenant_id` et toutes les requêtes filtrent. **SQLite** : `slots` et `appointments` n'ont **pas** de colonne `tenant_id` (`db.py` init_db). |
+| `tenant_id` + FK sur tables métier | ✅ PG / ✅ SQLite (Jour 6) | **PG** : `slots`, `appointments` ont `tenant_id` et toutes les requêtes filtrent. **SQLite** : colonne `tenant_id` (DEFAULT 1), migration `_migrate_sqlite_add_tenant_id`, toutes les requêtes filtrent. |
 | Index sur `tenant_id` | ✅ PG | Utilisés dans `slots_pg` (WHERE tenant_id = %s). Pas d’index explicite créé dans le code (à vérifier en migrations PG). |
 | RLS (Row-Level Security) | ❌ | Aucune policy RLS ou équivalent dans le code. Isolation uniquement par filtre applicatif. |
 | Migrations cohérentes | 🟡 | Pas de dossier migrations visible ; schéma PG décrit dans le code (tenants_pg, slots_pg, session_pg, ivr_events_pg). |
@@ -32,7 +34,7 @@ PostgreSQL structuré pour le multi-tenant. **Mise à jour (Jours 1–5)** : ré
 | **WhatsApp** | Numéro destinataire (To) → `tenant_routing` (channel=`whatsapp`, key=E.164). `resolve_tenant_from_whatsapp(to_number)`. | `tenant_routing.py`, `routes/whatsapp.py` | ✅ |
 | **Web** | Header `X-Tenant-Key` → `tenant_routing` (channel=`web`, key=api_key). `resolve_tenant_from_api_key(api_key)`. Défaut si absent ; 401 si clé invalide. | `tenant_routing.py`, `main.py` (/chat, /stream) | ✅ |
 
-Le tenant n’est pas injecté via FastAPI `Depends()` ni `ContextVar` : il est résolu dans chaque route (ex. voice) et passé à la session / engine.
+**Jour 7 :** Résolution Web centralisée via `Depends(require_tenant_web)` sur `POST /chat` (`backend/deps.py`) ; `require_tenant_from_header` et `validate_tenant_id` pour autres routes. Config affichage : `get_tenant_display_config(tenant_id)` (business_name, transfer_phone depuis `params_json`). Greeting vocal l'utilise. Tests : `test_deps.py`, `test_tenant_config.py`, `test_multitenant_web_integration.py`.
 
 ---
 
@@ -43,7 +45,7 @@ Le tenant n’est pas injecté via FastAPI `Depends()` ni `ContextVar` : il est 
 | Engine reçoit un tenant explicite | ✅ | `session.tenant_id` est fixé par la route (vocal) ; engine utilise `getattr(session, "tenant_id", None)` pour scope ivr_events et `get_tenant_flags`. |
 | Services (Calendar, Twilio) par tenant | 🟡 | **Calendar** : `get_calendar_adapter(session)` utilise `tenant_config.params_json` (calendar_id par tenant) ; credentials Google = **global** (`SERVICE_ACCOUNT_FILE`). **Twilio** : pas de mapping numéro → tenant vu dans le code. |
 | Variables globales / singletons | 🟡 | `ENGINE` (engine global), `get_client_memory()` singleton. **Session store** : `HybridSessionStore` — sessions web en PG (`web_sessions` par `tenant_id`, `conv_id`), cache `conv_id` → `tenant_id` pour GET /stream. **ClientMemory** : `HybridClientMemory` — PG `tenant_clients` / `tenant_booking_history` quand `tenant_id` connu (ContextVar ou param). |
-| Prompts paramétrés par tenant | ❌ | `config.BUSINESS_NAME`, `config.TRANSFER_PHONE`, horaires = globaux. Commentaire config : « Pour multi-clients plus tard : passer en config par tenant ». |
+| Prompts paramétrés par tenant | 🟡 | **Jour 7** : `get_tenant_display_config(tenant_id)` (business_name, transfer_phone depuis `params_json`) ; greeting vocal l'utilise. Horaires et autres messages restent globaux. |
 
 ---
 
@@ -51,12 +53,7 @@ Le tenant n’est pas injecté via FastAPI `Depends()` ni `ContextVar` : il est 
 
 Toutes les requêtes **PG** (slots_pg, tenants_pg, session_pg) passent par `tenant_id`. En revanche :
 
-- **db.py (SQLite fallback)**  
-  - `list_free_slots` (SQLite) : `SELECT ... FROM slots WHERE is_booked=0 AND date >= ?` — **aucun tenant_id** (table sans colonne).  
-  - `find_slot_id_by_datetime` : idem.  
-  - `book_slot_atomic` (SQLite path) : `UPDATE slots`, `INSERT INTO appointments` sans tenant_id.  
-  - `find_booking_by_name` (SQLite) : `SELECT ... FROM appointments a JOIN slots s ... WHERE LOWER(TRIM(a.name)) = ...` — **aucun tenant_id**.  
-  - `cancel_booking_sqlite` : idem.
+- **db.py (SQLite fallback)** — **Jour 6** : colonne `tenant_id` ajoutée (DEFAULT 1), toutes les requêtes (list_free_slots, find_slot_id_by_datetime, book_slot_atomic, find_booking_by_name, cancel_booking_sqlite, cleanup_old_slots) filtrent par `tenant_id`.
 
 - **session_store_sqlite**  
   - `get(conv_id)`, `get_or_create(conv_id)` : clé = `conv_id` uniquement. Pas de `tenant_id` dans la table `sessions`. Risque de collision si `conv_id` identique pour deux tenants (rare mais possible).
@@ -73,7 +70,7 @@ Toutes les requêtes **PG** (slots_pg, tenants_pg, session_pg) passent par `tena
 
 | Élément | Statut | Détail |
 |---------|--------|--------|
-| Config métier (horaires, types RDV, messages) | 🟡 | `tenant_config.params_json` en PG (ex. calendar_id, calendar_provider). BUSINESS_NAME, horaires, transfer = globaux dans `config.py`. |
+| Config métier (horaires, types RDV, messages) | 🟡 | `params_json` : calendar_id, business_name, transfer_phone, **horaires** (repli `OPENING_HOURS_DEFAULT`). `get_tenant_display_config(tenant_id)` ; rapports quotidiens utilisent `business_name` ; `prompts.format_transfer_callback(phone_number, horaires)`. Messages génériques = globaux. |
 | Tokens OAuth / Google Calendar | 🟡 | Un seul `SERVICE_ACCOUNT_FILE` global. Par tenant : uniquement `calendar_id` (et provider) dans `params_json`. |
 | Numéros Twilio / WhatsApp | ❌ | Pas de mapping numéro → tenant dans le code (sauf vocal via `tenant_routing`). |
 
@@ -83,7 +80,7 @@ Toutes les requêtes **PG** (slots_pg, tenants_pg, session_pg) passent par `tena
 
 | Point | Statut | Détail |
 |-------|--------|--------|
-| Rapports quotidiens scopés par tenant | ✅ | `POST /api/reports/daily?tenant_id=` optionnel ; `get_clients_with_email(tenant_id=...)` restreint au tenant. `get_daily_report_data(client_id, date)` : scope `client_id`. En pratique, la boucle rapports utilise `get_clients_with_email()` de **ClientMemory** (patients avec email), pas la liste des tenants — incohérent pour un rapport “par cabinet”. Sans clients avec email, rapport envoyé avec `get_daily_report_data(1, today)` (tenant 1 en dur). |
+| Rapports quotidiens scopés par tenant | ✅ | `POST /api/reports/daily?tenant_id=` optionnel. Sans `tenant_id` : boucle sur `pg_fetch_tenants`, email = `params_json.contact_email` par tenant (repli REPORT_EMAIL). Avec `tenant_id` : idem. business_name par tenant pour l'objet du mail. |
 | Tracking consommation (tokens, minutes) | ❌ | Aucun tracking par tenant vu dans le code. |
 
 ---
@@ -111,16 +108,14 @@ Toutes les requêtes **PG** (slots_pg, tenants_pg, session_pg) passent par `tena
 ## 🟡 Risques (fonctionnel mais fragile)
 
 1. **backend/config.py (BUSINESS_NAME, TRANSFER_PHONE, horaires)**  
-   Valeurs globales. Un seul nom de cabinet et un seul numéro de transfert pour toute l’app.  
-   **Amélioration :** Lire depuis `tenant_config.params_json` (ou équivalent) par tenant.
+   **Adressé (Jour 7 + suite)** : `get_tenant_display_config(tenant_id)` retourne business_name, transfer_phone, horaires (params_json + repli config). Greeting vocal et rapports quotidiens utilisent business_name ; `params_json.horaires` + `format_transfer_callback(phone_number, horaires)` pour message de rappel. Routes admin : `Depends(validate_tenant_id)` sur `tenant_id` path.
 
 2. **backend/calendar_adapter.py**  
    Credentials Google communs à tous les tenants. Un seul compte de service.  
    **Amélioration :** Pour forte isolation, prévoir des credentials par tenant (ou délégation de domaine) et les charger depuis la config tenant.
 
 3. **backend/routes/reports.py**  
-   Rapport quotidien basé sur `get_clients_with_email()` (patients) au lieu d’une liste de tenants. `get_daily_report_data(1, ...)` en fallback.  
-   **Amélioration :** Boucle sur les tenants actifs (ex. depuis `tenants` PG), avec contact email par tenant (ex. `tenant_config` ou `tenant_users`), et scope des données par `tenant_id` / `client_id` tenant.
+   **Adressé** : Boucle sur `pg_fetch_tenants` ; email = `params_json.contact_email` par tenant (repli global). Appel avec `?tenant_id=` utilise aussi le contact_email du tenant. Données scopées par tenant (get_daily_report_data(tid), business_name par tenant).
 
 4. **Pas de RLS en PG**  
    L’isolation repose uniquement sur les filtres applicatifs. Une requête oubliant `tenant_id` exposerait des données.  
@@ -153,8 +148,8 @@ Toutes les requêtes **PG** (slots_pg, tenants_pg, session_pg) passent par `tena
 | 3 | Définir résolution tenant pour le web (API key ou paramètre tenant) et l’utiliser dans les routes chat/stream. | M | Critique |
 | 4 | Session store : clé ou colonne `tenant_id` (SQLite + PG si utilisé) pour isoler les sessions par tenant. | M | Critique |
 | 5 | ClientMemory : introduire `tenant_id` (ou équivalent) partout pour isoler clients/patients par tenant. | L | Critique |
-| 6 | Rapports quotidiens : boucle sur les tenants (ex. depuis PG), email par tenant, et scope des données par tenant. | M | Important |
-| 7 | Config métier par tenant : BUSINESS_NAME, TRANSFER_PHONE, horaires depuis tenant_config/params. | S | Important |
+| 6 | Rapports quotidiens : boucle sur les tenants (ex. depuis PG), email par tenant, et scope des données par tenant. | M | ✅ Fait (contact_email par tenant, boucle pg_fetch_tenants, business_name par tenant). |
+| 7 | Config métier par tenant : BUSINESS_NAME, TRANSFER_PHONE depuis tenant_config/params. | S | ✅ Fait (Jour 7 : get_tenant_display_config, params_json, greeting vocal). Horaires à étendre si besoin. |
 | 8 | (Optionnel) RLS sur les tables PG avec tenant_id. | M | Renforcement |
 | 9 | (Optionnel) Tracking consommation (tokens, minutes Vapi) par tenant. | M | Plus tard |
 

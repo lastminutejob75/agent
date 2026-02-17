@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 
 from backend.db import get_daily_report_data
 from backend.client_memory import get_client_memory
+from backend.tenant_config import get_params, get_tenant_display_config
 from backend.services.email_service import send_daily_report_email
 
 logger = logging.getLogger(__name__)
@@ -39,15 +40,17 @@ def _run_daily_report_one_tenant(tenant_id: Optional[int], today: str, admin_ema
         clients = memory.get_clients_with_email(tenant_id=tenant_id)
     except Exception as e:
         logger.exception("report_daily: get_client_memory failed")
-        return {"notified": 0, "email_error": str(e)}
+        return {"status": "error", "clients_notified": 0, "email_error": str(e)}
 
     notified = 0
     email_skipped = None
     email_error = None
     if not clients:
         try:
-            data = get_daily_report_data(1, today)
-            ok, err = send_daily_report_email(admin_email, "Cabinet", today, data)
+            tid = tenant_id if tenant_id is not None and tenant_id > 0 else 1
+            data = get_daily_report_data(tid, today)
+            business_name = get_tenant_display_config(tid)["business_name"]
+            ok, err = send_daily_report_email(admin_email, business_name, today, data)
             if ok:
                 notified = 1
                 logger.info("report_sent admin only (no clients)", extra={"date": today})
@@ -111,9 +114,18 @@ def _run_daily_report(tenant_id: Optional[int] = None) -> Dict[str, Any]:
         }
 
     if tenant_id is not None:
-        return _run_daily_report_one_tenant(tenant_id, today, admin_email)
+        report_email = admin_email
+        try:
+            params = get_params(tenant_id)
+            if params:
+                ce = (params.get("contact_email") or "").strip()
+                if ce:
+                    report_email = ce
+        except Exception:
+            pass
+        return _run_daily_report_one_tenant(tenant_id, today, report_email)
 
-    # tenant_id absent : tous les tenants actifs (PG) ou fallback mono-tenant
+    # tenant_id absent : tous les tenants actifs (PG), email = contact_email du tenant ou repli global
     try:
         from backend import config
         if config.USE_PG_TENANTS:
@@ -126,7 +138,9 @@ def _run_daily_report(tenant_id: Optional[int] = None) -> Dict[str, Any]:
                     for t in tenants_list:
                         tid = t.get("tenant_id")
                         if tid is not None:
-                            one = _run_daily_report_one_tenant(tid, today, admin_email)
+                            params = get_params(tid)
+                            report_email = (params.get("contact_email") or "").strip() or admin_email
+                            one = _run_daily_report_one_tenant(tid, today, report_email)
                             total_notified += one.get("clients_notified", 0)
                     return {"status": "ok", "clients_notified": total_notified, "tenants_processed": len(tenants_list)}
     except Exception as e:
