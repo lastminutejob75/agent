@@ -38,7 +38,9 @@ Aujourd’hui : un seul token admin (ADMIN_API_TOKEN) → tout ce qui n’est pa
   - **401** : Bearer manquant, vide, ou token invalide/expiré.
   - **403** : réservé pour usage futur (token valide mais role ≠ admin).
 - **Rotation** : `ADMIN_API_TOKENS=tok1,tok2` permet plusieurs tokens valides en parallèle (sans coupure pendant la rotation).
-- **Audit** : chaque accès admin est loggé (path, client IP, user-agent, `token_fp` = 8 premiers caractères du sha256 du token). Le Bearer n'est jamais loggé en clair ; l'empreinte permet de diagnostiquer une fuite sans exposer le secret. **CORS** : refuser `/api/admin/*` depuis des origines inattendues ; optionnel : allowlist IP (plus tard).
+- **Audit** : chaque accès admin est loggé (path, client IP, user-agent, `token_fp` = 8 premiers caractères du sha256 du token). Le Bearer n'est jamais loggé en clair ; l'empreinte permet de diagnostiquer une fuite sans exposer le secret.
+- **CORS** : refuser `/api/admin/*` si l'en-tête `Origin` est présente et non autorisée. Les appels sans `Origin` (curl, Postman, serveur-à-serveur) passent → OK, protégés par `require_admin()`. Option plus stricte : exiger `Origin` uniquement quand la requête vient du navigateur (ex. `Sec-Fetch-Site`).
+- **Allowlist IP** (optionnel) : si `ADMIN_ALLOWED_IPS` est implémentée, n'utiliser **X-Forwarded-For** (première IP) **que si `TRUST_PROXY=true`** (env), sinon risque de spoof ; sinon utiliser `request.client.host`.
 
 Aucune route admin n’accepte le JWT client : seuls les tokens admin ouvrent l’accès.
 

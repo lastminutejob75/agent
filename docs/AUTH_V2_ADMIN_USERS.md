@@ -7,7 +7,7 @@ Spec courte pour passer de l’auth admin par token partagé à l’auth admin p
 ## Choix par défaut
 
 - **Admin login** : magic link (même flux que les clients).
-- **JWT** : en cookie **HttpOnly, Secure, SameSite=Lax** (meilleur UX, moins de fuite via JS).
+- **JWT** : en cookie **HttpOnly, Secure, SameSite=Lax** (meilleur UX, moins de fuite via JS). **Secure=True obligatoire en prod** (sans quoi le cookie n’est pas envoyé en HTTPS → bug classique “ça marche en local mais pas en prod”). Voir section Cookies ci-dessous.
 - **require_admin()** : 403 si user non admin (après résolution du user via JWT).
 - **ADMIN_API_TOKENS** : conservé en **legacy bypass** (étape 1), puis retiré (étape 2).
 
@@ -47,17 +47,35 @@ Pas de mot de passe : tout en magic link.
 | Méthode | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/api/auth/admin/request-link` | Body `{ "email": "..." }`. Si email dans allowlist admin → crée magic_link (tenant_id NULL ou scope admin), envoie email. Sinon 200 { ok: true } (pas d’enumeration). |
-| GET | `/api/auth/admin/verify?token=...` | Vérifie token, marque used. Émet **JWT** (payload : sub=email, role=admin, pas de tenant_id ou tenant_id=null). Réponse : **Set-Cookie** (HttpOnly, Secure, SameSite=Lax) + redirect vers `/admin` ou JSON { ok, redirect }. |
+| GET | `/api/auth/admin/verify?token=...` | Vérifie token, marque used. Émet **JWT** dans cookie **uwi_admin_session** (voir section Cookies) + redirect vers `/admin` ou JSON { ok, redirect }. |
 | POST | `/api/auth/admin/logout` | Invalide cookie (Clear-Set-Cookie ou token blacklist optionnel). |
 
 Côté client (navigateur) : après verify, toutes les requêtes vers `/api/admin/*` envoient le cookie ; plus besoin de mettre le JWT dans localStorage pour l’admin.
 
 ---
 
+## Cookies (client vs admin)
+
+Séparation claire pour éviter toute confusion et simplifier tests / middleware :
+
+| Contexte | Nom du cookie | Usage |
+|----------|----------------|--------|
+| **Client** (magic link tenant) | `uwi_session` | JWT tenant, routes `/api/tenant/*`, `/app` |
+| **Admin** | `uwi_admin_session` | JWT admin, routes `/api/admin/*` |
+
+Attributs **obligatoires** pour les cookies JWT (admin et client en prod) :
+
+- **HttpOnly** = true (pas d'accès JS, limite les fuites XSS).
+- **Secure** = true **en prod** (sans quoi le cookie n'est pas envoyé en HTTPS → bug classique « ça marche en local mais pas en prod »). En local (HTTP), Secure=false ou omis.
+- **SameSite** = Lax (équilibre UX / CSRF).
+- **Path** = `/` (ou scoper à `/` + `/api` si besoin).
+
+---
+
 ## Backend : get_current_user + require_admin
 
 - **get_current_user(request)**  
-  - Lit le JWT depuis le **cookie** (nom fixe, ex. `session` ou `admin_session`).  
+  - Lit le JWT depuis le **cookie** : `uwi_session` (client) ou `uwi_admin_session` (admin) selon la route.  
   - Si header `Authorization: Bearer <token>` présent (legacy), l’utiliser en secours.  
   - Token absent / invalide / expiré → 401.  
   - Sinon décode et retourne un objet **User** (email, role, tenant_id optionnel, is_admin dérivé).
@@ -74,8 +92,8 @@ Côté client (navigateur) : après verify, toutes les requêtes vers `/api/admi
 
 ## CORS et réseau
 
-- **CORS** : `/api/admin/*` déjà limité aux origines autorisées (`ADMIN_CORS_ORIGINS` ou fallback `CORS_ORIGINS`). À conserver.
-- **Allowlist IP (optionnel)** : variable `ADMIN_ALLOWED_IPS` (liste d’IP ou CIDR). Si définie, les requêtes vers `/api/admin/*` dont l’IP client n’est pas dans la liste → 403. À ajouter en middleware ou dans `require_admin()`. Peut rester désactivé (variable vide) en prod si non nécessaire.
+- **CORS** : `/api/admin/*` déjà limité aux origines autorisées (`ADMIN_CORS_ORIGINS` ou fallback `CORS_ORIGINS`). À conserver. Les appels sans en-tête `Origin` (curl, Postman, serveur-à-serveur) passent → OK, ils restent protégés par `require_admin()`. Option plus stricte plus tard : exiger `Origin` uniquement quand la requête vient du navigateur (ex. `Sec-Fetch-Site`).
+- **Allowlist IP (optionnel)** : variable `ADMIN_ALLOWED_IPS` (liste d’IP ou CIDR). Si définie, les requêtes vers `/api/admin/*` dont l’IP client n’est pas dans la liste → 403. **Attention Railway / proxies** : n’utiliser `X-Forwarded-For` (première IP) **que si `TRUST_PROXY=true`** (env), sinon risque de spoof. Règle safe : si `TRUST_PROXY=true` → IP = première entrée de `X-Forwarded-For` ; sinon → `request.client.host`.
 
 ---
 
@@ -123,7 +141,8 @@ Côté client (navigateur) : après verify, toutes les requêtes vers `/api/admi
 | Élément | Décision |
 |--------|----------|
 | Login admin | Magic link (comme client) |
-| JWT admin | Cookie HttpOnly, Secure, SameSite=Lax |
+| JWT admin | Cookie `uwi_admin_session` : HttpOnly, **Secure en prod**, SameSite=Lax, Path=/ |
+| Cookie client | `uwi_session` (séparation claire client vs admin) |
 | Qui est admin ? | `admin_users` ou `tenant_users` avec tenant_id NULL + is_admin |
 | require_admin() | 403 si user non admin |
 | Legacy | ADMIN_API_TOKENS accepté en étape 1, retiré en étape 2 |

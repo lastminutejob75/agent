@@ -154,19 +154,7 @@ def _init_heavy_sync():
     """Partie synchrone de l'init (validation multi-tenant, credentials, PG)."""
     import os
     print("🔄 Heavy init started...")
-    # En prod : TEST_TENANT_ID doit être défini explicitement (pas de fallback silencieux)
-    _env = (os.environ.get("ENV") or os.environ.get("RAILWAY_ENVIRONMENT") or "").lower()
-    if _env == "production" and os.environ.get("TEST_TENANT_ID") is None:
-        _logger.error("TEST_TENANT_ID must be set in production (no silent fallback). Set env TEST_TENANT_ID.")
-        raise RuntimeError("TEST_TENANT_ID must be set in production. See docs/ARCHITECTURE_VOCAL_TENANTS.md.")
-    # Validation multi-tenant (ne bloque plus le startup → healthcheck OK)
-    try:
-        config.validate_multi_tenant_config()
-        print("✅ Multi-tenant config OK")
-    except RuntimeError as e:
-        _logger.critical("MULTI_TENANT config invalid: %s", e)
-        print(f"⚠️ MULTI_TENANT: {e}")
-    # Credentials Google
+    # 1. Credentials Google en premier (aucune condition) pour que /health affiche credentials_loaded true dès que possible
     try:
         config.load_google_credentials()
         print("✅ Google credentials loaded")
@@ -176,6 +164,22 @@ def _init_heavy_sync():
         config.GOOGLE_CALENDAR_ENABLED = False
         config.GOOGLE_CALENDAR_DISABLE_REASON = str(e)
         print(f"⚠️ Google Calendar disabled: {e}")
+    # 2. En prod sans TEST_TENANT_ID : fallback DEFAULT_TENANT_ID pour ensure_test_number_route
+    _env = (os.environ.get("ENV") or os.environ.get("RAILWAY_ENVIRONMENT") or "").lower()
+    if _env == "production" and os.environ.get("TEST_TENANT_ID") is None:
+        _logger.warning(
+            "TEST_TENANT_ID not set in production; using DEFAULT_TENANT_ID=%s. Set TEST_TENANT_ID for correct routing.",
+            config.DEFAULT_TENANT_ID,
+        )
+        os.environ["TEST_TENANT_ID"] = str(config.DEFAULT_TENANT_ID)
+        config.TEST_TENANT_ID = config.DEFAULT_TENANT_ID
+    # 3. Validation multi-tenant (ne bloque plus le startup → healthcheck OK)
+    try:
+        config.validate_multi_tenant_config()
+        print("✅ Multi-tenant config OK")
+    except RuntimeError as e:
+        _logger.critical("MULTI_TENANT config invalid: %s", e)
+        print(f"⚠️ MULTI_TENANT: {e}")
     # PG healthcheck
     try:
         from backend.tenants_pg import check_pg_health
@@ -379,10 +383,12 @@ async def health() -> dict:
     except Exception:
         free_slots = -1
 
-    # Credentials: chargés depuis base64 (Railway) ou fichier local (dev)
+    # Credentials: refléter l'état réel après load_google_credentials() (ou non exécuté si init a échoué)
     service_account_file = config.SERVICE_ACCOUNT_FILE
     file_exists = bool(service_account_file and os.path.exists(service_account_file))
     has_base64_env = bool(os.getenv("GOOGLE_SERVICE_ACCOUNT_BASE64"))
+    # credentials_loaded = True seulement si load_google_credentials() a réussi (fichier écrit ou flag enabled)
+    credentials_loaded = getattr(config, "GOOGLE_CALENDAR_ENABLED", False) or file_exists
 
     # Postgres: test connexion si DATABASE_URL présent
     postgres_ok = False
@@ -404,9 +410,11 @@ async def health() -> dict:
         "free_slots": free_slots,
         "service_account_file": service_account_file,
         "file_exists": file_exists,
-        "credentials_loaded": file_exists,
+        "credentials_loaded": credentials_loaded,
         "calendar_id_set": bool(config.GOOGLE_CALENDAR_ID),
         "google_base64_set": has_base64_env,
+        "google_calendar_enabled": getattr(config, "GOOGLE_CALENDAR_ENABLED", False),
+        "google_calendar_disable_reason": getattr(config, "GOOGLE_CALENDAR_DISABLE_REASON", None),
         "postgres_ok": postgres_ok,
         "postgres_error": postgres_error,
         "database_url_set": bool(db_url),

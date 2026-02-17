@@ -54,16 +54,20 @@ class SQLiteSessionStore:
         self._memory_cache: Dict[str, Session] = {}  # Cache en mémoire pour performance
     
     def _init_db(self):
-        """Crée la table sessions si elle n'existe pas."""
-        conn = sqlite3.connect(self.db_path)
-        
-        # Activer WAL mode pour meilleures performances en écriture
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")  # Plus rapide, toujours safe
-        
-        cursor = conn.cursor()
-        
-        cursor.execute("""
+        """Crée la table sessions si elle n'existe pas. Retry si database is locked (Railway)."""
+        import time
+        last_err = None
+        for attempt in range(3):
+            conn = None
+            try:
+                conn = sqlite3.connect(self.db_path, timeout=10.0)
+                try:
+                    conn.execute("PRAGMA journal_mode=WAL")
+                    conn.execute("PRAGMA synchronous=NORMAL")
+                except sqlite3.OperationalError:
+                    conn.rollback()
+                cursor = conn.cursor()
+                cursor.execute("""
             CREATE TABLE IF NOT EXISTS sessions (
                 conv_id TEXT PRIMARY KEY,
                 state TEXT NOT NULL,
@@ -106,21 +110,31 @@ class SQLiteSessionStore:
                 pending_slots_display_json TEXT
             )
         """)
-        
-        # Index pour performance
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_last_seen 
-            ON sessions(last_seen_at)
-        """)
-        
-        # Migration: ajouter colonne pending_slots_display_json si absente
-        try:
-            cursor.execute("ALTER TABLE sessions ADD COLUMN pending_slots_display_json TEXT")
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass  # colonne déjà présente
-        conn.close()
-    
+                # Index pour performance
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_last_seen 
+                    ON sessions(last_seen_at)
+                """)
+                # Migration: ajouter colonne pending_slots_display_json si absente
+                try:
+                    cursor.execute("ALTER TABLE sessions ADD COLUMN pending_slots_display_json TEXT")
+                    conn.commit()
+                except sqlite3.OperationalError:
+                    pass  # colonne déjà présente
+                conn.close()
+                break
+            except sqlite3.OperationalError as e:
+                last_err = e
+                if conn:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                if attempt < 2:
+                    time.sleep(0.5 * (attempt + 1))
+                else:
+                    raise last_err
+
     def _serialize_session(self, session: Session) -> Dict[str, Any]:
         """Convertit une Session en dict pour SQLite."""
         return {
