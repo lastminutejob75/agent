@@ -177,6 +177,8 @@ def pg_create_tenant(
     calendar_provider: str = "none",
     calendar_id: str = "",
     timezone: str = "Europe/Paris",
+    business_type: Optional[str] = None,
+    notes: Optional[str] = None,
 ) -> Optional[int]:
     """
     Crée un tenant + tenant_config dans PG.
@@ -202,7 +204,10 @@ def pg_create_tenant(
                     "calendar_provider": calendar_provider or "none",
                     "calendar_id": calendar_id or "",
                     "contact_email": contact_email or "",
+                    "business_type": (business_type or "").strip() or None,
+                    "notes": (notes or "").strip() or None,
                 }
+                params = {k: v for k, v in params.items() if v is not None}
                 cur.execute(
                     "INSERT INTO tenant_config (tenant_id, flags_json, params_json) VALUES (%s, %s, %s)",
                     (tid, "{}", json.dumps(params)),

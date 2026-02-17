@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from backend import config
 from backend.deps import validate_tenant_id
-from backend.auth_pg import pg_add_tenant_user, pg_create_tenant_user
+from backend.auth_pg import pg_add_tenant_user, pg_create_tenant_user, pg_get_tenant_user_by_email
 from backend.tenants_pg import (
     pg_add_routing,
     pg_create_tenant,
@@ -81,6 +81,23 @@ class ParamsUpdate(BaseModel):
 class AdminTenantUserCreate(BaseModel):
     email: str = Field(..., max_length=255)
     role: str = Field(default="owner", pattern="^(owner|member)$")
+
+
+class TenantCreateIn(BaseModel):
+    name: str = Field(..., min_length=2, max_length=120)
+    contact_email: str = Field(..., max_length=255)
+    timezone: str = Field(default="Europe/Paris", max_length=64)
+    business_type: Optional[str] = Field(default=None, max_length=64)
+    notes: Optional[str] = Field(default=None, max_length=2000)
+
+
+class TenantOut(BaseModel):
+    tenant_id: int
+    name: str
+    contact_email: str
+    timezone: str
+    business_type: Optional[str] = None
+    created_at: str
 
 
 # --- Helpers ---
@@ -891,6 +908,103 @@ def admin_list_tenants(
     """Liste tous les tenants."""
     items = _get_tenant_list(include_inactive=include_inactive)
     return {"tenants": items}
+
+
+@router.post("/admin/tenants", response_model=TenantOut, status_code=201)
+def admin_create_tenant(
+    body: TenantCreateIn,
+    _: None = Depends(_verify_admin),
+):
+    """
+    Crée un tenant (client) par l'admin.
+    409 si contact_email déjà associé à un autre tenant (v1 : 1 email = 1 tenant).
+    """
+    contact_email = (body.contact_email or "").strip().lower()
+    if not contact_email:
+        raise HTTPException(400, "contact_email required")
+
+    if config.USE_PG_TENANTS:
+        existing = pg_get_tenant_user_by_email(contact_email)
+        if existing:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "detail": "Cet email est déjà rattaché à un autre client.",
+                    "error_code": "EMAIL_ALREADY_ASSIGNED",
+                },
+            )
+    else:
+        import backend.db as db
+        db.ensure_tenant_config()
+        conn_sqlite = db.get_conn()
+        try:
+            rows = conn_sqlite.execute("SELECT tenant_id, params_json FROM tenant_config").fetchall()
+            for r in rows:
+                params = json.loads(r[1]) if r[1] else {}
+                existing_email = (params.get("contact_email") or "").strip().lower()
+                if existing_email == contact_email:
+                    return JSONResponse(
+                        status_code=409,
+                        content={
+                            "detail": "Cet email est déjà rattaché à un autre client.",
+                            "error_code": "EMAIL_ALREADY_ASSIGNED",
+                        },
+                    )
+        finally:
+            conn_sqlite.close()
+
+    tid = None
+    if config.USE_PG_TENANTS:
+        tid = pg_create_tenant(
+            name=body.name.strip(),
+            contact_email=contact_email,
+            calendar_provider="none",
+            calendar_id="",
+            timezone=body.timezone or "Europe/Paris",
+            business_type=(body.business_type or "").strip() or None,
+            notes=(body.notes or "").strip() or None,
+        )
+    if not tid and not config.USE_PG_TENANTS:
+        import backend.db as db
+        db.ensure_tenant_config()
+        conn = db.get_conn()
+        try:
+            conn.execute(
+                "INSERT INTO tenants (name, timezone, status) VALUES (?, ?, 'active')",
+                (body.name.strip() or "Nouveau", body.timezone or "Europe/Paris"),
+            )
+            row = conn.execute("SELECT last_insert_rowid()").fetchone()
+            tid = row[0] if row else None
+            if tid:
+                params = json.dumps({
+                    "contact_email": contact_email,
+                    "business_type": (body.business_type or "").strip() or "",
+                    "notes": (body.notes or "").strip() or "",
+                })
+                conn.execute(
+                    "INSERT INTO tenant_config (tenant_id, flags_json, params_json) VALUES (?, '{}', ?)",
+                    (tid, params),
+                )
+                conn.commit()
+        except Exception as e:
+            conn.rollback()
+            logger.exception("admin_create_tenant sqlite failed")
+            raise HTTPException(500, str(e))
+        finally:
+            conn.close()
+
+    if not tid:
+        raise HTTPException(500, "Failed to create tenant")
+
+    created_at = datetime.utcnow().isoformat() + "Z"
+    return TenantOut(
+        tenant_id=int(tid),
+        name=body.name.strip(),
+        contact_email=contact_email,
+        timezone=body.timezone or "Europe/Paris",
+        business_type=(body.business_type or "").strip() or None,
+        created_at=created_at,
+    )
 
 
 @router.get("/admin/tenants/{tenant_id}")

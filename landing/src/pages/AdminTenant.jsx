@@ -27,8 +27,12 @@ export default function AdminTenant() {
   const [techStatus, setTechStatus] = useState(null);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
+  const [routingDid, setRoutingDid] = useState("");
+  const [routingLoading, setRoutingLoading] = useState(false);
+  const [routingErr, setRoutingErr] = useState("");
+  const [routingSuccess, setRoutingSuccess] = useState(false);
 
-  useEffect(() => {
+  function loadTenant() {
     if (!tenantId) return;
     setLoading(true);
     setErr("");
@@ -42,7 +46,42 @@ export default function AdminTenant() {
       })
       .catch((e) => setErr(e.message || "Erreur"))
       .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    loadTenant();
   }, [tenantId]);
+
+  async function onActivateNumber(e) {
+    e.preventDefault();
+    const did = (routingDid || "").trim().replace(/\s/g, "");
+    if (!did) {
+      setRoutingErr("Saisissez un numéro (E.164 ou FR).");
+      return;
+    }
+    setRoutingErr("");
+    setRoutingSuccess(false);
+    setRoutingLoading(true);
+    try {
+      await api.adminAddRouting({
+        channel: "vocal",
+        key: did.startsWith("+") ? did : did.startsWith("0") ? "+33" + did.slice(1) : "+33" + did,
+        tenant_id: parseInt(tenantId, 10),
+      });
+      setRoutingSuccess(true);
+      setRoutingDid("");
+      loadTenant();
+    } catch (e) {
+      const code = e?.data?.error_code;
+      if (e?.status === 409 && code === "TEST_NUMBER_IMMUTABLE") {
+        setRoutingErr("Numéro test immuable : ce numéro est réservé à la démo.");
+      } else {
+        setRoutingErr(e?.message || "Erreur lors de l’activation.");
+      }
+    } finally {
+      setRoutingLoading(false);
+    }
+  }
 
   if (loading) return <p className="p-8 text-gray-600">Chargement...</p>;
   if (err) {
@@ -63,6 +102,36 @@ export default function AdminTenant() {
       <p className="mt-2">
         <Link to={`/admin/tenants/${tenantId}/dashboard`} className="text-blue-600 hover:underline">Voir le dashboard →</Link>
       </p>
+
+      {/* Bloc Raccorder un numéro */}
+      <section className="mt-8 rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+        <h2 className="mb-4 text-lg font-semibold text-gray-900">Raccorder un numéro</h2>
+        <form onSubmit={onActivateNumber} className="flex flex-wrap items-end gap-4">
+          <label className="flex-1 min-w-[200px]">
+            <span className="block text-sm font-medium text-gray-700 mb-1">Numéro (DID)</span>
+            <input
+              type="text"
+              value={routingDid}
+              onChange={(e) => setRoutingDid(e.target.value)}
+              placeholder="+33987654321 ou 09 87 65 43 21"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="shrink-0">
+            <span className="block text-sm font-medium text-gray-700 mb-1">Canal</span>
+            <input type="text" value="vocal" readOnly className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm w-24" />
+          </label>
+          <button
+            type="submit"
+            disabled={routingLoading}
+            className="rounded-lg bg-teal-600 text-white px-4 py-2 text-sm font-medium hover:bg-teal-700 disabled:opacity-50"
+          >
+            {routingLoading ? "Activation…" : "Activer"}
+          </button>
+        </form>
+        {routingSuccess && <p className="mt-3 text-sm text-emerald-600">Numéro activé.</p>}
+        {routingErr && <p className="mt-3 text-sm text-red-600">{routingErr}</p>}
+      </section>
 
       {/* Bloc Statut technique */}
       {techStatus && (

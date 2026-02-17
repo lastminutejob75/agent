@@ -44,6 +44,12 @@ export default function Admin() {
       {err && <p style={{ color: "crimson" }}>{err}</p>}
       {loading && <p>Chargement...</p>}
 
+      <p style={{ marginTop: 16 }}>
+        <Link to="/admin/clients/new" style={{ color: "#0d9488", fontWeight: 600 }}>
+          Créer un client →
+        </Link>
+      </p>
+
       <ul>
         {tenants.map((t) => (
           <li key={t.tenant_id ?? t.id}>

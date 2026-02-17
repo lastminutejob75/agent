@@ -61,6 +61,7 @@ async function request(path, { method = "GET", body, admin = false, tenant = fal
     const msg = (data && (data.detail || data.error || data.message)) || `HTTP ${res.status}`;
     const err = new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
     err.status = res.status;
+    err.data = data;
     throw err;
   }
   return data;
@@ -88,6 +89,8 @@ export const api = {
     request(`/api/admin/tenants/${tenantId}/technical-status`, { admin: true }),
   adminAddTenantUser: (tenantId, payload) =>
     request(`/api/admin/tenants/${tenantId}/users`, { method: "POST", body: payload, admin: true }),
+  adminCreateTenant: (payload) =>
+    request("/api/admin/tenants", { method: "POST", body: payload, admin: true }),
 
   // auth ( Magic Link )
   authRequestLink: (email) =>

@@ -4,6 +4,7 @@ import Onboarding from "./pages/Onboarding";
 import Admin from "./pages/Admin";
 import AdminTenant from "./pages/AdminTenant";
 import AdminTenantDashboard from "./pages/AdminTenantDashboard";
+import AdminClientNew from "./pages/AdminClientNew";
 import Login from "./pages/Login";
 import AuthCallback from "./pages/AuthCallback";
 import AppLayout from "./pages/AppLayout";
@@ -26,6 +27,7 @@ export default function App() {
         <Route path="rgpd" element={<AppRgpd />} />
       </Route>
       <Route path="/admin" element={<Admin />} />
+      <Route path="/admin/clients/new" element={<AdminClientNew />} />
       <Route path="/admin/tenants/:tenantId" element={<AdminTenant />} />
       <Route path="/admin/tenants/:tenantId/dashboard" element={<AdminTenantDashboard />} />
       <Route path="*" element={<Navigate to="/" replace />} />
