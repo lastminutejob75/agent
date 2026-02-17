@@ -32,23 +32,14 @@ def _check_report_secret(x_report_secret: Optional[str] = Header(None, alias="X-
         raise HTTPException(status_code=403, detail="Invalid secret")
 
 
-def _run_daily_report(tenant_id: Optional[int] = None) -> Dict[str, Any]:
-    """Logique rapport (exécutée dans un thread pour timeout). tenant_id optionnel pour multi-tenant."""
-    today = date.today().isoformat()
-    admin_email = os.getenv("REPORT_EMAIL") or os.getenv("OWNER_EMAIL")
-    if not admin_email:
-        return {
-            "status": "ok",
-            "clients_notified": 0,
-            "email_skipped": "REPORT_EMAIL ou OWNER_EMAIL non défini sur Railway",
-        }
-
+def _run_daily_report_one_tenant(tenant_id: Optional[int], today: str, admin_email: str) -> Dict[str, Any]:
+    """Exécute le rapport pour un seul tenant. Retourne {notified, email_skipped, email_error}."""
     try:
         memory = get_client_memory()
         clients = memory.get_clients_with_email(tenant_id=tenant_id)
     except Exception as e:
         logger.exception("report_daily: get_client_memory failed")
-        return {"status": "error", "clients_notified": 0, "error": str(e)}
+        return {"notified": 0, "email_error": str(e)}
 
     notified = 0
     email_skipped = None
@@ -103,6 +94,45 @@ def _run_daily_report(tenant_id: Optional[int] = None) -> Dict[str, Any]:
     if email_error:
         out["email_error"] = email_error
     return out
+
+
+def _run_daily_report(tenant_id: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Lance le rapport quotidien. Si tenant_id est None et PG dispo, exécute le rapport
+    pour chaque tenant actif (pg_fetch_tenants). Sinon un seul tenant (tenant_id ou fallback legacy).
+    """
+    today = date.today().isoformat()
+    admin_email = os.getenv("REPORT_EMAIL") or os.getenv("OWNER_EMAIL")
+    if not admin_email:
+        return {
+            "status": "ok",
+            "clients_notified": 0,
+            "email_skipped": "REPORT_EMAIL ou OWNER_EMAIL non défini sur Railway",
+        }
+
+    if tenant_id is not None:
+        return _run_daily_report_one_tenant(tenant_id, today, admin_email)
+
+    # tenant_id absent : tous les tenants actifs (PG) ou fallback mono-tenant
+    try:
+        from backend import config
+        if config.USE_PG_TENANTS:
+            from backend.tenants_pg import pg_fetch_tenants
+            result = pg_fetch_tenants(include_inactive=False)
+            if result:
+                tenants_list, _ = result
+                if tenants_list:
+                    total_notified = 0
+                    for t in tenants_list:
+                        tid = t.get("tenant_id")
+                        if tid is not None:
+                            one = _run_daily_report_one_tenant(tid, today, admin_email)
+                            total_notified += one.get("clients_notified", 0)
+                    return {"status": "ok", "clients_notified": total_notified, "tenants_processed": len(tenants_list)}
+    except Exception as e:
+        logger.debug("report_daily all-tenants pg: %s, fallback single", e)
+
+    return _run_daily_report_one_tenant(None, today, admin_email)
 
 
 def _run_report_background(tenant_id: Optional[int] = None) -> None:
