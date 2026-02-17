@@ -30,6 +30,7 @@ Doc court, une seule source de vérité : numéro test = vitrine, dashboard = in
 - **Règle** : 1 DID → 1 tenant
 - **Contrainte** : clé unique sur `(channel, did_key)` (SQLite) / `(channel, key)` (Postgres) — une seule ligne par DID par canal, l’UPSERT est donc bien défini.
 - **Formats** : stocker `did_key` normalisé (E.164 recommandé, ex. `+33939240575`).
+- **Canal démo** : la route du numéro test est toujours `channel = "vocal"` (toutes les écritures démo utilisent ce canal pour éviter des doublons par canal).
 
 **Colonnes**
 - SQLite : `channel`, `did_key`, `tenant_id`, `created_at` — `PRIMARY KEY (channel, did_key)`.

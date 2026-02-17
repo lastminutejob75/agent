@@ -167,7 +167,7 @@ def _init_heavy_sync():
             print("⚠️ PG_HEALTH down -> sqlite fallback")
     except Exception as e:
         _logger.warning("PG healthcheck failed: %s", e)
-    # Route démo test → TEST_TENANT_ID (idempotent). Si PG down : SQLite seul, log WARN pour PG.
+    # Route démo test → TEST_TENANT_ID (idempotent), juste après PG check pour éviter pool/transaction divergent.
     try:
         from backend.tenant_routing import ensure_test_number_route
         if ensure_test_number_route():

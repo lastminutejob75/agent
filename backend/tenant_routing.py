@@ -236,7 +236,9 @@ def ensure_test_number_route() -> bool:
             if key and pg_add_routing("vocal", key, test_tid):
                 logger.info("ensure_test_number_route: vocal %s → tenant_id=%s (pg)", key, test_tid)
         except Exception as e:
-            logger.warning("ensure_test_number_route pg: %s", e)
+            logger.warning(
+                "[ROUTING] ensure_test_number_route skipped (PG down); relying on SQLite fallback: %s", e
+            )
     return True
 
 

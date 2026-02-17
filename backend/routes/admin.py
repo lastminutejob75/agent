@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
@@ -1109,10 +1110,10 @@ def admin_add_routing(
         return {"ok": True}
     except ValueError as e:
         if "TEST_TENANT_ID" in str(e) or "Forbidden" in str(e) or "démo vocal" in str(e):
-            raise HTTPException(
+            return JSONResponse(
                 status_code=409,
-                detail={"detail": str(e), "error_code": "TEST_NUMBER_IMMUTABLE"},
-            ) from e
+                content={"detail": str(e), "error_code": "TEST_NUMBER_IMMUTABLE"},
+            )
         raise
 
 
