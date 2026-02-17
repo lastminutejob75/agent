@@ -14,6 +14,8 @@ from contextvars import ContextVar
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+from backend.pg_tenant_context import set_tenant_id_on_connection
+
 logger = logging.getLogger(__name__)
 
 # Phase 2.1: connexion du lock en cours (pour journal sans deadlock)
@@ -71,6 +73,7 @@ def pg_ensure_call_session(
     def _do():
         import psycopg
         with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -114,6 +117,7 @@ def pg_next_seq(tenant_id: int, call_id: str) -> Optional[int]:
     def _do():
         import psycopg
         with psycopg.connect(url) as c:
+            set_tenant_id_on_connection(c, tenant_id)
             with c.cursor() as cur:
                 cur.execute(
                     """
@@ -150,6 +154,7 @@ def pg_add_message(
     def _do():
         import psycopg
         with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -176,6 +181,7 @@ def pg_update_last_state(tenant_id: int, call_id: str, state: str) -> bool:
     def _do():
         import psycopg
         with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -207,6 +213,7 @@ def pg_write_checkpoint(
     def _do():
         import psycopg
         with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -238,6 +245,7 @@ def pg_get_latest_checkpoint(
         import json
         import psycopg
         with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -271,6 +279,7 @@ def pg_list_messages_since(
         import psycopg
         from psycopg.rows import dict_row
         with psycopg.connect(url, row_factory=dict_row) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -308,6 +317,7 @@ def pg_lock_call_session(tenant_id: int, call_id: str, timeout_seconds: int = 2)
     try:
         import psycopg
         with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL lock_timeout = %s", (f"{timeout_seconds * 1000}ms",))
                 cur.execute(
@@ -342,6 +352,7 @@ def pg_get_call_session_info(tenant_id: int, call_id: str) -> Optional[Tuple[str
     def _do():
         import psycopg
         with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT last_state, last_seq FROM call_sessions WHERE tenant_id = %s AND call_id = %s",
@@ -406,6 +417,7 @@ def pg_get_web_session(tenant_id: int, conv_id: str) -> Optional["Session"]:
     def _do() -> Optional["Session"]:
         import psycopg
         with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
             _pg_ensure_web_sessions_table(conn)
             with conn.cursor() as cur:
                 cur.execute(
@@ -439,6 +451,7 @@ def pg_save_web_session(tenant_id: int, conv_id: str, session: "Session") -> boo
     def _do() -> bool:
         import psycopg
         with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
             _pg_ensure_web_sessions_table(conn)
             with conn.cursor() as cur:
                 cur.execute(
@@ -492,27 +505,7 @@ def pg_delete_web_session(tenant_id: int, conv_id: str) -> bool:
     def _do() -> bool:
         import psycopg
         with psycopg.connect(url) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "DELETE FROM web_sessions WHERE tenant_id = %s AND conv_id = %s",
-                    (tenant_id, conv_id),
-                )
-                conn.commit()
-        return True
-
-    return _execute_with_retry("pg_delete_web_session", _do) is True
-
-
-
-def pg_delete_web_session(tenant_id: int, conv_id: str) -> bool:
-    """Supprime une session web en PG. Retourne True si succès."""
-    url = _pg_url()
-    if not url:
-        return False
-
-    def _do() -> bool:
-        import psycopg
-        with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute(
                     "DELETE FROM web_sessions WHERE tenant_id = %s AND conv_id = %s",

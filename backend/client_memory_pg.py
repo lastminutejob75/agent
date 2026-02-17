@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from backend.client_memory import Client, BookingHistory
+from backend.pg_tenant_context import set_tenant_id_on_connection
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +106,7 @@ def pg_get_client_by_phone(tenant_id: int, phone: str) -> Optional[Client]:
         if not p:
             return None
         with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
             _ensure_tables(conn)
             with conn.cursor() as cur:
                 cur.execute(
@@ -128,6 +130,7 @@ def pg_get_client_by_name(tenant_id: int, name: str) -> Optional[Client]:
         if not name_lower:
             return None
         with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
             _ensure_tables(conn)
             with conn.cursor() as cur:
                 cur.execute(
@@ -182,6 +185,7 @@ def pg_create_client(
         raise RuntimeError("client_memory_pg: no DATABASE_URL")
     import psycopg
     with psycopg.connect(url) as conn:
+        set_tenant_id_on_connection(conn, tenant_id)
         _ensure_tables(conn)
         with conn.cursor() as cur:
             cur.execute(
@@ -211,6 +215,7 @@ def pg_update_client(tenant_id: int, client_id: int, **kwargs: Any) -> None:
     set_parts = [f"{k} = %s" for k in updates]
     values = list(updates.values()) + [tenant_id, client_id]
     with psycopg.connect(url) as conn:
+        set_tenant_id_on_connection(conn, tenant_id)
         with conn.cursor() as cur:
             cur.execute(
                 f"UPDATE tenant_clients SET {', '.join(set_parts)} WHERE tenant_id = %s AND id = %s",
@@ -232,6 +237,7 @@ def pg_record_booking(
     try:
         import psycopg
         with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
             _ensure_tables(conn)
             with conn.cursor() as cur:
                 cur.execute(
@@ -265,6 +271,7 @@ def pg_get_history(tenant_id: int, client_id: int, limit: int = 10) -> List[Book
     try:
         import psycopg
         with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -290,6 +297,7 @@ def pg_get_clients_with_email(tenant_id: int) -> List[Tuple[int, str, str]]:
     try:
         import psycopg
         with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT id, name, email FROM tenant_clients WHERE tenant_id = %s AND email IS NOT NULL AND email != ''",
@@ -309,6 +317,7 @@ def pg_get_stats(tenant_id: int, days: int = 30) -> Dict[str, Any]:
         import psycopg
         since = datetime.utcnow() - timedelta(days=days)
         with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute("SELECT COUNT(*) FROM tenant_clients WHERE tenant_id = %s", (tenant_id,))
                 total_clients = cur.fetchone()[0]

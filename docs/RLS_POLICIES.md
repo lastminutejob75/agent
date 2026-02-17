@@ -58,9 +58,11 @@ CREATE POLICY ivr_events_tenant_isolation ON ivr_events
 -- Policy FOR ALL (SELECT, INSERT, UPDATE, DELETE) si besoin, ou séparer.
 ```
 
-## Côté application
+## Côté application (intégré)
 
-Pour que RLS soit efficace, chaque requête doit être exécutée dans un contexte où `app.current_tenant_id` est défini :
+L’app pose `app.current_tenant_id` via `backend.pg_tenant_context.set_tenant_id_on_connection(conn, tenant_id)` juste après chaque `psycopg.connect()` dans les modules tenant-scopés : `tenants_pg`, `session_pg`, `client_memory_pg`, `ivr_events_pg` (client_id = tenant). Aucune policy RLS n’est active tant que le script SQL des policies n’est pas exécuté sur la base.
+
+Pour que RLS soit efficace après activation des policies, chaque requête doit être exécutée dans un contexte où `app.current_tenant_id` est défini :
 
 - **Option A** : au début de chaque handler (FastAPI) qui a déjà le `tenant_id`, ouvrir une connexion puis `SET LOCAL app.current_tenant_id = '<tenant_id>'` avant tout accès DB.
 - **Option B** : middleware ou dépendance qui pose la variable sur la connexion du pool (si le pool est par-request).

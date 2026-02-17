@@ -11,6 +11,8 @@ import logging
 import os
 from typing import Optional
 
+from backend.pg_tenant_context import set_tenant_id_on_connection
+
 logger = logging.getLogger(__name__)
 
 # Erreurs transitoires (réessayer 1x)
@@ -55,6 +57,7 @@ def create_ivr_event_pg(
     def _do_insert() -> bool:
         import psycopg
         with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, client_id)
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -91,6 +94,7 @@ def consent_obtained_exists_pg(client_id: int, call_id: str) -> bool:
     try:
         import psycopg
         with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, client_id)
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT 1 FROM ivr_events WHERE client_id = %s AND call_id = %s AND event = 'consent_obtained' LIMIT 1",

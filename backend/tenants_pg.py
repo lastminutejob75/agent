@@ -10,6 +10,8 @@ import logging
 import os
 from typing import Optional, Tuple
 
+from backend.pg_tenant_context import set_tenant_id_on_connection
+
 logger = logging.getLogger(__name__)
 
 # Cache healthcheck (évite hammering si PG down)
@@ -103,6 +105,7 @@ def pg_get_tenant_flags(tenant_id: int) -> Optional[Tuple[dict, str]]:
     def _query() -> Optional[Tuple[dict, str]]:
         import psycopg
         with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT flags_json FROM tenant_config WHERE tenant_id = %s",
@@ -141,6 +144,7 @@ def pg_get_tenant_params(tenant_id: int) -> Optional[Tuple[dict, str]]:
     def _query() -> Optional[Tuple[dict, str]]:
         import psycopg
         with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT params_json FROM tenant_config WHERE tenant_id = %s",
@@ -236,6 +240,7 @@ def pg_update_tenant_flags(tenant_id: int, flags: dict) -> bool:
         current, _ = pg_get_tenant_flags(tenant_id) or ({}, "pg")
         merged = {**current, **{k: v for k, v in flags.items() if isinstance(v, bool)}}
         with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute(
                     "UPDATE tenant_config SET flags_json = %s, updated_at = now() WHERE tenant_id = %s",
@@ -264,6 +269,7 @@ def pg_update_tenant_params(tenant_id: int, params: dict) -> bool:
         # timezone est dans tenants, pas params_json
         tz_val = merged.pop("timezone", None)
         with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute(
                     "UPDATE tenant_config SET params_json = %s, updated_at = now() WHERE tenant_id = %s",
@@ -294,6 +300,7 @@ def pg_add_routing(channel: str, key: str, tenant_id: int) -> bool:
     try:
         import psycopg
         with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -319,6 +326,7 @@ def pg_get_routing_for_tenant(tenant_id: int) -> Optional[list]:
         import psycopg
         from psycopg.rows import dict_row
         with psycopg.connect(url, row_factory=dict_row) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT channel, key, is_active FROM tenant_routing WHERE tenant_id = %s ORDER BY channel, key",
@@ -339,6 +347,7 @@ def pg_get_tenant_full(tenant_id: int) -> Optional[dict]:
         import psycopg
         from psycopg.rows import dict_row
         with psycopg.connect(url, row_factory=dict_row) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute("SELECT tenant_id, name, timezone, status, created_at FROM tenants WHERE tenant_id = %s", (tenant_id,))
                 t = cur.fetchone()
