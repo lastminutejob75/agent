@@ -1,4 +1,5 @@
 // UWi Medical - Landing Page (design unifié uwiapp.com)
+// Déployé via Vercel depuis landing/ — ce composant est utilisé par landing/src/App.jsx (route /)
 import {
   Calendar,
   Phone,
@@ -22,8 +23,9 @@ import {
   Zap,
 } from 'lucide-react';
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 
-function App() {
+export default function UwiLanding() {
   const [openFaq, setOpenFaq] = useState(-1);
 
   return (
@@ -31,31 +33,33 @@ function App() {
       <header className="fixed top-0 left-0 right-0 bg-slate-950/90 backdrop-blur-2xl border-b border-slate-800 z-50">
         <nav className="max-w-7xl mx-auto px-6 py-6 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <div className="relative">
-              <div className="absolute inset-0 bg-teal-500 rounded-xl blur-lg opacity-50"></div>
-              <div className="relative w-12 h-12 bg-gradient-to-br from-teal-500 to-cyan-400 rounded-xl flex items-center justify-center shadow-2xl transform -rotate-3">
-                <Stethoscope className="w-7 h-7 text-slate-950 font-bold" strokeWidth={2.5} />
+            <Link to="/" className="flex items-center gap-4">
+              <div className="relative">
+                <div className="absolute inset-0 bg-teal-500 rounded-xl blur-lg opacity-50"></div>
+                <div className="relative w-12 h-12 bg-gradient-to-br from-teal-500 to-cyan-400 rounded-xl flex items-center justify-center shadow-2xl transform -rotate-3">
+                  <Stethoscope className="w-7 h-7 text-slate-950 font-bold" strokeWidth={2.5} />
+                </div>
               </div>
-            </div>
-            <div>
-              <div className="text-2xl font-black text-white tracking-tight">UWi Medical</div>
-              <div className="text-[10px] text-teal-400 font-semibold tracking-widest uppercase">IA Secrétariat</div>
-            </div>
+              <div>
+                <div className="text-2xl font-black text-white tracking-tight">UWi Medical</div>
+                <div className="text-[10px] text-teal-400 font-semibold tracking-widest uppercase">IA Secrétariat</div>
+              </div>
+            </Link>
           </div>
           <div className="hidden lg:flex items-center gap-8">
-            <a href="#specialites" className="text-slate-400 hover:text-teal-400 transition-colors text-sm font-semibold">Spécialités</a>
+            <a href="#metiers" className="text-slate-400 hover:text-teal-400 transition-colors text-sm font-semibold">Spécialités</a>
             <a href="#fonctionnalites" className="text-slate-400 hover:text-teal-400 transition-colors text-sm font-semibold">Fonctionnalités</a>
-            <a href="#securite" className="text-slate-400 hover:text-teal-400 transition-colors text-sm font-semibold">Sécurité</a>
-            <a href="#tarifs" className="text-slate-400 hover:text-teal-400 transition-colors text-sm font-semibold">Tarifs</a>
+            <a href="#fonctionnalites" className="text-slate-400 hover:text-teal-400 transition-colors text-sm font-semibold">Sécurité</a>
+            <a href="#pricing" className="text-slate-400 hover:text-teal-400 transition-colors text-sm font-semibold">Tarifs</a>
           </div>
           <div className="flex items-center gap-3">
-            <button className="hidden sm:block text-slate-300 hover:text-white px-5 py-2.5 rounded-lg text-sm font-bold transition-colors">
+            <Link to="/login" className="hidden sm:block text-slate-300 hover:text-white px-5 py-2.5 rounded-lg text-sm font-bold transition-colors">
               Connexion
-            </button>
-            <button className="relative group bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 px-7 py-3 rounded-lg text-sm font-black hover:shadow-2xl hover:shadow-teal-500/50 hover:scale-105 transition-all duration-200">
+            </Link>
+            <Link to="/onboarding" className="relative group bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 px-7 py-3 rounded-lg text-sm font-black hover:shadow-2xl hover:shadow-teal-500/50 hover:scale-105 transition-all duration-200 inline-flex">
               <div className="absolute inset-0 bg-white/20 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"></div>
               <span className="relative">Démarrer →</span>
-            </button>
+            </Link>
           </div>
         </nav>
       </header>
