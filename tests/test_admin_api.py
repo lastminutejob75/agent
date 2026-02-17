@@ -46,6 +46,53 @@ def test_admin_tenants_requires_auth(client):
     assert r.status_code == 401
 
 
+def test_admin_create_tenant_requires_auth(client):
+    """POST /api/admin/tenants sans token → 401."""
+    r = client.post(
+        "/api/admin/tenants",
+        json={"name": "Test", "contact_email": "a@b.fr", "timezone": "Europe/Paris"},
+    )
+    assert r.status_code == 401
+
+
+@patch("backend.routes.admin.config.USE_PG_TENANTS", False)
+def test_admin_create_tenant_sqlite_201(client, admin_headers):
+    """POST /api/admin/tenants (SQLite) → 201, contact_email normalisé lower."""
+    r = client.post(
+        "/api/admin/tenants",
+        headers=admin_headers,
+        json={
+            "name": "Cabinet Test",
+            "contact_email": "  Dr@Cabinet.Fr  ",
+            "timezone": "Europe/Paris",
+            "business_type": "medical",
+            "notes": "Note",
+        },
+    )
+    assert r.status_code == 201
+    data = r.json()
+    assert data["name"] == "Cabinet Test"
+    assert data["contact_email"] == "dr@cabinet.fr"
+    assert data["timezone"] == "Europe/Paris"
+    assert data.get("business_type") == "medical"
+    assert "tenant_id" in data
+    assert data["tenant_id"] >= 1
+    assert "created_at" in data
+
+
+@patch("backend.routes.admin.config.USE_PG_TENANTS", False)
+def test_admin_create_tenant_sqlite_409_duplicate_email(client, admin_headers):
+    """POST /api/admin/tenants (SQLite) même email deux fois → 409 EMAIL_ALREADY_ASSIGNED."""
+    payload = {"name": "First", "contact_email": "same@example.com", "timezone": "Europe/Paris"}
+    r1 = client.post("/api/admin/tenants", headers=admin_headers, json=payload)
+    assert r1.status_code == 201
+    r2 = client.post("/api/admin/tenants", headers=admin_headers, json={**payload, "name": "Second"})
+    assert r2.status_code == 409
+    data = r2.json()
+    assert data.get("error_code") == "EMAIL_ALREADY_ASSIGNED"
+    assert "detail" in data
+
+
 def test_admin_tenants_with_token(client, admin_headers):
     """GET /api/admin/tenants avec token → 200."""
     r = client.get("/api/admin/tenants", headers=admin_headers)
