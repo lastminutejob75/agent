@@ -29,6 +29,9 @@ venv/
 .idea/
 .cursor/
 
+# Node
+node_modules/
+
 # Credentials / env (ne pas committer les secrets)
 .env
 credentials/

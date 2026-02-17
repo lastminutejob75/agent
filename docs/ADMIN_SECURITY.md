@@ -11,7 +11,22 @@ Référence pour la barrière admin sans casser le magic link client.
 | **Admin** | `Authorization: Bearer <ADMIN_API_TOKEN>` (header) | Toutes les routes `/api/admin/*`. Token partagé (env). |
 | **Client** | Magic link → JWT en localStorage → `Authorization: Bearer <JWT>` | Routes `/api/tenant/*`, `/app`. |
 
-Un client qui envoie un token invalide ou son JWT reçoit **401 Unauthorized** (comme si le token manquait), pour ne pas révéler si le token est "valide mais pas admin". Le **403** est réservé pour plus tard : "token valide mais role ≠ admin".
+---
+
+## Matrice HTTP (version clean standard)
+
+| Code | Cas |
+|------|-----|
+| **401 Unauthorized** | Bearer manquant ; Bearer présent mais token invalide / expiré |
+| **403 Forbidden** | Token valide, user authentifié, mais role ≠ admin |
+
+Séparation nette : l’auth (qui es-tu ?) → 401 ; l’authz (as-tu le droit ?) → 403.
+
+**Structure cible** (quand admin = users avec rôle) :
+- `get_current_user()` : token absent → 401, token invalide/expiré → 401, sinon retourne User.
+- `require_admin(user: User = Depends(get_current_user))` : si pas user → 401, si pas user.is_admin → 403, sinon return user.
+
+Aujourd’hui : un seul token admin (ADMIN_API_TOKEN) → tout ce qui n’est pas ce token donne 401 ; 403 réservé pour plus tard.
 
 ---
 
@@ -19,11 +34,15 @@ Un client qui envoie un token invalide ou son JWT reçoit **401 Unauthorized** (
 
 - **Dépendance** : `require_admin` (alias `_verify_admin`) dans `backend/routes/admin.py`.
 - **Codes** :
-  - **503** : `ADMIN_API_TOKEN` non défini (config manquante).
-  - **401** : Bearer manquant, vide, ou token invalide/expiré (ne pas révéler "valide mais pas admin").
+  - **503** : aucun token admin configuré (`ADMIN_API_TOKEN` ou `ADMIN_API_TOKENS`).
+  - **401** : Bearer manquant, vide, ou token invalide/expiré.
   - **403** : réservé pour usage futur (token valide mais role ≠ admin).
+- **Rotation** : `ADMIN_API_TOKENS=tok1,tok2` permet plusieurs tokens valides en parallèle (sans coupure pendant la rotation).
+- **Audit** : chaque accès admin est loggé (path, client IP, user-agent) pour traçabilité même sans user.
 
-Aucune route admin n’accepte le JWT client : seul le token admin ouvre l’accès.
+Aucune route admin n’accepte le JWT client : seuls les tokens admin ouvrent l’accès.
+
+**Tests (triple verrou)** : `test_admin_tenants_401_without_token` (401 sans token), `test_admin_tenants_401_with_invalid_token` (401 token invalide), `test_admin_tenants_with_token` (200 avec token admin). Un test 403 sera ajouté quand "token valide mais non-admin" existera (get_current_user + role).
 
 ---
 

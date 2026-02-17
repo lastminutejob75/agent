@@ -12,7 +12,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
@@ -37,24 +37,37 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["admin"])
 _security = HTTPBearer(auto_error=False)
 
-ADMIN_TOKEN = os.environ.get("ADMIN_API_TOKEN", "")
+ADMIN_TOKEN = (os.environ.get("ADMIN_API_TOKEN") or "").strip()
+# Rotation : plusieurs tokens valides (ADMIN_API_TOKENS=tok1,tok2)
+_ADMIN_TOKENS_EXTRA = [t.strip() for t in (os.environ.get("ADMIN_API_TOKENS") or "").split(",") if t.strip()]
+_ADMIN_VALID_TOKENS = frozenset([ADMIN_TOKEN] + _ADMIN_TOKENS_EXTRA) if ADMIN_TOKEN else frozenset(_ADMIN_TOKENS_EXTRA)
 
 
 def require_admin(
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security),
 ) -> None:
     """
     Dépendance FastAPI : accès réservé à l'admin.
-    - 503 : ADMIN_API_TOKEN non configuré
+    - 503 : aucun token admin configuré (ADMIN_API_TOKEN ou ADMIN_API_TOKENS)
     - 401 : pas authentifié (Bearer manquant ou token invalide/expiré)
-    - 403 : authentifié mais pas autorisé (token valide, role != admin) — réservé pour usage futur
+    - 403 : réservé (token valide mais role != admin).
+    Rotation : ADMIN_API_TOKENS=tok1,tok2 accepte plusieurs tokens en parallèle.
     """
-    if not ADMIN_TOKEN:
-        raise HTTPException(503, "Admin API not configured (ADMIN_API_TOKEN missing)")
+    if not _ADMIN_VALID_TOKENS:
+        raise HTTPException(503, "Admin API not configured (ADMIN_API_TOKEN or ADMIN_API_TOKENS missing)")
     if not credentials or not (credentials.credentials or "").strip():
         raise HTTPException(401, "Missing credentials (Bearer token required)")
-    if credentials.credentials.strip() != ADMIN_TOKEN:
+    token = credentials.credentials.strip()
+    if token not in _ADMIN_VALID_TOKENS:
         raise HTTPException(401, "Invalid or expired token")
+    # Audit minimal : route + ip + user-agent (sans user, token partagé)
+    logger.info(
+        "admin_access path=%s client=%s user_agent=%s",
+        request.url.path,
+        request.client.host if request.client else None,
+        (request.headers.get("user-agent") or "")[:200],
+    )
 
 
 # Alias pour compatibilité existante
