@@ -55,6 +55,15 @@ def test_admin_create_tenant_requires_auth(client):
     assert r.status_code == 401
 
 
+def test_admin_tenants_forbidden_with_wrong_token(client):
+    """GET /api/admin/tenants avec Bearer invalide (ex. JWT client) → 403."""
+    r = client.get(
+        "/api/admin/tenants",
+        headers={"Authorization": "Bearer wrong-token-or-client-jwt"},
+    )
+    assert r.status_code == 403
+
+
 @patch("backend.routes.admin.config.USE_PG_TENANTS", False)
 def test_admin_create_tenant_sqlite_201(client, admin_headers):
     """POST /api/admin/tenants (SQLite) → 201, contact_email normalisé lower."""

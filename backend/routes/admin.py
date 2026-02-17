@@ -40,11 +40,25 @@ _security = HTTPBearer(auto_error=False)
 ADMIN_TOKEN = os.environ.get("ADMIN_API_TOKEN", "")
 
 
-def _verify_admin(credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security)) -> None:
+def require_admin(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security),
+) -> None:
+    """
+    Dépendance FastAPI : accès réservé à l'admin.
+    - 503 : ADMIN_API_TOKEN non configuré
+    - 401 : pas de Bearer (non authentifié)
+    - 403 : Bearer présent mais invalide (ex. JWT client) → pas les droits admin
+    """
     if not ADMIN_TOKEN:
         raise HTTPException(503, "Admin API not configured (ADMIN_API_TOKEN missing)")
-    if not credentials or credentials.credentials != ADMIN_TOKEN:
-        raise HTTPException(401, "Invalid or missing admin token")
+    if not credentials or not (credentials.credentials or "").strip():
+        raise HTTPException(401, "Missing admin credentials (Bearer token required)")
+    if credentials.credentials.strip() != ADMIN_TOKEN:
+        raise HTTPException(403, "Forbidden: admin access required")
+
+
+# Alias pour compatibilité existante
+_verify_admin = require_admin
 
 
 # --- Schemas ---
