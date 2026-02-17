@@ -118,12 +118,11 @@ Toutes les requêtes **PG** (slots_pg, tenants_pg, session_pg) passent par `tena
    **Adressé** : Boucle sur `pg_fetch_tenants` ; email = `params_json.contact_email` par tenant (repli global). Appel avec `?tenant_id=` utilise aussi le contact_email du tenant. Données scopées par tenant (get_daily_report_data(tid), business_name par tenant).
 
 4. **Pas de RLS en PG**  
-   L’isolation repose uniquement sur les filtres applicatifs. Une requête oubliant `tenant_id` exposerait des données.  
-   **Amélioration :** Ajouter des policies RLS sur les tables contenant `tenant_id` (slots, appointments, call_sessions, etc.) pour renforcer la garantie côté DB.
+   L'isolation repose uniquement sur les filtres applicatifs.  
+   **Doc + script :** `docs/RLS_POLICIES.md` et `docs/migrations/001_rls_policies_example.sql` (exemple policies + `app.current_tenant_id`). À appliquer après mise en place de la variable de session côté app.
 
 5. **ivr_events.client_id vs tenant_id**  
-   Colonne nommée `client_id` alors qu’elle sert de scope tenant pour le vocal. Possible confusion avec “client” patient.  
-   **Amélioration :** Documenter clairement que `client_id` = tenant pour IVR ; ou renommer en `tenant_id` si migration possible.
+   **Documenté :** `docs/IVR_EVENTS_SCOPE.md` — convention `client_id` = tenant pour IVR. Renommage en `tenant_id` possible plus tard.
 
 ---
 
@@ -150,8 +149,8 @@ Toutes les requêtes **PG** (slots_pg, tenants_pg, session_pg) passent par `tena
 | 5 | ClientMemory : introduire `tenant_id` (ou équivalent) partout pour isoler clients/patients par tenant. | L | Critique |
 | 6 | Rapports quotidiens : boucle sur les tenants (ex. depuis PG), email par tenant, et scope des données par tenant. | M | ✅ Fait (contact_email par tenant, boucle pg_fetch_tenants, business_name par tenant). |
 | 7 | Config métier par tenant : BUSINESS_NAME, TRANSFER_PHONE depuis tenant_config/params. | S | ✅ Fait (Jour 7 : get_tenant_display_config, params_json, greeting vocal). Horaires à étendre si besoin. |
-| 8 | (Optionnel) RLS sur les tables PG avec tenant_id. | M | Renforcement |
-| 9 | (Optionnel) Tracking consommation (tokens, minutes Vapi) par tenant. | M | Plus tard |
+| 8 | (Optionnel) RLS sur les tables PG avec tenant_id. | M | Doc + script : `docs/RLS_POLICIES.md`, `docs/migrations/001_rls_policies_example.sql`. |
+| 9 | (Optionnel) Tracking consommation (tokens, minutes Vapi) par tenant. | M | Réf. `docs/OPTIONS_FUTURES.md` (#2 Calendar, #9 Tracking). |
 
 **Légende effort :** S = petit, M = moyen, L = large.
 
