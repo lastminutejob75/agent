@@ -141,6 +141,8 @@ class ClientMemory:
         Returns:
             Client ou None si non trouvé
         """
+        from backend import config
+        config._sqlite_guard("client_memory.get_by_phone")
         phone_normalized = self._normalize_phone(phone)
         
         conn = sqlite3.connect(self.db_path)
@@ -167,6 +169,8 @@ class ClientMemory:
         Returns:
             Client ou None si non trouvé
         """
+        from backend import config
+        config._sqlite_guard("client_memory.get_by_name")
         name_lower = name.lower().strip()
         
         conn = sqlite3.connect(self.db_path)
@@ -210,6 +214,8 @@ class ClientMemory:
         Returns:
             Client existant ou nouvellement créé
         """
+        from backend import config
+        config._sqlite_guard("client_memory.get_or_create")
         # Essayer de trouver par téléphone d'abord
         if phone:
             existing = self.get_by_phone(phone)
@@ -268,6 +274,8 @@ class ClientMemory:
     
     def _update_client(self, client_id: int, **kwargs) -> None:
         """Met à jour un client."""
+        from backend import config
+        config._sqlite_guard("client_memory._update_client")
         if not kwargs:
             return
         
@@ -308,6 +316,8 @@ class ClientMemory:
         Returns:
             ID du booking créé
         """
+        from backend import config
+        config._sqlite_guard("client_memory.record_booking")
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -351,6 +361,8 @@ class ClientMemory:
         Returns:
             Liste des RDV (plus récent en premier)
         """
+        from backend import config
+        config._sqlite_guard("client_memory.get_history")
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -445,6 +457,8 @@ class ClientMemory:
         Liste des clients ayant un email (pour envoi rapport quotidien).
         Returns: List[(id, name, email), ...]
         """
+        from backend import config
+        config._sqlite_guard("client_memory.get_clients_with_email")
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute(
@@ -468,6 +482,8 @@ class ClientMemory:
         Returns:
             Dict avec les stats
         """
+        from backend import config
+        config._sqlite_guard("client_memory.get_stats")
         since = datetime.utcnow() - timedelta(days=days)
         
         conn = sqlite3.connect(self.db_path)

@@ -1,17 +1,21 @@
 # backend/tenant_routing.py
 """
 DID → tenant_id routing.
-Permet de router un appel vocal vers le bon tenant selon le numéro appelé (E.164).
+Permet de router un appel vocal ou WhatsApp vers le bon tenant selon le numéro (E.164).
 """
 from __future__ import annotations
 
 import logging
 import re
+from contextvars import ContextVar
 from typing import Optional
 
 from backend import config, db
 
 logger = logging.getLogger(__name__)
+
+# Contexte tenant pour la requête en cours (str pour cohérence avec set_config PG)
+current_tenant_id: ContextVar[Optional[str]] = ContextVar("current_tenant_id", default=None)
 
 # Nettoyage E.164 : espaces, 00→+, garder +digits
 def normalize_did(raw: str) -> str:
@@ -64,6 +68,92 @@ def resolve_tenant_id_from_vocal_call(to_number: Optional[str], channel: str = "
         conn.close()
 
     return (config.DEFAULT_TENANT_ID, "default")
+
+
+def resolve_tenant_from_whatsapp(to_number: str) -> int:
+    """
+    Résout le tenant_id à partir du numéro WhatsApp Business destinataire (To).
+    Utilise tenant_routing(channel='whatsapp', key=E.164).
+    Lève HTTPException(404) si aucun route trouvée pour ce numéro.
+    """
+    from fastapi import HTTPException
+    from backend.utils.phone import normalize_e164
+    try:
+        key = normalize_e164(to_number or "")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid phone number format")
+    if not key:
+        raise HTTPException(status_code=400, detail="Missing or invalid To number")
+
+    if config.USE_PG_TENANTS:
+        try:
+            from backend.tenants_pg import pg_resolve_tenant_id
+            result = pg_resolve_tenant_id("whatsapp", key)
+            if result:
+                tenant_id, _ = result
+                logger.debug("TENANT_READ whatsapp source=pg to=%s -> tenant_id=%s", key, tenant_id)
+                return tenant_id
+        except Exception as e:
+            logger.debug("TENANT_READ whatsapp pg failed: %s (fallback sqlite)", e)
+
+    db.ensure_tenant_config()
+    conn = db.get_conn()
+    try:
+        row = conn.execute(
+            "SELECT tenant_id FROM tenant_routing WHERE channel = ? AND did_key = ?",
+            ("whatsapp", key),
+        ).fetchone()
+        if row:
+            logger.debug("TENANT_READ whatsapp source=sqlite to=%s -> tenant_id=%s", key, row[0])
+            return int(row[0])
+    except Exception as e:
+        logger.debug("tenant_routing whatsapp resolve: %s", e)
+    finally:
+        conn.close()
+
+    raise HTTPException(status_code=404, detail=f"No tenant configured for WhatsApp number {key}")
+
+
+def resolve_tenant_from_api_key(api_key: Optional[str]) -> int:
+    """
+    Résout le tenant_id à partir de la clé API Web (header X-Tenant-Key).
+    Utilise tenant_routing(channel='web', key=api_key).
+    - Si api_key vide/absent : retourne DEFAULT_TENANT_ID (rétrocompat).
+    - Si api_key fourni mais inconnu : lève HTTPException 401.
+    """
+    from fastapi import HTTPException
+
+    key = (api_key or "").strip()
+    if not key:
+        return config.DEFAULT_TENANT_ID
+
+    if config.USE_PG_TENANTS:
+        try:
+            from backend.tenants_pg import pg_resolve_tenant_id
+            result = pg_resolve_tenant_id("web", key)
+            if result:
+                tenant_id, _ = result
+                logger.debug("TENANT_READ web source=pg key=*** -> tenant_id=%s", tenant_id)
+                return tenant_id
+        except Exception as e:
+            logger.debug("TENANT_READ web pg failed: %s (fallback sqlite)", e)
+
+    db.ensure_tenant_config()
+    conn = db.get_conn()
+    try:
+        row = conn.execute(
+            "SELECT tenant_id FROM tenant_routing WHERE channel = ? AND did_key = ?",
+            ("web", key),
+        ).fetchone()
+        if row:
+            logger.debug("TENANT_READ web source=sqlite key=*** -> tenant_id=%s", row[0])
+            return int(row[0])
+    except Exception as e:
+        logger.debug("tenant_routing web resolve: %s", e)
+    finally:
+        conn.close()
+
+    raise HTTPException(status_code=401, detail="Invalid or unknown X-Tenant-Key")
 
 
 def add_route(channel: str, did_key: str, tenant_id: int) -> None:

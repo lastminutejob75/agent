@@ -371,3 +371,154 @@ def load_session_pg_first(tenant_id: int, call_id: str) -> Optional[Tuple["Sessi
     info = pg_get_call_session_info(tenant_id, call_id)
     last_seq = info[1] if info else ck_seq
     return (session, ck_seq, last_seq)
+
+
+# ---------- Web sessions (tenant_id, conv_id) ----------
+# Cache conv_id -> tenant_id pour GET /stream qui n'a pas le header X-Tenant-Key.
+_WEB_CONV_TENANT_CACHE: Dict[str, int] = {}
+_WEB_CACHE_MAX = 10000
+
+
+def _pg_ensure_web_sessions_table(conn) -> None:
+    """Crée la table web_sessions si absente (idempotent)."""
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS web_sessions (
+            tenant_id BIGINT NOT NULL,
+            conv_id TEXT NOT NULL,
+            state_json JSONB NOT NULL DEFAULT '{}',
+            updated_at TIMESTAMPTZ DEFAULT now(),
+            PRIMARY KEY (tenant_id, conv_id)
+        )
+    """)
+    conn.commit()
+
+
+def pg_get_web_session(tenant_id: int, conv_id: str) -> Optional["Session"]:
+    """Charge une session web depuis PG. Retourne None si absente."""
+    from backend.session_codec import session_from_dict
+    import json
+
+    url = _pg_url()
+    if not url:
+        return None
+
+    def _do() -> Optional["Session"]:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            _pg_ensure_web_sessions_table(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT state_json FROM web_sessions WHERE tenant_id = %s AND conv_id = %s",
+                    (tenant_id, conv_id),
+                )
+                row = cur.fetchone()
+                if not row or not row[0]:
+                    return None
+                state = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+                session = session_from_dict(conv_id=conv_id, d=state)
+                session.tenant_id = tenant_id
+                session.channel = "web"
+                return session
+
+    result = _execute_with_retry("pg_get_web_session", _do)
+    return result
+
+
+def pg_save_web_session(tenant_id: int, conv_id: str, session: "Session") -> bool:
+    """Enregistre une session web en PG (UPSERT)."""
+    from backend.session_codec import session_to_dict
+    import json
+
+    url = _pg_url()
+    if not url:
+        return False
+
+    state = session_to_dict(session)
+
+    def _do() -> bool:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            _pg_ensure_web_sessions_table(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO web_sessions (tenant_id, conv_id, state_json, updated_at)
+                    VALUES (%s, %s, %s::jsonb, now())
+                    ON CONFLICT (tenant_id, conv_id) DO UPDATE SET state_json = EXCLUDED.state_json, updated_at = now()
+                    """,
+                    (tenant_id, conv_id, json.dumps(state)),
+                )
+                conn.commit()
+        return True
+
+    return _execute_with_retry("pg_save_web_session", _do) is True
+
+
+def pg_get_or_create_web_session(tenant_id: int, conv_id: str) -> "Session":
+    """Charge ou crée une session web en PG. Scopée par (tenant_id, conv_id)."""
+    from backend.session import Session
+
+    session = pg_get_web_session(tenant_id, conv_id)
+    if session is not None:
+        return session
+    session = Session(conv_id=conv_id)
+    session.tenant_id = tenant_id
+    session.channel = "web"
+    pg_save_web_session(tenant_id, conv_id, session)
+    return session
+
+
+def pg_web_register_conv_tenant(conv_id: str, tenant_id: int) -> None:
+    """Enregistre conv_id -> tenant_id pour résolution ultérieure (ex: GET /stream)."""
+    if len(_WEB_CONV_TENANT_CACHE) >= _WEB_CACHE_MAX:
+        to_remove = list(_WEB_CONV_TENANT_CACHE.keys())[: _WEB_CACHE_MAX // 10]
+        for k in to_remove:
+            del _WEB_CONV_TENANT_CACHE[k]
+    _WEB_CONV_TENANT_CACHE[conv_id] = tenant_id
+
+
+def pg_web_resolve_tenant_for_conv(conv_id: str) -> Optional[int]:
+    """Résout tenant_id pour un conv_id (depuis le cache). Retourne None si inconnu."""
+    return _WEB_CONV_TENANT_CACHE.get(conv_id)
+
+
+def pg_delete_web_session(tenant_id: int, conv_id: str) -> bool:
+    """Supprime une session web en PG (best-effort)."""
+    url = _pg_url()
+    if not url:
+        return False
+
+    def _do() -> bool:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM web_sessions WHERE tenant_id = %s AND conv_id = %s",
+                    (tenant_id, conv_id),
+                )
+                conn.commit()
+        return True
+
+    return _execute_with_retry("pg_delete_web_session", _do) is True
+
+
+
+def pg_delete_web_session(tenant_id: int, conv_id: str) -> bool:
+    """Supprime une session web en PG. Retourne True si succès."""
+    url = _pg_url()
+    if not url:
+        return False
+
+    def _do() -> bool:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM web_sessions WHERE tenant_id = %s AND conv_id = %s",
+                    (tenant_id, conv_id),
+                )
+                conn.commit()
+        return True
+
+    return _execute_with_retry("pg_delete_web_session", _do) is True

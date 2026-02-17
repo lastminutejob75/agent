@@ -63,8 +63,8 @@ class OnboardingResponse(BaseModel):
 
 
 class RoutingCreate(BaseModel):
-    channel: str = Field(default="vocal", pattern="^(vocal|whatsapp)$")
-    key: str = Field(..., min_length=1)  # DID E.164 ou widget_key
+    channel: str = Field(default="vocal", pattern="^(vocal|whatsapp|web)$")
+    key: str = Field(..., min_length=1)  # DID E.164, numéro WhatsApp ou clé API web (X-Tenant-Key)
     tenant_id: int
 
 

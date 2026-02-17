@@ -252,6 +252,8 @@ class SQLiteSessionStore:
     
     def save(self, session: Session) -> None:
         """Sauvegarde une session dans SQLite."""
+        from backend import config
+        config._sqlite_guard("session_store_sqlite.save")
         import time
         t_start = time.time()
         
@@ -301,6 +303,8 @@ class SQLiteSessionStore:
     
     def get(self, conv_id: str) -> Optional[Session]:
         """Récupère une session depuis SQLite."""
+        from backend import config
+        config._sqlite_guard("session_store_sqlite.get")
         import time
         t_start = time.time()
         
@@ -333,6 +337,8 @@ class SQLiteSessionStore:
     
     def get_or_create(self, conv_id: str) -> Session:
         """Récupère ou crée une session."""
+        from backend import config
+        config._sqlite_guard("session_store_sqlite.get_or_create")
         session = self.get(conv_id)
         if session is None:
             session = Session(conv_id=conv_id)
@@ -345,6 +351,8 @@ class SQLiteSessionStore:
     
     def delete(self, conv_id: str) -> None:
         """Supprime une session."""
+        from backend import config
+        config._sqlite_guard("session_store_sqlite.delete")
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute("DELETE FROM sessions WHERE conv_id = ?", (conv_id,))
@@ -361,6 +369,8 @@ class SQLiteSessionStore:
         Returns:
             Nombre de sessions supprimées
         """
+        from backend import config
+        config._sqlite_guard("session_store_sqlite.cleanup_old_sessions")
         from datetime import timedelta
         cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
         

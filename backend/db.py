@@ -220,17 +220,10 @@ def init_db(days: int = 7) -> None:
 def cleanup_old_slots() -> None:
     """
     Supprime les slots passés et garantit au moins TARGET_MIN_SLOTS slots futurs
-    (lundi-vendredi uniquement).
-    
-    Logique :
-    - Supprime tous les slots dont date < aujourd'hui
-    - Compte les slots futurs restants
-    - Crée de nouveaux slots (weekdays only) jusqu'à atteindre TARGET_MIN_SLOTS
-    - Utilise BEGIN IMMEDIATE pour éviter race conditions
-    
-    Raises:
-        Exception: Si erreur DB (rollback automatique)
+    (lundi-vendredi uniquement). SQLite uniquement.
     """
+    from backend import config
+    config._sqlite_guard("db.cleanup_old_slots")
     conn = get_conn()
     try:
         # Lock write transaction (évite race)
@@ -299,6 +292,7 @@ def count_free_slots(limit: int = 1000, tenant_id: int = 1) -> int:
                 return n
         except Exception:
             pass
+    config._sqlite_guard("db.count_free_slots")
     cleanup_old_slots()
     conn = get_conn()
     try:
@@ -324,6 +318,7 @@ def list_free_slots(limit: int = 3, pref: Optional[str] = None, tenant_id: int =
                 return [{"id": r["id"], "date": r["date"], "time": r["time"]} for r in raw]
         except Exception:
             pass
+    config._sqlite_guard("db.list_free_slots")
     cleanup_old_slots()
     conn = get_conn()
     try:
@@ -356,8 +351,10 @@ def list_free_slots(limit: int = 3, pref: Optional[str] = None, tenant_id: int =
 def find_slot_id_by_datetime(date_str: str, time_str: str) -> Optional[int]:
     """
     Trouve l'id d'un slot libre par date et heure (ex: "2026-02-16", "09:00").
-    Retourne None si non trouvé ou déjà réservé.
+    Retourne None si non trouvé ou déjà réservé. SQLite uniquement (pas de branche PG).
     """
+    from backend import config
+    config._sqlite_guard("db.find_slot_id_by_datetime")
     conn = get_conn()
     try:
         cur = conn.execute(
@@ -391,6 +388,7 @@ def book_slot_atomic(
                 return result
         except Exception:
             pass
+    config._sqlite_guard("db.book_slot_atomic")
     conn = get_conn()
     try:
         conn.execute("BEGIN")
@@ -433,6 +431,7 @@ def find_booking_by_name(name: str, tenant_id: int = 1) -> Optional[Dict]:
                 return r
         except Exception:
             pass
+    config._sqlite_guard("db.find_booking_by_name")
     conn = get_conn()
     try:
         cur = conn.execute(
@@ -478,6 +477,7 @@ def cancel_booking_sqlite(booking: Dict, tenant_id: int = 1) -> bool:
                 return result
         except Exception:
             pass
+    config._sqlite_guard("db.cancel_booking_sqlite")
     conn = get_conn()
     try:
         conn.execute("BEGIN")

@@ -27,6 +27,7 @@ from backend.engine import ENGINE, Event
 from backend.routes.voice import _get_engine
 import backend.config as config  # Import du MODULE (pas from import)
 from backend.db import init_db, list_free_slots, count_free_slots
+from backend.tenant_routing import resolve_tenant_from_api_key, current_tenant_id
 # Nouvelle architecture multi-canal
 from backend.routes import voice, whatsapp, bland, reports, admin, auth, tenant
 
@@ -40,7 +41,7 @@ app.add_middleware(
     allow_origins=[o.strip() for o in _cors_origins if o.strip()],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "X-Tenant-Key"],
 )
 
 
@@ -116,6 +117,7 @@ async def startup():
     L'init lourde (credentials, PG) tourne en arrière-plan pour que /health
     réponde immédiatement (healthcheck Railway).
     """
+    config.validate_multi_tenant_config()
     # Démarre les tâches de fond immédiatement
     asyncio.create_task(cleanup_old_conversations())
     asyncio.create_task(keep_alive())
@@ -385,16 +387,32 @@ async def debug_slots() -> dict:
 async def chat(payload: dict, request: Request) -> dict:
     message = (payload.get("message") or "")
     conv_id = payload.get("conversation_id") or str(uuid.uuid4())
-    channel = payload.get("channel", "web")  # ← NOUVEAU
+    channel = payload.get("channel", "web")
+
+    # Résolution tenant Web (header X-Tenant-Key) ; défaut si absent
+    api_key = request.headers.get("X-Tenant-Key") or ""
+    tenant_id = resolve_tenant_from_api_key(api_key)
+    session = ENGINE.session_store.get_or_create(conv_id)
+    session.tenant_id = tenant_id
+    request.state.tenant_id = tenant_id
+    current_tenant_id.set(str(tenant_id))
 
     ensure_stream(conv_id)
 
-    asyncio.create_task(run_engine(conv_id, message, channel))  # ← PASSER channel
+    asyncio.create_task(run_engine(conv_id, message, channel))
     return {"conversation_id": conv_id}
 
 
 @app.get("/stream/{conv_id}")
 async def stream(conv_id: str):
+    # Tenant déjà fixé sur la session au premier POST /chat ; sinon défaut
+    session = ENGINE.session_store.get_or_create(conv_id)
+    tid = getattr(session, "tenant_id", None)
+    if tid is not None:
+        current_tenant_id.set(str(tid))
+    else:
+        current_tenant_id.set(str(config.DEFAULT_TENANT_ID))
+
     ensure_stream(conv_id)
 
     async def gen():

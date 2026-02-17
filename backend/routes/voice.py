@@ -827,6 +827,7 @@ async def vapi_webhook(request: Request):
         extract_customer_phone_from_vapi_payload,
         extract_to_number_from_vapi_payload,
         resolve_tenant_id_from_vocal_call,
+        current_tenant_id,
     )
     call_id = _webhook_extract_call_id(payload)
     customer_phone = extract_customer_phone_from_vapi_payload(payload)
@@ -841,6 +842,8 @@ async def vapi_webhook(request: Request):
             try:
                 to_number = extract_to_number_from_vapi_payload(payload)
                 resolved_tenant_id, _ = resolve_tenant_id_from_vocal_call(to_number or "", channel="vocal")
+                request.state.tenant_id = resolved_tenant_id
+                current_tenant_id.set(str(resolved_tenant_id))
                 session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
                 if not session.customer_phone:
                     session.customer_phone = customer_phone
@@ -946,11 +949,14 @@ async def vapi_tool(request: Request):
         from backend.tenant_routing import (
             extract_to_number_from_vapi_payload,
             resolve_tenant_id_from_vocal_call,
+            current_tenant_id,
         )
         from backend import vapi_tool_handlers as th
 
         to_number = extract_to_number_from_vapi_payload(payload)
         resolved_tenant_id, _ = resolve_tenant_id_from_vocal_call(to_number or "", channel="vocal")
+        request.state.tenant_id = resolved_tenant_id
+        current_tenant_id.set(str(resolved_tenant_id))
 
         def _get_session():
             return _get_or_resume_voice_session(resolved_tenant_id, call_id)

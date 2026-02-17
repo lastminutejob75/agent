@@ -1,6 +1,7 @@
 # backend/routes/whatsapp.py
 """
 Routes API pour le canal WhatsApp (Twilio).
+Résolution tenant par numéro destinataire (To) → tenant_routing channel=whatsapp.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from backend.channels.whatsapp import whatsapp_channel
 from backend.channels.base import ChannelError
 from backend.models.message import AgentResponse
 from backend.engine import ENGINE
+from backend.tenant_routing import resolve_tenant_from_whatsapp, current_tenant_id
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +49,18 @@ async def whatsapp_webhook(request: Request):
                 content=whatsapp_channel.get_media_response()["twiml"],
                 media_type="application/xml"
             )
+        
+        # Résolution tenant par numéro destinataire (To = WhatsApp Business)
+        to_number = message.metadata.get("to_number") or ""
+        try:
+            tenant_id = resolve_tenant_from_whatsapp(to_number)
+        except HTTPException:
+            raise
+        session = ENGINE.session_store.get(message.conversation_id)
+        if session is not None:
+            session.tenant_id = tenant_id
+        request.state.tenant_id = tenant_id
+        current_tenant_id.set(str(tenant_id))
         
         # Traiter via l'engine
         events = ENGINE.handle_message(message.conversation_id, message.user_text)

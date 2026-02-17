@@ -1,7 +1,10 @@
 # backend/config.py
 from __future__ import annotations
+import logging
 import os
 import base64
+
+logger = logging.getLogger(__name__)
 
 # --- Cabinet / horaires (RÈGLE 7) ---
 # (Pour multi-clients plus tard : passer en config par tenant)
@@ -51,6 +54,42 @@ USE_PG_SLOTS = os.getenv("USE_PG_SLOTS", "true").lower() in ("true", "1", "yes")
 # P0 Option B: Journal + checkpoints sessions vocales (dual-write Phase 1)
 # Si PG down: log WARN, continue (pas de crash)
 USE_PG_CALL_JOURNAL = os.getenv("USE_PG_CALL_JOURNAL", "true").lower() in ("true", "1", "yes")
+
+# ==============================
+# MULTI-TENANT MODE (fail-closed SQLite)
+# ==============================
+# Lecture runtime (pas import-time) pour permettre mock en tests.
+
+
+def is_multi_tenant_mode() -> bool:
+    """True si MULTI_TENANT_MODE=true. Utiliser une fonction pour mock facile en test."""
+    return os.getenv("MULTI_TENANT_MODE", "false").lower() in ("true", "1", "yes")
+
+
+def _sqlite_guard(func_name: str) -> None:
+    """
+    Bloque l'exécution du chemin SQLite en mode multi-tenant.
+    À appeler au début de chaque branche SQLite (pas au top-level des fonctions qui routent PG/SQLite).
+    """
+    if is_multi_tenant_mode():
+        logger.critical(
+            "[MULTI_TENANT] %s called via SQLite path. Blocked.",
+            func_name,
+        )
+        raise RuntimeError(
+            f"[MULTI_TENANT] {func_name} called via SQLite path. "
+            "SQLite is disabled in multi-tenant mode. Use PG."
+        )
+
+
+def validate_multi_tenant_config() -> None:
+    """À appeler au démarrage de l'app. Lève si mode multi-tenant mais PG slots désactivé."""
+    if is_multi_tenant_mode() and not USE_PG_SLOTS:
+        raise RuntimeError(
+            "[MULTI_TENANT] USE_PG_SLOTS must be True in multi-tenant mode. "
+            "Set USE_PG_SLOTS=true (or MULTI_TENANT_MODE=false)."
+        )
+
 
 # ==============================
 # TENANT FLAGS (P0)

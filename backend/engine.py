@@ -23,7 +23,7 @@ from backend import db as backend_db
 from backend.session import Session, SessionStore, reset_slots_reading, set_reading_slots
 from backend.slot_choice import detect_slot_choice_early
 from backend.time_constraints import extract_time_constraint
-from backend.session_store_sqlite import SQLiteSessionStore
+from backend.session_store_hybrid import HybridSessionStore
 from backend.tools_faq import FaqStore, FaqResult
 from backend.llm_assist import (
     LLMClient,
@@ -4245,7 +4245,8 @@ def create_engine(llm_client: Optional[LLMClient] = None) -> Engine:
     """Factory pour créer l'engine avec ses dépendances. llm_client optionnel (LLM Assist zone grise)."""
     from backend.tools_faq import default_faq_store
     
-    session_store = SQLiteSessionStore()
+    # Store hybride : PG web_sessions (tenant_id, conv_id) si dispo, sinon SQLite.
+    session_store = HybridSessionStore()
     faq_store = default_faq_store()
     
     return Engine(session_store=session_store, faq_store=faq_store, llm_client=llm_client)
