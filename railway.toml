@@ -5,7 +5,8 @@ dockerfilePath = "Dockerfile"
 watchPatterns = ["backend/**", "frontend/**", "requirements.txt", "Dockerfile", "railway.toml", "migrations/**", "scripts/**", ".dockerignore"]
 
 [deploy]
+# Healthcheck : timeout 300s. Pour désactiver, supprimer les 2 lignes ci‑dessous (voir docs/RAILWAY_HEALTHCHECK.md).
 healthcheckPath = "/health"
-healthcheckTimeout = 60
+healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
