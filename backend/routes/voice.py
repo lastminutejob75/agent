@@ -811,12 +811,37 @@ def _webhook_extract_call_id(payload: dict) -> Optional[str]:
     return call.get("id") or payload.get("call", {}).get("id")
 
 
+def _vapi_assistant_request_response() -> JSONResponse:
+    """
+    Réponse pour message.type === "assistant-request".
+    Vapi exige un body avec assistantId ou assistant (transient). Sans ça → endedReason: assistant-request-returned-no-assistant, fallback anglais.
+    """
+    import os
+    assistant_id = (os.environ.get("VAPI_ASSISTANT_ID") or "").strip()
+    if assistant_id:
+        return JSONResponse(content={"assistantId": assistant_id}, status_code=200)
+    # Fallback: assistant transient (firstMessage FR + Custom LLM vers notre backend)
+    base = (os.environ.get("VAPI_PUBLIC_BACKEND_URL") or os.environ.get("APP_BASE_URL") or "").rstrip("/")
+    if not base:
+        logger.warning("VAPI_ASSISTANT_ID and VAPI_PUBLIC_BACKEND_URL/APP_BASE_URL unset: assistant-request returns transient with openai fallback")
+    chat_url = f"{base}/api/vapi/chat/completions" if base else ""
+    assistant = {
+        "firstMessage": "Bonjour, vous appelez pour un rendez-vous ?",
+        "model": (
+            {"provider": "custom-llm", "url": chat_url, "model": "gpt-4o-mini"}
+            if chat_url
+            else {"provider": "openai", "model": "gpt-4o-mini", "messages": [{"role": "system", "content": "Tu réponds uniquement en français."}]}
+        ),
+    }
+    return JSONResponse(content={"assistant": assistant}, status_code=200)
+
+
 @router.post("/webhook")
 async def vapi_webhook(request: Request):
     """
-    Webhook Vapi — Réception assistant.started, status-update, conversation-update, etc.
-    On persiste le caller ID (message.call.customer.number) dès assistant.started ou
-    status-update in-progress pour que /chat/completions ait session.customer_phone.
+    Webhook Vapi — Réception assistant-request, assistant.started, status-update, conversation-update, etc.
+    - assistant-request : obligatoire de retourner assistantId ou assistant (sinon Vapi → fallback anglais / endedReason no-assistant).
+    - On persiste le caller ID (message.call.customer.number) dès assistant.started ou status-update in-progress.
     """
     try:
         payload = await request.json()
@@ -824,6 +849,11 @@ async def vapi_webhook(request: Request):
         return Response(status_code=200)
     message = payload.get("message") or {}
     msg_type = message.get("type") or message.get("event") or ""
+
+    # assistant-request : répondre immédiatement avec assistantId ou assistant (évite 5.8s + PG puis {} → Vapi fallback anglais)
+    if msg_type == "assistant-request":
+        return _vapi_assistant_request_response()
+
     # Persister customer_phone uniquement sur les webhooks qui contiennent call.customer.number
     # (conversation-update / speech-update ne le contiennent pas — source: rapport Vapi)
     from backend.tenant_routing import (

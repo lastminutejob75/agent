@@ -1,6 +1,34 @@
 # Checklist — Assistant en français (plus d’anglais)
 
-Si l’assistant parle en anglais ou dit « there was an error », vérifier **dans le dashboard Vapi** les points suivants. Le backend renvoie toujours du français ; l’anglais vient de la config Vapi.
+Si l’assistant parle en anglais ou dit « there was an error », **tout vient de la config Vapi** (le backend ne renvoie que du français). À corriger dans le **dashboard Vapi** uniquement.
+
+---
+
+## En 3 étapes (à faire dans l’ordre)
+
+### Étape 1 — Choisir Custom LLM
+- Ouvre ton **Assistant** dans Vapi → onglet **Model** (ou **AI**).
+- Tu dois voir un choix du type : **OpenAI** / **Anthropic** / **Custom LLM** (ou **Custom**).
+- Sélectionne **Custom LLM** (ou **Custom**).
+- Dans **Server URL** (ou **Custom LLM URL**), mets exactement :  
+  `https://agent-production-c246.up.railway.app/api/vapi/chat/completions`  
+- **Sauvegarde**. Sans ça, Vapi utilise son modèle par défaut (souvent en anglais) et n’appelle jamais ton backend pour les réponses.
+
+### Étape 2 — Premier message en français
+- Dans le même Assistant → champ **First Message** (ou **Message d’accueil**).
+- **Supprime** tout texte en anglais (ex. "Hello, how can I help?").
+- Mets **exactement** :  
+  `Bonjour, vous appelez pour un rendez-vous ?`  
+- **Sauvegarde**. C’est ce que l’assistant dit dès que l’appel est décroché ; si c’est en anglais, tout le début sera en anglais.
+
+### Étape 3 — Langue de l’assistant
+- Cherche un champ **Language** (ou **Langue**) dans les paramètres de l’assistant.
+- Mets **French** (ou **Français**).
+- Si tu as un **System prompt** / **Instructions** : ajoute en première ligne :  
+  `Tu réponds uniquement en français.`  
+- **Sauvegarde**.
+
+Ensuite refais un **nouvel appel** (pas juste « reprendre »). Si après ces 3 étapes c’est encore en anglais, envoie une capture d’écran de la page **Model** de ton assistant (sans données sensibles) pour qu’on voie ce qui est sélectionné.
 
 ---
 
@@ -55,7 +83,19 @@ Si c’est en anglais (« Hello, how can I help? »), le tout premier message se
 
 ---
 
-## 6. Webhook et Tool URL
+## 6. assistant-request (obligatoire côté backend)
+
+Vapi envoie un event **assistant-request** au webhook au début de l’appel. Si le backend répond **200 avec un body vide** → Vapi considère qu’aucun assistant n’est retourné → fallback anglais / fin d’appel.
+
+Le backend répond désormais correctement :
+- Si **VAPI_ASSISTANT_ID** est défini (env) → retourne `{"assistantId": "..."}` (assistant créé dans le dashboard Vapi).
+- Sinon → retourne un **assistant transient** avec `firstMessage` en français et Custom LLM pointant vers le backend. Pour que l’URL soit correcte, définir **VAPI_PUBLIC_BACKEND_URL** (ou **APP_BASE_URL**) sur Railway, ex. :  
+  `https://agent-production-c246.up.railway.app`  
+  (sans slash final).
+
+---
+
+## 7. Webhook et Tool URL
 
 - **Webhook** : `https://agent-production-c246.up.railway.app/api/vapi/webhook`
 - **Tool** (function calling) : `https://agent-production-c246.up.railway.app/api/vapi/tool`
@@ -74,5 +114,6 @@ Les trois URLs (Custom LLM, Webhook, Tool) doivent pointer vers le **même** bac
 | Assistant | Language | **French** |
 | System prompt | Première ligne | « Tu réponds uniquement en français. » |
 | Transcriber | language | **fr** |
+| Backend (Railway) | **VAPI_PUBLIC_BACKEND_URL** ou **APP_BASE_URL** | `https://<ton-backend>.up.railway.app` (pour assistant-request transient) |
 
 Après modification, **sauvegarder** l’assistant et **retester un appel**. Si tu entends encore de l’anglais, c’est en général le **First Message** ou le **Model** (pas Custom LLM) qu’il faut corriger en priorité.
