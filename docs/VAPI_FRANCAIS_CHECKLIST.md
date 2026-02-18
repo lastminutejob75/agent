@@ -87,11 +87,15 @@ Si c’est en anglais (« Hello, how can I help? »), le tout premier message se
 
 Vapi envoie un event **assistant-request** au webhook au début de l’appel. Si le backend répond **200 avec un body vide** → Vapi considère qu’aucun assistant n’est retourné → fallback anglais / fin d’appel.
 
-Le backend répond désormais correctement :
-- Si **VAPI_ASSISTANT_ID** est défini (env) → retourne `{"assistantId": "..."}` (assistant créé dans le dashboard Vapi).
-- Sinon → retourne un **assistant transient** avec `firstMessage` en français et Custom LLM pointant vers le backend. Pour que l’URL soit correcte, définir **VAPI_PUBLIC_BACKEND_URL** (ou **APP_BASE_URL**) sur Railway, ex. :  
-  `https://agent-production-c246.up.railway.app`  
-  (sans slash final).
+**Recommandé (Option A — le plus stable)**  
+- Sur **Railway** : ajouter la variable **VAPI_ASSISTANT_ID** = l’ID de l’assistant déjà créé dans le dashboard Vapi (ex. `78dd0e14-337e-40ab-96d9-7dbbe92cdf95`).  
+- Le backend répond alors uniquement `{"assistantId": "..."}`. Aucune dépendance Postgres, aucun custom-llm au démarrage ; tu utilises l’assistant déjà configuré en FR (tools, prompt, etc.).
+
+**Fallback (Option B — transient)**  
+- Si **VAPI_ASSISTANT_ID** n’est pas défini : le backend renvoie un assistant **transient** avec `firstMessage` en français et Custom LLM. Définir **VAPI_PUBLIC_BACKEND_URL** (ou **APP_BASE_URL**) sur Railway, ex. `https://agent-production-c246.up.railway.app` (sans slash final). Plus fragile (latence, PG, etc.).
+
+**À vérifier après déploiement**  
+Dans les webhook logs Vapi : **Assistant Request** → `responseBody` doit contenir `assistantId` ou `assistant` ; dans le call, `assistantId` ne doit plus être null.
 
 ---
 

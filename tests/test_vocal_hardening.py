@@ -56,20 +56,54 @@ def test_critical_tokens_and_overlap_defined():
     assert "oui" in CRITICAL_TOKENS or "oui" in CRITICAL_OVERLAP
 
 
-# --- P2 : webhook Vapi retourne 200 (Option A : pas de traitement, évite saturation worker) ---
+# --- P2 : webhook Vapi assistant-request (body obligatoire pour éviter fallback anglais) ---
 
 
-def test_assistant_request_returns_200():
-    """Webhook Vapi : retourne 200 immédiat (fire-and-forget, pas de lecture du body)."""
+def test_assistant_request_returns_200_with_body():
+    """Webhook : assistant-request doit retourner 200 avec body assistantId ou assistant (pas vide)."""
     client = TestClient(app)
     payload = {
         "call": {"id": "test-assistant-request"},
-        "message": {
-            "role": "user",
-            "type": "assistant-request",
-            "transcript": "",
-            "transcriptType": "final",
-        },
+        "message": {"type": "assistant-request"},
     }
     response = client.post("/api/vapi/webhook", json=payload)
     assert response.status_code == 200
+    data = response.json()
+    assert "assistantId" in data or "assistant" in data
+    if "assistant" in data:
+        assert data["assistant"].get("firstMessage", "").strip()
+        assert "Bonjour" in data["assistant"].get("firstMessage", "")
+
+
+def test_assistant_request_with_vapi_assistant_id_returns_assistant_id(monkeypatch):
+    """Quand VAPI_ASSISTANT_ID est défini, la réponse contient assistantId (Option A)."""
+    monkeypatch.setenv("VAPI_ASSISTANT_ID", "78dd0e14-337e-40ab-96d9-7dbbe92cdf95")
+    client = TestClient(app)
+    payload = {"message": {"type": "assistant-request"}}
+    response = client.post("/api/vapi/webhook", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data.get("assistantId") == "78dd0e14-337e-40ab-96d9-7dbbe92cdf95"
+
+
+def test_assistant_request_detected_via_event_key():
+    """assistant-request peut être dans message.event (pas seulement message.type)."""
+    client = TestClient(app)
+    payload = {"message": {"event": "assistant-request"}}
+    response = client.post("/api/vapi/webhook", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert "assistantId" in data or "assistant" in data
+
+
+def test_assistant_request_transient_has_french_first_message(monkeypatch):
+    """Sans VAPI_ASSISTANT_ID, le fallback transient a firstMessage en français (Option B)."""
+    monkeypatch.delenv("VAPI_ASSISTANT_ID", raising=False)
+    client = TestClient(app)
+    payload = {"message": {"type": "assistant-request"}}
+    response = client.post("/api/vapi/webhook", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert "assistant" in data
+    first = data["assistant"].get("firstMessage", "")
+    assert "Bonjour" in first
