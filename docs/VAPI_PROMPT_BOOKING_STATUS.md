@@ -1,5 +1,13 @@
 # Prompt Vapi — Gestion des statuts de réservation (V3)
 
+## Statut
+
+| Élément | Statut |
+|--------|--------|
+| Backend `handle_book` → JSON `status` | OK (`vapi_tool_handlers.handle_book`) |
+| Backend `get_slots` avec `exclude_start_iso` / `exclude_end_iso` | OK (route `/api/vapi/tool`) |
+| System prompt Vapi (Dashboard) | À coller (bloc ci-dessous) |
+
 À intégrer dans le **system prompt** de l’assistant Vapi (Dashboard → Assistant → Model → System instructions, ou via API `partial_update`). Ce bloc garantit que l’assistant réagit correctement au **JSON retourné par le tool de réservation** (champ `status`).
 
 ---

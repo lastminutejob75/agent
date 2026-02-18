@@ -97,7 +97,8 @@ def validate_multi_tenant_config() -> None:
 # ==============================
 DEFAULT_TENANT_ID = 1
 # Tenant et numéro de démo (vitrine vocale). Règle : DID test → TEST_TENANT_ID uniquement (guard_demo_number_routing).
-TEST_TENANT_ID = int(os.getenv("TEST_TENANT_ID", str(DEFAULT_TENANT_ID)))
+# TEST_TENANT_ID peut être vide en env (''), int() accepterait pas → fallback DEFAULT_TENANT_ID
+TEST_TENANT_ID = int((os.getenv("TEST_TENANT_ID") or "").strip() or str(DEFAULT_TENANT_ID))
 TEST_VOCAL_NUMBER = (os.getenv("TEST_VOCAL_NUMBER") or os.getenv("ONBOARDING_DEMO_VOCAL_NUMBER", "+33939240575") or "").strip() or None
 DEFAULT_FLAGS = {
     "ENABLE_LLM_ASSIST_START": False,
