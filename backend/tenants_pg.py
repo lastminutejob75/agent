@@ -417,3 +417,20 @@ def pg_fetch_tenants(include_inactive: bool = False) -> Optional[Tuple[list, str
             except Exception:
                 pass
         return None
+
+
+def pg_deactivate_tenant(tenant_id: int) -> bool:
+    """Passe le tenant en status inactive (soft delete). Retourne True si OK."""
+    url = _pg_url()
+    if not url:
+        return False
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE tenants SET status = 'inactive' WHERE tenant_id = %s", (tenant_id,))
+                conn.commit()
+                return cur.rowcount > 0
+    except Exception as e:
+        logger.warning("pg_deactivate_tenant failed: %s", e)
+        return False

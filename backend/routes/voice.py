@@ -586,9 +586,21 @@ def _compute_voice_response_sync(
     """
     Exécute le tour vocal complet (session, classify, engine) de façon synchrone.
     Retourne (response_text, cancel_lookup_streaming).
-    Utilisé pour streaming : permet d'émettre le premier token SSE immédiatement puis de calculer la réponse en thread.
+    Si le tenant est suspendu : retourne la phrase fixe immédiatement.
+    Garantie : AUCUN appel LLM, AUCUN tool, AUCUN journal/DB coûteux — coût zéro.
     """
     from backend import tools_booking
+    from backend.billing_pg import get_tenant_suspension
+    from backend import prompts
+    # Check suspension en tout premier : avant session, intent, engine, tools.
+    is_suspended, _, suspension_mode = get_tenant_suspension(resolved_tenant_id)
+    if is_suspended:
+        msg = (
+            getattr(prompts, "MSG_VOCAL_SUSPENDED_SOFT", None)
+            if (suspension_mode or "hard").strip().lower() == "soft"
+            else getattr(prompts, "MSG_VOCAL_SUSPENDED", "Votre service est temporairement suspendu. Merci de contacter votre interlocuteur.")
+        )
+        return (msg or prompts.MSG_VOCAL_SUSPENDED, True)
     t_start = time.time()
     _call_journal_ensure(resolved_tenant_id, call_id)
     session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
@@ -855,6 +867,16 @@ async def vapi_webhook(request: Request):
     # assistant-request : répondre immédiatement avec assistantId ou assistant (évite 5.8s + PG puis {} → Vapi fallback anglais)
     if msg_type == "assistant-request":
         return _vapi_assistant_request_response()
+
+    # end-of-call-report : ingérer conso Vapi (durée, coût) dans vapi_call_usage (source de vérité billing)
+    if msg_type == "end-of-call-report":
+        try:
+            from backend.vapi_usage_pg import ingest_end_of_call_report
+            _cid = _webhook_extract_call_id(payload)
+            if ingest_end_of_call_report(payload):
+                logger.info("VAPI_USAGE_INGESTED call_id=%s", (_cid or "")[:24])
+        except Exception as e:
+            logger.warning("VAPI_USAGE_INGEST_FAILED %s", str(e)[:100])
 
     # Persister customer_phone uniquement sur les webhooks qui contiennent call.customer.number
     # (conversation-update / speech-update ne le contiennent pas — source: rapport Vapi)
@@ -1309,7 +1331,8 @@ async def vapi_custom_llm(request: Request):
                         "Excusez-moi, un problème est survenu. Je vous transfère à un collègue.",
                     ) or "Excusez-moi, un problème est survenu."
                     cancel_lookup_streaming = False
-                if cancel_lookup_streaming:
+                # cancel_lookup_streaming = True soit suspension (response_text déjà rempli), soit annulation RDV (engine nécessaire)
+                if cancel_lookup_streaming and not response_text:
                     holding = getattr(prompts, "VOCAL_CANCEL_LOOKUP_HOLDING", "Je cherche votre rendez-vous...")
                     for i, word in enumerate(holding.split()):
                         content = f" {word}" if i > 0 else word
@@ -1355,292 +1378,304 @@ async def vapi_custom_llm(request: Request):
             response_text = ""
             action_taken = ""
 
-            # Phase 2: PG-first read — pas de lock sur /chat/completions.
-            # Vapi envoie les tours de façon séquentielle (attend la réponse avant le tour suivant).
-            # Un lock bloquait le 2e tour (LockTimeout → greeting au lieu de la vraie réponse).
-            _call_journal_ensure(resolved_tenant_id, call_id)
-            session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
-            state_before_turn = getattr(session, "state", "START")
-
-            session.channel = "vocal"
-            session.tenant_id = resolved_tenant_id
-
-            # Garde-fou Phase 2: session déjà terminée (CONFIRMED/TRANSFERRED) → ne pas rouvrir
-            if session.state in ("TRANSFERRED", "CONFIRMED"):
-                response_text = prompts.VOCAL_RESUME_ALREADY_TERMINATED
-                action_taken = "resume_terminal_guard"
+            # Suspension : même règle qu'en streaming — avant toute logique agent/tools (zéro LLM).
+            from backend.billing_pg import get_tenant_suspension as _get_suspension
+            _suspend, _, _mode = _get_suspension(resolved_tenant_id)
+            if _suspend:
+                response_text = (
+                    getattr(prompts, "MSG_VOCAL_SUSPENDED_SOFT", None)
+                    if (_mode or "hard").strip().lower() == "soft"
+                    else getattr(prompts, "MSG_VOCAL_SUSPENDED", prompts.MSG_VOCAL_SUSPENDED)
+                ) or prompts.MSG_VOCAL_SUSPENDED
                 overlap_handled = True
 
-            # P0 Option B: dual-write journal PG (Phase 1)
-            _call_journal_ensure(resolved_tenant_id, call_id, state_before_turn)
-            _call_journal_user_message(resolved_tenant_id, call_id, user_message or "")
+            if not overlap_handled:
+                # Phase 2: PG-first read — pas de lock sur /chat/completions.
+                # Vapi envoie les tours de façon séquentielle (attend la réponse avant le tour suivant).
+                # Un lock bloquait le 2e tour (LockTimeout → greeting au lieu de la vraie réponse).
+                _call_journal_ensure(resolved_tenant_id, call_id)
+                session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
+                state_before_turn = getattr(session, "state", "START")
 
-            # 🧠 Stocker le téléphone dans la session pour plus tard
-            if customer_phone:
-                session.customer_phone = customer_phone
-            
-            # 🔄 RECONSTRUCTION DE L'ÉTAT depuis l'historique des messages
-            # NOTE: Avec SQLite, cette reconstruction ne devrait plus être nécessaire
-            # On la garde en fallback si SQLite échoue
-            # Guard: si on VA reconstruire ET qu'on a déjà reconstruit 1 fois → transfert (évite boucle)
-            needs_reconstruct = session.state == "START" and len(messages) > 1 and not session.qualif_data.name
-            reconstruct_count = getattr(session, "reconstruct_count", 0)
-            last_user_content = next((m.get("content") or "" for m in reversed(messages) if m.get("role") == "user"), "")
-            if needs_reconstruct and reconstruct_count >= 1:
-                # Ne pas transférer si le message utilisateur ressemble à une demande de RDV
-                if _looks_like_booking_request(last_user_content or user_message or ""):
-                    logger.info("[SESSION_RECONSTRUCT] conv_id=%s booking-like message -> skip transfer, pass to engine", call_id)
-                else:
-                    logger.warning("[SESSION_RECONSTRUCT] conv_id=%s reconstruct_count=%s -> transfer", call_id, reconstruct_count)
-                    session.state = "TRANSFERRED"
-                    response_text = prompts.VOCAL_TRANSFER_COMPLEX
-                    session.add_message("agent", response_text)
-                    action_taken = "reconstruct_loop_guard"
-                    overlap_handled = True  # skip engine processing
-            elif needs_reconstruct:
-                logger.debug("session in START with history but no data -> reconstruction")
-                session = _reconstruct_session_from_history(session, messages, call_id=call_id)
-                session.reconstruct_count = 1
-            else:
-                logger.debug("session loaded OK: state=%s name=%s", session.state, session.qualif_data.name)
-            
-            t3 = log_timer("Session loaded", t2)
-            
-            # 🧠 Check si client récurrent (avant le premier message traité)
-            if customer_phone:
-                try:
-                    existing_client = client_memory.get_by_phone(customer_phone, tenant_id=getattr(session, "tenant_id", None))
-                    if existing_client:
-                        session.client_id = existing_client.id  # pour ivr_events / rapport quotidien
-                        if existing_client.total_bookings > 0:
-                            greeting = client_memory.get_personalized_greeting(existing_client, channel="vocal")
-                            if greeting:
-                                logger.debug("returning client detected: %s", existing_client.name)
-                except Exception as e:
-                    logger.debug("client memory error: %s", e)
+                session.channel = "vocal"
+                session.tenant_id = resolved_tenant_id
 
-            # Input firewall (text-only) : SILENCE / UNCLEAR / TEXT — avant tout traitement
-            kind, normalized = classify_text_only(user_message or "")
-            # Ne pas traiter "Je voudrais un rendez-vous" comme UNCLEAR → passer à l'engine (flow RDV)
-            if kind == "UNCLEAR" and _looks_like_booking_request(user_message or ""):
-                kind, normalized = "TEXT", (normalized or normalize_transcript(user_message or ""))
-            unclear_count = getattr(session, "unclear_text_count", 0)
-            logger.info(
-                "decision_in",
-                extra={
-                    "call_id": call_id,
-                    "state_before": session.state,
-                    "kind": kind,
-                    "raw_len": len((user_message or "")),
-                    "normalized_len": len(normalized or ""),
-                    "unclear_count": unclear_count,
-                },
-            )
-            logger.info(
-                "decision_in_chat",
-                extra={
-                    "call_id": call_id,
-                    "state_before": session.state,
-                    "turn_count": getattr(session, "turn_count", 0),
-                },
-            )
+                # Garde-fou Phase 2: session déjà terminée (CONFIRMED/TRANSFERRED) → ne pas rouvrir
+                if session.state in ("TRANSFERRED", "CONFIRMED"):
+                    response_text = prompts.VOCAL_RESUME_ALREADY_TERMINATED
+                    action_taken = "resume_terminal_guard"
+                    overlap_handled = True
 
-            # Semi-sourd : overlap guard (UNCLEAR/SILENCE pendant TTS = ignoré ; mots critiques passent)
-            # Ne pas réinitialiser si déjà géré (reconstruct_loop_guard, resume_terminal_guard)
-            if action_taken not in ("reconstruct_loop_guard", "resume_terminal_guard"):
-                overlap_handled = False
-                response_text = ""
-                action_taken = ""
-                if _is_agent_speaking(session):
-                    # Interruption pendant énonciation des créneaux (WAIT_CONFIRM) : "un", "1", "deux" = choix valide
-                    if session.state == "WAIT_CONFIRM" and is_critical_token(normalized):
-                        overlap_handled = False
-                    elif is_critical_overlap(user_message or ""):
-                        logger.info(
-                            "critical_overlap_allowed",
-                            extra={"call_id": call_id, "text_len": len((user_message or "")[:20])},
-                        )
-                    elif kind in ("UNCLEAR", "SILENCE"):
-                        response_text = prompts.MSG_VOCAL_CROSSTALK_ACK
-                        action_taken = "overlap_ignored"
-                        overlap_handled = True
-                        logger.info(
-                            "overlap_ignored",
-                            extra={"call_id": call_id, "classification": kind, "reason": "agent_speaking"},
-                        )
-                    elif kind == "TEXT" and len((user_message or "").strip()) < 10:
-                        response_text = getattr(
-                            prompts, "MSG_OVERLAP_REPEAT_SHORT", "Pardon, pouvez-vous répéter ?"
-                        )
+                # P0 Option B: dual-write journal PG (Phase 1)
+                _call_journal_ensure(resolved_tenant_id, call_id, state_before_turn)
+                _call_journal_user_message(resolved_tenant_id, call_id, user_message or "")
+
+                # 🧠 Stocker le téléphone dans la session pour plus tard
+                if customer_phone:
+                    session.customer_phone = customer_phone
+
+                # 🔄 RECONSTRUCTION DE L'ÉTAT depuis l'historique des messages
+                # NOTE: Avec SQLite, cette reconstruction ne devrait plus être nécessaire
+                # On la garde en fallback si SQLite échoue
+                # Guard: si on VA reconstruire ET qu'on a déjà reconstruit 1 fois → transfert (évite boucle)
+                needs_reconstruct = session.state == "START" and len(messages) > 1 and not session.qualif_data.name
+                reconstruct_count = getattr(session, "reconstruct_count", 0)
+                last_user_content = next((m.get("content") or "" for m in reversed(messages) if m.get("role") == "user"), "")
+                if needs_reconstruct and reconstruct_count >= 1:
+                    # Ne pas transférer si le message utilisateur ressemble à une demande de RDV
+                    if _looks_like_booking_request(last_user_content or user_message or ""):
+                        logger.info("[SESSION_RECONSTRUCT] conv_id=%s booking-like message -> skip transfer, pass to engine", call_id)
+                    else:
+                        logger.warning("[SESSION_RECONSTRUCT] conv_id=%s reconstruct_count=%s -> transfer", call_id, reconstruct_count)
+                        session.state = "TRANSFERRED"
+                        response_text = prompts.VOCAL_TRANSFER_COMPLEX
                         session.add_message("agent", response_text)
-                        action_taken = "overlap_repeat"
-                        overlap_handled = True
-                        logger.info(
-                            "overlap_repeat",
-                            extra={"call_id": call_id, "text_len": len((user_message or "").strip())},
-                        )
+                        action_taken = "reconstruct_loop_guard"
+                        overlap_handled = True  # skip engine processing
+                elif needs_reconstruct:
+                    logger.debug("session in START with history but no data -> reconstruction")
+                    session = _reconstruct_session_from_history(session, messages, call_id=call_id)
+                    session.reconstruct_count = 1
+                else:
+                    logger.debug("session loaded OK: state=%s name=%s", session.state, session.qualif_data.name)
 
-            # En annulation : si on va chercher le RDV par nom, envoyer d'abord un message de tenue
-            # en stream pour éviter le "mmm" TTS pendant la latence (recherche Google Calendar).
-            cancel_lookup_streaming = (
-                is_streaming
-                and session.state == "CANCEL_NAME"
-                and _looks_like_name_for_cancel(user_message)
-            )
-            if cancel_lookup_streaming:
-                response_text = ""
-            else:
-                if not overlap_handled:
+                t3 = log_timer("Session loaded", t2)
+
+                # 🧠 Check si client récurrent (avant le premier message traité)
+                if customer_phone:
                     try:
-                        if kind == "SILENCE":
-                            events = _get_engine(call_id).handle_message(call_id, "")
-                            response_text = events[0].text if events else prompts.MSG_EMPTY_MESSAGE
-                            action_taken = "silence"
-                            _maybe_reset_noise_on_terminal(session, events or [])
-                        elif kind == "TEXT":
-                            events = _get_engine(call_id).handle_message(call_id, normalized)
-                            response_text = events[0].text if events else "Je n'ai pas compris"
-                            action_taken = "text"
-                            _maybe_reset_noise_on_terminal(session, events or [])
-                        else:  # UNCLEAR — overlap guard puis crosstalk : ne pas compter overlap comme échec
-                            now = time.time()
-                            last_reply_ts = getattr(session, "last_agent_reply_ts", 0) or 0
-                            overlap_window = getattr(config, "OVERLAP_WINDOW_SEC", 1.2)
-                            recent_agent = (now - last_reply_ts) < overlap_window
-                            if recent_agent:
-                                response_text = getattr(
-                                    prompts, "MSG_OVERLAP_REPEAT", "Je vous ai entendu en même temps. Pouvez-vous répéter maintenant ?"
-                                )
-                                session.add_message("agent", response_text)
-                                action_taken = "overlap_guard"
-                            else:
-                                raw_len = len((user_message or ""))
-                                last_ts = getattr(session, "last_assistant_ts", 0) or 0
-                                within_crosstalk_window = (now - last_ts) < getattr(
-                                    config, "CROSSTALK_WINDOW_SEC", 5.0
-                                )
-                                max_crosstalk_len = getattr(config, "CROSSTALK_MAX_RAW_LEN", 40)
-                                if within_crosstalk_window and raw_len <= max_crosstalk_len:
-                                    response_text = prompts.MSG_VOCAL_CROSSTALK_ACK
-                                    action_taken = "ignore_crosstalk"
-                                else:
-                                    session.unclear_text_count = getattr(session, "unclear_text_count", 0) + 1
-                                    count = session.unclear_text_count
-                                    if count == 1:
-                                        response_text = prompts.MSG_UNCLEAR_1
-                                        session.add_message("agent", response_text)
-                                        action_taken = "unclear_1"
-                                    elif count == 2:
-                                        events = ENGINE._trigger_intent_router(
-                                            session, "unclear_text_2", user_message or ""
-                                        )
-                                        response_text = events[0].text if events else prompts.MSG_UNCLEAR_1
-                                        action_taken = "unclear_2_intent_router"
-                                    else:
-                                        state_before = getattr(session, "state", "START")
-                                        session.state = "TRANSFERRED"
-                                        response_text = (
-                                            prompts.VOCAL_TRANSFER_COMPLEX
-                                            if getattr(session, "channel", "") == "vocal"
-                                            else prompts.MSG_TRANSFER
-                                        )
-                                        session.add_message("agent", response_text)
-                                        action_taken = "unclear_3_transfer"
-                                        logger.info(
-                                            "DECISION_TRACE state_before=%s intent_detected=n/a guard_triggered=unclear_3_transfer state_after=TRANSFERRED text=%r",
-                                            state_before,
-                                            (user_message or "")[:200],
-                                            extra={
-                                                "call_id": call_id[:24] if call_id else "",
-                                                "state_before": state_before,
-                                                "guard_triggered": "unclear_3_transfer",
-                                                "state_after": "TRANSFERRED",
-                                            },
-                                        )
+                        existing_client = client_memory.get_by_phone(customer_phone, tenant_id=getattr(session, "tenant_id", None))
+                        if existing_client:
+                            session.client_id = existing_client.id  # pour ivr_events / rapport quotidien
+                            if existing_client.total_bookings > 0:
+                                greeting = client_memory.get_personalized_greeting(existing_client, channel="vocal")
+                                if greeting:
+                                    logger.debug("returning client detected: %s", existing_client.name)
                     except Exception as e:
-                        print(f"❌ ENGINE ERROR: {e}")
-                        import traceback
-                        traceback.print_exc()
-                        response_text = "Excusez-moi, j'ai un petit souci technique. Je vous transfère à un collègue."
-                t4 = log_timer("ENGINE processed", t3)
-                _log_decision_out(call_id, session, action_taken, response_text)
-                if hasattr(ENGINE.session_store, "save"):
-                    ENGINE.session_store.save(session)
-                # P0 Option B: dual-write — message agent + checkpoint
-                state_after = getattr(session, "state", "START")
-                # Checkpoint sur: changement état, pending_slots, awaiting_confirmation, états critiques
-                should_cp = (
-                    state_before_turn != state_after
-                    or bool(getattr(session, "pending_slots", None))
-                    or getattr(session, "awaiting_confirmation", None) is not None
-                    or state_after in ("QUALIF_CONTACT", "WAIT_CONFIRM", "CONTACT_CONFIRM", "CONTACT_CONFIRM_CALLERID")
-                )
-                _call_journal_agent_response(
-                    resolved_tenant_id,
-                    call_id,
-                    session,
-                    response_text,
-                    state_before_turn,
-                    should_checkpoint=should_cp,
+                        logger.debug("client memory error: %s", e)
+
+                # Input firewall (text-only) : SILENCE / UNCLEAR / TEXT — avant tout traitement
+                kind, normalized = classify_text_only(user_message or "")
+                # Ne pas traiter "Je voudrais un rendez-vous" comme UNCLEAR → passer à l'engine (flow RDV)
+                if kind == "UNCLEAR" and _looks_like_booking_request(user_message or ""):
+                    kind, normalized = "TEXT", (normalized or normalize_transcript(user_message or ""))
+                unclear_count = getattr(session, "unclear_text_count", 0)
+                logger.info(
+                    "decision_in",
+                    extra={
+                        "call_id": call_id,
+                        "state_before": session.state,
+                        "kind": kind,
+                        "raw_len": len((user_message or "")),
+                        "normalized_len": len(normalized or ""),
+                        "unclear_count": unclear_count,
+                    },
                 )
                 logger.info(
-                    "decision_out_chat",
-                    extra={"call_id": call_id, "state_after": getattr(session, "state", "")},
+                    "decision_in_chat",
+                    extra={
+                        "call_id": call_id,
+                        "state_before": session.state,
+                        "turn_count": getattr(session, "turn_count", 0),
+                    },
                 )
-            if not cancel_lookup_streaming:
-                print(f"✅ Response: '{response_text[:50]}...' ({len(response_text)} chars)")
-                session.last_assistant_ts = time.time()
-                session.last_agent_reply_ts = time.time()
-                if response_text and response_text.strip():
-                    tts_duration = estimate_tts_duration(response_text)
-                    session.speaking_until_ts = time.time() + tts_duration
-                    logger.info(
-                        "agent_speaking",
-                        extra={
-                            "call_id": call_id,
-                            "tts_duration": round(tts_duration, 2),
-                            "speaking_until_ts": session.speaking_until_ts,
-                        },
+
+                # Semi-sourd : overlap guard (UNCLEAR/SILENCE pendant TTS = ignoré ; mots critiques passent)
+                # Ne pas réinitialiser si déjà géré (reconstruct_loop_guard, resume_terminal_guard)
+                if action_taken not in ("reconstruct_loop_guard", "resume_terminal_guard"):
+                    overlap_handled = False
+                    response_text = ""
+                    action_taken = ""
+                    if _is_agent_speaking(session):
+                        # Interruption pendant énonciation des créneaux (WAIT_CONFIRM) : "un", "1", "deux" = choix valide
+                        if session.state == "WAIT_CONFIRM" and is_critical_token(normalized):
+                            overlap_handled = False
+                        elif is_critical_overlap(user_message or ""):
+                            logger.info(
+                                "critical_overlap_allowed",
+                                extra={"call_id": call_id, "text_len": len((user_message or "")[:20])},
+                            )
+                        elif kind in ("UNCLEAR", "SILENCE"):
+                            response_text = prompts.MSG_VOCAL_CROSSTALK_ACK
+                            action_taken = "overlap_ignored"
+                            overlap_handled = True
+                            logger.info(
+                                "overlap_ignored",
+                                extra={"call_id": call_id, "classification": kind, "reason": "agent_speaking"},
+                            )
+                        elif kind == "TEXT" and len((user_message or "").strip()) < 10:
+                            response_text = getattr(
+                                prompts, "MSG_OVERLAP_REPEAT_SHORT", "Pardon, pouvez-vous répéter ?"
+                            )
+                            session.add_message("agent", response_text)
+                            action_taken = "overlap_repeat"
+                            overlap_handled = True
+                            logger.info(
+                                "overlap_repeat",
+                                extra={"call_id": call_id, "text_len": len((user_message or "").strip())},
+                            )
+
+                # En annulation : si on va chercher le RDV par nom, envoyer d'abord un message de tenue
+                # en stream pour éviter le "mmm" TTS pendant la latence (recherche Google Calendar).
+                cancel_lookup_streaming = (
+                    is_streaming
+                    and session.state == "CANCEL_NAME"
+                    and _looks_like_name_for_cancel(user_message)
+                )
+                if cancel_lookup_streaming:
+                    response_text = ""
+                else:
+                    if not overlap_handled:
+                        try:
+                            if kind == "SILENCE":
+                                events = _get_engine(call_id).handle_message(call_id, "")
+                                response_text = events[0].text if events else prompts.MSG_EMPTY_MESSAGE
+                                action_taken = "silence"
+                                _maybe_reset_noise_on_terminal(session, events or [])
+                            elif kind == "TEXT":
+                                events = _get_engine(call_id).handle_message(call_id, normalized)
+                                response_text = events[0].text if events else "Je n'ai pas compris"
+                                action_taken = "text"
+                                _maybe_reset_noise_on_terminal(session, events or [])
+                            else:  # UNCLEAR — overlap guard puis crosstalk : ne pas compter overlap comme échec
+                                now = time.time()
+                                last_reply_ts = getattr(session, "last_agent_reply_ts", 0) or 0
+                                overlap_window = getattr(config, "OVERLAP_WINDOW_SEC", 1.2)
+                                recent_agent = (now - last_reply_ts) < overlap_window
+                                if recent_agent:
+                                    response_text = getattr(
+                                        prompts, "MSG_OVERLAP_REPEAT", "Je vous ai entendu en même temps. Pouvez-vous répéter maintenant ?"
+                                    )
+                                    session.add_message("agent", response_text)
+                                    action_taken = "overlap_guard"
+                                else:
+                                    raw_len = len((user_message or ""))
+                                    last_ts = getattr(session, "last_assistant_ts", 0) or 0
+                                    within_crosstalk_window = (now - last_ts) < getattr(
+                                        config, "CROSSTALK_WINDOW_SEC", 5.0
+                                    )
+                                    max_crosstalk_len = getattr(config, "CROSSTALK_MAX_RAW_LEN", 40)
+                                    if within_crosstalk_window and raw_len <= max_crosstalk_len:
+                                        response_text = prompts.MSG_VOCAL_CROSSTALK_ACK
+                                        action_taken = "ignore_crosstalk"
+                                    else:
+                                        session.unclear_text_count = getattr(session, "unclear_text_count", 0) + 1
+                                        count = session.unclear_text_count
+                                        if count == 1:
+                                            response_text = prompts.MSG_UNCLEAR_1
+                                            session.add_message("agent", response_text)
+                                            action_taken = "unclear_1"
+                                        elif count == 2:
+                                            events = ENGINE._trigger_intent_router(
+                                                session, "unclear_text_2", user_message or ""
+                                            )
+                                            response_text = events[0].text if events else prompts.MSG_UNCLEAR_1
+                                            action_taken = "unclear_2_intent_router"
+                                        else:
+                                            state_before = getattr(session, "state", "START")
+                                            session.state = "TRANSFERRED"
+                                            response_text = (
+                                                prompts.VOCAL_TRANSFER_COMPLEX
+                                                if getattr(session, "channel", "") == "vocal"
+                                                else prompts.MSG_TRANSFER
+                                            )
+                                            session.add_message("agent", response_text)
+                                            action_taken = "unclear_3_transfer"
+                                            logger.info(
+                                                "DECISION_TRACE state_before=%s intent_detected=n/a guard_triggered=unclear_3_transfer state_after=TRANSFERRED text=%r",
+                                                state_before,
+                                                (user_message or "")[:200],
+                                                extra={
+                                                    "call_id": call_id[:24] if call_id else "",
+                                                    "state_before": state_before,
+                                                    "guard_triggered": "unclear_3_transfer",
+                                                    "state_after": "TRANSFERRED",
+                                                },
+                                            )
+                        except Exception as e:
+                            print(f"❌ ENGINE ERROR: {e}")
+                            import traceback
+                            traceback.print_exc()
+                            response_text = "Excusez-moi, j'ai un petit souci technique. Je vous transfère à un collègue."
+                    t4 = log_timer("ENGINE processed", t3)
+                    _log_decision_out(call_id, session, action_taken, response_text)
+                    if hasattr(ENGINE.session_store, "save"):
+                        ENGINE.session_store.save(session)
+                    # P0 Option B: dual-write — message agent + checkpoint
+                    state_after = getattr(session, "state", "START")
+                    # Checkpoint sur: changement état, pending_slots, awaiting_confirmation, états critiques
+                    should_cp = (
+                        state_before_turn != state_after
+                        or bool(getattr(session, "pending_slots", None))
+                        or getattr(session, "awaiting_confirmation", None) is not None
+                        or state_after in ("QUALIF_CONTACT", "WAIT_CONFIRM", "CONTACT_CONFIRM", "CONTACT_CONFIRM_CALLERID")
                     )
-            
-            # 📊 Enregistrer stats pour rapport (si conversation terminée) — pas en cancel_lookup_streaming (fait dans le stream)
-            if not cancel_lookup_streaming:
-                try:
-                    if session.state in ["CONFIRMED", "TRANSFERRED"]:
-                        intent = "BOOKING" if session.state == "CONFIRMED" else "TRANSFER"
-                        outcome = "confirmed" if session.state == "CONFIRMED" else "transferred"
-                        duration_ms = int((time.time() - t_start) * 1000)
-                        report_generator.record_interaction(
-                            call_id=call_id,
-                            intent=intent,
-                            outcome=outcome,
-                            channel="vocal",
-                            duration_ms=duration_ms,
-                            motif=session.qualif_data.motif if hasattr(session, 'qualif_data') else None,
-                            client_name=session.qualif_data.name if hasattr(session, 'qualif_data') else None,
-                            client_phone=customer_phone
+                    _call_journal_agent_response(
+                        resolved_tenant_id,
+                        call_id,
+                        session,
+                        response_text,
+                        state_before_turn,
+                        should_checkpoint=should_cp,
+                    )
+                    logger.info(
+                        "decision_out_chat",
+                        extra={"call_id": call_id, "state_after": getattr(session, "state", "")},
+                    )
+                if not cancel_lookup_streaming:
+                    print(f"✅ Response: '{response_text[:50]}...' ({len(response_text)} chars)")
+                    session.last_assistant_ts = time.time()
+                    session.last_agent_reply_ts = time.time()
+                    if response_text and response_text.strip():
+                        tts_duration = estimate_tts_duration(response_text)
+                        session.speaking_until_ts = time.time() + tts_duration
+                        logger.info(
+                            "agent_speaking",
+                            extra={
+                                "call_id": call_id,
+                                "tts_duration": round(tts_duration, 2),
+                                "speaking_until_ts": session.speaking_until_ts,
+                            },
                         )
-                        print(f"📊 Stats recorded: {intent} → {outcome}")
-                        if session.state == "CONFIRMED" and session.qualif_data.name:
-                            try:
-                                client = client_memory.get_or_create(
-                                    phone=customer_phone,
-                                    name=session.qualif_data.name,
-                                    email=session.qualif_data.contact if session.qualif_data.contact_type == "email" else None,
-                                    tenant_id=getattr(session, "tenant_id", None),
-                                )
-                                slot_label = tools_booking.get_label_for_choice(session, session.pending_slot_choice or 1) or "RDV"
-                                client_memory.record_booking(
-                                    client_id=client.id,
-                                    slot_label=slot_label,
-                                    motif=session.qualif_data.motif or "consultation",
-                                    tenant_id=getattr(session, "tenant_id", None),
-                                )
-                                print(f"🧠 Client saved: {client.name} (id={client.id})")
-                            except Exception as e:
-                                print(f"⚠️ Client save error: {e}")
-                except Exception as e:
-                    print(f"⚠️ Stats recording error: {e}")
+
+                # 📊 Enregistrer stats pour rapport (si conversation terminée) — pas en cancel_lookup_streaming (fait dans le stream)
+                if not cancel_lookup_streaming:
+                    try:
+                        if session.state in ["CONFIRMED", "TRANSFERRED"]:
+                            intent = "BOOKING" if session.state == "CONFIRMED" else "TRANSFER"
+                            outcome = "confirmed" if session.state == "CONFIRMED" else "transferred"
+                            duration_ms = int((time.time() - t_start) * 1000)
+                            report_generator.record_interaction(
+                                call_id=call_id,
+                                intent=intent,
+                                outcome=outcome,
+                                channel="vocal",
+                                duration_ms=duration_ms,
+                                motif=session.qualif_data.motif if hasattr(session, 'qualif_data') else None,
+                                client_name=session.qualif_data.name if hasattr(session, 'qualif_data') else None,
+                                client_phone=customer_phone
+                            )
+                            print(f"📊 Stats recorded: {intent} → {outcome}")
+                            if session.state == "CONFIRMED" and session.qualif_data.name:
+                                try:
+                                    client = client_memory.get_or_create(
+                                        phone=customer_phone,
+                                        name=session.qualif_data.name,
+                                        email=session.qualif_data.contact if session.qualif_data.contact_type == "email" else None,
+                                        tenant_id=getattr(session, "tenant_id", None),
+                                    )
+                                    slot_label = tools_booking.get_label_for_choice(session, session.pending_slot_choice or 1) or "RDV"
+                                    client_memory.record_booking(
+                                        client_id=client.id,
+                                        slot_label=slot_label,
+                                        motif=session.qualif_data.motif or "consultation",
+                                        tenant_id=getattr(session, "tenant_id", None),
+                                    )
+                                    print(f"🧠 Client saved: {client.name} (id={client.id})")
+                                except Exception as e:
+                                    print(f"⚠️ Client save error: {e}")
+                    except Exception as e:
+                        print(f"⚠️ Stats recording error: {e}")
         
         # ⏱️ TIMING TOTAL
         total_ms = (time.time() - t_start) * 1000

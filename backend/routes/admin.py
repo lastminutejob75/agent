@@ -2,10 +2,12 @@
 """
 API admin / onboarding pour uwi-landing (Vite SPA).
 - POST /public/onboarding (public)
-- GET/PATCH /admin/* (protégé Bearer ADMIN_API_TOKEN)
+- POST /api/admin/auth/login, GET /api/admin/auth/me, POST /api/admin/auth/logout (cookie session)
+- GET/PATCH /admin/* (protégé cookie session OU Bearer ADMIN_API_TOKEN)
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import logging
@@ -13,7 +15,8 @@ import os
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+import jwt
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
@@ -21,9 +24,18 @@ from pydantic import BaseModel, Field
 from backend import config
 from backend.deps import validate_tenant_id
 from backend.auth_pg import pg_add_tenant_user, pg_create_tenant_user, pg_get_tenant_user_by_email
+from backend.billing_pg import (
+    get_tenant_billing,
+    set_force_active,
+    set_stripe_customer_id,
+    set_tenant_suspended,
+    set_tenant_unsuspended,
+    tenant_id_by_stripe_customer_id,
+)
 from backend.tenants_pg import (
     pg_add_routing,
     pg_create_tenant,
+    pg_deactivate_tenant,
     pg_fetch_tenants,
     pg_get_tenant_full,
     pg_get_tenant_flags,
@@ -35,6 +47,58 @@ from backend.tenants_pg import (
 
 logger = logging.getLogger(__name__)
 
+# Convention produit : ivr_events.client_id = tenant_id (même entité). RLS/audit futur possible
+# si migration ivr_events.client_id → tenant_id (ou vue SQL). Toutes les requêtes stats filtrent
+# ivr_events par client_id = tenant_id (input).
+def _ivr_client_id(tenant_id: int) -> int:
+    """Résolution tenant → clé ivr_events. Actuellement client_id = tenant_id."""
+    return tenant_id
+
+# Minutes : plafond 6h par session pour éviter les outliers (sessions ouvertes / bug updated_at).
+MAX_SESSION_MINUTES = 6 * 60  # 360
+
+
+def _get_vapi_usage_for_window(
+    url: Optional[str], start: str, end: str, tenant_id: Optional[int] = None
+) -> tuple:
+    """
+    Agrège vapi_call_usage sur la fenêtre (ended_at). Retourne (minutes_total, cost_usd) ou (None, None) si table absente/erreur.
+    Vapi = source de vérité conso ; utilisé en priorité dans les stats admin.
+    """
+    if not url:
+        return (None, None)
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                if tenant_id is not None:
+                    cur.execute(
+                        """
+                        SELECT COALESCE(SUM(duration_sec), 0) / 60.0 AS mins, COALESCE(SUM(cost_usd), 0) AS cost
+                        FROM vapi_call_usage
+                        WHERE tenant_id = %s AND ended_at IS NOT NULL AND ended_at >= %s AND ended_at <= %s
+                        """,
+                        (tenant_id, start, end),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT COALESCE(SUM(duration_sec), 0) / 60.0 AS mins, COALESCE(SUM(cost_usd), 0) AS cost
+                        FROM vapi_call_usage
+                        WHERE ended_at IS NOT NULL AND ended_at >= %s AND ended_at <= %s
+                        """,
+                        (start, end),
+                    )
+                row = cur.fetchone()
+                if row and (row[0] or row[1]):
+                    return (float(row[0] or 0), float(row[1] or 0))
+                return (None, None)
+    except Exception as e:
+        if "does not exist" not in str(e).lower() and "vapi_call_usage" not in str(e).lower():
+            logger.debug("vapi_usage agg: %s", e)
+        return (None, None)
+
+
 router = APIRouter(prefix="/api", tags=["admin"])
 _security = HTTPBearer(auto_error=False)
 
@@ -43,26 +107,61 @@ ADMIN_TOKEN = (os.environ.get("ADMIN_API_TOKEN") or "").strip()
 _ADMIN_TOKENS_EXTRA = [t.strip() for t in (os.environ.get("ADMIN_API_TOKENS") or "").split(",") if t.strip()]
 _ADMIN_VALID_TOKENS = frozenset([ADMIN_TOKEN] + _ADMIN_TOKENS_EXTRA) if ADMIN_TOKEN else frozenset(_ADMIN_TOKENS_EXTRA)
 
+# Auth admin par email + mot de passe → cookie session (HttpOnly)
+ADMIN_EMAIL = (os.environ.get("ADMIN_EMAIL") or "").strip().lower()
+ADMIN_PASSWORD = (os.environ.get("ADMIN_PASSWORD") or "").strip()  # Déprécié : préférer ADMIN_PASSWORD_HASH
+ADMIN_PASSWORD_HASH = (os.environ.get("ADMIN_PASSWORD_HASH") or "").strip()  # bcrypt hash (recommandé en prod)
+ADMIN_SESSION_COOKIE = "uwi_admin_session"
+JWT_SECRET_ADMIN = (os.environ.get("JWT_SECRET") or os.environ.get("ADMIN_SESSION_SECRET") or "").strip()
+ADMIN_SESSION_EXPIRES_HOURS = int(os.environ.get("ADMIN_SESSION_EXPIRES_HOURS") or "8")
+# Cross-domain (front uwiapp.com / API Railway) : SameSite=None; Secure. Même domaine (api.uwiapp.com) : Lax.
+ADMIN_COOKIE_SAMESITE = (os.environ.get("ADMIN_COOKIE_SAMESITE") or "").strip().lower() or None
+
+
+def _get_admin_email_from_cookie(request: Request) -> Optional[str]:
+    """Lit et valide le JWT admin depuis le cookie. Retourne l'email si valide, sinon None."""
+    if not JWT_SECRET_ADMIN:
+        return None
+    raw = request.cookies.get(ADMIN_SESSION_COOKIE)
+    if not raw:
+        return None
+    try:
+        payload = jwt.decode(raw, JWT_SECRET_ADMIN, algorithms=["HS256"])
+        if payload.get("scope") != "admin":
+            return None
+        email = (payload.get("sub") or payload.get("email") or "").strip().lower()
+        if email and email == ADMIN_EMAIL:
+            return email
+    except jwt.ExpiredSignatureError:
+        pass
+    except jwt.InvalidTokenError:
+        pass
+    return None
+
 
 def require_admin(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security),
 ) -> None:
     """
-    Dépendance FastAPI : accès réservé à l'admin.
-    - 503 : aucun token admin configuré (ADMIN_API_TOKEN ou ADMIN_API_TOKENS)
-    - 401 : pas authentifié (Bearer manquant ou token invalide/expiré)
-    - 403 : réservé (token valide mais role != admin).
-    Rotation : ADMIN_API_TOKENS=tok1,tok2 accepte plusieurs tokens en parallèle.
+    Accès admin : 1) cookie uwi_admin_session (JWT scope=admin), 2) Bearer ADMIN_API_TOKEN (legacy).
+    - 503 : aucune méthode configurée (ADMIN_EMAIL+ADMIN_PASSWORD ou ADMIN_API_TOKEN)
+    - 401 : pas authentifié (cookie invalide/expiré ou Bearer manquant/invalide).
     """
-    if not _ADMIN_VALID_TOKENS:
-        raise HTTPException(503, "Admin API not configured (ADMIN_API_TOKEN or ADMIN_API_TOKENS missing)")
+    # 1) Cookie session
+    if JWT_SECRET_ADMIN and ADMIN_EMAIL:
+        email = _get_admin_email_from_cookie(request)
+        if email:
+            logger.info("admin_access path=%s client=%s auth=cookie", request.url.path, request.client.host if request.client else None)
+            return
+    # 2) Bearer legacy
+    if not _ADMIN_VALID_TOKENS and not (ADMIN_EMAIL and (ADMIN_PASSWORD or ADMIN_PASSWORD_HASH)):
+        raise HTTPException(503, "Admin API not configured (ADMIN_EMAIL + ADMIN_PASSWORD_HASH or ADMIN_API_TOKEN)")
     if not credentials or not (credentials.credentials or "").strip():
-        raise HTTPException(401, "Missing credentials (Bearer token required)")
+        raise HTTPException(401, "Missing credentials (cookie or Bearer required)")
     token = credentials.credentials.strip()
     if token not in _ADMIN_VALID_TOKENS:
         raise HTTPException(401, "Invalid or expired token")
-    # Audit minimal : route, ip, user-agent, empreinte token (jamais le token en clair)
     token_fingerprint = hashlib.sha256(token.encode()).hexdigest()[:8]
     logger.info(
         "admin_access path=%s client=%s user_agent=%s token_fp=%s",
@@ -92,6 +191,11 @@ class OnboardingResponse(BaseModel):
     tenant_id: int
     message: str
     admin_setup_token: Optional[str] = None  # P0: same as ADMIN_API_TOKEN for internal use
+
+
+class AdminLoginBody(BaseModel):
+    email: str = Field(..., max_length=255)
+    password: str = Field(..., min_length=1)
 
 
 class RoutingCreate(BaseModel):
@@ -875,6 +979,75 @@ def _link_demo_vocal_number(tenant_id: int) -> bool:
 # --- Routes ---
 
 
+def _verify_admin_password(password: str) -> bool:
+    """Vérifie le mot de passe : ADMIN_PASSWORD_HASH (bcrypt) prioritaire, sinon ADMIN_PASSWORD (déprécié)."""
+    if not password:
+        return False
+    if ADMIN_PASSWORD_HASH:
+        try:
+            import bcrypt
+            return bcrypt.checkpw(password.encode("utf-8"), ADMIN_PASSWORD_HASH.encode("utf-8"))
+        except Exception as e:
+            logger.warning("admin_password_hash_check failed: %s", e)
+            return False
+    if ADMIN_PASSWORD:
+        if (os.environ.get("ENV") or os.environ.get("RAILWAY_ENVIRONMENT") or "").lower() in ("production", "prod"):
+            logger.warning("ADMIN_PASSWORD in plain text is deprecated in production; use ADMIN_PASSWORD_HASH (bcrypt)")
+        return password.strip() == ADMIN_PASSWORD
+    return False
+
+
+@router.post("/admin/auth/login")
+def admin_auth_login(body: AdminLoginBody, request: Request):
+    """Connexion admin par email + mot de passe. Pose un cookie HttpOnly (uwi_admin_session)."""
+    if not ADMIN_EMAIL:
+        raise HTTPException(503, "Admin login not configured (ADMIN_EMAIL)")
+    if not ADMIN_PASSWORD_HASH and not ADMIN_PASSWORD:
+        raise HTTPException(503, "Admin login not configured (ADMIN_PASSWORD_HASH or ADMIN_PASSWORD)")
+    if not JWT_SECRET_ADMIN:
+        raise HTTPException(503, "JWT_SECRET or ADMIN_SESSION_SECRET required for admin session")
+    email = (body.email or "").strip().lower()
+    if email != ADMIN_EMAIL or not _verify_admin_password((body.password or "").strip()):
+        raise HTTPException(401, "Identifiants invalides")
+    exp = datetime.utcnow() + timedelta(hours=ADMIN_SESSION_EXPIRES_HOURS)
+    payload = {"sub": email, "email": email, "scope": "admin", "exp": exp, "iat": datetime.utcnow()}
+    token = jwt.encode(payload, JWT_SECRET_ADMIN, algorithm="HS256")
+    secure = (os.environ.get("ENV") or os.environ.get("RAILWAY_ENVIRONMENT") or "").lower() in ("production", "prod")
+    samesite = ADMIN_COOKIE_SAMESITE if ADMIN_COOKIE_SAMESITE in ("none", "lax", "strict") else ("none" if secure else "lax")
+    response = JSONResponse(content={"ok": True, "email": email})
+    # Ne pas set domain= : avec API sur Railway (domaine différent de uwiapp.com), le cookie doit rester host-only sur *.railway.app.
+    response.set_cookie(
+        key=ADMIN_SESSION_COOKIE,
+        value=token,
+        httponly=True,
+        secure=secure,
+        samesite=samesite,
+        path="/",
+        max_age=ADMIN_SESSION_EXPIRES_HOURS * 3600,
+    )
+    logger.info("admin_login email=%s client=%s", email, request.client.host if request.client else None)
+    return response
+
+
+@router.get("/admin/auth/me")
+def admin_auth_me(request: Request):
+    """Retourne l'email de l'admin connecté (cookie). 401 si non connecté."""
+    email = _get_admin_email_from_cookie(request)
+    if not email:
+        raise HTTPException(401, "Not authenticated")
+    return {"email": email}
+
+
+@router.post("/admin/auth/logout")
+def admin_auth_logout():
+    """Déconnexion : supprime le cookie admin (même samesite que login pour cross-domain)."""
+    response = JSONResponse(content={"ok": True})
+    secure = (os.environ.get("ENV") or os.environ.get("RAILWAY_ENVIRONMENT") or "").lower() in ("production", "prod")
+    samesite = ADMIN_COOKIE_SAMESITE if ADMIN_COOKIE_SAMESITE in ("none", "lax", "strict") else ("none" if secure else "lax")
+    response.delete_cookie(ADMIN_SESSION_COOKIE, path="/", samesite=samesite)
+    return response
+
+
 @router.post("/public/onboarding", response_model=OnboardingResponse)
 def public_onboarding(body: OnboardingRequest):
     """Crée un tenant + config. Public (pas de auth). Aucun lien avec le numéro démo (voir docs/ARCHITECTURE_VOCAL_TENANTS.md)."""
@@ -1049,6 +1222,19 @@ def admin_get_tenant(
     return d
 
 
+@router.delete("/admin/tenants/{tenant_id}")
+def admin_delete_tenant(
+    tenant_id: int = Depends(validate_tenant_id),
+    _: None = Depends(_verify_admin),
+):
+    """Soft delete : passe le tenant en inactive (PG uniquement)."""
+    if not config.USE_PG_TENANTS:
+        raise HTTPException(501, "Delete tenant requires USE_PG_TENANTS (Postgres)")
+    if not pg_deactivate_tenant(tenant_id):
+        raise HTTPException(404, "Tenant not found or already inactive")
+    return {"ok": True, "tenant_id": tenant_id}
+
+
 @router.get("/admin/tenants/{tenant_id}/dashboard")
 def admin_get_dashboard(
     tenant_id: int = Depends(validate_tenant_id),
@@ -1059,6 +1245,278 @@ def admin_get_dashboard(
     if not d:
         raise HTTPException(404, "Tenant not found")
     return _get_dashboard_snapshot(tenant_id, d.get("name", "N/A"))
+
+
+@router.get("/admin/tenants/{tenant_id}/activity")
+def admin_tenant_activity(
+    tenant_id: int = Depends(validate_tenant_id),
+    limit: int = Query(50, ge=1, le=200),
+    _: None = Depends(_verify_admin),
+):
+    """Timeline des derniers events ivr_events (date, call_id, event, meta)."""
+    return _get_tenant_activity(tenant_id, limit)
+
+
+def _call_result_from_event(event: Optional[str]) -> str:
+    """Priorité: rdv > transfer > abandoned > other."""
+    if not event:
+        return "other"
+    if event == "booking_confirmed":
+        return "rdv"
+    if event in ("transferred_human", "transferred", "transfer_human", "transfer"):
+        return "transfer"
+    if event in ("user_abandon", "abandon", "hangup", "user_hangup"):
+        return "abandoned"
+    return "other"
+
+
+def _get_calls_list(
+    tenant_id: Optional[int],
+    days: int,
+    limit: int,
+    cursor: Optional[str] = None,
+    result_filter: Optional[str] = None,
+) -> dict:
+    """Liste appels depuis ivr_events (+ call_sessions pour duration). PG prioritaire."""
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    start = (now - timedelta(days=days)).strftime("%Y-%m-%d 00:00:00")
+    end = now.strftime("%Y-%m-%d %H:%M:%S")
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    items: List[dict] = []
+    next_cursor: Optional[str] = None
+
+    if url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            # Cursor : base64url(json {t, c}) pour éviter +/= en querystring ; fallback legacy "ts|call_id"
+            cursor_ts: Optional[str] = None
+            cursor_id: Optional[str] = None
+            if cursor:
+                try:
+                    padded = cursor + ("=" * (4 - len(cursor) % 4)) if len(cursor) % 4 else cursor
+                    raw = base64.urlsafe_b64decode(padded.encode()).decode()
+                    obj = json.loads(raw)
+                    cursor_ts = obj.get("t")
+                    cursor_id = obj.get("c")
+                except Exception:
+                    parts = cursor.split("|", 1)
+                    if len(parts) == 2:
+                        cursor_ts, cursor_id = parts[0], parts[1]
+
+            with psycopg.connect(url, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    params: List[Any] = [start, end]
+                    tenant_filter = ""
+                    if tenant_id is not None:
+                        tenant_filter = " AND client_id = %s"
+                        params.append(_ivr_client_id(tenant_id))
+
+                    cursor_filter = ""
+                    if cursor_ts and cursor_id:
+                        cursor_filter = " AND (a.last_event_at < %s OR (a.last_event_at = %s AND a.call_id < %s))"
+                        params.extend([cursor_ts, cursor_ts, cursor_id])
+
+                    # Filtre sur dernier event (pas "call a eu au moins un event error" ; pour ça voir has_error plus tard)
+                    result_filter_sql = ""
+                    if result_filter == "rdv":
+                        result_filter_sql = " AND a.last_event = 'booking_confirmed'"
+                    elif result_filter == "transfer":
+                        result_filter_sql = " AND a.last_event IN ('transferred_human', 'transferred', 'transfer_human', 'transfer')"
+                    elif result_filter == "abandoned":
+                        result_filter_sql = " AND a.last_event IN ('user_abandon', 'abandon', 'hangup', 'user_hangup')"
+                    elif result_filter == "error":
+                        result_filter_sql = " AND a.last_event = 'anti_loop_trigger'"
+
+                    params.append(limit + 1)
+
+                    cur.execute(
+                        """
+                        WITH agg AS (
+                            SELECT client_id, call_id,
+                                   MIN(created_at) AS started_at,
+                                   MAX(created_at) AS last_event_at,
+                                   (array_agg(event ORDER BY created_at DESC))[1] AS last_event
+                            FROM ivr_events
+                            WHERE created_at >= %s AND created_at <= %s
+                              AND call_id IS NOT NULL AND TRIM(call_id) != ''
+                              """ + tenant_filter + """
+                            GROUP BY client_id, call_id
+                        )
+                        SELECT a.client_id, a.call_id, a.started_at, a.last_event_at, a.last_event,
+                               cs.started_at AS cs_started, cs.updated_at AS cs_updated
+                        FROM agg a
+                        LEFT JOIN call_sessions cs ON cs.tenant_id = a.client_id AND cs.call_id = a.call_id
+                        WHERE 1=1 """ + cursor_filter + result_filter_sql + """
+                        ORDER BY a.last_event_at DESC, a.call_id DESC
+                        LIMIT %s
+                        """,
+                        tuple(params),
+                    )
+                    rows = cur.fetchall()
+                    if not rows:
+                        return {"items": [], "next_cursor": None, "days": days}
+
+                    for r in rows[:limit]:
+                        started_at = r.get("started_at")
+                        last_event_at = r.get("last_event_at")
+                        last_event = r.get("last_event")
+                        cs_started = r.get("cs_started")
+                        cs_updated = r.get("cs_updated")
+                        duration_min: Optional[int] = None
+                        if cs_started and cs_updated:
+                            delta_mins = (cs_updated - cs_started).total_seconds() / 60.0
+                            delta_mins = max(0, min(MAX_SESSION_MINUTES, delta_mins))
+                            duration_min = int(round(delta_mins, 0))
+                        elif started_at and last_event_at:
+                            delta_mins = (last_event_at - started_at).total_seconds() / 60.0
+                            delta_mins = max(0, min(MAX_SESSION_MINUTES, delta_mins))
+                            duration_min = int(round(delta_mins, 0))
+
+                        items.append({
+                            "call_id": r.get("call_id") or "",
+                            "tenant_id": r.get("client_id"),
+                            "started_at": started_at.isoformat() + "Z" if hasattr(started_at, "isoformat") else str(started_at),
+                            "last_event_at": last_event_at.isoformat() + "Z" if hasattr(last_event_at, "isoformat") else str(last_event_at),
+                            "last_event": last_event or "",
+                            "result": _call_result_from_event(last_event),
+                            "duration_min": duration_min,
+                        })
+
+                    if len(rows) > limit:
+                        last_row = rows[limit - 1]
+                        t_iso = last_row["last_event_at"].isoformat() if hasattr(last_row["last_event_at"], "isoformat") else str(last_row["last_event_at"])
+                        c_id = last_row.get("call_id") or ""
+                        next_cursor = base64.urlsafe_b64encode(json.dumps({"t": t_iso, "c": c_id}).encode()).decode().rstrip("=")
+
+        except Exception as e:
+            logger.warning("admin calls list pg failed: %s", e)
+    # Pas de fallback SQLite pour la liste appels (PG uniquement en prod).
+
+    return {"items": items, "next_cursor": next_cursor, "days": days}
+
+
+@router.get("/admin/calls")
+def admin_calls_list(
+    tenant_id: Optional[int] = Query(None, description="Filtrer par tenant"),
+    days: int = Query(7, ge=1, le=90),
+    limit: int = Query(50, ge=1, le=200),
+    cursor: Optional[str] = Query(None),
+    result: Optional[str] = Query(None, description="rdv | transfer | abandoned | error"),
+    _: None = Depends(_verify_admin),
+):
+    """Liste appels. Filtre optionnel result=rdv|transfer|abandoned|error. Cursor base64(json {t,c})."""
+    if tenant_id is not None:
+        _get_tenant_detail(tenant_id)  # 404 if missing
+    return _get_calls_list(tenant_id, days, limit, cursor, result)
+
+
+def _iso_utc(dt: Any) -> str:
+    """Format datetime en ISO UTC (suffixe Z) pour éviter confusion timezone dans le front."""
+    if dt is None:
+        return ""
+    from datetime import timezone
+    if hasattr(dt, "astimezone"):
+        utc = dt.astimezone(timezone.utc) if getattr(dt, "tzinfo", None) else dt
+        return utc.strftime("%Y-%m-%dT%H:%M:%S") + "Z"
+    return str(dt)
+
+
+def _get_call_detail(tenant_id: int, call_id: str) -> dict:
+    """Détail d'un call : metadata + events[] depuis ivr_events (call_id unique par tenant). Timestamps en UTC (Z)."""
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    cid = _ivr_client_id(tenant_id)
+    call_id_clean = (call_id or "").strip()
+    if not call_id_clean:
+        raise HTTPException(400, "call_id required")
+    out: Dict[str, Any] = {
+        "call_id": call_id_clean,
+        "tenant_id": tenant_id,
+        "started_at": None,
+        "last_event_at": None,
+        "duration_min": None,
+        "result": "other",
+        "events": [],
+    }
+    if not url:
+        return out
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+        with psycopg.connect(url, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT created_at, event, context, reason
+                    FROM ivr_events
+                    WHERE client_id = %s AND call_id = %s
+                    ORDER BY created_at ASC
+                    """,
+                    (cid, call_id_clean),
+                )
+                rows = cur.fetchall()
+                if not rows:
+                    raise HTTPException(404, "Call not found")
+                events = []
+                for r in rows:
+                    meta = {}
+                    if r.get("context"):
+                        meta["context"] = r["context"]
+                    if r.get("reason"):
+                        meta["reason"] = r["reason"]
+                    events.append({
+                        "created_at": _iso_utc(r.get("created_at")),
+                        "event": r.get("event") or "",
+                        "meta": meta if meta else None,
+                    })
+                out["events"] = events
+                out["started_at"] = events[0]["created_at"] if events else None
+                out["last_event_at"] = events[-1]["created_at"] if events else None
+                last_event = rows[-1].get("event") if rows else None
+                out["result"] = _call_result_from_event(last_event)
+                if len(rows) >= 2:
+                    from datetime import datetime
+                    try:
+                        first_ts = rows[0]["created_at"]
+                        last_ts = rows[-1]["created_at"]
+                        if hasattr(first_ts, "timestamp") and hasattr(last_ts, "timestamp"):
+                            delta_mins = (last_ts - first_ts).total_seconds() / 60.0
+                        else:
+                            delta_mins = 0
+                        delta_mins = max(0, min(MAX_SESSION_MINUTES, delta_mins))
+                        out["duration_min"] = int(round(delta_mins, 0))
+                    except Exception:
+                        pass
+                cur.execute(
+                    """
+                    SELECT started_at, updated_at FROM call_sessions
+                    WHERE tenant_id = %s AND call_id = %s
+                    """,
+                    (tenant_id, call_id_clean),
+                )
+                cs = cur.fetchone()
+                if cs and cs.get("started_at") and cs.get("updated_at"):
+                    delta_mins = (cs["updated_at"] - cs["started_at"]).total_seconds() / 60.0
+                    delta_mins = max(0, min(MAX_SESSION_MINUTES, delta_mins))
+                    out["duration_min"] = int(round(delta_mins, 0))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("call detail pg failed: %s", e)
+    return out
+
+
+@router.get("/admin/tenants/{tenant_id}/calls/{call_id}")
+def admin_call_detail(
+    tenant_id: int = Depends(validate_tenant_id),
+    call_id: str = ...,
+    _: None = Depends(_verify_admin),
+):
+    """Détail d'un call : metadata + timeline events. call_id unique par tenant."""
+    if _get_tenant_detail(tenant_id) is None:
+        raise HTTPException(404, "Tenant not found")
+    return _get_call_detail(tenant_id, call_id)
 
 
 def _get_transfer_reasons(tenant_id: int, days: int = 7) -> dict:
@@ -1177,6 +1635,154 @@ def admin_get_technical_status(
     return s
 
 
+@router.get("/admin/tenants/{tenant_id}/billing")
+def admin_get_tenant_billing(
+    tenant_id: int = Depends(validate_tenant_id),
+    _: None = Depends(_verify_admin),
+):
+    """Billing Stripe (customer, subscription, status) + suspension. Agnostique prix."""
+    if not _get_tenant_detail(tenant_id):
+        raise HTTPException(404, "Tenant not found")
+    billing = get_tenant_billing(tenant_id)
+    out = billing if billing is not None else {}
+    for k in ("is_suspended", "suspension_reason", "suspended_at", "force_active_override", "force_active_until", "suspension_mode"):
+        out.setdefault(k, None)
+    return out
+
+
+class ForceActiveBody(BaseModel):
+    days: int = Field(7, ge=1, le=90, description="Nombre de jours pendant lesquels forcer actif")
+
+
+class SuspendBody(BaseModel):
+    mode: str = Field("hard", description="hard = phrase courte zero LLM; soft = message poli sans RDV (manual only)")
+
+
+@router.post("/admin/tenants/{tenant_id}/suspend")
+def admin_tenant_suspend(
+    tenant_id: int = Depends(validate_tenant_id),
+    body: SuspendBody = Body(SuspendBody()),
+    _: None = Depends(_verify_admin),
+):
+    """Suspend le tenant manuellement. mode=soft uniquement pour manual (message poli, pas de RDV)."""
+    if not _get_tenant_detail(tenant_id):
+        raise HTTPException(404, "Tenant not found")
+    mode = (body.mode or "hard").strip().lower()
+    if mode not in ("hard", "soft"):
+        mode = "hard"
+    if not set_tenant_suspended(tenant_id, reason="manual", mode=mode):
+        raise HTTPException(500, "Failed to suspend")
+    return {"ok": True, "tenant_id": tenant_id, "is_suspended": True, "suspension_mode": mode}
+
+
+@router.post("/admin/tenants/{tenant_id}/unsuspend")
+def admin_tenant_unsuspend(
+    tenant_id: int = Depends(validate_tenant_id),
+    _: None = Depends(_verify_admin),
+):
+    """Lève la suspension (admin)."""
+    if not _get_tenant_detail(tenant_id):
+        raise HTTPException(404, "Tenant not found")
+    if not set_tenant_unsuspended(tenant_id):
+        raise HTTPException(500, "Failed to unsuspend")
+    return {"ok": True, "tenant_id": tenant_id, "is_suspended": False}
+
+
+@router.post("/admin/tenants/{tenant_id}/force-active")
+def admin_tenant_force_active(
+    tenant_id: int = Depends(validate_tenant_id),
+    body: ForceActiveBody = Body(ForceActiveBody()),
+    _: None = Depends(_verify_admin),
+):
+    """Force le tenant actif pendant X jours (pas de suspension même si past_due)."""
+    if not _get_tenant_detail(tenant_id):
+        raise HTTPException(404, "Tenant not found")
+    if not set_force_active(tenant_id, body.days):
+        raise HTTPException(500, "Failed to set force-active")
+    return {"ok": True, "tenant_id": tenant_id, "force_active_days": body.days}
+
+
+@router.post("/admin/tenants/{tenant_id}/stripe-customer")
+def admin_create_stripe_customer(
+    tenant_id: int = Depends(validate_tenant_id),
+    _: None = Depends(_verify_admin),
+):
+    """Crée un Stripe Customer pour le tenant et enregistre stripe_customer_id."""
+    d = _get_tenant_detail(tenant_id)
+    if not d:
+        raise HTTPException(404, "Tenant not found")
+    stripe_key = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
+    if not stripe_key:
+        raise HTTPException(503, "Stripe not configured (STRIPE_SECRET_KEY)")
+    try:
+        import stripe
+        stripe.api_key = stripe_key
+        name = (d.get("name") or f"Tenant #{tenant_id}")[:500]
+        customer = stripe.Customer.create(
+            name=name,
+            metadata={"tenant_id": str(tenant_id)},
+        )
+        cid = (customer.id or "").strip()
+        if not cid:
+            raise HTTPException(500, "Stripe customer id empty")
+        if not set_stripe_customer_id(tenant_id, cid):
+            raise HTTPException(500, "Failed to save stripe_customer_id")
+        logger.info("STRIPE_CUSTOMER_CREATED tenant_id=%s stripe_customer_id=%s", tenant_id, cid)
+        return {"stripe_customer_id": cid, "tenant_id": tenant_id}
+    except stripe.StripeError as e:
+        logger.warning("stripe customer create failed: %s", e)
+        raise HTTPException(502, str(e) or "Stripe error")
+
+
+@router.get("/admin/tenants/{tenant_id}/usage")
+def admin_get_tenant_usage(
+    tenant_id: int = Depends(validate_tenant_id),
+    month: str = Query(..., description="YYYY-MM"),
+    _: None = Depends(_verify_admin),
+):
+    """Usage Vapi du mois (vapi_call_usage) : minutes_total, cost_usd, calls_count. Convention : mois calendaire en UTC (ended_at >= 1er 00:00:00 UTC, < 1er mois suivant)."""
+    if not _get_tenant_detail(tenant_id):
+        raise HTTPException(404, "Tenant not found")
+    if len(month) != 7 or month[4] != "-":
+        raise HTTPException(400, "month must be YYYY-MM")
+    start = f"{month}-01 00:00:00"
+    try:
+        from datetime import datetime
+        y, m = int(month[:4]), int(month[5:7])
+        if m == 12:
+            end = f"{y + 1}-01-01 00:00:00"
+        else:
+            end = f"{y}-{m + 1:02d}-01 00:00:00"
+    except ValueError:
+        raise HTTPException(400, "month must be YYYY-MM")
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    out = {"tenant_id": tenant_id, "month": month, "minutes_total": 0, "cost_usd": 0, "calls_count": 0}
+    if url:
+        try:
+            import psycopg
+            with psycopg.connect(url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT COALESCE(SUM(duration_sec), 0) / 60.0 AS mins,
+                               COALESCE(SUM(cost_usd), 0) AS cost,
+                               COUNT(*) AS cnt
+                        FROM vapi_call_usage
+                        WHERE tenant_id = %s AND ended_at IS NOT NULL AND ended_at >= %s AND ended_at < %s
+                        """,
+                        (tenant_id, start, end),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        out["minutes_total"] = round(float(row[0] or 0), 2)
+                        out["cost_usd"] = round(float(row[1] or 0), 4)
+                        out["calls_count"] = int(row[2] or 0)
+        except Exception as e:
+            if "does not exist" not in str(e).lower():
+                logger.warning("tenant usage query failed: %s", e)
+    return out
+
+
 @router.post("/admin/tenants/{tenant_id}/users")
 def admin_add_tenant_user(
     tenant_id: int = Depends(validate_tenant_id),
@@ -1259,6 +1865,835 @@ def admin_add_routing(
                 content={"detail": str(e), "error_code": "TEST_NUMBER_IMMUTABLE"},
             )
         raise
+
+
+def _get_global_stats(window_days: int) -> dict:
+    """KPIs globaux sur la fenêtre. Prod = Postgres (Railway) ; fallback SQLite en dev local."""
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    start = (now - timedelta(days=window_days)).strftime("%Y-%m-%d 00:00:00")
+    end = now.strftime("%Y-%m-%d %H:%M:%S")
+    tenants_list = _get_tenant_list(include_inactive=True)
+    tenants_total = len(tenants_list)
+    tenants_active = sum(1 for t in tenants_list if (t.get("status") or "active") == "active")
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    calls_total = 0
+    calls_abandoned = 0
+    appointments_total = 0
+    transfers_total = 0
+    errors_total = 0
+    last_activity_at: Optional[str] = None
+    minutes_total = 0.0
+    cost_usd_total: Optional[float] = None
+
+    if url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            with psycopg.connect(url, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT COUNT(DISTINCT call_id) AS c
+                        FROM ivr_events
+                        WHERE call_id IS NOT NULL AND TRIM(call_id) != '' AND created_at >= %s AND created_at <= %s
+                        """,
+                        (start, end),
+                    )
+                    row = cur.fetchone()
+                    calls_total = row["c"] or 0
+                    cur.execute(
+                        """
+                        SELECT event, COUNT(*) AS cnt FROM ivr_events
+                        WHERE created_at >= %s AND created_at <= %s
+                        GROUP BY event
+                        """,
+                        (start, end),
+                    )
+                    by_event = {r["event"]: r["cnt"] for r in cur.fetchall()}
+                    calls_abandoned = sum(by_event.get(e, 0) for e in ("user_abandon", "abandon", "hangup", "user_hangup"))
+                    transfers_total = sum(by_event.get(e, 0) for e in ("transferred_human", "transferred", "transfer_human", "transfer"))
+                    appointments_total = by_event.get("booking_confirmed", 0)
+                    errors_total = by_event.get("anti_loop_trigger", 0)
+                    cur.execute(
+                        "SELECT MAX(created_at) AS m FROM ivr_events WHERE created_at >= %s AND created_at <= %s",
+                        (start, end),
+                    )
+                    r = cur.fetchone()
+                    if r and r["m"]:
+                        last_activity_at = r["m"].isoformat() + "Z" if hasattr(r["m"], "isoformat") else str(r["m"])
+                    cur.execute(
+                        """
+                        SELECT SUM(LEAST(GREATEST(EXTRACT(EPOCH FROM (updated_at - started_at)) / 60.0, 0), %s)) AS mins
+                        FROM call_sessions
+                        WHERE started_at >= %s AND updated_at <= %s
+                        """,
+                        (MAX_SESSION_MINUTES, start, end),
+                    )
+                    row = cur.fetchone()
+                    if row and row["mins"] is not None:
+                        minutes_total = round(float(row["mins"]), 1)
+                    # Vapi = source de vérité conso : priorité vapi_call_usage si dispo
+                    vapi_mins, vapi_cost = _get_vapi_usage_for_window(url, start, end, tenant_id=None)
+                    if vapi_mins is not None and vapi_mins > 0:
+                        minutes_total = round(vapi_mins, 1)
+                    if vapi_cost is not None and vapi_cost >= 0:
+                        cost_usd_total = round(vapi_cost, 4)
+        except Exception as e:
+            logger.warning("stats global pg failed: %s", e)
+    else:
+        import backend.db as db
+        conn = db.get_conn()
+        try:
+            db._ensure_ivr_tables(conn)
+            cur = conn.execute(
+                """SELECT COUNT(DISTINCT call_id) FROM ivr_events
+                   WHERE call_id IS NOT NULL AND TRIM(call_id) != '' AND created_at >= ? AND created_at <= ?""",
+                (start, end),
+            )
+            calls_total = cur.fetchone()[0] or 0
+            cur = conn.execute(
+                """SELECT event, COUNT(*) FROM ivr_events WHERE created_at >= ? AND created_at <= ? GROUP BY event""",
+                (start, end),
+            )
+            by_event = dict(cur.fetchall())
+            calls_abandoned = sum(by_event.get(e, 0) for e in ("user_abandon", "abandon", "hangup", "user_hangup"))
+            transfers_total = sum(by_event.get(e, 0) for e in ("transferred_human", "transferred", "transfer_human", "transfer"))
+            appointments_total = by_event.get("booking_confirmed", 0)
+            errors_total = by_event.get("anti_loop_trigger", 0)
+            cur = conn.execute(
+                "SELECT MAX(created_at) FROM ivr_events WHERE created_at >= ? AND created_at <= ?",
+                (start, end),
+            )
+            r = cur.fetchone()
+            if r and r[0]:
+                last_activity_at = r[0]
+        finally:
+            conn.close()
+
+    if config.USE_PG_SLOTS:
+        url_slots = os.environ.get("DATABASE_URL") or os.environ.get("PG_SLOTS_URL")
+        if url_slots:
+            try:
+                import psycopg
+                with psycopg.connect(url_slots) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT COUNT(*) FROM appointments WHERE created_at >= %s AND created_at <= %s",
+                            (start, end),
+                        )
+                        row = cur.fetchone()
+                        if row:
+                            appointments_total = row[0] or appointments_total
+            except Exception as e:
+                logger.debug("stats global appointments pg: %s", e)
+
+    out = {
+        "window_days": window_days,
+        "tenants_total": tenants_total,
+        "tenants_active": tenants_active,
+        "calls_total": calls_total,
+        "calls_answered": max(0, calls_total - calls_abandoned),
+        "calls_abandoned": calls_abandoned,
+        "minutes_total": int(minutes_total),
+        "appointments_total": appointments_total,
+        "transfers_total": transfers_total,
+        "errors_total": errors_total,
+        "last_activity_at": last_activity_at,
+    }
+    if cost_usd_total is not None:
+        out["cost_usd_total"] = cost_usd_total
+    return out
+
+
+def _get_stats_timeseries(metric: str, days: int) -> dict:
+    """Série temporelle par jour. Sources = Postgres (Railway) en prod."""
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    points: List[dict] = []
+    for i in range(days - 1, -1, -1):
+        d = (now - timedelta(days=i)).date()
+        date_str = d.strftime("%Y-%m-%d")
+        start = date_str + " 00:00:00"
+        end = date_str + " 23:59:59"
+        value = 0
+        if url:
+            try:
+                import psycopg
+                with psycopg.connect(url) as conn:
+                    with conn.cursor() as cur:
+                        if metric == "calls":
+                            cur.execute(
+                                """SELECT COUNT(DISTINCT call_id) FROM ivr_events
+                                   WHERE call_id IS NOT NULL AND TRIM(call_id) != '' AND created_at >= %s AND created_at <= %s""",
+                                (start, end),
+                            )
+                            value = cur.fetchone()[0] or 0
+                        elif metric == "appointments":
+                            cur.execute(
+                                """SELECT COUNT(*) FROM ivr_events WHERE event = 'booking_confirmed' AND created_at >= %s AND created_at <= %s""",
+                                (start, end),
+                            )
+                            value = cur.fetchone()[0] or 0
+                        elif metric == "minutes":
+                            try:
+                                cur.execute(
+                                    """SELECT COALESCE(SUM(duration_sec), 0) / 60.0 FROM vapi_call_usage
+                                       WHERE ended_at IS NOT NULL AND ended_at >= %s AND ended_at <= %s""",
+                                    (start, end),
+                                )
+                                vapi_val = cur.fetchone()[0]
+                                if vapi_val is not None and float(vapi_val) > 0:
+                                    value = int(round(float(vapi_val), 0))
+                            except Exception:
+                                pass
+                            if value == 0:
+                                cur.execute(
+                                    """SELECT COALESCE(SUM(LEAST(GREATEST(EXTRACT(EPOCH FROM (updated_at - started_at)) / 60.0, 0), %s)), 0) FROM call_sessions
+                                       WHERE started_at >= %s AND updated_at <= %s""",
+                                    (MAX_SESSION_MINUTES, start, end),
+                                )
+                                value = int(cur.fetchone()[0] or 0)
+                        elif metric == "cost_usd":
+                            try:
+                                cur.execute(
+                                    """SELECT COALESCE(SUM(cost_usd), 0) FROM vapi_call_usage
+                                       WHERE ended_at IS NOT NULL AND ended_at >= %s AND ended_at <= %s""",
+                                    (start, end),
+                                )
+                                vapi_val = cur.fetchone()[0]
+                                if vapi_val is not None:
+                                    value = round(float(vapi_val), 4)
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+        else:
+            import backend.db as db
+            conn = db.get_conn()
+            try:
+                db._ensure_ivr_tables(conn)
+                if metric == "calls":
+                    cur = conn.execute(
+                        """SELECT COUNT(DISTINCT call_id) FROM ivr_events
+                           WHERE call_id IS NOT NULL AND TRIM(call_id) != '' AND created_at >= ? AND created_at <= ?""",
+                        (start, end),
+                    )
+                    value = cur.fetchone()[0] or 0
+                elif metric == "appointments":
+                    cur = conn.execute(
+                        """SELECT COUNT(*) FROM ivr_events WHERE event = 'booking_confirmed' AND created_at >= ? AND created_at <= ?""",
+                        (start, end),
+                    )
+                    value = cur.fetchone()[0] or 0
+                # metric == "minutes" : pas de call_sessions en SQLite, value reste 0
+            finally:
+                conn.close()
+        points.append({"date": date_str, "value": value})
+    return {"metric": metric, "days": days, "points": points}
+
+
+def _get_stats_top_tenants(metric: str, window_days: int, limit: int) -> dict:
+    """Top tenants par métrique. Sources = Postgres (Railway) en prod."""
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    start = (now - timedelta(days=window_days)).strftime("%Y-%m-%d 00:00:00")
+    end = now.strftime("%Y-%m-%d %H:%M:%S")
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    items: List[dict] = []
+    if url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            with psycopg.connect(url, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    if metric == "calls":
+                        cur.execute(
+                            """
+                            SELECT client_id AS tenant_id, COUNT(DISTINCT call_id) AS value
+                            FROM ivr_events
+                            WHERE call_id IS NOT NULL AND TRIM(call_id) != '' AND created_at >= %s AND created_at <= %s
+                            GROUP BY client_id ORDER BY value DESC LIMIT %s
+                            """,
+                            (start, end, limit),
+                        )
+                    elif metric == "appointments":
+                        cur.execute(
+                            """
+                            SELECT client_id AS tenant_id, COUNT(*) AS value
+                            FROM ivr_events
+                            WHERE event = 'booking_confirmed' AND created_at >= %s AND created_at <= %s
+                            GROUP BY client_id ORDER BY value DESC LIMIT %s
+                            """,
+                            (start, end, limit),
+                        )
+                    elif metric == "minutes":
+                        try:
+                            cur.execute(
+                                """
+                                SELECT tenant_id, (COALESCE(SUM(duration_sec), 0) / 60.0)::INT AS value
+                                FROM vapi_call_usage
+                                WHERE ended_at IS NOT NULL AND ended_at >= %s AND ended_at <= %s
+                                GROUP BY tenant_id ORDER BY value DESC LIMIT %s
+                                """,
+                                (start, end, limit),
+                            )
+                            rows = cur.fetchall()
+                            if not rows:
+                                raise ValueError("no vapi rows")
+                        except Exception:
+                            cur.execute(
+                                """
+                                SELECT tenant_id, COALESCE(SUM(LEAST(GREATEST(EXTRACT(EPOCH FROM (updated_at - started_at)) / 60.0, 0), %s)), 0)::INT AS value
+                                FROM call_sessions
+                                WHERE started_at >= %s AND updated_at <= %s
+                                GROUP BY tenant_id ORDER BY value DESC LIMIT %s
+                                """,
+                                (MAX_SESSION_MINUTES, start, end, limit),
+                            )
+                            rows = cur.fetchall()
+                        for r in rows:
+                            tid = r.get("tenant_id") if isinstance(r, dict) else r[0]
+                            val = r.get("value") if isinstance(r, dict) else r[1]
+                            d = _get_tenant_detail(tid) if tid else {}
+                            items.append({
+                                "tenant_id": tid,
+                                "name": d.get("name") or f"Tenant #{tid}",
+                                "value": val or 0,
+                                "last_activity_at": None,
+                            })
+                    elif metric == "cost_usd":
+                        try:
+                            cur.execute(
+                                """
+                                SELECT tenant_id, COALESCE(SUM(cost_usd), 0) AS value
+                                FROM vapi_call_usage
+                                WHERE ended_at IS NOT NULL AND ended_at >= %s AND ended_at <= %s
+                                GROUP BY tenant_id ORDER BY value DESC LIMIT %s
+                                """,
+                                (start, end, limit),
+                            )
+                            rows = cur.fetchall()
+                            for r in rows:
+                                tid = r.get("tenant_id") if isinstance(r, dict) else r[0]
+                                val = r.get("value") if isinstance(r, dict) else r[1]
+                                d = _get_tenant_detail(tid) if tid else {}
+                                items.append({
+                                    "tenant_id": tid,
+                                    "name": d.get("name") or f"Tenant #{tid}",
+                                    "value": round(float(val or 0), 4),
+                                    "last_activity_at": None,
+                                })
+                        except Exception as e:
+                            logger.warning("stats top_tenants cost_usd pg: %s", e)
+                    else:
+                        cur.execute(
+                            """
+                            SELECT client_id AS tenant_id, COUNT(DISTINCT call_id) AS value
+                            FROM ivr_events
+                            WHERE call_id IS NOT NULL AND TRIM(call_id) != '' AND created_at >= %s AND created_at <= %s
+                            GROUP BY client_id ORDER BY value DESC LIMIT %s
+                            """,
+                            (start, end, limit),
+                        )
+                    if metric != "minutes":
+                        rows = cur.fetchall()
+                        for r in rows:
+                            tid = r.get("tenant_id")
+                            d = _get_tenant_detail(tid) if tid else {}
+                            items.append({
+                                "tenant_id": tid,
+                                "name": d.get("name") or f"Tenant #{tid}",
+                                "value": r.get("value") or 0,
+                                "last_activity_at": None,
+                            })
+        except Exception as e:
+            logger.warning("stats top_tenants pg failed: %s", e)
+    else:
+        import backend.db as db
+        conn = db.get_conn()
+        try:
+            db._ensure_ivr_tables(conn)
+            if metric == "calls":
+                cur = conn.execute(
+                    """SELECT client_id, COUNT(DISTINCT call_id) AS value FROM ivr_events
+                       WHERE call_id != '' AND created_at >= ? AND created_at <= ?
+                       GROUP BY client_id ORDER BY value DESC LIMIT ?""",
+                    (start, end, limit),
+                )
+            elif metric == "appointments":
+                cur = conn.execute(
+                    """SELECT client_id, COUNT(*) AS value FROM ivr_events
+                       WHERE event = 'booking_confirmed' AND created_at >= ? AND created_at <= ?
+                       GROUP BY client_id ORDER BY value DESC LIMIT ?""",
+                    (start, end, limit),
+                )
+            else:
+                cur = conn.execute(
+                    """SELECT client_id, COUNT(DISTINCT call_id) AS value FROM ivr_events
+                       WHERE call_id != '' AND created_at >= ? AND created_at <= ?
+                       GROUP BY client_id ORDER BY value DESC LIMIT ?""",
+                    (start, end, limit),
+                )
+            for row in cur.fetchall():
+                tid = row[0]
+                d = _get_tenant_detail(tid) if tid else {}
+                items.append({
+                    "tenant_id": tid,
+                    "name": d.get("name") or f"Tenant #{tid}",
+                    "value": row[1] or 0,
+                    "last_activity_at": None,
+                })
+        finally:
+            conn.close()
+    return {"metric": metric, "window_days": window_days, "items": items}
+
+
+def _get_tenant_stats(tenant_id: int, window_days: int) -> dict:
+    """KPIs pour un tenant sur la fenêtre. Prod = Postgres (Railway). calls_answered = calls_total - calls_abandoned."""
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    start = (now - timedelta(days=window_days)).strftime("%Y-%m-%d 00:00:00")
+    end = now.strftime("%Y-%m-%d %H:%M:%S")
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    out = {
+        "tenant_id": tenant_id,
+        "window_days": window_days,
+        "calls_total": 0,
+        "calls_abandoned": 0,
+        "calls_answered": 0,
+        "minutes_total": 0,
+        "appointments_total": 0,
+        "transfers_total": 0,
+        "errors_total": 0,
+        "last_activity_at": None,
+    }
+    if url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            with psycopg.connect(url, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    cid = _ivr_client_id(tenant_id)
+                    cur.execute(
+                        """
+                        SELECT COUNT(DISTINCT call_id) AS c
+                        FROM ivr_events
+                        WHERE client_id = %s AND call_id IS NOT NULL AND TRIM(call_id) != ''
+                          AND created_at >= %s AND created_at <= %s
+                        """,
+                        (cid, start, end),
+                    )
+                    out["calls_total"] = cur.fetchone()["c"] or 0
+                    cur.execute(
+                        """
+                        SELECT COUNT(DISTINCT call_id) AS c
+                        FROM ivr_events
+                        WHERE client_id = %s AND created_at >= %s AND created_at <= %s
+                          AND event IN ('user_abandon', 'abandon', 'hangup', 'user_hangup')
+                        """,
+                        (cid, start, end),
+                    )
+                    out["calls_abandoned"] = cur.fetchone()["c"] or 0
+                    out["calls_answered"] = max(0, out["calls_total"] - out["calls_abandoned"])
+                    cur.execute(
+                        """
+                        SELECT COUNT(*) AS c FROM ivr_events
+                        WHERE client_id = %s AND created_at >= %s AND created_at <= %s
+                          AND event IN ('booking_confirmed')
+                        """,
+                        (cid, start, end),
+                    )
+                    out["appointments_total"] = cur.fetchone()["c"] or 0
+                    cur.execute(
+                        """
+                        SELECT COUNT(*) AS c FROM ivr_events
+                        WHERE client_id = %s AND created_at >= %s AND created_at <= %s
+                          AND event IN ('transferred_human', 'transferred', 'transfer_human', 'transfer')
+                        """,
+                        (cid, start, end),
+                    )
+                    out["transfers_total"] = cur.fetchone()["c"] or 0
+                    cur.execute(
+                        """
+                        SELECT COUNT(*) AS c FROM ivr_events
+                        WHERE client_id = %s AND created_at >= %s AND created_at <= %s
+                          AND event = 'anti_loop_trigger'
+                        """,
+                        (cid, start, end),
+                    )
+                    out["errors_total"] = cur.fetchone()["c"] or 0
+                    cur.execute(
+                        "SELECT MAX(created_at) AS m FROM ivr_events WHERE client_id = %s AND created_at >= %s AND created_at <= %s",
+                        (cid, start, end),
+                    )
+                    r = cur.fetchone()
+                    if r and r["m"]:
+                        out["last_activity_at"] = r["m"].isoformat() + "Z" if hasattr(r["m"], "isoformat") else str(r["m"])
+                    cur.execute(
+                        """
+                        SELECT COALESCE(SUM(LEAST(GREATEST(EXTRACT(EPOCH FROM (updated_at - started_at)) / 60.0, 0), %s)), 0) AS mins
+                        FROM call_sessions
+                        WHERE tenant_id = %s AND started_at >= %s AND updated_at <= %s
+                        """,
+                        (MAX_SESSION_MINUTES, tenant_id, start, end),
+                    )
+                    row = cur.fetchone()
+                    if row and row["mins"] is not None:
+                        out["minutes_total"] = int(round(float(row["mins"]), 0))
+                    vapi_mins, vapi_cost = _get_vapi_usage_for_window(url, start, end, tenant_id=tenant_id)
+                    if vapi_mins is not None and vapi_mins > 0:
+                        out["minutes_total"] = int(round(vapi_mins, 0))
+                    if vapi_cost is not None and vapi_cost >= 0:
+                        out["cost_usd"] = round(vapi_cost, 4)
+        except Exception as e:
+            logger.warning("tenant stats pg failed: %s", e)
+    else:
+        import backend.db as db
+        cid = _ivr_client_id(tenant_id)
+        conn = db.get_conn()
+        try:
+            db._ensure_ivr_tables(conn)
+            cur = conn.execute(
+                """SELECT COUNT(DISTINCT call_id) FROM ivr_events
+                   WHERE client_id = ? AND call_id IS NOT NULL AND TRIM(call_id) != '' AND created_at >= ? AND created_at <= ?""",
+                (cid, start, end),
+            )
+            out["calls_total"] = cur.fetchone()[0] or 0
+            cur = conn.execute(
+                """SELECT COUNT(DISTINCT call_id) FROM ivr_events
+                   WHERE client_id = ? AND created_at >= ? AND created_at <= ?
+                     AND event IN ('user_abandon', 'abandon', 'hangup', 'user_hangup')""",
+                (cid, start, end),
+            )
+            out["calls_abandoned"] = cur.fetchone()[0] or 0
+            out["calls_answered"] = max(0, out["calls_total"] - out["calls_abandoned"])
+            cur = conn.execute(
+                """SELECT COUNT(*) FROM ivr_events WHERE client_id = ? AND created_at >= ? AND created_at <= ? AND event = 'booking_confirmed'""",
+                (cid, start, end),
+            )
+            out["appointments_total"] = cur.fetchone()[0] or 0
+            cur = conn.execute(
+                """SELECT COUNT(*) FROM ivr_events WHERE client_id = ? AND created_at >= ? AND created_at <= ?
+                   AND event IN ('transferred_human', 'transferred', 'transfer_human', 'transfer')""",
+                (cid, start, end),
+            )
+            out["transfers_total"] = cur.fetchone()[0] or 0
+            cur = conn.execute(
+                """SELECT COUNT(*) FROM ivr_events WHERE client_id = ? AND created_at >= ? AND created_at <= ? AND event = 'anti_loop_trigger'""",
+                (cid, start, end),
+            )
+            out["errors_total"] = cur.fetchone()[0] or 0
+            cur = conn.execute(
+                "SELECT MAX(created_at) FROM ivr_events WHERE client_id = ? AND created_at >= ? AND created_at <= ?",
+                (cid, start, end),
+            )
+            r = cur.fetchone()
+            if r and r[0]:
+                out["last_activity_at"] = r[0].isoformat() + "Z" if hasattr(r[0], "isoformat") else str(r[0])
+        finally:
+            conn.close()
+    return out
+
+
+def _get_tenant_timeseries(tenant_id: int, metric: str, days: int) -> dict:
+    """Série temporelle par jour pour un tenant. Sources = Postgres (Railway) en prod."""
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    points: List[dict] = []
+    for i in range(days - 1, -1, -1):
+        d = (now - timedelta(days=i)).date()
+        date_str = d.strftime("%Y-%m-%d")
+        start = date_str + " 00:00:00"
+        end = date_str + " 23:59:59"
+        value = 0
+        if url:
+            try:
+                import psycopg
+                with psycopg.connect(url) as conn:
+                    with conn.cursor() as cur:
+                        cid = _ivr_client_id(tenant_id)
+                        if metric == "calls":
+                            cur.execute(
+                                """SELECT COUNT(DISTINCT call_id) FROM ivr_events
+                                   WHERE client_id = %s AND call_id IS NOT NULL AND TRIM(call_id) != ''
+                                     AND created_at >= %s AND created_at <= %s""",
+                                (cid, start, end),
+                            )
+                            value = cur.fetchone()[0] or 0
+                        elif metric == "appointments":
+                            cur.execute(
+                                """SELECT COUNT(*) FROM ivr_events
+                                   WHERE client_id = %s AND event = 'booking_confirmed' AND created_at >= %s AND created_at <= %s""",
+                                (cid, start, end),
+                            )
+                            value = cur.fetchone()[0] or 0
+                        elif metric == "minutes":
+                            try:
+                                cur.execute(
+                                    """SELECT COALESCE(SUM(duration_sec), 0) / 60.0 FROM vapi_call_usage
+                                       WHERE tenant_id = %s AND ended_at IS NOT NULL AND ended_at >= %s AND ended_at <= %s""",
+                                    (tenant_id, start, end),
+                                )
+                                vapi_val = cur.fetchone()[0]
+                                if vapi_val is not None and float(vapi_val) > 0:
+                                    value = int(round(float(vapi_val), 0))
+                            except Exception:
+                                pass
+                            if value == 0:
+                                cur.execute(
+                                    """SELECT COALESCE(SUM(LEAST(GREATEST(EXTRACT(EPOCH FROM (updated_at - started_at)) / 60.0, 0), %s)), 0) FROM call_sessions
+                                       WHERE tenant_id = %s AND started_at >= %s AND updated_at <= %s""",
+                                    (MAX_SESSION_MINUTES, tenant_id, start, end),
+                                )
+                                value = int(cur.fetchone()[0] or 0)
+            except Exception:
+                pass
+        else:
+            import backend.db as db
+            conn = db.get_conn()
+            try:
+                db._ensure_ivr_tables(conn)
+                cid = _ivr_client_id(tenant_id)
+                if metric == "calls":
+                    cur = conn.execute(
+                        """SELECT COUNT(DISTINCT call_id) FROM ivr_events
+                           WHERE client_id = ? AND call_id IS NOT NULL AND TRIM(call_id) != '' AND created_at >= ? AND created_at <= ?""",
+                        (cid, start, end),
+                    )
+                    value = cur.fetchone()[0] or 0
+                elif metric == "appointments":
+                    cur = conn.execute(
+                        """SELECT COUNT(*) FROM ivr_events WHERE client_id = ? AND event = 'booking_confirmed' AND created_at >= ? AND created_at <= ?""",
+                        (cid, start, end),
+                    )
+                    value = cur.fetchone()[0] or 0
+            finally:
+                conn.close()
+        points.append({"date": date_str, "value": value})
+    return {"metric": metric, "days": days, "points": points}
+
+
+def _get_tenant_activity(tenant_id: int, limit: int) -> dict:
+    """Timeline des derniers events ivr_events pour le tenant (preuve physique)."""
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    items: List[dict] = []
+    if url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            with psycopg.connect(url, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT created_at, call_id, event, context, reason
+                        FROM ivr_events
+                        WHERE client_id = %s
+                        ORDER BY created_at DESC
+                        LIMIT %s
+                        """,
+                        (_ivr_client_id(tenant_id), limit),
+                    )
+                    for r in cur.fetchall():
+                        meta = {}
+                        if r.get("context"):
+                            meta["context"] = r["context"]
+                        if r.get("reason"):
+                            meta["reason"] = r["reason"]
+                        items.append({
+                            "date": r["created_at"].isoformat() + "Z" if hasattr(r["created_at"], "isoformat") else str(r["created_at"]),
+                            "call_id": r.get("call_id") or "",
+                            "event": r.get("event") or "",
+                            "meta": meta if meta else None,
+                        })
+        except Exception as e:
+            logger.warning("tenant activity pg failed: %s", e)
+    else:
+        import backend.db as db
+        conn = db.get_conn()
+        try:
+            db._ensure_ivr_tables(conn)
+            cur = conn.execute(
+                """SELECT created_at, call_id, event, context, reason FROM ivr_events
+                   WHERE client_id = ? ORDER BY created_at DESC LIMIT ?""",
+                (_ivr_client_id(tenant_id), limit),
+            )
+            for row in cur.fetchall():
+                meta = {}
+                if row[3]:
+                    meta["context"] = row[3]
+                if row[4]:
+                    meta["reason"] = row[4]
+                items.append({
+                    "date": row[0].isoformat() + "Z" if hasattr(row[0], "isoformat") else str(row[0]),
+                    "call_id": row[1] or "",
+                    "event": row[2] or "",
+                    "meta": meta if meta else None,
+                })
+        finally:
+            conn.close()
+    return {"tenant_id": tenant_id, "event_count": len(items), "items": items}
+
+
+def _get_billing_snapshot() -> dict:
+    """Coût Vapi ce mois (UTC), top tenants par coût ce mois, tenants past_due. Ne dépend d'aucun prix Stripe."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if now.month == 12:
+        end = start.replace(year=start.year + 1, month=1)
+    else:
+        end = start.replace(month=start.month + 1)
+    start_str = start.strftime("%Y-%m-%d %H:%M:%S")
+    end_str = end.strftime("%Y-%m-%d %H:%M:%S")
+    url_events = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    url_billing = os.environ.get("DATABASE_URL") or os.environ.get("PG_TENANTS_URL")
+    out = {
+        "cost_usd_this_month": 0.0,
+        "top_tenants_by_cost_this_month": [],
+        "tenants_past_due_count": 0,
+        "tenant_ids_past_due": [],
+        "tenants_past_due": [],
+    }
+    if url_events:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            with psycopg.connect(url_events, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT COALESCE(SUM(cost_usd), 0) AS total
+                        FROM vapi_call_usage
+                        WHERE ended_at IS NOT NULL AND ended_at >= %s AND ended_at < %s
+                        """,
+                        (start_str, end_str),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        out["cost_usd_this_month"] = round(float(row["total"] or 0), 4)
+                    cur.execute(
+                        """
+                        SELECT tenant_id, COALESCE(SUM(cost_usd), 0) AS value
+                        FROM vapi_call_usage
+                        WHERE ended_at IS NOT NULL AND ended_at >= %s AND ended_at < %s
+                        GROUP BY tenant_id ORDER BY value DESC LIMIT 10
+                        """,
+                        (start_str, end_str),
+                    )
+                    for r in cur.fetchall():
+                        tid = r.get("tenant_id")
+                        d = _get_tenant_detail(tid) if tid else {}
+                        out["top_tenants_by_cost_this_month"].append({
+                            "tenant_id": tid,
+                            "name": d.get("name") or f"Tenant #{tid}",
+                            "value": round(float(r.get("value") or 0), 4),
+                        })
+        except Exception as e:
+            if "does not exist" not in str(e).lower():
+                logger.warning("billing_snapshot vapi: %s", e)
+    if url_billing:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            with psycopg.connect(url_billing, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT tb.tenant_id, tb.billing_status, tb.current_period_end, t.name
+                        FROM tenant_billing tb
+                        JOIN tenants t ON t.tenant_id = tb.tenant_id
+                        WHERE tb.billing_status = %s
+                        """,
+                        ("past_due",),
+                    )
+                    rows = cur.fetchall()
+                    out["tenant_ids_past_due"] = [int(r["tenant_id"]) for r in rows if r and r.get("tenant_id")]
+                    out["tenants_past_due_count"] = len(out["tenant_ids_past_due"])
+                    for r in rows:
+                        tid = r.get("tenant_id")
+                        if tid is None:
+                            continue
+                        period_end = r.get("current_period_end")
+                        if period_end and hasattr(period_end, "isoformat"):
+                            period_end = period_end.isoformat()
+                        out["tenants_past_due"].append({
+                            "tenant_id": int(tid),
+                            "name": (r.get("name") or "").strip() or f"Tenant #{tid}",
+                            "billing_status": r.get("billing_status") or "past_due",
+                            "current_period_end": period_end,
+                        })
+        except Exception as e:
+            if "does not exist" not in str(e).lower():
+                logger.warning("billing_snapshot past_due: %s", e)
+    return out
+
+
+@router.get("/admin/stats/global")
+def admin_stats_global(
+    window_days: int = Query(7, ge=1, le=90, description="7 ou 30"),
+    _: None = Depends(_verify_admin),
+):
+    """KPIs globaux : tenants, appels, RDV, transferts, erreurs, dernière activité."""
+    return _get_global_stats(window_days)
+
+
+@router.get("/admin/stats/billing-snapshot")
+def admin_stats_billing_snapshot(
+    _: None = Depends(_verify_admin),
+):
+    """Coût Vapi ce mois (UTC), top tenants par coût ce mois, nombre de tenants past_due. Sans prix Stripe."""
+    return _get_billing_snapshot()
+
+
+@router.get("/admin/stats/timeseries")
+def admin_stats_timeseries(
+    metric: str = Query("calls", description="calls | appointments | minutes | cost_usd"),
+    days: int = Query(30, ge=7, le=90),
+    _: None = Depends(_verify_admin),
+):
+    """Série temporelle par jour pour graph."""
+    if metric not in ("calls", "appointments", "minutes", "cost_usd"):
+        metric = "calls"
+    return _get_stats_timeseries(metric, days)
+
+
+@router.get("/admin/stats/top-tenants")
+def admin_stats_top_tenants(
+    metric: str = Query("minutes", description="minutes | calls | appointments | cost_usd"),
+    window_days: int = Query(30, ge=1, le=90),
+    limit: int = Query(10, ge=1, le=50),
+    _: None = Depends(_verify_admin),
+):
+    """Top tenants par métrique."""
+    if metric not in ("minutes", "calls", "appointments", "cost_usd"):
+        metric = "calls"
+    return _get_stats_top_tenants(metric, window_days, limit)
+
+
+@router.get("/admin/stats/tenants/{tenant_id}")
+def admin_stats_tenant(
+    tenant_id: int = Depends(validate_tenant_id),
+    window_days: int = Query(7, ge=1, le=90, description="7 ou 30"),
+    _: None = Depends(_verify_admin),
+):
+    """KPIs pour un tenant (calls, abandons, RDV, transferts, minutes, dernière activité)."""
+    return _get_tenant_stats(tenant_id, window_days)
+
+
+@router.get("/admin/stats/tenants/{tenant_id}/timeseries")
+def admin_stats_tenant_timeseries(
+    tenant_id: int = Depends(validate_tenant_id),
+    metric: str = Query("calls", description="calls | appointments | minutes"),
+    days: int = Query(30, ge=7, le=90),
+    _: None = Depends(_verify_admin),
+):
+    """Série temporelle par jour pour un tenant."""
+    if metric not in ("calls", "appointments", "minutes"):
+        metric = "calls"
+    return _get_tenant_timeseries(tenant_id, metric, days)
 
 
 @router.get("/admin/kpis/weekly")

@@ -30,7 +30,7 @@ from backend.db import init_db, list_free_slots, count_free_slots
 from backend.tenant_routing import current_tenant_id
 from backend.deps import require_tenant_web, TenantIdWeb
 # Nouvelle architecture multi-canal
-from backend.routes import voice, whatsapp, bland, reports, admin, auth, tenant
+from backend.routes import voice, whatsapp, bland, reports, admin, auth, tenant, stripe_webhook
 
 app = FastAPI()
 _logger = logging.getLogger(__name__)
@@ -53,8 +53,10 @@ app.add_middleware(
 
 @app.middleware("http")
 async def admin_cors_guard(request: Request, call_next):
-    """Refuse /api/admin/* si Origin présente et non autorisée (réduit la surface d'attaque)."""
+    """Refuse /api/admin/* si Origin présente et non autorisée. Ne jamais bloquer OPTIONS (preflight CORS)."""
     if not request.url.path.startswith("/api/admin/"):
+        return await call_next(request)
+    if request.method == "OPTIONS":
         return await call_next(request)
     origin = (request.headers.get("origin") or "").strip()
     if not origin:
@@ -87,6 +89,7 @@ app.include_router(reports.router)    # /api/reports/*
 app.include_router(admin.router)      # /api/public/onboarding, /api/admin/*
 app.include_router(auth.router)       # /api/auth/*
 app.include_router(tenant.router)     # /api/tenant/*
+app.include_router(stripe_webhook.router)  # POST /api/stripe/webhook
 
 # Static frontend (optionnel - peut ne pas exister)
 try:
@@ -103,6 +106,14 @@ except Exception as e:
     import logging
     logging.warning(f"DB init failed (non-critical): {e}")
     pass
+
+# Scheduler (rapports + suspension past_due à 03:00 UTC)
+try:
+    from backend.reports import setup_scheduler
+    setup_scheduler()
+except Exception as e:
+    import logging
+    logging.warning("Scheduler setup failed (reports/suspension): %s", e)
 
 # SSE Streams
 STREAMS: Dict[str, asyncio.Queue[Optional[str]]] = {}
@@ -504,12 +515,25 @@ async def stream(conv_id: str):
 async def run_engine(conv_id: str, message: str, channel: str = "web") -> None:
     """
     Exécute engine.handle_message et push SSE events.
+    Suspension multi-canal : si tenant suspendu → message fixe, pas d'appel engine (zéro LLM).
     """
     try:
-        # Stocker channel dans session
         session = ENGINE.session_store.get_or_create(conv_id)
         session.channel = channel
-        
+        tenant_id = getattr(session, "tenant_id", None)
+        if tenant_id is not None:
+            from backend.billing_pg import get_tenant_suspension
+            from backend import prompts
+            is_suspended, _, suspension_mode = get_tenant_suspension(int(tenant_id))
+            if is_suspended:
+                msg = (
+                    getattr(prompts, "MSG_VOCAL_SUSPENDED_SOFT", None)
+                    if (suspension_mode or "hard").strip().lower() == "soft"
+                    else getattr(prompts, "MSG_VOCAL_SUSPENDED", prompts.MSG_VOCAL_SUSPENDED)
+                ) or getattr(prompts, "MSG_VOCAL_SUSPENDED", "Votre service est temporairement suspendu.")
+                await push_event(conv_id, {"type": "final", "text": msg, "conv_state": "START", "timestamp": now_iso()})
+                return
+
         await push_event(conv_id, {
             "type": "partial",
             "text": "…",

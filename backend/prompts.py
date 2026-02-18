@@ -77,6 +77,11 @@ MSG_OVERLAP_REPEAT = "Je vous ai entendu en même temps. Répétez maintenant, s
 # --- Semi-sourd : TEXT court pendant que l'agent parle ---
 MSG_OVERLAP_REPEAT_SHORT = "Pardon. Répétez, s'il vous plaît."
 
+# --- Suspension (billing past_due) : blocage total, phrase fixe ---
+MSG_VOCAL_SUSPENDED = "Votre service est temporairement suspendu. Merci de contacter votre interlocuteur."
+# --- Suspension soft (manual) : message poli, pas de RDV ---
+MSG_VOCAL_SUSPENDED_SOFT = "Je peux vous aider avec les informations pratiques (horaires, adresse, services). En revanche, la prise de rendez-vous est temporairement indisponible."
+
 # --- Contrainte horaire (RÈGLE 7) ---
 MSG_TIME_CONSTRAINT_IMPOSSIBLE = (
     "D'accord. Mais nous fermons à {closing}. "

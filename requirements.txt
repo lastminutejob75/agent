@@ -37,11 +37,12 @@ mangum==0.17.0
 # Notifications (SMS, WhatsApp)
 twilio==9.0.0
 
-# Auth (JWT)
+# Auth (JWT + admin password hash)
 PyJWT>=2.8.0
+bcrypt>=4.0.0
 
-# Auth (JWT)
-PyJWT>=2.8.0
+# Billing (Stripe foundation)
+stripe>=8.0.0
 
 # Scheduler (rapports automatiques)
 apscheduler==3.10.4

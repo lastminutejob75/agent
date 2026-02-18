@@ -894,7 +894,19 @@ def setup_scheduler():
         logger.info(f"Sending weekly report via {channel_type}...")
         report = generator.generate_weekly_report()
         generator.send_report(report)
-    
+
+    # Suspension past_due : 03:00 UTC quotidien (SUSPENSION_PAST_DUE_DAYS=7 par défaut)
+    @scheduler.scheduled_job(CronTrigger(hour=3, minute=0))
+    def suspension_past_due_job():
+        try:
+            from backend.billing_pg import run_suspension_past_due_job
+            days = int(os.environ.get("SUSPENSION_PAST_DUE_DAYS", "7"))
+            n = run_suspension_past_due_job(days_after_period_end=days)
+            if n:
+                logger.info("suspension_past_due_job: %s tenant(s) suspended", n)
+        except Exception as e:
+            logger.warning("suspension_past_due_job failed: %s", e)
+
     scheduler.start()
     channel_type = os.getenv("REPORT_CHANNEL", "telegram")
     logger.info(f"Report scheduler started (daily at 18h, weekly on Sunday 20h) via {channel_type}")
