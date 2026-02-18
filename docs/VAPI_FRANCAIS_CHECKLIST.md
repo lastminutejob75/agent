@@ -89,13 +89,24 @@ Vapi envoie un event **assistant-request** au webhook au début de l’appel. Si
 
 **Recommandé (Option A — le plus stable)**  
 - Sur **Railway** : ajouter la variable **VAPI_ASSISTANT_ID** = l’ID de l’assistant déjà créé dans le dashboard Vapi (ex. `78dd0e14-337e-40ab-96d9-7dbbe92cdf95`).  
-- Le backend répond alors uniquement `{"assistantId": "..."}`. Aucune dépendance Postgres, aucun custom-llm au démarrage ; tu utilises l’assistant déjà configuré en FR (tools, prompt, etc.).
+- Le backend répond alors **uniquement** `{"assistantId": "..."}` (pas d’assistant transient). Tu utilises la voix, le firstMessage et les tools de cet assistant Vapi.  
+- **Si tu entends encore** « Bonjour, vous appelez pour un rendez-vous ? » + **voix homme** → tu es en Option B (transient). Il faut bien définir **VAPI_ASSISTANT_ID** sur Railway, **sauvegarder**, puis **redéployer**.
 
 **Fallback (Option B — transient)**  
 - Si **VAPI_ASSISTANT_ID** n’est pas défini : le backend renvoie un assistant **transient** avec `firstMessage` en français et Custom LLM. Définir **VAPI_PUBLIC_BACKEND_URL** (ou **APP_BASE_URL**) sur Railway, ex. `https://agent-production-c246.up.railway.app` (sans slash final). Plus fragile (latence, PG, etc.).
 
-**À vérifier après déploiement**  
-Dans les webhook logs Vapi : **Assistant Request** → `responseBody` doit contenir `assistantId` ou `assistant` ; dans le call, `assistantId` ne doit plus être null.
+**Checklist Railway (3 pièges classiques)**  
+1. **Variables → Service** : `VAPI_ASSISTANT_ID` doit être défini sur le **service** qui sert `/api/vapi/webhook` (pas seulement au niveau Project/Environment si tu as plusieurs services).  
+2. **Redeploy obligatoire** : après avoir ajouté/modifié la variable, faire un **Redeploy** (les variables sont lues au démarrage du container).  
+3. **Nom et valeur exacts** : `VAPI_ASSISTANT_ID` (majuscules, underscores), valeur ex. `78dd0e14-337e-40ab-96d9-7dbbe92cdf95` (pas d’espace avant/après).
+
+**Vérification côté backend**  
+Dans les logs Railway, au premier `assistant-request` tu dois voir :  
+`assistant-request: VAPI_ASSISTANT_ID=78dd0e14-...`  
+Si tu vois `VAPI_ASSISTANT_ID=(empty)` → la variable n’est pas chargée par ce service (vérifier scope + redeploy).
+
+**Vérification côté Vapi**  
+Après un appel : dans le détail du call, **assistantId** doit être `78dd0e14-...` (Option A). Si **assistantId** est null → tu es encore en transient (voix homme + ancien firstMessage).
 
 ---
 

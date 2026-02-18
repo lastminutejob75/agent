@@ -22,5 +22,9 @@ def set_tenant_id_on_connection(conn, tenant_id: Optional[int]) -> None:
         with conn.cursor() as cur:
             cur.execute("SET LOCAL app.current_tenant_id = %s", (str(tenant_id),))
     except Exception:
-        # RLS peut être désactivé ou la variable non utilisée ; ne pas faire échouer le flow
-        pass
+        # RLS peut être désactivé ou la variable non utilisée ; rollback pour ne pas laisser la connexion en failed transaction
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        # ne pas faire échouer le flow

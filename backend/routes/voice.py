@@ -818,6 +818,8 @@ def _vapi_assistant_request_response() -> JSONResponse:
     """
     import os
     assistant_id = (os.environ.get("VAPI_ASSISTANT_ID") or "").strip()
+    # Log pour vérifier que la variable est bien chargée (Railway: Variables → Service, puis Redeploy)
+    logger.info("assistant-request: VAPI_ASSISTANT_ID=%s", os.environ.get("VAPI_ASSISTANT_ID") or "(empty)")
     if assistant_id:
         return JSONResponse(content={"assistantId": assistant_id}, status_code=200)
     # Fallback: assistant transient (firstMessage FR + Custom LLM vers notre backend)

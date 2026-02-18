@@ -373,54 +373,71 @@ async def get_booking_stats() -> dict:
         }
 
 
+def _health_checks_sync() -> dict:
+    """Partie synchrone des checks (slots, PG). Timeout géré par l'appelant."""
+    out = {}
+    try:
+        out["free_slots"] = count_free_slots()
+    except Exception:
+        out["free_slots"] = -1
+    db_url = os.environ.get("DATABASE_URL") or os.environ.get("PG_TENANTS_URL")
+    out["database_url_set"] = bool(db_url)
+    postgres_ok = False
+    postgres_error = None
+    if db_url:
+        try:
+            import psycopg
+            with psycopg.connect(db_url, connect_timeout=2) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+            postgres_ok = True
+        except Exception as e:
+            postgres_error = str(e)[:100]
+    out["postgres_ok"] = postgres_ok
+    out["postgres_error"] = postgres_error
+    return out
+
+
 @app.get("/health")
 async def health() -> dict:
     """
-    Health check pour Railway (répond toujours 200 rapidement).
-    Détails (credentials, Postgres) dans le body ; en cas d'exception on retourne quand même 200 + status ok.
+    Health check pour Railway : répond toujours 200 en < 2s.
+    Détails (credentials, Postgres) dans le body ; checks lourds en thread avec timeout.
     """
     import os
 
     out = {"status": "ok", "streams": len(STREAMS)}
+    # Infos instantanées (pas d'I/O)
+    service_account_file = getattr(config, "SERVICE_ACCOUNT_FILE", None)
+    file_exists = bool(service_account_file and os.path.exists(service_account_file))
+    has_base64_env = bool(os.getenv("GOOGLE_SERVICE_ACCOUNT_BASE64"))
+    credentials_loaded = getattr(config, "GOOGLE_CALENDAR_ENABLED", False) or file_exists
+    out["service_account_file"] = service_account_file
+    out["file_exists"] = file_exists
+    out["credentials_loaded"] = credentials_loaded
+    out["calendar_id_set"] = bool(getattr(config, "GOOGLE_CALENDAR_ID", None))
+    out["google_base64_set"] = has_base64_env
+    out["google_calendar_enabled"] = getattr(config, "GOOGLE_CALENDAR_ENABLED", False)
+    out["google_calendar_disable_reason"] = getattr(config, "GOOGLE_CALENDAR_DISABLE_REASON", None)
+    out["runtime_env_count"] = len(os.environ)
+
+    # Checks I/O (slots, Postgres) avec timeout 2s pour ne jamais bloquer le healthcheck Railway
     try:
-        try:
-            free_slots = count_free_slots()
-        except Exception:
-            free_slots = -1
-        out["free_slots"] = free_slots
-
-        service_account_file = getattr(config, "SERVICE_ACCOUNT_FILE", None)
-        file_exists = bool(service_account_file and os.path.exists(service_account_file))
-        has_base64_env = bool(os.getenv("GOOGLE_SERVICE_ACCOUNT_BASE64"))
-        credentials_loaded = getattr(config, "GOOGLE_CALENDAR_ENABLED", False) or file_exists
-
-        out["service_account_file"] = service_account_file
-        out["file_exists"] = file_exists
-        out["credentials_loaded"] = credentials_loaded
-        out["calendar_id_set"] = bool(getattr(config, "GOOGLE_CALENDAR_ID", None))
-        out["google_base64_set"] = has_base64_env
-        out["google_calendar_enabled"] = getattr(config, "GOOGLE_CALENDAR_ENABLED", False)
-        out["google_calendar_disable_reason"] = getattr(config, "GOOGLE_CALENDAR_DISABLE_REASON", None)
-
-        postgres_ok = False
-        postgres_error = None
-        db_url = os.getenv("DATABASE_URL") or os.getenv("PG_TENANTS_URL")
-        if db_url:
-            try:
-                import psycopg
-                with psycopg.connect(db_url, connect_timeout=3) as conn:
-                    with conn.cursor() as cur:
-                        cur.execute("SELECT 1")
-                postgres_ok = True
-            except Exception as e:
-                postgres_error = str(e)[:100]
-        out["postgres_ok"] = postgres_ok
-        out["postgres_error"] = postgres_error
-        out["database_url_set"] = bool(db_url)
-        out["runtime_env_count"] = len(os.environ)
+        detail = await asyncio.wait_for(
+            asyncio.to_thread(_health_checks_sync),
+            timeout=2.0,
+        )
+        out.update(detail)
+    except asyncio.TimeoutError:
+        out["health_timeout"] = True
+        out["free_slots"] = -1
+        out["postgres_ok"] = False
+        out["postgres_error"] = "health check timeout (2s)"
     except Exception as e:
         _logger.warning("health check partial failure: %s", e)
         out["health_detail_error"] = str(e)[:200]
+        out.setdefault("free_slots", -1)
+        out.setdefault("postgres_ok", False)
     return out
 
 
