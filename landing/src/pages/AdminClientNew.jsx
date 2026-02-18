@@ -40,81 +40,84 @@ export default function AdminClientNew() {
     }
   }
 
+  const inputClass =
+    "block w-full mt-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#0066CC] focus:border-[#0066CC] text-gray-900 bg-white";
+  const labelClass = "block text-sm font-medium text-gray-700";
+
   return (
-    <div style={{ maxWidth: 720, margin: "0 auto", padding: 24 }}>
-      <Link to="/admin" style={{ color: "#374151", marginBottom: 16, display: "inline-block" }}>
+    <div className="max-w-2xl mx-auto px-6 py-8">
+      <Link to="/admin" className="inline-block text-gray-600 hover:text-gray-900 mb-4">
         ← Admin
       </Link>
-      <h1 style={{ marginTop: 8 }}>Créer un client</h1>
+      <h1 className="text-2xl font-semibold text-gray-900 mt-2">Créer un client</h1>
 
       {errorMsg && (
-        <div
-          style={{
-            padding: 12,
-            border: "1px solid #dc2626",
-            backgroundColor: "#fef2f2",
-            borderRadius: 8,
-            marginTop: 16,
-          }}
-        >
+        <div className="mt-4 p-3 border border-red-300 bg-red-50 text-red-800 rounded-lg text-sm">
           {errorMsg}
         </div>
       )}
 
-      <form onSubmit={onSubmit} style={{ display: "grid", gap: 16, marginTop: 24 }}>
-        <label style={{ display: "block" }}>
+      <form onSubmit={onSubmit} className="flex flex-col gap-5 mt-6">
+        <label className={labelClass}>
           Nom entreprise *
           <input
+            type="text"
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
             required
             minLength={2}
             maxLength={120}
-            style={{ display: "block", width: "100%", marginTop: 4, padding: 8 }}
+            className={inputClass}
           />
         </label>
 
-        <label style={{ display: "block" }}>
+        <label className={labelClass}>
           Email contact *
           <input
+            type="email"
             value={form.contact_email}
             onChange={(e) => setForm({ ...form, contact_email: e.target.value })}
-            type="email"
             required
-            style={{ display: "block", width: "100%", marginTop: 4, padding: 8 }}
+            className={inputClass}
           />
         </label>
 
-        <label style={{ display: "block" }}>
+        <label className={labelClass}>
           Fuseau horaire
           <input
+            type="text"
             value={form.timezone}
             onChange={(e) => setForm({ ...form, timezone: e.target.value })}
-            style={{ display: "block", width: "100%", marginTop: 4, padding: 8 }}
+            className={inputClass}
           />
         </label>
 
-        <label style={{ display: "block" }}>
+        <label className={labelClass}>
           Type de business
           <input
+            type="text"
             value={form.business_type}
             onChange={(e) => setForm({ ...form, business_type: e.target.value })}
             placeholder="medical / artisan / …"
-            style={{ display: "block", width: "100%", marginTop: 4, padding: 8 }}
+            className={inputClass}
           />
         </label>
 
-        <label style={{ display: "block" }}>
+        <label className={labelClass}>
           Notes internes
           <textarea
             value={form.notes}
             onChange={(e) => setForm({ ...form, notes: e.target.value })}
             rows={4}
-            style={{ display: "block", width: "100%", marginTop: 4, padding: 8 }}
+            className={inputClass + " resize-y"}
           />
         </label>
 
-        <button type="submit" disabled={loading} style={{ padding: "10px 20px", cursor: loading ? "wait" : "pointer" }}>
+        <button
+          type="submit"
+          disabled={loading}
+          className="mt-2 px-5 py-2.5 bg-[#0066CC] text-white font-medium rounded-lg hover:bg-[#0052A3] disabled:opacity-50 disabled:cursor-not-allowed"
+        >
           {loading ? "Création…" : "Créer le client"}
         </button>
       </form>
