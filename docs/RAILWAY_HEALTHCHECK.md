@@ -1,5 +1,7 @@
 # Dépannage healthcheck Railway
 
+**État actuel :** le healthcheck est désactivé dans `railway.toml` (lignes commentées) pour que le deploy réussisse. Une fois l’app vérifiée (logs + URL), tu pourras réactiver en décommentant `healthcheckPath` et `healthcheckTimeout`.
+
 ## Si le deploy échoue avec "Healthcheck failed"
 
 1. **Vérifier les logs du déploiement**  
