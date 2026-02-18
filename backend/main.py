@@ -375,51 +375,53 @@ async def get_booking_stats() -> dict:
 
 @app.get("/health")
 async def health() -> dict:
-    """Health check avec vérification credentials + Postgres"""
+    """
+    Health check pour Railway (répond toujours 200 rapidement).
+    Détails (credentials, Postgres) dans le body ; en cas d'exception on retourne quand même 200 + status ok.
+    """
     import os
 
+    out = {"status": "ok", "streams": len(STREAMS)}
     try:
-        free_slots = count_free_slots()
-    except Exception:
-        free_slots = -1
-
-    # Credentials: refléter l'état réel après load_google_credentials() (ou non exécuté si init a échoué)
-    service_account_file = config.SERVICE_ACCOUNT_FILE
-    file_exists = bool(service_account_file and os.path.exists(service_account_file))
-    has_base64_env = bool(os.getenv("GOOGLE_SERVICE_ACCOUNT_BASE64"))
-    # credentials_loaded = True seulement si load_google_credentials() a réussi (fichier écrit ou flag enabled)
-    credentials_loaded = getattr(config, "GOOGLE_CALENDAR_ENABLED", False) or file_exists
-
-    # Postgres: test connexion si DATABASE_URL présent
-    postgres_ok = False
-    postgres_error = None
-    db_url = os.getenv("DATABASE_URL") or os.getenv("PG_TENANTS_URL")
-    if db_url:
         try:
-            import psycopg
-            with psycopg.connect(db_url) as conn:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT 1")
-            postgres_ok = True
-        except Exception as e:
-            postgres_error = str(e)[:100]
+            free_slots = count_free_slots()
+        except Exception:
+            free_slots = -1
+        out["free_slots"] = free_slots
 
-    return {
-        "status": "ok",
-        "streams": len(STREAMS),
-        "free_slots": free_slots,
-        "service_account_file": service_account_file,
-        "file_exists": file_exists,
-        "credentials_loaded": credentials_loaded,
-        "calendar_id_set": bool(config.GOOGLE_CALENDAR_ID),
-        "google_base64_set": has_base64_env,
-        "google_calendar_enabled": getattr(config, "GOOGLE_CALENDAR_ENABLED", False),
-        "google_calendar_disable_reason": getattr(config, "GOOGLE_CALENDAR_DISABLE_REASON", None),
-        "postgres_ok": postgres_ok,
-        "postgres_error": postgres_error,
-        "database_url_set": bool(db_url),
-        "runtime_env_count": len(os.environ),
-    }
+        service_account_file = getattr(config, "SERVICE_ACCOUNT_FILE", None)
+        file_exists = bool(service_account_file and os.path.exists(service_account_file))
+        has_base64_env = bool(os.getenv("GOOGLE_SERVICE_ACCOUNT_BASE64"))
+        credentials_loaded = getattr(config, "GOOGLE_CALENDAR_ENABLED", False) or file_exists
+
+        out["service_account_file"] = service_account_file
+        out["file_exists"] = file_exists
+        out["credentials_loaded"] = credentials_loaded
+        out["calendar_id_set"] = bool(getattr(config, "GOOGLE_CALENDAR_ID", None))
+        out["google_base64_set"] = has_base64_env
+        out["google_calendar_enabled"] = getattr(config, "GOOGLE_CALENDAR_ENABLED", False)
+        out["google_calendar_disable_reason"] = getattr(config, "GOOGLE_CALENDAR_DISABLE_REASON", None)
+
+        postgres_ok = False
+        postgres_error = None
+        db_url = os.getenv("DATABASE_URL") or os.getenv("PG_TENANTS_URL")
+        if db_url:
+            try:
+                import psycopg
+                with psycopg.connect(db_url, connect_timeout=3) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT 1")
+                postgres_ok = True
+            except Exception as e:
+                postgres_error = str(e)[:100]
+        out["postgres_ok"] = postgres_ok
+        out["postgres_error"] = postgres_error
+        out["database_url_set"] = bool(db_url)
+        out["runtime_env_count"] = len(os.environ)
+    except Exception as e:
+        _logger.warning("health check partial failure: %s", e)
+        out["health_detail_error"] = str(e)[:200]
+    return out
 
 
 @app.get("/")
