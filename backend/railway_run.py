@@ -33,17 +33,30 @@ def main() -> int:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    # Uvicorn en avant-plan (remplace ce processus)
-    os.execvp(
-        "uvicorn",
-        [
-            "uvicorn", "backend.main:app",
-            "--host", "0.0.0.0",
-            "--port", str(port_int),
-            "--workers", "2",
-        ],
-    )
+    # Pré-import pour que toute erreur d'import remonte dans les logs Railway
+    try:
+        import uvicorn
+        print("Importing backend.main ...", flush=True)
+        import backend.main as _m  # noqa: F401
+        print(f"App loaded. Binding 0.0.0.0:{port_int} ...", flush=True)
+        uvicorn.run(
+            "backend.main:app",
+            host="0.0.0.0",
+            port=port_int,
+            workers=1,
+        )
+    except Exception as e:
+        print(f"FATAL uvicorn: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        return 1
     return 0
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as e:
+        print(f"railway_run error: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
