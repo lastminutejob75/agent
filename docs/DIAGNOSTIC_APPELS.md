@@ -99,4 +99,30 @@ En production, filtrer les logs sur :
 - `LATENCY_FIRST_TOKEN_MS` : temps jusqu’au premier token (objectif < 3000 ms)
 - `ensure_test_number_route` / `Heavy init` : succès ou échec de l’init
 
+---
+
+## 8. Assistant parle en anglais / dit « there was an error »
+
+Le **backend renvoie toujours du français** (messages dans `prompts.py`). Si l’assistant parle en anglais ou annonce une erreur en anglais, c’est en général soit la **config Vapi**, soit une **erreur backend** (Vapi affiche alors son message par défaut en anglais).
+
+### 8.1 Configuration Vapi (Dashboard)
+
+| Paramètre | À vérifier |
+|-----------|------------|
+| **Language** | Doit être **French** (ou équivalent). |
+| **First Message** | En français, ex. `Bonjour Cabinet Dupont, vous appelez pour un rendez-vous ?` (voir `VAPI_CONFIG.md`). |
+| **Model** | **Custom LLM** avec Server URL = `https://<backend>/api/vapi/chat/completions` (pas un modèle OpenAI/Claude seul en anglais). |
+| **System instructions** | Inclure explicitement : *« Tu réponds uniquement en français. »* (ou le prompt dans `docs/VAPI_PROMPT_ASSISTANT.md`). |
+| **Transcriber** | `language: "fr"` (STT en français). |
+
+Si le **modèle** n’est pas en Custom LLM ou que l’URL Custom LLM est fausse, Vapi utilise son propre modèle (souvent en anglais) ou un message d’erreur par défaut en anglais.
+
+### 8.2 Erreur backend (500 / timeout)
+
+Si le backend renvoie **500** ou **timeout**, Vapi peut afficher un message générique du type « There was an error » **en anglais**, sans utiliser notre texte français.
+
+**À faire** : Regarder les **logs Railway** pendant un appel (filtres : `CHAT_COMPLETIONS`, `ERROR`, `exception`, `500`). Si tu vois une exception ou un 500 sur `/api/vapi/chat/completions` ou `/api/vapi/tool`, corriger la cause (ex. DB, calendrier, timeout). Nos messages d’erreur côté backend sont en français (`MSG_VOCAL_TECHNICAL_FALLBACK`, « Désolé, une erreur… ») ; si l’utilisateur entend de l’anglais, la réponse vient très probablement de Vapi, pas du backend.
+
+---
+
 Si tu veux, on peut ensuite cibler un scénario précis (ex. « pas de créneaux », « silence », « 500 ») et tracer le code path correspondant.

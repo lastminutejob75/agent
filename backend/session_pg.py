@@ -41,7 +41,7 @@ def _is_transient(e: Exception) -> bool:
 
 
 def _execute_with_retry(op_name: str, fn):
-    """Exécute fn(), retry 1x si erreur transitoire."""
+    """Exécute fn(), retry 1x si erreur transitoire. Les _do() doivent faire conn.rollback() en cas d'exception pour éviter InFailedSqlTransaction."""
     try:
         import psycopg
     except ImportError:
@@ -391,18 +391,25 @@ _WEB_CACHE_MAX = 10000
 
 
 def _pg_ensure_web_sessions_table(conn) -> None:
-    """Crée la table web_sessions si absente (idempotent)."""
-    cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS web_sessions (
-            tenant_id BIGINT NOT NULL,
-            conv_id TEXT NOT NULL,
-            state_json JSONB NOT NULL DEFAULT '{}',
-            updated_at TIMESTAMPTZ DEFAULT now(),
-            PRIMARY KEY (tenant_id, conv_id)
-        )
-    """)
-    conn.commit()
+    """Crée la table web_sessions si absente (idempotent). Rollback sur erreur pour éviter InFailedSqlTransaction."""
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS web_sessions (
+                tenant_id BIGINT NOT NULL,
+                conv_id TEXT NOT NULL,
+                state_json JSONB NOT NULL DEFAULT '{}',
+                updated_at TIMESTAMPTZ DEFAULT now(),
+                PRIMARY KEY (tenant_id, conv_id)
+            )
+        """)
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
 
 
 def pg_get_web_session(tenant_id: int, conv_id: str) -> Optional["Session"]:
@@ -417,21 +424,28 @@ def pg_get_web_session(tenant_id: int, conv_id: str) -> Optional["Session"]:
     def _do() -> Optional["Session"]:
         import psycopg
         with psycopg.connect(url) as conn:
-            set_tenant_id_on_connection(conn, tenant_id)
-            _pg_ensure_web_sessions_table(conn)
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT state_json FROM web_sessions WHERE tenant_id = %s AND conv_id = %s",
-                    (tenant_id, conv_id),
-                )
-                row = cur.fetchone()
-                if not row or not row[0]:
-                    return None
-                state = row[0] if isinstance(row[0], dict) else json.loads(row[0])
-                session = session_from_dict(conv_id=conv_id, d=state)
-                session.tenant_id = tenant_id
-                session.channel = "web"
-                return session
+            try:
+                set_tenant_id_on_connection(conn, tenant_id)
+                _pg_ensure_web_sessions_table(conn)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT state_json FROM web_sessions WHERE tenant_id = %s AND conv_id = %s",
+                        (tenant_id, conv_id),
+                    )
+                    row = cur.fetchone()
+                    if not row or not row[0]:
+                        return None
+                    state = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+                    session = session_from_dict(conv_id=conv_id, d=state)
+                    session.tenant_id = tenant_id
+                    session.channel = "web"
+                    return session
+            except Exception:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                raise
 
     result = _execute_with_retry("pg_get_web_session", _do)
     return result
@@ -451,19 +465,26 @@ def pg_save_web_session(tenant_id: int, conv_id: str, session: "Session") -> boo
     def _do() -> bool:
         import psycopg
         with psycopg.connect(url) as conn:
-            set_tenant_id_on_connection(conn, tenant_id)
-            _pg_ensure_web_sessions_table(conn)
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO web_sessions (tenant_id, conv_id, state_json, updated_at)
-                    VALUES (%s, %s, %s::jsonb, now())
-                    ON CONFLICT (tenant_id, conv_id) DO UPDATE SET state_json = EXCLUDED.state_json, updated_at = now()
-                    """,
-                    (tenant_id, conv_id, json.dumps(state)),
-                )
-                conn.commit()
-        return True
+            try:
+                set_tenant_id_on_connection(conn, tenant_id)
+                _pg_ensure_web_sessions_table(conn)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO web_sessions (tenant_id, conv_id, state_json, updated_at)
+                        VALUES (%s, %s, %s::jsonb, now())
+                        ON CONFLICT (tenant_id, conv_id) DO UPDATE SET state_json = EXCLUDED.state_json, updated_at = now()
+                        """,
+                        (tenant_id, conv_id, json.dumps(state)),
+                    )
+                    conn.commit()
+                return True
+            except Exception:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                raise
 
     return _execute_with_retry("pg_save_web_session", _do) is True
 
@@ -505,13 +526,20 @@ def pg_delete_web_session(tenant_id: int, conv_id: str) -> bool:
     def _do() -> bool:
         import psycopg
         with psycopg.connect(url) as conn:
-            set_tenant_id_on_connection(conn, tenant_id)
-            with conn.cursor() as cur:
-                cur.execute(
-                    "DELETE FROM web_sessions WHERE tenant_id = %s AND conv_id = %s",
-                    (tenant_id, conv_id),
-                )
-                conn.commit()
-        return True
+            try:
+                set_tenant_id_on_connection(conn, tenant_id)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "DELETE FROM web_sessions WHERE tenant_id = %s AND conv_id = %s",
+                        (tenant_id, conv_id),
+                    )
+                    conn.commit()
+                return True
+            except Exception:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                raise
 
     return _execute_with_retry("pg_delete_web_session", _do) is True
