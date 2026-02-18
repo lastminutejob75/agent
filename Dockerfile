@@ -23,6 +23,5 @@ EXPOSE 8000
 # Railway gère son propre health check, pas besoin de HEALTHCHECK Docker
 # HEALTHCHECK désactivé pour éviter conflit avec Railway
 
-# Migrations en arrière-plan pour que /health réponde vite (healthcheck Railway)
-# Uvicorn démarre immédiatement ; migrations s'exécutent en parallèle
-CMD sh -c "echo 'Starting server (migrations in background)...'; (python -m backend.run_migration 005 || true; python -m backend.run_migration 003 || true; python -m backend.run_migration 004 || true; python -m backend.run_migration 006 || true; python -m backend.run_migration 007 || true; python -m backend.run_migration 008 || true; python -m backend.run_migration 008_call_sessions_messages_checkpoints.sql || true; echo 'Migrations done') & exec uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 2"
+# Railway : utiliser le script qui lit PORT depuis l'env (même port que le healthcheck)
+CMD ["python", "-m", "backend.railway_run"]
