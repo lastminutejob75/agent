@@ -303,6 +303,65 @@ def send_magic_link_email(to: str, login_url: str, ttl_minutes: int = 15) -> Tup
     return False, "Email non configuré (Postmark ou SMTP)"
 
 
+def send_quota_alert_80_email(
+    to_email: str,
+    tenant_name: str,
+    used_minutes: float,
+    included_minutes: int,
+    month_utc: str,
+) -> Tuple[bool, Optional[str]]:
+    """
+    Alerte quota 80 % : « Vous avez utilisé X % de vos minutes ce mois. »
+    Returns (success, error_message).
+    """
+    if not to_email or not to_email.strip():
+        return False, "Destinataire vide"
+    usage_pct = round((used_minutes / included_minutes) * 100, 1) if included_minutes else 0
+    subject = f"UWi – Alerte quota ({usage_pct:.0f} % utilisés ce mois)"
+    html = f"""
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Alerte quota</title></head>
+<body style="font-family: sans-serif; max-width: 560px; margin: 0 auto; padding: 1rem;">
+  <h1 style="font-size: 1.2rem;">Alerte utilisation des minutes</h1>
+  <p>Bonjour,</p>
+  <p>Pour <strong>{tenant_name}</strong>, vous avez utilisé <strong>{usage_pct:.1f} %</strong> de vos minutes incluses pour le mois {month_utc} ({used_minutes:.0f} / {included_minutes} minutes).</p>
+  <p>À 100 %, les appels seront temporairement suspendus jusqu'au mois suivant. Pensez à souscrire à un forfait supérieur ou à gérer votre consommation.</p>
+  <p style="color:#666;font-size:0.9rem;">Cet email est envoyé une fois par mois par client lorsque le seuil de 80 % est atteint.</p>
+</body>
+</html>
+"""
+    from_addr = (
+        os.getenv("POSTMARK_FROM_EMAIL") or os.getenv("EMAIL_FROM") or os.getenv("SMTP_EMAIL") or ""
+    ).strip()
+    token = (os.getenv("POSTMARK_SERVER_TOKEN") or "").strip()
+    if token and from_addr:
+        try:
+            ok, err = _send_via_postmark(from_addr, to_email, subject, html, token)
+            return ok, err
+        except Exception as e:
+            logger.exception("send_quota_alert_80_email postmark failed")
+            return False, str(e)
+    smtp_user = (os.getenv("SMTP_EMAIL") or "").strip()
+    smtp_pass = (os.getenv("SMTP_PASSWORD") or "").strip()
+    if smtp_user and smtp_pass:
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["From"] = smtp_user
+            msg["To"] = to_email
+            msg["Subject"] = subject
+            msg.attach(MIMEText(html, "html", "utf-8"))
+            with smtplib.SMTP(os.getenv("SMTP_HOST", "smtp.gmail.com"), int(os.getenv("SMTP_PORT", "587"))) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, [to_email], msg.as_string())
+            return True, None
+        except Exception as e:
+            logger.exception("send_quota_alert_80_email smtp failed")
+            return False, str(e)
+    return False, "Email non configuré (Postmark ou SMTP)"
+
+
 def send_ordonnance_notification(request: Dict[str, Any]) -> bool:
     """
     Envoie une notification au cabinet pour demande d'ordonnance (patient veut qu'on transmette un message).

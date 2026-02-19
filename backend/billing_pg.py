@@ -33,7 +33,7 @@ def get_tenant_billing(tenant_id: int) -> Optional[Dict[str, Any]]:
                         SELECT tenant_id, stripe_customer_id, stripe_subscription_id, billing_status,
                                plan_key, current_period_start, current_period_end, trial_ends_at, updated_at,
                                is_suspended, suspension_reason, suspended_at, force_active_override, force_active_until,
-                               suspension_mode
+                               suspension_mode, stripe_metered_item_id
                         FROM tenant_billing WHERE tenant_id = %s
                         """,
                         (tenant_id,),
@@ -57,6 +57,7 @@ def get_tenant_billing(tenant_id: int) -> Optional[Dict[str, Any]]:
                 d.setdefault("force_active_override", False)
                 d.setdefault("force_active_until", None)
                 d.setdefault("suspension_mode", "hard")
+                d.setdefault("stripe_metered_item_id", None)
                 for k in ("current_period_start", "current_period_end", "trial_ends_at", "updated_at", "suspended_at", "force_active_until"):
                     if d.get(k) and hasattr(d[k], "isoformat"):
                         d[k] = d[k].isoformat()
@@ -146,6 +147,33 @@ def upsert_billing_from_subscription(
         return False
 
 
+def set_stripe_metered_item_id(tenant_id: int, stripe_metered_item_id: str | None) -> bool:
+    """Enregistre ou met à jour stripe_metered_item_id (subscription item id metered) pour le tenant."""
+    url = _pg_url()
+    if not url:
+        return False
+    item_id = (stripe_metered_item_id or "").strip() or None
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO tenant_billing (tenant_id, stripe_metered_item_id, updated_at)
+                    VALUES (%s, %s, now())
+                    ON CONFLICT (tenant_id) DO UPDATE SET
+                        stripe_metered_item_id = EXCLUDED.stripe_metered_item_id,
+                        updated_at = now()
+                    """,
+                    (tenant_id, item_id),
+                )
+                conn.commit()
+        return True
+    except Exception as e:
+        logger.warning("set_stripe_metered_item_id failed: %s", e)
+        return False
+
+
 def clear_subscription(tenant_id: int, set_status_canceled: bool = True) -> bool:
     """Met à zéro subscription et optionnellement billing_status = canceled (webhook subscription.deleted)."""
     url = _pg_url()
@@ -159,6 +187,7 @@ def clear_subscription(tenant_id: int, set_status_canceled: bool = True) -> bool
                     """
                     UPDATE tenant_billing SET
                         stripe_subscription_id = NULL,
+                        stripe_metered_item_id = NULL,
                         billing_status = CASE WHEN %s THEN 'canceled' ELSE billing_status END,
                         updated_at = now()
                     WHERE tenant_id = %s
@@ -540,3 +569,80 @@ def get_plan_included_minutes(plan_key: Optional[str]) -> int:
         if k == plan_key:
             return v
     return 0
+
+
+def _get_tenant_params_for_quota(tenant_id: int) -> dict:
+    """Lit params_json (tenant_config) pour résolution quota (plan_key, custom_included_minutes_month)."""
+    url = _pg_url()
+    if not url:
+        return {}
+    try:
+        import json
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT params_json FROM tenant_config WHERE tenant_id = %s", (tenant_id,))
+                row = cur.fetchone()
+                if row and row[0]:
+                    return json.loads(row[0]) if isinstance(row[0], str) else (row[0] or {})
+    except Exception as e:
+        if "does not exist" not in str(e).lower():
+            logger.debug("_get_tenant_params_for_quota: %s", e)
+    return {}
+
+
+def _get_quota_used_minutes_pg(tenant_id: int, start: str, end: str) -> float:
+    """Somme duration_sec/60 pour le tenant sur [start, end[ (mois UTC)."""
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL") or _pg_url()
+    if not url:
+        return 0.0
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COALESCE(SUM(duration_sec), 0) / 60.0
+                    FROM vapi_call_usage
+                    WHERE tenant_id = %s AND ended_at IS NOT NULL AND ended_at >= %s AND ended_at < %s
+                    """,
+                    (tenant_id, start, end),
+                )
+                row = cur.fetchone()
+                return round(float(row[0] or 0), 2) if row else 0.0
+    except Exception as e:
+        if "does not exist" not in str(e).lower():
+            logger.debug("_get_quota_used_minutes_pg: %s", e)
+    return 0.0
+
+
+def get_quota_snapshot_month(tenant_id: int, month_utc: str) -> tuple[int, float]:
+    """
+    Snapshot quota pour un mois UTC (YYYY-MM).
+    Returns (included_minutes_month, used_minutes_month).
+    Si included == 0 : ne pas bloquer par quota (plan non configuré / gratuit).
+    """
+    if not month_utc or len(month_utc) != 7 or month_utc[4] != "-":
+        return (0, 0.0)
+    try:
+        y, m = int(month_utc[:4]), int(month_utc[5:7])
+        start = f"{month_utc}-01 00:00:00"
+        end = f"{y}-{m + 1:02d}-01 00:00:00" if m < 12 else f"{y + 1}-01-01 00:00:00"
+    except ValueError:
+        return (0, 0.0)
+
+    billing = get_tenant_billing(tenant_id)
+    params = _get_tenant_params_for_quota(tenant_id)
+    plan_key = (billing or {}).get("plan_key") or (params.get("plan_key") or "").strip() or "free"
+
+    if plan_key == "custom":
+        try:
+            custom_val = int(params.get("custom_included_minutes_month") or 0)
+            included = custom_val if custom_val > 0 else get_plan_included_minutes("custom")
+        except (TypeError, ValueError):
+            included = get_plan_included_minutes("custom")
+    else:
+        included = get_plan_included_minutes(plan_key)
+
+    used = _get_quota_used_minutes_pg(tenant_id, start, end)
+    return (included, used)

@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 
 from backend.billing_pg import (
     clear_subscription,
+    set_stripe_metered_item_id,
     try_acquire_stripe_event,
     tenant_id_by_stripe_customer_id,
     update_billing_status,
@@ -69,7 +70,7 @@ def _sync_subscription(subscription: object) -> bool:
     period_start = _get_ts(subscription, "current_period_start")
     period_end = _get_ts(subscription, "current_period_end")
     trial_end = _get_ts(subscription, "trial_end") if getattr(subscription, "trial_end", None) else None
-    return upsert_billing_from_subscription(
+    ok = upsert_billing_from_subscription(
         tenant_id=tenant_id,
         stripe_subscription_id=sub_id,
         billing_status=status or "unknown",
@@ -79,6 +80,38 @@ def _sync_subscription(subscription: object) -> bool:
         trial_ends_at=trial_end,
         stripe_customer_id=customer_id,
     )
+    if ok:
+        metered_item_id = _get_metered_subscription_item_id(subscription)
+        if metered_item_id:
+            set_stripe_metered_item_id(tenant_id, metered_item_id)
+    return ok
+
+
+def _get_metered_subscription_item_id(subscription: object) -> str | None:
+    """
+    Retourne le subscription item id (metered) depuis subscription.items.data.
+    Si STRIPE_METERED_PRICE_ID est défini : item dont price.id == STRIPE_METERED_PRICE_ID.
+    Sinon : premier item dont price.recurring.usage_type == 'metered'.
+    """
+    metered_price_id = (os.environ.get("STRIPE_METERED_PRICE_ID") or "").strip()
+    if not hasattr(subscription, "items") or not subscription.items or not getattr(subscription.items, "data", None):
+        return None
+    fallback_item_id = None
+    for item in subscription.items.data or []:
+        price = getattr(item, "price", None)
+        if not price:
+            continue
+        pid = (getattr(price, "id", None) or "").strip()
+        recurring = getattr(price, "recurring", None)
+        is_metered = recurring and getattr(recurring, "usage_type", None) == "metered"
+        if metered_price_id:
+            if pid == metered_price_id:
+                return (getattr(item, "id", None) or "").strip() or None
+        elif is_metered:
+            fallback_item_id = (getattr(item, "id", None) or "").strip() or None
+            if fallback_item_id:
+                return fallback_item_id
+    return fallback_item_id
 
 
 @router.post("/api/stripe/webhook")

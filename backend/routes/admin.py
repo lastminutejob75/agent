@@ -1167,18 +1167,22 @@ def admin_create_tenant(
 
     tid = None
     if config.USE_PG_TENANTS:
-        tid = pg_create_tenant(
-            name=body.name.strip(),
-            contact_email=contact_email,
-            calendar_provider="none",
-            calendar_id="",
-            timezone=body.timezone or "Europe/Paris",
-            business_type=(body.business_type or "").strip() or None,
-            notes=(body.notes or "").strip() or None,
-            status=initial_status,
-            plan_key=plan_key or None,
-            billing_email=billing_email,
-        )
+        try:
+            tid = pg_create_tenant(
+                name=body.name.strip(),
+                contact_email=contact_email,
+                calendar_provider="none",
+                calendar_id="",
+                timezone=body.timezone or "Europe/Paris",
+                business_type=(body.business_type or "").strip() or None,
+                notes=(body.notes or "").strip() or None,
+                status=initial_status,
+                plan_key=plan_key or None,
+                billing_email=billing_email,
+            )
+        except Exception as e:
+            logger.exception("admin_create_tenant pg_create_tenant failed")
+            raise HTTPException(500, "Impossible de créer le client (base de données). Réessayez ou vérifiez la configuration.")
     if not tid and not config.USE_PG_TENANTS:
         import backend.db as db
         db.ensure_tenant_config()
@@ -1211,7 +1215,7 @@ def admin_create_tenant(
             conn.close()
 
     if not tid:
-        raise HTTPException(500, "Failed to create tenant")
+        raise HTTPException(500, "Impossible de créer le client. Vérifiez la configuration (base de données).")
 
     created_at = datetime.utcnow().isoformat() + "Z"
     return TenantOut(
@@ -3131,6 +3135,25 @@ def admin_stats_billing_snapshot(
 ):
     """Coût Vapi ce mois (UTC), top tenants par coût ce mois, nombre de tenants past_due. Sans prix Stripe."""
     return _get_billing_snapshot()
+
+
+@router.post("/admin/jobs/quota-alerts-80")
+def admin_job_quota_alerts_80(
+    month: Optional[str] = Query(None, description="YYYY-MM (défaut: mois courant UTC)"),
+    _: None = Depends(_verify_admin),
+):
+    """Lance le job d’alertes quota 80 % (email + log). Anti-spam : 1 email/tenant/mois. À appeler en cron daily."""
+    from backend.quota_alerts import run_quota_alerts_80
+    return run_quota_alerts_80(month_utc=month)
+
+
+@router.post("/admin/jobs/push-daily-usage")
+def admin_job_push_daily_usage(
+    _: None = Depends(_verify_admin),
+):
+    """Pousse l'usage Vapi → Stripe (yesterday + day_before si pas sent). Retry 48h. Cron 01:00 UTC recommandé."""
+    from backend.stripe_usage import push_daily_usage_with_retry_48h
+    return push_daily_usage_with_retry_48h()
 
 
 @router.get("/admin/stats/operations-snapshot")

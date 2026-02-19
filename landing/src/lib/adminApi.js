@@ -17,7 +17,17 @@ async function adminFetch(path, options = {}) {
   const data = await res.json().catch(() => ({}));
 
   if (!res.ok) {
-    const err = new Error(typeof data?.detail === "string" ? data.detail : "Request failed");
+    let message = "Request failed";
+    if (typeof data?.detail === "string" && data.detail) {
+      message = data.detail;
+    } else if (Array.isArray(data?.detail) && data.detail.length) {
+      message = data.detail.map((x) => x?.msg ?? x?.loc?.join(".") ?? JSON.stringify(x)).join(" · ");
+    } else if (data?.detail?.msg) {
+      message = data.detail.msg;
+    } else if (res.status) {
+      message = `Erreur ${res.status}${data?.detail ? ` — ${JSON.stringify(data.detail)}` : ""}`.trim();
+    }
+    const err = new Error(message);
     err.status = res.status;
     err.data = data;
     throw err;

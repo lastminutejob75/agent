@@ -590,7 +590,7 @@ def _compute_voice_response_sync(
     Garantie : AUCUN appel LLM, AUCUN tool, AUCUN journal/DB coûteux — coût zéro.
     """
     from backend import tools_booking
-    from backend.billing_pg import get_tenant_suspension
+    from backend.billing_pg import get_tenant_suspension, get_quota_snapshot_month, set_tenant_suspended
     from backend import prompts
     # Check suspension en tout premier : avant session, intent, engine, tools.
     is_suspended, _, suspension_mode = get_tenant_suspension(resolved_tenant_id)
@@ -601,6 +601,13 @@ def _compute_voice_response_sync(
             else getattr(prompts, "MSG_VOCAL_SUSPENDED", "Votre service est temporairement suspendu. Merci de contacter votre interlocuteur.")
         )
         return (msg or prompts.MSG_VOCAL_SUSPENDED, True)
+    # Quota : si included > 0 et used >= included → suspension hard (quota_exceeded). Si included == 0 → ne pas bloquer.
+    month_utc = time.strftime("%Y-%m", time.gmtime())
+    included_minutes, used_minutes = get_quota_snapshot_month(resolved_tenant_id, month_utc)
+    if included_minutes > 0 and used_minutes >= included_minutes:
+        set_tenant_suspended(resolved_tenant_id, reason="quota_exceeded", mode="hard")
+        logger.info("TENANT_SUSPENDED_QUOTA_EXCEEDED tenant_id=%s month=%s used=%.1f included=%s", resolved_tenant_id, month_utc, used_minutes, included_minutes)
+        return (getattr(prompts, "MSG_VOCAL_SUSPENDED", "Votre service est temporairement suspendu. Merci de contacter votre interlocuteur."), True)
     t_start = time.time()
     _call_journal_ensure(resolved_tenant_id, call_id)
     session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
