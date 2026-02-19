@@ -88,6 +88,9 @@ export const adminApi = {
   operationsSnapshot: (windowDays = 7) =>
     adminFetch(`/api/admin/stats/operations-snapshot?window_days=${windowDays}`, { method: "GET" }),
 
+  qualitySnapshot: (windowDays = 7) =>
+    adminFetch(`/api/admin/stats/quality-snapshot?window_days=${windowDays}`, { method: "GET" }),
+
   tenantStats: (tenantId, windowDays = 7) =>
     adminFetch(`/api/admin/stats/tenants/${tenantId}?window_days=${windowDays}`, { method: "GET" }),
   tenantTimeseries: (tenantId, metric, days) =>

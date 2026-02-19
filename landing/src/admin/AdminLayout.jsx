@@ -42,6 +42,9 @@ export default function AdminLayout() {
           <NavLink to="/admin/operations" className={linkClass}>
             <span className="text-slate-400">⚙️</span> Operations
           </NavLink>
+          <NavLink to="/admin/quality" className={linkClass}>
+            <span className="text-slate-400">🎯</span> Quality
+          </NavLink>
           <NavLink to="/admin/audit" className={linkClass}>
             <span className="text-slate-400">📋</span> Audit log
           </NavLink>

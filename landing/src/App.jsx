@@ -22,6 +22,7 @@ import AdminCalls from "./admin/pages/AdminCalls";
 import AdminMonitoring from "./admin/pages/AdminMonitoring";
 import AdminAuditLog from "./admin/pages/AdminAuditLog";
 import AdminOperations from "./admin/pages/AdminOperations";
+import AdminQuality from "./admin/pages/AdminQuality";
 import AdminNotFound from "./admin/pages/AdminNotFound";
 
 export default function App() {
@@ -43,20 +44,21 @@ export default function App() {
         element={
           <AdminAuthProvider>
             <Routes>
-              <Route path="login" element={<AdminLogin />} />
+              <Route path="/admin/login" element={<AdminLogin />} />
               <Route element={<ProtectedRoute />}>
                 <Route element={<AdminLayout />}>
-                  <Route index element={<AdminDashboard />} />
-                  <Route path="tenants" element={<AdminTenantsList />} />
-                  <Route path="tenants/new" element={<AdminTenantNew />} />
-                  <Route path="tenants/:id" element={<AdminTenantDetail />} />
-                  <Route path="tenants/:id/dashboard" element={<AdminTenantDashboard />} />
-                  <Route path="tenants/:id/calls" element={<AdminCalls />} />
-                  <Route path="calls" element={<AdminCalls />} />
-                  <Route path="monitoring" element={<AdminMonitoring />} />
-                  <Route path="operations" element={<AdminOperations />} />
-                  <Route path="audit" element={<AdminAuditLog />} />
-                  <Route path="*" element={<AdminNotFound />} />
+                  <Route path="/admin" element={<AdminDashboard />} />
+                  <Route path="/admin/tenants/new" element={<AdminTenantNew />} />
+                  <Route path="/admin/tenants" element={<AdminTenantsList />} />
+                  <Route path="/admin/tenants/:id" element={<AdminTenantDetail />} />
+                  <Route path="/admin/tenants/:id/dashboard" element={<AdminTenantDashboard />} />
+                  <Route path="/admin/tenants/:id/calls" element={<AdminCalls />} />
+                  <Route path="/admin/calls" element={<AdminCalls />} />
+                  <Route path="/admin/monitoring" element={<AdminMonitoring />} />
+                  <Route path="/admin/operations" element={<AdminOperations />} />
+                  <Route path="/admin/quality" element={<AdminQuality />} />
+                  <Route path="/admin/audit" element={<AdminAuditLog />} />
+                  <Route path="/admin/*" element={<AdminNotFound />} />
                 </Route>
               </Route>
             </Routes>

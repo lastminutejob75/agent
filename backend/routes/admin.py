@@ -2653,7 +2653,7 @@ def _get_operations_snapshot(window_days: int = 7) -> dict:
     # Billing : réutilise _get_billing_snapshot + month_utc
     billing = _get_billing_snapshot()
     billing["month_utc"] = now.strftime("%Y-%m")
-    # Enrichir top_tenants_by_cost_this_month avec last_activity_at si on a PG events
+    # Enrichir top_tenants_by_cost_this_month avec last_activity_at (1 seule requête groupée, pas de N+1)
     url_events = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
     if url_events and billing.get("top_tenants_by_cost_this_month"):
         try:
@@ -2741,7 +2741,10 @@ def _get_operations_snapshot(window_days: int = 7) -> dict:
     seven_d_start = (today_start - timedelta(days=window_days))
     seven_d_str = seven_d_start.strftime("%Y-%m-%d %H:%M:%S")
 
-    cost = {"today_utc": {"total_usd": 0.0, "top": []}, "last_7d": {"total_usd": 0.0, "top": []}}
+    cost = {
+        "today_utc": {"date_utc": today_start.strftime("%Y-%m-%d"), "total_usd": 0.0, "top": []},
+        "last_7d": {"window_days": window_days, "total_usd": 0.0, "top": []},
+    }
     if url_events:
         try:
             import psycopg
@@ -2831,6 +2834,89 @@ def _get_operations_snapshot(window_days: int = 7) -> dict:
     }
 
 
+def _get_quality_snapshot(window_days: int = 7) -> dict:
+    """
+    Snapshot Quality : KPIs + top tenants par anti_loop, abandons, transferts.
+    Source ivr_events (PG prioritaire). UTC.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    now = datetime.now(timezone.utc)
+    start = (now - timedelta(days=window_days)).strftime("%Y-%m-%d 00:00:00")
+    end = now.strftime("%Y-%m-%d %H:%M:%S")
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+
+    kpis = {"calls_total": 0, "abandons": 0, "transfers": 0, "anti_loop": 0, "appointments": 0}
+    top = {"anti_loop": [], "abandons": [], "transfers": []}
+
+    if url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            with psycopg.connect(url, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT COUNT(DISTINCT call_id) AS c FROM ivr_events
+                        WHERE call_id IS NOT NULL AND TRIM(call_id) != '' AND created_at >= %s AND created_at <= %s
+                        """,
+                        (start, end),
+                    )
+                    kpis["calls_total"] = cur.fetchone()["c"] or 0
+                    cur.execute(
+                        """
+                        SELECT event, COUNT(*) AS cnt FROM ivr_events
+                        WHERE created_at >= %s AND created_at <= %s GROUP BY event
+                        """,
+                        (start, end),
+                    )
+                    by_event = {r["event"]: r["cnt"] for r in cur.fetchall()}
+                    abandon_events = ("user_abandon", "abandon", "hangup", "user_hangup")
+                    transfer_events = ("transferred_human", "transferred", "transfer_human", "transfer")
+                    kpis["abandons"] = sum(by_event.get(e, 0) for e in abandon_events)
+                    kpis["transfers"] = sum(by_event.get(e, 0) for e in transfer_events)
+                    kpis["anti_loop"] = by_event.get("anti_loop_trigger", 0)
+                    kpis["appointments"] = by_event.get("booking_confirmed", 0)
+
+                    for metric, event_filter, event_list in [
+                        ("anti_loop", "event = 'anti_loop_trigger'", ["anti_loop_trigger"]),
+                        ("abandons", "event IN ('user_abandon', 'abandon', 'hangup', 'user_hangup')", list(abandon_events)),
+                        ("transfers", "event IN ('transferred_human', 'transferred', 'transfer_human', 'transfer')", list(transfer_events)),
+                    ]:
+                        cur.execute(
+                            f"""
+                            SELECT client_id AS tenant_id, COUNT(*) AS count, MAX(created_at) AS last_at
+                            FROM ivr_events
+                            WHERE {event_filter} AND created_at >= %s AND created_at <= %s
+                            GROUP BY client_id ORDER BY count DESC LIMIT 10
+                            """,
+                            (start, end),
+                        )
+                        for r in cur.fetchall():
+                            tid = r.get("tenant_id")
+                            d = _get_tenant_detail(tid) if tid else {}
+                            last_at = r.get("last_at")
+                            if last_at and hasattr(last_at, "isoformat"):
+                                last_at = last_at.isoformat() + "Z"
+                            top[metric].append({
+                                "tenant_id": tid,
+                                "name": d.get("name") or f"Tenant #{tid}",
+                                "count": int(r.get("count") or 0),
+                                "last_at": last_at,
+                            })
+        except Exception as e:
+            if "does not exist" not in str(e).lower():
+                logger.warning("quality_snapshot failed: %s", e)
+
+    abandon_rate = (kpis["abandons"] / kpis["calls_total"] * 100) if kpis["calls_total"] else 0
+    return {
+        "window_days": window_days,
+        "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "kpis": {**kpis, "abandon_rate_pct": round(abandon_rate, 1)},
+        "top": top,
+    }
+
+
 @router.get("/admin/stats/billing-snapshot")
 def admin_stats_billing_snapshot(
     _: None = Depends(_verify_admin),
@@ -2846,6 +2932,15 @@ def admin_stats_operations_snapshot(
 ):
     """Snapshot unique pour /admin/operations : billing, suspensions, cost today/7d, errors. 1 seul fetch côté front."""
     return _get_operations_snapshot(window_days)
+
+
+@router.get("/admin/stats/quality-snapshot")
+def admin_stats_quality_snapshot(
+    window_days: int = Query(7, ge=1, le=90),
+    _: None = Depends(_verify_admin),
+):
+    """Snapshot Quality : KPIs (appels, abandons, transferts, anti_loop, RDV, taux abandon) + top 10 par problème. Drill-down vers /admin/calls?result=."""
+    return _get_quality_snapshot(window_days)
 
 
 @router.get("/admin/stats/timeseries")

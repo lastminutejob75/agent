@@ -1,17 +1,26 @@
 import { useState, useEffect, useCallback } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, useSearchParams, Link } from "react-router-dom";
 import { adminApi } from "../../lib/adminApi";
 
-const RESULT_LABELS = { rdv: "RDV", transfer: "Transfert", abandoned: "Abandon", other: "Autre" };
+const RESULT_LABELS = { rdv: "RDV", transfer: "Transfert", abandoned: "Abandon", error: "Erreur", other: "Autre" };
 const DAYS_OPTIONS = [7, 14, 30];
 
 export default function AdminCalls() {
   const { id: tenantIdParam } = useParams();
-  const tenantId = tenantIdParam ? parseInt(tenantIdParam, 10) : null;
+  const [searchParams] = useSearchParams();
+  const tenantIdFromPath = tenantIdParam ? parseInt(tenantIdParam, 10) : null;
+  const tenantIdFromQuery = searchParams.get("tenant_id");
+  const tenantId = tenantIdFromPath ?? (tenantIdFromQuery ? parseInt(tenantIdFromQuery, 10) : null);
   const [tenant, setTenant] = useState(null);
   const [data, setData] = useState({ items: [], next_cursor: null, days: 7 });
-  const [days, setDays] = useState(7);
-  const [resultFilter, setResultFilter] = useState(null); // null | 'rdv' | 'error'
+  const [days, setDays] = useState(() => {
+    const d = searchParams.get("days");
+    return d ? parseInt(d, 10) : 7;
+  });
+  const [resultFilter, setResultFilter] = useState(() => {
+    const r = searchParams.get("result");
+    return r && ["rdv", "transfer", "abandoned", "error"].includes(r) ? r : null;
+  });
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
   const [selectedCall, setSelectedCall] = useState(null); // { tenantId, callId }

@@ -194,7 +194,9 @@ export default function AdminOperations() {
         <h2 className="text-lg font-semibold text-slate-800">Top coût</h2>
         <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-6">
           <div>
-            <h3 className="text-sm font-medium text-slate-500">Aujourd’hui (UTC)</h3>
+            <h3 className="text-sm font-medium text-slate-500">
+              Aujourd’hui (UTC){cost.today_utc?.date_utc ? ` · ${cost.today_utc.date_utc}` : ""}
+            </h3>
             <p className="text-xl font-bold text-slate-900 mt-1">{Number(cost.today_utc?.total_usd ?? 0).toFixed(2)} $</p>
             <ul className="mt-2 space-y-1">
               {(cost.today_utc?.top ?? []).slice(0, 5).map((t) => (
@@ -206,7 +208,9 @@ export default function AdminOperations() {
             </ul>
           </div>
           <div>
-            <h3 className="text-sm font-medium text-slate-500">7 derniers jours</h3>
+            <h3 className="text-sm font-medium text-slate-500">
+              {cost.last_7d?.window_days ?? 7} derniers jours
+            </h3>
             <p className="text-xl font-bold text-slate-900 mt-1">{Number(cost.last_7d?.total_usd ?? 0).toFixed(2)} $</p>
             <ul className="mt-2 space-y-1">
               {(cost.last_7d?.top ?? []).slice(0, 5).map((t) => (
