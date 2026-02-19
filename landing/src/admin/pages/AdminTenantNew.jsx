@@ -10,6 +10,9 @@ export default function AdminTenantNew() {
     timezone: "Europe/Paris",
     business_type: "",
     notes: "",
+    plan_key: "",
+    billing_email: "",
+    initial_status: "active",
   });
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -25,13 +28,21 @@ export default function AdminTenantNew() {
         timezone: form.timezone || "Europe/Paris",
         business_type: form.business_type.trim() || undefined,
         notes: form.notes.trim() || undefined,
+        plan_key: form.plan_key.trim() || "",
+        billing_email: form.billing_email.trim() || undefined,
+        initial_status: form.initial_status || "active",
       };
       const created = await adminApi.createTenant(payload);
       navigate(`/admin/tenants/${created.tenant_id}`);
     } catch (err) {
       const code = err?.data?.error_code;
+      const detail = err?.data?.detail;
       if (err.status === 409 && code === "EMAIL_ALREADY_ASSIGNED") {
         setErrorMsg("Cet email est déjà rattaché à un autre client.");
+      } else if (typeof detail === "string" && detail) {
+        setErrorMsg(detail);
+      } else if (Array.isArray(detail) && detail.length) {
+        setErrorMsg(detail.map((x) => x?.msg ?? x?.loc?.join(".") ?? JSON.stringify(x)).join(" · "));
       } else {
         setErrorMsg(err.message || "Erreur lors de la création.");
       }
@@ -50,6 +61,9 @@ export default function AdminTenantNew() {
         ← Clients
       </Link>
       <h1 className="text-2xl font-bold text-gray-900">Créer un client</h1>
+      <p className="mt-1 text-gray-500 text-sm">
+        Après création, configurer dans la fiche client : numéro DID, calendrier, facturation Stripe. Vous pourrez ajouter un compte utilisateur (propriétaire) depuis la fiche client.
+      </p>
 
       {errorMsg && (
         <div className="mt-4 p-3 border border-red-200 bg-red-50 text-red-700 rounded-lg text-sm">
@@ -81,6 +95,16 @@ export default function AdminTenantNew() {
           />
         </label>
         <label className={labelClass}>
+          Email facturation (optionnel)
+          <input
+            type="email"
+            value={form.billing_email}
+            onChange={(e) => setForm({ ...form, billing_email: e.target.value })}
+            placeholder="Si différent du contact"
+            className={inputClass}
+          />
+        </label>
+        <label className={labelClass}>
           Fuseau horaire
           <input
             type="text"
@@ -98,6 +122,33 @@ export default function AdminTenantNew() {
             placeholder="medical / artisan / …"
             className={inputClass}
           />
+        </label>
+        <label className={labelClass}>
+          Plan
+          <select
+            value={form.plan_key}
+            onChange={(e) => setForm({ ...form, plan_key: e.target.value })}
+            className={inputClass}
+          >
+            <option value="">Aucun</option>
+            <option value="starter">Starter</option>
+            <option value="pro">Pro</option>
+            <option value="business">Business</option>
+            <option value="custom">Custom</option>
+          </select>
+        </label>
+        <label className={labelClass}>
+          Statut initial
+          <select
+            value={form.initial_status}
+            onChange={(e) => setForm({ ...form, initial_status: e.target.value })}
+            className={inputClass}
+          >
+            <option value="active">Actif</option>
+            <option value="suspended">Suspendu</option>
+            <option value="sandbox">Test / Sandbox</option>
+            <option value="pending_payment">En attente paiement</option>
+          </select>
         </label>
         <label className={labelClass}>
           Notes internes

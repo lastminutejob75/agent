@@ -10,13 +10,15 @@ export default function ConfirmDialog({
   onCancel,
   danger = false,
   loading = false,
+  confirmDisabled = false,
 }) {
   if (!open) return null;
+  const isMessageNode = typeof message === "object" && message !== null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" role="dialog">
       <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
         <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
-        <p className="mt-2 text-gray-600">{message}</p>
+        {isMessageNode ? <div className="mt-2 text-gray-600">{message}</div> : <p className="mt-2 text-gray-600">{message}</p>}
         <div className="mt-6 flex gap-3 justify-end">
           <button
             type="button"
@@ -29,7 +31,7 @@ export default function ConfirmDialog({
           <button
             type="button"
             onClick={onConfirm}
-            disabled={loading}
+            disabled={loading || confirmDisabled}
             className={
               danger
                 ? "px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50"

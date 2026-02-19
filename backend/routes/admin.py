@@ -25,6 +25,8 @@ from backend import config
 from backend.deps import validate_tenant_id
 from backend.auth_pg import pg_add_tenant_user, pg_create_tenant_user, pg_get_tenant_user_by_email
 from backend.billing_pg import (
+    get_billing_plans,
+    get_plan_included_minutes,
     get_tenant_billing,
     set_force_active,
     set_stripe_customer_id,
@@ -223,6 +225,9 @@ class TenantCreateIn(BaseModel):
     timezone: str = Field(default="Europe/Paris", max_length=64)
     business_type: Optional[str] = Field(default=None, max_length=64)
     notes: Optional[str] = Field(default=None, max_length=2000)
+    plan_key: Optional[str] = Field(default="", max_length=64)
+    billing_email: Optional[str] = Field(default=None, max_length=255)
+    initial_status: Optional[str] = Field(default="active", max_length=32)
 
 
 class TenantOut(BaseModel):
@@ -1156,6 +1161,10 @@ def admin_create_tenant(
         finally:
             conn_sqlite.close()
 
+    initial_status = (body.initial_status or "active").strip() or "active"
+    plan_key = (body.plan_key or "").strip() or ""
+    billing_email = (body.billing_email or "").strip() or None
+
     tid = None
     if config.USE_PG_TENANTS:
         tid = pg_create_tenant(
@@ -1166,6 +1175,9 @@ def admin_create_tenant(
             timezone=body.timezone or "Europe/Paris",
             business_type=(body.business_type or "").strip() or None,
             notes=(body.notes or "").strip() or None,
+            status=initial_status,
+            plan_key=plan_key or None,
+            billing_email=billing_email,
         )
     if not tid and not config.USE_PG_TENANTS:
         import backend.db as db
@@ -1173,8 +1185,8 @@ def admin_create_tenant(
         conn = db.get_conn()
         try:
             conn.execute(
-                "INSERT INTO tenants (name, timezone, status) VALUES (?, ?, 'active')",
-                (body.name.strip() or "Nouveau", body.timezone or "Europe/Paris"),
+                "INSERT INTO tenants (name, timezone, status) VALUES (?, ?, ?)",
+                (body.name.strip() or "Nouveau", body.timezone or "Europe/Paris", initial_status),
             )
             row = conn.execute("SELECT last_insert_rowid()").fetchone()
             tid = row[0] if row else None
@@ -1183,6 +1195,8 @@ def admin_create_tenant(
                     "contact_email": contact_email,
                     "business_type": (body.business_type or "").strip() or "",
                     "notes": (body.notes or "").strip() or "",
+                    "plan_key": plan_key or "",
+                    "billing_email": (billing_email or "").strip() or "",
                 })
                 conn.execute(
                     "INSERT INTO tenant_config (tenant_id, flags_json, params_json) VALUES (?, '{}', ?)",
@@ -1781,6 +1795,74 @@ def admin_get_tenant_usage(
             if "does not exist" not in str(e).lower():
                 logger.warning("tenant usage query failed: %s", e)
     return out
+
+
+@router.get("/admin/billing/plans")
+def admin_get_billing_plans(_: None = Depends(_verify_admin)):
+    """Liste des plans (plan_key, included_minutes_month) pour quota minutes."""
+    items = get_billing_plans()
+    return {"items": items}
+
+
+@router.get("/admin/tenants/{tenant_id}/quota")
+def admin_get_tenant_quota(
+    tenant_id: int = Depends(validate_tenant_id),
+    month: str = Query(..., description="YYYY-MM (mois UTC)"),
+    _: None = Depends(_verify_admin),
+):
+    """Snapshot quota mois UTC : used_minutes / included_minutes, usage_pct, remaining."""
+    d = _get_tenant_detail(tenant_id)
+    if not d:
+        raise HTTPException(404, "Tenant not found")
+    if len(month) != 7 or month[4] != "-":
+        raise HTTPException(400, "month must be YYYY-MM")
+    start = f"{month}-01 00:00:00"
+    try:
+        y, m = int(month[:4]), int(month[5:7])
+        end = f"{y}-{m + 1:02d}-01 00:00:00" if m < 12 else f"{y + 1}-01-01 00:00:00"
+    except ValueError:
+        raise HTTPException(400, "month must be YYYY-MM")
+
+    plan_key = (d.get("params") or {}).get("plan_key") or ""
+    if not plan_key and get_tenant_billing(tenant_id):
+        plan_key = (get_tenant_billing(tenant_id) or {}).get("plan_key") or ""
+    plan_key = (plan_key or "").strip() or "free"
+    included = get_plan_included_minutes(plan_key)
+
+    used_minutes_month = 0.0
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    if url:
+        try:
+            import psycopg
+            with psycopg.connect(url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT COALESCE(SUM(duration_sec), 0) / 60.0
+                        FROM vapi_call_usage
+                        WHERE tenant_id = %s AND ended_at IS NOT NULL AND ended_at >= %s AND ended_at < %s
+                        """,
+                        (tenant_id, start, end),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        used_minutes_month = round(float(row[0] or 0), 2)
+        except Exception as e:
+            if "does not exist" not in str(e).lower():
+                logger.warning("tenant quota usage query failed: %s", e)
+
+    usage_pct = (used_minutes_month / included * 100) if included else (100.0 if used_minutes_month else 0.0)
+    remaining = max(0, included - used_minutes_month) if included else 0
+
+    return {
+        "tenant_id": tenant_id,
+        "month_utc": month,
+        "plan_key": plan_key,
+        "included_minutes_month": included,
+        "used_minutes_month": used_minutes_month,
+        "usage_pct": round(usage_pct, 1),
+        "remaining_minutes_month": int(remaining),
+    }
 
 
 @router.post("/admin/tenants/{tenant_id}/users")

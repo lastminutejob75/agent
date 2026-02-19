@@ -36,10 +36,44 @@ export const adminApi = {
 
   listTenants: (params = "") => adminFetch(`/api/admin/tenants${params}`, { method: "GET" }),
   getTenant: (id) => adminFetch(`/api/admin/tenants/${id}`, { method: "GET" }),
+  /** Mappe sur PATCH /params (tenant_config.params_json). Ne met pas à jour name/timezone (table tenants). */
+  updateTenant: (id, payload) => {
+    const params = {};
+    if (payload.contact_email !== undefined) params.contact_email = payload.contact_email;
+    if (payload.billing_email !== undefined) params.billing_email = payload.billing_email;
+    if (payload.manager_phone !== undefined) params.responsible_phone = payload.manager_phone;
+    if (payload.manager_name !== undefined) params.manager_name = payload.manager_name;
+    if (payload.notes !== undefined) params.notes = payload.notes;
+    if (Object.keys(params).length === 0) return Promise.resolve();
+    return adminFetch(`/api/admin/tenants/${id}/params`, { method: "PATCH", body: JSON.stringify({ params }) });
+  },
+  /** Mappe sur PATCH /params. DID = routing (addRouting), pas un champ unique. */
+  updateTenantTelephony: (id, payload) => {
+    const params = {};
+    if (payload.transfer_number !== undefined) params.transfer_number = payload.transfer_number;
+    if (Object.keys(params).length === 0) return Promise.resolve();
+    return adminFetch(`/api/admin/tenants/${id}/params`, { method: "PATCH", body: JSON.stringify({ params }) });
+  },
+  updateTenantVapi: (id, payload) => {
+    const params = {};
+    if (payload.vapi_assistant_id !== undefined) params.vapi_assistant_id = payload.vapi_assistant_id;
+    if (Object.keys(params).length === 0) return Promise.resolve();
+    return adminFetch(`/api/admin/tenants/${id}/params`, { method: "PATCH", body: JSON.stringify({ params }) });
+  },
   createTenant: (payload) =>
     adminFetch("/api/admin/tenants", {
       method: "POST",
       body: JSON.stringify(payload),
+    }),
+  patchTenantParams: (id, params) =>
+    adminFetch(`/api/admin/tenants/${id}/params`, {
+      method: "PATCH",
+      body: JSON.stringify({ params }),
+    }),
+  patchTenantFlags: (id, flags) =>
+    adminFetch(`/api/admin/tenants/${id}/flags`, {
+      method: "PATCH",
+      body: JSON.stringify({ flags }),
     }),
   deleteTenant: (id) =>
     adminFetch(`/api/admin/tenants/${id}`, { method: "DELETE" }),
@@ -55,6 +89,10 @@ export const adminApi = {
     adminFetch(`/api/admin/tenants/${id}/technical-status`, { method: "GET" }),
   getTenantBilling: (id) =>
     adminFetch(`/api/admin/tenants/${id}/billing`, { method: "GET" }),
+  getBillingPlans: () =>
+    adminFetch("/api/admin/billing/plans", { method: "GET" }),
+  getTenantQuota: (id, month) =>
+    adminFetch(`/api/admin/tenants/${id}/quota?month=${encodeURIComponent(month)}`, { method: "GET" }),
   tenantSuspend: (id, mode = "hard") =>
     adminFetch(`/api/admin/tenants/${id}/suspend`, {
       method: "POST",
@@ -70,7 +108,7 @@ export const adminApi = {
   createStripeCustomer: (id) =>
     adminFetch(`/api/admin/tenants/${id}/stripe-customer`, { method: "POST" }),
   getTenantUsage: (id, month) =>
-    adminFetch(`/api/admin/tenants/${id}/usage?month=${month}`, { method: "GET" }),
+    adminFetch(`/api/admin/tenants/${id}/usage?month=${encodeURIComponent(month)}`, { method: "GET" }),
   getKpisWeekly: (tenantId, start, end) =>
     adminFetch(`/api/admin/kpis/weekly?tenant_id=${tenantId}&start=${start}&end=${end}`, { method: "GET" }),
   getRgpd: (tenantId, start, end) =>

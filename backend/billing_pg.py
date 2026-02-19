@@ -455,3 +455,88 @@ def run_suspension_past_due_job(days_after_period_end: int = 7) -> int:
         if "does not exist" not in str(e).lower() and "column" not in str(e).lower():
             logger.warning("run_suspension_past_due_job failed: %s", e)
         return 0
+
+
+# --- Billing plans (quota minutes V1) ---
+
+DEFAULT_PLANS = [
+    ("starter", 500),
+    ("pro", 1500),
+    ("business", 5000),
+    ("custom", 0),  # 0 = illimité ou à définir manuellement
+    ("free", 0),
+]
+
+
+def ensure_billing_plans() -> None:
+    """Crée la table billing_plans si besoin et insère les plans par défaut si vide."""
+    url = _pg_url()
+    if not url:
+        return
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS billing_plans (
+                        plan_key TEXT PRIMARY KEY,
+                        included_minutes_month INT NOT NULL DEFAULT 0,
+                        updated_at TIMESTAMPTZ DEFAULT now()
+                    )
+                """)
+                conn.commit()
+                cur.execute("SELECT COUNT(*) FROM billing_plans")
+                if cur.fetchone()[0] == 0:
+                    for plan_key, mins in DEFAULT_PLANS:
+                        cur.execute(
+                            "INSERT INTO billing_plans (plan_key, included_minutes_month) VALUES (%s, %s) ON CONFLICT (plan_key) DO NOTHING",
+                            (plan_key, mins),
+                        )
+                    conn.commit()
+    except Exception as e:
+        if "does not exist" not in str(e).lower():
+            logger.warning("ensure_billing_plans failed: %s", e)
+
+
+def get_billing_plans() -> list:
+    """Liste les plans (plan_key, included_minutes_month). Fallback sur DEFAULT_PLANS si table absente."""
+    ensure_billing_plans()
+    url = _pg_url()
+    if not url:
+        return [{"plan_key": k, "included_minutes_month": v} for k, v in DEFAULT_PLANS]
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+        with psycopg.connect(url, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT plan_key, included_minutes_month FROM billing_plans ORDER BY included_minutes_month ASC")
+                rows = cur.fetchall()
+                return [{"plan_key": r["plan_key"], "included_minutes_month": int(r["included_minutes_month"] or 0)} for r in rows]
+    except Exception as e:
+        if "does not exist" not in str(e).lower():
+            logger.warning("get_billing_plans failed: %s", e)
+        return [{"plan_key": k, "included_minutes_month": v} for k, v in DEFAULT_PLANS]
+
+
+def get_plan_included_minutes(plan_key: Optional[str]) -> int:
+    """Retourne included_minutes_month pour le plan (0 si free/unknown/custom)."""
+    if not (plan_key or "").strip():
+        return 0
+    plan_key = (plan_key or "").strip().lower()
+    url = _pg_url()
+    if url:
+        try:
+            import psycopg
+            with psycopg.connect(url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT included_minutes_month FROM billing_plans WHERE plan_key = %s", (plan_key,))
+                    row = cur.fetchone()
+                    if row:
+                        return int(row[0] or 0)
+        except Exception as e:
+            if "does not exist" not in str(e).lower():
+                logger.debug("get_plan_included_minutes: %s", e)
+    for k, v in DEFAULT_PLANS:
+        if k == plan_key:
+            return v
+    return 0

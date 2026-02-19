@@ -156,8 +156,12 @@ def get_params(tenant_id: Optional[int] = None) -> Dict[str, str]:
 
 
 def set_params(tenant_id: int, params: Dict[str, str]) -> None:
-    """Met à jour params_json d'un tenant (calendar_provider, calendar_id, contact_email, consent_mode, business_name, transfer_phone, horaires, etc.)."""
-    allowed = ("calendar_provider", "calendar_id", "contact_email", "consent_mode", "business_name", "transfer_phone", "horaires")
+    """Met à jour params_json (merge shallow). Clés à plat."""
+    allowed = (
+        "calendar_provider", "calendar_id", "contact_email", "consent_mode", "business_name",
+        "transfer_phone", "transfer_number", "horaires",
+        "responsible_phone", "manager_name", "billing_email", "vapi_assistant_id", "plan_key", "notes",
+    )
     filtered = {k: str(v) for k, v in params.items() if k in allowed and v is not None}
     if not filtered:
         return

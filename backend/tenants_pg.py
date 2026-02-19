@@ -179,6 +179,9 @@ def pg_create_tenant(
     timezone: str = "Europe/Paris",
     business_type: Optional[str] = None,
     notes: Optional[str] = None,
+    status: str = "active",
+    plan_key: Optional[str] = None,
+    billing_email: Optional[str] = None,
 ) -> Optional[int]:
     """
     Crée un tenant + tenant_config dans PG.
@@ -188,13 +191,15 @@ def pg_create_tenant(
     if not url:
         return None
 
+    status_val = (status or "active").strip() or "active"
+
     def _do() -> Optional[int]:
         import psycopg
         with psycopg.connect(url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "INSERT INTO tenants (name, timezone, status) VALUES (%s, %s, 'active') RETURNING tenant_id",
-                    (name.strip() or "Nouveau", timezone),
+                    "INSERT INTO tenants (name, timezone, status) VALUES (%s, %s, %s) RETURNING tenant_id",
+                    (name.strip() or "Nouveau", timezone, status_val),
                 )
                 row = cur.fetchone()
                 if not row:
@@ -206,6 +211,8 @@ def pg_create_tenant(
                     "contact_email": contact_email or "",
                     "business_type": (business_type or "").strip() or None,
                     "notes": (notes or "").strip() or None,
+                    "plan_key": (plan_key or "").strip() or None,
+                    "billing_email": (billing_email or "").strip() or None,
                 }
                 params = {k: v for k, v in params.items() if v is not None}
                 cur.execute(
@@ -259,8 +266,12 @@ def pg_update_tenant_flags(tenant_id: int, flags: dict) -> bool:
 
 
 def pg_update_tenant_params(tenant_id: int, params: dict) -> bool:
-    """Met à jour params_json (merge). Champs autorisés: calendar_provider, calendar_id, contact_email, timezone, consent_mode, business_name, transfer_phone, horaires."""
-    allowed = {"calendar_provider", "calendar_id", "contact_email", "timezone", "consent_mode", "business_name", "transfer_phone", "horaires"}
+    """Met à jour params_json (merge shallow). Clés à plat pour éviter merge profond."""
+    allowed = {
+        "calendar_provider", "calendar_id", "contact_email", "timezone", "consent_mode", "business_name",
+        "transfer_phone", "transfer_number", "horaires",
+        "responsible_phone", "manager_name", "billing_email", "vapi_assistant_id", "plan_key", "notes",
+    }
     filtered = {k: str(v) for k, v in params.items() if k in allowed and v is not None}
     if not filtered:
         return True
