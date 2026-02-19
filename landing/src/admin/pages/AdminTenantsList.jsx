@@ -6,13 +6,20 @@ export default function AdminTenantsList() {
   const [tenants, setTenants] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
+  const [errStatus, setErrStatus] = useState(null);
   const [search, setSearch] = useState("");
 
   useEffect(() => {
     adminApi
       .listTenants("?include_inactive=true")
-      .then((r) => setTenants(r.tenants || r || []))
-      .catch((e) => setErr(e.message))
+      .then((r) => {
+        const raw = r?.tenants ?? r;
+        setTenants(Array.isArray(raw) ? raw : []);
+      })
+      .catch((e) => {
+        setErr(e?.message ?? (e?.data?.detail ?? String(e)) ?? "Erreur de chargement");
+        setErrStatus(e?.status);
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -29,7 +36,14 @@ export default function AdminTenantsList() {
   }
   if (err) {
     return (
-      <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">{err}</div>
+      <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
+        <p>{err}</p>
+        {errStatus === 401 && (
+          <Link to="/admin/login" className="mt-2 inline-block text-indigo-600 hover:underline font-medium">
+            Revenir à la connexion
+          </Link>
+        )}
+      </div>
     );
   }
 
@@ -64,13 +78,13 @@ export default function AdminTenantsList() {
           </div>
         ) : (
           <ul className="divide-y divide-gray-200">
-            {filtered.map((t) => {
+            {filtered.map((t, index) => {
               const id = t.tenant_id ?? t.id;
               const name = t.name || "Sans nom";
               const status = t.status || "active";
               return (
                 <li
-                  key={id}
+                  key={id != null ? id : `row-${index}`}
                   className="flex flex-wrap items-center justify-between gap-3 px-6 py-4 hover:bg-gray-50"
                 >
                   <div>
@@ -83,19 +97,23 @@ export default function AdminTenantsList() {
                     )}
                   </div>
                   <div className="flex gap-2">
-                    <Link
-                      to={`/admin/tenants/${id}`}
-                      className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
-                    >
-                      Détail
-                    </Link>
-                    {status === "active" && (
-                      <Link
-                        to={`/admin/tenants/${id}/dashboard`}
-                        className="px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700"
-                      >
-                        Dashboard
-                      </Link>
+                    {id != null && (
+                      <>
+                        <Link
+                          to={`/admin/tenants/${id}`}
+                          className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+                        >
+                          Détail
+                        </Link>
+                        {status === "active" && (
+                          <Link
+                            to={`/admin/tenants/${id}/dashboard`}
+                            className="px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700"
+                          >
+                            Dashboard
+                          </Link>
+                        )}
+                      </>
                     )}
                   </div>
                 </li>
