@@ -21,6 +21,7 @@ import AdminTenantDashboard from "./admin/pages/AdminTenantDashboard";
 import AdminCalls from "./admin/pages/AdminCalls";
 import AdminMonitoring from "./admin/pages/AdminMonitoring";
 import AdminAuditLog from "./admin/pages/AdminAuditLog";
+import AdminOperations from "./admin/pages/AdminOperations";
 import AdminNotFound from "./admin/pages/AdminNotFound";
 
 export default function App() {
@@ -53,6 +54,7 @@ export default function App() {
                   <Route path="tenants/:id/calls" element={<AdminCalls />} />
                   <Route path="calls" element={<AdminCalls />} />
                   <Route path="monitoring" element={<AdminMonitoring />} />
+                  <Route path="operations" element={<AdminOperations />} />
                   <Route path="audit" element={<AdminAuditLog />} />
                   <Route path="*" element={<AdminNotFound />} />
                 </Route>

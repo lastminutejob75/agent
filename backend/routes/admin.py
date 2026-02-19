@@ -2605,9 +2605,8 @@ def _get_billing_snapshot() -> dict:
                         SELECT tb.tenant_id, tb.billing_status, tb.current_period_end, t.name
                         FROM tenant_billing tb
                         JOIN tenants t ON t.tenant_id = tb.tenant_id
-                        WHERE tb.billing_status = %s
+                        WHERE tb.billing_status IN ('past_due', 'unpaid')
                         """,
-                        ("past_due",),
                     )
                     rows = cur.fetchall()
                     out["tenant_ids_past_due"] = [int(r["tenant_id"]) for r in rows if r and r.get("tenant_id")]
@@ -2640,12 +2639,213 @@ def admin_stats_global(
     return _get_global_stats(window_days)
 
 
+def _get_operations_snapshot(window_days: int = 7) -> dict:
+    """
+    Snapshot unique pour /admin/operations : billing, suspensions, cost today/7d, errors.
+    Tout en 1 appel. Today = UTC.
+    Errors = event anti_loop_trigger (liste stricte).
+    """
+    from datetime import datetime, timezone, timedelta
+
+    now = datetime.now(timezone.utc)
+    generated_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Billing : réutilise _get_billing_snapshot + month_utc
+    billing = _get_billing_snapshot()
+    billing["month_utc"] = now.strftime("%Y-%m")
+    # Enrichir top_tenants_by_cost_this_month avec last_activity_at si on a PG events
+    url_events = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    if url_events and billing.get("top_tenants_by_cost_this_month"):
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            tids = [t["tenant_id"] for t in billing["top_tenants_by_cost_this_month"] if t.get("tenant_id") is not None]
+            month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+            if tids:
+                with psycopg.connect(url_events, row_factory=dict_row) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            SELECT client_id AS tenant_id, MAX(created_at) AS last_activity_at
+                            FROM ivr_events
+                            WHERE client_id = ANY(%s) AND created_at >= %s
+                            GROUP BY client_id
+                            """,
+                            (tids, month_start),
+                        )
+                        last_by_tenant = {r["tenant_id"]: r["last_activity_at"] for r in cur.fetchall() if r.get("tenant_id")}
+                for t in billing["top_tenants_by_cost_this_month"]:
+                    la = last_by_tenant.get(t["tenant_id"])
+                    t["last_activity_at"] = la.isoformat() + "Z" if la and hasattr(la, "isoformat") else (str(la) if la else None)
+        except Exception as e:
+            if "does not exist" not in str(e).lower():
+                logger.warning("operations_snapshot last_activity: %s", e)
+
+    # Suspensions : tenant_billing JOIN tenants
+    url_billing = os.environ.get("DATABASE_URL") or os.environ.get("PG_TENANTS_URL")
+    suspensions = {"suspended_total": 0, "items": []}
+    if url_billing:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            with psycopg.connect(url_billing, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    try:
+                        cur.execute(
+                            """
+                            SELECT tb.tenant_id, t.name, tb.suspension_reason AS reason, tb.suspension_mode AS mode,
+                                   tb.suspended_at, tb.force_active_until
+                            FROM tenant_billing tb
+                            JOIN tenants t ON t.tenant_id = tb.tenant_id
+                            WHERE tb.is_suspended = TRUE
+                            ORDER BY tb.suspended_at DESC NULLS LAST
+                            """,
+                        )
+                    except Exception:
+                        cur.execute(
+                            """
+                            SELECT tb.tenant_id, t.name, tb.suspension_reason AS reason,
+                                   tb.suspended_at, tb.force_active_until
+                            FROM tenant_billing tb
+                            JOIN tenants t ON t.tenant_id = tb.tenant_id
+                            WHERE tb.is_suspended = TRUE
+                            ORDER BY tb.suspended_at DESC NULLS LAST
+                            """,
+                        )
+                    rows = cur.fetchall()
+                    for r in rows:
+                        mode = r.get("mode") if r.get("mode") else "hard"
+                        suspended_at = r.get("suspended_at")
+                        force_active_until = r.get("force_active_until")
+                        if suspended_at and hasattr(suspended_at, "isoformat"):
+                            suspended_at = suspended_at.isoformat() + "Z"
+                        if force_active_until and hasattr(force_active_until, "isoformat"):
+                            force_active_until = force_active_until.isoformat() + "Z"
+                        suspensions["items"].append({
+                            "tenant_id": int(r["tenant_id"]),
+                            "name": (r.get("name") or "").strip() or f"Tenant #{r['tenant_id']}",
+                            "reason": r.get("reason") or "manual",
+                            "mode": mode,
+                            "suspended_at": suspended_at,
+                            "force_active_until": force_active_until,
+                        })
+                    suspensions["suspended_total"] = len(suspensions["items"])
+        except Exception as e:
+            if "does not exist" not in str(e).lower() and "tenant_billing" not in str(e).lower():
+                logger.warning("operations_snapshot suspensions: %s", e)
+
+    # Cost today UTC + last 7d (vapi_call_usage)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_str = today_start.strftime("%Y-%m-%d %H:%M:%S")
+    end_str = now.strftime("%Y-%m-%d %H:%M:%S")
+    seven_d_start = (today_start - timedelta(days=window_days))
+    seven_d_str = seven_d_start.strftime("%Y-%m-%d %H:%M:%S")
+
+    cost = {"today_utc": {"total_usd": 0.0, "top": []}, "last_7d": {"total_usd": 0.0, "top": []}}
+    if url_events:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            with psycopg.connect(url_events, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    for label, start_s, end_s in [("today_utc", today_str, end_str), ("last_7d", seven_d_str, end_str)]:
+                        cur.execute(
+                            """
+                            SELECT COALESCE(SUM(cost_usd), 0) AS total
+                            FROM vapi_call_usage
+                            WHERE ended_at IS NOT NULL AND ended_at >= %s AND ended_at <= %s
+                            """,
+                            (start_s, end_s),
+                        )
+                        row = cur.fetchone()
+                        cost[label]["total_usd"] = round(float(row["total"] or 0), 2)
+                        cur.execute(
+                            """
+                            SELECT tenant_id, COALESCE(SUM(cost_usd), 0) AS value
+                            FROM vapi_call_usage
+                            WHERE ended_at IS NOT NULL AND ended_at >= %s AND ended_at <= %s
+                            GROUP BY tenant_id ORDER BY value DESC LIMIT 5
+                            """,
+                            (start_s, end_s),
+                        )
+                        for r in cur.fetchall():
+                            tid = r.get("tenant_id")
+                            d = _get_tenant_detail(tid) if tid else {}
+                            cost[label]["top"].append({
+                                "tenant_id": tid,
+                                "name": d.get("name") or f"Tenant #{tid}",
+                                "value": round(float(r.get("value") or 0), 2),
+                            })
+        except Exception as e:
+            if "does not exist" not in str(e).lower():
+                logger.warning("operations_snapshot cost: %s", e)
+
+    # Errors : top tenants par anti_loop_trigger (7j) + total
+    errors = {"window_days": window_days, "top_tenants": [], "errors_total": 0}
+    if url_events:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            with psycopg.connect(url_events, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT client_id AS tenant_id, COUNT(*) AS errors_total, MAX(created_at) AS last_error_at
+                        FROM ivr_events
+                        WHERE event = 'anti_loop_trigger' AND created_at >= %s AND created_at <= %s
+                        GROUP BY client_id ORDER BY errors_total DESC LIMIT 10
+                        """,
+                        (seven_d_str, end_str),
+                    )
+                    for r in cur.fetchall():
+                        tid = r.get("tenant_id")
+                        d = _get_tenant_detail(tid) if tid else {}
+                        last_at = r.get("last_error_at")
+                        if last_at and hasattr(last_at, "isoformat"):
+                            last_at = last_at.isoformat() + "Z"
+                        errors["top_tenants"].append({
+                            "tenant_id": tid,
+                            "name": d.get("name") or f"Tenant #{tid}",
+                            "errors_total": int(r.get("errors_total") or 0),
+                            "last_error_at": last_at,
+                        })
+                    cur.execute(
+                        """
+                        SELECT COUNT(*) AS c FROM ivr_events
+                        WHERE event = 'anti_loop_trigger' AND created_at >= %s AND created_at <= %s
+                        """,
+                        (seven_d_str, end_str),
+                    )
+                    row = cur.fetchone()
+                    errors["errors_total"] = int(row["c"] or 0)
+        except Exception as e:
+            if "does not exist" not in str(e).lower():
+                logger.warning("operations_snapshot errors: %s", e)
+
+    return {
+        "generated_at": generated_at,
+        "billing": billing,
+        "suspensions": suspensions,
+        "cost": cost,
+        "errors": errors,
+    }
+
+
 @router.get("/admin/stats/billing-snapshot")
 def admin_stats_billing_snapshot(
     _: None = Depends(_verify_admin),
 ):
     """Coût Vapi ce mois (UTC), top tenants par coût ce mois, nombre de tenants past_due. Sans prix Stripe."""
     return _get_billing_snapshot()
+
+
+@router.get("/admin/stats/operations-snapshot")
+def admin_stats_operations_snapshot(
+    window_days: int = Query(7, ge=1, le=30),
+    _: None = Depends(_verify_admin),
+):
+    """Snapshot unique pour /admin/operations : billing, suspensions, cost today/7d, errors. 1 seul fetch côté front."""
+    return _get_operations_snapshot(window_days)
 
 
 @router.get("/admin/stats/timeseries")
