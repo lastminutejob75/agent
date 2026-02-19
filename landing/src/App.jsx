@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, Outlet } from "react-router-dom";
 import UwiLanding from "./components/UwiLanding";
 import Onboarding from "./pages/Onboarding";
 import Login from "./pages/Login";
