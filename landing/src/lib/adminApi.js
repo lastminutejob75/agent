@@ -36,6 +36,9 @@ export const adminApi = {
 
   listTenants: (params = "") => adminFetch(`/api/admin/tenants${params}`, { method: "GET" }),
   getTenant: (id) => adminFetch(`/api/admin/tenants/${id}`, { method: "GET" }),
+  /** Token 5 min pour ouvrir /app/impersonate?token=... (voir comme le client). */
+  impersonate: (tenantId) =>
+    adminFetch(`/api/admin/tenants/${tenantId}/impersonate`, { method: "POST" }),
   /** Mappe sur PATCH /params (tenant_config.params_json). Ne met pas à jour name/timezone (table tenants). */
   updateTenant: (id, payload) => {
     const params = {};

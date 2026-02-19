@@ -271,6 +271,7 @@ def pg_update_tenant_params(tenant_id: int, params: dict) -> bool:
         "calendar_provider", "calendar_id", "contact_email", "timezone", "consent_mode", "business_name",
         "transfer_phone", "transfer_number", "horaires",
         "responsible_phone", "manager_name", "billing_email", "vapi_assistant_id", "plan_key", "notes",
+        "custom_included_minutes_month",
     }
     filtered = {k: str(v) for k, v in params.items() if k in allowed and v is not None}
     if not filtered:

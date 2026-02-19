@@ -93,10 +93,19 @@ export const api = {
     request("/api/admin/tenants", { method: "POST", body: payload, admin: true }),
 
   // auth ( Magic Link )
-  authRequestLink: (email) =>
-    request("/api/auth/request-link", { method: "POST", body: { email } }),
+  authRequestLink: (email, supportContext) =>
+    request("/api/auth/request-link", {
+      method: "POST",
+      body: {
+        email,
+        ...(supportContext?.from && { from: supportContext.from }),
+        ...(supportContext?.tenant && { tenant: supportContext.tenant }),
+      },
+    }),
   authVerify: (token) =>
     request(`/api/auth/verify?token=${encodeURIComponent(token)}`),
+  tenantImpersonateValidate: (token) =>
+    request(`/api/auth/impersonate?token=${encodeURIComponent(token)}`),
 
   // tenant ( protégé JWT )
   tenantMe: () => request("/api/tenant/me", { tenant: true }),

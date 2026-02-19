@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { adminApi } from "../../lib/adminApi";
+import { getClientLoginUrl } from "../../lib/clientAppUrl";
 
 const WINDOW_OPTIONS = [7, 14, 30];
 
@@ -81,6 +82,7 @@ export default function AdminOperations() {
   const suspensions = data?.suspensions ?? { items: [] };
   const cost = data?.cost ?? { today_utc: { total_usd: 0, top: [] }, last_7d: { total_usd: 0, top: [] } };
   const errors = data?.errors ?? { top_tenants: [], errors_total: 0 };
+  const quota = data?.quota ?? { month_utc: null, over_80: [], over_100: [] };
 
   return (
     <div className="space-y-8">
@@ -130,7 +132,7 @@ export default function AdminOperations() {
         {billing.tenants_past_due?.length > 0 ? (
           <ul className="mt-3 space-y-2">
             {billing.tenants_past_due.map((t) => (
-              <li key={t.tenant_id} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0">
+              <li key={t.tenant_id} className="flex items-center justify-between gap-2 py-2 border-b border-slate-100 last:border-0 flex-wrap">
                 <Link to={`/admin/tenants/${t.tenant_id}`} className="text-indigo-600 hover:underline font-medium">
                   {t.name}
                 </Link>
@@ -138,12 +140,78 @@ export default function AdminOperations() {
                   {t.billing_status}
                   {t.current_period_end && ` · Période jusqu'au ${new Date(t.current_period_end).toLocaleDateString("fr-FR")}`}
                 </span>
+                <a
+                  href={getClientLoginUrl(undefined, t.tenant_id)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-indigo-600 hover:underline whitespace-nowrap"
+                  title="Page de connexion client"
+                >
+                  Connexion client ↗
+                </a>
               </li>
             ))}
           </ul>
         ) : (
           <p className="text-slate-500 mt-3 text-sm">Aucun client past_due.</p>
         )}
+      </section>
+
+      {/* Quota risk */}
+      <section className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
+        <h2 className="text-lg font-semibold text-slate-800">Quota risk</h2>
+        <p className="text-sm text-slate-500 mt-0.5">
+          Utilisation minutes ce mois UTC
+          {quota.month_utc && <span className="ml-1">({quota.month_utc})</span>}
+        </p>
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div>
+            <h3 className="text-sm font-medium text-slate-600 flex items-center gap-2">
+              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">80%+</span>
+              {quota.over_80?.length ?? 0} tenant(s)
+            </h3>
+            {quota.over_80?.length > 0 ? (
+              <ul className="mt-2 space-y-2">
+                {quota.over_80.map((t) => (
+                  <li key={t.tenant_id} className="flex flex-wrap items-center justify-between gap-2 py-2 border-b border-slate-100 last:border-0">
+                    <Link to={`/admin/tenants/${t.tenant_id}`} className="text-indigo-600 hover:underline font-medium truncate pr-2">
+                      {t.name}
+                    </Link>
+                    <span className="text-slate-600 font-mono text-sm whitespace-nowrap">
+                      {Number(t.used_minutes).toFixed(0)} / {t.included_minutes} min · {t.usage_pct}%
+                    </span>
+                    <a href={getClientLoginUrl(undefined, t.tenant_id)} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-600 hover:underline" title="Connexion client">↗</a>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-slate-500 mt-2 text-sm">Aucun.</p>
+            )}
+          </div>
+          <div>
+            <h3 className="text-sm font-medium text-slate-600 flex items-center gap-2">
+              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">100%+</span>
+              {quota.over_100?.length ?? 0} tenant(s)
+            </h3>
+            {quota.over_100?.length > 0 ? (
+              <ul className="mt-2 space-y-2">
+                {quota.over_100.map((t) => (
+                  <li key={t.tenant_id} className="flex flex-wrap items-center justify-between gap-2 py-2 border-b border-slate-100 last:border-0">
+                    <Link to={`/admin/tenants/${t.tenant_id}`} className="text-indigo-600 hover:underline font-medium truncate pr-2">
+                      {t.name}
+                    </Link>
+                    <span className="text-slate-600 font-mono text-sm whitespace-nowrap">
+                      {Number(t.used_minutes).toFixed(0)} / {t.included_minutes} min · {t.usage_pct}%
+                    </span>
+                    <a href={getClientLoginUrl(undefined, t.tenant_id)} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-600 hover:underline" title="Connexion client">↗</a>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-slate-500 mt-2 text-sm">Aucun.</p>
+            )}
+          </div>
+        </div>
       </section>
 
       {/* Suspendus */}
@@ -163,7 +231,16 @@ export default function AdminOperations() {
                     {s.suspended_at && ` · depuis ${new Date(s.suspended_at).toLocaleDateString("fr-FR")}`}
                   </span>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 items-center">
+                  <a
+                    href={getClientLoginUrl(undefined, s.tenant_id)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-indigo-600 hover:underline whitespace-nowrap"
+                    title="Page de connexion client"
+                  >
+                    Connexion client ↗
+                  </a>
                   <button
                     type="button"
                     onClick={() => handleUnsuspend(s.tenant_id)}

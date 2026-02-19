@@ -346,3 +346,156 @@ def test_admin_add_user_email_conflict_other_tenant_409(mock_add, client, admin_
         json={"email": "contact@client.com", "role": "owner"},
     )
     assert r.status_code == 409
+
+
+# --- Quota (custom override) ---
+
+
+@patch("backend.routes.admin._get_tenant_detail")
+@patch("backend.routes.admin.get_tenant_billing")
+@patch("backend.config.USE_PG_TENANTS", False)
+def test_quota_custom_override(mock_billing, mock_detail, client, admin_headers):
+    """plan_key=custom + custom_included_minutes_month=300 → included=300, quota_source=custom."""
+    mock_detail.return_value = {
+        "tenant_id": 1,
+        "params": {"plan_key": "custom", "custom_included_minutes_month": "300"},
+    }
+    mock_billing.return_value = None
+    r = client.get("/api/admin/tenants/1/quota", headers=admin_headers, params={"month": "2026-01"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["plan_key"] == "custom"
+    assert data["included_minutes_month"] == 300
+    assert data["quota_source"] == "custom"
+
+
+@patch("backend.routes.admin._get_tenant_detail")
+@patch("backend.routes.admin.get_tenant_billing")
+@patch("backend.config.USE_PG_TENANTS", False)
+def test_quota_custom_no_value(mock_billing, mock_detail, client, admin_headers):
+    """plan_key=custom sans custom_included_minutes_month → included=0, quota_source=plan."""
+    mock_detail.return_value = {"tenant_id": 1, "params": {"plan_key": "custom"}}
+    mock_billing.return_value = None
+    r = client.get("/api/admin/tenants/1/quota", headers=admin_headers, params={"month": "2026-01"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["plan_key"] == "custom"
+    assert data["included_minutes_month"] == 0
+    assert data["quota_source"] == "plan"
+
+
+@patch("backend.routes.admin._get_tenant_detail")
+@patch("backend.routes.admin.get_tenant_billing")
+@patch("backend.config.USE_PG_TENANTS", False)
+def test_quota_custom_zero(mock_billing, mock_detail, client, admin_headers):
+    """plan_key=custom avec custom_included_minutes_month=0 → included=0, quota_source=plan."""
+    mock_detail.return_value = {
+        "tenant_id": 1,
+        "params": {"plan_key": "custom", "custom_included_minutes_month": "0"},
+    }
+    mock_billing.return_value = None
+    r = client.get("/api/admin/tenants/1/quota", headers=admin_headers, params={"month": "2026-01"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["plan_key"] == "custom"
+    assert data["included_minutes_month"] == 0
+    assert data["quota_source"] == "plan"
+
+
+# --- Priorité 2: Tests socle (UTC, résolution plan, auth) ---
+
+
+def test_billing_plans_requires_admin(client):
+    """GET /api/admin/billing/plans sans token → 401."""
+    r = client.get("/api/admin/billing/plans")
+    assert r.status_code == 401
+
+
+@patch("backend.config.USE_PG_TENANTS", False)
+def test_quota_requires_admin(client):
+    """GET /api/admin/tenants/1/quota sans token → 401."""
+    r = client.get("/api/admin/tenants/1/quota", params={"month": "2026-01"})
+    assert r.status_code == 401
+
+
+@patch("backend.routes.admin._get_tenant_detail")
+@patch("backend.routes.admin.get_tenant_billing")
+@patch("backend.config.USE_PG_TENANTS", False)
+def test_quota_plan_resolution_order_params_wins(mock_billing, mock_detail, client, admin_headers):
+    """Cas 1: params.plan_key=pro + tenant_billing.plan_key=starter → choisi pro (params > tenant_billing)."""
+    mock_detail.return_value = {"tenant_id": 1, "params": {"plan_key": "pro"}}
+    mock_billing.return_value = {"plan_key": "starter"}
+    with patch("backend.routes.admin.get_plan_included_minutes") as mock_plan:
+        mock_plan.return_value = 1500  # pro
+        r = client.get("/api/admin/tenants/1/quota", headers=admin_headers, params={"month": "2026-01"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["plan_key"] == "pro"
+    assert data["included_minutes_month"] == 1500
+    mock_plan.assert_called_with("pro")
+
+
+@patch("backend.routes.admin._get_tenant_detail")
+@patch("backend.routes.admin.get_tenant_billing")
+@patch("backend.config.USE_PG_TENANTS", False)
+def test_quota_plan_resolution_order_billing_fallback(mock_billing, mock_detail, client, admin_headers):
+    """Cas 2: params absent + tenant_billing.plan_key=business → choisi business."""
+    mock_detail.return_value = {"tenant_id": 1, "params": {}}
+    mock_billing.return_value = {"plan_key": "business"}
+    with patch("backend.routes.admin.get_plan_included_minutes") as mock_plan:
+        mock_plan.return_value = 5000
+        r = client.get("/api/admin/tenants/1/quota", headers=admin_headers, params={"month": "2026-01"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["plan_key"] == "business"
+    assert data["included_minutes_month"] == 5000
+    mock_plan.assert_called_with("business")
+
+
+@patch("backend.routes.admin._get_tenant_detail")
+@patch("backend.routes.admin.get_tenant_billing")
+@patch("backend.config.USE_PG_TENANTS", False)
+def test_quota_plan_resolution_order_free_default(mock_billing, mock_detail, client, admin_headers):
+    """Cas 3: aucun plan_key → free."""
+    mock_detail.return_value = {"tenant_id": 1, "params": {}}
+    mock_billing.return_value = None
+    with patch("backend.routes.admin.get_plan_included_minutes") as mock_plan:
+        mock_plan.return_value = 0
+        r = client.get("/api/admin/tenants/1/quota", headers=admin_headers, params={"month": "2026-01"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["plan_key"] == "free"
+    assert data["included_minutes_month"] == 0
+    mock_plan.assert_called_with("free")
+
+
+@patch("backend.routes.admin._get_tenant_detail")
+@patch("backend.routes.admin.get_tenant_billing")
+@patch("backend.config.USE_PG_TENANTS", False)
+def test_quota_month_utc_window(mock_billing, mock_detail, client, admin_headers):
+    """
+    Fenêtre mois UTC : [start, end[ avec end = 1er du mois suivant.
+    ended_at 2026-02-01 00:00:00Z compte dans 2026-02, ended_at 2026-03-01 00:00:00Z ne compte pas dans 2026-02.
+    Mock _get_quota_used_minutes : 5 min pour fév, 3 min pour mars.
+    """
+    mock_detail.return_value = {"tenant_id": 1, "params": {"plan_key": "starter"}}
+    mock_billing.return_value = None
+
+    def fake_used(tenant_id, start, end):
+        if end == "2026-03-01 00:00:00":
+            return 5.0  # février
+        if end == "2026-04-01 00:00:00":
+            return 3.0  # mars
+        return 0.0
+
+    with patch("backend.routes.admin.get_plan_included_minutes", return_value=500), patch(
+        "backend.routes.admin._get_quota_used_minutes", side_effect=fake_used
+    ):
+        r_feb = client.get("/api/admin/tenants/1/quota", headers=admin_headers, params={"month": "2026-02"})
+        r_mar = client.get("/api/admin/tenants/1/quota", headers=admin_headers, params={"month": "2026-03"})
+    assert r_feb.status_code == 200
+    assert r_mar.status_code == 200
+    assert r_feb.json()["used_minutes_month"] == 5.0
+    assert r_feb.json()["month_utc"] == "2026-02"
+    assert r_mar.json()["used_minutes_month"] == 3.0
+    assert r_mar.json()["month_utc"] == "2026-03"

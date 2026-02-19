@@ -1236,6 +1236,45 @@ def admin_get_tenant(
     return d
 
 
+IMPERSONATE_TTL_MINUTES = 5
+
+
+@router.post("/admin/tenants/{tenant_id}/impersonate")
+def admin_impersonate(
+    tenant_id: int = Depends(validate_tenant_id),
+    request: Request = None,
+    _: None = Depends(_verify_admin),
+):
+    """
+    Génère un token d’impersonation court (5 min) pour voir le dashboard client comme ce tenant.
+    Audit log: ADMIN_IMPERSONATION. Le token est un JWT tenant (scope=impersonate) accepté par /api/tenant/*.
+    """
+    JWT_SECRET = (os.environ.get("JWT_SECRET") or "").strip()
+    if not JWT_SECRET:
+        raise HTTPException(503, "JWT_SECRET not configured")
+    d = _get_tenant_detail(tenant_id)
+    if not d:
+        raise HTTPException(404, "Tenant not found")
+    admin_email = _get_admin_email_from_cookie(request) if request else None
+    admin_id = (admin_email or "admin").strip() or "admin"
+    now = datetime.utcnow()
+    exp = now + timedelta(minutes=IMPERSONATE_TTL_MINUTES)
+    payload = {
+        "sub": admin_id,
+        "tenant_id": tenant_id,
+        "email": admin_id,
+        "role": "owner",
+        "scope": "impersonate",
+        "impersonated_by": admin_id,
+        "exp": exp,
+        "iat": now,
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+    logger.info("ADMIN_IMPERSONATION tenant_id=%s admin=%s", tenant_id, admin_id)
+    expires_at = exp.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {"token": token, "expires_at": expires_at}
+
+
 @router.delete("/admin/tenants/{tenant_id}")
 def admin_delete_tenant(
     tenant_id: int = Depends(validate_tenant_id),
@@ -1797,6 +1836,31 @@ def admin_get_tenant_usage(
     return out
 
 
+def _get_quota_used_minutes(tenant_id: int, start: str, end: str) -> float:
+    """Somme duration_sec/60 pour le tenant sur [start, end[ (mois UTC). Utilisé par quota + tests."""
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    if not url:
+        return 0.0
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COALESCE(SUM(duration_sec), 0) / 60.0
+                    FROM vapi_call_usage
+                    WHERE tenant_id = %s AND ended_at IS NOT NULL AND ended_at >= %s AND ended_at < %s
+                    """,
+                    (tenant_id, start, end),
+                )
+                row = cur.fetchone()
+                return round(float(row[0] or 0), 2) if row else 0.0
+    except Exception as e:
+        if "does not exist" not in str(e).lower():
+            logger.warning("tenant quota usage query failed: %s", e)
+    return 0.0
+
+
 @router.get("/admin/billing/plans")
 def admin_get_billing_plans(_: None = Depends(_verify_admin)):
     """Liste des plans (plan_key, included_minutes_month) pour quota minutes."""
@@ -1823,33 +1887,25 @@ def admin_get_tenant_quota(
     except ValueError:
         raise HTTPException(400, "month must be YYYY-MM")
 
-    plan_key = (d.get("params") or {}).get("plan_key") or ""
+    params = d.get("params") or {}
+    plan_key = params.get("plan_key") or ""
     if not plan_key and get_tenant_billing(tenant_id):
         plan_key = (get_tenant_billing(tenant_id) or {}).get("plan_key") or ""
     plan_key = (plan_key or "").strip() or "free"
-    included = get_plan_included_minutes(plan_key)
 
-    used_minutes_month = 0.0
-    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
-    if url:
+    if plan_key == "custom":
         try:
-            import psycopg
-            with psycopg.connect(url) as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        SELECT COALESCE(SUM(duration_sec), 0) / 60.0
-                        FROM vapi_call_usage
-                        WHERE tenant_id = %s AND ended_at IS NOT NULL AND ended_at >= %s AND ended_at < %s
-                        """,
-                        (tenant_id, start, end),
-                    )
-                    row = cur.fetchone()
-                    if row:
-                        used_minutes_month = round(float(row[0] or 0), 2)
-        except Exception as e:
-            if "does not exist" not in str(e).lower():
-                logger.warning("tenant quota usage query failed: %s", e)
+            custom_val = int(params.get("custom_included_minutes_month") or 0)
+            included = custom_val if custom_val > 0 else get_plan_included_minutes("custom")
+            quota_source = "custom" if custom_val > 0 else "plan"
+        except (TypeError, ValueError):
+            included = get_plan_included_minutes("custom")
+            quota_source = "plan"
+    else:
+        included = get_plan_included_minutes(plan_key)
+        quota_source = "plan"
+
+    used_minutes_month = _get_quota_used_minutes(tenant_id, start, end)
 
     usage_pct = (used_minutes_month / included * 100) if included else (100.0 if used_minutes_month else 0.0)
     remaining = max(0, included - used_minutes_month) if included else 0
@@ -1862,6 +1918,7 @@ def admin_get_tenant_quota(
         "used_minutes_month": used_minutes_month,
         "usage_pct": round(usage_pct, 1),
         "remaining_minutes_month": int(remaining),
+        "quota_source": quota_source,
     }
 
 
@@ -2907,12 +2964,81 @@ def _get_operations_snapshot(window_days: int = 7) -> dict:
             if "does not exist" not in str(e).lower():
                 logger.warning("operations_snapshot errors: %s", e)
 
+    # Quota risk : tenants >80% et >100% ce mois UTC (même logique que GET .../quota)
+    month_utc = now.strftime("%Y-%m")
+    start_quota = f"{month_utc}-01 00:00:00"
+    try:
+        y, m = int(month_utc[:4]), int(month_utc[5:7])
+        end_quota = f"{y}-{m + 1:02d}-01 00:00:00" if m < 12 else f"{y + 1}-01-01 00:00:00"
+    except ValueError:
+        end_quota = start_quota
+    quota_risk = {"month_utc": month_utc, "over_80": [], "over_100": []}
+    if url_events:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            with psycopg.connect(url_events, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT tenant_id, COALESCE(SUM(duration_sec), 0) / 60.0 AS used_minutes
+                        FROM vapi_call_usage
+                        WHERE ended_at IS NOT NULL AND ended_at >= %s AND ended_at < %s
+                        GROUP BY tenant_id
+                        """,
+                        (start_quota, end_quota),
+                    )
+                    rows = cur.fetchall()
+            for r in rows:
+                tid = r.get("tenant_id")
+                if tid is None:
+                    continue
+                used_minutes = round(float(r.get("used_minutes") or 0), 2)
+                d = _get_tenant_detail(tid)
+                if not d:
+                    continue
+                params = d.get("params") or {}
+                plan_key = (params.get("plan_key") or "").strip()
+                if not plan_key and get_tenant_billing(tid):
+                    plan_key = (get_tenant_billing(tid) or {}).get("plan_key") or ""
+                plan_key = (plan_key or "").strip() or "free"
+                if plan_key == "custom":
+                    try:
+                        custom_val = int(params.get("custom_included_minutes_month") or 0)
+                        included = custom_val if custom_val > 0 else get_plan_included_minutes("custom")
+                    except (TypeError, ValueError):
+                        included = get_plan_included_minutes("custom")
+                else:
+                    included = get_plan_included_minutes(plan_key)
+                if included <= 0:
+                    continue
+                usage_pct = round((used_minutes / included) * 100, 1)
+                name = (d.get("name") or "").strip() or f"Tenant #{tid}"
+                item = {
+                    "tenant_id": int(tid),
+                    "name": name,
+                    "used_minutes": used_minutes,
+                    "included_minutes": included,
+                    "usage_pct": usage_pct,
+                }
+                if usage_pct > 100:
+                    quota_risk["over_100"].append(item)
+                if usage_pct >= 80:
+                    quota_risk["over_80"].append(item)
+            # over_80 peut contenir les mêmes que over_100 ; tri par usage_pct décroissant
+            quota_risk["over_80"].sort(key=lambda x: -x["usage_pct"])
+            quota_risk["over_100"].sort(key=lambda x: -x["usage_pct"])
+        except Exception as e:
+            if "does not exist" not in str(e).lower():
+                logger.warning("operations_snapshot quota: %s", e)
+
     return {
         "generated_at": generated_at,
         "billing": billing,
         "suspensions": suspensions,
         "cost": cost,
         "errors": errors,
+        "quota": quota_risk,
     }
 
 

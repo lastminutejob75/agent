@@ -8,6 +8,12 @@ import AppDashboard from "./pages/AppDashboard";
 import AppStatus from "./pages/AppStatus";
 import AppSettings from "./pages/AppSettings";
 import AppRgpd from "./pages/AppRgpd";
+import ImpersonatePage from "./pages/Impersonate";
+
+/** Layout neutre pour /app : rend uniquement les routes enfants (impersonate ou AppLayout). */
+function AppShell() {
+  return <Outlet />;
+}
 
 import { AdminAuthProvider } from "./admin/AdminAuthProvider";
 import ProtectedRoute from "./admin/ProtectedRoute";
@@ -32,11 +38,14 @@ export default function App() {
       <Route path="/onboarding" element={<Onboarding />} />
       <Route path="/login" element={<Login />} />
       <Route path="/auth/callback" element={<AuthCallback />} />
-      <Route path="/app" element={<AppLayout />}>
-        <Route index element={<AppDashboard />} />
-        <Route path="status" element={<AppStatus />} />
-        <Route path="settings" element={<AppSettings />} />
-        <Route path="rgpd" element={<AppRgpd />} />
+      <Route path="/app" element={<AppShell />}>
+        <Route path="impersonate" element={<ImpersonatePage />} />
+        <Route element={<AppLayout />}>
+          <Route index element={<AppDashboard />} />
+          <Route path="status" element={<AppStatus />} />
+          <Route path="settings" element={<AppSettings />} />
+          <Route path="rgpd" element={<AppRgpd />} />
+        </Route>
       </Route>
 
       <Route path="/admin" element={<AdminAuthProvider><Outlet /></AdminAuthProvider>}>

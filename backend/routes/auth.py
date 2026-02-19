@@ -11,6 +11,7 @@ import os
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta
+from typing import Optional
 
 import jwt
 from fastapi import APIRouter, HTTPException, Request
@@ -59,6 +60,8 @@ def _check_rate_limit(ip: str, email: str) -> bool:
 
 class RequestLinkBody(BaseModel):
     email: str = Field(..., max_length=255)
+    from_ref: Optional[str] = Field(None, alias="from", max_length=64)
+    tenant_tag: Optional[str] = Field(None, alias="tenant", max_length=128)
 
 
 def _get_tenant_name(tenant_id: int) -> str:
@@ -94,6 +97,14 @@ def auth_request_link(body: RequestLinkBody, request: Request):
     email = (body.email or "").strip().lower()
     if not email:
         return {"ok": True}
+
+    # Log support tag quand l’admin envoie le lien (from=admin + tenant=base64url)
+    if body.from_ref == "admin" and body.tenant_tag:
+        logger.info(
+            "LOGIN_REQUEST from=admin tenant_tag=%s email=%s",
+            (body.tenant_tag or "")[:64],
+            email[:50] if email else "(empty)",
+        )
 
     ip = _client_ip(request)
     if _check_rate_limit(ip, email):
@@ -152,4 +163,34 @@ def auth_verify(token: str = ""):
         "tenant_name": tenant_name,
         "email": email,
         "expires_in": expires_in,
+    }
+
+
+@router.get("/impersonate")
+def auth_impersonate_validate(token: str = ""):
+    """
+    Valide un token d’impersonation (émis par POST /api/admin/tenants/{id}/impersonate).
+    Retourne tenant_id, tenant_name, expires_at pour que le client stocke le token et affiche le bandeau.
+    """
+    if not JWT_SECRET:
+        raise HTTPException(503, "JWT_SECRET not configured")
+    if not token:
+        raise HTTPException(400, "token missing")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(400, "Token expiré")
+    except jwt.InvalidTokenError:
+        raise HTTPException(400, "Token invalide")
+    if payload.get("scope") != "impersonate" or "tenant_id" not in payload:
+        raise HTTPException(400, "Token invalide (scope)")
+    tenant_id = int(payload["tenant_id"])
+    exp = payload.get("exp")
+    expires_at = datetime.utcfromtimestamp(exp).strftime("%Y-%m-%dT%H:%M:%SZ") if exp else None
+    tenant_name = _get_tenant_name(tenant_id)
+    log_auth_event(tenant_id, "impersonate", "auth_impersonate_used", None)
+    return {
+        "tenant_id": tenant_id,
+        "tenant_name": tenant_name,
+        "expires_at": expires_at,
     }

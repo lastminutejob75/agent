@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { adminApi } from "../../lib/adminApi";
+import { getClientLoginUrl } from "../../lib/clientAppUrl";
 
 export default function AdminTenantsList() {
   const [tenants, setTenants] = useState([]);
@@ -96,7 +97,7 @@ export default function AdminTenantsList() {
                       </span>
                     )}
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 items-center">
                     {id != null && (
                       <>
                         <Link
@@ -113,6 +114,15 @@ export default function AdminTenantsList() {
                             Dashboard
                           </Link>
                         )}
+                        <a
+                          href={getClientLoginUrl(t.contact_email || t.params?.contact_email, id)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center px-2.5 py-1.5 text-sm text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-lg"
+                          title="Ouvrir la page de connexion du client (dashboard client)"
+                        >
+                          <span aria-hidden>↗</span>
+                        </a>
                       </>
                     )}
                   </div>

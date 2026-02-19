@@ -16,6 +16,9 @@ export default function BillingUsageCard({ tenantId, tenant, billing, usageMonth
   const [planSelect, setPlanSelect] = useState("");
   const [planSaving, setPlanSaving] = useState(false);
   const [planErr, setPlanErr] = useState(null);
+  const [customQuotaInput, setCustomQuotaInput] = useState("");
+  const [customQuotaSaving, setCustomQuotaSaving] = useState(false);
+  const [customQuotaErr, setCustomQuotaErr] = useState(null);
 
   const month = usageMonth || (() => {
     const d = new Date();
@@ -51,6 +54,11 @@ export default function BillingUsageCard({ tenantId, tenant, billing, usageMonth
     setPlanSelect(pk);
   }, [tenant?.params?.plan_key, quota?.plan_key]);
 
+  useEffect(() => {
+    const v = tenant?.params?.custom_included_minutes_month;
+    setCustomQuotaInput(v !== undefined && v !== null ? String(v) : "");
+  }, [tenant?.params?.custom_included_minutes_month]);
+
   async function savePlan() {
     if (!tenantId) return;
     setPlanErr(null);
@@ -64,6 +72,28 @@ export default function BillingUsageCard({ tenantId, tenant, billing, usageMonth
       setPlanErr(e?.data?.detail ?? e?.message ?? "Erreur.");
     } finally {
       setPlanSaving(false);
+    }
+  }
+
+  async function saveCustomQuota() {
+    if (!tenantId) return;
+    setCustomQuotaErr(null);
+    const raw = customQuotaInput.trim();
+    const parsed = raw === "" ? 0 : parseInt(customQuotaInput.trim(), 10);
+    if (Number.isNaN(parsed) || parsed < 0) {
+      setCustomQuotaErr("Entier ≥ 0 requis.");
+      return;
+    }
+    setCustomQuotaSaving(true);
+    try {
+      await adminApi.patchTenantParams(tenantId, { custom_included_minutes_month: String(parsed) });
+      await onSaved?.();
+      const q = await adminApi.getTenantQuota(tenantId, month);
+      setQuota(q);
+    } catch (e) {
+      setCustomQuotaErr(e?.data?.detail ?? e?.message ?? "Erreur.");
+    } finally {
+      setCustomQuotaSaving(false);
     }
   }
 
@@ -109,6 +139,9 @@ export default function BillingUsageCard({ tenantId, tenant, billing, usageMonth
             {quota.remaining_minutes_month != null && quota.included_minutes_month > 0 && (
               <p className="text-xs text-gray-500">Reste : {quota.remaining_minutes_month} min</p>
             )}
+            {quota.quota_source && (
+              <p className="text-xs text-gray-500">Source quota : {quota.quota_source}</p>
+            )}
           </div>
         ) : (
           <p className="text-sm text-gray-500">—</p>
@@ -137,6 +170,29 @@ export default function BillingUsageCard({ tenantId, tenant, billing, usageMonth
           </button>
         </div>
         {planErr && <InlineAlert kind="error" message={planErr} />}
+        {planSelect === "custom" && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <label className="text-sm text-gray-600">Quota minutes (mois)</label>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={customQuotaInput}
+              onChange={(e) => setCustomQuotaInput(e.target.value)}
+              className="rounded border border-gray-300 px-2 py-1 text-sm w-24"
+              placeholder="0"
+            />
+            <button
+              type="button"
+              disabled={customQuotaSaving}
+              onClick={saveCustomQuota}
+              className="px-3 py-1.5 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {customQuotaSaving ? "Enregistrement…" : "Enregistrer"}
+            </button>
+          </div>
+        )}
+        {customQuotaErr && <InlineAlert kind="error" message={customQuotaErr} />}
       </div>
 
       <div className="grid gap-4">

@@ -1,12 +1,30 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api, getTenantToken } from "../lib/api.js";
 import { Link, Navigate } from "react-router-dom";
 
 export default function Login() {
+  const [searchParams] = useSearchParams();
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+  const submitRef = useRef(null);
+
+  // Pré-remplir l’email depuis l’URL (ex. lien admin ?email=...&from=admin&tenant=...)
+  useEffect(() => {
+    const q = searchParams.get("email");
+    if (q && typeof q === "string" && q.trim()) {
+      setEmail(q.trim());
+    }
+  }, [searchParams]);
+
+  // Focus sur le bouton "Envoyer le lien" quand l’email est déjà pré-rempli (UX support)
+  useEffect(() => {
+    if (email && submitRef.current) {
+      submitRef.current.focus();
+    }
+  }, [email]);
 
   if (getTenantToken()) {
     return <Navigate to="/app" replace />;
@@ -17,7 +35,12 @@ export default function Login() {
     setErr("");
     setLoading(true);
     try {
-      const r = await api.authRequestLink(email.trim());
+      const fromParam = searchParams.get("from") || undefined;
+      const tenantParam = searchParams.get("tenant") || undefined;
+      const r = await api.authRequestLink(email.trim(), {
+        ...(fromParam && { from: fromParam }),
+        ...(tenantParam && { tenant: tenantParam }),
+      });
       setSent(true);
       if (r.debug_login_url) {
         setErr("Mode debug: lien = " + r.debug_login_url);
@@ -88,6 +111,7 @@ export default function Login() {
           />
           {err && <p className="text-red-600 text-sm">{err}</p>}
           <button
+            ref={submitRef}
             type="submit"
             disabled={loading}
             className="w-full rounded-lg bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700 disabled:opacity-50"
