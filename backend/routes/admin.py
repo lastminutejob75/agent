@@ -1275,6 +1275,15 @@ def admin_create_tenant_alt(
     return _admin_create_tenant_handle(body)
 
 
+@router.post("/admin/create-tenant", response_model=TenantOut, status_code=201)
+def admin_create_tenant_main(
+    body: TenantCreateIn,
+    _: None = Depends(_verify_admin),
+):
+    """Création client (path dédié, sans 'tenants' dans l'URL pour éviter 405)."""
+    return _admin_create_tenant_handle(body)
+
+
 @router.get("/admin/tenants/{tenant_id}")
 def admin_get_tenant(
     tenant_id: int = Depends(validate_tenant_id),

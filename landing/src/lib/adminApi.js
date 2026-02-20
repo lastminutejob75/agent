@@ -74,7 +74,7 @@ export const adminApi = {
     return adminFetch(`/api/admin/tenants/${id}/params`, { method: "PATCH", body: JSON.stringify({ params }) });
   },
   createTenant: (payload) =>
-    adminFetch("/api/admin/tenant/create", {
+    adminFetch("/api/admin/create-tenant", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
