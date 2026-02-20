@@ -280,6 +280,71 @@ def send_test_email(to: str) -> Tuple[bool, Optional[str]]:
     return False, "Email non configuré (POSTMARK_SERVER_TOKEN + EMAIL_FROM ou SMTP_EMAIL + SMTP_PASSWORD)"
 
 
+def send_password_reset_email(to: str, reset_url: str, ttl_minutes: int = 60) -> Tuple[bool, Optional[str]]:
+    """
+    Envoie l'email « Réinitialiser mon mot de passe » (lien UWi).
+    Postmark puis SMTP. Returns (success, error_message).
+    """
+    if not to or not to.strip():
+        return False, "Destinataire vide"
+    if not reset_url:
+        return False, "URL vide"
+    subject = "UWi – Réinitialisation de votre mot de passe"
+    html = f"""
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Réinitialisation mot de passe UWi</title></head>
+<body style="font-family: sans-serif; max-width: 560px; margin: 0 auto; padding: 1rem;">
+  <h1 style="font-size: 1.2rem;">Réinitialisation de votre mot de passe</h1>
+  <p>Bonjour,</p>
+  <p>Vous avez demandé à réinitialiser votre mot de passe. Cliquez sur le bouton ci-dessous :</p>
+  <p style="margin: 1.5rem 0;">
+    <a href="{reset_url}" style="background:#2563eb;color:white;padding:0.75rem 1.5rem;text-decoration:none;border-radius:0.5rem;display:inline-block;">
+      Définir un nouveau mot de passe
+    </a>
+  </p>
+  <p style="color:#666;font-size:0.9rem;">Ou copiez ce lien : <a href="{reset_url}">{reset_url}</a></p>
+  <p style="color:#888;font-size:0.85rem;">Ce lien expire dans {ttl_minutes} minutes.</p>
+  <p style="color:#888;font-size:0.85rem;">Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.</p>
+</body>
+</html>
+"""
+    from_addr = (
+        os.getenv("POSTMARK_FROM_EMAIL") or os.getenv("EMAIL_FROM") or os.getenv("SMTP_EMAIL") or ""
+    ).strip()
+    token = (os.getenv("POSTMARK_SERVER_TOKEN") or "").strip()
+    if token and from_addr:
+        try:
+            ok, err = _send_via_postmark(from_addr, to.strip(), subject, html, token)
+            if ok:
+                logger.info("password_reset_email_sent via postmark", extra={"to": to[:50]})
+            return ok, err
+        except Exception as e:
+            logger.exception("send_password_reset_email postmark failed")
+            return False, str(e)
+    smtp_user = (os.getenv("SMTP_EMAIL") or "").strip()
+    smtp_pass = (os.getenv("SMTP_PASSWORD") or "").strip()
+    if smtp_user and smtp_pass:
+        host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        port = int(os.getenv("SMTP_PORT", "587"))
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["From"] = smtp_user
+            msg["To"] = to.strip()
+            msg["Subject"] = subject
+            msg.attach(MIMEText(html, "html", "utf-8"))
+            with smtplib.SMTP(host, port) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, [to.strip()], msg.as_string())
+            logger.info("password_reset_email_sent via smtp", extra={"to": to[:50]})
+            return True, None
+        except Exception as e:
+            logger.exception("send_password_reset_email smtp failed")
+            return False, str(e)
+    return False, "Email non configuré (Postmark ou SMTP)"
+
+
 def send_quota_alert_80_email(
     to_email: str,
     tenant_name: str,
