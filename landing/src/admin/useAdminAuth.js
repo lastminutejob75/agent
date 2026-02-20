@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { adminApi } from "../lib/adminApi.js";
+import { setAdminToken } from "../lib/api.js";
 
 export function useAdminAuth() {
   const [loading, setLoading] = useState(true);
@@ -46,14 +47,31 @@ export function useAdminAuth() {
     }
   };
 
+  /** Connexion avec le token API (ADMIN_API_TOKEN). Contourne email/mot de passe. */
+  const loginWithToken = async (token) => {
+    const t = (token || "").trim();
+    if (!t) throw new Error("Token requis");
+    setAdminToken(t);
+    try {
+      const data = await adminApi.me();
+      setMe(data);
+      setIsAuthed(true);
+      return { ok: true };
+    } catch (e) {
+      setAdminToken("");
+      throw e;
+    }
+  };
+
   const logout = async () => {
     try {
       await adminApi.logout();
     } finally {
+      setAdminToken("");
       setMe(null);
       setIsAuthed(false);
     }
   };
 
-  return { loading, isAuthed, me, login, logout, refresh, sessionPersistError };
+  return { loading, isAuthed, me, login, loginWithToken, logout, refresh, sessionPersistError };
 }

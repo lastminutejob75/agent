@@ -1,17 +1,23 @@
 /**
- * API admin : credentials: "include" (cookie session).
+ * API admin : credentials: "include" (cookie session) ou Authorization: Bearer (token API).
  * Base URL = VITE_UWI_API_BASE_URL (même que api.js).
  */
+import { getAdminToken } from "./api.js";
+
 const baseUrl = (import.meta.env.VITE_UWI_API_BASE_URL || "").replace(/\/$/, "");
 
 async function adminFetch(path, options = {}) {
+  const token = (getAdminToken() || "").trim();
+  const headers = {
+    "Content-Type": "application/json",
+    ...(options.headers || {}),
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
   const res = await fetch(baseUrl + path, {
     ...options,
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
+    headers,
   });
 
   const data = await res.json().catch(() => ({}));

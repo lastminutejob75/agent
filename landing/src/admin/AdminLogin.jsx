@@ -3,15 +3,18 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { useAdminAuth } from "./AdminAuthProvider";
 
 export default function AdminLogin() {
-  const { login, isAuthed, sessionPersistError } = useAdminAuth();
+  const { login, loginWithToken, isAuthed, sessionPersistError } = useAdminAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const from = location.state?.from?.pathname || "/admin";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [token, setToken] = useState("");
   const [loading, setLoading] = useState(false);
+  const [tokenLoading, setTokenLoading] = useState(false);
   const [err, setErr] = useState(null);
+  const [tokenErr, setTokenErr] = useState(null);
 
   useEffect(() => {
     if (isAuthed) navigate(from, { replace: true });
@@ -99,6 +102,47 @@ export default function AdminLogin() {
               {loading ? "Connexion…" : "Se connecter"}
             </button>
           </form>
+
+          <div className="mt-6 pt-6 border-t border-slate-600">
+            <p className="text-sm font-medium text-slate-400 mb-2">Ou avec le token API</p>
+            <p className="text-xs text-slate-500 mb-3">
+              Colle la valeur de <code className="bg-slate-700 px-1 rounded">ADMIN_API_TOKEN</code> (Railway).
+            </p>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setTokenErr(null);
+                setTokenLoading(true);
+                try {
+                  await loginWithToken(token);
+                  navigate(from, { replace: true });
+                } catch {
+                  setTokenErr("Token invalide ou expiré.");
+                } finally {
+                  setTokenLoading(false);
+                }
+              }}
+              className="flex gap-2"
+            >
+              <input
+                type="password"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                placeholder="Token API admin"
+                className="flex-1 px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-xl text-white placeholder-slate-500 focus:ring-2 focus:ring-indigo-500 text-sm"
+              />
+              <button
+                type="submit"
+                disabled={tokenLoading || !token.trim()}
+                className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white text-sm font-medium rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {tokenLoading ? "…" : "OK"}
+              </button>
+            </form>
+            {tokenErr && (
+              <p className="mt-2 text-sm text-red-400">{tokenErr}</p>
+            )}
+          </div>
         </div>
 
         <p className="mt-6 text-center text-slate-500 text-xs">

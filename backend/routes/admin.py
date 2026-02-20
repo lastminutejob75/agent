@@ -988,18 +988,39 @@ def _verify_admin_password(password: str) -> bool:
     """Vérifie le mot de passe : ADMIN_PASSWORD_HASH (bcrypt) prioritaire, sinon ADMIN_PASSWORD (déprécié)."""
     if not password:
         return False
+    pwd = password.strip() if password else ""
+    if not pwd:
+        return False
     if ADMIN_PASSWORD_HASH:
         try:
             import bcrypt
-            return bcrypt.checkpw(password.encode("utf-8"), ADMIN_PASSWORD_HASH.encode("utf-8"))
+            raw_hash = ADMIN_PASSWORD_HASH.strip()
+            if not raw_hash:
+                return False
+            return bcrypt.checkpw(pwd.encode("utf-8"), raw_hash.encode("utf-8"))
         except Exception as e:
             logger.warning("admin_password_hash_check failed: %s", e)
             return False
     if ADMIN_PASSWORD:
         if (os.environ.get("ENV") or os.environ.get("RAILWAY_ENVIRONMENT") or "").lower() in ("production", "prod"):
             logger.warning("ADMIN_PASSWORD in plain text is deprecated in production; use ADMIN_PASSWORD_HASH (bcrypt)")
-        return password.strip() == ADMIN_PASSWORD
+        return pwd == ADMIN_PASSWORD
     return False
+
+
+@router.get("/admin/auth/status")
+def admin_auth_status():
+    """
+    Diagnostic (sans auth) : indique si le login email/mot de passe est configuré.
+    Permet de vérifier que ADMIN_EMAIL et ADMIN_PASSWORD ou ADMIN_PASSWORD_HASH sont bien pris en compte.
+    """
+    return {
+        "login_configured": bool(ADMIN_EMAIL and (ADMIN_PASSWORD or ADMIN_PASSWORD_HASH) and JWT_SECRET_ADMIN),
+        "email_set": bool(ADMIN_EMAIL),
+        "password_plain_set": bool(ADMIN_PASSWORD),
+        "password_hash_set": bool(ADMIN_PASSWORD_HASH),
+        "jwt_secret_set": bool(JWT_SECRET_ADMIN),
+    }
 
 
 @router.post("/admin/auth/login")
