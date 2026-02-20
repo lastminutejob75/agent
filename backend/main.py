@@ -35,8 +35,8 @@ from backend.routes import voice, whatsapp, bland, reports, admin, auth, tenant,
 app = FastAPI()
 _logger = logging.getLogger(__name__)
 
-# CORS pour front uwiapp.com (JWT localStorage)
-_cors_origins = (os.environ.get("CORS_ORIGINS") or "https://uwiapp.com,https://www.uwiapp.com,http://localhost:5173").split(",")
+# CORS : origines exactes (pas *). Inclure www et non-www (uwiapp.com) pour éviter 401 si l’user arrive sans www.
+_cors_origins = (os.environ.get("CORS_ORIGINS") or "https://www.uwiapp.com,https://uwiapp.com,http://localhost:5173").split(",")
 _cors_origins_list = [o.strip() for o in _cors_origins if o.strip()]
 # Admin : mêmes origines par défaut ; optionnel ADMIN_CORS_ORIGINS pour liste plus stricte
 _admin_cors_origins = (os.environ.get("ADMIN_CORS_ORIGINS") or "").strip()

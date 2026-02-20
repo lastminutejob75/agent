@@ -3,6 +3,7 @@ import UwiLanding from "./components/UwiLanding";
 import Onboarding from "./pages/Onboarding";
 import Login from "./pages/Login";
 import AuthCallback from "./pages/AuthCallback";
+import AuthGoogleCallback from "./pages/AuthGoogleCallback";
 import AppLayout from "./pages/AppLayout";
 import AppDashboard from "./pages/AppDashboard";
 import AppStatus from "./pages/AppStatus";
@@ -38,6 +39,7 @@ export default function App() {
       <Route path="/onboarding" element={<Onboarding />} />
       <Route path="/login" element={<Login />} />
       <Route path="/auth/callback" element={<AuthCallback />} />
+      <Route path="/auth/google/callback" element={<AuthGoogleCallback />} />
       <Route path="/app" element={<AppShell />}>
         <Route path="impersonate" element={<ImpersonatePage />} />
         <Route element={<AppLayout />}>

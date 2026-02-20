@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, getTenantToken } from "../lib/api.js";
 import { Link, Navigate } from "react-router-dom";
+import { GoogleLoginButton } from "../components/GoogleLoginButton.jsx";
+import { getApiUrl } from "../lib/authConfig.js";
 
 export default function Login() {
   const [searchParams] = useSearchParams();
@@ -25,6 +27,15 @@ export default function Login() {
       submitRef.current.focus();
     }
   }, [email]);
+
+  // Redirection si déjà connecté via cookie (email+mdp ou Google)
+  useEffect(() => {
+    const apiUrl = getApiUrl();
+    if (!apiUrl) return;
+    fetch(`${apiUrl}/api/auth/me`, { method: "GET", credentials: "include" })
+      .then((r) => { if (r.ok) window.location.replace("/app"); })
+      .catch(() => {});
+  }, []);
 
   if (getTenantToken()) {
     return <Navigate to="/app" replace />;
@@ -100,7 +111,13 @@ export default function Login() {
         <p className="mt-1 text-sm text-gray-500">
           Si un compte existe pour cet email, vous recevrez un lien de connexion.
         </p>
-        <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+
+        <div className="mt-4">
+          <GoogleLoginButton />
+        </div>
+        <hr className="my-4 border-gray-200" />
+
+        <form onSubmit={handleSubmit} className="space-y-4">
           <input
             type="email"
             value={email}

@@ -1,7 +1,7 @@
 # backend/routes/tenant.py
 """
 API tenant (client): dashboard, technical-status, me, params.
-Protégé par JWT Bearer (require_tenant_auth).
+Protégé par cookie uwi_session ou JWT Bearer (require_tenant_auth).
 """
 from __future__ import annotations
 
@@ -11,9 +11,10 @@ import os
 from typing import Any, Dict, Optional
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from backend.auth_pg import pg_get_tenant_user_by_id
 from backend.routes.admin import (
     _get_dashboard_snapshot,
     _get_kpis_daily,
@@ -29,32 +30,68 @@ router = APIRouter(prefix="/api/tenant", tags=["tenant"])
 _security = HTTPBearer(auto_error=False)
 
 JWT_SECRET = os.environ.get("JWT_SECRET", "")
+SESSION_COOKIE_NAME = os.environ.get("SESSION_COOKIE_NAME", "uwi_session")
 
 
-def _decode_jwt(credentials: Optional[HTTPAuthorizationCredentials]) -> Optional[Dict[str, Any]]:
+def _decode_jwt(token: str) -> Optional[Dict[str, Any]]:
+    if not JWT_SECRET or not token:
+        return None
+    try:
+        return jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+    except Exception:
+        return None
+
+
+def _auth_from_cookie(request: Request) -> Optional[Dict[str, Any]]:
+    raw = request.cookies.get(SESSION_COOKIE_NAME)
+    if not raw:
+        return None
+    payload = _decode_jwt(raw)
+    if not payload or payload.get("typ") != "client_session":
+        return None
+    user_id = payload.get("sub")
+    if not user_id:
+        return None
+    row = pg_get_tenant_user_by_id(user_id)
+    if not row:
+        return None
+    return {
+        "tenant_id": row["tenant_id"],
+        "email": row["email"],
+        "role": row["role"],
+        "sub": str(user_id),
+    }
+
+
+def _auth_from_bearer(credentials: Optional[HTTPAuthorizationCredentials]) -> Optional[Dict[str, Any]]:
+    if not credentials or not credentials.credentials:
+        return None
+    payload = _decode_jwt(credentials.credentials)
+    if not payload or "tenant_id" not in payload:
+        return None
+    return payload
+
+
+def require_tenant_auth(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security),
+) -> Dict[str, Any]:
+    """
+    Cookie uwi_session (typ=client_session) puis fallback Bearer (magic link).
+    Si cookie présent mais invalide → 401 (pas de fallback Bearer silencieux).
+    """
     if not JWT_SECRET:
         raise HTTPException(503, "JWT_SECRET not configured")
-    if not credentials or not credentials.credentials:
+    has_cookie = request.cookies.get(SESSION_COOKIE_NAME) is not None
+    auth = _auth_from_cookie(request)
+    if auth:
+        return auth
+    if has_cookie:
         raise HTTPException(401, "Missing or invalid token")
-    try:
-        payload = jwt.decode(
-            credentials.credentials,
-            JWT_SECRET,
-            algorithms=["HS256"],
-        )
-        return payload
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(401, "Token expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(401, "Invalid token")
-
-
-def require_tenant_auth(credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security)) -> Dict[str, Any]:
-    """Dependency: extrait JWT et retourne payload (tenant_id, email, role)."""
-    payload = _decode_jwt(credentials)
-    if not payload or "tenant_id" not in payload:
-        raise HTTPException(401, "Invalid token")
-    return payload
+    auth = _auth_from_bearer(credentials)
+    if auth:
+        return auth
+    raise HTTPException(401, "Missing or invalid token")
 
 
 @router.get("/me")

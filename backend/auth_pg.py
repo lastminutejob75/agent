@@ -12,7 +12,7 @@ import logging
 import os
 import secrets
 from datetime import datetime, timedelta
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,132 @@ def pg_get_tenant_user_by_email(email: str) -> Optional[Tuple[int, int, str]]:
                     return (int(row[0]), int(row[1]), row[2] or "owner")
     except Exception as e:
         logger.warning("pg_get_tenant_user_by_email failed: %s", e)
+    return None
+
+
+def pg_get_tenant_user_by_email_for_login(email: str) -> Optional[Dict[str, Any]]:
+    """
+    Lookup tenant_user par email avec password_hash (pour login email+mdp).
+    Returns {"tenant_id", "user_id", "role", "password_hash"} ou None.
+    password_hash nullable : si NULL → login password doit répondre 401 neutre.
+    """
+    url = _pg_url()
+    if not url:
+        return None
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT tenant_id, id AS user_id, role, password_hash FROM tenant_users WHERE email = %s LIMIT 1",
+                    (email.strip().lower(),),
+                )
+                row = cur.fetchone()
+                if row:
+                    return {
+                        "tenant_id": int(row[0]),
+                        "user_id": int(row[1]),
+                        "role": row[2] or "owner",
+                        "password_hash": row[3],
+                    }
+    except Exception as e:
+        logger.warning("pg_get_tenant_user_by_email_for_login failed: %s", e)
+    return None
+
+
+def pg_get_tenant_user_by_email_for_google(email: str) -> Optional[Dict[str, Any]]:
+    """
+    Lookup tenant_user par email avec google_sub (pour callback Google SSO).
+    Returns {"tenant_id", "user_id", "role", "google_sub"} ou None.
+    """
+    url = _pg_url()
+    if not url:
+        return None
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT tenant_id, id, role, google_sub FROM tenant_users WHERE email = %s LIMIT 1",
+                    (email.strip().lower(),),
+                )
+                row = cur.fetchone()
+                if row:
+                    return {
+                        "tenant_id": int(row[0]),
+                        "user_id": int(row[1]),
+                        "role": row[2] or "owner",
+                        "google_sub": row[3],
+                    }
+    except Exception as e:
+        logger.warning("pg_get_tenant_user_by_email_for_google failed: %s", e)
+    return None
+
+
+def pg_link_google_sub(user_id: Any, google_sub: str, google_email: str) -> str:
+    """
+    Lie un tenant_user à un compte Google (google_sub, google_email, auth_provider).
+    Returns: "linked" (mis à jour), "already_linked" (déjà le même sub), "conflict" (déjà lié à un autre Google).
+    """
+    url = _pg_url()
+    if not url:
+        return "conflict"
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT google_sub FROM tenant_users WHERE id = %s",
+                    (int(user_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return "conflict"
+                current_sub = row[0]
+                if current_sub is not None and current_sub != google_sub:
+                    return "conflict"
+                if current_sub == google_sub:
+                    return "already_linked"
+                cur.execute(
+                    """
+                    UPDATE tenant_users
+                    SET google_sub = %s, google_email = %s, auth_provider = %s, email_verified = TRUE
+                    WHERE id = %s
+                    """,
+                    (google_sub, (google_email or "").strip().lower(), "google", int(user_id)),
+                )
+                conn.commit()
+                return "linked"
+    except Exception as e:
+        logger.warning("pg_link_google_sub failed: %s", e)
+        return "conflict"
+
+
+def pg_get_tenant_user_by_id(user_id: Any) -> Optional[Dict[str, Any]]:
+    """
+    Lookup tenant_user par id (pour validation session).
+    Returns {"tenant_id", "email", "role"} ou None.
+    """
+    url = _pg_url()
+    if not url:
+        return None
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT tenant_id, email, role FROM tenant_users WHERE id = %s LIMIT 1",
+                    (int(user_id),),
+                )
+                row = cur.fetchone()
+                if row:
+                    return {
+                        "tenant_id": int(row[0]),
+                        "email": (row[1] or "").strip(),
+                        "role": row[2] or "owner",
+                    }
+    except Exception as e:
+        logger.warning("pg_get_tenant_user_by_id failed: %s", e)
     return None
 
 

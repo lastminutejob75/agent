@@ -47,6 +47,7 @@ async function request(path, { method = "GET", body, admin = false, tenant = fal
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
+    credentials: "include", // cookie uwi_session (login email+mdp ou Google)
   });
 
   const text = await res.text();
