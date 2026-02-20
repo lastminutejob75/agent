@@ -1138,15 +1138,8 @@ def admin_list_tenants(
     return {"tenants": items}
 
 
-@router.post("/admin/tenants", response_model=TenantOut, status_code=201)
-def admin_create_tenant(
-    body: TenantCreateIn,
-    _: None = Depends(_verify_admin),
-):
-    """
-    Crée un tenant (client) par l'admin.
-    409 si contact_email déjà associé à un autre tenant (v1 : 1 email = 1 tenant).
-    """
+def _admin_create_tenant_impl(body: TenantCreateIn) -> TenantOut:
+    """Logique commune pour POST /admin/tenants et POST /admin/tenants/."""
     contact_email = (body.contact_email or "").strip().lower()
     if not contact_email:
         raise HTTPException(400, "contact_email required")
@@ -1154,12 +1147,9 @@ def admin_create_tenant(
     if config.USE_PG_TENANTS:
         existing = pg_get_tenant_user_by_email(contact_email)
         if existing:
-            return JSONResponse(
-                status_code=409,
-                content={
-                    "detail": "Cet email est déjà rattaché à un autre client.",
-                    "error_code": "EMAIL_ALREADY_ASSIGNED",
-                },
+            raise HTTPException(
+                409,
+                detail="Cet email est déjà rattaché à un autre client.",
             )
     else:
         import backend.db as db
@@ -1171,12 +1161,9 @@ def admin_create_tenant(
                 params = json.loads(r[1]) if r[1] else {}
                 existing_email = (params.get("contact_email") or "").strip().lower()
                 if existing_email == contact_email:
-                    return JSONResponse(
-                        status_code=409,
-                        content={
-                            "detail": "Cet email est déjà rattaché à un autre client.",
-                            "error_code": "EMAIL_ALREADY_ASSIGNED",
-                        },
+                    raise HTTPException(
+                        409,
+                        detail="Cet email est déjà rattaché à un autre client.",
                     )
         finally:
             conn_sqlite.close()
@@ -1246,6 +1233,37 @@ def admin_create_tenant(
         business_type=(body.business_type or "").strip() or None,
         created_at=created_at,
     )
+
+
+def _admin_create_tenant_handle(body: TenantCreateIn):
+    """Appelle l'impl et renvoie la réponse 409 avec error_code si besoin."""
+    try:
+        return _admin_create_tenant_impl(body)
+    except HTTPException as e:
+        if e.status_code == 409:
+            return JSONResponse(
+                status_code=409,
+                content={"detail": (e.detail or "Conflict"), "error_code": "EMAIL_ALREADY_ASSIGNED"},
+            )
+        raise
+
+
+@router.post("/admin/tenants", response_model=TenantOut, status_code=201)
+def admin_create_tenant(
+    body: TenantCreateIn,
+    _: None = Depends(_verify_admin),
+):
+    """Crée un tenant (client) par l'admin. 409 si contact_email déjà associé à un autre tenant."""
+    return _admin_create_tenant_handle(body)
+
+
+@router.post("/admin/tenants/", response_model=TenantOut, status_code=201)
+def admin_create_tenant_trailing_slash(
+    body: TenantCreateIn,
+    _: None = Depends(_verify_admin),
+):
+    """Même création, pour les clients qui envoient POST avec slash final (évite 405)."""
+    return _admin_create_tenant_handle(body)
 
 
 @router.get("/admin/tenants/{tenant_id}")
