@@ -1266,6 +1266,15 @@ def admin_create_tenant_trailing_slash(
     return _admin_create_tenant_handle(body)
 
 
+@router.post("/admin/tenant/create", response_model=TenantOut, status_code=201)
+def admin_create_tenant_alt(
+    body: TenantCreateIn,
+    _: None = Depends(_verify_admin),
+):
+    """Création client (path alternatif pour éviter 405 sur certains proxies/CDN)."""
+    return _admin_create_tenant_handle(body)
+
+
 @router.get("/admin/tenants/{tenant_id}")
 def admin_get_tenant(
     tenant_id: int = Depends(validate_tenant_id),

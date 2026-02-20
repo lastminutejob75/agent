@@ -90,7 +90,7 @@ export const api = {
   adminAddTenantUser: (tenantId, payload) =>
     request(`/api/admin/tenants/${tenantId}/users`, { method: "POST", body: payload, admin: true }),
   adminCreateTenant: (payload) =>
-    request("/api/admin/tenants", { method: "POST", body: payload, admin: true }),
+    request("/api/admin/tenant/create", { method: "POST", body: payload, admin: true }),
 
   // auth ( Magic Link )
   authRequestLink: (email, supportContext) =>
