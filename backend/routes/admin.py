@@ -1085,7 +1085,7 @@ def admin_email_test(
 ):
     """
     Envoie un email de test "Test UWi" pour vérifier Postmark/SMTP sans passer par /login.
-    Permet de valider que l'envoi d'email est opérationnel avant de tester le magic link.
+    Permet de valider que l'envoi d'email (Postmark/SMTP) est opérationnel.
     """
     from backend.services.email_service import send_test_email
     ok, err = send_test_email(body.to.strip())

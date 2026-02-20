@@ -175,17 +175,10 @@ def test_e2e_vapi_chat_completions_rdv(client):
     assert "nom" in content.lower() or "prénom" in content.lower() or "créneau" in content.lower() or "disponible" in content.lower()
 
 
-# ---------- 5. Auth magic link (comportement, sans DB réelle) ----------
+# ---------- 5. Auth client : cookie uniquement (plus de magic link) ----------
 
 
-def test_e2e_auth_request_link_always_200(client):
-    """POST /api/auth/request-link retourne toujours 200 (anti enumeration)."""
-    r = client.post("/api/auth/request-link", json={"email": "unknown@example.com"})
-    assert r.status_code == 200
-    assert r.json().get("ok") is True
-
-
-def test_e2e_auth_verify_invalid_400(client):
-    """GET /api/auth/verify?token=invalid → 400."""
-    r = client.get("/api/auth/verify?token=invalid-token")
-    assert r.status_code == 400
+def test_e2e_tenant_me_unauthorized_without_cookie(client):
+    """GET /api/tenant/me sans cookie → 401."""
+    r = client.get("/api/tenant/me")
+    assert r.status_code == 401

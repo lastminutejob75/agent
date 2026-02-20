@@ -93,18 +93,9 @@ export const api = {
   adminCreateTenant: (payload) =>
     request("/api/admin/create-tenant", { method: "POST", body: payload, admin: true }),
 
-  // auth ( Magic Link )
-  authRequestLink: (email, supportContext) =>
-    request("/api/auth/request-link", {
-      method: "POST",
-      body: {
-        email,
-        ...(supportContext?.from && { from: supportContext.from }),
-        ...(supportContext?.tenant && { tenant: supportContext.tenant }),
-      },
-    }),
-  authVerify: (token) =>
-    request(`/api/auth/verify?token=${encodeURIComponent(token)}`),
+  // auth
+  authLogin: (email, password) =>
+    request("/api/auth/login", { method: "POST", body: { email, password } }),
   tenantImpersonateValidate: (token) =>
     request(`/api/auth/impersonate?token=${encodeURIComponent(token)}`),
 

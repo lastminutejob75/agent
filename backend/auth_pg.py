@@ -1,17 +1,12 @@
 """
-Auth client: tenant_users, magic_links (Postgres).
-- lookup tenant_user par email
-- create magic_link (hash token)
-- verify magic_link
+Auth client: tenant_users (Postgres).
+- lookup tenant_user par email (login, Google, admin)
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
-import secrets
-from datetime import datetime, timedelta
 from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -247,90 +242,6 @@ def pg_add_tenant_user(tenant_id: int, email: str, role: str = "owner") -> dict:
     except Exception as e:
         logger.warning("pg_add_tenant_user failed: %s", e)
         raise ValueError(str(e))
-
-
-def pg_create_magic_link(tenant_id: int, email: str, ttl_minutes: int = 15) -> Optional[str]:
-    """
-    Crée un magic link token.
-    Stocke hash SHA256 du token en DB.
-    Returns token brut (32 bytes urlsafe) ou None.
-    """
-    url = _pg_url()
-    if not url:
-        return None
-    token = secrets.token_urlsafe(32)
-    token_hash = hashlib.sha256(token.encode()).hexdigest()
-    expires_at = datetime.utcnow() + timedelta(minutes=ttl_minutes)
-    try:
-        import psycopg
-        with psycopg.connect(url) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO magic_links (token_hash, tenant_id, email, expires_at)
-                    VALUES (%s, %s, %s, %s)
-                    """,
-                    (token_hash, tenant_id, email.strip().lower(), expires_at),
-                )
-                conn.commit()
-                return token
-    except Exception as e:
-        logger.warning("pg_create_magic_link failed: %s", e)
-    return None
-
-
-def pg_verify_magic_link(token: str) -> Optional[Tuple[int, str, str]]:
-    """
-    Vérifie token: hash existe, not expired, not used.
-    Marque used_at.
-    Returns (tenant_id, email, role) ou None.
-    """
-    url = _pg_url()
-    if not url:
-        return None
-    token_hash = hashlib.sha256(token.encode()).hexdigest()
-    try:
-        import psycopg
-        with psycopg.connect(url) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT tenant_id, email, used_at, expires_at
-                    FROM magic_links
-                    WHERE token_hash = %s
-                    """,
-                    (token_hash,),
-                )
-                row = cur.fetchone()
-                if not row:
-                    return None
-                tenant_id, email, used_at, expires_at = row
-                if used_at:
-                    return None
-                now = datetime.utcnow()
-                if expires_at and expires_at.tzinfo:
-                    expires_at = expires_at.replace(tzinfo=None)
-                if now > expires_at:
-                    return None
-                cur.execute(
-                    "UPDATE magic_links SET used_at = %s WHERE token_hash = %s",
-                    (now, token_hash),
-                )
-                conn.commit()
-                # Get role from tenant_users
-                cur.execute("SELECT role FROM tenant_users WHERE email = %s", (email,))
-                r = cur.fetchone()
-                role = r[0] if r else "owner"
-                return (int(tenant_id), email, role)
-    except Exception as e:
-        logger.warning("pg_verify_magic_link failed: %s", e)
-    return None
-
-
-# Aliases pour compatibilité avec backend/routes/auth.py
-auth_get_tenant_user_by_email = pg_get_tenant_user_by_email
-auth_create_magic_link = pg_create_magic_link
-auth_verify_magic_link = pg_verify_magic_link
 
 
 def pg_get_tenant_name(tenant_id: int) -> Optional[str]:

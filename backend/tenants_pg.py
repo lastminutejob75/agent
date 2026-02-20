@@ -219,7 +219,7 @@ def pg_create_tenant(
                     "INSERT INTO tenant_config (tenant_id, flags_json, params_json) VALUES (%s, %s, %s)",
                     (tid, "{}", json.dumps(params)),
                 )
-                # Créer tenant_user pour contact_email (permet magic link ensuite)
+                # Créer tenant_user pour contact_email (login email+mdp ou Google)
                 if contact_email and contact_email.strip():
                     try:
                         cur.execute(

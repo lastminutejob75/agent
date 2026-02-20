@@ -17,17 +17,16 @@ Code présent dans le repo ≠ feature en prod. Ce document liste ce qu'il faut 
 
 ---
 
-## 2. Auth Magic Link
+## 2. Auth client (email+mdp + Google)
 
-**Code** : `POST /api/auth/request-link`, `GET /api/auth/verify`, `auth_pg.py`, `send_magic_link_email`
+**Code** : `POST /api/auth/login`, `GET /api/auth/me`, cookie `uwi_session`, Google SSO
 
 **À faire** :
-- [ ] Migrations 007 + 008 exécutées sur Railway : `make migrate-railway`
-- [ ] Backfill `tenant_users` : `make backfill-tenant-users`
-- [ ] Configurer Postmark : `POSTMARK_SERVER_TOKEN`, `POSTMARK_FROM_EMAIL` (ou SMTP)
-- [ ] Tester : entrer un email sur /login → recevoir le lien → cliquer → accès au dashboard
+- [ ] Migrations exécutées sur Railway : `make migrate-railway`
+- [ ] Backfill `tenant_users` si besoin : `make backfill-tenant-users`
+- [ ] Tester : /login avec email+mdp → accès au dashboard ; connexion Google
 
-**Variables** : `POSTMARK_SERVER_TOKEN`, `POSTMARK_FROM_EMAIL`, `JWT_SECRET` (ou équivalent)
+**Variables** : `JWT_SECRET` (ou `SESSION_SECRET`), Google OAuth si SSO
 
 ---
 
@@ -127,6 +126,6 @@ Pas besoin de `make migrate-railway` en local.
 1. **Postgres** : créer la DB sur Railway si absente
 2. **Redéployer** : les migrations s'exécutent au startup
 3. **Backfill tenant_users** : `make backfill-tenant-users` ou `DATABASE_URL="..." python3 scripts/backfill_tenant_users.py`
-4. **Email (Postmark/SMTP)** : pour envoyer les magic links
+4. **Email (Postmark/SMTP)** : pour envoi d'emails (test admin, alertes quota, etc.)
 5. **CORS + VITE_UWI_API_BASE_URL** : pour que uwiapp.com appelle le backend
 6. **Tester le flux complet** : login → dashboard → KPIs

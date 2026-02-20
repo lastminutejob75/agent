@@ -1,7 +1,7 @@
 # backend/routes/tenant.py
 """
 API tenant (client): dashboard, technical-status, me, params.
-Protégé par cookie uwi_session ou JWT Bearer (require_tenant_auth).
+Protégé par cookie uwi_session uniquement (require_tenant_auth).
 """
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ from typing import Any, Dict, Optional
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from backend.auth_pg import pg_get_tenant_user_by_id
 from backend.routes.admin import (
@@ -27,7 +26,6 @@ from backend.tenants_pg import pg_update_tenant_params
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tenant", tags=["tenant"])
-_security = HTTPBearer(auto_error=False)
 
 JWT_SECRET = os.environ.get("JWT_SECRET", "")
 SESSION_COOKIE_NAME = os.environ.get("SESSION_COOKIE_NAME", "uwi_session")
@@ -63,32 +61,13 @@ def _auth_from_cookie(request: Request) -> Optional[Dict[str, Any]]:
     }
 
 
-def _auth_from_bearer(credentials: Optional[HTTPAuthorizationCredentials]) -> Optional[Dict[str, Any]]:
-    if not credentials or not credentials.credentials:
-        return None
-    payload = _decode_jwt(credentials.credentials)
-    if not payload or "tenant_id" not in payload:
-        return None
-    return payload
-
-
-def require_tenant_auth(
-    request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security),
-) -> Dict[str, Any]:
+def require_tenant_auth(request: Request) -> Dict[str, Any]:
     """
-    Cookie uwi_session (typ=client_session) puis fallback Bearer (magic link).
-    Si cookie présent mais invalide → 401 (pas de fallback Bearer silencieux).
+    Authentification par cookie uwi_session uniquement (typ=client_session).
     """
     if not JWT_SECRET:
         raise HTTPException(503, "JWT_SECRET not configured")
-    has_cookie = request.cookies.get(SESSION_COOKIE_NAME) is not None
     auth = _auth_from_cookie(request)
-    if auth:
-        return auth
-    if has_cookie:
-        raise HTTPException(401, "Missing or invalid token")
-    auth = _auth_from_bearer(credentials)
     if auth:
         return auth
     raise HTTPException(401, "Missing or invalid token")
