@@ -224,6 +224,62 @@ def send_daily_report_email(to: str, client_name: str, date_str: str, data: Dict
         return False, err
 
 
+def send_test_email(to: str) -> Tuple[bool, Optional[str]]:
+    """
+    Envoie un email de test "Test UWi" (vérifier Postmark/SMTP sans passer par /login).
+    Même priorité que send_magic_link_email : Postmark puis SMTP.
+    Returns (success, error_message).
+    """
+    if not to or not to.strip():
+        return False, "Destinataire vide"
+    subject = "Test UWi – Email auth"
+    html = """
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Test UWi</title></head>
+<body style="font-family: sans-serif; max-width: 560px; margin: 0 auto; padding: 1rem;">
+  <h1 style="font-size: 1.2rem;">Test UWi</h1>
+  <p>Si vous recevez cet email, l'envoi (Postmark ou SMTP) est opérationnel.</p>
+  <p style="color:#888;font-size:0.85rem;">Envoyé depuis l'endpoint admin /api/admin/email/test.</p>
+</body>
+</html>
+"""
+    token = (os.getenv("POSTMARK_SERVER_TOKEN") or "").strip()
+    from_addr = (
+        os.getenv("POSTMARK_FROM_EMAIL") or os.getenv("EMAIL_FROM") or os.getenv("SMTP_EMAIL") or ""
+    ).strip()
+    if token and from_addr:
+        try:
+            ok, err = _send_via_postmark(from_addr, to.strip(), subject, html, token)
+            if ok:
+                logger.info("test_email_sent via postmark", extra={"to": to[:50]})
+            return ok, err
+        except Exception as e:
+            logger.exception("send_test_email postmark failed")
+            return False, str(e)
+    smtp_user = (os.getenv("SMTP_EMAIL") or "").strip()
+    smtp_pass = (os.getenv("SMTP_PASSWORD") or "").strip()
+    if smtp_user and smtp_pass:
+        host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        port = int(os.getenv("SMTP_PORT", "587"))
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["From"] = smtp_user
+            msg["To"] = to.strip()
+            msg["Subject"] = subject
+            msg.attach(MIMEText(html, "html", "utf-8"))
+            with smtplib.SMTP(host, port) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, [to.strip()], msg.as_string())
+            logger.info("test_email_sent via smtp", extra={"to": to[:50]})
+            return True, None
+        except Exception as e:
+            logger.exception("send_test_email smtp failed")
+            return False, str(e)
+    return False, "Email non configuré (POSTMARK_SERVER_TOKEN + EMAIL_FROM ou SMTP_EMAIL + SMTP_PASSWORD)"
+
+
 def send_magic_link_email(to: str, login_url: str, ttl_minutes: int = 15) -> Tuple[bool, Optional[str]]:
     """
     Envoie l'email magic link (connexion UWi).

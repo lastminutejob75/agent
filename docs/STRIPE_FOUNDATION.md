@@ -4,6 +4,24 @@ Brique Stripe **sans figer les prix** : customer + subscription + usage framewor
 
 ---
 
+## Variables d'environnement (Checkout + usage)
+
+| Variable | Rôle |
+|----------|------|
+| `STRIPE_SECRET_KEY` | Clé API Stripe |
+| `STRIPE_WEBHOOK_SECRET` | Signature webhooks |
+| `STRIPE_CHECKOUT_SUCCESS_URL` | Redirection après paiement réussi (ex. https://uwiapp.com/app?checkout=success) |
+| `STRIPE_CHECKOUT_CANCEL_URL` | Redirection si annulation (ex. https://uwiapp.com/app?checkout=cancel) |
+| `STRIPE_PRICE_BASE_STARTER` | Price ID abo base Starter |
+| `STRIPE_PRICE_BASE_PRO` | Price ID abo base Pro |
+| `STRIPE_PRICE_BASE_BUSINESS` | Price ID abo base Business |
+| `STRIPE_PRICE_METERED_MINUTES` | Price ID usage metered (minutes) |
+| `STRIPE_METERED_PRICE_ID` | Même valeur que `STRIPE_PRICE_METERED_MINUTES` (remplissage `stripe_metered_item_id` via webhook) |
+
+Changer les montants plus tard = changer les Price dans le Dashboard Stripe et mettre à jour ces IDs.
+
+---
+
 ## 1. DB Billing (migration 011)
 
 Table **`tenant_billing`** (1 ligne par tenant) :
@@ -30,6 +48,7 @@ Pas de prix en DB : tout vient de Stripe (Products/Prices) quand tu les créeras
 |---------|-------|------|
 | GET | `/api/admin/tenants/{id}/billing` | Lecture billing (stripe_customer_id, billing_status, plan_key, period, trial_ends_at) |
 | POST | `/api/admin/tenants/{id}/stripe-customer` | Créer un Stripe Customer pour le tenant, enregistrer `stripe_customer_id` (metadata.tenant_id = tenant_id) |
+| POST | `/api/admin/tenants/{id}/stripe-checkout` | Créer une session Checkout (body: `plan_key`, optionnel `trial_days`) ; retourne `checkout_url` |
 | GET | `/api/admin/tenants/{id}/usage?month=YYYY-MM` | Usage Vapi du mois : minutes_total, cost_usd, nb appels (depuis vapi_call_usage). **Convention : mois en UTC** (ended_at >= 1er 00:00:00 UTC, &lt; 1er jour mois suivant). Base pour CSV/PDF plus tard. |
 | GET | `/api/admin/stats/billing-snapshot` | Coût Vapi ce mois (UTC), top tenants par coût ce mois, tenants past_due (count + ids). Sans prix. |
 
@@ -62,6 +81,11 @@ Optionnel plus tard : POST `/api/admin/tenants/{id}/stripe-subscription` (lier u
 | `checkout.session.completed` | Si tu utilises Checkout : récupérer customer_id + subscription_id, lier au tenant (metadata ou lookup), upsert billing |
 
 **Résultat** : l’admin affiche en temps réel « Stripe connecté / statut / période » sans toucher aux prix.
+
+**STRIPE_METERED_PRICE_ID (optionnel mais recommandé)**  
+Si défini, le webhook remplit `tenant_billing.stripe_metered_item_id` en sélectionnant l'item de subscription dont `price.id == STRIPE_METERED_PRICE_ID`.  
+Sinon, fallback : premier item dont `price.recurring.usage_type == "metered"`.  
+Recommandation : définir `STRIPE_METERED_PRICE_ID` en test et en live dès que le price « minutes » est créé, pour figer le mapping.
 
 ---
 

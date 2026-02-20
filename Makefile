@@ -1,4 +1,4 @@
-.PHONY: help install test run docker clean check-report-env export-kpis migrate migrate-007 migrate-008 migrate-railway railway-fix-vars onboard-tenant-users backfill-tenant-users add-tenant-user test-postgres
+.PHONY: help install test run docker clean check-report-env export-kpis migrate migrate-007 migrate-008 migrate-railway railway-fix-vars onboard-tenant-users backfill-tenant-users add-tenant-user test-postgres test-email
 
 help:
 	@echo "Commandes disponibles :"
@@ -14,6 +14,7 @@ help:
 	@echo "  make railway-fix-vars - Réappliquer variables TWILIO/SMTP (depuis .env)"
 	@echo "  make backfill-tenant-users - Backfill tenant_users (tenants existants)"
 	@echo "  make add-tenant-user EMAIL=x@y.com - Ajouter un email pour connexion dashboard"
+	@echo "  make test-email EMAIL=x@y.com     - Envoyer email test (API_URL + ADMIN_API_TOKEN dans .env)"
 	@echo "  make gh-secret-sync   - Configurer UWI_LANDING_PAT (gh secret set)"
 	@echo "  make clean           - Clean cache & DB"
 
@@ -44,6 +45,11 @@ add-tenant-user:
 # Tester Postgres (local avec .env ou railway run pour contexte Railway)
 test-postgres:
 	python3 scripts/test_postgres.py
+
+# Envoyer un email de test (vérifier Postmark/SMTP). Lit API_URL (ou VITE_UWI_API_BASE_URL) et ADMIN_API_TOKEN depuis .env
+test-email:
+	@test -n "$(EMAIL)" || (echo "Usage: make test-email EMAIL=ton@email.com"; echo "  (mettez API_URL et ADMIN_API_TOKEN dans .env)"; exit 1)
+	python3 scripts/test_email_send.py $(EMAIL)
 
 # Configurer le secret GitHub pour le sync landing → uwi-landing
 gh-secret-sync:

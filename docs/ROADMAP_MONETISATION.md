@@ -98,6 +98,14 @@ Objectif : **lier l’usage Vapi à la facturation Stripe** et **bloquer automat
 
 ---
 
+**Stripe Checkout (création abonnement)**  
+- `POST /api/admin/tenants/{id}/stripe-checkout` (body : `plan_key`, optionnel `trial_days`) → `checkout_url`.  
+- Env : `STRIPE_CHECKOUT_SUCCESS_URL`, `STRIPE_CHECKOUT_CANCEL_URL`, `STRIPE_PRICE_BASE_STARTER/PRO/BUSINESS`, `STRIPE_PRICE_METERED_MINUTES`.  
+- UI admin : bloc « Démarrer abonnement » (plan + Générer lien Checkout, Copier, Ouvrir) ; désactivé si `billing_status` = active/trialing.  
+- Voir `docs/STRIPE_FOUNDATION.md` pour la liste des variables.
+
+---
+
 ## Backlog (hors 2 semaines)
 
 - **Solidifier** : cookie HttpOnly pour JWT client, rate limiting, audit log centralisé.
@@ -111,7 +119,7 @@ Objectif : **lier l’usage Vapi à la facturation Stripe** et **bloquer automat
    Ajouter colonnes `status` (`pending` \| `sent` \| `failed`) + `error_short` (texte court). Avantage : diagnostic « pourquoi ça ne push pas » sans fouiller les logs. Aujourd’hui : INSERT puis DELETE si échec (retry OK).
 
 2. **stripe_metered_item_id : remplir automatiquement**  
-   S’assurer que les webhooks `customer.subscription.updated` (et `subscription.created`) récupèrent le subscription_item metered et le stockent dans `tenant_billing.stripe_metered_item_id`. Sinon le push usage ne peut pas appeler Stripe.
+   S’assurer que les webhooks `customer.subscription.updated` (et `subscription.created`) récupèrent le subscription_item metered et le stockent dans `tenant_billing.stripe_metered_item_id`. Sinon le push usage ne peut pas appeler Stripe. **Config** : définir `STRIPE_METERED_PRICE_ID` en env (test + live) dès que le price minutes est créé → voir `docs/STRIPE_FOUNDATION.md`.
 
 3. **Cron push daily : retry 48h**  
    Si le cron échoue (Stripe down), au prochain run : pousser « hier » et « avant-hier » si pas déjà dans `stripe_usage_push_log`. Rattrapage simple sans queue.

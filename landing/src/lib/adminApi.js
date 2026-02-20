@@ -120,6 +120,11 @@ export const adminApi = {
     }),
   createStripeCustomer: (id) =>
     adminFetch(`/api/admin/tenants/${id}/stripe-customer`, { method: "POST" }),
+  createStripeCheckout: (id, body) =>
+    adminFetch(`/api/admin/tenants/${id}/stripe-checkout`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   getTenantUsage: (id, month) =>
     adminFetch(`/api/admin/tenants/${id}/usage?month=${encodeURIComponent(month)}`, { method: "GET" }),
   getKpisWeekly: (tenantId, start, end) =>

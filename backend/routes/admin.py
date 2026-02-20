@@ -1053,6 +1053,26 @@ def admin_auth_logout():
     return response
 
 
+class AdminEmailTestBody(BaseModel):
+    to: str = Field(..., description="Adresse email de destination pour le test")
+
+
+@router.post("/admin/email/test")
+def admin_email_test(
+    body: AdminEmailTestBody = Body(...),
+    _: None = Depends(_verify_admin),
+):
+    """
+    Envoie un email de test "Test UWi" pour vérifier Postmark/SMTP sans passer par /login.
+    Permet de valider que l'envoi d'email est opérationnel avant de tester le magic link.
+    """
+    from backend.services.email_service import send_test_email
+    ok, err = send_test_email(body.to.strip())
+    if not ok:
+        raise HTTPException(502, err or "Envoi échoué")
+    return {"ok": True, "message": "Email envoyé"}
+
+
 @router.post("/public/onboarding", response_model=OnboardingResponse)
 def public_onboarding(body: OnboardingRequest):
     """Crée un tenant + config. Public (pas de auth). Aucun lien avec le numéro démo (voir docs/ARCHITECTURE_VOCAL_TENANTS.md)."""
@@ -1788,6 +1808,98 @@ def admin_create_stripe_customer(
         return {"stripe_customer_id": cid, "tenant_id": tenant_id}
     except stripe.StripeError as e:
         logger.warning("stripe customer create failed: %s", e)
+        raise HTTPException(502, str(e) or "Stripe error")
+
+
+class StripeCheckoutBody(BaseModel):
+    plan_key: str = Field(..., description="starter | pro | business")
+    trial_days: Optional[int] = Field(None, ge=1, le=365, description="Jours d'essai avant première facture")
+
+
+@router.post("/admin/tenants/{tenant_id}/stripe-checkout")
+def admin_create_stripe_checkout(
+    tenant_id: int = Depends(validate_tenant_id),
+    body: StripeCheckoutBody = Body(...),
+    _: None = Depends(_verify_admin),
+):
+    """
+    Crée une session Stripe Checkout (subscription) pour le tenant.
+    Ensure customer existe (création si absent), map plan_key → STRIPE_PRICE_BASE_*,
+    2 line items : base (qty 1) + metered minutes (qty 1).
+    Retourne checkout_url pour redirection. Webhooks sync subscription + stripe_metered_item_id.
+    """
+    d = _get_tenant_detail(tenant_id)
+    if not d:
+        raise HTTPException(404, "Tenant not found")
+    billing = get_tenant_billing(tenant_id)
+    status = (billing or {}).get("billing_status") or ""
+    if status in ("active", "trialing"):
+        raise HTTPException(400, "Abonnement déjà actif")
+    stripe_key = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
+    if not stripe_key:
+        raise HTTPException(503, "Stripe not configured (STRIPE_SECRET_KEY)")
+    success_url = (os.environ.get("STRIPE_CHECKOUT_SUCCESS_URL") or "").strip()
+    cancel_url = (os.environ.get("STRIPE_CHECKOUT_CANCEL_URL") or "").strip()
+    if not success_url or not cancel_url:
+        raise HTTPException(503, "STRIPE_CHECKOUT_SUCCESS_URL and STRIPE_CHECKOUT_CANCEL_URL required")
+    plan_key = (body.plan_key or "").strip().lower()
+    if not plan_key:
+        raise HTTPException(400, "plan_key required")
+    base_price_id = (os.environ.get(f"STRIPE_PRICE_BASE_{plan_key.upper()}") or "").strip()
+    if not base_price_id:
+        raise HTTPException(400, "PRICE_NOT_CONFIGURED")
+    metered_price_id = (
+        (os.environ.get("STRIPE_PRICE_METERED_MINUTES") or os.environ.get("STRIPE_METERED_PRICE_ID") or "").strip()
+    )
+    if not metered_price_id:
+        raise HTTPException(503, "STRIPE_PRICE_METERED_MINUTES or STRIPE_METERED_PRICE_ID required")
+    customer_id = (billing or {}).get("stripe_customer_id") or ""
+    customer_id = (customer_id or "").strip()
+    if not customer_id:
+        try:
+            import stripe
+            stripe.api_key = stripe_key
+            name = (d.get("name") or f"Tenant #{tenant_id}")[:500]
+            customer = stripe.Customer.create(
+                name=name,
+                metadata={"tenant_id": str(tenant_id)},
+            )
+            customer_id = (customer.id or "").strip()
+            if not customer_id:
+                raise HTTPException(500, "Stripe customer id empty")
+            if not set_stripe_customer_id(tenant_id, customer_id):
+                raise HTTPException(500, "Failed to save stripe_customer_id")
+            logger.info("STRIPE_CUSTOMER_CREATED tenant_id=%s stripe_customer_id=%s (checkout)", tenant_id, customer_id)
+        except Exception as e:
+            if isinstance(e, HTTPException):
+                raise e
+            logger.warning("stripe customer create (checkout) failed: %s", e)
+            raise HTTPException(502, str(e) or "Stripe error")
+    try:
+        import stripe
+        stripe.api_key = stripe_key
+        line_items = [
+            {"price": base_price_id, "quantity": 1},
+            {"price": metered_price_id, "quantity": 1},
+        ]
+        subscription_data = {"metadata": {"tenant_id": str(tenant_id)}}
+        if body.trial_days is not None and body.trial_days >= 1:
+            subscription_data["trial_period_days"] = body.trial_days
+        session = stripe.checkout.Session.create(
+            mode="subscription",
+            customer=customer_id,
+            line_items=line_items,
+            success_url=success_url,
+            cancel_url=cancel_url,
+            metadata={"tenant_id": str(tenant_id)},
+            subscription_data=subscription_data,
+        )
+        url = (getattr(session, "url", None) or "").strip()
+        if not url:
+            raise HTTPException(500, "Stripe did not return checkout URL")
+        return {"checkout_url": url}
+    except stripe.StripeError as e:
+        logger.warning("stripe checkout session create failed: %s", e)
         raise HTTPException(502, str(e) or "Stripe error")
 
 

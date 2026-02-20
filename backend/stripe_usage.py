@@ -34,6 +34,7 @@ def try_acquire_usage_push(tenant_id: int, date_utc: date, quantity_minutes: int
         import psycopg
         with psycopg.connect(url) as conn:
             with conn.cursor() as cur:
+                # sent = immuable : on ne met à jour que si status = 'failed' (retry). Jamais de downgrade sent → pending.
                 cur.execute(
                     """
                     INSERT INTO stripe_usage_push_log (tenant_id, date_utc, quantity_minutes, status)
@@ -57,22 +58,33 @@ def try_acquire_usage_push(tenant_id: int, date_utc: date, quantity_minutes: int
 
 
 def mark_usage_push_sent(tenant_id: int, date_utc: date, stripe_usage_record_id: str | None = None) -> None:
-    """Marque le push comme réussi (status=sent). Optionnel : stocker stripe_usage_record_id si dispo."""
+    """Marque le push comme réussi (status=sent). Stocke stripe_usage_record_id si fourni (debug Stripe)."""
     url = _pg_url()
     if not url:
         return
+    record_id = (stripe_usage_record_id or "").strip() or None
     try:
         import psycopg
         with psycopg.connect(url) as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE stripe_usage_push_log
-                    SET status = 'sent', error_short = NULL
-                    WHERE tenant_id = %s AND date_utc = %s
-                    """,
-                    (tenant_id, date_utc),
-                )
+                if record_id:
+                    cur.execute(
+                        """
+                        UPDATE stripe_usage_push_log
+                        SET status = 'sent', error_short = NULL, stripe_usage_record_id = %s
+                        WHERE tenant_id = %s AND date_utc = %s
+                        """,
+                        (record_id, tenant_id, date_utc),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE stripe_usage_push_log
+                        SET status = 'sent', error_short = NULL
+                        WHERE tenant_id = %s AND date_utc = %s
+                        """,
+                        (tenant_id, date_utc),
+                    )
                 conn.commit()
         logger.debug("STRIPE_USAGE_PUSH_SENT tenant_id=%s date_utc=%s", tenant_id, date_utc)
     except Exception as e:
@@ -174,13 +186,14 @@ def push_daily_usage_to_stripe(date_utc: date) -> dict:
             import stripe
             stripe.api_key = stripe_key
             end_of_day_ts = int(datetime(date_utc.year, date_utc.month, date_utc.day, 23, 59, 59).timestamp())
-            stripe.UsageRecord.create(
+            record = stripe.UsageRecord.create(
                 subscription_item=metered_item_id,
                 quantity=minutes,
                 timestamp=end_of_day_ts,
                 action="set",
             )
-            mark_usage_push_sent(tenant_id, date_utc)
+            usage_record_id = getattr(record, "id", None) if record else None
+            mark_usage_push_sent(tenant_id, date_utc, stripe_usage_record_id=usage_record_id)
             pushed += 1
             logger.info("STRIPE_USAGE_PUSHED tenant_id=%s date_utc=%s minutes=%s", tenant_id, date_utc, minutes)
         except Exception as e:
@@ -206,5 +219,14 @@ def push_daily_usage_with_retry_48h(reference_date: date | None = None) -> dict:
             today = date.today()
     yesterday = today - timedelta(days=1)
     day_before = today - timedelta(days=2)
-    out = {"yesterday": push_daily_usage_to_stripe(yesterday), "day_before": push_daily_usage_to_stripe(day_before)}
-    return out
+    r1 = push_daily_usage_to_stripe(yesterday)
+    r2 = push_daily_usage_to_stripe(day_before)
+    sent = r1.get("pushed", 0) + r2.get("pushed", 0)
+    skipped = r1.get("skipped", 0) + r2.get("skipped", 0)
+    failed = len(r1.get("errors", [])) + len(r2.get("errors", []))
+    return {
+        "dates": [yesterday.isoformat(), day_before.isoformat()],
+        "sent": sent,
+        "skipped": skipped,
+        "failed": failed,
+    }

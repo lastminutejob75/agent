@@ -19,6 +19,11 @@ export default function BillingUsageCard({ tenantId, tenant, billing, usageMonth
   const [customQuotaInput, setCustomQuotaInput] = useState("");
   const [customQuotaSaving, setCustomQuotaSaving] = useState(false);
   const [customQuotaErr, setCustomQuotaErr] = useState(null);
+  const [checkoutPlan, setCheckoutPlan] = useState("starter");
+  const [checkoutTrialDays, setCheckoutTrialDays] = useState("");
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [checkoutUrl, setCheckoutUrl] = useState("");
+  const [checkoutErr, setCheckoutErr] = useState(null);
 
   const month = usageMonth || (() => {
     const d = new Date();
@@ -242,6 +247,84 @@ export default function BillingUsageCard({ tenantId, tenant, billing, usageMonth
                 >
                   {stripeLoading ? "Création…" : "Créer customer Stripe"}
                 </button>
+              )}
+            </div>
+          )}
+
+          {/* Démarrer abonnement (Checkout) */}
+          {billing?.stripe_customer_id && (
+            <div className="mt-3 pt-3 border-t border-gray-100">
+              <div className="text-sm font-medium text-gray-700 mb-2">Démarrer abonnement</div>
+              {["active", "trialing"].includes(billing?.billing_status || "") ? (
+                <p className="text-sm text-gray-500">Abonnement déjà actif.</p>
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-center gap-2 mb-2">
+                    <label className="text-sm text-gray-600">Plan</label>
+                    <select
+                      value={checkoutPlan}
+                      onChange={(e) => setCheckoutPlan(e.target.value)}
+                      className="rounded border border-gray-300 px-2 py-1 text-sm"
+                    >
+                      <option value="starter">Starter</option>
+                      <option value="pro">Pro</option>
+                      <option value="business">Business</option>
+                    </select>
+                    <label className="text-sm text-gray-600">Jours d'essai (optionnel)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={365}
+                      placeholder="0"
+                      value={checkoutTrialDays}
+                      onChange={(e) => setCheckoutTrialDays(e.target.value.replace(/\D/g, "").slice(0, 3))}
+                      className="rounded border border-gray-300 px-2 py-1 text-sm w-16"
+                    />
+                    <button
+                      type="button"
+                      disabled={checkoutLoading}
+                      onClick={async () => {
+                        if (!tenantId) return;
+                        setCheckoutErr(null);
+                        setCheckoutUrl("");
+                        setCheckoutLoading(true);
+                        try {
+                          const body = { plan_key: checkoutPlan };
+                          const trial = parseInt(checkoutTrialDays, 10);
+                          if (!Number.isNaN(trial) && trial > 0) body.trial_days = trial;
+                          const r = await adminApi.createStripeCheckout(tenantId, body);
+                          const url = r?.checkout_url;
+                          if (url) setCheckoutUrl(url);
+                          else setCheckoutErr("URL non reçue.");
+                        } catch (e) {
+                          setCheckoutErr(e?.data?.detail ?? e?.message ?? "Erreur.");
+                        } finally {
+                          setCheckoutLoading(false);
+                        }
+                      }}
+                      className="px-3 py-1.5 bg-emerald-600 text-white text-sm rounded-lg hover:bg-emerald-700 disabled:opacity-50"
+                    >
+                      {checkoutLoading ? "Génération…" : "Générer lien Checkout"}
+                    </button>
+                  </div>
+                  {checkoutErr && <InlineAlert kind="error" message={checkoutErr} />}
+                  {checkoutUrl && (
+                    <div className="flex flex-wrap items-center gap-2 mt-2">
+                      <input
+                        type="text"
+                        readOnly
+                        value={checkoutUrl}
+                        className="flex-1 min-w-0 rounded border border-gray-300 px-2 py-1 text-xs font-mono"
+                      />
+                      <button type="button" onClick={() => copy(checkoutUrl)} className="px-2 py-1 text-sm text-indigo-600 hover:underline whitespace-nowrap">
+                        Copier
+                      </button>
+                      <a href={checkoutUrl} target="_blank" rel="noopener noreferrer" className="px-2 py-1 text-sm text-indigo-600 hover:underline whitespace-nowrap">
+                        Ouvrir
+                      </a>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}
