@@ -1,7 +1,9 @@
 # backend/routes/auth.py
 """
-Auth tenant: login email+mdp (cookie uwi_session) ; Google SSO.
+Auth tenant: login email+mdp (cookie uwi_session) ; Google SSO ; mot de passe oublié.
 - POST /api/auth/login {email, password} → cookie uwi_session
+- POST /api/auth/forgot-password {email} → envoie email reset (réponse neutre)
+- POST /api/auth/reset-password {token, new_password} → met à jour mot de passe
 - GET /api/auth/me → profil depuis cookie
 - POST /api/auth/logout → supprime cookie
 - GET /api/auth/google/start → { auth_url, state, code_verifier }
@@ -19,7 +21,7 @@ import secrets
 import time
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import bcrypt
@@ -29,11 +31,15 @@ from pydantic import BaseModel, EmailStr
 
 from backend.auth_events_pg import log_auth_event
 from backend.auth_pg import (
+    pg_create_password_reset,
     pg_get_tenant_user_by_email_for_google,
     pg_get_tenant_user_by_email_for_login,
     pg_get_tenant_user_by_id,
+    pg_get_tenant_user_for_reset_check,
     pg_link_google_sub,
+    pg_update_password_and_clear_reset,
 )
+from backend.services.email_service import send_password_reset_email
 from backend.tenants_pg import pg_create_tenant, pg_get_tenant_full
 
 logger = logging.getLogger(__name__)
@@ -41,6 +47,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 JWT_SECRET = os.environ.get("JWT_SECRET") or os.environ.get("SESSION_SECRET") or ""
+APP_BASE_URL = (
+    os.environ.get("FRONT_BASE_URL")
+    or os.environ.get("APP_BASE_URL")
+    or os.environ.get("FRONTEND_URL")
+    or ""
+).rstrip("/")
+PASSWORD_RESET_TTL_MINUTES = int(os.environ.get("PASSWORD_RESET_TTL_MINUTES", "30"))
+RESET_PASSWORD_MIN_LENGTH = 10
 
 # Session cookie (login email+mdp) — delete_cookie doit matcher secure/samesite/path
 SESSION_COOKIE_NAME = os.environ.get("SESSION_COOKIE_NAME", "uwi_session")
@@ -158,6 +172,99 @@ def auth_login(body: LoginBody, response: Response):
         max_age=SESSION_TTL_SECONDS,
     )
     log_auth_event(row["tenant_id"], email, "auth_login_password", None)
+    return {"ok": True}
+
+
+# --- Mot de passe oublié ---
+
+class ForgotPasswordBody(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordBody(BaseModel):
+    email: EmailStr
+    token: str
+    new_password: str
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+@router.post("/forgot-password")
+def auth_forgot_password(body: ForgotPasswordBody):
+    """
+    Demande de réinitialisation mot de passe. Toujours 200 { ok: true } (anti-enumération).
+    Si l'email existe : génère token, stocke hash+expiry, envoie email avec lien
+    /reset-password?email=...&token=...
+    """
+    email = (body.email or "").strip().lower()
+    if not email:
+        return {"ok": True}
+    token = pg_create_password_reset(email, ttl_minutes=PASSWORD_RESET_TTL_MINUTES)
+    if token and APP_BASE_URL:
+        reset_url = (
+            f"{APP_BASE_URL}/reset-password"
+            f"?email={urllib.parse.quote(email, safe='')}&token={urllib.parse.quote(token, safe='')}"
+        )
+        ok, _ = send_password_reset_email(email, reset_url, ttl_minutes=PASSWORD_RESET_TTL_MINUTES)
+        if ok:
+            log_auth_event(None, email, "auth_password_reset_requested", None)
+    elif token and not APP_BASE_URL:
+        logger.warning("forgot-password: FRONT_BASE_URL/APP_BASE_URL not set, reset email not sent")
+    return {"ok": True}
+
+
+@router.post("/reset-password")
+def auth_reset_password(body: ResetPasswordBody, response: Response):
+    """
+    Réinitialise le mot de passe avec email + token reçu par email.
+    Vérifie user existe, token non expiré, hash match. Puis met à jour password,
+    efface token (usage unique) et pose cookie uwi_session (login auto).
+    400 "Lien invalide ou expiré" sinon.
+    """
+    email = (body.email or "").strip().lower()
+    token = (body.token or "").strip()
+    new_password = (body.new_password or "").strip()
+
+    if len(new_password) < RESET_PASSWORD_MIN_LENGTH:
+        raise HTTPException(400, "Mot de passe trop court (min. 10 caractères)")
+
+    user = pg_get_tenant_user_for_reset_check(email)
+    if not user:
+        raise HTTPException(400, "Lien invalide ou expiré")
+
+    token_hash_db = (user.get("password_reset_token_hash") or "").strip()
+    expires_at = user.get("password_reset_expires_at")
+    if not token_hash_db or not expires_at:
+        raise HTTPException(400, "Lien invalide ou expiré")
+
+    now = datetime.now(timezone.utc)
+    exp_utc = expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=timezone.utc)
+    if now > exp_utc:
+        raise HTTPException(400, "Lien invalide ou expiré")
+
+    if _hash_token(token) != token_hash_db:
+        raise HTTPException(400, "Lien invalide ou expiré")
+
+    password_hash = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    pg_update_password_and_clear_reset(user["user_id"], password_hash)
+
+    session_token = _issue_client_session(
+        user_id=user["user_id"],
+        tenant_id=user["tenant_id"],
+        role=user["role"],
+    )
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=session_token,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE,
+        path="/",
+        max_age=SESSION_TTL_SECONDS,
+    )
+    log_auth_event(user["tenant_id"], email, "auth_password_reset_done", None)
     return {"ok": True}
 
 

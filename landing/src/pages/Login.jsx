@@ -77,6 +77,11 @@ export default function Login() {
           >
             {loading ? "Connexion..." : "Se connecter"}
           </button>
+          <p className="text-center text-sm text-gray-500 mt-2">
+            <Link to="/forgot-password" className="text-blue-600 hover:underline">
+              Mot de passe oublié
+            </Link>
+          </p>
         </form>
         <Link to="/" className="mt-4 inline-block text-gray-600 hover:underline">
           Retour à l'accueil

@@ -1,12 +1,16 @@
 """
 Auth client: tenant_users (Postgres).
 - lookup tenant_user par email (login, Google, admin)
+- mot de passe oublié : token reset stocké sur tenant_users (password_reset_token_hash, password_reset_expires_at)
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
+import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -242,6 +246,152 @@ def pg_add_tenant_user(tenant_id: int, email: str, role: str = "owner") -> dict:
     except Exception as e:
         logger.warning("pg_add_tenant_user failed: %s", e)
         raise ValueError(str(e))
+
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def pg_create_password_reset(email: str, ttl_minutes: int = 60) -> Optional[str]:
+    """
+    Crée un token de réinitialisation mot de passe pour l'email.
+    Stocke le hash du token + expires_at (TIMESTAMPTZ) sur tenant_users.
+    Returns token brut (urlsafe) ou None si email inconnu / erreur.
+    """
+    url = _pg_url()
+    if not url:
+        return None
+    email = email.strip().lower()
+    if not email:
+        return None
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    expires_at = _now_utc() + timedelta(minutes=ttl_minutes)
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE tenant_users
+                    SET password_reset_token_hash = %s, password_reset_expires_at = %s
+                    WHERE email = %s
+                    """,
+                    (token_hash, expires_at, email),
+                )
+                if cur.rowcount == 0:
+                    return None
+                conn.commit()
+                return token
+    except Exception as e:
+        logger.warning("pg_create_password_reset failed: %s", e)
+    return None
+
+
+def pg_get_tenant_user_for_reset_check(email: str) -> Optional[Dict[str, Any]]:
+    """
+    Récupère le tenant_user par email avec les champs nécessaires pour valider un reset.
+    Returns { user_id, tenant_id, role, password_reset_token_hash, password_reset_expires_at } ou None.
+    password_reset_expires_at est renvoyé en UTC (naive ou aware selon le driver).
+    """
+    url = _pg_url()
+    if not url:
+        return None
+    email = email.strip().lower()
+    if not email:
+        return None
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, tenant_id, role, password_reset_token_hash, password_reset_expires_at
+                    FROM tenant_users
+                    WHERE email = %s
+                    LIMIT 1
+                    """,
+                    (email,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                user_id, tenant_id, role, token_hash, expires_at = row
+                return {
+                    "user_id": int(user_id),
+                    "tenant_id": int(tenant_id),
+                    "role": role or "owner",
+                    "password_reset_token_hash": token_hash,
+                    "password_reset_expires_at": expires_at,
+                }
+    except Exception as e:
+        logger.warning("pg_get_tenant_user_for_reset_check failed: %s", e)
+    return None
+
+
+def pg_update_password_and_clear_reset(user_id: int, password_hash: str) -> None:
+    """
+    Met à jour le mot de passe et efface le token reset (usage unique).
+    """
+    url = _pg_url()
+    if not url:
+        raise ValueError("DB not configured")
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE tenant_users
+                    SET password_hash = %s, password_reset_token_hash = NULL, password_reset_expires_at = NULL
+                    WHERE id = %s
+                    """,
+                    (password_hash, user_id),
+                )
+                conn.commit()
+    except Exception as e:
+        logger.warning("pg_update_password_and_clear_reset failed: %s", e)
+        raise
+
+
+def pg_reset_password_with_token(token: str, new_password_hash: str) -> bool:
+    """
+    Valide le token reset, met à jour le password_hash et efface le token/expiry.
+    (Legacy: préférer pg_get_tenant_user_for_reset_check + pg_update_password_and_clear_reset avec email.)
+    """
+    url = _pg_url()
+    if not url or not token or not new_password_hash:
+        return False
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, tenant_id FROM tenant_users
+                    WHERE password_reset_token_hash = %s
+                      AND password_reset_expires_at > %s
+                    """,
+                    (token_hash, _now_utc()),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return False
+                user_id, _ = row
+                cur.execute(
+                    """
+                    UPDATE tenant_users
+                    SET password_hash = %s, password_reset_token_hash = NULL, password_reset_expires_at = NULL
+                    WHERE id = %s
+                    """,
+                    (new_password_hash, user_id),
+                )
+                conn.commit()
+                return True
+    except Exception as e:
+        logger.warning("pg_reset_password_with_token failed: %s", e)
+    return False
 
 
 def pg_get_tenant_name(tenant_id: int) -> Optional[str]:

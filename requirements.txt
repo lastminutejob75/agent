@@ -37,9 +37,10 @@ mangum==0.17.0
 # Notifications (SMS, WhatsApp)
 twilio==9.0.0
 
-# Auth (JWT + admin password hash)
+# Auth (JWT + admin password hash + email validation)
 PyJWT>=2.8.0
 bcrypt>=4.0.0
+email-validator>=2.0.0
 
 # Billing (Stripe foundation)
 stripe>=8.0.0

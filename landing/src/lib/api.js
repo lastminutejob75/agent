@@ -96,6 +96,13 @@ export const api = {
   // auth
   authLogin: (email, password) =>
     request("/api/auth/login", { method: "POST", body: { email, password } }),
+  authForgotPassword: (email) =>
+    request("/api/auth/forgot-password", { method: "POST", body: { email } }),
+  authResetPassword: (email, token, newPassword) =>
+    request("/api/auth/reset-password", {
+      method: "POST",
+      body: { email, token, new_password: newPassword },
+    }),
   tenantImpersonateValidate: (token) =>
     request(`/api/auth/impersonate?token=${encodeURIComponent(token)}`),
 
