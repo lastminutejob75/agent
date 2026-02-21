@@ -340,7 +340,7 @@ curl -i -b /tmp/uwi_cookies.txt https://api.uwiapp.com/api/auth/me \
 
 - Aller sur https://www.uwiapp.com/login → « Continuer avec Google » ou login email+mdp → après redirection, le dashboard (/app) doit s’afficher.
 - **Network** : tous les appels API doivent partir vers **api.uwiapp.com** (aucun vers `*.railway.app`). Si tu vois encore l’ancien domaine, une lib utilise peut‑être un endpoint hardcodé → vérifier que tout passe par `getApiUrl()` / `VITE_UWI_API_BASE_URL`.
-- **Application → Cookies** : ouvrir DevTools → **Application** (ou Storage) → **Cookies** → **https://api.uwiapp.com**. Vérifier la présence de **uwi_session** et ses attributs : **HttpOnly**, **Secure**, **SameSite=None**. C’est le check visuel le plus rapide pour valider le comportement cookie (Chrome/Safari).
+- **Application → Cookies** : ouvrir DevTools → **Application** (ou Storage) → **Cookies** → **https://api.uwiapp.com**. Vérifier la présence de **uwi_session** et ses attributs : **HttpOnly**, **Secure**, **SameSite=None**. S’assurer que le cookie est bien attaché à **https://api.uwiapp.com** (domaine de l’API) et **pas** à https://www.uwiapp.com (front) — c’est normal : cookie host-only côté API.
 
 ---
 
