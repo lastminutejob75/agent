@@ -42,14 +42,12 @@ export function GoogleLoginButton() {
         type="button"
         onClick={startGoogle}
         disabled={loading}
-        className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-2"
+        className="w-full rounded-xl border border-slate-600 bg-slate-800/80 px-4 py-2.5 font-bold text-slate-200 hover:bg-slate-700/80 hover:border-slate-500 disabled:opacity-50 flex items-center justify-center gap-2 transition-colors"
       >
         {loading ? "Redirection..." : "Continuer avec Google"}
       </button>
       {error && (
-        <p className="mt-2 text-sm text-red-600" role="alert">
-          {error}
-        </p>
+        <p className="mt-2 text-sm text-red-400" role="alert">{error}</p>
       )}
     </div>
   );

@@ -64,13 +64,13 @@ export default function AuthGoogleCallback() {
   }, []);
 
   return (
-    <div className="mx-auto max-w-md p-8">
-      <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-        <h1 className="text-xl font-bold text-gray-900">Google</h1>
-        <p className="mt-2 text-gray-600">{message}</p>
+    <div className="flex justify-center">
+      <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-800/80 backdrop-blur p-6 sm:p-8 shadow-xl">
+        <h1 className="text-2xl font-black text-white">Google</h1>
+        <p className="mt-2 text-slate-400">{message}</p>
         {status === "error" && (
-          <div className="mt-4">
-            <a href="/login" className="text-blue-600 hover:underline">
+          <div className="mt-6">
+            <a href="/login" className="text-teal-400 hover:text-teal-300 transition-colors">
               Retour au login
             </a>
           </div>

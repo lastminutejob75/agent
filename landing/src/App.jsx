@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate, Outlet } from "react-router-dom";
 import UwiLanding from "./components/UwiLanding";
+import AuthLayout from "./components/AuthLayout";
 import Onboarding from "./pages/Onboarding";
 import Login from "./pages/Login";
 import ForgotPassword from "./pages/ForgotPassword";
@@ -38,10 +39,12 @@ export default function App() {
     <Routes>
       <Route path="/" element={<UwiLanding />} />
       <Route path="/onboarding" element={<Onboarding />} />
-      <Route path="/login" element={<Login />} />
-      <Route path="/forgot-password" element={<ForgotPassword />} />
-      <Route path="/reset-password" element={<ResetPassword />} />
-      <Route path="/auth/google/callback" element={<AuthGoogleCallback />} />
+      <Route element={<AuthLayout />}>
+        <Route path="login" element={<Login />} />
+        <Route path="forgot-password" element={<ForgotPassword />} />
+        <Route path="reset-password" element={<ResetPassword />} />
+        <Route path="auth/google/callback" element={<AuthGoogleCallback />} />
+      </Route>
       <Route path="/app" element={<AppShell />}>
         <Route path="impersonate" element={<ImpersonatePage />} />
         <Route element={<AppLayout />}>
