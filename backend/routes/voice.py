@@ -614,6 +614,14 @@ def _compute_voice_response_sync(
     state_before_turn = getattr(session, "state", "START")
     session.channel = "vocal"
     session.tenant_id = resolved_tenant_id
+    # Pour que chaque appel apparaisse dans le dashboard (stats appels), on persiste un event "call_started" une fois par appel
+    if session.state == "START" and call_id and not getattr(session, "call_started_persisted", False):
+        try:
+            from backend.engine import _persist_ivr_event
+            _persist_ivr_event(session, "call_started", reason="first_turn")
+            session.call_started_persisted = True
+        except Exception:
+            pass
     response_text = ""
     action_taken = ""
     overlap_handled = False
