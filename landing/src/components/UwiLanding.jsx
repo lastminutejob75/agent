@@ -91,25 +91,25 @@ export default function UwiLanding() {
               {/* 2. Illustration + carte démo — mobile: rétrécie pour limiter le scroll ; desktop: colonne droite */}
               <div className="relative flex justify-center lg:justify-end lg:col-start-2 lg:row-start-1 lg:row-span-2">
                 <div className="absolute inset-0 bg-gradient-to-r from-teal-500 via-cyan-400 to-blue-500 rounded-[3rem] blur-3xl opacity-30"></div>
-                <div className="relative w-full max-w-[200px] sm:max-w-[240px] lg:max-w-xs space-y-2 lg:space-y-4">
+                <div className="relative w-full max-w-[130px] sm:max-w-[180px] lg:max-w-xs space-y-1.5 sm:space-y-2 lg:space-y-4">
                   <div className="absolute -top-6 -right-6 w-32 h-32 bg-teal-500 rounded-3xl opacity-20 blur-2xl"></div>
                   <div className="absolute -bottom-6 -left-6 w-32 h-32 bg-cyan-400 rounded-3xl opacity-20 blur-2xl"></div>
-                  <div className="relative rounded-xl lg:rounded-2xl overflow-hidden shadow-xl lg:shadow-2xl border-2 border-slate-700 ring-1 ring-white/10 bg-slate-800">
+                  <div className="relative rounded-lg lg:rounded-2xl overflow-hidden shadow-lg lg:shadow-2xl border border-slate-700 lg:border-2 ring-1 ring-white/10 bg-slate-800 max-h-[100px] sm:max-h-[140px] lg:max-h-none">
                     <img
                       src="/ia-en-direct.png"
                       alt="IA en direct - Écouter la démo vocale"
-                      className="w-full h-auto object-contain"
+                      className="w-full h-full object-contain object-top"
                     />
                   </div>
                   <a
                     href="tel:+33939240575"
-                    className="relative flex flex-col items-center justify-center rounded-xl lg:rounded-2xl border-2 border-teal-500/60 bg-gradient-to-br from-teal-500/20 to-cyan-400/20 px-3 py-3 sm:px-4 sm:py-4 lg:px-6 lg:py-5 shadow-lg lg:shadow-xl hover:border-teal-400 hover:shadow-teal-500/30 hover:scale-[1.02] transition-all duration-300 group"
+                    className="relative flex flex-col items-center justify-center rounded-lg lg:rounded-2xl border border-teal-500/60 lg:border-2 bg-gradient-to-br from-teal-500/20 to-cyan-400/20 px-2 py-2 sm:px-4 sm:py-4 lg:px-6 lg:py-5 shadow-md lg:shadow-xl hover:border-teal-400 hover:shadow-teal-500/30 hover:scale-[1.02] transition-all duration-300 group"
                   >
-                    <span className="text-[10px] sm:text-xs font-bold text-teal-400 uppercase tracking-wider">Écouter la démo vocale</span>
-                    <span className="text-lg sm:text-xl lg:text-2xl font-black text-white mt-1 lg:mt-2 tracking-tight group-hover:text-teal-300 transition-colors">09 39 24 05 75</span>
-                    <span className="text-[10px] sm:text-xs text-slate-400 mt-0.5 lg:mt-1 hidden sm:inline">Numéro de démonstration (public)</span>
-                    <div className="mt-2 lg:mt-3 flex items-center gap-1.5 lg:gap-2 bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 px-3 py-1.5 lg:px-4 lg:py-2 rounded-full text-xs lg:text-sm font-black">
-                      <Sparkles className="w-3 h-3 lg:w-4 lg:h-4" />
+                    <span className="text-[9px] sm:text-xs font-bold text-teal-400 uppercase tracking-wider">Démo vocale</span>
+                    <span className="text-sm sm:text-xl lg:text-2xl font-black text-white mt-0.5 lg:mt-2 tracking-tight group-hover:text-teal-300 transition-colors">09 39 24 05 75</span>
+                    <span className="text-[9px] sm:text-xs text-slate-400 mt-0.5 lg:mt-1 hidden sm:inline">Démo (public)</span>
+                    <div className="mt-1.5 lg:mt-3 flex items-center gap-1 lg:gap-2 bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 px-2 py-1 lg:px-4 lg:py-2 rounded-full text-[10px] sm:text-xs lg:text-sm font-black">
+                      <Sparkles className="w-2.5 h-2.5 sm:w-4 sm:h-4" />
                       IA en direct
                     </div>
                   </a>
