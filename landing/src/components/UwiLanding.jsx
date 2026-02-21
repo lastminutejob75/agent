@@ -76,17 +76,6 @@ export default function UwiLanding() {
           <div className="max-w-7xl mx-auto px-6 py-24 lg:py-32 relative">
             <div className="grid lg:grid-cols-2 gap-20 items-start">
               <div className="space-y-10 lg:pt-12">
-                <a href="tel:+33939240575" className="inline-flex items-center gap-3 bg-gradient-to-r from-teal-500/20 to-cyan-400/20 backdrop-blur-sm text-teal-400 px-6 py-4 rounded-2xl text-sm font-bold border border-teal-500/40 shadow-lg hover:shadow-2xl hover:shadow-teal-500/30 hover:scale-105 transition-all duration-300 group">
-                  <div className="relative flex items-center justify-center">
-                    <div className="absolute inset-0 bg-teal-400 rounded-full blur-md opacity-50 group-hover:opacity-75 transition-opacity"></div>
-                    <Phone className="relative w-5 h-5 group-hover:rotate-12 transition-transform" />
-                  </div>
-                  <div className="flex flex-col items-start">
-                    <span className="text-xs text-teal-300/80 font-semibold uppercase tracking-wider">📞 Écouter la démo vocale : 09 39 24 05 75</span>
-                    <span className="text-base text-white font-black">Numéro de démonstration (public).</span>
-                  </div>
-                </a>
-
                 <h1 className="text-6xl lg:text-7xl xl:text-8xl font-black text-white leading-[0.95] tracking-tighter">
                   Votre cabinet
                   <span className="block mt-3 bg-gradient-to-r from-teal-400 via-cyan-300 to-blue-400 bg-clip-text text-transparent">
@@ -137,16 +126,30 @@ export default function UwiLanding() {
 
               <div className="relative flex justify-center lg:justify-end">
                 <div className="absolute inset-0 bg-gradient-to-r from-teal-500 via-cyan-400 to-blue-500 rounded-[3rem] blur-3xl opacity-30"></div>
-                <div className="relative w-full max-w-xs">
+                <div className="relative w-full max-w-xs space-y-4">
                   <div className="absolute -top-6 -right-6 w-32 h-32 bg-teal-500 rounded-3xl opacity-20 blur-2xl"></div>
                   <div className="absolute -bottom-6 -left-6 w-32 h-32 bg-cyan-400 rounded-3xl opacity-20 blur-2xl"></div>
-                  <div className="relative w-full aspect-[3/4] bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl shadow-2xl border-2 border-slate-700 ring-1 ring-white/10 flex items-center justify-center">
-                    <Phone className="w-24 h-24 text-teal-400" />
+                  {/* Illustration IA en direct */}
+                  <div className="relative rounded-2xl overflow-hidden shadow-2xl border-2 border-slate-700 ring-1 ring-white/10 bg-slate-800">
+                    <img
+                      src="/ia-en-direct.png"
+                      alt="IA en direct - Écouter la démo vocale"
+                      className="w-full h-auto object-contain"
+                    />
                   </div>
-                  <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 px-6 py-3 rounded-full text-sm font-black shadow-2xl flex items-center gap-2">
-                    <Sparkles className="w-4 h-4" />
-                    IA en direct
-                  </div>
+                  {/* Démo vocale : numéro bien visible */}
+                  <a
+                    href="tel:+33939240575"
+                    className="relative flex flex-col items-center justify-center rounded-2xl border-2 border-teal-500/60 bg-gradient-to-br from-teal-500/20 to-cyan-400/20 px-6 py-5 shadow-xl hover:border-teal-400 hover:shadow-teal-500/30 hover:scale-[1.02] transition-all duration-300 group"
+                  >
+                    <span className="text-xs font-bold text-teal-400 uppercase tracking-wider">Écouter la démo vocale</span>
+                    <span className="text-2xl font-black text-white mt-2 tracking-tight group-hover:text-teal-300 transition-colors">09 39 24 05 75</span>
+                    <span className="text-xs text-slate-400 mt-1">Numéro de démonstration (public)</span>
+                    <div className="mt-3 flex items-center gap-2 bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 px-4 py-2 rounded-full text-sm font-black">
+                      <Sparkles className="w-4 h-4" />
+                      IA en direct
+                    </div>
+                  </a>
                 </div>
               </div>
             </div>
