@@ -6,6 +6,7 @@ import Login from "./pages/Login";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import AuthGoogleCallback from "./pages/AuthGoogleCallback";
+import EssaiGratuit from "./pages/EssaiGratuit";
 import AppLayout from "./pages/AppLayout";
 import AppDashboard from "./pages/AppDashboard";
 import AppStatus from "./pages/AppStatus";
@@ -43,6 +44,7 @@ export default function App() {
         <Route path="login" element={<Login />} />
         <Route path="forgot-password" element={<ForgotPassword />} />
         <Route path="reset-password" element={<ResetPassword />} />
+        <Route path="essai-gratuit" element={<EssaiGratuit />} />
         <Route path="auth/google/callback" element={<AuthGoogleCallback />} />
       </Route>
       <Route path="/app" element={<AppShell />}>

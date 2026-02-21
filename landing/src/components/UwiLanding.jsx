@@ -105,12 +105,12 @@ export default function UwiLanding() {
                 </p>
 
                 <div className="flex flex-col sm:flex-row gap-4 pt-4">
-                  <button className="group relative bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 px-10 py-5 rounded-xl font-black hover:shadow-2xl hover:shadow-teal-500/50 hover:scale-105 transition-all duration-200 flex items-center justify-center gap-3 text-lg overflow-hidden">
+                  <Link to="/essai-gratuit" className="group relative bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 px-10 py-5 rounded-xl font-black hover:shadow-2xl hover:shadow-teal-500/50 hover:scale-105 transition-all duration-200 flex items-center justify-center gap-3 text-lg overflow-hidden">
                     <div className="absolute inset-0 bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                    <span className="relative">Essai gratuit 14 jours</span>
+                    <span className="relative">Essai gratuit 1 mois</span>
                     <ArrowRight className="relative w-6 h-6 group-hover:translate-x-2 transition-transform" />
-                  </button>
-                  <a href="tel:+33939240575" className="group bg-slate-800/50 backdrop-blur text-white px-10 py-5 rounded-xl font-bold border-2 border-slate-700 hover:border-teal-500 hover:bg-slate-800 hover:shadow-xl transition-all duration-200 text-lg flex items-center justify-center gap-3">
+                  </Link>
+                  <a href="tel:+33652398414" className="group bg-slate-800/50 backdrop-blur text-white px-10 py-5 rounded-xl font-bold border-2 border-slate-700 hover:border-teal-500 hover:bg-slate-800 hover:shadow-xl transition-all duration-200 text-lg flex items-center justify-center gap-3">
                     <Phone className="w-5 h-5 group-hover:rotate-12 transition-transform" />
                     Parler à un expert
                   </a>
@@ -844,8 +844,8 @@ export default function UwiLanding() {
             <h2 className="text-5xl md:text-6xl font-bold">Prêt à optimiser votre accueil patient ?</h2>
             <p className="text-xl text-teal-100 max-w-2xl mx-auto">Rejoignez les 300+ praticiens qui retrouvent du temps pour soigner avec UWi Medical</p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center pt-4">
-              <button className="bg-white text-teal-600 px-10 py-4 rounded-xl font-semibold hover:bg-teal-50 transition-colors text-base">Essai gratuit 14 jours</button>
-              <a href="tel:+33939240575" className="bg-teal-500/30 backdrop-blur text-white px-10 py-4 rounded-xl font-semibold border border-white/30 hover:bg-teal-500/40 transition-colors text-base inline-block">📞 Écouter la démo vocale : 09 39 24 05 75</a>
+              <Link to="/essai-gratuit" className="bg-white text-teal-600 px-10 py-4 rounded-xl font-semibold hover:bg-teal-50 transition-colors text-base text-center">Essai gratuit 1 mois</Link>
+              <a href="tel:+33939240575" className="bg-teal-500/30 backdrop-blur text-white px-10 py-4 rounded-xl font-semibold border border-white/30 hover:bg-teal-500/40 transition-colors text-base inline-block text-center">📞 Écouter la démo vocale : 09 39 24 05 75</a>
             </div>
           </div>
         </section>
