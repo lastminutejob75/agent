@@ -8,11 +8,6 @@ export default function AppLayout() {
   const [err, setErr] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const token = getTenantToken();
-  if (!token) {
-    return <Navigate to="/login" replace />;
-  }
-
   useEffect(() => {
     api
       .tenantMe()
