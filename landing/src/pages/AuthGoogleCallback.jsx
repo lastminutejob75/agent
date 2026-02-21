@@ -1,9 +1,7 @@
 import React from "react";
-import { useNavigate } from "react-router-dom";
 import { API_URL, GOOGLE_REDIRECT_URI, OAUTH_CODE_VERIFIER_KEY } from "../lib/authConfig.js";
 
 export default function AuthGoogleCallback() {
-  const nav = useNavigate();
   const [status, setStatus] = React.useState("loading");
   const [message, setMessage] = React.useState("Connexion en cours…");
 
@@ -53,18 +51,9 @@ export default function AuthGoogleCallback() {
           throw new Error(`Google login échoué (${res.status}). ${txt}`);
         }
 
-        const me = await fetch(`${API_URL}/api/auth/me`, {
-          method: "GET",
-          credentials: "include",
-        });
-
-        if (!me.ok) {
-          throw new Error("Connexion réussie mais session non lisible (/me).");
-        }
-
-        setStatus("ok");
+        // Redirection complète pour que le navigateur recharge la page avec le cookie
         setMessage("Connecté. Redirection…");
-        nav("/app", { replace: true });
+        window.location.replace("/app");
       } catch (e) {
         setStatus("error");
         setMessage(e?.message || "Erreur lors de la connexion Google.");
@@ -72,7 +61,7 @@ export default function AuthGoogleCallback() {
     };
 
     run();
-  }, [nav]);
+  }, []);
 
   return (
     <div className="mx-auto max-w-md p-8">
