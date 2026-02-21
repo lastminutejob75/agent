@@ -75,8 +75,9 @@ export default function UwiLanding() {
 
           <div className="max-w-7xl mx-auto px-6 py-24 lg:py-32 relative">
             <div className="grid lg:grid-cols-2 gap-20 items-start">
-              <div className="space-y-10 lg:pt-12">
-                <h1 className="text-6xl lg:text-7xl xl:text-8xl font-black text-white leading-[0.95] tracking-tighter">
+              {/* 1. Slogan — mobile: en premier ; desktop: gauche en haut */}
+              <div className="lg:col-start-1 lg:row-start-1">
+                <h1 className="text-5xl sm:text-6xl lg:text-7xl xl:text-8xl font-black text-white leading-[0.95] tracking-tighter">
                   Votre cabinet
                   <span className="block mt-3 bg-gradient-to-r from-teal-400 via-cyan-300 to-blue-400 bg-clip-text text-transparent">
                     ne rate plus
@@ -85,7 +86,38 @@ export default function UwiLanding() {
                     un seul appel
                   </span>
                 </h1>
+              </div>
 
+              {/* 2. Illustration + carte démo — mobile: juste sous le slogan ; desktop: colonne droite */}
+              <div className="relative flex justify-center lg:justify-end lg:col-start-2 lg:row-start-1 lg:row-span-2">
+                <div className="absolute inset-0 bg-gradient-to-r from-teal-500 via-cyan-400 to-blue-500 rounded-[3rem] blur-3xl opacity-30"></div>
+                <div className="relative w-full max-w-xs space-y-4">
+                  <div className="absolute -top-6 -right-6 w-32 h-32 bg-teal-500 rounded-3xl opacity-20 blur-2xl"></div>
+                  <div className="absolute -bottom-6 -left-6 w-32 h-32 bg-cyan-400 rounded-3xl opacity-20 blur-2xl"></div>
+                  <div className="relative rounded-2xl overflow-hidden shadow-2xl border-2 border-slate-700 ring-1 ring-white/10 bg-slate-800">
+                    <img
+                      src="/ia-en-direct.png"
+                      alt="IA en direct - Écouter la démo vocale"
+                      className="w-full h-auto object-contain"
+                    />
+                  </div>
+                  <a
+                    href="tel:+33939240575"
+                    className="relative flex flex-col items-center justify-center rounded-2xl border-2 border-teal-500/60 bg-gradient-to-br from-teal-500/20 to-cyan-400/20 px-6 py-5 shadow-xl hover:border-teal-400 hover:shadow-teal-500/30 hover:scale-[1.02] transition-all duration-300 group"
+                  >
+                    <span className="text-xs font-bold text-teal-400 uppercase tracking-wider">Écouter la démo vocale</span>
+                    <span className="text-2xl font-black text-white mt-2 tracking-tight group-hover:text-teal-300 transition-colors">09 39 24 05 75</span>
+                    <span className="text-xs text-slate-400 mt-1">Numéro de démonstration (public)</span>
+                    <div className="mt-3 flex items-center gap-2 bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 px-4 py-2 rounded-full text-sm font-black">
+                      <Sparkles className="w-4 h-4" />
+                      IA en direct
+                    </div>
+                  </a>
+                </div>
+              </div>
+
+              {/* 3. Texte + CTAs + stats — mobile: en scrollant en dessous ; desktop: gauche sous le slogan */}
+              <div className="space-y-10 lg:pt-12 lg:col-start-1 lg:row-start-2">
                 <p className="text-xl text-slate-400 leading-relaxed max-w-xl">
                   L'IA médicale qui transforme chaque appel en opportunité.
                   <span className="block mt-3 text-slate-300 font-semibold">
@@ -121,35 +153,6 @@ export default function UwiLanding() {
                     <div className="text-2xl font-black text-white">500+</div>
                     <div className="text-xs text-slate-500 font-semibold uppercase tracking-wide">Praticiens</div>
                   </div>
-                </div>
-              </div>
-
-              <div className="relative flex justify-center lg:justify-end">
-                <div className="absolute inset-0 bg-gradient-to-r from-teal-500 via-cyan-400 to-blue-500 rounded-[3rem] blur-3xl opacity-30"></div>
-                <div className="relative w-full max-w-xs space-y-4">
-                  <div className="absolute -top-6 -right-6 w-32 h-32 bg-teal-500 rounded-3xl opacity-20 blur-2xl"></div>
-                  <div className="absolute -bottom-6 -left-6 w-32 h-32 bg-cyan-400 rounded-3xl opacity-20 blur-2xl"></div>
-                  {/* Illustration IA en direct */}
-                  <div className="relative rounded-2xl overflow-hidden shadow-2xl border-2 border-slate-700 ring-1 ring-white/10 bg-slate-800">
-                    <img
-                      src="/ia-en-direct.png"
-                      alt="IA en direct - Écouter la démo vocale"
-                      className="w-full h-auto object-contain"
-                    />
-                  </div>
-                  {/* Démo vocale : numéro bien visible */}
-                  <a
-                    href="tel:+33939240575"
-                    className="relative flex flex-col items-center justify-center rounded-2xl border-2 border-teal-500/60 bg-gradient-to-br from-teal-500/20 to-cyan-400/20 px-6 py-5 shadow-xl hover:border-teal-400 hover:shadow-teal-500/30 hover:scale-[1.02] transition-all duration-300 group"
-                  >
-                    <span className="text-xs font-bold text-teal-400 uppercase tracking-wider">Écouter la démo vocale</span>
-                    <span className="text-2xl font-black text-white mt-2 tracking-tight group-hover:text-teal-300 transition-colors">09 39 24 05 75</span>
-                    <span className="text-xs text-slate-400 mt-1">Numéro de démonstration (public)</span>
-                    <div className="mt-3 flex items-center gap-2 bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 px-4 py-2 rounded-full text-sm font-black">
-                      <Sparkles className="w-4 h-4" />
-                      IA en direct
-                    </div>
-                  </a>
                 </div>
               </div>
             </div>
