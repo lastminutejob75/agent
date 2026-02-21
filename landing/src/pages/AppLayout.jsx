@@ -16,7 +16,7 @@ export default function AppLayout() {
         if (isTenantUnauthorized(e)) {
           setImpersonation(null);
           clearTenantToken();
-          window.location.href = "/login";
+          window.location.href = "/";
           return;
         }
         setErr(e.message || "Erreur");
@@ -33,7 +33,7 @@ export default function AppLayout() {
   const handleLogout = () => {
     setImpersonation(null);
     clearTenantToken();
-    window.location.href = "/login";
+    window.location.href = "/";
   };
 
   return (
