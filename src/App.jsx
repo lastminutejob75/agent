@@ -8,7 +8,7 @@ import Contact from "./pages/Contact";
 
 const legalStyle = {
   minHeight: "100vh",
-  background: "#0A1628",
+  background: "#0D1120",
   color: "#e2e8f0",
   display: "flex",
   alignItems: "center",

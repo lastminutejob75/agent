@@ -14,7 +14,7 @@ export default function LegalPageLayout({ title, children }) {
       <style>{`
         .legal-page {
           min-height: 100vh;
-          background: #0A1628;
+          background: #0D1120;
           color: #e2e8f0;
           font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
           padding: 24px 16px 48px;
@@ -28,7 +28,7 @@ export default function LegalPageLayout({ title, children }) {
           margin-bottom: 24px;
           font-size: 14px;
           font-weight: 600;
-          color: #00D4AA;
+          color: #00F0B5;
           text-decoration: none;
         }
         .legal-page__back:hover { text-decoration: underline; }
@@ -58,7 +58,7 @@ export default function LegalPageLayout({ title, children }) {
         }
         .legal-page__content li { margin-bottom: 6px; }
         .legal-page__content a {
-          color: #00D4AA;
+          color: #00F0B5;
           text-decoration: none;
         }
         .legal-page__content a:hover { text-decoration: underline; }

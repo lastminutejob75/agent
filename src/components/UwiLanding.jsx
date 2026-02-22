@@ -103,9 +103,9 @@ export default function UwiLanding() {
     resize();
     window.addEventListener("resize", resize);
     const blobs = [
-      { x: 0.5, y: 0, r: 0.65, col: "rgba(0,212,170,0.09)", sp: 0.00022, ph: 0 },
-      { x: 0.85, y: 0.78, r: 0.5, col: "rgba(0,80,180,0.07)", sp: 0.00028, ph: 1.3 },
-      { x: 0.1, y: 0.6, r: 0.44, col: "rgba(0,160,130,0.055)", sp: 0.00018, ph: 2.6 },
+      { x: 0.5, y: 0, r: 0.65, col: "rgba(0,240,181,0.08)", sp: 0.00022, ph: 0 },
+      { x: 0.85, y: 0.78, r: 0.5, col: "rgba(0,163,163,0.06)", sp: 0.00028, ph: 1.3 },
+      { x: 0.1, y: 0.6, r: 0.44, col: "rgba(0,230,204,0.05)", sp: 0.00018, ph: 2.6 },
     ];
     const dots = Array.from({ length: 26 }, () => ({
       x: Math.random(),
@@ -120,9 +120,9 @@ export default function UwiLanding() {
       const W = c.width;
       const H = c.height;
       ctx.clearRect(0, 0, W, H);
-      ctx.fillStyle = "#0A1628";
+      ctx.fillStyle = "#0D1120";
       ctx.fillRect(0, 0, W, H);
-      ctx.strokeStyle = "rgba(0,212,170,0.028)";
+      ctx.strokeStyle = "rgba(100,160,200,0.12)";
       ctx.lineWidth = 1;
       for (let x = 0; x < W; x += 44) {
         ctx.beginPath();
@@ -154,7 +154,7 @@ export default function UwiLanding() {
         if (d.y > 1) d.y = 0;
         ctx.beginPath();
         ctx.arc(d.x * W, d.y * H, d.r, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(0,212,170,${d.a})`;
+        ctx.fillStyle = `rgba(0,240,181,${d.a})`;
         ctx.fill();
       });
       t++;
