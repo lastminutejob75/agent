@@ -34,17 +34,17 @@ const LABEL_CONSULTATIONS_BY_VOLUME = {
   unknown: "plusieurs",
 };
 
-// Message personnalisé selon primary_pain_point (wording institutionnel)
+// Message personnalisé selon primary_pain_point (step 6 — wording institutionnel)
 const PAIN_POINT_MESSAGE = {
-  "Les appels interrompent mes consultations":
+  "Je suis interrompu(e) en consultation par les appels":
     "En filtrant les appels et en supprimant les interruptions pendant vos consultations.",
-  "Mon secrétariat est débordé":
+  "On me laisse beaucoup de messages à rappeler":
+    "En répondant aux appels et en réduisant les messages à rappeler.",
+  "Mon secrétariat n'arrive pas à suivre":
     "En absorbant une partie du flux d'appels et en automatisant la prise de rendez-vous.",
-  "Je rate des appels importants":
-    "En répondant 7j/7 et en réduisant les appels non traités.",
-  "La gestion des rendez-vous me prend trop de temps":
+  "Je passe trop de temps à gérer les rendez-vous":
     "En proposant des créneaux disponibles et en enregistrant automatiquement les rendez-vous.",
-  "Je veux améliorer l'expérience patient":
+  "Je veux mieux orienter les patients (infos, consignes, urgence)":
     "En apportant une réponse immédiate et structurée à chaque appel.",
   Autre: "En réduisant les interruptions et en automatisant la prise de rendez-vous.",
 };
@@ -82,23 +82,65 @@ function computeDiagnostic(data) {
   };
 }
 
-// Step 6 — Point de douleur principal (1 seule sélection)
+// Step 6 — Quelle situation vous arrive le plus souvent (1 clic)
 const PAIN_POINT_OPTIONS = [
-  "Les appels interrompent mes consultations",
-  "Mon secrétariat est débordé",
-  "Je rate des appels importants",
-  "La gestion des rendez-vous me prend trop de temps",
-  "Je veux améliorer l'expérience patient",
+  "Je suis interrompu(e) en consultation par les appels",
+  "On me laisse beaucoup de messages à rappeler",
+  "Mon secrétariat n'arrive pas à suivre",
+  "Je passe trop de temps à gérer les rendez-vous",
+  "Je veux mieux orienter les patients (infos, consignes, urgence)",
   "Autre",
 ];
 
-// Step 1 — Spécialité médicale (menu déroulant)
-const MEDICAL_SPECIALTY_OPTIONS = [
-  { group: "Médecins", options: ["Médecin généraliste", "Médecin spécialiste", "Pédiatre", "Dermatologue", "Ophtalmologue", "Cardiologue", "Gynécologue", "Psychiatre"] },
-  { group: "Dentaire", options: ["Chirurgien-dentiste", "Orthodontiste"] },
-  { group: "Paramédical", options: ["Infirmier(e) libéral(e)", "Kinésithérapeute", "Ostéopathe", "Orthophoniste", "Psychologue", "Sage-femme"] },
-  { group: "Structures", options: ["Centre médical", "Clinique privée", "Cabinet de groupe", "Maison de santé"] },
-  { group: "Autre", options: ["Autre profession de santé"] },
+// Step 1 — Spécialité : slug (stockage/API) + label (affichage). 6 tuiles + Autres (dropdown)
+const STEP1_TILES = [
+  { slug: "medecin_generaliste", label: "Médecin généraliste" },
+  { slug: "dentiste", label: "Dentiste" },
+  { slug: "kinesitherapeute", label: "Kinésithérapeute" },
+  { slug: "infirmier_liberal", label: "Infirmier(e) libéral(e)" },
+  { slug: "osteopathe", label: "Ostéopathe" },
+  { slug: "centre_medical", label: "Centre médical / Maison de santé" },
+];
+const STEP1_OTHER_GROUPS = [
+  {
+    group: "Médecins spécialistes",
+    options: [
+      { slug: "pediatre", label: "Pédiatre" },
+      { slug: "dermatologue", label: "Dermatologue" },
+      { slug: "gynecologue", label: "Gynécologue" },
+      { slug: "ophtalmologue", label: "Ophtalmologue" },
+      { slug: "cardiologue", label: "Cardiologue" },
+      { slug: "orl", label: "ORL" },
+      { slug: "psychiatre", label: "Psychiatre" },
+      { slug: "neurologue", label: "Neurologue" },
+      { slug: "rhumatologue", label: "Rhumatologue" },
+      { slug: "gastro_enterologue", label: "Gastro-entérologue" },
+    ],
+  },
+  {
+    group: "Paramédical",
+    options: [
+      { slug: "orthophoniste", label: "Orthophoniste" },
+      { slug: "sage_femme", label: "Sage-femme" },
+      { slug: "psychologue", label: "Psychologue" },
+      { slug: "pedicure_podologue", label: "Pédicure-podologue" },
+      { slug: "ergotherapeute", label: "Ergothérapeute" },
+      { slug: "dieteticien", label: "Diététicien(ne)" },
+    ],
+  },
+  {
+    group: "Structures",
+    options: [
+      { slug: "cabinet_de_groupe", label: "Cabinet de groupe" },
+      { slug: "clinique_privee", label: "Clinique privée" },
+      { slug: "imagerie_labo", label: "Laboratoire / Imagerie" },
+      { slug: "pharmacie", label: "Pharmacie" },
+    ],
+  },
+  {
+    group: "Autre",
+    options: [{ slug: "autre", label: "Autre profession de santé…" }],
+  },
 ];
 
 const VOLUME_OPTIONS = [
@@ -134,6 +176,8 @@ function loadState() {
   return {
     step: 1,
     medical_specialty: "",
+    medical_specialty_label: "",
+    specialty_other: "",
     daily_call_volume: "",
     primary_pain_point: "",
     opening_hours: defaultOpeningHours(),
@@ -212,6 +256,8 @@ export default function CreerAssistante() {
       const payload = {
         email: modalEmail.trim(),
         medical_specialty: (state.medical_specialty || "").trim(),
+        medical_specialty_label: (state.medical_specialty_label || "").trim() || undefined,
+        specialty_other: (state.specialty_other || "").trim() || undefined,
         daily_call_volume: state.daily_call_volume,
         primary_pain_point: (state.primary_pain_point || "").trim(),
         opening_hours: oh,
@@ -348,22 +394,70 @@ export default function CreerAssistante() {
                 Quelle est votre spécialité ?
               </h2>
               <p className="text-sm text-slate-400 text-center mb-4">
-                Nous adaptons l'assistante à votre activité.
+                Nous adaptons automatiquement l'accueil et la prise de rendez-vous à votre spécialité.
               </p>
-              <select
-                value={state.medical_specialty}
-                onChange={(e) => persist({ medical_specialty: e.target.value })}
-                className="w-full max-w-md rounded-xl border-2 border-slate-600 bg-slate-800/80 px-4 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
-              >
-                <option value="">Choisissez votre spécialité</option>
-                {MEDICAL_SPECIALTY_OPTIONS.map(({ group, options }) => (
-                  <optgroup key={group} label={group}>
-                    {options.map((opt) => (
-                      <option key={opt} value={opt}>{opt}</option>
-                    ))}
-                  </optgroup>
+              <div className="w-full max-w-lg grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+                {STEP1_TILES.map(({ slug, label }) => (
+                  <button
+                    key={slug}
+                    type="button"
+                    onClick={() => persist({ medical_specialty: slug, medical_specialty_label: label, specialty_other: "" })}
+                    className={`py-4 px-3 rounded-xl border-2 text-sm font-semibold transition-all text-left flex items-center gap-2 ${
+                      state.medical_specialty === slug
+                        ? "border-teal-500 bg-teal-500/20 text-teal-400"
+                        : "border-slate-600 text-slate-300 bg-slate-800/50 hover:border-slate-500"
+                    }`}
+                  >
+                    {state.medical_specialty === slug && (
+                      <span className="flex-shrink-0 w-5 h-5 rounded-full bg-teal-500 flex items-center justify-center text-slate-950 text-xs">✓</span>
+                    )}
+                    {label}
+                  </button>
                 ))}
-              </select>
+              </div>
+              <div className="w-full max-w-lg">
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">Autres spécialités</label>
+                <select
+                  value={STEP1_TILES.some((t) => t.slug === state.medical_specialty) ? "" : (state.medical_specialty || "")}
+                  onChange={(e) => {
+                    const slug = e.target.value;
+                    if (!slug) {
+                      persist({ medical_specialty: "", medical_specialty_label: "", specialty_other: "" });
+                      return;
+                    }
+                    const found = STEP1_OTHER_GROUPS.flatMap((g) => g.options).find((o) => o.slug === slug);
+                    persist({
+                      medical_specialty: slug,
+                      medical_specialty_label: found ? found.label : slug,
+                      specialty_other: slug === "autre" ? state.specialty_other : "",
+                    });
+                  }}
+                  className="w-full rounded-xl border-2 border-slate-600 bg-slate-800/80 px-4 py-3 text-white focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                >
+                  <option value="">Choisir…</option>
+                  {STEP1_OTHER_GROUPS.map(({ group, options }) => (
+                    <optgroup key={group} label={group}>
+                      {options.map(({ slug: s, label: l }) => (
+                        <option key={s} value={s}>{l}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </div>
+              {state.medical_specialty === "autre" && (
+                <input
+                  type="text"
+                  value={state.specialty_other || ""}
+                  onChange={(e) => persist({ specialty_other: e.target.value })}
+                  placeholder="Précisez (optionnel)"
+                  className="mt-3 w-full max-w-md rounded-xl border-2 border-slate-600 bg-slate-800/80 px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                />
+              )}
+              {state.medical_specialty && (
+                <p className="mt-4 text-sm text-teal-400/90 text-center">
+                  Parfait. Nous allons configurer une assistante adaptée à votre spécialité.
+                </p>
+              )}
             </>
           )}
 
@@ -550,7 +644,7 @@ export default function CreerAssistante() {
           {step === 6 && (
             <>
               <h2 className="text-xl font-bold text-white text-center mb-2">
-                Qu'est-ce qui impacte le plus votre organisation aujourd'hui ?
+                Quelle situation vous arrive le plus souvent ?
               </h2>
               <p className="text-sm text-slate-400 text-center mb-4">
                 Une seule réponse — nous personnaliserons notre recommandation.
@@ -561,16 +655,22 @@ export default function CreerAssistante() {
                     key={opt}
                     type="button"
                     onClick={() => persist({ primary_pain_point: opt })}
-                    className={`w-full py-3 px-4 rounded-xl border-2 text-left text-sm font-medium transition-all ${
+                    className={`w-full py-3 px-4 rounded-xl border-2 text-left text-sm font-medium transition-all flex items-center gap-2 ${
                       state.primary_pain_point === opt
                         ? "border-teal-500 bg-teal-500/20 text-teal-400"
                         : "border-slate-600 text-slate-300 bg-slate-800/50 hover:border-slate-500"
                     }`}
                   >
+                    {state.primary_pain_point === opt && (
+                      <span className="flex-shrink-0 w-5 h-5 rounded-full bg-teal-500 flex items-center justify-center text-slate-950 text-xs">✓</span>
+                    )}
                     {opt}
                   </button>
                 ))}
               </div>
+              <p className="mt-4 text-xs text-slate-500 text-center">
+                UWi s'adaptera automatiquement à votre situation.
+              </p>
             </>
           )}
 

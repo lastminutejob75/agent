@@ -30,7 +30,7 @@ def get_lead_by_email_for_upsert(email: str) -> Optional[Dict[str, Any]]:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT id, created_at, email, daily_call_volume, medical_specialty, primary_pain_point, assistant_name, voice_gender,
+                    SELECT id, created_at, email, daily_call_volume, medical_specialty, medical_specialty_label, specialty_other, primary_pain_point, assistant_name, voice_gender,
                            opening_hours, wants_callback, callback_phone, source, status, notes, contacted_at, converted_at,
                            updated_at, last_submitted_at
                     FROM pre_onboarding_leads
@@ -57,6 +57,8 @@ def upsert_lead(
     opening_hours: Dict[str, Any],
     wants_callback: bool = False,
     callback_phone: Optional[str] = None,
+    specialty_other: Optional[str] = None,
+    medical_specialty_label: Optional[str] = None,
     source: str = "landing_cta",
 ) -> Optional[str]:
     """
@@ -72,20 +74,22 @@ def upsert_lead(
                     cur.execute(
                         """
                         UPDATE pre_onboarding_leads
-                        SET daily_call_volume = %s, medical_specialty = %s, primary_pain_point = %s, assistant_name = %s, voice_gender = %s,
-                            opening_hours = %s::jsonb, wants_callback = %s, callback_phone = %s, source = %s,
+                        SET daily_call_volume = %s, medical_specialty = %s, medical_specialty_label = %s, primary_pain_point = %s, assistant_name = %s, voice_gender = %s,
+                            opening_hours = %s::jsonb, wants_callback = %s, callback_phone = %s, specialty_other = %s, source = %s,
                             updated_at = NOW(), last_submitted_at = NOW()
                         WHERE id = %s
                         """,
                         (
                             daily_call_volume,
                             (medical_specialty or "").strip() or None,
+                            (medical_specialty_label or "").strip() or None,
                             (primary_pain_point or "").strip() or None,
                             assistant_name.strip(),
                             voice_gender,
                             _json_dumps(opening_hours),
                             bool(wants_callback),
                             (callback_phone or "").strip() or None,
+                            (specialty_other or "").strip() or None,
                             source,
                             lead_id,
                         ),
@@ -105,6 +109,8 @@ def upsert_lead(
         opening_hours=opening_hours,
         wants_callback=wants_callback,
         callback_phone=callback_phone,
+        specialty_other=specialty_other,
+        medical_specialty_label=medical_specialty_label,
         source=source,
     )
 
@@ -119,6 +125,8 @@ def insert_lead(
     opening_hours: Dict[str, Any],
     wants_callback: bool = False,
     callback_phone: Optional[str] = None,
+    specialty_other: Optional[str] = None,
+    medical_specialty_label: Optional[str] = None,
     source: str = "landing_cta",
 ) -> Optional[str]:
     """Insert a new lead. Returns lead_id (uuid) or None on error."""
@@ -129,20 +137,22 @@ def insert_lead(
                 cur.execute(
                     """
                     INSERT INTO pre_onboarding_leads
-                    (id, email, daily_call_volume, medical_specialty, primary_pain_point, assistant_name, voice_gender, opening_hours, wants_callback, callback_phone, source, status, last_submitted_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, 'new', NOW(), NOW())
+                    (id, email, daily_call_volume, medical_specialty, medical_specialty_label, primary_pain_point, assistant_name, voice_gender, opening_hours, wants_callback, callback_phone, specialty_other, source, status, last_submitted_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, 'new', NOW(), NOW())
                     """,
                     (
                         lead_id,
                         email.strip(),
                         daily_call_volume,
                         (medical_specialty or "").strip() or None,
+                        (medical_specialty_label or "").strip() or None,
                         (primary_pain_point or "").strip() or None,
                         assistant_name.strip(),
                         voice_gender,
                         _json_dumps(opening_hours),
                         bool(wants_callback),
                         (callback_phone or "").strip() or None,
+                        (specialty_other or "").strip() or None,
                         source,
                     ),
                 )
@@ -166,7 +176,7 @@ def list_leads(status: Optional[str] = None, limit: int = 200) -> List[Dict[str,
                 if status:
                     cur.execute(
                         """
-                        SELECT id, created_at, email, daily_call_volume, medical_specialty, primary_pain_point, assistant_name, voice_gender,
+                        SELECT id, created_at, email, daily_call_volume, medical_specialty, medical_specialty_label, specialty_other, primary_pain_point, assistant_name, voice_gender,
                                opening_hours, wants_callback, callback_phone, source, status, notes, contacted_at, converted_at,
                                updated_at, last_submitted_at
                         FROM pre_onboarding_leads
@@ -180,7 +190,7 @@ def list_leads(status: Optional[str] = None, limit: int = 200) -> List[Dict[str,
                     # Tri par défaut : new d'abord (leads chauds), puis created_at DESC
                     cur.execute(
                         """
-                        SELECT id, created_at, email, daily_call_volume, medical_specialty, primary_pain_point, assistant_name, voice_gender,
+                        SELECT id, created_at, email, daily_call_volume, medical_specialty, medical_specialty_label, specialty_other, primary_pain_point, assistant_name, voice_gender,
                                opening_hours, wants_callback, callback_phone, source, status, notes, contacted_at, converted_at,
                                updated_at, last_submitted_at
                         FROM pre_onboarding_leads
@@ -203,7 +213,7 @@ def get_lead(lead_id: str) -> Optional[Dict[str, Any]]:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT id, created_at, email, daily_call_volume, medical_specialty, primary_pain_point, assistant_name, voice_gender,
+                    SELECT id, created_at, email, daily_call_volume, medical_specialty, medical_specialty_label, specialty_other, primary_pain_point, assistant_name, voice_gender,
                            opening_hours, wants_callback, callback_phone, source, status, notes, tenant_id, contacted_at, converted_at,
                            updated_at, last_submitted_at
                     FROM pre_onboarding_leads

@@ -67,11 +67,11 @@ export default function AdminLeadDetail() {
     if (!lead) return;
     const lines = [
       `Email: ${lead.email}`,
-      `Spécialité: ${lead.medical_specialty || "—"}`,
-      `Point de douleur: ${lead.primary_pain_point || "—"}`,
+      `Spécialité: ${lead.medical_specialty_label || lead.medical_specialty || "—"}${lead.specialty_other ? ` – ${lead.specialty_other}` : ""}`,
+      `Situation: ${lead.primary_pain_point || "—"}`,
       `Appels/jour: ${lead.daily_call_volume}`,
       `Assistante: ${lead.assistant_name} (voix ${lead.voice_gender === "female" ? "féminine" : "masculine"})`,
-      `Rappel souhaité: ${lead.wants_callback ? "Oui" : "Non"}`,
+      `Rappel souhaité: ${lead.wants_callback ? (lead.callback_phone ? `Oui – ${lead.callback_phone}` : "Oui") : "Non"}`,
       `Source: ${lead.source || "landing_cta"}`,
       `Date: ${formatDate(lead.created_at)}`,
     ];
@@ -121,12 +121,12 @@ export default function AdminLeadDetail() {
           <h2 className="text-sm font-semibold text-slate-500 uppercase mb-4">Informations</h2>
           <ul className="space-y-2 text-sm">
             <li><strong>Email:</strong> <a href={mailto} className="text-indigo-600 hover:underline">{lead.email}</a></li>
-            <li><strong>Spécialité:</strong> {lead.medical_specialty || "—"}</li>
-            <li><strong>Point de douleur:</strong> {lead.primary_pain_point || "—"}</li>
+            <li><strong>Spécialité:</strong> {lead.medical_specialty_label || lead.medical_specialty || "—"}{lead.specialty_other ? ` – ${lead.specialty_other}` : ""}</li>
+            <li><strong>Situation:</strong> {lead.primary_pain_point || "—"}</li>
             <li><strong>Appels/jour:</strong> {lead.daily_call_volume}</li>
             <li><strong>Assistante:</strong> {lead.assistant_name}</li>
             <li><strong>Voix:</strong> {lead.voice_gender === "female" ? "Féminine" : "Masculine"}</li>
-            <li><strong>Rappel souhaité:</strong> {lead.wants_callback ? "Oui" : "Non"}</li>
+            <li><strong>Rappel souhaité:</strong> {lead.wants_callback ? (lead.callback_phone ? `Oui – ${lead.callback_phone}` : "Oui") : "Non"}</li>
             <li><strong>Source:</strong> {lead.source || "landing_cta"}</li>
             <li><strong>Créé le:</strong> {formatDate(lead.created_at)}</li>
           </ul>

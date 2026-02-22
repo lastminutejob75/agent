@@ -21,30 +21,32 @@ router = APIRouter(prefix="/api/pre-onboarding", tags=["pre_onboarding"])
 VALID_VOLUME = {"<10", "10-25", "25-50", "50-100", "100+", "unknown"}
 VALID_VOICE = {"female", "male"}
 
-# Spécialités médicales (menu déroulant wizard) — ordre affichage côté front
+# Spécialités médicales (step 1 : slugs normalisés)
 VALID_SPECIALTIES = frozenset({
-    "Médecin généraliste", "Médecin spécialiste", "Pédiatre", "Dermatologue", "Ophtalmologue",
-    "Cardiologue", "Gynécologue", "Psychiatre",
-    "Chirurgien-dentiste", "Orthodontiste",
-    "Infirmier(e) libéral(e)", "Kinésithérapeute", "Ostéopathe", "Orthophoniste", "Psychologue", "Sage-femme",
-    "Centre médical", "Clinique privée", "Cabinet de groupe", "Maison de santé",
-    "Autre profession de santé",
+    "medecin_generaliste", "dentiste", "kinesitherapeute", "infirmier_liberal", "osteopathe", "centre_medical",
+    "pediatre", "dermatologue", "gynecologue", "ophtalmologue", "cardiologue", "orl", "psychiatre",
+    "neurologue", "rhumatologue", "gastro_enterologue",
+    "orthophoniste", "sage_femme", "psychologue", "pedicure_podologue", "ergotherapeute", "dieteticien",
+    "cabinet_de_groupe", "clinique_privee", "imagerie_labo", "pharmacie",
+    "autre",
 })
 
-# Point de douleur principal (mini-diagnostic)
+# Point de douleur principal (step 6 — quelle situation vous arrive le plus souvent)
 VALID_PAIN_POINTS = frozenset({
-    "Les appels interrompent mes consultations",
-    "Mon secrétariat est débordé",
-    "Je rate des appels importants",
-    "La gestion des rendez-vous me prend trop de temps",
-    "Je veux améliorer l'expérience patient",
+    "Je suis interrompu(e) en consultation par les appels",
+    "On me laisse beaucoup de messages à rappeler",
+    "Mon secrétariat n'arrive pas à suivre",
+    "Je passe trop de temps à gérer les rendez-vous",
+    "Je veux mieux orienter les patients (infos, consignes, urgence)",
     "Autre",
 })
 
 
 class PreOnboardingCommitBody(BaseModel):
     email: str = Field(..., min_length=1)
-    medical_specialty: str = Field(..., min_length=1)
+    medical_specialty: str = Field(..., min_length=1)  # slug (ex: kinesitherapeute)
+    medical_specialty_label: Optional[str] = Field(default=None)  # label affiché (ex: Kinésithérapeute)
+    specialty_other: Optional[str] = Field(default=None)  # précision si medical_specialty=autre
     daily_call_volume: str = Field(...)
     primary_pain_point: str = Field(default="")
     opening_hours: Dict[str, Any] = Field(default_factory=dict)
@@ -121,6 +123,8 @@ async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody)
         opening_hours=body.opening_hours,
         wants_callback=body.wants_callback,
         callback_phone=(body.callback_phone or "").strip() or None,
+        specialty_other=(body.specialty_other or "").strip() or None,
+        medical_specialty_label=(body.medical_specialty_label or "").strip() or None,
         source=body.source or "landing_cta",
     )
     if not lead_id:
@@ -139,6 +143,8 @@ async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody)
             email=body.email,
             daily_call_volume=body.daily_call_volume,
             medical_specialty=body.medical_specialty,
+            medical_specialty_label=(body.medical_specialty_label or "").strip() or "",
+            specialty_other=(body.specialty_other or "").strip() or "",
             primary_pain_point=(body.primary_pain_point or "").strip(),
             assistant_name=body.assistant_name,
             voice_gender=body.voice_gender,

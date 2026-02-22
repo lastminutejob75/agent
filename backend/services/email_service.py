@@ -454,6 +454,8 @@ def send_lead_founder_email(
     email: str,
     daily_call_volume: str,
     medical_specialty: str = "",
+    medical_specialty_label: str = "",
+    specialty_other: str = "",
     primary_pain_point: str = "",
     assistant_name: str = "",
     voice_gender: str = "",
@@ -499,7 +501,8 @@ def send_lead_founder_email(
 
     # dashboard_base_url doit être une URL absolue (ex. ADMIN_BASE_URL en prod) pour éviter liens cassés dans l'email
     link = f"{dashboard_base_url.rstrip('/')}/admin/leads/{lead_id}" if dashboard_base_url else f"/admin/leads/{lead_id}"
-    subject = f"Nouveau lead UWi – {daily_call_volume} appels/jour – {medical_specialty or '—'}"
+    specialty_display = (medical_specialty_label or "").strip() or medical_specialty or "—"
+    subject = f"Nouveau lead UWi – {daily_call_volume} appels/jour – {specialty_display}"
 
     html = f"""
 <!DOCTYPE html>
@@ -509,8 +512,8 @@ def send_lead_founder_email(
   <h1 style="font-size: 1.2rem;">Nouveau lead UWi – {assistant_name}</h1>
   <ul style="color: #333;">
     <li><strong>Email prospect:</strong> {email}</li>
-    <li><strong>Spécialité:</strong> {medical_specialty or '—'}</li>
-    <li><strong>Point de douleur:</strong> {primary_pain_point or '—'}</li>
+    <li><strong>Spécialité:</strong> {specialty_display}{(' – ' + (specialty_other or '').strip()) if (specialty_other or '').strip() else ''}</li>
+    <li><strong>Situation (douleur):</strong> {primary_pain_point or '—'}</li>
     <li><strong>Appels estimés/jour:</strong> {daily_call_volume}</li>
     <li><strong>Assistante:</strong> {assistant_name}</li>
     <li><strong>Voix:</strong> {voice_label}</li>
