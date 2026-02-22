@@ -25,7 +25,7 @@ export default function Hero({ title, subtitle }: HeroProps) {
                 to="/creer-assistante"
                 className="inline-flex items-center justify-center rounded-xl bg-[#0066CC] px-8 py-4 text-base font-semibold text-white shadow-lg hover:bg-[#0052A3] transition hover:scale-105"
               >
-                Démarrer l'essai gratuit
+                Créer mon assistante
               </Link>
               <a
                 href="#roi"

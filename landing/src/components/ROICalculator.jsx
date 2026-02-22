@@ -172,7 +172,7 @@ export default function ROICalculator() {
                   href="#contact"
                   className="block w-full bg-white hover:bg-slate-50 text-[#0066CC] font-bold py-4 px-6 rounded-lg transition-all hover:scale-105 active:scale-95 shadow-lg text-center"
                 >
-                  Démarrer l'essai gratuit
+                  Créer mon assistante
                   <ArrowRight className="inline ml-2 h-5 w-5" />
                 </a>
 

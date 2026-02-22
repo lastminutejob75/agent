@@ -30,7 +30,7 @@ export default function AuthLayout() {
               to="/decouverte"
               className="relative group bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 px-7 py-3 rounded-lg text-sm font-black hover:shadow-2xl hover:shadow-teal-500/50 hover:scale-105 transition-all duration-200 inline-flex"
             >
-              <span className="relative">Démarrer →</span>
+              <span className="relative">Créer mon assistante</span>
             </Link>
           </div>
         </nav>

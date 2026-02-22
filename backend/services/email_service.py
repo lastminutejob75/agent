@@ -459,6 +459,7 @@ def send_lead_founder_email(
     voice_gender: str = "",
     opening_hours: Optional[Dict[str, Any]] = None,
     wants_callback: bool = False,
+    callback_phone: str = "",
     dashboard_base_url: str = "",
 ) -> Tuple[bool, Optional[str]]:
     """
@@ -513,7 +514,7 @@ def send_lead_founder_email(
     <li><strong>Appels estimés/jour:</strong> {daily_call_volume}</li>
     <li><strong>Assistante:</strong> {assistant_name}</li>
     <li><strong>Voix:</strong> {voice_label}</li>
-    <li><strong>Rappel souhaité:</strong> {"Oui" if wants_callback else "Non"}</li>
+    <li><strong>Rappel souhaité:</strong> {"Oui – " + (callback_phone or "").strip() if wants_callback and (callback_phone or "").strip() else ("Oui (pas de numéro)" if wants_callback else "Non")}</li>
     <li><strong>Source:</strong> landing_cta</li>
     <li><strong>Date/heure:</strong> {datetime.now().strftime("%d/%m/%Y %H:%M")} UTC</li>
   </ul>

@@ -52,6 +52,7 @@ class PreOnboardingCommitBody(BaseModel):
     assistant_name: str = Field(..., min_length=1)
     source: str = Field(default="landing_cta")
     wants_callback: bool = False
+    callback_phone: str = Field(default="")
 
 
 def _validate_email(email: str) -> bool:
@@ -98,6 +99,11 @@ async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody)
         raise HTTPException(status_code=400, detail="voice_gender invalide")
     if not (body.assistant_name and body.assistant_name.strip()):
         raise HTTPException(status_code=400, detail="assistant_name requis")
+    if body.wants_callback and not (body.callback_phone and body.callback_phone.strip()):
+        raise HTTPException(
+            status_code=400,
+            detail="Numéro de téléphone requis pour être rappelé",
+        )
     if not _validate_opening_hours(body.opening_hours):
         raise HTTPException(
             status_code=400,
@@ -114,6 +120,7 @@ async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody)
         voice_gender=body.voice_gender,
         opening_hours=body.opening_hours,
         wants_callback=body.wants_callback,
+        callback_phone=(body.callback_phone or "").strip() or None,
         source=body.source or "landing_cta",
     )
     if not lead_id:
@@ -137,6 +144,7 @@ async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody)
             voice_gender=body.voice_gender,
             opening_hours=body.opening_hours,
             wants_callback=body.wants_callback,
+            callback_phone=(body.callback_phone or "").strip() or "",
             dashboard_base_url=dashboard_base,
         )
         if not ok:

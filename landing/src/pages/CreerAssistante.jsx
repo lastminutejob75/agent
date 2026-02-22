@@ -159,6 +159,7 @@ export default function CreerAssistante() {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalEmail, setModalEmail] = useState("");
   const [modalCallback, setModalCallback] = useState(false);
+  const [modalCallbackPhone, setModalCallbackPhone] = useState("");
   const [commitLoading, setCommitLoading] = useState(false);
   const [commitDone, setCommitDone] = useState(false);
   const [submittedEmail, setSubmittedEmail] = useState("");
@@ -218,6 +219,7 @@ export default function CreerAssistante() {
         assistant_name: (state.assistant_name || "").trim(),
         source: "landing_cta",
         wants_callback: modalCallback,
+        callback_phone: modalCallback ? (modalCallbackPhone || "").trim() : "",
       };
       await api.preOnboardingCommit(payload);
       setSubmittedEmail(modalEmail.trim());
@@ -233,22 +235,26 @@ export default function CreerAssistante() {
 
   if (commitDone) {
     return (
-      <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6">
-        <div className="max-w-md text-center">
-          <h1 className="text-2xl font-bold text-slate-800 mb-2">C'est bon, on vous recontacte</h1>
-          <p className="text-slate-600 mb-2">
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 relative">
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute top-0 left-1/4 w-96 h-96 bg-teal-500/10 rounded-full blur-[120px]" />
+          <div className="absolute top-1/3 right-1/4 w-96 h-96 bg-cyan-400/10 rounded-full blur-[120px]" />
+        </div>
+        <div className="max-w-md text-center relative z-10">
+          <h1 className="text-2xl font-bold text-white mb-2">C'est bon, on vous recontacte</h1>
+          <p className="text-slate-400 mb-2">
             Nous avons bien reçu votre demande et vous recontacterons à l'adresse :
           </p>
           {submittedEmail && (
-            <p className="text-teal-700 font-medium mb-4 break-all">{submittedEmail}</p>
+            <p className="text-teal-400 font-medium mb-4 break-all">{submittedEmail}</p>
           )}
           <p className="text-slate-500 text-sm mb-6">
             Vous recevrez sous peu un numéro de test pour écouter votre assistante.
           </p>
-          <p className="text-slate-400 text-xs mb-6">Vous pouvez fermer cette page.</p>
+          <p className="text-slate-500 text-xs mb-6">Vous pouvez fermer cette page.</p>
           <Link
             to="/"
-            className="inline-flex items-center justify-center rounded-xl bg-teal-600 text-white font-semibold px-6 py-3 hover:bg-teal-700"
+            className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 font-black px-6 py-3 hover:shadow-lg hover:shadow-teal-500/30 transition-all"
           >
             Retour à l'accueil
           </Link>
@@ -265,15 +271,21 @@ export default function CreerAssistante() {
     primary_pain_point: state.primary_pain_point,
   });
 
-  // Compteur animé (0 → target en 800ms) pour l'écran estimation
+  // Compteur animé (0 → target en 800ms) pour l'écran estimation ; respecte prefers-reduced-motion ; clamp final
   const [animMinutes, setAnimMinutes] = useState(0);
   const [animAnnual, setAnimAnnual] = useState(0);
   useEffect(() => {
     if (!isStep7) return;
-    setAnimMinutes(0);
-    setAnimAnnual(0);
     const targetMin = diagnostic.estimated_minutes_per_day;
     const targetAnnual = diagnostic.annual_hours;
+    const reduceMotion = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) {
+      setAnimMinutes(targetMin);
+      setAnimAnnual(targetAnnual);
+      return;
+    }
+    setAnimMinutes(0);
+    setAnimAnnual(0);
     const duration = 800;
     const start = performance.now();
     let rafId = 0;
@@ -281,8 +293,8 @@ export default function CreerAssistante() {
       const elapsed = now - start;
       const t = Math.min(elapsed / duration, 1);
       const ease = 1 - (1 - t) * (1 - t);
-      setAnimMinutes(ease * targetMin);
-      setAnimAnnual(ease * targetAnnual);
+      setAnimMinutes(t >= 1 ? targetMin : ease * targetMin);
+      setAnimAnnual(t >= 1 ? targetAnnual : ease * targetAnnual);
       if (t < 1) rafId = requestAnimationFrame(tick);
     };
     rafId = requestAnimationFrame(tick);
@@ -292,35 +304,56 @@ export default function CreerAssistante() {
   }, [isStep7, diagnostic.estimated_minutes_per_day, diagnostic.annual_hours]);
 
   return (
-    <div className="min-h-screen bg-white flex flex-col">
+    <div className="min-h-screen bg-slate-950 flex flex-col relative overflow-hidden">
+      {/* Header identité landing — retour accueil */}
+      <header className="flex-shrink-0 px-6 py-4 relative z-20">
+        <div className="max-w-xl mx-auto flex justify-between items-center">
+          <Link
+            to="/"
+            className="text-white font-bold tracking-tight hover:text-teal-400 transition-colors flex items-center gap-2"
+          >
+            <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-teal-500 to-cyan-400 flex items-center justify-center text-slate-950 text-sm font-black">U</span>
+            <span>UWi Medical</span>
+          </Link>
+          <Link to="/login" className="text-sm text-slate-400 hover:text-teal-400 transition-colors">Connexion</Link>
+        </div>
+      </header>
+
+      {/* Fond identité landing (orbs + grille légère) */}
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute top-0 left-1/4 w-96 h-96 bg-teal-500/10 rounded-full blur-[120px]" />
+        <div className="absolute top-1/3 right-1/4 w-96 h-96 bg-cyan-400/10 rounded-full blur-[120px]" />
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,#0f172a_1px,transparent_1px),linear-gradient(to_bottom,#0f172a_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_80%_50%_at_50%_0%,#000_40%,transparent_110%)] opacity-50" />
+      </div>
+
       {/* Progress */}
-      <div className="flex-shrink-0 px-6 pt-8 pb-2">
+      <div className="flex-shrink-0 px-6 pt-8 pb-2 relative z-10">
         <div className="max-w-xl mx-auto flex justify-between text-xs text-slate-400">
           <span>Étape {step} sur 7</span>
         </div>
-        <div className="max-w-xl mx-auto h-1 bg-slate-100 rounded-full mt-1 overflow-hidden">
+        <div className="max-w-xl mx-auto h-1.5 bg-slate-800 rounded-full mt-1 overflow-hidden">
           <div
-            className="h-full bg-teal-500 rounded-full transition-all duration-300"
+            className="h-full bg-gradient-to-r from-teal-500 to-cyan-400 rounded-full transition-all duration-300"
             style={{ width: `${(step / 7) * 100}%` }}
           />
         </div>
       </div>
 
       {/* Content — no scroll */}
-      <div className="flex-1 flex flex-col items-center justify-center px-6 py-6 overflow-hidden">
+      <div className="flex-1 flex flex-col items-center justify-center px-6 py-6 overflow-hidden relative z-10">
         <div className="w-full max-w-xl flex flex-col items-center justify-center min-h-0">
           {step === 1 && (
             <>
-              <h2 className="text-xl font-bold text-slate-800 text-center mb-2">
+              <h2 className="text-xl font-bold text-white text-center mb-2">
                 Quelle est votre spécialité ?
               </h2>
-              <p className="text-sm text-slate-500 text-center mb-4">
+              <p className="text-sm text-slate-400 text-center mb-4">
                 Nous adaptons l'assistante à votre activité.
               </p>
               <select
                 value={state.medical_specialty}
                 onChange={(e) => persist({ medical_specialty: e.target.value })}
-                className="w-full max-w-md rounded-xl border-2 border-slate-200 px-4 py-3 text-slate-800 focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                className="w-full max-w-md rounded-xl border-2 border-slate-600 bg-slate-800/80 px-4 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
               >
                 <option value="">Choisissez votre spécialité</option>
                 {MEDICAL_SPECIALTY_OPTIONS.map(({ group, options }) => (
@@ -336,7 +369,7 @@ export default function CreerAssistante() {
 
           {step === 2 && (
             <>
-              <h2 className="text-xl font-bold text-slate-800 text-center mb-2">
+              <h2 className="text-xl font-bold text-white text-center mb-2">
                 Combien d'appels recevez-vous par jour ?
               </h2>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 w-full mt-6">
@@ -347,8 +380,8 @@ export default function CreerAssistante() {
                     onClick={() => persist({ daily_call_volume: opt.value })}
                     className={`py-4 px-4 rounded-xl border-2 text-sm font-semibold transition-all ${
                       state.daily_call_volume === opt.value
-                        ? "border-teal-500 bg-teal-50 text-teal-800"
-                        : "border-slate-200 text-slate-700 hover:border-slate-300"
+                        ? "border-teal-500 bg-teal-500/20 text-teal-400"
+                        : "border-slate-600 text-slate-300 bg-slate-800/50 hover:border-slate-500"
                     }`}
                   >
                     {opt.label}
@@ -356,27 +389,27 @@ export default function CreerAssistante() {
                 ))}
               </div>
               {volumeMicroText() && (
-                <p className="text-sm text-slate-500 mt-4 text-center">{volumeMicroText()}</p>
+                <p className="text-sm text-slate-400 mt-4 text-center">{volumeMicroText()}</p>
               )}
             </>
           )}
 
           {step === 3 && (
             <>
-              <h2 className="text-xl font-bold text-slate-800 text-center mb-1">
+              <h2 className="text-xl font-bold text-white text-center mb-1">
                 À quels horaires votre cabinet est-il ouvert ?
               </h2>
-              <p className="text-sm text-slate-500 text-center mb-4">
+              <p className="text-sm text-slate-400 text-center mb-4">
                 Ces horaires servent à informer vos patients et gérer les appels hors ouverture.
               </p>
               <button
                 type="button"
                 onClick={applyPreset}
-                className="text-sm text-teal-600 font-medium mb-4 hover:underline"
+                className="text-sm text-teal-400 font-medium mb-4 hover:text-teal-300"
               >
                 Cabinet standard (L-V 08:30–18:00)
               </button>
-              <div className="w-full space-y-2 max-h-64 overflow-auto">
+              <div className="w-full space-y-2 max-h-64 overflow-auto rounded-xl border border-slate-700 bg-slate-800/50 p-3">
                 {(state.opening_hours || defaultOpeningHours()) &&
                   DAYS.map((label, i) => {
                     const key = String(i);
@@ -388,10 +421,10 @@ export default function CreerAssistante() {
                     return (
                       <div
                         key={key}
-                        className="flex items-center gap-3 py-2 border-b border-slate-100"
+                        className="flex items-center gap-3 py-2 border-b border-slate-700 last:border-0"
                       >
-                        <span className="w-10 text-sm font-medium text-slate-600">{label}</span>
-                        <label className="flex items-center gap-2 text-sm">
+                        <span className="w-10 text-sm font-medium text-slate-400">{label}</span>
+                        <label className="flex items-center gap-2 text-sm text-slate-300">
                           <input
                             type="checkbox"
                             checked={!!slot.closed}
@@ -407,6 +440,7 @@ export default function CreerAssistante() {
                                 },
                               })
                             }
+                            className="rounded border-slate-600 bg-slate-700 text-teal-500 focus:ring-teal-500"
                           />
                           Fermé
                         </label>
@@ -423,9 +457,9 @@ export default function CreerAssistante() {
                                   },
                                 })
                               }
-                              className="rounded-lg border border-slate-200 px-2 py-1 text-sm"
+                              className="rounded-lg border border-slate-600 bg-slate-800 px-2 py-1 text-sm text-white"
                             />
-                            <span className="text-slate-400">–</span>
+                            <span className="text-slate-500">–</span>
                             <input
                               type="time"
                               value={slot.end}
@@ -437,7 +471,7 @@ export default function CreerAssistante() {
                                   },
                                 })
                               }
-                              className="rounded-lg border border-slate-200 px-2 py-1 text-sm"
+                              className="rounded-lg border border-slate-600 bg-slate-800 px-2 py-1 text-sm text-white"
                             />
                           </>
                         )}
@@ -450,7 +484,7 @@ export default function CreerAssistante() {
 
           {step === 4 && (
             <>
-              <h2 className="text-xl font-bold text-slate-800 text-center mb-6">
+              <h2 className="text-xl font-bold text-white text-center mb-6">
                 Quelle voix pour votre assistante ?
               </h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
@@ -459,24 +493,24 @@ export default function CreerAssistante() {
                   onClick={() => persist({ voice_gender: "female" })}
                   className={`p-6 rounded-2xl border-2 text-left transition-all ${
                     state.voice_gender === "female"
-                      ? "border-teal-500 bg-teal-50"
-                      : "border-slate-200 hover:border-slate-300"
+                      ? "border-teal-500 bg-teal-500/20"
+                      : "border-slate-600 bg-slate-800/50 hover:border-slate-500"
                   }`}
                 >
-                  <div className="font-semibold text-slate-800">Voix féminine</div>
-                  <div className="text-sm text-slate-500 mt-1">douce et rassurante</div>
+                  <div className="font-semibold text-white">Voix féminine</div>
+                  <div className="text-sm text-slate-400 mt-1">douce et rassurante</div>
                 </button>
                 <button
                   type="button"
                   onClick={() => persist({ voice_gender: "male" })}
                   className={`p-6 rounded-2xl border-2 text-left transition-all ${
                     state.voice_gender === "male"
-                      ? "border-teal-500 bg-teal-50"
-                      : "border-slate-200 hover:border-slate-300"
+                      ? "border-teal-500 bg-teal-500/20"
+                      : "border-slate-600 bg-slate-800/50 hover:border-slate-500"
                   }`}
                 >
-                  <div className="font-semibold text-slate-800">Voix masculine</div>
-                  <div className="text-sm text-slate-500 mt-1">posée et professionnelle</div>
+                  <div className="font-semibold text-white">Voix masculine</div>
+                  <div className="text-sm text-slate-400 mt-1">posée et professionnelle</div>
                 </button>
               </div>
             </>
@@ -484,7 +518,7 @@ export default function CreerAssistante() {
 
           {step === 5 && (
             <>
-              <h2 className="text-xl font-bold text-slate-800 text-center mb-2">
+              <h2 className="text-xl font-bold text-white text-center mb-2">
                 Comment souhaitez-vous l'appeler ?
               </h2>
               <div className="flex flex-wrap gap-2 justify-center mt-4">
@@ -495,8 +529,8 @@ export default function CreerAssistante() {
                     onClick={() => persist({ assistant_name: n })}
                     className={`px-4 py-2 rounded-xl border-2 text-sm font-medium ${
                       state.assistant_name === n
-                        ? "border-teal-500 bg-teal-50 text-teal-800"
-                        : "border-slate-200 text-slate-700 hover:border-slate-300"
+                        ? "border-teal-500 bg-teal-500/20 text-teal-400"
+                        : "border-slate-600 text-slate-300 bg-slate-800/50 hover:border-slate-500"
                     }`}
                   >
                     {n}
@@ -508,17 +542,17 @@ export default function CreerAssistante() {
                 value={state.assistant_name}
                 onChange={(e) => persist({ assistant_name: e.target.value })}
                 placeholder="Ou un prénom de votre choix"
-                className="mt-4 w-full max-w-xs rounded-xl border border-slate-200 px-4 py-3 text-slate-800 placeholder-slate-400 focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                className="mt-4 w-full max-w-xs rounded-xl border-2 border-slate-600 bg-slate-800/80 px-4 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
               />
             </>
           )}
 
           {step === 6 && (
             <>
-              <h2 className="text-xl font-bold text-slate-800 text-center mb-2">
+              <h2 className="text-xl font-bold text-white text-center mb-2">
                 Qu'est-ce qui impacte le plus votre organisation aujourd'hui ?
               </h2>
-              <p className="text-sm text-slate-500 text-center mb-4">
+              <p className="text-sm text-slate-400 text-center mb-4">
                 Une seule réponse — nous personnaliserons notre recommandation.
               </p>
               <div className="w-full max-w-lg space-y-2">
@@ -529,8 +563,8 @@ export default function CreerAssistante() {
                     onClick={() => persist({ primary_pain_point: opt })}
                     className={`w-full py-3 px-4 rounded-xl border-2 text-left text-sm font-medium transition-all ${
                       state.primary_pain_point === opt
-                        ? "border-teal-500 bg-teal-50 text-teal-800"
-                        : "border-slate-200 text-slate-700 hover:border-slate-300"
+                        ? "border-teal-500 bg-teal-500/20 text-teal-400"
+                        : "border-slate-600 text-slate-300 bg-slate-800/50 hover:border-slate-500"
                     }`}
                   >
                     {opt}
@@ -542,57 +576,57 @@ export default function CreerAssistante() {
 
           {step === 7 && (
             <>
-              <h2 className="text-xl font-bold text-slate-800 text-center mb-1">
+              <h2 className="text-xl font-bold text-white text-center mb-1">
                 Votre estimation personnalisée
               </h2>
-              <p className="text-sm text-slate-500 text-center mb-6">
+              <p className="text-sm text-slate-400 text-center mb-6">
                 Estimation indicative basée sur votre volume d'appels et vos réponses.
               </p>
               <div className="w-full max-w-lg space-y-4">
                 {/* Card 1 — Temps potentiellement économisé (compteur animé, valeur arrondie) */}
-                <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 text-center">
-                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">
+                <div className="rounded-xl border border-slate-700 bg-slate-800/80 p-4 text-center ring-1 ring-white/5" aria-live="polite" aria-atomic="true">
+                  <p className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-1">
                     Temps potentiellement économisé
                   </p>
-                  <p className="text-slate-800">
-                    <span className="text-3xl font-bold text-teal-800 tabular-nums">{formatMinutesForDisplay(Math.round(animMinutes))}</span>
+                  <p>
+                    <span className="text-3xl font-bold bg-gradient-to-r from-teal-400 to-cyan-400 bg-clip-text text-transparent tabular-nums">{formatMinutesForDisplay(Math.round(animMinutes))}</span>
                     <span className="text-base font-medium text-slate-500 ml-1">/ jour</span>
                   </p>
-                  <p className="text-xs text-slate-400 mt-1">
+                  <p className="text-xs text-slate-500 mt-1">
                     principalement via filtrage des appels et automatisation des RDV
                   </p>
                 </div>
                 {/* Card 2 — Projection annuelle (arrondi par pas de 5 pour éviter effet slot) */}
-                <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 text-center">
-                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">
+                <div className="rounded-xl border border-slate-700 bg-slate-800/80 p-4 text-center ring-1 ring-white/5">
+                  <p className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-1">
                     Sur une année (estimation)
                   </p>
-                  <p className="text-slate-800">
-                    <span className="text-3xl font-bold text-slate-800 tabular-nums">≈ {Math.round(animAnnual / 5) * 5}</span>
+                  <p>
+                    <span className="text-3xl font-bold text-white tabular-nums">≈ {Math.round(animAnnual / 5) * 5}</span>
                     <span className="text-base font-medium text-slate-500 ml-1">heures / an</span>
                   </p>
-                  <p className="text-xs text-slate-400 mt-1">
+                  <p className="text-xs text-slate-500 mt-1">
                     calcul basé sur 200 jours ouvrés
                   </p>
                 </div>
                 {/* Card 3 — Consultations potentielles (valeur en avant) */}
-                <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 text-center">
-                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">
+                <div className="rounded-xl border border-slate-700 bg-slate-800/80 p-4 text-center ring-1 ring-white/5">
+                  <p className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-1">
                     Ce que cela peut représenter
                   </p>
-                  <p className="text-slate-800">
-                    <span className="text-2xl font-bold text-slate-800">
+                  <p>
+                    <span className="text-2xl font-bold text-white">
                       {diagnostic.label_consultations === "1" ? "1 consultation potentielle" : `${diagnostic.label_consultations} consultations potentielles`}
                     </span>
                     <span className="text-sm font-medium text-slate-500"> / jour</span>
                   </p>
-                  <p className="text-xs text-slate-400 mt-1">
+                  <p className="text-xs text-slate-500 mt-1">
                     ou simplement moins d'interruptions et plus de continuité de soin
                   </p>
                 </div>
                 {/* Phrase personnalisée (pain point) — 1 ligne max, tooltip si tronqué */}
                 <p
-                  className="text-sm text-slate-600 text-center italic pt-1 line-clamp-1"
+                  className="text-sm text-slate-400 text-center italic pt-1 line-clamp-1"
                   title={diagnostic.message}
                 >
                   {diagnostic.message}
@@ -603,7 +637,7 @@ export default function CreerAssistante() {
                   <button
                     type="button"
                     onClick={() => setModalOpen(true)}
-                    className="w-full px-6 py-3 rounded-xl bg-teal-600 text-white font-semibold hover:bg-teal-700"
+                    className="w-full px-6 py-3 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 font-black hover:shadow-lg hover:shadow-teal-500/30 transition-all"
                   >
                     Recevoir un numéro de test
                   </button>
@@ -613,12 +647,12 @@ export default function CreerAssistante() {
                 </div>
                 <button
                   type="button"
-                  className="flex-1 px-6 py-3 rounded-xl border-2 border-slate-300 text-slate-700 font-semibold hover:bg-slate-50"
+                  className="flex-1 px-6 py-3 rounded-xl border-2 border-slate-600 text-slate-300 font-semibold hover:bg-slate-800/80 hover:border-slate-500"
                 >
                   Écouter {state.assistant_name || "l'assistante"}
                 </button>
               </div>
-              <p className="text-xs text-slate-400 text-center mt-4">
+              <p className="text-xs text-slate-500 text-center mt-4">
                 Configuration modifiable à tout moment.
               </p>
             </>
@@ -628,13 +662,13 @@ export default function CreerAssistante() {
 
       {/* Sticky buttons (steps 1–6 only; step 7 has its own CTA) */}
       {!isStep7 && (
-        <div className="flex-shrink-0 sticky bottom-0 bg-white border-t border-slate-100 px-6 py-4">
+        <div className="flex-shrink-0 sticky bottom-0 bg-slate-950/95 border-t border-slate-800 px-6 py-4 backdrop-blur-sm relative z-10">
           <div className="max-w-xl mx-auto flex justify-between gap-4">
             {step > 1 ? (
               <button
                 type="button"
                 onClick={() => persist({ step: step - 1 })}
-                className="px-5 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-medium hover:bg-slate-50"
+                className="px-5 py-2.5 rounded-xl border-2 border-slate-600 text-slate-300 font-medium hover:bg-slate-800/80 hover:border-slate-500"
               >
                 Retour
               </button>
@@ -645,7 +679,7 @@ export default function CreerAssistante() {
               type="button"
               onClick={() => persist({ step: step + 1 })}
               disabled={!canContinue()}
-              className="px-6 py-2.5 rounded-xl bg-teal-600 text-white font-semibold hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 font-black hover:shadow-lg hover:shadow-teal-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
             >
               Continuer
             </button>
@@ -653,11 +687,11 @@ export default function CreerAssistante() {
         </div>
       )}
 
-      {/* Modal email */}
+      {/* Modal email — identité landing */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
-            <h3 className="text-lg font-bold text-slate-800 mb-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl max-w-md w-full p-6 ring-1 ring-white/10">
+            <h3 className="text-lg font-bold text-white mb-4">
               Recevez votre numéro de test
             </h3>
             <input
@@ -665,24 +699,25 @@ export default function CreerAssistante() {
               value={modalEmail}
               onChange={(e) => setModalEmail(e.target.value)}
               placeholder="votre@email.com"
-              className="w-full rounded-xl border border-slate-200 px-4 py-3 mb-4 focus:ring-2 focus:ring-teal-500"
+              className="w-full rounded-xl border-2 border-slate-600 bg-slate-800 px-4 py-3 mb-4 text-white placeholder-slate-500 focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
             />
-            <label className="flex items-center gap-2 text-sm text-slate-600 mb-4">
+            <label className="flex items-center gap-2 text-sm text-slate-400 mb-4">
               <input
                 type="checkbox"
                 checked={modalCallback}
                 onChange={(e) => setModalCallback(e.target.checked)}
+                className="rounded border-slate-600 bg-slate-700 text-teal-500 focus:ring-teal-500"
               />
               Je souhaite être rappelé
             </label>
             {commitError && (
-              <p className="text-sm text-red-600 mb-2">{commitError}</p>
+              <p className="text-sm text-red-400 mb-2">{commitError}</p>
             )}
             <div className="flex gap-3">
               <button
                 type="button"
                 onClick={() => setModalOpen(false)}
-                className="flex-1 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-medium"
+                className="flex-1 py-2.5 rounded-xl border-2 border-slate-600 text-slate-300 font-medium hover:bg-slate-800"
               >
                 Annuler
               </button>
@@ -690,7 +725,7 @@ export default function CreerAssistante() {
                 type="button"
                 onClick={handleCommit}
                 disabled={!modalEmail.trim() || commitLoading}
-                className="flex-1 py-2.5 rounded-xl bg-teal-600 text-white font-semibold hover:bg-teal-700 disabled:opacity-50"
+                className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 font-black hover:shadow-teal-500/30 disabled:opacity-50 transition-all"
               >
                 {commitLoading ? "Envoi…" : "Recevoir mon numéro"}
               </button>
