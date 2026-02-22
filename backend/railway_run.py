@@ -35,6 +35,15 @@ def main() -> int:
         "python -m backend.run_migration 016 || true; "
         "python -m backend.run_migration 017 || true; "
         "python -m backend.run_migration 018 || true; "
+        "python -m backend.run_migration 019 || true; "
+        "python -m backend.run_migration 020 || true; "
+        "python -m backend.run_migration 021 || true; "
+        "python -m backend.run_migration 022 || true; "
+        "python -m backend.run_migration 023 || true; "
+        "python -m backend.run_migration 024 || true; "
+        "python -m backend.run_migration 025 || true; "
+        "python -m backend.run_migration 026 || true; "
+        "python -m backend.run_migration 027 || true; "
         "echo 'Migrations done'"
     )
     subprocess.Popen(

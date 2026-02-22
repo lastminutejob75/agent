@@ -1,4 +1,4 @@
-.PHONY: help install test run docker clean check-report-env export-kpis migrate migrate-007 migrate-008 migrate-018 migrate-railway railway-fix-vars onboard-tenant-users backfill-tenant-users add-tenant-user test-postgres test-email
+.PHONY: help install test run docker clean check-report-env export-kpis migrate migrate-007 migrate-008 migrate-018 migrate-026 migrate-027 migrate-leads migrate-railway railway-fix-vars onboard-tenant-users backfill-tenant-users add-tenant-user test-postgres test-email
 
 help:
 	@echo "Commandes disponibles :"
@@ -11,6 +11,9 @@ help:
 	@echo "  make export-kpis     - Export KPIs semaine précédente (--last-week)"
 	@echo "  make migrate         - Run migrations 007+008 (local)"
 	@echo "  make migrate-018     - Run migration 018 (tenant_users password/google)"
+	@echo "  make migrate-026     - Run migration 026 (leads is_enterprise)"
+	@echo "  make migrate-027     - Run migration 027 (leads max_daily_amplitude)"
+	@echo "  make migrate-leads   - Run migrations 026+027 (leads)"
 	@echo "  make migrate-railway - Run migrations sur Railway"
 	@echo "  make railway-fix-vars - Réappliquer variables TWILIO/SMTP (depuis .env)"
 	@echo "  make backfill-tenant-users - Backfill tenant_users (tenants existants)"
@@ -29,6 +32,14 @@ migrate-008:
 
 migrate-018:
 	python3 -m backend.run_migration 018
+
+migrate-026:
+	python3 -m backend.run_migration 026
+
+migrate-027:
+	python3 -m backend.run_migration 027
+
+migrate-leads: migrate-026 migrate-027
 
 # Migration sur Railway (DATABASE_URL injecté). Prérequis : npx, railway login + railway link
 migrate-railway:
