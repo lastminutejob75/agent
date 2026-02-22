@@ -49,14 +49,15 @@ const PAIN_POINT_MESSAGE = {
   Autre: "En réduisant les interruptions et en automatisant la prise de rendez-vous.",
 };
 
-/** Formate des minutes pour affichage (15 min, 30 min, 1 h, 1 à 2 h, 2 h+) */
+/** Formate des minutes pour affichage (15 min, 30 min, 1 h, 1 à 2 h, 2 h+). Préférer passer un entier (ex. Math.round) pour éviter clignotements. */
 function formatMinutesForDisplay(min) {
-  if (min >= 120) return "2 h+";
-  if (min >= 90) return "1 à 2 h";
-  if (min >= 60) return "1 h";
-  if (min >= 30) return "30 min";
-  if (min >= 15) return "15 min";
-  return `${Math.round(min)} min`;
+  const m = Math.round(Number(min) || 0);
+  if (m >= 120) return "2 h+";
+  if (m >= 90) return "1 à 2 h";
+  if (m >= 60) return "1 h";
+  if (m >= 30) return "30 min";
+  if (m >= 15) return "15 min";
+  return m <= 0 ? "0 min" : `${m} min`;
 }
 
 /**
@@ -275,17 +276,19 @@ export default function CreerAssistante() {
     const targetAnnual = diagnostic.annual_hours;
     const duration = 800;
     const start = performance.now();
-    let raf = 0;
+    let rafId = 0;
     const tick = (now) => {
       const elapsed = now - start;
       const t = Math.min(elapsed / duration, 1);
       const ease = 1 - (1 - t) * (1 - t);
       setAnimMinutes(ease * targetMin);
-      setAnimAnnual(Math.round(ease * targetAnnual));
-      if (t < 1) raf = requestAnimationFrame(tick);
+      setAnimAnnual(ease * targetAnnual);
+      if (t < 1) rafId = requestAnimationFrame(tick);
     };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    rafId = requestAnimationFrame(tick);
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+    };
   }, [isStep7, diagnostic.estimated_minutes_per_day, diagnostic.annual_hours]);
 
   return (
@@ -546,57 +549,68 @@ export default function CreerAssistante() {
                 Estimation indicative basée sur votre volume d'appels et vos réponses.
               </p>
               <div className="w-full max-w-lg space-y-4">
-                {/* Card 1 — Temps potentiellement économisé (compteur animé) */}
+                {/* Card 1 — Temps potentiellement économisé (compteur animé, valeur arrondie) */}
                 <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 text-center">
                   <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">
                     Temps potentiellement économisé
                   </p>
-                  <p className="text-2xl font-bold text-teal-800 tabular-nums">
-                    {formatMinutesForDisplay(animMinutes)} / jour
+                  <p className="text-slate-800">
+                    <span className="text-3xl font-bold text-teal-800 tabular-nums">{formatMinutesForDisplay(Math.round(animMinutes))}</span>
+                    <span className="text-base font-medium text-slate-500 ml-1">/ jour</span>
                   </p>
-                  <p className="text-xs text-slate-500 mt-1">
+                  <p className="text-xs text-slate-400 mt-1">
                     principalement via filtrage des appels et automatisation des RDV
                   </p>
                 </div>
-                {/* Card 2 — Projection annuelle */}
+                {/* Card 2 — Projection annuelle (arrondi par pas de 5 pour éviter effet slot) */}
                 <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 text-center">
                   <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">
                     Sur une année (estimation)
                   </p>
-                  <p className="text-2xl font-bold text-slate-800 tabular-nums">
-                    ≈ {animAnnual} heures / an
+                  <p className="text-slate-800">
+                    <span className="text-3xl font-bold text-slate-800 tabular-nums">≈ {Math.round(animAnnual / 5) * 5}</span>
+                    <span className="text-base font-medium text-slate-500 ml-1">heures / an</span>
                   </p>
-                  <p className="text-xs text-slate-500 mt-1">
+                  <p className="text-xs text-slate-400 mt-1">
                     calcul basé sur 200 jours ouvrés
                   </p>
                 </div>
-                {/* Card 3 — Consultations potentielles */}
+                {/* Card 3 — Consultations potentielles (valeur en avant) */}
                 <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 text-center">
                   <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">
                     Ce que cela peut représenter
                   </p>
-                  <p className="text-xl font-semibold text-slate-800">
-                    {diagnostic.label_consultations === "1"
-                      ? "1 consultation potentielle / jour"
-                      : `${diagnostic.label_consultations} consultations potentielles / jour`}
+                  <p className="text-slate-800">
+                    <span className="text-2xl font-bold text-slate-800">
+                      {diagnostic.label_consultations === "1" ? "1 consultation potentielle" : `${diagnostic.label_consultations} consultations potentielles`}
+                    </span>
+                    <span className="text-sm font-medium text-slate-500"> / jour</span>
                   </p>
-                  <p className="text-xs text-slate-500 mt-1">
+                  <p className="text-xs text-slate-400 mt-1">
                     ou simplement moins d'interruptions et plus de continuité de soin
                   </p>
                 </div>
-                {/* Phrase personnalisée (pain point) */}
-                <p className="text-sm text-slate-600 text-center italic pt-1">
+                {/* Phrase personnalisée (pain point) — 1 ligne max, tooltip si tronqué */}
+                <p
+                  className="text-sm text-slate-600 text-center italic pt-1 line-clamp-1"
+                  title={diagnostic.message}
+                >
                   {diagnostic.message}
                 </p>
               </div>
               <div className="flex flex-col sm:flex-row gap-3 mt-6">
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(true)}
-                  className="flex-1 px-6 py-3 rounded-xl bg-teal-600 text-white font-semibold hover:bg-teal-700"
-                >
-                  Recevoir un numéro de test
-                </button>
+                <div className="flex-1 flex flex-col items-center">
+                  <button
+                    type="button"
+                    onClick={() => setModalOpen(true)}
+                    className="w-full px-6 py-3 rounded-xl bg-teal-600 text-white font-semibold hover:bg-teal-700"
+                  >
+                    Recevoir un numéro de test
+                  </button>
+                  <p className="text-xs text-slate-500 mt-1.5">
+                    Numéro de test envoyé par email en moins d'une minute.
+                  </p>
+                </div>
                 <button
                   type="button"
                   className="flex-1 px-6 py-3 rounded-xl border-2 border-slate-300 text-slate-700 font-semibold hover:bg-slate-50"
