@@ -19,9 +19,98 @@ def _get_conn():
     return psycopg.connect(url, row_factory=dict_row)
 
 
+def get_lead_by_email_for_upsert(email: str) -> Optional[Dict[str, Any]]:
+    """
+    Retourne un lead existant avec status in ('new','contacted') pour déduplication, ou None.
+    Les leads converted/lost ne sont jamais retournés → jamais modifiés par un nouveau commit
+    (pas d'écrasement d'historique ou de config).
+    """
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, created_at, email, daily_call_volume, medical_specialty, primary_pain_point, assistant_name, voice_gender,
+                           opening_hours, wants_callback, source, status, notes, contacted_at, converted_at,
+                           updated_at, last_submitted_at
+                    FROM pre_onboarding_leads
+                    WHERE LOWER(TRIM(email)) = LOWER(TRIM(%s)) AND status IN ('new', 'contacted')
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (email.strip(),),
+                )
+                row = cur.fetchone()
+        return _row_to_lead(row) if row else None
+    except Exception as e:
+        logger.exception("get_lead_by_email_for_upsert failed: %s", e)
+        return None
+
+
+def upsert_lead(
+    email: str,
+    daily_call_volume: str,
+    medical_specialty: str,
+    primary_pain_point: str,
+    assistant_name: str,
+    voice_gender: str,
+    opening_hours: Dict[str, Any],
+    wants_callback: bool = False,
+    source: str = "landing_cta",
+) -> Optional[str]:
+    """
+    Si un lead existe déjà avec cet email et status in ('new','contacted') → UPDATE et retourne son id.
+    Sinon INSERT et retourne le nouvel id. Évite les doublons quand un médecin refait le wizard.
+    """
+    existing = get_lead_by_email_for_upsert(email)
+    if existing:
+        lead_id = existing["id"]
+        try:
+            with _get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE pre_onboarding_leads
+                        SET daily_call_volume = %s, medical_specialty = %s, primary_pain_point = %s, assistant_name = %s, voice_gender = %s,
+                            opening_hours = %s::jsonb, wants_callback = %s, source = %s,
+                            updated_at = NOW(), last_submitted_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (
+                            daily_call_volume,
+                            (medical_specialty or "").strip() or None,
+                            (primary_pain_point or "").strip() or None,
+                            assistant_name.strip(),
+                            voice_gender,
+                            _json_dumps(opening_hours),
+                            bool(wants_callback),
+                            source,
+                            lead_id,
+                        ),
+                    )
+                conn.commit()
+            return lead_id
+        except Exception as e:
+            logger.exception("upsert_lead update failed: %s", e)
+            return None
+    return insert_lead(
+        email=email,
+        daily_call_volume=daily_call_volume,
+        medical_specialty=medical_specialty,
+        primary_pain_point=primary_pain_point,
+        assistant_name=assistant_name,
+        voice_gender=voice_gender,
+        opening_hours=opening_hours,
+        wants_callback=wants_callback,
+        source=source,
+    )
+
+
 def insert_lead(
     email: str,
     daily_call_volume: str,
+    medical_specialty: str,
+    primary_pain_point: str,
     assistant_name: str,
     voice_gender: str,
     opening_hours: Dict[str, Any],
@@ -36,13 +125,15 @@ def insert_lead(
                 cur.execute(
                     """
                     INSERT INTO pre_onboarding_leads
-                    (id, email, daily_call_volume, assistant_name, voice_gender, opening_hours, wants_callback, source, status)
-                    VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, 'new')
+                    (id, email, daily_call_volume, medical_specialty, primary_pain_point, assistant_name, voice_gender, opening_hours, wants_callback, source, status, last_submitted_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, 'new', NOW(), NOW())
                     """,
                     (
                         lead_id,
                         email.strip(),
                         daily_call_volume,
+                        (medical_specialty or "").strip() or None,
+                        (primary_pain_point or "").strip() or None,
                         assistant_name.strip(),
                         voice_gender,
                         _json_dumps(opening_hours),
@@ -70,8 +161,9 @@ def list_leads(status: Optional[str] = None, limit: int = 200) -> List[Dict[str,
                 if status:
                     cur.execute(
                         """
-                        SELECT id, created_at, email, daily_call_volume, assistant_name, voice_gender,
-                               opening_hours, wants_callback, source, status, notes, contacted_at, converted_at
+                        SELECT id, created_at, email, daily_call_volume, medical_specialty, primary_pain_point, assistant_name, voice_gender,
+                               opening_hours, wants_callback, source, status, notes, contacted_at, converted_at,
+                               updated_at, last_submitted_at
                         FROM pre_onboarding_leads
                         WHERE status = %s
                         ORDER BY created_at DESC
@@ -80,12 +172,14 @@ def list_leads(status: Optional[str] = None, limit: int = 200) -> List[Dict[str,
                         (status, limit),
                     )
                 else:
+                    # Tri par défaut : new d'abord (leads chauds), puis created_at DESC
                     cur.execute(
                         """
-                        SELECT id, created_at, email, daily_call_volume, assistant_name, voice_gender,
-                               opening_hours, wants_callback, source, status, notes, contacted_at, converted_at
+                        SELECT id, created_at, email, daily_call_volume, medical_specialty, primary_pain_point, assistant_name, voice_gender,
+                               opening_hours, wants_callback, source, status, notes, contacted_at, converted_at,
+                               updated_at, last_submitted_at
                         FROM pre_onboarding_leads
-                        ORDER BY created_at DESC
+                        ORDER BY (status = 'new') DESC, created_at DESC
                         LIMIT %s
                         """,
                         (limit,),
@@ -104,8 +198,9 @@ def get_lead(lead_id: str) -> Optional[Dict[str, Any]]:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT id, created_at, email, daily_call_volume, assistant_name, voice_gender,
-                           opening_hours, wants_callback, source, status, notes, tenant_id, contacted_at, converted_at
+                    SELECT id, created_at, email, daily_call_volume, medical_specialty, primary_pain_point, assistant_name, voice_gender,
+                           opening_hours, wants_callback, source, status, notes, tenant_id, contacted_at, converted_at,
+                           updated_at, last_submitted_at
                     FROM pre_onboarding_leads
                     WHERE id = %s
                     """,
@@ -166,10 +261,7 @@ def count_new_leads() -> int:
 
 def _row_to_lead(r: Dict) -> Dict[str, Any]:
     out = dict(r)
-    if out.get("created_at") and hasattr(out["created_at"], "isoformat"):
-        out["created_at"] = out["created_at"].isoformat()
-    if out.get("contacted_at") and hasattr(out["contacted_at"], "isoformat"):
-        out["contacted_at"] = out["contacted_at"].isoformat()
-    if out.get("converted_at") and hasattr(out["converted_at"], "isoformat"):
-        out["converted_at"] = out["converted_at"].isoformat()
+    for key in ("created_at", "contacted_at", "converted_at", "updated_at", "last_submitted_at"):
+        if out.get(key) and hasattr(out[key], "isoformat"):
+            out[key] = out[key].isoformat()
     return out

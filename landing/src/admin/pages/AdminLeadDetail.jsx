@@ -26,6 +26,7 @@ export default function AdminLeadDetail() {
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -55,10 +56,19 @@ export default function AdminLeadDetail() {
     });
   };
 
+  const copyDirectLink = () => {
+    const url = window.location.origin + window.location.pathname;
+    navigator.clipboard.writeText(url);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2000);
+  };
+
   const copySummary = () => {
     if (!lead) return;
     const lines = [
       `Email: ${lead.email}`,
+      `Spécialité: ${lead.medical_specialty || "—"}`,
+      `Point de douleur: ${lead.primary_pain_point || "—"}`,
       `Appels/jour: ${lead.daily_call_volume}`,
       `Assistante: ${lead.assistant_name} (voix ${lead.voice_gender === "female" ? "féminine" : "masculine"})`,
       `Rappel souhaité: ${lead.wants_callback ? "Oui" : "Non"}`,
@@ -111,6 +121,8 @@ export default function AdminLeadDetail() {
           <h2 className="text-sm font-semibold text-slate-500 uppercase mb-4">Informations</h2>
           <ul className="space-y-2 text-sm">
             <li><strong>Email:</strong> <a href={mailto} className="text-indigo-600 hover:underline">{lead.email}</a></li>
+            <li><strong>Spécialité:</strong> {lead.medical_specialty || "—"}</li>
+            <li><strong>Point de douleur:</strong> {lead.primary_pain_point || "—"}</li>
             <li><strong>Appels/jour:</strong> {lead.daily_call_volume}</li>
             <li><strong>Assistante:</strong> {lead.assistant_name}</li>
             <li><strong>Voix:</strong> {lead.voice_gender === "female" ? "Féminine" : "Masculine"}</li>
@@ -152,14 +164,23 @@ export default function AdminLeadDetail() {
       </div>
 
       <div className="mt-6 rounded-xl border border-slate-200 bg-white p-6">
-        <h2 className="text-sm font-semibold text-slate-500 uppercase mb-2">Résumé copiable</h2>
-        <button
-          type="button"
-          onClick={copySummary}
-          className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700"
-        >
-          {copied ? "Copié !" : "Copier le résumé"}
-        </button>
+        <h2 className="text-sm font-semibold text-slate-500 uppercase mb-2">Partage rapide</h2>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={copyDirectLink}
+            className="px-4 py-2 rounded-lg bg-slate-100 text-slate-700 text-sm font-medium hover:bg-slate-200"
+          >
+            {copiedLink ? "Lien copié !" : "Copier lien direct"}
+          </button>
+          <button
+            type="button"
+            onClick={copySummary}
+            className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700"
+          >
+            {copied ? "Copié !" : "Copier le résumé"}
+          </button>
+        </div>
       </div>
 
       <div className="mt-6 rounded-xl border border-slate-200 bg-white p-6">

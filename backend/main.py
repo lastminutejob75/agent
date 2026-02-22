@@ -434,6 +434,10 @@ async def health() -> dict:
         out["google_calendar_enabled"] = getattr(config, "GOOGLE_CALENDAR_ENABLED", False)
         out["google_calendar_disable_reason"] = getattr(config, "GOOGLE_CALENDAR_DISABLE_REASON", None)
         out["runtime_env_count"] = len(os.environ)
+        # Wizard lead : lien dashboard dans l'email fondateur (éviter lien relatif en prod)
+        out["admin_base_url_configured"] = bool(
+            (os.environ.get("ADMIN_BASE_URL") or os.environ.get("FRONT_BASE_URL") or os.environ.get("APP_BASE_URL") or "").strip()
+        )
 
         # Checks I/O (slots, Postgres) avec timeout 2s
         try:

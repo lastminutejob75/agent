@@ -4,6 +4,22 @@ import { adminApi } from "../../lib/adminApi.js";
 
 const STATUS_LABELS = { new: "Nouveau", contacted: "Contacté", converted: "Converti", lost: "Perdu" };
 
+// Score commercial : volume 100+ → +50, 50-100 → +30, 25-50 → +20, Centre/Clinique → +30, secrétariat débordé → +20
+function getLeadPriority(lead) {
+  let score = 0;
+  const vol = lead.daily_call_volume;
+  if (vol === "100+") score += 50;
+  else if (vol === "50-100") score += 30;
+  else if (vol === "25-50") score += 20;
+  const spec = (lead.medical_specialty || "").toLowerCase();
+  if (spec.includes("centre médical") || spec.includes("clinique privée")) score += 30;
+  const pain = lead.primary_pain_point || "";
+  if (pain.includes("secrétariat est débordé")) score += 20;
+  if (score >= 70) return { score, label: "Haute priorité", className: "bg-red-100 text-red-800" };
+  if (score >= 40) return { score, label: "Moyenne", className: "bg-amber-100 text-amber-800" };
+  return { score, label: "Standard", className: "bg-slate-100 text-slate-700" };
+}
+
 function formatDate(iso) {
   if (!iso) return "—";
   try {
@@ -70,7 +86,10 @@ export default function AdminLeadsList() {
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Date</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Email</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Spécialité</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Appels/jour</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Douleur</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Priorité</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Assistante</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Horaires</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Statut</th>
@@ -80,16 +99,25 @@ export default function AdminLeadsList() {
             <tbody className="divide-y divide-slate-100">
               {leads.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
+                  <td colSpan={10} className="px-4 py-8 text-center text-slate-500">
                     Aucun lead
                   </td>
                 </tr>
               ) : (
-                leads.map((lead) => (
+                leads.map((lead) => {
+                  const prio = getLeadPriority(lead);
+                  return (
                   <tr key={lead.id} className="hover:bg-slate-50">
                     <td className="px-4 py-3 text-sm text-slate-600">{formatDate(lead.created_at)}</td>
                     <td className="px-4 py-3 text-sm font-medium text-slate-800">{lead.email}</td>
+                    <td className="px-4 py-3 text-sm text-slate-600">{lead.medical_specialty || "—"}</td>
                     <td className="px-4 py-3 text-sm text-slate-600">{lead.daily_call_volume}</td>
+                    <td className="px-4 py-3 text-sm text-slate-500 max-w-[140px] truncate" title={lead.primary_pain_point || ""}>{lead.primary_pain_point || "—"}</td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${prio.className}`} title={`Score: ${prio.score}`}>
+                        {prio.label}
+                      </span>
+                    </td>
                     <td className="px-4 py-3 text-sm text-slate-600">
                       {lead.assistant_name} ({lead.voice_gender === "female" ? "F" : "M"})
                     </td>
@@ -120,7 +148,8 @@ export default function AdminLeadsList() {
                       </Link>
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>

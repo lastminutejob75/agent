@@ -453,10 +453,12 @@ def send_lead_founder_email(
     lead_id: str,
     email: str,
     daily_call_volume: str,
-    assistant_name: str,
-    voice_gender: str,
-    opening_hours: Dict[str, Any],
-    wants_callback: bool,
+    medical_specialty: str = "",
+    primary_pain_point: str = "",
+    assistant_name: str = "",
+    voice_gender: str = "",
+    opening_hours: Optional[Dict[str, Any]] = None,
+    wants_callback: bool = False,
     dashboard_base_url: str = "",
 ) -> Tuple[bool, Optional[str]]:
     """
@@ -473,6 +475,13 @@ def send_lead_founder_email(
         logger.warning("send_lead_founder_email: FOUNDER_EMAIL/ADMIN_EMAIL non défini, skip")
         return False, "FOUNDER_EMAIL non défini"
 
+    # En prod : lien relatif = mort. Ne jamais envoyer sans URL absolue (ADMIN_BASE_URL).
+    if not (dashboard_base_url or "").strip():
+        logger.warning(
+            "send_lead_founder_email: ADMIN_BASE_URL (ou FRONT_BASE_URL) non défini — email not sent, missing dashboard link"
+        )
+        return False, "ADMIN_BASE_URL manquant (email non envoyé, lien dashboard invalide)"
+
     voice_label = "féminine" if voice_gender == "female" else "masculine"
     days_fr = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
     hours_lines = []
@@ -487,8 +496,9 @@ def send_lead_founder_email(
             hours_lines.append(f"  {day}: —")
     hours_block = "\n".join(hours_lines) if hours_lines else "—"
 
+    # dashboard_base_url doit être une URL absolue (ex. ADMIN_BASE_URL en prod) pour éviter liens cassés dans l'email
     link = f"{dashboard_base_url.rstrip('/')}/admin/leads/{lead_id}" if dashboard_base_url else f"/admin/leads/{lead_id}"
-    subject = f"Nouveau lead UWi – {daily_call_volume} appels/jour – {assistant_name}"
+    subject = f"Nouveau lead UWi – {daily_call_volume} appels/jour – {medical_specialty or '—'}"
 
     html = f"""
 <!DOCTYPE html>
@@ -498,6 +508,8 @@ def send_lead_founder_email(
   <h1 style="font-size: 1.2rem;">Nouveau lead UWi – {assistant_name}</h1>
   <ul style="color: #333;">
     <li><strong>Email prospect:</strong> {email}</li>
+    <li><strong>Spécialité:</strong> {medical_specialty or '—'}</li>
+    <li><strong>Point de douleur:</strong> {primary_pain_point or '—'}</li>
     <li><strong>Appels estimés/jour:</strong> {daily_call_volume}</li>
     <li><strong>Assistante:</strong> {assistant_name}</li>
     <li><strong>Voix:</strong> {voice_label}</li>

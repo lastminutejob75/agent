@@ -1,29 +1,52 @@
 # backend/routes/pre_onboarding.py — POST /api/pre-onboarding/commit (wizard "Créer votre assistante")
+# E2E test: Landing → /creer-assistante → remplir wizard → commit (email + modal) → voir lead dans /admin/leads → email fondateur (FOUNDER_EMAIL/ADMIN_EMAIL). Voir landing/README.md § Test E2E Wizard Lead.
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import re
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from backend.leads_pg import insert_lead
+from backend.leads_pg import upsert_lead
+from backend.pre_onboarding_rate_limit import check_pre_onboarding_commit
 from backend.services.email_service import send_lead_founder_email
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/pre-onboarding", tags=["pre_onboarding"])
 
-VALID_VOLUME = {"<10", "10-25", "25-50", "50+", "unknown"}
+VALID_VOLUME = {"<10", "10-25", "25-50", "50-100", "100+", "unknown"}
 VALID_VOICE = {"female", "male"}
+
+# Spécialités médicales (menu déroulant wizard) — ordre affichage côté front
+VALID_SPECIALTIES = frozenset({
+    "Médecin généraliste", "Médecin spécialiste", "Pédiatre", "Dermatologue", "Ophtalmologue",
+    "Cardiologue", "Gynécologue", "Psychiatre",
+    "Chirurgien-dentiste", "Orthodontiste",
+    "Infirmier(e) libéral(e)", "Kinésithérapeute", "Ostéopathe", "Orthophoniste", "Psychologue", "Sage-femme",
+    "Centre médical", "Clinique privée", "Cabinet de groupe", "Maison de santé",
+    "Autre profession de santé",
+})
+
+# Point de douleur principal (mini-diagnostic)
+VALID_PAIN_POINTS = frozenset({
+    "Les appels interrompent mes consultations",
+    "Mon secrétariat est débordé",
+    "Je rate des appels importants",
+    "La gestion des rendez-vous me prend trop de temps",
+    "Je veux améliorer l'expérience patient",
+    "Autre",
+})
 
 
 class PreOnboardingCommitBody(BaseModel):
     email: str = Field(..., min_length=1)
+    medical_specialty: str = Field(..., min_length=1)
     daily_call_volume: str = Field(...)
+    primary_pain_point: str = Field(default="")
     opening_hours: Dict[str, Any] = Field(default_factory=dict)
     voice_gender: str = Field(...)
     assistant_name: str = Field(..., min_length=1)
@@ -50,39 +73,27 @@ def _validate_opening_hours(oh: Dict[str, Any]) -> bool:
     return has_open
 
 
-def _send_founder_email_async(lead_id: str, body: PreOnboardingCommitBody) -> None:
-    """Run in thread so we don't block the response."""
-    try:
-        dashboard_base = (
-            os.environ.get("FRONT_BASE_URL") or os.environ.get("APP_BASE_URL") or ""
-        ).strip()
-        ok, err = send_lead_founder_email(
-            lead_id=lead_id,
-            email=body.email,
-            daily_call_volume=body.daily_call_volume,
-            assistant_name=body.assistant_name,
-            voice_gender=body.voice_gender,
-            opening_hours=body.opening_hours,
-            wants_callback=body.wants_callback,
-            dashboard_base_url=dashboard_base,
-        )
-        if not ok:
-            logger.warning("lead_founder_email failed: %s", err)
-    except Exception as e:
-        logger.exception("_send_founder_email_async: %s", e)
-
-
 @router.post("/commit")
-async def commit_pre_onboarding(body: PreOnboardingCommitBody) -> Dict[str, Any]:
+async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody) -> Dict[str, Any]:
     """
     Enregistre un lead pré-onboarding (wizard "Créer votre assistante").
     Retourne rapidement ; envoi email fondateur en arrière-plan.
     """
+    # 0) Rate limit (anti-spam)
+    try:
+        check_pre_onboarding_commit(request, body.email.strip())
+    except RuntimeError as e:
+        raise HTTPException(status_code=429, detail=str(e))
+
     # 1) Validation
     if not _validate_email(body.email):
         raise HTTPException(status_code=400, detail="Email invalide")
+    if body.medical_specialty not in VALID_SPECIALTIES:
+        raise HTTPException(status_code=400, detail="medical_specialty invalide")
     if body.daily_call_volume not in VALID_VOLUME:
         raise HTTPException(status_code=400, detail="daily_call_volume invalide")
+    if body.primary_pain_point and body.primary_pain_point not in VALID_PAIN_POINTS:
+        raise HTTPException(status_code=400, detail="primary_pain_point invalide")
     if body.voice_gender not in VALID_VOICE:
         raise HTTPException(status_code=400, detail="voice_gender invalide")
     if not (body.assistant_name and body.assistant_name.strip()):
@@ -93,10 +104,12 @@ async def commit_pre_onboarding(body: PreOnboardingCommitBody) -> Dict[str, Any]
             detail="Horaires invalides : au moins un jour doit être ouvert",
         )
 
-    # 2) Insert lead
-    lead_id = insert_lead(
+    # 2) Upsert lead (déduplication : si email déjà en new/contacted → update, sinon insert)
+    lead_id = upsert_lead(
         email=body.email.strip(),
         daily_call_volume=body.daily_call_volume,
+        medical_specialty=body.medical_specialty.strip(),
+        primary_pain_point=(body.primary_pain_point or "").strip(),
         assistant_name=body.assistant_name.strip(),
         voice_gender=body.voice_gender,
         opening_hours=body.opening_hours,
@@ -106,17 +119,30 @@ async def commit_pre_onboarding(body: PreOnboardingCommitBody) -> Dict[str, Any]
     if not lead_id:
         raise HTTPException(status_code=500, detail="Erreur enregistrement lead")
 
-    # 3) Return quickly
+    # 3) Envoi email fondateur en synchrone (v1 fiable sur Railway : pas de process recyclé avant envoi)
+    dashboard_base = (
+        os.environ.get("ADMIN_BASE_URL")
+        or os.environ.get("FRONT_BASE_URL")
+        or os.environ.get("APP_BASE_URL")
+        or ""
+    ).strip()
+    try:
+        ok, err = send_lead_founder_email(
+            lead_id=lead_id,
+            email=body.email,
+            daily_call_volume=body.daily_call_volume,
+            medical_specialty=body.medical_specialty,
+            primary_pain_point=(body.primary_pain_point or "").strip(),
+            assistant_name=body.assistant_name,
+            voice_gender=body.voice_gender,
+            opening_hours=body.opening_hours,
+            wants_callback=body.wants_callback,
+            dashboard_base_url=dashboard_base,
+        )
+        if not ok:
+            logger.warning("lead_founder_email failed: %s", err)
+    except Exception as e:
+        logger.exception("lead_founder_email exception: %s", e)
+
     out = {"ok": True, "lead_id": lead_id}
-    # Optional: mock test number for v1
-    # out["test_number"] = "+33900000000"
-
-    # 4) Send founder email in background (don't block response)
-    asyncio.get_event_loop().run_in_executor(
-        None,
-        _send_founder_email_async,
-        lead_id,
-        body,
-    )
-
     return out
