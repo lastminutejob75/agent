@@ -117,7 +117,7 @@ export default function AdminLeadDetail() {
     );
   }
 
-  const mailto = `mailto:${lead.email}?subject=UWi – Votre assistante ${lead.assistant_name}`;
+  const mailto = `mailto:${lead.email}?subject=UWi – Votre assistant ${lead.assistant_name}`;
 
   return (
     <div>

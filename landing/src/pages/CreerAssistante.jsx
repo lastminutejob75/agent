@@ -1,4 +1,4 @@
-// Wizard "Créer votre assistante" — 7 steps, diagnostic + projection ROI (1 question par écran, 0 scroll)
+// Wizard "Créer votre assistant" — 7 steps, diagnostic + projection ROI (1 question par écran, 0 scroll)
 import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api.js";
@@ -320,7 +320,7 @@ export default function CreerAssistante() {
             <p className="text-teal-400 font-medium mb-4 break-all">{submittedEmail}</p>
           )}
           <p className="text-slate-500 text-sm mb-6">
-            Vous recevrez sous peu un numéro de test pour écouter votre assistante.
+            Vous recevrez sous peu un numéro de test pour écouter votre assistant.
           </p>
           <p className="text-slate-500 text-xs mb-6">Vous pouvez fermer cette page.</p>
           <Link
@@ -480,7 +480,7 @@ export default function CreerAssistante() {
               )}
               {state.medical_specialty && (
                 <p className="mt-4 text-sm text-teal-400/90 text-center">
-                  Parfait. Nous allons configurer une assistante adaptée à votre spécialité.
+                  Parfait. Nous allons configurer un assistant adapté à votre spécialité.
                 </p>
               )}
             </>
@@ -610,7 +610,7 @@ export default function CreerAssistante() {
           {step === 4 && (
             <>
               <h2 className="text-xl font-bold text-white text-center mb-6">
-                Quelle voix pour votre assistante ?
+                Quelle voix pour votre assistant ?
               </h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
                 <button
@@ -780,7 +780,7 @@ export default function CreerAssistante() {
                   type="button"
                   className="flex-1 px-6 py-3 rounded-xl border-2 border-slate-600 text-slate-300 font-semibold hover:bg-slate-800/80 hover:border-slate-500"
                 >
-                  Écouter {state.assistant_name || "l'assistante"}
+                  Écouter {state.assistant_name || "l'assistant"}
                 </button>
               </div>
               <p className="text-xs text-slate-500 text-center mt-4">

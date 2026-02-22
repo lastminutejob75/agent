@@ -1,45 +1,578 @@
-import React from "react";
-import Header from "./Header";
-import Hero from "./Hero";
-import SocialProof from "./SocialProof";
-import ComparisonSection from "./ComparisonSection";
-import WorkflowArtisanSection from "./WorkflowArtisanSection";
-import SolutionsGridSection from "./SolutionsGridSection";
-import UseCasesSection from "./UseCasesSection";
-import FeaturesSection from "./FeaturesSection";
-import ROICalculator from "./ROICalculator";
-import PricingSection from "./PricingSection";
-import TestimonialsSection from "./TestimonialsSection";
-import TrustSection from "./TrustSection";
-import FAQSection from "./FAQSection";
-import ContactForm from "./ContactForm";
-import CTASection from "./CTASection";
-import Footer from "./Footer";
+// UWi Medical — Landing nouvelle maquette (synchro avec landing/src/components/UwiLanding.jsx)
+import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import "./UwiLandingNew.css";
+
+const TYPEWRITER_LINES = [
+  "Cabinet du Dr. Martin, bonjour ! Je suis UWi, comment puis-je vous aider ?",
+  "Je vérifie les disponibilités… Mardi à 10h ou jeudi à 14h30, lequel vous convient ?",
+  "Parfait. Mardi 25 à 10h, c'est noté. Une confirmation SMS vous sera envoyée.",
+  "Pour un renouvellement, je transmets votre demande au Dr. Martin. Délai : 24h.",
+];
+
+function LogoStethoscope() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4.5 6.5a4 4 0 0 0 8 0V4a.5.5 0 0 0-1 0v2.5a3 3 0 0 1-6 0V4a.5.5 0 0 0-1 0v2.5z" />
+      <path d="M8.5 10.5V14a5.5 5.5 0 0 0 11 0v-1.5" />
+      <circle cx="19.5" cy="12" r="1.5" />
+    </svg>
+  );
+}
+
+function PhoneIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor">
+      <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.8 19.79 19.79 0 01.22 1.18 2 2 0 012.22 0h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.91 7.91a16 16 0 006.16 6.16l1.27-.72a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z" />
+    </svg>
+  );
+}
+
+function PhoneOutlineIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.8 19.79 19.79 0 01.22 1.18 2 2 0 012.22 0h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.91 7.91a16 16 0 006.16 6.16l1.27-.72a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z" />
+    </svg>
+  );
+}
+
+const FAQ_ITEMS = [
+  { q: "En combien de temps puis-je démarrer ?", a: "Environ 15 minutes : connexion à votre agenda, configuration des créneaux et de la voix. Votre assistant IA est opérationnel le jour même." },
+  { q: "L'IA comprend-elle vraiment les demandes des patients ?", a: "Oui. UWi qualifie le motif (consultation, urgence, renouvellement), propose des créneaux en temps réel et gère les rappels. Elle s'améliore avec le temps." },
+  { q: "Mes données sont-elles sécurisées ?", a: "Oui. Hébergement HDS, données en France, conformité RGPD. Nous ne réutilisons pas les conversations à des fins commerciales." },
+  { q: "Puis-je annuler à tout moment ?", a: "Oui. Sans engagement : vous pouvez arrêter le service à tout moment. Aucun frais caché, résiliation en un clic." },
+  { q: "Quels agendas sont compatibles ?", a: "Google Calendar, et bientôt d'autres logiciels de planification. La synchronisation est en temps réel pour éviter les doubles réservations." },
+];
+
+const PRICING_PLANS = [
+  {
+    name: "Essai gratuit",
+    price: "0 €",
+    note: "1 mois, sans carte bancaire",
+    features: ["Assistante IA illimitée", "Prise de RDV en direct", "Triage urgences", "Rappels SMS", "Support par email"],
+    cta: "Démarrer l'essai",
+    featured: false,
+  },
+  {
+    name: "Cabinet",
+    price: "Sur devis",
+    note: "Adapté à votre volume d'appels",
+    features: ["Tout de l'essai", "Agenda multi-praticiens", "Personnalisation voix & scénarios", "Support prioritaire", "HDS inclus"],
+    cta: "Nous contacter",
+    featured: true,
+  },
+  {
+    name: "Multi-sites",
+    price: "Sur devis",
+    note: "Centres, cliniques, réseaux",
+    features: ["Plusieurs cabinets", "Tableau de bord centralisé", "Facturation groupée", "Account manager dédié"],
+    cta: "Demander un devis",
+    featured: false,
+  },
+];
+
+const SECURITY_ITEMS = [
+  { icon: "🛡️", title: "Hébergement HDS", desc: "Données de santé hébergées chez un acteur certifié HDS." },
+  { icon: "🔒", title: "RGPD", desc: "Conformité totale, pas de revente de données." },
+  { icon: "🇫🇷", title: "Hébergé en France", desc: "Serveurs en France, souveraineté des données." },
+  { icon: "⚡", title: "Disponibilité", desc: "Service conçu pour une disponibilité maximale." },
+];
+
+const STEPS = [
+  { num: "1", title: "Connexion agenda", desc: "Connectez votre Google Calendar (ou autre). Les créneaux sont synchronisés en temps réel." },
+  { num: "2", title: "Paramétrage", desc: "Définissez vos horaires, la voix de l'assistant et les règles (urgences, renouvellements)." },
+  { num: "3", title: "En production", desc: "UWi décroche, prend les RDV et envoie les rappels. Vous restez concentré sur vos patients." },
+];
 
 export default function UwiLanding() {
+  const bgRef = useRef(null);
+  const waveRef = useRef(null);
+  const [typedLine, setTypedLine] = useState(0);
+  const [typedChar, setTypedChar] = useState(0);
+  const [deleting, setDeleting] = useState(false);
+  const [openFaq, setOpenFaq] = useState(-1);
+
+  useEffect(() => {
+    const c = bgRef.current;
+    if (!c) return;
+    const ctx = c.getContext("2d");
+    const resize = () => {
+      c.width = window.innerWidth;
+      c.height = window.innerHeight;
+    };
+    resize();
+    window.addEventListener("resize", resize);
+    const blobs = [
+      { x: 0.5, y: 0, r: 0.65, col: "rgba(0,212,170,0.09)", sp: 0.00022, ph: 0 },
+      { x: 0.85, y: 0.78, r: 0.5, col: "rgba(0,80,180,0.07)", sp: 0.00028, ph: 1.3 },
+      { x: 0.1, y: 0.6, r: 0.44, col: "rgba(0,160,130,0.055)", sp: 0.00018, ph: 2.6 },
+    ];
+    const dots = Array.from({ length: 26 }, () => ({
+      x: Math.random(),
+      y: Math.random(),
+      r: Math.random() * 0.9 + 0.25,
+      vx: (Math.random() - 0.5) * 9e-5,
+      vy: (Math.random() - 0.5) * 9e-5,
+      a: Math.random() * 0.28 + 0.06,
+    }));
+    let t = 0;
+    const loop = () => {
+      const W = c.width;
+      const H = c.height;
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = "#0A1628";
+      ctx.fillRect(0, 0, W, H);
+      ctx.strokeStyle = "rgba(0,212,170,0.028)";
+      ctx.lineWidth = 1;
+      for (let x = 0; x < W; x += 44) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, H);
+        ctx.stroke();
+      }
+      for (let y = 0; y < H; y += 44) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(W, y);
+        ctx.stroke();
+      }
+      blobs.forEach((b) => {
+        const bx = (b.x + Math.sin(t * b.sp * 1000 + b.ph) * 0.07) * W;
+        const by = (b.y + Math.cos(t * b.sp * 1000 + b.ph * 1.4) * 0.055) * H;
+        const g = ctx.createRadialGradient(bx, by, 0, bx, by, b.r * Math.min(W, H));
+        g.addColorStop(0, b.col);
+        g.addColorStop(1, "transparent");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, W, H);
+      });
+      dots.forEach((d) => {
+        d.x += d.vx;
+        d.y += d.vy;
+        if (d.x < 0) d.x = 1;
+        if (d.x > 1) d.x = 0;
+        if (d.y < 0) d.y = 1;
+        if (d.y > 1) d.y = 0;
+        ctx.beginPath();
+        ctx.arc(d.x * W, d.y * H, d.r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(0,212,170,${d.a})`;
+        ctx.fill();
+      });
+      t++;
+      requestAnimationFrame(loop);
+    };
+    loop();
+    return () => window.removeEventListener("resize", resize);
+  }, []);
+
+  useEffect(() => {
+    const c = waveRef.current;
+    if (!c) return;
+    const ctx = c.getContext("2d");
+    let W = 0;
+    let H = 0;
+    const sz = () => {
+      W = c.offsetWidth * (window.devicePixelRatio || 1);
+      H = c.offsetHeight * (window.devicePixelRatio || 1);
+      c.width = W;
+      c.height = H;
+    };
+    sz();
+    window.addEventListener("resize", sz);
+    const N = 44;
+    const ph = Array.from({ length: N }, () => Math.random() * Math.PI * 2);
+    const sp = Array.from({ length: N }, () => 0.035 + Math.random() * 0.04);
+    let t = 0;
+    const loop = () => {
+      ctx.clearRect(0, 0, W, H);
+      const bw = W / N;
+      const cy = H / 2;
+      for (let i = 0; i < N; i++) {
+        const amp =
+          Math.sin(t * sp[i] + ph[i]) * 0.4 +
+          Math.sin(t * sp[i] * 1.9 + ph[i] * 0.55) * 0.3 +
+          Math.sin(t * 0.017 + i * 0.23) * 0.3;
+        const bh = Math.max(3, Math.abs(amp) * cy * 0.78 + 4);
+        const x = i * bw + bw * 0.2;
+        const w = bw * 0.52;
+        const a = 0.28 + Math.abs(amp) * 0.62;
+        const g = ctx.createLinearGradient(0, cy - bh, 0, cy + bh);
+        g.addColorStop(0, `rgba(0,212,170,${a * 0.25})`);
+        g.addColorStop(0.5, `rgba(0,212,170,${a})`);
+        g.addColorStop(1, `rgba(0,212,170,${a * 0.25})`);
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(x, cy - bh, w, bh * 2, w / 2);
+        else ctx.rect(x, cy - bh, w, bh * 2);
+        ctx.fill();
+      }
+      t++;
+      requestAnimationFrame(loop);
+    };
+    loop();
+    return () => window.removeEventListener("resize", sz);
+  }, []);
+
+  useEffect(() => {
+    const line = TYPEWRITER_LINES[typedLine];
+    if (!line) return;
+    if (!deleting && typedChar === line.length) {
+      const id = setTimeout(() => setDeleting(true), 2600);
+      return () => clearTimeout(id);
+    }
+    const delay = deleting ? 15 : 34;
+    const id = setTimeout(() => {
+      if (!deleting) {
+        if (typedChar < line.length) setTypedChar((c) => c + 1);
+      } else {
+        if (typedChar > 0) {
+          setTypedChar((c) => c - 1);
+        } else {
+          setDeleting(false);
+          setTypedLine((li) => (li + 1) % TYPEWRITER_LINES.length);
+        }
+      }
+    }, delay);
+    return () => clearTimeout(id);
+  }, [typedLine, typedChar, deleting]);
+
+  useEffect(() => {
+    const io = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((e) => {
+          if (e.isIntersecting) {
+            e.target.classList.add("visible");
+            io.unobserve(e.target);
+          }
+        });
+      },
+      { threshold: 0.08 }
+    );
+    const run = () => document.querySelectorAll(".uwi-landing-new .reveal").forEach((el) => io.observe(el));
+    run();
+    return () => io.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const root = document.querySelector(".uwi-landing-new");
+    if (!root) return;
+    const handleClick = (e) => {
+      const a = e.target.closest('a[href^="#"]');
+      if (!a || !a.getAttribute("href") || a.getAttribute("href") === "#") return;
+      const id = a.getAttribute("href").slice(1);
+      const el = document.getElementById(id);
+      if (el) {
+        e.preventDefault();
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    };
+    root.addEventListener("click", handleClick);
+    return () => root.removeEventListener("click", handleClick);
+  }, []);
+
+  const line = TYPEWRITER_LINES[typedLine] || "";
+  const displayed = line.slice(0, typedChar);
+
   return (
-    <>
-      <Header />
-      <main>
-        <Hero
-          title="Votre IA d'accueil prend vos RDV pendant que vous travaillez"
-          subtitle="UWI répond à vos appels 24/7, gère votre agenda automatiquement, et ne manque jamais un client. Sans formation, sans matériel."
-        />
-        <SocialProof />
-        <ComparisonSection />
-        <WorkflowArtisanSection />
-        <SolutionsGridSection />
-        <UseCasesSection />
-        <FeaturesSection />
-        <ROICalculator />
-        <PricingSection />
-        <TestimonialsSection />
-        <TrustSection />
-        <FAQSection />
-        <ContactForm />
-        <CTASection />
-      </main>
-      <Footer />
-    </>
+    <div className="uwi-landing-new">
+      <canvas id="bg" ref={bgRef} aria-hidden />
+      <div className="wrap">
+        <nav>
+          <Link to="/" className="logo">
+            <div className="logo-mark">
+              <LogoStethoscope />
+            </div>
+            <div className="logo-copy">
+              <span className="logo-name">UWi Medical</span>
+              <span className="logo-tag">IA Secrétariat</span>
+            </div>
+          </Link>
+          <div className="nav-links">
+            <a href="#metiers">Spécialités</a>
+            <a href="#fonctionnalites">Fonctionnalités</a>
+            <a href="#comment">Comment ça marche</a>
+            <a href="#pricing">Tarifs</a>
+            <a href="#securite">Sécurité</a>
+            <a href="#faq">FAQ</a>
+          </div>
+          <div className="nav-actions">
+            <Link to="/login" className="nav-btn nav-btn--secondary">Connexion</Link>
+            <Link to="/creer-assistante?new=1" className="nav-btn">
+              Créer mon assistant
+            </Link>
+          </div>
+        </nav>
+
+        <section className="hero">
+          <div className="pill">
+            <div className="pill-avs">
+              <div className="pav pav-1">👨‍⚕️</div>
+              <div className="pav pav-2">👩‍⚕️</div>
+              <div className="pav pav-3">🧑‍⚕️</div>
+            </div>
+            <span className="pill-lbl">500+ praticiens nous font confiance</span>
+          </div>
+
+          <h1>
+            <span className="h1-w">Votre assistant IA</span>
+            <span className="h1-t">répond et prend</span>
+            <span className="h1-w">vos RDV</span>
+          </h1>
+
+          <p className="subtitle">
+            Pendant que vous soignez, UWi <strong>décroche, oriente vos patients et remplit votre agenda</strong> — sans aucune interruption de votre part.
+          </p>
+
+          <div className="stats">
+            <div className="stat">
+              <span className="stat-v">HDS</span>
+              <span className="stat-l">Certifié santé</span>
+            </div>
+            <div className="stat">
+              <span className="stat-v">15min</span>
+              <span className="stat-l">Pour démarrer</span>
+            </div>
+            <div className="stat">
+              <span className="stat-v">24/7</span>
+              <span className="stat-l">Disponible</span>
+            </div>
+          </div>
+
+          <div className="feats">
+            <div className="feat">
+              <div className="feat-ico ico-teal">📅</div>
+              <span className="feat-name">Agenda en direct</span>
+            </div>
+            <div className="feat">
+              <div className="feat-ico ico-orange">🚨</div>
+              <span className="feat-name">Triage urgences</span>
+            </div>
+            <div className="feat">
+              <div className="feat-ico ico-blue">💊</div>
+              <span className="feat-name">Renouvellements</span>
+            </div>
+            <div className="feat">
+              <div className="feat-ico ico-violet">🔔</div>
+              <span className="feat-name">Rappels SMS</span>
+            </div>
+          </div>
+
+          <div className="ctas">
+            <Link to="/creer-assistante?new=1" className="btn-primary">
+              Essai gratuit 1 mois
+              <span className="btn-badge">Sans CB</span>
+            </Link>
+            <a href="tel:0939240575" className="btn-secondary">
+              <PhoneOutlineIcon />
+              Parler à un expert
+            </a>
+          </div>
+
+          <div className="trust">
+            <div className="trust-item">
+              <span className="trust-check">✓</span> Sans engagement
+            </div>
+            <div className="trust-dot" />
+            <div className="trust-item">
+              <span className="trust-check">✓</span> RGPD · HDS
+            </div>
+            <div className="trust-dot" />
+            <div className="trust-item">
+              <span className="trust-check">✓</span> Hébergé en France 🇫🇷
+            </div>
+          </div>
+        </section>
+
+        <div className="section-divider">
+          <span className="divider-label">Démo vocale</span>
+        </div>
+
+        <section className="demo reveal">
+          <div className="demo-inner">
+          <p className="eyebrow">Testez en 60 secondes</p>
+          <h2>Écoutez UWi<br />répondre à votre place</h2>
+          <p className="demo-sub">
+            Appelez ce numéro et vivez l'expérience d'un de vos patients. <strong>Une conversation suffit</strong> pour comprendre ce que ça change.
+          </p>
+
+          <div className="demo-card">
+            <div className="live">
+              <span className="live-dot" />
+              IA disponible maintenant
+            </div>
+
+            <div className="wave-wrap">
+              <canvas id="wave" ref={waveRef} aria-hidden />
+            </div>
+
+            <div className="agent-row">
+              <div className="agent-av">UWi</div>
+              <div className="agent-info">
+                <span className="agent-name">Secrétaire IA — Cabinet Dr. Martin</span>
+                <span className="agent-status">Répond en moins de 2 secondes</span>
+              </div>
+              <div className="agent-online" />
+            </div>
+
+            <div className="bubble">
+              <span>{displayed}</span>
+              <span className="cursor" />
+            </div>
+
+            <div className="phone-block">
+              <p className="ph-label">Numéro de démonstration</p>
+              <p className="ph-number">09 39 24 05 75</p>
+              <p className="ph-sub">Gratuit · Appel public · Sans engagement</p>
+            </div>
+
+            <a href="tel:0939240575" className="btn-call">
+              <PhoneIcon />
+              Appeler la démo maintenant
+            </a>
+          </div>
+          </div>
+        </section>
+
+        <section id="metiers" className="landing-section reveal">
+          <p className="section-eyebrow">Spécialités</p>
+          <h2>Pour tous les cabinets</h2>
+          <p className="section-sub">
+            Médecins généralistes, kinés, dentistes, centres médicaux… <strong>UWi s'adapte à votre activité</strong> et à vos horaires.
+          </p>
+          <div className="landing-cards">
+            <div className="landing-card">
+              <h3>Médecine générale</h3>
+              <p>RDV, renouvellements, triage des urgences. L'IA gère les appels pendant vos consultations.</p>
+            </div>
+            <div className="landing-card">
+              <h3>Kinésithérapie & spécialistes</h3>
+              <p>Prise de rendez-vous selon vos créneaux, rappels de présence, orientation des patients.</p>
+            </div>
+            <div className="landing-card">
+              <h3>Centres & cliniques</h3>
+              <p>Volume élevé, plusieurs praticiens. UWi qualifie et répartit sans saturer votre standard.</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="fonctionnalites" className="landing-section reveal">
+          <p className="section-eyebrow">Fonctionnalités</p>
+          <h2>Un secrétariat IA complet</h2>
+          <p className="section-sub">
+            Prise de RDV en direct, gestion des urgences, renouvellements, rappels patients. <strong>Disponible 24/7</strong>.
+          </p>
+          <div className="landing-cards">
+            <div className="landing-card">
+              <h3>Agenda synchronisé</h3>
+              <p>Créneaux en temps réel, plus de double réservation. Intégration avec votre outil actuel.</p>
+            </div>
+            <div className="landing-card">
+              <h3>Triage & urgences</h3>
+              <p>L'IA identifie les cas urgents et les signale. Les autres demandes sont planifiées proprement.</p>
+            </div>
+            <div className="landing-card">
+              <h3>Rappels & confirmation</h3>
+              <p>SMS de rappel pour limiter les absences. Confirmation des RDV à la prise.</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="comment" className="landing-section reveal">
+          <p className="section-eyebrow">Comment ça marche</p>
+          <h2>En 3 étapes</h2>
+          <p className="section-sub">
+            Mise en route en quelques minutes. Aucune compétence technique requise.
+          </p>
+          <div className="steps-row">
+            {STEPS.map((step, i) => (
+              <div key={i} className="step-card">
+                <div className="step-num">{step.num}</div>
+                <h3>{step.title}</h3>
+                <p>{step.desc}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section id="pricing" className="landing-section reveal">
+          <p className="section-eyebrow">Tarifs</p>
+          <h2>Simple et prévisible</h2>
+          <p className="section-sub">
+            Essai gratuit 1 mois, sans CB. Ensuite, offre adaptée à votre volume d'appels.
+          </p>
+          <div className="pricing-grid">
+            {PRICING_PLANS.map((plan, i) => (
+              <div key={i} className={`pricing-card ${plan.featured ? "featured" : ""}`}>
+                <h3>{plan.name}</h3>
+                <div className="price">{plan.price}</div>
+                <div className="price-note">{plan.note}</div>
+                <ul>
+                  {plan.features.map((f, j) => (
+                    <li key={j}>{f}</li>
+                  ))}
+                </ul>
+                <div className="pricing-cta">
+                  <Link to="/creer-assistante?new=1" className="btn-primary">
+                    {plan.cta}
+                  </Link>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section id="securite" className="landing-section reveal">
+          <p className="section-eyebrow">Sécurité & conformité</p>
+          <h2>Vos données protégées</h2>
+          <p className="section-sub">
+            Hébergement santé, conformité RGPD et données en France. Nous prenons la confiance au sérieux.
+          </p>
+          <div className="security-grid">
+            {SECURITY_ITEMS.map((item, i) => (
+              <div key={i} className="security-card">
+                <div className="sec-icon">{item.icon}</div>
+                <h3>{item.title}</h3>
+                <p>{item.desc}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section id="faq" className="landing-section reveal">
+          <p className="section-eyebrow">FAQ</p>
+          <h2>Questions fréquentes</h2>
+          <div className="landing-faq">
+            {FAQ_ITEMS.map((item, i) => (
+              <div key={i} className={`faq-item ${openFaq === i ? "open" : ""}`}>
+                <button type="button" onClick={() => setOpenFaq(openFaq === i ? -1 : i)}>
+                  {item.q}
+                  <span className="faq-chevron">▼</span>
+                </button>
+                {openFaq === i && <p className="faq-answer">{item.a}</p>}
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="landing-section reveal">
+          <div className="landing-cta-block">
+            <h2>Prêt à ne plus rater un appel ?</h2>
+            <p>Créez votre assistant IA en quelques minutes. Essai gratuit, sans carte bancaire.</p>
+            <Link to="/creer-assistante?new=1" className="btn-primary" style={{ display: "inline-flex", width: "auto", padding: "16px 28px" }}>
+              Créer mon assistant
+            </Link>
+          </div>
+        </section>
+
+        <footer className="landing-footer">
+          <Link to="/creer-assistante?new=1">Créer mon assistant</Link>
+          <Link to="/contact">Contact</Link>
+          <a href="tel:0939240575">09 39 24 05 75</a>
+          <Link to="/cgv">CGV</Link>
+          <Link to="/cgu">CGU</Link>
+          <Link to="/mentions-legales">Mentions légales</Link>
+          <span>© UWi Medical</span>
+        </footer>
+      </div>
+    </div>
   );
 }

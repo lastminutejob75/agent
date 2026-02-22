@@ -1,4 +1,4 @@
-/* UWi Medical — Landing nouvelle maquette (navy, teal, mobile-first) */
+/* UWi Medical — Landing nouvelle maquette (navy, teal, mobile-first) — copie pour racine */
 .uwi-landing-new *,
 .uwi-landing-new *::before,
 .uwi-landing-new *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -45,7 +45,6 @@
   .uwi-landing-new .wrap { max-width: 1440px; padding: 0 48px; }
 }
 
-/* NAV */
 .uwi-landing-new nav {
   display: flex; align-items: center; justify-content: space-between;
   padding: 13px 18px;
@@ -126,7 +125,6 @@
   .uwi-landing-new .nav-links { display: flex; }
 }
 
-/* HERO */
 .uwi-landing-new .hero { padding: 36px 20px 44px; }
 @media (min-width: 1024px) {
   .uwi-landing-new .hero { padding: 48px 0 56px; }
@@ -276,7 +274,6 @@
 .uwi-landing-new .trust-check { color: var(--teal); font-size: 10px; }
 .uwi-landing-new .trust-dot { width: 3px; height: 3px; border-radius: 50%; background: rgba(255,255,255,.18); }
 
-/* Section divider */
 .uwi-landing-new .section-divider {
   display: flex; align-items: center; gap: 14px;
   padding: 0 20px; margin: 4px 0;
@@ -291,7 +288,6 @@
   white-space: nowrap;
 }
 
-/* Demo section */
 .uwi-landing-new .demo { padding: 44px 20px 56px; }
 @media (min-width: 1024px) {
   .uwi-landing-new .demo { padding: 56px 0 64px; }
@@ -418,9 +414,6 @@
 }
 .uwi-landing-new .reveal.visible { opacity: 1; transform: none; }
 
-/* ══════════════════════════════════
-   RESTE DU SITE (sections au scroll)
-══════════════════════════════════ */
 .uwi-landing-new .landing-section {
   padding: 48px 20px 56px;
   border-top: 1px solid var(--border);

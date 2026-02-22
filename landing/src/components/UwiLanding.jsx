@@ -38,9 +38,30 @@ function PhoneOutlineIcon() {
 }
 
 const FAQ_ITEMS = [
-  { q: "En combien de temps puis-je démarrer ?", a: "Environ 15 minutes : connexion à votre agenda, configuration des créneaux et de la voix. Votre assistante IA est opérationnelle le jour même." },
+  { q: "En combien de temps puis-je démarrer ?", a: "Environ 15 minutes : connexion à votre agenda, configuration des créneaux et de la voix. Votre assistant IA est opérationnel le jour même." },
   { q: "L'IA comprend-elle vraiment les demandes des patients ?", a: "Oui. UWi qualifie le motif (consultation, urgence, renouvellement), propose des créneaux en temps réel et gère les rappels. Elle s'améliore avec le temps." },
   { q: "Mes données sont-elles sécurisées ?", a: "Oui. Hébergement HDS, données en France, conformité RGPD. Nous ne réutilisons pas les conversations à des fins commerciales." },
+  { q: "Puis-je annuler à tout moment ?", a: "Oui. Sans engagement : vous pouvez arrêter le service à tout moment. Aucun frais caché, résiliation en un clic." },
+  { q: "Quels agendas sont compatibles ?", a: "Google Calendar, et bientôt d'autres logiciels de planification. La synchronisation est en temps réel pour éviter les doubles réservations." },
+];
+
+const PRICING_PLANS = [
+  { name: "Essai gratuit", price: "0 €", note: "1 mois, sans carte bancaire", features: ["Assistante IA illimitée", "Prise de RDV en direct", "Triage urgences", "Rappels SMS", "Support par email"], cta: "Démarrer l'essai", featured: false },
+  { name: "Cabinet", price: "Sur devis", note: "Adapté à votre volume d'appels", features: ["Tout de l'essai", "Agenda multi-praticiens", "Personnalisation voix & scénarios", "Support prioritaire", "HDS inclus"], cta: "Nous contacter", featured: true },
+  { name: "Multi-sites", price: "Sur devis", note: "Centres, cliniques, réseaux", features: ["Plusieurs cabinets", "Tableau de bord centralisé", "Facturation groupée", "Account manager dédié"], cta: "Demander un devis", featured: false },
+];
+
+const SECURITY_ITEMS = [
+  { icon: "🛡️", title: "Hébergement HDS", desc: "Données de santé hébergées chez un acteur certifié HDS." },
+  { icon: "🔒", title: "RGPD", desc: "Conformité totale, pas de revente de données." },
+  { icon: "🇫🇷", title: "Hébergé en France", desc: "Serveurs en France, souveraineté des données." },
+  { icon: "⚡", title: "Disponibilité", desc: "Service conçu pour une disponibilité maximale." },
+];
+
+const STEPS = [
+  { num: "1", title: "Connexion agenda", desc: "Connectez votre Google Calendar (ou autre). Les créneaux sont synchronisés en temps réel." },
+  { num: "2", title: "Paramétrage", desc: "Définissez vos horaires, la voix de l'assistant et les règles (urgences, renouvellements)." },
+  { num: "3", title: "En production", desc: "UWi décroche, prend les RDV et envoie les rappels. Vous restez concentré sur vos patients." },
 ];
 
 export default function UwiLanding() {
@@ -253,11 +274,17 @@ export default function UwiLanding() {
           <div className="nav-links">
             <a href="#metiers">Spécialités</a>
             <a href="#fonctionnalites">Fonctionnalités</a>
+            <a href="#comment">Comment ça marche</a>
             <a href="#pricing">Tarifs</a>
+            <a href="#securite">Sécurité</a>
+            <a href="#faq">FAQ</a>
           </div>
-          <Link to="/creer-assistante?new=1" className="nav-btn">
-            Démarrer →
-          </Link>
+          <div className="nav-actions">
+            <Link to="/login" className="nav-btn nav-btn--secondary">Connexion</Link>
+            <Link to="/creer-assistante?new=1" className="nav-btn">
+              Créer mon assistant
+            </Link>
+          </div>
         </nav>
 
         <section className="hero">
@@ -434,25 +461,64 @@ export default function UwiLanding() {
           </div>
         </section>
 
+        <section id="comment" className="landing-section reveal">
+          <p className="section-eyebrow">Comment ça marche</p>
+          <h2>En 3 étapes</h2>
+          <p className="section-sub">
+            Mise en route en quelques minutes. Aucune compétence technique requise.
+          </p>
+          <div className="steps-row">
+            {STEPS.map((step, i) => (
+              <div key={i} className="step-card">
+                <div className="step-num">{step.num}</div>
+                <h3>{step.title}</h3>
+                <p>{step.desc}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
         <section id="pricing" className="landing-section reveal">
           <p className="section-eyebrow">Tarifs</p>
           <h2>Simple et prévisible</h2>
           <p className="section-sub">
             Essai gratuit 1 mois, sans CB. Ensuite, offre adaptée à votre volume d'appels.
           </p>
-          <div className="landing-cards">
-            <div className="landing-card">
-              <h3>Essai 1 mois</h3>
-              <p>Gratuit, sans engagement. Créez votre assistante en 15 min et testez en conditions réelles.</p>
-            </div>
-            <div className="landing-card">
-              <h3>HDS & RGPD</h3>
-              <p>Hébergement données de santé, conformité RGPD. Données hébergées en France.</p>
-            </div>
-            <div className="landing-card">
-              <h3>Support</h3>
-              <p>Équipe dédiée pour la mise en route et le paramétrage de votre cabinet.</p>
-            </div>
+          <div className="pricing-grid">
+            {PRICING_PLANS.map((plan, i) => (
+              <div key={i} className={`pricing-card ${plan.featured ? "featured" : ""}`}>
+                <h3>{plan.name}</h3>
+                <div className="price">{plan.price}</div>
+                <div className="price-note">{plan.note}</div>
+                <ul>
+                  {plan.features.map((f, j) => (
+                    <li key={j}>{f}</li>
+                  ))}
+                </ul>
+                <div className="pricing-cta">
+                  <Link to="/creer-assistante?new=1" className="btn-primary">
+                    {plan.cta}
+                  </Link>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section id="securite" className="landing-section reveal">
+          <p className="section-eyebrow">Sécurité & conformité</p>
+          <h2>Vos données protégées</h2>
+          <p className="section-sub">
+            Hébergement santé, conformité RGPD et données en France. Nous prenons la confiance au sérieux.
+          </p>
+          <div className="security-grid">
+            {SECURITY_ITEMS.map((item, i) => (
+              <div key={i} className="security-card">
+                <div className="sec-icon">{item.icon}</div>
+                <h3>{item.title}</h3>
+                <p>{item.desc}</p>
+              </div>
+            ))}
           </div>
         </section>
 
@@ -475,16 +541,20 @@ export default function UwiLanding() {
         <section className="landing-section reveal">
           <div className="landing-cta-block">
             <h2>Prêt à ne plus rater un appel ?</h2>
-            <p>Créez votre assistante IA en quelques minutes. Essai gratuit, sans carte bancaire.</p>
+            <p>Créez votre assistant IA en quelques minutes. Essai gratuit, sans carte bancaire.</p>
             <Link to="/creer-assistante?new=1" className="btn-primary" style={{ display: "inline-flex", width: "auto", padding: "16px 28px" }}>
-              Créer mon assistante
+              Créer mon assistant
             </Link>
           </div>
         </section>
 
         <footer className="landing-footer">
-          <Link to="/creer-assistante?new=1">Créer mon assistante</Link>
+          <Link to="/creer-assistante?new=1">Créer mon assistant</Link>
+          <Link to="/contact">Contact</Link>
           <a href="tel:0939240575">09 39 24 05 75</a>
+          <Link to="/cgv">CGV</Link>
+          <Link to="/cgu">CGU</Link>
+          <Link to="/mentions-legales">Mentions légales</Link>
           <span>© UWi Medical</span>
         </footer>
       </div>

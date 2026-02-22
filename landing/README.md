@@ -33,12 +33,12 @@ Les fichiers de production sont générés dans `frontend/landing/`
 - Framer Motion
 - Lucide React (icônes)
 
-## Test E2E Wizard Lead « Créer votre assistante »
+## Test E2E Wizard Lead « Créer votre assistant »
 
 Pour valider le parcours lead de bout en bout :
 
 1. **Landing** : ouvrir l’accueil (ex. `http://localhost:3000/`), puis aller sur le wizard via un lien « Démarrer » ou directement `/creer-assistante`.
-2. **Wizard** : remplir les 5 étapes (appels/jour, horaires cabinet, voix, prénom assistante), puis à l’étape 5 cliquer « Recevoir un numéro de test ».
+2. **Wizard** : remplir les 5 étapes (appels/jour, horaires cabinet, voix, prénom assistant), puis à l’étape 5 cliquer « Recevoir un numéro de test ».
 3. **Modal** : saisir un email et éventuellement cocher « Je souhaite être rappelé », puis « Recevoir mon numéro ».
 4. **Commit** : le front envoie `POST /api/pre-onboarding/commit` ; le lead est enregistré en base, la réponse est rapide, l’email fondateur est envoyé en async.
 5. **Admin** : se connecter à `/admin`, aller dans **Leads** ; le nouveau lead apparaît dans la liste (avec appels/jour, horaires, statut). Ouvrir le détail pour voir email, daily_call_volume, wants_callback, opening_hours ; modifier statut et notes si besoin (PATCH).

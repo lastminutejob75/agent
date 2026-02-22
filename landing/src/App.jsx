@@ -15,6 +15,10 @@ import AppStatus from "./pages/AppStatus";
 import AppSettings from "./pages/AppSettings";
 import AppRgpd from "./pages/AppRgpd";
 import ImpersonatePage from "./pages/Impersonate";
+import CGV from "./pages/CGV";
+import CGU from "./pages/CGU";
+import MentionsLegales from "./pages/MentionsLegales";
+import Contact from "./pages/Contact";
 
 /** Layout neutre pour /app : rend uniquement les routes enfants (impersonate ou AppLayout). */
 function AppShell() {
@@ -45,6 +49,10 @@ export default function App() {
       <Route path="/" element={<UwiLanding />} />
       <Route path="/onboarding" element={<Onboarding />} />
       <Route path="/creer-assistante" element={<CreerAssistante />} />
+      <Route path="/cgv" element={<CGV />} />
+      <Route path="/cgu" element={<CGU />} />
+      <Route path="/mentions-legales" element={<MentionsLegales />} />
+      <Route path="/contact" element={<Contact />} />
       <Route element={<AuthLayout />}>
         <Route path="login" element={<Login />} />
         <Route path="forgot-password" element={<ForgotPassword />} />

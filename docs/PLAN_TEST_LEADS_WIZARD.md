@@ -45,7 +45,7 @@
 - **Spécialité :** Autre + précision libre  
 - **Volume :** Je ne sais pas (unknown)  
 - **Horaires :** 1 seul jour ouvert  
-- **Prénom assistante :** vide ou minimal  
+- **Prénom assistant :** vide ou minimal  
 
 | Vérification | OK / KO |
 |--------------|---------|
