@@ -23,7 +23,7 @@ export default function Header() {
               Connexion
             </Link>
             <Link
-              to="/onboarding"
+              to="/creer-assistante"
               className="rounded-xl bg-[#0066CC] px-6 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#0052A3] transition"
             >
               Essai 14 jours

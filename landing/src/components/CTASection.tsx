@@ -36,7 +36,7 @@ export default function CTASection() {
             <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
               {/* Bouton 1 : Essayer → onboarding */}
               <Link
-                to="/onboarding"
+                to="/creer-assistante"
                 className="w-full sm:w-auto inline-flex items-center justify-center rounded-xl bg-white text-[#0066CC] px-8 py-4 text-base font-semibold shadow-lg hover:bg-gray-50 transition-all hover:scale-105 active:scale-95"
               >
                 Essayer

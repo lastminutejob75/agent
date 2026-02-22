@@ -172,7 +172,7 @@ export default function MultiChannelSection() {
 
         <div className="text-center mt-12 animate-slide-up delay-400">
           <Link
-            to="/onboarding"
+            to="/creer-assistante"
             className="inline-flex items-center gap-2 btn-primary text-lg px-8 py-4"
           >
             Découvrir les intégrations

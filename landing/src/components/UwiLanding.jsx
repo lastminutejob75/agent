@@ -56,7 +56,7 @@ export default function UwiLanding() {
             <Link to="/login" className="hidden sm:block text-slate-300 hover:text-white px-5 py-2.5 rounded-lg text-sm font-bold transition-colors">
               Connexion
             </Link>
-            <Link to="/decouverte" className="relative group bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 px-7 py-3 rounded-lg text-sm font-black hover:shadow-2xl hover:shadow-teal-500/50 hover:scale-105 transition-all duration-200 inline-flex">
+            <Link to="/creer-assistante" className="relative group bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 px-7 py-3 rounded-lg text-sm font-black hover:shadow-2xl hover:shadow-teal-500/50 hover:scale-105 transition-all duration-200 inline-flex">
               <div className="absolute inset-0 bg-white/20 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"></div>
               <span className="relative">Démarrer →</span>
             </Link>
