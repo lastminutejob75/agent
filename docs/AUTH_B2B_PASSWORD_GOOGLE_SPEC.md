@@ -379,3 +379,51 @@ Si tu ne peux pas tester iOS, le passage à **api.uwiapp.com** réduira une bonn
 Pour confirmer que tout est “cookie + CORS compliant”, vérifier (sans valeurs sensibles) les headers de :
 - **POST /api/auth/google/callback** (réponse 200) : `Set-Cookie`, `Access-Control-Allow-Credentials: true`, `Access-Control-Allow-Origin` (exact), `Vary: Origin` si proxy/cache.
 - **GET /api/auth/me** juste après : même CORS ; le cookie doit être envoyé par le navigateur (Request headers : `Cookie: uwi_session=...`).
+
+---
+
+## Checklist finale avant prod (forgot / reset)
+
+### A) URL dans l’email : encodage
+
+Le lien de reset est construit avec `urllib.parse.urlencode({"email": email, "token": token})` pour éviter les caractères spéciaux (+, /, etc.) dans la query string.
+
+### B) ResetPassword.jsx : pas de token dans l’URL
+
+Après lecture des paramètres `email` et `token` depuis l’URL, la page appelle `window.history.replaceState({}, "", "/reset-password")` pour ne pas laisser le token dans l’historique / screenshots.
+
+### C) Cookie cross-site
+
+Si l’API est encore sur `*.railway.app`, le reset peut réussir mais `/me` échouer sur Safari. Une fois sur **api.uwiapp.com**, le comportement est plus stable.
+
+### D) Rate limiting (auth)
+
+- **POST /api/auth/forgot-password** : 5 requêtes/min par IP, 3/min par email (429 si dépassement).
+- **POST /api/auth/reset-password** : 10 requêtes/min par IP.
+- **POST /api/auth/login** : 10 requêtes/min par IP.
+
+Implémentation : `backend/auth_rate_limit.py` (in-memory TTL 60 s). Pour multi-instances, prévoir Redis plus tard.
+
+---
+
+## Tests curl « vérité terrain »
+
+Remplacer `EMAIL`, `TOKEN`, `Secret#2026!!` et l’URL si besoin.
+
+**Forgot (toujours 200, anti-enumération) :**
+```bash
+curl -i -X POST https://api.uwiapp.com/api/auth/forgot-password \
+  -H "Content-Type: application/json" \
+  -d '{"email":"EMAIL"}'
+```
+
+**Reset puis /me avec cookie :**
+```bash
+curl -i -c /tmp/uwi_cookies.txt -X POST https://api.uwiapp.com/api/auth/reset-password \
+  -H "Content-Type: application/json" \
+  -d '{"email":"EMAIL","token":"TOKEN","new_password":"Secret#2026!!"}'
+
+curl -i -b /tmp/uwi_cookies.txt https://api.uwiapp.com/api/auth/me
+```
+
+Attendu : 200 sur reset, puis 200 sur /me avec le profil.

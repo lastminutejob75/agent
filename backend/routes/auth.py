@@ -134,13 +134,19 @@ def _read_client_session_cookie(request: Request) -> Optional[dict]:
 
 
 @router.post("/login")
-def auth_login(body: LoginBody, response: Response):
+def auth_login(request: Request, body: LoginBody, response: Response):
     """
     Login email + mot de passe. Pose le cookie uwi_session (JWT).
     Réponse neutre en cas d'échec (anti-enumération).
+    Rate limit: 10/min par IP.
     """
     if not JWT_SECRET:
         raise HTTPException(503, "JWT_SECRET not configured")
+    try:
+        from backend.auth_rate_limit import check_login
+        check_login(request)
+    except RuntimeError as e:
+        raise HTTPException(status_code=429, detail=str(e))
     email = (body.email or "").strip().lower()
     password = (body.password or "").strip()
 
@@ -192,21 +198,25 @@ def _hash_token(token: str) -> str:
 
 
 @router.post("/forgot-password")
-def auth_forgot_password(body: ForgotPasswordBody):
+def auth_forgot_password(request: Request, body: ForgotPasswordBody):
     """
     Demande de réinitialisation mot de passe. Toujours 200 { ok: true } (anti-enumération).
     Si l'email existe : génère token, stocke hash+expiry, envoie email avec lien
     /reset-password?email=...&token=...
+    Rate limit: 5/min par IP, 3/min par email.
     """
     email = (body.email or "").strip().lower()
+    try:
+        from backend.auth_rate_limit import check_forgot_password
+        check_forgot_password(request, email)
+    except RuntimeError as e:
+        raise HTTPException(status_code=429, detail=str(e))
     if not email:
         return {"ok": True}
     token = pg_create_password_reset(email, ttl_minutes=PASSWORD_RESET_TTL_MINUTES)
     if token and APP_BASE_URL:
-        reset_url = (
-            f"{APP_BASE_URL}/reset-password"
-            f"?email={urllib.parse.quote(email, safe='')}&token={urllib.parse.quote(token, safe='')}"
-        )
+        qs = urllib.parse.urlencode({"email": email, "token": token})
+        reset_url = f"{APP_BASE_URL}/reset-password?{qs}"
         ok, _ = send_password_reset_email(email, reset_url, ttl_minutes=PASSWORD_RESET_TTL_MINUTES)
         if ok:
             log_auth_event(None, email, "auth_password_reset_requested", None)
@@ -216,13 +226,19 @@ def auth_forgot_password(body: ForgotPasswordBody):
 
 
 @router.post("/reset-password")
-def auth_reset_password(body: ResetPasswordBody, response: Response):
+def auth_reset_password(request: Request, body: ResetPasswordBody, response: Response):
     """
     Réinitialise le mot de passe avec email + token reçu par email.
     Vérifie user existe, token non expiré, hash match. Puis met à jour password,
     efface token (usage unique) et pose cookie uwi_session (login auto).
     400 "Lien invalide ou expiré" sinon.
+    Rate limit: 10/min par IP.
     """
+    try:
+        from backend.auth_rate_limit import check_reset_password
+        check_reset_password(request)
+    except RuntimeError as e:
+        raise HTTPException(status_code=429, detail=str(e))
     email = (body.email or "").strip().lower()
     token = (body.token or "").strip()
     new_password = (body.new_password or "").strip()

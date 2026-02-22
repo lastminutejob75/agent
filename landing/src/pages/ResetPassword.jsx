@@ -21,6 +21,13 @@ export default function ResetPassword() {
     if (tokenFromUrl) setToken(tokenFromUrl);
   }, [emailFromUrl, tokenFromUrl]);
 
+  // Ne pas laisser token/email dans l’URL (historique, screenshots)
+  useEffect(() => {
+    if (tokenFromUrl || emailFromUrl) {
+      window.history.replaceState({}, "", "/reset-password");
+    }
+  }, [tokenFromUrl, emailFromUrl]);
+
   async function handleSubmit(e) {
     e.preventDefault();
     setErr("");
