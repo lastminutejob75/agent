@@ -71,6 +71,16 @@ async function request(path, { method = "GET", body, admin = false, tenant = fal
 export const api = {
   // public
   onboardingCreate: (payload) => request("/api/public/onboarding", { method: "POST", body: payload }),
+  preOnboardingCommit: (payload) =>
+    request("/api/pre-onboarding/commit", { method: "POST", body: payload }),
+
+  // admin — leads
+  adminLeadsCountNew: () => request("/api/admin/leads/count-new", { admin: true }),
+  adminLeadsList: (status) =>
+    request(`/api/admin/leads${status ? `?status=${encodeURIComponent(status)}` : ""}`, { admin: true }),
+  adminLeadGet: (leadId) => request(`/api/admin/leads/${leadId}`, { admin: true }),
+  adminLeadPatch: (leadId, body) =>
+    request(`/api/admin/leads/${leadId}`, { method: "PATCH", body, admin: true }),
 
   // admin
   adminListTenants: () => request("/api/admin/tenants", { admin: true }),

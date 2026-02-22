@@ -447,3 +447,105 @@ Date/Heure : {ts}
     except Exception as e:
         logger.exception("send_ordonnance_notification failed: %s", e)
         return False
+
+
+def send_lead_founder_email(
+    lead_id: str,
+    email: str,
+    daily_call_volume: str,
+    assistant_name: str,
+    voice_gender: str,
+    opening_hours: Dict[str, Any],
+    wants_callback: bool,
+    dashboard_base_url: str = "",
+) -> Tuple[bool, Optional[str]]:
+    """
+    Email interne au fondateur : résumé nouveau lead pré-onboarding.
+    Destinataire: FOUNDER_EMAIL ou ADMIN_EMAIL ou SMTP_EMAIL.
+    Returns (success, error_message).
+    """
+    from datetime import datetime
+
+    to = (
+        os.getenv("FOUNDER_EMAIL") or os.getenv("ADMIN_EMAIL") or os.getenv("SMTP_EMAIL") or ""
+    ).strip()
+    if not to:
+        logger.warning("send_lead_founder_email: FOUNDER_EMAIL/ADMIN_EMAIL non défini, skip")
+        return False, "FOUNDER_EMAIL non défini"
+
+    voice_label = "féminine" if voice_gender == "female" else "masculine"
+    days_fr = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
+    hours_lines = []
+    for i, day in enumerate(days_fr):
+        key = str(i) if str(i) in (opening_hours or {}) else day.lower()[:3]
+        slot = (opening_hours or {}).get(key, opening_hours or {})
+        if isinstance(slot, dict) and slot.get("closed"):
+            hours_lines.append(f"  {day}: Fermé")
+        elif isinstance(slot, dict) and slot.get("start") and slot.get("end"):
+            hours_lines.append(f"  {day}: {slot['start']} – {slot['end']}")
+        else:
+            hours_lines.append(f"  {day}: —")
+    hours_block = "\n".join(hours_lines) if hours_lines else "—"
+
+    link = f"{dashboard_base_url.rstrip('/')}/admin/leads/{lead_id}" if dashboard_base_url else f"/admin/leads/{lead_id}"
+    subject = f"Nouveau lead UWi – {daily_call_volume} appels/jour – {assistant_name}"
+
+    html = f"""
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Nouveau lead UWi</title></head>
+<body style="font-family: sans-serif; max-width: 560px; margin: 0 auto; padding: 1rem;">
+  <h1 style="font-size: 1.2rem;">Nouveau lead UWi – {assistant_name}</h1>
+  <ul style="color: #333;">
+    <li><strong>Email prospect:</strong> {email}</li>
+    <li><strong>Appels estimés/jour:</strong> {daily_call_volume}</li>
+    <li><strong>Assistante:</strong> {assistant_name}</li>
+    <li><strong>Voix:</strong> {voice_label}</li>
+    <li><strong>Rappel souhaité:</strong> {"Oui" if wants_callback else "Non"}</li>
+    <li><strong>Source:</strong> landing_cta</li>
+    <li><strong>Date/heure:</strong> {datetime.now().strftime("%d/%m/%Y %H:%M")} UTC</li>
+  </ul>
+  <h2 style="font-size: 1rem;">Horaires cabinet</h2>
+  <pre style="background: #f5f5f5; padding: 0.75rem; border-radius: 0.5rem; font-size: 0.9rem;">{hours_block}</pre>
+  <p style="margin-top: 1rem;">
+    <a href="{link}" style="background:#2563eb;color:white;padding:0.5rem 1rem;text-decoration:none;border-radius:0.5rem;display:inline-block;">
+      Voir dans le dashboard
+    </a>
+  </p>
+</body>
+</html>
+"""
+    from_addr = (
+        os.getenv("POSTMARK_FROM_EMAIL") or os.getenv("EMAIL_FROM") or os.getenv("SMTP_EMAIL") or ""
+    ).strip()
+    token = (os.getenv("POSTMARK_SERVER_TOKEN") or "").strip()
+    if token and from_addr:
+        try:
+            ok, err = _send_via_postmark(from_addr, to, subject, html, token)
+            if ok:
+                logger.info("lead_founder_email_sent via postmark", extra={"lead_id": lead_id[:24]})
+            return ok, err
+        except Exception as e:
+            logger.exception("send_lead_founder_email postmark failed")
+            return False, str(e)
+    smtp_user = (os.getenv("SMTP_EMAIL") or "").strip()
+    smtp_pass = (os.getenv("SMTP_PASSWORD") or "").strip()
+    if smtp_user and smtp_pass:
+        host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        port = int(os.getenv("SMTP_PORT", "587"))
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["From"] = smtp_user
+            msg["To"] = to
+            msg["Subject"] = subject
+            msg.attach(MIMEText(html, "html", "utf-8"))
+            with smtplib.SMTP(host, port) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, [to], msg.as_string())
+            logger.info("lead_founder_email_sent via smtp", extra={"lead_id": lead_id[:24]})
+            return True, None
+        except Exception as e:
+            logger.exception("send_lead_founder_email smtp failed")
+            return False, str(e)
+    return False, "Email non configuré (Postmark ou SMTP)"

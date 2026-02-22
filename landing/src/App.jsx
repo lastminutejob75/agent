@@ -7,6 +7,8 @@ import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import AuthGoogleCallback from "./pages/AuthGoogleCallback";
 import EssaiGratuit from "./pages/EssaiGratuit";
+import DecouverteClient from "./pages/DecouverteClient";
+import CreerAssistante from "./pages/CreerAssistante";
 import AppLayout from "./pages/AppLayout";
 import AppDashboard from "./pages/AppDashboard";
 import AppStatus from "./pages/AppStatus";
@@ -33,6 +35,8 @@ import AdminMonitoring from "./admin/pages/AdminMonitoring";
 import AdminAuditLog from "./admin/pages/AdminAuditLog";
 import AdminOperations from "./admin/pages/AdminOperations";
 import AdminQuality from "./admin/pages/AdminQuality";
+import AdminLeadsList from "./admin/pages/AdminLeadsList";
+import AdminLeadDetail from "./admin/pages/AdminLeadDetail";
 import AdminNotFound from "./admin/pages/AdminNotFound";
 
 export default function App() {
@@ -40,11 +44,13 @@ export default function App() {
     <Routes>
       <Route path="/" element={<UwiLanding />} />
       <Route path="/onboarding" element={<Onboarding />} />
+      <Route path="/creer-assistante" element={<CreerAssistante />} />
       <Route element={<AuthLayout />}>
         <Route path="login" element={<Login />} />
         <Route path="forgot-password" element={<ForgotPassword />} />
         <Route path="reset-password" element={<ResetPassword />} />
         <Route path="essai-gratuit" element={<EssaiGratuit />} />
+        <Route path="decouverte" element={<DecouverteClient />} />
         <Route path="auth/google/callback" element={<AuthGoogleCallback />} />
       </Route>
       <Route path="/app" element={<AppShell />}>
@@ -71,6 +77,8 @@ export default function App() {
             <Route path="monitoring" element={<AdminMonitoring />} />
             <Route path="operations" element={<AdminOperations />} />
             <Route path="quality" element={<AdminQuality />} />
+            <Route path="leads" element={<AdminLeadsList />} />
+            <Route path="leads/:id" element={<AdminLeadDetail />} />
             <Route path="audit" element={<AdminAuditLog />} />
             <Route path="*" element={<AdminNotFound />} />
           </Route>

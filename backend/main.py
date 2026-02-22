@@ -30,7 +30,7 @@ from backend.db import init_db, list_free_slots, count_free_slots
 from backend.tenant_routing import current_tenant_id
 from backend.deps import require_tenant_web, TenantIdWeb
 # Nouvelle architecture multi-canal
-from backend.routes import voice, whatsapp, bland, reports, admin, auth, tenant, stripe_webhook
+from backend.routes import voice, whatsapp, bland, reports, admin, auth, tenant, stripe_webhook, pre_onboarding
 
 app = FastAPI()
 _logger = logging.getLogger(__name__)
@@ -90,6 +90,7 @@ app.include_router(admin.router)      # /api/public/onboarding, /api/admin/*
 app.include_router(auth.router)       # /api/auth/*
 app.include_router(tenant.router)     # /api/tenant/*
 app.include_router(stripe_webhook.router)  # POST /api/stripe/webhook
+app.include_router(pre_onboarding.router)  # POST /api/pre-onboarding/commit
 
 # Static frontend (optionnel - peut ne pas exister)
 try:

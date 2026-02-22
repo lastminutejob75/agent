@@ -1,8 +1,15 @@
+import { useState, useEffect } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useAdminAuth } from "./AdminAuthProvider";
+import { adminApi } from "../lib/adminApi.js";
 
 export default function AdminLayout() {
   const { logout, me } = useAdminAuth();
+  const [newLeadsCount, setNewLeadsCount] = useState(0);
+
+  useEffect(() => {
+    adminApi.leadsCountNew().then((r) => setNewLeadsCount(r?.count ?? 0)).catch(() => {});
+  }, []);
 
   const linkClass = ({ isActive }) =>
     `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium no-underline transition-colors ${
@@ -32,6 +39,15 @@ export default function AdminLayout() {
           </NavLink>
           <NavLink to="/admin/tenants" className={linkClass}>
             <span className="text-slate-400">👥</span> Clients
+          </NavLink>
+          <NavLink to="/admin/leads" className={({ isActive }) => `${linkClass({ isActive })} w-full flex`}>
+            <span className="text-slate-400">📋</span>
+            <span>Leads</span>
+            {newLeadsCount > 0 && (
+              <span className="ml-auto rounded-full bg-amber-500 text-white text-xs font-bold min-w-[1.25rem] h-5 flex items-center justify-center px-1.5">
+                {newLeadsCount > 99 ? "99+" : newLeadsCount}
+              </span>
+            )}
           </NavLink>
           <NavLink to="/admin/calls" className={linkClass}>
             <span className="text-slate-400">📞</span> Appels

@@ -1094,6 +1094,61 @@ def admin_email_test(
     return {"ok": True, "message": "Email envoyé"}
 
 
+# --- Leads pré-onboarding (wizard "Créer votre assistante") ---
+
+
+@router.get("/admin/leads/count-new")
+def admin_leads_count_new(_: None = Depends(_verify_admin)):
+    """Nombre de leads status=new (badge sidebar)."""
+    from backend.leads_pg import count_new_leads
+    return {"count": count_new_leads()}
+
+
+@router.get("/admin/leads")
+def admin_leads_list(
+    status: Optional[str] = Query(None),
+    _: None = Depends(_verify_admin),
+):
+    """Liste des leads (ordre created_at desc)."""
+    from backend.leads_pg import list_leads
+    items = list_leads(status=status)
+    return {"leads": items}
+
+
+@router.get("/admin/leads/{lead_id}")
+def admin_lead_detail(
+    lead_id: str,
+    _: None = Depends(_verify_admin),
+):
+    """Détail d'un lead."""
+    from backend.leads_pg import get_lead
+    lead = get_lead(lead_id)
+    if not lead:
+        raise HTTPException(404, "Lead non trouvé")
+    return lead
+
+
+class LeadPatchBody(BaseModel):
+    status: Optional[str] = Field(None, pattern="^(new|contacted|converted|lost)$")
+    notes: Optional[str] = None
+
+
+@router.patch("/admin/leads/{lead_id}")
+def admin_lead_patch(
+    lead_id: str,
+    body: LeadPatchBody,
+    _: None = Depends(_verify_admin),
+):
+    """Met à jour statut et/ou notes d'un lead."""
+    from backend.leads_pg import get_lead, update_lead
+    if get_lead(lead_id) is None:
+        raise HTTPException(404, "Lead non trouvé")
+    ok = update_lead(lead_id, status=body.status, notes=body.notes)
+    if not ok:
+        raise HTTPException(500, "Erreur mise à jour")
+    return {"ok": True}
+
+
 @router.post("/public/onboarding", response_model=OnboardingResponse)
 def public_onboarding(body: OnboardingRequest):
     """Crée un tenant + config. Public (pas de auth). Aucun lien avec le numéro démo (voir docs/ARCHITECTURE_VOCAL_TENANTS.md)."""

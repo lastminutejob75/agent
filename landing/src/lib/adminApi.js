@@ -172,4 +172,12 @@ export const adminApi = {
 
   getCallDetail: (tenantId, callId) =>
     adminFetch(`/api/admin/tenants/${tenantId}/calls/${encodeURIComponent(callId)}`, { method: "GET" }),
+
+  // Leads pré-onboarding
+  leadsCountNew: () => adminFetch("/api/admin/leads/count-new", { method: "GET" }),
+  leadsList: (status) =>
+    adminFetch(`/api/admin/leads${status ? `?status=${encodeURIComponent(status)}` : ""}`, { method: "GET" }),
+  leadGet: (leadId) => adminFetch(`/api/admin/leads/${leadId}`, { method: "GET" }),
+  leadPatch: (leadId, body) =>
+    adminFetch(`/api/admin/leads/${leadId}`, { method: "PATCH", body: JSON.stringify(body) }),
 };
