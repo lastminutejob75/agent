@@ -22,7 +22,7 @@ export default function Hero({ title, subtitle }: HeroProps) {
             </p>
             <div className="flex flex-col sm:flex-row gap-4 mb-4">
               <Link
-                to="/creer-assistante"
+                to="/creer-assistante?new=1"
                 className="inline-flex items-center justify-center rounded-xl bg-[#0066CC] px-8 py-4 text-base font-semibold text-white shadow-lg hover:bg-[#0052A3] transition hover:scale-105"
               >
                 Créer mon assistante

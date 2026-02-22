@@ -325,7 +325,7 @@ export default function CancellationManagementSection() {
         {/* CTA - Design premium */}
         <div className="text-center mt-16 animate-slide-up delay-500">
           <a
-            href="/creer-assistante"
+            href="/creer-assistante?new=1"
             className="inline-flex items-center gap-3 bg-gradient-to-r from-[#0066CC] to-[#0052A3] text-white font-bold text-lg px-10 py-5 rounded-2xl hover:shadow-2xl hover:scale-105 transition-all duration-300 shadow-lg"
           >
             Optimiser mon planning
