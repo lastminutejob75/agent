@@ -37,12 +37,19 @@ function PhoneOutlineIcon() {
   );
 }
 
+const FAQ_ITEMS = [
+  { q: "En combien de temps puis-je démarrer ?", a: "Environ 15 minutes : connexion à votre agenda, configuration des créneaux et de la voix. Votre assistante IA est opérationnelle le jour même." },
+  { q: "L'IA comprend-elle vraiment les demandes des patients ?", a: "Oui. UWi qualifie le motif (consultation, urgence, renouvellement), propose des créneaux en temps réel et gère les rappels. Elle s'améliore avec le temps." },
+  { q: "Mes données sont-elles sécurisées ?", a: "Oui. Hébergement HDS, données en France, conformité RGPD. Nous ne réutilisons pas les conversations à des fins commerciales." },
+];
+
 export default function UwiLanding() {
   const bgRef = useRef(null);
   const waveRef = useRef(null);
   const [typedLine, setTypedLine] = useState(0);
   const [typedChar, setTypedChar] = useState(0);
   const [deleting, setDeleting] = useState(false);
+  const [openFaq, setOpenFaq] = useState(-1);
 
   // BG Aurora canvas
   useEffect(() => {
@@ -190,7 +197,7 @@ export default function UwiLanding() {
     return () => clearTimeout(id);
   }, [typedLine, typedChar, deleting]);
 
-  // Scroll reveal
+  // Scroll reveal (sections .reveal)
   useEffect(() => {
     const io = new IntersectionObserver(
       (entries) => {
@@ -201,10 +208,29 @@ export default function UwiLanding() {
           }
         });
       },
-      { threshold: 0.12 }
+      { threshold: 0.08 }
     );
-    document.querySelectorAll(".uwi-landing-new .reveal").forEach((el) => io.observe(el));
+    const run = () => document.querySelectorAll(".uwi-landing-new .reveal").forEach((el) => io.observe(el));
+    run();
     return () => io.disconnect();
+  }, []);
+
+  // Smooth scroll pour ancres (nav)
+  useEffect(() => {
+    const root = document.querySelector(".uwi-landing-new");
+    if (!root) return;
+    const handleClick = (e) => {
+      const a = e.target.closest('a[href^="#"]');
+      if (!a || !a.getAttribute("href") || a.getAttribute("href") === "#") return;
+      const id = a.getAttribute("href").slice(1);
+      const el = document.getElementById(id);
+      if (el) {
+        e.preventDefault();
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    };
+    root.addEventListener("click", handleClick);
+    return () => root.removeEventListener("click", handleClick);
   }, []);
 
   const line = TYPEWRITER_LINES[typedLine] || "";
@@ -224,6 +250,11 @@ export default function UwiLanding() {
               <span className="logo-tag">IA Secrétariat</span>
             </div>
           </Link>
+          <div className="nav-links">
+            <a href="#metiers">Spécialités</a>
+            <a href="#fonctionnalites">Fonctionnalités</a>
+            <a href="#pricing">Tarifs</a>
+          </div>
           <Link to="/creer-assistante?new=1" className="nav-btn">
             Démarrer →
           </Link>
@@ -314,6 +345,7 @@ export default function UwiLanding() {
         </div>
 
         <section className="demo reveal">
+          <div className="demo-inner">
           <p className="eyebrow">Testez en 60 secondes</p>
           <h2>Écoutez UWi<br />répondre à votre place</h2>
           <p className="demo-sub">
@@ -355,7 +387,106 @@ export default function UwiLanding() {
               Appeler la démo maintenant
             </a>
           </div>
+          </div>
         </section>
+
+        <section id="metiers" className="landing-section reveal">
+          <p className="section-eyebrow">Spécialités</p>
+          <h2>Pour tous les cabinets</h2>
+          <p className="section-sub">
+            Médecins généralistes, kinés, dentistes, centres médicaux… <strong>UWi s'adapte à votre activité</strong> et à vos horaires.
+          </p>
+          <div className="landing-cards">
+            <div className="landing-card">
+              <h3>Médecine générale</h3>
+              <p>RDV, renouvellements, triage des urgences. L'IA gère les appels pendant vos consultations.</p>
+            </div>
+            <div className="landing-card">
+              <h3>Kinésithérapie & spécialistes</h3>
+              <p>Prise de rendez-vous selon vos créneaux, rappels de présence, orientation des patients.</p>
+            </div>
+            <div className="landing-card">
+              <h3>Centres & cliniques</h3>
+              <p>Volume élevé, plusieurs praticiens. UWi qualifie et répartit sans saturer votre standard.</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="fonctionnalites" className="landing-section reveal">
+          <p className="section-eyebrow">Fonctionnalités</p>
+          <h2>Un secrétariat IA complet</h2>
+          <p className="section-sub">
+            Prise de RDV en direct, gestion des urgences, renouvellements, rappels patients. <strong>Disponible 24/7</strong>.
+          </p>
+          <div className="landing-cards">
+            <div className="landing-card">
+              <h3>Agenda synchronisé</h3>
+              <p>Créneaux en temps réel, plus de double réservation. Intégration avec votre outil actuel.</p>
+            </div>
+            <div className="landing-card">
+              <h3>Triage & urgences</h3>
+              <p>L'IA identifie les cas urgents et les signale. Les autres demandes sont planifiées proprement.</p>
+            </div>
+            <div className="landing-card">
+              <h3>Rappels & confirmation</h3>
+              <p>SMS de rappel pour limiter les absences. Confirmation des RDV à la prise.</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="pricing" className="landing-section reveal">
+          <p className="section-eyebrow">Tarifs</p>
+          <h2>Simple et prévisible</h2>
+          <p className="section-sub">
+            Essai gratuit 1 mois, sans CB. Ensuite, offre adaptée à votre volume d'appels.
+          </p>
+          <div className="landing-cards">
+            <div className="landing-card">
+              <h3>Essai 1 mois</h3>
+              <p>Gratuit, sans engagement. Créez votre assistante en 15 min et testez en conditions réelles.</p>
+            </div>
+            <div className="landing-card">
+              <h3>HDS & RGPD</h3>
+              <p>Hébergement données de santé, conformité RGPD. Données hébergées en France.</p>
+            </div>
+            <div className="landing-card">
+              <h3>Support</h3>
+              <p>Équipe dédiée pour la mise en route et le paramétrage de votre cabinet.</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="faq" className="landing-section reveal">
+          <p className="section-eyebrow">FAQ</p>
+          <h2>Questions fréquentes</h2>
+          <div className="landing-faq">
+            {FAQ_ITEMS.map((item, i) => (
+              <div key={i} className={`faq-item ${openFaq === i ? "open" : ""}`}>
+                <button type="button" onClick={() => setOpenFaq(openFaq === i ? -1 : i)}>
+                  {item.q}
+                  <span className="faq-chevron">▼</span>
+                </button>
+                {openFaq === i && <p className="faq-answer">{item.a}</p>}
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="landing-section reveal">
+          <div className="landing-cta-block">
+            <h2>Prêt à ne plus rater un appel ?</h2>
+            <p>Créez votre assistante IA en quelques minutes. Essai gratuit, sans carte bancaire.</p>
+            <Link to="/creer-assistante?new=1" className="btn-primary" style={{ display: "inline-flex", width: "auto", padding: "16px 28px" }}>
+              Créer mon assistante
+            </Link>
+          </div>
+        </section>
+
+        <footer className="landing-footer">
+          <Link to="/creer-assistante?new=1">Créer mon assistante</Link>
+          <a href="tel:0939240575">09 39 24 05 75</a>
+          <span>© UWi Medical</span>
+        </footer>
       </div>
     </div>
   );
