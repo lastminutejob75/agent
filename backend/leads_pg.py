@@ -31,8 +31,8 @@ def get_lead_by_email_for_upsert(email: str) -> Optional[Dict[str, Any]]:
                 cur.execute(
                     """
                     SELECT id, created_at, email, daily_call_volume, medical_specialty, medical_specialty_label, specialty_other, primary_pain_point, assistant_name, voice_gender,
-                           opening_hours, wants_callback, callback_phone, source, status, notes, contacted_at, converted_at,
-                           updated_at, last_submitted_at
+                           opening_hours, wants_callback, callback_phone, is_enterprise, source, status, notes, contacted_at, converted_at,
+                           updated_at, last_submitted_at, max_daily_amplitude
                     FROM pre_onboarding_leads
                     WHERE LOWER(TRIM(email)) = LOWER(TRIM(%s)) AND status IN ('new', 'contacted')
                     ORDER BY created_at DESC
@@ -65,18 +65,20 @@ def upsert_lead(
     Si un lead existe déjà avec cet email et status in ('new','contacted') → UPDATE et retourne son id.
     Sinon INSERT et retourne le nouvel id. Évite les doublons quand un médecin refait le wizard.
     """
+    is_enterprise = (daily_call_volume == "100+")
     existing = get_lead_by_email_for_upsert(email)
     if existing:
         lead_id = existing["id"]
         try:
             with _get_conn() as conn:
                 with conn.cursor() as cur:
+                    max_amp = compute_max_daily_amplitude(opening_hours)
                     cur.execute(
                         """
                         UPDATE pre_onboarding_leads
                         SET daily_call_volume = %s, medical_specialty = %s, medical_specialty_label = %s, primary_pain_point = %s, assistant_name = %s, voice_gender = %s,
-                            opening_hours = %s::jsonb, wants_callback = %s, callback_phone = %s, specialty_other = %s, source = %s,
-                            updated_at = NOW(), last_submitted_at = NOW()
+                            opening_hours = %s::jsonb, wants_callback = %s, callback_phone = %s, specialty_other = %s, is_enterprise = %s, source = %s,
+                            max_daily_amplitude = %s, updated_at = NOW(), last_submitted_at = NOW()
                         WHERE id = %s
                         """,
                         (
@@ -90,7 +92,9 @@ def upsert_lead(
                             bool(wants_callback),
                             (callback_phone or "").strip() or None,
                             (specialty_other or "").strip() or None,
+                            is_enterprise,
                             source,
+                            max_amp,
                             lead_id,
                         ),
                     )
@@ -132,13 +136,15 @@ def insert_lead(
     """Insert a new lead. Returns lead_id (uuid) or None on error."""
     try:
         lead_id = str(uuid.uuid4())
+        max_amp = compute_max_daily_amplitude(opening_hours)
         with _get_conn() as conn:
             with conn.cursor() as cur:
+                is_enterprise = (daily_call_volume == "100+")
                 cur.execute(
                     """
                     INSERT INTO pre_onboarding_leads
-                    (id, email, daily_call_volume, medical_specialty, medical_specialty_label, primary_pain_point, assistant_name, voice_gender, opening_hours, wants_callback, callback_phone, specialty_other, source, status, last_submitted_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, 'new', NOW(), NOW())
+                    (id, email, daily_call_volume, medical_specialty, medical_specialty_label, primary_pain_point, assistant_name, voice_gender, opening_hours, wants_callback, callback_phone, specialty_other, is_enterprise, source, status, last_submitted_at, updated_at, max_daily_amplitude)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, 'new', NOW(), NOW(), %s)
                     """,
                     (
                         lead_id,
@@ -153,7 +159,9 @@ def insert_lead(
                         bool(wants_callback),
                         (callback_phone or "").strip() or None,
                         (specialty_other or "").strip() or None,
+                        is_enterprise,
                         source,
+                        max_amp,
                     ),
                 )
             conn.commit()
@@ -168,37 +176,89 @@ def _json_dumps(obj: Any) -> str:
     return json.dumps(obj, ensure_ascii=False)
 
 
-def list_leads(status: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
-    """List leads, newest first. Optional filter by status."""
+def _time_to_hours(t: str) -> float:
+    """Parse HH:MM to decimal hours (e.g. 08:30 -> 8.5, 21:00 -> 21.0)."""
+    if not t or not isinstance(t, str):
+        return 0.0
+    parts = (t.strip().split(":") + ["0"])[:2]
+    try:
+        h = int(parts[0].strip() or "0")
+        m = int(parts[1].strip() or "0")
+        return h + m / 60.0
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def compute_max_daily_amplitude(opening_hours: Optional[Dict[str, Any]]) -> Optional[float]:
+    """
+    Pour chaque jour ouvert: amplitude = end - start (heures).
+    Retourne max(amplitudes) sur la semaine, ou None si aucun jour ouvert.
+    """
+    if not opening_hours or not isinstance(opening_hours, dict):
+        return None
+    day_keys_alt = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+    amplitudes = []
+    for i in range(7):
+        key = str(i)
+        slot = opening_hours.get(key) or opening_hours.get(
+            (["lun", "mar", "mer", "jeu", "ven", "sam", "dim"][i])
+        )
+        if not slot and i < len(day_keys_alt):
+            slot = opening_hours.get(day_keys_alt[i]) or opening_hours.get(day_keys_alt[i][:3])
+        if not slot or not isinstance(slot, dict) or slot.get("closed"):
+            continue
+        start = (slot.get("start") or "").strip()
+        end = (slot.get("end") or "").strip()
+        if not start and not end:
+            continue
+        sh, eh = _time_to_hours(start), _time_to_hours(end)
+        if eh > sh:
+            amplitudes.append(eh - sh)
+    return max(amplitudes) if amplitudes else None
+
+
+def compute_amplitude_score(opening_hours: Optional[Dict[str, Any]]) -> int:
+    """+20 si max_daily_amplitude >= 12h, +10 si >= 10h, sinon 0."""
+    max_h = compute_max_daily_amplitude(opening_hours)
+    if max_h is None:
+        return 0
+    if max_h >= 12:
+        return 20
+    if max_h >= 10:
+        return 10
+    return 0
+
+
+def list_leads(
+    status: Optional[str] = None,
+    enterprise_only: Optional[bool] = None,
+    limit: int = 200,
+) -> List[Dict[str, Any]]:
+    """List leads. Optional filter by status and/or is_enterprise. Order: new first, then enterprise, then created_at desc."""
     try:
         with _get_conn() as conn:
             with conn.cursor() as cur:
+                where_parts = []
+                params = []
                 if status:
-                    cur.execute(
-                        """
-                        SELECT id, created_at, email, daily_call_volume, medical_specialty, medical_specialty_label, specialty_other, primary_pain_point, assistant_name, voice_gender,
-                               opening_hours, wants_callback, callback_phone, source, status, notes, contacted_at, converted_at,
-                               updated_at, last_submitted_at
-                        FROM pre_onboarding_leads
-                        WHERE status = %s
-                        ORDER BY created_at DESC
-                        LIMIT %s
-                        """,
-                        (status, limit),
-                    )
-                else:
-                    # Tri par défaut : new d'abord (leads chauds), puis created_at DESC
-                    cur.execute(
-                        """
-                        SELECT id, created_at, email, daily_call_volume, medical_specialty, medical_specialty_label, specialty_other, primary_pain_point, assistant_name, voice_gender,
-                               opening_hours, wants_callback, callback_phone, source, status, notes, contacted_at, converted_at,
-                               updated_at, last_submitted_at
-                        FROM pre_onboarding_leads
-                        ORDER BY (status = 'new') DESC, created_at DESC
-                        LIMIT %s
-                        """,
-                        (limit,),
-                    )
+                    where_parts.append("status = %s")
+                    params.append(status)
+                if enterprise_only:
+                    where_parts.append("is_enterprise = true")
+                where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+                params.append(limit)
+                cur.execute(
+                    f"""
+                    SELECT id, created_at, email, daily_call_volume, medical_specialty, medical_specialty_label, specialty_other, primary_pain_point, assistant_name, voice_gender,
+                           opening_hours, wants_callback, callback_phone, is_enterprise, source, status, notes, contacted_at, converted_at,
+                           updated_at, last_submitted_at, max_daily_amplitude
+                    FROM pre_onboarding_leads
+                    {where_sql}
+                    ORDER BY (status = 'new') DESC, is_enterprise DESC, created_at DESC
+                    LIMIT %s
+                    """,
+                    tuple(params),
+                )
                 rows = cur.fetchall()
         return [_row_to_lead(r) for r in rows]
     except Exception as e:
@@ -214,8 +274,8 @@ def get_lead(lead_id: str) -> Optional[Dict[str, Any]]:
                 cur.execute(
                     """
                     SELECT id, created_at, email, daily_call_volume, medical_specialty, medical_specialty_label, specialty_other, primary_pain_point, assistant_name, voice_gender,
-                           opening_hours, wants_callback, callback_phone, source, status, notes, tenant_id, contacted_at, converted_at,
-                           updated_at, last_submitted_at
+                           opening_hours, wants_callback, callback_phone, is_enterprise, source, status, notes, tenant_id, contacted_at, converted_at,
+                           updated_at, last_submitted_at, max_daily_amplitude
                     FROM pre_onboarding_leads
                     WHERE id = %s
                     """,

@@ -462,7 +462,9 @@ def send_lead_founder_email(
     opening_hours: Optional[Dict[str, Any]] = None,
     wants_callback: bool = False,
     callback_phone: str = "",
+    is_enterprise: bool = False,
     dashboard_base_url: str = "",
+    source: str = "landing_cta",
 ) -> Tuple[bool, Optional[str]]:
     """
     Email interne au fondateur : résumé nouveau lead pré-onboarding.
@@ -470,6 +472,60 @@ def send_lead_founder_email(
     Returns (success, error_message).
     """
     from datetime import datetime
+
+    def _compute_lead_score(vol: str, spec: str, pain: str, oh: Optional[Dict[str, Any]] = None):
+        from backend.leads_pg import compute_amplitude_score
+        score = 0
+        if vol == "100+":
+            score += 50
+        elif vol == "50-100":
+            score += 30
+        elif vol == "25-50":
+            score += 20
+        spec_lower = (spec or "").lower()
+        if spec_lower in ("centre_medical", "clinique_privee"):
+            score += 30
+        if "secrétariat" in (pain or "") and ("n'arrive pas" in (pain or "") or "débordé" in (pain or "")):
+            score += 20
+        score += compute_amplitude_score(oh or {})
+        if score >= 70:
+            return score, "Haute priorité"
+        if score >= 40:
+            return score, "Moyenne"
+        return score, "Standard"
+
+    def _slot_value(slot: Any) -> str:
+        if not slot or not isinstance(slot, dict) or slot.get("closed"):
+            return "Fermé"
+        start = (slot.get("start") or "").strip()
+        end = (slot.get("end") or "").strip()
+        if start or end:
+            return f"{start or '?'}–{end or '?'}"
+        return "Fermé"
+
+    def _opening_hours_pretty(oh: Optional[Dict[str, Any]]) -> str:
+        if not oh or not isinstance(oh, dict):
+            return "—"
+        days_short = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
+        day_keys_alt = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+        values = []
+        for i in range(7):
+            key = str(i)
+            slot = oh.get(key) or oh.get(days_short[i].lower()[:3])
+            if not slot and i < len(day_keys_alt):
+                slot = oh.get(day_keys_alt[i]) or oh.get(day_keys_alt[i][:3])
+            values.append(_slot_value(slot))
+        lines = []
+        i = 0
+        while i < 7:
+            v = values[i]
+            j = i + 1
+            while j < 7 and values[j] == v:
+                j += 1
+            label = days_short[i] if j == i + 1 else f"{days_short[i]}–{days_short[j - 1]}"
+            lines.append(f"{label} : {v}")
+            i = j
+        return "\n".join(lines)
 
     to = (
         os.getenv("FOUNDER_EMAIL") or os.getenv("ADMIN_EMAIL") or os.getenv("SMTP_EMAIL") or ""
@@ -485,48 +541,69 @@ def send_lead_founder_email(
         )
         return False, "ADMIN_BASE_URL manquant (email non envoyé, lien dashboard invalide)"
 
-    voice_label = "féminine" if voice_gender == "female" else "masculine"
-    days_fr = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
-    hours_lines = []
-    for i, day in enumerate(days_fr):
-        key = str(i) if str(i) in (opening_hours or {}) else day.lower()[:3]
-        slot = (opening_hours or {}).get(key, opening_hours or {})
-        if isinstance(slot, dict) and slot.get("closed"):
-            hours_lines.append(f"  {day}: Fermé")
-        elif isinstance(slot, dict) and slot.get("start") and slot.get("end"):
-            hours_lines.append(f"  {day}: {slot['start']} – {slot['end']}")
-        else:
-            hours_lines.append(f"  {day}: —")
-    hours_block = "\n".join(hours_lines) if hours_lines else "—"
-
-    # dashboard_base_url doit être une URL absolue (ex. ADMIN_BASE_URL en prod) pour éviter liens cassés dans l'email
+    voice_label = "Féminine" if voice_gender == "female" else "Masculine"
     link = f"{dashboard_base_url.rstrip('/')}/admin/leads/{lead_id}" if dashboard_base_url else f"/admin/leads/{lead_id}"
     specialty_display = (medical_specialty_label or "").strip() or medical_specialty or "—"
-    subject = f"Nouveau lead UWi – {daily_call_volume} appels/jour – {specialty_display}"
+    specialty_full = specialty_display + ((" – " + (specialty_other or "").strip()) if (specialty_other or "").strip() else "")
+    if is_enterprise:
+        subject = f"[URGENT] Nouveau lead UWi — 100+ appels/jour — {specialty_display}"
+    else:
+        subject = f"Nouveau lead UWi — {daily_call_volume} appels/jour — {specialty_display}"
+
+    from backend.leads_pg import compute_max_daily_amplitude
+    max_amp = compute_max_daily_amplitude(opening_hours)
+    amplitude_h_display = f"{max_amp:.1f} h".replace(".", ",") if max_amp is not None else "—"
+    lead_score, priority_label = _compute_lead_score(daily_call_volume, medical_specialty or "", primary_pain_point or "", opening_hours)
+    grand_compte = "OUI" if is_enterprise else "NON"
+    rappel_txt = "OUI" if wants_callback else "NON"
+    if wants_callback and (callback_phone or "").strip():
+        rappel_txt += " – " + (callback_phone or "").strip()
+    elif wants_callback:
+        rappel_txt += " (pas de numéro)"
+    hours_pretty = _opening_hours_pretty(opening_hours)
+    date_local = datetime.now().strftime("%d/%m/%Y %H:%M")
 
     html = f"""
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><title>Nouveau lead UWi</title></head>
 <body style="font-family: sans-serif; max-width: 560px; margin: 0 auto; padding: 1rem;">
-  <h1 style="font-size: 1.2rem;">Nouveau lead UWi – {assistant_name}</h1>
-  <ul style="color: #333;">
-    <li><strong>Email prospect:</strong> {email}</li>
-    <li><strong>Spécialité:</strong> {specialty_display}{(' – ' + (specialty_other or '').strip()) if (specialty_other or '').strip() else ''}</li>
-    <li><strong>Situation (douleur):</strong> {primary_pain_point or '—'}</li>
-    <li><strong>Appels estimés/jour:</strong> {daily_call_volume}</li>
-    <li><strong>Assistante:</strong> {assistant_name}</li>
-    <li><strong>Voix:</strong> {voice_label}</li>
-    <li><strong>Rappel souhaité:</strong> {"Oui – " + (callback_phone or "").strip() if wants_callback and (callback_phone or "").strip() else ("Oui (pas de numéro)" if wants_callback else "Non")}</li>
-    <li><strong>Source:</strong> landing_cta</li>
-    <li><strong>Date/heure:</strong> {datetime.now().strftime("%d/%m/%Y %H:%M")} UTC</li>
+  <h1 style="font-size: 1.25rem;">Nouveau lead UWi (pré-onboarding)</h1>
+
+  <h2 style="font-size: 0.95rem; color: #333; margin-top: 1.25rem;">📌 Priorité</h2>
+  <ul style="color: #333; margin: 0.25rem 0 1rem 0;">
+    <li>Appels / jour : <strong>{daily_call_volume}</strong></li>
+    <li>Grand compte potentiel : <strong>{grand_compte}</strong></li>
+    <li>Score : <strong>{lead_score}</strong> ({priority_label})</li>
+    <li>Amplitude maximale / jour : <strong>{amplitude_h_display}</strong></li>
   </ul>
-  <h2 style="font-size: 1rem;">Horaires cabinet</h2>
-  <pre style="background: #f5f5f5; padding: 0.75rem; border-radius: 0.5rem; font-size: 0.9rem;">{hours_block}</pre>
-  <p style="margin-top: 1rem;">
-    <a href="{link}" style="background:#2563eb;color:white;padding:0.5rem 1rem;text-decoration:none;border-radius:0.5rem;display:inline-block;">
-      Voir dans le dashboard
-    </a>
+
+  <h2 style="font-size: 0.95rem; color: #333;">🏥 Cabinet</h2>
+  <ul style="color: #333; margin: 0.25rem 0 1rem 0;">
+    <li>Spécialité : {specialty_full}</li>
+    <li>Douleur principale : {primary_pain_point or '—'}</li>
+    <li>Souhaite être rappelé : {rappel_txt}</li>
+  </ul>
+
+  <h2 style="font-size: 0.95rem; color: #333;">🤖 Assistante</h2>
+  <ul style="color: #333; margin: 0.25rem 0 1rem 0;">
+    <li>Prénom : {assistant_name or '—'}</li>
+    <li>Voix : {voice_label}</li>
+  </ul>
+  <p style="font-size: 0.95rem; color: #333; margin: 0.5rem 0 1rem 0;">
+    <strong>Horaires cabinet :</strong><br/>
+    {hours_pretty.replace(chr(10), '<br/>')}
+  </p>
+
+  <h2 style="font-size: 0.95rem; color: #333;">🔗 Traiter ce lead</h2>
+  <p style="margin: 0.25rem 0 1rem 0;">
+    <a href="{link}" style="color:#2563eb;word-break:break-all;">{link}</a>
+  </p>
+
+  <p style="color: #666; font-size: 0.85rem; margin-top: 1.5rem;">
+    —<br/>
+    Source : {source or 'landing_cta'}<br/>
+    Date : {date_local}
   </p>
 </body>
 </html>

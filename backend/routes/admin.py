@@ -1106,12 +1106,13 @@ def admin_leads_count_new(_: None = Depends(_verify_admin)):
 
 @router.get("/admin/leads")
 def admin_leads_list(
-    status: Optional[str] = Query(None),
+    status: Optional[str] = Query(None, description="Filter by status: new, contacted, converted, lost"),
+    enterprise: Optional[int] = Query(None, description="Filter grands comptes only: 1"),
     _: None = Depends(_verify_admin),
 ):
-    """Liste des leads (ordre created_at desc)."""
+    """Liste des leads. Query: ?status=new & ?enterprise=1 (combinaison possible)."""
     from backend.leads_pg import list_leads
-    items = list_leads(status=status)
+    items = list_leads(status=status, enterprise_only=(enterprise == 1))
     return {"leads": items}
 
 

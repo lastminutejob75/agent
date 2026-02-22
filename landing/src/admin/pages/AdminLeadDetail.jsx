@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { adminApi } from "../../lib/adminApi.js";
+import { formatOpeningHoursPretty, getAmplitudeBadge, getAmplitudeScore } from "../../lib/openingHoursPretty.js";
 
 const DAYS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"];
 const STATUS_OPTIONS = [
@@ -9,6 +10,22 @@ const STATUS_OPTIONS = [
   { value: "converted", label: "Converti" },
   { value: "lost", label: "Perdu" },
 ];
+
+function getLeadPriority(lead) {
+  let score = 0;
+  const vol = lead?.daily_call_volume;
+  if (vol === "100+") score += 50;
+  else if (vol === "50-100") score += 30;
+  else if (vol === "25-50") score += 20;
+  const spec = (lead?.medical_specialty || "").toLowerCase();
+  if (spec === "centre_medical" || spec === "clinique_privee") score += 30;
+  const pain = lead?.primary_pain_point || "";
+  if (pain.includes("secrétariat n'arrive pas") || pain.includes("secrétariat est débordé")) score += 20;
+  score += getAmplitudeScore(lead);
+  if (score >= 70) return { score, label: "Haute priorité", className: "bg-red-100 text-red-800" };
+  if (score >= 40) return { score, label: "Moyenne", className: "bg-amber-100 text-amber-800" };
+  return { score, label: "Standard", className: "bg-slate-100 text-slate-700" };
+}
 
 function formatDate(iso) {
   if (!iso) return "—";
@@ -75,13 +92,8 @@ export default function AdminLeadDetail() {
       `Source: ${lead.source || "landing_cta"}`,
       `Date: ${formatDate(lead.created_at)}`,
     ];
-    const oh = lead.opening_hours || {};
     lines.push("Horaires:");
-    DAYS.forEach((d, i) => {
-      const s = oh[String(i)] || oh[d.toLowerCase().slice(0, 3)];
-      if (s && s.closed) lines.push(`  ${d}: Fermé`);
-      else if (s && (s.start || s.end)) lines.push(`  ${d}: ${s.start || "?"} – ${s.end || "?"}`);
-    });
+    lines.push(formatOpeningHoursPretty(lead.opening_hours));
     navigator.clipboard.writeText(lines.join("\n"));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -114,6 +126,57 @@ export default function AdminLeadDetail() {
           ← Leads
         </Link>
         <h1 className="text-2xl font-bold text-slate-800">Lead – {lead.email}</h1>
+      </div>
+
+      <div className="mb-6 rounded-xl border border-slate-200 bg-white p-6">
+        <h2 className="text-sm font-semibold text-slate-500 uppercase mb-4">Qualification</h2>
+        <div className="flex flex-wrap items-center gap-4">
+          <div>
+            <span className="text-xs text-slate-500">Grand compte potentiel</span>
+            <p className="font-semibold text-slate-800">
+              {(lead.is_enterprise || lead.daily_call_volume === "100+") ? (
+                <span className="text-amber-700">Oui 🔥</span>
+              ) : (
+                "Non"
+              )}
+            </p>
+          </div>
+          <div>
+            <span className="text-xs text-slate-500">Appels/jour</span>
+            <p className="font-semibold text-slate-800">{lead.daily_call_volume || "—"}</p>
+          </div>
+          <div>
+            <span className="text-xs text-slate-500">Spécialité</span>
+            <p className="font-semibold text-slate-800">{lead.medical_specialty_label || lead.medical_specialty || "—"}</p>
+          </div>
+          <div>
+            <span className="text-xs text-slate-500">Douleur principale</span>
+            <p className="font-semibold text-slate-800 max-w-xs">{lead.primary_pain_point || "—"}</p>
+          </div>
+          <div>
+            <span className="text-xs text-slate-500">Priorité</span>
+            <p>
+              {(() => {
+                const prio = getLeadPriority(lead);
+                return (
+                  <span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${prio.className}`} title={`Score: ${prio.score}`}>
+                    {prio.label}
+                  </span>
+                );
+              })()}
+            </p>
+          </div>
+          <div>
+            <span className="text-xs text-slate-500">Amplitude max / jour</span>
+            <p className="font-semibold text-slate-800 flex items-center gap-2">
+              {lead.max_daily_amplitude != null ? `${Number(lead.max_daily_amplitude).toFixed(1)} h` : "—"}
+              {(() => {
+                const amp = getAmplitudeBadge(lead);
+                return amp ? <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${amp.className}`}>⏰ {amp.label}</span> : null;
+              })()}
+            </p>
+          </div>
+        </div>
       </div>
 
       <div className="grid gap-6 md:grid-cols-2">
@@ -150,16 +213,9 @@ export default function AdminLeadDetail() {
 
         <div className="rounded-xl border border-slate-200 bg-white p-6">
           <h2 className="text-sm font-semibold text-slate-500 uppercase mb-2">Horaires cabinet</h2>
-          <ul className="space-y-1 text-sm">
-            {DAYS.map((d, i) => {
-              const s = (lead.opening_hours || {})[String(i)] || (lead.opening_hours || {})[d.toLowerCase().slice(0, 3)];
-              return (
-                <li key={d}>
-                  {d}: {s && s.closed ? "Fermé" : s && (s.start || s.end) ? `${s.start || "?"} – ${s.end || "?"}` : "—"}
-                </li>
-              );
-            })}
-          </ul>
+          <pre className="text-sm text-slate-700 whitespace-pre-wrap font-sans">
+            {formatOpeningHoursPretty(lead.opening_hours)}
+          </pre>
         </div>
       </div>
 
@@ -184,6 +240,23 @@ export default function AdminLeadDetail() {
       </div>
 
       <div className="mt-6 rounded-xl border border-slate-200 bg-white p-6">
+        <h2 className="text-sm font-semibold text-slate-500 uppercase mb-2">Actions rapides</h2>
+        <div className="flex flex-wrap gap-2 mb-4">
+          <button
+            type="button"
+            onClick={() => setStatus("contacted")}
+            className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700"
+          >
+            Marquer contacté
+          </button>
+          <button
+            type="button"
+            onClick={() => setStatus("lost")}
+            className="px-4 py-2 rounded-lg bg-slate-600 text-white text-sm font-medium hover:bg-slate-700"
+          >
+            Marquer perdu
+          </button>
+        </div>
         <h2 className="text-sm font-semibold text-slate-500 uppercase mb-3">Statut</h2>
         <div className="flex flex-wrap gap-2 mb-4">
           {STATUS_OPTIONS.map((opt) => (

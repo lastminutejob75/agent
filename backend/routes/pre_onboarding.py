@@ -138,6 +138,7 @@ async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody)
         or ""
     ).strip()
     try:
+        is_enterprise = body.daily_call_volume == "100+"
         ok, err = send_lead_founder_email(
             lead_id=lead_id,
             email=body.email,
@@ -151,7 +152,9 @@ async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody)
             opening_hours=body.opening_hours,
             wants_callback=body.wants_callback,
             callback_phone=(body.callback_phone or "").strip() or "",
+            is_enterprise=is_enterprise,
             dashboard_base_url=dashboard_base,
+            source=body.source or "landing_cta",
         )
         if not ok:
             logger.warning("lead_founder_email failed: %s", err)

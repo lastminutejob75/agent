@@ -175,8 +175,13 @@ export const adminApi = {
 
   // Leads pré-onboarding
   leadsCountNew: () => adminFetch("/api/admin/leads/count-new", { method: "GET" }),
-  leadsList: (status) =>
-    adminFetch(`/api/admin/leads${status ? `?status=${encodeURIComponent(status)}` : ""}`, { method: "GET" }),
+  leadsList: (opts = {}) => {
+    const params = new URLSearchParams();
+    if (opts.status) params.set("status", opts.status);
+    if (opts.enterprise === true || opts.enterprise === 1) params.set("enterprise", "1");
+    const qs = params.toString();
+    return adminFetch(`/api/admin/leads${qs ? `?${qs}` : ""}`, { method: "GET" });
+  },
   leadGet: (leadId) => adminFetch(`/api/admin/leads/${leadId}`, { method: "GET" }),
   leadPatch: (leadId, body) =>
     adminFetch(`/api/admin/leads/${leadId}`, { method: "PATCH", body: JSON.stringify(body) }),

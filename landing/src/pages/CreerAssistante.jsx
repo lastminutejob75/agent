@@ -168,11 +168,7 @@ const defaultOpeningHours = () =>
     DAYS.map((_, i) => [String(i), { start: "", end: "", closed: false }])
   );
 
-function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch (_) {}
+function getInitialState() {
   return {
     step: 1,
     medical_specialty: "",
@@ -184,6 +180,14 @@ function loadState() {
     voice_gender: "",
     assistant_name: "",
   };
+}
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (_) {}
+  return getInitialState();
 }
 
 function saveState(state) {
@@ -199,8 +203,29 @@ function clearState() {
 }
 
 export default function CreerAssistante() {
-  const [state, setState] = useState(loadState);
+  const [state, setState] = useState(() => {
+    if (typeof window === "undefined") return getInitialState();
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("new") === "1" || params.get("start") === "1") {
+      clearState();
+      return getInitialState();
+    }
+    return loadState();
+  });
   const [modalOpen, setModalOpen] = useState(false);
+
+  // Retirer ?new=1 de l'URL pour que le rafraîchissement ne réinitialise pas
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("new") === "1" || params.get("start") === "1") {
+      params.delete("new");
+      params.delete("start");
+      const newSearch = params.toString();
+      const url = window.location.pathname + (newSearch ? `?${newSearch}` : "") + window.location.hash;
+      window.history.replaceState({}, "", url);
+    }
+  }, []);
   const [modalEmail, setModalEmail] = useState("");
   const [modalCallback, setModalCallback] = useState(false);
   const [modalCallbackPhone, setModalCallbackPhone] = useState("");
@@ -543,6 +568,9 @@ export default function CreerAssistante() {
                             <input
                               type="time"
                               value={slot.start}
+                              min="06:00"
+                              max="22:00"
+                              step="900"
                               onChange={(e) =>
                                 persist({
                                   opening_hours: {
@@ -557,6 +585,9 @@ export default function CreerAssistante() {
                             <input
                               type="time"
                               value={slot.end}
+                              min="06:00"
+                              max="22:00"
+                              step="900"
                               onChange={(e) =>
                                 persist({
                                   opening_hours: {
