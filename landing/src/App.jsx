@@ -11,6 +11,12 @@ import DecouverteClient from "./pages/DecouverteClient";
 import CreerAssistante from "./pages/CreerAssistante";
 import AppLayout from "./pages/AppLayout";
 import AppDashboard from "./pages/AppDashboard";
+import AppCalls from "./pages/AppCalls";
+import AppAgenda from "./pages/AppAgenda";
+import AppActions from "./pages/AppActions";
+import AppFacturation from "./pages/AppFacturation";
+import AppProfil from "./pages/AppProfil";
+import AppConfig from "./pages/AppConfig";
 import AppStatus from "./pages/AppStatus";
 import AppSettings from "./pages/AppSettings";
 import AppRgpd from "./pages/AppRgpd";
@@ -69,6 +75,12 @@ export default function App() {
         <Route path="impersonate" element={<ImpersonatePage />} />
         <Route element={<AppLayout />}>
           <Route index element={<AppDashboard />} />
+          <Route path="appels" element={<AppCalls />} />
+          <Route path="agenda" element={<AppAgenda />} />
+          <Route path="actions" element={<AppActions />} />
+          <Route path="facturation" element={<AppFacturation />} />
+          <Route path="profil" element={<AppProfil />} />
+          <Route path="config" element={<AppConfig />} />
           <Route path="status" element={<AppStatus />} />
           <Route path="settings" element={<AppSettings />} />
           <Route path="rgpd" element={<AppRgpd />} />

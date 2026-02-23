@@ -1,279 +1,310 @@
 import { useState, useEffect } from "react";
+import { useNavigate, useOutletContext } from "react-router-dom";
 import { api } from "../lib/api.js";
 
 const COUNTERS_DEFAULT = { calls_total: 0, bookings_confirmed: 0, transfers: 0, abandons: 0 };
 
-function formatTimeAgo(ts) {
+function formatTime(ts) {
   if (ts == null) return "—";
   try {
-    const date = typeof ts === "string" ? new Date(ts.replace("Z", "+00:00")) : new Date(ts);
-    const s = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
-    if (s < 10) return "à l'instant";
-    if (s < 60) return `il y a ${s}s`;
-    if (s < 3600) return `il y a ${Math.floor(s / 60)} min`;
-    if (s < 86400) return `il y a ${Math.floor(s / 3600)} h`;
-    return `il y a ${Math.floor(s / 86400)} j`;
+    const d = typeof ts === "string" ? new Date(ts.replace("Z", "+00:00")) : new Date(ts);
+    return d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
   } catch {
     return "—";
   }
 }
 
-function formatDate(ts) {
-  if (ts == null) return "—";
-  try {
-    return new Date(ts).toLocaleString("fr-FR");
-  } catch {
-    return "—";
-  }
+function formatDuration() {
+  return "—";
 }
 
-function TrendBadge({ value }) {
-  if (value == null || value === 0) return null;
-  const isUp = value > 0;
-  return (
-    <span className={`text-sm font-medium ${isUp ? "text-emerald-600" : "text-red-600"}`}>
-      {isUp ? "↑" : "↓"} {Math.abs(value)}%
-    </span>
-  );
+function outcomeTag(outcome) {
+  if (outcome === "booking_confirmed") return { label: "✓ RDV confirmé", cls: "cd-tg-g" };
+  if (outcome === "transferred_human") return { label: "Transféré", cls: "cd-tg-n" };
+  if (outcome === "user_abandon") return { label: "Abandon", cls: "cd-tg-n" };
+  return { label: "Appel traité", cls: "cd-tg-n" };
 }
 
-function MiniChart({ days }) {
-  if (!days || days.length === 0) return null;
-  const maxVal = Math.max(1, ...days.map((d) => d.calls + d.bookings + d.transfers));
-  const barMaxHeight = 56;
-  return (
-    <div className="mt-4 flex items-end gap-1.5" style={{ height: barMaxHeight + 28 }}>
-      {days.map((d) => {
-        const total = d.calls + d.bookings + d.transfers;
-        const barHeight = maxVal ? Math.max((total / maxVal) * barMaxHeight, 4) : 4;
-        const dayShort = d.date ? new Date(d.date + "T12:00:00").toLocaleDateString("fr-FR", { weekday: "short" }) : "";
-        return (
-          <div key={d.date} className="flex-1 flex flex-col items-center justify-end gap-1.5">
-            <div
-              className="w-full rounded-t-md bg-teal-200 transition-all"
-              style={{ height: `${barHeight}px` }}
-              title={`${d.date}: ${d.calls} appels, ${d.bookings} RDV, ${d.transfers} transférés`}
-            />
-            <span className="text-xs text-slate-500 shrink-0">{dayShort}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
+function outcomeDot(outcome) {
+  if (outcome === "booking_confirmed") return "cd-cd-g";
+  if (outcome === "transferred_human") return "cd-cd-o";
+  return "cd-cd-o";
 }
-
-function StatusBadge({ status }) {
-  const isOnline = status === "online";
-  return (
-    <span
-      className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium shadow-sm ${
-        isOnline ? "bg-emerald-50 text-emerald-800 border border-emerald-200" : "bg-slate-100 text-slate-600 border border-slate-200"
-      }`}
-    >
-      <span className={`h-2.5 w-2.5 rounded-full ${isOnline ? "bg-emerald-500" : "bg-slate-400"}`} />
-      {isOnline ? "100% disponible" : "Hors ligne"}
-    </span>
-  );
-}
-
-function buildActivityItems(last_call, last_booking) {
-  const items = [];
-  if (last_call?.created_at) {
-    const outcomeLabel =
-      last_call.outcome === "booking_confirmed"
-        ? "RDV programmé"
-        : last_call.outcome === "transferred_human"
-          ? "Appel transféré"
-          : last_call.outcome === "user_abandon"
-            ? "Appel abandonné"
-            : "Appel traité";
-    const detail =
-      last_call.outcome === "booking_confirmed" && last_call.slot_label
-        ? `RDV le ${last_call.slot_label}`
-        : "Appel entrant traité";
-    items.push({
-      id: "call-" + (last_call.call_id || "0"),
-      at: last_call.created_at,
-      type: "call",
-      title: "Appel entrant traité",
-      detail: last_call.outcome === "booking_confirmed" ? detail : outcomeLabel,
-      color: "emerald",
-    });
-  }
-  if (last_booking?.created_at) {
-    const detail = last_booking.slot_label
-      ? `RDV le ${last_booking.slot_label}`
-      : last_booking.name
-        ? `Client: ${last_booking.name}`
-        : "RDV confirmé";
-    items.push({
-      id: "booking-" + (last_booking.created_at || ""),
-      at: last_booking.created_at,
-      type: "booking",
-      title: "RDV confirmé",
-      detail,
-      color: "sky",
-    });
-  }
-  items.sort((a, b) => new Date(b.at) - new Date(a.at));
-  return items.slice(0, 5);
-}
-
-const activityColors = {
-  emerald: "bg-emerald-500",
-  sky: "bg-sky-400",
-  violet: "bg-violet-400",
-  amber: "bg-amber-400",
-};
-
-const activityCardBg = {
-  emerald: "bg-emerald-50 border-emerald-100",
-  sky: "bg-sky-50 border-sky-100",
-  violet: "bg-violet-50 border-violet-100",
-  amber: "bg-amber-50 border-amber-100",
-};
 
 export default function AppDashboard() {
-  const [data, setData] = useState(null);
+  const navigate = useNavigate();
+  const { me, dashboard } = useOutletContext() || {};
   const [kpis, setKpis] = useState(null);
-  const [err, setErr] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  function load() {
-    setLoading(true);
-    setErr(null);
-    api
-      .tenantDashboard()
-      .then((d) => {
-        setData(d);
-        return api.tenantKpis(7).then(setKpis).catch(() => setKpis(null));
-      })
-      .catch(setErr)
-      .finally(() => setLoading(false));
-  }
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    load();
+    api.tenantKpis(7).then(setKpis).catch(() => setKpis(null));
   }, []);
 
-  useEffect(() => {
-    const id = setInterval(() => load(), 30000);
-    return () => clearInterval(id);
-  }, []);
-
-  if (loading) {
-    return (
-      <div className="flex min-h-[200px] items-center justify-center">
-        <p className="text-slate-500">Chargement...</p>
-      </div>
-    );
+  const go = (path) => () => navigate(path);
+  const counters = { ...COUNTERS_DEFAULT, ...(dashboard?.counters_7d || {}) };
+  const lastCall = dashboard?.last_call;
+  const lastBooking = dashboard?.last_booking;
+  const today = new Date();
+  const dayLabel = today.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+  const weekDays = [];
+  for (let i = -2; i <= 2; i++) {
+    const d = new Date(today);
+    d.setDate(d.getDate() + i);
+    weekDays.push({
+      label: d.toLocaleDateString("fr-FR", { weekday: "short" }).slice(0, 1),
+      num: d.getDate(),
+      today: i === 0,
+      date: d,
+    });
   }
-  if (err) {
-    return (
-      <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-red-700">
-        {err.message || "Erreur"}
-      </div>
-    );
-  }
-  if (!data) return null;
+  const rdvPlaceholder = [
+    { time: "09h", name: "Claire Fontaine", motif: "Consultation", src: "uwi" },
+    { time: "10h", name: "Marie Dupont", motif: "Tension artérielle", src: "uwi" },
+    { time: "11h", name: "Henri Blanc", motif: "Renouvellement", src: "doc" },
+    { time: "14h", name: "Isabelle Roy", motif: "Bilan annuel", src: "doc" },
+  ];
 
-  const { tenant_name, service_status, last_call, last_booking, counters_7d } = data;
-  const counters = { ...COUNTERS_DEFAULT, ...(counters_7d || {}) };
-  const status = ["online", "offline", "unknown"].includes(service_status?.status) ? service_status.status : "unknown";
-  const trend = kpis?.trend || {};
-  const activities = buildActivityItems(last_call, last_booking);
+  const callRows = [];
+  if (lastCall) {
+    const tag = outcomeTag(lastCall.outcome);
+    callRows.push({
+      id: "last-call",
+      time: formatTime(lastCall.created_at),
+      duration: formatDuration(),
+      name: lastCall.name || "Patient",
+      agentName: "UWi",
+      text: lastCall.slot_label
+        ? `RDV pris ${lastCall.slot_label}`
+        : lastCall.outcome === "booking_confirmed"
+          ? "RDV confirmé"
+          : lastCall.outcome === "transferred_human"
+            ? "Appel transféré à un humain"
+            : "Appel traité",
+      tag: tag.label,
+      tagCls: tag.cls,
+      dot: outcomeDot(lastCall.outcome),
+      urg: false,
+    });
+  }
+  if (callRows.length === 0) {
+    callRows.push({
+      id: "empty",
+      time: "—",
+      duration: "—",
+      name: "Aucun appel récent",
+      agentName: null,
+      text: "Les appels traités par UWi apparaîtront ici.",
+      tag: "Info",
+      tagCls: "cd-tg-n",
+      dot: "cd-cd-g",
+      urg: false,
+    });
+  }
+
+  const decrochePct = counters.calls_total > 0 ? Math.min(100, Math.round((counters.bookings_confirmed + counters.transfers) / counters.calls_total * 100)) : 98;
+  const minutesUsed = 563;
+  const minutesIncluded = 800;
+  const rdvAuj = counters.bookings_confirmed ?? 0;
 
   return (
-    <div className="space-y-8 pb-8">
-      {/* En-tête : titre + disponibilité */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold text-slate-900">{tenant_name || "Tableau de bord"}</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Vue d'ensemble des 7 derniers jours</p>
+    <div className="client-dash" style={{ display: "flex", flexDirection: "column", gap: 26 }}>
+      {/* Greeting */}
+      <div className="client-dash cd-greeting">
+        <div className="client-dash cd-gr-l">
+          <div className="client-dash cd-gr-hello">
+            Bonjour, {me?.tenant_name?.split(/\s+/)[0] || "Cabinet"} 👋
+          </div>
+          <div className="client-dash cd-gr-sub">
+            {dayLabel} · <strong>UWi</strong> a traité {counters.calls_total} appel{counters.calls_total !== 1 ? "s" : ""} sur les 7 derniers jours
+            {counters.bookings_confirmed > 0 && <> · <strong>{counters.bookings_confirmed} RDV</strong> pris</>}
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          <StatusBadge status={status} />
-          <button
-            type="button"
-            onClick={load}
-            disabled={loading}
-            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-          >
-            Rafraîchir
-          </button>
+        <div className="client-dash cd-gr-kpis">
+          <div className="client-dash cd-gr-kpi">
+            <div className="client-dash cd-gr-kpi-val">{decrochePct}%</div>
+            <div className="client-dash cd-gr-kpi-lbl">Décroché</div>
+          </div>
+          <div className="client-dash cd-gr-kpi">
+            <div className="client-dash cd-gr-kpi-val">{minutesUsed}</div>
+            <div className="client-dash cd-gr-kpi-lbl">Min / {minutesIncluded}</div>
+          </div>
+          <div className="client-dash cd-gr-kpi">
+            <div className="client-dash cd-gr-kpi-val">{rdvAuj}</div>
+            <div className="client-dash cd-gr-kpi-lbl">RDV (7j)</div>
+          </div>
         </div>
       </div>
 
-      {/* 3 KPI principaux — style pastel, pédagogique */}
-      <div className="grid gap-5 sm:grid-cols-3">
-        <div className="rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50 to-white p-6 shadow-sm">
-          <p className="text-sm font-medium text-emerald-800/80">Appels (7 jours)</p>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-3xl font-bold text-emerald-700">{counters.calls_total}</span>
-            <TrendBadge value={trend.calls_pct} />
+      <div className="client-dash cd-layout">
+        <div className="client-dash cd-lstack">
+          {/* Actions requises */}
+          <div className="client-dash cd-card">
+            <div className="client-dash cd-ch">
+              <div className="client-dash cd-ch-left">
+                <div className="client-dash cd-ch-ico cd-ico-r">🚨</div>
+                <div>
+                  <div className="client-dash cd-ch-title">Actions requises</div>
+                  <div className="client-dash cd-ch-sub">Nécessitent votre attention aujourd'hui</div>
+                </div>
+              </div>
+              <a className="client-dash cd-ch-lnk" href="/app/actions" onClick={(e) => { e.preventDefault(); navigate("/app/actions"); }}>Tout voir →</a>
+            </div>
+            <div className="client-dash cd-urg-grid">
+              <div className="client-dash cd-urg-cell" onClick={go("/app/actions")}>
+                <div className="client-dash cd-urg-bubble cd-ub-r">📞</div>
+                <div>
+                  <div className="client-dash cd-urg-count cd-uc-r">0</div>
+                  <div className="client-dash cd-urg-lbl">Rappels en attente</div>
+                  <div className="client-dash cd-urg-cta">Appeler maintenant →</div>
+                </div>
+              </div>
+              <div className="client-dash cd-urg-cell" onClick={go("/app/actions")}>
+                <div className="client-dash cd-urg-bubble cd-ub-o">💊</div>
+                <div>
+                  <div className="client-dash cd-urg-count cd-uc-o">0</div>
+                  <div className="client-dash cd-urg-lbl">Ordonnance à valider</div>
+                  <div className="client-dash cd-urg-cta">Valider →</div>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
-        <div className="rounded-2xl border border-sky-100 bg-gradient-to-br from-sky-50 to-white p-6 shadow-sm">
-          <p className="text-sm font-medium text-sky-800/80">RDV confirmés</p>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-3xl font-bold text-sky-700">{counters.bookings_confirmed}</span>
-            <TrendBadge value={trend.bookings_pct} />
-          </div>
-        </div>
-        <div className="rounded-2xl border border-violet-100 bg-gradient-to-br from-violet-50 to-white p-6 shadow-sm">
-          <p className="text-sm font-medium text-violet-800/80">Disponibilité</p>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-3xl font-bold text-violet-700">
-              {status === "online" ? "100%" : "—"}
-            </span>
-          </div>
-          <p className="text-xs text-violet-600/80 mt-1">
-            {status === "online" ? "Service actif" : "Pas d'activité récente"}
-          </p>
-        </div>
-      </div>
 
-      {/* Activité récente — cartes avec point coloré, titre, détail, temps relatif */}
-      <div>
-        <h2 className="text-base font-semibold text-slate-800 mb-4">Activité récente</h2>
-        {activities.length === 0 ? (
-          <div className="rounded-2xl border border-slate-100 bg-slate-50/50 p-6 text-center text-slate-500 text-sm">
-            Aucune activité récente sur les 7 derniers jours.
-          </div>
-        ) : (
-          <ul className="space-y-3">
-            {activities.map((a) => (
-              <li
-                key={a.id}
-                className={`rounded-xl border p-4 ${activityCardBg[a.color] || activityCardBg.emerald}`}
-              >
-                <div className="flex gap-3">
-                  <span className={`mt-1.5 h-3 w-3 shrink-0 rounded-full ${activityColors[a.color] || activityColors.emerald}`} />
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium text-slate-900">{a.title}</p>
-                    <p className="text-sm text-slate-600 mt-0.5">{a.detail}</p>
-                    <p className="text-xs text-slate-500 mt-2">{formatTimeAgo(a.at)}</p>
+          {/* Appels d'aujourd'hui */}
+          <div className="client-dash cd-card">
+            <div className="client-dash cd-ch">
+              <div className="client-dash cd-ch-left">
+                <div className="client-dash cd-ch-ico cd-ico-t">📋</div>
+                <div>
+                  <div className="client-dash cd-ch-title">Appels récents</div>
+                  <div className="client-dash cd-ch-sub">{counters.calls_total} appels (7j)</div>
+                </div>
+              </div>
+              <a className="client-dash cd-ch-lnk" href="/app/appels" onClick={(e) => { e.preventDefault(); navigate("/app/appels"); }}>Historique →</a>
+            </div>
+            <div className="client-dash cd-call-list">
+              {callRows.map((row) => (
+                <div key={row.id} className={`client-dash cd-call-row ${row.urg ? "cd-call-urg" : ""}`}>
+                  <div className="client-dash cd-ctime">
+                    <span className="client-dash cd-ct-h">{row.time}</span>
+                    <span className="client-dash cd-ct-d">{row.duration}</span>
+                  </div>
+                  <div className={`client-dash cd-cdot ${row.dot}`} />
+                  <div className="client-dash cd-cbody">
+                    <div className="client-dash cd-cname">
+                      {row.name}
+                      {row.agentName && <span className="client-dash cd-agent-badge">{row.agentName}</span>}
+                    </div>
+                    <div className="client-dash cd-ctext">{row.text}</div>
+                    <span className={`client-dash cd-ctag ${row.tagCls}`}>{row.tag}</span>
+                  </div>
+                  <div className="client-dash cd-cbtns">
+                    <button type="button" className="client-dash cd-cbtn cd-btn-view" onClick={go("/app/appels")}>Transcription</button>
                   </div>
                 </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
-      {/* Graphique 7 jours */}
-      {kpis?.days?.length > 0 && (
-        <div className="rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
-          <h3 className="text-sm font-semibold text-slate-700">Activité sur 7 jours</h3>
-          <MiniChart days={kpis.days} />
+              ))}
+            </div>
+          </div>
         </div>
-      )}
 
-      {/* Badge pédagogique Réponse rapide */}
-      <div className="flex flex-wrap items-center gap-4">
-        <div className="inline-flex items-center gap-2 rounded-xl border border-amber-100 bg-amber-50 px-4 py-2.5 text-sm font-medium text-amber-800">
-          <span className="text-amber-500">⚡</span>
-          Réponse &lt; 2 s
+        {/* Colonne droite */}
+        <div className="client-dash cd-rstack">
+          {/* Agenda */}
+          <div className="client-dash cd-card">
+            <div className="client-dash cd-ch">
+              <div className="client-dash cd-ch-left">
+                <div className="client-dash cd-ch-ico cd-ico-t">📆</div>
+                <div><div className="client-dash cd-ch-title">Planning du jour</div></div>
+              </div>
+              <a className="client-dash cd-ch-lnk" href="/app/agenda" onClick={(e) => { e.preventDefault(); navigate("/app/agenda"); }}>Agenda →</a>
+            </div>
+            <div className="client-dash cd-week-strip">
+              {weekDays.map((w) => (
+                <div key={w.num} className={`client-dash cd-wday ${w.today ? "wt" : ""}`}>
+                  <span className="client-dash cd-wl">{w.label}</span>
+                  <span className="client-dash cd-wn">{w.num}</span>
+                  <div className="client-dash cd-wpip" />
+                </div>
+              ))}
+            </div>
+            <div className="client-dash cd-rdv-list">
+              {rdvPlaceholder.map((r) => (
+                <div key={r.time + r.name} className="client-dash cd-rdv-item">
+                  <span className="client-dash cd-rdv-t">{r.time}</span>
+                  <div className="client-dash cd-rdv-bar" />
+                  <div style={{ flex: 1 }}>
+                    <div className="client-dash cd-rdv-nm">{r.name}</div>
+                    <div className="client-dash cd-rdv-m">{r.motif}</div>
+                  </div>
+                  <span className={`client-dash cd-rdv-src ${r.src === "uwi" ? "cd-rs-uwi" : "cd-rs-doc"}`}>{r.src === "uwi" ? "UWi" : "Doctolib"}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Stats */}
+          <div className="client-dash cd-card">
+            <div className="client-dash cd-ch">
+              <div className="client-dash cd-ch-left">
+                <div className="client-dash cd-ch-ico cd-ico-t">📊</div>
+                <div><div className="client-dash cd-ch-title">{today.toLocaleDateString("fr-FR", { month: "long", year: "numeric" })}</div></div>
+              </div>
+            </div>
+            <div className="client-dash cd-stat-grid">
+              <div className="client-dash cd-stat-cell">
+                <div className="client-dash cd-st-lbl">Appels</div>
+                <div className="client-dash cd-st-val">{counters.calls_total}</div>
+                <div className="client-dash cd-st-sub">{kpis?.trend?.calls_pct != null ? `+${kpis.trend.calls_pct}% vs sem. préc.` : "7 derniers jours"}</div>
+              </div>
+              <div className="client-dash cd-stat-cell">
+                <div className="client-dash cd-st-lbl">Décroché</div>
+                <div className="client-dash cd-st-val cd-st-t">{decrochePct}%</div>
+                <div className="client-dash cd-st-sub">par UWi</div>
+              </div>
+              <div className="client-dash cd-stat-cell">
+                <div className="client-dash cd-st-lbl">RDV pris</div>
+                <div className="client-dash cd-st-val">{counters.bookings_confirmed}</div>
+                <div className="client-dash cd-st-sub">via UWi</div>
+              </div>
+              <div className="client-dash cd-stat-cell">
+                <div className="client-dash cd-st-lbl">Transferts</div>
+                <div className="client-dash cd-st-val">{counters.transfers}</div>
+                <div className="client-dash cd-st-sub">vers humain</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Facturation */}
+          <div className="client-dash cd-card">
+            <div className="client-dash cd-ch">
+              <div className="client-dash cd-ch-left">
+                <div className="client-dash cd-ch-ico cd-ico-t">💳</div>
+                <div><div className="client-dash cd-ch-title">Forfait Growth</div></div>
+              </div>
+              <a className="client-dash cd-ch-lnk" href="/app/facturation" onClick={(e) => { e.preventDefault(); navigate("/app/facturation"); }}>Détail →</a>
+            </div>
+            <div className="client-dash cd-bill-body">
+              <div className="client-dash cd-bill-top">
+                <div>
+                  <div className="client-dash cd-bill-lbl">Ce mois</div>
+                  <div className="client-dash cd-bill-val">149 <span style={{ fontSize: 14, fontWeight: 600, color: "var(--muted)" }}>€</span></div>
+                  <div className="client-dash cd-bill-sub">Renouvellement le 1er</div>
+                </div>
+                <div className="client-dash cd-bill-ok">✓ Dans le forfait</div>
+              </div>
+              <div>
+                <div className="client-dash cd-bill-row">
+                  <span className="client-dash cd-bill-row-lbl">Minutes utilisées</span>
+                  <span className="client-dash cd-bill-row-val">{minutesUsed} / {minutesIncluded}</span>
+                </div>
+                <div className="client-dash cd-bill-bar">
+                  <div className="client-dash cd-bill-fill" style={{ width: `${Math.min(100, (minutesUsed / minutesIncluded) * 100)}%` }} />
+                </div>
+                <div className="client-dash cd-bill-hint">{minutesIncluded - minutesUsed} min restantes · pas de dépassement prévu</div>
+              </div>
+              <button type="button" className="client-dash cd-bill-cta" onClick={go("/app/facturation")}>Voir la facturation complète</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
