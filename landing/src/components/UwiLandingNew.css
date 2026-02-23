@@ -654,14 +654,14 @@
 .uwi-landing-new .landing-footer a { color: var(--muted-hi); text-decoration: none; }
 .uwi-landing-new .landing-footer a:hover { color: var(--teal); }
 
-/* Pricing section — contraste teal pour faire ressortir du reste de la page */
+/* Pricing section — fond gris très clair, cartes blanches pour contraste (comme maquette) */
 .uwi-landing-new .pricing-section {
-  background: rgba(0,240,181,.06);
-  border: 1px solid rgba(0,240,181,.2);
+  background: #F0F4F8;
+  border: none;
   border-radius: 24px;
   padding: 48px 20px 56px;
   margin: 0 -16px;
-  box-shadow: 0 0 0 1px rgba(0,240,181,.08) inset;
+  box-shadow: none;
 }
 @media (min-width: 768px) {
   .uwi-landing-new .pricing-section {
@@ -676,11 +676,14 @@
   }
 }
 .uwi-landing-new .pricing-section .section-eyebrow {
-  color: var(--teal);
+  color: #00A882;
+}
+.uwi-landing-new .pricing-section h2 {
+  color: #0D1F3C;
 }
 .uwi-landing-new .pricing-section .section-sub { display: none; }
 .uwi-landing-new .pricing-intro {
-  font-size: 15px; line-height: 1.6; color: var(--muted-hi);
+  font-size: 15px; line-height: 1.6; color: #3D5166;
   max-width: 640px; margin-bottom: 28px;
 }
 .uwi-landing-new .pricing-grid {
@@ -701,34 +704,39 @@
   }
 }
 
+/* Cartes : fond très clair (blanc) pour contraste avec le fond de section */
 .uwi-landing-new .pricing-card {
-  background: var(--card); border: 1px solid var(--border);
-  border-radius: 20px; padding: 28px 24px;
+  background: #FFFFFF;
+  border: 1px solid #E2EBF0;
+  border-radius: 20px;
+  padding: 28px 24px;
   display: flex; flex-direction: column; gap: 14px;
-  transition: border-color .2s, background .2s, transform .15s;
+  transition: border-color .2s, box-shadow .2s;
   position: relative;
 }
 .uwi-landing-new .pricing-card:hover {
-  border-color: rgba(0,240,181,.25); background: var(--card-hi);
+  border-color: #B8D4E3;
+  box-shadow: 0 4px 20px rgba(0,0,0,.06);
 }
 .uwi-landing-new .pricing-card.featured {
-  border-color: var(--teal);
-  background: rgba(0,240,181,.12);
-  box-shadow: 0 0 0 2px rgba(0,240,181,.25), 0 8px 32px rgba(0,240,181,.15);
+  border: 2px solid #00C49A;
+  background: #FFFFFF;
+  box-shadow: 0 4px 24px rgba(0,196,154,.12);
 }
 .uwi-landing-new .pricing-card.featured .pricing-cta .btn-primary {
-  background: linear-gradient(135deg, var(--teal), var(--teal-dk));
-  color: var(--navy);
-  box-shadow: 0 4px 20px rgba(0,240,181,.35);
+  background: linear-gradient(135deg, #00C49A, #0096C7);
+  color: #fff;
+  border: none;
+  box-shadow: 0 4px 16px rgba(0,196,154,.3);
 }
 .uwi-landing-new .pricing-card:not(.featured) .pricing-cta .btn-primary {
-  background: transparent;
-  border: 2px solid var(--teal);
-  color: var(--teal);
+  background: #FFFFFF;
+  border: 2px solid #00C49A;
+  color: #00A882;
 }
 .uwi-landing-new .pricing-card:not(.featured) .pricing-cta .btn-primary:hover {
-  background: rgba(0,240,181,.1);
-  color: var(--teal);
+  background: #F5FCFA;
+  color: #00A882;
 }
 .uwi-landing-new .pricing-card:has(.pricing-card-badge) {
   padding-top: 44px;
@@ -737,40 +745,40 @@
   position: absolute;
   top: -12px; left: 50%;
   transform: translateX(-50%);
-  background: linear-gradient(135deg, var(--teal), var(--teal-dk));
-  color: var(--navy);
+  background: linear-gradient(135deg, #00C49A, #00A882);
+  color: #fff;
   font-size: 11px; font-weight: 800;
   letter-spacing: .05em;
   padding: 6px 14px; border-radius: 100px;
   white-space: nowrap;
-  box-shadow: 0 2px 12px rgba(0,240,181,.4);
+  box-shadow: 0 2px 12px rgba(0,196,154,.35);
 }
 .uwi-landing-new .pricing-card h3 {
-  font-size: 16px; font-weight: 800; color: var(--white); margin: 0;
+  font-size: 16px; font-weight: 800; color: #0D1F3C; margin: 0;
   letter-spacing: .06em;
 }
 .uwi-landing-new .pricing-card .price {
-  font-size: 28px; font-weight: 800; color: var(--teal);
+  font-size: 28px; font-weight: 800; color: #0D1F3C;
   letter-spacing: -.02em; line-height: 1;
 }
 .uwi-landing-new .pricing-card-desc {
-  font-size: 13px; color: var(--muted); line-height: 1.45; margin: 0;
+  font-size: 13px; color: #3D5166; line-height: 1.45; margin: 0;
 }
 .uwi-landing-new .pricing-minutes {
-  background: rgba(255,255,255,.06);
-  border: 1px solid var(--border);
+  background: #F0F4F8;
+  border: 1px solid #E2EBF0;
   border-radius: 12px;
   padding: 12px 14px;
   display: flex; flex-direction: column; gap: 4px;
 }
 .uwi-landing-new .pricing-minutes-value {
-  font-size: 14px; font-weight: 700; color: var(--white);
+  font-size: 14px; font-weight: 700; color: #0D1F3C;
 }
 .uwi-landing-new .pricing-minutes-sub {
-  font-size: 11px; color: var(--muted);
+  font-size: 11px; color: #7A94A8;
 }
 .uwi-landing-new .pricing-over-usage {
-  font-size: 12px; color: var(--muted); line-height: 1.45; margin: 0;
+  font-size: 12px; color: #3D5166; line-height: 1.45; margin: 0;
 }
 .uwi-landing-new .pricing-features {
   list-style: none; margin: 0; padding: 0;
@@ -778,18 +786,18 @@
   display: flex; flex-direction: column; gap: 6px;
 }
 .uwi-landing-new .pricing-features li.included {
-  color: var(--muted-hi);
+  color: #3D5166;
 }
 .uwi-landing-new .pricing-features li.excluded {
-  color: var(--muted);
-  opacity: .85;
+  color: #7A94A8;
+  opacity: .9;
 }
 .uwi-landing-new .pricing-card .pricing-cta {
   margin-top: auto; padding-top: 8px;
 }
 .uwi-landing-new .pricing-card .pricing-cta .btn-primary { width: 100%; }
 
-/* Bloc garantie meilleur prix */
+/* Bloc garantie et usage — fond clair cohérent */
 .uwi-landing-new .pricing-guarantee,
 .uwi-landing-new .pricing-usage-stats {
   display: flex;
@@ -797,8 +805,8 @@
   gap: 16px;
   margin-top: 32px;
   padding: 20px 24px;
-  background: rgba(255,255,255,.04);
-  border: 1px solid var(--border);
+  background: #FFFFFF;
+  border: 1px solid #E2EBF0;
   border-radius: 16px;
   text-align: left;
 }
@@ -811,13 +819,13 @@
 .uwi-landing-new .pricing-usage-stats strong {
   display: block;
   font-size: 14px;
-  color: var(--white);
+  color: #0D1F3C;
   margin-bottom: 6px;
 }
 .uwi-landing-new .pricing-guarantee p,
 .uwi-landing-new .pricing-usage-stats p {
   font-size: 13px;
-  color: var(--muted);
+  color: #3D5166;
   line-height: 1.55;
   margin: 0;
 }
