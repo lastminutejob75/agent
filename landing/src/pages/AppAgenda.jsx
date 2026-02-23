@@ -1,6 +1,6 @@
 export default function AppAgenda() {
   return (
-    <div className="client-dash cd-page">
+    <div className="client-dash cd-page-inner">
       <div className="client-dash cd-card">
         <div className="client-dash cd-ch">
           <div className="client-dash cd-ch-left">

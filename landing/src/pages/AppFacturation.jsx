@@ -1,6 +1,6 @@
 export default function AppFacturation() {
   return (
-    <div className="client-dash cd-page">
+    <div className="client-dash cd-page-inner">
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "18px", marginBottom: "20px" }}>
         <div className="client-dash cd-card" style={{ padding: "22px" }}>
           <div style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--muted)", marginBottom: "8px" }}>Forfait actuel</div>

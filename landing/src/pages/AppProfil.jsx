@@ -5,7 +5,7 @@ export default function AppProfil() {
   const initials = (me?.tenant_name || "U").split(/\s+/).map((w) => w[0]).join("").toUpperCase().slice(0, 2);
 
   return (
-    <div className="client-dash cd-page">
+    <div className="client-dash cd-page-inner">
       <div className="client-dash cd-card">
         <div style={{ display: "flex", alignItems: "center", gap: "20px", padding: "28px", borderBottom: "1px solid var(--border)" }}>
           <div className="client-dash cd-doc-av" style={{ width: 66, height: 66, fontSize: 22 }}>{initials}</div>
