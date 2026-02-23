@@ -4,6 +4,7 @@ Postgres ivr_events (dual-write quand USE_PG_EVENTS=true).
 Écriture seulement ; lecture = export_weekly_kpis.py.
 - Idempotent : ON CONFLICT DO NOTHING (retry, backfill rejoué)
 - Retry léger (1x) sur erreurs transitoires
+- Création automatique de la table au premier écriture si elle n'existe pas.
 """
 from __future__ import annotations
 
@@ -14,6 +15,30 @@ from typing import Optional
 from backend.pg_tenant_context import set_tenant_id_on_connection
 
 logger = logging.getLogger(__name__)
+
+# Table créée une fois par process (évite requêtes répétées)
+_table_created: bool = False
+
+# SQL création table + index (aligné sur migrations/003_postgres_ivr_events.sql)
+_CREATE_IVR_EVENTS_SQL = """
+CREATE TABLE IF NOT EXISTS ivr_events (
+    id BIGSERIAL PRIMARY KEY,
+    client_id INTEGER NOT NULL,
+    call_id TEXT NOT NULL DEFAULT '',
+    event TEXT NOT NULL,
+    context TEXT,
+    reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_ivr_events_dedup UNIQUE (client_id, call_id, event, created_at)
+);
+CREATE INDEX IF NOT EXISTS idx_ivr_events_client_created
+    ON ivr_events (client_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_ivr_events_client_call
+    ON ivr_events (client_id, call_id)
+    WHERE call_id IS NOT NULL AND call_id != '';
+CREATE INDEX IF NOT EXISTS idx_ivr_events_client_event_created
+    ON ivr_events (client_id, event, created_at);
+"""
 
 # Erreurs transitoires (réessayer 1x)
 _TRANSIENT_ERRORS = (
@@ -33,6 +58,35 @@ def _pg_url() -> Optional[str]:
 def _is_transient(e: Exception) -> bool:
     msg = str(e).lower()
     return any(x.lower() in msg for x in _TRANSIENT_ERRORS)
+
+
+def ensure_ivr_events_table() -> bool:
+    """
+    Crée la table ivr_events et les index si elle n'existe pas (idempotent).
+    Appelé automatiquement au premier écriture ; peut aussi être appelé au démarrage.
+    Returns True si la table est prête, False sinon.
+    """
+    global _table_created
+    if _table_created:
+        return True
+    url = _pg_url()
+    if not url:
+        return False
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                for stmt in _CREATE_IVR_EVENTS_SQL.strip().split(";"):
+                    stmt = stmt.strip()
+                    if stmt:
+                        cur.execute(stmt)
+            conn.commit()
+        _table_created = True
+        logger.debug("ivr_events_pg: table created or already exists")
+        return True
+    except Exception as e:
+        logger.warning("ivr_events_pg: ensure table failed: %s", e)
+        return False
 
 
 def create_ivr_event_pg(
@@ -55,6 +109,7 @@ def create_ivr_event_pg(
     call_id_val = call_id or ""
 
     def _do_insert() -> bool:
+        ensure_ivr_events_table()
         import psycopg
         with psycopg.connect(url) as conn:
             set_tenant_id_on_connection(conn, client_id)
@@ -91,6 +146,7 @@ def consent_obtained_exists_pg(client_id: int, call_id: str) -> bool:
     url = _pg_url()
     if not url:
         return False
+    ensure_ivr_events_table()
     try:
         import psycopg
         with psycopg.connect(url) as conn:

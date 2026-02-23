@@ -202,6 +202,16 @@ def _init_heavy_sync():
             print("⚠️ PG_HEALTH down -> sqlite fallback")
     except Exception as e:
         _logger.warning("PG healthcheck failed: %s", e)
+    # Table ivr_events (dashboards) : création automatique si USE_PG_EVENTS et DATABASE_URL
+    if getattr(config, "USE_PG_EVENTS", False):
+        try:
+            from backend.ivr_events_pg import ensure_ivr_events_table
+            if ensure_ivr_events_table():
+                print("✅ ivr_events table ready")
+            else:
+                print("⚠️ ivr_events table skip (no DATABASE_URL)")
+        except Exception as e:
+            _logger.warning("ivr_events ensure table failed: %s", e)
     # Route démo test → TEST_TENANT_ID (idempotent), juste après PG check pour éviter pool/transaction divergent.
     try:
         from backend.tenant_routing import ensure_test_number_route
@@ -212,6 +222,13 @@ def _init_heavy_sync():
     except Exception as e:
         _logger.warning("ensure_test_number_route failed: %s", e)
         print("⚠️ ensure_test_number_route: %s", e)
+    # Dashboard : si on lit les stats depuis Postgres (DATABASE_URL) mais qu'on n'écrit pas les events (USE_PG_EVENTS=false), les dashboards restent vides.
+    if (os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")) and not getattr(config, "USE_PG_EVENTS", False):
+        _logger.warning(
+            "DASHBOARD_EMPTY: DATABASE_URL (or PG_EVENTS_URL) is set but USE_PG_EVENTS is false. "
+            "Admin and tenant dashboards read from Postgres ivr_events, which will stay empty. Set USE_PG_EVENTS=true and run migrations/003_postgres_ivr_events.sql."
+        )
+        print("⚠️ DASHBOARD: Set USE_PG_EVENTS=true so appels/RDV appear in dashboards (see .env.example)")
     print("✅ Heavy init done")
 
 
