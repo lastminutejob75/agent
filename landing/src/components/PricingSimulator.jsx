@@ -34,8 +34,12 @@ function getRecommended(minutes) {
 }
 
 const MIN_MINUTES = 100;
-const MAX_MINUTES = 1500;
+const MAX_MINUTES = 1800;
 const STEP = 50;
+
+function approxCalls(min) {
+  return Math.round(min / 4);
+}
 
 export default function PricingSimulator() {
   const [minutes, setMinutes] = useState(400);
@@ -43,10 +47,13 @@ export default function PricingSimulator() {
 
   return (
     <div className="simulator">
-      <p className="sim-title">Estimez votre forfait</p>
-      <p className="sim-subtitle">Déplacez le curseur selon vos besoins en minutes par mois.</p>
+      <p className="sim-title">
+        <span className="sim-title-icon" aria-hidden>📋</span>
+        Estimez votre facture
+      </p>
+      <p className="sim-subtitle">Déplacez le curseur selon votre volume mensuel estimé.</p>
       <label className="sim-label" htmlFor="sim-slider">
-        Minutes / mois
+        MINUTES D'APPELS / MOIS
       </label>
       <input
         id="sim-slider"
@@ -60,33 +67,32 @@ export default function PricingSimulator() {
       />
       <div className="sim-ticks">
         <span>100</span>
-        <span>500</span>
-        <span>800</span>
-        <span>1200</span>
-        <span><small>1500</small></span>
+        <span>400 min / ~100 appels</span>
+        <span>800 min / ~200 appels</span>
+        <span>{minutes}</span>
       </div>
       <div className="sim-result">
         <p className="sim-plan-rec">
-          Forfait recommandé : <strong>{r.name}</strong>
+          Plan recommandé : <strong>{r.name}</strong> — {minutes} min/mois ≈ {approxCalls(minutes)} appels
         </p>
         <div className="sim-cost-row">
           <div className="sim-cost-item">
             <span className="sim-cost-label">Forfait</span>
-            <span className="sim-cost-val">{r.base} €</span>
+            <span className="sim-cost-val">{r.base}€</span>
           </div>
-          {r.overMinutes > 0 && (
+          {r.overMinutes > 0 ? (
             <>
               <span className="sim-cost-plus">+</span>
               <div className="sim-cost-item">
-                <span className="sim-cost-label">Au-delà</span>
-                <span className="sim-cost-val">{r.overCost} €</span>
+                <span className="sim-cost-label">Min. suppl.</span>
+                <span className="sim-cost-val">+{r.overCost}€</span>
               </div>
             </>
-          )}
+          ) : null}
           <span className="sim-cost-plus">=</span>
           <div className="sim-cost-item sim-cost-total">
-            <span className="sim-cost-label">Total</span>
-            <span className="sim-cost-val">{r.total} €</span>
+            <span className="sim-cost-label">Total estimé</span>
+            <span className="sim-cost-val">{r.total}€</span>
           </div>
         </div>
         <p className="sim-guarantee">✓ Bascule automatique au meilleur prix appliquée</p>
@@ -97,6 +103,7 @@ export default function PricingSimulator() {
           Démarrer avec {r.name} — Essai gratuit 1 mois →
         </Link>
       </div>
+      <p className="sim-footer">Essai gratuit 1 mois · Sans CB · Sans engagement · Données hébergées en France 🇫🇷</p>
     </div>
   );
 }
