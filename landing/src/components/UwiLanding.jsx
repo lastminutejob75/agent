@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import "./UwiLandingNew.css";
+import PricingSimulator from "./PricingSimulator";
 
 const TYPEWRITER_LINES = [
   "Cabinet du Dr. Martin, bonjour ! Je suis UWi, comment puis-je vous aider ?",
@@ -620,6 +621,7 @@ export default function UwiLanding() {
               </div>
             ))}
           </div>
+          <PricingSimulator />
           <div className="pricing-guarantee">
             <span className="pricing-guarantee-icon" aria-hidden>🛡️</span>
             <div>
