@@ -171,26 +171,42 @@
     display: block;
     position: relative;
     min-height: 280px;
+    min-width: 0;
   }
-  .uwi-landing-new .hero-visual-blob {
-    position: absolute;
-    inset: 0;
-    border-radius: 24px;
-    background: radial-gradient(ellipse 70% 70% at 50% 50%, rgba(0,240,181,.18) 0%, rgba(0,163,163,.1) 40%, transparent 70%);
-    border: 1px solid rgba(0,240,181,.25);
-    box-shadow: 0 0 60px rgba(0,240,181,.08);
+  .uwi-landing-new .hero-demo {
+    width: 100%;
   }
-  .uwi-landing-new .hero-visual-blob::before {
-    content: '';
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 120px;
-    height: 120px;
-    margin: -60px 0 0 -60px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, rgba(0,240,181,.25) 0%, rgba(0,163,163,.15) 100%);
-    border: 2px solid rgba(0,240,181,.35);
+  .uwi-landing-new .hero-demo .eyebrow {
+    margin-bottom: 6px;
+  }
+  .uwi-landing-new .hero-demo-title {
+    font-size: 22px;
+    font-weight: 800;
+    line-height: 1.15;
+    letter-spacing: -.025em;
+    margin-bottom: 8px;
+    color: var(--white);
+  }
+  .uwi-landing-new .hero-demo .demo-sub {
+    font-size: 13px;
+    margin-bottom: 16px;
+  }
+  .uwi-landing-new .hero-demo .demo-card {
+    padding: 18px 16px 16px;
+  }
+  .uwi-landing-new .hero-demo .wave-wrap {
+    height: 48px;
+    margin-bottom: 14px;
+  }
+  .uwi-landing-new .hero-demo .ph-number {
+    font-size: 22px;
+  }
+  /* Sur desktop, masquer la section démo (bloc déjà dans le hero à droite) */
+  .uwi-landing-new .demo-section {
+    display: none;
+  }
+  .uwi-landing-new .section-divider:has(+ .demo-section) {
+    display: none;
   }
 }
 @media (min-width: 1024px) {
@@ -202,11 +218,10 @@
     gap: 48px;
   }
   .uwi-landing-new .hero-visual { min-height: 320px; }
-  .uwi-landing-new .hero-visual-blob::before {
-    width: 160px;
-    height: 160px;
-    margin: -80px 0 0 -80px;
-  }
+  .uwi-landing-new .hero-demo-title { font-size: 26px; }
+  .uwi-landing-new .hero-demo .demo-card { padding: 22px 20px 20px; }
+  .uwi-landing-new .hero-demo .wave-wrap { height: 56px; }
+  .uwi-landing-new .hero-demo .ph-number { font-size: 26px; }
 }
 
 .uwi-landing-new .pill {

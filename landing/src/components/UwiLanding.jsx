@@ -67,6 +67,7 @@ const STEPS = [
 export default function UwiLanding() {
   const bgRef = useRef(null);
   const waveRef = useRef(null);
+  const waveRefDemo = useRef(null);
   const [typedLine, setTypedLine] = useState(0);
   const [typedChar, setTypedChar] = useState(0);
   const [deleting, setDeleting] = useState(false);
@@ -145,10 +146,10 @@ export default function UwiLanding() {
     return () => window.removeEventListener("resize", resize);
   }, []);
 
-  // Waveform canvas
-  useEffect(() => {
-    const c = waveRef.current;
-    if (!c) return;
+  // Waveform canvas (hero + section démo)
+  const setupWave = (canvasRef) => {
+    const c = canvasRef.current;
+    if (!c) return () => {};
     const ctx = c.getContext("2d");
     let W = 0;
     let H = 0;
@@ -192,6 +193,12 @@ export default function UwiLanding() {
     };
     loop();
     return () => window.removeEventListener("resize", sz);
+  };
+  useEffect(() => {
+    return setupWave(waveRef);
+  }, []);
+  useEffect(() => {
+    return setupWave(waveRefDemo);
   }, []);
 
   // Typewriter
@@ -368,8 +375,50 @@ export default function UwiLanding() {
                 </div>
               </div>
             </div>
-            <div className="hero-visual" aria-hidden>
-              <div className="hero-visual-blob" />
+            <div className="hero-visual">
+              <div className="hero-demo">
+                <p className="eyebrow">Testez en 60 secondes</p>
+                <h2 className="hero-demo-title">Écoutez UWi<br />répondre à votre place</h2>
+                <p className="demo-sub">
+                  Appelez ce numéro et vivez l'expérience d'un de vos patients. <strong>Une conversation suffit</strong> pour comprendre ce que ça change.
+                </p>
+
+                <div className="demo-card">
+                  <div className="live">
+                    <span className="live-dot" />
+                    IA disponible maintenant
+                  </div>
+
+                  <div className="wave-wrap">
+                    <canvas id="wave" ref={waveRef} aria-hidden />
+                  </div>
+
+                  <div className="agent-row">
+                    <div className="agent-av">UWi</div>
+                    <div className="agent-info">
+                      <span className="agent-name">Secrétaire IA — Cabinet Dr. Martin</span>
+                      <span className="agent-status">Répond en moins de 2 secondes</span>
+                    </div>
+                    <div className="agent-online" />
+                  </div>
+
+                  <div className="bubble">
+                    <span>{displayed}</span>
+                    <span className="cursor" />
+                  </div>
+
+                  <div className="phone-block">
+                    <p className="ph-label">Numéro de démonstration</p>
+                    <p className="ph-number">09 39 24 05 75</p>
+                    <p className="ph-sub">Gratuit · Appel public · Sans engagement</p>
+                  </div>
+
+                  <a href="tel:0939240575" className="btn-call">
+                    <PhoneIcon />
+                    Appeler la démo maintenant
+                  </a>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -378,49 +427,49 @@ export default function UwiLanding() {
           <span className="divider-label">Démo vocale</span>
         </div>
 
-        <section className="demo reveal">
+        <section className="demo reveal demo-section">
           <div className="demo-inner">
-          <p className="eyebrow">Testez en 60 secondes</p>
-          <h2>Écoutez UWi<br />répondre à votre place</h2>
-          <p className="demo-sub">
-            Appelez ce numéro et vivez l'expérience d'un de vos patients. <strong>Une conversation suffit</strong> pour comprendre ce que ça change.
-          </p>
+            <p className="eyebrow">Testez en 60 secondes</p>
+            <h2>Écoutez UWi<br />répondre à votre place</h2>
+            <p className="demo-sub">
+              Appelez ce numéro et vivez l'expérience d'un de vos patients. <strong>Une conversation suffit</strong> pour comprendre ce que ça change.
+            </p>
 
-          <div className="demo-card">
-            <div className="live">
-              <span className="live-dot" />
-              IA disponible maintenant
-            </div>
-
-            <div className="wave-wrap">
-              <canvas id="wave" ref={waveRef} aria-hidden />
-            </div>
-
-            <div className="agent-row">
-              <div className="agent-av">UWi</div>
-              <div className="agent-info">
-                <span className="agent-name">Secrétaire IA — Cabinet Dr. Martin</span>
-                <span className="agent-status">Répond en moins de 2 secondes</span>
+            <div className="demo-card">
+              <div className="live">
+                <span className="live-dot" />
+                IA disponible maintenant
               </div>
-              <div className="agent-online" />
-            </div>
 
-            <div className="bubble">
-              <span>{displayed}</span>
-              <span className="cursor" />
-            </div>
+              <div className="wave-wrap">
+                <canvas id="wave-demo" ref={waveRefDemo} aria-hidden />
+              </div>
 
-            <div className="phone-block">
-              <p className="ph-label">Numéro de démonstration</p>
-              <p className="ph-number">09 39 24 05 75</p>
-              <p className="ph-sub">Gratuit · Appel public · Sans engagement</p>
-            </div>
+              <div className="agent-row">
+                <div className="agent-av">UWi</div>
+                <div className="agent-info">
+                  <span className="agent-name">Secrétaire IA — Cabinet Dr. Martin</span>
+                  <span className="agent-status">Répond en moins de 2 secondes</span>
+                </div>
+                <div className="agent-online" />
+              </div>
 
-            <a href="tel:0939240575" className="btn-call">
-              <PhoneIcon />
-              Appeler la démo maintenant
-            </a>
-          </div>
+              <div className="bubble">
+                <span>{displayed}</span>
+                <span className="cursor" />
+              </div>
+
+              <div className="phone-block">
+                <p className="ph-label">Numéro de démonstration</p>
+                <p className="ph-number">09 39 24 05 75</p>
+                <p className="ph-sub">Gratuit · Appel public · Sans engagement</p>
+              </div>
+
+              <a href="tel:0939240575" className="btn-call">
+                <PhoneIcon />
+                Appeler la démo maintenant
+              </a>
+            </div>
           </div>
         </section>
 
