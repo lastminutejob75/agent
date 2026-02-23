@@ -288,81 +288,88 @@ export default function UwiLanding() {
         </nav>
 
         <section className="hero">
-          <div className="pill">
-            <div className="pill-avs">
-              <div className="pav pav-1">👨‍⚕️</div>
-              <div className="pav pav-2">👩‍⚕️</div>
-              <div className="pav pav-3">🧑‍⚕️</div>
-            </div>
-            <span className="pill-lbl">500+ praticiens nous font confiance</span>
-          </div>
+          <div className="hero-inner">
+            <div className="hero-content">
+              <div className="pill">
+                <div className="pill-avs">
+                  <div className="pav pav-1">👨‍⚕️</div>
+                  <div className="pav pav-2">👩‍⚕️</div>
+                  <div className="pav pav-3">🧑‍⚕️</div>
+                </div>
+                <span className="pill-lbl">500+ praticiens nous font confiance</span>
+              </div>
 
-          <h1>
-            <span className="h1-w">Votre assistant IA</span>
-            <span className="h1-t">répond et prend</span>
-            <span className="h1-w">vos RDV</span>
-          </h1>
+              <h1>
+                <span className="h1-w">Votre assistant IA</span>
+                <span className="h1-t">répond et prend</span>
+                <span className="h1-w">vos RDV</span>
+              </h1>
 
-          <p className="subtitle">
-            Pendant que vous soignez, UWi <strong>décroche, oriente vos patients et remplit votre agenda</strong> — sans aucune interruption de votre part.
-          </p>
+              <p className="subtitle">
+                Pendant que vous soignez, UWi <strong>décroche, oriente vos patients et remplit votre agenda</strong> — sans aucune interruption de votre part.
+              </p>
 
-          <div className="stats">
-            <div className="stat">
-              <span className="stat-v">HDS</span>
-              <span className="stat-l">Certifié santé</span>
-            </div>
-            <div className="stat">
-              <span className="stat-v">15min</span>
-              <span className="stat-l">Pour démarrer</span>
-            </div>
-            <div className="stat">
-              <span className="stat-v">24/7</span>
-              <span className="stat-l">Disponible</span>
-            </div>
-          </div>
+              <div className="stats">
+                <div className="stat">
+                  <span className="stat-v">HDS</span>
+                  <span className="stat-l">Certifié santé</span>
+                </div>
+                <div className="stat">
+                  <span className="stat-v">15min</span>
+                  <span className="stat-l">Pour démarrer</span>
+                </div>
+                <div className="stat">
+                  <span className="stat-v">24/7</span>
+                  <span className="stat-l">Disponible</span>
+                </div>
+              </div>
 
-          <div className="feats">
-            <div className="feat">
-              <div className="feat-ico ico-teal">📅</div>
-              <span className="feat-name">Agenda en direct</span>
-            </div>
-            <div className="feat">
-              <div className="feat-ico ico-orange">🚨</div>
-              <span className="feat-name">Triage urgences</span>
-            </div>
-            <div className="feat">
-              <div className="feat-ico ico-blue">💊</div>
-              <span className="feat-name">Renouvellements</span>
-            </div>
-            <div className="feat">
-              <div className="feat-ico ico-violet">🔔</div>
-              <span className="feat-name">Rappels SMS</span>
-            </div>
-          </div>
+              <div className="feats">
+                <div className="feat">
+                  <div className="feat-ico ico-teal">📅</div>
+                  <span className="feat-name">Agenda en direct</span>
+                </div>
+                <div className="feat">
+                  <div className="feat-ico ico-orange">🚨</div>
+                  <span className="feat-name">Triage urgences</span>
+                </div>
+                <div className="feat">
+                  <div className="feat-ico ico-blue">💊</div>
+                  <span className="feat-name">Renouvellements</span>
+                </div>
+                <div className="feat">
+                  <div className="feat-ico ico-violet">🔔</div>
+                  <span className="feat-name">Rappels SMS</span>
+                </div>
+              </div>
 
-          <div className="ctas">
-            <Link to="/creer-assistante?new=1" className="btn-primary">
-              Essai gratuit 1 mois
-              <span className="btn-badge">Sans CB</span>
-            </Link>
-            <a href="tel:0939240575" className="btn-secondary">
-              <PhoneOutlineIcon />
-              Parler à un expert
-            </a>
-          </div>
+              <div className="ctas">
+                <Link to="/creer-assistante?new=1" className="btn-primary">
+                  Essai gratuit 1 mois
+                  <span className="btn-badge">Sans CB</span>
+                </Link>
+                <a href="tel:0939240575" className="btn-secondary">
+                  <PhoneOutlineIcon />
+                  Parler à un expert
+                </a>
+              </div>
 
-          <div className="trust">
-            <div className="trust-item">
-              <span className="trust-check">✓</span> Sans engagement
+              <div className="trust">
+                <div className="trust-item">
+                  <span className="trust-check">✓</span> Sans engagement
+                </div>
+                <div className="trust-dot" />
+                <div className="trust-item">
+                  <span className="trust-check">✓</span> RGPD · HDS
+                </div>
+                <div className="trust-dot" />
+                <div className="trust-item">
+                  <span className="trust-check">✓</span> Hébergé en France 🇫🇷
+                </div>
+              </div>
             </div>
-            <div className="trust-dot" />
-            <div className="trust-item">
-              <span className="trust-check">✓</span> RGPD · HDS
-            </div>
-            <div className="trust-dot" />
-            <div className="trust-item">
-              <span className="trust-check">✓</span> Hébergé en France 🇫🇷
+            <div className="hero-visual" aria-hidden>
+              <div className="hero-visual-blob" />
             </div>
           </div>
         </section>
@@ -550,6 +557,7 @@ export default function UwiLanding() {
 
         <footer className="landing-footer">
           <Link to="/creer-assistante?new=1">Créer mon assistant</Link>
+          <Link to="/checkout">Paiement</Link>
           <Link to="/contact">Contact</Link>
           <a href="tel:0939240575">09 39 24 05 75</a>
           <Link to="/cgv">CGV</Link>

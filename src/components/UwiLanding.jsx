@@ -565,6 +565,7 @@ export default function UwiLanding() {
 
         <footer className="landing-footer">
           <Link to="/creer-assistante?new=1">Créer mon assistant</Link>
+          <Link to="/checkout">Paiement</Link>
           <Link to="/contact">Contact</Link>
           <a href="tel:0939240575">09 39 24 05 75</a>
           <Link to="/cgv">CGV</Link>

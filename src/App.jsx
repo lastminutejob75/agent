@@ -50,6 +50,22 @@ function LoginPlaceholder() {
   );
 }
 
+function CheckoutPlaceholder() {
+  return (
+    <div style={legalStyle}>
+      <div>
+        <p style={{ marginBottom: 16, fontSize: 18 }}>
+          Pour le paiement Stripe, lancez l'app depuis le dossier <code style={codeStyle}>landing/</code>.
+        </p>
+        <p style={{ marginBottom: 24, color: "#94a3b8" }}>
+          <code>cd landing && npm run dev</code>
+        </p>
+        <a href="/" style={{ color: "#00d4aa", textDecoration: "underline" }}>← Retour à l'accueil</a>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -61,6 +77,8 @@ export default function App() {
         <Route path="/cgu" element={<CGU />} />
         <Route path="/mentions-legales" element={<MentionsLegales />} />
         <Route path="/contact" element={<Contact />} />
+        <Route path="/checkout" element={<CheckoutPlaceholder />} />
+        <Route path="/checkout/return" element={<CheckoutPlaceholder />} />
       </Routes>
     </BrowserRouter>
   );
