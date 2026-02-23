@@ -38,7 +38,7 @@
   padding: 0 16px;
 }
 @media (min-width: 768px) {
-  .uwi-landing-new .wrap { max-width: 720px; padding: 0 24px; }
+  .uwi-landing-new .wrap { max-width: 960px; padding: 0 24px; }
 }
 @media (min-width: 1024px) {
   .uwi-landing-new .wrap { max-width: 1280px; padding: 0 40px; }
@@ -158,6 +158,40 @@
 }
 @media (min-width: 768px) {
   .uwi-landing-new .hero { padding: 48px 24px 56px; }
+  /* Deux colonnes dès 768px pour remplir l’espace à droite */
+  .uwi-landing-new .hero-inner {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
+    align-items: center;
+    max-width: 100%;
+  }
+  .uwi-landing-new .hero-content { min-width: 0; }
+  .uwi-landing-new .hero-visual {
+    display: block;
+    position: relative;
+    min-height: 280px;
+  }
+  .uwi-landing-new .hero-visual-blob {
+    position: absolute;
+    inset: 0;
+    border-radius: 24px;
+    background: radial-gradient(ellipse 70% 70% at 50% 50%, rgba(0,240,181,.18) 0%, rgba(0,163,163,.1) 40%, transparent 70%);
+    border: 1px solid rgba(0,240,181,.25);
+    box-shadow: 0 0 60px rgba(0,240,181,.08);
+  }
+  .uwi-landing-new .hero-visual-blob::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 120px;
+    height: 120px;
+    margin: -60px 0 0 -60px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, rgba(0,240,181,.25) 0%, rgba(0,163,163,.15) 100%);
+    border: 2px solid rgba(0,240,181,.35);
+  }
 }
 @media (min-width: 1024px) {
   .uwi-landing-new .hero { padding: 56px 0 72px; }
@@ -165,25 +199,13 @@
     max-width: 1200px;
     margin: 0 auto;
     padding: 0 80px;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
     gap: 48px;
-    align-items: center;
   }
-  .uwi-landing-new .hero-content {
-    min-width: 0;
-  }
-  .uwi-landing-new .hero-visual {
-    display: block;
-    position: relative;
-    min-height: 320px;
-  }
-  .uwi-landing-new .hero-visual-blob {
-    position: absolute;
-    inset: 0;
-    border-radius: 24px;
-    background: radial-gradient(ellipse 80% 80% at 50% 50%, rgba(0,240,181,.12) 0%, rgba(0,163,163,.06) 50%, transparent 70%);
-    border: 1px solid rgba(0,240,181,.15);
+  .uwi-landing-new .hero-visual { min-height: 320px; }
+  .uwi-landing-new .hero-visual-blob::before {
+    width: 160px;
+    height: 160px;
+    margin: -80px 0 0 -80px;
   }
 }
 
