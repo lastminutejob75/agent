@@ -654,7 +654,30 @@
 .uwi-landing-new .landing-footer a { color: var(--muted-hi); text-decoration: none; }
 .uwi-landing-new .landing-footer a:hover { color: var(--teal); }
 
-/* Pricing section — nouvelle maquette (Starter / Growth / Pro) */
+/* Pricing section — contraste teal pour faire ressortir du reste de la page */
+.uwi-landing-new .pricing-section {
+  background: rgba(0,240,181,.06);
+  border: 1px solid rgba(0,240,181,.2);
+  border-radius: 24px;
+  padding: 48px 20px 56px;
+  margin: 0 -16px;
+  box-shadow: 0 0 0 1px rgba(0,240,181,.08) inset;
+}
+@media (min-width: 768px) {
+  .uwi-landing-new .pricing-section {
+    margin: 0 -24px;
+    padding: 56px 24px 64px;
+  }
+}
+@media (min-width: 1024px) {
+  .uwi-landing-new .pricing-section {
+    margin: 0 -40px;
+    padding: 64px 40px 72px;
+  }
+}
+.uwi-landing-new .pricing-section .section-eyebrow {
+  color: var(--teal);
+}
 .uwi-landing-new .pricing-section .section-sub { display: none; }
 .uwi-landing-new .pricing-intro {
   font-size: 15px; line-height: 1.6; color: var(--muted-hi);
@@ -689,9 +712,23 @@
   border-color: rgba(0,240,181,.25); background: var(--card-hi);
 }
 .uwi-landing-new .pricing-card.featured {
-  border-color: rgba(0,240,181,.35);
-  background: rgba(0,240,181,.06);
-  box-shadow: 0 0 0 1px rgba(0,240,181,.12);
+  border-color: var(--teal);
+  background: rgba(0,240,181,.12);
+  box-shadow: 0 0 0 2px rgba(0,240,181,.25), 0 8px 32px rgba(0,240,181,.15);
+}
+.uwi-landing-new .pricing-card.featured .pricing-cta .btn-primary {
+  background: linear-gradient(135deg, var(--teal), var(--teal-dk));
+  color: var(--navy);
+  box-shadow: 0 4px 20px rgba(0,240,181,.35);
+}
+.uwi-landing-new .pricing-card:not(.featured) .pricing-cta .btn-primary {
+  background: transparent;
+  border: 2px solid var(--teal);
+  color: var(--teal);
+}
+.uwi-landing-new .pricing-card:not(.featured) .pricing-cta .btn-primary:hover {
+  background: rgba(0,240,181,.1);
+  color: var(--teal);
 }
 .uwi-landing-new .pricing-card:has(.pricing-card-badge) {
   padding-top: 44px;
@@ -706,7 +743,7 @@
   letter-spacing: .05em;
   padding: 6px 14px; border-radius: 100px;
   white-space: nowrap;
-  box-shadow: 0 2px 12px rgba(0,240,181,.3);
+  box-shadow: 0 2px 12px rgba(0,240,181,.4);
 }
 .uwi-landing-new .pricing-card h3 {
   font-size: 16px; font-weight: 800; color: var(--white); margin: 0;
