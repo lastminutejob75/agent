@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api, getTenantToken } from "../lib/api.js";
 import { Link, Navigate } from "react-router-dom";
 import { GoogleLoginButton } from "../components/GoogleLoginButton.jsx";
@@ -9,13 +9,16 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+  const userHasInteractedWithForm = useRef(false);
 
-  // Redirection si déjà connecté via cookie (email+mdp ou Google)
+  // Vérification « déjà connecté » au montage (cookie). Redirection uniquement si /me répond ok.
   useEffect(() => {
     const apiUrl = getApiUrl();
     if (!apiUrl) return;
     fetch(`${apiUrl}/api/auth/me`, { method: "GET", credentials: "include" })
-      .then((r) => { if (r.ok) window.location.replace("/app"); })
+      .then((r) => {
+        if (r.ok) window.location.replace("/app");
+      })
       .catch(() => {});
   }, []);
 
@@ -25,6 +28,11 @@ export default function Login() {
 
   async function handleSubmit(e) {
     e.preventDefault();
+    // Ne pas accepter de soumission tant que l'utilisateur n'a pas interagi avec le formulaire
+    // (évite la connexion automatique déclenchée par l'autofill du navigateur)
+    if (!userHasInteractedWithForm.current) {
+      return;
+    }
     setErr("");
     setLoading(true);
     try {
@@ -35,6 +43,10 @@ export default function Login() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function markFormInteracted() {
+    userHasInteractedWithForm.current = true;
   }
 
   const inputClass =
@@ -61,6 +73,7 @@ export default function Login() {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              onFocus={markFormInteracted}
               placeholder="email@exemple.com"
               required
               autoComplete="email"
@@ -74,6 +87,7 @@ export default function Login() {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              onFocus={markFormInteracted}
               placeholder="Mot de passe"
               required
               autoComplete="current-password"
@@ -88,7 +102,7 @@ export default function Login() {
           {err && (
             <p className="text-red-400 text-sm" role="alert">{err}</p>
           )}
-          <button type="submit" disabled={loading} className={btnPrimaryClass}>
+          <button type="submit" disabled={loading} onClick={markFormInteracted} className={btnPrimaryClass}>
             {loading ? "Connexion..." : "Se connecter"}
           </button>
         </form>
