@@ -46,9 +46,60 @@ const FAQ_ITEMS = [
 ];
 
 const PRICING_PLANS = [
-  { name: "Essai gratuit", price: "0 €", note: "1 mois, sans carte bancaire", features: ["Assistante IA illimitée", "Prise de RDV en direct", "Triage urgences", "Rappels SMS", "Support par email"], cta: "Démarrer l'essai", featured: false },
-  { name: "Cabinet", price: "Sur devis", note: "Adapté à votre volume d'appels", features: ["Tout de l'essai", "Agenda multi-praticiens", "Personnalisation voix & scénarios", "Support prioritaire", "HDS inclus"], cta: "Nous contacter", featured: true },
-  { name: "Multi-sites", price: "Sur devis", note: "Centres, cliniques, réseaux", features: ["Plusieurs cabinets", "Tableau de bord centralisé", "Facturation groupée", "Account manager dédié"], cta: "Demander un devis", featured: false },
+  {
+    name: "STARTER",
+    price: "99 €/mois",
+    description: "Pour un cabinet qui démarre ou teste UWi.",
+    minutes: "400 minutes / mois",
+    minutesSub: "≈ 100 appels patients - durée moyenne 4 min",
+    overUsage: "Au-delà : 0,19€ / min — bascule auto vers Growth si plus avantageux",
+    features: [
+      { label: "Réponse téléphonique 24/7", included: true },
+      { label: "Prise de RDV automatique", included: true },
+      { label: "Rappels SMS patients", included: true },
+      { label: "Intégration Doctolib / Maiia", included: true },
+      { label: "Triage urgences avancé", included: false },
+      { label: "Renouvellements ordonnances", included: false },
+    ],
+    cta: "Essai gratuit 1 mois",
+    featured: false,
+  },
+  {
+    name: "GROWTH",
+    price: "149 €/mois",
+    description: "Pour un cabinet actif avec flux régulier.",
+    minutes: "800 minutes / mois",
+    minutesSub: "≈ 200 appels patients - durée moyenne 4 min",
+    overUsage: "Au-delà : 0,17€ / min — bascule auto vers Pro si plus avantageux",
+    features: [
+      { label: "Tout le plan Starter", included: true },
+      { label: "Triage des urgences médicales", included: true },
+      { label: "Renouvellements d'ordonnances", included: true },
+      { label: "Rapports hebdomadaires", included: true },
+      { label: "WhatsApp Business", included: false },
+      { label: "Support prioritaire 7j/7", included: false },
+    ],
+    cta: "Essai gratuit 1 mois",
+    featured: true,
+    badge: "LE PLUS POPULAIRE",
+  },
+  {
+    name: "PRO",
+    price: "199 €/mois",
+    description: "Pour les cabinets chargés qui veulent tout déléguer.",
+    minutes: "1200 minutes / mois",
+    minutesSub: "≈ 300 appels patients - durée moyenne 4 min",
+    overUsage: "Au-delà : 0,15€ / min — tarif le plus bas",
+    features: [
+      { label: "Tout le plan Growth", included: true },
+      { label: "WhatsApp Business inclus", included: true },
+      { label: "Support prioritaire 7j/7", included: true },
+      { label: "Onboarding personnalisé", included: true },
+      { label: "Rapport mensuel détaillé", included: true },
+    ],
+    cta: "Essai gratuit 1 mois",
+    featured: false,
+  },
 ];
 
 const SECURITY_ITEMS = [
@@ -534,21 +585,31 @@ export default function UwiLanding() {
           </div>
         </section>
 
-        <section id="pricing" className="landing-section reveal">
+        <section id="pricing" className="landing-section reveal pricing-section">
           <p className="section-eyebrow">Tarifs</p>
           <h2>Simple et prévisible</h2>
-          <p className="section-sub">
-            Essai gratuit 1 mois, sans CB. Ensuite, offre adaptée à votre volume d'appels.
+          <p className="pricing-intro">
+            Un forfait fixe couvre votre usage courant. Au-delà, vous payez uniquement les minutes consommées — jamais plus que nécessaire.
           </p>
           <div className="pricing-grid">
             {PRICING_PLANS.map((plan, i) => (
               <div key={i} className={`pricing-card ${plan.featured ? "featured" : ""}`}>
+                {plan.badge && (
+                  <div className="pricing-card-badge">{plan.badge}</div>
+                )}
                 <h3>{plan.name}</h3>
                 <div className="price">{plan.price}</div>
-                <div className="price-note">{plan.note}</div>
-                <ul>
+                <p className="pricing-card-desc">{plan.description}</p>
+                <div className="pricing-minutes">
+                  <span className="pricing-minutes-value">{plan.minutes}</span>
+                  <span className="pricing-minutes-sub">{plan.minutesSub}</span>
+                </div>
+                <p className="pricing-over-usage">{plan.overUsage}</p>
+                <ul className="pricing-features">
                   {plan.features.map((f, j) => (
-                    <li key={j}>{f}</li>
+                    <li key={j} className={f.included ? "included" : "excluded"}>
+                      {f.included ? "✔" : "✘"} {f.label}
+                    </li>
                   ))}
                 </ul>
                 <div className="pricing-cta">
@@ -558,6 +619,20 @@ export default function UwiLanding() {
                 </div>
               </div>
             ))}
+          </div>
+          <div className="pricing-guarantee">
+            <span className="pricing-guarantee-icon" aria-hidden>🛡️</span>
+            <div>
+              <strong>Meilleur prix garanti automatiquement</strong>
+              <p>Si votre usage rend le forfait supérieur plus avantageux, nous vous basculons automatiquement. Vous ne payez jamais plus que nécessaire. Facturation à la seconde, sans arrondi.</p>
+            </div>
+          </div>
+          <div className="pricing-usage-stats">
+            <span className="pricing-usage-stats-icon" aria-hidden>💡</span>
+            <div>
+              <strong>La plupart des cabinets utilisent entre 350 et 900 minutes par mois.</strong>
+              <p>Contrairement aux solutions facturées uniquement à la minute, notre forfait vous protège des mois chargés.</p>
+            </div>
           </div>
         </section>
 

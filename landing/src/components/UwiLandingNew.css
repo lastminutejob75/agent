@@ -654,7 +654,12 @@
 .uwi-landing-new .landing-footer a { color: var(--muted-hi); text-decoration: none; }
 .uwi-landing-new .landing-footer a:hover { color: var(--teal); }
 
-/* Pricing plans */
+/* Pricing section — nouvelle maquette (Starter / Growth / Pro) */
+.uwi-landing-new .pricing-section .section-sub { display: none; }
+.uwi-landing-new .pricing-intro {
+  font-size: 15px; line-height: 1.6; color: var(--muted-hi);
+  max-width: 640px; margin-bottom: 28px;
+}
 .uwi-landing-new .pricing-grid {
   display: grid; gap: 20px;
   grid-template-columns: 1fr;
@@ -662,13 +667,13 @@
 }
 @media (min-width: 768px) {
   .uwi-landing-new .pricing-grid {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, 1fr);
     gap: 24px;
   }
 }
 @media (min-width: 1024px) {
   .uwi-landing-new .pricing-grid {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, 1fr);
     gap: 24px;
   }
 }
@@ -676,8 +681,9 @@
 .uwi-landing-new .pricing-card {
   background: var(--card); border: 1px solid var(--border);
   border-radius: 20px; padding: 28px 24px;
-  display: flex; flex-direction: column; gap: 16px;
+  display: flex; flex-direction: column; gap: 14px;
   transition: border-color .2s, background .2s, transform .15s;
+  position: relative;
 }
 .uwi-landing-new .pricing-card:hover {
   border-color: rgba(0,240,181,.25); background: var(--card-hi);
@@ -687,30 +693,100 @@
   background: rgba(0,240,181,.06);
   box-shadow: 0 0 0 1px rgba(0,240,181,.12);
 }
+.uwi-landing-new .pricing-card:has(.pricing-card-badge) {
+  padding-top: 44px;
+}
+.uwi-landing-new .pricing-card-badge {
+  position: absolute;
+  top: -12px; left: 50%;
+  transform: translateX(-50%);
+  background: linear-gradient(135deg, var(--teal), var(--teal-dk));
+  color: var(--navy);
+  font-size: 11px; font-weight: 800;
+  letter-spacing: .05em;
+  padding: 6px 14px; border-radius: 100px;
+  white-space: nowrap;
+  box-shadow: 0 2px 12px rgba(0,240,181,.3);
+}
 .uwi-landing-new .pricing-card h3 {
-  font-size: 18px; font-weight: 800; color: var(--white); margin: 0;
+  font-size: 16px; font-weight: 800; color: var(--white); margin: 0;
+  letter-spacing: .06em;
 }
 .uwi-landing-new .pricing-card .price {
-  font-size: 32px; font-weight: 800; color: var(--teal);
+  font-size: 28px; font-weight: 800; color: var(--teal);
   letter-spacing: -.02em; line-height: 1;
 }
-.uwi-landing-new .pricing-card .price-note {
-  font-size: 13px; color: var(--muted); margin-top: -4px;
+.uwi-landing-new .pricing-card-desc {
+  font-size: 13px; color: var(--muted); line-height: 1.45; margin: 0;
 }
-.uwi-landing-new .pricing-card ul {
+.uwi-landing-new .pricing-minutes {
+  background: rgba(255,255,255,.06);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.uwi-landing-new .pricing-minutes-value {
+  font-size: 14px; font-weight: 700; color: var(--white);
+}
+.uwi-landing-new .pricing-minutes-sub {
+  font-size: 11px; color: var(--muted);
+}
+.uwi-landing-new .pricing-over-usage {
+  font-size: 12px; color: var(--muted); line-height: 1.45; margin: 0;
+}
+.uwi-landing-new .pricing-features {
   list-style: none; margin: 0; padding: 0;
-  font-size: 14px; color: var(--muted); line-height: 1.7;
+  font-size: 13px; line-height: 1.65;
+  display: flex; flex-direction: column; gap: 6px;
 }
-.uwi-landing-new .pricing-card ul li {
-  display: flex; align-items: flex-start; gap: 8px;
+.uwi-landing-new .pricing-features li.included {
+  color: var(--muted-hi);
 }
-.uwi-landing-new .pricing-card ul li::before {
-  content: '✓'; color: var(--teal); font-weight: 700; flex-shrink: 0;
+.uwi-landing-new .pricing-features li.excluded {
+  color: var(--muted);
+  opacity: .85;
 }
 .uwi-landing-new .pricing-card .pricing-cta {
   margin-top: auto; padding-top: 8px;
 }
 .uwi-landing-new .pricing-card .pricing-cta .btn-primary { width: 100%; }
+
+/* Bloc garantie meilleur prix */
+.uwi-landing-new .pricing-guarantee,
+.uwi-landing-new .pricing-usage-stats {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin-top: 32px;
+  padding: 20px 24px;
+  background: rgba(255,255,255,.04);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  text-align: left;
+}
+.uwi-landing-new .pricing-guarantee-icon,
+.uwi-landing-new .pricing-usage-stats-icon {
+  font-size: 24px;
+  flex-shrink: 0;
+}
+.uwi-landing-new .pricing-guarantee strong,
+.uwi-landing-new .pricing-usage-stats strong {
+  display: block;
+  font-size: 14px;
+  color: var(--white);
+  margin-bottom: 6px;
+}
+.uwi-landing-new .pricing-guarantee p,
+.uwi-landing-new .pricing-usage-stats p {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.55;
+  margin: 0;
+}
+.uwi-landing-new .pricing-usage-stats {
+  margin-top: 16px;
+}
 
 /* Sécurité / Garanties */
 .uwi-landing-new .security-grid {
