@@ -51,8 +51,8 @@
 .uwi-landing-new nav {
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 20px;
-  position: sticky; top: 0; z-index: 20;
-  background: rgba(13,17,32,0.9);
+  position: sticky; top: 0; z-index: 30;
+  background: rgba(13,17,32,0.97);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border-bottom: 1px solid var(--border);
@@ -148,7 +148,12 @@
 .uwi-landing-new .nav-links a:hover { color: var(--teal); opacity: 1; }
 
 /* HERO */
-.uwi-landing-new .hero { padding: 36px 20px 44px; }
+.uwi-landing-new .hero {
+  position: relative;
+  z-index: 1;
+  padding: 36px 20px 44px;
+  scroll-margin-top: 72px;
+}
 .uwi-landing-new .hero-inner {
   width: 100%;
   margin: 0 auto;
@@ -157,13 +162,13 @@
   display: none;
 }
 @media (min-width: 768px) {
-  .uwi-landing-new .hero { padding: 48px 24px 56px; }
+  .uwi-landing-new .hero { padding: 56px 24px 56px; }
   /* Deux colonnes dès 768px pour remplir l’espace à droite */
   .uwi-landing-new .hero-inner {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 32px;
-    align-items: center;
+    gap: 28px;
+    align-items: start;
     max-width: 100%;
   }
   .uwi-landing-new .hero-content { min-width: 0; }
@@ -172,6 +177,7 @@
     position: relative;
     min-height: 280px;
     min-width: 0;
+    padding-top: 0;
   }
   .uwi-landing-new .hero-demo {
     width: 100%;
