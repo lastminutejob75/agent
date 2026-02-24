@@ -28,8 +28,7 @@ Si le front est sur un **domaine différent** de l’API (ex. front sur `https:/
   ```
   Une seule valeur, origines séparées par des **virgules**, **sans slash final**, **sans espace** (ou espaces après les virgules uniquement).
 
-- **Défaut** du backend (si `CORS_ORIGINS` n’est pas défini) :
-  - `https://www.uwiapp.com`, `https://uwiapp.com`, `http://localhost:5173`, `http://localhost:3000`, `http://127.0.0.1:5173`, `http://127.0.0.1:3000`
+- **Défaut** du backend (si `CORS_ORIGINS` n’est pas défini) : prod uniquement — `https://www.uwiapp.com`, `https://uwiapp.com`. En **dev local**, définir `CORS_ORIGINS=http://localhost:5173` (ou le port de ton front).
 
 - Si tu utilises une **preview Vercel** (ex. `https://xxx-xxx.vercel.app`), ajoute cette URL exacte dans `CORS_ORIGINS`.
 
