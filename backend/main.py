@@ -37,8 +37,12 @@ _logger = logging.getLogger(__name__)
 
 # CORS : origines exactes (pas *). Inclure www et non-www (uwiapp.com) pour éviter 401 si l’user arrive sans www.
 # Défaut = prod uniquement. En dev local, définir CORS_ORIGINS=http://localhost:5173 (ou le port du front).
-_cors_origins = (os.environ.get("CORS_ORIGINS") or "https://www.uwiapp.com,https://uwiapp.com").split(",")
+_default_cors = "https://www.uwiapp.com,https://uwiapp.com"
+_cors_raw = (os.environ.get("CORS_ORIGINS") or "").strip()
+_cors_origins = (_cors_raw if _cors_raw else _default_cors).split(",")
 _cors_origins_list = [o.strip() for o in _cors_origins if o.strip()]
+if not _cors_origins_list:
+    _cors_origins_list = _default_cors.split(",")
 # Admin : mêmes origines par défaut ; optionnel ADMIN_CORS_ORIGINS pour liste plus stricte
 _admin_cors_origins = (os.environ.get("ADMIN_CORS_ORIGINS") or "").strip()
 _admin_origins_list = [o.strip() for o in _admin_cors_origins.split(",") if o.strip()] if _admin_cors_origins else _cors_origins_list

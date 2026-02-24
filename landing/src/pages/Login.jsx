@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { api, getTenantToken } from "../lib/api.js";
-import { Link, Navigate } from "react-router-dom";
+import { api } from "../lib/api.js";
+import { Link } from "react-router-dom";
 import { GoogleLoginButton } from "../components/GoogleLoginButton.jsx";
 import { getApiUrl } from "../lib/authConfig.js";
 
@@ -36,9 +36,7 @@ export default function Login() {
       .catch(() => setBackendCheck("fail"));
   }, [apiUrl]);
 
-  if (getTenantToken()) {
-    return <Navigate to="/app" replace />;
-  }
+  // Ne pas rediriger sur le seul token localStorage (il peut être expiré) → seule la réponse /api/auth/me (cookie valide) déclenche la redirection.
 
   async function handleSubmit(e) {
     e.preventDefault();
