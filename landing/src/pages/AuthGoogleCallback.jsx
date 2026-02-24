@@ -29,17 +29,12 @@ export default function AuthGoogleCallback() {
         const code_verifier = sessionStorage.getItem(OAUTH_CODE_VERIFIER_KEY) || "";
         sessionStorage.removeItem(OAUTH_CODE_VERIFIER_KEY);
 
-        if (!code_verifier) {
-          throw new Error(
-            "Session perdue (onglet fermé ou autre domaine). Revenez à la page de connexion et cliquez à nouveau sur « Continuer avec Google »."
-          );
-        }
-
+        // Envoyé uniquement si dispo (sur mobile / autre onglet le sessionStorage est souvent vide ; le backend utilise alors le code_verifier stocké côté serveur).
         const body = {
           code,
           state,
           redirect_uri: GOOGLE_REDIRECT_URI,
-          code_verifier,
+          ...(code_verifier ? { code_verifier } : {}),
         };
 
         const res = await fetch(`${API_URL}/api/auth/google/callback`, {
