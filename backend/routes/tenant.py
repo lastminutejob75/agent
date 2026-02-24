@@ -61,13 +61,38 @@ def _auth_from_cookie(request: Request) -> Optional[Dict[str, Any]]:
     }
 
 
+def _auth_from_bearer(request: Request) -> Optional[Dict[str, Any]]:
+    """Même JWT que le cookie, envoyé en Authorization: Bearer (pour mobile où les cookies tiers sont bloqués)."""
+    auth_h = request.headers.get("Authorization")
+    if not auth_h or not auth_h.startswith("Bearer "):
+        return None
+    raw = auth_h[7:].strip()
+    if not raw:
+        return None
+    payload = _decode_jwt(raw)
+    if not payload or payload.get("typ") != "client_session":
+        return None
+    user_id = payload.get("sub")
+    if not user_id:
+        return None
+    row = pg_get_tenant_user_by_id(user_id)
+    if not row:
+        return None
+    return {
+        "tenant_id": row["tenant_id"],
+        "email": row["email"],
+        "role": row["role"],
+        "sub": str(user_id),
+    }
+
+
 def require_tenant_auth(request: Request) -> Dict[str, Any]:
     """
-    Authentification par cookie uwi_session uniquement (typ=client_session).
+    Authentification par cookie uwi_session ou Bearer (même JWT). Bearer permet mobile quand les cookies tiers sont bloqués.
     """
     if not JWT_SECRET:
         raise HTTPException(503, "JWT_SECRET not configured")
-    auth = _auth_from_cookie(request)
+    auth = _auth_from_cookie(request) or _auth_from_bearer(request)
     if auth:
         return auth
     raise HTTPException(401, "Missing or invalid token")

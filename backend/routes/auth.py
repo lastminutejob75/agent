@@ -598,4 +598,5 @@ def auth_google_callback(body: GoogleCallbackBody, response: Response):
         max_age=SESSION_TTL_SECONDS,
     )
     log_auth_event(tenant_id, email, "auth_google_sso", None)
-    return {"ok": True}
+    # Token en plus du cookie : le front le stocke (localStorage) et l'envoie en Bearer pour contourner le blocage des cookies tiers sur mobile.
+    return {"ok": True, "token": token}
