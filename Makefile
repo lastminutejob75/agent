@@ -13,6 +13,7 @@ help:
 	@echo "  make migrate-018     - Run migration 018 (tenant_users password/google)"
 	@echo "  make migrate-026     - Run migration 026 (leads is_enterprise)"
 	@echo "  make migrate-027     - Run migration 027 (leads max_daily_amplitude)"
+	@echo "  make migrate-028     - Run migration 028 (vapi_calls + call_transcripts)"
 	@echo "  make migrate-leads   - Run migrations 026+027 (leads)"
 	@echo "  make migrate-ivr-events - Run migrations 003+004 (table ivr_events, dashboards)"
 	@echo "  make migrate-railway - Run migrations sur Railway"
@@ -39,6 +40,9 @@ migrate-026:
 
 migrate-027:
 	python3 -m backend.run_migration 027
+
+migrate-028:
+	python3 -m backend.run_migration 028_vapi_calls_and_transcripts.sql
 
 migrate-leads: migrate-026 migrate-027
 

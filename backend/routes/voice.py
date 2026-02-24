@@ -893,6 +893,74 @@ async def vapi_webhook(request: Request):
         except Exception as e:
             logger.warning("VAPI_USAGE_INGEST_FAILED %s", str(e)[:100])
 
+    # status-update → vapi_calls (cycle de vie: ringing / in-progress / ended) pour dashboard + Tableau
+    if msg_type == "status-update":
+        try:
+            from backend.tenant_routing import extract_to_number_from_vapi_payload, resolve_tenant_id_from_vocal_call
+            from backend.vapi_calls_pg import upsert_vapi_call
+            _cid = _webhook_extract_call_id(payload)
+            _to = extract_to_number_from_vapi_payload(payload)
+            _tid, _ = resolve_tenant_id_from_vocal_call(_to or "", channel="vocal")
+            _call = message.get("call") or {}
+            _cust = _call.get("customer") or {}
+            _pn = _call.get("phoneNumber") or {}
+            _status = message.get("status") or _call.get("status") or "unknown"
+            _started_at = None
+            _ended_at = None
+            _ended_reason = message.get("endedReason") or _call.get("endedReason")
+            if _status == "in-progress":
+                _started_at = _call.get("startedAt") or _call.get("createdAt")
+                if isinstance(_started_at, str):
+                    try:
+                        from datetime import datetime as _dt
+                        _started_at = _dt.fromisoformat(_started_at.replace("Z", "+00:00")[:26])
+                    except Exception:
+                        _started_at = None
+                if _started_at is None:
+                    from datetime import datetime, timezone
+                    _started_at = datetime.now(timezone.utc)
+            elif _status == "ended":
+                _ended_at = _call.get("endedAt") or _call.get("updatedAt")
+                if isinstance(_ended_at, str):
+                    try:
+                        from datetime import datetime as _dt
+                        _ended_at = _dt.fromisoformat(_ended_at.replace("Z", "+00:00")[:26])
+                    except Exception:
+                        _ended_at = None
+                if _ended_at is None:
+                    from datetime import datetime, timezone
+                    _ended_at = datetime.now(timezone.utc)
+            if _cid and _tid:
+                upsert_vapi_call(
+                    _tid,
+                    _cid,
+                    customer_number=_cust.get("number") if isinstance(_cust, dict) else None,
+                    assistant_id=_call.get("assistantId"),
+                    phone_number_id=_call.get("phoneNumberId") or (_pn.get("id") if isinstance(_pn, dict) else None),
+                    status=_status,
+                    started_at=_started_at,
+                    ended_at=_ended_at,
+                    ended_reason=_ended_reason,
+                )
+        except Exception as e:
+            logger.warning("VAPI_STATUS_UPDATE_PERSIST_FAILED %s", str(e)[:120])
+
+    # transcript → call_transcripts (user / assistant, final ou partial) pour détail appel + analyse
+    if msg_type == "transcript":
+        try:
+            from backend.tenant_routing import extract_to_number_from_vapi_payload, resolve_tenant_id_from_vocal_call
+            from backend.vapi_calls_pg import insert_call_transcript
+            _cid = _webhook_extract_call_id(payload)
+            _to = extract_to_number_from_vapi_payload(payload)
+            _tid, _ = resolve_tenant_id_from_vocal_call(_to or "", channel="vocal")
+            _role = (message.get("role") or "user").lower()
+            _text = (message.get("transcript") or "").strip()
+            _is_final = (message.get("transcriptType") or "").lower() == "final"
+            if _cid and _tid and _text:
+                insert_call_transcript(_tid, _cid, _role, _text, is_final=_is_final)
+        except Exception as e:
+            logger.warning("VAPI_TRANSCRIPT_PERSIST_FAILED %s", str(e)[:120])
+
     # Persister customer_phone uniquement sur les webhooks qui contiennent call.customer.number
     # (conversation-update / speech-update ne le contiennent pas — source: rapport Vapi)
     from backend.tenant_routing import (
