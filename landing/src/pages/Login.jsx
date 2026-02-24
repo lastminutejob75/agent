@@ -10,16 +10,17 @@ export default function Login() {
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
   const [backendCheck, setBackendCheck] = useState("idle"); // idle | checking | ok | fail
+  const [alreadyLoggedIn, setAlreadyLoggedIn] = useState(false); // session valide côté serveur
   const userHasInteractedWithForm = useRef(false);
 
   const apiUrl = getApiUrl();
 
-  // Vérification « déjà connecté » au montage (cookie). Redirection uniquement si /me répond ok.
+  // Vérification « déjà connecté » au montage : on affiche un bandeau + lien au lieu de rediriger automatiquement.
   useEffect(() => {
     if (!apiUrl) return;
     fetch(`${apiUrl}/api/auth/me`, { method: "GET", credentials: "include" })
       .then((r) => {
-        if (r.ok) window.location.replace("/app");
+        if (r.ok) setAlreadyLoggedIn(true);
       })
       .catch(() => {});
   }, [apiUrl]);
@@ -69,6 +70,12 @@ export default function Login() {
   return (
     <div className="flex justify-center">
       <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-800/80 backdrop-blur p-6 sm:p-8 shadow-xl">
+        {alreadyLoggedIn && (
+          <div className="mb-4 rounded-xl bg-green-500/20 border border-green-500/50 text-green-200 text-sm p-3 flex items-center justify-between gap-3">
+            <span>Vous êtes déjà connecté.</span>
+            <Link to="/app" className="font-semibold text-green-300 hover:text-green-100 underline shrink-0">Accéder au dashboard →</Link>
+          </div>
+        )}
         {!apiUrl && (
           <p className="mb-4 rounded-xl bg-amber-500/20 border border-amber-500/50 text-amber-200 text-sm p-3" role="alert">
             Backend non configuré : définir <code className="font-mono text-xs">VITE_UWI_API_BASE_URL</code> (ex. URL de l'API), puis reconstruire le front.
