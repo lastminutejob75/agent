@@ -2375,90 +2375,115 @@ def _get_global_stats(window_days: int) -> dict:
 
 
 def _get_stats_timeseries(metric: str, days: int) -> dict:
-    """Série temporelle par jour. Sources = Postgres (Railway) en prod."""
+    """Série temporelle par jour. Une connexion + une requête agrégée par jour (évite N connexions)."""
     from datetime import datetime, timedelta
     now = datetime.utcnow()
+    start = (now - timedelta(days=days)).strftime("%Y-%m-%d 00:00:00")
+    end = now.strftime("%Y-%m-%d %H:%M:%S")
     url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
-    points: List[dict] = []
-    for i in range(days - 1, -1, -1):
-        d = (now - timedelta(days=i)).date()
-        date_str = d.strftime("%Y-%m-%d")
-        start = date_str + " 00:00:00"
-        end = date_str + " 23:59:59"
-        value = 0
-        if url:
-            try:
-                import psycopg
-                with psycopg.connect(url) as conn:
-                    with conn.cursor() as cur:
-                        if metric == "calls":
+    by_date: Dict[str, float] = {}
+    for i in range(days):
+        d = (now - timedelta(days=days - 1 - i)).date()
+        by_date[d.strftime("%Y-%m-%d")] = 0
+
+    if url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            with psycopg.connect(url, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    if metric == "calls":
+                        cur.execute(
+                            """
+                            SELECT DATE(created_at AT TIME ZONE 'UTC') AS d,
+                                   COUNT(DISTINCT call_id) AS value
+                            FROM ivr_events
+                            WHERE call_id IS NOT NULL AND TRIM(call_id) != '' AND created_at >= %s AND created_at <= %s
+                            GROUP BY DATE(created_at AT TIME ZONE 'UTC')
+                            """,
+                            (start, end),
+                        )
+                        for r in cur.fetchall():
+                            if r.get("d"):
+                                by_date[str(r["d"])] = int(r["value"] or 0)
+                    elif metric == "appointments":
+                        cur.execute(
+                            """
+                            SELECT DATE(created_at AT TIME ZONE 'UTC') AS d, COUNT(*) AS value
+                            FROM ivr_events
+                            WHERE event = 'booking_confirmed' AND created_at >= %s AND created_at <= %s
+                            GROUP BY DATE(created_at AT TIME ZONE 'UTC')
+                            """,
+                            (start, end),
+                        )
+                        for r in cur.fetchall():
+                            if r.get("d"):
+                                by_date[str(r["d"])] = int(r["value"] or 0)
+                    elif metric == "minutes":
+                        try:
                             cur.execute(
-                                """SELECT COUNT(DISTINCT call_id) FROM ivr_events
-                                   WHERE call_id IS NOT NULL AND TRIM(call_id) != '' AND created_at >= %s AND created_at <= %s""",
+                                """
+                                SELECT DATE(ended_at AT TIME ZONE 'UTC') AS d,
+                                       COALESCE(SUM(duration_sec), 0) / 60.0 AS value
+                                FROM vapi_call_usage
+                                WHERE ended_at IS NOT NULL AND ended_at >= %s AND ended_at <= %s
+                                GROUP BY DATE(ended_at AT TIME ZONE 'UTC')
+                                """,
                                 (start, end),
                             )
-                            value = cur.fetchone()[0] or 0
-                        elif metric == "appointments":
+                            for r in cur.fetchall():
+                                if r.get("d"):
+                                    by_date[str(r["d"])] = int(round(float(r["value"] or 0), 0))
+                        except Exception:
+                            pass
+                    elif metric == "cost_usd":
+                        try:
                             cur.execute(
-                                """SELECT COUNT(*) FROM ivr_events WHERE event = 'booking_confirmed' AND created_at >= %s AND created_at <= %s""",
+                                """
+                                SELECT DATE(ended_at AT TIME ZONE 'UTC') AS d, COALESCE(SUM(cost_usd), 0) AS value
+                                FROM vapi_call_usage
+                                WHERE ended_at IS NOT NULL AND ended_at >= %s AND ended_at <= %s
+                                GROUP BY DATE(ended_at AT TIME ZONE 'UTC')
+                                """,
                                 (start, end),
                             )
-                            value = cur.fetchone()[0] or 0
-                        elif metric == "minutes":
-                            try:
-                                cur.execute(
-                                    """SELECT COALESCE(SUM(duration_sec), 0) / 60.0 FROM vapi_call_usage
-                                       WHERE ended_at IS NOT NULL AND ended_at >= %s AND ended_at <= %s""",
-                                    (start, end),
-                                )
-                                vapi_val = cur.fetchone()[0]
-                                if vapi_val is not None and float(vapi_val) > 0:
-                                    value = int(round(float(vapi_val), 0))
-                            except Exception:
-                                pass
-                            if value == 0:
-                                cur.execute(
-                                    """SELECT COALESCE(SUM(LEAST(GREATEST(EXTRACT(EPOCH FROM (updated_at - started_at)) / 60.0, 0), %s)), 0) FROM call_sessions
-                                       WHERE started_at >= %s AND updated_at <= %s""",
-                                    (MAX_SESSION_MINUTES, start, end),
-                                )
-                                value = int(cur.fetchone()[0] or 0)
-                        elif metric == "cost_usd":
-                            try:
-                                cur.execute(
-                                    """SELECT COALESCE(SUM(cost_usd), 0) FROM vapi_call_usage
-                                       WHERE ended_at IS NOT NULL AND ended_at >= %s AND ended_at <= %s""",
-                                    (start, end),
-                                )
-                                vapi_val = cur.fetchone()[0]
-                                if vapi_val is not None:
-                                    value = round(float(vapi_val), 4)
-                            except Exception:
-                                pass
-            except Exception:
-                pass
-        else:
-            import backend.db as db
-            conn = db.get_conn()
-            try:
-                db._ensure_ivr_tables(conn)
-                if metric == "calls":
-                    cur = conn.execute(
-                        """SELECT COUNT(DISTINCT call_id) FROM ivr_events
-                           WHERE call_id IS NOT NULL AND TRIM(call_id) != '' AND created_at >= ? AND created_at <= ?""",
-                        (start, end),
-                    )
-                    value = cur.fetchone()[0] or 0
-                elif metric == "appointments":
-                    cur = conn.execute(
-                        """SELECT COUNT(*) FROM ivr_events WHERE event = 'booking_confirmed' AND created_at >= ? AND created_at <= ?""",
-                        (start, end),
-                    )
-                    value = cur.fetchone()[0] or 0
-                # metric == "minutes" : pas de call_sessions en SQLite, value reste 0
-            finally:
-                conn.close()
-        points.append({"date": date_str, "value": value})
+                            for r in cur.fetchall():
+                                if r.get("d"):
+                                    by_date[str(r["d"])] = round(float(r["value"] or 0), 4)
+                        except Exception:
+                            pass
+        except Exception as e:
+            logger.warning("stats_timeseries pg: %s", e)
+    else:
+        import backend.db as db
+        conn = db.get_conn()
+        try:
+            db._ensure_ivr_tables(conn)
+            if metric == "calls":
+                rows = conn.execute(
+                    """SELECT date(created_at) AS d, COUNT(DISTINCT call_id) AS value
+                       FROM ivr_events
+                       WHERE created_at >= ? AND created_at <= ? AND call_id IS NOT NULL AND TRIM(call_id) != ''
+                       GROUP BY date(created_at)""",
+                    (start, end),
+                ).fetchall()
+                for r in rows:
+                    if r[0]:
+                        by_date[str(r[0])] = int(r[1] or 0)
+            elif metric == "appointments":
+                rows = conn.execute(
+                    """SELECT date(created_at) AS d, COUNT(*) AS value FROM ivr_events
+                       WHERE event = 'booking_confirmed' AND created_at >= ? AND created_at <= ?
+                       GROUP BY date(created_at)""",
+                    (start, end),
+                ).fetchall()
+                for r in rows:
+                    if r[0]:
+                        by_date[str(r[0])] = int(r[1] or 0)
+        finally:
+            conn.close()
+
+    points = [{"date": d, "value": by_date[d]} for d in sorted(by_date.keys())]
     return {"metric": metric, "days": days, "points": points}
 
 
@@ -3005,6 +3030,21 @@ def admin_stats_global(
 ):
     """KPIs globaux : tenants, appels, RDV, transferts, erreurs, dernière activité."""
     return _get_global_stats(window_days)
+
+
+@router.get("/admin/stats/dashboard-payload")
+def admin_stats_dashboard_payload(
+    window_days: int = Query(30, ge=7, le=90),
+    _: None = Depends(_verify_admin),
+):
+    """Payload unique pour la page Dashboard admin : global + timeseries + topTenants (calls + cost) + billing. 1 seul round-trip."""
+    return {
+        "global": _get_global_stats(window_days),
+        "timeseries": _get_stats_timeseries("calls", window_days),
+        "topTenantsCalls": _get_stats_top_tenants("calls", window_days, 10),
+        "topTenantsCost": _get_stats_top_tenants("cost_usd", window_days, 10),
+        "billing": _get_billing_snapshot(),
+    }
 
 
 def _get_operations_snapshot(window_days: int = 7) -> dict:

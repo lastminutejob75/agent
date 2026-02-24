@@ -43,11 +43,10 @@ export default function AppLayout() {
   const [sbOpen, setSbOpen] = useState(false);
 
   useEffect(() => {
-    api
-      .tenantMe()
-      .then((m) => {
+    Promise.all([api.tenantMe(), api.tenantDashboard().catch(() => null)])
+      .then(([m, dash]) => {
         setMe(m);
-        return api.tenantDashboard().then(setDashboard).catch(() => setDashboard(null));
+        setDashboard(dash);
       })
       .catch((e) => {
         if (isTenantUnauthorized(e)) {

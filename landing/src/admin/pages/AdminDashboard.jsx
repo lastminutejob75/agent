@@ -19,18 +19,12 @@ export default function AdminDashboard() {
     setErr(null);
     setLoading(true);
     try {
-      const [stats, ts, top, topCost, snapshot] = await Promise.all([
-        adminApi.globalStats(windowDays),
-        adminApi.statsTimeseries("calls", windowDays),
-        adminApi.statsTopTenants("calls", windowDays, 10),
-        adminApi.statsTopTenants("cost_usd", windowDays, 10),
-        adminApi.billingSnapshot().catch(() => null),
-      ]);
-      setGlobalStats(stats);
-      setTimeseries(ts);
-      setTopTenants(top);
-      setTopTenantsByCost(topCost);
-      setBillingSnapshot(snapshot);
+      const payload = await adminApi.dashboardPayload(windowDays);
+      setGlobalStats(payload.global ?? null);
+      setTimeseries(payload.timeseries ?? null);
+      setTopTenants(payload.topTenantsCalls ?? null);
+      setTopTenantsByCost(payload.topTenantsCost ?? null);
+      setBillingSnapshot(payload.billing ?? null);
       setLastUpdated(new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }));
     } catch (e) {
       setErr(e.message || "Erreur chargement stats");

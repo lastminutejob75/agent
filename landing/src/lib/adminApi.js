@@ -140,6 +140,9 @@ export const adminApi = {
 
   globalStats: (windowDays = 30) =>
     adminFetch(`/api/admin/stats/global?window_days=${windowDays}`, { method: "GET" }),
+  /** Payload unique pour la page Dashboard admin (1 round-trip au lieu de 5). */
+  dashboardPayload: (windowDays = 30) =>
+    adminFetch(`/api/admin/stats/dashboard-payload?window_days=${windowDays}`, { method: "GET" }),
   statsTimeseries: (metric, days) =>
     adminFetch(`/api/admin/stats/timeseries?metric=${metric}&days=${days}`, { method: "GET" }),
   statsTopTenants: (metric, windowDays, limit = 10) =>
