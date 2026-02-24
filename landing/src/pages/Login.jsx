@@ -83,7 +83,7 @@ export default function Login() {
             Backend non configuré : définir <code className="font-mono text-xs">VITE_UWI_API_BASE_URL</code> (ex. URL de l'API), puis reconstruire le front.
           </p>
         )}
-        {apiUrl && (
+        {apiUrl && backendCheck === "fail" && (
           <div className="mb-4 rounded-xl border border-slate-600 bg-slate-800/80 p-3 text-xs text-slate-300">
             <p className="font-semibold text-slate-200 mb-1">Diagnostic</p>
             <p>Origine : <code className="font-mono text-cyan-300 break-all">{typeof window !== "undefined" ? window.location.origin : ""}</code></p>
@@ -139,11 +139,11 @@ export default function Login() {
             <button
               type="button"
               onClick={() => setShowPassword((v) => !v)}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 focus:outline-none focus:ring-2 focus:ring-teal-500/50"
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-lg text-slate-300 hover:text-white hover:bg-slate-600/80 focus:outline-none focus:ring-2 focus:ring-teal-500/50 transition-colors"
               title={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"}
               aria-label={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"}
             >
-              {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              {showPassword ? <EyeOff size={20} strokeWidth={2} /> : <Eye size={20} strokeWidth={2} />}
             </button>
           </div>
             <p className="mt-1.5 text-right">
