@@ -146,12 +146,11 @@ export default function Login() {
               {showPassword ? <EyeOff size={20} strokeWidth={2} /> : <Eye size={20} strokeWidth={2} />}
             </button>
           </div>
-            <p className="mt-1.5 text-right">
-              <Link to="/forgot-password" className="text-sm text-teal-400 hover:text-teal-300 transition-colors">
-                Mot de passe oublié ?
-              </Link>
-            </p>
-          </div>
+          <p className="mt-1.5 text-right">
+            <Link to="/forgot-password" className="text-sm text-teal-400 hover:text-teal-300 transition-colors">
+              Mot de passe oublié ?
+            </Link>
+          </p>
           {err && (
             <div className="space-y-3" role="alert">
               <p className="text-red-400 text-sm">{err}</p>
