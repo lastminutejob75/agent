@@ -80,12 +80,15 @@ export default function Login() {
           <div className="mb-4 rounded-xl border border-slate-600 bg-slate-800/80 p-3 text-xs text-slate-300">
             <p className="font-semibold text-slate-200 mb-1">Diagnostic</p>
             <p>Origine : <code className="font-mono text-cyan-300 break-all">{typeof window !== "undefined" ? window.location.origin : ""}</code></p>
+            <p className="mt-1">Backend : <a href={`${apiUrl}/health`} target="_blank" rel="noopener noreferrer" className="font-mono text-cyan-300 underline break-all">{apiUrl}</a></p>
             <p className="mt-1">
-              Test backend <code className="font-mono">/health</code> :{" "}
+              Test <code className="font-mono">/health</code> :{" "}
               {backendCheck === "checking" && <span className="text-slate-400">vérification…</span>}
               {backendCheck === "ok" && <span className="text-green-400 font-medium">OK</span>}
               {backendCheck === "fail" && (
-                <span className="text-red-400">Échec → CORS ou URL backend incorrecte. Ajoutez l’origine ci-dessus dans <code>CORS_ORIGINS</code> (Railway) et vérifiez <code>VITE_UWI_API_BASE_URL</code>.</span>
+                <span className="text-red-400">
+                  Échec. Pour <strong>www.uwiapp.com</strong> le backend autorise cette origine par défaut → soit <code>CORS_ORIGINS</code> sur Railway écrase le défaut (le définir à <code>https://www.uwiapp.com,https://uwiapp.com</code>), soit l’URL backend ci-dessus est incorrecte ou le service ne répond pas. Ouvrez le lien Backend ci-dessus pour tester <code>/health</code> dans un onglet.
+                </span>
               )}
             </p>
           </div>
