@@ -8,11 +8,21 @@ export default function AuthGoogleCallback() {
   React.useEffect(() => {
     const run = async () => {
       try {
+        if (!API_URL) {
+          throw new Error("Backend non configuré (VITE_UWI_API_BASE_URL).");
+        }
         const params = new URLSearchParams(window.location.search);
         const code = params.get("code") || "";
         const state = params.get("state") || "";
 
         if (!code || !state) {
+          const err = params.get("error");
+          if (err === "access_denied") {
+            throw new Error("Connexion Google annulée.");
+          }
+          if (err) {
+            throw new Error(`Google a refusé l’accès : ${err}. Vérifiez l’URI de redirection dans la Google Cloud Console.`);
+          }
           throw new Error("Paramètres OAuth manquants (code/state).");
         }
 
@@ -21,7 +31,7 @@ export default function AuthGoogleCallback() {
 
         if (!code_verifier) {
           throw new Error(
-            "code_verifier manquant (session expirée ou page rechargée). Recommence la connexion Google."
+            "Session perdue (onglet fermé ou autre domaine). Revenez à la page de connexion et cliquez à nouveau sur « Continuer avec Google »."
           );
         }
 
@@ -46,9 +56,12 @@ export default function AuthGoogleCallback() {
         if (res.status === 403) {
           throw new Error("Votre email Google n'est pas vérifié.");
         }
+        if (res.status === 503) {
+          throw new Error("Google SSO désactivé côté serveur. Contactez l’administrateur.");
+        }
         if (!res.ok) {
-          const txt = await res.text().catch(() => "");
-          throw new Error(`Google login échoué (${res.status}). ${txt}`);
+          const txt = await res.text().catch(() => "") || res.statusText;
+          throw new Error(`Connexion Google échouée (${res.status}). ${txt}`);
         }
 
         // Redirection complète pour que le navigateur recharge la page avec le cookie

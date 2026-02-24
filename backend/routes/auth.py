@@ -339,6 +339,8 @@ def _pkce_code_verifier_and_challenge() -> tuple[str, str]:
 
 # Anti-replay : jti déjà utilisés (TTL 10 min). Cleans lazily on check.
 _used_oauth_jtis: dict[str, float] = {}
+# Code verifier côté serveur (jti -> (code_verifier, timestamp)) pour éviter la perte sessionStorage (redirect cross-origin).
+_oauth_code_verifiers: dict[str, tuple[str, float]] = {}
 
 
 def _issue_oauth_state() -> str:
@@ -375,6 +377,25 @@ def _verify_and_consume_oauth_state(state: str) -> bool:
         return False
 
 
+def _get_oauth_code_verifier_from_state(state: str) -> Optional[str]:
+    """Récupère et supprime le code_verifier stocké pour ce state (jti). Purge les entrées expirées."""
+    if not state or not JWT_SECRET:
+        return None
+    now = time.time()
+    for jti, (_, t) in list(_oauth_code_verifiers.items()):
+        if now - t > GOOGLE_OAUTH_STATE_TTL_SECONDS:
+            del _oauth_code_verifiers[jti]
+    try:
+        payload = jwt.decode(state, JWT_SECRET, algorithms=["HS256"])
+        jti = payload.get("jti")
+        if not jti:
+            return None
+        entry = _oauth_code_verifiers.pop(jti, None)
+        return entry[0] if entry else None
+    except Exception:
+        return None
+
+
 @router.get("/google/start")
 def auth_google_start(redirect_uri: Optional[str] = None):
     """
@@ -389,6 +410,13 @@ def auth_google_start(redirect_uri: Optional[str] = None):
         raise HTTPException(400, "redirect_uri required (query or GOOGLE_REDIRECT_URI)")
     code_verifier, code_challenge = _pkce_code_verifier_and_challenge()
     state = _issue_oauth_state()
+    try:
+        payload = jwt.decode(state, JWT_SECRET, algorithms=["HS256"])
+        jti = payload.get("jti")
+        if jti:
+            _oauth_code_verifiers[jti] = (code_verifier, time.time())
+    except Exception:
+        pass
     params = {
         "response_type": "code",
         "client_id": GOOGLE_CLIENT_ID,
@@ -409,7 +437,7 @@ class GoogleCallbackBody(BaseModel):
     code: str
     redirect_uri: str
     state: str
-    code_verifier: str
+    code_verifier: Optional[str] = None
 
 
 def _exchange_code_for_tokens(code: str, redirect_uri: str, code_verifier: str) -> Optional[dict]:
@@ -461,11 +489,14 @@ def auth_google_callback(body: GoogleCallbackBody, response: Response):
     """
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET or not JWT_SECRET:
         raise HTTPException(503, "Google SSO not configured")
+    # Récupérer code_verifier : d’abord celui stocké côté serveur (évite perte sessionStorage / redirect cross-origin)
+    code_verifier = _get_oauth_code_verifier_from_state(body.state)
+    if not code_verifier:
+        code_verifier = (body.code_verifier or "").strip()
+    if not code_verifier:
+        raise HTTPException(400, "code_verifier required (session perdue ou state expiré)")
     if not _verify_and_consume_oauth_state(body.state):
         raise HTTPException(400, "Invalid or expired state")
-    code_verifier = (body.code_verifier or "").strip()
-    if not code_verifier:
-        raise HTTPException(400, "code_verifier required")
     redirect_uri = body.redirect_uri.strip()
     tokens = _exchange_code_for_tokens(body.code, redirect_uri, code_verifier)
     if not tokens or "id_token" not in tokens:

@@ -9,6 +9,16 @@ export function GoogleLoginButton() {
     setLoading(true);
     setError(null);
     try {
+      if (!API_URL) {
+        setError("Backend non configuré : définir VITE_UWI_API_BASE_URL (ex. URL de l’API).");
+        setLoading(false);
+        return;
+      }
+      if (!GOOGLE_REDIRECT_URI) {
+        setError("Redirect URI non configurée : définir VITE_GOOGLE_REDIRECT_URI ou ouvrir depuis le bon domaine.");
+        setLoading(false);
+        return;
+      }
       const url = new URL(`${API_URL}/api/auth/google/start`);
       url.searchParams.set("redirect_uri", GOOGLE_REDIRECT_URI);
 
@@ -18,8 +28,14 @@ export function GoogleLoginButton() {
       });
 
       if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(`google/start failed (${res.status}) ${txt}`);
+        const txt = await res.text().catch(() => "") || res.statusText;
+        if (res.status === 503) {
+          throw new Error("Google SSO désactivé côté serveur (vérifier GOOGLE_CLIENT_ID, JWT_SECRET).");
+        }
+        if (res.status === 0 || res.type === "opaque") {
+          throw new Error("Impossible de joindre l’API (CORS ou URL backend incorrecte).");
+        }
+        throw new Error(`Échec démarrage Google (${res.status}). ${txt}`);
       }
 
       const data = await res.json();
