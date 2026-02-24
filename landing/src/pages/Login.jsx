@@ -9,18 +9,32 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+  const [backendCheck, setBackendCheck] = useState("idle"); // idle | checking | ok | fail
   const userHasInteractedWithForm = useRef(false);
+
+  const apiUrl = getApiUrl();
 
   // Vérification « déjà connecté » au montage (cookie). Redirection uniquement si /me répond ok.
   useEffect(() => {
-    const apiUrl = getApiUrl();
     if (!apiUrl) return;
     fetch(`${apiUrl}/api/auth/me`, { method: "GET", credentials: "include" })
       .then((r) => {
         if (r.ok) window.location.replace("/app");
       })
       .catch(() => {});
-  }, []);
+  }, [apiUrl]);
+
+  // Test /health au chargement pour afficher si le backend est joignable (diagnostic CORS / URL).
+  useEffect(() => {
+    if (!apiUrl) {
+      setBackendCheck("idle");
+      return;
+    }
+    setBackendCheck("checking");
+    fetch(`${apiUrl}/health`, { method: "GET", credentials: "include" })
+      .then((r) => setBackendCheck(r.ok ? "ok" : "fail"))
+      .catch(() => setBackendCheck("fail"));
+  }, [apiUrl]);
 
   if (getTenantToken()) {
     return <Navigate to="/app" replace />;
@@ -54,8 +68,6 @@ export default function Login() {
   const btnPrimaryClass =
     "w-full rounded-xl bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 font-black px-4 py-2.5 hover:shadow-lg hover:shadow-teal-500/30 disabled:opacity-50 transition-all";
 
-  const apiUrl = getApiUrl();
-
   return (
     <div className="flex justify-center">
       <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-800/80 backdrop-blur p-6 sm:p-8 shadow-xl">
@@ -63,6 +75,20 @@ export default function Login() {
           <p className="mb-4 rounded-xl bg-amber-500/20 border border-amber-500/50 text-amber-200 text-sm p-3" role="alert">
             Backend non configuré : définir <code className="font-mono text-xs">VITE_UWI_API_BASE_URL</code> (ex. URL de l'API), puis reconstruire le front.
           </p>
+        )}
+        {apiUrl && (
+          <div className="mb-4 rounded-xl border border-slate-600 bg-slate-800/80 p-3 text-xs text-slate-300">
+            <p className="font-semibold text-slate-200 mb-1">Diagnostic</p>
+            <p>Origine : <code className="font-mono text-cyan-300 break-all">{typeof window !== "undefined" ? window.location.origin : ""}</code></p>
+            <p className="mt-1">
+              Test backend <code className="font-mono">/health</code> :{" "}
+              {backendCheck === "checking" && <span className="text-slate-400">vérification…</span>}
+              {backendCheck === "ok" && <span className="text-green-400 font-medium">OK</span>}
+              {backendCheck === "fail" && (
+                <span className="text-red-400">Échec → CORS ou URL backend incorrecte. Ajoutez l’origine ci-dessus dans <code>CORS_ORIGINS</code> (Railway) et vérifiez <code>VITE_UWI_API_BASE_URL</code>.</span>
+              )}
+            </p>
+          </div>
         )}
         <h1 className="text-2xl font-black text-white">Connexion</h1>
         <p className="mt-1 text-sm text-slate-400">
@@ -107,7 +133,21 @@ export default function Login() {
             </p>
           </div>
           {err && (
-            <p className="text-red-400 text-sm" role="alert">{err}</p>
+            <div className="space-y-3" role="alert">
+              <p className="text-red-400 text-sm">{err}</p>
+              {err.includes("Impossible de joindre le serveur") && typeof window !== "undefined" && (
+                <div className="rounded-xl bg-slate-800 border border-slate-600 p-3 text-xs text-slate-300 space-y-2">
+                  <p className="font-semibold text-amber-300">Que faire ?</p>
+                  <p>Origine de cette page (à autoriser côté backend) :</p>
+                  <p className="font-mono bg-slate-900/80 px-2 py-1.5 rounded break-all text-cyan-300">{window.location.origin}</p>
+                  <ol className="list-decimal list-inside space-y-1">
+                    <li><strong>Backend (Railway)</strong> → Variables → <code>CORS_ORIGINS</code> = cette URL (ou liste séparée par des virgules, ex. <code>https://www.uwiapp.com,{window.location.origin}</code>), puis redéployer le backend.</li>
+                    <li><strong>Front (Vercel / build)</strong> → Variables → <code>VITE_UWI_API_BASE_URL</code> = URL du backend (ex. <code>https://xxx.up.railway.app</code>), puis <strong>redéployer le front</strong> (obligatoire, les VITE_* sont lues au build).</li>
+                    <li>Vérifier que le backend répond : ouvrir <code className="text-cyan-300">https://votre-backend.up.railway.app/health</code> dans un onglet.</li>
+                  </ol>
+                </div>
+              )}
+            </div>
           )}
           <button type="submit" disabled={loading} onClick={markFormInteracted} className={btnPrimaryClass}>
             {loading ? "Connexion..." : "Se connecter"}

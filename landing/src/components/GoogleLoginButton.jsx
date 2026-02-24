@@ -72,7 +72,15 @@ export function GoogleLoginButton() {
         {loading ? "Redirection..." : "Continuer avec Google"}
       </button>
       {error && (
-        <p className="mt-2 text-sm text-red-400" role="alert">{error}</p>
+        <div className="mt-2 space-y-1" role="alert">
+          <p className="text-sm text-red-400">{error}</p>
+          {error.includes("Impossible de joindre le serveur") && typeof window !== "undefined" && (
+            <p className="text-xs text-slate-400">
+              Origine de cette page : <code className="font-mono bg-slate-700/80 px-1 rounded">{window.location.origin}</code>
+              {" "}→ à ajouter dans <code className="font-mono text-amber-300">CORS_ORIGINS</code> sur le backend.
+            </p>
+          )}
+        </div>
       )}
     </div>
   );
