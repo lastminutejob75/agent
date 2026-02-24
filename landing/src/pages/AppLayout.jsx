@@ -43,9 +43,13 @@ export default function AppLayout() {
   const [sbOpen, setSbOpen] = useState(false);
 
   useEffect(() => {
-    Promise.all([api.tenantMe(), api.tenantDashboard().catch(() => null)])
-      .then(([m, dash]) => {
+    api
+      .tenantMe()
+      .then((m) => {
         setMe(m);
+        return api.tenantDashboard().catch(() => null);
+      })
+      .then((dash) => {
         setDashboard(dash);
       })
       .catch((e) => {
@@ -55,7 +59,7 @@ export default function AppLayout() {
           window.location.href = "/";
           return;
         }
-        setErr(e.message || "Erreur");
+        setErr(e?.message || e?.data?.detail || "Chargement impossible. Réessayez ou déconnectez-vous.");
       })
       .finally(() => setLoading(false));
   }, []);
@@ -76,9 +80,28 @@ export default function AppLayout() {
     );
   }
   if (err) {
+    const errMsg = typeof err === "string" ? err : (err?.message || err?.data?.detail || "Erreur");
     return (
-      <div className="dash" style={{ padding: "2rem", color: "var(--red)" }}>
-        {err}
+      <div className="dash" style={{ padding: "2rem", color: "var(--red)", maxWidth: "32rem" }}>
+        <p><strong>Chargement échoué</strong></p>
+        <p style={{ marginTop: "0.5rem", fontSize: "0.9rem" }}>{errMsg}</p>
+        <p style={{ marginTop: "1rem" }}>
+          <button
+            type="button"
+            onClick={() => { setErr(null); setLoading(true); window.location.reload(); }}
+            className="rounded-lg border border-slate-600 bg-slate-800 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700"
+          >
+            Réessayer
+          </button>
+          {" · "}
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="rounded-lg border border-slate-600 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800"
+          >
+            Se déconnecter
+          </button>
+        </p>
       </div>
     );
   }

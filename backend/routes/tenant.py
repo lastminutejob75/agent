@@ -118,6 +118,24 @@ def tenant_me(auth: dict = Depends(require_tenant_auth)):
     }
 
 
+def _safe_dashboard_snapshot(tenant_id: int, tenant_name: str) -> dict:
+    """Retourne le snapshot dashboard ou un fallback minimal en cas d'erreur (évite 500)."""
+    try:
+        return _get_dashboard_snapshot(tenant_id, tenant_name)
+    except Exception as e:
+        logger.warning("dashboard snapshot failed for tenant_id=%s: %s", tenant_id, e)
+        from datetime import datetime, timezone
+        return {
+            "tenant_id": tenant_id,
+            "tenant_name": tenant_name or "N/A",
+            "service_status": {"status": "offline", "reason": "error", "checked_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")},
+            "last_call": None,
+            "last_booking": None,
+            "counters_7d": {"calls_total": 0, "bookings_confirmed": 0, "transfers": 0, "abandons": 0},
+            "transfer_reasons": [],
+        }
+
+
 @router.get("/dashboard")
 def tenant_dashboard(auth: dict = Depends(require_tenant_auth)):
     """Snapshot dashboard (même payload que admin/tenants/{id}/dashboard)."""
@@ -125,7 +143,7 @@ def tenant_dashboard(auth: dict = Depends(require_tenant_auth)):
     d = _get_tenant_detail(tenant_id)
     if not d:
         raise HTTPException(404, "Tenant not found")
-    return _get_dashboard_snapshot(tenant_id, d.get("name", "N/A"))
+    return _safe_dashboard_snapshot(tenant_id, d.get("name", "N/A"))
 
 
 @router.get("/kpis")
