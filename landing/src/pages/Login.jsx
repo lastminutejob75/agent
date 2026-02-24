@@ -54,9 +54,16 @@ export default function Login() {
   const btnPrimaryClass =
     "w-full rounded-xl bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 font-black px-4 py-2.5 hover:shadow-lg hover:shadow-teal-500/30 disabled:opacity-50 transition-all";
 
+  const apiUrl = getApiUrl();
+
   return (
     <div className="flex justify-center">
       <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-800/80 backdrop-blur p-6 sm:p-8 shadow-xl">
+        {!apiUrl && (
+          <p className="mb-4 rounded-xl bg-amber-500/20 border border-amber-500/50 text-amber-200 text-sm p-3" role="alert">
+            Backend non configuré : définir <code className="font-mono text-xs">VITE_UWI_API_BASE_URL</code> (ex. URL de l'API), puis reconstruire le front.
+          </p>
+        )}
         <h1 className="text-2xl font-black text-white">Connexion</h1>
         <p className="mt-1 text-sm text-slate-400">
           Connectez-vous avec votre email et mot de passe, ou avec Google.

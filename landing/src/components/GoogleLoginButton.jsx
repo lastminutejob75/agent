@@ -49,7 +49,10 @@ export function GoogleLoginButton() {
         sessionStorage.setItem(OAUTH_CODE_VERIFIER_KEY, data.code_verifier);
         window.location.href = data.auth_url;
       } catch (e) {
-        setError(e?.message || "Impossible de démarrer Google SSO");
+        const msg = e?.message === "Failed to fetch" || (e?.name === "TypeError" && /fetch|network/i.test(e?.message || ""))
+          ? "Impossible de joindre le serveur. Vérifiez VITE_UWI_API_BASE_URL, CORS et que le backend est démarré."
+          : (e?.message || "Impossible de démarrer Google SSO");
+        setError(msg);
         setLoading(false);
       }
     };

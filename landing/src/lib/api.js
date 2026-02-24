@@ -30,7 +30,13 @@ export function isTenantUnauthorized(err) {
   return err && (err.status === 401 || err.message?.includes("401") || err.message?.includes("Token"));
 }
 
+const MSG_BACKEND_UNREACHABLE =
+  "Impossible de joindre le serveur. Vérifiez VITE_UWI_API_BASE_URL, CORS et que le backend est démarré.";
+
 async function request(path, { method = "GET", body, admin = false, tenant = false } = {}) {
+  if (!BASE_URL) {
+    throw new Error("Backend non configuré : définir VITE_UWI_API_BASE_URL (ex. URL de l'API).");
+  }
   const url = `${BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
 
   const headers = { "Content-Type": "application/json" };
@@ -43,12 +49,20 @@ async function request(path, { method = "GET", body, admin = false, tenant = fal
     if (tok) headers["Authorization"] = `Bearer ${tok}`;
   }
 
-  const res = await fetch(url, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-    credentials: "include", // cookie uwi_session (login email+mdp ou Google)
-  });
+  let res;
+  try {
+    res = await fetch(url, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+      credentials: "include", // cookie uwi_session (login email+mdp ou Google)
+    });
+  } catch (e) {
+    if (e?.message === "Failed to fetch" || (e?.name === "TypeError" && /fetch|network/i.test(e?.message || ""))) {
+      throw new Error(MSG_BACKEND_UNREACHABLE);
+    }
+    throw e;
+  }
 
   const text = await res.text();
   let data = null;
