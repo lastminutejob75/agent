@@ -343,15 +343,50 @@ _used_oauth_jtis: dict[str, float] = {}
 _oauth_code_verifiers: dict[str, tuple[str, float]] = {}
 
 
-def _issue_oauth_state() -> str:
-    """State JWT : nonce (jti) + exp uniquement. Pas de code_verifier (stocké côté front)."""
+def _oauth_fernet():
+    """Fernet dérivé de JWT_SECRET pour chiffrer le code_verifier dans le state (mobile / multi-instances)."""
+    try:
+        from cryptography.fernet import Fernet
+        raw = hashlib.sha256((JWT_SECRET or "").encode()).digest()
+        key = base64.urlsafe_b64encode(raw).decode()
+        return Fernet(key.encode())
+    except Exception:
+        return None
+
+
+def _encrypt_code_verifier(code_verifier: str) -> Optional[str]:
+    f = _oauth_fernet()
+    if not f:
+        return None
+    try:
+        return f.encrypt(code_verifier.encode()).decode()
+    except Exception:
+        return None
+
+
+def _decrypt_code_verifier(cv_enc: str) -> Optional[str]:
+    f = _oauth_fernet()
+    if not f:
+        return None
+    try:
+        return f.decrypt(cv_enc.encode()).decode()
+    except Exception:
+        return None
+
+
+def _issue_oauth_state(code_verifier: str) -> str:
+    """State JWT : jti + exp + code_verifier chiffré (cv). Callback OK sans sessionStorage / multi-instances."""
     now = int(time.time())
+    jti = secrets.token_urlsafe(16)
     payload = {
         "typ": "google_oauth_state",
-        "jti": secrets.token_urlsafe(16),
+        "jti": jti,
         "iat": now,
         "exp": now + GOOGLE_OAUTH_STATE_TTL_SECONDS,
     }
+    cv_enc = _encrypt_code_verifier(code_verifier)
+    if cv_enc:
+        payload["cv"] = cv_enc
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
 
@@ -409,11 +444,11 @@ def auth_google_start(redirect_uri: Optional[str] = None):
     if not redirect:
         raise HTTPException(400, "redirect_uri required (query or GOOGLE_REDIRECT_URI)")
     code_verifier, code_challenge = _pkce_code_verifier_and_challenge()
-    state = _issue_oauth_state()
+    state = _issue_oauth_state(code_verifier)
     try:
         payload = jwt.decode(state, JWT_SECRET, algorithms=["HS256"])
         jti = payload.get("jti")
-        if jti:
+        if jti and "cv" not in payload:
             _oauth_code_verifiers[jti] = (code_verifier, time.time())
     except Exception:
         pass
@@ -489,14 +524,23 @@ def auth_google_callback(body: GoogleCallbackBody, response: Response):
     """
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET or not JWT_SECRET:
         raise HTTPException(503, "Google SSO not configured")
-    # Récupérer code_verifier : d’abord celui stocké côté serveur (évite perte sessionStorage / redirect cross-origin)
-    code_verifier = _get_oauth_code_verifier_from_state(body.state)
+    if not _verify_and_consume_oauth_state(body.state):
+        raise HTTPException(400, "Invalid or expired state")
+    # Code_verifier : 1) state avec cv (chiffré) → mobile / multi-instances  2) mémoire serveur  3) body (front)
+    code_verifier = None
+    try:
+        payload = jwt.decode(body.state, JWT_SECRET, algorithms=["HS256"])
+        cv_enc = payload.get("cv")
+        if cv_enc:
+            code_verifier = _decrypt_code_verifier(cv_enc)
+    except Exception:
+        pass
+    if not code_verifier:
+        code_verifier = _get_oauth_code_verifier_from_state(body.state)
     if not code_verifier:
         code_verifier = (body.code_verifier or "").strip()
     if not code_verifier:
         raise HTTPException(400, "code_verifier required (session perdue ou state expiré)")
-    if not _verify_and_consume_oauth_state(body.state):
-        raise HTTPException(400, "Invalid or expired state")
     redirect_uri = body.redirect_uri.strip()
     tokens = _exchange_code_for_tokens(body.code, redirect_uri, code_verifier)
     if not tokens or "id_token" not in tokens:
