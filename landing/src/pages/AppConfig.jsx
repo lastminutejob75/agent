@@ -22,63 +22,57 @@ export default function AppConfig() {
   };
 
   return (
-    <div className="client-dash" style={{ display: "flex", flexDirection: "column", gap: 26 }}>
+    <div className="page">
       {/* Mes agents UWi */}
-      <div className="client-dash cd-dcard" style={{ marginBottom: 0 }}>
-        <div className="client-dash cd-ch" style={{ padding: "22px 26px 18px" }}>
-          <div className="client-dash cd-ch-left">
-            <div className="client-dash cd-ch-ico cd-ico-t">🧑‍💼</div>
+      <div className="dcard" style={{ marginBottom: 0 }}>
+        <div className="ch" style={{ padding: '22px 26px 18px' }}>
+          <div className="ch-left">
+            <div className="ch-ico ico-t">🧑‍💼</div>
             <div>
-              <div className="client-dash cd-ch-title">Mes agents UWi</div>
-              <div className="client-dash cd-ch-sub">Forfait Growth — 2 agents actifs sur 2</div>
+              <div className="ch-title">Mes agents UWi</div>
+              <div className="ch-sub">Forfait Growth — 2 agents actifs sur 2</div>
             </div>
           </div>
-          <button type="button" className="client-dash cd-save-btn" style={{ padding: "8px 16px", fontSize: 12 }}>+ Ajouter un agent</button>
+          <button type="button" className="save-btn" style={{ padding: '8px 16px', fontSize: 12 }}>+ Ajouter un agent</button>
         </div>
-        <div className="client-dash cd-agents-grid">
+        <div className="agents-grid">
           {AGENTS.map((agent) => (
-            <div key={agent.id} className="client-dash cd-agent-card">
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div key={agent.id} className="agent-card">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                   <div
                     style={{
                       width: 44,
                       height: 44,
-                      borderRadius: "50%",
+                      borderRadius: '50%',
                       background: agent.gradient,
-                      display: "grid",
-                      placeItems: "center",
+                      display: 'grid',
+                      placeItems: 'center',
                       fontSize: 17,
                       fontWeight: 800,
-                      color: "#fff",
+                      color: '#fff',
                       flexShrink: 0,
                     }}
                   >
                     {agent.initial}
                   </div>
                   <div>
-                    <div style={{ fontSize: 15, fontWeight: 800, color: "var(--navy)" }}>{agent.name}</div>
-                    <div
-                      style={{
-                        fontSize: 11.5,
-                        color: agent.active ? "var(--green)" : "var(--muted)",
-                        fontWeight: 600,
-                      }}
-                    >
-                      ● {agent.active ? "Active maintenant" : "Hors horaires"}
+                    <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--navy)' }}>{agent.name}</div>
+                    <div style={{ fontSize: 11.5, color: agent.active ? 'var(--green)' : 'var(--muted)', fontWeight: 600 }}>
+                      ● {agent.active ? 'Active maintenant' : 'Hors horaires'}
                     </div>
                   </div>
                 </div>
-                <button type="button" className="client-dash cd-tog cd-tog-on" aria-label={`Activer ${agent.name}`} />
+                <button type="button" className={`tog ${agent.active ? 'tog-on' : ''}`} aria-label={`Activer ${agent.name}`} />
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div>
-                  <label className="client-dash cd-flbl">Prénom de l'agent</label>
-                  <input className="client-dash cd-fin" defaultValue={agent.name} />
+                  <label className="flbl">Prénom de l'agent</label>
+                  <input className="fin" defaultValue={agent.name} />
                 </div>
                 <div>
-                  <label className="client-dash cd-flbl">Voix</label>
-                  <select className="client-dash cd-fin" style={{ cursor: "pointer" }} defaultValue={agent.voice}>
+                  <label className="flbl">Voix</label>
+                  <select className="fin" style={{ cursor: 'pointer' }} defaultValue={agent.voice}>
                     <option>Française — féminine (naturelle)</option>
                     <option>Française — féminine (douce)</option>
                     <option>Française — masculine (naturelle)</option>
@@ -86,14 +80,11 @@ export default function AppConfig() {
                   </select>
                 </div>
                 <div>
-                  <label className="client-dash cd-flbl">Horaires actifs</label>
-                  <input className="client-dash cd-fin" defaultValue={agent.hours} />
+                  <label className="flbl">Horaires actifs</label>
+                  <input className="fin" defaultValue={agent.hours} />
                 </div>
-                <div
-                  className="client-dash"
-                  style={{ fontSize: 11.5, color: "var(--muted)", background: "var(--bg)", padding: "10px 12px", borderRadius: 9, lineHeight: 1.6 }}
-                >
-                  Phrase : <em style={{ color: "var(--body)" }}>"{agent.phrase}"</em>
+                <div style={{ fontSize: 11.5, color: 'var(--muted)', background: 'var(--bg)', padding: '10px 12px', borderRadius: 9, lineHeight: 1.6 }}>
+                  Phrase : <em style={{ color: 'var(--body)' }}>"{agent.phrase}"</em>
                 </div>
               </div>
             </div>
@@ -102,46 +93,46 @@ export default function AppConfig() {
       </div>
 
       {/* Configuration générale */}
-      <div className="client-dash cd-dcard">
-        <div className="client-dash cd-ch" style={{ padding: "22px 26px 18px" }}>
-          <div className="client-dash cd-ch-left">
-            <div className="client-dash cd-ch-ico cd-ico-t">⚙️</div>
+      <div className="dcard">
+        <div className="ch" style={{ padding: '22px 26px 18px' }}>
+          <div className="ch-left">
+            <div className="ch-ico ico-t">⚙️</div>
             <div>
-              <div className="client-dash cd-ch-title">Configuration générale</div>
-              <div className="client-dash cd-ch-sub">Paramètres communs à tous les agents</div>
+              <div className="ch-title">Configuration générale</div>
+              <div className="ch-sub">Paramètres communs à tous les agents</div>
             </div>
           </div>
         </div>
-        <div className="client-dash cd-form-wrap" style={{ borderTop: "1px solid var(--border)" }}>
+        <div className="form-wrap" style={{ borderTop: '1px solid var(--border)' }}>
           <div>
-            <label className="client-dash cd-flbl">Message hors horaires (tous agents inactifs)</label>
+            <label className="flbl">Message hors horaires (tous agents inactifs)</label>
             <textarea
-              className="client-dash cd-fta"
+              className="fta"
               defaultValue="Le cabinet est fermé. Horaires : lundi-vendredi 8h30–18h30. En cas d'urgence, appelez le 15."
             />
           </div>
           <div>
-            <label className="client-dash cd-flbl" style={{ marginBottom: 10 }}>Motifs d'appel autorisés</label>
-            <div className="client-dash cd-mtags">
-              <span className="client-dash cd-mtag">📅 Prise de RDV <span className="client-dash cd-mtag-x">×</span></span>
-              <span className="client-dash cd-mtag">💊 Renouvellement <span className="client-dash cd-mtag-x">×</span></span>
-              <span className="client-dash cd-mtag">🚨 Urgences <span className="client-dash cd-mtag-x">×</span></span>
-              <span className="client-dash cd-mtag">📋 Résultats <span className="client-dash cd-mtag-x">×</span></span>
-              <span className="client-dash cd-madd">+ Ajouter un motif</span>
+            <label className="flbl" style={{ marginBottom: 10 }}>Motifs d'appel autorisés</label>
+            <div className="mtags">
+              <span className="mtag">📅 Prise de RDV <span className="mtag-x">×</span></span>
+              <span className="mtag">💊 Renouvellement <span className="mtag-x">×</span></span>
+              <span className="mtag">🚨 Urgences <span className="mtag-x">×</span></span>
+              <span className="mtag">📋 Résultats <span className="mtag-x">×</span></span>
+              <span className="madd">+ Ajouter un motif</span>
             </div>
           </div>
           <div>
-            <label className="client-dash cd-flbl" style={{ marginBottom: 10 }}>Intégrations & automatisations</label>
-            <div className="client-dash cd-tog-block">
+            <label className="flbl" style={{ marginBottom: 10 }}>Intégrations & automatisations</label>
+            <div className="tog-block">
               {INTEGRATIONS.map((item) => (
-                <div key={item.id} className="client-dash cd-trow">
+                <div key={item.id} className="trow">
                   <div>
-                    <div className="client-dash cd-trnm">{item.name}</div>
-                    <div className="client-dash cd-trsub">{item.sub}</div>
+                    <div className="trnm">{item.name}</div>
+                    <div className="trsub">{item.sub}</div>
                   </div>
                   <button
                     type="button"
-                    className={`client-dash cd-tog ${toggles[item.id] ? "cd-tog-on" : ""}`}
+                    className={`tog ${toggles[item.id] ? 'tog-on' : ''}`}
                     onClick={() => toggle(item.id)}
                     aria-label={item.name}
                   />
@@ -149,7 +140,7 @@ export default function AppConfig() {
               ))}
             </div>
           </div>
-          <button type="button" className="client-dash cd-save-btn">Enregistrer la configuration</button>
+          <button type="button" className="save-btn">Enregistrer la configuration</button>
         </div>
       </div>
     </div>
