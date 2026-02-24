@@ -209,14 +209,15 @@
   margin-top: 1px;
 }
 
-/* Main */
+/* Main — largeur explicite pour éviter zone vide à droite (viewport - sidebar) */
 .client-dash .cd-main {
   margin-left: var(--sb);
   min-height: 100vh;
+  width: calc(100vw - var(--sb));
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   flex: 1;
-  width: 100%;
   min-width: 0;
 }
 
@@ -288,7 +289,17 @@
   gap: 26px;
   flex: 1;
   min-width: 0;
+  width: 100%;
+  max-width: 100%;
   overflow-y: auto;
+  overflow-x: auto;
+}
+
+/* Enfants directs de .cd-page (dashboard ou page) — évitent min-width: auto qui compresse le layout */
+.client-dash .cd-page > * {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
 }
 
 /* Contenu des pages (évite double .cd-page et débordement / icône tronquée) */
@@ -1342,6 +1353,7 @@
   }
   .client-dash .cd-main {
     margin-left: 0;
+    width: 100%;
     padding-bottom: 80px;
   }
   .client-dash .cd-topbar {
