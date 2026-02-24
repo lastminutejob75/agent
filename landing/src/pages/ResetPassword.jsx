@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link, useSearchParams, useNavigate } from "react-router-dom";
+import { Eye, EyeOff } from "lucide-react";
 import { api } from "../lib/api.js";
 
 const MIN_PASSWORD_LENGTH = 10;
@@ -15,6 +16,8 @@ export default function ResetPassword() {
   const [confirm, setConfirm] = useState("");
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   useEffect(() => {
     if (emailFromUrl) setEmail(emailFromUrl);
@@ -87,26 +90,48 @@ export default function ResetPassword() {
               className={inputClass}
             />
           )}
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Nouveau mot de passe"
-            required
-            minLength={MIN_PASSWORD_LENGTH}
-            autoComplete="new-password"
-            className={inputClass}
-          />
-          <input
-            type="password"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            placeholder="Confirmer le mot de passe"
-            required
-            minLength={MIN_PASSWORD_LENGTH}
-            autoComplete="new-password"
-            className={inputClass}
-          />
+          <div className="relative">
+            <input
+              type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Nouveau mot de passe"
+              required
+              minLength={MIN_PASSWORD_LENGTH}
+              autoComplete="new-password"
+              className={`${inputClass} pr-11`}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 focus:outline-none focus:ring-2 focus:ring-teal-500/50"
+              title={showPassword ? "Masquer" : "Afficher"}
+              aria-label={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+            >
+              {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
+          </div>
+          <div className="relative">
+            <input
+              type={showConfirm ? "text" : "password"}
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              placeholder="Confirmer le mot de passe"
+              required
+              minLength={MIN_PASSWORD_LENGTH}
+              autoComplete="new-password"
+              className={`${inputClass} pr-11`}
+            />
+            <button
+              type="button"
+              onClick={() => setShowConfirm((v) => !v)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 focus:outline-none focus:ring-2 focus:ring-teal-500/50"
+              title={showConfirm ? "Masquer" : "Afficher"}
+              aria-label={showConfirm ? "Masquer la confirmation" : "Afficher la confirmation"}
+            >
+              {showConfirm ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
+          </div>
           {err && <p className="text-red-400 text-sm">{err}</p>}
           <button type="submit" disabled={loading} className={btnPrimaryClass}>
             {loading ? "Enregistrement..." : "Enregistrer le mot de passe"}

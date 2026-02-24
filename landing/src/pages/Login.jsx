@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { api } from "../lib/api.js";
 import { Link } from "react-router-dom";
+import { Eye, EyeOff } from "lucide-react";
 import { GoogleLoginButton } from "../components/GoogleLoginButton.jsx";
 import { getApiUrl } from "../lib/authConfig.js";
 
@@ -11,6 +12,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [backendCheck, setBackendCheck] = useState("idle"); // idle | checking | ok | fail
   const [alreadyLoggedIn, setAlreadyLoggedIn] = useState(false); // session valide côté serveur
+  const [showPassword, setShowPassword] = useState(false);
   const userHasInteractedWithForm = useRef(false);
 
   const apiUrl = getApiUrl();
@@ -121,19 +123,29 @@ export default function Login() {
               className={inputClass}
             />
           </div>
-          <div>
+          <div className="relative">
             <label htmlFor="login-password" className="sr-only">Mot de passe</label>
             <input
               id="login-password"
-              type="password"
+              type={showPassword ? "text" : "password"}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               onFocus={markFormInteracted}
               placeholder="Mot de passe"
               required
               autoComplete="current-password"
-              className={inputClass}
+              className={`${inputClass} pr-11`}
             />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 focus:outline-none focus:ring-2 focus:ring-teal-500/50"
+              title={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+              aria-label={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+            >
+              {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
+          </div>
             <p className="mt-1.5 text-right">
               <Link to="/forgot-password" className="text-sm text-teal-400 hover:text-teal-300 transition-colors">
                 Mot de passe oublié ?
