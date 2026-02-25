@@ -129,6 +129,13 @@
 }
 
 .uwi-landing-new .nav-btn:active { opacity: .82; transform: scale(.96); }
+
+/* Mobile : texte court pour éviter le débordement du bouton CTA */
+.uwi-landing-new .nav-btn-text-short { display: none; }
+@media (max-width: 540px) {
+  .uwi-landing-new .nav-btn-text-long { display: none; }
+  .uwi-landing-new .nav-btn-text-short { display: inline; }
+}
 @media (max-width: 380px) {
   .uwi-landing-new .nav-actions { gap: 6px; }
   .uwi-landing-new .nav-btn { font-size: 12px; padding: 8px 12px; }
