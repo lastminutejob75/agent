@@ -355,9 +355,22 @@ export default function CreerAssistante() {
   };
 
   if (commitDone) {
+    let displayContact = submittedEmail;
+    if (!displayContact && typeof window !== "undefined") {
+      try {
+        const raw = sessionStorage.getItem(COMMIT_DONE_KEY);
+        if (raw) {
+          const data = JSON.parse(raw);
+          displayContact = data?.contact != null ? String(data.contact) : "";
+        }
+      } catch (_) {}
+    }
     return (
-      <div className="min-h-screen w-full bg-slate-950 flex flex-col items-center justify-center p-6 relative" style={{ minHeight: "100vh" }}>
-        <div className="absolute inset-0 pointer-events-none">
+      <div
+        className="min-h-screen w-full flex flex-col items-center justify-center p-6 relative"
+        style={{ minHeight: "100vh", backgroundColor: "#0f172a" }}
+      >
+        <div className="absolute inset-0 pointer-events-none" aria-hidden>
           <div className="absolute top-0 left-1/4 w-96 h-96 bg-teal-500/10 rounded-full blur-[120px]" />
           <div className="absolute top-1/3 right-1/4 w-96 h-96 bg-cyan-400/10 rounded-full blur-[120px]" />
         </div>
@@ -366,9 +379,9 @@ export default function CreerAssistante() {
           <p className="text-slate-400 mb-2">
             Nous avons bien reçu votre demande et vous recontacterons aux coordonnées indiquées.
           </p>
-          {submittedEmail && (
-            <p className="text-teal-400 font-medium mb-4 break-all">{submittedEmail}</p>
-          )}
+          {displayContact ? (
+            <p className="text-teal-400 font-medium mb-4 break-all">{displayContact}</p>
+          ) : null}
           <p className="text-slate-300 font-medium mb-4">
             Un expert vous contactera sous 24 h.
           </p>
