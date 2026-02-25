@@ -341,8 +341,7 @@ export default function UwiLanding() {
           <div className="nav-actions">
             <Link to="/login" className="nav-btn nav-btn--secondary">Connexion</Link>
             <Link to="/creer-assistante?new=1" className="nav-btn">
-              <span className="nav-btn-text-long">Créer mon assistant</span>
-              <span className="nav-btn-text-short">Créer</span>
+              Créer mon assistant
             </Link>
           </div>
         </nav>
