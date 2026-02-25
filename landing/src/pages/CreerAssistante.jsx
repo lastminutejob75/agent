@@ -643,6 +643,24 @@ export default function CreerAssistante() {
                     );
                   })}
               </div>
+              {/* Boutons uniquement sur l'écran horaires — juste sous le formulaire */}
+              <div className="max-w-xl w-full flex justify-between gap-4 mt-6">
+                <button
+                  type="button"
+                  onClick={() => persist({ step: 2 })}
+                  className="px-5 py-2.5 rounded-xl border-2 border-slate-600 text-slate-300 font-medium hover:bg-slate-800/80 hover:border-slate-500"
+                >
+                  Retour
+                </button>
+                <button
+                  type="button"
+                  onClick={() => persist({ step: 4 })}
+                  disabled={!atLeastOneOpen()}
+                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 font-black hover:shadow-lg hover:shadow-teal-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                >
+                  Continuer
+                </button>
+              </div>
             </>
           )}
 
@@ -708,6 +726,24 @@ export default function CreerAssistante() {
                 placeholder="Ou un prénom de votre choix"
                 className="mt-4 w-full max-w-xs rounded-xl border-2 border-slate-600 bg-slate-800/80 px-4 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
               />
+              {/* Boutons pour saisie manuelle du prénom */}
+              <div className="max-w-xl w-full flex justify-between gap-4 mt-6">
+                <button
+                  type="button"
+                  onClick={() => persist({ step: 4 })}
+                  className="px-5 py-2.5 rounded-xl border-2 border-slate-600 text-slate-300 font-medium hover:bg-slate-800/80 hover:border-slate-500"
+                >
+                  Retour
+                </button>
+                <button
+                  type="button"
+                  onClick={() => persist({ step: 6 })}
+                  disabled={!canContinue()}
+                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 font-black hover:shadow-lg hover:shadow-teal-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                >
+                  Continuer
+                </button>
+              </div>
             </>
           )}
 
@@ -830,32 +866,7 @@ export default function CreerAssistante() {
         </div>
       </div>
 
-      {/* Sticky buttons (steps 1–6 only; step 7 has its own CTA) */}
-      {!isStep7 && (
-        <div className="flex-shrink-0 sticky bottom-0 bg-slate-950/95 border-t border-slate-800 px-6 py-4 backdrop-blur-sm relative z-10">
-          <div className="max-w-xl mx-auto flex justify-between gap-4">
-            {step > 1 ? (
-              <button
-                type="button"
-                onClick={() => persist({ step: step - 1 })}
-                className="px-5 py-2.5 rounded-xl border-2 border-slate-600 text-slate-300 font-medium hover:bg-slate-800/80 hover:border-slate-500"
-              >
-                Retour
-              </button>
-            ) : (
-              <div />
-            )}
-            <button
-              type="button"
-              onClick={() => persist({ step: step + 1 })}
-              disabled={!canContinue()}
-              className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 font-black hover:shadow-lg hover:shadow-teal-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-            >
-              Continuer
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Plus de barre sticky Continuer : affichée uniquement sur l'écran horaires (step 3), intégrée sous le formulaire */}
 
       {/* Modal coordonnées — email et/ou téléphone (au moins un requis), enregistré comme lead en admin */}
       {modalOpen && (
