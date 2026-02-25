@@ -400,12 +400,14 @@ export default function CreerAssistante() {
 
   if (commitDone) {
     let leadId = state.lead_id || "";
-    if (!leadId && typeof window !== "undefined") {
+    let initialPhone = "";
+    if (typeof window !== "undefined") {
       try {
         const raw = sessionStorage.getItem(COMMIT_DONE_KEY);
         if (raw) {
           const data = JSON.parse(raw);
-          leadId = (data && data.lead_id) ? data.lead_id : "";
+          if (data && data.lead_id) leadId = data.lead_id;
+          if (data && data.phone) initialPhone = String(data.phone).replace(/\D/g, "").slice(0, 10);
         }
       } catch (_) {}
     }
@@ -413,6 +415,7 @@ export default function CreerAssistante() {
       <div className="min-h-screen w-full" style={{ backgroundColor: "#0A1828" }}>
         <UWIFinalization
           leadId={leadId}
+          initialPhone={initialPhone}
           assistantName={state.assistant_name || "Emma"}
           practitioner="votre cabinet"
           onComplete={handleBackToHome}

@@ -57,14 +57,14 @@ function formatDayForDisplay(date) {
   return `${days[date.getDay()]} ${date.getDate()} ${months[date.getMonth()]}`;
 }
 
-export default function UWIFinalization({ leadId = "", assistantName = "Emma", practitioner = "votre cabinet", onComplete }) {
+export default function UWIFinalization({ leadId = "", initialPhone = "", assistantName = "Emma", practitioner = "votre cabinet", onComplete }) {
   const [phase, setPhase] = useState("loading");
   const [loadingStep, setLoadingStep] = useState(0);
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [expert] = useState(() => EXPERTS[Math.floor(Math.random() * EXPERTS.length)]);
   const [selectedDay, setSelectedDay] = useState(null);
   const [selectedSlot, setSelectedSlot] = useState(null);
-  const [phone, setPhone] = useState("");
+  const [phone, setPhone] = useState(() => (initialPhone || "").replace(/\D/g, "").slice(0, 10));
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const assistantInfo = ASSISTANTS[assistantName] || ASSISTANTS.Emma;
