@@ -1,6 +1,6 @@
 // Wizard "Créer votre assistant" — 7 steps, diagnostic + projection ROI (1 question par écran, 0 scroll)
 import { useState, useEffect, useCallback } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { api } from "../lib/api.js";
 
 const STORAGE_KEY = "uwi_creer_assistante";
