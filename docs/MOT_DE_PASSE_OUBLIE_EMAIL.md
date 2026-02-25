@@ -2,6 +2,8 @@
 
 L’API répond toujours **200** (pour ne pas révéler si l’email existe). Si l’email de réinitialisation ne part pas, vérifier la config **backend (Railway)**.
 
+**Important** : l’email est envoyé **uniquement si l’adresse est déjà inscrite** (compte existant dans `tenant_users`). Si le compte n’existe pas, aucun email n’est envoyé (sécurité).
+
 ## 1. URL du lien (obligatoire)
 
 Le backend doit connaître l’URL de la landing pour construire le lien dans l’email.
@@ -40,7 +42,8 @@ Sans Postmark ni SMTP → l’email ne part pas (log : `email not sent — Email
 
 Après une demande « Mot de passe oublié », regarder les **logs** du service backend sur Railway :
 
-- `forgot-password: FRONT_BASE_URL/APP_BASE_URL not set` → définir **APP_BASE_URL** (ou FRONT_BASE_URL).
+- `forgot-password: no token (email not in DB or DATABASE_URL missing)` → l’email **n’est pas dans la base** (compte non créé) ou **DATABASE_URL** manquant. Vérifier que l’utilisateur a bien un compte (inscription / premier login).
+- `forgot-password: APP_BASE_URL/FRONT_BASE_URL not set` → définir **APP_BASE_URL** (ou FRONT_BASE_URL) sur Railway.
 - `forgot-password: email not sent to xxx — Email non configuré` → configurer **Postmark** ou **SMTP** (voir ci‑dessus).
 - `forgot-password: email not sent to xxx — Postmark 4xx...` ou erreur SMTP → problème de token, expéditeur non validé, ou mot de passe SMTP incorrect.
 
