@@ -124,6 +124,17 @@ export default function UwiLanding() {
   const [typedChar, setTypedChar] = useState(0);
   const [deleting, setDeleting] = useState(false);
   const [openFaq, setOpenFaq] = useState(-1);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  useEffect(() => {
+    const close = (e) => {
+      if (!e.target.closest(".burger-btn") && !e.target.closest(".mobile-dropdown")) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
 
   // BG Aurora canvas
   useEffect(() => {
@@ -320,14 +331,14 @@ export default function UwiLanding() {
     <div className="uwi-landing-new">
       <canvas id="bg" ref={bgRef} aria-hidden />
       <div className="wrap">
-        <nav>
-          <Link to="/" className="logo">
-            <div className="logo-mark">
+        <nav className="landing-nav">
+          <Link to="/" className="logo header-logo">
+            <div className="logo-mark header-logo-icon">
               <LogoStethoscope />
             </div>
             <div className="logo-copy">
-              <span className="logo-name">UWi Medical</span>
-              <span className="logo-tag">IA Secrétariat</span>
+              <span className="logo-name header-logo-name">UWi Medical</span>
+              <span className="logo-tag header-logo-subtitle">IA Secrétariat</span>
             </div>
           </Link>
           <div className="nav-links">
@@ -338,13 +349,59 @@ export default function UwiLanding() {
             <a href="#securite">Sécurité</a>
             <a href="#faq">FAQ</a>
           </div>
-          <div className="nav-actions">
-            <Link to="/login" className="nav-btn nav-btn--secondary">Connexion</Link>
-            <Link to="/creer-assistante?new=1" className="nav-btn">
+          <div className="nav-actions header-right">
+            <Link to="/login" className="nav-btn nav-btn--secondary header-link-connexion">Connexion</Link>
+            <Link to="/creer-assistante?new=1" className="nav-btn header-cta">
               Créer mon assistant
             </Link>
+            <button
+              type="button"
+              className={`burger-btn ${menuOpen ? "open" : ""}`}
+              onClick={() => setMenuOpen(!menuOpen)}
+              aria-label="Menu"
+              aria-expanded={menuOpen}
+            >
+              <span /><span /><span />
+            </button>
           </div>
         </nav>
+
+        {menuOpen && (
+          <div className="mobile-dropdown">
+            <Link to="/login" className="dd-item" onClick={() => setMenuOpen(false)}>
+              <span className="dd-icon">👤</span>
+              <div>
+                <div className="dd-label">Connexion</div>
+                <div className="dd-sub">Accéder à mon espace</div>
+              </div>
+            </Link>
+            <a href="#pricing" className="dd-item" onClick={() => setMenuOpen(false)}>
+              <span className="dd-icon">💳</span>
+              <div>
+                <div className="dd-label">Tarifs</div>
+                <div className="dd-sub">À partir de 99€/mois</div>
+              </div>
+            </a>
+            <a href="#fonctionnalites" className="dd-item" onClick={() => setMenuOpen(false)}>
+              <span className="dd-icon">⚡</span>
+              <div>
+                <div className="dd-label">Fonctionnalités</div>
+                <div className="dd-sub">Agenda, triage, RDV 24/7</div>
+              </div>
+            </a>
+            <a href="#metiers" className="dd-item" onClick={() => setMenuOpen(false)}>
+              <span className="dd-icon">🏥</span>
+              <div>
+                <div className="dd-label">Pour les médecins</div>
+                <div className="dd-sub">Certifié HDS, RGPD</div>
+              </div>
+            </a>
+            <div className="dd-sep" />
+            <Link to="/creer-assistante?new=1" className="dd-cta" onClick={() => setMenuOpen(false)}>
+              Créer mon assistant — gratuit 1 mois →
+            </Link>
+          </div>
+        )}
 
         <section className="hero">
           <div className="hero-inner">
@@ -358,11 +415,15 @@ export default function UwiLanding() {
                 <span className="pill-lbl">500+ praticiens nous font confiance</span>
               </div>
 
-              <h1>
+              <h1 className="hero-h1">
                 <span className="h1-w">Votre assistant IA</span>
                 <span className="h1-t">répond et prend</span>
                 <span className="h1-w">vos RDV</span>
               </h1>
+
+              <Link to="/creer-assistante?new=1" className="hero-cta-mobile">
+                Créer mon assistant →
+              </Link>
 
               <p className="subtitle">
                 Pendant que vous soignez, UWi <strong>décroche, oriente vos patients et remplit votre agenda</strong> — sans aucune interruption de votre part.
@@ -680,6 +741,13 @@ export default function UwiLanding() {
             </Link>
           </div>
         </section>
+
+        {/* Sticky CTA — mobile uniquement */}
+        <div className="sticky-cta">
+          <Link to="/creer-assistante?new=1" className="sticky-cta-btn">
+            Créer mon assistant — gratuit 1 mois →
+          </Link>
+        </div>
 
         <footer className="landing-footer">
           <Link to="/creer-assistante?new=1">Créer mon assistant</Link>
