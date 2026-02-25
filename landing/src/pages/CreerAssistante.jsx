@@ -853,25 +853,17 @@ export default function CreerAssistante() {
                   {diagnostic.message}
                 </p>
               </div>
-              <div className="flex flex-col sm:flex-row gap-3 mt-6">
-                <div className="flex-1 flex flex-col items-center">
-                  <button
-                    type="button"
-                    onClick={() => setModalOpen(true)}
-                    className="w-full px-6 py-3 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 font-black hover:shadow-lg hover:shadow-teal-500/30 transition-all"
-                  >
-                    Profiter de mon mois offert
-                  </button>
-                  <p className="text-xs text-slate-500 mt-1.5">
-                    Numéro de test envoyé par email en moins d'une minute.
-                  </p>
-                </div>
+              <div className="flex flex-col items-center justify-center mt-6">
                 <button
                   type="button"
-                  className="flex-1 px-6 py-3 rounded-xl border-2 border-slate-600 text-slate-300 font-semibold hover:bg-slate-800/80 hover:border-slate-500"
+                  onClick={() => setModalOpen(true)}
+                  className="w-full max-w-sm px-6 py-3 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 font-black hover:shadow-lg hover:shadow-teal-500/30 transition-all"
                 >
-                  Écouter {state.assistant_name || "l'assistant"}
+                  Profiter de mon mois offert
                 </button>
+                <p className="text-xs text-slate-500 mt-1.5 text-center">
+                  Numéro de test envoyé par email en moins d'une minute.
+                </p>
               </div>
               <p className="text-xs text-slate-500 text-center mt-4">
                 Configuration modifiable à tout moment.
@@ -910,23 +902,14 @@ export default function CreerAssistante() {
             {commitError && (
               <p className="text-sm text-red-400 mb-2">{commitError}</p>
             )}
-            <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={() => setModalOpen(false)}
-                className="flex-1 py-2.5 rounded-xl border-2 border-slate-600 text-slate-300 font-medium hover:bg-slate-800"
-              >
-                Annuler
-              </button>
-              <button
-                type="button"
-                onClick={handleCommit}
-                disabled={(!modalEmail.trim() && !modalPhone.trim()) || commitLoading}
-                className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 font-black hover:shadow-teal-500/30 disabled:opacity-50 transition-all"
-              >
-                {commitLoading ? "Envoi…" : "Terminer la configuration de mon assistant avec un expert"}
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={handleCommit}
+              disabled={(!modalEmail.trim() && !modalPhone.trim()) || commitLoading}
+              className="w-full py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 font-black hover:shadow-teal-500/30 disabled:opacity-50 transition-all"
+            >
+              {commitLoading ? "Envoi…" : "Terminer la configuration de mon assistant avec un expert"}
+            </button>
           </div>
         </div>
       )}
