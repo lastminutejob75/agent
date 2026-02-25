@@ -24,7 +24,11 @@ def get_lead_by_email_for_upsert(email: str) -> Optional[Dict[str, Any]]:
     Retourne un lead existant avec status in ('new','contacted') pour déduplication, ou None.
     Les leads converted/lost ne sont jamais retournés → jamais modifiés par un nouveau commit
     (pas d'écrasement d'historique ou de config).
+    Si email vide, retourne None (pas de déduplication par email).
     """
+    if not email or not (email or "").strip():
+        return None
+    email = (email or "").strip()
     try:
         with _get_conn() as conn:
             with conn.cursor() as cur:
@@ -48,7 +52,7 @@ def get_lead_by_email_for_upsert(email: str) -> Optional[Dict[str, Any]]:
 
 
 def upsert_lead(
-    email: str,
+    email: Optional[str],
     daily_call_volume: str,
     medical_specialty: str,
     primary_pain_point: str,
@@ -64,9 +68,10 @@ def upsert_lead(
     """
     Si un lead existe déjà avec cet email et status in ('new','contacted') → UPDATE et retourne son id.
     Sinon INSERT et retourne le nouvel id. Évite les doublons quand un médecin refait le wizard.
+    Si email vide/None (lead téléphone seul), pas de déduplication → insert.
     """
     is_enterprise = (daily_call_volume == "100+")
-    existing = get_lead_by_email_for_upsert(email)
+    existing = get_lead_by_email_for_upsert(email or "") if (email and (email or "").strip()) else None
     if existing:
         lead_id = existing["id"]
         try:
@@ -104,7 +109,7 @@ def upsert_lead(
             logger.exception("upsert_lead update failed: %s", e)
             return None
     return insert_lead(
-        email=email,
+        email=(email or "").strip() or "",
         daily_call_volume=daily_call_volume,
         medical_specialty=medical_specialty,
         primary_pain_point=primary_pain_point,
@@ -120,7 +125,7 @@ def upsert_lead(
 
 
 def insert_lead(
-    email: str,
+    email: str,  # peut être "" pour lead téléphone seul (colonne NOT NULL accepte '')
     daily_call_volume: str,
     medical_specialty: str,
     primary_pain_point: str,
@@ -148,7 +153,7 @@ def insert_lead(
                     """,
                     (
                         lead_id,
-                        email.strip(),
+                        (email or "").strip(),
                         daily_call_volume,
                         (medical_specialty or "").strip() or None,
                         (medical_specialty_label or "").strip() or None,

@@ -43,7 +43,7 @@ VALID_PAIN_POINTS = frozenset({
 
 
 class PreOnboardingCommitBody(BaseModel):
-    email: str = Field(..., min_length=1)
+    email: str = Field(default="")  # optionnel si callback_phone fourni
     medical_specialty: str = Field(..., min_length=1)  # slug (ex: kinesitherapeute)
     medical_specialty_label: Optional[str] = Field(default=None)  # label affiché (ex: Kinésithérapeute)
     specialty_other: Optional[str] = Field(default=None)  # précision si medical_specialty=autre
@@ -54,7 +54,7 @@ class PreOnboardingCommitBody(BaseModel):
     assistant_name: str = Field(..., min_length=1)
     source: str = Field(default="landing_cta")
     wants_callback: bool = False
-    callback_phone: str = Field(default="")
+    callback_phone: str = Field(default="")  # optionnel si email fourni ; au moins un des deux requis
 
 
 def _validate_email(email: str) -> bool:
@@ -82,15 +82,23 @@ async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody)
     Enregistre un lead pré-onboarding (wizard "Créer votre assistante").
     Retourne rapidement ; envoi email fondateur en arrière-plan.
     """
-    # 0) Rate limit (anti-spam)
+    email = (body.email or "").strip()
+    callback_phone = (body.callback_phone or "").strip()
+    if not email and not callback_phone:
+        raise HTTPException(
+            status_code=400,
+            detail="Indiquez au moins un email ou un numéro de téléphone",
+        )
+    if email and not _validate_email(email):
+        raise HTTPException(status_code=400, detail="Email invalide")
+
+    # 0) Rate limit (anti-spam) — clé = email ou téléphone
     try:
-        check_pre_onboarding_commit(request, body.email.strip())
+        check_pre_onboarding_commit(request, email or callback_phone)
     except RuntimeError as e:
         raise HTTPException(status_code=429, detail=str(e))
 
     # 1) Validation
-    if not _validate_email(body.email):
-        raise HTTPException(status_code=400, detail="Email invalide")
     if body.medical_specialty not in VALID_SPECIALTIES:
         raise HTTPException(status_code=400, detail="medical_specialty invalide")
     if body.daily_call_volume not in VALID_VOLUME:
@@ -101,28 +109,23 @@ async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody)
         raise HTTPException(status_code=400, detail="voice_gender invalide")
     if not (body.assistant_name and body.assistant_name.strip()):
         raise HTTPException(status_code=400, detail="assistant_name requis")
-    if body.wants_callback and not (body.callback_phone and body.callback_phone.strip()):
-        raise HTTPException(
-            status_code=400,
-            detail="Numéro de téléphone requis pour être rappelé",
-        )
     if not _validate_opening_hours(body.opening_hours):
         raise HTTPException(
             status_code=400,
             detail="Horaires invalides : au moins un jour doit être ouvert",
         )
 
-    # 2) Upsert lead (déduplication : si email déjà en new/contacted → update, sinon insert)
+    # 2) Upsert lead (déduplication par email si fourni ; sinon insert)
     lead_id = upsert_lead(
-        email=body.email.strip(),
+        email=email or None,
         daily_call_volume=body.daily_call_volume,
         medical_specialty=body.medical_specialty.strip(),
         primary_pain_point=(body.primary_pain_point or "").strip(),
         assistant_name=body.assistant_name.strip(),
         voice_gender=body.voice_gender,
         opening_hours=body.opening_hours,
-        wants_callback=body.wants_callback,
-        callback_phone=(body.callback_phone or "").strip() or None,
+        wants_callback=bool(callback_phone),
+        callback_phone=callback_phone or None,
         specialty_other=(body.specialty_other or "").strip() or None,
         medical_specialty_label=(body.medical_specialty_label or "").strip() or None,
         source=body.source or "landing_cta",
@@ -130,36 +133,37 @@ async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody)
     if not lead_id:
         raise HTTPException(status_code=500, detail="Erreur enregistrement lead")
 
-    # 3) Envoi email fondateur en synchrone (v1 fiable sur Railway : pas de process recyclé avant envoi)
-    dashboard_base = (
-        os.environ.get("ADMIN_BASE_URL")
-        or os.environ.get("FRONT_BASE_URL")
-        or os.environ.get("APP_BASE_URL")
-        or ""
-    ).strip()
-    try:
-        is_enterprise = body.daily_call_volume == "100+"
-        ok, err = send_lead_founder_email(
-            lead_id=lead_id,
-            email=body.email,
-            daily_call_volume=body.daily_call_volume,
-            medical_specialty=body.medical_specialty,
-            medical_specialty_label=(body.medical_specialty_label or "").strip() or "",
-            specialty_other=(body.specialty_other or "").strip() or "",
-            primary_pain_point=(body.primary_pain_point or "").strip(),
-            assistant_name=body.assistant_name,
-            voice_gender=body.voice_gender,
-            opening_hours=body.opening_hours,
-            wants_callback=body.wants_callback,
-            callback_phone=(body.callback_phone or "").strip() or "",
-            is_enterprise=is_enterprise,
-            dashboard_base_url=dashboard_base,
-            source=body.source or "landing_cta",
-        )
-        if not ok:
-            logger.warning("lead_founder_email failed: %s", err)
-    except Exception as e:
-        logger.exception("lead_founder_email exception: %s", e)
+    # 3) Envoi email fondateur en synchrone si email fourni (pas d'envoi si lead téléphone seul)
+    if email:
+        dashboard_base = (
+            os.environ.get("ADMIN_BASE_URL")
+            or os.environ.get("FRONT_BASE_URL")
+            or os.environ.get("APP_BASE_URL")
+            or ""
+        ).strip()
+        try:
+            is_enterprise = body.daily_call_volume == "100+"
+            ok, err = send_lead_founder_email(
+                lead_id=lead_id,
+                email=email,
+                daily_call_volume=body.daily_call_volume,
+                medical_specialty=body.medical_specialty,
+                medical_specialty_label=(body.medical_specialty_label or "").strip() or "",
+                specialty_other=(body.specialty_other or "").strip() or "",
+                primary_pain_point=(body.primary_pain_point or "").strip(),
+                assistant_name=body.assistant_name,
+                voice_gender=body.voice_gender,
+                opening_hours=body.opening_hours,
+                wants_callback=bool(callback_phone),
+                callback_phone=callback_phone or "",
+                is_enterprise=is_enterprise,
+                dashboard_base_url=dashboard_base,
+                source=body.source or "landing_cta",
+            )
+            if not ok:
+                logger.warning("lead_founder_email failed: %s", err)
+        except Exception as e:
+            logger.exception("lead_founder_email exception: %s", e)
 
     out = {"ok": True, "lead_id": lead_id}
     return out

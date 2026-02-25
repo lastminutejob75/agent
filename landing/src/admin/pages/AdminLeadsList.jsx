@@ -111,7 +111,7 @@ export default function AdminLeadsList() {
             <thead className="bg-slate-50">
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Date</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Email</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Contact</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Spécialité</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Appels/jour</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase"></th>
@@ -137,7 +137,9 @@ export default function AdminLeadsList() {
                   return (
                   <tr key={lead.id} className="hover:bg-slate-50">
                     <td className="px-4 py-3 text-sm text-slate-600">{formatDate(lead.created_at)}</td>
-                    <td className="px-4 py-3 text-sm font-medium text-slate-800">{lead.email}</td>
+                    <td className="px-4 py-3 text-sm font-medium text-slate-800">
+                      {lead.email?.trim() || lead.callback_phone || "—"}
+                    </td>
                     <td className="px-4 py-3 text-sm text-slate-600">{lead.medical_specialty_label || lead.medical_specialty || "—"}</td>
                     <td className="px-4 py-3 text-sm text-slate-600">{lead.daily_call_volume}</td>
                     <td className="px-4 py-3 flex flex-wrap gap-1">

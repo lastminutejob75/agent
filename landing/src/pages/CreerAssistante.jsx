@@ -227,8 +227,7 @@ export default function CreerAssistante() {
     }
   }, []);
   const [modalEmail, setModalEmail] = useState("");
-  const [modalCallback, setModalCallback] = useState(false);
-  const [modalCallbackPhone, setModalCallbackPhone] = useState("");
+  const [modalPhone, setModalPhone] = useState("");
   const [commitLoading, setCommitLoading] = useState(false);
   const [commitDone, setCommitDone] = useState(false);
   const [submittedEmail, setSubmittedEmail] = useState("");
@@ -278,8 +277,10 @@ export default function CreerAssistante() {
     setCommitLoading(true);
     try {
       const oh = state.opening_hours || defaultOpeningHours();
+      const emailTrim = modalEmail.trim();
+      const phoneTrim = modalPhone.trim();
       const payload = {
-        email: modalEmail.trim(),
+        email: emailTrim,
         medical_specialty: (state.medical_specialty || "").trim(),
         medical_specialty_label: (state.medical_specialty_label || "").trim() || undefined,
         specialty_other: (state.specialty_other || "").trim() || undefined,
@@ -289,11 +290,11 @@ export default function CreerAssistante() {
         voice_gender: state.voice_gender,
         assistant_name: (state.assistant_name || "").trim(),
         source: "landing_cta",
-        wants_callback: modalCallback,
-        callback_phone: modalCallback ? (modalCallbackPhone || "").trim() : "",
+        wants_callback: !!phoneTrim,
+        callback_phone: phoneTrim,
       };
       await api.preOnboardingCommit(payload);
-      setSubmittedEmail(modalEmail.trim());
+      setSubmittedEmail(emailTrim || phoneTrim || "");
       clearState();
       setCommitDone(true);
       setModalOpen(false);
@@ -314,7 +315,7 @@ export default function CreerAssistante() {
         <div className="max-w-md text-center relative z-10">
           <h1 className="text-2xl font-bold text-white mb-2">C'est bon, on vous recontacte</h1>
           <p className="text-slate-400 mb-2">
-            Nous avons bien reçu votre demande et vous recontacterons à l'adresse :
+            Nous avons bien reçu votre demande et vous recontacterons aux coordonnées indiquées.
           </p>
           {submittedEmail && (
             <p className="text-teal-400 font-medium mb-4 break-all">{submittedEmail}</p>
@@ -818,29 +819,30 @@ export default function CreerAssistante() {
         </div>
       )}
 
-      {/* Modal email — identité landing */}
+      {/* Modal coordonnées — email et/ou téléphone (au moins un requis), enregistré comme lead en admin */}
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
           <div className="rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl max-w-md w-full p-6 ring-1 ring-white/10">
-            <h3 className="text-lg font-bold text-white mb-4">
+            <h3 className="text-lg font-bold text-white mb-2">
               Recevez votre numéro de test
             </h3>
+            <p className="text-sm text-slate-400 mb-4">
+              Indiquez au moins l'un des deux pour que nous puissions vous recontacter.
+            </p>
             <input
               type="email"
               value={modalEmail}
               onChange={(e) => setModalEmail(e.target.value)}
-              placeholder="votre@email.com"
+              placeholder="Email (optionnel)"
+              className="w-full rounded-xl border-2 border-slate-600 bg-slate-800 px-4 py-3 mb-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+            />
+            <input
+              type="tel"
+              value={modalPhone}
+              onChange={(e) => setModalPhone(e.target.value)}
+              placeholder="Téléphone (optionnel)"
               className="w-full rounded-xl border-2 border-slate-600 bg-slate-800 px-4 py-3 mb-4 text-white placeholder-slate-500 focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
             />
-            <label className="flex items-center gap-2 text-sm text-slate-400 mb-4">
-              <input
-                type="checkbox"
-                checked={modalCallback}
-                onChange={(e) => setModalCallback(e.target.checked)}
-                className="rounded border-slate-600 bg-slate-700 text-teal-500 focus:ring-teal-500"
-              />
-              Je souhaite être rappelé
-            </label>
             {commitError && (
               <p className="text-sm text-red-400 mb-2">{commitError}</p>
             )}
@@ -855,7 +857,7 @@ export default function CreerAssistante() {
               <button
                 type="button"
                 onClick={handleCommit}
-                disabled={!modalEmail.trim() || commitLoading}
+                disabled={(!modalEmail.trim() && !modalPhone.trim()) || commitLoading}
                 className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 font-black hover:shadow-teal-500/30 disabled:opacity-50 transition-all"
               >
                 {commitLoading ? "Envoi…" : "Recevoir mon numéro"}

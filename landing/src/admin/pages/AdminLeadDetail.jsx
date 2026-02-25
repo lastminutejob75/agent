@@ -80,10 +80,14 @@ export default function AdminLeadDetail() {
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
+  const contactLabel = (lead.email?.trim() || lead.callback_phone || "—");
+  const hasEmail = !!(lead.email && lead.email.trim());
+
   const copySummary = () => {
     if (!lead) return;
     const lines = [
-      `Email: ${lead.email}`,
+      `Email: ${lead.email?.trim() || "—"}`,
+      ...(lead.callback_phone ? [`Téléphone: ${lead.callback_phone}`] : []),
       `Spécialité: ${lead.medical_specialty_label || lead.medical_specialty || "—"}${lead.specialty_other ? ` – ${lead.specialty_other}` : ""}`,
       `Situation: ${lead.primary_pain_point || "—"}`,
       `Appels/jour: ${lead.daily_call_volume}`,
@@ -117,7 +121,7 @@ export default function AdminLeadDetail() {
     );
   }
 
-  const mailto = `mailto:${lead.email}?subject=UWi – Votre assistant ${lead.assistant_name}`;
+  const mailto = hasEmail ? `mailto:${lead.email.trim()}?subject=UWi – Votre assistant ${lead.assistant_name}` : null;
 
   return (
     <div>
@@ -125,7 +129,7 @@ export default function AdminLeadDetail() {
         <Link to="/admin/leads" className="text-slate-500 hover:text-slate-700 text-sm">
           ← Leads
         </Link>
-        <h1 className="text-2xl font-bold text-slate-800">Lead – {lead.email}</h1>
+        <h1 className="text-2xl font-bold text-slate-800">Lead – {contactLabel}</h1>
       </div>
 
       <div className="mb-6 rounded-xl border border-slate-200 bg-white p-6">
@@ -183,7 +187,8 @@ export default function AdminLeadDetail() {
         <div className="rounded-xl border border-slate-200 bg-white p-6">
           <h2 className="text-sm font-semibold text-slate-500 uppercase mb-4">Informations</h2>
           <ul className="space-y-2 text-sm">
-            <li><strong>Email:</strong> <a href={mailto} className="text-indigo-600 hover:underline">{lead.email}</a></li>
+            <li><strong>Email:</strong> {hasEmail ? <a href={mailto} className="text-indigo-600 hover:underline">{lead.email}</a> : "—"}</li>
+            {lead.callback_phone && <li><strong>Téléphone:</strong> {lead.callback_phone}</li>}
             <li><strong>Spécialité:</strong> {lead.medical_specialty_label || lead.medical_specialty || "—"}{lead.specialty_other ? ` – ${lead.specialty_other}` : ""}</li>
             <li><strong>Situation:</strong> {lead.primary_pain_point || "—"}</li>
             <li><strong>Appels/jour:</strong> {lead.daily_call_volume}</li>
@@ -194,19 +199,21 @@ export default function AdminLeadDetail() {
             <li><strong>Créé le:</strong> {formatDate(lead.created_at)}</li>
           </ul>
           <div className="mt-4 flex gap-2">
-            <a href={mailto} className="px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 text-sm font-medium hover:bg-slate-200">
-              Envoyer un email
-            </a>
+            {hasEmail && (
+              <a href={mailto} className="px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 text-sm font-medium hover:bg-slate-200">
+                Envoyer un email
+              </a>
+            )}
             <button
               type="button"
               onClick={() => {
-                navigator.clipboard.writeText(lead.email);
+                navigator.clipboard.writeText(lead.email?.trim() || lead.callback_phone || "");
                 setCopied(true);
                 setTimeout(() => setCopied(false), 2000);
               }}
               className="px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 text-sm font-medium hover:bg-slate-200"
             >
-              Copier l'email
+              Copier {hasEmail ? "l'email" : "le téléphone"}
             </button>
           </div>
         </div>
