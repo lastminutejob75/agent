@@ -1,9 +1,10 @@
 // Wizard "Créer votre assistant" — 7 steps, diagnostic + projection ROI (1 question par écran, 0 scroll)
 import { useState, useEffect, useCallback } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api } from "../lib/api.js";
 
 const STORAGE_KEY = "uwi_creer_assistante";
+const COMMIT_DONE_KEY = "uwi_creer_assistante_done";
 const DAYS = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
 
 // Diagnostic : minutes/jour pour calcul + label (200 jours ouvrés/an)
@@ -229,9 +230,28 @@ export default function CreerAssistante() {
   const [modalEmail, setModalEmail] = useState("");
   const [modalPhone, setModalPhone] = useState("");
   const [commitLoading, setCommitLoading] = useState(false);
-  const [commitDone, setCommitDone] = useState(false);
-  const [submittedEmail, setSubmittedEmail] = useState("");
+  const [commitDone, setCommitDone] = useState(() => {
+    try {
+      const raw = typeof window !== "undefined" && sessionStorage.getItem(COMMIT_DONE_KEY);
+      if (raw) {
+        const { contact } = JSON.parse(raw);
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  });
+  const [submittedEmail, setSubmittedEmail] = useState(() => {
+    try {
+      const raw = typeof window !== "undefined" && sessionStorage.getItem(COMMIT_DONE_KEY);
+      if (raw) {
+        const { contact } = JSON.parse(raw);
+        return contact || "";
+      }
+    } catch (_) {}
+    return "";
+  });
   const [commitError, setCommitError] = useState("");
+  const navigate = useNavigate();
 
   const persist = useCallback((next) => {
     setState((prev) => {
@@ -297,8 +317,11 @@ export default function CreerAssistante() {
         callback_phone: phoneTrim,
       };
       await api.preOnboardingCommit(payload);
-      setSubmittedEmail(emailTrim || phoneTrim || "");
-      clearState();
+      const contact = emailTrim || phoneTrim || "";
+      try {
+        sessionStorage.setItem(COMMIT_DONE_KEY, JSON.stringify({ contact }));
+      } catch (_) {}
+      setSubmittedEmail(contact);
       setCommitDone(true);
       setModalOpen(false);
     } catch (e) {
@@ -306,6 +329,14 @@ export default function CreerAssistante() {
     } finally {
       setCommitLoading(false);
     }
+  };
+
+  const handleBackToHome = () => {
+    try {
+      sessionStorage.removeItem(COMMIT_DONE_KEY);
+      clearState();
+    } catch (_) {}
+    navigate("/", { replace: true });
   };
 
   if (commitDone) {
@@ -323,16 +354,20 @@ export default function CreerAssistante() {
           {submittedEmail && (
             <p className="text-teal-400 font-medium mb-4 break-all">{submittedEmail}</p>
           )}
+          <p className="text-slate-300 font-medium mb-4">
+            Un expert vous contactera sous 24 h.
+          </p>
           <p className="text-slate-500 text-sm mb-6">
             Vous recevrez sous peu un numéro de test pour écouter votre assistant.
           </p>
           <p className="text-slate-500 text-xs mb-6">Vous pouvez fermer cette page.</p>
-          <Link
-            to="/"
+          <button
+            type="button"
+            onClick={handleBackToHome}
             className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 font-black px-6 py-3 hover:shadow-lg hover:shadow-teal-500/30 transition-all"
           >
             Retour à l'accueil
-          </Link>
+          </button>
         </div>
       </div>
     );
