@@ -68,6 +68,22 @@ def _get_tenant_name(tenant_id: int) -> str:
     return (d.get("name") or "Tenant") if d else "Tenant"
 
 
+def _get_reset_base_url(request: Request) -> str:
+    """Base URL pour le lien reset : APP_BASE_URL ou, à défaut, origine de la requête (Origin/Referer)."""
+    if APP_BASE_URL:
+        return APP_BASE_URL
+    origin = (request.headers.get("origin") or request.headers.get("referer") or "").strip()
+    if not origin:
+        return ""
+    try:
+        parsed = urllib.parse.urlparse(origin)
+        if parsed.scheme in ("http", "https") and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+    except Exception:
+        pass
+    return ""
+
+
 @router.get("/impersonate")
 def auth_impersonate_validate(token: str = ""):
     """
@@ -217,11 +233,12 @@ def auth_forgot_password(request: Request, body: ForgotPasswordBody):
     if not token:
         logger.info("forgot-password: no token (email not in DB or DATABASE_URL missing) for %s", email[:50])
         return {"ok": True}
-    if not APP_BASE_URL:
-        logger.warning("forgot-password: APP_BASE_URL/FRONT_BASE_URL not set on Railway, reset email not sent")
+    base_url = _get_reset_base_url(request)
+    if not base_url:
+        logger.warning("forgot-password: APP_BASE_URL not set and no Origin/Referer, reset email not sent")
         return {"ok": True}
     qs = urllib.parse.urlencode({"email": email, "token": token})
-    reset_url = f"{APP_BASE_URL}/reset-password?{qs}"
+    reset_url = f"{base_url}/reset-password?{qs}"
     ok, err = send_password_reset_email(email, reset_url, ttl_minutes=PASSWORD_RESET_TTL_MINUTES)
     if ok:
         log_auth_event(None, email, "auth_password_reset_requested", None)

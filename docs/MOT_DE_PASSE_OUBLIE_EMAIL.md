@@ -4,17 +4,14 @@ L’API répond toujours **200** (pour ne pas révéler si l’email existe). Si
 
 **Important** : l’email est envoyé **uniquement si l’adresse est déjà inscrite** (compte existant dans `tenant_users`). Si le compte n’existe pas, aucun email n’est envoyé (sécurité).
 
-## 1. URL du lien (obligatoire)
+## 1. URL du lien
 
-Le backend doit connaître l’URL de la landing pour construire le lien dans l’email.
+Le backend construit le lien de réinitialisation dans l’email. Il utilise dans l’ordre :
 
-Sur **Railway** (service backend), définir **une** de ces variables :
+1. **APP_BASE_URL** (ou **FRONT_BASE_URL**, **FRONTEND_URL**) sur Railway = `https://www.uwiapp.com` (sans slash final).
+2. Si aucune n’est définie : l’**origine de la requête** (en-tête `Origin` ou `Referer`) envoyée par le navigateur quand l’utilisateur envoie le formulaire depuis ta landing. Donc si la page « Mot de passe oublié » est sur `https://www.uwiapp.com`, le lien sera correct sans config.
 
-- **APP_BASE_URL** = `https://www.uwiapp.com` (sans slash final)
-- ou **FRONT_BASE_URL** = idem
-- ou **FRONTEND_URL** = idem
-
-Si aucune n’est définie → l’email **n’est pas envoyé** (log : `FRONT_BASE_URL/APP_BASE_URL not set`).
+Si ni variable ni Origin/Referer → log `APP_BASE_URL not set and no Origin/Referer`, email non envoyé.
 
 ## 2. Envoi d’email (Postmark ou SMTP)
 
