@@ -264,6 +264,9 @@ export default function CreerAssistante() {
     return true;
   };
 
+  /** Persiste et passe à l'étape suivante (pour les écrans à choix unique : clic = passage auto) */
+  const goNext = (updates) => persist({ ...updates, step: Math.min(7, state.step + 1) });
+
   const volumeMicroText = () => {
     const v = state.daily_call_volume;
     if (v === "25-50" || v === "50-100" || v === "100+")
@@ -427,7 +430,7 @@ export default function CreerAssistante() {
                   <button
                     key={slug}
                     type="button"
-                    onClick={() => persist({ medical_specialty: slug, medical_specialty_label: label, specialty_other: "" })}
+                    onClick={() => goNext({ medical_specialty: slug, medical_specialty_label: label, specialty_other: "" })}
                     className={`py-4 px-3 rounded-xl border-2 text-sm font-semibold transition-all text-left flex items-center gap-2 ${
                       state.medical_specialty === slug
                         ? "border-teal-500 bg-teal-500/20 text-teal-400"
@@ -452,7 +455,7 @@ export default function CreerAssistante() {
                       return;
                     }
                     const found = STEP1_OTHER_GROUPS.flatMap((g) => g.options).find((o) => o.slug === slug);
-                    persist({
+                    goNext({
                       medical_specialty: slug,
                       medical_specialty_label: found ? found.label : slug,
                       specialty_other: slug === "autre" ? state.specialty_other : "",
@@ -497,7 +500,7 @@ export default function CreerAssistante() {
                   <button
                     key={opt.value}
                     type="button"
-                    onClick={() => persist({ daily_call_volume: opt.value })}
+                    onClick={() => goNext({ daily_call_volume: opt.value })}
                     className={`py-4 px-4 rounded-xl border-2 text-sm font-semibold transition-all ${
                       state.daily_call_volume === opt.value
                         ? "border-teal-500 bg-teal-500/20 text-teal-400"
@@ -616,7 +619,7 @@ export default function CreerAssistante() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
                 <button
                   type="button"
-                  onClick={() => persist({ voice_gender: "female" })}
+                  onClick={() => goNext({ voice_gender: "female" })}
                   className={`p-6 rounded-2xl border-2 text-left transition-all ${
                     state.voice_gender === "female"
                       ? "border-teal-500 bg-teal-500/20"
@@ -628,7 +631,7 @@ export default function CreerAssistante() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => persist({ voice_gender: "male" })}
+                  onClick={() => goNext({ voice_gender: "male" })}
                   className={`p-6 rounded-2xl border-2 text-left transition-all ${
                     state.voice_gender === "male"
                       ? "border-teal-500 bg-teal-500/20"
@@ -652,7 +655,7 @@ export default function CreerAssistante() {
                   <button
                     key={n}
                     type="button"
-                    onClick={() => persist({ assistant_name: n })}
+                    onClick={() => goNext({ assistant_name: n })}
                     className={`px-4 py-2 rounded-xl border-2 text-sm font-medium ${
                       state.assistant_name === n
                         ? "border-teal-500 bg-teal-500/20 text-teal-400"
@@ -686,7 +689,7 @@ export default function CreerAssistante() {
                   <button
                     key={opt}
                     type="button"
-                    onClick={() => persist({ primary_pain_point: opt })}
+                    onClick={() => goNext({ primary_pain_point: opt })}
                     className={`w-full py-3 px-4 rounded-xl border-2 text-left text-sm font-medium transition-all flex items-center gap-2 ${
                       state.primary_pain_point === opt
                         ? "border-teal-500 bg-teal-500/20 text-teal-400"
