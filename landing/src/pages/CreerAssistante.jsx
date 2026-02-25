@@ -334,7 +334,7 @@ export default function CreerAssistante() {
       await api.preOnboardingCommit(payload);
       const contact = emailTrim || phoneTrim || "";
       try {
-        sessionStorage.setItem(COMMIT_DONE_KEY, JSON.stringify({ contact }));
+        sessionStorage.setItem(COMMIT_DONE_KEY, JSON.stringify({ contact, phone: phoneTrim }));
       } catch (_) {}
       setSubmittedEmail(contact);
       setCommitDone(true);
@@ -396,12 +396,14 @@ export default function CreerAssistante() {
 
   if (commitDone) {
     let displayContact = submittedEmail;
-    if (!displayContact && typeof window !== "undefined") {
+    let displayPhone = "";
+    if (typeof window !== "undefined") {
       try {
         const raw = sessionStorage.getItem(COMMIT_DONE_KEY);
         if (raw) {
           const data = JSON.parse(raw);
-          displayContact = data?.contact != null ? String(data.contact) : "";
+          if (displayContact === "" && data?.contact != null) displayContact = String(data.contact);
+          if (data?.phone != null && String(data.phone).trim()) displayPhone = String(data.phone).trim();
         }
       } catch (_) {}
     }
@@ -441,20 +443,21 @@ export default function CreerAssistante() {
               </p>
             ) : null}
           </div>
-          <div className="rounded-xl border border-slate-700 bg-slate-800/50 p-4 mb-4 text-left">
-            <p className="text-slate-200 font-medium mb-2">
-              Votre assistant sera configuré pour répondre aux appels destinés au :
-            </p>
-            <p className="text-teal-400 font-bold text-lg tracking-wide mb-2">
-              06 52 39 84 14
-            </p>
-            <p className="text-slate-500 text-sm">
-              ou au numéro de votre choix.
-            </p>
-          </div>
-          <p className="text-slate-300 font-medium mb-2">
-            Un expert vous appellera à ce numéro pour effectuer le test.
-          </p>
+          {displayPhone ? (
+            <>
+              <div className="rounded-xl border border-slate-700 bg-slate-800/50 p-4 mb-4 text-left">
+                <p className="text-slate-200 font-medium mb-2">
+                  Votre assistant sera configuré pour répondre aux appels destinés au :
+                </p>
+                <p className="text-teal-400 font-bold text-lg tracking-wide">
+                  {displayPhone}
+                </p>
+              </div>
+              <p className="text-slate-300 font-medium mb-2">
+                Un expert vous appellera à ce numéro pour effectuer le test.
+              </p>
+            </>
+          ) : null}
           <p className="text-teal-400 font-semibold mb-4">
             Un expert vous contactera pour finaliser la configuration de{" "}
             {state.assistant_name ? (
