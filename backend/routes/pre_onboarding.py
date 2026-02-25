@@ -139,38 +139,7 @@ async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody)
     if not lead_id:
         raise HTTPException(status_code=500, detail="Erreur enregistrement lead")
 
-    # Envoi email confirmation lead (un seul email par lead, au commit) — avec ou sans adresse email (téléphone seul OK)
-    dashboard_base = (
-        os.environ.get("ADMIN_BASE_URL")
-        or os.environ.get("FRONT_BASE_URL")
-        or os.environ.get("APP_BASE_URL")
-        or ""
-    ).strip()
-    if dashboard_base:
-        try:
-            is_enterprise = body.daily_call_volume == "100+"
-            ok, err = send_lead_founder_email(
-                lead_id=lead_id,
-                email=email,
-                daily_call_volume=body.daily_call_volume,
-                medical_specialty=body.medical_specialty,
-                medical_specialty_label=(body.medical_specialty_label or "").strip() or "",
-                specialty_other=(body.specialty_other or "").strip() or "",
-                primary_pain_point=(body.primary_pain_point or "").strip(),
-                assistant_name=body.assistant_name,
-                voice_gender=body.voice_gender,
-                opening_hours=body.opening_hours,
-                wants_callback=bool(callback_phone),
-                callback_phone=callback_phone or "",
-                is_enterprise=is_enterprise,
-                dashboard_base_url=dashboard_base,
-                source=body.source or "landing_cta",
-            )
-            if not ok:
-                logger.warning("lead_founder_email failed: %s", err)
-        except Exception as e:
-            logger.exception("lead_founder_email exception: %s", e)
-
+    # Un seul email par lead : envoyé après la confirmation du RDV de rappel (voir callback-booking)
     out = {"ok": True, "lead_id": lead_id}
     return out
 
@@ -198,5 +167,36 @@ async def callback_booking(lead_id: str, body: CallbackBookingBody) -> Dict[str,
     if not ok:
         raise HTTPException(status_code=500, detail="Erreur enregistrement créneau")
 
-    # Pas de second email : le récap a déjà été envoyé au commit ; le créneau est visible en admin (fiche lead)
+    # Envoi email avec le RDV (créneau de rappel) pour que le fondateur ait l'info dans sa boîte mail
+    dashboard_base = (
+        os.environ.get("ADMIN_BASE_URL")
+        or os.environ.get("FRONT_BASE_URL")
+        or os.environ.get("APP_BASE_URL")
+        or ""
+    ).strip()
+    if dashboard_base:
+        lead_after = get_lead(lead_id) or lead
+        try:
+            send_lead_founder_email(
+                lead_id=lead_id,
+                email=(lead_after.get("email") or "").strip(),
+                daily_call_volume=lead_after.get("daily_call_volume") or "",
+                medical_specialty=lead_after.get("medical_specialty") or "",
+                medical_specialty_label=(lead_after.get("medical_specialty_label") or "").strip() or "",
+                specialty_other=(lead_after.get("specialty_other") or "").strip() or "",
+                primary_pain_point=(lead_after.get("primary_pain_point") or "").strip() or "",
+                assistant_name=(lead_after.get("assistant_name") or "").strip() or "",
+                voice_gender=lead_after.get("voice_gender") or "",
+                opening_hours=lead_after.get("opening_hours") or {},
+                wants_callback=bool(lead_after.get("callback_phone") or phone),
+                callback_phone=(lead_after.get("callback_phone") or phone or "").strip() or "",
+                is_enterprise=lead_after.get("is_enterprise") is True,
+                dashboard_base_url=dashboard_base,
+                source=(lead_after.get("source") or "landing_cta").strip() or "landing_cta",
+                callback_booking_date=date_str,
+                callback_booking_slot=slot,
+            )
+        except Exception as e:
+            logger.warning("lead_founder_email after callback_booking failed: %s", e)
+
     return {"ok": True}
