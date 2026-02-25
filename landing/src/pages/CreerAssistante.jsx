@@ -264,6 +264,7 @@ export default function CreerAssistante() {
         if (data != null) {
           setCommitDone(true);
           setSubmittedEmail(data.contact != null ? String(data.contact) : "");
+          if (data.lead_id) setState((s) => ({ ...s, lead_id: data.lead_id }));
         }
       }
     } catch (_) {}
@@ -332,13 +333,15 @@ export default function CreerAssistante() {
         wants_callback: !!phoneTrim,
         callback_phone: phoneTrim,
       };
-      await api.preOnboardingCommit(payload);
+      const res = await api.preOnboardingCommit(payload);
       const contact = emailTrim || phoneTrim || "";
+      const leadId = (res && res.lead_id) || "";
       try {
-        sessionStorage.setItem(COMMIT_DONE_KEY, JSON.stringify({ contact, phone: phoneTrim }));
+        sessionStorage.setItem(COMMIT_DONE_KEY, JSON.stringify({ contact, phone: phoneTrim, lead_id: leadId }));
       } catch (_) {}
       setSubmittedEmail(contact);
       setCommitDone(true);
+      if (leadId) setState((s) => ({ ...s, lead_id: leadId }));
       setModalOpen(false);
     } catch (e) {
       setCommitError(e.message || "Erreur enregistrement");
@@ -396,9 +399,20 @@ export default function CreerAssistante() {
   }, [isStep7, diagnostic.estimated_minutes_per_day, diagnostic.annual_hours]);
 
   if (commitDone) {
+    let leadId = state.lead_id || "";
+    if (!leadId && typeof window !== "undefined") {
+      try {
+        const raw = sessionStorage.getItem(COMMIT_DONE_KEY);
+        if (raw) {
+          const data = JSON.parse(raw);
+          leadId = (data && data.lead_id) ? data.lead_id : "";
+        }
+      } catch (_) {}
+    }
     return (
       <div className="min-h-screen w-full" style={{ backgroundColor: "#0A1828" }}>
         <UWIFinalization
+          leadId={leadId}
           assistantName={state.assistant_name || "Emma"}
           practitioner="votre cabinet"
           onComplete={handleBackToHome}

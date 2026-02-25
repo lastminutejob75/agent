@@ -87,6 +87,11 @@ export const api = {
   onboardingCreate: (payload) => request("/api/public/onboarding", { method: "POST", body: payload }),
   preOnboardingCommit: (payload) =>
     request("/api/pre-onboarding/commit", { method: "POST", body: payload }),
+  preOnboardingCallbackBooking: (leadId, payload) =>
+    request(`/api/pre-onboarding/leads/${encodeURIComponent(leadId)}/callback-booking`, {
+      method: "POST",
+      body: payload,
+    }),
 
   // admin — leads
   adminLeadsCountNew: () => request("/api/admin/leads/count-new", { admin: true }),

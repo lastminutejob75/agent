@@ -465,6 +465,8 @@ def send_lead_founder_email(
     is_enterprise: bool = False,
     dashboard_base_url: str = "",
     source: str = "landing_cta",
+    callback_booking_date: Optional[str] = None,
+    callback_booking_slot: Optional[str] = None,
 ) -> Tuple[bool, Optional[str]]:
     """
     Email interne au fondateur : résumé nouveau lead pré-onboarding.
@@ -563,6 +565,26 @@ def send_lead_founder_email(
     hours_pretty = _opening_hours_pretty(opening_hours)
     date_local = datetime.now().strftime("%d/%m/%Y %H:%M")
 
+    def _callback_booking_display(cb_date: Optional[str], cb_slot: Optional[str], cb_phone: str) -> str:
+        if not cb_date or not cb_slot:
+            return "—"
+        try:
+            from datetime import datetime as dt
+            d = dt.strptime((cb_date or "")[:10], "%Y-%m-%d")
+            days_fr = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
+            months_fr = ["janv", "fév", "mars", "avr", "mai", "juin", "juil", "août", "sept", "oct", "nov", "déc"]
+            date_display = f"{days_fr[d.weekday()]} {d.day} {months_fr[d.month - 1]}"
+        except Exception:
+            date_display = (cb_date or "")[:10]
+        part = f"{date_display} à {cb_slot}"
+        if (cb_phone or "").strip():
+            part += f", au {(cb_phone or '').strip()}"
+        return part
+
+    rappel_reserve_html = ""
+    if callback_booking_date and callback_booking_slot:
+        rappel_reserve_html = f"<li><strong>Créneau de rappel réservé :</strong> {_callback_booking_display(callback_booking_date, callback_booking_slot, callback_phone)}</li>"
+
     html = f"""
 <!DOCTYPE html>
 <html>
@@ -583,6 +605,7 @@ def send_lead_founder_email(
     <li>Spécialité : {specialty_full}</li>
     <li>Douleur principale : {primary_pain_point or '—'}</li>
     <li>Souhaite être rappelé : {rappel_txt}</li>
+    {rappel_reserve_html}
   </ul>
 
   <h2 style="font-size: 0.95rem; color: #333;">🤖 Assistante</h2>
@@ -640,5 +663,101 @@ def send_lead_founder_email(
             return True, None
         except Exception as e:
             logger.exception("send_lead_founder_email smtp failed")
+            return False, str(e)
+    return False, "Email non configuré (Postmark ou SMTP)"
+
+
+def send_lead_callback_booking_email(
+    lead_id: str,
+    assistant_name: str,
+    callback_date_iso: str,
+    callback_slot: str,
+    callback_phone: str,
+    dashboard_base_url: str = "",
+) -> Tuple[bool, Optional[str]]:
+    """
+    Email recap au fondateur : créneau de rappel réservé pour un lead.
+    Même destinataire que send_lead_founder_email (FOUNDER_EMAIL / ADMIN_EMAIL).
+    callback_date_iso au format YYYY-MM-DD.
+    """
+    to = (
+        os.getenv("FOUNDER_EMAIL") or os.getenv("ADMIN_EMAIL") or os.getenv("SMTP_EMAIL") or ""
+    ).strip()
+    if not to:
+        logger.warning("send_lead_callback_booking_email: FOUNDER_EMAIL non défini, skip")
+        return False, "FOUNDER_EMAIL non défini"
+    if not (dashboard_base_url or "").strip():
+        logger.warning("send_lead_callback_booking_email: ADMIN_BASE_URL manquant")
+        return False, "ADMIN_BASE_URL manquant"
+
+    try:
+        from datetime import datetime as dt
+        d = dt.strptime(callback_date_iso[:10], "%Y-%m-%d")
+        days_fr = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
+        months_fr = ["janv", "fév", "mars", "avr", "mai", "juin", "juil", "août", "sept", "oct", "nov", "déc"]
+        date_display = f"{days_fr[d.weekday()]} {d.day} {months_fr[d.month - 1]}"
+    except Exception:
+        date_display = callback_date_iso[:10]
+
+    link = f"{dashboard_base_url.rstrip('/')}/admin/leads/{lead_id}"
+    phone_display = (callback_phone or "").strip() or "—"
+    subject = f"📅 Rappel réservé – {assistant_name} – {date_display} à {callback_slot}"
+    date_local = datetime.now().strftime("%d/%m/%Y %H:%M")
+    html = f"""
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Rappel réservé</title></head>
+<body style="font-family: sans-serif; max-width: 560px; margin: 0 auto; padding: 1rem;">
+  <h1 style="font-size: 1.25rem;">Créneau de rappel réservé (lead pré-onboarding)</h1>
+  <p style="font-size: 1rem; color: #333; margin: 1rem 0;">
+    Le lead a choisi un créneau pour finaliser la configuration de <strong>{assistant_name}</strong>.
+  </p>
+  <ul style="color: #333; margin: 0.25rem 0 1rem 0;">
+    <li><strong>Date :</strong> {date_display} à {callback_slot}</li>
+    <li><strong>Rappel au :</strong> {phone_display}</li>
+    <li><strong>Assistante :</strong> {assistant_name}</li>
+  </ul>
+  <p style="margin: 1rem 0;">
+    <a href="{link}" style="color:#2563eb;word-break:break-all;">Voir le lead → {link}</a>
+  </p>
+  <p style="color: #666; font-size: 0.85rem; margin-top: 1.5rem;">
+    —<br/>
+    Date envoi : {date_local}
+  </p>
+</body>
+</html>
+"""
+    from_addr = (
+        os.getenv("POSTMARK_FROM_EMAIL") or os.getenv("EMAIL_FROM") or os.getenv("SMTP_EMAIL") or ""
+    ).strip()
+    token = (os.getenv("POSTMARK_SERVER_TOKEN") or "").strip()
+    if token and from_addr:
+        try:
+            ok, err = _send_via_postmark(from_addr, to, subject, html, token)
+            if ok:
+                logger.info("lead_callback_booking_email_sent via postmark", extra={"lead_id": lead_id[:24]})
+            return ok, err
+        except Exception as e:
+            logger.exception("send_lead_callback_booking_email postmark failed")
+            return False, str(e)
+    smtp_user = (os.getenv("SMTP_EMAIL") or "").strip()
+    smtp_pass = (os.getenv("SMTP_PASSWORD") or "").strip()
+    if smtp_user and smtp_pass:
+        host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        port = int(os.getenv("SMTP_PORT", "587"))
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["From"] = smtp_user
+            msg["To"] = to
+            msg["Subject"] = subject
+            msg.attach(MIMEText(html, "html", "utf-8"))
+            with smtplib.SMTP(host, port) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, [to], msg.as_string())
+            logger.info("lead_callback_booking_email_sent via smtp", extra={"lead_id": lead_id[:24]})
+            return True, None
+        except Exception as e:
+            logger.exception("send_lead_callback_booking_email smtp failed")
             return False, str(e)
     return False, "Email non configuré (Postmark ou SMTP)"

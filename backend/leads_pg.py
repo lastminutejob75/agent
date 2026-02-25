@@ -35,7 +35,7 @@ def get_lead_by_email_for_upsert(email: str) -> Optional[Dict[str, Any]]:
                 cur.execute(
                     """
                     SELECT id, created_at, email, daily_call_volume, medical_specialty, medical_specialty_label, specialty_other, primary_pain_point, assistant_name, voice_gender,
-                           opening_hours, wants_callback, callback_phone, is_enterprise, source, status, notes, contacted_at, converted_at,
+                           opening_hours, wants_callback, callback_phone, callback_booking_date, callback_booking_slot, is_enterprise, source, status, notes, contacted_at, converted_at,
                            updated_at, last_submitted_at, max_daily_amplitude
                     FROM pre_onboarding_leads
                     WHERE LOWER(TRIM(email)) = LOWER(TRIM(%s)) AND status IN ('new', 'contacted')
@@ -255,7 +255,7 @@ def list_leads(
                 cur.execute(
                     f"""
                     SELECT id, created_at, email, daily_call_volume, medical_specialty, medical_specialty_label, specialty_other, primary_pain_point, assistant_name, voice_gender,
-                           opening_hours, wants_callback, callback_phone, is_enterprise, source, status, notes, contacted_at, converted_at,
+                           opening_hours, wants_callback, callback_phone, callback_booking_date, callback_booking_slot, is_enterprise, source, status, notes, contacted_at, converted_at,
                            updated_at, last_submitted_at, max_daily_amplitude
                     FROM pre_onboarding_leads
                     {where_sql}
@@ -279,7 +279,7 @@ def get_lead(lead_id: str) -> Optional[Dict[str, Any]]:
                 cur.execute(
                     """
                     SELECT id, created_at, email, daily_call_volume, medical_specialty, medical_specialty_label, specialty_other, primary_pain_point, assistant_name, voice_gender,
-                           opening_hours, wants_callback, callback_phone, is_enterprise, source, status, notes, tenant_id, contacted_at, converted_at,
+                           opening_hours, wants_callback, callback_phone, callback_booking_date, callback_booking_slot, is_enterprise, source, status, notes, tenant_id, contacted_at, converted_at,
                            updated_at, last_submitted_at, max_daily_amplitude
                     FROM pre_onboarding_leads
                     WHERE id = %s
@@ -291,6 +291,33 @@ def get_lead(lead_id: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.exception("get_lead failed: %s", e)
         return None
+
+
+def update_lead_callback_booking(
+    lead_id: str,
+    callback_booking_date: Optional[str],
+    callback_booking_slot: Optional[str],
+    callback_phone: Optional[str],
+) -> bool:
+    """Enregistre le créneau de rappel choisi (écran finalisation). date au format YYYY-MM-DD."""
+    if not callback_booking_date or not callback_booking_slot:
+        return False
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE pre_onboarding_leads
+                    SET callback_booking_date = %s::date, callback_booking_slot = %s, callback_phone = COALESCE(NULLIF(TRIM(%s), ''), callback_phone), updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (callback_booking_date, (callback_booking_slot or "").strip() or None, (callback_phone or "").strip() or None, lead_id),
+                )
+            conn.commit()
+        return True
+    except Exception as e:
+        logger.exception("update_lead_callback_booking failed: %s", e)
+        return False
 
 
 def update_lead(lead_id: str, status: Optional[str] = None, notes: Optional[str] = None) -> bool:
@@ -341,7 +368,7 @@ def count_new_leads() -> int:
 
 def _row_to_lead(r: Dict) -> Dict[str, Any]:
     out = dict(r)
-    for key in ("created_at", "contacted_at", "converted_at", "updated_at", "last_submitted_at"):
+    for key in ("created_at", "contacted_at", "converted_at", "updated_at", "last_submitted_at", "callback_booking_date"):
         if out.get(key) and hasattr(out[key], "isoformat"):
             out[key] = out[key].isoformat()
     return out

@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from backend.leads_pg import upsert_lead
+from backend.leads_pg import get_lead, update_lead_callback_booking, upsert_lead
 from backend.pre_onboarding_rate_limit import check_pre_onboarding_commit
 from backend.services.email_service import send_lead_founder_email
 
@@ -40,6 +40,12 @@ VALID_PAIN_POINTS = frozenset({
     "Je veux mieux orienter les patients (infos, consignes, urgence)",
     "Autre",
 })
+
+
+class CallbackBookingBody(BaseModel):
+    date: str = Field(..., min_length=10)  # YYYY-MM-DD
+    slot: str = Field(..., min_length=1)
+    phone: str = Field(default="")
 
 
 class PreOnboardingCommitBody(BaseModel):
@@ -133,37 +139,64 @@ async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody)
     if not lead_id:
         raise HTTPException(status_code=500, detail="Erreur enregistrement lead")
 
-    # 3) Envoi email fondateur en synchrone si email fourni (pas d'envoi si lead téléphone seul)
-    if email:
-        dashboard_base = (
-            os.environ.get("ADMIN_BASE_URL")
-            or os.environ.get("FRONT_BASE_URL")
-            or os.environ.get("APP_BASE_URL")
-            or ""
-        ).strip()
-        try:
-            is_enterprise = body.daily_call_volume == "100+"
-            ok, err = send_lead_founder_email(
-                lead_id=lead_id,
-                email=email,
-                daily_call_volume=body.daily_call_volume,
-                medical_specialty=body.medical_specialty,
-                medical_specialty_label=(body.medical_specialty_label or "").strip() or "",
-                specialty_other=(body.specialty_other or "").strip() or "",
-                primary_pain_point=(body.primary_pain_point or "").strip(),
-                assistant_name=body.assistant_name,
-                voice_gender=body.voice_gender,
-                opening_hours=body.opening_hours,
-                wants_callback=bool(callback_phone),
-                callback_phone=callback_phone or "",
-                is_enterprise=is_enterprise,
-                dashboard_base_url=dashboard_base,
-                source=body.source or "landing_cta",
-            )
-            if not ok:
-                logger.warning("lead_founder_email failed: %s", err)
-        except Exception as e:
-            logger.exception("lead_founder_email exception: %s", e)
-
+    # Email lead envoyé uniquement lorsque le RDV de rappel est confirmé (voir callback-booking)
     out = {"ok": True, "lead_id": lead_id}
     return out
+
+
+@router.post("/leads/{lead_id}/callback-booking")
+async def callback_booking(lead_id: str, body: CallbackBookingBody) -> Dict[str, Any]:
+    """
+    Enregistre le créneau de rappel choisi (écran finalisation UWI).
+    Met à jour le lead puis envoie l'email recap lead au fondateur (un seul email, avec créneau).
+    """
+    import re
+    date_str = (body.date or "").strip()[:10]
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
+        raise HTTPException(status_code=400, detail="date invalide (attendu YYYY-MM-DD)")
+    slot = (body.slot or "").strip()
+    if not slot:
+        raise HTTPException(status_code=400, detail="slot requis")
+    phone = (body.phone or "").strip().replace(" ", "")
+
+    lead = get_lead(lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead introuvable")
+
+    ok = update_lead_callback_booking(lead_id, callback_booking_date=date_str, callback_booking_slot=slot, callback_phone=phone or None)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Erreur enregistrement créneau")
+
+    # Envoi email lead (un seul email, dès que le RDV est confirmé)
+    dashboard_base = (
+        os.environ.get("ADMIN_BASE_URL")
+        or os.environ.get("FRONT_BASE_URL")
+        or os.environ.get("APP_BASE_URL")
+        or ""
+    ).strip()
+    if dashboard_base:
+        lead_after = get_lead(lead_id) or lead
+        try:
+            send_lead_founder_email(
+                lead_id=lead_id,
+                email=(lead_after.get("email") or "").strip(),
+                daily_call_volume=lead_after.get("daily_call_volume") or "",
+                medical_specialty=lead_after.get("medical_specialty") or "",
+                medical_specialty_label=(lead_after.get("medical_specialty_label") or "").strip() or "",
+                specialty_other=(lead_after.get("specialty_other") or "").strip() or "",
+                primary_pain_point=(lead_after.get("primary_pain_point") or "").strip() or "",
+                assistant_name=(lead_after.get("assistant_name") or "").strip() or "",
+                voice_gender=lead_after.get("voice_gender") or "",
+                opening_hours=lead_after.get("opening_hours") or {},
+                wants_callback=bool(lead_after.get("callback_phone") or phone),
+                callback_phone=(lead_after.get("callback_phone") or phone or "").strip() or "",
+                is_enterprise=lead_after.get("is_enterprise") is True,
+                dashboard_base_url=dashboard_base,
+                source=(lead_after.get("source") or "landing_cta").strip() or "landing_cta",
+                callback_booking_date=date_str,
+                callback_booking_slot=slot,
+            )
+        except Exception as e:
+            logger.warning("lead_founder_email after callback_booking failed: %s", e)
+
+    return {"ok": True}

@@ -1,5 +1,6 @@
 // Écran de finalisation UWI — 5 phases: loading → reveal → congrats → handoff → done
 import { useState, useEffect, useCallback } from "react";
+import { api } from "../lib/api.js";
 
 const COLORS = {
   bg: "#0A1828",
@@ -56,7 +57,7 @@ function formatDayForDisplay(date) {
   return `${days[date.getDay()]} ${date.getDate()} ${months[date.getMonth()]}`;
 }
 
-export default function UWIFinalization({ assistantName = "Emma", practitioner = "votre cabinet", onComplete }) {
+export default function UWIFinalization({ leadId = "", assistantName = "Emma", practitioner = "votre cabinet", onComplete }) {
   const [phase, setPhase] = useState("loading");
   const [loadingStep, setLoadingStep] = useState(0);
   const [loadingProgress, setLoadingProgress] = useState(0);
@@ -101,11 +102,20 @@ export default function UWIFinalization({ assistantName = "Emma", practitioner =
   const handleHandoffSubmit = useCallback(() => {
     if (!canSubmit) return;
     setIsSubmitting(true);
+    const dateIso = selectedDay ? selectedDay.toISOString().slice(0, 10) : "";
+    const phoneDigitsOnly = (phone || "").replace(/\D/g, "");
+    if (leadId && dateIso && selectedSlot && phoneDigitsOnly.length >= 10) {
+      api.preOnboardingCallbackBooking(leadId, {
+        date: dateIso,
+        slot: selectedSlot,
+        phone: phoneDigitsOnly,
+      }).catch(() => {});
+    }
     setTimeout(() => {
       setIsSubmitting(false);
       setPhase("done");
     }, 1400);
-  }, [canSubmit]);
+  }, [canSubmit, leadId, selectedDay, selectedSlot, phone]);
 
   const baseStyle = {
     fontFamily: "'DM Sans', -apple-system, sans-serif",

@@ -195,6 +195,9 @@ export default function AdminLeadDetail() {
             <li><strong>Assistante:</strong> {lead.assistant_name}</li>
             <li><strong>Voix:</strong> {lead.voice_gender === "female" ? "Féminine" : "Masculine"}</li>
             <li><strong>Rappel souhaité:</strong> {lead.wants_callback ? (lead.callback_phone ? `Oui – ${lead.callback_phone}` : "Oui") : "Non"}</li>
+            {lead.callback_booking_date && (
+              <li><strong>Créneau rappel réservé:</strong> {lead.callback_booking_date} à {lead.callback_booking_slot || "—"}</li>
+            )}
             <li><strong>Source:</strong> {lead.source || "landing_cta"}</li>
             <li><strong>Créé le:</strong> {formatDate(lead.created_at)}</li>
           </ul>
