@@ -217,9 +217,11 @@ def auth_forgot_password(request: Request, body: ForgotPasswordBody):
     if token and APP_BASE_URL:
         qs = urllib.parse.urlencode({"email": email, "token": token})
         reset_url = f"{APP_BASE_URL}/reset-password?{qs}"
-        ok, _ = send_password_reset_email(email, reset_url, ttl_minutes=PASSWORD_RESET_TTL_MINUTES)
+        ok, err = send_password_reset_email(email, reset_url, ttl_minutes=PASSWORD_RESET_TTL_MINUTES)
         if ok:
             log_auth_event(None, email, "auth_password_reset_requested", None)
+        else:
+            logger.warning("forgot-password: email not sent to %s — %s", email[:50], err or "unknown")
     elif token and not APP_BASE_URL:
         logger.warning("forgot-password: FRONT_BASE_URL/APP_BASE_URL not set, reset email not sent")
     return {"ok": True}
