@@ -354,6 +354,46 @@ export default function CreerAssistante() {
     navigate("/", { replace: true });
   };
 
+  // Toujours appeler les mêmes hooks (règles des Hooks React) — avant tout return conditionnel
+  const step = Math.min(7, Math.max(1, state.step));
+  const isStep7 = step === 7;
+  const names = state.voice_gender === "female" ? NAMES_FEMALE : NAMES_MALE;
+  const diagnostic = computeDiagnostic({
+    daily_call_volume: state.daily_call_volume,
+    primary_pain_point: state.primary_pain_point,
+  });
+
+  const [animMinutes, setAnimMinutes] = useState(0);
+  const [animAnnual, setAnimAnnual] = useState(0);
+  useEffect(() => {
+    if (!isStep7) return;
+    const targetMin = diagnostic.estimated_minutes_per_day;
+    const targetAnnual = diagnostic.annual_hours;
+    const reduceMotion = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) {
+      setAnimMinutes(targetMin);
+      setAnimAnnual(targetAnnual);
+      return;
+    }
+    setAnimMinutes(0);
+    setAnimAnnual(0);
+    const duration = 800;
+    const start = performance.now();
+    let rafId = 0;
+    const tick = (now) => {
+      const elapsed = now - start;
+      const t = Math.min(elapsed / duration, 1);
+      const ease = 1 - (1 - t) * (1 - t);
+      setAnimMinutes(t >= 1 ? targetMin : ease * targetMin);
+      setAnimAnnual(t >= 1 ? targetAnnual : ease * targetAnnual);
+      if (t < 1) rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [isStep7, diagnostic.estimated_minutes_per_day, diagnostic.annual_hours]);
+
   if (commitDone) {
     let displayContact = submittedEmail;
     if (!displayContact && typeof window !== "undefined") {
@@ -400,46 +440,6 @@ export default function CreerAssistante() {
       </div>
     );
   }
-
-  const step = Math.min(7, Math.max(1, state.step));
-  const isStep7 = step === 7;
-  const names = state.voice_gender === "female" ? NAMES_FEMALE : NAMES_MALE;
-  const diagnostic = computeDiagnostic({
-    daily_call_volume: state.daily_call_volume,
-    primary_pain_point: state.primary_pain_point,
-  });
-
-  // Compteur animé (0 → target en 800ms) pour l'écran estimation ; respecte prefers-reduced-motion ; clamp final
-  const [animMinutes, setAnimMinutes] = useState(0);
-  const [animAnnual, setAnimAnnual] = useState(0);
-  useEffect(() => {
-    if (!isStep7) return;
-    const targetMin = diagnostic.estimated_minutes_per_day;
-    const targetAnnual = diagnostic.annual_hours;
-    const reduceMotion = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduceMotion) {
-      setAnimMinutes(targetMin);
-      setAnimAnnual(targetAnnual);
-      return;
-    }
-    setAnimMinutes(0);
-    setAnimAnnual(0);
-    const duration = 800;
-    const start = performance.now();
-    let rafId = 0;
-    const tick = (now) => {
-      const elapsed = now - start;
-      const t = Math.min(elapsed / duration, 1);
-      const ease = 1 - (1 - t) * (1 - t);
-      setAnimMinutes(t >= 1 ? targetMin : ease * targetMin);
-      setAnimAnnual(t >= 1 ? targetAnnual : ease * targetAnnual);
-      if (t < 1) rafId = requestAnimationFrame(tick);
-    };
-    rafId = requestAnimationFrame(tick);
-    return () => {
-      if (rafId) cancelAnimationFrame(rafId);
-    };
-  }, [isStep7, diagnostic.estimated_minutes_per_day, diagnostic.annual_hours]);
 
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col relative overflow-hidden">
