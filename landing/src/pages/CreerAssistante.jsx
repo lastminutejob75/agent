@@ -1,7 +1,8 @@
 // Wizard "Créer votre assistant" — 7 steps, diagnostic + projection ROI (1 question par écran, 0 scroll)
 import { useState, useEffect, useCallback } from "react";
-import { Link, useNavigate, useLocation } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api } from "../lib/api.js";
+import UWIFinalization from "../components/UWIFinalization.jsx";
 
 const STORAGE_KEY = "uwi_creer_assistante";
 const COMMIT_DONE_KEY = "uwi_creer_assistante_done";
@@ -395,87 +396,13 @@ export default function CreerAssistante() {
   }, [isStep7, diagnostic.estimated_minutes_per_day, diagnostic.annual_hours]);
 
   if (commitDone) {
-    let displayContact = submittedEmail;
-    let displayPhone = "";
-    if (typeof window !== "undefined") {
-      try {
-        const raw = sessionStorage.getItem(COMMIT_DONE_KEY);
-        if (raw) {
-          const data = JSON.parse(raw);
-          if (displayContact === "" && data?.contact != null) displayContact = String(data.contact);
-          if (data?.phone != null && String(data.phone).trim()) displayPhone = String(data.phone).trim();
-        }
-      } catch (_) {}
-    }
     return (
-      <div
-        className="min-h-screen w-full flex flex-col items-center justify-center p-6 relative"
-        style={{ minHeight: "100vh", backgroundColor: "#0f172a" }}
-      >
-        <div className="absolute inset-0 pointer-events-none" aria-hidden>
-          <div className="absolute top-0 left-1/4 w-96 h-96 bg-teal-500/10 rounded-full blur-[120px]" />
-          <div className="absolute top-1/3 right-1/4 w-96 h-96 bg-cyan-400/10 rounded-full blur-[120px]" />
-        </div>
-        <div className="max-w-md text-center relative z-10 px-4">
-          <h1 className="text-2xl font-bold text-white mb-4">C'est bon, on vous recontacte</h1>
-          <p className="text-slate-400 mb-4">
-            Nous avons bien reçu votre demande.
-          </p>
-          {displayContact ? (
-            <p className="text-teal-400 font-medium mb-4 break-all">{displayContact}</p>
-          ) : null}
-          <div className="rounded-xl border border-slate-700 bg-slate-800/50 p-4 mb-4 text-left">
-            <p className="text-slate-500 text-xs font-semibold uppercase tracking-wider mb-2">Récapitulatif</p>
-            {state.assistant_name ? (
-              <p className="text-slate-200 mb-1">
-                <span className="text-slate-500">Prénom de l'assistant :</span>{" "}
-                <span className="text-teal-400 font-semibold">{state.assistant_name}</span>
-              </p>
-            ) : null}
-            <p className="text-slate-200 mb-1">
-              <span className="text-slate-500">Disponibilité :</span>{" "}
-              <span className="text-teal-400 font-semibold">24 h/24, 7 j/7</span>
-            </p>
-            {state.medical_specialty_label ? (
-              <p className="text-slate-200">
-                <span className="text-slate-500">Spécialité :</span>{" "}
-                <span className="text-slate-300">{state.medical_specialty_label}</span>
-              </p>
-            ) : null}
-          </div>
-          {displayPhone ? (
-            <>
-              <div className="rounded-xl border border-slate-700 bg-slate-800/50 p-4 mb-4 text-left">
-                <p className="text-slate-200 font-medium mb-2">
-                  Votre assistant sera configuré pour répondre aux appels destinés au :
-                </p>
-                <p className="text-teal-400 font-bold text-lg tracking-wide">
-                  {displayPhone}
-                </p>
-              </div>
-              <p className="text-slate-300 font-medium mb-2">
-                Un expert vous appellera à ce numéro pour effectuer le test.
-              </p>
-            </>
-          ) : null}
-          <p className="text-teal-400 font-semibold mb-4">
-            Un expert vous contactera pour finaliser la configuration de{" "}
-            {state.assistant_name ? (
-              <span>{state.assistant_name}</span>
-            ) : (
-              "votre assistante"
-            )}
-            .
-          </p>
-          <p className="text-slate-500 text-xs mb-6">Vous pouvez fermer cette page.</p>
-          <button
-            type="button"
-            onClick={handleBackToHome}
-            className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 font-black px-6 py-3 hover:shadow-lg hover:shadow-teal-500/30 transition-all"
-          >
-            Retour à l'accueil
-          </button>
-        </div>
+      <div className="min-h-screen w-full" style={{ backgroundColor: "#0A1828" }}>
+        <UWIFinalization
+          assistantName={state.assistant_name || "Emma"}
+          practitioner="votre cabinet"
+          onComplete={handleBackToHome}
+        />
       </div>
     );
   }
