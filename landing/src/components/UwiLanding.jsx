@@ -416,9 +416,10 @@ export default function UwiLanding() {
               </div>
 
               <h1 className="hero-h1">
-                <span className="h1-w">Votre assistant IA</span>
-                <span className="h1-t">répond et prend</span>
-                <span className="h1-w">vos RDV</span>
+                <span className="h1-w">Votre</span>
+                <span className="h1-w">assistant IA</span>
+                <span className="h1-t">répond et</span>
+                <span className="h1-line-4"><span className="h1-t">prend</span><span className="h1-w"> vos RDV</span></span>
               </h1>
 
               <Link to="/creer-assistante?new=1" className="hero-cta-mobile">

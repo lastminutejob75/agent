@@ -253,6 +253,21 @@ export default function CreerAssistante() {
   const [commitError, setCommitError] = useState("");
   const navigate = useNavigate();
 
+  // Restaurer l'écran de validation si l'utilisateur a déjà soumis (ex. remontage du composant)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = sessionStorage.getItem(COMMIT_DONE_KEY);
+      if (raw) {
+        const data = JSON.parse(raw);
+        if (data != null) {
+          setCommitDone(true);
+          setSubmittedEmail(data.contact != null ? String(data.contact) : "");
+        }
+      }
+    } catch (_) {}
+  }, []);
+
   const persist = useCallback((next) => {
     setState((prev) => {
       const out = typeof next === "function" ? next(prev) : { ...prev, ...next };
@@ -341,12 +356,12 @@ export default function CreerAssistante() {
 
   if (commitDone) {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 relative">
+      <div className="min-h-screen w-full bg-slate-950 flex flex-col items-center justify-center p-6 relative" style={{ minHeight: "100vh" }}>
         <div className="absolute inset-0 pointer-events-none">
           <div className="absolute top-0 left-1/4 w-96 h-96 bg-teal-500/10 rounded-full blur-[120px]" />
           <div className="absolute top-1/3 right-1/4 w-96 h-96 bg-cyan-400/10 rounded-full blur-[120px]" />
         </div>
-        <div className="max-w-md text-center relative z-10">
+        <div className="max-w-md text-center relative z-10 px-4">
           <h1 className="text-2xl font-bold text-white mb-2">C'est bon, on vous recontacte</h1>
           <p className="text-slate-400 mb-2">
             Nous avons bien reçu votre demande et vous recontacterons aux coordonnées indiquées.
@@ -845,7 +860,7 @@ export default function CreerAssistante() {
                     onClick={() => setModalOpen(true)}
                     className="w-full px-6 py-3 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 font-black hover:shadow-lg hover:shadow-teal-500/30 transition-all"
                   >
-                    Recevoir un numéro de test
+                    Profiter de mon mois offert
                   </button>
                   <p className="text-xs text-slate-500 mt-1.5">
                     Numéro de test envoyé par email en moins d'une minute.
@@ -909,7 +924,7 @@ export default function CreerAssistante() {
                 disabled={(!modalEmail.trim() && !modalPhone.trim()) || commitLoading}
                 className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-400 text-slate-950 font-black hover:shadow-teal-500/30 disabled:opacity-50 transition-all"
               >
-                {commitLoading ? "Envoi…" : "Recevoir mon numéro"}
+                {commitLoading ? "Envoi…" : "Terminer la configuration de mon assistant avec un expert"}
               </button>
             </div>
           </div>
