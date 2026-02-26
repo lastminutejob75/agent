@@ -139,7 +139,37 @@ async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody)
     if not lead_id:
         raise HTTPException(status_code=500, detail="Erreur enregistrement lead")
 
-    # Un seul email par lead : envoyé après la confirmation du RDV de rappel (voir callback-booking)
+    # Envoi email lead au commit (comme avant) — récap sans créneau ; créneau ajouté en admin si rappel réservé plus tard
+    dashboard_base = (
+        os.environ.get("ADMIN_BASE_URL")
+        or os.environ.get("FRONT_BASE_URL")
+        or os.environ.get("APP_BASE_URL")
+        or ""
+    ).strip()
+    try:
+        is_enterprise = body.daily_call_volume == "100+"
+        ok, err = send_lead_founder_email(
+            lead_id=lead_id,
+            email=email,
+            daily_call_volume=body.daily_call_volume,
+            medical_specialty=body.medical_specialty,
+            medical_specialty_label=(body.medical_specialty_label or "").strip() or "",
+            specialty_other=(body.specialty_other or "").strip() or "",
+            primary_pain_point=(body.primary_pain_point or "").strip(),
+            assistant_name=body.assistant_name,
+            voice_gender=body.voice_gender,
+            opening_hours=body.opening_hours,
+            wants_callback=bool(callback_phone),
+            callback_phone=callback_phone or "",
+            is_enterprise=is_enterprise,
+            dashboard_base_url=dashboard_base,
+            source=body.source or "landing_cta",
+        )
+        if not ok:
+            logger.warning("lead_founder_email at commit failed: %s", err)
+    except Exception as e:
+        logger.exception("lead_founder_email at commit exception: %s", e)
+
     out = {"ok": True, "lead_id": lead_id}
     return out
 
@@ -175,7 +205,19 @@ async def callback_booking(lead_id: str, body: CallbackBookingBody) -> Dict[str,
         or ""
     ).strip()
     lead_after = get_lead(lead_id) or lead
+    email_sent = False
+    email_error = None
     try:
+        oh = lead_after.get("opening_hours")
+        if isinstance(oh, str):
+            import json
+            try:
+                oh = json.loads(oh) if oh else {}
+            except Exception:
+                oh = {}
+        if not isinstance(oh, dict):
+            oh = {}
+        logger.info("callback_booking: attempting lead_founder_email", extra={"lead_id": lead_id})
         ok, err = send_lead_founder_email(
             lead_id=lead_id,
             email=(lead_after.get("email") or "").strip(),
@@ -186,7 +228,7 @@ async def callback_booking(lead_id: str, body: CallbackBookingBody) -> Dict[str,
             primary_pain_point=(lead_after.get("primary_pain_point") or "").strip() or "",
             assistant_name=(lead_after.get("assistant_name") or "").strip() or "",
             voice_gender=lead_after.get("voice_gender") or "",
-            opening_hours=lead_after.get("opening_hours") or {},
+            opening_hours=oh,
             wants_callback=bool(lead_after.get("callback_phone") or phone),
             callback_phone=(lead_after.get("callback_phone") or phone or "").strip() or "",
             is_enterprise=lead_after.get("is_enterprise") is True,
@@ -195,9 +237,14 @@ async def callback_booking(lead_id: str, body: CallbackBookingBody) -> Dict[str,
             callback_booking_date=date_str,
             callback_booking_slot=slot,
         )
+        email_sent = ok
         if not ok:
+            email_error = err or "unknown"
             logger.warning("lead_founder_email after callback_booking failed: %s", err)
+        else:
+            logger.info("lead_founder_email after callback_booking sent ok", extra={"lead_id": lead_id})
     except Exception as e:
+        email_error = str(e)
         logger.exception("lead_founder_email after callback_booking exception: %s", e)
 
-    return {"ok": True}
+    return {"ok": True, "email_sent": email_sent, "email_error": email_error}
