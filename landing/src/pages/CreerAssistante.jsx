@@ -401,74 +401,26 @@ export default function CreerAssistante() {
   if (commitDone) {
     let leadId = state.lead_id || "";
     let initialPhone = "";
-    let displayContact = submittedEmail;
-    let displayPhone = "";
     if (typeof window !== "undefined") {
       try {
         const raw = sessionStorage.getItem(COMMIT_DONE_KEY);
         if (raw) {
           const data = JSON.parse(raw);
           if (data && data.lead_id) leadId = data.lead_id;
-          if (data && data.phone) {
-            initialPhone = String(data.phone).replace(/\D/g, "").slice(0, 10);
-            displayPhone = String(data.phone).trim();
-          }
-          if (displayContact === "" && data.contact != null) displayContact = String(data.contact);
+          if (data && data.phone) initialPhone = String(data.phone).replace(/\D/g, "").slice(0, 10);
         }
       } catch (_) {}
     }
     const assistantName = state.assistant_name || "Emma";
     return (
-      <div className="min-h-screen w-full flex flex-col" style={{ backgroundColor: "#0A1828" }}>
-        {/* Écran de confirmation (récap + message) */}
-        <div className="flex-shrink-0 w-full flex flex-col items-center justify-center p-6 relative">
-          <div className="max-w-md text-center relative z-10 px-4">
-            <h1 className="text-2xl font-bold text-white mb-4">C'est bon, on vous recontacte</h1>
-            <p className="text-slate-400 mb-4">Nous avons bien reçu votre demande.</p>
-            {displayContact ? (
-              <p className="text-teal-400 font-medium mb-4 break-all">{displayContact}</p>
-            ) : null}
-            <div className="rounded-xl border border-slate-700 bg-slate-800/50 p-4 mb-4 text-left">
-              <p className="text-slate-500 text-xs font-semibold uppercase tracking-wider mb-2">Récapitulatif</p>
-              <p className="text-slate-200 mb-1">
-                <span className="text-slate-500">Prénom de l'assistant :</span>{" "}
-                <span className="text-teal-400 font-semibold">{assistantName}</span>
-              </p>
-              <p className="text-slate-200 mb-1">
-                <span className="text-slate-500">Disponibilité :</span>{" "}
-                <span className="text-teal-400 font-semibold">24 h/24, 7 j/7</span>
-              </p>
-              {state.medical_specialty_label ? (
-                <p className="text-slate-200">
-                  <span className="text-slate-500">Spécialité :</span>{" "}
-                  <span className="text-slate-300">{state.medical_specialty_label}</span>
-                </p>
-              ) : null}
-            </div>
-            {displayPhone ? (
-              <>
-                <div className="rounded-xl border border-slate-700 bg-slate-800/50 p-4 mb-4 text-left">
-                  <p className="text-slate-200 font-medium mb-2">Votre assistant sera configuré pour répondre aux appels destinés au :</p>
-                  <p className="text-teal-400 font-bold text-lg tracking-wide">{displayPhone}</p>
-                </div>
-                <p className="text-slate-300 font-medium mb-2">Un expert vous appellera à ce numéro pour effectuer le test.</p>
-              </>
-            ) : null}
-            <p className="text-teal-400 font-semibold mb-4">
-              Un expert vous contactera pour finaliser la configuration de <span>{assistantName}</span>.
-            </p>
-          </div>
-        </div>
-        {/* Flow finalisation (loading → reveal → congrats → handoff → done) */}
-        <div className="flex-1 w-full min-h-0">
-          <UWIFinalization
-            leadId={leadId}
-            initialPhone={initialPhone}
-            assistantName={assistantName}
-            practitioner="votre cabinet"
-            onComplete={handleBackToHome}
-          />
-        </div>
+      <div className="min-h-screen w-full" style={{ backgroundColor: "#0A1828" }}>
+        <UWIFinalization
+          leadId={leadId}
+          initialPhone={initialPhone}
+          assistantName={assistantName}
+          practitioner="votre cabinet"
+          onComplete={handleBackToHome}
+        />
       </div>
     );
   }
