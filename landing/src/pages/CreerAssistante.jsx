@@ -335,13 +335,13 @@ export default function CreerAssistante() {
       };
       const res = await api.preOnboardingCommit(payload);
       const contact = emailTrim || phoneTrim || "";
-      const leadId = (res && res.lead_id) || "";
+      const leadId = (res && res.lead_id) ? String(res.lead_id) : "";
       try {
         sessionStorage.setItem(COMMIT_DONE_KEY, JSON.stringify({ contact, phone: phoneTrim, lead_id: leadId }));
       } catch (_) {}
       setSubmittedEmail(contact);
       setCommitDone(true);
-      if (leadId) setState((s) => ({ ...s, lead_id: leadId }));
+      if (leadId) persist({ lead_id: leadId });
       setModalOpen(false);
     } catch (e) {
       setCommitError(e.message || "Erreur enregistrement");
@@ -399,18 +399,19 @@ export default function CreerAssistante() {
   }, [isStep7, diagnostic.estimated_minutes_per_day, diagnostic.annual_hours]);
 
   if (commitDone) {
-    let leadId = state.lead_id || "";
+    let leadId = "";
     let initialPhone = "";
     if (typeof window !== "undefined") {
       try {
         const raw = sessionStorage.getItem(COMMIT_DONE_KEY);
         if (raw) {
           const data = JSON.parse(raw);
-          if (data && data.lead_id) leadId = data.lead_id;
+          leadId = (data && data.lead_id) ? String(data.lead_id) : (state.lead_id || "");
           if (data && data.phone) initialPhone = String(data.phone).replace(/\D/g, "").slice(0, 10);
         }
       } catch (_) {}
     }
+    if (!leadId) leadId = state.lead_id || "";
     const assistantName = state.assistant_name || "Emma";
     return (
       <div className="min-h-screen w-full" style={{ backgroundColor: "#0A1828" }}>
