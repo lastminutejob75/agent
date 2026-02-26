@@ -550,6 +550,19 @@ def send_lead_founder_email(
     else:
         subject = f"Nouveau lead UWi — {daily_call_volume} appels/jour — {specialty_display}"
 
+    # Si un créneau de rappel est réservé (callback-booking), l'ajouter explicitement dans l'objet du mail
+    if callback_booking_date and callback_booking_slot:
+        try:
+            from datetime import datetime as dt
+
+            d_cb = dt.strptime((callback_booking_date or "")[:10], "%Y-%m-%d")
+            days_fr_cb = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
+            months_fr_cb = ["janv", "fév", "mars", "avr", "mai", "juin", "juil", "août", "sept", "oct", "nov", "déc"]
+            cb_date_display = f"{days_fr_cb[d_cb.weekday()]} {d_cb.day} {months_fr_cb[d_cb.month - 1]}"
+        except Exception:
+            cb_date_display = (callback_booking_date or "")[:10]
+        subject = f"{subject} — RDV rappel {cb_date_display} à {callback_booking_slot}"
+
     from backend.leads_pg import compute_max_daily_amplitude
     max_amp = compute_max_daily_amplitude(opening_hours)
     amplitude_h_display = f"{max_amp:.1f} h".replace(".", ",") if max_amp is not None else "—"
