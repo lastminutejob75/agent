@@ -139,37 +139,7 @@ async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody)
     if not lead_id:
         raise HTTPException(status_code=500, detail="Erreur enregistrement lead")
 
-    # Envoi email lead au commit (comme avant) — récap sans créneau ; créneau ajouté en admin si rappel réservé plus tard
-    dashboard_base = (
-        os.environ.get("ADMIN_BASE_URL")
-        or os.environ.get("FRONT_BASE_URL")
-        or os.environ.get("APP_BASE_URL")
-        or ""
-    ).strip()
-    try:
-        is_enterprise = body.daily_call_volume == "100+"
-        ok, err = send_lead_founder_email(
-            lead_id=lead_id,
-            email=email,
-            daily_call_volume=body.daily_call_volume,
-            medical_specialty=body.medical_specialty,
-            medical_specialty_label=(body.medical_specialty_label or "").strip() or "",
-            specialty_other=(body.specialty_other or "").strip() or "",
-            primary_pain_point=(body.primary_pain_point or "").strip(),
-            assistant_name=body.assistant_name,
-            voice_gender=body.voice_gender,
-            opening_hours=body.opening_hours,
-            wants_callback=bool(callback_phone),
-            callback_phone=callback_phone or "",
-            is_enterprise=is_enterprise,
-            dashboard_base_url=dashboard_base,
-            source=body.source or "landing_cta",
-        )
-        if not ok:
-            logger.warning("lead_founder_email at commit failed: %s", err)
-    except Exception as e:
-        logger.exception("lead_founder_email at commit exception: %s", e)
-
+    # Email envoyé uniquement après confirmation du RDV de rappel (voir callback-booking) pour que le mail contienne toujours la date/heure du rappel
     out = {"ok": True, "lead_id": lead_id}
     return out
 

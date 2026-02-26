@@ -596,12 +596,22 @@ def send_lead_founder_email(
     if callback_booking_date and callback_booking_slot:
         rappel_reserve_html = f"<li><strong>Créneau de rappel réservé :</strong> {_callback_booking_display(callback_booking_date, callback_booking_slot, callback_phone)}</li>"
 
+    rdv_block_html = ""
+    if callback_booking_date and callback_booking_slot:
+        rdv_display = _callback_booking_display(callback_booking_date, callback_booking_slot, callback_phone)
+        rdv_block_html = f"""
+  <div style="background: #e8f5e9; border: 2px solid #00e5a0; border-radius: 12px; padding: 16px; margin: 1rem 0;">
+    <h2 style="font-size: 1rem; color: #1b5e20; margin: 0 0 8px 0;">📅 RDV de rappel confirmé</h2>
+    <p style="font-size: 1.1rem; font-weight: 700; color: #333; margin: 0;">{rdv_display}</p>
+  </div>"""
+
     html = f"""
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><title>Nouveau lead UWi</title></head>
 <body style="font-family: sans-serif; max-width: 560px; margin: 0 auto; padding: 1rem;">
   <h1 style="font-size: 1.25rem;">Nouveau lead UWi (pré-onboarding)</h1>
+{rdv_block_html}
 
   <h2 style="font-size: 0.95rem; color: #333; margin-top: 1.25rem;">📌 Priorité</h2>
   <ul style="color: #333; margin: 0.25rem 0 1rem 0;">
