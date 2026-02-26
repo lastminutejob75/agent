@@ -55,28 +55,54 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
   const [selectedSlot, setSelectedSlot] = useState(null);
   const [phone, setPhone] = useState(() => (initialPhone || "").replace(/\D/g, "").slice(0, 10));
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [callbackResult, setCallbackResult] = useState(null); // { apiCalled, emailSent, emailError }
 
   const workingDays = getNextWorkingDays(4);
   const phoneDigits = (phone || "").replace(/\D/g, "");
   const phoneValid = phoneDigits.length >= 10;
   const canSubmit = selectedDay && selectedSlot && phoneValid;
 
-  const handleHandoffSubmit = useCallback(() => {
+  const handleHandoffSubmit = useCallback(async () => {
     if (!canSubmit) return;
     setIsSubmitting(true);
+    setCallbackResult(null);
     const dateIso = selectedDay ? selectedDay.toISOString().slice(0, 10) : "";
-    const phoneDigitsOnly = (phone || "").replace(/\D/g, "");
-    if (leadId && dateIso && selectedSlot && phoneDigitsOnly.length >= 10) {
-      api.preOnboardingCallbackBooking(leadId, {
+    const phoneDigitsOnly = (phone || "").replace(/\D/g, "").slice(0, 10);
+    if (!leadId || !dateIso || !selectedSlot || phoneDigitsOnly.length < 10) {
+      if (!leadId) console.warn("[UWIFinalization] leadId manquant: appel callback-booking ignoré (vérifier sessionStorage/commit).");
+      setCallbackResult({ apiCalled: false, emailSent: false, emailError: null });
+      setTimeout(() => {
+        setIsSubmitting(false);
+        setPhase("done");
+      }, 800);
+      return;
+    }
+    try {
+      const res = await api.preOnboardingCallbackBooking(leadId, {
         date: dateIso,
         slot: selectedSlot,
         phone: phoneDigitsOnly,
-      }).catch(() => {});
+      });
+      setCallbackResult({
+        apiCalled: true,
+        emailSent: res && res.email_sent === true,
+        emailError: res && res.email_error ? String(res.email_error) : null,
+      });
+      if (res && res.email_sent !== true && res.email_error) {
+        console.warn("[UWIFinalization] callback-booking: email non envoyé", res.email_error);
+      }
+    } catch (err) {
+      console.error("[UWIFinalization] callback-booking erreur", err);
+      setCallbackResult({
+        apiCalled: true,
+        emailSent: false,
+        emailError: err?.message || "Erreur réseau ou serveur",
+      });
     }
     setTimeout(() => {
       setIsSubmitting(false);
       setPhase("done");
-    }, 1400);
+    }, 800);
   }, [canSubmit, leadId, selectedDay, selectedSlot, phone]);
 
   const baseStyle = {
@@ -305,6 +331,16 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
           <div style={{ background: "rgba(0,229,160,0.05)", border: "1px solid rgba(0,229,160,0.2)", borderRadius: 12, padding: 12, marginBottom: 24, fontSize: 12, color: COLORS.muted, textAlign: "left" }}>
             📩 SMS de rappel envoyé sur votre mobile
           </div>
+          {callbackResult && !callbackResult.apiCalled && (
+            <div style={{ background: "rgba(255,180,0,0.1)", border: "1px solid rgba(255,180,0,0.4)", borderRadius: 12, padding: 12, marginBottom: 24, fontSize: 12, color: "#e6b800", textAlign: "left" }}>
+              Votre créneau n’a pas pu être enregistré (session expirée ou page rafraîchie). Contactez-nous pour confirmer votre rappel.
+            </div>
+          )}
+          {callbackResult && callbackResult.apiCalled && !callbackResult.emailSent && (
+            <div style={{ background: "rgba(255,180,0,0.08)", border: "1px solid rgba(255,180,0,0.3)", borderRadius: 12, padding: 12, marginBottom: 24, fontSize: 12, color: COLORS.muted, textAlign: "left" }}>
+              Votre créneau est bien enregistré. La notification au cabinet n’a pas pu être envoyée — nous en sommes informés.
+            </div>
+          )}
           <button
             type="button"
             onClick={onComplete}

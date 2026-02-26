@@ -217,4 +217,8 @@ async def callback_booking(lead_id: str, body: CallbackBookingBody) -> Dict[str,
         email_error = str(e)
         logger.exception("lead_founder_email after callback_booking exception: %s", e)
 
+    logger.info(
+        "callback_booking done",
+        extra={"lead_id": lead_id, "email_sent": email_sent, "email_error": email_error or ""},
+    )
     return {"ok": True, "email_sent": email_sent, "email_error": email_error}
