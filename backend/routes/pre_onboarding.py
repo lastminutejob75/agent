@@ -139,7 +139,7 @@ async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody)
     if not lead_id:
         raise HTTPException(status_code=500, detail="Erreur enregistrement lead")
 
-    # Email envoyé uniquement après confirmation du RDV de rappel (voir callback-booking) pour que le mail contienne toujours la date/heure du rappel
+    # Un seul mail : envoyé après confirmation du RDV (callback-booking), avec récap complet + RDV
     out = {"ok": True, "lead_id": lead_id}
     return out
 
