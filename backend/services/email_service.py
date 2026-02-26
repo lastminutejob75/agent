@@ -533,8 +533,10 @@ def send_lead_founder_email(
         os.getenv("FOUNDER_EMAIL") or os.getenv("ADMIN_EMAIL") or os.getenv("SMTP_EMAIL") or ""
     ).strip()
     if not to:
-        logger.warning("send_lead_founder_email: FOUNDER_EMAIL/ADMIN_EMAIL non défini, skip")
-        return False, "FOUNDER_EMAIL non défini"
+        logger.warning(
+            "send_lead_founder_email: aucun destinataire (définir FOUNDER_EMAIL, ADMIN_EMAIL ou SMTP_EMAIL)"
+        )
+        return False, "Destinataire email non configuré (FOUNDER_EMAIL / ADMIN_EMAIL / SMTP_EMAIL)"
 
     dashboard_base_url = (dashboard_base_url or "").strip()
     if not dashboard_base_url:
