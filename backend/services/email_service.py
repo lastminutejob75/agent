@@ -536,15 +536,11 @@ def send_lead_founder_email(
         logger.warning("send_lead_founder_email: FOUNDER_EMAIL/ADMIN_EMAIL non défini, skip")
         return False, "FOUNDER_EMAIL non défini"
 
-    # En prod : lien relatif = mort. Ne jamais envoyer sans URL absolue (ADMIN_BASE_URL).
-    if not (dashboard_base_url or "").strip():
-        logger.warning(
-            "send_lead_founder_email: ADMIN_BASE_URL (ou FRONT_BASE_URL) non défini — email not sent, missing dashboard link"
-        )
-        return False, "ADMIN_BASE_URL manquant (email non envoyé, lien dashboard invalide)"
-
+    dashboard_base_url = (dashboard_base_url or "").strip()
+    if not dashboard_base_url:
+        logger.warning("send_lead_founder_email: ADMIN_BASE_URL non défini — lien admin dans le mail sera absent")
     voice_label = "Féminine" if voice_gender == "female" else "Masculine"
-    link = f"{dashboard_base_url.rstrip('/')}/admin/leads/{lead_id}" if dashboard_base_url else f"/admin/leads/{lead_id}"
+    link = f"{dashboard_base_url.rstrip('/')}/admin/leads/{lead_id}" if dashboard_base_url else f"(configurer ADMIN_BASE_URL pour le lien) — lead_id: {lead_id}"
     specialty_display = (medical_specialty_label or "").strip() or medical_specialty or "—"
     specialty_full = specialty_display + ((" – " + (specialty_other or "").strip()) if (specialty_other or "").strip() else "")
     if is_enterprise:
