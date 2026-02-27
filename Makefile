@@ -14,6 +14,7 @@ help:
 	@echo "  make migrate-026     - Run migration 026 (leads is_enterprise)"
 	@echo "  make migrate-027     - Run migration 027 (leads max_daily_amplitude)"
 	@echo "  make migrate-028     - Run migration 028 (vapi_calls + call_transcripts)"
+	@echo "  make migrate-029     - Run migration 029 (pre_onboarding_leads callback_booking_date/slot)"
 	@echo "  make migrate-leads   - Run migrations 026+027 (leads)"
 	@echo "  make migrate-ivr-events - Run migrations 003+004 (table ivr_events, dashboards)"
 	@echo "  make migrate-railway - Run migrations sur Railway"
@@ -43,6 +44,16 @@ migrate-027:
 
 migrate-028:
 	python3 -m backend.run_migration 028_vapi_calls_and_transcripts.sql
+
+migrate-029:
+	python3 -m backend.run_migration 029_pre_onboarding_leads_callback_booking.sql
+
+# Migration 029 sur la DB de prod. Récupère l'URL dans Railway → Postgres → Connect → "Postgres Connection URL", puis :
+#   DATABASE_URL='postgresql://...' make migrate-029
+# Ou avec une URL en variable : make migrate-029 PG_URL='postgresql://...'
+migrate-029-railway:
+	@echo "Colle l'URL Postgres (Railway → Postgres → Connect) puis lance :"
+	@echo "  DATABASE_URL='<url>' make migrate-029"
 
 migrate-leads: migrate-026 migrate-027
 
