@@ -2,6 +2,7 @@
 # E2E test: Landing → /creer-assistante → remplir wizard → commit (email + modal) → voir lead dans /admin/leads → email fondateur (FOUNDER_EMAIL/ADMIN_EMAIL). Voir landing/README.md § Test E2E Wizard Lead.
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
@@ -139,6 +140,15 @@ async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody)
     if not lead_id:
         raise HTTPException(status_code=500, detail="Erreur enregistrement lead")
 
+    # Diagnostic express (logs Railway) : à comparer avec callback_booking_diagnostic (même deployment_id + db_hash ?)
+    _db_url = os.environ.get("DATABASE_URL") or os.environ.get("PG_TENANTS_URL") or ""
+    _db_hash = hashlib.sha256(_db_url.encode()).hexdigest()[:8] if _db_url else "none"
+    _deploy_id = os.environ.get("RAILWAY_DEPLOYMENT_ID") or os.environ.get("RAILWAY_REPLICA_ID") or "n/a"
+    logger.info(
+        "commit_pre_onboarding_diagnostic",
+        extra={"lead_id": lead_id, "deployment_id": _deploy_id, "db_hash": _db_hash},
+    )
+
     # Envoi d'un email récap lead dès le commit (comme avant), sans attendre le choix du créneau.
     # Cela garantit qu'un email est bien reçu même si la confirmation de rappel échoue côté infra (lead introuvable, etc.).
     try:
@@ -183,6 +193,18 @@ async def callback_booking(lead_id: str, body: CallbackBookingBody) -> Dict[str,
     Enregistre le créneau de rappel choisi (écran finalisation UWI).
     Met à jour le lead puis envoie l'email recap lead au fondateur (un seul email, avec créneau).
     """
+    # Diagnostic express (logs Railway) : même instance + même DB que commit ?
+    _db_url = os.environ.get("DATABASE_URL") or os.environ.get("PG_TENANTS_URL") or ""
+    _db_hash = hashlib.sha256(_db_url.encode()).hexdigest()[:8] if _db_url else "none"
+    _deploy_id = os.environ.get("RAILWAY_DEPLOYMENT_ID") or os.environ.get("RAILWAY_REPLICA_ID") or "n/a"
+    logger.info(
+        "callback_booking_diagnostic",
+        extra={
+            "lead_id": lead_id,
+            "deployment_id": _deploy_id,
+            "db_hash": _db_hash,
+        },
+    )
     import re
     date_str = (body.date or "").strip()[:10]
     if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
