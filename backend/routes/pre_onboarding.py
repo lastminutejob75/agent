@@ -139,7 +139,40 @@ async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody)
     if not lead_id:
         raise HTTPException(status_code=500, detail="Erreur enregistrement lead")
 
-    # Un seul email : envoyé uniquement à la confirmation du RDV (callback-booking), avec récap + date/heure du rappel
+    # Envoi d'un email récap lead dès le commit (comme avant), sans attendre le choix du créneau.
+    # Cela garantit qu'un email est bien reçu même si la confirmation de rappel échoue côté infra (lead introuvable, etc.).
+    try:
+        dashboard_base = (
+            os.environ.get("ADMIN_BASE_URL")
+            or os.environ.get("FRONT_BASE_URL")
+            or os.environ.get("APP_BASE_URL")
+            or ""
+        ).strip()
+        logger.info("commit_pre_onboarding: attempting lead_founder_email", extra={"lead_id": lead_id})
+        ok, err = send_lead_founder_email(
+            lead_id=lead_id,
+            email=email,
+            daily_call_volume=body.daily_call_volume,
+            medical_specialty=body.medical_specialty.strip(),
+            medical_specialty_label=(body.medical_specialty_label or "").strip() or "",
+            specialty_other=(body.specialty_other or "").strip() or "",
+            primary_pain_point=(body.primary_pain_point or "").strip() or "",
+            assistant_name=body.assistant_name.strip(),
+            voice_gender=body.voice_gender,
+            opening_hours=body.opening_hours,
+            wants_callback=bool(callback_phone),
+            callback_phone=(callback_phone or "").strip() or "",
+            is_enterprise=(body.daily_call_volume == "100+"),
+            dashboard_base_url=dashboard_base,
+            source=body.source or "landing_cta",
+            callback_booking_date=None,
+            callback_booking_slot=None,
+        )
+        if not ok:
+            logger.warning("lead_founder_email on commit failed: %s", err)
+    except Exception as e:
+        logger.exception("lead_founder_email on commit exception: %s", e)
+
     out = {"ok": True, "lead_id": lead_id}
     return out
 
