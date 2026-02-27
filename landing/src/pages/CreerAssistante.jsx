@@ -341,7 +341,10 @@ export default function CreerAssistante() {
       } catch (_) {}
       setSubmittedEmail(contact);
       setCommitDone(true);
-      if (leadId) persist({ lead_id: leadId });
+      if (leadId) {
+        setState((s) => ({ ...s, lead_id: leadId }));
+        persist({ lead_id: leadId });
+      }
       setModalOpen(false);
     } catch (e) {
       setCommitError(e.message || "Erreur enregistrement");

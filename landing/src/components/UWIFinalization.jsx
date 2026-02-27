@@ -109,7 +109,9 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
         date: dateIso,
         slot: selectedSlot,
         phone: phoneDigitsOnly,
-      }).catch(() => {});
+      }).catch((err) => {
+        console.error("[UWIFinalization] callback-booking failed", err);
+      });
     }
     setTimeout(() => {
       setIsSubmitting(false);
