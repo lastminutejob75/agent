@@ -66,6 +66,7 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
   const [selectedSlot, setSelectedSlot] = useState(null);
   const [phone, setPhone] = useState(() => (initialPhone || "").replace(/\D/g, "").slice(0, 10));
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [callbackError, setCallbackError] = useState(null);
 
   const assistantInfo = ASSISTANTS[assistantName] || ASSISTANTS.Emma;
   const voiceLabel = assistantInfo.voice;
@@ -99,24 +100,29 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
 
   const handleRevealCta = () => setPhase("congrats");
   const handleCongratsCta = () => setPhase("handoff");
-  const handleHandoffSubmit = useCallback(() => {
+  const handleHandoffSubmit = useCallback(async () => {
     if (!canSubmit) return;
     setIsSubmitting(true);
+    setCallbackError(null);
     const dateIso = selectedDay ? selectedDay.toISOString().slice(0, 10) : "";
-    const phoneDigitsOnly = (phone || "").replace(/\D/g, "");
+    const phoneDigitsOnly = (phone || "").replace(/\D/g, "").slice(0, 10);
     if (leadId && dateIso && selectedSlot && phoneDigitsOnly.length >= 10) {
-      api.preOnboardingCallbackBooking(leadId, {
-        date: dateIso,
-        slot: selectedSlot,
-        phone: phoneDigitsOnly,
-      }).catch((err) => {
+      try {
+        await api.preOnboardingCallbackBooking(leadId, {
+          date: dateIso,
+          slot: selectedSlot,
+          phone: phoneDigitsOnly,
+        });
+      } catch (err) {
         console.error("[UWIFinalization] callback-booking failed", err);
-      });
+        const msg = err?.message || "Erreur serveur";
+        setCallbackError(msg.includes("introuvable") ? "Lead introuvable (lien expiré ou ancienne session). Refaitez votre demande depuis l'accueil." : msg);
+      }
     }
     setTimeout(() => {
       setIsSubmitting(false);
       setPhase("done");
-    }, 1400);
+    }, 800);
   }, [canSubmit, leadId, selectedDay, selectedSlot, phone]);
 
   const baseStyle = {
@@ -566,10 +572,15 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
         <div style={orb2} />
         <div style={barAccent} />
         <div style={{ position: "relative", zIndex: 1, paddingTop: 40, textAlign: "center" }}>
-          <div style={{ width: 64, height: 64, margin: "0 auto 20px", borderRadius: "50%", background: COLORS.accent, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, animation: "popIn 0.5s cubic-bezier(0.34,1.56,0.64,1) forwards", boxShadow: "0 0 24px rgba(0,229,160,0.4)" }}>✅</div>
-          <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 12 }}>RDV confirmé !</h1>
+          {callbackError && (
+            <div style={{ background: "rgba(220, 80, 60, 0.15)", border: "1px solid rgba(220, 80, 60, 0.5)", borderRadius: 12, padding: 14, marginBottom: 20, textAlign: "left", fontSize: 13, color: "#f0a0a0" }}>
+              {callbackError}
+            </div>
+          )}
+          <div style={{ width: 64, height: 64, margin: "0 auto 20px", borderRadius: "50%", background: callbackError ? COLORS.surface : COLORS.accent, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, animation: "popIn 0.5s cubic-bezier(0.34,1.56,0.64,1) forwards", boxShadow: callbackError ? "none" : "0 0 24px rgba(0,229,160,0.4)" }}>{callbackError ? "⚠️" : "✅"}</div>
+          <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 12 }}>{callbackError ? "Erreur" : "RDV confirmé !"}</h1>
           <p style={{ fontSize: 14, color: COLORS.muted, marginBottom: 24, lineHeight: 1.5 }}>
-            {expert.name} vous appellera le {dayStr} à {selectedSlot} pour activer {assistantName}.
+            {callbackError ? "Votre créneau n'a pas pu être enregistré." : `${expert.name} vous appellera le ${dayStr} à ${selectedSlot} pour activer ${assistantName}.`}
           </p>
           <div style={{ background: COLORS.surface, borderRadius: 16, padding: 16, marginBottom: 20, border: `1px solid ${COLORS.border}`, textAlign: "left" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
@@ -606,7 +617,7 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
               boxShadow: "0 4px 20px rgba(0,229,160,0.25)",
             }}
           >
-            Aller au tableau de bord
+            {callbackError ? "Retour à l'accueil" : "Aller au tableau de bord"}
           </button>
         </div>
         <style>{`@keyframes popIn { 0% { transform: scale(0.3); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }`}</style>
