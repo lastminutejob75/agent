@@ -2028,6 +2028,7 @@ def admin_create_stripe_checkout(
             line_items=line_items,
             success_url=success_url,
             cancel_url=cancel_url,
+            locale="fr",
             metadata={"tenant_id": str(tenant_id), "plan_key": plan_key},
             subscription_data=subscription_data,
         )
