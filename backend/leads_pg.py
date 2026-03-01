@@ -239,7 +239,7 @@ def list_leads(
     enterprise_only: Optional[bool] = None,
     limit: int = 200,
 ) -> List[Dict[str, Any]]:
-    """List leads. Optional filter by status and/or is_enterprise. Order: new first, then enterprise, then created_at desc."""
+    """List leads. Optional filter by status and/or is_enterprise. Order: chronological (created_at desc, most recent first)."""
     try:
         with _get_conn() as conn:
             with conn.cursor() as cur:
@@ -259,7 +259,7 @@ def list_leads(
                            updated_at, last_submitted_at, max_daily_amplitude
                     FROM pre_onboarding_leads
                     {where_sql}
-                    ORDER BY (status = 'new') DESC, is_enterprise DESC, created_at DESC
+                    ORDER BY created_at DESC
                     LIMIT %s
                     """,
                     tuple(params),
