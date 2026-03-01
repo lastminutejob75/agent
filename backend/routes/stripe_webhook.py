@@ -87,13 +87,24 @@ def _sync_subscription(subscription: object) -> bool:
     return ok
 
 
+def _get_metered_price_ids_from_env() -> set:
+    """Ensemble des price ids metered (STRIPE_PRICE_METERED_STARTER/GROWTH/PRO + legacy)."""
+    ids = set()
+    for key in ("STRIPE_PRICE_METERED_STARTER", "STRIPE_PRICE_METERED_GROWTH", "STRIPE_PRICE_METERED_PRO",
+                "STRIPE_METERED_PRICE_ID", "STRIPE_PRICE_METERED_MINUTES"):
+        v = (os.environ.get(key) or "").strip()
+        if v:
+            ids.add(v)
+    return ids
+
+
 def _get_metered_subscription_item_id(subscription: object) -> str | None:
     """
     Retourne le subscription item id (metered) depuis subscription.items.data.
-    Si STRIPE_METERED_PRICE_ID est défini : item dont price.id == STRIPE_METERED_PRICE_ID.
+    Si des STRIPE_PRICE_METERED_* sont définis : item dont price.id est dans cet ensemble.
     Sinon : premier item dont price.recurring.usage_type == 'metered'.
     """
-    metered_price_id = (os.environ.get("STRIPE_METERED_PRICE_ID") or "").strip()
+    metered_price_ids = _get_metered_price_ids_from_env()
     if not hasattr(subscription, "items") or not subscription.items or not getattr(subscription.items, "data", None):
         return None
     fallback_item_id = None
@@ -104,10 +115,9 @@ def _get_metered_subscription_item_id(subscription: object) -> str | None:
         pid = (getattr(price, "id", None) or "").strip()
         recurring = getattr(price, "recurring", None)
         is_metered = recurring and getattr(recurring, "usage_type", None) == "metered"
-        if metered_price_id:
-            if pid == metered_price_id:
-                return (getattr(item, "id", None) or "").strip() or None
-        elif is_metered:
+        if metered_price_ids and pid in metered_price_ids:
+            return (getattr(item, "id", None) or "").strip() or None
+        if is_metered:
             fallback_item_id = (getattr(item, "id", None) or "").strip() or None
             if fallback_item_id:
                 return fallback_item_id

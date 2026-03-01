@@ -38,6 +38,7 @@ mangum==0.17.0
 twilio==9.0.0
 
 # Auth (JWT + admin password hash + email validation + OAuth state encryption)
+# bcrypt requis pour auth + tests (pip install -r requirements.txt en CI/local)
 PyJWT>=2.8.0
 bcrypt>=4.0.0
 email-validator>=2.0.0

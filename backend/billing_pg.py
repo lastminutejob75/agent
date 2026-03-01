@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -488,13 +488,21 @@ def run_suspension_past_due_job(days_after_period_end: int = 7) -> int:
 
 # --- Billing plans (quota minutes V1) ---
 
+# starter / growth / pro : quotas et overage (€/min) pour simulation upgrade.
 DEFAULT_PLANS = [
-    ("starter", 500),
-    ("pro", 1500),
+    ("starter", 400),
+    ("growth", 800),
+    ("pro", 1200),
     ("business", 5000),
     ("custom", 0),  # 0 = illimité ou à définir manuellement
     ("free", 0),
 ]
+# €/min au-delà des inclus (pour maybe_upgrade_plan). starter→0.19, growth→0.17, pro→0.15.
+PLAN_OVERAGE_EUR_PER_MIN = {
+    "starter": 0.19,
+    "growth": 0.17,
+    "pro": 0.15,
+}
 
 
 def ensure_billing_plans() -> None:
@@ -569,6 +577,62 @@ def get_plan_included_minutes(plan_key: Optional[str]) -> int:
         if k == plan_key:
             return v
     return 0
+
+
+def get_plan_overage_rate(plan_key: Optional[str]) -> Optional[float]:
+    """Retourne le tarif overage €/min pour le plan (None si inconnu / pas d'overage)."""
+    if not (plan_key or "").strip():
+        return None
+    return PLAN_OVERAGE_EUR_PER_MIN.get((plan_key or "").strip().lower())
+
+
+def get_tenant_ids_with_active_subscription() -> list:
+    """Liste des tenant_id ayant une subscription active (pour run_upgrade_suggestions)."""
+    url = _pg_url()
+    if not url:
+        return []
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT tenant_id FROM tenant_billing
+                    WHERE stripe_subscription_id IS NOT NULL AND stripe_subscription_id != ''
+                      AND COALESCE(billing_status, '') IN ('active', 'trialing')
+                    """
+                )
+                return [int(r[0]) for r in cur.fetchall()]
+    except Exception as e:
+        if "does not exist" not in str(e).lower():
+            logger.warning("get_tenant_ids_with_active_subscription failed: %s", e)
+        return []
+
+
+def get_tenant_minutes_in_current_period(tenant_id: int) -> Tuple[float, Optional[str], Optional[str]]:
+    """
+    Minutes consommées sur la période courante (pour simulation upgrade).
+    Returns (minutes_used, period_start_iso, period_end_iso). (0, None, None) si pas d'abo / pas de période.
+    """
+    billing = get_tenant_billing(tenant_id)
+    if not billing:
+        return (0.0, None, None)
+    start_ts = billing.get("current_period_start")
+    end_ts = billing.get("current_period_end")
+    if not start_ts or not end_ts:
+        return (0.0, None, None)
+    if hasattr(start_ts, "strftime"):
+        start_str = start_ts.strftime("%Y-%m-%d %H:%M:%S") if start_ts else None
+    else:
+        start_str = str(start_ts)[:19].replace("T", " ") if start_ts else None
+    if hasattr(end_ts, "strftime"):
+        end_str = end_ts.strftime("%Y-%m-%d %H:%M:%S") if end_ts else None
+    else:
+        end_str = str(end_ts)[:19].replace("T", " ") if end_ts else None
+    if not start_str or not end_str:
+        return (0.0, start_str, end_str)
+    used = _get_quota_used_minutes_pg(tenant_id, start_str, end_str)
+    return (used, start_str, end_str)
 
 
 def _get_tenant_params_for_quota(tenant_id: int) -> dict:

@@ -27,6 +27,7 @@ import MentionsLegales from "./pages/MentionsLegales";
 import Contact from "./pages/Contact";
 import Checkout from "./pages/Checkout";
 import CheckoutReturn from "./pages/CheckoutReturn";
+import BillingPage from "./pages/BillingPage";
 
 /** Layout neutre pour /app : rend uniquement les routes enfants (impersonate ou AppLayout). */
 function AppShell() {
@@ -63,6 +64,7 @@ export default function App() {
       <Route path="/contact" element={<Contact />} />
       <Route path="/checkout" element={<Checkout />} />
       <Route path="/checkout/return" element={<CheckoutReturn />} />
+      <Route path="/billing" element={<BillingPage />} />
       <Route element={<AuthLayout />}>
         <Route path="login" element={<Login />} />
         <Route path="forgot-password" element={<ForgotPassword />} />

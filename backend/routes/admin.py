@@ -1924,8 +1924,28 @@ def admin_create_stripe_customer(
         raise HTTPException(502, str(e) or "Stripe error")
 
 
+# Plans Stripe : starter, growth, pro (3 base + 3 metered prices).
+STRIPE_CHECKOUT_PLAN_KEYS = ("starter", "growth", "pro")
+
+
+def _get_stripe_price_ids_for_plan(plan_key: str) -> tuple[str | None, str | None]:
+    """
+    Mapping unique plan_key → (base_price_id, metered_price_id) depuis les env.
+    Env: STRIPE_PRICE_BASE_STARTER/GROWTH/PRO, STRIPE_PRICE_METERED_STARTER/GROWTH/PRO
+    (fallback: STRIPE_PRICE_METERED_MINUTES / STRIPE_METERED_PRICE_ID si un seul metered).
+    """
+    pk = (plan_key or "").strip().lower()
+    base = (os.environ.get(f"STRIPE_PRICE_BASE_{pk.upper()}") or "").strip() or None
+    metered = (
+        (os.environ.get(f"STRIPE_PRICE_METERED_{pk.upper()}") or "").strip()
+        or (os.environ.get("STRIPE_PRICE_METERED_MINUTES") or os.environ.get("STRIPE_METERED_PRICE_ID") or "").strip()
+        or None
+    )
+    return (base, metered)
+
+
 class StripeCheckoutBody(BaseModel):
-    plan_key: str = Field(..., description="starter | pro | business")
+    plan_key: str = Field(..., description="starter | growth | pro")
     trial_days: Optional[int] = Field(None, ge=1, le=365, description="Jours d'essai avant première facture")
 
 
@@ -1937,8 +1957,8 @@ def admin_create_stripe_checkout(
 ):
     """
     Crée une session Stripe Checkout (subscription) pour le tenant.
-    Ensure customer existe (création si absent), map plan_key → STRIPE_PRICE_BASE_*,
-    2 line items : base (qty 1) + metered minutes (qty 1).
+    Ensure customer existe (création si absent), map plan_key → (base_price, metered_price),
+    2 line items : base (qty 1) + metered minutes (qty 1). Metadata tenant_id + plan_key.
     Retourne checkout_url pour redirection. Webhooks sync subscription + stripe_metered_item_id.
     """
     d = _get_tenant_detail(tenant_id)
@@ -1956,16 +1976,19 @@ def admin_create_stripe_checkout(
     if not success_url or not cancel_url:
         raise HTTPException(503, "STRIPE_CHECKOUT_SUCCESS_URL and STRIPE_CHECKOUT_CANCEL_URL required")
     plan_key = (body.plan_key or "").strip().lower()
-    if not plan_key:
-        raise HTTPException(400, "plan_key required")
-    base_price_id = (os.environ.get(f"STRIPE_PRICE_BASE_{plan_key.upper()}") or "").strip()
+    if plan_key not in STRIPE_CHECKOUT_PLAN_KEYS:
+        raise HTTPException(400, "plan_key must be one of: starter, growth, pro")
+    base_price_id, metered_price_id = _get_stripe_price_ids_for_plan(plan_key)
+    # En prod : privilégier les 6 vars (STRIPE_PRICE_METERED_STARTER/GROWTH/PRO) ; legacy peut masquer une mauvaise config.
+    if metered_price_id and not (os.environ.get(f"STRIPE_PRICE_METERED_{plan_key.upper()}") or "").strip():
+        logger.warning(
+            "STRIPE_CHECKOUT_LEGACY_METERED plan_key=%s tenant_id=%s (définir STRIPE_PRICE_METERED_* pour des prices par plan)",
+            plan_key, tenant_id,
+        )
     if not base_price_id:
         raise HTTPException(400, "PRICE_NOT_CONFIGURED")
-    metered_price_id = (
-        (os.environ.get("STRIPE_PRICE_METERED_MINUTES") or os.environ.get("STRIPE_METERED_PRICE_ID") or "").strip()
-    )
     if not metered_price_id:
-        raise HTTPException(503, "STRIPE_PRICE_METERED_MINUTES or STRIPE_METERED_PRICE_ID required")
+        raise HTTPException(503, "STRIPE_PRICE_METERED_* or STRIPE_PRICE_METERED_MINUTES required")
     customer_id = (billing or {}).get("stripe_customer_id") or ""
     customer_id = (customer_id or "").strip()
     if not customer_id:
@@ -1991,11 +2014,12 @@ def admin_create_stripe_checkout(
     try:
         import stripe
         stripe.api_key = stripe_key
+        # Metered price : ne pas envoyer quantity (Stripe le rejette pour usage_type=metered)
         line_items = [
             {"price": base_price_id, "quantity": 1},
-            {"price": metered_price_id, "quantity": 1},
+            {"price": metered_price_id},
         ]
-        subscription_data = {"metadata": {"tenant_id": str(tenant_id)}}
+        subscription_data = {"metadata": {"tenant_id": str(tenant_id), "plan_key": plan_key}}
         if body.trial_days is not None and body.trial_days >= 1:
             subscription_data["trial_period_days"] = body.trial_days
         session = stripe.checkout.Session.create(
@@ -2004,7 +2028,7 @@ def admin_create_stripe_checkout(
             line_items=line_items,
             success_url=success_url,
             cancel_url=cancel_url,
-            metadata={"tenant_id": str(tenant_id)},
+            metadata={"tenant_id": str(tenant_id), "plan_key": plan_key},
             subscription_data=subscription_data,
         )
         url = (getattr(session, "url", None) or "").strip()

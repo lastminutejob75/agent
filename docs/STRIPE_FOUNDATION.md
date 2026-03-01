@@ -12,11 +12,16 @@ Brique Stripe **sans figer les prix** : customer + subscription + usage framewor
 | `STRIPE_WEBHOOK_SECRET` | Signature webhooks |
 | `STRIPE_CHECKOUT_SUCCESS_URL` | Redirection après paiement réussi (ex. https://uwiapp.com/app?checkout=success) |
 | `STRIPE_CHECKOUT_CANCEL_URL` | Redirection si annulation (ex. https://uwiapp.com/app?checkout=cancel) |
-| `STRIPE_PRICE_BASE_STARTER` | Price ID abo base Starter |
-| `STRIPE_PRICE_BASE_PRO` | Price ID abo base Pro |
-| `STRIPE_PRICE_BASE_BUSINESS` | Price ID abo base Business |
-| `STRIPE_PRICE_METERED_MINUTES` | Price ID usage metered (minutes) |
-| `STRIPE_METERED_PRICE_ID` | Même valeur que `STRIPE_PRICE_METERED_MINUTES` (remplissage `stripe_metered_item_id` via webhook) |
+| `STRIPE_PRICE_BASE_STARTER` | Price ID abo base Starter (99 €/mois) |
+| `STRIPE_PRICE_BASE_GROWTH` | Price ID abo base Growth (149 €/mois) |
+| `STRIPE_PRICE_BASE_PRO` | Price ID abo base Pro (199 €/mois) |
+| `STRIPE_PRICE_METERED_STARTER` | Price ID usage metered Starter (0,19 €/min après 400) |
+| `STRIPE_PRICE_METERED_GROWTH` | Price ID usage metered Growth (0,17 €/min après 800) |
+| `STRIPE_PRICE_METERED_PRO` | Price ID usage metered Pro (0,15 €/min après 1200) |
+| `STRIPE_PRICE_METERED_MINUTES` | (Legacy) Un seul price metered si pas de 3 prices distincts |
+| `STRIPE_METERED_PRICE_ID` | (Legacy) Remplissage `stripe_metered_item_id` via webhook |
+| `STRIPE_METER_EVENT_NAME` | (Optionnel) Nom du meter event Stripe (default: `uwi.minutes`) |
+| `STRIPE_USE_METER_EVENTS` | (Optionnel) `true` = push via billing.MeterEvent ; `false` (default) = UsageRecord legacy |
 
 Changer les montants plus tard = changer les Price dans le Dashboard Stripe et mettre à jour ces IDs.
 
