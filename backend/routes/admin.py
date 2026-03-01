@@ -3236,7 +3236,9 @@ def _get_operations_snapshot(window_days: int = 7) -> dict:
                     )
                     for r in cur.fetchall():
                         tid = r.get("tenant_id")
-                        d = _get_tenant_detail(tid) if tid else {}
+                        if tid is None:
+                            continue
+                        d = _get_tenant_detail(tid) or {}
                         last_at = r.get("last_error_at")
                         if last_at and hasattr(last_at, "isoformat"):
                             last_at = last_at.isoformat() + "Z"
@@ -3397,7 +3399,9 @@ def _get_quality_snapshot(window_days: int = 7) -> dict:
                         )
                         for r in cur.fetchall():
                             tid = r.get("tenant_id")
-                            d = _get_tenant_detail(tid) if tid else {}
+                            if tid is None:
+                                continue
+                            d = _get_tenant_detail(tid) or {}
                             last_at = r.get("last_at")
                             if last_at and hasattr(last_at, "isoformat"):
                                 last_at = last_at.isoformat() + "Z"
