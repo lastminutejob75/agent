@@ -1113,6 +1113,7 @@ def admin_leads_list(
     """Liste des leads. Query: ?status=new & ?enterprise=1 (combinaison possible)."""
     from backend.leads_pg import list_leads
     items = list_leads(status=status, enterprise_only=(enterprise == 1))
+    logger.info("admin_leads_list status=%s enterprise=%s count=%s", status, enterprise, len(items))
     return {"leads": items}
 
 

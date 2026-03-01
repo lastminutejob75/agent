@@ -51,12 +51,29 @@ export default function AdminLeadsList() {
   const enterpriseParam = searchParams.get("enterprise") === "1";
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
   useEffect(() => {
+    setLoadError(null);
     adminApi
       .leadsList({ status: statusParam || undefined, enterprise: enterpriseParam || undefined })
-      .then((r) => setLeads(r.leads || []))
-      .catch(() => setLeads([]))
+      .then((r) => {
+        setLeads(r.leads || []);
+      })
+      .catch((err) => {
+        setLeads([]);
+        const status = err?.status;
+        const msg = err?.message || String(err);
+        if (status === 401) {
+          setLoadError("Session expirée ou token invalide. Reconnectez-vous depuis la page Admin.");
+        } else if (status === 403) {
+          setLoadError("Accès refusé (CORS ou origine non autorisée). Vérifiez CORS_ORIGINS sur le backend.");
+        } else if (status === 503) {
+          setLoadError("Admin non configuré côté serveur (ADMIN_EMAIL / ADMIN_API_TOKEN).");
+        } else {
+          setLoadError(msg || "Impossible de charger les leads. Vérifiez la console et les logs backend.");
+        }
+      })
       .finally(() => setLoading(false));
   }, [statusParam, enterpriseParam]);
 
@@ -103,6 +120,16 @@ export default function AdminLeadsList() {
           🔥 Grands comptes
         </button>
       </div>
+      {loadError && (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
+          {loadError}
+          {loadError.includes("Reconnectez-vous") && (
+            <Link to="/admin/login" className="ml-2 font-medium text-amber-700 underline hover:text-amber-900">
+              Se connecter
+            </Link>
+          )}
+        </div>
+      )}
       {loading ? (
         <p className="text-slate-500">Chargement…</p>
       ) : (
