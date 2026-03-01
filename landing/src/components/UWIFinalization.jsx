@@ -1,5 +1,6 @@
 // Écran de finalisation UWI — 5 phases: loading → reveal → congrats → handoff → done
 import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api.js";
 
 const COLORS = {
@@ -58,6 +59,7 @@ function formatDayForDisplay(date) {
 }
 
 export default function UWIFinalization({ leadId = "", initialPhone = "", assistantName = "Emma", practitioner = "votre cabinet", onComplete }) {
+  const navigate = useNavigate();
   const [phase, setPhase] = useState("loading");
   const [loadingStep, setLoadingStep] = useState(0);
   const [loadingProgress, setLoadingProgress] = useState(0);
@@ -603,7 +605,13 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
           </div>
           <button
             type="button"
-            onClick={onComplete}
+            onClick={() => {
+              if (callbackError) {
+                onComplete?.();
+              } else {
+                navigate("/checkout");
+              }
+            }}
             style={{
               width: "100%",
               padding: "14px 20px",
@@ -617,7 +625,7 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
               boxShadow: "0 4px 20px rgba(0,229,160,0.25)",
             }}
           >
-            {callbackError ? "Retour à l'accueil" : "Aller au tableau de bord"}
+            {callbackError ? "Retour à l'accueil" : "Profiter du mois gratuit"}
           </button>
         </div>
         <style>{`@keyframes popIn { 0% { transform: scale(0.3); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }`}</style>
