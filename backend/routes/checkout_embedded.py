@@ -1,6 +1,6 @@
 # backend/routes/checkout_embedded.py
 # POST /create-checkout-session : session Embedded Checkout pour la page /checkout (lead « Profiter du mois gratuit »).
-# Compatible avec le frontend qui appelle stripeApiUrl + /create-checkout-session et attend { clientSecret }.
+# Utilise les 6 prices existants : plan=starter|growth|pro → STRIPE_PRICE_BASE_* ; sinon body.price_id ou STRIPE_PRICE_ID.
 from __future__ import annotations
 
 import logging
@@ -14,33 +14,52 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="", tags=["checkout_embedded"])
 
+PLAN_KEYS = ("starter", "growth", "pro")
+
+
+def _get_base_price_id_for_plan(plan_key: str) -> Optional[str]:
+    """Résout le price ID base depuis les env STRIPE_PRICE_BASE_STARTER/GROWTH/PRO."""
+    pk = (plan_key or "").strip().lower()
+    if pk not in PLAN_KEYS:
+        return None
+    return (os.environ.get(f"STRIPE_PRICE_BASE_{pk.upper()}") or "").strip() or None
+
 
 class CreateCheckoutSessionBody(BaseModel):
-    price_id: Optional[str] = Field(None, description="Stripe Price ID (optionnel si STRIPE_PRICE_ID en env)")
+    price_id: Optional[str] = Field(None, description="Stripe Price ID (optionnel si plan ou STRIPE_PRICE_ID)")
     quantity: int = Field(1, ge=1, le=100)
+    plan: Optional[str] = Field("starter", description="starter | growth | pro — utilise STRIPE_PRICE_BASE_* (défaut: starter pour mois gratuit)")
 
 
 @router.post("/create-checkout-session")
 def create_checkout_session_embedded(body: CreateCheckoutSessionBody) -> dict[str, Any]:
     """
     Crée une session Stripe Checkout en mode embedded (clientSecret pour EmbeddedCheckout).
-    Utilisé par la landing /checkout quand VITE_STRIPE_API_URL pointe vers ce backend.
+    Utilise les 6 prices : plan=starter|growth|pro → STRIPE_PRICE_BASE_* ; sinon price_id ou STRIPE_PRICE_ID.
     """
     stripe_key = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
     if not stripe_key:
         raise HTTPException(503, "Stripe non configuré (STRIPE_SECRET_KEY)")
-    price_id = (body.price_id or "").strip() or (os.environ.get("STRIPE_PRICE_ID") or "").strip()
+    # Priorité : body.price_id > plan (STRIPE_PRICE_BASE_*) > STRIPE_PRICE_ID
+    price_id = (body.price_id or "").strip()
+    if not price_id and body.plan:
+        price_id = _get_base_price_id_for_plan(body.plan) or ""
     if not price_id:
-        raise HTTPException(400, "STRIPE_PRICE_ID manquant (env ou body.price_id)")
+        price_id = (os.environ.get("STRIPE_PRICE_ID") or "").strip()
+    if not price_id:
+        raise HTTPException(400, "Price manquant : envoyez plan=starter|growth|pro ou price_id, ou définissez STRIPE_PRICE_ID / STRIPE_PRICE_BASE_STARTER en env")
     frontend_url = (os.environ.get("STRIPE_EMBEDDED_RETURN_URL") or os.environ.get("FRONTEND_URL") or "https://uwiapp.com").strip().rstrip("/")
     return_url = f"{frontend_url}/checkout/return?session_id={{CHECKOUT_SESSION_ID}}"
+    # Les prix base (plan starter/growth/pro) sont des abonnements ; sinon paiement one-shot
+    from_plan = _get_base_price_id_for_plan(body.plan or "") == price_id
+    mode = "subscription" if from_plan else "payment"
     try:
         import stripe
         stripe.api_key = stripe_key
         session = stripe.checkout.Session.create(
             ui_mode="embedded",
             line_items=[{"price": price_id, "quantity": body.quantity}],
-            mode="payment",
+            mode=mode,
             return_url=return_url,
         )
         secret = (getattr(session, "client_secret", None) or "").strip()
