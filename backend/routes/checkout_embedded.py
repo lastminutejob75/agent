@@ -29,6 +29,7 @@ class CreateCheckoutSessionBody(BaseModel):
     price_id: Optional[str] = Field(None, description="Stripe Price ID (optionnel si plan ou STRIPE_PRICE_ID)")
     quantity: int = Field(1, ge=1, le=100)
     plan: Optional[str] = Field("starter", description="starter | growth | pro — utilise STRIPE_PRICE_BASE_* (défaut: starter pour mois gratuit)")
+    trial_days: Optional[int] = Field(30, ge=0, le=365, description="Jours d'essai gratuit (défaut 30 = mois gratuit)")
 
 
 @router.post("/create-checkout-session")
@@ -53,15 +54,18 @@ def create_checkout_session_embedded(body: CreateCheckoutSessionBody) -> dict[st
     # Les prix base (plan starter/growth/pro) sont des abonnements ; sinon paiement one-shot
     from_plan = _get_base_price_id_for_plan(body.plan or "") == price_id
     mode = "subscription" if from_plan else "payment"
+    kwargs = {
+        "ui_mode": "embedded",
+        "line_items": [{"price": price_id, "quantity": body.quantity}],
+        "mode": mode,
+        "return_url": return_url,
+    }
+    if mode == "subscription" and (body.trial_days or 0) >= 1:
+        kwargs["subscription_data"] = {"trial_period_days": min(body.trial_days or 30, 365)}
     try:
         import stripe
         stripe.api_key = stripe_key
-        session = stripe.checkout.Session.create(
-            ui_mode="embedded",
-            line_items=[{"price": price_id, "quantity": body.quantity}],
-            mode=mode,
-            return_url=return_url,
-        )
+        session = stripe.checkout.Session.create(**kwargs)
         secret = (getattr(session, "client_secret", None) or "").strip()
         if not secret:
             raise HTTPException(500, "Stripe n'a pas renvoyé client_secret")
