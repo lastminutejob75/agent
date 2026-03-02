@@ -1,39 +1,46 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+
   <url>
     <loc>https://www.uwiapp.com/</loc>
+    <lastmod>2026-03-02</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
-    <lastmod>2026-03-02</lastmod>
   </url>
+
   <url>
     <loc>https://www.uwiapp.com/creer-assistante</loc>
+    <lastmod>2026-03-02</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.9</priority>
-    <lastmod>2026-03-02</lastmod>
   </url>
+
   <url>
     <loc>https://www.uwiapp.com/contact</loc>
+    <lastmod>2026-03-02</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
-    <lastmod>2026-03-02</lastmod>
   </url>
+
   <url>
     <loc>https://www.uwiapp.com/cgv</loc>
+    <lastmod>2026-03-02</lastmod>
     <changefreq>yearly</changefreq>
     <priority>0.3</priority>
-    <lastmod>2026-03-02</lastmod>
   </url>
+
   <url>
     <loc>https://www.uwiapp.com/cgu</loc>
+    <lastmod>2026-03-02</lastmod>
     <changefreq>yearly</changefreq>
     <priority>0.3</priority>
-    <lastmod>2026-03-02</lastmod>
   </url>
+
   <url>
     <loc>https://www.uwiapp.com/mentions-legales</loc>
+    <lastmod>2026-03-02</lastmod>
     <changefreq>yearly</changefreq>
     <priority>0.3</priority>
-    <lastmod>2026-03-02</lastmod>
   </url>
+
 </urlset>
