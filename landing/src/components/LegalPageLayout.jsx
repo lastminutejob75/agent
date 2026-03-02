@@ -1,12 +1,13 @@
 // Layout commun pour pages légales (CGV, CGU, Mentions légales, Contact)
 import { Link } from "react-router-dom";
 
-export default function LegalPageLayout({ title, children }) {
+export default function LegalPageLayout({ title, tagline, children }) {
   return (
     <div className="legal-page">
       <div className="legal-page__wrap">
         <Link to="/" className="legal-page__back">← Retour à l'accueil</Link>
         <h1 className="legal-page__title">{title}</h1>
+        {tagline ? <p className="legal-page__tagline">{tagline}</p> : null}
         <div className="legal-page__content">
           {children}
         </div>
@@ -36,8 +37,14 @@ export default function LegalPageLayout({ title, children }) {
           font-size: 28px;
           font-weight: 800;
           color: #fff;
-          margin-bottom: 28px;
+          margin-bottom: 8px;
           letter-spacing: -0.02em;
+        }
+        .legal-page__tagline {
+          font-size: 16px;
+          color: rgba(255,255,255,0.75);
+          margin-bottom: 28px;
+          font-weight: 500;
         }
         .legal-page__content {
           font-size: 15px;

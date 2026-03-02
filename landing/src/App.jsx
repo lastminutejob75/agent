@@ -26,6 +26,7 @@ import CGV from "./pages/CGV";
 import CGU from "./pages/CGU";
 import MentionsLegales from "./pages/MentionsLegales";
 import Contact from "./pages/Contact";
+import SeoVerticalPage from "./pages/SeoVerticalPage";
 import Checkout from "./pages/Checkout";
 import CheckoutReturn from "./pages/CheckoutReturn";
 import BillingPage from "./pages/BillingPage";
@@ -66,6 +67,16 @@ export default function App() {
       <Route path="/cgu" element={<CGU />} />
       <Route path="/mentions-legales" element={<MentionsLegales />} />
       <Route path="/contact" element={<Contact />} />
+      <Route path="/secretaire-medicale-augmentee" element={<SeoVerticalPage pageKey="/secretaire-medicale-augmentee" />} />
+      <Route path="/secretaire-medicale-augmentee-medecin" element={<SeoVerticalPage pageKey="/secretaire-medicale-augmentee-medecin" />} />
+      <Route path="/agent-accueil-ia-medical" element={<Navigate to="/secretaire-medicale-augmentee" replace />} />
+      <Route path="/assistant-telephone-ia-medecin" element={<Navigate to="/secretaire-medicale-augmentee-medecin" replace />} />
+      <Route path="/assistant-telephone-ia-dentiste" element={<SeoVerticalPage pageKey="/assistant-telephone-ia-dentiste" />} />
+      <Route path="/assistant-telephone-ia-kine" element={<SeoVerticalPage pageKey="/assistant-telephone-ia-kine" />} />
+      <Route path="/assistant-telephone-ia-sage-femme" element={<SeoVerticalPage pageKey="/assistant-telephone-ia-sage-femme" />} />
+      <Route path="/assistant-telephone-ia-dermatologue" element={<SeoVerticalPage pageKey="/assistant-telephone-ia-dermatologue" />} />
+      <Route path="/assistant-telephone-ia-orthophoniste" element={<SeoVerticalPage pageKey="/assistant-telephone-ia-orthophoniste" />} />
+      <Route path="/standard-telephonique-cabinet-medical" element={<SeoVerticalPage pageKey="/standard-telephonique-cabinet-medical" />} />
       <Route path="/checkout" element={<Checkout />} />
       <Route path="/checkout/return" element={<CheckoutReturn />} />
       <Route path="/billing" element={<BillingPage />} />

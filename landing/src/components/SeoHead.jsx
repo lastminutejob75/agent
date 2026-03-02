@@ -1,6 +1,7 @@
 import React from "react";
 import { Helmet } from "react-helmet-async";
 import { useLocation } from "react-router-dom";
+import { SEO_VERTICAL_PAGES, SEO_VERTICAL_PATHS } from "../config/seoVerticalPages.config.js";
 
 /**
  * NOINDEX_PATTERNS + getMetaForPath : mapping route → meta, noindex pour
@@ -20,8 +21,7 @@ function toAbsoluteUrl(pathname) {
 const ROUTE_META = {
   "/": {
     title: "UWi — Agent d'accueil IA multicanal (téléphone, web, WhatsApp)",
-    description:
-      "Répondez aux appels, qualifiez les demandes et prenez des RDV automatiquement. Handoff humain inclus.",
+    description: null, // évite doublon : meta description home = celle de index.html (fallback crawler)
   },
   "/creer-assistante": {
     title: "Créer mon assistant — UWi",
@@ -38,6 +38,12 @@ const ROUTE_META = {
     title: "Mentions légales — UWi",
     description: "Mentions légales et informations légales UWi.",
   },
+  ...Object.fromEntries(
+    SEO_VERTICAL_PATHS.map((path) => [
+      path,
+      { title: SEO_VERTICAL_PAGES[path].title, description: SEO_VERTICAL_PAGES[path].description },
+    ])
+  ),
 };
 
 const NOINDEX_PATTERNS = [
@@ -55,7 +61,7 @@ const NOINDEX_PATTERNS = [
 ];
 
 function getMetaForPath(pathname) {
-  const normalized = (pathname || "").replace(/\?.*$/, "") || "/";
+  const normalized = (pathname || "").replace(/\?.*$/, "").replace(/\/+$/, "") || "/";
   const exact = ROUTE_META[normalized];
   if (exact) return { ...exact, noIndex: false };
   const noIndex =
@@ -70,6 +76,61 @@ function getMetaForPath(pathname) {
 
 function matchesNoindex(pathname) {
   return NOINDEX_PATTERNS.some((re) => re.test(pathname || ""));
+}
+
+/** Description fallback home (alignée index.html). */
+const DEFAULT_DESCRIPTION =
+  "Répondez aux appels, qualifiez les demandes et prenez des RDV automatiquement. Handoff humain inclus.";
+
+/**
+ * Construit l’objet head pour vite-prerender-plugin (title + elements).
+ * Une seule source de vérité avec getMetaForPath.
+ */
+export function getHeadForPrerender(pathname) {
+  const path = (pathname || "").replace(/\?.*$/, "").replace(/\/+$/, "") || "/";
+  const meta = getMetaForPath(path);
+  const noindex = Boolean(meta?.noIndex ?? meta?.noindex ?? matchesNoindex(path));
+  const title = meta?.title || "UWi";
+  const url = toAbsoluteUrl(path);
+  const description = meta?.description ?? (path === "/" ? DEFAULT_DESCRIPTION : null);
+
+  const elements = new Set([
+    { type: "link", props: { rel: "canonical", href: url } },
+    { type: "meta", props: { name: "robots", content: noindex ? "noindex,nofollow" : "index,follow" } },
+    { type: "meta", props: { property: "og:site_name", content: "UWi" } },
+    { type: "meta", props: { property: "og:locale", content: "fr_FR" } },
+    { type: "meta", props: { property: "og:type", content: "website" } },
+    { type: "meta", props: { property: "og:url", content: url } },
+    { type: "meta", props: { property: "og:title", content: title } },
+    { type: "meta", props: { name: "twitter:card", content: "summary_large_image" } },
+    { type: "meta", props: { name: "twitter:title", content: title } },
+  ]);
+  if (description) {
+    elements.add({ type: "meta", props: { name: "description", content: description } });
+    elements.add({ type: "meta", props: { property: "og:description", content: description } });
+    elements.add({ type: "meta", props: { name: "twitter:description", content: description } });
+  }
+
+  // FAQ JSON-LD pour les pages SEO verticales (rich snippets)
+  const verticalPage = SEO_VERTICAL_PAGES[path];
+  if (verticalPage?.faq?.length) {
+    const faqJsonLd = {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      mainEntity: verticalPage.faq.map(({ q, a }) => ({
+        "@type": "Question",
+        name: q,
+        acceptedAnswer: { "@type": "Answer", text: a },
+      })),
+    };
+    elements.add({
+      type: "script",
+      props: { type: "application/ld+json" },
+      children: JSON.stringify(faqJsonLd),
+    });
+  }
+
+  return { title, lang: "fr", elements };
 }
 
 export function SeoHeadInner({ title, description, path, noindex }) {
@@ -103,9 +164,9 @@ export function SeoHeadInner({ title, description, path, noindex }) {
 
 export default function SeoHead() {
   const { pathname } = useLocation();
-  const meta = getMetaForPath(pathname);
-  const noindex = Boolean(meta?.noIndex) || matchesNoindex(pathname);
-  const path = (pathname || "").replace(/\?.*$/, "") || "/";
+  const path = pathname || "/";
+  const meta = getMetaForPath(path);
+  const noindex = Boolean(meta?.noindex || meta?.noIndex) || matchesNoindex(path);
 
   return (
     <SeoHeadInner

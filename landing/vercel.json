@@ -4,10 +4,26 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "installCommand": "npm install",
+  "redirects": [
+    { "source": "/agent-accueil-ia-medical", "destination": "/secretaire-medicale-augmentee", "permanent": true },
+    { "source": "/assistant-telephone-ia-medecin", "destination": "/secretaire-medicale-augmentee-medecin", "permanent": true }
+  ],
   "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": "/index.html"
-    }
+    { "source": "/robots.txt", "destination": "/robots.txt" },
+    { "source": "/sitemap.xml", "destination": "/sitemap.xml" },
+    { "source": "/creer-assistante", "destination": "/creer-assistante/index.html" },
+    { "source": "/contact", "destination": "/contact/index.html" },
+    { "source": "/cgv", "destination": "/cgv/index.html" },
+    { "source": "/cgu", "destination": "/cgu/index.html" },
+    { "source": "/mentions-legales", "destination": "/mentions-legales/index.html" },
+    { "source": "/secretaire-medicale-augmentee", "destination": "/secretaire-medicale-augmentee/index.html" },
+    { "source": "/secretaire-medicale-augmentee-medecin", "destination": "/secretaire-medicale-augmentee-medecin/index.html" },
+    { "source": "/assistant-telephone-ia-dentiste", "destination": "/assistant-telephone-ia-dentiste/index.html" },
+    { "source": "/assistant-telephone-ia-kine", "destination": "/assistant-telephone-ia-kine/index.html" },
+    { "source": "/assistant-telephone-ia-sage-femme", "destination": "/assistant-telephone-ia-sage-femme/index.html" },
+    { "source": "/assistant-telephone-ia-dermatologue", "destination": "/assistant-telephone-ia-dermatologue/index.html" },
+    { "source": "/assistant-telephone-ia-orthophoniste", "destination": "/assistant-telephone-ia-orthophoniste/index.html" },
+    { "source": "/standard-telephonique-cabinet-medical", "destination": "/standard-telephonique-cabinet-medical/index.html" },
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
