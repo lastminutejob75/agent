@@ -1,26 +1,15 @@
-# UWi — robots.txt
-# Pages indexables : home, créateur, CGV/CGU, contact, mentions légales
-# Pages non indexées : app, admin, auth, checkout, billing
-
 User-agent: *
 Allow: /
-Allow: /creer-assistante
-Allow: /cgv
-Allow: /cgu
-Allow: /mentions-legales
-Allow: /contact
 
 Disallow: /admin
 Disallow: /app
 Disallow: /login
-Disallow: /forgot-password
-Disallow: /reset-password
-Disallow: /auth/
 Disallow: /checkout
-Disallow: /checkout/
 Disallow: /billing
-Disallow: /onboarding
-Disallow: /essai-gratuit
-Disallow: /decouverte
+Disallow: /auth/
+Disallow: /reset-password
+Disallow: /forgot-password
+Disallow: /api/
+Disallow: /_vercel/
 
 Sitemap: https://www.uwiapp.com/sitemap.xml

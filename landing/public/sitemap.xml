@@ -4,30 +4,36 @@
     <loc>https://www.uwiapp.com/</loc>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
+    <lastmod>2026-03-02</lastmod>
   </url>
   <url>
     <loc>https://www.uwiapp.com/creer-assistante</loc>
     <changefreq>weekly</changefreq>
     <priority>0.9</priority>
+    <lastmod>2026-03-02</lastmod>
   </url>
   <url>
     <loc>https://www.uwiapp.com/contact</loc>
     <changefreq>monthly</changefreq>
-    <priority>0.7</priority>
+    <priority>0.6</priority>
+    <lastmod>2026-03-02</lastmod>
   </url>
   <url>
     <loc>https://www.uwiapp.com/cgv</loc>
-    <changefreq>monthly</changefreq>
-    <priority>0.5</priority>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
+    <lastmod>2026-03-02</lastmod>
   </url>
   <url>
     <loc>https://www.uwiapp.com/cgu</loc>
-    <changefreq>monthly</changefreq>
-    <priority>0.5</priority>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
+    <lastmod>2026-03-02</lastmod>
   </url>
   <url>
     <loc>https://www.uwiapp.com/mentions-legales</loc>
-    <changefreq>monthly</changefreq>
-    <priority>0.5</priority>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
+    <lastmod>2026-03-02</lastmod>
   </url>
 </urlset>
