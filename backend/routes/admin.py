@@ -3485,6 +3485,45 @@ def admin_job_quota_alerts_80(
     return run_quota_alerts_80(month_utc=month)
 
 
+@router.post("/admin/jobs/insert-test-usage")
+def admin_job_insert_test_usage(
+    tenant_id: int = Query(1, description="Tenant pour usage test"),
+    _: None = Depends(_verify_admin),
+):
+    """Insère 55 min de test dans vapi_call_usage pour hier UTC (E2E Stripe)."""
+    import uuid
+    from datetime import datetime, timedelta, timezone
+
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    if not url:
+        raise HTTPException(503, "DATABASE_URL not configured")
+    now = datetime.now(timezone.utc)
+    yesterday = (now.date() - timedelta(days=1))
+    start = datetime(yesterday.year, yesterday.month, yesterday.day, 10, 0, 0, tzinfo=timezone.utc)
+    rows = [
+        (tenant_id, f"test-usage-{uuid.uuid4()}", start, start + timedelta(minutes=15), 900, 0.05),
+        (tenant_id, f"test-usage-{uuid.uuid4()}", start + timedelta(hours=4), start + timedelta(hours=4, minutes=20), 1200, 0.07),
+        (tenant_id, f"test-usage-{uuid.uuid4()}", start + timedelta(hours=6), start + timedelta(hours=6, minutes=20), 1200, 0.07),
+    ]
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                for tid, vid, s, e, dur, cost in rows:
+                    cur.execute(
+                        """
+                        INSERT INTO vapi_call_usage (tenant_id, vapi_call_id, started_at, ended_at, duration_sec, cost_usd, cost_currency)
+                        VALUES (%s, %s, %s, %s, %s, %s, 'USD')
+                        ON CONFLICT (tenant_id, vapi_call_id) DO NOTHING
+                        """,
+                        (tid, vid, s, e, dur, cost),
+                    )
+                conn.commit()
+        return {"ok": True, "tenant_id": tenant_id, "minutes": 55, "date_utc": yesterday.isoformat()}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.post("/admin/jobs/push-daily-usage")
 def admin_job_push_daily_usage(
     _: None = Depends(_verify_admin),

@@ -113,6 +113,13 @@ Vérifier réception des events Stripe (200) : `checkout.session.completed`, `cu
 
 Les prices metered Stripe sont configurés avec paliers (0€ jusqu'à 400/800/1200 min puis €/min). On pousse donc le **total** des minutes — Stripe applique les paliers.
 
+**Checklist Stripe (metered price)** :
+- Recurring → Usage type = **Metered**
+- Billing scheme = **Progressive** (graduée)
+- Tiers : 1→800 (Growth) = 0€/unité ; au-delà = 0,17€/unité
+
+**Backend** : on pousse l'usage **journalier** (chaque jour). Stripe somme les records sur la période → total. Paliers appliqués au total. Ex. 500 min → 0€ ; 900 min → 100×0,17€.
+
 ### 3.3 Données usage (vapi_call_usage)
 
 Pour déclencher un push, il faut des lignes dans `vapi_call_usage` pour **hier** (UTC) :
@@ -126,21 +133,28 @@ WHERE ended_at >= (CURRENT_DATE - INTERVAL '1 day')::timestamp
 GROUP BY tenant_id, ended_at;
 ```
 
-Si vide, insérer des données de test (remplacer `TENANT_ID` et la date) :
+Si vide, insérer des données de test. **Schéma** : `tenant_id`, `vapi_call_id`, `started_at`, `ended_at`, `duration_sec`, `cost_usd`, `cost_currency`.
 
 ```sql
+-- 55 min total pour hier (15+20+20). Exécuter sur Postgres Railway.
 INSERT INTO vapi_call_usage (tenant_id, vapi_call_id, started_at, ended_at, duration_sec, cost_usd, cost_currency)
-VALUES (
-  TENANT_ID,
-  'test-e2e-' || gen_random_uuid()::text,
-  (CURRENT_DATE - INTERVAL '1 day')::timestamp + INTERVAL '10:00',
-  (CURRENT_DATE - INTERVAL '1 day')::timestamp + INTERVAL '10:05',
-  300,
-  0.05,
-  'USD'
-)
+VALUES
+  (1, 'test-usage-' || gen_random_uuid()::text,
+   (date_trunc('day', now() AT TIME ZONE 'utc') - interval '1 day') + interval '10:00',
+   (date_trunc('day', now() AT TIME ZONE 'utc') - interval '1 day') + interval '10:15',
+   900, 0.05, 'USD'),
+  (1, 'test-usage-' || gen_random_uuid()::text,
+   (date_trunc('day', now() AT TIME ZONE 'utc') - interval '1 day') + interval '14:00',
+   (date_trunc('day', now() AT TIME ZONE 'utc') - interval '1 day') + interval '14:20',
+   1200, 0.07, 'USD'),
+  (1, 'test-usage-' || gen_random_uuid()::text,
+   (date_trunc('day', now() AT TIME ZONE 'utc') - interval '1 day') + interval '16:00',
+   (date_trunc('day', now() AT TIME ZONE 'utc') - interval '1 day') + interval '16:20',
+   1200, 0.07, 'USD')
 ON CONFLICT (tenant_id, vapi_call_id) DO NOTHING;
 ```
+
+Ou utiliser `scripts/insert_test_usage_tenant1.sql`.
 
 ### 3.4 Déclencher le job
 
