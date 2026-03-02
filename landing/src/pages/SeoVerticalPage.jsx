@@ -30,8 +30,27 @@ export default function SeoVerticalPage({ pageKey }) {
       <Helmet>
         <script type="application/ld+json">{JSON.stringify(faqJsonLd)}</script>
       </Helmet>
-      <LegalPageLayout title={page.h1} tagline={page.tagline}>
-        {page.intro?.length ? (
+      <LegalPageLayout
+        title={page.hero ? undefined : page.h1}
+        tagline={page.hero ? undefined : page.tagline}
+      >
+        {page.hero ? (
+          <div className="legal-page__hero">
+            <h1 className="legal-page__hero-title">{page.hero.h1}</h1>
+            <p className="legal-page__hero-subtitle">{page.hero.subtitle}</p>
+            <ul className="legal-page__hero-bullets">
+              {page.hero.bullets.map((item, j) => (
+                <li key={j}>
+                  <span className="legal-page__hero-check">✔</span> {item}
+                </li>
+              ))}
+            </ul>
+            <Link to="/creer-assistante?new=1" className="legal-page__hero-cta">
+              {page.hero.cta}
+            </Link>
+          </div>
+        ) : null}
+        {!page.hero && page.intro?.length ? (
           <div style={{ marginBottom: 24 }}>
             {page.intro.map((paragraph, i) => (
               <Fragment key={i}>
@@ -68,6 +87,13 @@ export default function SeoVerticalPage({ pageKey }) {
             ) : null}
           </section>
         ))}
+        {page.ctaFinal ? (
+          <div className="legal-page__cta-final">
+            <Link to="/creer-assistante?new=1" className="legal-page__hero-cta">
+              {page.ctaFinal}
+            </Link>
+          </div>
+        ) : null}
         <h2>FAQ</h2>
         {page.faq.map((item, i) => (
           <div key={i} style={{ marginBottom: 20 }}>

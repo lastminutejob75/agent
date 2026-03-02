@@ -14,6 +14,8 @@ Pas un outil. Pas une option. Un élément structurel du cabinet.
 
 Trois piliers : charge mentale du praticien · fluidité du cabinet · qualité perçue par les patients.
 
+**Équilibre SEO + conversion** : mélanger émotion ET termes explicites. Google aime précision et mots-clés ancrés recherche (appels manqués cabinet médical, gestion appels cabinet médical, secrétariat médical débordé, prise de rendez-vous cabinet libéral, continuité téléphonique cabinet médical). Clarté > subtilité en early-stage.
+
 Ciblage : **cabinets libéraux uniquement** (médecin installé, professionnel de santé indépendant, cabinet individuel ou de groupe). Pas de clinique, hôpital, centre hospitalier, établissement de santé — cycle de vente long, DSI, comités ; à traiter plus tard.
 
 ---
@@ -56,13 +58,13 @@ Chaque page spécialité : lien vers la page pilier, liens vers les autres spéc
 
 - **H1** : Secrétaire médicale augmentée indispensable pour cabinet médical libéral  
 - **Tagline** : Ne laissez plus la pression téléphonique désorganiser votre cabinet  
-- **H2** : Un cabinet sous pression permanente  
+- **H2** : Appels manqués et gestion appels cabinet médical : un cabinet sous tension (SEO + émotion)  
 - **H2** : Réduire le stress organisationnel (axe 1)  
 - **H2** : Améliorer l'expérience patient (axe 2)  
-- **H2** : Une continuité téléphonique devenue indispensable  
+- **H2** : Continuité téléphonique cabinet médical : devenue indispensable  
 - **H2** : Et si votre cabinet n'avait plus d'appels manqués ?  
 - **H2** : Pensé exclusivement pour les cabinets libéraux  
-- **FAQ**
+- **FAQ** : 6 questions optimisées (termes recherchés) en JSON-LD FAQPage
 
 ---
 

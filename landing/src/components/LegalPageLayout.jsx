@@ -6,7 +6,7 @@ export default function LegalPageLayout({ title, tagline, children }) {
     <div className="legal-page">
       <div className="legal-page__wrap">
         <Link to="/" className="legal-page__back">← Retour à l'accueil</Link>
-        <h1 className="legal-page__title">{title}</h1>
+        {title ? <h1 className="legal-page__title">{title}</h1> : null}
         {tagline ? <p className="legal-page__tagline">{tagline}</p> : null}
         <div className="legal-page__content">
           {children}
@@ -69,6 +69,59 @@ export default function LegalPageLayout({ title, tagline, children }) {
           text-decoration: none;
         }
         .legal-page__content a:hover { text-decoration: underline; }
+        .legal-page__hero {
+          margin-bottom: 36px;
+        }
+        .legal-page__hero-title {
+          font-size: 26px;
+          font-weight: 800;
+          color: #fff;
+          line-height: 1.25;
+          margin: 0 0 16px;
+          letter-spacing: -0.02em;
+        }
+        .legal-page__hero-subtitle {
+          font-size: 16px;
+          color: rgba(255,255,255,0.85);
+          line-height: 1.6;
+          margin: 0 0 20px;
+        }
+        .legal-page__hero-bullets {
+          list-style: none;
+          padding: 0;
+          margin: 0 0 24px;
+        }
+        .legal-page__hero-bullets li {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          margin-bottom: 10px;
+          font-size: 15px;
+          color: rgba(255,255,255,0.9);
+        }
+        .legal-page__hero-check {
+          color: #00F0B5;
+          font-weight: 700;
+        }
+        .legal-page__hero-cta {
+          display: inline-block;
+          background: #00F0B5;
+          color: #0D1120;
+          font-weight: 700;
+          font-size: 16px;
+          padding: 14px 24px;
+          border-radius: 8px;
+          text-decoration: none;
+          transition: opacity 0.2s;
+        }
+        .legal-page__hero-cta:hover {
+          opacity: 0.9;
+        }
+        .legal-page__cta-final {
+          margin: 32px 0;
+          padding-top: 24px;
+          border-top: 1px solid rgba(255,255,255,0.15);
+        }
       `}</style>
     </div>
   );

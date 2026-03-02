@@ -2,6 +2,8 @@
  * Config des pages SEO verticales — UWi Medical.
  * Positionnement : UWi = la secrétaire médicale augmentée INDISPENSABLE pour les cabinets libéraux.
  * Angle : stress organisationnel + expérience patient. Pas finance, pas techno, pas gadget.
+ * SEO : mélanger émotion ET termes explicites (appels manqués cabinet médical, gestion appels,
+ * secrétariat médical débordé, prise de rendez-vous cabinet libéral, continuité téléphonique).
  *
  * Phrase pilier : continuité téléphonique.
  * Positionnement émotionnel : réduire le stress organisationnel + garantir une expérience patient fluide.
@@ -51,102 +53,76 @@ export const SEO_VERTICAL_PAGES = {
   [PILLAR_PATH]: {
     title: "Secrétaire médicale augmentée indispensable pour cabinet libéral | UWi Medical",
     description:
-      "Réduisez le stress organisationnel et garantissez une expérience patient fluide. Secrétaire médicale augmentée indispensable aux cabinets libéraux — réponse 24/7, continuité téléphonique.",
+      "Votre cabinet ne devrait jamais manquer un appel. UWi assure la continuité téléphonique — moins d'interruptions, moins de stress en fin de journée.",
     h1: "Secrétaire médicale augmentée indispensable pour cabinet médical libéral",
-    tagline: "Ne laissez plus la pression téléphonique désorganiser votre cabinet.",
-    intro: [
-      "Un cabinet médical ne peut pas se permettre de manquer des appels.",
-      "Chaque appel manqué peut représenter :",
-      "UWi est la secrétaire médicale augmentée indispensable pour réduire le stress organisationnel du cabinet et garantir une expérience patient fluide.",
-    ],
-    introListItems: [
-      "un patient perdu",
-      "une consultation non planifiée",
-      "une surcharge administrative",
-    ],
+    conversion: true,
+    hero: {
+      h1: "Votre cabinet ne devrait jamais manquer un appel.",
+      subtitle:
+        "UWi est la secrétaire médicale augmentée indispensable pour assurer la continuité téléphonique de votre cabinet libéral.",
+      bullets: [
+        "Réponse immédiate aux patients",
+        "Moins d'interruptions pendant vos consultations",
+        "Moins de stress en fin de journée",
+      ],
+      cta: "Réduire la pression de mon cabinet",
+    },
     ctaPrimary: "Réduire la pression de mon cabinet",
+    ctaFinal: "Mettre en place ma secrétaire augmentée",
     sections: [
       {
-        h2: "Un cabinet sous pression permanente",
-        content: "Un cabinet médical fonctionne sous tension permanente.",
+        h2: "Votre cabinet est sous tension permanente",
+        content: "Le médecin doit se reconnaître :",
         listItems: [
-          "Appels incessants",
-          "Interruptions pendant les consultations",
-          "Gestion administrative en fin de journée",
-          "Secrétariat débordé",
+          "Le téléphone qui sonne en consultation",
+          "Les 18 appels à rappeler à 19h",
+          "Les messages mal notés",
+          "La secrétaire débordée",
         ],
-        subContent:
-          "La secrétaire médicale augmentée UWi absorbe cette pression. Elle assure une continuité téléphonique constante, sans ajouter de charge mentale.",
-      },
-      {
-        h2: "Réduire le stress organisationnel",
-        content: "Un médecin libéral ne veut pas :",
-        listItems: [
-          "entendre le téléphone sonner en consultation",
-          "rattraper 18 appels à 19h",
-          "gérer des messages incomplets",
-          "dépendre d'une seule personne",
-        ],
-      },
-      {
-        h2: "Améliorer l'expérience patient",
-        content: "Un appel sans réponse crée de la frustration. UWi permet :",
-        listItems: [
-          "Une réponse immédiate",
-          "Une prise de rendez-vous structurée",
-          "Un message clair",
-          "Un transfert si nécessaire",
-        ],
-        subContent: "Le cabinet reste organisé, même en période de forte activité.",
-      },
-      {
-        h2: "Une continuité téléphonique devenue indispensable",
-        listItems: [
-          "Consultations en cours",
-          "Absences ponctuelles",
-          "Pics d'appels le lundi",
-          "Congés",
-        ],
-        subContent: "La continuité d'accueil est devenue indispensable.",
       },
       {
         h2: "Et si votre cabinet n'avait plus d'appels manqués ?",
+        content: "Imaginez :",
         listItems: [
-          "Moins d'interruptions",
-          "Moins de stress en fin de journée",
-          "Moins de rappels à gérer",
-          "Des patients rassurés",
+          "Consultations sans interruption",
+          "Appels gérés en continu",
+          "Patients rassurés",
+          "Fin de journée plus légère",
         ],
-        subContent: "Ça touche directement le praticien.",
+        subContent: "La sérénité au quotidien.",
       },
       {
-        h2: "Pensé exclusivement pour les cabinets libéraux",
+        h2: "Comment fonctionne votre secrétaire médicale augmentée",
+        content: "3 étapes simples. Court. Clair. Rassurant.",
         listItems: [
-          "Médecins généralistes",
-          "Dentistes",
-          "Kinésithérapeutes",
-          "Orthophonistes",
-          "Sages-femmes",
+          "Elle répond immédiatement",
+          "Elle organise les rendez-vous",
+          "Elle transmet les urgences",
         ],
-        subContent: "Sans infrastructure complexe. Sans service informatique.",
+      },
+      {
+        h2: "UWi ne remplace pas votre secrétariat",
+        content: "Il le complète. Pas d'erreur, pas de remplacement de l'humain :",
+        listItems: [
+          "UWi ne remplace pas votre secrétariat — il le complète",
+          "Il absorbe les pics",
+          "Il transfère les cas sensibles",
+          "Il ne donne aucun avis médical",
+        ],
       },
     ],
     faq: [
       {
-        q: "La secrétaire médicale augmentée remplace-t-elle une secrétaire ?",
-        a: "Non. UWi assure la continuité du secrétariat : elle prend les appels et les rendez-vous simples, et transfère à un humain les situations qui le nécessitent.",
+        q: "La secrétaire médicale augmentée remplace-t-elle ma secrétaire ?",
+        a: "Non. UWi complète votre secrétariat : elle absorbe les pics, prend les appels et les RDV simples, et transfère à un humain les cas sensibles.",
       },
       {
-        q: "Donne-t-elle des conseils médicaux ?",
-        a: "Non. Aucun conseil médical, aucun diagnostic. Elle gère uniquement l'accueil téléphonique et l'organisation des rendez-vous.",
-      },
-      {
-        q: "Est-ce compatible avec Doctolib ou un agenda existant ?",
-        a: "UWi peut fonctionner avec votre organisation actuelle et s'intégrer à votre agenda.",
+        q: "UWi donne-t-il des conseils médicaux ?",
+        a: "Non. Aucun avis médical, aucun diagnostic. Uniquement accueil téléphonique et organisation des rendez-vous.",
       },
       {
         q: "Les données sont-elles conformes au RGPD ?",
-        a: "Oui. UWi est conçu pour respecter la réglementation européenne.",
+        a: "Oui. UWi est conçu pour respecter le RGPD et la réglementation européenne.",
       },
     ],
   },
