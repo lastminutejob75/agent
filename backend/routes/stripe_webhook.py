@@ -98,11 +98,45 @@ def _get_metered_price_ids_from_env() -> set:
     return ids
 
 
+def resync_metered_item_for_tenant(tenant_id: int) -> dict:
+    """
+    Re-fetch subscription depuis Stripe (expand items.data.price) et met à jour stripe_metered_item_id.
+    Utile pour backfill si webhook n'a pas persisté le metered item.
+    Retourne {ok, stripe_metered_item_id, error}.
+    """
+    from backend.billing_pg import get_tenant_billing, set_stripe_metered_item_id
+    billing = get_tenant_billing(tenant_id)
+    if not billing:
+        return {"ok": False, "stripe_metered_item_id": None, "error": "no_billing"}
+    sub_id = (billing.get("stripe_subscription_id") or "").strip()
+    if not sub_id:
+        return {"ok": False, "stripe_metered_item_id": None, "error": "no_subscription"}
+    try:
+        sub = _retrieve_subscription_with_items(sub_id)
+        metered_id = _get_metered_subscription_item_id(sub)
+        if metered_id:
+            set_stripe_metered_item_id(tenant_id, metered_id)
+            logger.info("resync_metered_item tenant_id=%s sub=%s metered_item=%s", tenant_id, sub_id, metered_id)
+            return {"ok": True, "stripe_metered_item_id": metered_id, "error": None}
+        return {"ok": False, "stripe_metered_item_id": None, "error": "no_metered_item_in_subscription"}
+    except Exception as e:
+        logger.warning("resync_metered_item tenant_id=%s error=%s", tenant_id, e)
+        return {"ok": False, "stripe_metered_item_id": None, "error": str(e)}
+
+
+def _retrieve_subscription_with_items(sub_id: str):
+    """Re-fetch subscription avec expand items.data.price pour accéder à price.recurring.usage_type."""
+    import stripe
+    stripe.api_key = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
+    return stripe.Subscription.retrieve(sub_id, expand=["items.data.price"])
+
+
 def _get_metered_subscription_item_id(subscription: object) -> str | None:
     """
     Retourne le subscription item id (metered) depuis subscription.items.data.
     Si des STRIPE_PRICE_METERED_* sont définis : item dont price.id est dans cet ensemble.
     Sinon : premier item dont price.recurring.usage_type == 'metered'.
+    Gère price objet ou dict (expand).
     """
     metered_price_ids = _get_metered_price_ids_from_env()
     if not hasattr(subscription, "items") or not subscription.items or not getattr(subscription.items, "data", None):
@@ -112,9 +146,16 @@ def _get_metered_subscription_item_id(subscription: object) -> str | None:
         price = getattr(item, "price", None)
         if not price:
             continue
-        pid = (getattr(price, "id", None) or "").strip()
-        recurring = getattr(price, "recurring", None)
-        is_metered = recurring and getattr(recurring, "usage_type", None) == "metered"
+        # price peut être string (id), objet ou dict selon expand
+        if isinstance(price, str):
+            pid = price.strip()
+            is_metered = pid in metered_price_ids if metered_price_ids else False
+        else:
+            pid = (price.get("id") if isinstance(price, dict) else getattr(price, "id", None)) or ""
+            pid = (pid or "").strip()
+            recurring = price.get("recurring") if isinstance(price, dict) else getattr(price, "recurring", None)
+            usage_type = (recurring.get("usage_type") if isinstance(recurring, dict) else getattr(recurring, "usage_type", None)) if recurring else None
+            is_metered = usage_type == "metered"
         if metered_price_ids and pid in metered_price_ids:
             return (getattr(item, "id", None) or "").strip() or None
         if is_metered:
@@ -157,8 +198,18 @@ async def stripe_webhook(request: Request):
     try:
         if typ == "customer.subscription.created" or typ == "customer.subscription.updated":
             if obj:
+                sub_id = (getattr(obj, "id", None) or "").strip()
                 status = (getattr(obj, "status", None) or "").strip()
-                ok = _sync_subscription(obj)
+                # Re-fetch avec expand pour accéder à price.recurring.usage_type (event brut souvent sans expand)
+                if sub_id:
+                    try:
+                        sub = _retrieve_subscription_with_items(sub_id)
+                        ok = _sync_subscription(sub)
+                    except Exception as e:
+                        logger.warning("subscription.%s re-fetch failed: %s, fallback to event obj", typ.split(".")[-1], e)
+                        ok = _sync_subscription(obj)
+                else:
+                    ok = _sync_subscription(obj)
                 # Reprise de paiement : si subscription repasse active/trialing → lever suspension (évite client payé bloqué).
                 if ok and status in ("active", "trialing"):
                     customer_id = getattr(obj, "customer", None)
@@ -197,7 +248,9 @@ async def stripe_webhook(request: Request):
                 if hasattr(customer_id, "id"):
                     customer_id = customer_id.id
                 customer_id = (customer_id or "").strip()
-                sub_id = (getattr(obj, "subscription", None) or "").strip()
+                sub_id = getattr(obj, "subscription", None)
+                sub_id = getattr(sub_id, "id", sub_id) if sub_id else ""
+                sub_id = (sub_id or "").strip() if isinstance(sub_id, str) else ""
                 if customer_id and sub_id:
                     tenant_id = tenant_id_by_stripe_customer_id(customer_id)
                     if tenant_id is None and getattr(obj, "metadata", None) and getattr(obj.metadata, "get", None):
@@ -205,11 +258,12 @@ async def stripe_webhook(request: Request):
                         if tid.isdigit():
                             tenant_id = int(tid)
                     if tenant_id is not None:
-                        import stripe
-                        stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "").strip()
                         try:
-                            sub = stripe.Subscription.retrieve(sub_id)
+                            sub = _retrieve_subscription_with_items(sub_id)
                             _sync_subscription(sub)
+                            metered_id = _get_metered_subscription_item_id(sub)
+                            logger.info("checkout.session.completed sub=%s metered_item=%s items=%d",
+                                        sub_id, metered_id or "none", len(getattr(getattr(sub, "items"), "data", None) or []))
                         except Exception as e:
                             logger.warning("checkout.session.completed sync subscription: %s", e)
     except Exception as e:

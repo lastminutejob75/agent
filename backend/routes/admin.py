@@ -1841,6 +1841,21 @@ def admin_get_tenant_billing(
     return out
 
 
+@router.post("/admin/tenants/{tenant_id}/billing/resync-metered-item")
+def admin_resync_metered_item(
+    tenant_id: int = Depends(validate_tenant_id),
+    _: None = Depends(_verify_admin),
+):
+    """Re-fetch subscription Stripe (expand items.data.price) et met à jour stripe_metered_item_id. Backfill si webhook n'a pas persisté."""
+    if not _get_tenant_detail(tenant_id):
+        raise HTTPException(404, "Tenant not found")
+    from backend.routes.stripe_webhook import resync_metered_item_for_tenant
+    result = resync_metered_item_for_tenant(tenant_id)
+    if not result["ok"]:
+        raise HTTPException(502, result.get("error") or "Resync failed")
+    return {"ok": True, "tenant_id": tenant_id, "stripe_metered_item_id": result["stripe_metered_item_id"]}
+
+
 class ForceActiveBody(BaseModel):
     days: int = Field(7, ge=1, le=90, description="Nombre de jours pendant lesquels forcer actif")
 
