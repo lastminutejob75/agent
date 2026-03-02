@@ -1,19 +1,18 @@
 # Déploiement Vercel (landing UWi)
 
-Le **vercel.json à la racine** du repo est configuré pour builder la landing sans changer le Root Directory dans le dashboard.
+Configuration simple et unique : **Root Directory = `landing`**, et c’est **`landing/vercel.json`** qui fait foi.  
+Il n’y a plus de `vercel.json` à la racine du repo.
 
-## Comportement
+## Étapes côté Vercel
 
-- **installCommand** : `cd landing && npm ci` → les deps sont installées dans `landing/`
-- **buildCommand** : `cd landing && npm run build` → le build Vite + prerender tourne dans `landing/`
-- **outputDirectory** : `landing/dist` → Vercel sert le contenu de `landing/dist` à la racine du site
+1. **Vercel Dashboard** → ton projet → **Settings** → **General**.
+2. Dans **Root Directory**, saisir **`landing`** puis **Save**.
+3. Dans **Build & Output Settings** (Framework = Vite, overrides activés) vérifier :
+   - **Build Command** : `npm run build`
+   - **Output Directory** : `dist`
+   - **Install Command** : `npm install`
 
-Tu peux laisser **Root Directory** vide (racine du repo). Pas besoin de le mettre à `landing`.
-
-## Si tu préfères utiliser le dossier `landing` comme racine
-
-1. **Vercel Dashboard** → **Settings** → **General** → **Root Directory** → **Edit** → saisir **`landing`** → **Save**.
-2. Dans ce cas, c’est **landing/vercel.json** qui s’applique (le vercel.json racine est ignoré).
+Vercel exécutera donc le build dans `landing/` avec les commandes standard Vite, en utilisant `landing/vercel.json` pour les rewrites (sitemap, robots, routes pré-rendues…).
 
 ## Vérifications après déploiement
 
