@@ -47,15 +47,11 @@
   .uwi-landing-new .wrap { max-width: 1440px; padding: 0 48px; }
 }
 
-/* Bandeau 10 assistants : pleine largeur (breakout du .wrap) */
-.uwi-landing-new .uwi-marquee-breakout {
-  width: 100vw;
-  max-width: 100vw;
+/* Sections pleine largeur (Spotlight, Marquee) — hors .wrap pour affichage garanti */
+.uwi-landing-new .uwi-fullwidth-section {
+  width: 100%;
+  min-height: 1px;
   position: relative;
-  left: 50%;
-  right: 50%;
-  margin-left: -50vw;
-  margin-right: -50vw;
   z-index: 1;
 }
 

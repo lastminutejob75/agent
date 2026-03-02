@@ -2,7 +2,9 @@
   "name": "uwi-landing",
   "version": "1.0.0",
   "type": "module",
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "dev": "vite",
     "build": "npx vite build",
@@ -15,6 +17,7 @@
     "lucide-react": "^0.303.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-helmet-async": "^2.0.5",
     "react-router-dom": "^7.13.0"
   },
   "devDependencies": {

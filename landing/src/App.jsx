@@ -1,4 +1,5 @@
 import { Routes, Route, Navigate, Outlet } from "react-router-dom";
+import SeoHead from "./components/SeoHead";
 import UwiLanding from "./components/UwiLanding";
 import AuthLayout from "./components/AuthLayout";
 import Onboarding from "./pages/Onboarding";
@@ -28,6 +29,7 @@ import Contact from "./pages/Contact";
 import Checkout from "./pages/Checkout";
 import CheckoutReturn from "./pages/CheckoutReturn";
 import BillingPage from "./pages/BillingPage";
+import NotFound from "./pages/NotFound";
 
 /** Layout neutre pour /app : rend uniquement les routes enfants (impersonate ou AppLayout). */
 function AppShell() {
@@ -54,7 +56,9 @@ import AdminNotFound from "./admin/pages/AdminNotFound";
 
 export default function App() {
   return (
-    <Routes>
+    <>
+      <SeoHead />
+      <Routes>
       <Route path="/" element={<UwiLanding />} />
       <Route path="/onboarding" element={<Onboarding />} />
       <Route path="/creer-assistante" element={<CreerAssistante />} />
@@ -111,7 +115,8 @@ export default function App() {
         </Route>
       </Route>
 
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="*" element={<NotFound />} />
     </Routes>
+    </>
   );
 }

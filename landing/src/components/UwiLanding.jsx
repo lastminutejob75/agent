@@ -2,6 +2,7 @@
 // Route / — CTAs vers /creer-assistante?new=1
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { Helmet } from "react-helmet-async";
 import "./UwiLandingNew.css";
 import PricingSimulator from "./PricingSimulator";
 import AgentsMarquee from "./AgentsMarquee";
@@ -330,8 +331,21 @@ export default function UwiLanding() {
   const line = TYPEWRITER_LINES[typedLine] || "";
   const displayed = line.slice(0, typedChar);
 
+  const faqLdJson = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: FAQ_ITEMS.map(({ q, a }) => ({
+      "@type": "Question",
+      name: q,
+      acceptedAnswer: { "@type": "Answer", text: a },
+    })),
+  };
+
   return (
     <div className="uwi-landing-new">
+      <Helmet>
+        <script type="application/ld+json">{JSON.stringify(faqLdJson)}</script>
+      </Helmet>
       <canvas id="bg" ref={bgRef} aria-hidden />
       <div className="wrap">
         <nav className="landing-nav">
@@ -651,11 +665,14 @@ export default function UwiLanding() {
             ))}
           </div>
         </section>
+      </div>
 
-        <div className="uwi-marquee-breakout">
-          <AgentsSpotlight onSelectAgent={(a) => navigate("/creer-assistante?new=1", { state: a })} />
-        </div>
+      {/* Spotlight — hors wrap pour pleine largeur */}
+      <div className="uwi-fullwidth-section">
+        <AgentsSpotlight onSelectAgent={(a) => navigate("/creer-assistante?new=1", { state: a })} />
+      </div>
 
+      <div className="wrap">
         <section id="pricing" className="landing-section reveal pricing-section">
           <p className="section-eyebrow">Tarifs</p>
           <h2>Simple et prévisible</h2>
@@ -750,11 +767,14 @@ export default function UwiLanding() {
             </Link>
           </div>
         </section>
+      </div>
 
-        <div className="uwi-marquee-breakout">
-          <AgentsMarquee onSelectAgent={() => navigate("/creer-assistante?new=1")} />
-        </div>
+      {/* Marquee — hors wrap pour pleine largeur */}
+      <div className="uwi-fullwidth-section">
+        <AgentsMarquee onSelectAgent={() => navigate("/creer-assistante?new=1")} />
+      </div>
 
+      <div className="wrap">
         {/* Sticky CTA — mobile uniquement */}
         <div className="sticky-cta">
           <Link to="/creer-assistante?new=1" className="sticky-cta-btn">
