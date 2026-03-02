@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api.js";
+import ASSISTANTS_CONFIG from "../assistants.config.js";
 
 const COLORS = {
   bg: "#0A1828",
@@ -77,6 +78,10 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
 
   const assistantInfo = ASSISTANTS[assistantName] || ASSISTANTS.Emma;
   const voiceLabel = assistantInfo.voice;
+  const isMale = assistantInfo.gender === "m";
+  const configAssistant = ASSISTANTS_CONFIG.find((a) => a.prenom === assistantName);
+  const avatarImg = configAssistant?.img ?? null;
+  const [avatarImgFailed, setAvatarImgFailed] = useState(false);
   const workingDays = getNextWorkingDays(4);
   const phoneDigits = (phone || "").replace(/\D/g, "");
   const phoneValid = phoneDigits.length >= 10;
@@ -282,7 +287,7 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
         <div style={orb2} />
         <div style={barAccent} />
         <div style={{ position: "relative", zIndex: 1, paddingTop: 32, textAlign: "center" }}>
-          <p style={{ fontSize: 13, color: COLORS.accent, marginBottom: 16, fontWeight: 600 }}>✨ Voici votre assistante</p>
+          <p style={{ fontSize: 13, color: COLORS.accent, marginBottom: 16, fontWeight: 600 }}>✨ Voici votre {isMale ? "assistant" : "assistante"}</p>
           <div
             style={{
               width: 130,
@@ -296,15 +301,25 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
               justifyContent: "center",
               fontSize: 48,
               position: "relative",
+              overflow: "hidden",
               boxShadow: "0 0 0 0 rgba(0,229,160,0.4)",
               animation: "pingRing 1.8s ease-in-out infinite",
             }}
           >
-            👩‍⚕️
+            {avatarImg && !avatarImgFailed ? (
+              <img
+                src={avatarImg}
+                alt={assistantName}
+                style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                onError={() => setAvatarImgFailed(true)}
+              />
+            ) : (
+              "👩‍⚕️"
+            )}
             <span style={{ position: "absolute", bottom: 8, right: 8, width: 16, height: 16, borderRadius: "50%", background: COLORS.accent, border: `2px solid ${COLORS.bg}` }} />
           </div>
           <h1 style={{ fontSize: 32, fontWeight: 800, marginBottom: 4 }}>{assistantName}</h1>
-          <p style={{ fontSize: 15, color: COLORS.muted, marginBottom: 12 }}>Assistante de {practitioner}</p>
+          <p style={{ fontSize: 15, color: COLORS.muted, marginBottom: 12 }}>{isMale ? "Assistant" : "Assistante"} de {practitioner}</p>
           <span
             style={{
               display: "inline-block",
@@ -318,7 +333,7 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
               marginBottom: 20,
             }}
           >
-            🟢 Prête 24h/24 · 7j/7
+            🟢 {isMale ? "Prêt" : "Prête"} 24h/24 · 7j/7
           </span>
           <div style={{ background: COLORS.card, borderRadius: 12, padding: "12px 16px", marginBottom: 16, border: `1px solid ${COLORS.border}` }}>
             <span style={{ color: COLORS.muted, fontSize: 13 }}>🎙️ Voix : </span>
@@ -380,9 +395,9 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
         <div style={{ position: "relative", zIndex: 1, paddingTop: 32, textAlign: "center" }}>
           <div style={{ fontSize: 56, marginBottom: 16, animation: "popIn 0.5s cubic-bezier(0.34,1.56,0.64,1) forwards" }}>🎉</div>
           <h1 style={{ fontSize: 26, fontWeight: 800, marginBottom: 8 }}>Félicitations !</h1>
-          <p style={{ fontSize: 16, color: COLORS.accent, fontWeight: 600, marginBottom: 20 }}>{assistantName} est prête à rejoindre votre équipe</p>
+          <p style={{ fontSize: 16, color: COLORS.accent, fontWeight: 600, marginBottom: 20 }}>{assistantName} est {isMale ? "prêt" : "prête"} à rejoindre votre équipe</p>
           <p style={{ fontSize: 14, color: COLORS.muted, marginBottom: 24, lineHeight: 1.5 }}>
-            Votre assistante vocale est configurée. Un expert UWI va vous contacter pour finaliser ensemble.
+            Votre {isMale ? "assistant vocal est configuré" : "assistante vocale est configurée"}. Un expert UWI va vous contacter pour finaliser ensemble.
           </p>
           <div
             style={{
