@@ -33,6 +33,13 @@ Le **&lt;head&gt;** (title, canonical, meta description, robots, Open Graph, Twi
 - En local après `npm run build` : ouvrir `dist/contact/index.html` (ou une autre route) et vérifier que `<div id="root">` contient du texte lisible (titres, paragraphes).
 - En prod : **View Source** sur `https://www.uwiapp.com/contact` → le HTML doit contenir le contenu de la page, pas seulement une structure vide.
 
+## Sitemap et robots (Vercel)
+
+- **Fichiers** : `public/sitemap.xml` et `public/robots.txt` sont copiés à la racine de `dist/` par Vite.
+- **Ordre critique** : dans `vercel.json`, les rewrites `/robots.txt` et `/sitemap.xml` doivent être **en premier**, avant le catch-all `/(.*)` → `/index.html`, sinon Google reçoit du HTML au lieu du XML.
+- **Root Directory** : dans le projet Vercel, définir **Root Directory = `landing`** (et non la racine du repo) pour que ce `vercel.json` soit appliqué et que `dist/sitemap.xml` soit servi à `https://www.uwiapp.com/sitemap.xml`.
+- **Vérification** : après déploiement, ouvrir `https://www.uwiapp.com/sitemap.xml` → la réponse doit être du XML (`<urlset>…`), pas la page d’accueil.
+
 ## Pièges à éviter
 
 - **`window` / `document` au top-level** : les mettre dans `useEffect` ou derrière `typeof window !== "undefined"`.
