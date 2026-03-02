@@ -98,11 +98,31 @@ def _get_metered_price_ids_from_env() -> set:
     return ids
 
 
+def _subscription_items_debug(subscription: object) -> list[dict]:
+    """Retourne [{item_id, price_id, usage_type}] pour diagnostic."""
+    out = []
+    if not hasattr(subscription, "items") or not subscription.items or not getattr(subscription.items, "data", None):
+        return out
+    for item in subscription.items.data or []:
+        price = getattr(item, "price", None)
+        if not price:
+            out.append({"item_id": getattr(item, "id", None), "price_id": None, "usage_type": None})
+            continue
+        if isinstance(price, str):
+            out.append({"item_id": getattr(item, "id", None), "price_id": price, "usage_type": "? (price not expanded)"})
+        else:
+            pid = price.get("id") if isinstance(price, dict) else getattr(price, "id", None)
+            recurring = price.get("recurring") if isinstance(price, dict) else getattr(price, "recurring", None)
+            usage_type = (recurring.get("usage_type") if isinstance(recurring, dict) else getattr(recurring, "usage_type", None)) if recurring else None
+            out.append({"item_id": getattr(item, "id", None), "price_id": pid, "usage_type": usage_type})
+    return out
+
+
 def resync_metered_item_for_tenant(tenant_id: int) -> dict:
     """
     Re-fetch subscription depuis Stripe (expand items.data.price) et met à jour stripe_metered_item_id.
     Utile pour backfill si webhook n'a pas persisté le metered item.
-    Retourne {ok, stripe_metered_item_id, error}.
+    Retourne {ok, stripe_metered_item_id, error, items_debug?}.
     """
     from backend.billing_pg import get_tenant_billing, set_stripe_metered_item_id
     billing = get_tenant_billing(tenant_id)
@@ -113,12 +133,22 @@ def resync_metered_item_for_tenant(tenant_id: int) -> dict:
         return {"ok": False, "stripe_metered_item_id": None, "error": "no_subscription"}
     try:
         sub = _retrieve_subscription_with_items(sub_id)
+        items_debug = _subscription_items_debug(sub)
+        for d in items_debug:
+            logger.info("resync_metered_item tenant_id=%s item=%s price=%s usage_type=%s",
+                        tenant_id, d.get("item_id"), d.get("price_id"), d.get("usage_type"))
         metered_id = _get_metered_subscription_item_id(sub)
         if metered_id:
             set_stripe_metered_item_id(tenant_id, metered_id)
             logger.info("resync_metered_item tenant_id=%s sub=%s metered_item=%s", tenant_id, sub_id, metered_id)
             return {"ok": True, "stripe_metered_item_id": metered_id, "error": None}
-        return {"ok": False, "stripe_metered_item_id": None, "error": "no_metered_item_in_subscription"}
+        return {
+            "ok": False,
+            "stripe_metered_item_id": None,
+            "error": "no_metered_item_in_subscription",
+            "items_debug": items_debug,
+            "expected_metered_price_ids": list(_get_metered_price_ids_from_env()),
+        }
     except Exception as e:
         logger.warning("resync_metered_item tenant_id=%s error=%s", tenant_id, e)
         return {"ok": False, "stripe_metered_item_id": None, "error": str(e)}

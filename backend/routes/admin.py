@@ -1852,7 +1852,13 @@ def admin_resync_metered_item(
     from backend.routes.stripe_webhook import resync_metered_item_for_tenant
     result = resync_metered_item_for_tenant(tenant_id)
     if not result["ok"]:
-        raise HTTPException(502, result.get("error") or "Resync failed")
+        # Retourne le détail pour diagnostic (items_debug, expected_metered_price_ids)
+        detail = {"error": result.get("error") or "Resync failed"}
+        if "items_debug" in result:
+            detail["items_debug"] = result["items_debug"]
+        if "expected_metered_price_ids" in result:
+            detail["expected_metered_price_ids"] = result["expected_metered_price_ids"]
+        raise HTTPException(502, detail=detail)
     return {"ok": True, "tenant_id": tenant_id, "stripe_metered_item_id": result["stripe_metered_item_id"]}
 
 
