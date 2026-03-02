@@ -244,7 +244,7 @@ export default function AgentsMarquee({ onSelectAgent }) {
           Choisir mon assistant →
         </button>
         <div style={{ fontSize: 12, color: C.muted, marginTop: 12 }}>
-          Gratuit pendant 14 jours · Sans engagement
+          Gratuit pendant 1 mois · Sans engagement
         </div>
       </div>
 

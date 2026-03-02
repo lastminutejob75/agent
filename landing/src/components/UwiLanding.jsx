@@ -544,10 +544,6 @@ export default function UwiLanding() {
           <span className="divider-label">Démo vocale</span>
         </div>
 
-        <div className="uwi-marquee-breakout">
-          <AgentsMarquee onSelectAgent={() => navigate("/creer-assistante?new=1")} />
-        </div>
-
         <section className="demo reveal demo-section">
           <div className="demo-inner">
             <p className="eyebrow">Testez en 60 secondes</p>
@@ -749,6 +745,10 @@ export default function UwiLanding() {
             </Link>
           </div>
         </section>
+
+        <div className="uwi-marquee-breakout">
+          <AgentsMarquee onSelectAgent={() => navigate("/creer-assistante?new=1")} />
+        </div>
 
         {/* Sticky CTA — mobile uniquement */}
         <div className="sticky-cta">
