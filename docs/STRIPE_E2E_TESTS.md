@@ -109,7 +109,11 @@ Vérifier réception des events Stripe (200) : `checkout.session.completed`, `cu
 
 - `STRIPE_USE_METER_EVENTS=false` (ou non défini)
 
-### 3.2 Données usage (vapi_call_usage)
+### 3.2 Règle : pousser le TOTAL des minutes (Option A)
+
+Les prices metered Stripe sont configurés avec paliers (0€ jusqu'à 400/800/1200 min puis €/min). On pousse donc le **total** des minutes — Stripe applique les paliers.
+
+### 3.3 Données usage (vapi_call_usage)
 
 Pour déclencher un push, il faut des lignes dans `vapi_call_usage` pour **hier** (UTC) :
 
@@ -138,20 +142,20 @@ VALUES (
 ON CONFLICT (tenant_id, vapi_call_id) DO NOTHING;
 ```
 
-### 3.3 Déclencher le job
+### 3.4 Déclencher le job
 
 ```bash
 curl -i -X POST "https://agent-production-c246.up.railway.app/api/admin/jobs/push-daily-usage" \
   -H "Authorization: Bearer ADMIN_API_TOKEN"
 ```
 
-### 3.4 Attendu (logs Railway)
+### 3.5 Attendu (logs Railway)
 
 ```
 STRIPE_USAGE_PUSHED tenant_id=... date_utc=... minutes=...
 ```
 
-### 3.5 Vérifier idempotence
+### 3.6 Vérifier idempotence
 
 - Relancer la même commande pour la même date
 - Vérifier qu’aucun second push Stripe n’est effectué (skip car déjà `sent`)
@@ -166,7 +170,7 @@ LIMIT 5;
 
 **Attendu** : `status = 'sent'`, pas de doublon pour la même `(tenant_id, date_utc)`.
 
-### 3.6 Verdict
+### 3.7 Verdict
 
 | Étape | Résultat | Notes |
 |-------|----------|-------|

@@ -245,6 +245,7 @@ def push_daily_usage_to_stripe(date_utc: date) -> dict:
             skipped += 1
             continue
 
+        # Option A : pousser le TOTAL des minutes (Stripe applique les paliers 0€/X min puis €/min)
         acquired = try_acquire_usage_push(tenant_id, date_utc, minutes)
         if not acquired:
             skipped += 1
