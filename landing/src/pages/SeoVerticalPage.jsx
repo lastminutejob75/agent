@@ -77,7 +77,9 @@ export default function SeoVerticalPage({ pageKey }) {
                 ))}
               </ul>
             ) : null}
-            {section.subContent ? <p style={{ marginTop: 12 }}>{section.subContent}</p> : null}
+            {section.subContent ? (
+              <p style={{ marginTop: section.subContentSpaced ? 28 : 12 }}>{section.subContent}</p>
+            ) : null}
             {section.subListItems?.length ? (
               <ul style={{ marginTop: 8, marginBottom: 0, paddingLeft: 24 }}>
                 {section.subListItems.map((item, j) => (

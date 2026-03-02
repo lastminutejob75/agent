@@ -14,6 +14,8 @@ Pas un outil. Pas une option. Un élément structurel du cabinet.
 
 Trois piliers : charge mentale du praticien · fluidité du cabinet · qualité perçue par les patients.
 
+**Positionnement perçu** : solution **incontournable** (D), construite en B → C → D : évidente (compréhension) → rassurante (levée des freins) → incontournable (justification abonnement). Bloc « norme » sur la pilier : « Aujourd'hui, un cabinet organisé répond toujours » + phrase de clôture (« Un cabinet médical ne revient pas en arrière… »).
+
 **Équilibre SEO + conversion** : mélanger émotion ET termes explicites. Google aime précision et mots-clés ancrés recherche (appels manqués cabinet médical, gestion appels cabinet médical, secrétariat médical débordé, prise de rendez-vous cabinet libéral, continuité téléphonique cabinet médical). Clarté > subtilité en early-stage.
 
 Ciblage : **cabinets libéraux uniquement** (médecin installé, professionnel de santé indépendant, cabinet individuel ou de groupe). Pas de clinique, hôpital, centre hospitalier, établissement de santé — cycle de vente long, DSI, comités ; à traiter plus tard.

@@ -53,11 +53,11 @@ export const SEO_VERTICAL_PAGES = {
   [PILLAR_PATH]: {
     title: "Secrétaire médicale augmentée indispensable pour cabinet libéral | UWi Medical",
     description:
-      "Votre cabinet ne devrait jamais manquer un appel. UWi assure la continuité téléphonique — moins d'interruptions, moins de stress en fin de journée.",
+      "Un cabinet médical libéral ne peut pas se permettre de manquer des appels. UWi assure la continuité téléphonique — moins d'interruptions, moins de stress en fin de journée.",
     h1: "Secrétaire médicale augmentée indispensable pour cabinet médical libéral",
     conversion: true,
     hero: {
-      h1: "Votre cabinet ne devrait jamais manquer un appel.",
+      h1: "Un cabinet médical libéral ne peut pas se permettre de manquer des appels.",
       subtitle:
         "UWi est la secrétaire médicale augmentée indispensable pour assurer la continuité téléphonique de votre cabinet libéral.",
       bullets: [
@@ -68,7 +68,7 @@ export const SEO_VERTICAL_PAGES = {
       cta: "Réduire la pression de mon cabinet",
     },
     ctaPrimary: "Réduire la pression de mon cabinet",
-    ctaFinal: "Mettre en place ma secrétaire augmentée",
+    ctaFinal: "Assurer la continuité de mon cabinet",
     sections: [
       {
         h2: "Votre cabinet est sous tension permanente",
@@ -90,6 +90,17 @@ export const SEO_VERTICAL_PAGES = {
           "Fin de journée plus légère",
         ],
         subContent: "La sérénité au quotidien.",
+      },
+      {
+        h2: "Aujourd'hui, un cabinet organisé répond toujours.",
+        listItems: [
+          "La continuité téléphonique n'est plus un confort.",
+          "Elle est devenue une exigence des patients.",
+          "UWi s'intègre naturellement dans l'organisation d'un cabinet libéral structuré.",
+        ],
+        subContent:
+          "Un cabinet médical ne revient pas en arrière après avoir assuré sa continuité téléphonique.",
+        subContentSpaced: true,
       },
       {
         h2: "Comment fonctionne votre secrétaire médicale augmentée",
