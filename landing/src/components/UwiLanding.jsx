@@ -1,9 +1,10 @@
 // UWi Medical — Landing nouvelle maquette (navy, teal, mobile-first)
 // Route / — CTAs vers /creer-assistante?new=1
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import "./UwiLandingNew.css";
 import PricingSimulator from "./PricingSimulator";
+import AgentsMarquee from "./AgentsMarquee";
 
 const TYPEWRITER_LINES = [
   "Cabinet du Dr. Martin, bonjour ! Je suis UWi, comment puis-je vous aider ?",
@@ -117,6 +118,7 @@ const STEPS = [
 ];
 
 export default function UwiLanding() {
+  const navigate = useNavigate();
   const bgRef = useRef(null);
   const waveRef = useRef(null);
   const waveRefDemo = useRef(null);
@@ -342,6 +344,7 @@ export default function UwiLanding() {
             </div>
           </Link>
           <div className="nav-links">
+            <a href="#assistants">Assistants</a>
             <a href="#metiers">Spécialités</a>
             <a href="#fonctionnalites">Fonctionnalités</a>
             <a href="#comment">Comment ça marche</a>
@@ -539,6 +542,10 @@ export default function UwiLanding() {
 
         <div className="section-divider">
           <span className="divider-label">Démo vocale</span>
+        </div>
+
+        <div className="uwi-marquee-breakout">
+          <AgentsMarquee onSelectAgent={() => navigate("/creer-assistante?new=1")} />
         </div>
 
         <section className="demo reveal demo-section">

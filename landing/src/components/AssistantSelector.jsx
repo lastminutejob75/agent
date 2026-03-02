@@ -264,7 +264,6 @@ export default function AssistantSelector({ onSelect, onBack }) {
               width: "100%",
               padding: "14px 20px",
               borderRadius: 12,
-              border: "none",
               fontFamily: "'DM Sans', sans-serif",
               fontSize: 15,
               fontWeight: 700,

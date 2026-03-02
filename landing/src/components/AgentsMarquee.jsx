@@ -160,7 +160,7 @@ export default function AgentsMarquee({ onSelectAgent }) {
   const [hoveredId, setHoveredId] = useState(null);
 
   return (
-    <section style={{ background: C.bg, padding: "64px 0 56px", position: "relative", overflow: "hidden" }}>
+    <section id="assistants" style={{ background: C.bg, padding: "64px 0 56px", position: "relative", overflow: "hidden" }}>
       <style>
         {`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&display=swap');
