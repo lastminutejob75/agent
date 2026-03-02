@@ -98,23 +98,53 @@ def _get_metered_price_ids_from_env() -> set:
     return ids
 
 
+def _get_subscription_items_list(subscription: object) -> list:
+    """Extrait la liste des items depuis subscription (StripeObject ou dict)."""
+    items_obj = None
+    if hasattr(subscription, "items"):
+        items_obj = subscription.items
+    elif isinstance(subscription, dict):
+        items_obj = subscription.get("items")
+    # Accès dict (StripeObject supporte __getitem__)
+    if items_obj is None and hasattr(subscription, "__getitem__"):
+        try:
+            items_obj = subscription["items"]
+        except (KeyError, TypeError):
+            pass
+    if items_obj is None:
+        return []
+    data = None
+    if hasattr(items_obj, "data"):
+        data = items_obj.data
+    elif isinstance(items_obj, dict):
+        data = items_obj.get("data")
+    elif hasattr(items_obj, "__getitem__"):
+        try:
+            data = items_obj["data"]
+        except (KeyError, TypeError):
+            pass
+    if data is None:
+        return []
+    return list(data) if not isinstance(data, list) else data
+
+
 def _subscription_items_debug(subscription: object) -> list[dict]:
     """Retourne [{item_id, price_id, usage_type}] pour diagnostic."""
     out = []
-    if not hasattr(subscription, "items") or not subscription.items or not getattr(subscription.items, "data", None):
-        return out
-    for item in subscription.items.data or []:
-        price = getattr(item, "price", None)
+    items_list = _get_subscription_items_list(subscription)
+    for item in items_list:
+        item_id = item.get("id") if isinstance(item, dict) else getattr(item, "id", None)
+        price = item.get("price") if isinstance(item, dict) else getattr(item, "price", None)
         if not price:
-            out.append({"item_id": getattr(item, "id", None), "price_id": None, "usage_type": None})
+            out.append({"item_id": item_id, "price_id": None, "usage_type": None})
             continue
         if isinstance(price, str):
-            out.append({"item_id": getattr(item, "id", None), "price_id": price, "usage_type": "? (price not expanded)"})
+            out.append({"item_id": item_id, "price_id": price, "usage_type": "? (price not expanded)"})
         else:
             pid = price.get("id") if isinstance(price, dict) else getattr(price, "id", None)
             recurring = price.get("recurring") if isinstance(price, dict) else getattr(price, "recurring", None)
             usage_type = (recurring.get("usage_type") if isinstance(recurring, dict) else getattr(recurring, "usage_type", None)) if recurring else None
-            out.append({"item_id": getattr(item, "id", None), "price_id": pid, "usage_type": usage_type})
+            out.append({"item_id": item_id, "price_id": pid, "usage_type": usage_type})
     return out
 
 
@@ -133,6 +163,10 @@ def resync_metered_item_for_tenant(tenant_id: int) -> dict:
         return {"ok": False, "stripe_metered_item_id": None, "error": "no_subscription"}
     try:
         sub = _retrieve_subscription_with_items(sub_id)
+        items_list = _get_subscription_items_list(sub)
+        if not items_list:
+            items_list = _list_subscription_items(sub_id)
+            sub = {"items": {"data": items_list}} if items_list else sub
         items_debug = _subscription_items_debug(sub)
         for d in items_debug:
             logger.info("resync_metered_item tenant_id=%s item=%s price=%s usage_type=%s",
@@ -161,6 +195,14 @@ def _retrieve_subscription_with_items(sub_id: str):
     return stripe.Subscription.retrieve(sub_id, expand=["items.data.price"])
 
 
+def _list_subscription_items(sub_id: str) -> list:
+    """Liste les subscription items via API dédiée (plus fiable que expand)."""
+    import stripe
+    stripe.api_key = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
+    items = stripe.SubscriptionItem.list(subscription=sub_id, expand=["data.price"])
+    return list(items.data) if items and getattr(items, "data", None) else []
+
+
 def _get_metered_subscription_item_id(subscription: object) -> str | None:
     """
     Retourne le subscription item id (metered) depuis subscription.items.data.
@@ -169,11 +211,12 @@ def _get_metered_subscription_item_id(subscription: object) -> str | None:
     Gère price objet ou dict (expand).
     """
     metered_price_ids = _get_metered_price_ids_from_env()
-    if not hasattr(subscription, "items") or not subscription.items or not getattr(subscription.items, "data", None):
-        return None
+    items_list = _get_subscription_items_list(subscription)
     fallback_item_id = None
-    for item in subscription.items.data or []:
-        price = getattr(item, "price", None)
+    for item in items_list:
+        item_id = (item.get("id") if isinstance(item, dict) else getattr(item, "id", None)) or ""
+        item_id = (item_id or "").strip()
+        price = item.get("price") if isinstance(item, dict) else getattr(item, "price", None)
         if not price:
             continue
         # price peut être string (id), objet ou dict selon expand
@@ -187,9 +230,9 @@ def _get_metered_subscription_item_id(subscription: object) -> str | None:
             usage_type = (recurring.get("usage_type") if isinstance(recurring, dict) else getattr(recurring, "usage_type", None)) if recurring else None
             is_metered = usage_type == "metered"
         if metered_price_ids and pid in metered_price_ids:
-            return (getattr(item, "id", None) or "").strip() or None
+            return item_id or None
         if is_metered:
-            fallback_item_id = (getattr(item, "id", None) or "").strip() or None
+            fallback_item_id = item_id or None
             if fallback_item_id:
                 return fallback_item_id
     return fallback_item_id

@@ -1841,6 +1841,28 @@ def admin_get_tenant_billing(
     return out
 
 
+class SetMeteredItemBody(BaseModel):
+    stripe_metered_item_id: str = Field(..., min_length=3, description="ID si_... du subscription item metered (Stripe Dashboard)")
+
+
+@router.post("/admin/tenants/{tenant_id}/billing/set-metered-item")
+def admin_set_metered_item(
+    tenant_id: int = Depends(validate_tenant_id),
+    body: SetMeteredItemBody = Body(...),
+    _: None = Depends(_verify_admin),
+):
+    """Force stripe_metered_item_id manuellement (si_... copié depuis Stripe Dashboard → Subscription items)."""
+    if not _get_tenant_detail(tenant_id):
+        raise HTTPException(404, "Tenant not found")
+    si_id = (body.stripe_metered_item_id or "").strip()
+    if not si_id.startswith("si_"):
+        raise HTTPException(400, "stripe_metered_item_id doit commencer par si_")
+    from backend.billing_pg import set_stripe_metered_item_id
+    if not set_stripe_metered_item_id(tenant_id, si_id):
+        raise HTTPException(500, "Failed to update stripe_metered_item_id")
+    return {"ok": True, "tenant_id": tenant_id, "stripe_metered_item_id": si_id}
+
+
 @router.post("/admin/tenants/{tenant_id}/billing/resync-metered-item")
 def admin_resync_metered_item(
     tenant_id: int = Depends(validate_tenant_id),
