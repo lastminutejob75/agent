@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../lib/api.js";
 import UWIFinalization from "../components/UWIFinalization.jsx";
+import AssistantSelector from "../components/AssistantSelector.jsx";
 
 const STORAGE_KEY = "uwi_creer_assistante";
 const COMMIT_DONE_KEY = "uwi_creer_assistante_done";
@@ -681,37 +682,18 @@ export default function CreerAssistante() {
           )}
 
           {step === 4 && (
-            <>
-              <h2 className="text-xl font-bold text-white text-center mb-6">
-                Quelle voix pour votre assistant ?
-              </h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
-                <button
-                  type="button"
-                  onClick={() => goNext({ voice_gender: "female" })}
-                  className={`p-6 rounded-2xl border-2 text-left transition-all ${
-                    state.voice_gender === "female"
-                      ? "border-teal-500 bg-teal-500/20"
-                      : "border-slate-600 bg-slate-800/50 hover:border-slate-500"
-                  }`}
-                >
-                  <div className="font-semibold text-white">Voix féminine</div>
-                  <div className="text-sm text-slate-400 mt-1">douce et rassurante</div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => goNext({ voice_gender: "male" })}
-                  className={`p-6 rounded-2xl border-2 text-left transition-all ${
-                    state.voice_gender === "male"
-                      ? "border-teal-500 bg-teal-500/20"
-                      : "border-slate-600 bg-slate-800/50 hover:border-slate-500"
-                  }`}
-                >
-                  <div className="font-semibold text-white">Voix masculine</div>
-                  <div className="text-sm text-slate-400 mt-1">posée et professionnelle</div>
-                </button>
-              </div>
-            </>
+            <div className="w-full flex-1 min-h-0 flex flex-col -mx-6 -my-6 self-stretch">
+              <AssistantSelector
+                onBack={() => persist({ step: 3 })}
+                onSelect={(assistant) => {
+                  persist({
+                    voice_gender: assistant.gender === "f" ? "female" : "male",
+                    assistant_name: assistant.prenom,
+                    step: 6,
+                  });
+                }}
+              />
+            </div>
           )}
 
           {step === 5 && (

@@ -25,10 +25,15 @@ const LOADING_STEPS = [
 
 const ASSISTANTS = {
   Sophie: { gender: "f", voice: "Douce et professionnelle" },
-  Léa: { gender: "f", voice: "Chaleureuse et rassurante" },
+  Laura: { gender: "f", voice: "Chaleureuse et rassurante" },
   Emma: { gender: "f", voice: "Dynamique et claire" },
-  Lucas: { gender: "m", voice: "Calme et fiable" },
-  Hugo: { gender: "m", voice: "Précis et efficace" },
+  Julie: { gender: "f", voice: "Calme et professionnelle" },
+  Clara: { gender: "f", voice: "Précise et efficace" },
+  Hugo: { gender: "m", voice: "Analytique et fiable" },
+  Julien: { gender: "m", voice: "Chaleureux et rassurant" },
+  Nicolas: { gender: "m", voice: "Dynamique et efficace" },
+  Alexandre: { gender: "m", voice: "Charismatique et précis" },
+  Thomas: { gender: "m", voice: "Calme et professionnel" },
 };
 
 const EXPERTS = [
