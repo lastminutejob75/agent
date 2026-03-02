@@ -5,6 +5,7 @@ import { Link, useNavigate } from "react-router-dom";
 import "./UwiLandingNew.css";
 import PricingSimulator from "./PricingSimulator";
 import AgentsMarquee from "./AgentsMarquee";
+import AgentsSpotlight from "./AgentsSpotlight";
 
 const TYPEWRITER_LINES = [
   "Cabinet du Dr. Martin, bonjour ! Je suis UWi, comment puis-je vous aider ?",
@@ -650,6 +651,10 @@ export default function UwiLanding() {
             ))}
           </div>
         </section>
+
+        <div className="uwi-marquee-breakout">
+          <AgentsSpotlight onSelectAgent={(a) => navigate("/creer-assistante?new=1", { state: a })} />
+        </div>
 
         <section id="pricing" className="landing-section reveal pricing-section">
           <p className="section-eyebrow">Tarifs</p>
