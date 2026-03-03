@@ -433,7 +433,7 @@ const STATUS_COLORS = {
   info: "#64748b",
 };
 
-export default function UWIDashboard() {
+export default function UWIDashboard({ title = "Dashboard", showCreateButton = true }) {
   const [period, setPeriod] = useState("30j");
   const { data, calls, loading, error, refresh } = useDashboard(period);
   const billingOv = useBillingOverview();
@@ -597,32 +597,34 @@ export default function UWIDashboard() {
       {/* Header */}
       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 16, marginBottom: 24 }}>
         <div>
-          <h1 style={{ fontSize: 24, fontWeight: 700, color: C.text, margin: 0 }}>Dashboard</h1>
+          <h1 style={{ fontSize: 24, fontWeight: 700, color: C.text, margin: 0 }}>{title}</h1>
           <p style={{ fontSize: 14, color: C.textMuted, marginTop: 4 }}>
             Vue d'ensemble sur les {days} derniers jours
           </p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <button
-            type="button"
-            onClick={() => setShowCreate(true)}
-            style={{
-              padding: "7px 16px",
-              borderRadius: 10,
-              background: C.accent,
-              border: "none",
-              color: "#fff",
-              fontSize: 13,
-              fontWeight: 800,
-              cursor: "pointer",
-              fontFamily: "inherit",
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-            }}
-          >
-            + Nouveau client
-          </button>
+          {showCreateButton && (
+            <button
+              type="button"
+              onClick={() => setShowCreate(true)}
+              style={{
+                padding: "7px 16px",
+                borderRadius: 10,
+                background: C.accent,
+                border: "none",
+                color: "#fff",
+                fontSize: 13,
+                fontWeight: 800,
+                cursor: "pointer",
+                fontFamily: "inherit",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              + Nouveau client
+            </button>
+          )}
           <div style={{ display: "flex", gap: 4 }}>
             {["7j", "30j", "90j"].map((p) => (
               <button
