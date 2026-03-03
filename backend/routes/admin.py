@@ -1480,6 +1480,18 @@ def _call_result_from_event(event: Optional[str]) -> str:
     return "other"
 
 
+def _vapi_call_result_from_status(status: Optional[str], ended_reason: Optional[str]) -> str:
+    """Mappe status/ended_reason vapi_calls vers result (rdv|transfer|abandoned|other)."""
+    if not status and not ended_reason:
+        return "other"
+    reason = (ended_reason or "").lower()
+    if "transfer" in reason or "forward" in reason:
+        return "transfer"
+    if "hangup" in reason or "abandon" in reason or "user" in reason:
+        return "abandoned"
+    return "other"
+
+
 def _get_calls_list(
     tenant_id: Optional[int],
     days: int,
@@ -1487,7 +1499,7 @@ def _get_calls_list(
     cursor: Optional[str] = None,
     result_filter: Optional[str] = None,
 ) -> dict:
-    """Liste appels depuis ivr_events (+ call_sessions pour duration). PG prioritaire."""
+    """Liste appels : vapi_calls (tous les appels Vapi) en priorité, fallback ivr_events."""
     from datetime import datetime, timedelta
     now = datetime.utcnow()
     start = (now - timedelta(days=days)).strftime("%Y-%m-%d 00:00:00")
@@ -1500,7 +1512,6 @@ def _get_calls_list(
         try:
             import psycopg
             from psycopg.rows import dict_row
-            # Cursor : base64url(json {t, c}) pour éviter +/= en querystring ; fallback legacy "ts|call_id"
             cursor_ts: Optional[str] = None
             cursor_id: Optional[str] = None
             if cursor:
@@ -1517,7 +1528,97 @@ def _get_calls_list(
 
             with psycopg.connect(url, row_factory=dict_row) as conn:
                 with conn.cursor() as cur:
-                    params: List[Any] = [start, end]
+                    # 1) Essayer vapi_calls (tous les appels, même sans interaction engine)
+                    try:
+                        vapi_params: List[Any] = [start, end, start, end]
+                        tenant_filter = ""
+                        if tenant_id is not None:
+                            tenant_filter = " AND v.tenant_id = %s"
+                            vapi_params.append(tenant_id)
+
+                        cursor_filter = ""
+                        if cursor_ts and cursor_id:
+                            cursor_filter = " AND (v.updated_at < %s::timestamptz OR (v.updated_at = %s::timestamptz AND v.call_id < %s))"
+                            vapi_params.extend([cursor_ts, cursor_ts, cursor_id])
+
+                        result_filter_sql = ""
+                        if result_filter == "rdv":
+                            result_filter_sql = " AND COALESCE(e.last_event, '') = 'booking_confirmed'"
+                        elif result_filter == "transfer":
+                            result_filter_sql = " AND (COALESCE(e.last_event, '') IN ('transferred_human', 'transferred', 'transfer_human', 'transfer') OR LOWER(COALESCE(v.ended_reason, '')) LIKE '%%transfer%%')"
+                        elif result_filter == "abandoned":
+                            result_filter_sql = " AND (COALESCE(e.last_event, '') IN ('user_abandon', 'abandon', 'hangup', 'user_hangup') OR LOWER(COALESCE(v.ended_reason, '')) LIKE '%%hangup%%')"
+                        elif result_filter == "error":
+                            result_filter_sql = " AND COALESCE(e.last_event, '') = 'anti_loop_trigger'"
+
+                        vapi_params.append(limit + 1)
+
+                        cur.execute(
+                            """
+                            WITH ivr_agg AS (
+                                SELECT client_id, call_id,
+                                       (array_agg(event ORDER BY created_at DESC))[1] AS last_event
+                                FROM ivr_events
+                                WHERE call_id IS NOT NULL AND TRIM(call_id) != ''
+                                GROUP BY client_id, call_id
+                            )
+                            SELECT v.tenant_id, v.call_id, v.started_at, v.ended_at, v.updated_at,
+                                   v.status, v.ended_reason, e.last_event
+                            FROM vapi_calls v
+                            LEFT JOIN ivr_agg e ON e.client_id = v.tenant_id AND e.call_id = v.call_id
+                            WHERE ((v.started_at >= %s AND v.started_at <= %s)
+                               OR (v.updated_at >= %s AND v.updated_at <= %s))
+                              """ + tenant_filter + cursor_filter + result_filter_sql + """
+                            ORDER BY COALESCE(v.ended_at, v.updated_at, v.started_at) DESC NULLS LAST, v.call_id DESC
+                            LIMIT %s
+                            """,
+                            tuple(vapi_params),
+                        )
+                        vapi_rows = cur.fetchall()
+                    except Exception as ve:
+                        if "does not exist" not in str(ve).lower() and "vapi_calls" not in str(ve).lower():
+                            logger.debug("admin calls vapi_calls query: %s", ve)
+                        vapi_rows = []
+
+                    if vapi_rows:
+                        for r in vapi_rows[:limit]:
+                            started_at = r.get("started_at")
+                            ended_at = r.get("ended_at")
+                            updated_at = r.get("updated_at")
+                            last_event = r.get("last_event")
+                            duration_min: Optional[int] = None
+                            if started_at and (ended_at or updated_at):
+                                end_ts = ended_at or updated_at
+                                delta_mins = (end_ts - started_at).total_seconds() / 60.0
+                                delta_mins = max(0, min(MAX_SESSION_MINUTES, delta_mins))
+                                duration_min = int(round(delta_mins, 0))
+
+                            tid = r.get("tenant_id")
+                            d = _get_tenant_detail(tid) if tid else {}
+                            sort_ts = ended_at or updated_at or started_at
+                            result_val = _call_result_from_event(last_event) if last_event else _vapi_call_result_from_status(
+                                r.get("status"), r.get("ended_reason")
+                            )
+                            items.append({
+                                "call_id": r.get("call_id") or "",
+                                "tenant_id": tid,
+                                "tenant_name": (d.get("name") or "").strip() or (f"Client #{tid}" if tid else "—"),
+                                "started_at": started_at.isoformat() + "Z" if hasattr(started_at, "isoformat") else str(started_at or ""),
+                                "last_event_at": sort_ts.isoformat() + "Z" if hasattr(sort_ts, "isoformat") else str(sort_ts or ""),
+                                "last_event": last_event or r.get("ended_reason") or r.get("status") or "",
+                                "result": result_val,
+                                "duration_min": duration_min,
+                            })
+
+                        if len(vapi_rows) > limit:
+                            last_row = vapi_rows[limit - 1]
+                            sort_ts = last_row.get("ended_at") or last_row.get("updated_at") or last_row.get("started_at")
+                            t_iso = sort_ts.isoformat() if hasattr(sort_ts, "isoformat") else str(sort_ts or "")
+                            next_cursor = base64.urlsafe_b64encode(json.dumps({"t": t_iso, "c": last_row.get("call_id") or ""}).encode()).decode().rstrip("=")
+                        return {"items": items, "next_cursor": next_cursor, "days": days}
+
+                    # 2) Fallback ivr_events (comportement historique)
+                    params = [start, end]
                     tenant_filter = ""
                     if tenant_id is not None:
                         tenant_filter = " AND client_id = %s"
@@ -1528,7 +1629,6 @@ def _get_calls_list(
                         cursor_filter = " AND (a.last_event_at < %s OR (a.last_event_at = %s AND a.call_id < %s))"
                         params.extend([cursor_ts, cursor_ts, cursor_id])
 
-                    # Filtre sur dernier event (pas "call a eu au moins un event error" ; pour ça voir has_error plus tard)
                     result_filter_sql = ""
                     if result_filter == "rdv":
                         result_filter_sql = " AND a.last_event = 'booking_confirmed'"
@@ -1605,7 +1705,6 @@ def _get_calls_list(
 
         except Exception as e:
             logger.warning("admin calls list pg failed: %s", e)
-    # Pas de fallback SQLite pour la liste appels (PG uniquement en prod).
 
     return {"items": items, "next_cursor": next_cursor, "days": days}
 
@@ -2953,6 +3052,22 @@ def _get_global_stats(window_days: int) -> dict:
                     )
                     by_event = {r["event"]: r["cnt"] for r in cur.fetchall()}
                     calls_abandoned = sum(by_event.get(e, 0) for e in ("user_abandon", "abandon", "hangup", "user_hangup"))
+                    # Fallback vapi_calls si ivr_events vide (USE_PG_EVENTS=false ou appels sans interaction)
+                    if calls_total == 0:
+                        try:
+                            cur.execute(
+                                """
+                                SELECT COUNT(*) AS c FROM vapi_calls
+                                WHERE (started_at >= %s AND started_at <= %s)
+                                   OR (updated_at >= %s AND updated_at <= %s)
+                                """,
+                                (start, end, start, end),
+                            )
+                            r = cur.fetchone()
+                            if r and r.get("c"):
+                                calls_total = int(r["c"])
+                        except Exception:
+                            pass
                     transfers_total = sum(by_event.get(e, 0) for e in ("transferred_human", "transferred", "transfer_human", "transfer"))
                     appointments_total = by_event.get("booking_confirmed", 0)
                     errors_total = by_event.get("anti_loop_trigger", 0)
@@ -2963,6 +3078,17 @@ def _get_global_stats(window_days: int) -> dict:
                     r = cur.fetchone()
                     if r and r["m"]:
                         last_activity_at = r["m"].isoformat() + "Z" if hasattr(r["m"], "isoformat") else str(r["m"])
+                    if not last_activity_at and calls_total > 0:
+                        try:
+                            cur.execute(
+                                "SELECT MAX(COALESCE(ended_at, updated_at, started_at)) AS m FROM vapi_calls WHERE updated_at >= %s AND updated_at <= %s",
+                                (start, end),
+                            )
+                            r = cur.fetchone()
+                            if r and r.get("m"):
+                                last_activity_at = r["m"].isoformat() + "Z" if hasattr(r["m"], "isoformat") else str(r["m"])
+                        except Exception:
+                            pass
                     cur.execute(
                         """
                         SELECT SUM(LEAST(GREATEST(EXTRACT(EPOCH FROM (updated_at - started_at)) / 60.0, 0), %s)) AS mins
