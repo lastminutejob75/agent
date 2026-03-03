@@ -357,3 +357,73 @@ Stripe Dashboard → **Billing** → **Facturation à l’usage** → **Compteur
 
 **Date** : _à remplir_  
 **Exécuté par** : _à remplir_
+
+---
+
+## Garde-fous avant lancement (vrais clients)
+
+### Webhook prod
+
+- `STRIPE_WEBHOOK_SECRET` = `whsec_...` sur Railway (mode live, pas test)
+- Sans cette variable, le webhook cassera dès qu'un autre environnement est relié
+- Stripe Dashboard → Webhooks → ton endpoint → voir les events reçus (200)
+- Events clés : `checkout.session.completed`, `customer.subscription.updated`, `invoice.*`
+
+### Monitoring prod test
+
+- Alerte / log sur `STRIPE_USAGE_PUSH_FAILED` (tenant_id + date)
+- Vérifier 1× que le cron push fonctionne sur une date avec minutes réelles
+
+### Observabilité (logs à surveiller)
+
+| Log | Signification |
+|-----|---------------|
+| `STRIPE_USAGE_PUSH_FAILED tenant_id=... date_utc=...` | Push échoué → vérifier `stripe_usage_push_log.error_short` |
+| `no_metered_item_in_subscription` | Resync n'a pas trouvé l'item metered → vérifier subscription Stripe |
+
+---
+
+## Checklist Jour J (6 étapes)
+
+### 1. Créer checkout Growth
+
+```bash
+POST /api/admin/tenants/{TENANT_ID}/stripe-checkout
+{"plan_key":"growth"}
+```
+
+➜ Obtenir `checkout_url`
+
+### 2. Vérifier la page Stripe (avant payer)
+
+Dans Checkout : **2 lignes**
+- Base 149€/mois
+- « Minutes » metered (paliers 0€ jusqu'à 800 puis 0,17€/min)
+
+### 3. Payer / terminer checkout
+
+Redirection OK vers : `https://uwiapp.com/billing?checkout=success` (puis URL nettoyée)
+
+### 4. Vérifier DB (tenant_billing)
+
+| Champ | Attendu |
+|-------|---------|
+| plan_key | growth |
+| stripe_customer_id | cus_... |
+| stripe_subscription_id | sub_... |
+| stripe_metered_item_id | si_... (non vide) |
+
+➜ Si les 4 champs sont OK → **GO prod** sur ce maillon.
+
+### 5. Mettre de l'usage
+
+- Soit faire de vrais appels
+- Soit insérer 10–20 min test dans `vapi_call_usage` pour « hier » (ou `POST /api/admin/jobs/insert-test-usage`)
+
+### 6. Pusher l'usage + contrôler
+
+- Lancer `POST /api/admin/jobs/push-daily-usage` (ou attendre le cron)
+- **Attendu** :
+  - Log `STRIPE_USAGE_PUSHED tenant_id=... date_utc=... minutes=...`
+  - Stripe → Subscription → Usage : les minutes apparaissent
+  - Relancer le push pour la même date → pas de doublon (idempotence)

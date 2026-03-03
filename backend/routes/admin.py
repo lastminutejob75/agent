@@ -3527,7 +3527,7 @@ def admin_job_insert_test_usage(
 @router.get("/admin/tenants/{tenant_id}/stripe-usage-push-log")
 def admin_get_stripe_usage_push_log(
     tenant_id: int = Depends(validate_tenant_id),
-    date_from: str | None = Query(None, description="YYYY-MM-DD (optionnel)"),
+    date_from: Optional[str] = Query(None, description="YYYY-MM-DD (optionnel)"),
     limit: int = Query(10, ge=1, le=50),
     _: None = Depends(_verify_admin),
 ):
