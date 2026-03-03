@@ -1565,9 +1565,12 @@ def _get_calls_list(
                             delta_mins = max(0, min(MAX_SESSION_MINUTES, delta_mins))
                             duration_min = int(round(delta_mins, 0))
 
+                        tid = r.get("client_id")
+                        d = _get_tenant_detail(tid) if tid else {}
                         items.append({
                             "call_id": r.get("call_id") or "",
-                            "tenant_id": r.get("client_id"),
+                            "tenant_id": tid,
+                            "tenant_name": (d.get("name") or "").strip() or (f"Client #{tid}" if tid else "—"),
                             "started_at": started_at.isoformat() + "Z" if hasattr(started_at, "isoformat") else str(started_at),
                             "last_event_at": last_event_at.isoformat() + "Z" if hasattr(last_event_at, "isoformat") else str(last_event_at),
                             "last_event": last_event or "",
@@ -1884,6 +1887,196 @@ def admin_resync_metered_item(
     }
 
 
+class ChangePlanBody(BaseModel):
+    plan_key: str = Field(..., description="starter | growth | pro")
+
+
+@router.post("/admin/tenants/{tenant_id}/billing/change-plan")
+def admin_billing_change_plan(
+    tenant_id: int = Depends(validate_tenant_id),
+    body: ChangePlanBody = Body(...),
+    _: None = Depends(_verify_admin),
+):
+    """Change le plan Stripe du tenant (starter/growth/pro). Met à jour base + metered prices."""
+    if not _get_tenant_detail(tenant_id):
+        raise HTTPException(404, "Tenant not found")
+    plan_key = (body.plan_key or "").strip().lower()
+    if plan_key not in STRIPE_CHECKOUT_PLAN_KEYS:
+        raise HTTPException(400, "plan_key must be one of: starter, growth, pro")
+    billing = get_tenant_billing(tenant_id)
+    sub_id = (billing or {}).get("stripe_subscription_id") or ""
+    if not sub_id.strip():
+        raise HTTPException(400, "No Stripe subscription for this tenant")
+    stripe_key = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
+    if not stripe_key:
+        raise HTTPException(503, "Stripe not configured (STRIPE_SECRET_KEY)")
+    base_price_id, metered_price_id = _get_stripe_price_ids_for_plan(plan_key)
+    if not base_price_id or not metered_price_id:
+        raise HTTPException(400, "Stripe prices not configured for this plan")
+    try:
+        import stripe
+        stripe.api_key = stripe_key
+        sub = stripe.Subscription.retrieve(sub_id, expand=["items.data.price"])
+        items = sub.get("items", {}).get("data", []) or []
+        base_item_id = None
+        metered_item_id = (billing or {}).get("stripe_metered_item_id") or ""
+        for it in items:
+            pid = (it.get("price") or {}).get("id") or ""
+            if it.get("recurring", {}).get("usage_type") == "metered":
+                metered_item_id = (it.get("id") or "").strip() or metered_item_id
+            else:
+                base_item_id = (it.get("id") or "").strip()
+        if not base_item_id or not metered_item_id:
+            raise HTTPException(400, "Could not resolve subscription items (base + metered)")
+        stripe.Subscription.modify(
+            sub_id,
+            items=[
+                {"id": base_item_id, "price": base_price_id},
+                {"id": metered_item_id, "price": metered_price_id},
+            ],
+            metadata={"tenant_id": str(tenant_id), "plan_key": plan_key},
+        )
+        from backend.billing_pg import upsert_billing_from_subscription
+        upsert_billing_from_subscription(
+            tenant_id,
+            stripe_subscription_id=sub_id,
+            billing_status="active",
+            plan_key=plan_key,
+            stripe_customer_id=(billing or {}).get("stripe_customer_id"),
+        )
+        logger.info("BILLING_CHANGE_PLAN tenant_id=%s plan_key=%s", tenant_id, plan_key)
+        return {"ok": True, "tenant_id": tenant_id, "plan_key": plan_key}
+    except stripe.StripeError as e:
+        logger.warning("stripe change-plan failed: %s", e)
+        raise HTTPException(502, str(e) or "Stripe error")
+
+
+@router.post("/admin/tenants/{tenant_id}/billing/cancel")
+def admin_billing_cancel(
+    tenant_id: int = Depends(validate_tenant_id),
+    _: None = Depends(_verify_admin),
+):
+    """Annule l'abonnement Stripe à la fin de la période (cancel_at_period_end)."""
+    if not _get_tenant_detail(tenant_id):
+        raise HTTPException(404, "Tenant not found")
+    billing = get_tenant_billing(tenant_id)
+    sub_id = (billing or {}).get("stripe_subscription_id") or ""
+    if not sub_id.strip():
+        raise HTTPException(400, "No Stripe subscription for this tenant")
+    stripe_key = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
+    if not stripe_key:
+        raise HTTPException(503, "Stripe not configured (STRIPE_SECRET_KEY)")
+    try:
+        import stripe
+        stripe.api_key = stripe_key
+        stripe.Subscription.modify(sub_id, cancel_at_period_end=True)
+        logger.info("BILLING_CANCEL_AT_PERIOD_END tenant_id=%s sub=%s", tenant_id, sub_id[:20])
+        return {"ok": True, "tenant_id": tenant_id, "cancel_at_period_end": True}
+    except stripe.StripeError as e:
+        logger.warning("stripe cancel failed: %s", e)
+        raise HTTPException(502, str(e) or "Stripe error")
+
+
+@router.post("/admin/tenants/{tenant_id}/billing/resume")
+def admin_billing_resume(
+    tenant_id: int = Depends(validate_tenant_id),
+    _: None = Depends(_verify_admin),
+):
+    """Réactive un abonnement annulé (cancel_at_period_end=False)."""
+    if not _get_tenant_detail(tenant_id):
+        raise HTTPException(404, "Tenant not found")
+    billing = get_tenant_billing(tenant_id)
+    sub_id = (billing or {}).get("stripe_subscription_id") or ""
+    if not sub_id.strip():
+        raise HTTPException(400, "No Stripe subscription for this tenant")
+    stripe_key = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
+    if not stripe_key:
+        raise HTTPException(503, "Stripe not configured (STRIPE_SECRET_KEY)")
+    try:
+        import stripe
+        stripe.api_key = stripe_key
+        stripe.Subscription.modify(sub_id, cancel_at_period_end=False)
+        logger.info("BILLING_RESUME tenant_id=%s sub=%s", tenant_id, sub_id[:20])
+        return {"ok": True, "tenant_id": tenant_id, "cancel_at_period_end": False}
+    except stripe.StripeError as e:
+        logger.warning("stripe resume failed: %s", e)
+        raise HTTPException(502, str(e) or "Stripe error")
+
+
+@router.post("/admin/tenants/{tenant_id}/billing/portal-link")
+def admin_billing_portal_link(
+    tenant_id: int = Depends(validate_tenant_id),
+    _: None = Depends(_verify_admin),
+):
+    """Génère un lien vers le portail client Stripe (gestion factures, moyen de paiement)."""
+    if not _get_tenant_detail(tenant_id):
+        raise HTTPException(404, "Tenant not found")
+    billing = get_tenant_billing(tenant_id)
+    customer_id = (billing or {}).get("stripe_customer_id") or ""
+    if not customer_id.strip():
+        raise HTTPException(400, "No Stripe customer for this tenant")
+    stripe_key = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
+    if not stripe_key:
+        raise HTTPException(503, "Stripe not configured (STRIPE_SECRET_KEY)")
+    return_url = (
+        os.environ.get("STRIPE_PORTAL_RETURN_URL")
+        or os.environ.get("STRIPE_CHECKOUT_SUCCESS_URL")
+        or os.environ.get("FRONTEND_URL")
+        or "https://uwiapp.com"
+    ).strip().rstrip("/")
+    try:
+        import stripe
+        stripe.api_key = stripe_key
+        session = stripe.billing_portal.Session.create(
+            customer=customer_id.strip(),
+            return_url=return_url,
+        )
+        url = (session.get("url") or "").strip()
+        if not url:
+            raise HTTPException(500, "Stripe portal did not return URL")
+        return {"url": url}
+    except stripe.StripeError as e:
+        logger.warning("stripe portal session failed: %s", e)
+        raise HTTPException(502, str(e) or "Stripe error")
+
+
+@router.get("/admin/tenants/{tenant_id}/billing/invoices")
+def admin_billing_invoices(
+    tenant_id: int = Depends(validate_tenant_id),
+    limit: int = Query(10, ge=1, le=50),
+    _: None = Depends(_verify_admin),
+):
+    """Liste les factures Stripe du tenant (dernières N)."""
+    if not _get_tenant_detail(tenant_id):
+        raise HTTPException(404, "Tenant not found")
+    billing = get_tenant_billing(tenant_id)
+    customer_id = (billing or {}).get("stripe_customer_id") or ""
+    if not customer_id.strip():
+        return {"items": []}
+    stripe_key = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
+    if not stripe_key:
+        return {"items": []}
+    try:
+        import stripe
+        stripe.api_key = stripe_key
+        invoices = stripe.Invoice.list(customer=customer_id.strip(), limit=limit)
+        items = []
+        for inv in (invoices.get("data") or []):
+            items.append({
+                "id": inv.get("id"),
+                "number": inv.get("number"),
+                "status": inv.get("status"),
+                "amount_due": (inv.get("amount_due") or 0) / 100,
+                "currency": inv.get("currency", "eur").upper(),
+                "created": inv.get("created"),
+                "invoice_pdf": (inv.get("invoice_pdf") or "").strip() or None,
+            })
+        return {"items": items}
+    except stripe.StripeError as e:
+        logger.warning("stripe invoice list failed: %s", e)
+        return {"items": []}
+
+
 class ForceActiveBody(BaseModel):
     days: int = Field(7, ge=1, le=90, description="Nombre de jours pendant lesquels forcer actif")
 
@@ -2159,11 +2352,166 @@ def _get_quota_used_minutes(tenant_id: int, start: str, end: str) -> float:
     return 0.0
 
 
+# MRR € par plan (aligné billing_upgrade.PLAN_BASE_EUR)
+PLAN_MRR_EUR = {"starter": 99, "growth": 149, "pro": 199, "free": 0, "business": 0, "custom": 0}
+
+
+def _get_billing_overview(month: str) -> dict:
+    """
+    Overview billing agrégé (DB only, pas d'appel Stripe).
+    1 query tenants+tenant_billing, 1 query usage vapi_call_usage.
+    """
+    if len(month) != 7 or month[4] != "-":
+        return {"month": month, "summary": {"mrr_eur_total": 0, "tenants_past_due_count": 0, "cost_usd_month_total": 0}, "tenants": []}
+    try:
+        y, m = int(month[:4]), int(month[5:7])
+        end = f"{y}-{m + 1:02d}-01 00:00:00" if m < 12 else f"{y + 1}-01-01 00:00:00"
+    except ValueError:
+        return {"month": month, "summary": {"mrr_eur_total": 0, "tenants_past_due_count": 0, "cost_usd_month_total": 0}, "tenants": []}
+    start = f"{month}-01 00:00:00"
+
+    url_billing = os.environ.get("DATABASE_URL") or os.environ.get("PG_TENANTS_URL")
+    url_events = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+
+    tenants_data: List[dict] = []
+    past_due_count = 0
+    mrr_total = 0
+    cost_total = 0.0
+
+    if not url_billing:
+        return {"month": month, "summary": {"mrr_eur_total": 0, "tenants_past_due_count": 0, "cost_usd_month_total": 0}, "tenants": []}
+
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+        with psycopg.connect(url_billing, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT t.tenant_id, t.name, t.status,
+                           tb.stripe_customer_id, tb.stripe_subscription_id, tb.billing_status,
+                           tb.plan_key, tb.current_period_start, tb.current_period_end
+                    FROM tenants t
+                    LEFT JOIN tenant_billing tb ON tb.tenant_id = t.tenant_id
+                    WHERE COALESCE(t.status, 'active') = 'active' AND COALESCE(t.status, '') != 'deleted'
+                    ORDER BY t.name
+                    """,
+                )
+                rows = cur.fetchall()
+    except Exception as e:
+        if "does not exist" not in str(e).lower() and "tenant" not in str(e).lower():
+            logger.warning("billing overview tenants query: %s", e)
+        return {"month": month, "summary": {"mrr_eur_total": 0, "tenants_past_due_count": 0, "cost_usd_month_total": 0}, "tenants": []}
+
+    usage_by_tenant: dict = {}
+    if url_events:
+        try:
+            import psycopg
+            with psycopg.connect(url_events) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT tenant_id,
+                               COALESCE(SUM(duration_sec), 0) / 60.0 AS minutes,
+                               COALESCE(SUM(cost_usd), 0) AS cost_usd
+                        FROM vapi_call_usage
+                        WHERE ended_at IS NOT NULL AND ended_at >= %s AND ended_at < %s
+                        GROUP BY tenant_id
+                        """,
+                        (start, end),
+                    )
+                    for r in cur.fetchall() or []:
+                        tid = r[0]
+                        usage_by_tenant[tid] = {"minutes": round(float(r[1] or 0), 2), "cost_usd": round(float(r[2] or 0), 4)}
+        except Exception as e:
+            if "does not exist" not in str(e).lower() and "vapi_call_usage" not in str(e).lower():
+                logger.warning("billing overview usage query: %s", e)
+
+    for r in rows or []:
+        tid = r.get("tenant_id")
+        if tid is None:
+            continue
+        name = (r.get("name") or f"Tenant #{tid}")[:200]
+        plan_key = (r.get("plan_key") or "").strip().lower() or "free"
+        billing_status = (r.get("billing_status") or "").strip() or None
+        if billing_status in ("past_due", "unpaid"):
+            past_due_count += 1
+
+        mrr_eur = PLAN_MRR_EUR.get(plan_key, 0)
+        if billing_status in ("active", "trialing"):
+            mrr_total += mrr_eur
+
+        usage = usage_by_tenant.get(tid) or {"minutes": 0, "cost_usd": 0}
+        cost_total += float(usage.get("cost_usd") or 0)
+
+        included = get_plan_included_minutes(plan_key)
+        used = round(float(usage.get("minutes") or 0), 2)
+
+        period_end = r.get("current_period_end")
+        if period_end and hasattr(period_end, "timestamp"):
+            period_end_ts = int(period_end.timestamp())
+        elif period_end and hasattr(period_end, "isoformat"):
+            from datetime import datetime
+            try:
+                dt = datetime.fromisoformat(period_end.replace("Z", "+00:00"))
+                period_end_ts = int(dt.timestamp())
+            except Exception:
+                period_end_ts = None
+        else:
+            period_end_ts = None
+
+        tenants_data.append({
+            "tenant_id": tid,
+            "name": name,
+            "plan_key": plan_key,
+            "stripe_status": billing_status,
+            "stripe_customer_id": (r.get("stripe_customer_id") or "").strip() or None,
+            "stripe_subscription_id": (r.get("stripe_subscription_id") or "").strip() or None,
+            "current_period_end": period_end_ts,
+            "mrr_eur": mrr_eur if billing_status in ("active", "trialing") else 0,
+            "usage": {"minutes": used, "cost_usd": round(float(usage.get("cost_usd") or 0), 4)},
+            "quota": {"included": included, "used": int(used)},
+        })
+
+    return {
+        "month": month,
+        "summary": {
+            "mrr_eur_total": mrr_total,
+            "tenants_past_due_count": past_due_count,
+            "cost_usd_month_total": round(cost_total, 2),
+        },
+        "tenants": tenants_data,
+    }
+
+
+@router.get("/admin/billing/overview")
+def admin_get_billing_overview(
+    month: str = Query(..., description="YYYY-MM"),
+    _: None = Depends(_verify_admin),
+):
+    """Overview billing agrégé : tenants + billing + usage + quota en 1 round-trip (DB only)."""
+    if len(month) != 7 or month[4] != "-":
+        raise HTTPException(400, "month must be YYYY-MM")
+    return _get_billing_overview(month)
+
+
 @router.get("/admin/billing/plans")
 def admin_get_billing_plans(_: None = Depends(_verify_admin)):
-    """Liste des plans (plan_key, included_minutes_month) pour quota minutes."""
+    """Liste des plans (plan_key, name, mrr_eur, quota_min)."""
     items = get_billing_plans()
-    return {"items": items}
+    out = []
+    for it in items or []:
+        pk = (it.get("plan_key") or "").strip().lower()
+        quota = int(it.get("included_minutes_month") or 0)
+        out.append({
+            "id": pk,
+            "plan_key": pk,
+            "name": pk.capitalize() if pk else "",
+            "included_minutes_month": quota,
+            "quota_min": quota,
+            "mrr_eur": PLAN_MRR_EUR.get(pk, 0),
+        })
+    return {"items": out}
 
 
 @router.get("/admin/tenants/{tenant_id}/quota")

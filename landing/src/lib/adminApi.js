@@ -4,9 +4,13 @@
  */
 import { getAdminToken } from "./api.js";
 
-const baseUrl = (import.meta.env.VITE_UWI_API_BASE_URL || "").replace(/\/$/, "");
-
 async function adminFetch(path, options = {}) {
+  const base = (import.meta.env.VITE_UWI_API_BASE_URL || "").replace(/\/$/, "");
+  if (!base) {
+    const err = new Error("VITE_UWI_API_BASE_URL non configuré. Définissez l’URL du backend (ex. Railway).");
+    err.status = 0;
+    throw err;
+  }
   const token = (getAdminToken() || "").trim();
   const headers = {
     "Content-Type": "application/json",
@@ -14,7 +18,7 @@ async function adminFetch(path, options = {}) {
   };
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  const res = await fetch(baseUrl + path, {
+  const res = await fetch(base + path, {
     ...options,
     credentials: "include",
     headers,
@@ -131,6 +135,19 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  changeTenantPlan: (id, planKey) =>
+    adminFetch(`/api/admin/tenants/${id}/billing/change-plan`, {
+      method: "POST",
+      body: JSON.stringify({ plan_key: planKey }),
+    }),
+  cancelTenantSubscription: (id) =>
+    adminFetch(`/api/admin/tenants/${id}/billing/cancel`, { method: "POST" }),
+  resumeTenantSubscription: (id) =>
+    adminFetch(`/api/admin/tenants/${id}/billing/resume`, { method: "POST" }),
+  getStripePortalLink: (id) =>
+    adminFetch(`/api/admin/tenants/${id}/billing/portal-link`, { method: "POST" }),
+  getTenantInvoices: (id) =>
+    adminFetch(`/api/admin/tenants/${id}/billing/invoices`, { method: "GET" }),
   getTenantUsage: (id, month) =>
     adminFetch(`/api/admin/tenants/${id}/usage?month=${encodeURIComponent(month)}`, { method: "GET" }),
   getKpisWeekly: (tenantId, start, end) =>
@@ -189,3 +206,43 @@ export const adminApi = {
   leadPatch: (leadId, body) =>
     adminFetch(`/api/admin/leads/${leadId}`, { method: "PATCH", body: JSON.stringify(body) }),
 };
+
+// ── Exports nommés pour UWIDashboard ───────────────────────────────────────────
+export const getDashboardPayload = (windowDays = 30) =>
+  adminFetch(`/api/admin/stats/dashboard-payload?window_days=${windowDays}`);
+export const getRecentCalls = (days = 1, limit = 5) =>
+  adminFetch(`/api/admin/calls?days=${days}&limit=${limit}`);
+export const getBillingSnapshot = () => adminFetch("/api/admin/stats/billing-snapshot");
+export const getTenants = () => adminFetch("/api/admin/tenants");
+export const getCallDetail = (tenantId, callId) =>
+  adminFetch(`/api/admin/tenants/${tenantId}/calls/${encodeURIComponent(callId)}`);
+export const loginAdmin = (email, password) =>
+  adminFetch("/api/admin/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+export const getMe = () => adminFetch("/api/admin/auth/me");
+
+// ── Billing overview (agrégé, 1 endpoint) ──────────────────────────────────────
+export const getBillingOverview = (month) => {
+  const m = month || new Date().toISOString().slice(0, 7);
+  return adminFetch(`/api/admin/billing/overview?month=${encodeURIComponent(m)}`);
+};
+
+// ── Plans ─────────────────────────────────────────────────────────────────────
+export const getBillingPlans = () => adminFetch("/api/admin/billing/plans");
+
+// ── Actions Stripe ───────────────────────────────────────────────────────────
+export const changeTenantPlan = (tenantId, planKey) =>
+  adminFetch(`/api/admin/tenants/${tenantId}/billing/change-plan`, {
+    method: "POST",
+    body: JSON.stringify({ plan_key: planKey }),
+  });
+export const cancelTenantSubscription = (tenantId) =>
+  adminFetch(`/api/admin/tenants/${tenantId}/billing/cancel`, { method: "POST" });
+export const resumeTenantSubscription = (tenantId) =>
+  adminFetch(`/api/admin/tenants/${tenantId}/billing/resume`, { method: "POST" });
+export const getStripePortalLink = (tenantId) =>
+  adminFetch(`/api/admin/tenants/${tenantId}/billing/portal-link`, { method: "POST" });
+export const getTenantInvoices = (tenantId) =>
+  adminFetch(`/api/admin/tenants/${tenantId}/billing/invoices`);

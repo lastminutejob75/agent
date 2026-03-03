@@ -32,7 +32,13 @@ export default function AdminTenantDashboard() {
       setActivity(act);
       setLastUpdated(new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }));
     } catch (e) {
-      setErr(e.message || "Erreur chargement");
+      let msg = e?.message || (typeof e?.data?.detail === "string" ? e.data.detail : null) || "Erreur chargement";
+      if (e?.status === 403 && /origin|cors/i.test(msg || "")) {
+        msg = "CORS bloqué : ajoutez l’origine dans CORS_ORIGINS (Railway).";
+      } else if (e?.status === 401) {
+        msg = "Session expirée. Reconnectez-vous.";
+      }
+      setErr(typeof msg === "string" ? msg : JSON.stringify(msg));
     } finally {
       setLoading(false);
     }
@@ -143,7 +149,7 @@ export default function AdminTenantDashboard() {
                         className="w-2 bg-indigo-400 rounded-t min-h-[4px]"
                         style={{ height: Math.max(4, (p.value / maxVal) * 60) }}
                       />
-                      <span className="text-[10px] text-gray-400 mt-1">{p.date.slice(8)}</span>
+                      <span className="text-[10px] text-gray-400 mt-1">{p.date?.slice(8) ?? ""}</span>
                     </div>
                   ))}
                 </div>
