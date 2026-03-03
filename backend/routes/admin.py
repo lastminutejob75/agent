@@ -1011,8 +1011,8 @@ def _verify_admin_password(password: str) -> bool:
 @router.get("/admin/auth/status")
 def admin_auth_status():
     """
-    Diagnostic (sans auth) : indique si le login email/mot de passe est configuré.
-    Permet de vérifier que ADMIN_EMAIL et ADMIN_PASSWORD ou ADMIN_PASSWORD_HASH sont bien pris en compte.
+    Diagnostic (sans auth) : indique si le login email/mot de passe et token sont configurés.
+    Permet de vérifier que ADMIN_EMAIL, ADMIN_PASSWORD/HASH et ADMIN_API_TOKEN sont bien pris en compte.
     """
     return {
         "login_configured": bool(ADMIN_EMAIL and (ADMIN_PASSWORD or ADMIN_PASSWORD_HASH) and JWT_SECRET_ADMIN),
@@ -1020,6 +1020,7 @@ def admin_auth_status():
         "password_plain_set": bool(ADMIN_PASSWORD),
         "password_hash_set": bool(ADMIN_PASSWORD_HASH),
         "jwt_secret_set": bool(JWT_SECRET_ADMIN),
+        "admin_token_set": bool(ADMIN_TOKEN),
     }
 
 

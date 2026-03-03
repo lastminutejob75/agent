@@ -1,4 +1,4 @@
-.PHONY: help install test run docker clean check-report-env export-kpis migrate migrate-007 migrate-008 migrate-018 migrate-026 migrate-027 migrate-leads migrate-003 migrate-004 migrate-ivr-events migrate-railway railway-fix-vars onboard-tenant-users backfill-tenant-users add-tenant-user test-postgres test-email
+.PHONY: help install test run docker clean check-report-env export-kpis migrate migrate-007 migrate-008 migrate-018 migrate-026 migrate-027 migrate-leads migrate-003 migrate-004 migrate-ivr-events migrate-railway migrate-railway-029 railway-fix-vars onboard-tenant-users backfill-tenant-users add-tenant-user test-postgres test-email
 
 help:
 	@echo "Commandes disponibles :"
@@ -18,6 +18,7 @@ help:
 	@echo "  make migrate-leads   - Run migrations 026+027 (leads)"
 	@echo "  make migrate-ivr-events - Run migrations 003+004 (table ivr_events, dashboards)"
 	@echo "  make migrate-railway - Run migrations sur Railway"
+	@echo "  make migrate-railway-029 - Run migration 029 sur Railway (après railway link)"
 	@echo "  make railway-fix-vars - Réappliquer variables TWILIO/SMTP (depuis .env)"
 	@echo "  make backfill-tenant-users - Backfill tenant_users (tenants existants)"
 	@echo "  make add-tenant-user EMAIL=x@y.com - Ajouter un email pour connexion dashboard"
@@ -69,6 +70,9 @@ migrate-004:
 # Migration sur Railway (DATABASE_URL injecté). Prérequis : npx, railway login + railway link
 migrate-railway:
 	npx --yes @railway/cli run make migrate
+# Migration 029 + suivantes sur Railway (après railway link)
+migrate-railway-029:
+	npx --yes @railway/cli run make migrate-029
 
 # Réappliquer variables TWILIO/SMTP sur Railway (depuis .env). Fix "inactive"
 railway-fix-vars:

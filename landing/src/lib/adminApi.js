@@ -46,6 +46,8 @@ async function adminFetch(path, options = {}) {
 }
 
 export const adminApi = {
+  /** Diagnostic sans auth : config backend (email_set, password_hash_set, admin_token_set). */
+  authStatus: () => adminFetch("/api/admin/auth/status", { method: "GET" }),
   me: () => adminFetch("/api/admin/auth/me", { method: "GET" }),
   login: (payload) =>
     adminFetch("/api/admin/auth/login", {

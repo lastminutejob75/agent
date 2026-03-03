@@ -1,6 +1,9 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAdminAuth } from "./AdminAuthProvider";
+import { adminApi } from "../lib/adminApi.js";
+
+const API_BASE = (import.meta.env.VITE_UWI_API_BASE_URL || "").replace(/\/$/, "");
 
 export default function AdminLogin() {
   const { login, loginWithToken, isAuthed, sessionPersistError } = useAdminAuth();
@@ -15,10 +18,19 @@ export default function AdminLogin() {
   const [tokenLoading, setTokenLoading] = useState(false);
   const [err, setErr] = useState(null);
   const [tokenErr, setTokenErr] = useState(null);
+  const [showDiagnostic, setShowDiagnostic] = useState(false);
+  const [diagnostic, setDiagnostic] = useState(null);
+  const [diagnosticErr, setDiagnosticErr] = useState(null);
 
   useEffect(() => {
     if (isAuthed) navigate(from, { replace: true });
   }, [isAuthed, from, navigate]);
+
+  useEffect(() => {
+    if (!showDiagnostic) return;
+    setDiagnosticErr(null);
+    adminApi.authStatus().then(setDiagnostic).catch((e) => setDiagnosticErr(e?.message || "Erreur"));
+  }, [showDiagnostic]);
 
   if (isAuthed) {
     return (
@@ -148,6 +160,31 @@ export default function AdminLogin() {
         <p className="mt-6 text-center text-slate-500 text-xs">
           Accès réservé aux administrateurs.
         </p>
+
+        <div className="mt-6 pt-4 border-t border-slate-700">
+          <button
+            type="button"
+            onClick={() => setShowDiagnostic((s) => !s)}
+            className="text-xs text-slate-500 hover:text-slate-400"
+          >
+            {showDiagnostic ? "▼" : "▶"} Diagnostic backend
+          </button>
+          {showDiagnostic && (
+            <div className="mt-3 p-3 bg-slate-900/80 rounded-lg text-xs font-mono text-slate-400 space-y-1">
+              <div>API : {API_BASE || "(non configuré)"}</div>
+              {diagnosticErr && <div className="text-red-400">{diagnosticErr}</div>}
+              {diagnostic && (
+                <div className="mt-2 space-y-0.5">
+                  <div>email_set: {String(diagnostic.email_set)}</div>
+                  <div>password_plain_set: {String(diagnostic.password_plain_set)}</div>
+                  <div>password_hash_set: {String(diagnostic.password_hash_set)}</div>
+                  <div>admin_token_set: {String(diagnostic.admin_token_set)}</div>
+                  <div>jwt_secret_set: {String(diagnostic.jwt_secret_set)}</div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
