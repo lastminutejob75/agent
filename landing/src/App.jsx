@@ -44,7 +44,7 @@ import AdminLogin from "./admin/AdminLogin";
 import AdminDashboard from "./admin/pages/AdminDashboard";
 import AdminTenantsList from "./admin/pages/AdminTenantsList";
 import AdminTenantNew from "./admin/pages/AdminTenantNew";
-import AdminTenantDetail from "./admin/pages/AdminTenantDetail";
+import AdminTenantPage from "./admin/pages/AdminTenantPage";
 import AdminTenantDashboard from "./admin/pages/AdminTenantDashboard";
 import AdminCalls from "./admin/pages/AdminCalls";
 import AdminMonitoring from "./admin/pages/AdminMonitoring";
@@ -111,7 +111,7 @@ export default function App() {
             <Route index element={<AdminDashboard />} />
             <Route path="tenants/new" element={<AdminTenantNew />} />
             <Route path="tenants" element={<AdminTenantsList />} />
-            <Route path="tenants/:id" element={<AdminTenantDetail />} />
+            <Route path="tenants/:id" element={<AdminTenantPage />} />
             <Route path="tenants/:id/dashboard" element={<AdminTenantDashboard />} />
             <Route path="tenants/:id/calls" element={<AdminCalls />} />
             <Route path="calls" element={<AdminCalls />} />

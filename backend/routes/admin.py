@@ -1694,6 +1694,29 @@ def _get_call_detail(tenant_id: int, call_id: str) -> dict:
                     delta_mins = (cs["updated_at"] - cs["started_at"]).total_seconds() / 60.0
                     delta_mins = max(0, min(MAX_SESSION_MINUTES, delta_mins))
                     out["duration_min"] = int(round(delta_mins, 0))
+                # Transcription depuis call_transcripts (si table existe)
+                try:
+                    cur.execute(
+                        """
+                        SELECT role, transcript, created_at
+                        FROM call_transcripts
+                        WHERE tenant_id = %s AND call_id = %s AND is_final = TRUE
+                        ORDER BY created_at ASC
+                        """,
+                        (tenant_id, call_id_clean),
+                    )
+                    rows_t = cur.fetchall()
+                    if rows_t:
+                        parts = []
+                        for r in rows_t:
+                            role = (r.get("role") or "user").lower()
+                            txt = (r.get("transcript") or "").strip()
+                            if txt:
+                                prefix = "Patient:" if role == "user" else "Assistant:"
+                                parts.append(f"{prefix} {txt}")
+                        out["transcript"] = "\n\n".join(parts) if parts else None
+                except Exception:
+                    pass
     except HTTPException:
         raise
     except Exception as e:

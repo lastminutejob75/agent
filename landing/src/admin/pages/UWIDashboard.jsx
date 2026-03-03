@@ -210,7 +210,13 @@ function TenantBillingCard({ item, plans, onAction }) {
         style={{ padding: "18px 20px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12 }}
       >
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: "#FFFFFF", marginBottom: 5 }}>{tenantName}</div>
+          <Link
+            to={`/admin/tenants/${tenantId}`}
+            onClick={(e) => e.stopPropagation()}
+            style={{ fontSize: 14, fontWeight: 700, color: "#FFFFFF", marginBottom: 5, textDecoration: "none" }}
+          >
+            {tenantName}
+          </Link>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <PlanBadge plan={planKey} />
             <StripeBadge status={stripeStatus} />

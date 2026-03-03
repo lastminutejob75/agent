@@ -246,3 +246,32 @@ export const getStripePortalLink = (tenantId) =>
   adminFetch(`/api/admin/tenants/${tenantId}/billing/portal-link`, { method: "POST" });
 export const getTenantInvoices = (tenantId) =>
   adminFetch(`/api/admin/tenants/${tenantId}/billing/invoices`);
+
+// ── Tenant detail page ────────────────────────────────────────────────────────
+export const getTenant = (tenantId) => adminFetch(`/api/admin/tenants/${tenantId}`);
+export const getTenantDashboard = (tenantId) =>
+  adminFetch(`/api/admin/tenants/${tenantId}/dashboard`);
+export const getTenantActivity = (tenantId, limit = 20) =>
+  adminFetch(`/api/admin/tenants/${tenantId}/activity?limit=${limit}`);
+export const getTenantCalls = (tenantId, days = 7, limit = 20) =>
+  adminFetch(`/api/admin/calls?tenant_id=${tenantId}&days=${days}&limit=${limit}`);
+export const getTenantBilling = (tenantId) =>
+  adminFetch(`/api/admin/tenants/${tenantId}/billing`);
+export const getTenantUsage = (tenantId, month) => {
+  const m = month || new Date().toISOString().slice(0, 7);
+  return adminFetch(`/api/admin/tenants/${tenantId}/usage?month=${encodeURIComponent(m)}`);
+};
+export const getTenantQuota = (tenantId, month) => {
+  const m = month || new Date().toISOString().slice(0, 7);
+  return adminFetch(`/api/admin/tenants/${tenantId}/quota?month=${encodeURIComponent(m)}`);
+};
+export const updateTenantFlags = (tenantId, flags) =>
+  adminFetch(`/api/admin/tenants/${tenantId}/flags`, {
+    method: "PATCH",
+    body: JSON.stringify({ flags }),
+  });
+export const updateTenantParams = (tenantId, params) =>
+  adminFetch(`/api/admin/tenants/${tenantId}/params`, {
+    method: "PATCH",
+    body: JSON.stringify({ params }),
+  });
