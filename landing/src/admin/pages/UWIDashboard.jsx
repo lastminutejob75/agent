@@ -11,6 +11,7 @@ import {
   resumeTenantSubscription,
   getStripePortalLink,
 } from "../../lib/adminApi";
+import CreateTenantModal from "../components/CreateTenantModal";
 
 const C = {
   card: "#ffffff",
@@ -436,6 +437,7 @@ export default function UWIDashboard() {
   const [period, setPeriod] = useState("30j");
   const { data, calls, loading, error, refresh } = useDashboard(period);
   const billingOv = useBillingOverview();
+  const [showCreate, setShowCreate] = useState(false);
   const [selectedCall, setSelectedCall] = useState(null);
   const [callDetail, setCallDetail] = useState(null);
   const [callDetailLoading, setCallDetailLoading] = useState(false);
@@ -601,6 +603,26 @@ export default function UWIDashboard() {
           </p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <button
+            type="button"
+            onClick={() => setShowCreate(true)}
+            style={{
+              padding: "7px 16px",
+              borderRadius: 10,
+              background: C.accent,
+              border: "none",
+              color: "#fff",
+              fontSize: 13,
+              fontWeight: 800,
+              cursor: "pointer",
+              fontFamily: "inherit",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            + Nouveau client
+          </button>
           <div style={{ display: "flex", gap: 4 }}>
             {["7j", "30j", "90j"].map((p) => (
               <button
@@ -1121,6 +1143,17 @@ export default function UWIDashboard() {
             )}
           </div>
         </div>
+      )}
+
+      {showCreate && (
+        <CreateTenantModal
+          onClose={() => setShowCreate(false)}
+          onCreated={() => {
+            setShowCreate(false);
+            refresh();
+            billingOv.reload?.();
+          }}
+        />
       )}
     </div>
   );

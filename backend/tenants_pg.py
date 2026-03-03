@@ -272,6 +272,7 @@ def pg_update_tenant_params(tenant_id: int, params: dict) -> bool:
         "transfer_phone", "transfer_number", "horaires",
         "responsible_phone", "manager_name", "billing_email", "vapi_assistant_id", "plan_key", "notes",
         "custom_included_minutes_month",
+        "assistant_name", "phone_number", "sector",
     }
     filtered = {k: str(v) for k, v in params.items() if k in allowed and v is not None}
     if not filtered:

@@ -782,3 +782,94 @@ def send_lead_callback_booking_email(
             logger.exception("send_lead_callback_booking_email smtp failed")
             return False, str(e)
     return False, "Email non configuré (Postmark ou SMTP)"
+
+
+def send_welcome_email(
+    email: str,
+    client_name: str,
+    assistant_id: str,
+    plan_key: str,
+    phone_number: str,
+    app_url: str = "",
+) -> Tuple[bool, Optional[str]]:
+    """
+    Email de bienvenue au client après création tenant (Vapi + Stripe + Twilio).
+    Destinataire : email du client.
+    Returns (success, error_message).
+    """
+    to = (email or "").strip().lower()
+    if not to:
+        logger.warning("send_welcome_email: email vide, skip")
+        return False, "Email vide"
+
+    assistant_display = (assistant_id or "Sophie").capitalize()
+    plan_display = {"starter": "Starter (99€/mois)", "growth": "Growth (149€/mois)", "pro": "Pro (199€/mois)"}.get(
+        (plan_key or "").lower(), plan_key or "—"
+    )
+    phone_display = (phone_number or "").strip() or "À configurer"
+    app_url = (app_url or os.getenv("ADMIN_BASE_URL") or os.getenv("VITE_SITE_URL") or "https://www.uwiapp.com").strip().rstrip("/")
+
+    subject = f"Bienvenue sur UWi — {client_name}"
+    from datetime import datetime
+    date_local = datetime.now().strftime("%d/%m/%Y %H:%M")
+    html = f"""
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Bienvenue UWi</title></head>
+<body style="font-family: sans-serif; max-width: 560px; margin: 0 auto; padding: 1rem;">
+  <h1 style="font-size: 1.25rem;">Bienvenue sur UWi — {client_name}</h1>
+  <p style="font-size: 1rem; color: #333; margin: 1rem 0;">
+    Votre compte a été créé avec succès. Voici les informations d'accès :
+  </p>
+  <ul style="color: #333; margin: 0.25rem 0 1rem 0;">
+    <li><strong>Assistante vocale :</strong> {assistant_display}</li>
+    <li><strong>Plan :</strong> {plan_display}</li>
+    <li><strong>Numéro d'appel :</strong> {phone_display}</li>
+  </ul>
+  <p style="margin: 1rem 0;">
+    <a href="{app_url}" style="color:#2563eb;word-break:break-all;">Accéder à votre espace → {app_url}</a>
+  </p>
+  <p style="color: #666; font-size: 0.9rem; margin-top: 1.5rem;">
+    Connectez-vous avec cet email pour gérer votre cabinet et consulter les rapports d'appels.
+  </p>
+  <p style="color: #666; font-size: 0.85rem; margin-top: 1.5rem;">
+    —<br/>
+    Date d'envoi : {date_local}
+  </p>
+</body>
+</html>
+"""
+    from_addr = (
+        os.getenv("POSTMARK_FROM_EMAIL") or os.getenv("EMAIL_FROM") or os.getenv("SMTP_EMAIL") or ""
+    ).strip()
+    token = (os.getenv("POSTMARK_SERVER_TOKEN") or "").strip()
+    if token and from_addr:
+        try:
+            ok, err = _send_via_postmark(from_addr, to, subject, html, token)
+            if ok:
+                logger.info("welcome_email_sent via postmark", extra={"to": to[:50]})
+            return ok, err
+        except Exception as e:
+            logger.exception("send_welcome_email postmark failed")
+            return False, str(e)
+    smtp_user = (os.getenv("SMTP_EMAIL") or "").strip()
+    smtp_pass = (os.getenv("SMTP_PASSWORD") or "").strip()
+    if smtp_user and smtp_pass:
+        host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        port = int(os.getenv("SMTP_PORT", "587"))
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["From"] = smtp_user
+            msg["To"] = to
+            msg["Subject"] = subject
+            msg.attach(MIMEText(html, "html", "utf-8"))
+            with smtplib.SMTP(host, port) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, [to], msg.as_string())
+            logger.info("welcome_email_sent via smtp", extra={"to": to[:50]})
+            return True, None
+        except Exception as e:
+            logger.exception("send_welcome_email smtp failed")
+            return False, str(e)
+    return False, "Email non configuré (Postmark ou SMTP)"

@@ -55,6 +55,16 @@ Pour un agent fluide avec **interruptions** et **validations rapides** ("Oui !" 
 
 Remplacez `serverUrl` et `serverUrlSecret` par vos valeurs (Railway, Vercel, etc.).
 
+### Authentification webhook (Custom Credential Vapi)
+
+Si tu as créé une Custom Credential dans le dashboard Vapi (Bearer Token), configure sur Railway :
+
+```
+VAPI_WEBHOOK_CREDENTIAL_ID=206e89fd-be06-407e-8828-bc72559a5c63
+```
+
+Le backend utilisera ce `credentialId` lors de la création des assistants (nouveau client). Priorité : `VAPI_WEBHOOK_CREDENTIAL_ID` > `VAPI_WEBHOOK_SECRET` (legacy).
+
 ### Test rapide après déploiement
 
 Scénario à valider :

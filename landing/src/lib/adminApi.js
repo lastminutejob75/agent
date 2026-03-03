@@ -90,6 +90,13 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  /** Création complète : DB + Vapi + Stripe + Twilio + email */
+  createTenantFull: (payload) =>
+    adminFetch("/api/admin/tenants/create", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  getTwilioNumbers: () => adminFetch("/api/admin/twilio/numbers", { method: "GET" }),
   patchTenantParams: (id, params) =>
     adminFetch(`/api/admin/tenants/${id}/params`, {
       method: "PATCH",

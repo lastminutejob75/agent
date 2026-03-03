@@ -19,7 +19,7 @@ import jwt
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 from backend import config
 from backend.deps import validate_tenant_id
@@ -33,6 +33,7 @@ from backend.billing_pg import (
     set_tenant_suspended,
     set_tenant_unsuspended,
     tenant_id_by_stripe_customer_id,
+    upsert_billing_from_subscription,
 )
 from backend.tenants_pg import (
     pg_add_routing,
@@ -237,6 +238,23 @@ class TenantOut(BaseModel):
     timezone: str
     business_type: Optional[str] = None
     created_at: str
+
+
+class CreateTenantRequest(BaseModel):
+    """Création tenant complète : DB + Vapi + Stripe + Twilio + email."""
+
+    name: str = Field(..., min_length=2, max_length=120)
+    email: EmailStr
+    phone: str = Field(..., min_length=5, max_length=32)
+    sector: str = Field(
+        ...,
+        pattern="^(medecin_generaliste|specialiste|kine|dentiste|infirmier)$",
+    )
+    plan_key: str = Field(..., pattern="^(starter|growth|pro)$")
+    assistant_id: str = Field(..., min_length=2, max_length=32)
+    twilio_number: Optional[str] = Field(default=None, max_length=32)
+    timezone: str = Field(default="Europe/Paris", max_length=64)
+    send_welcome: bool = Field(default=True)
 
 
 # --- Helpers ---
@@ -2674,6 +2692,220 @@ def admin_add_routing(
                 content={"detail": str(e), "error_code": "TEST_NUMBER_IMMUTABLE"},
             )
         raise
+
+
+@router.post("/admin/tenants/create")
+async def admin_create_tenant_full(
+    body: CreateTenantRequest,
+    _: None = Depends(_verify_admin),
+):
+    """
+    Crée un tenant complet : DB + Vapi + Stripe + Twilio + email.
+    Retourne tenant_id et les IDs externes (vapi, stripe, twilio).
+    """
+    from datetime import datetime
+
+    from backend.services.email_service import send_welcome_email
+    from backend.vapi_utils import assign_twilio_to_vapi, create_vapi_assistant
+
+    results: Dict[str, Any] = {
+        "tenant_id": None,
+        "vapi_assistant_id": None,
+        "stripe_customer_id": None,
+        "stripe_subscription_id": None,
+        "twilio_number": body.twilio_number,
+        "errors": [],
+    }
+
+    if not config.USE_PG_TENANTS:
+        raise HTTPException(503, "Création tenant complète requiert Postgres (USE_PG_TENANTS)")
+
+    contact_email = (body.email or "").strip().lower()
+    if not contact_email:
+        raise HTTPException(400, "email requis")
+
+    existing = pg_get_tenant_user_by_email(contact_email)
+    if existing:
+        raise HTTPException(409, "Cet email est déjà rattaché à un autre client.")
+
+    # ── Étape 1 : Créer le tenant en DB ──────────────────────────────────────
+    tid = pg_create_tenant(
+        name=body.name.strip(),
+        contact_email=contact_email,
+        calendar_provider="none",
+        calendar_id="",
+        timezone=body.timezone,
+        status="active",
+        plan_key=body.plan_key,
+    )
+    if not tid:
+        raise HTTPException(500, "Impossible de créer le tenant en base")
+
+    results["tenant_id"] = tid
+
+    # Créer tenant_user pour login
+    pg_create_tenant_user(tid, contact_email, role="owner")
+
+    # Mettre à jour params : flags + assistant_name, phone_number, sector
+    pg_update_tenant_flags(
+        tid,
+        {
+            "ENABLE_BOOKING": True,
+            "ENABLE_TRANSFER": True,
+            "ENABLE_FAQ": True,
+            "ENABLE_ANTI_LOOP": True,
+        },
+    )
+    pg_update_tenant_params(
+        tid,
+        {
+            "assistant_name": body.assistant_id,
+            "phone_number": body.phone,
+            "sector": body.sector,
+            "plan_key": body.plan_key,
+        },
+    )
+
+    # ── Étape 2 : Créer l'assistant Vapi ─────────────────────────────────────
+    try:
+        vapi_assistant = await create_vapi_assistant(
+            tenant_id=tid,
+            tenant_name=body.name.strip(),
+            assistant_id=body.assistant_id,
+            sector=body.sector,
+            phone=body.phone,
+        )
+        vapi_id = vapi_assistant.get("id") or ""
+        results["vapi_assistant_id"] = vapi_id
+        if vapi_id:
+            pg_update_tenant_params(tid, {"vapi_assistant_id": vapi_id})
+
+        if body.twilio_number and vapi_id:
+            await assign_twilio_to_vapi(vapi_id, body.twilio_number)
+            pg_add_routing("vocal", body.twilio_number.strip().replace(" ", ""), tid)
+    except Exception as e:
+        logger.exception("create_tenant_full Vapi failed: %s", e)
+        results["errors"].append(f"Vapi: {str(e)}")
+
+    # ── Étape 3 : Créer le customer Stripe + subscription ───────────────────
+    try:
+        import stripe
+
+        stripe_key = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
+        if not stripe_key:
+            results["errors"].append("Stripe: STRIPE_SECRET_KEY non configuré")
+        else:
+            stripe.api_key = stripe_key
+            customer = stripe.Customer.create(
+                email=contact_email,
+                name=body.name.strip(),
+                phone=body.phone,
+                metadata={"tenant_id": str(tid), "plan": body.plan_key},
+            )
+            results["stripe_customer_id"] = customer.id
+
+            base_price_id, metered_price_id = _get_stripe_price_ids_for_plan(body.plan_key)
+            subscription = None
+            if base_price_id:
+                line_items = [{"price": base_price_id, "quantity": 1}]
+                if metered_price_id:
+                    line_items.append({"price": metered_price_id})
+                subscription = stripe.Subscription.create(
+                    customer=customer.id,
+                    items=line_items,
+                    metadata={"tenant_id": str(tid), "plan_key": body.plan_key},
+                )
+                results["stripe_subscription_id"] = subscription.id
+
+                cps = None
+                cpe = None
+                if getattr(subscription, "current_period_start", None):
+                    cps = datetime.utcfromtimestamp(subscription.current_period_start)
+                if getattr(subscription, "current_period_end", None):
+                    cpe = datetime.utcfromtimestamp(subscription.current_period_end)
+                upsert_billing_from_subscription(
+                    tid,
+                    stripe_subscription_id=subscription.id,
+                    billing_status=subscription.status or "active",
+                    plan_key=body.plan_key,
+                    current_period_start=cps,
+                    current_period_end=cpe,
+                    stripe_customer_id=customer.id,
+                )
+            else:
+                set_stripe_customer_id(tid, customer.id)
+                results["errors"].append("Stripe: STRIPE_PRICE_BASE_* non configuré pour ce plan (customer créé)")
+    except Exception as e:
+        logger.exception("create_tenant_full Stripe failed: %s", e)
+        results["errors"].append(f"Stripe: {str(e)}")
+
+    # ── Étape 4 : Envoyer email d'accès ──────────────────────────────────────
+    if body.send_welcome:
+        try:
+            ok, err = send_welcome_email(
+                email=contact_email,
+                client_name=body.name.strip(),
+                assistant_id=body.assistant_id,
+                plan_key=body.plan_key,
+                phone_number=body.twilio_number or body.phone,
+            )
+            if not ok:
+                results["errors"].append(f"Email: {err or 'échec envoi'}")
+        except Exception as e:
+            logger.exception("create_tenant_full send_welcome_email failed: %s", e)
+            results["errors"].append(f"Email: {str(e)}")
+
+    return {
+        "success": len(results["errors"]) == 0,
+        "tenant_id": tid,
+        "results": results,
+    }
+
+
+def _get_assigned_voice_numbers() -> set:
+    """Numéros déjà assignés dans tenant_routing (channel vocal)."""
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_TENANTS_URL")
+    if not url:
+        return set()
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT key FROM tenant_routing WHERE channel IN ('voice', 'vocal') AND is_active = TRUE"
+                )
+                return {r[0] for r in cur.fetchall() if r and r[0]}
+    except Exception as e:
+        logger.warning("_get_assigned_voice_numbers failed: %s", e)
+        return set()
+
+
+@router.get("/admin/twilio/numbers")
+def admin_list_twilio_numbers(_: None = Depends(_verify_admin)):
+    """Retourne les numéros Twilio (disponibles = non assignés)."""
+    try:
+        from twilio.rest import Client
+
+        sid = (os.environ.get("TWILIO_ACCOUNT_SID") or "").strip()
+        token = (os.environ.get("TWILIO_AUTH_TOKEN") or "").strip()
+        if not sid or not token:
+            return []
+        client = Client(sid, token)
+        numbers = client.incoming_phone_numbers.list()
+        assigned = _get_assigned_voice_numbers()
+        out = []
+        for n in numbers:
+            num = (n.phone_number or "").strip()
+            friendly = (n.friendly_name or num or "—")[:80]
+            out.append({
+                "number": num,
+                "friendly": friendly,
+                "available": num not in assigned if num else False,
+            })
+        return out
+    except Exception as e:
+        logger.warning("admin_list_twilio_numbers failed: %s", e)
+        return []
 
 
 def _get_global_stats(window_days: int) -> dict:
