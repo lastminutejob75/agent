@@ -169,7 +169,23 @@ curl -i -X POST "https://agent-production-c246.up.railway.app/api/admin/jobs/pus
 STRIPE_USAGE_PUSHED tenant_id=... date_utc=... minutes=...
 ```
 
-### 3.6 Vérifier idempotence
+### 3.6 Diagnostic stripe_usage_push_log (si failed mais Stripe affiche l'usage)
+
+```bash
+curl -s "https://agent-production-c246.up.railway.app/api/admin/tenants/1/stripe-usage-push-log?date_from=2026-03-01" \
+  -H "Authorization: Bearer ADMIN_API_TOKEN"
+```
+
+Ou en SQL :
+```sql
+SELECT tenant_id, date_utc, status, quantity_minutes, error_short, stripe_usage_record_id, pushed_at
+FROM stripe_usage_push_log
+WHERE tenant_id = 1 AND date_utc = '2026-03-02';
+```
+
+Si status=failed mais Stripe a l'usage → bug de marquage après succès. Si error_short contient un message Stripe → cause réelle.
+
+### 3.7 Vérifier idempotence
 
 - Relancer la même commande pour la même date
 - Vérifier qu’aucun second push Stripe n’est effectué (skip car déjà `sent`)
@@ -184,7 +200,7 @@ LIMIT 5;
 
 **Attendu** : `status = 'sent'`, pas de doublon pour la même `(tenant_id, date_utc)`.
 
-### 3.7 Verdict
+### 3.8 Verdict
 
 | Étape | Résultat | Notes |
 |-------|----------|-------|
