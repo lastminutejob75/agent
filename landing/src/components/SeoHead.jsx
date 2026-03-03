@@ -111,24 +111,8 @@ export function getHeadForPrerender(pathname) {
     elements.add({ type: "meta", props: { name: "twitter:description", content: description } });
   }
 
-  // FAQ JSON-LD pour les pages SEO verticales (rich snippets)
-  const verticalPage = SEO_VERTICAL_PAGES[path];
-  if (verticalPage?.faq?.length) {
-    const faqJsonLd = {
-      "@context": "https://schema.org",
-      "@type": "FAQPage",
-      mainEntity: verticalPage.faq.map(({ q, a }) => ({
-        "@type": "Question",
-        name: q,
-        acceptedAnswer: { "@type": "Answer", text: a },
-      })),
-    };
-    elements.add({
-      type: "script",
-      props: { type: "application/ld+json" },
-      children: JSON.stringify(faqJsonLd),
-    });
-  }
+  // FAQ JSON-LD : uniquement via UwiLanding (/) et SeoVerticalPage (Helmet).
+  // Ne pas ajouter ici pour éviter "FAQPage en double" (Search Console).
 
   return { title, lang: "fr", elements };
 }
