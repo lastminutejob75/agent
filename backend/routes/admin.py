@@ -3524,6 +3524,52 @@ def admin_job_insert_test_usage(
         raise HTTPException(500, str(e))
 
 
+@router.get("/admin/tenants/{tenant_id}/stripe-usage-push-log")
+def admin_get_stripe_usage_push_log(
+    tenant_id: int = Depends(validate_tenant_id),
+    date_from: str | None = Query(None, description="YYYY-MM-DD (optionnel)"),
+    limit: int = Query(10, ge=1, le=50),
+    _: None = Depends(_verify_admin),
+):
+    """Diagnostic : stripe_usage_push_log pour le tenant (status, error_short)."""
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_TENANTS_URL")
+    if not url:
+        raise HTTPException(503, "DATABASE_URL not configured")
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+        with psycopg.connect(url, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                if date_from:
+                    cur.execute(
+                        """
+                        SELECT tenant_id, date_utc, status, quantity_minutes, error_short, stripe_usage_record_id, pushed_at
+                        FROM stripe_usage_push_log
+                        WHERE tenant_id = %s AND date_utc >= %s::date
+                        ORDER BY date_utc DESC
+                        LIMIT %s
+                        """,
+                        (tenant_id, date_from, limit),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT tenant_id, date_utc, status, quantity_minutes, error_short, stripe_usage_record_id, pushed_at
+                        FROM stripe_usage_push_log
+                        WHERE tenant_id = %s
+                        ORDER BY date_utc DESC
+                        LIMIT %s
+                        """,
+                        (tenant_id, limit),
+                    )
+                rows = cur.fetchall()
+        return {"tenant_id": tenant_id, "rows": [dict(r) for r in rows]}
+    except Exception as e:
+        if "does not exist" in str(e).lower():
+            return {"tenant_id": tenant_id, "rows": []}
+        raise HTTPException(500, str(e))
+
+
 @router.post("/admin/jobs/push-daily-usage")
 def admin_job_push_daily_usage(
     _: None = Depends(_verify_admin),
