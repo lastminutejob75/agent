@@ -37,13 +37,13 @@ function formatDate(iso) {
   }
 }
 
-const cardStyle = { background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 };
-const h2Style = { fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 16 };
+const cardStyle = { background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24, color: C.text };
+const h2Style = { fontSize: 11, fontWeight: 700, color: "#9BB5C7", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 16 };
 const btnStyle = { padding: "8px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" };
 const btnPrimary = { ...btnStyle, background: C.accent, color: C.bg };
-const btnSecondary = { ...btnStyle, background: "rgba(107,144,168,0.2)", color: C.muted };
+const btnSecondary = { ...btnStyle, background: "#1E3D56", border: `1px solid ${C.border}`, color: "#E2E8F0" };
 const btnSuccess = { ...btnStyle, background: "rgba(16,185,129,0.3)", color: "#10B981" };
-const btnDanger = { ...btnStyle, background: "rgba(107,144,168,0.3)", color: C.muted };
+const btnDanger = { ...btnStyle, background: "rgba(107,144,168,0.3)", color: "#E2E8F0" };
 const btnActive = { ...btnStyle, background: C.accent, color: C.bg };
 const ampBadgeStyle = (label) => {
   const isHigh = label?.includes("élevée");
@@ -137,7 +137,8 @@ export default function AdminLeadDetail() {
   const mailto = hasEmail ? `mailto:${lead.email.trim()}?subject=UWi – Votre assistant ${lead.assistant_name}` : null;
 
   return (
-    <div style={{ padding: "32px", background: C.bg, minHeight: "100vh" }}>
+    <div style={{ padding: "32px", background: C.bg, minHeight: "100vh", color: C.text }}>
+      <style>{`textarea.admin-lead-notes::placeholder { color: #6B90A8; }`}</style>
       <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 24 }}>
         <Link to="/admin/leads" style={{ color: C.muted, fontSize: 14 }}>
           ← Leads
@@ -149,7 +150,7 @@ export default function AdminLeadDetail() {
         <h2 style={h2Style}>Qualification</h2>
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 24 }}>
           <div>
-            <span style={{ fontSize: 11, color: C.muted }}>Grand compte potentiel</span>
+            <span style={{ fontSize: 11, color: "#9BB5C7" }}>Grand compte potentiel</span>
             <p style={{ fontWeight: 600, color: C.text, marginTop: 2 }}>
               {(lead.is_enterprise || lead.daily_call_volume === "100+") ? (
                 <span style={{ color: "#FFB347" }}>Oui 🔥</span>
@@ -159,19 +160,19 @@ export default function AdminLeadDetail() {
             </p>
           </div>
           <div>
-            <span style={{ fontSize: 11, color: C.muted }}>Appels/jour</span>
+            <span style={{ fontSize: 11, color: "#9BB5C7" }}>Appels/jour</span>
             <p style={{ fontWeight: 600, color: C.text, marginTop: 2 }}>{lead.daily_call_volume || "—"}</p>
           </div>
           <div>
-            <span style={{ fontSize: 11, color: C.muted }}>Spécialité</span>
+            <span style={{ fontSize: 11, color: "#9BB5C7" }}>Spécialité</span>
             <p style={{ fontWeight: 600, color: C.text, marginTop: 2 }}>{lead.medical_specialty_label || lead.medical_specialty || "—"}</p>
           </div>
           <div>
-            <span style={{ fontSize: 11, color: C.muted }}>Douleur principale</span>
+            <span style={{ fontSize: 11, color: "#9BB5C7" }}>Douleur principale</span>
             <p style={{ fontWeight: 600, color: C.text, marginTop: 2, maxWidth: 200 }}>{lead.primary_pain_point || "—"}</p>
           </div>
           <div>
-            <span style={{ fontSize: 11, color: C.muted }}>Priorité</span>
+            <span style={{ fontSize: 11, color: "#9BB5C7" }}>Priorité</span>
             <p style={{ marginTop: 2 }}>
               {(() => {
                 const prio = getLeadPriority(lead);
@@ -184,7 +185,7 @@ export default function AdminLeadDetail() {
             </p>
           </div>
           <div>
-            <span style={{ fontSize: 11, color: C.muted }}>Amplitude max / jour</span>
+            <span style={{ fontSize: 11, color: "#9BB5C7" }}>Amplitude max / jour</span>
             <p style={{ fontWeight: 600, color: C.text, marginTop: 2, display: "flex", alignItems: "center", gap: 8 }}>
               {lead.max_daily_amplitude != null ? `${Number(lead.max_daily_amplitude).toFixed(1)} h` : "—"}
               {(() => {
@@ -199,20 +200,20 @@ export default function AdminLeadDetail() {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 24 }}>
         <div style={cardStyle}>
           <h2 style={h2Style}>Informations</h2>
-          <ul style={{ margin: 0, padding: 0, listStyle: "none", fontSize: 14 }}>
-            <li style={{ marginBottom: 8 }}><strong style={{ color: C.muted }}>Email:</strong> {hasEmail ? <a href={mailto} style={{ color: C.accent }}>{lead.email}</a> : "—"}</li>
-            {lead.callback_phone && <li style={{ marginBottom: 8 }}><strong style={{ color: C.muted }}>Téléphone:</strong> {lead.callback_phone}</li>}
-            <li style={{ marginBottom: 8 }}><strong style={{ color: C.muted }}>Spécialité:</strong> {lead.medical_specialty_label || lead.medical_specialty || "—"}{lead.specialty_other ? ` – ${lead.specialty_other}` : ""}</li>
-            <li style={{ marginBottom: 8 }}><strong style={{ color: C.muted }}>Situation:</strong> {lead.primary_pain_point || "—"}</li>
-            <li style={{ marginBottom: 8 }}><strong style={{ color: C.muted }}>Appels/jour:</strong> {lead.daily_call_volume}</li>
-            <li style={{ marginBottom: 8 }}><strong style={{ color: C.muted }}>Assistante:</strong> {lead.assistant_name}</li>
-            <li style={{ marginBottom: 8 }}><strong style={{ color: C.muted }}>Voix:</strong> {lead.voice_gender === "female" ? "Féminine" : "Masculine"}</li>
-            <li style={{ marginBottom: 8 }}><strong style={{ color: C.muted }}>Rappel souhaité:</strong> {lead.wants_callback ? (lead.callback_phone ? `Oui – ${lead.callback_phone}` : "Oui") : "Non"}</li>
+          <ul style={{ margin: 0, padding: 0, listStyle: "none", fontSize: 14, color: C.text }}>
+            <li style={{ marginBottom: 8 }}><strong style={{ color: "#9BB5C7" }}>Email:</strong> {hasEmail ? <a href={mailto} style={{ color: C.accent }}>{lead.email}</a> : <span style={{ color: C.text }}>—</span>}</li>
+            {lead.callback_phone && <li style={{ marginBottom: 8 }}><strong style={{ color: "#9BB5C7" }}>Téléphone:</strong> <span style={{ color: C.text }}>{lead.callback_phone}</span></li>}
+            <li style={{ marginBottom: 8 }}><strong style={{ color: "#9BB5C7" }}>Spécialité:</strong> <span style={{ color: C.text }}>{lead.medical_specialty_label || lead.medical_specialty || "—"}{lead.specialty_other ? ` – ${lead.specialty_other}` : ""}</span></li>
+            <li style={{ marginBottom: 8 }}><strong style={{ color: "#9BB5C7" }}>Situation:</strong> <span style={{ color: C.text }}>{lead.primary_pain_point || "—"}</span></li>
+            <li style={{ marginBottom: 8 }}><strong style={{ color: "#9BB5C7" }}>Appels/jour:</strong> <span style={{ color: C.text }}>{lead.daily_call_volume}</span></li>
+            <li style={{ marginBottom: 8 }}><strong style={{ color: "#9BB5C7" }}>Assistante:</strong> <span style={{ color: C.text }}>{lead.assistant_name}</span></li>
+            <li style={{ marginBottom: 8 }}><strong style={{ color: "#9BB5C7" }}>Voix:</strong> <span style={{ color: C.text }}>{lead.voice_gender === "female" ? "Féminine" : "Masculine"}</span></li>
+            <li style={{ marginBottom: 8 }}><strong style={{ color: "#9BB5C7" }}>Rappel souhaité:</strong> <span style={{ color: C.text }}>{lead.wants_callback ? (lead.callback_phone ? `Oui – ${lead.callback_phone}` : "Oui") : "Non"}</span></li>
             {lead.callback_booking_date && (
-              <li style={{ marginBottom: 8 }}><strong style={{ color: C.muted }}>Créneau rappel réservé:</strong> {lead.callback_booking_date} à {lead.callback_booking_slot || "—"}</li>
+              <li style={{ marginBottom: 8 }}><strong style={{ color: "#9BB5C7" }}>Créneau rappel réservé:</strong> <span style={{ color: C.text }}>{lead.callback_booking_date} à {lead.callback_booking_slot || "—"}</span></li>
             )}
-            <li style={{ marginBottom: 8 }}><strong style={{ color: C.muted }}>Source:</strong> {lead.source || "landing_cta"}</li>
-            <li style={{ marginBottom: 8 }}><strong style={{ color: C.muted }}>Créé le:</strong> {formatDate(lead.created_at)}</li>
+            <li style={{ marginBottom: 8 }}><strong style={{ color: "#9BB5C7" }}>Source:</strong> <span style={{ color: C.text }}>{lead.source || "landing_cta"}</span></li>
+            <li style={{ marginBottom: 8 }}><strong style={{ color: "#9BB5C7" }}>Créé le:</strong> <span style={{ color: C.text }}>{formatDate(lead.created_at)}</span></li>
           </ul>
           <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
             {hasEmail && (
@@ -279,6 +280,7 @@ export default function AdminLeadDetail() {
         </div>
         <h2 style={{ ...h2Style, marginBottom: 8 }}>Notes</h2>
         <textarea
+          className="admin-lead-notes"
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           rows={4}

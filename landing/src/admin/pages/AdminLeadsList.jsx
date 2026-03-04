@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { adminApi } from "../../lib/adminApi.js";
 import { formatOpeningHoursCompact, formatOpeningHoursPretty, getAmplitudeBadge, getAmplitudeScore } from "../../lib/openingHoursPretty.js";
@@ -91,6 +91,16 @@ export default function AdminLeadsList() {
     setSearchParams(next);
   };
 
+  const stats = useMemo(
+    () => [
+      ["Total", leads.length, "#6B90A8"],
+      ["Nouveaux", leads.filter((l) => l.status === "new").length, "#FFB347"],
+      ["Convertis", leads.filter((l) => l.status === "converted").length, "#00E5A0"],
+      ["Grands comptes", leads.filter((l) => l.is_enterprise || l.daily_call_volume === "100+").length, "#a78bfa"],
+    ],
+    [leads]
+  );
+
   return (
     <div style={{ padding: "32px", background: C.bg, minHeight: "100vh" }}>
       <h1 style={{ fontSize: 24, fontWeight: 800, color: C.text, letterSpacing: -0.8, marginBottom: 16 }}>Leads</h1>
@@ -147,14 +157,10 @@ export default function AdminLeadsList() {
         <p style={{ color: C.muted }}>Chargement…</p>
       ) : (
         <>
+          <style>{`.admin-lead-card:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.3); }`}</style>
           {/* Stats rapides */}
           <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
-            {[
-              ["Total", leads.length, "#6B90A8"],
-              ["Nouveaux", leads.filter((l) => l.status === "new").length, "#FFB347"],
-              ["Convertis", leads.filter((l) => l.status === "converted").length, "#00E5A0"],
-              ["Grands comptes", leads.filter((l) => l.is_enterprise || l.daily_call_volume === "100+").length, "#a78bfa"],
-            ].map(([label, count, color]) => (
+            {stats.map(([label, count, color]) => (
               <div key={label} style={{ background: "#132840", border: "1px solid #1E3D56", borderRadius: 12, padding: "10px 18px", display: "flex", alignItems: "center", gap: 10 }}>
                 <span style={{ fontSize: 18, fontWeight: 800, color }}>{count}</span>
                 <span style={{ fontSize: 12, color: "#6B90A8" }}>{label}</span>
@@ -186,6 +192,7 @@ export default function AdminLeadsList() {
                 return (
                   <div
                     key={lead.id}
+                    className="admin-lead-card"
                     style={{
                       background: "#132840",
                       border: "1px solid #1E3D56",
@@ -194,8 +201,6 @@ export default function AdminLeadsList() {
                       borderLeft: isEnterprise ? "3px solid #FFB347" : `3px solid ${prio.style.color}`,
                       transition: "box-shadow 0.15s",
                     }}
-                    onMouseEnter={(e) => (e.currentTarget.style.boxShadow = "0 4px 20px rgba(0,0,0,0.3)")}
-                    onMouseLeave={(e) => (e.currentTarget.style.boxShadow = "none")}
                   >
                     {/* Ligne 1 — Contact + badges + date + statut + action */}
                     <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
