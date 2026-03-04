@@ -171,7 +171,32 @@ export default function AdminLeadsList() {
           {/* Cards leads */}
           {leads.length === 0 ? (
             <div style={{ background: "#132840", border: "1px solid #1E3D56", borderRadius: 16, padding: "40px", textAlign: "center", color: "#6B90A8", fontSize: 14 }}>
-              Aucun lead sur cette période
+              {statusParam || enterpriseParam ? (
+                <>
+                  Aucun lead avec ces filtres.
+                  <br />
+                  <span style={{ fontSize: 13, marginTop: 8, display: "inline-block" }}>
+                    Les nouveaux leads ont le statut &quot;Nouveau&quot;. Essayez{" "}
+                    <button
+                      type="button"
+                      onClick={() => setSearchParams({})}
+                      style={{ color: "#00E5A0", fontWeight: 700, textDecoration: "underline", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }}
+                    >
+                      Tous
+                    </button>
+                    {" ou "}
+                    <button
+                      type="button"
+                      onClick={() => setSearchParams({ status: "new" })}
+                      style={{ color: "#00E5A0", fontWeight: 700, textDecoration: "underline", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }}
+                    >
+                      Nouveaux
+                    </button>
+                  </span>
+                </>
+              ) : (
+                "Aucun lead pour l'instant"
+              )}
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
