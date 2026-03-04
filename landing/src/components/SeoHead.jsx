@@ -32,6 +32,11 @@ const ROUTE_META = {
     title: "Contact — UWi",
     description: "Contactez l'équipe UWi pour une démo ou un accompagnement.",
   },
+  "/demo": {
+    title: "UWi — Parlez à Clara, votre assistante IA",
+    description:
+      "Testez Clara, l'assistante vocale IA pour cabinets médicaux. Elle répond, filtre et prend les rendez-vous automatiquement.",
+  },
   "/cgv": { title: "Conditions générales de vente — UWi", description: "CGV UWi Medical." },
   "/cgu": { title: "Conditions générales d'utilisation — UWi", description: "CGU UWi." },
   "/mentions-legales": {

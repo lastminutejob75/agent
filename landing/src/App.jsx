@@ -25,6 +25,7 @@ import CGV from "./pages/CGV";
 import CGU from "./pages/CGU";
 import MentionsLegales from "./pages/MentionsLegales";
 import Contact from "./pages/Contact";
+import Demo from "./pages/Demo";
 import SeoVerticalPage from "./pages/SeoVerticalPage";
 import Checkout from "./pages/Checkout";
 import CheckoutReturn from "./pages/CheckoutReturn";
@@ -66,6 +67,7 @@ export default function App() {
       <Route path="/cgu" element={<CGU />} />
       <Route path="/mentions-legales" element={<MentionsLegales />} />
       <Route path="/contact" element={<Contact />} />
+      <Route path="/demo" element={<Demo />} />
       <Route path="/secretaire-medicale-augmentee" element={<SeoVerticalPage pageKey="/secretaire-medicale-augmentee" />} />
       <Route path="/secretaire-medicale-augmentee-medecin" element={<SeoVerticalPage pageKey="/secretaire-medicale-augmentee-medecin" />} />
       <Route path="/agent-accueil-ia-medical" element={<Navigate to="/secretaire-medicale-augmentee" replace />} />
