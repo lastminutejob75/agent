@@ -255,8 +255,8 @@ def list_leads(
                 cur.execute(
                     f"""
                     SELECT id, created_at, email, daily_call_volume, medical_specialty, medical_specialty_label, specialty_other, primary_pain_point, assistant_name, voice_gender,
-                           opening_hours, wants_callback, callback_phone, callback_booking_date, callback_booking_slot, is_enterprise, source, status, notes, contacted_at, converted_at,
-                           updated_at, last_submitted_at, max_daily_amplitude
+                           opening_hours, wants_callback, callback_phone, callback_booking_date, callback_booking_slot, is_enterprise, source, status, notes, notes_log, follow_up_at,
+                           contacted_at, converted_at, updated_at, last_submitted_at, max_daily_amplitude
                     FROM pre_onboarding_leads
                     {where_sql}
                     ORDER BY created_at DESC
@@ -279,8 +279,8 @@ def get_lead(lead_id: str) -> Optional[Dict[str, Any]]:
                 cur.execute(
                     """
                     SELECT id, created_at, email, daily_call_volume, medical_specialty, medical_specialty_label, specialty_other, primary_pain_point, assistant_name, voice_gender,
-                           opening_hours, wants_callback, callback_phone, callback_booking_date, callback_booking_slot, is_enterprise, source, status, notes, tenant_id, contacted_at, converted_at,
-                           updated_at, last_submitted_at, max_daily_amplitude
+                           opening_hours, wants_callback, callback_phone, callback_booking_date, callback_booking_slot, is_enterprise, source, status, notes, notes_log, follow_up_at,
+                           tenant_id, contacted_at, converted_at, updated_at, last_submitted_at, max_daily_amplitude
                     FROM pre_onboarding_leads
                     WHERE id = %s
                     """,
@@ -320,8 +320,14 @@ def update_lead_callback_booking(
         return False
 
 
-def update_lead(lead_id: str, status: Optional[str] = None, notes: Optional[str] = None) -> bool:
-    """Update lead status and/or notes. Set contacted_at/converted_at when status changes."""
+def update_lead(
+    lead_id: str,
+    status: Optional[str] = None,
+    notes: Optional[str] = None,
+    notes_log: Optional[str] = None,
+    follow_up_at: Optional[str] = None,
+) -> bool:
+    """Update lead status, notes, notes_log and/or follow_up_at. Set contacted_at/converted_at when status changes."""
     try:
         with _get_conn() as conn:
             with conn.cursor() as cur:
@@ -337,6 +343,15 @@ def update_lead(lead_id: str, status: Optional[str] = None, notes: Optional[str]
                 if notes is not None:
                     updates.append("notes = %s")
                     params.append(notes)
+                if notes_log is not None:
+                    updates.append("notes_log = %s::jsonb")
+                    params.append(notes_log)
+                if follow_up_at is not None:
+                    if follow_up_at.strip():
+                        updates.append("follow_up_at = %s::timestamptz")
+                        params.append(follow_up_at.strip())
+                    else:
+                        updates.append("follow_up_at = NULL")
                 if not updates:
                     return True
                 params.append(lead_id)
@@ -368,7 +383,7 @@ def count_new_leads() -> int:
 
 def _row_to_lead(r: Dict) -> Dict[str, Any]:
     out = dict(r)
-    for key in ("created_at", "contacted_at", "converted_at", "updated_at", "last_submitted_at", "callback_booking_date"):
+    for key in ("created_at", "contacted_at", "converted_at", "updated_at", "last_submitted_at", "callback_booking_date", "follow_up_at"):
         if out.get(key) and hasattr(out[key], "isoformat"):
             out[key] = out[key].isoformat()
     return out

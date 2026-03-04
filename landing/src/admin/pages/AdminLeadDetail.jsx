@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { adminApi } from "../../lib/adminApi.js";
 import { formatOpeningHoursPretty, getAmplitudeBadge, getAmplitudeScore } from "../../lib/openingHoursPretty.js";
+import CreateTenantModal from "../components/CreateTenantModal.jsx";
 
 const C = { bg: "#0A1828", card: "#132840", border: "#1E3D56", accent: "#00E5A0", text: "#FFFFFF", muted: "#6B90A8" };
 const DAYS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"];
@@ -50,13 +51,18 @@ const ampBadgeStyle = (label) => {
   return { display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 600, background: isHigh ? "rgba(139,92,246,0.2)" : "rgba(56,189,248,0.2)", color: isHigh ? "#a78bfa" : "#38bdf8" };
 };
 
+const STATUS_LABELS = { new: "Nouveau", contacted: "Contacté", converted: "Converti", lost: "Perdu" };
+
 export default function AdminLeadDetail() {
   const { id } = useParams();
   const [lead, setLead] = useState(null);
-  const [notes, setNotes] = useState("");
-  const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [showCreateTenant, setShowCreateTenant] = useState(false);
+  const [followUpDate, setFollowUpDate] = useState("");
+  const [followUpSaved, setFollowUpSaved] = useState(false);
+  const [newNote, setNewNote] = useState("");
+  const [noteLog, setNoteLog] = useState([]);
 
   useEffect(() => {
     if (!id) return;
@@ -67,23 +73,54 @@ export default function AdminLeadDetail() {
   }, [id]);
 
   useEffect(() => {
-    if (lead) setNotes(lead.notes ?? "");
+    if (!lead) return;
+    let parsed = [];
+    try {
+      if (typeof lead.notes_log === "string") {
+        parsed = JSON.parse(lead.notes_log || "[]");
+      } else if (Array.isArray(lead.notes_log)) {
+        parsed = lead.notes_log;
+      }
+    } catch {
+      /* ignore */
+    }
+    if (parsed.length === 0 && lead.notes) {
+      parsed = [{ text: lead.notes, created_at: lead.created_at }];
+    }
+    setNoteLog(parsed);
+    setFollowUpDate(lead.follow_up_at?.slice(0, 16) || "");
   }, [lead]);
 
-  const saveNotes = () => {
-    if (!id) return;
-    setSaving(true);
-    adminApi
-      .leadPatch(id, { notes })
-      .then(() => setSaving(false))
-      .catch(() => setSaving(false));
-  };
+  const VALID_SECTORS = ["medecin_generaliste", "specialiste", "kine", "dentiste", "infirmier"];
+  const VALID_ASSISTANTS = ["sophie", "laura", "emma", "julie", "clara", "hugo", "julien", "nicolas", "alexandre", "thomas"];
+  const tenantPrefill = lead
+    ? {
+        name: lead.cabinet_name || lead.email || "",
+        email: lead.email || "",
+        phone: lead.callback_phone || lead.phone || "",
+        sector: VALID_SECTORS.includes(lead.medical_specialty) ? lead.medical_specialty : "medecin_generaliste",
+        assistant_id: VALID_ASSISTANTS.includes(lead.assistant_name?.toLowerCase()) ? lead.assistant_name?.toLowerCase() : "sophie",
+        plan_key:
+          lead.daily_call_volume === "100+"
+            ? "pro"
+            : lead.daily_call_volume === "50-100"
+              ? "growth"
+              : "starter",
+      }
+    : {};
 
-  const setStatus = (status) => {
+  const handleStatusChange = async (newStatus) => {
     if (!id) return;
-    adminApi.leadPatch(id, { status }).then(() => {
-      setLead((p) => (p ? { ...p, status } : null));
-    });
+    const autoEntry = {
+      text: `Statut changé → ${STATUS_LABELS[newStatus] || newStatus}`,
+      action: "statut",
+      created_at: new Date().toISOString(),
+    };
+    const updatedLog = [...noteLog, autoEntry];
+    await adminApi.leadPatch(id, { status: newStatus, notes_log: JSON.stringify(updatedLog) });
+    setLead((p) => (p ? { ...p, status: newStatus } : null));
+    setNoteLog(updatedLog);
+    if (newStatus === "converted") setShowCreateTenant(true);
   };
 
   const copyDirectLink = () => {
@@ -138,7 +175,6 @@ export default function AdminLeadDetail() {
 
   return (
     <div style={{ padding: "32px", background: C.bg, minHeight: "100vh", color: C.text }}>
-      <style>{`textarea.admin-lead-notes::placeholder { color: #6B90A8; }`}</style>
       <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 24 }}>
         <Link to="/admin/leads" style={{ color: C.muted, fontSize: 14 }}>
           ← Leads
@@ -252,53 +288,159 @@ export default function AdminLeadDetail() {
           <button type="button" onClick={copySummary} style={btnPrimary}>
             {copied ? "Copié !" : "Copier le résumé"}
           </button>
+          <a
+            href={`https://www.uwiapp.com/demo?ref=${encodeURIComponent(lead.email || "")}`}
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              background: "linear-gradient(135deg, #00E5A0, #00b87c)",
+              color: "#0A1828",
+              borderRadius: 10,
+              padding: "10px 18px",
+              fontSize: 13,
+              fontWeight: 800,
+              textDecoration: "none",
+              boxShadow: "0 4px 16px rgba(0,229,160,0.25)",
+            }}
+          >
+            🎯 Envoyer la démo
+          </a>
         </div>
-      </div>
 
-      <div style={{ ...cardStyle, marginTop: 24 }}>
-        <h2 style={h2Style}>Actions rapides</h2>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
-          <button type="button" onClick={() => setStatus("contacted")} style={btnSuccess}>
-            Marquer contacté
-          </button>
-          <button type="button" onClick={() => setStatus("lost")} style={btnDanger}>
-            Marquer perdu
-          </button>
-        </div>
-        <h2 style={{ ...h2Style, marginBottom: 12 }}>Statut</h2>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
+        <h2 style={{ ...h2Style, marginTop: 24, marginBottom: 12 }}>Statut</h2>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
           {STATUS_OPTIONS.map((opt) => (
             <button
               key={opt.value}
               type="button"
-              onClick={() => setStatus(opt.value)}
+              onClick={() => handleStatusChange(opt.value)}
               style={lead.status === opt.value ? btnActive : btnSecondary}
             >
               {opt.label}
             </button>
           ))}
         </div>
-        <h2 style={{ ...h2Style, marginBottom: 8 }}>Notes</h2>
-        <textarea
-          className="admin-lead-notes"
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          rows={4}
-          style={{
-            width: "100%",
-            padding: "12px",
-            borderRadius: 8,
-            border: `1px solid ${C.border}`,
-            background: C.card,
-            color: C.text,
-            fontSize: 14,
-          }}
-          placeholder="Notes internes…"
-        />
-        <button type="button" onClick={saveNotes} disabled={saving} style={{ ...btnPrimary, marginTop: 8, opacity: saving ? 0.6 : 1 }}>
-          {saving ? "Enregistrement…" : "Enregistrer"}
-        </button>
+
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 11, color: "#6B90A8", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 }}>
+            📅 Date de relance
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input
+              type="datetime-local"
+              value={followUpDate}
+              onChange={(e) => setFollowUpDate(e.target.value)}
+              style={{
+                background: "#132840",
+                border: "1px solid #1E3D56",
+                borderRadius: 9,
+                padding: "8px 12px",
+                color: "#FFFFFF",
+                fontSize: 13,
+                fontFamily: "inherit",
+                cursor: "pointer",
+              }}
+            />
+            <button
+              type="button"
+              onClick={async () => {
+                await adminApi.leadPatch(id, { follow_up_at: followUpDate });
+                setFollowUpSaved(true);
+                setTimeout(() => setFollowUpSaved(false), 2000);
+              }}
+              style={{
+                padding: "8px 16px",
+                borderRadius: 9,
+                fontSize: 12,
+                fontWeight: 700,
+                background: followUpSaved ? "rgba(0,229,160,0.1)" : "#132840",
+                border: `1px solid ${followUpSaved ? "#00E5A0" : "#1E3D56"}`,
+                color: followUpSaved ? "#00E5A0" : "#6B90A8",
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              {followUpSaved ? "✓ Sauvegardé" : "Sauvegarder"}
+            </button>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 24 }}>
+          <div style={{ fontSize: 11, color: "#6B90A8", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 12 }}>
+            📝 Journal
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+            {noteLog.map((entry, i) => (
+              <div key={i} style={{ background: "#0F2236", borderRadius: 10, padding: "10px 14px" }}>
+                <div style={{ fontSize: 11, color: "#6B90A8", marginBottom: 4 }}>
+                  {new Date(entry.created_at).toLocaleString("fr-FR")}
+                  {entry.action && (
+                    <span style={{ marginLeft: 8, color: "#00E5A0", fontWeight: 600 }}>· {entry.action}</span>
+                  )}
+                </div>
+                <div style={{ fontSize: 13, color: "#FFFFFF", lineHeight: 1.6 }}>{entry.text}</div>
+              </div>
+            ))}
+            {noteLog.length === 0 && (
+              <div style={{ fontSize: 13, color: "#6B90A8", fontStyle: "italic" }}>Aucune note pour l&apos;instant</div>
+            )}
+          </div>
+          <textarea
+            value={newNote}
+            onChange={(e) => setNewNote(e.target.value)}
+            placeholder="Ajouter une note..."
+            rows={3}
+            style={{
+              width: "100%",
+              background: "#0F2236",
+              border: "1px solid #1E3D56",
+              borderRadius: 10,
+              padding: "10px 14px",
+              color: "#FFFFFF",
+              fontSize: 13,
+              fontFamily: "inherit",
+              resize: "vertical",
+              outline: "none",
+            }}
+          />
+          <button
+            type="button"
+            onClick={async () => {
+              if (!newNote.trim()) return;
+              const entry = { text: newNote.trim(), created_at: new Date().toISOString() };
+              const updatedLog = [...noteLog, entry];
+              await adminApi.leadPatch(id, { notes_log: JSON.stringify(updatedLog) });
+              setNoteLog(updatedLog);
+              setNewNote("");
+            }}
+            style={{
+              marginTop: 8,
+              padding: "9px 20px",
+              borderRadius: 9,
+              background: "linear-gradient(135deg, #00E5A0, #00b87c)",
+              border: "none",
+              color: "#0A1828",
+              fontSize: 13,
+              fontWeight: 800,
+              cursor: "pointer",
+              fontFamily: "inherit",
+            }}
+          >
+            Ajouter au journal
+          </button>
+        </div>
       </div>
+
+      {showCreateTenant && (
+        <CreateTenantModal
+          prefill={tenantPrefill}
+          onClose={() => setShowCreateTenant(false)}
+          onCreated={() => setShowCreateTenant(false)}
+        />
+      )}
     </div>
   );
 }

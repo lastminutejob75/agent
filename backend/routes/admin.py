@@ -1152,6 +1152,8 @@ def admin_lead_detail(
 class LeadPatchBody(BaseModel):
     status: Optional[str] = Field(None, pattern="^(new|contacted|converted|lost)$")
     notes: Optional[str] = None
+    notes_log: Optional[str] = None
+    follow_up_at: Optional[str] = None
 
 
 @router.patch("/admin/leads/{lead_id}")
@@ -1160,11 +1162,17 @@ def admin_lead_patch(
     body: LeadPatchBody,
     _: None = Depends(_verify_admin),
 ):
-    """Met à jour statut et/ou notes d'un lead."""
+    """Met à jour statut, notes, notes_log et/ou follow_up_at d'un lead."""
     from backend.leads_pg import get_lead, update_lead
     if get_lead(lead_id) is None:
         raise HTTPException(404, "Lead non trouvé")
-    ok = update_lead(lead_id, status=body.status, notes=body.notes)
+    ok = update_lead(
+        lead_id,
+        status=body.status,
+        notes=body.notes,
+        notes_log=body.notes_log,
+        follow_up_at=body.follow_up_at,
+    )
     if not ok:
         raise HTTPException(500, "Erreur mise à jour")
     return {"ok": True}

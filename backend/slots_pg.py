@@ -342,7 +342,12 @@ def pg_cleanup_and_ensure_slots(tenant_id: int) -> Optional[bool]:
         with psycopg.connect(url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "DELETE FROM slots WHERE tenant_id = %s AND start_ts < CURRENT_DATE + INTERVAL '1 day'",
+                    """
+                    DELETE FROM slots s
+                    WHERE s.tenant_id = %s
+                      AND s.start_ts < CURRENT_DATE + INTERVAL '1 day'
+                      AND NOT EXISTS (SELECT 1 FROM appointments a WHERE a.slot_id = s.id)
+                    """,
                     (tenant_id,),
                 )
                 cur.execute(

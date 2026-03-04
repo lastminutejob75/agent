@@ -42,20 +42,20 @@ const PLANS = [
 
 const STEPS = ["Infos client", "Configuration", "Assistant", "Récapitulatif"];
 
-export default function CreateTenantModal({ onClose, onCreated }) {
+export default function CreateTenantModal({ onClose, onCreated, prefill = {} }) {
   const [step, setStep] = useState(0);
   const [twilioNumbers, setTwilio] = useState([]);
   const [submitting, setSubmit] = useState(false);
   const [result, setResult] = useState(null);
 
   const [form, setForm] = useState({
-    name: "",
-    email: "",
-    phone: "",
-    sector: "medecin_generaliste",
-    plan_key: "starter",
-    assistant_id: "sophie",
-    twilio_number: "",
+    name: prefill.name || "",
+    email: prefill.email || "",
+    phone: prefill.phone || "",
+    sector: prefill.sector || "medecin_generaliste",
+    plan_key: prefill.plan_key || "starter",
+    assistant_id: prefill.assistant_id || "sophie",
+    twilio_number: prefill.twilio_number || "",
     send_welcome: true,
     timezone: "Europe/Paris",
   });
