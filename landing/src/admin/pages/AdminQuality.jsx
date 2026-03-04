@@ -2,46 +2,49 @@ import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { adminApi } from "../../lib/adminApi";
 
+const C = { bg: "#0A1828", card: "#132840", border: "#1E3D56", accent: "#00E5A0", text: "#FFFFFF", muted: "#6B90A8", warning: "#FFB347" };
 const WINDOW_OPTIONS = [7, 14, 30];
+
+const sectionStyle = { background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20 };
+const h2Style = { fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 12 };
+const linkStyle = { color: C.accent, fontWeight: 600 };
+const btnStyle = { padding: "8px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: "linear-gradient(135deg, #00E5A0, #00b87c)", color: C.bg, border: "none", cursor: "pointer" };
+const btnLinkStyle = { display: "inline-block", padding: "6px 12px", fontSize: 12, fontWeight: 600, color: C.accent, background: "rgba(0,229,160,0.1)", border: `1px solid rgba(0,229,160,0.2)`, borderRadius: 8, textDecoration: "none" };
 
 function TopTable({ title, items, resultFilter, windowDays }) {
   if (!items?.length) {
     return (
-      <section className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-800">{title}</h2>
-        <p className="text-slate-500 mt-3 text-sm">Aucune donnée sur la période.</p>
+      <section style={sectionStyle}>
+        <h2 style={h2Style}>{title}</h2>
+        <p style={{ fontSize: 13, color: C.muted, marginTop: 12 }}>Aucune donnée sur la période.</p>
       </section>
     );
   }
   return (
-    <section className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
-      <h2 className="text-lg font-semibold text-slate-800">{title}</h2>
-      <div className="mt-3 overflow-x-auto">
-        <table className="w-full text-sm">
+    <section style={sectionStyle}>
+      <h2 style={h2Style}>{title}</h2>
+      <div style={{ marginTop: 12, overflowX: "auto" }}>
+        <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
           <thead>
-            <tr className="border-b border-slate-200 text-left text-slate-500 font-medium">
-              <th className="pb-2 pr-4">Client</th>
-              <th className="pb-2 pr-4 text-right">Count</th>
-              <th className="pb-2 pr-4">Dernier incident</th>
-              <th className="pb-2 w-32" />
+            <tr style={{ borderBottom: `1px solid ${C.border}`, textAlign: "left" }}>
+              <th style={{ padding: "8px 16px 8px 0", color: C.muted, fontWeight: 600 }}>Client</th>
+              <th style={{ padding: "8px 16px 8px 0", color: C.muted, fontWeight: 600, textAlign: "right" }}>Count</th>
+              <th style={{ padding: "8px 16px 8px 0", color: C.muted, fontWeight: 600 }}>Dernier incident</th>
+              <th style={{ padding: "8px 0", width: 120 }} />
             </tr>
           </thead>
           <tbody>
-            {items.map((row) => (
-              <tr key={row.tenant_id} className="border-b border-slate-100 last:border-0">
-                <td className="py-2.5 pr-4">
-                  <Link to={`/admin/tenants/${row.tenant_id}`} className="text-indigo-600 hover:underline font-medium">
-                    {row.name}
-                  </Link>
+            {items.map((row, i) => (
+              <tr key={row.tenant_id} style={{ borderBottom: i < items.length - 1 ? `1px solid ${C.border}` : "none" }}>
+                <td style={{ padding: "10px 16px 10px 0" }}>
+                  <Link to={`/admin/tenants/${row.tenant_id}`} style={linkStyle}>{row.name}</Link>
                 </td>
-                <td className="py-2.5 pr-4 text-right font-mono">{row.count}</td>
-                <td className="py-2.5 pr-4 text-slate-500">
-                  {row.last_at ? new Date(row.last_at).toLocaleString("fr-FR") : "—"}
-                </td>
-                <td className="py-2.5">
+                <td style={{ padding: "10px 16px 10px 0", fontFamily: "monospace", textAlign: "right", color: C.text }}>{row.count}</td>
+                <td style={{ padding: "10px 16px 10px 0", color: C.muted }}>{row.last_at ? new Date(row.last_at).toLocaleString("fr-FR") : "—"}</td>
+                <td style={{ padding: "10px 0" }}>
                   <Link
                     to={`/admin/calls?tenant_id=${row.tenant_id}&result=${resultFilter}&days=${windowDays}`}
-                    className="inline-block px-3 py-1.5 text-xs font-medium text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100"
+                    style={btnLinkStyle}
                   >
                     Voir appels
                   </Link>
@@ -80,8 +83,8 @@ export default function AdminQuality() {
 
   if (loading && !data) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 text-slate-500">
-        <div className="h-10 w-10 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4" />
+      <div style={{ padding: "32px", background: C.bg, minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: C.muted }}>
+        <div style={{ width: 40, height: 40, border: `2px solid ${C.border}`, borderTopColor: C.accent, borderRadius: "50%", animation: "spin 0.8s linear infinite", marginBottom: 16 }} />
         <span>Chargement Quality…</span>
       </div>
     );
@@ -89,12 +92,14 @@ export default function AdminQuality() {
 
   if (err && !data) {
     return (
-      <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-red-800">
-        <p className="font-medium">Erreur</p>
-        <p className="mt-1 text-sm">{err}</p>
-        <button type="button" onClick={load} className="mt-4 px-4 py-2 text-sm font-medium text-red-700 bg-white border border-red-200 rounded-lg hover:bg-red-50">
-          Réessayer
-        </button>
+      <div style={{ padding: "32px", background: C.bg, minHeight: "100vh" }}>
+        <div style={{ ...sectionStyle, borderColor: "rgba(255,107,107,0.3)", background: "rgba(255,107,107,0.1)", color: "#FF6B6B" }}>
+          <p style={{ fontWeight: 600 }}>Erreur</p>
+          <p style={{ fontSize: 13, marginTop: 4 }}>{err}</p>
+          <button type="button" onClick={load} style={{ ...btnStyle, marginTop: 16 }}>
+            Réessayer
+          </button>
+        </div>
       </div>
     );
   }
@@ -102,94 +107,82 @@ export default function AdminQuality() {
   const kpis = data?.kpis ?? {};
   const top = data?.top ?? { anti_loop: [], abandons: [], transfers: [] };
 
+  const kpiItemStyle = { fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: 1 };
+  const kpiValueStyle = { fontSize: 28, fontWeight: 800, color: C.text, marginTop: 4 };
+  const kpiWarningStyle = { ...kpiValueStyle, color: C.warning };
+
   return (
-    <div className="space-y-8">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+    <div style={{ padding: "32px", background: C.bg, minHeight: "100vh" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-start", justifyContent: "space-between", gap: 16, marginBottom: 24 }}>
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Quality</h1>
-          <p className="mt-1 text-slate-500 text-sm">
-            Améliorer l’agent · {data?.window_days ?? 7} derniers jours
+          <h1 style={{ fontSize: 24, fontWeight: 800, color: C.text, letterSpacing: -0.8, marginBottom: 4 }}>Quality</h1>
+          <p style={{ fontSize: 14, color: C.muted }}>
+            Améliorer l'agent · {data?.window_days ?? 7} derniers jours
             {data?.generated_at && <> · Mis à jour {new Date(data.generated_at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</>}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-slate-500">Fenêtre</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 13, color: C.muted }}>Fenêtre</span>
           <select
             value={windowDays}
             onChange={(e) => setWindowDays(Number(e.target.value))}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            style={{ padding: "8px 12px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 13 }}
           >
             {WINDOW_OPTIONS.map((d) => (
               <option key={d} value={d}>{d} j</option>
             ))}
           </select>
-          <button
-            type="button"
-            onClick={load}
-            disabled={loading}
-            className="px-4 py-2 text-sm font-medium text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 disabled:opacity-50"
-          >
+          <button type="button" onClick={load} disabled={loading} style={{ ...btnStyle, opacity: loading ? 0.6 : 1 }}>
             Rafraîchir
           </button>
         </div>
       </div>
 
       {err && data && (
-        <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-sm">{err}</div>
+        <div style={{ marginBottom: 16, padding: "12px 16px", background: "rgba(255,179,71,0.1)", border: "1px solid rgba(255,179,71,0.3)", borderRadius: 12, color: C.warning, fontSize: 13 }}>
+          {err}
+        </div>
       )}
 
       {/* KPIs globaux */}
-      <section className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-800">KPIs globaux</h2>
-        <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+      <section style={{ ...sectionStyle, marginBottom: 24 }}>
+        <h2 style={h2Style}>KPIs globaux</h2>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 16, marginTop: 16 }}>
           <div>
-            <div className="text-xs font-medium text-slate-500 uppercase tracking-wide">Appels</div>
-            <div className="text-xl font-bold text-slate-900 mt-1">{kpis.calls_total ?? "—"}</div>
+            <div style={kpiItemStyle}>Appels</div>
+            <div style={kpiValueStyle}>{kpis.calls_total ?? "—"}</div>
           </div>
           <div>
-            <div className="text-xs font-medium text-slate-500 uppercase tracking-wide">Abandons</div>
-            <div className="text-xl font-bold text-slate-900 mt-1">{kpis.abandons ?? "—"}</div>
+            <div style={kpiItemStyle}>Abandons</div>
+            <div style={kpiValueStyle}>{kpis.abandons ?? "—"}</div>
           </div>
           <div>
-            <div className="text-xs font-medium text-slate-500 uppercase tracking-wide">Transferts</div>
-            <div className="text-xl font-bold text-slate-900 mt-1">{kpis.transfers ?? "—"}</div>
+            <div style={kpiItemStyle}>Transferts</div>
+            <div style={kpiValueStyle}>{kpis.transfers ?? "—"}</div>
           </div>
           <div>
-            <div className="text-xs font-medium text-slate-500 uppercase tracking-wide">Anti-loop</div>
-            <div className="text-xl font-bold text-amber-700 mt-1">{kpis.anti_loop ?? "—"}</div>
+            <div style={kpiItemStyle}>Anti-loop</div>
+            <div style={kpiWarningStyle}>{kpis.anti_loop ?? "—"}</div>
           </div>
           <div>
-            <div className="text-xs font-medium text-slate-500 uppercase tracking-wide">RDV confirmés</div>
-            <div className="text-xl font-bold text-slate-900 mt-1">{kpis.appointments ?? "—"}</div>
+            <div style={kpiItemStyle}>RDV confirmés</div>
+            <div style={kpiValueStyle}>{kpis.appointments ?? "—"}</div>
           </div>
           <div>
-            <div className="text-xs font-medium text-slate-500 uppercase tracking-wide">Taux abandon</div>
-            <div className="text-xl font-bold text-slate-900 mt-1">{kpis.abandon_rate_pct != null ? `${kpis.abandon_rate_pct} %` : "—"}</div>
+            <div style={kpiItemStyle}>Taux abandon</div>
+            <div style={kpiValueStyle}>{kpis.abandon_rate_pct != null ? `${kpis.abandon_rate_pct} %` : "—"}</div>
           </div>
         </div>
       </section>
 
       {/* Top tenants par problème */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <TopTable
-          title="Top 10 · Anti-loop"
-          items={top.anti_loop}
-          resultFilter="error"
-          windowDays={windowDays}
-        />
-        <TopTable
-          title="Top 10 · Abandons"
-          items={top.abandons}
-          resultFilter="abandoned"
-          windowDays={windowDays}
-        />
-        <TopTable
-          title="Top 10 · Transferts"
-          items={top.transfers}
-          resultFilter="transfer"
-          windowDays={windowDays}
-        />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 24 }}>
+        <TopTable title="Top 10 · Anti-loop" items={top.anti_loop} resultFilter="error" windowDays={windowDays} />
+        <TopTable title="Top 10 · Abandons" items={top.abandons} resultFilter="abandoned" windowDays={windowDays} />
+        <TopTable title="Top 10 · Transferts" items={top.transfers} resultFilter="transfer" windowDays={windowDays} />
       </div>
+
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }

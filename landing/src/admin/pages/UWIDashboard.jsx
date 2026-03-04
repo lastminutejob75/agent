@@ -13,7 +13,8 @@ import {
 } from "../../lib/adminApi";
 import CreateTenantModal from "../components/CreateTenantModal";
 
-const C = {
+const C_LIGHT = {
+  bg: "#ffffff",
   card: "#ffffff",
   border: "#e2e8f0",
   accent: "#6366f1",
@@ -23,6 +24,18 @@ const C = {
   muted: "#64748b",
   text: "#0f172a",
   textMuted: "#64748b",
+};
+const C_DARK = {
+  bg: "#0A1828",
+  card: "#132840",
+  border: "#1E3D56",
+  accent: "#00E5A0",
+  blue: "#5BA8FF",
+  warning: "#FFB347",
+  danger: "#FF6B6B",
+  muted: "#6B90A8",
+  text: "#FFFFFF",
+  textMuted: "#6B90A8",
 };
 
 function useDashboard(period) {
@@ -359,12 +372,12 @@ function TenantBillingCard({ item, plans, onAction }) {
   );
 }
 
-function SkeletonCard() {
+function SkeletonCard({ theme = C_LIGHT }) {
   return (
     <div
       style={{
-        background: C.card,
-        border: `1px solid ${C.border}`,
+        background: theme.card,
+        border: `1px solid ${theme.border}`,
         borderRadius: 16,
         padding: "20px 22px",
         height: 100,
@@ -375,7 +388,7 @@ function SkeletonCard() {
           width: 60,
           height: 10,
           borderRadius: 4,
-          background: C.border,
+          background: theme.border,
           marginBottom: 12,
           animation: "uwi-shimmer 1.5s ease infinite",
         }}
@@ -385,7 +398,7 @@ function SkeletonCard() {
           width: 80,
           height: 28,
           borderRadius: 6,
-          background: C.border,
+          background: theme.border,
           animation: "uwi-shimmer 1.5s ease 0.1s infinite",
         }}
       />
@@ -393,25 +406,25 @@ function SkeletonCard() {
   );
 }
 
-function KpiCard({ label, value, sub, color, delay = 0 }) {
+function KpiCard({ theme = C_LIGHT, label, value, sub, color, delay = 0 }) {
   return (
     <div
       style={{
-        background: C.card,
-        border: `1px solid ${C.border}`,
+        background: theme.card,
+        border: `1px solid ${theme.border}`,
         borderRadius: 16,
         padding: "20px 22px",
         boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
       }}
     >
-      <div style={{ fontSize: 11, fontWeight: 600, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+      <div style={{ fontSize: 11, fontWeight: 600, color: theme.textMuted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
         {label}
       </div>
-      <div style={{ fontSize: 24, fontWeight: 700, color: color || C.text }}>
+      <div style={{ fontSize: 24, fontWeight: 700, color: color || theme.text }}>
         {value}
       </div>
       {sub && (
-        <div style={{ fontSize: 12, color: C.textMuted, marginTop: 4 }}>{sub}</div>
+        <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 4 }}>{sub}</div>
       )}
     </div>
   );
@@ -433,7 +446,8 @@ const STATUS_COLORS = {
   info: "#64748b",
 };
 
-export default function UWIDashboard({ title = "Dashboard", showCreateButton = true }) {
+export default function UWIDashboard({ title = "Dashboard", showCreateButton = true, darkTheme = false }) {
+  const C = darkTheme ? C_DARK : C_LIGHT;
   const [period, setPeriod] = useState("30j");
   const { data, calls, loading, error, refresh } = useDashboard(period);
   const billingOv = useBillingOverview();
@@ -555,7 +569,7 @@ export default function UWIDashboard({ title = "Dashboard", showCreateButton = t
   }, [selectedCall]);
 
   return (
-    <div style={{ fontFamily: "system-ui, sans-serif" }}>
+    <div style={{ fontFamily: "system-ui, sans-serif", ...(darkTheme && { background: C.bg, padding: "32px", minHeight: "100vh" }) }}>
       <style>{`
         @keyframes uwi-shimmer { 0%,100%{opacity:.4} 50%{opacity:.8} }
         @keyframes uwi-fadein { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
@@ -653,9 +667,9 @@ export default function UWIDashboard({ title = "Dashboard", showCreateButton = t
             style={{
               padding: "8px 16px",
               borderRadius: 8,
-              border: `1px solid ${C.border}`,
-              background: C.card,
-              color: C.accent,
+              border: darkTheme ? "none" : `1px solid ${C.border}`,
+              background: darkTheme ? "linear-gradient(135deg, #00E5A0, #00b87c)" : C.card,
+              color: darkTheme ? "#0A1828" : C.accent,
               fontWeight: 600,
               cursor: loading ? "not-allowed" : "pointer",
               fontSize: 13,
@@ -672,9 +686,9 @@ export default function UWIDashboard({ title = "Dashboard", showCreateButton = t
         {loading
           ? Array(4)
               .fill(0)
-              .map((_, i) => <SkeletonCard key={i} />)
+              .map((_, i) => <SkeletonCard key={i} theme={C} />)
           : kpis.map((kpi) => (
-              <KpiCard key={kpi.label} label={kpi.label} value={kpi.value} sub={kpi.sub} color={kpi.color} />
+              <KpiCard key={kpi.label} theme={C} label={kpi.label} value={kpi.value} sub={kpi.sub} color={kpi.color} />
             ))}
       </div>
 

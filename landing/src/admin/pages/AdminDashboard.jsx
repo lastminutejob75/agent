@@ -35,134 +35,6 @@ const C = {
   warning: "#FFB347",
 };
 
-const NAV_ITEMS = [
-  { icon: "⬛", label: "Dashboard" },
-  { icon: "👥", label: "Clients" },
-  { icon: "🎯", label: "Leads" },
-  { icon: "📞", label: "Appels" },
-  { icon: "📡", label: "Monitoring" },
-  { icon: "⚙️", label: "Operations" },
-  { icon: "⭐", label: "Quality" },
-  { icon: "📋", label: "Audit log" },
-];
-
-// ── Sidebar ───────────────────────────────────────────────────────────────────
-function Sidebar({ active, onNavigate }) {
-  return (
-    <aside
-      style={{
-        width: 200,
-        flexShrink: 0,
-        background: C.surface,
-        borderRight: `1px solid ${C.border}`,
-        display: "flex",
-        flexDirection: "column",
-        padding: "20px 0",
-        position: "sticky",
-        top: 0,
-        height: "100vh",
-      }}
-    >
-      <div style={{ padding: "0 20px 24px", borderBottom: `1px solid ${C.border}` }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 8,
-              background: `linear-gradient(135deg,${C.accent},${C.accentDim})`,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 13,
-              fontWeight: 800,
-              color: C.bg,
-            }}
-          >
-            UWi
-          </div>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>UWi Admin</div>
-            <div style={{ fontSize: 10, color: C.muted }}>Pilotage & facturation</div>
-          </div>
-        </div>
-      </div>
-      <nav style={{ padding: "16px 10px", flex: 1 }}>
-        <div
-          style={{
-            fontSize: 9,
-            color: C.muted,
-            fontWeight: 700,
-            letterSpacing: 1.5,
-            textTransform: "uppercase",
-            padding: "0 10px",
-            marginBottom: 10,
-          }}
-        >
-          Navigation
-        </div>
-        {NAV_ITEMS.map((item) => {
-          const isActive = active === item.label;
-          return (
-            <div
-              key={item.label}
-              onClick={() => onNavigate(item.label)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                padding: "9px 10px",
-                borderRadius: 10,
-                marginBottom: 2,
-                cursor: "pointer",
-                background: isActive ? "rgba(0,229,160,0.1)" : "transparent",
-                border: `1px solid ${isActive ? "rgba(0,229,160,0.2)" : "transparent"}`,
-                transition: "all 0.15s",
-              }}
-            >
-              <span style={{ fontSize: 14, opacity: isActive ? 1 : 0.6 }}>{item.icon}</span>
-              <span
-                style={{
-                  fontSize: 13,
-                  fontWeight: isActive ? 700 : 500,
-                  color: isActive ? C.accent : C.muted,
-                }}
-              >
-                {item.label}
-              </span>
-              {isActive && (
-                <div
-                  style={{
-                    marginLeft: "auto",
-                    width: 4,
-                    height: 4,
-                    borderRadius: "50%",
-                    background: C.accent,
-                  }}
-                />
-              )}
-            </div>
-          );
-        })}
-      </nav>
-      <div style={{ padding: "16px 20px", borderTop: `1px solid ${C.border}` }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: C.muted }}>
-          <div
-            style={{
-              width: 6,
-              height: 6,
-              borderRadius: "50%",
-              background: C.accent,
-              animation: "uwi-pulse 2s ease infinite",
-            }}
-          />
-          Système opérationnel
-        </div>
-      </div>
-    </aside>
-  );
-}
-
 // ── KPI Card ──────────────────────────────────────────────────────────────────
 function KpiCard({ label, value, sub, trend, color, delay }) {
   return (
@@ -723,7 +595,6 @@ function SkeletonCard() {
 export default function AdminDashboard() {
   const navigate = useNavigate();
   const [period, setPeriod] = useState("30j");
-  const [navActive, setNavActive] = useState("Dashboard");
   const [showCreate, setShowCreate] = useState(false);
 
   const days = period === "7j" ? 7 : period === "90j" ? 90 : 30;
@@ -737,20 +608,6 @@ export default function AdminDashboard() {
     setMonth,
     reload: reloadBilling,
   } = useBillingOverview();
-
-  const handleNav = (label) => {
-    setNavActive(label);
-    const routes = {
-      Clients: "/admin/tenants",
-      Appels: "/admin/calls",
-      Leads: "/admin/leads",
-      Monitoring: "/admin/monitoring",
-      Operations: "/admin/operations",
-      Quality: "/admin/quality",
-      "Audit log": "/admin/audit",
-    };
-    if (routes[label]) navigate(routes[label]);
-  };
 
   // ── Mapping données API → UI ──
   const RESULT_MAP = {
@@ -833,19 +690,14 @@ export default function AdminDashboard() {
   }));
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: C.bg, fontFamily: "'DM Sans', sans-serif" }}>
+    <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');
-        * { box-sizing:border-box; margin:0; padding:0; }
         @keyframes uwi-fadein  { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
         @keyframes uwi-pulse   { 0%,100%{opacity:1} 50%{opacity:.4} }
         @keyframes uwi-shimmer { 0%,100%{opacity:.4} 50%{opacity:.8} }
-        ::-webkit-scrollbar{width:4px} ::-webkit-scrollbar-thumb{background:${C.border};border-radius:2px}
       `}</style>
 
-      <Sidebar active={navActive} onNavigate={handleNav} />
-
-      <main style={{ flex: 1, padding: "32px", overflowY: "auto", minWidth: 0 }}>
+      <div style={{ padding: "32px", minWidth: 0 }}>
         {/* ── Header ── */}
         <div
           style={{
@@ -1380,7 +1232,7 @@ export default function AdminDashboard() {
             </div>
           )}
         </section>
-      </main>
+      </div>
 
       {/* ── Modal création tenant ── */}
       {showCreate && (
@@ -1393,6 +1245,6 @@ export default function AdminDashboard() {
           }}
         />
       )}
-    </div>
+    </>
   );
 }

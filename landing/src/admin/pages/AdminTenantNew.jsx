@@ -2,6 +2,21 @@ import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { adminApi } from "../../lib/adminApi";
 
+const C = { bg: "#0A1828", card: "#132840", border: "#1E3D56", accent: "#00E5A0", text: "#FFFFFF", muted: "#6B90A8", danger: "#FF6B6B" };
+
+const inputStyle = {
+  display: "block",
+  width: "100%",
+  marginTop: 4,
+  padding: "10px 12px",
+  border: `1px solid ${C.border}`,
+  borderRadius: 8,
+  background: C.card,
+  color: C.text,
+  fontSize: 14,
+};
+const labelStyle = { display: "block", fontSize: 14, fontWeight: 600, color: C.muted, marginBottom: 4 };
+
 export default function AdminTenantNew() {
   const navigate = useNavigate();
   const [form, setForm] = useState({
@@ -51,28 +66,24 @@ export default function AdminTenantNew() {
     }
   }
 
-  const inputClass =
-    "block w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 bg-white";
-  const labelClass = "block text-sm font-medium text-gray-700";
-
   return (
-    <div className="max-w-2xl">
-      <Link to="/admin/tenants" className="inline-block text-gray-600 hover:text-gray-900 mb-4">
+    <div style={{ padding: "32px", background: C.bg, minHeight: "100vh", maxWidth: 640 }}>
+      <Link to="/admin/tenants" style={{ color: C.muted, marginBottom: 16, display: "inline-block" }}>
         ← Clients
       </Link>
-      <h1 className="text-2xl font-bold text-gray-900">Créer un client</h1>
-      <p className="mt-1 text-gray-500 text-sm">
+      <h1 style={{ fontSize: 24, fontWeight: 800, color: C.text, letterSpacing: -0.8, marginBottom: 8 }}>Créer un client</h1>
+      <p style={{ fontSize: 14, color: C.muted, marginBottom: 24 }}>
         Après création, configurer dans la fiche client : numéro DID, calendrier, facturation Stripe. Vous pourrez ajouter un compte utilisateur (propriétaire) depuis la fiche client.
       </p>
 
       {errorMsg && (
-        <div className="mt-4 p-3 border border-red-200 bg-red-50 text-red-700 rounded-lg text-sm">
+        <div style={{ marginBottom: 16, padding: "12px 16px", border: `1px solid rgba(255,107,107,0.3)`, background: "rgba(255,107,107,0.1)", borderRadius: 12, color: C.danger, fontSize: 14 }}>
           {errorMsg}
         </div>
       )}
 
-      <form onSubmit={onSubmit} className="mt-6 flex flex-col gap-5">
-        <label className={labelClass}>
+      <form onSubmit={onSubmit} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        <label style={labelStyle}>
           Nom entreprise *
           <input
             type="text"
@@ -81,54 +92,54 @@ export default function AdminTenantNew() {
             required
             minLength={2}
             maxLength={120}
-            className={inputClass}
+            style={inputStyle}
           />
         </label>
-        <label className={labelClass}>
+        <label style={labelStyle}>
           Email contact *
           <input
             type="email"
             value={form.contact_email}
             onChange={(e) => setForm({ ...form, contact_email: e.target.value })}
             required
-            className={inputClass}
+            style={inputStyle}
           />
         </label>
-        <label className={labelClass}>
+        <label style={labelStyle}>
           Email facturation (optionnel)
           <input
             type="email"
             value={form.billing_email}
             onChange={(e) => setForm({ ...form, billing_email: e.target.value })}
             placeholder="Si différent du contact"
-            className={inputClass}
+            style={inputStyle}
           />
         </label>
-        <label className={labelClass}>
+        <label style={labelStyle}>
           Fuseau horaire
           <input
             type="text"
             value={form.timezone}
             onChange={(e) => setForm({ ...form, timezone: e.target.value })}
-            className={inputClass}
+            style={inputStyle}
           />
         </label>
-        <label className={labelClass}>
+        <label style={labelStyle}>
           Type de business
           <input
             type="text"
             value={form.business_type}
             onChange={(e) => setForm({ ...form, business_type: e.target.value })}
             placeholder="medical / artisan / …"
-            className={inputClass}
+            style={inputStyle}
           />
         </label>
-        <label className={labelClass}>
+        <label style={labelStyle}>
           Plan
           <select
             value={form.plan_key}
             onChange={(e) => setForm({ ...form, plan_key: e.target.value })}
-            className={inputClass}
+            style={inputStyle}
           >
             <option value="">Aucun</option>
             <option value="starter">Starter</option>
@@ -137,12 +148,12 @@ export default function AdminTenantNew() {
             <option value="custom">Custom</option>
           </select>
         </label>
-        <label className={labelClass}>
+        <label style={labelStyle}>
           Statut initial
           <select
             value={form.initial_status}
             onChange={(e) => setForm({ ...form, initial_status: e.target.value })}
-            className={inputClass}
+            style={inputStyle}
           >
             <option value="active">Actif</option>
             <option value="suspended">Suspendu</option>
@@ -150,19 +161,29 @@ export default function AdminTenantNew() {
             <option value="pending_payment">En attente paiement</option>
           </select>
         </label>
-        <label className={labelClass}>
+        <label style={labelStyle}>
           Notes internes
           <textarea
             value={form.notes}
             onChange={(e) => setForm({ ...form, notes: e.target.value })}
             rows={4}
-            className={inputClass + " resize-y"}
+            style={{ ...inputStyle, resize: "vertical" }}
           />
         </label>
         <button
           type="submit"
           disabled={loading}
-          className="mt-2 px-5 py-2.5 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+          style={{
+            marginTop: 8,
+            padding: "12px 20px",
+            background: C.accent,
+            color: C.bg,
+            fontWeight: 600,
+            borderRadius: 8,
+            border: "none",
+            cursor: "pointer",
+            opacity: loading ? 0.6 : 1,
+          }}
         >
           {loading ? "Création…" : "Créer le client"}
         </button>

@@ -3,7 +3,19 @@ import { Link } from "react-router-dom";
 import { adminApi } from "../../lib/adminApi";
 import { getClientLoginUrl } from "../../lib/clientAppUrl";
 
+const C = { bg: "#0A1828", card: "#132840", border: "#1E3D56", accent: "#00E5A0", text: "#FFFFFF", muted: "#6B90A8", danger: "#FF6B6B", warning: "#FFB347" };
 const WINDOW_OPTIONS = [7, 14, 30];
+
+const sectionStyle = { background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20 };
+const h2Style = { fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 8 };
+const pMutedStyle = { fontSize: 13, color: C.muted, marginBottom: 12 };
+const linkStyle = { color: C.accent, fontWeight: 600 };
+const btnStyle = { padding: "8px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" };
+const btnPrimary = { ...btnStyle, background: "linear-gradient(135deg, #00E5A0, #00b87c)", color: C.bg };
+const btnSecondary = { ...btnStyle, background: "rgba(107,144,168,0.2)", color: C.muted };
+const btnSuccess = { ...btnStyle, background: "rgba(0,229,160,0.2)", color: C.accent };
+const badgeAmber = { display: "inline-flex", padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 600, background: "rgba(255,179,71,0.15)", color: C.warning, border: "1px solid rgba(255,179,71,0.3)" };
+const badgeRed = { display: "inline-flex", padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 600, background: "rgba(255,107,107,0.15)", color: C.danger, border: "1px solid rgba(255,107,107,0.3)" };
 
 export default function AdminOperations() {
   const [windowDays, setWindowDays] = useState(7);
@@ -11,7 +23,7 @@ export default function AdminOperations() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
-  const [actionLoading, setActionLoading] = useState(null); // tenant_id ou "refresh"
+  const [actionLoading, setActionLoading] = useState(null);
 
   const load = useCallback(async () => {
     setErr(null);
@@ -59,8 +71,8 @@ export default function AdminOperations() {
 
   if (loading && !data) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 text-slate-500">
-        <div className="h-10 w-10 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4" />
+      <div style={{ padding: "32px", background: C.bg, minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: C.muted }}>
+        <div style={{ width: 40, height: 40, border: `2px solid ${C.border}`, borderTopColor: C.accent, borderRadius: "50%", animation: "spin 0.8s linear infinite", marginBottom: 16 }} />
         <span>Chargement Operations…</span>
       </div>
     );
@@ -68,12 +80,14 @@ export default function AdminOperations() {
 
   if (err && !data) {
     return (
-      <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-red-800">
-        <p className="font-medium">Erreur</p>
-        <p className="mt-1 text-sm">{err}</p>
-        <button type="button" onClick={load} className="mt-4 px-4 py-2 text-sm font-medium text-red-700 bg-white border border-red-200 rounded-lg hover:bg-red-50">
-          Réessayer
-        </button>
+      <div style={{ padding: "32px", background: C.bg, minHeight: "100vh" }}>
+        <div style={{ ...sectionStyle, borderColor: "rgba(255,107,107,0.3)", background: "rgba(255,107,107,0.1)", color: C.danger }}>
+          <p style={{ fontWeight: 600 }}>Erreur</p>
+          <p style={{ fontSize: 13, marginTop: 4 }}>{err}</p>
+          <button type="button" onClick={load} style={{ ...btnPrimary, marginTop: 16 }}>
+            Réessayer
+          </button>
+        </div>
       </div>
     );
   }
@@ -84,177 +98,145 @@ export default function AdminOperations() {
   const errors = data?.errors ?? { top_tenants: [], errors_total: 0 };
   const quota = data?.quota ?? { month_utc: null, over_80: [], over_100: [] };
 
+  const rowStyle = { display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "12px 0", borderBottom: `1px solid ${C.border}` };
+  const lastRowStyle = { ...rowStyle, borderBottom: "none" };
+
   return (
-    <div className="space-y-8">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+    <div style={{ padding: "32px", background: C.bg, minHeight: "100vh" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-start", justifyContent: "space-between", gap: 16, marginBottom: 24 }}>
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Operations</h1>
-          <p className="mt-1 text-slate-500 text-sm">
+          <h1 style={{ fontSize: 24, fontWeight: 800, color: C.text, letterSpacing: -0.8, marginBottom: 4 }}>Operations</h1>
+          <p style={pMutedStyle}>
             Risque paiement, suspendus, coûts, erreurs
             {lastUpdated && <> · Mis à jour à {lastUpdated}</>}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-slate-500">Fenêtre erreurs</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 13, color: C.muted }}>Fenêtre erreurs</span>
           <select
             value={windowDays}
             onChange={(e) => setWindowDays(Number(e.target.value))}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            style={{ padding: "8px 12px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 13 }}
           >
             {WINDOW_OPTIONS.map((d) => (
               <option key={d} value={d}>{d} j</option>
             ))}
           </select>
-          <button
-            type="button"
-            onClick={load}
-            disabled={loading}
-            className="px-4 py-2 text-sm font-medium text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 disabled:opacity-50"
-          >
+          <button type="button" onClick={load} disabled={loading} style={{ ...btnPrimary, border: "none", opacity: loading ? 0.6 : 1 }}>
             {actionLoading === "refresh" ? "Chargement…" : "Rafraîchir"}
           </button>
         </div>
       </div>
 
       {err && data && (
-        <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-sm">
+        <div style={{ marginBottom: 16, padding: "12px 16px", background: "rgba(255,179,71,0.1)", border: "1px solid rgba(255,179,71,0.3)", borderRadius: 12, color: C.warning, fontSize: 13 }}>
           {err}
         </div>
       )}
 
       {/* À risque paiement */}
-      <section className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-800">À risque paiement</h2>
-        <p className="text-sm text-slate-500 mt-0.5">
-          Coût Vapi ce mois (UTC) : <strong className="font-mono text-slate-900">{Number(billing.cost_usd_this_month ?? 0).toFixed(2)} $</strong>
-          {billing.month_utc && <span className="ml-1">({billing.month_utc})</span>}
+      <section style={{ ...sectionStyle, marginBottom: 24 }}>
+        <h2 style={h2Style}>À risque paiement</h2>
+        <p style={pMutedStyle}>
+          Coût Vapi ce mois (UTC) : <strong style={{ fontFamily: "monospace", color: C.text }}>{Number(billing.cost_usd_this_month ?? 0).toFixed(2)} $</strong>
+          {billing.month_utc && <span style={{ marginLeft: 4 }}>({billing.month_utc})</span>}
         </p>
         {billing.tenants_past_due?.length > 0 ? (
-          <ul className="mt-3 space-y-2">
-            {billing.tenants_past_due.map((t) => (
-              <li key={t.tenant_id} className="flex items-center justify-between gap-2 py-2 border-b border-slate-100 last:border-0 flex-wrap">
-                <Link to={`/admin/tenants/${t.tenant_id}`} className="text-indigo-600 hover:underline font-medium">
-                  {t.name}
-                </Link>
-                <span className="text-slate-500 text-sm">
+          <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+            {billing.tenants_past_due.map((t, i) => (
+              <li key={t.tenant_id} style={i < billing.tenants_past_due.length - 1 ? rowStyle : lastRowStyle}>
+                <Link to={`/admin/tenants/${t.tenant_id}`} style={linkStyle}>{t.name}</Link>
+                <span style={{ fontSize: 13, color: C.muted }}>
                   {t.billing_status}
                   {t.current_period_end && ` · Période jusqu'au ${new Date(t.current_period_end).toLocaleDateString("fr-FR")}`}
                 </span>
-                <a
-                  href={getClientLoginUrl(undefined, t.tenant_id)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-indigo-600 hover:underline whitespace-nowrap"
-                  title="Page de connexion client"
-                >
+                <a href={getClientLoginUrl(undefined, t.tenant_id)} target="_blank" rel="noopener noreferrer" style={{ ...linkStyle, fontSize: 12 }} title="Page de connexion client">
                   Connexion client ↗
                 </a>
               </li>
             ))}
           </ul>
         ) : (
-          <p className="text-slate-500 mt-3 text-sm">Aucun client past_due.</p>
+          <p style={pMutedStyle}>Aucun client past_due.</p>
         )}
       </section>
 
       {/* Quota risk */}
-      <section className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-800">Quota risk</h2>
-        <p className="text-sm text-slate-500 mt-0.5">
+      <section style={{ ...sectionStyle, marginBottom: 24 }}>
+        <h2 style={h2Style}>Quota risk</h2>
+        <p style={pMutedStyle}>
           Utilisation minutes ce mois UTC
-          {quota.month_utc && <span className="ml-1">({quota.month_utc})</span>}
+          {quota.month_utc && <span style={{ marginLeft: 4 }}>({quota.month_utc})</span>}
         </p>
-        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 24 }}>
           <div>
-            <h3 className="text-sm font-medium text-slate-600 flex items-center gap-2">
-              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">80%+</span>
+            <h3 style={{ fontSize: 13, fontWeight: 600, color: C.muted, display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <span style={badgeAmber}>80%+</span>
               {quota.over_80?.length ?? 0} tenant(s)
             </h3>
             {quota.over_80?.length > 0 ? (
-              <ul className="mt-2 space-y-2">
+              <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
                 {quota.over_80.map((t) => (
-                  <li key={t.tenant_id} className="flex flex-wrap items-center justify-between gap-2 py-2 border-b border-slate-100 last:border-0">
-                    <Link to={`/admin/tenants/${t.tenant_id}`} className="text-indigo-600 hover:underline font-medium truncate pr-2">
-                      {t.name}
-                    </Link>
-                    <span className="text-slate-600 font-mono text-sm whitespace-nowrap">
+                  <li key={t.tenant_id} style={rowStyle}>
+                    <Link to={`/admin/tenants/${t.tenant_id}`} style={{ ...linkStyle, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "70%" }}>{t.name}</Link>
+                    <span style={{ fontSize: 13, fontFamily: "monospace", color: C.muted, whiteSpace: "nowrap" }}>
                       {Number(t.used_minutes).toFixed(0)} / {t.included_minutes} min · {t.usage_pct}%
                     </span>
-                    <a href={getClientLoginUrl(undefined, t.tenant_id)} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-600 hover:underline" title="Connexion client">↗</a>
+                    <a href={getClientLoginUrl(undefined, t.tenant_id)} target="_blank" rel="noopener noreferrer" style={{ ...linkStyle, fontSize: 12 }} title="Connexion client">↗</a>
                   </li>
                 ))}
               </ul>
             ) : (
-              <p className="text-slate-500 mt-2 text-sm">Aucun.</p>
+              <p style={pMutedStyle}>Aucun.</p>
             )}
           </div>
           <div>
-            <h3 className="text-sm font-medium text-slate-600 flex items-center gap-2">
-              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">100%+</span>
+            <h3 style={{ fontSize: 13, fontWeight: 600, color: C.muted, display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <span style={badgeRed}>100%+</span>
               {quota.over_100?.length ?? 0} tenant(s)
             </h3>
             {quota.over_100?.length > 0 ? (
-              <ul className="mt-2 space-y-2">
+              <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
                 {quota.over_100.map((t) => (
-                  <li key={t.tenant_id} className="flex flex-wrap items-center justify-between gap-2 py-2 border-b border-slate-100 last:border-0">
-                    <Link to={`/admin/tenants/${t.tenant_id}`} className="text-indigo-600 hover:underline font-medium truncate pr-2">
-                      {t.name}
-                    </Link>
-                    <span className="text-slate-600 font-mono text-sm whitespace-nowrap">
+                  <li key={t.tenant_id} style={rowStyle}>
+                    <Link to={`/admin/tenants/${t.tenant_id}`} style={{ ...linkStyle, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "70%" }}>{t.name}</Link>
+                    <span style={{ fontSize: 13, fontFamily: "monospace", color: C.muted, whiteSpace: "nowrap" }}>
                       {Number(t.used_minutes).toFixed(0)} / {t.included_minutes} min · {t.usage_pct}%
                     </span>
-                    <a href={getClientLoginUrl(undefined, t.tenant_id)} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-600 hover:underline" title="Connexion client">↗</a>
+                    <a href={getClientLoginUrl(undefined, t.tenant_id)} target="_blank" rel="noopener noreferrer" style={{ ...linkStyle, fontSize: 12 }} title="Connexion client">↗</a>
                   </li>
                 ))}
               </ul>
             ) : (
-              <p className="text-slate-500 mt-2 text-sm">Aucun.</p>
+              <p style={pMutedStyle}>Aucun.</p>
             )}
           </div>
         </div>
       </section>
 
       {/* Suspendus */}
-      <section className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-800">Suspendus</h2>
-        <p className="text-sm text-slate-500 mt-0.5">{suspensions.suspended_total ?? 0} client(s) suspendu(s)</p>
+      <section style={{ ...sectionStyle, marginBottom: 24 }}>
+        <h2 style={h2Style}>Suspendus</h2>
+        <p style={pMutedStyle}>{suspensions.suspended_total ?? 0} client(s) suspendu(s)</p>
         {suspensions.items?.length > 0 ? (
-          <ul className="mt-3 space-y-3">
-            {suspensions.items.map((s) => (
-              <li key={s.tenant_id} className="flex flex-wrap items-center justify-between gap-2 py-3 border-b border-slate-100 last:border-0">
+          <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+            {suspensions.items.map((s, i) => (
+              <li key={s.tenant_id} style={i < suspensions.items.length - 1 ? rowStyle : lastRowStyle}>
                 <div>
-                  <Link to={`/admin/tenants/${s.tenant_id}`} className="text-indigo-600 hover:underline font-medium">
-                    {s.name}
-                  </Link>
-                  <span className="ml-2 text-slate-500 text-sm">
+                  <Link to={`/admin/tenants/${s.tenant_id}`} style={linkStyle}>{s.name}</Link>
+                  <span style={{ marginLeft: 8, fontSize: 13, color: C.muted }}>
                     {s.reason}{s.mode && s.mode !== "hard" ? ` · ${s.mode}` : ""}
                     {s.suspended_at && ` · depuis ${new Date(s.suspended_at).toLocaleDateString("fr-FR")}`}
                   </span>
                 </div>
-                <div className="flex gap-2 items-center">
-                  <a
-                    href={getClientLoginUrl(undefined, s.tenant_id)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-indigo-600 hover:underline whitespace-nowrap"
-                    title="Page de connexion client"
-                  >
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <a href={getClientLoginUrl(undefined, s.tenant_id)} target="_blank" rel="noopener noreferrer" style={{ ...linkStyle, fontSize: 12 }} title="Page de connexion client">
                     Connexion client ↗
                   </a>
-                  <button
-                    type="button"
-                    onClick={() => handleUnsuspend(s.tenant_id)}
-                    disabled={actionLoading === s.tenant_id}
-                    className="px-3 py-1.5 text-sm font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 disabled:opacity-50"
-                  >
+                  <button type="button" onClick={() => handleUnsuspend(s.tenant_id)} disabled={actionLoading === s.tenant_id} style={{ ...btnSuccess, opacity: actionLoading === s.tenant_id ? 0.6 : 1 }}>
                     {actionLoading === s.tenant_id ? "…" : "Lever"}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => handleForceActive(s.tenant_id)}
-                    disabled={actionLoading === s.tenant_id}
-                    className="px-3 py-1.5 text-sm font-medium text-slate-700 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 disabled:opacity-50"
-                  >
+                  <button type="button" onClick={() => handleForceActive(s.tenant_id)} disabled={actionLoading === s.tenant_id} style={{ ...btnSecondary, opacity: actionLoading === s.tenant_id ? 0.6 : 1 }}>
                     Forcer actif 7j
                   </button>
                 </div>
@@ -262,50 +244,48 @@ export default function AdminOperations() {
             ))}
           </ul>
         ) : (
-          <p className="text-slate-500 mt-3 text-sm">Aucun client suspendu.</p>
+          <p style={pMutedStyle}>Aucun client suspendu.</p>
         )}
       </section>
 
       {/* Top coût */}
-      <section className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-800">Top coût</h2>
-        <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-6">
+      <section style={{ ...sectionStyle, marginBottom: 24 }}>
+        <h2 style={h2Style}>Top coût</h2>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 24, marginTop: 16 }}>
           <div>
-            <h3 className="text-sm font-medium text-slate-500">
-              Aujourd’hui (UTC){cost.today_utc?.date_utc ? ` · ${cost.today_utc.date_utc}` : ""}
+            <h3 style={{ fontSize: 13, fontWeight: 600, color: C.muted }}>
+              Aujourd'hui (UTC){cost.today_utc?.date_utc ? ` · ${cost.today_utc.date_utc}` : ""}
             </h3>
-            <p className="text-xl font-bold text-slate-900 mt-1">{Number(cost.today_utc?.total_usd ?? 0).toFixed(2)} $</p>
-            <ul className="mt-2 space-y-1">
+            <p style={{ fontSize: 20, fontWeight: 800, color: C.text, marginTop: 4 }}>{Number(cost.today_utc?.total_usd ?? 0).toFixed(2)} $</p>
+            <ul style={{ margin: "8px 0 0", padding: 0, listStyle: "none" }}>
               {(cost.today_utc?.top ?? []).slice(0, 5).map((t) => (
-                <li key={t.tenant_id} className="flex justify-between text-sm">
-                  <Link to={`/admin/tenants/${t.tenant_id}`} className="text-indigo-600 hover:underline truncate pr-2">{t.name}</Link>
-                  <span className="font-mono text-slate-600">{Number(t.value).toFixed(2)} $</span>
+                <li key={t.tenant_id} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}>
+                  <Link to={`/admin/tenants/${t.tenant_id}`} style={{ ...linkStyle, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "60%" }}>{t.name}</Link>
+                  <span style={{ fontFamily: "monospace", color: C.muted }}>{Number(t.value).toFixed(2)} $</span>
                 </li>
               ))}
             </ul>
           </div>
           <div>
-            <h3 className="text-sm font-medium text-slate-500">
-              {cost.last_7d?.window_days ?? 7} derniers jours
-            </h3>
-            <p className="text-xl font-bold text-slate-900 mt-1">{Number(cost.last_7d?.total_usd ?? 0).toFixed(2)} $</p>
-            <ul className="mt-2 space-y-1">
+            <h3 style={{ fontSize: 13, fontWeight: 600, color: C.muted }}>{cost.last_7d?.window_days ?? 7} derniers jours</h3>
+            <p style={{ fontSize: 20, fontWeight: 800, color: C.text, marginTop: 4 }}>{Number(cost.last_7d?.total_usd ?? 0).toFixed(2)} $</p>
+            <ul style={{ margin: "8px 0 0", padding: 0, listStyle: "none" }}>
               {(cost.last_7d?.top ?? []).slice(0, 5).map((t) => (
-                <li key={t.tenant_id} className="flex justify-between text-sm">
-                  <Link to={`/admin/tenants/${t.tenant_id}`} className="text-indigo-600 hover:underline truncate pr-2">{t.name}</Link>
-                  <span className="font-mono text-slate-600">{Number(t.value).toFixed(2)} $</span>
+                <li key={t.tenant_id} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}>
+                  <Link to={`/admin/tenants/${t.tenant_id}`} style={{ ...linkStyle, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "60%" }}>{t.name}</Link>
+                  <span style={{ fontFamily: "monospace", color: C.muted }}>{Number(t.value).toFixed(2)} $</span>
                 </li>
               ))}
             </ul>
           </div>
           <div>
-            <h3 className="text-sm font-medium text-slate-500">Ce mois (UTC)</h3>
-            <p className="text-xl font-bold text-slate-900 mt-1">{Number(billing.cost_usd_this_month ?? 0).toFixed(2)} $</p>
-            <ul className="mt-2 space-y-1">
+            <h3 style={{ fontSize: 13, fontWeight: 600, color: C.muted }}>Ce mois (UTC)</h3>
+            <p style={{ fontSize: 20, fontWeight: 800, color: C.text, marginTop: 4 }}>{Number(billing.cost_usd_this_month ?? 0).toFixed(2)} $</p>
+            <ul style={{ margin: "8px 0 0", padding: 0, listStyle: "none" }}>
               {(billing.top_tenants_by_cost_this_month ?? []).slice(0, 5).map((t) => (
-                <li key={t.tenant_id} className="flex justify-between text-sm">
-                  <Link to={`/admin/tenants/${t.tenant_id}`} className="text-indigo-600 hover:underline truncate pr-2">{t.name}</Link>
-                  <span className="font-mono text-slate-600">{Number(t.value).toFixed(2)} $</span>
+                <li key={t.tenant_id} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}>
+                  <Link to={`/admin/tenants/${t.tenant_id}`} style={{ ...linkStyle, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "60%" }}>{t.name}</Link>
+                  <span style={{ fontFamily: "monospace", color: C.muted }}>{Number(t.value).toFixed(2)} $</span>
                 </li>
               ))}
             </ul>
@@ -314,29 +294,29 @@ export default function AdminOperations() {
       </section>
 
       {/* Erreurs */}
-      <section className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-800">Erreurs</h2>
-        <p className="text-sm text-slate-500 mt-0.5">
-          Top 10 tenants par erreurs sur {errors.window_days ?? 7} j · Total : <strong>{errors.errors_total ?? 0}</strong>
+      <section style={sectionStyle}>
+        <h2 style={h2Style}>Erreurs</h2>
+        <p style={pMutedStyle}>
+          Top 10 tenants par erreurs sur {errors.window_days ?? 7} j · Total : <strong style={{ color: C.text }}>{errors.errors_total ?? 0}</strong>
         </p>
         {errors.top_tenants?.length > 0 ? (
-          <ul className="mt-3 divide-y divide-slate-100">
-            {errors.top_tenants.map((t) => (
-              <li key={t.tenant_id} className="py-2.5 flex justify-between items-center">
-                <Link to={`/admin/tenants/${t.tenant_id}`} className="text-indigo-600 hover:underline font-medium truncate pr-2">
-                  {t.name}
-                </Link>
-                <span className="text-slate-600 font-mono text-sm">{t.errors_total}</span>
+          <ul style={{ margin: 0, padding: 0, listStyle: "none", borderTop: `1px solid ${C.border}` }}>
+            {errors.top_tenants.map((t, i) => (
+              <li key={t.tenant_id} style={{ padding: "10px 0", borderBottom: i < errors.top_tenants.length - 1 ? `1px solid ${C.border}` : "none", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                <Link to={`/admin/tenants/${t.tenant_id}`} style={{ ...linkStyle, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "50%" }}>{t.name}</Link>
+                <span style={{ fontFamily: "monospace", fontSize: 13, color: C.muted }}>{t.errors_total}</span>
                 {t.last_error_at && (
-                  <span className="text-slate-400 text-xs ml-2">{new Date(t.last_error_at).toLocaleString("fr-FR")}</span>
+                  <span style={{ fontSize: 12, color: C.muted, marginLeft: 8 }}>{new Date(t.last_error_at).toLocaleString("fr-FR")}</span>
                 )}
               </li>
             ))}
           </ul>
         ) : (
-          <p className="text-slate-500 mt-3 text-sm">Aucune erreur sur la période.</p>
+          <p style={pMutedStyle}>Aucune erreur sur la période.</p>
         )}
       </section>
+
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }

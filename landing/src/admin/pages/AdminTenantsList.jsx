@@ -3,6 +3,16 @@ import { Link } from "react-router-dom";
 import { adminApi } from "../../lib/adminApi";
 import { getClientLoginUrl } from "../../lib/clientAppUrl";
 
+const C = {
+  bg: "#0A1828",
+  card: "#132840",
+  border: "#1E3D56",
+  accent: "#00E5A0",
+  text: "#FFFFFF",
+  muted: "#6B90A8",
+  danger: "#FF6B6B",
+};
+
 export default function AdminTenantsList() {
   const [tenants, setTenants] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -33,14 +43,27 @@ export default function AdminTenantsList() {
   });
 
   if (loading) {
-    return <div className="text-gray-500">Chargement des clients…</div>;
+    return (
+      <div style={{ padding: "32px", color: C.muted }}>Chargement des clients…</div>
+    );
   }
   if (err) {
     return (
-      <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
+      <div
+        style={{
+          padding: "32px",
+          background: "rgba(255,107,107,0.1)",
+          border: `1px solid rgba(255,107,107,0.3)`,
+          borderRadius: 12,
+          color: C.danger,
+        }}
+      >
         <p>{err}</p>
         {errStatus === 401 && (
-          <Link to="/admin/login" className="mt-2 inline-block text-indigo-600 hover:underline font-medium">
+          <Link
+            to="/admin/login"
+            style={{ marginTop: 8, display: "inline-block", color: C.accent, fontWeight: 600 }}
+          >
             Revenir à la connexion
           </Link>
         )}
@@ -49,36 +72,67 @@ export default function AdminTenantsList() {
   }
 
   return (
-    <div>
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-2xl font-bold text-gray-900">Clients</h1>
+    <div style={{ padding: "32px", background: C.bg, minHeight: "100vh" }}>
+      <style>{`input.admin-search-input::placeholder { color: #6B90A8; }`}</style>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+        <h1 style={{ fontSize: 24, fontWeight: 800, color: C.text, letterSpacing: -0.8, margin: 0 }}>
+          Clients
+        </h1>
         <Link
           to="/admin/tenants/new"
-          className="inline-flex items-center justify-center px-4 py-2.5 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "10px 20px",
+            background: `linear-gradient(135deg,${C.accent},#00b87c)`,
+            color: C.bg,
+            fontWeight: 600,
+            borderRadius: 10,
+            textDecoration: "none",
+          }}
         >
           Créer un client
         </Link>
       </div>
 
-      <div className="mt-4">
+      <div style={{ marginTop: 16 }}>
         <input
           type="search"
           placeholder="Rechercher (nom, email, id…)"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="block w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-gray-900"
+          style={{
+            width: "100%",
+            maxWidth: 400,
+            padding: "10px 14px",
+            border: `1px solid ${C.border}`,
+            borderRadius: 10,
+            background: C.card,
+            color: C.text,
+            fontSize: 14,
+          }}
+          className="admin-search-input"
         />
       </div>
 
-      <div className="mt-4 bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div
+        style={{
+          marginTop: 16,
+          background: C.card,
+          borderRadius: 16,
+          border: `1px solid ${C.border}`,
+          overflow: "hidden",
+        }}
+      >
         {filtered.length === 0 ? (
-          <div className="px-6 py-12 text-center text-gray-500">
+          <div style={{ padding: "48px 24px", textAlign: "center", color: C.muted }}>
             {tenants.length === 0
               ? "Aucun client. Cliquez sur « Créer un client » pour commencer."
               : "Aucun résultat pour cette recherche."}
           </div>
         ) : (
-          <ul className="divide-y divide-gray-200">
+          <ul style={{ margin: 0, padding: 0, listStyle: "none", borderTop: `1px solid ${C.border}` }}>
             {filtered.map((t, index) => {
               const id = t.tenant_id ?? t.id;
               const name = t.name || "Sans nom";
@@ -86,30 +140,65 @@ export default function AdminTenantsList() {
               return (
                 <li
                   key={id != null ? id : `row-${index}`}
-                  className="flex flex-wrap items-center justify-between gap-3 px-6 py-4 hover:bg-gray-50"
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    padding: "16px 24px",
+                    borderBottom: `1px solid ${C.border}`,
+                  }}
                 >
                   <div>
-                    <span className="font-medium text-gray-900">{name}</span>
-                    <span className="text-gray-400 text-sm ml-2">#{id}</span>
+                    <span style={{ fontWeight: 600, color: C.text }}>{name}</span>
+                    <span style={{ color: C.muted, fontSize: 13, marginLeft: 8 }}>#{id}</span>
                     {status !== "active" && (
-                      <span className="ml-2 text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-600">
+                      <span
+                        style={{
+                          marginLeft: 8,
+                          fontSize: 11,
+                          padding: "2px 8px",
+                          borderRadius: 6,
+                          background: "rgba(107,144,168,0.2)",
+                          color: C.muted,
+                        }}
+                      >
                         {status}
                       </span>
                     )}
                   </div>
-                  <div className="flex gap-2 items-center">
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     {id != null && (
                       <>
                         <Link
                           to={`/admin/tenants/${id}`}
-                          className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+                          style={{
+                            padding: "6px 12px",
+                            fontSize: 13,
+                            fontWeight: 600,
+                            color: C.muted,
+                            background: "#0F2236",
+                            border: `1px solid ${C.border}`,
+                            borderRadius: 8,
+                            textDecoration: "none",
+                          }}
                         >
                           Détail
                         </Link>
                         {status === "active" && (
                           <Link
                             to={`/admin/tenants/${id}/dashboard`}
-                            className="px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700"
+                            style={{
+                              padding: "6px 12px",
+                              fontSize: 13,
+                              fontWeight: 600,
+                              color: C.bg,
+                              background: "linear-gradient(135deg, #00E5A0, #00b87c)",
+                              border: "none",
+                              borderRadius: 8,
+                              textDecoration: "none",
+                            }}
                           >
                             Dashboard
                           </Link>
@@ -118,7 +207,14 @@ export default function AdminTenantsList() {
                           href={getClientLoginUrl(t.contact_email || t.params?.contact_email, id)}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center px-2.5 py-1.5 text-sm text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-lg"
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            padding: "6px 10px",
+                            fontSize: 13,
+                            color: C.muted,
+                            textDecoration: "none",
+                          }}
                           title="Ouvrir la page de connexion du client (dashboard client)"
                         >
                           <span aria-hidden>↗</span>
