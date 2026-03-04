@@ -2,7 +2,6 @@ import { Routes, Route, Navigate, Outlet } from "react-router-dom";
 import SeoHead from "./components/SeoHead";
 import UwiLanding from "./components/UwiLanding";
 import AuthLayout from "./components/AuthLayout";
-import Onboarding from "./pages/Onboarding";
 import Login from "./pages/Login";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
@@ -61,7 +60,7 @@ export default function App() {
       <SeoHead />
       <Routes>
       <Route path="/" element={<UwiLanding />} />
-      <Route path="/onboarding" element={<Onboarding />} />
+      <Route path="/onboarding" element={<Navigate to="/creer-assistante?new=1" replace />} />
       <Route path="/creer-assistante" element={<CreerAssistante />} />
       <Route path="/cgv" element={<CGV />} />
       <Route path="/cgu" element={<CGU />} />
