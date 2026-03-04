@@ -229,6 +229,18 @@ export default function CreerAssistante() {
       window.history.replaceState({}, "", url);
     }
   }, []);
+
+  // Prefill email depuis ?ref= ou sessionStorage (lien admin "Envoyer la démo")
+  const getRefEmail = () => {
+    if (typeof window === "undefined") return "";
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("ref")?.trim()) return params.get("ref").trim();
+    try {
+      const stored = sessionStorage.getItem("uwi_demo_ref");
+      if (stored?.trim()) return stored.trim();
+    } catch (_) {}
+    return "";
+  };
   const [modalEmail, setModalEmail] = useState("");
   const [modalPhone, setModalPhone] = useState("");
   const [commitLoading, setCommitLoading] = useState(false);
@@ -282,6 +294,19 @@ export default function CreerAssistante() {
   useEffect(() => {
     saveState(state);
   }, [state]);
+
+  // Pré-remplir email quand le modal s'ouvre (ref depuis admin "Envoyer la démo")
+  useEffect(() => {
+    if (modalOpen && !modalEmail.trim()) {
+      const ref = getRefEmail();
+      if (ref && ref.includes("@")) {
+        setModalEmail(ref);
+        try {
+          sessionStorage.removeItem("uwi_demo_ref");
+        } catch (_) {}
+      }
+    }
+  }, [modalOpen]);
 
   const applyPreset = () => {
     persist({ opening_hours: { ...PRESET_HOURS } });

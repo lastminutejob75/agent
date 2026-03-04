@@ -1,7 +1,12 @@
 // Page standalone /demo — Parlez à Clara, assistante vocale IA
 // Pas de navbar ni footer global. 100% autonome.
+// ?ref=email : démo envoyée par l'admin à un lead → message personnalisé + pré-remplissage wizard
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { Helmet } from "react-helmet-async";
 import "./Demo.css";
+
+const REF_STORAGE_KEY = "uwi_demo_ref";
 
 // Icônes inline (pas de dépendance lucide pour cette page standalone)
 function PhoneIcon({ className = "" }) {
@@ -31,6 +36,18 @@ function CheckIcon({ className = "" }) {
 }
 
 export default function Demo() {
+  const [refEmail, setRefEmail] = useState("");
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const ref = (params.get("ref") || "").trim();
+    if (ref) {
+      setRefEmail(ref);
+      try {
+        sessionStorage.setItem(REF_STORAGE_KEY, ref);
+      } catch (_) {}
+    }
+  }, []);
+
   return (
     <div className="demo-page">
       <Helmet>
@@ -59,7 +76,18 @@ export default function Demo() {
       {/* 2. HERO */}
       <main className="demo-main">
         <p className="demo-eyebrow demo-fade-up" style={{ animationDelay: "0.3s" }}>
-          Démo live · Sans inscription
+          {refEmail ? (
+            <>
+              Démo personnalisée pour vous
+              {refEmail.includes("@") && (
+                <span className="demo-ref-email" style={{ opacity: 0.85, fontWeight: 500 }}>
+                  {" "}({refEmail})
+                </span>
+              )}
+            </>
+          ) : (
+            "Démo live · Sans inscription"
+          )}
         </p>
 
         <div className="demo-stat-choc demo-fade-up" style={{ animationDelay: "0.35s" }}>
@@ -148,6 +176,25 @@ export default function Demo() {
             <span>Vérifie les dispos</span>
             <span>Prend les RDV</span>
           </div>
+
+          {/* H. CTA Créer assistante (si ref = lien admin → lead) */}
+          {refEmail && (
+            <div className="demo-or-sep" style={{ marginTop: 16 }}>
+              <span>ou</span>
+            </div>
+          )}
+          {refEmail && (
+            <Link
+              to={`/creer-assistante?ref=${encodeURIComponent(refEmail)}`}
+              className="demo-cta-expert"
+              style={{ textDecoration: "none", display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}
+            >
+              <span className="demo-cta-text">
+                <strong>Créer mon assistante personnalisée</strong>
+                <span className="demo-cta-sub">Email pré-rempli · En 2 min</span>
+              </span>
+            </Link>
+          )}
         </div>
 
         {/* 4. SECTION STEPS */}
