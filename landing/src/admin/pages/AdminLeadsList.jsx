@@ -146,73 +146,144 @@ export default function AdminLeadsList() {
       {loading ? (
         <p style={{ color: C.muted }}>Chargement…</p>
       ) : (
-        <div style={{ overflowX: "auto", borderRadius: 16, border: `1px solid ${C.border}`, background: C.card }} className="admin-leads-table-wrap">
-          <style>{`.admin-leads-table-wrap tbody tr:hover { background: rgba(0,229,160,0.04); }`}</style>
-          <table style={{ minWidth: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr style={{ background: "#0F2236", borderBottom: `1px solid ${C.border}` }}>
-                <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: 1 }}>Date</th>
-                <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: 1 }}>Contact</th>
-                <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: 1 }}>Spécialité</th>
-                <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: 1 }}>Appels/jour</th>
-                <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: 1 }}></th>
-                <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: 1 }}>Douleur</th>
-                <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: 1 }}>Priorité</th>
-                <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: 1 }}>Assistante</th>
-                <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: 1 }}>Horaires</th>
-                <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: 1 }}>Statut</th>
-                <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: 1 }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {leads.length === 0 ? (
-                <tr>
-                  <td colSpan={11} style={{ padding: "32px 16px", textAlign: "center", color: C.muted }}>
-                    Aucun lead
-                  </td>
-                </tr>
-              ) : (
-                leads.map((lead) => {
-                  const prio = getLeadPriority(lead);
-                  const ampBadge = getAmplitudeBadge(lead);
-                  const statusStyle = lead.status === "new" ? { background: "rgba(255,179,71,0.2)", color: "#FFB347" }
-                    : lead.status === "converted" ? { background: "rgba(0,229,160,0.2)", color: C.accent }
-                    : { background: "rgba(107,144,168,0.2)", color: C.muted };
-                  return (
-                  <tr key={lead.id} style={{ background: C.card, borderBottom: `1px solid ${C.border}` }}>
-                    <td style={{ padding: "12px 16px", fontSize: 13, color: C.muted }}>{formatDate(lead.created_at)}</td>
-                    <td style={{ padding: "12px 16px", fontSize: 13, fontWeight: 600, color: C.text }}>{lead.email?.trim() || lead.callback_phone || "—"}</td>
-                    <td style={{ padding: "12px 16px", fontSize: 13, color: C.muted }}>{lead.medical_specialty_label || lead.medical_specialty || "—"}</td>
-                    <td style={{ padding: "12px 16px", fontSize: 13, color: C.muted }}>{lead.daily_call_volume}</td>
-                    <td style={{ padding: "12px 16px", display: "flex", flexWrap: "wrap", gap: 4 }}>
-                      {(lead.is_enterprise || lead.daily_call_volume === "100+") && (
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700, background: "rgba(255,179,71,0.2)", color: "#FFB347" }} title="Grand compte potentiel">🔥 Grand compte</span>
+        <>
+          {/* Stats rapides */}
+          <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+            {[
+              ["Total", leads.length, "#6B90A8"],
+              ["Nouveaux", leads.filter((l) => l.status === "new").length, "#FFB347"],
+              ["Convertis", leads.filter((l) => l.status === "converted").length, "#00E5A0"],
+              ["Grands comptes", leads.filter((l) => l.is_enterprise || l.daily_call_volume === "100+").length, "#a78bfa"],
+            ].map(([label, count, color]) => (
+              <div key={label} style={{ background: "#132840", border: "1px solid #1E3D56", borderRadius: 12, padding: "10px 18px", display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 18, fontWeight: 800, color }}>{count}</span>
+                <span style={{ fontSize: 12, color: "#6B90A8" }}>{label}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Cards leads */}
+          {leads.length === 0 ? (
+            <div style={{ background: "#132840", border: "1px solid #1E3D56", borderRadius: 16, padding: "40px", textAlign: "center", color: "#6B90A8", fontSize: 14 }}>
+              Aucun lead sur cette période
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {leads.map((lead) => {
+                const prio = getLeadPriority(lead);
+                const ampBadge = getAmplitudeBadge(lead);
+                const isEnterprise = lead.is_enterprise || lead.daily_call_volume === "100+";
+
+                const statusStyle =
+                  lead.status === "new"
+                    ? { bg: "rgba(255,179,71,0.12)", color: "#FFB347", label: "Nouveau" }
+                    : lead.status === "converted"
+                    ? { bg: "rgba(0,229,160,0.12)", color: "#00E5A0", label: "Converti" }
+                    : lead.status === "contacted"
+                    ? { bg: "rgba(91,168,255,0.12)", color: "#5BA8FF", label: "Contacté" }
+                    : { bg: "rgba(107,144,168,0.12)", color: "#6B90A8", label: "Perdu" };
+
+                return (
+                  <div
+                    key={lead.id}
+                    style={{
+                      background: "#132840",
+                      border: "1px solid #1E3D56",
+                      borderRadius: 16,
+                      padding: "18px 20px",
+                      borderLeft: isEnterprise ? "3px solid #FFB347" : `3px solid ${prio.style.color}`,
+                      transition: "box-shadow 0.15s",
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.boxShadow = "0 4px 20px rgba(0,0,0,0.3)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.boxShadow = "none")}
+                  >
+                    {/* Ligne 1 — Contact + badges + date + statut + action */}
+                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+                      {/* Gauche : contact + badges */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        <div style={{ width: 36, height: 36, borderRadius: "50%", background: "#0F2236", border: "1px solid #1E3D56", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, color: "#6B90A8", flexShrink: 0 }}>
+                          {(lead.email || lead.callback_phone || "?")[0].toUpperCase()}
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: "#FFFFFF", marginBottom: 3 }}>
+                            {lead.email?.trim() || lead.callback_phone || "—"}
+                          </div>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                            <span style={{ background: statusStyle.bg, color: statusStyle.color, border: `1px solid ${statusStyle.color}30`, borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 700 }}>
+                              {statusStyle.label}
+                            </span>
+                            <span style={{ borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 600, ...prio.style }} title={`Score: ${prio.score}`}>
+                              {prio.label}
+                            </span>
+                            {isEnterprise && (
+                              <span style={{ background: "rgba(255,179,71,0.15)", color: "#FFB347", borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 700 }}>
+                                🔥 Grand compte
+                              </span>
+                            )}
+                            {ampBadge && (
+                              <span style={{ background: ampBadge.label.includes("élevée") ? "rgba(139,92,246,0.2)" : "rgba(56,189,248,0.2)", color: ampBadge.label.includes("élevée") ? "#a78bfa" : "#38bdf8", borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 600 }}>
+                                ⏰ {ampBadge.label}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      {/* Droite : date + bouton */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+                        <span style={{ fontSize: 11, color: "#6B90A8" }}>{formatDate(lead.created_at)}</span>
+                        <Link
+                          to={`/admin/leads/${lead.id}`}
+                          style={{
+                            background: "rgba(0,229,160,0.1)",
+                            color: "#00E5A0",
+                            border: "1px solid rgba(0,229,160,0.3)",
+                            borderRadius: 8,
+                            padding: "6px 14px",
+                            fontSize: 12,
+                            fontWeight: 700,
+                            textDecoration: "none",
+                          }}
+                        >
+                          Voir →
+                        </Link>
+                      </div>
+                    </div>
+
+                    {/* Ligne 2 — Infos métier en grille */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
+                      <div style={{ background: "#0F2236", borderRadius: 10, padding: "8px 12px" }}>
+                        <div style={{ fontSize: 10, color: "#6B90A8", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 3 }}>Spécialité</div>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: "#FFFFFF" }}>{lead.medical_specialty_label || lead.medical_specialty || "—"}</div>
+                      </div>
+                      <div style={{ background: "#0F2236", borderRadius: 10, padding: "8px 12px" }}>
+                        <div style={{ fontSize: 10, color: "#6B90A8", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 3 }}>Appels/jour</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: lead.daily_call_volume === "100+" ? "#FFB347" : "#FFFFFF" }}>{lead.daily_call_volume || "—"}</div>
+                      </div>
+                      <div style={{ background: "#0F2236", borderRadius: 10, padding: "8px 12px" }}>
+                        <div style={{ fontSize: 10, color: "#6B90A8", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 3 }}>Assistante</div>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: "#FFFFFF" }}>
+                          {lead.assistant_name} <span style={{ color: "#6B90A8" }}>({lead.voice_gender === "female" ? "F" : "M"})</span>
+                        </div>
+                      </div>
+                      <div style={{ background: "#0F2236", borderRadius: 10, padding: "8px 12px" }}>
+                        <div style={{ fontSize: 10, color: "#6B90A8", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 3 }}>Horaires</div>
+                        <div style={{ fontSize: 12, color: "#FFFFFF" }} title={formatOpeningHoursPretty(lead.opening_hours)}>
+                          {formatOpeningHoursCompact(lead.opening_hours) || "—"}
+                        </div>
+                      </div>
+                      {lead.primary_pain_point && (
+                        <div style={{ background: "#0F2236", borderRadius: 10, padding: "8px 12px", gridColumn: "1 / -1" }}>
+                          <div style={{ fontSize: 10, color: "#6B90A8", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 3 }}>Douleur principale</div>
+                          <div style={{ fontSize: 13, color: "#FFFFFF", lineHeight: 1.5 }}>{lead.primary_pain_point}</div>
+                        </div>
                       )}
-                      {ampBadge && (
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 600, background: ampBadge.label.includes("élevée") ? "rgba(139,92,246,0.2)" : "rgba(56,189,248,0.2)", color: ampBadge.label.includes("élevée") ? "#a78bfa" : "#38bdf8" }} title={ampBadge.label}>⏰ {ampBadge.label}</span>
-                      )}
-                    </td>
-                    <td style={{ padding: "12px 16px", fontSize: 13, color: C.muted, maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={lead.primary_pain_point || ""}>{lead.primary_pain_point || "—"}</td>
-                    <td style={{ padding: "12px 16px" }}>
-                      <span style={{ display: "inline-flex", padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 600, ...prio.style }} title={`Score: ${prio.score}`}>{prio.label}</span>
-                    </td>
-                    <td style={{ padding: "12px 16px", fontSize: 13, color: C.muted }}>{lead.assistant_name} ({lead.voice_gender === "female" ? "F" : "M"})</td>
-                    <td style={{ padding: "12px 16px", fontSize: 13, color: C.muted, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={formatOpeningHoursPretty(lead.opening_hours)}>{formatOpeningHoursCompact(lead.opening_hours)}</td>
-                    <td style={{ padding: "12px 16px" }}>
-                      <span style={{ display: "inline-flex", padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 600, ...statusStyle }}>{STATUS_LABELS[lead.status] || lead.status}</span>
-                    </td>
-                    <td style={{ padding: "12px 16px" }}>
-                      <Link to={`/admin/leads/${lead.id}`} style={{ color: C.accent, fontSize: 13, fontWeight: 600 }}>
-                        Voir
-                      </Link>
-                    </td>
-                  </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
