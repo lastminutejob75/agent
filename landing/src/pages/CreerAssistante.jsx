@@ -1,6 +1,6 @@
 // Wizard "Créer votre assistant" — 7 steps, diagnostic + projection ROI (1 question par écran, 0 scroll)
 import { useState, useEffect, useCallback } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api.js";
 import UWIFinalization from "../components/UWIFinalization.jsx";
 import AssistantSelector from "../components/AssistantSelector.jsx";
@@ -266,6 +266,7 @@ export default function CreerAssistante() {
   });
   const [commitError, setCommitError] = useState("");
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Restaurer l'écran de validation si l'utilisateur a déjà soumis (ex. remontage du composant)
   useEffect(() => {
@@ -427,20 +428,28 @@ export default function CreerAssistante() {
     };
   }, [isStep7, diagnostic.estimated_minutes_per_day, diagnostic.annual_hours]);
 
-  if (commitDone) {
-    let leadId = "";
+  const leadIdFromUrl = (searchParams.get("lead_id") || "").trim();
+  const showFinalization = commitDone || leadIdFromUrl;
+  if (showFinalization) {
+    let leadId = leadIdFromUrl;
     let initialPhone = "";
     if (typeof window !== "undefined") {
       try {
         const raw = sessionStorage.getItem(COMMIT_DONE_KEY);
         if (raw) {
           const data = JSON.parse(raw);
-          leadId = (data && data.lead_id) ? String(data.lead_id) : (state.lead_id || "");
           if (data && data.phone) initialPhone = String(data.phone).replace(/\D/g, "").slice(0, 10);
+          if (!leadId) leadId = (data && data.lead_id) ? String(data.lead_id) : (state.lead_id || "");
+          if (leadId && !searchParams.get("lead_id")) {
+            setSearchParams({ lead_id: leadId }, { replace: true });
+          }
         }
       } catch (_) {}
     }
     if (!leadId) leadId = state.lead_id || "";
+    if (leadId && !searchParams.get("lead_id")) {
+      setSearchParams({ lead_id: leadId }, { replace: true });
+    }
     const assistantName = state.assistant_name || "Emma";
     return (
       <div className="min-h-screen w-full" style={{ backgroundColor: "#0A1828" }}>

@@ -64,6 +64,8 @@ function formatDayForDisplay(date) {
   return `${days[date.getDay()]} ${date.getDate()} ${months[date.getMonth()]}`;
 }
 
+const MSG_LEAD_NOT_FOUND = "Lead introuvable, lien expiré ou ancienne session. Refaites votre demande depuis l'accueil.";
+
 export default function UWIFinalization({ leadId = "", initialPhone = "", assistantName = "Emma", practitioner = "votre cabinet", onComplete }) {
   const navigate = useNavigate();
   const [phase, setPhase] = useState("loading");
@@ -118,7 +120,9 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
     setCallbackError(null);
     const dateIso = selectedDay ? selectedDay.toISOString().slice(0, 10) : "";
     const phoneDigitsOnly = (phone || "").replace(/\D/g, "").slice(0, 10);
-    if (leadId && dateIso && selectedSlot && phoneDigitsOnly.length >= 10) {
+    if (!leadId) {
+      setCallbackError(MSG_LEAD_NOT_FOUND);
+    } else if (dateIso && selectedSlot && phoneDigitsOnly.length >= 10) {
       try {
         await api.preOnboardingCallbackBooking(leadId, {
           date: dateIso,
@@ -128,7 +132,7 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
       } catch (err) {
         console.error("[UWIFinalization] callback-booking failed", err);
         const msg = err?.message || "Erreur serveur";
-        setCallbackError(msg.includes("introuvable") ? "Lead introuvable (lien expiré ou ancienne session). Refaitez votre demande depuis l'accueil." : msg);
+        setCallbackError(msg.includes("introuvable") ? MSG_LEAD_NOT_FOUND : msg);
       }
     }
     setTimeout(() => {
@@ -136,6 +140,33 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
       setPhase("done");
     }, 800);
   }, [canSubmit, leadId, selectedDay, selectedSlot, phone]);
+
+  // Lead manquant dès le départ → écran dédié (pas de flow inutile)
+  if (!(leadId || "").trim()) {
+    return (
+      <div style={{ fontFamily: "'DM Sans', -apple-system, sans-serif", maxWidth: 420, margin: "0 auto", padding: "48px 24px", minHeight: "100vh", background: COLORS.bg, color: COLORS.text, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center" }}>
+        <div style={{ width: 64, height: 64, borderRadius: "50%", background: COLORS.surface, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, marginBottom: 24 }}>⚠️</div>
+        <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 12 }}>Lien expiré ou ancienne session</h1>
+        <p style={{ fontSize: 14, color: COLORS.muted, marginBottom: 24, lineHeight: 1.5 }}>{MSG_LEAD_NOT_FOUND}</p>
+        <button
+          type="button"
+          onClick={() => onComplete?.() || navigate("/")}
+          style={{
+            padding: "14px 24px",
+            borderRadius: 12,
+            border: "none",
+            background: `linear-gradient(135deg, ${COLORS.accent}, ${COLORS.accentDim})`,
+            color: COLORS.bg,
+            fontWeight: 700,
+            fontSize: 15,
+            cursor: "pointer",
+          }}
+        >
+          Retour à l'accueil
+        </button>
+      </div>
+    );
+  }
 
   const baseStyle = {
     fontFamily: "'DM Sans', -apple-system, sans-serif",
