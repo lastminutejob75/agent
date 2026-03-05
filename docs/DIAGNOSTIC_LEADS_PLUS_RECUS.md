@@ -11,6 +11,10 @@ Cette erreur apparaît quand un visiteur choisit un créneau de rappel (écran U
 2. **Landing et backend sur des environnements différents** — La landing (ex. preview.vercel.app) pointe vers un backend de staging, le commit crée le lead en staging, mais le visiteur revient via une URL prod → le `lead_id` de staging n’existe pas en prod.
 3. **DATABASE_URL / PG_TENANTS_URL** — Si le backend utilise une base différente entre le commit et le callback (réplicas, env distincts), le lead peut ne pas être trouvé.
 
+**Vérification au chargement :** La landing appelle `GET /api/pre-onboarding/leads/{lead_id}/check` dès l'affichage de l'écran finalisation. Si 404 → message « Lien expiré » immédiat (pas de flow loading/reveal/congrats/handoff). Cela confirme que le lead n'existe pas dans le backend appelé.
+
+**Diagnostic affiché :** En cas d'erreur, l'écran affiche « Backend : [URL] ». Vérifier que cette URL est bien celle du backend Railway prod (ex. `https://api.uwiapp.com` ou `https://agent-production-xxx.railway.app`). Si l'URL est différente ou vide → corriger `VITE_UWI_API_BASE_URL` sur Vercel (Preview ET Production) et redéployer.
+
 **Vérifications :**
 - Landing et admin : même `VITE_UWI_API_BASE_URL` (même backend).
 - Railway : une seule base pour `DATABASE_URL` ou `PG_TENANTS_URL`.

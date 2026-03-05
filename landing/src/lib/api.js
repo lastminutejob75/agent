@@ -6,6 +6,10 @@
 
 const BASE_URL = (import.meta.env.VITE_UWI_API_BASE_URL || "").replace(/\/$/, "");
 
+export function getApiBaseUrl() {
+  return BASE_URL;
+}
+
 export function getAdminToken() {
   return localStorage.getItem("uwi_admin_token") || "";
 }
@@ -87,6 +91,8 @@ export const api = {
   onboardingCreate: (payload) => request("/api/public/onboarding", { method: "POST", body: payload }),
   preOnboardingCommit: (payload) =>
     request("/api/pre-onboarding/commit", { method: "POST", body: payload }),
+  preOnboardingLeadCheck: (leadId) =>
+    request(`/api/pre-onboarding/leads/${encodeURIComponent(leadId)}/check`, { method: "GET" }),
   preOnboardingCallbackBooking: (leadId, payload) =>
     request(`/api/pre-onboarding/leads/${encodeURIComponent(leadId)}/callback-booking`, {
       method: "POST",

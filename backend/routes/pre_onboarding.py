@@ -187,6 +187,18 @@ async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody)
     return out
 
 
+@router.get("/leads/{lead_id}/check")
+async def check_lead_exists(lead_id: str) -> Dict[str, Any]:
+    """
+    Vérifie si un lead existe (pour diagnostic : landing vs backend même env ?).
+    Retourne 200 si existe, 404 sinon.
+    """
+    lead = get_lead(lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead introuvable")
+    return {"exists": True}
+
+
 @router.post("/leads/{lead_id}/callback-booking")
 async def callback_booking(lead_id: str, body: CallbackBookingBody) -> Dict[str, Any]:
     """

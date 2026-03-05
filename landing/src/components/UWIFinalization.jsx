@@ -1,7 +1,7 @@
 // Écran de finalisation UWI — 5 phases: loading → reveal → congrats → handoff → done
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { api } from "../lib/api.js";
+import { api, getApiBaseUrl } from "../lib/api.js";
 import ASSISTANTS_CONFIG from "../assistants.config.js";
 
 const COLORS = {
@@ -68,6 +68,7 @@ const MSG_LEAD_NOT_FOUND = "Lead introuvable, lien expiré ou ancienne session. 
 
 export default function UWIFinalization({ leadId = "", initialPhone = "", assistantName = "Emma", practitioner = "votre cabinet", onComplete }) {
   const navigate = useNavigate();
+  const [leadCheckFailed, setLeadCheckFailed] = useState(null); // null = en cours, true = 404, false = ok
   const [phase, setPhase] = useState("loading");
   const [loadingStep, setLoadingStep] = useState(0);
   const [loadingProgress, setLoadingProgress] = useState(0);
@@ -89,8 +90,22 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
   const phoneValid = phoneDigits.length >= 10;
   const canSubmit = selectedDay && selectedSlot && phoneValid;
 
+  // Vérifier que le lead existe au chargement (diagnostic : même backend que le commit ?)
   useEffect(() => {
-    if (phase !== "loading") return;
+    const id = (leadId || "").trim();
+    if (!id) return;
+    setLeadCheckFailed(null);
+    api
+      .preOnboardingLeadCheck(id)
+      .then(() => setLeadCheckFailed(false))
+      .catch((err) => {
+        const notFound = err?.status === 404 || (err?.message || "").includes("introuvable");
+        setLeadCheckFailed(notFound);
+      });
+  }, [leadId]);
+
+  useEffect(() => {
+    if (phase !== "loading" || leadCheckFailed !== false) return;
     const totalMs = LOADING_STEPS.reduce((s, t) => s + t.ms, 0);
     let elapsed = 0;
     const interval = setInterval(() => {
@@ -183,6 +198,45 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
     );
   }
 
+  // Lead introuvable (404 sur check) → env/backend différent entre commit et callback
+  if (leadCheckFailed === true) {
+    const apiBase = getApiBaseUrl() || "(non configuré)";
+    return (
+      <div style={{ fontFamily: "'DM Sans', -apple-system, sans-serif", maxWidth: 420, margin: "0 auto", padding: "48px 24px", minHeight: "100vh", background: COLORS.bg, color: COLORS.text, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center" }}>
+        <div style={{ width: 64, height: 64, borderRadius: "50%", background: COLORS.surface, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, marginBottom: 24 }}>⚠️</div>
+        <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 12 }}>Lien expiré ou ancienne session</h1>
+        <p style={{ fontSize: 12, color: COLORS.muted, marginBottom: 8, wordBreak: "break-all" }}>Backend : {apiBase}</p>
+        <p style={{ fontSize: 14, color: COLORS.muted, marginBottom: 24, lineHeight: 1.5 }}>
+          Lead introuvable, lien expiré ou ancienne session. Refaites votre demande depuis{" "}
+          <button
+            type="button"
+            onClick={() => onComplete?.() || navigate("/")}
+            style={{ background: "none", border: "none", padding: 0, color: COLORS.accent, textDecoration: "underline", cursor: "pointer", fontSize: "inherit", fontFamily: "inherit" }}
+          >
+            l'accueil
+          </button>
+          .
+        </p>
+        <button
+          type="button"
+          onClick={() => onComplete?.() || navigate("/")}
+          style={{
+            padding: "14px 24px",
+            borderRadius: 12,
+            border: "none",
+            background: `linear-gradient(135deg, ${COLORS.accent}, ${COLORS.accentDim})`,
+            color: COLORS.bg,
+            fontWeight: 700,
+            fontSize: 15,
+            cursor: "pointer",
+          }}
+        >
+          Retour à l'accueil
+        </button>
+      </div>
+    );
+  }
+
   const baseStyle = {
     fontFamily: "'DM Sans', -apple-system, sans-serif",
     boxSizing: "border-box",
@@ -235,6 +289,19 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
   };
 
   if (phase === "loading") {
+    if (leadCheckFailed === null) {
+      return (
+        <div style={baseStyle}>
+          <div style={gridBg} />
+          <div style={barAccent} />
+          <div style={{ position: "relative", zIndex: 1, paddingTop: 120, textAlign: "center" }}>
+            <div style={{ width: 40, height: 40, margin: "0 auto 20px", border: `3px solid ${COLORS.border}`, borderTopColor: COLORS.accent, borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+            <p style={{ fontSize: 14, color: COLORS.muted }}>Vérification...</p>
+          </div>
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        </div>
+      );
+    }
     return (
       <div style={baseStyle}>
         <div style={gridBg} />
@@ -644,6 +711,7 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
             <div style={{ background: "rgba(220, 80, 60, 0.15)", border: "1px solid rgba(220, 80, 60, 0.5)", borderRadius: 12, padding: 14, marginBottom: 20, textAlign: "left", fontSize: 13, color: "#f0a0a0" }}>
               {callbackError === MSG_LEAD_NOT_FOUND ? (
                 <>
+                  <p style={{ fontSize: 11, color: COLORS.muted, marginBottom: 8, wordBreak: "break-all" }}>Backend : {getApiBaseUrl() || "(non configuré)"}</p>
                   Lead introuvable, lien expiré ou ancienne session. Refaites votre demande depuis{" "}
                   <button
                     type="button"
