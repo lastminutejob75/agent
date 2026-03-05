@@ -152,7 +152,17 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
       <div style={{ fontFamily: "'DM Sans', -apple-system, sans-serif", maxWidth: 420, margin: "0 auto", padding: "48px 24px", minHeight: "100vh", background: COLORS.bg, color: COLORS.text, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center" }}>
         <div style={{ width: 64, height: 64, borderRadius: "50%", background: COLORS.surface, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, marginBottom: 24 }}>⚠️</div>
         <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 12 }}>Lien expiré ou ancienne session</h1>
-        <p style={{ fontSize: 14, color: COLORS.muted, marginBottom: 24, lineHeight: 1.5 }}>{MSG_LEAD_NOT_FOUND}</p>
+        <p style={{ fontSize: 14, color: COLORS.muted, marginBottom: 24, lineHeight: 1.5 }}>
+          Lead introuvable, lien expiré ou ancienne session. Refaites votre demande depuis{" "}
+          <button
+            type="button"
+            onClick={() => onComplete?.() || navigate("/")}
+            style={{ background: "none", border: "none", padding: 0, color: COLORS.accent, textDecoration: "underline", cursor: "pointer", fontSize: "inherit", fontFamily: "inherit" }}
+          >
+            l'accueil
+          </button>
+          .
+        </p>
         <button
           type="button"
           onClick={() => onComplete?.() || navigate("/")}
@@ -632,7 +642,21 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
         <div style={{ position: "relative", zIndex: 1, paddingTop: 40, textAlign: "center" }}>
           {callbackError && (
             <div style={{ background: "rgba(220, 80, 60, 0.15)", border: "1px solid rgba(220, 80, 60, 0.5)", borderRadius: 12, padding: 14, marginBottom: 20, textAlign: "left", fontSize: 13, color: "#f0a0a0" }}>
-              {callbackError}
+              {callbackError === MSG_LEAD_NOT_FOUND ? (
+                <>
+                  Lead introuvable, lien expiré ou ancienne session. Refaites votre demande depuis{" "}
+                  <button
+                    type="button"
+                    onClick={() => onComplete?.() || navigate("/")}
+                    style={{ background: "none", border: "none", padding: 0, color: COLORS.accent, textDecoration: "underline", cursor: "pointer", fontSize: "inherit", fontFamily: "inherit" }}
+                  >
+                    l'accueil
+                  </button>
+                  .
+                </>
+              ) : (
+                callbackError
+              )}
             </div>
           )}
           <div style={{ width: 64, height: 64, margin: "0 auto 20px", borderRadius: "50%", background: callbackError ? COLORS.surface : COLORS.accent, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, animation: "popIn 0.5s cubic-bezier(0.34,1.56,0.64,1) forwards", boxShadow: callbackError ? "none" : "0 0 24px rgba(0,229,160,0.4)" }}>{callbackError ? "⚠️" : "✅"}</div>
