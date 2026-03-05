@@ -531,13 +531,18 @@ def send_lead_founder_email(
         return "\n".join(lines)
 
     to = (
-        os.getenv("FOUNDER_EMAIL") or os.getenv("ADMIN_EMAIL") or os.getenv("SMTP_EMAIL") or ""
+        os.getenv("FOUNDER_EMAIL")
+        or os.getenv("ADMIN_EMAIL")
+        or os.getenv("ADMIN_ALERT_EMAIL")
+        or os.getenv("REPORT_EMAIL")
+        or os.getenv("SMTP_EMAIL")
+        or ""
     ).strip()
     if not to:
         logger.warning(
-            "send_lead_founder_email: aucun destinataire (définir FOUNDER_EMAIL, ADMIN_EMAIL ou SMTP_EMAIL)"
+            "send_lead_founder_email: aucun destinataire (définir FOUNDER_EMAIL, ADMIN_EMAIL, ADMIN_ALERT_EMAIL, REPORT_EMAIL ou SMTP_EMAIL)"
         )
-        return False, "Destinataire email non configuré (FOUNDER_EMAIL / ADMIN_EMAIL / SMTP_EMAIL)"
+        return False, "Destinataire email non configuré (FOUNDER_EMAIL / ADMIN_EMAIL / ADMIN_ALERT_EMAIL / REPORT_EMAIL / SMTP_EMAIL)"
 
     dashboard_base_url = (dashboard_base_url or "").strip()
     if not dashboard_base_url:
@@ -703,11 +708,16 @@ def send_lead_callback_booking_email(
     callback_date_iso au format YYYY-MM-DD.
     """
     to = (
-        os.getenv("FOUNDER_EMAIL") or os.getenv("ADMIN_EMAIL") or os.getenv("SMTP_EMAIL") or ""
+        os.getenv("FOUNDER_EMAIL")
+        or os.getenv("ADMIN_EMAIL")
+        or os.getenv("ADMIN_ALERT_EMAIL")
+        or os.getenv("REPORT_EMAIL")
+        or os.getenv("SMTP_EMAIL")
+        or ""
     ).strip()
     if not to:
-        logger.warning("send_lead_callback_booking_email: FOUNDER_EMAIL non défini, skip")
-        return False, "FOUNDER_EMAIL non défini"
+        logger.warning("send_lead_callback_booking_email: aucun destinataire (FOUNDER_EMAIL/ADMIN_EMAIL/etc), skip")
+        return False, "Destinataire email non configuré"
     if not (dashboard_base_url or "").strip():
         logger.warning("send_lead_callback_booking_email: ADMIN_BASE_URL manquant")
         return False, "ADMIN_BASE_URL manquant"

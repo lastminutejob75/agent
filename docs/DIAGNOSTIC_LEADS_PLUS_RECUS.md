@@ -2,6 +2,25 @@
 
 Le flux lead : **Landing** (CreerAssistante) → `POST /api/pre-onboarding/commit` → **Backend** → `upsert_lead()` → table **pre_onboarding_leads** (PG) + email fondateur en async.
 
+---
+
+## Checklist rapide : « Lead introuvable » + « Pas d'email »
+
+Si les deux échouent, vérifier dans cet ordre :
+
+| # | Où | Quoi | Valeur attendue |
+|---|-----|------|------------------|
+| 1 | **Vercel** → Settings → Variables | `VITE_UWI_API_BASE_URL` | Même URL pour **Production ET Preview** (ex. `https://api.uwiapp.com`) |
+| 2 | **Railway** → Variables | `DATABASE_URL` ou `PG_TENANTS_URL` | Postgres valide (leads y sont écrits) |
+| 3 | **Railway** → Variables | `FOUNDER_EMAIL` ou `ADMIN_EMAIL` | Email qui reçoit les leads (ex. `contact@uwiapp.com`) |
+| 4 | **Railway** → Variables | SMTP / Postmark | Configuré pour envoyer (voir `email_service.py`) |
+| 5 | **Railway** → Logs | `commit_pre_onboarding_diagnostic` | Doit apparaître quand tu soumets un lead |
+| 6 | **Railway** → Logs | `lead_founder_email on commit failed` | Si présent → problème email (destinataire, SMTP) |
+
+**Test** : soumettre un lead depuis **www.uwiapp.com** (prod), pas une preview. Onglet **Réseau** : vérifier que `POST .../api/pre-onboarding/commit` part vers la bonne URL et retourne **200**.
+
+**Diagnostic backend** : `GET /api/pre-onboarding/config` retourne `db_configured`, `email_recipient_configured`, `email_sender_configured`, `leads_ok`, `emails_ok`. Si `emails_ok: false` → définir FOUNDER_EMAIL (ou ADMIN_EMAIL, ADMIN_ALERT_EMAIL, REPORT_EMAIL) + Postmark ou SMTP sur Railway.
+
 ## Erreur « Lead introuvable » (écran finalisation)
 
 Cette erreur apparaît quand un visiteur choisit un créneau de rappel (écran UWIFinalization) et que `POST /api/pre-onboarding/leads/{lead_id}/callback-booking` renvoie 404.

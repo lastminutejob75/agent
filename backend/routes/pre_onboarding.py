@@ -20,6 +20,34 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/pre-onboarding", tags=["pre_onboarding"])
 
 VALID_VOLUME = {"<10", "10-25", "25-50", "50-100", "100+", "unknown"}
+
+
+@router.get("/config")
+async def pre_onboarding_config() -> Dict[str, Any]:
+    """
+    Diagnostic : vérifie que la config Railway est OK pour leads + emails.
+    Sans secrets. À appeler pour débug (ex. curl https://api.uwiapp.com/api/pre-onboarding/config).
+    """
+    db_url = os.environ.get("DATABASE_URL") or os.environ.get("PG_TENANTS_URL") or ""
+    db_ok = bool(db_url.strip())
+    to_email = (
+        (os.environ.get("FOUNDER_EMAIL") or "").strip()
+        or (os.environ.get("ADMIN_EMAIL") or "").strip()
+        or (os.environ.get("ADMIN_ALERT_EMAIL") or "").strip()
+        or (os.environ.get("REPORT_EMAIL") or "").strip()
+        or (os.environ.get("SMTP_EMAIL") or "").strip()
+    )
+    email_recipient_ok = bool(to_email)
+    postmark = bool((os.environ.get("POSTMARK_SERVER_TOKEN") or "").strip())
+    smtp = bool((os.environ.get("SMTP_EMAIL") or "").strip() and (os.environ.get("SMTP_PASSWORD") or "").strip())
+    email_sender_ok = postmark or smtp
+    return {
+        "db_configured": db_ok,
+        "email_recipient_configured": email_recipient_ok,
+        "email_sender_configured": email_sender_ok,
+        "leads_ok": db_ok,
+        "emails_ok": email_recipient_ok and email_sender_ok,
+    }
 VALID_VOICE = {"female", "male"}
 
 # Spécialités médicales (step 1 : slugs normalisés)
