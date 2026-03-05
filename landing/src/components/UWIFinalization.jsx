@@ -130,9 +130,14 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
           phone: phoneDigitsOnly,
         });
       } catch (err) {
-        console.error("[UWIFinalization] callback-booking failed", err);
         const msg = err?.message || "Erreur serveur";
-        setCallbackError(msg.includes("introuvable") ? MSG_LEAD_NOT_FOUND : msg);
+        const isNotFound = msg.includes("introuvable") || err?.status === 404;
+        if (isNotFound && import.meta.env.DEV) {
+          console.warn("[UWIFinalization] callback-booking 404", { leadId, status: err?.status });
+        } else if (!isNotFound) {
+          console.error("[UWIFinalization] callback-booking failed", { leadId, err });
+        }
+        setCallbackError(isNotFound ? MSG_LEAD_NOT_FOUND : msg);
       }
     }
     setTimeout(() => {
