@@ -3,7 +3,8 @@ import { Link, useSearchParams } from "react-router-dom";
 import { adminApi } from "../../lib/adminApi.js";
 import { formatOpeningHoursCompact, formatOpeningHoursPretty, getAmplitudeBadge, getAmplitudeScore } from "../../lib/openingHoursPretty.js";
 
-const C = { bg: "#0A1828", card: "#132840", border: "#1E3D56", accent: "#00E5A0", text: "#FFFFFF", muted: "#6B90A8" };
+const C = { bg: "#0A1828", card: "#132840", border: "#1E3D56", accent: "#00E5A0", text: "#FFFFFF", muted: "#6B90A8", danger: "#FF6B6B" };
+const API_BASE = (import.meta.env.VITE_UWI_API_BASE_URL || "").replace(/\/$/, "");
 const STATUS_LABELS = { new: "Nouveau", contacted: "Contacté", converted: "Converti", lost: "Perdu" };
 const STATUS_FILTERS = [
   { value: "", label: "Tous" },
@@ -53,6 +54,13 @@ export default function AdminLeadsList() {
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
+  const [connectivity, setConnectivity] = useState({ health: null, origin: typeof window !== "undefined" ? window.location.origin : "" });
+  useEffect(() => {
+    if (!API_BASE) return;
+    fetch(`${API_BASE}/health`, { method: "GET", credentials: "include" })
+      .then((r) => setConnectivity((c) => ({ ...c, health: r.ok ? "ok" : "fail" })))
+      .catch(() => setConnectivity((c) => ({ ...c, health: "fail" })));
+  }, []);
 
   useEffect(() => {
     setLoadError(null);
@@ -104,6 +112,41 @@ export default function AdminLeadsList() {
   return (
     <div style={{ padding: "32px", background: C.bg, minHeight: "100vh" }}>
       <h1 style={{ fontSize: 24, fontWeight: 800, color: C.text, letterSpacing: -0.8, marginBottom: 16 }}>Leads</h1>
+      {/* Panneau diagnostic connectivité */}
+      <div
+        style={{
+          marginBottom: 20,
+          padding: 14,
+          borderRadius: 10,
+          background: C.card,
+          border: `1px solid ${C.border}`,
+          fontSize: 12,
+          color: C.muted,
+        }}
+      >
+        <div style={{ fontWeight: 700, color: C.text, marginBottom: 8 }}>Statut des connexions</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
+          <span>
+            Backend : <code style={{ color: API_BASE ? C.accent : C.danger }}>{API_BASE || "Non configuré"}</code>
+          </span>
+          <span>
+            Health : {connectivity.health === "ok" ? "✅ OK" : connectivity.health === "fail" ? "❌ Injoignable" : "…"}
+          </span>
+          <span>
+            Origine : <code style={{ fontSize: 11 }}>{connectivity.origin}</code>
+          </span>
+          {loadError && (
+            <span style={{ color: C.danger, flexBasis: "100%", marginTop: 4 }}>
+              Erreur : {loadError}
+            </span>
+          )}
+        </div>
+        {!API_BASE && (
+          <p style={{ marginTop: 8, color: C.danger }}>
+            Définir <code>VITE_UWI_API_BASE_URL</code> sur Vercel, puis redéployer.
+          </p>
+        )}
+      </div>
       <div style={{ marginBottom: 16, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 600, color: C.muted }}>Pipeline :</span>
         {STATUS_FILTERS.map(({ value, label }) => (

@@ -1,6 +1,20 @@
-# Diagnostic : plus de leads reçus / plus visibles en admin depuis le 28 février
+# Diagnostic : plus de leads reçus / plus visibles en admin
 
 Le flux lead : **Landing** (CreerAssistante) → `POST /api/pre-onboarding/commit` → **Backend** → `upsert_lead()` → table **pre_onboarding_leads** (PG) + email fondateur en async.
+
+## Erreur « Lead introuvable » (écran finalisation)
+
+Cette erreur apparaît quand un visiteur choisit un créneau de rappel (écran UWIFinalization) et que `POST /api/pre-onboarding/leads/{lead_id}/callback-booking` renvoie 404.
+
+**Causes possibles :**
+1. **lead_id perdu** — Le visiteur a rafraîchi la page ou fermé l’onglet après le commit. Le `lead_id` est stocké en sessionStorage ; s’il est vide, le callback n’est pas envoyé. Si le lien de retour pointe vers une URL sans `lead_id` en paramètre, il sera vide.
+2. **Landing et backend sur des environnements différents** — La landing (ex. preview.vercel.app) pointe vers un backend de staging, le commit crée le lead en staging, mais le visiteur revient via une URL prod → le `lead_id` de staging n’existe pas en prod.
+3. **DATABASE_URL / PG_TENANTS_URL** — Si le backend utilise une base différente entre le commit et le callback (réplicas, env distincts), le lead peut ne pas être trouvé.
+
+**Vérifications :**
+- Landing et admin : même `VITE_UWI_API_BASE_URL` (même backend).
+- Railway : une seule base pour `DATABASE_URL` ou `PG_TENANTS_URL`.
+- Logs Railway : chercher `callback_booking_diagnostic` et `commit_pre_onboarding_diagnostic` — le `db_hash` doit être identique.
 
 ---
 
