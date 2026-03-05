@@ -66,7 +66,8 @@ class GoogleCalendarService:
         duration_minutes: int = 15,
         start_hour: int = 9,
         end_hour: int = 18,
-        limit: int = 3
+        limit: int = 3,
+        buffer_minutes: int = 0,
     ) -> List[Dict]:
         """
         Récupère les créneaux libres pour une date donnée.
@@ -128,7 +129,13 @@ class GoogleCalendarService:
             # Filtrer créneaux occupés (normaliser TZ event pour comparaison)
             free_slots = []
 
+            buffer_td = timedelta(minutes=int(buffer_minutes or 0))
             for slot in all_slots:
+                slot_start = slot['start']
+                slot_end = slot['end']
+                effective_end = slot_end + buffer_td
+                if effective_end > day_end:
+                    continue
                 is_free = True
 
                 for event in events:
@@ -142,8 +149,8 @@ class GoogleCalendarService:
                     else:
                         event_start = event_start.replace(tzinfo=tz)
                         event_end = event_end.replace(tzinfo=tz)
-                    # Check si overlap
-                    if (slot['start'] < event_end and slot['end'] > event_start):
+                    # Check overlap: slot + buffer ne doit pas chevaucher un event
+                    if (slot_start < event_end and effective_end > event_start):
                         is_free = False
                         break
                 

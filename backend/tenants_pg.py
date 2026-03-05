@@ -273,8 +273,28 @@ def pg_update_tenant_params(tenant_id: int, params: dict) -> bool:
         "responsible_phone", "manager_name", "billing_email", "vapi_assistant_id", "plan_key", "notes",
         "custom_included_minutes_month",
         "assistant_name", "phone_number", "sector",
+        "booking_duration_minutes", "booking_start_hour", "booking_end_hour",
+        "booking_buffer_minutes", "booking_days",
     }
-    filtered = {k: str(v) for k, v in params.items() if k in allowed and v is not None}
+    filtered = {}
+    for k, v in params.items():
+        if k not in allowed or v is None:
+            continue
+        if k == "booking_days":
+            if isinstance(v, (list, tuple)):
+                filtered[k] = [int(x) for x in v]
+            elif isinstance(v, str):
+                try:
+                    parsed = json.loads(v)
+                    filtered[k] = [int(x) for x in parsed] if isinstance(parsed, (list, tuple)) else [0, 1, 2, 3, 4]
+                except Exception:
+                    filtered[k] = [int(x.strip()) for x in v.split(",") if x.strip().isdigit()]
+                if not filtered.get(k):
+                    filtered[k] = [0, 1, 2, 3, 4]
+            else:
+                filtered[k] = [0, 1, 2, 3, 4]
+        else:
+            filtered[k] = str(v)
     if not filtered:
         return True
     url = _pg_url()

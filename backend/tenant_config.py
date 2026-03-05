@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from backend import config, db
 
@@ -121,6 +121,34 @@ def get_tenant_display_config(tenant_id: Optional[int] = None) -> Dict[str, str]
     }
 
 
+def get_booking_rules(tenant_id: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Retourne les règles de réservation pour un tenant (params_json).
+    Fallbacks : duration=15, start=9, end=18, buffer=0, days=[0..4].
+    """
+    params = get_params(tenant_id) or {}
+    raw_days = params.get("booking_days")
+    if isinstance(raw_days, (list, tuple)):
+        booking_days = [int(x) for x in raw_days]
+    elif isinstance(raw_days, str):
+        try:
+            parsed = json.loads(raw_days)
+            booking_days = [int(x) for x in parsed] if isinstance(parsed, (list, tuple)) else [0, 1, 2, 3, 4]
+        except Exception:
+            booking_days = [int(x.strip()) for x in raw_days.split(",") if x.strip().isdigit()]
+        if not booking_days:
+            booking_days = [0, 1, 2, 3, 4]
+    else:
+        booking_days = [0, 1, 2, 3, 4]
+    return {
+        "duration_minutes": int(params.get("booking_duration_minutes") or 15),
+        "start_hour": int(params.get("booking_start_hour") or 9),
+        "end_hour": int(params.get("booking_end_hour") or 18),
+        "buffer_minutes": int(params.get("booking_buffer_minutes") or 0),
+        "booking_days": booking_days,
+    }
+
+
 def get_params(tenant_id: Optional[int] = None) -> Dict[str, str]:
     """
     Retourne params_json pour un tenant (calendar_provider, calendar_id, etc.).
@@ -162,8 +190,28 @@ def set_params(tenant_id: int, params: Dict[str, str]) -> None:
         "transfer_phone", "transfer_number", "horaires",
         "responsible_phone", "manager_name", "billing_email", "vapi_assistant_id", "plan_key", "notes",
         "custom_included_minutes_month",
+        "booking_duration_minutes", "booking_start_hour", "booking_end_hour",
+        "booking_buffer_minutes", "booking_days",
     )
-    filtered = {k: str(v) for k, v in params.items() if k in allowed and v is not None}
+    filtered = {}
+    for k, v in params.items():
+        if k not in allowed or v is None:
+            continue
+        if k == "booking_days":
+            if isinstance(v, (list, tuple)):
+                filtered[k] = [int(x) for x in v]
+            elif isinstance(v, str):
+                try:
+                    parsed = json.loads(v)
+                    filtered[k] = [int(x) for x in parsed] if isinstance(parsed, (list, tuple)) else [0, 1, 2, 3, 4]
+                except Exception:
+                    filtered[k] = [int(x.strip()) for x in v.split(",") if x.strip().isdigit()]
+                if not filtered[k]:
+                    filtered[k] = [0, 1, 2, 3, 4]
+            else:
+                filtered[k] = [0, 1, 2, 3, 4]
+        else:
+            filtered[k] = str(v)
     if not filtered:
         return
     db.ensure_tenant_config()

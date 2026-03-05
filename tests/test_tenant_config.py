@@ -2,7 +2,7 @@
 """Tests feature flags et config affichage par tenant."""
 import pytest
 from backend import config
-from backend.tenant_config import get_flags, set_flags, get_tenant_display_config, get_params, set_params, FLAG_KEYS
+from backend.tenant_config import get_flags, set_flags, get_tenant_display_config, get_params, set_params, get_booking_rules, FLAG_KEYS
 
 
 def test_get_flags_returns_defaults():
@@ -60,3 +60,38 @@ def test_get_tenant_display_config_horaires(monkeypatch, tmp_path):
     set_params(1, {"horaires": "Lun-Ven 8h-18h"})
     display2 = get_tenant_display_config(1)
     assert display2["horaires"] == "Lun-Ven 8h-18h"
+
+
+def test_get_booking_rules_fallback_defaults(monkeypatch, tmp_path):
+    """Sans params booking_* → fallbacks 15/9/18/0/[0..4]."""
+    import backend.db as db
+    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "agent.db"))
+    db.init_db(days=0)
+    db.ensure_tenant_config()
+    rules = get_booking_rules(1)
+    assert rules["duration_minutes"] == 15
+    assert rules["start_hour"] == 9
+    assert rules["end_hour"] == 18
+    assert rules["buffer_minutes"] == 0
+    assert rules["booking_days"] == [0, 1, 2, 3, 4]
+
+
+def test_get_booking_rules_uses_params(monkeypatch, tmp_path):
+    """Si params_json contient booking_* → utilisés."""
+    import backend.db as db
+    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "agent.db"))
+    db.init_db(days=0)
+    db.ensure_tenant_config()
+    set_params(1, {
+        "booking_duration_minutes": "30",
+        "booking_start_hour": "8",
+        "booking_end_hour": "19",
+        "booking_buffer_minutes": "10",
+        "booking_days": "[0, 1, 2, 3, 4, 5]",
+    })
+    rules = get_booking_rules(1)
+    assert rules["duration_minutes"] == 30
+    assert rules["start_hour"] == 8
+    assert rules["end_hour"] == 19
+    assert rules["buffer_minutes"] == 10
+    assert rules["booking_days"] == [0, 1, 2, 3, 4, 5]

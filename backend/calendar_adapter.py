@@ -35,6 +35,7 @@ class CalendarAdapter(Protocol):
         start_hour: int = 9,
         end_hour: int = 18,
         limit: int = 3,
+        buffer_minutes: int = 0,
     ) -> List[Dict[str, Any]]:
         """Retourne les créneaux libres pour une date."""
         ...
@@ -89,6 +90,7 @@ class _GoogleCalendarAdapter:
         start_hour: int = 9,
         end_hour: int = 18,
         limit: int = 3,
+        buffer_minutes: int = 0,
     ) -> List[Dict[str, Any]]:
         svc = self._get_service()
         if not svc:
@@ -99,6 +101,7 @@ class _GoogleCalendarAdapter:
             start_hour=start_hour,
             end_hour=end_hour,
             limit=limit,
+            buffer_minutes=buffer_minutes,
         )
 
     def book_appointment(
@@ -182,6 +185,7 @@ class _NoneCalendarAdapter:
         start_hour: int = 9,
         end_hour: int = 18,
         limit: int = 3,
+        buffer_minutes: int = 0,
     ) -> List[Dict[str, Any]]:
         return []
 

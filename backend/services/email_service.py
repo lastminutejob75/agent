@@ -11,6 +11,7 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Any, Dict, Optional, Tuple
+from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
@@ -795,6 +796,7 @@ def send_welcome_email(
     """
     Email de bienvenue au client après création tenant (Vapi + Stripe + Twilio).
     Destinataire : email du client.
+    Lien direct : /login?email={email}&welcome=1 pour accès dashboard.
     Returns (success, error_message).
     """
     to = (email or "").strip().lower()
@@ -807,7 +809,10 @@ def send_welcome_email(
         (plan_key or "").lower(), plan_key or "—"
     )
     phone_display = (phone_number or "").strip() or "À configurer"
-    app_url = (app_url or os.getenv("ADMIN_BASE_URL") or os.getenv("VITE_SITE_URL") or "https://www.uwiapp.com").strip().rstrip("/")
+    base_url = (
+        app_url or os.getenv("CLIENT_APP_ORIGIN") or os.getenv("VITE_UWI_APP_URL") or os.getenv("VITE_SITE_URL") or "https://www.uwiapp.com"
+    ).strip().rstrip("/")
+    login_url = f"{base_url}/login?email={quote(to)}&welcome=1"
 
     subject = f"Bienvenue sur UWi — {client_name}"
     from datetime import datetime
@@ -819,15 +824,17 @@ def send_welcome_email(
 <body style="font-family: sans-serif; max-width: 560px; margin: 0 auto; padding: 1rem;">
   <h1 style="font-size: 1.25rem;">Bienvenue sur UWi — {client_name}</h1>
   <p style="font-size: 1rem; color: #333; margin: 1rem 0;">
-    Votre compte a été créé avec succès. Voici les informations d'accès :
+    Votre compte a été créé avec succès. Voici vos informations :
   </p>
   <ul style="color: #333; margin: 0.25rem 0 1rem 0;">
     <li><strong>Assistante vocale :</strong> {assistant_display}</li>
     <li><strong>Plan :</strong> {plan_display}</li>
-    <li><strong>Numéro d'appel :</strong> {phone_display}</li>
+    <li><strong>Numéro que les patients appellent :</strong> {phone_display}</li>
   </ul>
-  <p style="margin: 1rem 0;">
-    <a href="{app_url}" style="color:#2563eb;word-break:break-all;">Accéder à votre espace → {app_url}</a>
+  <p style="margin: 1.5rem 0;">
+    <a href="{login_url}" style="display:inline-block;background:linear-gradient(135deg,#14b8a6,#0d9488);color:#fff;padding:12px 24px;text-decoration:none;border-radius:8px;font-weight:700;font-size:1rem;">
+      Accéder à mon espace
+    </a>
   </p>
   <p style="color: #666; font-size: 0.9rem; margin-top: 1.5rem;">
     Connectez-vous avec cet email pour gérer votre cabinet et consulter les rapports d'appels.

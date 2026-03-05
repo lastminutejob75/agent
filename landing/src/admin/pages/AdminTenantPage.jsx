@@ -578,6 +578,168 @@ function TabActions({ tenantId, tenant, onSaved }) {
             />
           </div>
         ))}
+
+        {/* Section Agenda & Booking */}
+        <div style={{ marginTop: 24, borderTop: `1px solid ${C.border}`, paddingTop: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: C.accent, marginBottom: 12 }}>📅 Agenda & Booking</div>
+
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "block" }}>Provider agenda</div>
+            <select
+              value={params.calendar_provider || "none"}
+              onChange={(e) => setParams((p) => ({ ...p, calendar_provider: e.target.value }))}
+              style={{
+                width: "100%",
+                background: C.surface,
+                border: `1px solid ${C.border}`,
+                borderRadius: 8,
+                padding: "8px 12px",
+                color: C.text,
+                fontSize: 13,
+                fontFamily: "inherit",
+                outline: "none",
+              }}
+            >
+              <option value="none">Aucun (SQLite fallback)</option>
+              <option value="google">Google Calendar</option>
+            </select>
+          </div>
+
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "block" }}>Durée RDV (minutes)</div>
+            <input
+              type="number"
+              min={5}
+              max={120}
+              step={5}
+              value={params.booking_duration_minutes ?? 15}
+              onChange={(e) => setParams((p) => ({ ...p, booking_duration_minutes: parseInt(e.target.value, 10) || 15 }))}
+              style={{
+                width: "100%",
+                background: C.surface,
+                border: `1px solid ${C.border}`,
+                borderRadius: 8,
+                padding: "8px 12px",
+                color: C.text,
+                fontSize: 13,
+                fontFamily: "inherit",
+                outline: "none",
+              }}
+            />
+          </div>
+
+          <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "block" }}>Heure début</div>
+              <input
+                type="number"
+                min={6}
+                max={12}
+                value={params.booking_start_hour ?? 9}
+                onChange={(e) => setParams((p) => ({ ...p, booking_start_hour: parseInt(e.target.value, 10) || 9 }))}
+                style={{
+                  width: "100%",
+                  background: C.surface,
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 8,
+                  padding: "8px 12px",
+                  color: C.text,
+                  fontSize: 13,
+                  fontFamily: "inherit",
+                  outline: "none",
+                }}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "block" }}>Heure fin</div>
+              <input
+                type="number"
+                min={14}
+                max={22}
+                value={params.booking_end_hour ?? 18}
+                onChange={(e) => setParams((p) => ({ ...p, booking_end_hour: parseInt(e.target.value, 10) || 18 }))}
+                style={{
+                  width: "100%",
+                  background: C.surface,
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 8,
+                  padding: "8px 12px",
+                  color: C.text,
+                  fontSize: 13,
+                  fontFamily: "inherit",
+                  outline: "none",
+                }}
+              />
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "block" }}>Buffer entre RDV (minutes)</div>
+            <input
+              type="number"
+              min={0}
+              max={30}
+              step={5}
+              value={params.booking_buffer_minutes ?? 0}
+              onChange={(e) => setParams((p) => ({ ...p, booking_buffer_minutes: parseInt(e.target.value, 10) || 0 }))}
+              style={{
+                width: "100%",
+                background: C.surface,
+                border: `1px solid ${C.border}`,
+                borderRadius: 8,
+                padding: "8px 12px",
+                color: C.text,
+                fontSize: 13,
+                fontFamily: "inherit",
+                outline: "none",
+              }}
+            />
+          </div>
+
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 11, color: C.muted, marginBottom: 8, display: "block" }}>Jours de travail</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {[
+                ["L", 0],
+                ["M", 1],
+                ["Me", 2],
+                ["J", 3],
+                ["V", 4],
+                ["S", 5],
+                ["D", 6],
+              ].map(([label, day]) => {
+                const days = Array.isArray(params.booking_days) ? params.booking_days : [0, 1, 2, 3, 4];
+                const active = days.includes(day);
+                return (
+                  <button
+                    key={day}
+                    type="button"
+                    onClick={() => {
+                      const next = active ? days.filter((d) => d !== day) : [...days, day].sort((a, b) => a - b);
+                      setParams((p) => ({ ...p, booking_days: next }));
+                    }}
+                    style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: 8,
+                      fontSize: 12,
+                      fontWeight: 500,
+                      border: `1px solid ${active ? C.accent : C.border}`,
+                      background: active ? C.accent : C.surface,
+                      color: active ? C.bg : C.muted,
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                      transition: "all 0.15s",
+                    }}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
         <button
           type="button"
           onClick={saveParams}

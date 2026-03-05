@@ -41,6 +41,20 @@ export function getClientLoginUrl(email, tenantId) {
 }
 
 /**
+ * URL de connexion client avec email et welcome (lien email de bienvenue).
+ * @param {string} email - Email du contact
+ * @returns {string} URL absolue vers /login?email=...&welcome=1
+ */
+export function getClientWelcomeLoginUrl(email) {
+  const b = base || (typeof window !== "undefined" ? window.location.origin : "") || "https://www.uwiapp.com";
+  const path = "/login";
+  const url = new URL(path, b.replace(/\/$/, ""));
+  url.searchParams.set("email", String(email || "").trim());
+  url.searchParams.set("welcome", "1");
+  return url.toString();
+}
+
+/**
  * URL du dashboard client (/app) — pour affichage ou futur impersonation.
  */
 export function getClientAppUrl() {

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../lib/api.js";
 import { Link } from "react-router-dom";
 import { Eye, EyeOff } from "lucide-react";
@@ -6,8 +7,11 @@ import { GoogleLoginButton } from "../components/GoogleLoginButton.jsx";
 import { getApiUrl } from "../lib/authConfig.js";
 
 export default function Login() {
+  const [searchParams] = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const isWelcome = searchParams.get("welcome") === "1";
+  const emailFromUrl = searchParams.get("email") || "";
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
   const [backendCheck, setBackendCheck] = useState("idle"); // idle | checking | ok | fail
@@ -16,6 +20,11 @@ export default function Login() {
   const userHasInteractedWithForm = useRef(false);
 
   const apiUrl = getApiUrl();
+
+  // Pré-remplir l'email depuis ?email=
+  useEffect(() => {
+    if (emailFromUrl) setEmail(decodeURIComponent(emailFromUrl));
+  }, [emailFromUrl]);
 
   // Vérification « déjà connecté » au montage : on affiche un bandeau + lien au lieu de rediriger automatiquement.
   useEffect(() => {
@@ -101,6 +110,11 @@ export default function Login() {
           </div>
         )}
         <h1 className="text-2xl font-black text-white">Connexion</h1>
+        {isWelcome && (
+          <p className="mt-3 rounded-xl bg-teal-500/20 border border-teal-500/50 text-teal-200 text-sm p-3" role="status">
+            Bienvenue sur UWI ! Votre assistant vocal est actif.
+          </p>
+        )}
         <p className="mt-1 text-sm text-slate-400">
           Connectez-vous avec votre email et mot de passe, ou avec Google.
         </p>

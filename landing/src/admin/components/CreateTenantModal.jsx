@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { adminApi } from "../../lib/adminApi";
+import { getClientWelcomeLoginUrl } from "../../lib/clientAppUrl.js";
 
 const C = {
   bg: "#0A1828",
@@ -43,6 +45,7 @@ const PLANS = [
 const STEPS = ["Infos client", "Configuration", "Assistant", "Récapitulatif"];
 
 export default function CreateTenantModal({ onClose, onCreated, prefill = {} }) {
+  const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [twilioNumbers, setTwilio] = useState([]);
   const [submitting, setSubmit] = useState(false);
@@ -512,9 +515,6 @@ export default function CreateTenantModal({ onClose, onCreated, prefill = {} }) 
                   >
                     Client créé avec succès !
                   </div>
-                  <div style={{ fontSize: 13, color: C.muted, marginBottom: 20 }}>
-                    Tenant #{result.tenant_id}
-                  </div>
                   {result.results?.errors?.length > 0 && (
                     <div
                       style={{
@@ -536,69 +536,89 @@ export default function CreateTenantModal({ onClose, onCreated, prefill = {} }) 
                   )}
                   <div
                     style={{
-                      display: "grid",
-                      gridTemplateColumns: "1fr 1fr",
-                      gap: 8,
-                      marginBottom: 20,
-                    }}
-                  >
-                    {[
-                      ["Vapi", result.results?.vapi_assistant_id ? "✓" : "—"],
-                      ["Stripe", result.results?.stripe_customer_id ? "✓" : "—"],
-                      ["Twilio", result.results?.twilio_number ? "✓" : "—"],
-                      [
-                        "Email",
-                        result.results?.errors?.some((e) => e.includes("Email")) ? "⚠️" : "✓",
-                      ],
-                    ].map(([l, v]) => (
-                      <div
-                        key={l}
-                        style={{
-                          background: C.card,
-                          borderRadius: 8,
-                          padding: 10,
-                          textAlign: "center",
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontSize: 16,
-                            fontWeight: 800,
-                            color: v === "✓" ? C.accent : C.muted,
-                          }}
-                        >
-                          {v}
-                        </div>
-                        <div
-                          style={{
-                            fontSize: 10,
-                            color: C.muted,
-                            textTransform: "uppercase",
-                            letterSpacing: 0.5,
-                          }}
-                        >
-                          {l}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <button
-                    onClick={onClose}
-                    style={{
-                      width: "100%",
-                      padding: 12,
+                      textAlign: "left",
+                      background: C.card,
                       borderRadius: 12,
-                      background: `linear-gradient(135deg,${C.accent},${C.accentDim})`,
-                      border: "none",
-                      color: C.bg,
-                      fontSize: 14,
-                      fontWeight: 800,
-                      cursor: "pointer",
-                      fontFamily: "inherit",
+                      padding: 16,
+                      marginBottom: 20,
+                      fontSize: 13,
+                      color: C.text,
                     }}
                   >
-                    Fermer et rafraîchir
-                  </button>
+                    <div style={{ marginBottom: 8 }}>✅ Tenant créé</div>
+                    <div style={{ marginBottom: 8 }}>
+                      ✅ Assistant Vapi : {ASSISTANTS.find((a) => a.id === form.assistant_id)?.prenom || form.assistant_id}
+                    </div>
+                    <div style={{ marginBottom: 8 }}>
+                      ✅ Numéro Twilio : {result.results?.twilio_number || form.twilio_number || "—"}
+                    </div>
+                    <div style={{ marginBottom: 8 }}>
+                      ✅ Stripe : {PLANS.find((p) => p.id === form.plan_key)?.label || form.plan_key}
+                    </div>
+                    <div style={{ marginBottom: 0 }}>
+                      ✅ Email envoyé à : {form.email}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexDirection: "column" }}>
+                    <button
+                      onClick={() => {
+                        onClose?.();
+                        navigate(`/admin/tenants/${result.tenant_id}`);
+                      }}
+                      style={{
+                        width: "100%",
+                        padding: 12,
+                        borderRadius: 12,
+                        background: C.card,
+                        border: `1px solid ${C.border}`,
+                        color: C.text,
+                        fontSize: 14,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      Voir la fiche client
+                    </button>
+                    <button
+                      onClick={() => {
+                        const url = getClientWelcomeLoginUrl(form.email);
+                        navigator.clipboard?.writeText(url).then(() => {
+                          /* feedback optionnel */
+                        });
+                      }}
+                      style={{
+                        width: "100%",
+                        padding: 12,
+                        borderRadius: 12,
+                        background: `linear-gradient(135deg,${C.accent},${C.accentDim})`,
+                        border: "none",
+                        color: C.bg,
+                        fontSize: 14,
+                        fontWeight: 800,
+                        cursor: "pointer",
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      Copier le lien dashboard
+                    </button>
+                    <button
+                      onClick={onClose}
+                      style={{
+                        width: "100%",
+                        padding: 10,
+                        borderRadius: 12,
+                        background: "transparent",
+                        border: `1px solid ${C.border}`,
+                        color: C.muted,
+                        fontSize: 13,
+                        cursor: "pointer",
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      Fermer
+                    </button>
+                  </div>
                 </>
               ) : (
                 <>

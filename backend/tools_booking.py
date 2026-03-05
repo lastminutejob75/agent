@@ -553,7 +553,7 @@ def get_slots_for_display(
 
     # Récupérer le pool brut (pas encore étalé) pour pouvoir filtrer refus puis étaler
     if calendar_or_adapter:
-        pool = _get_slots_from_google_calendar(calendar_or_adapter, limit, pref=pref)
+        pool = _get_slots_from_google_calendar(calendar_or_adapter, limit, pref=pref, tenant_id=tenant_id)
     else:
         pool = _get_slots_from_sqlite(limit, pref=pref, tenant_id=tenant_id)
 
@@ -561,7 +561,7 @@ def get_slots_for_display(
     if pref and (not pool or len(pool) == 0):
         logger.info(f"⚠️ Aucun créneau pour pref={pref}, fallback sans filtre")
         if calendar_or_adapter:
-            pool = _get_slots_from_google_calendar(calendar_or_adapter, limit, pref=None)
+            pool = _get_slots_from_google_calendar(calendar_or_adapter, limit, pref=None, tenant_id=tenant_id)
         else:
             pool = _get_slots_from_sqlite(limit, pref=None, tenant_id=tenant_id)
 
@@ -610,18 +610,32 @@ def get_slots_for_display(
     return slots
 
 
-def _get_slots_from_google_calendar(calendar, limit: int, pref: Optional[str] = None) -> List[prompts.SlotDisplay]:
+def _get_slots_from_google_calendar(
+    calendar,
+    limit: int,
+    pref: Optional[str] = None,
+    tenant_id: int = 1,
+) -> List[prompts.SlotDisplay]:
     """Récupère le pool de créneaux via Google Calendar (étalement fait dans get_slots_for_display)."""
+    from backend.tenant_config import get_booking_rules
+
+    rules = get_booking_rules(tenant_id)
+    duration_minutes = rules["duration_minutes"]
+    base_start = rules["start_hour"]
+    base_end = rules["end_hour"]
+    booking_days = rules["booking_days"]
+    buffer_minutes = rules["buffer_minutes"]
+
     pool: List[prompts.SlotDisplay] = []
-    # Plage horaire selon préférence (ne pas proposer 10h si user a dit "je finis à 17h")
+    # Plage horaire selon préférence (intersection avec règles tenant)
     if pref == "matin":
-        start_hour, end_hour = 9, 12
+        start_hour, end_hour = max(base_start, 9), min(12, base_end)
     elif pref == "après-midi":
-        start_hour, end_hour = 14, 18
+        start_hour, end_hour = max(14, base_start), min(18, base_end)
     elif pref == "soir":
-        start_hour, end_hour = 18, 20
+        start_hour, end_hour = max(18, base_start), min(20, base_end)
     else:
-        start_hour, end_hour = 9, 18
+        start_hour, end_hour = base_start, base_end
 
     per_day = max(5, limit * 2)
     days_fr = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
@@ -629,14 +643,15 @@ def _get_slots_from_google_calendar(calendar, limit: int, pref: Optional[str] = 
         if len(pool) >= SLOTS_POOL_SIZE:
             break
         date = datetime.now() + timedelta(days=day_offset)
-        if date.weekday() >= 5:
+        if date.weekday() not in booking_days:
             continue
         day_slots = calendar.get_free_slots(
             date=date,
-            duration_minutes=15,
+            duration_minutes=duration_minutes,
             start_hour=start_hour,
             end_hour=end_hour,
             limit=per_day,
+            buffer_minutes=buffer_minutes,
         )
         for slot in day_slots:
             if len(pool) >= SLOTS_POOL_SIZE:
