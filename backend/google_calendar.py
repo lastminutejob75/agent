@@ -33,7 +33,7 @@ class GoogleCalendarPermissionError(Exception):
 
 class GoogleCalendarService:
     """Service Google Calendar pour gérer les RDV."""
-    
+
     def __init__(self, calendar_id: str):
         """
         Args:
@@ -41,14 +41,12 @@ class GoogleCalendarService:
         """
         self.calendar_id = calendar_id
         self.service = self._build_service()
-    
+
     def _build_service(self):
         """Crée le service Google Calendar."""
         try:
-            # Utiliser cfg.SERVICE_ACCOUNT_FILE (chargé au startup)
             if not cfg.SERVICE_ACCOUNT_FILE:
                 raise Exception("❌ SERVICE_ACCOUNT_FILE not initialized - startup not run?")
-            
             credentials = service_account.Credentials.from_service_account_file(
                 cfg.SERVICE_ACCOUNT_FILE,
                 scopes=SCOPES

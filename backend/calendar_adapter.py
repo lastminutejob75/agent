@@ -65,11 +65,12 @@ class CalendarAdapter(Protocol):
 
 
 class _GoogleCalendarAdapter:
-    """Wrapper autour de GoogleCalendarService."""
+    """Wrapper autour de GoogleCalendarService (Service Account ou OAuth)."""
 
-    def __init__(self, calendar_id: str, tenant_id: int = 1):
+    def __init__(self, calendar_id: str, tenant_id: int = 1, refresh_token: Optional[str] = None):
         self._calendar_id = calendar_id
         self._tenant_id = tenant_id
+        self._refresh_token = (refresh_token or "").strip()
         self._service = None
 
     def _get_service(self):
@@ -77,7 +78,10 @@ class _GoogleCalendarAdapter:
             return self._service
         try:
             from backend.google_calendar import GoogleCalendarService
-            self._service = GoogleCalendarService(self._calendar_id)
+            self._service = GoogleCalendarService(
+                self._calendar_id,
+                refresh_token=self._refresh_token if self._refresh_token else None,
+            )
             return self._service
         except Exception as e:
             logger.error("GoogleCalendarAdapter init: %s", e)

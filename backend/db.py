@@ -68,6 +68,18 @@ def _ensure_tenants_tables(conn: sqlite3.Connection) -> None:
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tenant_routing_lookup ON tenant_routing(channel, did_key)")
 
+    # Demandes de connexion agenda (logiciel métier)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS agenda_contact_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id INTEGER NOT NULL,
+            software TEXT NOT NULL,
+            software_other TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (tenant_id) REFERENCES tenants(tenant_id)
+        )
+    """)
+
 
 def ensure_tenant_config() -> None:
     """Garantit que les tables tenants/tenant_config existent."""

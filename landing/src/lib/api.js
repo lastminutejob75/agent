@@ -143,4 +143,17 @@ export const api = {
   tenantRgpd: () => request("/api/tenant/rgpd", { tenant: true }),
   tenantPatchParams: (params) =>
     request("/api/tenant/params", { method: "PATCH", body: params, tenant: true }),
+
+  // Agenda setup
+  agendaConfig: () => request("/api/tenant/agenda/config", { tenant: true }),
+  agendaVerifyGoogle: (calendarId) =>
+    request("/api/tenant/agenda/verify-google", { method: "POST", body: { calendar_id: calendarId }, tenant: true }),
+  agendaContactRequest: (software, softwareOther) =>
+    request("/api/tenant/agenda/contact-request", {
+      method: "POST",
+      body: { software, software_other: softwareOther || "" },
+      tenant: true,
+    }),
+  agendaActivateNone: () =>
+    request("/api/tenant/agenda/activate-none", { method: "POST", tenant: true }),
 };

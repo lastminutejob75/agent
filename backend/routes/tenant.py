@@ -1,6 +1,6 @@
 # backend/routes/tenant.py
 """
-API tenant (client): dashboard, technical-status, me, params.
+API tenant (client): dashboard, technical-status, me, params, agenda.
 Protégé par cookie uwi_session uniquement (require_tenant_auth).
 """
 from __future__ import annotations
@@ -8,12 +8,17 @@ from __future__ import annotations
 import json
 import logging
 import os
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
 
 from backend.auth_pg import pg_get_tenant_user_by_id
+from backend.config import get_service_account_email
+from backend.db import ensure_tenant_config, get_conn
+from backend.google_calendar import GoogleCalendarPermissionError, GoogleCalendarService
 from backend.routes.admin import (
     _get_dashboard_snapshot,
     _get_kpis_daily,
@@ -21,6 +26,7 @@ from backend.routes.admin import (
     _get_technical_status,
     _get_tenant_detail,
 )
+from backend.services.email_service import send_agenda_contact_request_email
 from backend.tenants_pg import pg_update_tenant_params
 
 logger = logging.getLogger(__name__)
@@ -190,4 +196,84 @@ def tenant_patch_params(
     ok = pg_update_tenant_params(tenant_id, params)
     if not ok:
         raise HTTPException(500, "Failed to update params")
+    return {"ok": True}
+
+
+# --- Agenda setup (client) ---
+
+
+class VerifyGoogleBody(BaseModel):
+    calendar_id: str
+
+
+class ContactRequestBody(BaseModel):
+    software: str
+    software_other: Optional[str] = None
+
+
+@router.get("/agenda/config")
+def tenant_agenda_config(auth: dict = Depends(require_tenant_auth)):
+    """Retourne service_account_email pour les instructions partage Google Calendar."""
+    return {"service_account_email": get_service_account_email()}
+
+
+@router.post("/agenda/verify-google")
+def tenant_agenda_verify_google(
+    body: VerifyGoogleBody,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """
+    Vérifie l'accès au calendrier Google (get_free_slots test).
+    Si OK : sauvegarde calendar_provider=google, calendar_id.
+    """
+    calendar_id = (body.calendar_id or "").strip()
+    if not calendar_id:
+        return {"ok": False, "reason": "calendar_id_required"}
+    tenant_id = auth["tenant_id"]
+    try:
+        svc = GoogleCalendarService(calendar_id)
+        slots = svc.get_free_slots(datetime.now(), duration_minutes=15, limit=1)
+        pg_update_tenant_params(tenant_id, {"calendar_provider": "google", "calendar_id": calendar_id})
+        logger.info("agenda_verify_google ok tenant_id=%s calendar_id=%s", tenant_id, calendar_id[:50])
+        return {"ok": True}
+    except GoogleCalendarPermissionError:
+        return {"ok": False, "reason": "permission"}
+    except Exception as e:
+        logger.warning("agenda_verify_google failed tenant_id=%s: %s", tenant_id, e)
+        return {"ok": False, "reason": "error"}
+
+
+@router.post("/agenda/contact-request")
+def tenant_agenda_contact_request(
+    body: ContactRequestBody,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Enregistre la demande de connexion agenda (logiciel métier) et envoie email admin."""
+    tenant_id = auth["tenant_id"]
+    software = (body.software or "").strip() or "autre"
+    software_other = (body.software_other or "").strip()
+    d = _get_tenant_detail(tenant_id)
+    if not d:
+        raise HTTPException(404, "Tenant not found")
+    tenant_name = d.get("name", "N/A")
+    tenant_email = auth.get("email", "") or (d.get("params") or {}).get("contact_email", "")
+    ensure_tenant_config()
+    conn = get_conn()
+    try:
+        conn.execute(
+            "INSERT INTO agenda_contact_requests (tenant_id, software, software_other) VALUES (?, ?, ?)",
+            (tenant_id, software, software_other),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    send_agenda_contact_request_email(tenant_name, tenant_email, software, software_other)
+    return {"ok": True}
+
+
+@router.post("/agenda/activate-none")
+def tenant_agenda_activate_none(auth: dict = Depends(require_tenant_auth)):
+    """Active le mode sans agenda externe (l'assistant gère les RDV dans son propre système)."""
+    tenant_id = auth["tenant_id"]
+    pg_update_tenant_params(tenant_id, {"calendar_provider": "none", "calendar_id": ""})
     return {"ok": True}

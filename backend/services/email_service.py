@@ -880,3 +880,72 @@ def send_welcome_email(
             logger.exception("send_welcome_email smtp failed")
             return False, str(e)
     return False, "Email non configuré (Postmark ou SMTP)"
+
+
+def send_agenda_contact_request_email(
+    tenant_name: str,
+    tenant_email: str,
+    software: str,
+    software_other: str = "",
+) -> Tuple[bool, Optional[str]]:
+    """
+    Email interne : demande de connexion agenda (logiciel métier Pabau/Maiia/Doctolib).
+    Destinataire : ADMIN_ALERT_EMAIL ou REPORT_EMAIL.
+    Returns (success, error_message).
+    """
+    to = (
+        os.getenv("ADMIN_ALERT_EMAIL")
+        or os.getenv("REPORT_EMAIL")
+        or os.getenv("OWNER_EMAIL")
+        or ""
+    ).strip()
+    if not to:
+        logger.warning("send_agenda_contact_request: no ADMIN_ALERT_EMAIL/REPORT_EMAIL, skip")
+        return False, "ADMIN_ALERT_EMAIL ou REPORT_EMAIL non défini"
+    software_display = (software_other or software or "—").strip()
+    if software == "autre" and software_other:
+        software_display = software_other.strip()
+    subject = f"📋 Demande connexion agenda – {tenant_name}"
+    html = f"""
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Demande agenda</title></head>
+<body style="font-family: sans-serif; max-width: 560px; margin: 0 auto; padding: 1rem;">
+  <h1 style="font-size: 1.2rem;">Demande de connexion agenda</h1>
+  <p><strong>Client :</strong> {tenant_name}</p>
+  <p><strong>Email :</strong> {tenant_email}</p>
+  <p><strong>Logiciel :</strong> {software_display}</p>
+  <p style="color: #666; font-size: 0.9rem;">Contacter le client sous 24h pour finaliser la connexion.</p>
+</body>
+</html>
+"""
+    use_postmark = (os.getenv("EMAIL_PROVIDER") or "").strip().lower() == "postmark" or bool(
+        (os.getenv("POSTMARK_SERVER_TOKEN") or "").strip()
+    )
+    from_addr = (os.getenv("EMAIL_FROM") or os.getenv("SMTP_EMAIL") or os.getenv("REPORT_EMAIL") or "").strip()
+    if use_postmark and (os.getenv("POSTMARK_SERVER_TOKEN") or "").strip():
+        ok, err = _send_via_postmark(
+            from_addr or to,
+            to,
+            subject,
+            html,
+            (os.getenv("POSTMARK_SERVER_TOKEN") or "").strip(),
+        )
+        return ok, err
+    smtp_user = (os.getenv("SMTP_EMAIL") or "").strip()
+    smtp_pass = (os.getenv("SMTP_PASSWORD") or "").strip()
+    if smtp_user and smtp_pass:
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["From"] = smtp_user
+            msg["To"] = to
+            msg["Subject"] = subject
+            msg.attach(MIMEText(html, "html", "utf-8"))
+            with smtplib.SMTP(os.getenv("SMTP_HOST", "smtp.gmail.com"), int(os.getenv("SMTP_PORT", "587"))) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, [to], msg.as_string())
+            return True, None
+        except Exception as e:
+            return False, str(e)
+    return False, "Email non configuré"

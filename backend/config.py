@@ -250,4 +250,18 @@ def load_google_credentials():
         GOOGLE_CALENDAR_DISABLE_REASON = f"decode_error: {e}"
         raise RuntimeError(f"❌ Failed to decode credentials: {e}")
 
+def get_service_account_email() -> str:
+    """Retourne client_email du Service Account (pour instructions partage calendrier)."""
+    path = SERVICE_ACCOUNT_FILE
+    if not path:
+        return os.getenv("SERVICE_ACCOUNT_EMAIL", "")
+    try:
+        import json
+        with open(path, "r") as f:
+            data = json.load(f)
+        return (data.get("client_email") or "").strip()
+    except Exception:
+        return os.getenv("SERVICE_ACCOUNT_EMAIL", "")
+
+
 # ⚠️ NE RIEN EXÉCUTER ICI (sera appelé au startup FastAPI)
