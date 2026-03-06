@@ -6,7 +6,6 @@ import hashlib
 import logging
 import os
 import re
-from email.utils import parseaddr
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -23,52 +22,6 @@ router = APIRouter(prefix="/api/pre-onboarding", tags=["pre_onboarding"])
 VALID_VOLUME = {"<10", "10-25", "25-50", "50-100", "100+", "unknown"}
 
 
-def _mask_email(value: str) -> str:
-    email = parseaddr((value or "").strip())[1].strip()
-    if not email or "@" not in email:
-        return ""
-    local, domain = email.split("@", 1)
-    local_masked = local[:2] + "***" if len(local) > 2 else (local[:1] + "***" if local else "***")
-    domain_parts = domain.split(".")
-    domain_main = domain_parts[0] if domain_parts else domain
-    domain_rest = ".".join(domain_parts[1:]) if len(domain_parts) > 1 else ""
-    domain_masked = (domain_main[:2] + "***") if domain_main else "***"
-    return f"{local_masked}@{domain_masked}{('.' + domain_rest) if domain_rest else ''}"
-
-
-def _lead_email_recipient_info() -> Dict[str, str]:
-    candidates = [
-        ("FOUNDER_EMAIL", (os.environ.get("FOUNDER_EMAIL") or "").strip()),
-        ("ADMIN_EMAIL", (os.environ.get("ADMIN_EMAIL") or "").strip()),
-        ("ADMIN_ALERT_EMAIL", (os.environ.get("ADMIN_ALERT_EMAIL") or "").strip()),
-        ("REPORT_EMAIL", (os.environ.get("REPORT_EMAIL") or "").strip()),
-        ("SMTP_EMAIL", (os.environ.get("SMTP_EMAIL") or "").strip()),
-    ]
-    for source, value in candidates:
-        if value:
-            return {"source": source, "masked": _mask_email(value)}
-    return {"source": "", "masked": ""}
-
-
-def _lead_email_sender_info() -> Dict[str, str]:
-    postmark_token = (os.environ.get("POSTMARK_SERVER_TOKEN") or "").strip()
-    smtp_email = (os.environ.get("SMTP_EMAIL") or "").strip()
-    smtp_password = (os.environ.get("SMTP_PASSWORD") or "").strip()
-    postmark_from = (
-        os.environ.get("POSTMARK_FROM_EMAIL")
-        or os.environ.get("EMAIL_FROM")
-        or os.environ.get("SMTP_EMAIL")
-        or ""
-    ).strip()
-    if postmark_token and postmark_from:
-        return {"transport": "postmark", "source": "POSTMARK_FROM_EMAIL/EMAIL_FROM/SMTP_EMAIL", "masked": _mask_email(postmark_from)}
-    if smtp_email and smtp_password:
-        return {"transport": "smtp", "source": "SMTP_EMAIL", "masked": _mask_email(smtp_email)}
-    if postmark_token:
-        return {"transport": "postmark", "source": "missing_from_addr", "masked": ""}
-    return {"transport": "", "source": "", "masked": ""}
-
-
 @router.get("/config")
 async def pre_onboarding_config() -> Dict[str, Any]:
     """
@@ -77,9 +30,14 @@ async def pre_onboarding_config() -> Dict[str, Any]:
     """
     db_url = os.environ.get("DATABASE_URL") or os.environ.get("PG_TENANTS_URL") or ""
     db_ok = bool(db_url.strip())
-    recipient_info = _lead_email_recipient_info()
-    sender_info = _lead_email_sender_info()
-    email_recipient_ok = bool(recipient_info["source"])
+    to_email = (
+        (os.environ.get("FOUNDER_EMAIL") or "").strip()
+        or (os.environ.get("ADMIN_EMAIL") or "").strip()
+        or (os.environ.get("ADMIN_ALERT_EMAIL") or "").strip()
+        or (os.environ.get("REPORT_EMAIL") or "").strip()
+        or (os.environ.get("SMTP_EMAIL") or "").strip()
+    )
+    email_recipient_ok = bool(to_email)
     postmark = bool((os.environ.get("POSTMARK_SERVER_TOKEN") or "").strip())
     smtp = bool((os.environ.get("SMTP_EMAIL") or "").strip() and (os.environ.get("SMTP_PASSWORD") or "").strip())
     email_sender_ok = postmark or smtp
@@ -93,11 +51,6 @@ async def pre_onboarding_config() -> Dict[str, Any]:
         "emails_ok": email_recipient_ok and email_sender_ok,
         "total_leads_in_db": total_leads,
         "backend_hint": backend_hint,
-        "email_transport": sender_info["transport"],
-        "email_recipient_source": recipient_info["source"],
-        "email_recipient_masked": recipient_info["masked"],
-        "email_sender_source": sender_info["source"],
-        "email_sender_masked": sender_info["masked"],
     }
 VALID_VOICE = {"female", "male"}
 
