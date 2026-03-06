@@ -137,6 +137,7 @@ export default function AdminLeadDetail() {
   };
 
   const handleConvertLead = () => {
+    // Action explicite depuis la fiche lead : ouvrir le modal sans marquer converti trop tôt.
     setTenantModalNotice("");
     setShowCreateTenant(true);
   };
