@@ -155,3 +155,68 @@ def test_stripe_checkout_growth_uses_plan_specific_prices(client, admin_headers)
         {"price": "price_metered_growth_xxx"},
     ]
     assert call_kw.get("metadata", {}).get("plan_key") == "growth"
+
+
+def test_send_payment_link_setup_mode_existing_subscription(client, admin_headers):
+    """Si la subscription existe déjà → send-payment-link crée un Checkout en mode setup et envoie l'email."""
+    fake = _fake_stripe_module(session_url="https://checkout.stripe.com/c/pay/setup_xxx", customer_id="cus_existing")
+    mock_send_email = MagicMock(return_value=(True, None))
+    billing = {
+        "stripe_customer_id": "cus_existing",
+        "stripe_subscription_id": "sub_existing",
+        "billing_status": "trialing",
+        "plan_key": "starter",
+        "trial_ends_at": "2026-04-05T10:00:00+00:00",
+    }
+    tenant = {"tenant_id": 1, "name": "Cabinet Test", "params": {"contact_email": "owner@test.fr", "phone_number": "+33600000001"}}
+    env_payment = {
+        "STRIPE_SECRET_KEY": "sk_test_fake",
+        "CLIENT_APP_ORIGIN": "https://app.example.com",
+    }
+    with patch("backend.config.USE_PG_TENANTS", False):
+        with patch("backend.routes.admin._get_tenant_detail", return_value=tenant):
+            with patch("backend.routes.admin.get_tenant_billing", return_value=billing):
+                with patch("backend.services.email_service.send_payment_link_email", mock_send_email):
+                    with patch.dict("os.environ", env_payment, clear=False):
+                        with patch.dict("sys.modules", {"stripe": fake}):
+                            r = client.post("/api/admin/tenants/1/send-payment-link", headers=admin_headers)
+    assert r.status_code == 200
+    assert r.json().get("checkout_url") == "https://checkout.stripe.com/c/pay/setup_xxx"
+    call_kw = fake.checkout.Session.create.call_args[1]
+    assert call_kw["mode"] == "setup"
+    assert call_kw["customer"] == "cus_existing"
+    mock_send_email.assert_called_once()
+
+
+def test_send_payment_link_subscription_mode_without_subscription(client, admin_headers):
+    """Sans subscription existante → send-payment-link crée un Checkout subscription avec trial 30j."""
+    fake = _fake_stripe_module(session_url="https://checkout.stripe.com/c/pay/sub_xxx", customer_id="cus_new_xxx")
+    mock_send_email = MagicMock(return_value=(True, None))
+    billing = {
+        "stripe_customer_id": "cus_new_xxx",
+        "stripe_subscription_id": "",
+        "billing_status": "",
+        "plan_key": "starter",
+    }
+    tenant = {"tenant_id": 1, "name": "Cabinet Test", "params": {"contact_email": "owner@test.fr"}}
+    env_payment = {
+        "STRIPE_SECRET_KEY": "sk_test_fake",
+        "CLIENT_APP_ORIGIN": "https://app.example.com",
+        "STRIPE_PRICE_BASE_STARTER": "price_starter_xxx",
+        "STRIPE_PRICE_METERED_MINUTES": "price_metered_xxx",
+    }
+    with patch("backend.config.USE_PG_TENANTS", False):
+        with patch("backend.routes.admin._get_tenant_detail", return_value=tenant):
+            with patch("backend.routes.admin.get_tenant_billing", return_value=billing):
+                with patch("backend.services.email_service.send_payment_link_email", mock_send_email):
+                    with patch.dict("os.environ", env_payment, clear=False):
+                        with patch.dict("sys.modules", {"stripe": fake}):
+                            r = client.post("/api/admin/tenants/1/send-payment-link", headers=admin_headers)
+    assert r.status_code == 200
+    call_kw = fake.checkout.Session.create.call_args[1]
+    assert call_kw["mode"] == "subscription"
+    assert call_kw["subscription_data"]["trial_period_days"] == 30
+    assert call_kw["line_items"] == [
+        {"price": "price_starter_xxx", "quantity": 1},
+        {"price": "price_metered_xxx"},
+    ]

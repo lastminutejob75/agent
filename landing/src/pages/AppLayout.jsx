@@ -40,6 +40,7 @@ export default function AppLayout() {
   const [err, setErr] = useState(null);
   const [loading, setLoading] = useState(true);
   const [dashboard, setDashboard] = useState(null);
+  const [clock, setClock] = useState(new Date());
   const location = useLocation();
   const [sbOpen, setSbOpen] = useState(false);
 
@@ -63,6 +64,11 @@ export default function AppLayout() {
         setErr(e?.message || e?.data?.detail || "Chargement impossible. Réessayez ou déconnectez-vous.");
       })
       .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(new Date()), 1000);
+    return () => window.clearInterval(timer);
   }, []);
 
   const handleLogout = () => {
@@ -120,6 +126,10 @@ export default function AppLayout() {
     .slice(0, 2);
   const actionsCount = 0;
   const callsBadge = dashboard?.counters_7d?.calls_total ?? 0;
+  const urgentBadge = dashboard?.counters_7d?.transfers ?? 0;
+  const assistantName = (me?.assistant_name || "sophie").replace(/^./, (s) => s.toUpperCase());
+  const planLabel = (me?.plan_key || "growth").replace(/^./, (s) => s.toUpperCase());
+  const clockLabel = clock.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
   return (
     <div className="dash">
@@ -175,14 +185,20 @@ export default function AppLayout() {
         </nav>
         <div className="sb-foot">
           <div className="doc-pill">
-            <div className="doc-av">{initials}</div>
+            <div className="doc-av" style={{ position: "relative" }}>
+              {assistantName.slice(0, 2).toUpperCase()}
+              <span className="pulse-dot" />
+            </div>
             <div>
-              <div className="doc-nm">{me.tenant_name || "Mon Cabinet"}</div>
-              <div className="doc-pl">Growth · 149€/mois</div>
+              <div className="doc-nm">{assistantName}</div>
+              <div className="doc-pl">IA secrétariat active</div>
             </div>
             <svg width="13" height="13" viewBox="0 0 24 24" stroke="rgba(255,255,255,.2)" fill="none" strokeWidth="2.5" strokeLinecap="round">
               <polyline points="9 18 15 12 9 6" />
             </svg>
+          </div>
+          <div style={{ marginTop: 10, padding: "0 4px", fontSize: 11, color: "rgba(255,255,255,.42)" }}>
+            {me.tenant_name || initials} · {planLabel}
           </div>
         </div>
       </aside>
@@ -196,12 +212,17 @@ export default function AppLayout() {
             <div className="tb-sub" id="cd-tb-sub">{sub}</div>
           </div>
           <div className="tb-right">
+            <div className="ia-badge">
+              <span className="pulse-dot light" />
+              IA ACTIVE
+            </div>
+            <div className="clock-pill">{clockLabel}</div>
             <div className="tb-btn" style={{ position: "relative" }}>
               <svg viewBox="0 0 24 24" width="16" height="16" stroke="var(--body)" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
                 <path d="M13.73 21a2 2 0 01-3.46 0" />
               </svg>
-              <div className="notif-dot" />
+              {urgentBadge > 0 && <div className="notif-dot" />}
             </div>
             <button type="button" className="tb-btn tb-ham" onClick={() => setSbOpen(true)} aria-label="Menu">
               <svg viewBox="0 0 24 24" width="16" height="16" stroke="var(--body)" fill="none" strokeWidth="2">

@@ -47,9 +47,11 @@ def test_tenant_rgpd_unauthorized(client):
 
 
 @patch("backend.routes.tenant.pg_get_tenant_user_by_id")
+@patch("backend.routes.tenant._get_quota_used_minutes")
 @patch("backend.routes.tenant._get_kpis_daily")
-def test_tenant_kpis_ok(mock_kpis, mock_get_user, client):
+def test_tenant_kpis_ok(mock_kpis, mock_quota_minutes, mock_get_user, client):
     """GET /api/tenant/kpis avec JWT → days + trend."""
+    mock_quota_minutes.return_value = 42
     mock_kpis.return_value = {
         "days": [
             {"date": "2026-02-01", "calls": 3, "bookings": 1, "transfers": 0},
@@ -66,6 +68,7 @@ def test_tenant_kpis_ok(mock_kpis, mock_get_user, client):
     data = r.json()
     assert len(data["days"]) == 2
     assert data["trend"]["calls_pct"] == 33
+    assert data["minutes_month"] == 42
 
 
 @patch("backend.routes.tenant.pg_get_tenant_user_by_id")
@@ -93,3 +96,76 @@ def test_tenant_rgpd_ok(mock_rgpd, mock_get_user, client):
     assert data["calls_total"] == 10
     assert len(data["last_consents"]) == 1
     assert data["last_consents"][0]["call_id"] == "call-1"
+
+
+@patch("backend.routes.tenant.pg_get_tenant_user_by_id")
+@patch("backend.routes.tenant._get_tenant_detail")
+@patch("backend.routes.tenant._get_call_detail")
+@patch("backend.routes.tenant._get_calls_list")
+def test_tenant_calls_ok(mock_calls, mock_call_detail, mock_tenant_detail, mock_get_user, client):
+    mock_get_user.return_value = {"tenant_id": 1, "email": "test@example.com", "role": "owner"}
+    mock_tenant_detail.return_value = {
+        "tenant_id": 1,
+        "name": "Cabinet Test",
+        "timezone": "Europe/Paris",
+        "params": {"assistant_name": "sophie", "timezone": "Europe/Paris"},
+    }
+    mock_calls.return_value = {
+        "items": [
+            {
+                "call_id": "call_123",
+                "started_at": "2026-03-06T10:32:00Z",
+                "last_event_at": "2026-03-06T10:34:00Z",
+                "result": "transfer",
+                "duration_min": 2,
+            }
+        ]
+    }
+    mock_call_detail.return_value = {
+        "duration_min": 2,
+        "events": [{"event": "transferred_human", "meta": {"reason": "medical_urgency"}}],
+        "transcript": "Patient: douleurs thoraciques depuis 2h",
+    }
+    token = _make_jwt()
+    r = client.get("/api/tenant/calls?limit=10&days=1", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["total"] == 1
+    assert data["calls"][0]["call_id"] == "call_123"
+    assert data["calls"][0]["status"] == "TRANSFERRED"
+    assert data["calls"][0]["agent_name"] == "Sophie"
+
+
+@patch("backend.routes.tenant.pg_get_tenant_user_by_id")
+@patch("backend.routes.tenant.GoogleCalendarService")
+@patch("backend.routes.tenant._get_tenant_detail")
+def test_tenant_agenda_google_ok(mock_tenant_detail, mock_google_service, mock_get_user, client):
+    mock_get_user.return_value = {"tenant_id": 1, "email": "test@example.com", "role": "owner"}
+    mock_tenant_detail.return_value = {
+        "tenant_id": 1,
+        "name": "Cabinet Test",
+        "timezone": "Europe/Paris",
+        "params": {
+            "timezone": "Europe/Paris",
+            "calendar_provider": "google",
+            "calendar_id": "cabinet@test.calendar.google.com",
+        },
+    }
+    mock_google_service.return_value.service.events.return_value.list.return_value.execute.return_value = {
+        "items": [
+            {
+                "id": "evt_1",
+                "summary": "RDV - Claire Fontaine",
+                "description": "Patient: Claire Fontaine\nMotif: Consultation",
+                "start": {"dateTime": "2026-03-06T09:00:00+01:00"},
+                "end": {"dateTime": "2026-03-06T09:30:00+01:00"},
+            }
+        ]
+    }
+    token = _make_jwt()
+    r = client.get("/api/tenant/agenda", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["total"] == 1
+    assert data["slots"][0]["patient"] == "Claire Fontaine"
+    assert data["slots"][0]["source"] == "UWI"

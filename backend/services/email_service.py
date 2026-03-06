@@ -907,6 +907,83 @@ def send_welcome_email(
     return False, "Email non configuré (Postmark ou SMTP)"
 
 
+def send_payment_link_email(
+    to: str,
+    tenant_name: str,
+    checkout_url: str,
+    trial_end_date: Optional[str] = None,
+) -> Tuple[bool, Optional[str]]:
+    """
+    Envoie un lien Stripe au client pour ajouter sa carte pendant/après le trial.
+    """
+    to_addr = (to or "").strip().lower()
+    if not to_addr:
+        return False, "Destinataire vide"
+    if not (checkout_url or "").strip():
+        return False, "checkout_url vide"
+
+    trial_sentence = (
+        f"Votre période d'essai de 30 jours se termine le <strong>{trial_end_date}</strong>.<br/>"
+        if (trial_end_date or "").strip()
+        else "Votre période d'essai de 30 jours est en cours.<br/>"
+    )
+    subject = "Finalisez votre abonnement UWI"
+    html = f"""
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Finalisez votre abonnement UWI</title></head>
+<body style="font-family: sans-serif; max-width: 560px; margin: 0 auto; padding: 1rem;">
+  <h1 style="font-size: 1.25rem;">Finalisez votre abonnement UWI</h1>
+  <p>Bonjour,</p>
+  <p>
+    {trial_sentence}
+    Pour continuer à utiliser votre assistant vocal <strong>{tenant_name}</strong>, ajoutez votre moyen de paiement.
+  </p>
+  <p style="margin: 1.5rem 0;">
+    <a href="{checkout_url}" style="display:inline-block;background:linear-gradient(135deg,#14b8a6,#0d9488);color:#fff;padding:12px 24px;text-decoration:none;border-radius:8px;font-weight:700;font-size:1rem;">
+      Ajouter ma carte
+    </a>
+  </p>
+  <p style="color:#666;font-size:0.9rem;">Ou copiez ce lien : <a href="{checkout_url}">{checkout_url}</a></p>
+</body>
+</html>
+"""
+    from_addr = (
+        os.getenv("POSTMARK_FROM_EMAIL") or os.getenv("EMAIL_FROM") or os.getenv("SMTP_EMAIL") or ""
+    ).strip()
+    token = (os.getenv("POSTMARK_SERVER_TOKEN") or "").strip()
+    if token and from_addr:
+        try:
+            ok, err = _send_via_postmark(from_addr, to_addr, subject, html, token)
+            if ok:
+                logger.info("payment_link_email_sent via postmark", extra={"to": to_addr[:50]})
+            return ok, err
+        except Exception as e:
+            logger.exception("send_payment_link_email postmark failed")
+            return False, str(e)
+    smtp_user = (os.getenv("SMTP_EMAIL") or "").strip()
+    smtp_pass = (os.getenv("SMTP_PASSWORD") or "").strip()
+    if smtp_user and smtp_pass:
+        host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        port = int(os.getenv("SMTP_PORT", "587"))
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["From"] = smtp_user
+            msg["To"] = to_addr
+            msg["Subject"] = subject
+            msg.attach(MIMEText(html, "html", "utf-8"))
+            with smtplib.SMTP(host, port) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, [to_addr], msg.as_string())
+            logger.info("payment_link_email_sent via smtp", extra={"to": to_addr[:50]})
+            return True, None
+        except Exception as e:
+            logger.exception("send_payment_link_email smtp failed")
+            return False, str(e)
+    return False, "Email non configuré (Postmark ou SMTP)"
+
+
 def send_agenda_contact_request_email(
     tenant_name: str,
     tenant_email: str,

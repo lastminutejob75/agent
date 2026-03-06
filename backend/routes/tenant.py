@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import bcrypt
@@ -20,10 +20,13 @@ from backend.auth_pg import pg_get_tenant_user_by_id, pg_update_password
 from backend.calendar_adapter import _GoogleCalendarAdapter
 from backend.config import get_service_account_email
 from backend.db import ensure_tenant_config, get_conn
-from backend.google_calendar import GoogleCalendarNotFoundError, GoogleCalendarPermissionError
+from backend.google_calendar import GoogleCalendarNotFoundError, GoogleCalendarPermissionError, GoogleCalendarService
 from backend.routes.admin import (
+    _get_call_detail,
+    _get_calls_list,
     _get_dashboard_snapshot,
     _get_kpis_daily,
+    _get_quota_used_minutes,
     _get_rgpd_extended,
     _get_technical_status,
     _get_tenant_detail,
@@ -32,12 +35,24 @@ from backend.services.email_service import send_agenda_contact_request_email
 from backend.tenant_config import derive_horaires_text, get_booking_rules
 from backend.tenants_pg import pg_update_tenant_params
 
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    ZoneInfo = None  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tenant", tags=["tenant"])
 
 JWT_SECRET = os.environ.get("JWT_SECRET", "")
 SESSION_COOKIE_NAME = os.environ.get("SESSION_COOKIE_NAME", "uwi_session")
+
+STATUS_MAP = {
+    "rdv": "CONFIRMED",
+    "transfer": "TRANSFERRED",
+    "abandoned": "ABANDONED",
+    "other": "FAQ",
+}
 
 
 def _decode_jwt(token: str) -> Optional[Dict[str, Any]]:
@@ -107,6 +122,103 @@ def require_tenant_auth(request: Request) -> Dict[str, Any]:
     raise HTTPException(401, "Missing or invalid token")
 
 
+def _tenant_timezone(detail: Optional[dict]) -> str:
+    params = (detail or {}).get("params") or {}
+    return (params.get("timezone") or (detail or {}).get("timezone") or "Europe/Paris").strip() or "Europe/Paris"
+
+
+def _get_zoneinfo(tz_name: str):
+    if ZoneInfo:
+        try:
+            return ZoneInfo(tz_name or "Europe/Paris")
+        except Exception:
+            return ZoneInfo("Europe/Paris")
+    return timezone(timedelta(hours=1))
+
+
+def _parse_dt(value: Any, tz_name: str = "Europe/Paris") -> Optional[datetime]:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        raw = str(value).strip()
+        if not raw:
+            return None
+        try:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except Exception:
+            try:
+                dt = datetime.strptime(raw[:19], "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=_get_zoneinfo(tz_name))
+    return dt
+
+
+def _format_hhmm(value: Any, tz_name: str) -> str:
+    dt = _parse_dt(value, tz_name)
+    if not dt:
+        return "—"
+    return dt.astimezone(_get_zoneinfo(tz_name)).strftime("%H:%M")
+
+
+def _format_hour_slot(value: Any, tz_name: str) -> str:
+    dt = _parse_dt(value, tz_name)
+    if not dt:
+        return "—"
+    return dt.astimezone(_get_zoneinfo(tz_name)).strftime("%Hh")
+
+
+def _format_duration_short(duration_min: Optional[int]) -> str:
+    total_seconds = max(0, int((duration_min or 0) * 60))
+    minutes = total_seconds // 60
+    seconds = total_seconds % 60
+    return f"{minutes}'{seconds:02d}"
+
+
+def _humanize_reason(reason: Optional[str]) -> Optional[str]:
+    if not reason:
+        return None
+    text = str(reason).strip().replace("_", " ")
+    if not text:
+        return None
+    return text[:1].upper() + text[1:]
+
+
+def _call_summary_from_detail(status: str, detail: dict) -> str:
+    transcript = (detail.get("transcript") or "").strip()
+    user_lines = []
+    if transcript:
+        for line in transcript.splitlines():
+            clean = line.strip()
+            if clean.startswith("Patient:"):
+                user_lines.append(clean.replace("Patient:", "", 1).strip())
+    latest_reason = None
+    for event in reversed(detail.get("events") or []):
+        meta = event.get("meta") or {}
+        if meta.get("reason"):
+            latest_reason = _humanize_reason(meta.get("reason"))
+            break
+    if status == "TRANSFERRED":
+        return f"{latest_reason} — transfert humain" if latest_reason else "Transféré à un humain"
+    if status == "CONFIRMED":
+        return "Rendez-vous confirmé" if not user_lines else f"RDV confirmé — {user_lines[0][:72]}"
+    if status == "ABANDONED":
+        return "Appel interrompu par le patient"
+    if user_lines:
+        return user_lines[0][:96]
+    return "Demande d'information traitée par l'assistant"
+
+
+def _extract_google_description_line(description: str, prefix: str) -> Optional[str]:
+    for line in (description or "").splitlines():
+        if line.lower().startswith(prefix.lower()):
+            return line.split(":", 1)[1].strip() if ":" in line else line.strip()
+    return None
+
+
 @router.get("/me")
 def tenant_me(auth: dict = Depends(require_tenant_auth)):
     """Profil du tenant connecté."""
@@ -124,6 +236,8 @@ def tenant_me(auth: dict = Depends(require_tenant_auth)):
         "timezone": params.get("timezone", "Europe/Paris"),
         "calendar_id": params.get("calendar_id", ""),
         "calendar_provider": params.get("calendar_provider", "none"),
+        "assistant_name": params.get("assistant_name", "sophie"),
+        "plan_key": params.get("plan_key", "growth"),
     }
 
 
@@ -159,7 +273,17 @@ def tenant_dashboard(auth: dict = Depends(require_tenant_auth)):
 def tenant_kpis(auth: dict = Depends(require_tenant_auth), days: int = Query(7, ge=1, le=30)):
     """KPIs par jour + trend vs semaine précédente (graphique 7j)."""
     tenant_id = auth["tenant_id"]
-    return _get_kpis_daily(tenant_id, days=days)
+    data = _get_kpis_daily(tenant_id, days=days)
+    current = data.get("current") or {}
+    calls = int(current.get("calls") or 0)
+    transfers = int(current.get("transfers") or 0)
+    answered = max(0, calls - transfers)
+    data["pickup_rate"] = round((answered / calls) * 100) if calls else 100
+    now = datetime.utcnow()
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    month_end = now.replace(month=now.month + 1, day=1, hour=0, minute=0, second=0, microsecond=0) if now.month < 12 else now.replace(year=now.year + 1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    data["minutes_month"] = int(round(_get_quota_used_minutes(tenant_id, month_start.strftime("%Y-%m-%d %H:%M:%S"), month_end.strftime("%Y-%m-%d %H:%M:%S")), 0))
+    return data
 
 
 @router.get("/rgpd")
@@ -181,6 +305,203 @@ def tenant_technical_status(auth: dict = Depends(require_tenant_auth)):
     if not status:
         raise HTTPException(404, "Tenant not found")
     return status
+
+
+@router.get("/calls")
+def tenant_calls(
+    auth: dict = Depends(require_tenant_auth),
+    limit: int = Query(10, ge=1, le=50),
+    days: int = Query(1, ge=1, le=30),
+):
+    """Retourne les derniers appels formatés pour le dashboard client."""
+    tenant_id = auth["tenant_id"]
+    detail = _get_tenant_detail(tenant_id)
+    if not detail:
+        raise HTTPException(404, "Tenant not found")
+    tz_name = _tenant_timezone(detail)
+    assistant_name = (((detail.get("params") or {}).get("assistant_name")) or "Sophie").strip().title()
+    raw = _get_calls_list(tenant_id=tenant_id, days=days, limit=limit)
+    items = raw.get("items") or []
+    if not items and not (os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")):
+        ensure_tenant_config()
+        conn = get_conn()
+        try:
+            rows = conn.execute(
+                """
+                SELECT call_id, MIN(created_at) AS started_at, MAX(created_at) AS last_event_at
+                FROM ivr_events
+                WHERE client_id = ? AND call_id IS NOT NULL AND TRIM(call_id) != ''
+                  AND created_at >= datetime('now', ?)
+                GROUP BY call_id
+                ORDER BY last_event_at DESC
+                LIMIT ?
+                """,
+                (tenant_id, f"-{int(days)} day", limit),
+            ).fetchall()
+            items = [
+                {
+                    "call_id": row[0],
+                    "started_at": row[1],
+                    "last_event_at": row[2],
+                    "result": "other",
+                    "duration_min": None,
+                }
+                for row in rows
+            ]
+        finally:
+            conn.close()
+    calls = []
+    for item in items[:limit]:
+        call_id = (item.get("call_id") or "").strip()
+        if not call_id:
+            continue
+        call_detail = _get_call_detail(tenant_id, call_id)
+        status = STATUS_MAP.get((item.get("result") or "other").lower(), "FAQ")
+        started_at = item.get("started_at") or item.get("last_event_at")
+        calls.append({
+            "id": call_id,
+            "time": _format_hhmm(started_at, tz_name),
+            "duration": _format_duration_short(call_detail.get("duration_min") or item.get("duration_min")),
+            "patient_name": "Patient",
+            "agent_name": assistant_name,
+            "summary": _call_summary_from_detail(status, call_detail),
+            "status": status,
+            "call_id": call_id,
+        })
+    return {
+        "calls": calls,
+        "total": len(calls),
+        "date": datetime.now(_get_zoneinfo(tz_name)).strftime("%Y-%m-%d"),
+    }
+
+
+@router.get("/agenda")
+def tenant_agenda(auth: dict = Depends(require_tenant_auth)):
+    """Retourne les rendez-vous du jour depuis Google Calendar ou le stockage local."""
+    tenant_id = auth["tenant_id"]
+    detail = _get_tenant_detail(tenant_id)
+    if not detail:
+        raise HTTPException(404, "Tenant not found")
+    params = detail.get("params") or {}
+    tz_name = _tenant_timezone(detail)
+    tz = _get_zoneinfo(tz_name)
+    now_local = datetime.now(tz)
+    day_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = day_start + timedelta(days=1)
+    slots: List[Dict[str, Any]] = []
+
+    if (params.get("calendar_provider") or "").strip() == "google" and (params.get("calendar_id") or "").strip():
+        try:
+            service = GoogleCalendarService((params.get("calendar_id") or "").strip())
+            result = service.service.events().list(
+                calendarId=(params.get("calendar_id") or "").strip(),
+                timeMin=day_start.isoformat(),
+                timeMax=day_end.isoformat(),
+                singleEvents=True,
+                orderBy="startTime",
+            ).execute()
+            for event in result.get("items", []):
+                raw_start = (event.get("start") or {}).get("dateTime") or (event.get("start") or {}).get("date")
+                raw_end = (event.get("end") or {}).get("dateTime") or (event.get("end") or {}).get("date")
+                start_dt = _parse_dt(raw_start, tz_name)
+                end_dt = _parse_dt(raw_end, tz_name)
+                if not start_dt:
+                    continue
+                start_local = start_dt.astimezone(tz)
+                end_local = end_dt.astimezone(tz) if end_dt else start_local
+                summary = (event.get("summary") or "").strip()
+                description = (event.get("description") or "").strip()
+                patient = summary.replace("RDV - ", "", 1).strip() if summary.startswith("RDV - ") else (summary or "Patient")
+                motif = _extract_google_description_line(description, "Motif") or (summary if summary and not summary.startswith("RDV - ") else "Consultation")
+                source = "UWI" if summary.startswith("RDV - ") or "Patient:" in description else "EXTERNAL"
+                slots.append({
+                    "hour": start_local.strftime("%Hh"),
+                    "patient": patient,
+                    "type": motif,
+                    "source": source,
+                    "done": end_local <= now_local,
+                    "current": start_local <= now_local < end_local,
+                    "event_id": event.get("id") or "",
+                })
+        except Exception as e:
+            logger.warning("tenant agenda google failed tenant_id=%s: %s", tenant_id, e)
+    else:
+        url = os.environ.get("DATABASE_URL") or os.environ.get("PG_SLOTS_URL")
+        if url:
+            try:
+                import psycopg
+                from psycopg.rows import dict_row
+                with psycopg.connect(url, row_factory=dict_row) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            SELECT a.id, a.name, a.motif, s.start_ts
+                            FROM appointments a
+                            JOIN slots s ON s.id = a.slot_id
+                            WHERE a.tenant_id = %s
+                              AND s.start_ts >= %s
+                              AND s.start_ts < %s
+                            ORDER BY s.start_ts ASC
+                            """,
+                            (tenant_id, day_start.astimezone(timezone.utc), day_end.astimezone(timezone.utc)),
+                        )
+                        for row in cur.fetchall():
+                            start_local = _parse_dt(row.get("start_ts"), tz_name)
+                            if not start_local:
+                                continue
+                            start_local = start_local.astimezone(tz)
+                            end_local = start_local + timedelta(minutes=30)
+                            slots.append({
+                                "hour": start_local.strftime("%Hh"),
+                                "patient": row.get("name") or "Patient",
+                                "type": row.get("motif") or "Consultation",
+                                "source": "UWI",
+                                "done": end_local <= now_local,
+                                "current": start_local <= now_local < end_local,
+                                "event_id": str(row.get("id") or ""),
+                            })
+            except Exception as e:
+                logger.warning("tenant agenda pg failed tenant_id=%s: %s", tenant_id, e)
+        else:
+            ensure_tenant_config()
+            conn = get_conn()
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT a.id, a.name, a.motif, s.date, s.time
+                    FROM appointments a
+                    JOIN slots s ON s.id = a.slot_id
+                    WHERE a.tenant_id = ? AND s.date = ?
+                    ORDER BY s.time ASC
+                    """,
+                    (tenant_id, day_start.strftime("%Y-%m-%d")),
+                ).fetchall()
+                for row in rows:
+                    start_local = _parse_dt(f"{row[3]}T{row[4]}:00", tz_name)
+                    if not start_local:
+                        continue
+                    end_local = start_local + timedelta(minutes=30)
+                    slots.append({
+                        "hour": start_local.strftime("%Hh"),
+                        "patient": row[1] or "Patient",
+                        "type": row[2] or "Consultation",
+                        "source": "UWI",
+                        "done": end_local <= now_local,
+                        "current": start_local <= now_local < end_local,
+                        "event_id": str(row[0] or ""),
+                    })
+            finally:
+                conn.close()
+
+    slots.sort(key=lambda item: item.get("hour") or "")
+    done_count = sum(1 for item in slots if item.get("done"))
+    return {
+        "slots": slots,
+        "date": day_start.strftime("%Y-%m-%d"),
+        "total": len(slots),
+        "done": done_count,
+        "remaining": max(0, len(slots) - done_count),
+    }
 
 
 @router.patch("/params")

@@ -154,6 +154,9 @@ export const api = {
   tenantGetHoraires: () => request("/api/tenant/horaires", { tenant: true }),
   tenantUpdateHoraires: (rules) =>
     request("/api/tenant/horaires", { method: "PATCH", body: rules, tenant: true }),
+  tenantGetCalls: (params = "") =>
+    request(`/api/tenant/calls${params}`, { tenant: true }),
+  tenantGetAgenda: () => request("/api/tenant/agenda", { tenant: true }),
   tenantChangePassword: (newPassword) =>
     request("/api/tenant/auth/change-password", {
       method: "PATCH",
@@ -177,4 +180,6 @@ export const api = {
 
 export const tenantGetHoraires = () => api.tenantGetHoraires();
 export const tenantUpdateHoraires = (rules) => api.tenantUpdateHoraires(rules);
+export const tenantGetCalls = (params = "") => api.tenantGetCalls(params);
+export const tenantGetAgenda = () => api.tenantGetAgenda();
 export const adminUpdateHoraires = (tenantId, rules) => api.adminUpdateHoraires(tenantId, rules);
