@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useSearchParams } from "react-router-dom";
 import { adminApi } from "../../lib/adminApi.js";
 import { convertOpeningHours } from "../../lib/bookingUtils.js";
 import { formatOpeningHoursPretty, getAmplitudeBadge, getAmplitudeScore } from "../../lib/openingHoursPretty.js";
@@ -56,6 +56,7 @@ const STATUS_LABELS = { new: "Nouveau", contacted: "Contacté", converted: "Conv
 
 export default function AdminLeadDetail() {
   const { id } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [lead, setLead] = useState(null);
   const [copied, setCopied] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
@@ -65,6 +66,7 @@ export default function AdminLeadDetail() {
   const [newNote, setNewNote] = useState("");
   const [noteLog, setNoteLog] = useState([]);
   const [tenantModalNotice, setTenantModalNotice] = useState("");
+  const [autoOpenHandled, setAutoOpenHandled] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -92,6 +94,15 @@ export default function AdminLeadDetail() {
     setNoteLog(parsed);
     setFollowUpDate(lead.follow_up_at?.slice(0, 16) || "");
   }, [lead]);
+
+  useEffect(() => {
+    if (!lead || autoOpenHandled) return;
+    if (searchParams.get("action") === "create-client" && lead.status !== "converted") {
+      setTenantModalNotice("");
+      setShowCreateTenant(true);
+      setAutoOpenHandled(true);
+    }
+  }, [lead, searchParams, autoOpenHandled]);
 
   const VALID_SECTORS = ["medecin_generaliste", "specialiste", "kine", "dentiste", "infirmier"];
   const VALID_ASSISTANTS = ["sophie", "laura", "emma", "julie", "clara", "hugo", "julien", "nicolas", "alexandre", "thomas"];
@@ -130,6 +141,13 @@ export default function AdminLeadDetail() {
     setShowCreateTenant(true);
   };
 
+  const clearCreateClientQuery = () => {
+    if (searchParams.get("action") !== "create-client") return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("action");
+    setSearchParams(next, { replace: true });
+  };
+
   const handleTenantCreated = async (newTenant) => {
     if (!id) return;
     const entry = {
@@ -154,12 +172,14 @@ export default function AdminLeadDetail() {
       setTenantModalNotice("Client créé, mais impossible de marquer le lead comme converti.");
     } finally {
       setShowCreateTenant(false);
+      clearCreateClientQuery();
     }
   };
 
   const handleTenantModalClose = () => {
     setShowCreateTenant(false);
     setTenantModalNotice("Création annulée — le lead n'a pas été modifié");
+    clearCreateClientQuery();
   };
 
   const copyDirectLink = () => {
@@ -347,6 +367,37 @@ export default function AdminLeadDetail() {
           >
             🎯 Envoyer la démo
           </a>
+          {lead.status !== "converted" ? (
+            <button
+              type="button"
+              onClick={handleConvertLead}
+              style={{
+                ...btnPrimary,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                boxShadow: "0 4px 16px rgba(0,229,160,0.25)",
+              }}
+            >
+              ✨ Créer client
+            </button>
+          ) : (
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                padding: "10px 18px",
+                borderRadius: 10,
+                background: "rgba(16,185,129,0.18)",
+                border: "1px solid rgba(16,185,129,0.35)",
+                color: "#10B981",
+                fontSize: 13,
+                fontWeight: 800,
+              }}
+            >
+              ✓ Client créé
+            </span>
+          )}
         </div>
 
         <h2 style={{ ...h2Style, marginTop: 24, marginBottom: 12 }}>Statut</h2>

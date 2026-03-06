@@ -304,6 +304,38 @@ export default function AdminLeadsList() {
                       {/* Droite : date + bouton */}
                       <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
                         <span style={{ fontSize: 11, color: "#6B90A8" }}>{formatDate(lead.created_at)}</span>
+                        {lead.status !== "converted" ? (
+                          <Link
+                            to={`/admin/leads/${lead.id}?action=create-client`}
+                            style={{
+                              background: "linear-gradient(135deg, #00E5A0, #00b87c)",
+                              color: "#0A1828",
+                              border: "1px solid rgba(0,229,160,0.35)",
+                              borderRadius: 8,
+                              padding: "6px 14px",
+                              fontSize: 12,
+                              fontWeight: 800,
+                              textDecoration: "none",
+                              boxShadow: "0 4px 14px rgba(0,229,160,0.18)",
+                            }}
+                          >
+                            ✨ Créer client
+                          </Link>
+                        ) : (
+                          <span
+                            style={{
+                              background: "rgba(0,229,160,0.12)",
+                              color: "#00E5A0",
+                              border: "1px solid rgba(0,229,160,0.3)",
+                              borderRadius: 8,
+                              padding: "6px 14px",
+                              fontSize: 12,
+                              fontWeight: 700,
+                            }}
+                          >
+                            ✓ Client créé
+                          </span>
+                        )}
                         <Link
                           to={`/admin/leads/${lead.id}`}
                           style={{
