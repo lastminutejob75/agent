@@ -240,22 +240,33 @@ def list_leads(
     limit: int = 200,
 ) -> List[Dict[str, Any]]:
     """List leads. Optional filter by status and/or is_enterprise. Order: chronological (created_at desc, most recent first)."""
+    where_parts = []
+    params = []
+    if status:
+        where_parts.append("status = %s")
+        params.append(status)
+    if enterprise_only:
+        where_parts.append("is_enterprise = true")
+    where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+    params.append(limit)
+
+    def _normalize_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        out = []
+        for row in rows:
+            d = _row_to_lead(row)
+            d.setdefault("notes_log", "[]")
+            d.setdefault("follow_up_at", None)
+            out.append(d)
+        return out
+
     try:
         with _get_conn() as conn:
             with conn.cursor() as cur:
-                where_parts = []
-                params = []
-                if status:
-                    where_parts.append("status = %s")
-                    params.append(status)
-                if enterprise_only:
-                    where_parts.append("is_enterprise = true")
-                where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
-                params.append(limit)
                 cur.execute(
                     f"""
                     SELECT id, created_at, email, daily_call_volume, medical_specialty, medical_specialty_label, specialty_other, primary_pain_point, assistant_name, voice_gender,
-                           opening_hours, wants_callback, callback_phone, callback_booking_date, callback_booking_slot, is_enterprise, source, status, notes, notes_log, follow_up_at,
+                           opening_hours, wants_callback, callback_phone, callback_booking_date, callback_booking_slot, is_enterprise, source, status, notes,
+                           COALESCE(notes_log, '[]'::jsonb) AS notes_log, follow_up_at,
                            contacted_at, converted_at, updated_at, last_submitted_at, max_daily_amplitude
                     FROM pre_onboarding_leads
                     {where_sql}
@@ -265,9 +276,29 @@ def list_leads(
                     tuple(params),
                 )
                 rows = cur.fetchall()
-        return [_row_to_lead(r) for r in rows]
+        return _normalize_rows(rows)
     except Exception as e:
-        logger.exception("list_leads failed: %s", e)
+        logger.warning("list_leads full query failed (schema?): %s", e)
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT id, created_at, email, daily_call_volume, medical_specialty, medical_specialty_label, specialty_other, primary_pain_point, assistant_name, voice_gender,
+                           opening_hours, wants_callback, callback_phone, callback_booking_date, callback_booking_slot, is_enterprise, source, status, notes,
+                           contacted_at, converted_at, updated_at, last_submitted_at, max_daily_amplitude
+                    FROM pre_onboarding_leads
+                    {where_sql}
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    tuple(params),
+                )
+                rows = cur.fetchall()
+        logger.info("list_leads: used minimal query (notes_log/follow_up_at may be missing)")
+        return _normalize_rows(rows)
+    except Exception as e:
+        logger.exception("list_leads minimal failed: %s", e)
         return []
 
 
