@@ -63,6 +63,7 @@ export default function AdminLeadDetail() {
   const [followUpSaved, setFollowUpSaved] = useState(false);
   const [newNote, setNewNote] = useState("");
   const [noteLog, setNoteLog] = useState([]);
+  const [tenantModalNotice, setTenantModalNotice] = useState("");
 
   useEffect(() => {
     if (!id) return;
@@ -111,6 +112,11 @@ export default function AdminLeadDetail() {
 
   const handleStatusChange = async (newStatus) => {
     if (!id) return;
+    if (newStatus === "converted") {
+      setTenantModalNotice("");
+      setShowCreateTenant(true);
+      return;
+    }
     const autoEntry = {
       text: `Statut changé → ${STATUS_LABELS[newStatus] || newStatus}`,
       action: "statut",
@@ -118,9 +124,40 @@ export default function AdminLeadDetail() {
     };
     const updatedLog = [...noteLog, autoEntry];
     await adminApi.leadPatch(id, { status: newStatus, notes_log: JSON.stringify(updatedLog) });
-    setLead((p) => (p ? { ...p, status: newStatus } : null));
+    setLead((p) => (p ? { ...p, status: newStatus, notes_log: JSON.stringify(updatedLog) } : null));
     setNoteLog(updatedLog);
-    if (newStatus === "converted") setShowCreateTenant(true);
+  };
+
+  const handleTenantCreated = async (newTenant) => {
+    if (!id) return;
+    const entry = {
+      text: `Tenant créé : ${newTenant?.name || lead?.cabinet_name || lead?.email || "Client"} (id: ${newTenant?.id || "—"})`,
+      action: "conversion",
+      created_at: new Date().toISOString(),
+    };
+    const updatedLog = [...noteLog, entry];
+    try {
+      await adminApi.leadPatch(id, {
+        status: "converted",
+        notes_log: JSON.stringify(updatedLog),
+      });
+      setLead((prev) =>
+        prev
+          ? { ...prev, status: "converted", notes_log: JSON.stringify(updatedLog) }
+          : prev,
+      );
+      setNoteLog(updatedLog);
+      setTenantModalNotice("");
+    } catch (e) {
+      setTenantModalNotice("Client créé, mais impossible de marquer le lead comme converti.");
+    } finally {
+      setShowCreateTenant(false);
+    }
+  };
+
+  const handleTenantModalClose = () => {
+    setShowCreateTenant(false);
+    setTenantModalNotice("Création annulée — le lead n'a pas été modifié");
   };
 
   const copyDirectLink = () => {
@@ -311,6 +348,21 @@ export default function AdminLeadDetail() {
         </div>
 
         <h2 style={{ ...h2Style, marginTop: 24, marginBottom: 12 }}>Statut</h2>
+        {tenantModalNotice && (
+          <div
+            style={{
+              marginBottom: 12,
+              padding: "10px 12px",
+              borderRadius: 10,
+              background: "rgba(107,144,168,0.12)",
+              border: "1px solid rgba(107,144,168,0.25)",
+              color: "#C7D7E3",
+              fontSize: 13,
+            }}
+          >
+            {tenantModalNotice}
+          </div>
+        )}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
           {STATUS_OPTIONS.map((opt) => (
             <button
@@ -437,8 +489,8 @@ export default function AdminLeadDetail() {
       {showCreateTenant && (
         <CreateTenantModal
           prefill={tenantPrefill}
-          onClose={() => setShowCreateTenant(false)}
-          onCreated={() => setShowCreateTenant(false)}
+          onClose={handleTenantModalClose}
+          onCreated={handleTenantCreated}
         />
       )}
     </div>

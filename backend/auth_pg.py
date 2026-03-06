@@ -193,7 +193,10 @@ def pg_create_tenant_user(
                     """
                     INSERT INTO tenant_users (tenant_id, email, role, password_hash)
                     VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (email) DO NOTHING
+                    ON CONFLICT (email) DO UPDATE SET
+                        role = EXCLUDED.role,
+                        password_hash = COALESCE(EXCLUDED.password_hash, tenant_users.password_hash)
+                    WHERE tenant_users.tenant_id = EXCLUDED.tenant_id
                     """,
                     (tenant_id, email.strip().lower(), role, password_hash),
                 )

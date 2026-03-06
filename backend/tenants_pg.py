@@ -467,3 +467,29 @@ def pg_deactivate_tenant(tenant_id: int) -> bool:
     except Exception as e:
         logger.warning("pg_deactivate_tenant failed: %s", e)
         return False
+
+
+def pg_delete_tenant(tenant_id: int) -> bool:
+    """
+    Supprime un tenant et ses données liées créées pendant le provisioning.
+    Suppression compensatoire utilisée uniquement pour rollback.
+    """
+    url = _pg_url()
+    if not url:
+        return False
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                for table in ("tenant_routing", "tenant_users", "tenant_config", "tenant_billing"):
+                    try:
+                        cur.execute(f"DELETE FROM {table} WHERE tenant_id = %s", (tenant_id,))
+                    except Exception as e:
+                        if "does not exist" not in str(e).lower():
+                            raise
+                cur.execute("DELETE FROM tenants WHERE tenant_id = %s", (tenant_id,))
+                conn.commit()
+                return True
+    except Exception as e:
+        logger.warning("pg_delete_tenant failed: %s", e)
+        return False

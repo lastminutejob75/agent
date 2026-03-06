@@ -39,6 +39,7 @@ from backend.billing_pg import (
 from backend.tenants_pg import (
     pg_add_routing,
     pg_create_tenant,
+    pg_delete_tenant,
     pg_deactivate_tenant,
     pg_fetch_tenants,
     pg_get_tenant_full,
@@ -2813,8 +2814,10 @@ async def admin_create_tenant_full(
     """
     from datetime import datetime
 
+    import stripe
+
     from backend.services.email_service import send_welcome_email
-    from backend.vapi_utils import assign_twilio_to_vapi, create_vapi_assistant
+    from backend.vapi_utils import assign_twilio_to_vapi, create_vapi_assistant, delete_vapi_assistant
 
     results: Dict[str, Any] = {
         "tenant_id": None,
@@ -2823,7 +2826,10 @@ async def admin_create_tenant_full(
         "stripe_subscription_id": None,
         "twilio_number": body.twilio_number,
         "errors": [],
+        "warnings": [],
     }
+    created: Dict[str, Any] = {}
+    current_step = 0
 
     if not config.USE_PG_TENANTS:
         raise HTTPException(503, "Création tenant complète requiert Postgres (USE_PG_TENANTS)")
@@ -2836,47 +2842,79 @@ async def admin_create_tenant_full(
     if existing:
         raise HTTPException(409, "Cet email est déjà rattaché à un autre client.")
 
-    # ── Étape 1 : Créer le tenant en DB ──────────────────────────────────────
-    tid = pg_create_tenant(
-        name=body.name.strip(),
-        contact_email=contact_email,
-        calendar_provider="none",
-        calendar_id="",
-        timezone=body.timezone,
-        status="active",
-        plan_key=body.plan_key,
-    )
-    if not tid:
-        raise HTTPException(500, "Impossible de créer le tenant en base")
-
-    results["tenant_id"] = tid
-
-    # Créer tenant_user pour login
     temp_password = secrets.token_urlsafe(10)
-    pg_create_tenant_user(tid, contact_email, role="owner", password=temp_password)
+    stripe_key = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
+    if not stripe_key:
+        raise HTTPException(503, "STRIPE_SECRET_KEY non configuré")
+    stripe.api_key = stripe_key
 
-    # Mettre à jour params : flags + assistant_name, phone_number, sector
-    pg_update_tenant_flags(
-        tid,
-        {
-            "ENABLE_BOOKING": True,
-            "ENABLE_TRANSFER": True,
-            "ENABLE_FAQ": True,
-            "ENABLE_ANTI_LOOP": True,
-        },
-    )
-    pg_update_tenant_params(
-        tid,
-        {
-            "assistant_name": body.assistant_id,
-            "phone_number": body.phone,
-            "sector": body.sector,
-            "plan_key": body.plan_key,
-        },
-    )
+    base_price_id, metered_price_id = _get_stripe_price_ids_for_plan(body.plan_key)
+    if not base_price_id:
+        raise HTTPException(503, "STRIPE_PRICE_BASE_* non configuré pour ce plan")
 
-    # ── Étape 2 : Créer l'assistant Vapi ─────────────────────────────────────
+    async def _rollback_provisioning() -> None:
+        if created.get("stripe_subscription_id"):
+            try:
+                stripe.Subscription.cancel(created["stripe_subscription_id"])
+            except Exception as rollback_exc:
+                logger.warning("createTenantFull rollback stripe subscription failed: %s", rollback_exc)
+        if created.get("stripe_customer_id"):
+            try:
+                stripe.Customer.delete(created["stripe_customer_id"])
+            except Exception as rollback_exc:
+                logger.warning("createTenantFull rollback stripe customer failed: %s", rollback_exc)
+        if created.get("vapi_assistant_id"):
+            ok = await delete_vapi_assistant(created["vapi_assistant_id"])
+            if not ok:
+                logger.warning("createTenantFull rollback vapi assistant failed: %s", created["vapi_assistant_id"])
+        if created.get("tenant_id"):
+            ok = pg_delete_tenant(created["tenant_id"])
+            if not ok:
+                logger.warning("createTenantFull rollback tenant failed tenant_id=%s", created["tenant_id"])
+
     try:
+        current_step = 1
+        logger.info("createTenantFull step=1 started tenant_id=pending")
+        tid = pg_create_tenant(
+            name=body.name.strip(),
+            contact_email=contact_email,
+            calendar_provider="none",
+            calendar_id="",
+            timezone=body.timezone,
+            status="active",
+            plan_key=body.plan_key,
+        )
+        if not tid:
+            raise RuntimeError("Impossible de créer le tenant en base")
+        created["tenant_id"] = tid
+        results["tenant_id"] = tid
+
+        if not pg_create_tenant_user(tid, contact_email, role="owner", password=temp_password):
+            raise RuntimeError("Impossible de créer le tenant_user")
+        if not pg_update_tenant_flags(
+            tid,
+            {
+                "ENABLE_BOOKING": True,
+                "ENABLE_TRANSFER": True,
+                "ENABLE_FAQ": True,
+                "ENABLE_ANTI_LOOP": True,
+            },
+        ):
+            raise RuntimeError("Impossible d'enregistrer les flags du tenant")
+        if not pg_update_tenant_params(
+            tid,
+            {
+                "assistant_name": body.assistant_id,
+                "phone_number": body.phone,
+                "sector": body.sector,
+                "plan_key": body.plan_key,
+            },
+        ):
+            raise RuntimeError("Impossible d'enregistrer les paramètres du tenant")
+        logger.info("createTenantFull step=1 ok tenant_id=%s", tid)
+
+        current_step = 2
+        logger.info("createTenantFull step=2 started tenant_id=%s", tid)
         vapi_assistant = await create_vapi_assistant(
             tenant_id=tid,
             tenant_name=body.name.strip(),
@@ -2884,92 +2922,107 @@ async def admin_create_tenant_full(
             sector=body.sector,
             phone=body.phone,
         )
-        vapi_id = vapi_assistant.get("id") or ""
+        vapi_id = (vapi_assistant or {}).get("id") or ""
+        if not vapi_id:
+            raise RuntimeError("Assistant Vapi créé sans identifiant")
+        created["vapi_assistant_id"] = vapi_id
         results["vapi_assistant_id"] = vapi_id
-        if vapi_id:
-            pg_update_tenant_params(tid, {"vapi_assistant_id": vapi_id})
+        if not pg_update_tenant_params(tid, {"vapi_assistant_id": vapi_id}):
+            raise RuntimeError("Impossible d'enregistrer l'assistant Vapi sur le tenant")
+        logger.info("createTenantFull step=2 ok tenant_id=%s", tid)
 
-        if body.twilio_number and vapi_id:
+        current_step = 3
+        logger.info("createTenantFull step=3 started tenant_id=%s", tid)
+        if body.twilio_number:
             await assign_twilio_to_vapi(vapi_id, body.twilio_number)
-            pg_add_routing("vocal", body.twilio_number.strip().replace(" ", ""), tid)
-    except Exception as e:
-        logger.exception("create_tenant_full Vapi failed: %s", e)
-        results["errors"].append(f"Vapi: {str(e)}")
+            if not pg_add_routing("vocal", body.twilio_number.strip().replace(" ", ""), tid):
+                raise RuntimeError("Impossible d'enregistrer le routing Twilio")
+            created["twilio_assigned"] = True
+        logger.info("createTenantFull step=3 ok tenant_id=%s", tid)
 
-    # ── Étape 3 : Créer le customer Stripe + subscription ───────────────────
-    try:
-        import stripe
+        current_step = 4
+        logger.info("createTenantFull step=4 started tenant_id=%s", tid)
+        customer = stripe.Customer.create(
+            email=contact_email,
+            name=body.name.strip(),
+            phone=body.phone,
+            metadata={"tenant_id": str(tid), "plan": body.plan_key},
+        )
+        created["stripe_customer_id"] = customer.id
+        results["stripe_customer_id"] = customer.id
 
-        stripe_key = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
-        if not stripe_key:
-            results["errors"].append("Stripe: STRIPE_SECRET_KEY non configuré")
-        else:
-            stripe.api_key = stripe_key
-            customer = stripe.Customer.create(
-                email=contact_email,
-                name=body.name.strip(),
-                phone=body.phone,
-                metadata={"tenant_id": str(tid), "plan": body.plan_key},
-            )
-            results["stripe_customer_id"] = customer.id
+        line_items = [{"price": base_price_id, "quantity": 1}]
+        if metered_price_id:
+            line_items.append({"price": metered_price_id})
+        subscription = stripe.Subscription.create(
+            customer=customer.id,
+            items=line_items,
+            metadata={"tenant_id": str(tid), "plan_key": body.plan_key},
+        )
+        created["stripe_subscription_id"] = subscription.id
+        results["stripe_subscription_id"] = subscription.id
 
-            base_price_id, metered_price_id = _get_stripe_price_ids_for_plan(body.plan_key)
-            subscription = None
-            if base_price_id:
-                line_items = [{"price": base_price_id, "quantity": 1}]
-                if metered_price_id:
-                    line_items.append({"price": metered_price_id})
-                subscription = stripe.Subscription.create(
-                    customer=customer.id,
-                    items=line_items,
-                    metadata={"tenant_id": str(tid), "plan_key": body.plan_key},
-                )
-                results["stripe_subscription_id"] = subscription.id
+        cps = None
+        cpe = None
+        if getattr(subscription, "current_period_start", None):
+            cps = datetime.utcfromtimestamp(subscription.current_period_start)
+        if getattr(subscription, "current_period_end", None):
+            cpe = datetime.utcfromtimestamp(subscription.current_period_end)
+        if not upsert_billing_from_subscription(
+            tid,
+            stripe_subscription_id=subscription.id,
+            billing_status=subscription.status or "active",
+            plan_key=body.plan_key,
+            current_period_start=cps,
+            current_period_end=cpe,
+            stripe_customer_id=customer.id,
+        ):
+            raise RuntimeError("Impossible d'enregistrer la souscription Stripe en base")
+        logger.info("createTenantFull step=4 ok tenant_id=%s", tid)
 
-                cps = None
-                cpe = None
-                if getattr(subscription, "current_period_start", None):
-                    cps = datetime.utcfromtimestamp(subscription.current_period_start)
-                if getattr(subscription, "current_period_end", None):
-                    cpe = datetime.utcfromtimestamp(subscription.current_period_end)
-                upsert_billing_from_subscription(
-                    tid,
-                    stripe_subscription_id=subscription.id,
-                    billing_status=subscription.status or "active",
+        current_step = 5
+        logger.info("createTenantFull step=5 started tenant_id=%s", tid)
+        if body.send_welcome:
+            try:
+                ok, err = send_welcome_email(
+                    email=contact_email,
+                    client_name=body.name.strip(),
+                    assistant_id=body.assistant_id,
                     plan_key=body.plan_key,
-                    current_period_start=cps,
-                    current_period_end=cpe,
-                    stripe_customer_id=customer.id,
+                    phone_number=body.twilio_number or body.phone,
+                    temp_password=temp_password,
                 )
-            else:
-                set_stripe_customer_id(tid, customer.id)
-                results["errors"].append("Stripe: STRIPE_PRICE_BASE_* non configuré pour ce plan (customer créé)")
+                if not ok:
+                    logger.warning("Email bienvenue échoué (non bloquant) tenant_id=%s: %s", tid, err or "unknown")
+                    results["warnings"].append("email_failed")
+            except Exception as e:
+                logger.warning("Email bienvenue échoué (non bloquant) tenant_id=%s: %s", tid, e)
+                results["warnings"].append("email_failed")
+        logger.info("createTenantFull step=5 ok tenant_id=%s", tid)
+
+        return {
+            "success": True,
+            "tenant_id": tid,
+            "results": results,
+        }
+    except stripe.StripeError as e:
+        logger.error(
+            "createTenantFull step=4 FAILED, rollback triggered tenant_id=%s: %s",
+            created.get("tenant_id"),
+            e,
+        )
+        await _rollback_provisioning()
+        raise HTTPException(502, detail=f"Stripe error: {str(e)}")
     except Exception as e:
-        logger.exception("create_tenant_full Stripe failed: %s", e)
-        results["errors"].append(f"Stripe: {str(e)}")
-
-    # ── Étape 4 : Envoyer email d'accès ──────────────────────────────────────
-    if body.send_welcome:
-        try:
-            ok, err = send_welcome_email(
-                email=contact_email,
-                client_name=body.name.strip(),
-                assistant_id=body.assistant_id,
-                plan_key=body.plan_key,
-                phone_number=body.twilio_number or body.phone,
-                temp_password=temp_password,
-            )
-            if not ok:
-                results["errors"].append(f"Email: {err or 'échec envoi'}")
-        except Exception as e:
-            logger.exception("create_tenant_full send_welcome_email failed: %s", e)
-            results["errors"].append(f"Email: {str(e)}")
-
-    return {
-        "success": len(results["errors"]) == 0,
-        "tenant_id": tid,
-        "results": results,
-    }
+        logger.error(
+            "createTenantFull step=%s FAILED, rollback triggered tenant_id=%s: %s",
+            current_step or "unknown",
+            created.get("tenant_id"),
+            e,
+            exc_info=True,
+        )
+        await _rollback_provisioning()
+        raise HTTPException(500, detail=f"Provisioning failed: {str(e)}")
 
 
 def _get_assigned_voice_numbers() -> set:

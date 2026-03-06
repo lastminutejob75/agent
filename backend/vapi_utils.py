@@ -168,3 +168,29 @@ async def assign_twilio_to_vapi(assistant_id: str, twilio_number: str) -> None:
             assistant_id[:24],
             number_clean[:12],
         )
+
+
+async def delete_vapi_assistant(assistant_id: str) -> bool:
+    """Supprime un assistant Vapi (rollback compensatoire)."""
+    assistant_id = (assistant_id or "").strip()
+    if not assistant_id:
+        return False
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.delete(
+                f"{VAPI_API_URL}/assistant/{assistant_id}",
+                headers={"Authorization": f"Bearer {_vapi_api_key()}"},
+                timeout=15,
+            )
+            if res.status_code in (200, 204):
+                logger.info("VAPI_ASSISTANT_DELETED assistant_id=%s", assistant_id[:24])
+                return True
+            logger.warning(
+                "delete_vapi_assistant unexpected status assistant_id=%s status=%s",
+                assistant_id[:24],
+                res.status_code,
+            )
+            return False
+    except Exception as e:
+        logger.error("delete_vapi_assistant failed: %s", e)
+        return False

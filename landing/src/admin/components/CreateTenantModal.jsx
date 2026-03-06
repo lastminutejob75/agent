@@ -89,7 +89,12 @@ export default function CreateTenantModal({ onClose, onCreated, prefill = {} }) 
       const res = await adminApi.createTenantFull(payload);
       setResult(res);
       setStep(4);
-      onCreated?.();
+      onCreated?.({
+        id: res?.tenant_id ?? res?.results?.tenant_id ?? null,
+        name: form.name,
+        email: form.email,
+        phone_number: form.phone,
+      });
     } catch (e) {
       setResult({ success: false, error: e?.message || "Erreur inconnue" });
       setStep(4);
