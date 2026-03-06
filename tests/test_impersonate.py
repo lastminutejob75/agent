@@ -13,10 +13,6 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
-os.environ.setdefault("JWT_SECRET", "test-secret-impersonate")
-os.environ.setdefault("ADMIN_API_TOKEN", "test-admin-token-123")
-
-
 @pytest.fixture
 def client():
     from backend.main import app
@@ -25,7 +21,8 @@ def client():
 
 @pytest.fixture
 def admin_headers():
-    return {"Authorization": "Bearer test-admin-token-123"}
+    token = os.environ.get("ADMIN_API_TOKEN")
+    return {"Authorization": f"Bearer {token}"}
 
 
 @patch("backend.routes.admin._get_tenant_detail")

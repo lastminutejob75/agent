@@ -11,7 +11,7 @@ from unittest.mock import patch, MagicMock
 
 
 def test_lock_timeout_returns_204():
-    """T1: mock pg_lock_call_session pour lever LockTimeout → endpoint retourne 204."""
+    """T1: mock pg_lock_call_session pour lever LockTimeout → endpoint tool retourne le fallback 200."""
     from backend.session_pg import LockTimeout
     from fastapi.testclient import TestClient
     from backend.main import app
@@ -24,19 +24,24 @@ def test_lock_timeout_returns_204():
             client = TestClient(app)
             payload = {
                 "message": {
-                    "type": "transcript",
-                    "role": "user",
-                    "transcript": "Bonjour",
-                    "transcriptType": "final",
+                    "type": "tool-calls",
+                    "call": {"id": "test_lock_timeout_001", "phoneNumber": {"number": "+33600000001"}},
+                    "toolCallList": [{
+                        "id": "tc_001",
+                        "function": {
+                            "name": "booking_tool",
+                            "arguments": {"action": "faq", "user_message": "Bonjour"},
+                        },
+                    }],
                 },
-                "call": {"id": "test_lock_timeout_001"},
             }
-            resp = client.post("/api/vapi/webhook", json=payload)
-            assert resp.status_code == 204
+            resp = client.post("/api/vapi/tool", json=payload)
+            assert resp.status_code == 200
+            assert "Un instant" in resp.text
 
 
 def test_lock_used_when_pg_enabled():
-    """T2: pg_lock_call_session appelé quand _pg_lock_ok et endpoint vocal hit."""
+    """T2: pg_lock_call_session appelé quand _pg_lock_ok et endpoint tool hit."""
     from fastapi.testclient import TestClient
     from backend.main import app
 
@@ -49,14 +54,18 @@ def test_lock_used_when_pg_enabled():
             client = TestClient(app)
             payload = {
                 "message": {
-                    "type": "transcript",
-                    "role": "user",
-                    "transcript": "Bonjour",
-                    "transcriptType": "final",
+                    "type": "tool-calls",
+                    "call": {"id": "test_lock_used_001", "phoneNumber": {"number": "+33600000001"}},
+                    "toolCallList": [{
+                        "id": "tc_001",
+                        "function": {
+                            "name": "booking_tool",
+                            "arguments": {"action": "faq", "user_message": "Bonjour"},
+                        },
+                    }],
                 },
-                "call": {"id": "test_lock_used_001"},
             }
-            client.post("/api/vapi/webhook", json=payload)
+            client.post("/api/vapi/tool", json=payload)
             assert mock_lock.call_count >= 1
 
 

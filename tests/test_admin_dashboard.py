@@ -5,7 +5,7 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-os.environ["ADMIN_API_TOKEN"] = "test-admin-token-123"
+os.environ.setdefault("ADMIN_API_TOKEN", "test-admin-token-pytest")
 
 
 @pytest.fixture
@@ -16,7 +16,7 @@ def client():
 
 @pytest.fixture
 def admin_headers():
-    return {"Authorization": "Bearer test-admin-token-123"}
+    return {"Authorization": f"Bearer {os.environ.get('ADMIN_API_TOKEN')}"}
 
 
 def test_dashboard_tenant_not_found_404(client, admin_headers):

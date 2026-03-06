@@ -95,7 +95,7 @@ def test_find_booking_by_name_uses_session_adapter(monkeypatch):
 
     monkeypatch.setattr("backend.calendar_adapter.get_calendar_adapter", capture_get_adapter)
     monkeypatch.setattr("backend.tools_booking._get_calendar_service", lambda: None)
-    monkeypatch.setattr("backend.tools_booking._find_booking_sqlite", lambda n: None)
+    monkeypatch.setattr("backend.tools_booking._find_booking_sqlite", lambda name, session: None)
 
     class S:
         tenant_id = 7

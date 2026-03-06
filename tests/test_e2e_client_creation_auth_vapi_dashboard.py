@@ -10,6 +10,7 @@ Enchaîne :
 from __future__ import annotations
 
 import os
+import time
 import uuid
 from datetime import datetime, timedelta
 from unittest.mock import patch
@@ -17,10 +18,6 @@ from unittest.mock import patch
 import jwt
 import pytest
 from fastapi.testclient import TestClient
-
-# JWT pour les tests tenant
-os.environ.setdefault("JWT_SECRET", "test-secret-e2e")
-
 
 @pytest.fixture
 def client():
@@ -30,20 +27,29 @@ def client():
 
 @pytest.fixture
 def jwt_secret():
-    return os.environ.get("JWT_SECRET", "test-secret-e2e")
+    return os.environ.get("JWT_SECRET")
 
 
 def _make_client_jwt(tenant_id: int, email: str = "client@test.fr", role: str = "owner", secret: str = None):
-    """Génère un JWT client (comme après magic link verify)."""
-    secret = secret or os.environ.get("JWT_SECRET", "test-secret-e2e")
-    exp = datetime.utcnow() + timedelta(days=7)
+    """Génère un vrai token client_session accepté par require_tenant_auth."""
+    from backend.auth_pg import pg_create_tenant_user, pg_get_tenant_user_by_email
+
+    secret = secret or os.environ.get("JWT_SECRET")
+    pg_create_tenant_user(tenant_id, email, role=role, password="testpass123")
+    user = pg_get_tenant_user_by_email(email)
+    if user is not None:
+        _, user_id, resolved_role = user
+    else:
+        user_id = int(tenant_id) * 1000 + 1
+        resolved_role = role
+    now = int(time.time())
     payload = {
-        "sub": email,
-        "tenant_id": tenant_id,
-        "email": email,
-        "role": role,
-        "exp": exp,
-        "iat": datetime.utcnow(),
+        "typ": "client_session",
+        "sub": str(user_id),
+        "tenant_id": str(tenant_id),
+        "role": resolved_role or role,
+        "exp": now + 86400,
+        "iat": now,
     }
     return jwt.encode(payload, secret, algorithm="HS256")
 
@@ -85,7 +91,8 @@ def test_e2e_validation_email():
 # ---------- 3. Connexion + dashboard client ----------
 
 
-def test_e2e_connexion_et_dashboard_client(client, jwt_secret):
+@patch("backend.routes.tenant.pg_get_tenant_user_by_id")
+def test_e2e_connexion_et_dashboard_client(mock_get_user, client, jwt_secret):
     """Avec un JWT client : GET /api/tenant/me et GET /api/tenant/dashboard renvoient 200."""
     # Créer un tenant puis se connecter avec un JWT pour ce tenant
     onboarding = client.post(
@@ -101,6 +108,7 @@ def test_e2e_connexion_et_dashboard_client(client, jwt_secret):
     tenant_id = onboarding.json()["tenant_id"]
     assert tenant_id >= 1
 
+    mock_get_user.return_value = {"tenant_id": tenant_id, "email": "dashboard@test.fr", "role": "owner"}
     token = _make_client_jwt(tenant_id, email="dashboard@test.fr", secret=jwt_secret)
     headers = {"Authorization": f"Bearer {token}"}
 

@@ -19,6 +19,8 @@ def engine():
 
 def test_pending_slots_display_matches_booking(monkeypatch):
     """Choix 2 (mardi 14h) → book_slot_from_session réserve bien le 2e slot (start/end ISO)."""
+    from backend.tools_booking import to_canonical_slots
+
     fake_slots = [
         {"source": "google", "label": "lundi 10h", "start_iso": "2026-02-03T10:00:00", "end_iso": "2026-02-03T10:15:00"},
         {"source": "google", "label": "mardi 14h", "start_iso": "2026-02-04T14:00:00", "end_iso": "2026-02-04T14:15:00"},
@@ -37,7 +39,7 @@ def test_pending_slots_display_matches_booking(monkeypatch):
     engine = Engine(session_store=SessionStore(), faq_store=FaqStore(items=[]))
     conv_id = "tc_consistency"
     session = engine.session_store.get_or_create(conv_id)
-    session.pending_slots_display = fake_slots
+    session.pending_slots = to_canonical_slots(fake_slots)
     session.pending_slot_choice = 2
     session.qualif_data.name = "Jean Dupont"
     session.qualif_data.contact = "jean@example.com"
