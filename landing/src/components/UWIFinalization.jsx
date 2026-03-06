@@ -99,8 +99,9 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
       .preOnboardingLeadCheck(id)
       .then(() => setLeadCheckFailed(false))
       .catch((err) => {
+        // 404, erreur réseau, CORS, etc. → afficher l'écran d'erreur (ne pas continuer)
         const notFound = err?.status === 404 || (err?.message || "").includes("introuvable");
-        setLeadCheckFailed(notFound);
+        setLeadCheckFailed(true);
       });
   }, [leadId]);
 

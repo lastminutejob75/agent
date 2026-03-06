@@ -271,26 +271,82 @@ def list_leads(
         return []
 
 
-def get_lead(lead_id: str) -> Optional[Dict[str, Any]]:
-    """Get one lead by id."""
+def lead_exists(lead_id: str) -> bool:
+    """Vérifie l'existence d'un lead (requête minimale, robuste au schema)."""
+    if not lead_id or not str(lead_id).strip():
+        return False
     try:
         with _get_conn() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT id, created_at, email, daily_call_volume, medical_specialty, medical_specialty_label, specialty_other, primary_pain_point, assistant_name, voice_gender,
-                           opening_hours, wants_callback, callback_phone, callback_booking_date, callback_booking_slot, is_enterprise, source, status, notes, notes_log, follow_up_at,
-                           tenant_id, contacted_at, converted_at, updated_at, last_submitted_at, max_daily_amplitude
-                    FROM pre_onboarding_leads
-                    WHERE id = %s
-                    """,
-                    (lead_id,),
-                )
-                row = cur.fetchone()
-        return _row_to_lead(row) if row else None
+                cur.execute("SELECT 1 FROM pre_onboarding_leads WHERE id = %s LIMIT 1", (str(lead_id).strip(),))
+                return cur.fetchone() is not None
     except Exception as e:
-        logger.exception("get_lead failed: %s", e)
+        logger.warning("lead_exists failed: %s", e)
+        return False
+
+
+def _get_lead_full(lead_id: str) -> Optional[Dict[str, Any]]:
+    """Requête complète (avec notes_log, follow_up_at). Peut échouer si migration 031 non appliquée."""
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, created_at, email, daily_call_volume, medical_specialty, medical_specialty_label, specialty_other, primary_pain_point, assistant_name, voice_gender,
+                       opening_hours, wants_callback, callback_phone, callback_booking_date, callback_booking_slot, is_enterprise, source, status, notes,
+                       COALESCE(notes_log, '[]'::jsonb) AS notes_log, follow_up_at,
+                       tenant_id, contacted_at, converted_at, updated_at, last_submitted_at, max_daily_amplitude
+                FROM pre_onboarding_leads
+                WHERE id = %s
+                """,
+                (lead_id,),
+            )
+            row = cur.fetchone()
+    return _row_to_lead(row) if row else None
+
+
+def _get_lead_minimal(lead_id: str) -> Optional[Dict[str, Any]]:
+    """Requête sans notes_log/follow_up_at (schema avant migration 031). Pour fallback."""
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, created_at, email, daily_call_volume, medical_specialty, medical_specialty_label, specialty_other, primary_pain_point, assistant_name, voice_gender,
+                       opening_hours, wants_callback, callback_phone, callback_booking_date, callback_booking_slot, is_enterprise, source, status, notes,
+                       tenant_id, contacted_at, converted_at, updated_at, last_submitted_at, max_daily_amplitude
+                FROM pre_onboarding_leads
+                WHERE id = %s
+                """,
+                (lead_id,),
+            )
+            row = cur.fetchone()
+    if not row:
         return None
+    d = _row_to_lead(row)
+    if d is not None:
+        d.setdefault("notes_log", "[]")
+        d.setdefault("follow_up_at", None)
+    return d
+
+
+def get_lead(lead_id: str) -> Optional[Dict[str, Any]]:
+    """Get one lead by id. Fallback sur requête minimale si schema incomplet (migration 031)."""
+    if not lead_id or not str(lead_id).strip():
+        return None
+    lead_id = str(lead_id).strip()
+    try:
+        lead = _get_lead_full(lead_id)
+        if lead is not None:
+            return lead
+    except Exception as e:
+        logger.warning("get_lead full query failed (schema?): %s", e)
+    try:
+        lead = _get_lead_minimal(lead_id)
+        if lead is not None:
+            logger.info("get_lead: used minimal query (notes_log/follow_up_at may be missing)")
+            return lead
+    except Exception as e:
+        logger.exception("get_lead minimal failed: %s", e)
+    return None
 
 
 def update_lead_callback_booking(
@@ -379,6 +435,19 @@ def count_new_leads() -> int:
     except Exception as e:
         logger.exception("count_new_leads failed: %s", e)
         return 0
+
+
+def count_leads_total() -> int:
+    """Compte total des leads (diagnostic). Retourne -1 si erreur."""
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) AS c FROM pre_onboarding_leads")
+                row = cur.fetchone()
+        return int(row["c"]) if row else 0
+    except Exception as e:
+        logger.warning("count_leads_total failed: %s", e)
+        return -1
 
 
 def _row_to_lead(r: Dict) -> Dict[str, Any]:

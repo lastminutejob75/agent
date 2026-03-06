@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from backend.leads_pg import get_lead, update_lead_callback_booking, upsert_lead
+from backend.leads_pg import count_leads_total, get_lead, lead_exists, update_lead_callback_booking, upsert_lead
 from backend.pre_onboarding_rate_limit import check_pre_onboarding_commit
 from backend.services.email_service import send_lead_founder_email
 
@@ -41,12 +41,16 @@ async def pre_onboarding_config() -> Dict[str, Any]:
     postmark = bool((os.environ.get("POSTMARK_SERVER_TOKEN") or "").strip())
     smtp = bool((os.environ.get("SMTP_EMAIL") or "").strip() and (os.environ.get("SMTP_PASSWORD") or "").strip())
     email_sender_ok = postmark or smtp
+    total_leads = count_leads_total() if db_ok else -1
+    backend_hint = (os.environ.get("RAILWAY_PUBLIC_DOMAIN") or os.environ.get("VERCEL_URL") or "unknown")[:64]
     return {
         "db_configured": db_ok,
         "email_recipient_configured": email_recipient_ok,
         "email_sender_configured": email_sender_ok,
         "leads_ok": db_ok,
         "emails_ok": email_recipient_ok and email_sender_ok,
+        "total_leads_in_db": total_leads,
+        "backend_hint": backend_hint,
     }
 VALID_VOICE = {"female", "male"}
 
@@ -215,16 +219,31 @@ async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody)
     return out
 
 
+
+
 @router.get("/leads/{lead_id}/check")
 async def check_lead_exists(lead_id: str) -> Dict[str, Any]:
     """
     Vérifie si un lead existe (pour diagnostic : landing vs backend même env ?).
+    Utilise lead_exists (requête minimale) pour éviter les faux 404 si get_lead échoue (schema).
     Retourne 200 si existe, 404 sinon.
     """
+    if lead_exists(lead_id):
+        return {"exists": True}
+    total = count_leads_total()
     lead = get_lead(lead_id)
-    if not lead:
-        raise HTTPException(status_code=404, detail="Lead introuvable")
-    return {"exists": True}
+    if lead:
+        return {"exists": True}
+    # lead_exists=False et get_lead=None → lead absent ou DB différente
+    logger.warning(
+        "check_lead_404",
+        extra={
+            "lead_id": (lead_id or "")[:36],
+            "total_leads_in_db": total,
+            "hint": "0 leads → commits vont peut-être vers un autre backend (VITE_UWI_API_BASE_URL)" if total == 0 else "lead_id absent de cette base",
+        },
+    )
+    raise HTTPException(status_code=404, detail="Lead introuvable")
 
 
 @router.post("/leads/{lead_id}/callback-booking")

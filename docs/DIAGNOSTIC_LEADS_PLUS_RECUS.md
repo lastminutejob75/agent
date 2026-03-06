@@ -19,7 +19,7 @@ Si les deux échouent, vérifier dans cet ordre :
 
 **Test** : soumettre un lead depuis **www.uwiapp.com** (prod), pas une preview. Onglet **Réseau** : vérifier que `POST .../api/pre-onboarding/commit` part vers la bonne URL et retourne **200**.
 
-**Diagnostic backend** : `GET /api/pre-onboarding/config` retourne `db_configured`, `email_recipient_configured`, `email_sender_configured`, `leads_ok`, `emails_ok`. Si `emails_ok: false` → définir FOUNDER_EMAIL (ou ADMIN_EMAIL, ADMIN_ALERT_EMAIL, REPORT_EMAIL) + Postmark ou SMTP sur Railway.
+**Diagnostic backend** : `GET /api/pre-onboarding/config` retourne `db_configured`, `email_recipient_configured`, `email_sender_configured`, `leads_ok`, `emails_ok`, `total_leads_in_db`, `backend_hint`. Si `total_leads_in_db: 0` → les commits ne vont pas sur ce backend (vérifier VITE_UWI_API_BASE_URL). Si `emails_ok: false` → définir FOUNDER_EMAIL (ou ADMIN_EMAIL, ADMIN_ALERT_EMAIL, REPORT_EMAIL) + Postmark ou SMTP sur Railway.
 
 ## Erreur « Lead introuvable » (écran finalisation)
 
