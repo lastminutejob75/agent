@@ -16,7 +16,11 @@ import logging
 
 from backend import prompts
 from backend import config
-from backend.google_calendar import GoogleCalendarPermissionError
+from backend.google_calendar import (
+    GoogleCalendarError,
+    GoogleCalendarNotFoundError,
+    GoogleCalendarPermissionError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -553,7 +557,24 @@ def get_slots_for_display(
 
     # Récupérer le pool brut (pas encore étalé) pour pouvoir filtrer refus puis étaler
     if calendar_or_adapter:
-        pool = _get_slots_from_google_calendar(calendar_or_adapter, limit, pref=pref, tenant_id=tenant_id)
+        try:
+            pool = _get_slots_from_google_calendar(calendar_or_adapter, limit, pref=pref, tenant_id=tenant_id)
+        except GoogleCalendarPermissionError as e:
+            logger.warning(
+                "GOOGLE_CALENDAR_PERMISSION_FALLBACK tenant_id=%s pref=%s error=%s",
+                tenant_id,
+                pref,
+                e,
+            )
+            pool = _get_slots_from_sqlite(limit, pref=pref, tenant_id=tenant_id)
+        except (GoogleCalendarNotFoundError, GoogleCalendarError) as e:
+            logger.warning(
+                "GOOGLE_CALENDAR_READ_FALLBACK tenant_id=%s pref=%s error=%s",
+                tenant_id,
+                pref,
+                e,
+            )
+            pool = _get_slots_from_sqlite(limit, pref=pref, tenant_id=tenant_id)
     else:
         pool = _get_slots_from_sqlite(limit, pref=pref, tenant_id=tenant_id)
 
@@ -561,7 +582,24 @@ def get_slots_for_display(
     if pref and (not pool or len(pool) == 0):
         logger.info(f"⚠️ Aucun créneau pour pref={pref}, fallback sans filtre")
         if calendar_or_adapter:
-            pool = _get_slots_from_google_calendar(calendar_or_adapter, limit, pref=None, tenant_id=tenant_id)
+            try:
+                pool = _get_slots_from_google_calendar(calendar_or_adapter, limit, pref=None, tenant_id=tenant_id)
+            except GoogleCalendarPermissionError as e:
+                logger.warning(
+                    "GOOGLE_CALENDAR_PERMISSION_FALLBACK tenant_id=%s pref=%s error=%s",
+                    tenant_id,
+                    pref,
+                    e,
+                )
+                pool = _get_slots_from_sqlite(limit, pref=None, tenant_id=tenant_id)
+            except (GoogleCalendarNotFoundError, GoogleCalendarError) as e:
+                logger.warning(
+                    "GOOGLE_CALENDAR_READ_FALLBACK tenant_id=%s pref=%s error=%s",
+                    tenant_id,
+                    pref,
+                    e,
+                )
+                pool = _get_slots_from_sqlite(limit, pref=None, tenant_id=tenant_id)
         else:
             pool = _get_slots_from_sqlite(limit, pref=None, tenant_id=tenant_id)
 
@@ -822,7 +860,7 @@ def store_pending_slots(session, slots: List[Any]) -> None:
     from backend.calendar_adapter import get_calendar_adapter
     adapter = get_calendar_adapter(session)
     calendar = None if (adapter and not adapter.can_propose_slots()) else (adapter or _get_calendar_service())
-    if calendar and slots:
+    if calendar and slots and (source or "").lower() == "google":
         _store_google_calendar_slots(session, slots, calendar)
 
 
@@ -845,13 +883,20 @@ def _store_google_calendar_slots(session, slots: List[prompts.SlotDisplay], cale
         if date.weekday() >= 5:
             continue
         
-        day_slots = calendar.get_free_slots(
-            date=date,
-            duration_minutes=15,
-            start_hour=9,
-            end_hour=18,
-            limit=len(slots) - len(full_slots)
-        )
+        try:
+            day_slots = calendar.get_free_slots(
+                date=date,
+                duration_minutes=15,
+                start_hour=9,
+                end_hour=18,
+                limit=len(slots) - len(full_slots)
+            )
+        except GoogleCalendarPermissionError as e:
+            logger.warning("pending_google_slots skipped: permission tenant_id=%s error=%s", getattr(session, "tenant_id", None) or 1, e)
+            return
+        except (GoogleCalendarNotFoundError, GoogleCalendarError) as e:
+            logger.warning("pending_google_slots skipped: google error tenant_id=%s error=%s", getattr(session, "tenant_id", None) or 1, e)
+            return
         
         full_slots.extend(day_slots)
     

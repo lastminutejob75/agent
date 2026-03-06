@@ -170,22 +170,32 @@ def pg_get_tenant_user_by_id(user_id: Any) -> Optional[Dict[str, Any]]:
     return None
 
 
-def pg_create_tenant_user(tenant_id: int, email: str, role: str = "owner") -> bool:
-    """Crée ou ignore (ON CONFLICT) un tenant_user."""
+def pg_create_tenant_user(
+    tenant_id: int,
+    email: str,
+    role: str = "owner",
+    password: Optional[str] = None,
+) -> bool:
+    """Crée ou ignore (ON CONFLICT) un tenant_user, avec mot de passe hashé optionnel."""
     url = _pg_url()
     if not url:
         return False
     try:
+        password_hash = None
+        password_value = (password or "").strip()
+        if password_value:
+            import bcrypt
+            password_hash = bcrypt.hashpw(password_value.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
         import psycopg
         with psycopg.connect(url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO tenant_users (tenant_id, email, role)
-                    VALUES (%s, %s, %s)
+                    INSERT INTO tenant_users (tenant_id, email, role, password_hash)
+                    VALUES (%s, %s, %s, %s)
                     ON CONFLICT (email) DO NOTHING
                     """,
-                    (tenant_id, email.strip().lower(), role),
+                    (tenant_id, email.strip().lower(), role, password_hash),
                 )
                 conn.commit()
                 return cur.rowcount > 0
@@ -351,6 +361,31 @@ def pg_update_password_and_clear_reset(user_id: int, password_hash: str) -> None
                 conn.commit()
     except Exception as e:
         logger.warning("pg_update_password_and_clear_reset failed: %s", e)
+        raise
+
+
+def pg_update_password(user_id: int, password_hash: str) -> None:
+    """
+    Met à jour le mot de passe sans toucher aux éventuels tokens de reset.
+    """
+    url = _pg_url()
+    if not url:
+        raise ValueError("DB not configured")
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE tenant_users
+                    SET password_hash = %s
+                    WHERE id = %s
+                    """,
+                    (password_hash, user_id),
+                )
+                conn.commit()
+    except Exception as e:
+        logger.warning("pg_update_password failed: %s", e)
         raise
 
 

@@ -11,14 +11,16 @@ import os
 from datetime import datetime
 from typing import Any, Dict, Optional
 
+import bcrypt
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from backend.auth_pg import pg_get_tenant_user_by_id
+from backend.auth_pg import pg_get_tenant_user_by_id, pg_update_password
+from backend.calendar_adapter import _GoogleCalendarAdapter
 from backend.config import get_service_account_email
 from backend.db import ensure_tenant_config, get_conn
-from backend.google_calendar import GoogleCalendarPermissionError, GoogleCalendarService
+from backend.google_calendar import GoogleCalendarNotFoundError, GoogleCalendarPermissionError
 from backend.routes.admin import (
     _get_dashboard_snapshot,
     _get_kpis_daily,
@@ -199,6 +201,37 @@ def tenant_patch_params(
     return {"ok": True}
 
 
+class ChangePasswordBody(BaseModel):
+    new_password: str
+
+
+@router.patch("/auth/change-password")
+def tenant_change_password(
+    body: ChangePasswordBody,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """
+    Met à jour le mot de passe du tenant connecté.
+    """
+    new_password = (body.new_password or "").strip()
+    if len(new_password) < 8:
+        raise HTTPException(400, "Le mot de passe doit contenir au moins 8 caractères")
+
+    user_id = int(auth["sub"])
+    password_hash = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    pg_update_password(user_id, password_hash)
+    logger.info(
+        "tenant_password_changed",
+        extra={
+            "tenant_id": auth["tenant_id"],
+            "user_id": user_id,
+            "role": auth.get("role", "owner"),
+            "why": "manual_change",
+        },
+    )
+    return {"ok": True}
+
+
 # --- Agenda setup (client) ---
 
 
@@ -231,16 +264,30 @@ def tenant_agenda_verify_google(
         return {"ok": False, "reason": "calendar_id_required"}
     tenant_id = auth["tenant_id"]
     try:
-        svc = GoogleCalendarService(calendar_id)
-        slots = svc.get_free_slots(datetime.now(), duration_minutes=15, limit=1)
+        adapter = _GoogleCalendarAdapter(calendar_id, tenant_id)
+        adapter.get_free_slots(datetime.now(), duration_minutes=15, limit=1)
         pg_update_tenant_params(tenant_id, {"calendar_provider": "google", "calendar_id": calendar_id})
         logger.info("agenda_verify_google ok tenant_id=%s calendar_id=%s", tenant_id, calendar_id[:50])
         return {"ok": True}
     except GoogleCalendarPermissionError:
-        return {"ok": False, "reason": "permission"}
+        return {
+            "ok": False,
+            "reason": "permission",
+            "message": "Accès refusé. Vérifiez que le calendrier est bien partagé avec le service account.",
+        }
+    except GoogleCalendarNotFoundError:
+        return {
+            "ok": False,
+            "reason": "not_found",
+            "message": "Calendrier introuvable. Vérifiez l'ID du calendrier.",
+        }
     except Exception as e:
-        logger.warning("agenda_verify_google failed tenant_id=%s: %s", tenant_id, e)
-        return {"ok": False, "reason": "error"}
+        logger.error("verify-google error tenant_id=%s: %s", tenant_id, e)
+        return {
+            "ok": False,
+            "reason": "error",
+            "message": "Erreur technique. Réessayez dans quelques instants.",
+        }
 
 
 @router.post("/agenda/contact-request")

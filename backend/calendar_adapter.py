@@ -12,6 +12,11 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Protocol
 
 from backend import config
+from backend.google_calendar import (
+    GoogleCalendarError,
+    GoogleCalendarNotFoundError,
+    GoogleCalendarPermissionError,
+)
 from backend.tenant_config import get_params
 
 logger = logging.getLogger(__name__)
@@ -78,10 +83,7 @@ class _GoogleCalendarAdapter:
             return self._service
         try:
             from backend.google_calendar import GoogleCalendarService
-            self._service = GoogleCalendarService(
-                self._calendar_id,
-                refresh_token=self._refresh_token if self._refresh_token else None,
-            )
+            self._service = GoogleCalendarService(self._calendar_id)
             return self._service
         except Exception as e:
             logger.error("GoogleCalendarAdapter init: %s", e)
@@ -99,14 +101,17 @@ class _GoogleCalendarAdapter:
         svc = self._get_service()
         if not svc:
             return []
-        return svc.get_free_slots(
-            date=date,
-            duration_minutes=duration_minutes,
-            start_hour=start_hour,
-            end_hour=end_hour,
-            limit=limit,
-            buffer_minutes=buffer_minutes,
-        )
+        try:
+            return svc.get_free_slots(
+                date=date,
+                duration_minutes=duration_minutes,
+                start_hour=start_hour,
+                end_hour=end_hour,
+                limit=limit,
+                buffer_minutes=buffer_minutes,
+            )
+        except (GoogleCalendarPermissionError, GoogleCalendarNotFoundError, GoogleCalendarError):
+            raise
 
     def book_appointment(
         self,

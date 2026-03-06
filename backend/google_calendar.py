@@ -5,6 +5,7 @@ from googleapiclient.discovery import build
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 import logging
+from googleapiclient.errors import HttpError
 
 try:
     from zoneinfo import ZoneInfo
@@ -21,14 +22,22 @@ import backend.config as cfg  # Import du MODULE (pas from import)
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 
 
-class GoogleCalendarPermissionError(Exception):
-    """
-    403 Forbidden : le compte de service n'a pas les droits writer sur le calendrier.
-    Levée pour que l'appelant distingue permission des autres erreurs (409, 400, timeouts).
-    """
-    def __init__(self, http_error):
-        self.http_error = http_error
-        super().__init__(f"403 permission: {getattr(http_error, 'resp', None)}")
+class GoogleCalendarError(Exception):
+    """Erreur Google Calendar générique remontée à l'appelant."""
+
+    def __init__(self, error: Exception):
+        self.error = error
+        self.http_error = error if isinstance(error, HttpError) else None
+        self.status = getattr(getattr(error, "resp", None), "status", None)
+        super().__init__(str(error))
+
+
+class GoogleCalendarPermissionError(GoogleCalendarError):
+    """403 Forbidden : le compte de service n'a pas les droits requis sur le calendrier."""
+
+
+class GoogleCalendarNotFoundError(GoogleCalendarError):
+    """404 Not Found : l'identifiant du calendrier est invalide ou introuvable."""
 
 
 class GoogleCalendarService:
@@ -151,7 +160,7 @@ class GoogleCalendarService:
                     if (slot_start < event_end and effective_end > event_start):
                         is_free = False
                         break
-                
+
                 if is_free:
                     # Formater label français
                     label = self._format_slot_label(slot['start'])
@@ -160,10 +169,10 @@ class GoogleCalendarService:
                         'end': slot['end'].isoformat(),
                         'label': label
                     })
-                
+
                 if len(free_slots) >= limit:
                     break
-            
+
             logger.info(
                 "get_free_slots: date=%s start_hour=%s end_hour=%s events_busy=%s free_slots=%s",
                 date.date(),
@@ -173,10 +182,18 @@ class GoogleCalendarService:
                 len(free_slots),
             )
             return free_slots
-        
+        except HttpError as e:
+            status = getattr(e.resp, "status", None)
+            err_txt = str(e)
+            logger.error("Error getting free slots: HTTP %s - %s", status, err_txt)
+            if status == 403 or "insufficientPermissions" in err_txt:
+                raise GoogleCalendarPermissionError(e)
+            if status == 404 or "notFound" in err_txt:
+                raise GoogleCalendarNotFoundError(e)
+            raise GoogleCalendarError(e)
         except Exception as e:
-            logger.error(f"Error getting free slots: {e}")
-            return []
+            logger.error("Error getting free slots: %s", e, exc_info=True)
+            raise GoogleCalendarError(e)
     
     def _format_slot_label(self, dt: datetime) -> str:
         """Formate un créneau en français."""

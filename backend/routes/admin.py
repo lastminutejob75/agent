@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import os
+import secrets
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -2851,7 +2852,8 @@ async def admin_create_tenant_full(
     results["tenant_id"] = tid
 
     # Créer tenant_user pour login
-    pg_create_tenant_user(tid, contact_email, role="owner")
+    temp_password = secrets.token_urlsafe(10)
+    pg_create_tenant_user(tid, contact_email, role="owner", password=temp_password)
 
     # Mettre à jour params : flags + assistant_name, phone_number, sector
     pg_update_tenant_flags(
@@ -2955,6 +2957,7 @@ async def admin_create_tenant_full(
                 assistant_id=body.assistant_id,
                 plan_key=body.plan_key,
                 phone_number=body.twilio_number or body.phone,
+                temp_password=temp_password,
             )
             if not ok:
                 results["errors"].append(f"Email: {err or 'échec envoi'}")

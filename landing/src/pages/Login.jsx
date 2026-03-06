@@ -61,7 +61,7 @@ export default function Login() {
     setLoading(true);
     try {
       await api.authLogin(email.trim(), password);
-      window.location.replace("/app");
+      window.location.replace(isWelcome ? "/app?welcome=1" : "/app");
     } catch (e) {
       setErr(e.message || "Erreur de connexion");
     } finally {

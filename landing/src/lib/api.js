@@ -149,6 +149,12 @@ export const api = {
   tenantRgpd: () => request("/api/tenant/rgpd", { tenant: true }),
   tenantPatchParams: (params) =>
     request("/api/tenant/params", { method: "PATCH", body: params, tenant: true }),
+  tenantChangePassword: (newPassword) =>
+    request("/api/tenant/auth/change-password", {
+      method: "PATCH",
+      body: { new_password: newPassword },
+      tenant: true,
+    }),
 
   // Agenda setup
   agendaConfig: () => request("/api/tenant/agenda/config", { tenant: true }),

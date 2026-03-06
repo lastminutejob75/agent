@@ -109,6 +109,7 @@ export default function AppLayout() {
 
   const path = location.pathname;
   const routeInfo = ROUTES[path] || { title: "Mon Cabinet", sub: "" };
+  const showWelcomeSecurityBanner = new URLSearchParams(location.search).get("welcome") === "1";
   const sub = routeInfo.sub || (path === "/app" ? new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" }) : "");
   const initials = (me.tenant_name || "U")
     .split(/\s+/)
@@ -209,6 +210,15 @@ export default function AppLayout() {
             </button>
           </div>
         </header>
+
+        {showWelcomeSecurityBanner && (
+          <div
+            className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+            role="alert"
+          >
+            Votre compte utilise un mot de passe temporaire. Changez-le dès maintenant dans <code>Paramètres</code> pour sécuriser l'accès à votre espace.
+          </div>
+        )}
 
         <Outlet context={{ me, dashboard }} />
       </main>

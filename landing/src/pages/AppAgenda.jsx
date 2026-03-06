@@ -55,7 +55,15 @@ export default function AppAgenda() {
         setVerifySuccess(true);
         setMe((m) => ({ ...m, calendar_provider: "google", calendar_id: calendarId.trim() }));
       } else {
-        setVerifyError(res?.reason === "permission" ? "Accès refusé. Vérifiez que vous avez bien partagé le calendrier avec " + serviceAccountEmail : "Erreur lors de la vérification. Réessayez.");
+        if (res?.reason === "permission") {
+          setVerifyError(`Accès refusé. Vérifiez que vous avez partagé le calendrier avec ${serviceAccountEmail}`);
+        } else if (res?.reason === "not_found") {
+          setVerifyError("Calendrier introuvable. Vérifiez l'ID copié.");
+        } else if (res?.reason === "error") {
+          setVerifyError("Erreur technique. Réessayez dans quelques instants.");
+        } else {
+          setVerifyError(res?.message || "Erreur lors de la vérification. Réessayez.");
+        }
       }
     } catch {
       setVerifyError("Erreur de connexion. Réessayez.");

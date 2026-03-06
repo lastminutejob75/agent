@@ -802,6 +802,7 @@ def send_welcome_email(
     plan_key: str,
     phone_number: str,
     app_url: str = "",
+    temp_password: Optional[str] = None,
 ) -> Tuple[bool, Optional[str]]:
     """
     Email de bienvenue au client après création tenant (Vapi + Stripe + Twilio).
@@ -823,6 +824,19 @@ def send_welcome_email(
         app_url or os.getenv("CLIENT_APP_ORIGIN") or os.getenv("VITE_UWI_APP_URL") or os.getenv("VITE_SITE_URL") or "https://www.uwiapp.com"
     ).strip().rstrip("/")
     login_url = f"{base_url}/login?email={quote(to)}&welcome=1"
+    password_block = ""
+    if temp_password:
+        password_block = f"""
+  <div style="margin: 1rem 0; padding: 1rem; border: 1px solid #f59e0b; border-radius: 12px; background: #fff7ed;">
+    <p style="margin: 0 0 0.5rem 0; font-weight: 700; color: #9a3412;">Mot de passe temporaire</p>
+    <p style="margin: 0; color: #7c2d12;">
+      <strong style="font-family: monospace; font-size: 1rem;">{temp_password}</strong>
+    </p>
+    <p style="margin: 0.75rem 0 0 0; color: #7c2d12; font-size: 0.92rem;">
+      Pour votre sécurité, changez ce mot de passe dès votre première connexion.
+    </p>
+  </div>
+"""
 
     subject = f"Bienvenue sur UWi — {client_name}"
     from datetime import datetime
@@ -841,6 +855,7 @@ def send_welcome_email(
     <li><strong>Plan :</strong> {plan_display}</li>
     <li><strong>Numéro que les patients appellent :</strong> {phone_display}</li>
   </ul>
+  {password_block}
   <p style="margin: 1.5rem 0;">
     <a href="{login_url}" style="display:inline-block;background:linear-gradient(135deg,#14b8a6,#0d9488);color:#fff;padding:12px 24px;text-decoration:none;border-radius:8px;font-weight:700;font-size:1rem;">
       Accéder à mon espace
