@@ -114,11 +114,6 @@ export default function AdminLeadDetail() {
 
   const handleStatusChange = async (newStatus) => {
     if (!id) return;
-    if (newStatus === "converted") {
-      setTenantModalNotice("");
-      setShowCreateTenant(true);
-      return;
-    }
     const autoEntry = {
       text: `Statut changé → ${STATUS_LABELS[newStatus] || newStatus}`,
       action: "statut",
@@ -128,6 +123,11 @@ export default function AdminLeadDetail() {
     await adminApi.leadPatch(id, { status: newStatus, notes_log: JSON.stringify(updatedLog) });
     setLead((p) => (p ? { ...p, status: newStatus, notes_log: JSON.stringify(updatedLog) } : null));
     setNoteLog(updatedLog);
+  };
+
+  const handleConvertLead = () => {
+    setTenantModalNotice("");
+    setShowCreateTenant(true);
   };
 
   const handleTenantCreated = async (newTenant) => {
@@ -366,7 +366,7 @@ export default function AdminLeadDetail() {
           </div>
         )}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {STATUS_OPTIONS.map((opt) => (
+          {STATUS_OPTIONS.filter((opt) => opt.value !== "converted").map((opt) => (
             <button
               key={opt.value}
               type="button"
@@ -376,6 +376,34 @@ export default function AdminLeadDetail() {
               {opt.label}
             </button>
           ))}
+          {lead.status === "converted" ? (
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                padding: "8px 16px",
+                borderRadius: 8,
+                background: "rgba(16,185,129,0.18)",
+                border: "1px solid rgba(16,185,129,0.35)",
+                color: "#10B981",
+                fontSize: 13,
+                fontWeight: 700,
+              }}
+            >
+              ✓ Client créé
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={handleConvertLead}
+              style={{
+                ...btnPrimary,
+                fontWeight: 700,
+              }}
+            >
+              ✨ Créer client
+            </button>
+          )}
         </div>
 
         <div style={{ marginTop: 16 }}>
