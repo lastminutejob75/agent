@@ -2,7 +2,17 @@
 """Tests feature flags et config affichage par tenant."""
 import pytest
 from backend import config
-from backend.tenant_config import get_flags, set_flags, get_tenant_display_config, get_params, set_params, get_booking_rules, FLAG_KEYS
+from backend.tenant_config import (
+    FLAG_KEYS,
+    convert_opening_hours_to_booking_rules,
+    derive_horaires_text,
+    get_booking_rules,
+    get_flags,
+    get_params,
+    get_tenant_display_config,
+    set_flags,
+    set_params,
+)
 
 
 def test_get_flags_returns_defaults():
@@ -95,3 +105,40 @@ def test_get_booking_rules_uses_params(monkeypatch, tmp_path):
     assert rules["end_hour"] == 19
     assert rules["buffer_minutes"] == 10
     assert rules["booking_days"] == [0, 1, 2, 3, 4, 5]
+
+
+def test_derive_horaires_text_from_booking_params():
+    text = derive_horaires_text({
+        "booking_days": [0, 1, 2, 3, 4],
+        "booking_start_hour": 9,
+        "booking_end_hour": 18,
+    })
+    assert text == "Lun, Mar, Mer, Jeu, Ven · 9h–18h"
+
+
+def test_convert_opening_hours_to_booking_rules():
+    rules = convert_opening_hours_to_booking_rules({
+        "monday": {"open": "09:00", "close": "18:00", "closed": False},
+        "tuesday": {"open": "08:00", "close": "17:00", "closed": False},
+        "sunday": {"open": "10:00", "close": "12:00", "closed": True},
+    })
+    assert rules == {
+        "booking_days": [0, 1],
+        "booking_start_hour": 8,
+        "booking_end_hour": 18,
+    }
+
+
+def test_set_params_auto_derives_horaires(monkeypatch, tmp_path):
+    import backend.db as db
+
+    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "agent.db"))
+    db.init_db(days=0)
+    db.ensure_tenant_config()
+    set_params(1, {
+        "booking_days": [0, 2, 4],
+        "booking_start_hour": 10,
+        "booking_end_hour": 17,
+    })
+    params = get_params(1)
+    assert params["horaires"] == "Lun, Mer, Ven · 10h–17h"

@@ -8,6 +8,7 @@ const ROUTES = {
   "/app": { title: "Vue d'ensemble", sub: "" },
   "/app/appels": { title: "Journal des appels", sub: "" },
   "/app/agenda": { title: "Mon agenda", sub: "" },
+  "/app/horaires": { title: "Mes horaires", sub: "" },
   "/app/actions": { title: "Actions en attente", sub: "" },
   "/app/facturation": { title: "Facturation", sub: "" },
   "/app/profil": { title: "Mon profil", sub: "" },
@@ -161,6 +162,7 @@ export default function AppLayout() {
           <NavItem to="/app">Vue d'ensemble</NavItem>
           <NavItem to="/app/appels" badge={callsBadge > 0 ? callsBadge : null}>Appels</NavItem>
           <NavItem to="/app/agenda">Agenda</NavItem>
+          <NavItem to="/app/horaires">Horaires</NavItem>
           <NavItem to="/app/actions" badge={actionsCount}>Actions</NavItem>
           <div className="sb-cat">Paramètres</div>
           <NavItem to="/app/facturation">Facturation</NavItem>
@@ -247,6 +249,18 @@ export default function AppLayout() {
               <line x1="3" y1="10" x2="21" y2="10" />
             </svg>
             <span className="bn-lbl">Agenda</span>
+          </NavLink>
+          <NavLink to="/app/horaires" className={({ isActive }) => `bn ${isActive ? "on" : ""}`} onClick={closeSb}>
+            <svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M8 2v4" />
+              <path d="M16 2v4" />
+              <rect x="3" y="4" width="18" height="18" rx="2" />
+              <path d="M3 10h18" />
+              <path d="M8 14h.01" />
+              <path d="M12 14h.01" />
+              <path d="M16 14h.01" />
+            </svg>
+            <span className="bn-lbl">Horaires</span>
           </NavLink>
           <NavLink to="/app/profil" className={({ isActive }) => `bn ${isActive ? "on" : ""}`} onClick={closeSb}>
             <svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

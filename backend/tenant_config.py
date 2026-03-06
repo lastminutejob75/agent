@@ -24,6 +24,76 @@ FLAG_KEYS = (
     "ENABLE_YES_AMBIGUOUS_ROUTER",
 )
 
+DAY_LABELS_SHORT = {0: "Lun", 1: "Mar", 2: "Mer", 3: "Jeu", 4: "Ven", 5: "Sam", 6: "Dim"}
+OPENING_DAY_MAP = {
+    "monday": 0, "mon": 0, "lun": 0, "0": 0,
+    "tuesday": 1, "tue": 1, "mar": 1, "1": 1,
+    "wednesday": 2, "wed": 2, "mer": 2, "2": 2,
+    "thursday": 3, "thu": 3, "jeu": 3, "3": 3,
+    "friday": 4, "fri": 4, "ven": 4, "4": 4,
+    "saturday": 5, "sat": 5, "sam": 5, "5": 5,
+    "sunday": 6, "sun": 6, "dim": 6, "6": 6,
+}
+
+
+def _coerce_booking_days(raw_days: Any) -> List[int]:
+    if isinstance(raw_days, (list, tuple)):
+        booking_days = [int(x) for x in raw_days if str(x).strip().isdigit()]
+    elif isinstance(raw_days, str):
+        try:
+            parsed = json.loads(raw_days)
+            booking_days = [int(x) for x in parsed] if isinstance(parsed, (list, tuple)) else [0, 1, 2, 3, 4]
+        except Exception:
+            booking_days = [int(x.strip()) for x in raw_days.split(",") if x.strip().isdigit()]
+    else:
+        booking_days = [0, 1, 2, 3, 4]
+    if not booking_days:
+        booking_days = [0, 1, 2, 3, 4]
+    return sorted({d for d in booking_days if 0 <= int(d) <= 6})
+
+
+def derive_horaires_text(params: dict) -> str:
+    """Génère un texte horaires lisible depuis les booking_rules / params structurés."""
+    days = _coerce_booking_days((params or {}).get("booking_days"))
+    start = int((params or {}).get("booking_start_hour") or (params or {}).get("start_hour") or 9)
+    end = int((params or {}).get("booking_end_hour") or (params or {}).get("end_hour") or 18)
+    days_str = ", ".join(DAY_LABELS_SHORT[d] for d in days if d in DAY_LABELS_SHORT)
+    return f"{days_str} · {start}h–{end}h"
+
+
+def convert_opening_hours_to_booking_rules(opening_hours: dict) -> Dict[str, Any]:
+    """
+    Convertit les horaires structurés du lead en booking_rules tenant.
+    Accepte les variantes open/close ou start/end et clés monday..sunday / 0..6.
+    """
+    days: List[int] = []
+    starts: List[int] = []
+    ends: List[int] = []
+    for day_name, val in (opening_hours or {}).items():
+        if not isinstance(val, dict):
+            continue
+        day_idx = OPENING_DAY_MAP.get(str(day_name).strip().lower())
+        if day_idx is None or val.get("closed"):
+            continue
+        days.append(day_idx)
+        open_val = (val.get("open") or val.get("start") or "").strip()
+        close_val = (val.get("close") or val.get("end") or "").strip()
+        if open_val and ":" in open_val:
+            try:
+                starts.append(int(open_val.split(":")[0]))
+            except Exception:
+                pass
+        if close_val and ":" in close_val:
+            try:
+                ends.append(int(close_val.split(":")[0]))
+            except Exception:
+                pass
+    return {
+        "booking_days": sorted(set(days)) or [0, 1, 2, 3, 4],
+        "booking_start_hour": min(starts) if starts else 9,
+        "booking_end_hour": max(ends) if ends else 18,
+    }
+
 
 @dataclass(frozen=True)
 class TenantFlags:
@@ -113,7 +183,9 @@ def get_tenant_display_config(tenant_id: Optional[int] = None) -> Dict[str, str]
     params = get_params(tenant_id)
     horaires = (params.get("horaires") or "").strip()
     if not horaires and hasattr(config, "OPENING_HOURS_DEFAULT"):
-        horaires = config.OPENING_HOURS_DEFAULT
+        horaires = derive_horaires_text(params) if params else config.OPENING_HOURS_DEFAULT
+    if not horaires:
+        horaires = derive_horaires_text(params)
     return {
         "business_name": (params.get("business_name") or "").strip() or config.BUSINESS_NAME,
         "transfer_phone": (params.get("transfer_phone") or "").strip() or config.TRANSFER_PHONE,
@@ -127,19 +199,7 @@ def get_booking_rules(tenant_id: Optional[int] = None) -> Dict[str, Any]:
     Fallbacks : duration=15, start=9, end=18, buffer=0, days=[0..4].
     """
     params = get_params(tenant_id) or {}
-    raw_days = params.get("booking_days")
-    if isinstance(raw_days, (list, tuple)):
-        booking_days = [int(x) for x in raw_days]
-    elif isinstance(raw_days, str):
-        try:
-            parsed = json.loads(raw_days)
-            booking_days = [int(x) for x in parsed] if isinstance(parsed, (list, tuple)) else [0, 1, 2, 3, 4]
-        except Exception:
-            booking_days = [int(x.strip()) for x in raw_days.split(",") if x.strip().isdigit()]
-        if not booking_days:
-            booking_days = [0, 1, 2, 3, 4]
-    else:
-        booking_days = [0, 1, 2, 3, 4]
+    booking_days = _coerce_booking_days(params.get("booking_days"))
     return {
         "duration_minutes": int(params.get("booking_duration_minutes") or 15),
         "start_hour": int(params.get("booking_start_hour") or 9),
@@ -212,6 +272,13 @@ def set_params(tenant_id: int, params: Dict[str, str]) -> None:
                 filtered[k] = [0, 1, 2, 3, 4]
         else:
             filtered[k] = str(v)
+    if any(k in filtered for k in ("booking_days", "booking_start_hour", "booking_end_hour")):
+        horaires_params = {
+            "booking_days": filtered.get("booking_days", params.get("booking_days")),
+            "booking_start_hour": filtered.get("booking_start_hour", params.get("booking_start_hour")),
+            "booking_end_hour": filtered.get("booking_end_hour", params.get("booking_end_hour")),
+        }
+        filtered["horaires"] = derive_horaires_text(horaires_params)
     if not filtered:
         return
     db.ensure_tenant_config()

@@ -49,6 +49,7 @@ from backend.tenants_pg import (
     pg_update_tenant_flags,
     pg_update_tenant_params,
 )
+from backend.tenant_config import derive_horaires_text
 
 logger = logging.getLogger(__name__)
 
@@ -257,9 +258,41 @@ class CreateTenantRequest(BaseModel):
     twilio_number: Optional[str] = Field(default=None, max_length=32)
     timezone: str = Field(default="Europe/Paris", max_length=64)
     send_welcome: bool = Field(default=True)
+    booking_rules: Optional[Dict[str, Any]] = None
+
+
+class HorairesBody(BaseModel):
+    booking_days: List[int]
+    booking_start_hour: int
+    booking_end_hour: int
+    booking_duration_minutes: int
+    booking_buffer_minutes: int
 
 
 # --- Helpers ---
+
+
+def _validate_horaires_payload(body: HorairesBody) -> Dict[str, Any]:
+    booking_days = sorted({int(day) for day in (body.booking_days or []) if 0 <= int(day) <= 6})
+    if not booking_days:
+        raise HTTPException(status_code=400, detail="Au moins un jour doit être sélectionné.")
+    if not 6 <= int(body.booking_start_hour) <= 22:
+        raise HTTPException(status_code=400, detail="Heure de début invalide.")
+    if not 6 <= int(body.booking_end_hour) <= 22:
+        raise HTTPException(status_code=400, detail="Heure de fin invalide.")
+    if int(body.booking_end_hour) <= int(body.booking_start_hour):
+        raise HTTPException(status_code=400, detail="L'heure de fin doit être après l'heure de début.")
+    if not 5 <= int(body.booking_duration_minutes) <= 120:
+        raise HTTPException(status_code=400, detail="Durée de rendez-vous invalide.")
+    if not 0 <= int(body.booking_buffer_minutes) <= 120:
+        raise HTTPException(status_code=400, detail="Buffer invalide.")
+    return {
+        "booking_days": booking_days,
+        "booking_start_hour": int(body.booking_start_hour),
+        "booking_end_hour": int(body.booking_end_hour),
+        "booking_duration_minutes": int(body.booking_duration_minutes),
+        "booking_buffer_minutes": int(body.booking_buffer_minutes),
+    }
 
 
 def _get_tenant_list(include_inactive: bool = False) -> List[dict]:
@@ -2332,6 +2365,42 @@ def _get_stripe_price_ids_for_plan(plan_key: str) -> tuple[str | None, str | Non
     return (base, metered)
 
 
+def _get_payment_collection_urls() -> tuple[str, str]:
+    base = (
+        os.environ.get("CLIENT_APP_ORIGIN")
+        or os.environ.get("ADMIN_BASE_URL")
+        or os.environ.get("FRONT_BASE_URL")
+        or os.environ.get("APP_BASE_URL")
+        or ""
+    ).strip().rstrip("/")
+    if base:
+        return (f"{base}/app?payment=success", f"{base}/app?payment=cancelled")
+
+    success_url = (os.environ.get("STRIPE_CHECKOUT_SUCCESS_URL") or "").strip()
+    cancel_url = (os.environ.get("STRIPE_CHECKOUT_CANCEL_URL") or "").strip()
+    if success_url and cancel_url:
+        return (success_url, cancel_url)
+    raise HTTPException(503, "CLIENT_APP_ORIGIN or STRIPE_CHECKOUT_SUCCESS_URL/STRIPE_CHECKOUT_CANCEL_URL required")
+
+
+def _extract_trial_end_date_display(trial_ends_at: Any) -> str | None:
+    if not trial_ends_at:
+        return None
+    try:
+        if isinstance(trial_ends_at, datetime):
+            dt = trial_ends_at
+        else:
+            raw = str(trial_ends_at).replace("Z", "+00:00")
+            dt = datetime.fromisoformat(raw)
+        months = [
+            "janvier", "février", "mars", "avril", "mai", "juin",
+            "juillet", "août", "septembre", "octobre", "novembre", "décembre",
+        ]
+        return f"{dt.day} {months[dt.month - 1]} {dt.year}"
+    except Exception:
+        return str(trial_ends_at)[:10] or None
+
+
 class StripeCheckoutBody(BaseModel):
     plan_key: str = Field(..., description="starter | growth | pro")
     trial_days: Optional[int] = Field(None, ge=1, le=365, description="Jours d'essai avant première facture")
@@ -2426,6 +2495,119 @@ def admin_create_stripe_checkout(
         return {"checkout_url": url}
     except stripe.StripeError as e:
         logger.warning("stripe checkout session create failed: %s", e)
+        raise HTTPException(502, str(e) or "Stripe error")
+
+
+@router.post("/admin/tenants/{tenant_id}/send-payment-link")
+def admin_send_payment_link(
+    tenant_id: int = Depends(validate_tenant_id),
+    _: None = Depends(_verify_admin),
+):
+    """
+    Génère un lien Stripe pour ajouter un moyen de paiement.
+    - Si une subscription existe déjà : Checkout mode=setup pour sauver la carte.
+    - Sinon : Checkout mode=subscription pour démarrer l'abonnement (trial 30j).
+    """
+    d = _get_tenant_detail(tenant_id)
+    if not d:
+        raise HTTPException(404, "Tenant not found")
+    billing = get_tenant_billing(tenant_id) or {}
+    params = d.get("params") or {}
+    contact_email = (
+        (d.get("contact_email") or "").strip()
+        or (params.get("contact_email") or "").strip()
+        or (params.get("billing_email") or "").strip()
+    )
+    if not contact_email:
+        raise HTTPException(400, "contact_email required")
+
+    stripe_key = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
+    if not stripe_key:
+        raise HTTPException(503, "Stripe not configured (STRIPE_SECRET_KEY)")
+    success_url, cancel_url = _get_payment_collection_urls()
+
+    customer_id = (billing.get("stripe_customer_id") or "").strip()
+    try:
+        import stripe
+
+        stripe.api_key = stripe_key
+        if not customer_id:
+            customer = stripe.Customer.create(
+                email=contact_email,
+                name=(d.get("name") or f"Tenant #{tenant_id}")[:500],
+                phone=(params.get("phone_number") or "").strip() or None,
+                metadata={"tenant_id": str(tenant_id), "plan": (billing.get("plan_key") or params.get("plan_key") or "")},
+            )
+            customer_id = (customer.id or "").strip()
+            if not customer_id:
+                raise HTTPException(500, "Stripe customer id empty")
+            if not set_stripe_customer_id(tenant_id, customer_id):
+                raise HTTPException(500, "Failed to save stripe_customer_id")
+
+        subscription_id = (billing.get("stripe_subscription_id") or "").strip()
+        plan_key = ((billing.get("plan_key") or params.get("plan_key") or "starter") or "").strip().lower()
+        metadata = {"tenant_id": str(tenant_id), "plan_key": plan_key}
+        if subscription_id:
+            session = stripe.checkout.Session.create(
+                customer=customer_id,
+                mode="setup",
+                payment_method_types=["card"],
+                success_url=success_url,
+                cancel_url=cancel_url,
+                locale="fr",
+                metadata=metadata,
+                setup_intent_data={"metadata": metadata},
+            )
+        else:
+            base_price_id, metered_price_id = _get_stripe_price_ids_for_plan(plan_key)
+            if plan_key not in STRIPE_CHECKOUT_PLAN_KEYS:
+                raise HTTPException(400, "plan_key must be one of: starter, growth, pro")
+            if not base_price_id:
+                raise HTTPException(400, "PRICE_NOT_CONFIGURED")
+            if not metered_price_id:
+                raise HTTPException(503, "STRIPE_PRICE_METERED_* or STRIPE_PRICE_METERED_MINUTES required")
+            session = stripe.checkout.Session.create(
+                mode="subscription",
+                customer=customer_id,
+                line_items=[
+                    {"price": base_price_id, "quantity": 1},
+                    {"price": metered_price_id},
+                ],
+                success_url=success_url,
+                cancel_url=cancel_url,
+                locale="fr",
+                metadata=metadata,
+                subscription_data={
+                    "trial_period_days": 30,
+                    "metadata": metadata,
+                },
+            )
+
+        checkout_url = (getattr(session, "url", None) or "").strip()
+        if not checkout_url:
+            raise HTTPException(500, "Stripe did not return checkout URL")
+
+        from backend.services.email_service import send_payment_link_email
+
+        trial_end_date = _extract_trial_end_date_display(billing.get("trial_ends_at"))
+        ok, err = send_payment_link_email(
+            to=contact_email,
+            tenant_name=(d.get("name") or f"Tenant #{tenant_id}"),
+            checkout_url=checkout_url,
+            trial_end_date=trial_end_date,
+        )
+        if not ok:
+            logger.warning("payment_link_email_failed tenant_id=%s: %s", tenant_id, err or "unknown")
+
+        return {
+            "ok": True,
+            "checkout_url": checkout_url,
+            "email": contact_email,
+            "email_sent": bool(ok),
+            "trial_end_date": trial_end_date,
+        }
+    except stripe.StripeError as e:
+        logger.warning("send payment link stripe failed tenant_id=%s: %s", tenant_id, e)
         raise HTTPException(502, str(e) or "Stripe error")
 
 
@@ -2780,6 +2962,25 @@ def admin_patch_params(
     return {"ok": True}
 
 
+@router.patch("/admin/tenants/{tenant_id}/horaires")
+def admin_patch_horaires(
+    tenant_id: int = Depends(validate_tenant_id),
+    body: HorairesBody = ...,
+    _: None = Depends(_verify_admin),
+):
+    """Met à jour les horaires structurés d'un tenant et dérive le texte d'affichage."""
+    rules = _validate_horaires_payload(body)
+    horaires = derive_horaires_text(rules)
+    payload = {**rules, "horaires": horaires}
+    if config.USE_PG_TENANTS:
+        ok = pg_update_tenant_params(tenant_id, payload)
+        if ok:
+            return {"ok": True, "horaires": horaires, **rules}
+    from backend.tenant_config import set_params
+    set_params(tenant_id, payload)
+    return {"ok": True, "horaires": horaires, **rules}
+
+
 @router.post("/admin/routing")
 def admin_add_routing(
     body: RoutingCreate,
@@ -2911,6 +3112,11 @@ async def admin_create_tenant_full(
             },
         ):
             raise RuntimeError("Impossible d'enregistrer les paramètres du tenant")
+        if body.booking_rules:
+            booking_rules = _validate_horaires_payload(HorairesBody(**body.booking_rules))
+            booking_rules["horaires"] = derive_horaires_text(booking_rules)
+            if not pg_update_tenant_params(tid, booking_rules):
+                raise RuntimeError("Impossible d'enregistrer les horaires du tenant")
         logger.info("createTenantFull step=1 ok tenant_id=%s", tid)
 
         current_step = 2
@@ -2957,6 +3163,10 @@ async def admin_create_tenant_full(
         subscription = stripe.Subscription.create(
             customer=customer.id,
             items=line_items,
+            trial_period_days=30,
+            payment_behavior="default_incomplete",
+            payment_settings={"save_default_payment_method": "on_subscription"},
+            expand=["latest_invoice.payment_intent"],
             metadata={"tenant_id": str(tid), "plan_key": body.plan_key},
         )
         created["stripe_subscription_id"] = subscription.id
@@ -2968,6 +3178,9 @@ async def admin_create_tenant_full(
             cps = datetime.utcfromtimestamp(subscription.current_period_start)
         if getattr(subscription, "current_period_end", None):
             cpe = datetime.utcfromtimestamp(subscription.current_period_end)
+        trial_ends_at = None
+        if getattr(subscription, "trial_end", None):
+            trial_ends_at = datetime.utcfromtimestamp(subscription.trial_end)
         if not upsert_billing_from_subscription(
             tid,
             stripe_subscription_id=subscription.id,
@@ -2975,6 +3188,7 @@ async def admin_create_tenant_full(
             plan_key=body.plan_key,
             current_period_start=cps,
             current_period_end=cpe,
+            trial_ends_at=trial_ends_at,
             stripe_customer_id=customer.id,
         ):
             raise RuntimeError("Impossible d'enregistrer la souscription Stripe en base")

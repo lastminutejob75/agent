@@ -10,8 +10,11 @@ import {
   getTenantUsage,
   getTenantQuota,
   updateTenantFlags,
+  updateTenantHoraires,
   updateTenantParams,
+  sendPaymentLink,
 } from "../../lib/adminApi";
+import { deriveHorairesText, normalizeBookingRules } from "../../lib/bookingUtils.js";
 
 const C = {
   bg: "#0A1828",
@@ -460,6 +463,9 @@ function TabActions({ tenantId, tenant, onSaved }) {
   const [params, setParams] = useState(tenant?.params || {});
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [paymentLinkLoading, setPaymentLinkLoading] = useState(false);
+  const [paymentLinkUrl, setPaymentLinkUrl] = useState("");
+  const [paymentLinkEmail, setPaymentLinkEmail] = useState("");
 
   useEffect(() => {
     setFlags(tenant?.flags || {});
@@ -468,6 +474,8 @@ function TabActions({ tenantId, tenant, onSaved }) {
 
   const FLAG_KEYS = ["ENABLE_LLM_ASSIST_START", "ENABLE_ANTI_LOOP", "ENABLE_TRANSFER", "ENABLE_BOOKING", "ENABLE_FAQ"];
   const PARAM_KEYS = ["calendar_id", "phone_number", "transfer_number", "timezone", "assistant_name"];
+  const bookingRules = normalizeBookingRules(params);
+  const horairesPreview = deriveHorairesText(bookingRules);
 
   const saveFlags = async () => {
     setSaving(true);
@@ -494,6 +502,48 @@ function TabActions({ tenantId, tenant, onSaved }) {
       setMsg({ type: "error", text: e?.message || "Erreur" });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const saveHoraires = async () => {
+    setSaving(true);
+    setMsg(null);
+    try {
+      await updateTenantHoraires(tenantId, bookingRules);
+      setParams((p) => ({ ...p, horaires: horairesPreview }));
+      setMsg({ type: "success", text: `Horaires sauvegardés ✓ ${horairesPreview}` });
+      onSaved?.();
+    } catch (e) {
+      setMsg({ type: "error", text: e?.message || "Erreur horaires" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSendPaymentLink = async () => {
+    if (!tenantId) return;
+    setPaymentLinkLoading(true);
+    setMsg(null);
+    try {
+      const res = await sendPaymentLink(tenantId);
+      setPaymentLinkUrl(res?.checkout_url || "");
+      setPaymentLinkEmail(res?.email || "");
+      setMsg({ type: "success", text: `Lien envoyé à ${res?.email || "ce client"} ✓` });
+      onSaved?.();
+    } catch (e) {
+      setMsg({ type: "error", text: e?.message || "Erreur lors de l'envoi du lien de paiement" });
+    } finally {
+      setPaymentLinkLoading(false);
+    }
+  };
+
+  const copyPaymentLink = async () => {
+    if (!paymentLinkUrl) return;
+    try {
+      await navigator.clipboard.writeText(paymentLinkUrl);
+      setMsg({ type: "success", text: "Lien copié ✓" });
+    } catch (_e) {
+      setMsg({ type: "error", text: "Impossible de copier le lien" });
     }
   };
 
@@ -738,6 +788,46 @@ function TabActions({ tenantId, tenant, onSaved }) {
               })}
             </div>
           </div>
+
+          <div
+            style={{
+              marginBottom: 12,
+              padding: "10px 12px",
+              borderRadius: 10,
+              background: "rgba(0,229,160,0.08)",
+              border: `1px solid rgba(0,229,160,0.18)`,
+              fontSize: 12,
+              color: C.text,
+            }}
+          >
+            <div style={{ color: C.accent, fontWeight: 700, marginBottom: 4 }}>Aperçu live</div>
+            <div>📅 {horairesPreview}</div>
+            <div style={{ color: C.muted, marginTop: 4 }}>
+              RDV de {bookingRules.booking_duration_minutes} min, buffer {bookingRules.booking_buffer_minutes} min
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={saveHoraires}
+            disabled={saving}
+            style={{
+              marginBottom: 12,
+              width: "100%",
+              padding: 10,
+              borderRadius: 10,
+              background: `linear-gradient(135deg,${C.accent},${C.accentDim})`,
+              border: "none",
+              color: C.bg,
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: "pointer",
+              fontFamily: "inherit",
+              opacity: saving ? 0.8 : 1,
+            }}
+          >
+            {saving ? "…" : "Sauvegarder les horaires"}
+          </button>
         </div>
 
         <button
@@ -760,6 +850,75 @@ function TabActions({ tenantId, tenant, onSaved }) {
         >
           {saving ? "…" : "Sauvegarder les params"}
         </button>
+
+        <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 8 }}>Paiement Stripe</div>
+          <div style={{ fontSize: 12, color: C.muted, marginBottom: 10 }}>
+            Envoie au client un lien Stripe pour ajouter sa carte pendant ou après les 30 jours d'essai.
+          </div>
+          <button
+            type="button"
+            onClick={handleSendPaymentLink}
+            disabled={paymentLinkLoading}
+            style={{
+              width: "100%",
+              padding: 10,
+              borderRadius: 10,
+              background: `linear-gradient(135deg,${C.accent},${C.accentDim})`,
+              border: "none",
+              color: C.bg,
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: "pointer",
+              fontFamily: "inherit",
+              opacity: paymentLinkLoading ? 0.7 : 1,
+            }}
+          >
+            {paymentLinkLoading ? "Envoi..." : "Envoyer lien de paiement"}
+          </button>
+          {paymentLinkUrl && (
+            <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+              <input
+                readOnly
+                value={paymentLinkUrl}
+                style={{
+                  width: "100%",
+                  background: C.surface,
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 8,
+                  padding: "8px 12px",
+                  color: C.text,
+                  fontSize: 12,
+                  fontFamily: "monospace",
+                  outline: "none",
+                }}
+              />
+              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  onClick={copyPaymentLink}
+                  style={{
+                    padding: "8px 12px",
+                    borderRadius: 8,
+                    background: C.surface,
+                    border: `1px solid ${C.border}`,
+                    color: C.text,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  Copier le lien
+                </button>
+                <a href={paymentLinkUrl} target="_blank" rel="noopener noreferrer" style={{ color: C.blue, fontSize: 12 }}>
+                  Ouvrir le lien
+                </a>
+                {paymentLinkEmail && <span style={{ fontSize: 12, color: C.muted }}>Envoyé à {paymentLinkEmail}</span>}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {msg && (

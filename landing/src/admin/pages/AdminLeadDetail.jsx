@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { adminApi } from "../../lib/adminApi.js";
+import { convertOpeningHours } from "../../lib/bookingUtils.js";
 import { formatOpeningHoursPretty, getAmplitudeBadge, getAmplitudeScore } from "../../lib/openingHoursPretty.js";
 import CreateTenantModal from "../components/CreateTenantModal.jsx";
 
@@ -109,6 +110,7 @@ export default function AdminLeadDetail() {
               : "starter",
       }
     : {};
+  const initialBookingRules = lead?.opening_hours ? convertOpeningHours(lead.opening_hours) : null;
 
   const handleStatusChange = async (newStatus) => {
     if (!id) return;
@@ -489,6 +491,7 @@ export default function AdminLeadDetail() {
       {showCreateTenant && (
         <CreateTenantModal
           prefill={tenantPrefill}
+          initialBookingRules={initialBookingRules}
           onClose={handleTenantModalClose}
           onCreated={handleTenantCreated}
         />

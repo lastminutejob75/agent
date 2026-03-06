@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { adminApi } from "../../lib/adminApi";
 import { getClientWelcomeLoginUrl } from "../../lib/clientAppUrl.js";
+import { deriveHorairesText, normalizeBookingRules } from "../../lib/bookingUtils.js";
 
 const C = {
   bg: "#0A1828",
@@ -44,12 +45,13 @@ const PLANS = [
 
 const STEPS = ["Infos client", "Configuration", "Assistant", "Récapitulatif"];
 
-export default function CreateTenantModal({ onClose, onCreated, prefill = {} }) {
+export default function CreateTenantModal({ onClose, onCreated, prefill = {}, initialBookingRules = null }) {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [twilioNumbers, setTwilio] = useState([]);
   const [submitting, setSubmit] = useState(false);
   const [result, setResult] = useState(null);
+  const bookingRules = normalizeBookingRules(initialBookingRules || {});
 
   const [form, setForm] = useState({
     name: prefill.name || "",
@@ -85,6 +87,7 @@ export default function CreateTenantModal({ onClose, onCreated, prefill = {} }) 
       const payload = {
         ...form,
         twilio_number: form.twilio_number || null,
+        booking_rules: bookingRules,
       };
       const res = await adminApi.createTenantFull(payload);
       setResult(res);
@@ -446,6 +449,7 @@ export default function CreateTenantModal({ onClose, onCreated, prefill = {} }) 
                 ["Secteur", SECTORS.find((s) => s.id === form.sector)?.label],
                 ["Plan", PLANS.find((p) => p.id === form.plan_key)?.label],
                 ["Assistant", ASSISTANTS.find((a) => a.id === form.assistant_id)?.prenom],
+                ["Horaires", `${deriveHorairesText(bookingRules)} · RDV ${bookingRules.booking_duration_minutes} min`],
                 ["Numéro", form.twilio_number || "À assigner plus tard"],
                 ["Email accès", form.send_welcome ? "✓ Oui" : "Non"],
               ].map(([l, v]) => (

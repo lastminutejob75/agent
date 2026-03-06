@@ -13,6 +13,7 @@ import AppLayout from "./pages/AppLayout";
 import AppDashboard from "./pages/AppDashboard";
 import AppCalls from "./pages/AppCalls";
 import AppAgenda from "./pages/AppAgenda";
+import AppHoraires from "./pages/AppHoraires";
 import AppActions from "./pages/AppActions";
 import AppFacturation from "./pages/AppFacturation";
 import AppProfil from "./pages/AppProfil";
@@ -95,6 +96,7 @@ export default function App() {
           <Route index element={<AppDashboard />} />
           <Route path="appels" element={<AppCalls />} />
           <Route path="agenda" element={<AppAgenda />} />
+          <Route path="horaires" element={<AppHoraires />} />
           <Route path="actions" element={<AppActions />} />
           <Route path="facturation" element={<AppFacturation />} />
           <Route path="profil" element={<AppProfil />} />

@@ -114,6 +114,8 @@ export const api = {
     request(`/api/admin/tenants/${tenantId}/flags`, { method: "PATCH", body: { flags }, admin: true }),
   adminPatchParams: (tenantId, params) =>
     request(`/api/admin/tenants/${tenantId}/params`, { method: "PATCH", body: { params }, admin: true }),
+  adminUpdateHoraires: (tenantId, rules) =>
+    request(`/api/admin/tenants/${tenantId}/horaires`, { method: "PATCH", body: rules, admin: true }),
   adminAddRouting: (payload) => request("/api/admin/routing", { method: "POST", body: payload, admin: true }),
   adminKpisWeekly: (tenantId, start, end) =>
     request(`/api/admin/kpis/weekly?tenant_id=${tenantId}&start=${start}&end=${end}`, { admin: true }),
@@ -149,6 +151,9 @@ export const api = {
   tenantRgpd: () => request("/api/tenant/rgpd", { tenant: true }),
   tenantPatchParams: (params) =>
     request("/api/tenant/params", { method: "PATCH", body: params, tenant: true }),
+  tenantGetHoraires: () => request("/api/tenant/horaires", { tenant: true }),
+  tenantUpdateHoraires: (rules) =>
+    request("/api/tenant/horaires", { method: "PATCH", body: rules, tenant: true }),
   tenantChangePassword: (newPassword) =>
     request("/api/tenant/auth/change-password", {
       method: "PATCH",
@@ -169,3 +174,7 @@ export const api = {
   agendaActivateNone: () =>
     request("/api/tenant/agenda/activate-none", { method: "POST", tenant: true }),
 };
+
+export const tenantGetHoraires = () => api.tenantGetHoraires();
+export const tenantUpdateHoraires = (rules) => api.tenantUpdateHoraires(rules);
+export const adminUpdateHoraires = (tenantId, rules) => api.adminUpdateHoraires(tenantId, rules);

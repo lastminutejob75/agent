@@ -9,7 +9,7 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import bcrypt
 import jwt
@@ -29,6 +29,7 @@ from backend.routes.admin import (
     _get_tenant_detail,
 )
 from backend.services.email_service import send_agenda_contact_request_email
+from backend.tenant_config import derive_horaires_text, get_booking_rules
 from backend.tenants_pg import pg_update_tenant_params
 
 logger = logging.getLogger(__name__)
@@ -201,8 +202,69 @@ def tenant_patch_params(
     return {"ok": True}
 
 
+@router.get("/horaires")
+def tenant_get_horaires(auth: dict = Depends(require_tenant_auth)):
+    """Retourne les règles de booking du tenant connecté + texte horaires dérivé."""
+    tenant_id = auth["tenant_id"]
+    rules = get_booking_rules(tenant_id)
+    payload = {
+        "booking_days": rules.get("booking_days", [0, 1, 2, 3, 4]),
+        "booking_start_hour": rules.get("start_hour", 9),
+        "booking_end_hour": rules.get("end_hour", 18),
+        "booking_duration_minutes": rules.get("duration_minutes", 15),
+        "booking_buffer_minutes": rules.get("buffer_minutes", 0),
+    }
+    return {**payload, "horaires": derive_horaires_text(payload)}
+
+
+@router.patch("/horaires")
+def tenant_patch_horaires(
+    body: HorairesBody,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Met à jour les horaires structurés du tenant connecté."""
+    tenant_id = auth["tenant_id"]
+    rules = _validate_horaires_payload(body)
+    horaires = derive_horaires_text(rules)
+    ok = pg_update_tenant_params(tenant_id, {**rules, "horaires": horaires})
+    if not ok:
+        raise HTTPException(500, "Failed to update horaires")
+    return {"ok": True, "horaires": horaires, **rules}
+
+
 class ChangePasswordBody(BaseModel):
     new_password: str
+
+
+class HorairesBody(BaseModel):
+    booking_days: List[int]
+    booking_start_hour: int
+    booking_end_hour: int
+    booking_duration_minutes: int
+    booking_buffer_minutes: int
+
+
+def _validate_horaires_payload(body: HorairesBody) -> Dict[str, Any]:
+    booking_days = sorted({int(day) for day in (body.booking_days or []) if 0 <= int(day) <= 6})
+    if not booking_days:
+        raise HTTPException(status_code=400, detail="Au moins un jour doit être sélectionné.")
+    if not 6 <= int(body.booking_start_hour) <= 22:
+        raise HTTPException(status_code=400, detail="Heure de début invalide.")
+    if not 6 <= int(body.booking_end_hour) <= 22:
+        raise HTTPException(status_code=400, detail="Heure de fin invalide.")
+    if int(body.booking_end_hour) <= int(body.booking_start_hour):
+        raise HTTPException(status_code=400, detail="L'heure de fin doit être après l'heure de début.")
+    if not 5 <= int(body.booking_duration_minutes) <= 120:
+        raise HTTPException(status_code=400, detail="Durée de rendez-vous invalide.")
+    if not 0 <= int(body.booking_buffer_minutes) <= 120:
+        raise HTTPException(status_code=400, detail="Buffer invalide.")
+    return {
+        "booking_days": booking_days,
+        "booking_start_hour": int(body.booking_start_hour),
+        "booking_end_hour": int(body.booking_end_hour),
+        "booking_duration_minutes": int(body.booking_duration_minutes),
+        "booking_buffer_minutes": int(body.booking_buffer_minutes),
+    }
 
 
 @router.patch("/auth/change-password")
