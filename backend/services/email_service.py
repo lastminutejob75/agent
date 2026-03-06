@@ -10,6 +10,7 @@ import os
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import parseaddr
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import quote
 
@@ -31,6 +32,23 @@ RECOMMENDATIONS = {
     "phone": "Demander chiffre par chiffre",
     "preference": "Reformulation avant/après midi + heures",
 }
+
+
+def _extract_email_address(value: str) -> str:
+    return parseaddr((value or "").strip())[1].strip()
+
+
+def _mask_email_address(value: str) -> str:
+    email = _extract_email_address(value)
+    if not email or "@" not in email:
+        return ""
+    local, domain = email.split("@", 1)
+    local_masked = local[:2] + "***" if len(local) > 2 else (local[:1] + "***" if local else "***")
+    domain_parts = domain.split(".")
+    domain_main = domain_parts[0] if domain_parts else domain
+    domain_rest = ".".join(domain_parts[1:]) if len(domain_parts) > 1 else ""
+    domain_masked = (domain_main[:2] + "***") if domain_main else "***"
+    return f"{local_masked}@{domain_masked}{('.' + domain_rest) if domain_rest else ''}"
 
 
 def _date_fr(date_str: str) -> str:
@@ -664,9 +682,24 @@ def send_lead_founder_email(
     token = (os.getenv("POSTMARK_SERVER_TOKEN") or "").strip()
     if token and from_addr:
         try:
+            logger.info(
+                "lead_founder_email_attempt via postmark",
+                extra={
+                    "lead_id": lead_id[:24],
+                    "to_masked": _mask_email_address(to),
+                    "from_masked": _mask_email_address(from_addr),
+                },
+            )
             ok, err = _send_via_postmark(from_addr, to, subject, html, token)
             if ok:
-                logger.info("lead_founder_email_sent via postmark", extra={"lead_id": lead_id[:24]})
+                logger.info(
+                    "lead_founder_email_sent via postmark",
+                    extra={
+                        "lead_id": lead_id[:24],
+                        "to_masked": _mask_email_address(to),
+                        "from_masked": _mask_email_address(from_addr),
+                    },
+                )
             return ok, err
         except Exception as e:
             logger.exception("send_lead_founder_email postmark failed")
@@ -677,6 +710,16 @@ def send_lead_founder_email(
         host = os.getenv("SMTP_HOST", "smtp.gmail.com")
         port = int(os.getenv("SMTP_PORT", "587"))
         try:
+            logger.info(
+                "lead_founder_email_attempt via smtp",
+                extra={
+                    "lead_id": lead_id[:24],
+                    "to_masked": _mask_email_address(to),
+                    "from_masked": _mask_email_address(smtp_user),
+                    "smtp_host": host,
+                    "smtp_port": port,
+                },
+            )
             msg = MIMEMultipart("alternative")
             msg["From"] = smtp_user
             msg["To"] = to
@@ -686,7 +729,16 @@ def send_lead_founder_email(
                 server.starttls()
                 server.login(smtp_user, smtp_pass)
                 server.sendmail(smtp_user, [to], msg.as_string())
-            logger.info("lead_founder_email_sent via smtp", extra={"lead_id": lead_id[:24]})
+            logger.info(
+                "lead_founder_email_sent via smtp",
+                extra={
+                    "lead_id": lead_id[:24],
+                    "to_masked": _mask_email_address(to),
+                    "from_masked": _mask_email_address(smtp_user),
+                    "smtp_host": host,
+                    "smtp_port": port,
+                },
+            )
             return True, None
         except Exception as e:
             logger.exception("send_lead_founder_email smtp failed")
