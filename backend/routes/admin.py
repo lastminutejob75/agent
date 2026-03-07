@@ -1191,6 +1191,34 @@ class LeadPatchBody(BaseModel):
     follow_up_at: Optional[str] = None
 
 
+class OnboardingLinkBody(BaseModel):
+    email: EmailStr
+    name: Optional[str] = Field(default="", max_length=120)
+
+
+def _build_onboarding_link(email: str) -> str:
+    base = (
+        os.getenv("PUBLIC_BASE_URL")
+        or os.getenv("CLIENT_APP_ORIGIN")
+        or os.getenv("FRONT_BASE_URL")
+        or "https://uwiapp.com"
+    ).strip().rstrip("/")
+    return f"{base}/creer-assistante?email={email}&new=1"
+
+
+def _send_onboarding_link(email: str, name: str = "") -> Dict[str, Any]:
+    from backend.services.email_service import send_onboarding_link_email
+
+    email_clean = (email or "").strip().lower()
+    if not email_clean:
+        raise HTTPException(400, "email required")
+    onboarding_url = _build_onboarding_link(email_clean)
+    ok, err = send_onboarding_link_email(email_clean, (name or "").strip(), onboarding_url)
+    if not ok:
+        raise HTTPException(502, err or "Envoi email échoué")
+    return {"ok": True, "email": email_clean, "onboarding_url": onboarding_url, "email_sent": True}
+
+
 @router.patch("/admin/leads/{lead_id}")
 def admin_lead_patch(
     lead_id: str,
@@ -1211,6 +1239,32 @@ def admin_lead_patch(
     if not ok:
         raise HTTPException(500, "Erreur mise à jour")
     return {"ok": True}
+
+
+@router.post("/admin/leads/{lead_id}/send-onboarding-link")
+def admin_send_lead_onboarding_link(
+    lead_id: str,
+    body: Optional[OnboardingLinkBody] = Body(default=None),
+    _: None = Depends(_verify_admin),
+):
+    from backend.leads_pg import get_lead
+
+    lead = get_lead(lead_id)
+    if not lead:
+        raise HTTPException(404, "Lead non trouvé")
+    email = ((body.email if body else None) or lead.get("email") or "").strip().lower()
+    if not email:
+        raise HTTPException(400, "Lead sans email")
+    name = ((body.name if body else None) or lead.get("cabinet_name") or lead.get("assistant_name") or "").strip()
+    return _send_onboarding_link(email=email, name=name)
+
+
+@router.post("/admin/send-onboarding-link")
+def admin_send_onboarding_link(
+    body: OnboardingLinkBody = Body(...),
+    _: None = Depends(_verify_admin),
+):
+    return _send_onboarding_link(email=body.email, name=body.name or "")
 
 
 @router.post("/public/onboarding", response_model=OnboardingResponse)
@@ -2609,6 +2663,29 @@ def admin_send_payment_link(
     except stripe.StripeError as e:
         logger.warning("send payment link stripe failed tenant_id=%s: %s", tenant_id, e)
         raise HTTPException(502, str(e) or "Stripe error")
+
+
+@router.post("/admin/tenants/{tenant_id}/send-onboarding-link")
+def admin_send_tenant_onboarding_link(
+    tenant_id: int = Depends(validate_tenant_id),
+    body: Optional[OnboardingLinkBody] = Body(default=None),
+    _: None = Depends(_verify_admin),
+):
+    d = _get_tenant_detail(tenant_id)
+    if not d:
+        raise HTTPException(404, "Tenant not found")
+    params = d.get("params") or {}
+    email = (
+        (body.email if body else None)
+        or (d.get("contact_email") or "")
+        or (params.get("contact_email") or "")
+        or (params.get("billing_email") or "")
+    )
+    email = (email or "").strip().lower()
+    if not email:
+        raise HTTPException(400, "contact_email required")
+    name = ((body.name if body else None) or d.get("name") or params.get("manager_name") or "").strip()
+    return _send_onboarding_link(email=email, name=name)
 
 
 @router.get("/admin/tenants/{tenant_id}/usage")

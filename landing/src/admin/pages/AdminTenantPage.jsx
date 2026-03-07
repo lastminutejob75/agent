@@ -13,6 +13,7 @@ import {
   updateTenantHoraires,
   updateTenantParams,
   sendPaymentLink,
+  sendTenantOnboardingLink,
 } from "../../lib/adminApi";
 import { deriveHorairesText, normalizeBookingRules } from "../../lib/bookingUtils.js";
 
@@ -466,10 +467,16 @@ function TabActions({ tenantId, tenant, onSaved }) {
   const [paymentLinkLoading, setPaymentLinkLoading] = useState(false);
   const [paymentLinkUrl, setPaymentLinkUrl] = useState("");
   const [paymentLinkEmail, setPaymentLinkEmail] = useState("");
+  const [showOnboardingModal, setShowOnboardingModal] = useState(false);
+  const [onboardingEmail, setOnboardingEmail] = useState("");
+  const [onboardingLoading, setOnboardingLoading] = useState(false);
 
   useEffect(() => {
     setFlags(tenant?.flags || {});
     setParams(tenant?.params || {});
+    setOnboardingEmail(
+      tenant?.contact_email || tenant?.params?.contact_email || tenant?.params?.billing_email || "",
+    );
   }, [tenant]);
 
   const FLAG_KEYS = ["ENABLE_LLM_ASSIST_START", "ENABLE_ANTI_LOOP", "ENABLE_TRANSFER", "ENABLE_BOOKING", "ENABLE_FAQ"];
@@ -546,6 +553,30 @@ function TabActions({ tenantId, tenant, onSaved }) {
       setMsg({ type: "error", text: "Impossible de copier le lien" });
     }
   };
+
+  const handleSendOnboardingLink = async () => {
+    if (!tenantId || !onboardingEmail.trim()) {
+      setMsg({ type: "error", text: "Email requis pour envoyer le lien onboarding" });
+      return;
+    }
+    setOnboardingLoading(true);
+    setMsg(null);
+    try {
+      const res = await sendTenantOnboardingLink(tenantId, {
+        email: onboardingEmail.trim(),
+        name: tenant?.name || "",
+      });
+      setMsg({ type: "success", text: `Lien envoyé à ${res?.email || onboardingEmail.trim()} ✓` });
+      setShowOnboardingModal(false);
+      onSaved?.();
+    } catch (e) {
+      setMsg({ type: "error", text: e?.message || "Erreur lors de l'envoi du lien onboarding" });
+    } finally {
+      setOnboardingLoading(false);
+    }
+  };
+
+  const onboardingEligible = !((tenant?.params?.vapi_assistant_id || "").trim());
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, maxWidth: 900 }}>
@@ -852,6 +883,33 @@ function TabActions({ tenantId, tenant, onSaved }) {
         </button>
 
         <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
+          {onboardingEligible && (
+            <>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 8 }}>Onboarding client</div>
+              <div style={{ fontSize: 12, color: C.muted, marginBottom: 10 }}>
+                Envoie au client un lien vers le wizard pour qu&apos;il configure lui-même son assistant.
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowOnboardingModal(true)}
+                style={{
+                  width: "100%",
+                  padding: 10,
+                  borderRadius: 10,
+                  background: "rgba(91,168,255,0.12)",
+                  border: `1px solid ${C.blue}55`,
+                  color: C.blue,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  marginBottom: 16,
+                }}
+              >
+                📧 Envoyer lien onboarding
+              </button>
+            </>
+          )}
           <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 8 }}>Paiement Stripe</div>
           <div style={{ fontSize: 12, color: C.muted, marginBottom: 10 }}>
             Envoie au client un lien Stripe pour ajouter sa carte pendant ou après les 30 jours d'essai.
@@ -934,6 +992,78 @@ function TabActions({ tenantId, tenant, onSaved }) {
           }}
         >
           {msg.text}
+        </div>
+      )}
+      {showOnboardingModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(3, 10, 18, 0.75)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+            padding: 20,
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowOnboardingModal(false);
+          }}
+        >
+          <div style={{ width: "100%", maxWidth: 460, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 18, padding: 22 }}>
+            <div style={{ fontSize: 16, fontWeight: 800, color: C.text, marginBottom: 8 }}>
+              Envoyer lien onboarding
+            </div>
+            <div style={{ fontSize: 12, color: C.muted, marginBottom: 16 }}>
+              Le client recevra un lien vers `/creer-assistante` pour finaliser lui-même la configuration.
+            </div>
+            <div style={{ fontSize: 11, color: C.muted, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.6 }}>
+              Email du client
+            </div>
+            <input
+              value={onboardingEmail}
+              onChange={(e) => setOnboardingEmail(e.target.value)}
+              placeholder="client@cabinet.fr"
+              style={{
+                width: "100%",
+                background: C.card,
+                border: `1px solid ${C.border}`,
+                borderRadius: 10,
+                padding: "10px 12px",
+                color: C.text,
+                fontSize: 13,
+                fontFamily: "inherit",
+                outline: "none",
+              }}
+            />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+              <button
+                type="button"
+                onClick={() => setShowOnboardingModal(false)}
+                style={{ padding: "9px 14px", borderRadius: 9, border: `1px solid ${C.border}`, background: "transparent", color: C.muted, cursor: "pointer", fontFamily: "inherit" }}
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={handleSendOnboardingLink}
+                disabled={onboardingLoading}
+                style={{
+                  padding: "9px 14px",
+                  borderRadius: 9,
+                  border: "none",
+                  background: `linear-gradient(135deg,${C.accent},${C.accentDim})`,
+                  color: C.bg,
+                  cursor: "pointer",
+                  fontWeight: 800,
+                  fontFamily: "inherit",
+                  opacity: onboardingLoading ? 0.7 : 1,
+                }}
+              >
+                {onboardingLoading ? "Envoi..." : "Envoyer"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -984,6 +984,90 @@ def send_payment_link_email(
     return False, "Email non configuré (Postmark ou SMTP)"
 
 
+def send_onboarding_link_email(
+    to_email: str,
+    name: str,
+    onboarding_url: str,
+) -> Tuple[bool, Optional[str]]:
+    """
+    Envoie un lien wizard au client pour qu'il configure son assistant.
+    """
+    to_addr = (to_email or "").strip().lower()
+    if not to_addr:
+        return False, "Destinataire vide"
+    if not (onboarding_url or "").strip():
+        return False, "onboarding_url vide"
+    display_name = (name or "").strip()
+    hello_suffix = f" {display_name}" if display_name else ""
+    subject = "Finalisez la configuration de votre assistant UWI"
+    html = f"""
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Finalisez votre assistant UWI</title></head>
+<body style="margin:0;background:#0a1628;padding:40px 20px;font-family:'DM Sans',Arial,sans-serif;">
+  <div style="max-width:520px;margin:0 auto;">
+    <div style="font-size:24px;font-weight:800;color:#00d4a0;margin-bottom:8px">UWI</div>
+    <h1 style="color:#ffffff;font-size:22px;line-height:1.3;margin:0 0 12px 0">
+      Bonjour{hello_suffix} 👋
+    </h1>
+    <p style="color:rgba(255,255,255,0.72);font-size:15px;line-height:1.6;margin:0 0 28px 0">
+      Votre espace UWI est prêt. Il ne reste plus qu'à configurer votre assistant vocal —
+      cela prend moins de 3 minutes.
+    </p>
+    <p style="margin:0 0 20px 0;">
+      <a href="{onboarding_url}"
+         style="display:inline-block;background:#00d4a0;color:#0a1628;padding:14px 28px;border-radius:10px;font-weight:700;font-size:15px;text-decoration:none">
+        Configurer mon assistant →
+      </a>
+    </p>
+    <p style="color:rgba(255,255,255,0.32);font-size:12px;line-height:1.6;margin:24px 0 0 0">
+      Une fois la configuration terminée, notre équipe active votre numéro dédié sous 24h.
+    </p>
+    <p style="color:rgba(255,255,255,0.28);font-size:12px;line-height:1.6;margin:14px 0 0 0">
+      Si le bouton ne fonctionne pas, copiez ce lien dans votre navigateur :
+      <br />
+      <a href="{onboarding_url}" style="color:#8be8cf;word-break:break-all;">{onboarding_url}</a>
+    </p>
+  </div>
+</body>
+</html>
+"""
+    from_addr = (
+        os.getenv("POSTMARK_FROM_EMAIL") or os.getenv("EMAIL_FROM") or os.getenv("SMTP_EMAIL") or ""
+    ).strip()
+    token = (os.getenv("POSTMARK_SERVER_TOKEN") or "").strip()
+    if token and from_addr:
+        try:
+            ok, err = _send_via_postmark(from_addr, to_addr, subject, html, token)
+            if ok:
+                logger.info("onboarding_link_email_sent via postmark", extra={"to": to_addr[:50]})
+            return ok, err
+        except Exception as e:
+            logger.exception("send_onboarding_link_email postmark failed")
+            return False, str(e)
+    smtp_user = (os.getenv("SMTP_EMAIL") or "").strip()
+    smtp_pass = (os.getenv("SMTP_PASSWORD") or "").strip()
+    if smtp_user and smtp_pass:
+        host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        port = int(os.getenv("SMTP_PORT", "587"))
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["From"] = smtp_user
+            msg["To"] = to_addr
+            msg["Subject"] = subject
+            msg.attach(MIMEText(html, "html", "utf-8"))
+            with smtplib.SMTP(host, port) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, [to_addr], msg.as_string())
+            logger.info("onboarding_link_email_sent via smtp", extra={"to": to_addr[:50]})
+            return True, None
+        except Exception as e:
+            logger.exception("send_onboarding_link_email smtp failed")
+            return False, str(e)
+    return False, "Email non configuré (Postmark ou SMTP)"
+
+
 def send_agenda_contact_request_email(
     tenant_name: str,
     tenant_email: str,

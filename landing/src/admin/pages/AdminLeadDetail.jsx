@@ -67,6 +67,7 @@ export default function AdminLeadDetail() {
   const [noteLog, setNoteLog] = useState([]);
   const [tenantModalNotice, setTenantModalNotice] = useState("");
   const [autoOpenHandled, setAutoOpenHandled] = useState(false);
+  const [sendingWizardLink, setSendingWizardLink] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -140,6 +141,26 @@ export default function AdminLeadDetail() {
     // Action explicite depuis la fiche lead : ouvrir le modal sans marquer converti trop tôt.
     setTenantModalNotice("");
     setShowCreateTenant(true);
+  };
+
+  const handleSendWizardLink = async () => {
+    if (!id || !hasEmail) {
+      setTenantModalNotice("Impossible d'envoyer le lien wizard sans email.");
+      return;
+    }
+    setSendingWizardLink(true);
+    setTenantModalNotice("");
+    try {
+      const res = await adminApi.sendLeadOnboardingLink(id, {
+        email: lead.email.trim(),
+        name: lead.cabinet_name || lead.assistant_name || "",
+      });
+      setTenantModalNotice(`Lien wizard envoyé à ${res?.email || lead.email.trim()} ✓`);
+    } catch (e) {
+      setTenantModalNotice(e?.message || "Erreur lors de l'envoi du lien wizard");
+    } finally {
+      setSendingWizardLink(false);
+    }
   };
 
   const clearCreateClientQuery = () => {
@@ -369,19 +390,37 @@ export default function AdminLeadDetail() {
             🎯 Envoyer la démo
           </a>
           {lead.status !== "converted" ? (
-            <button
-              type="button"
-              onClick={handleConvertLead}
-              style={{
-                ...btnPrimary,
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                boxShadow: "0 4px 16px rgba(0,229,160,0.25)",
-              }}
-            >
-              ✨ Créer client
-            </button>
+            <>
+              {hasEmail && (
+                <button
+                  type="button"
+                  onClick={handleSendWizardLink}
+                  disabled={sendingWizardLink}
+                  style={{
+                    ...btnSecondary,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    opacity: sendingWizardLink ? 0.7 : 1,
+                  }}
+                >
+                  {sendingWizardLink ? "…" : "📧 Envoyer lien wizard"}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleConvertLead}
+                style={{
+                  ...btnPrimary,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  boxShadow: "0 4px 16px rgba(0,229,160,0.25)",
+                }}
+              >
+                ✨ Créer client
+              </button>
+            </>
           ) : (
             <span
               style={{

@@ -148,6 +148,11 @@ export const adminApi = {
     adminFetch(`/api/admin/tenants/${id}/send-payment-link`, {
       method: "POST",
     }),
+  sendTenantOnboardingLink: (id, body) =>
+    adminFetch(`/api/admin/tenants/${id}/send-onboarding-link`, {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
   changeTenantPlan: (id, planKey) =>
     adminFetch(`/api/admin/tenants/${id}/billing/change-plan`, {
       method: "POST",
@@ -218,6 +223,16 @@ export const adminApi = {
   leadGet: (leadId) => adminFetch(`/api/admin/leads/${leadId}`, { method: "GET" }),
   leadPatch: (leadId, body) =>
     adminFetch(`/api/admin/leads/${leadId}`, { method: "PATCH", body: JSON.stringify(body) }),
+  sendLeadOnboardingLink: (leadId, body) =>
+    adminFetch(`/api/admin/leads/${leadId}/send-onboarding-link`, {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
+  sendOnboardingLink: (body) =>
+    adminFetch("/api/admin/send-onboarding-link", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 };
 
 // ── Exports nommés pour UWIDashboard ───────────────────────────────────────────
@@ -296,4 +311,14 @@ export const updateTenantHoraires = (tenantId, rules) =>
 export const sendPaymentLink = (tenantId) =>
   adminFetch(`/api/admin/tenants/${tenantId}/send-payment-link`, {
     method: "POST",
+  });
+export const sendTenantOnboardingLink = (tenantId, body = {}) =>
+  adminFetch(`/api/admin/tenants/${tenantId}/send-onboarding-link`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+export const sendLeadOnboardingLink = (leadId, body = {}) =>
+  adminFetch(`/api/admin/leads/${leadId}/send-onboarding-link`, {
+    method: "POST",
+    body: JSON.stringify(body),
   });
