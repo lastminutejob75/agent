@@ -227,6 +227,40 @@ def tenant_me(auth: dict = Depends(require_tenant_auth)):
     if not d:
         raise HTTPException(404, "Tenant not found")
     params = d.get("params") or {}
+    routing = d.get("routing") or []
+    voice_number = next(
+        ((r.get("key") or "").strip() for r in routing if (r.get("channel") or "").strip() == "vocal" and (r.get("key") or "").strip()),
+        None,
+    )
+    vapi_assistant_id = (params.get("vapi_assistant_id") or "").strip()
+    calendar_provider = (params.get("calendar_provider") or "none").strip() or "none"
+    calendar_id = (params.get("calendar_id") or "").strip()
+    assistant_name = (params.get("assistant_name") or "").strip()
+    booking_days = params.get("booking_days")
+    horaires_ready = False
+    if isinstance(booking_days, (list, tuple, set)):
+        horaires_ready = len(booking_days) > 0
+    elif isinstance(booking_days, str):
+        raw_days = booking_days.strip()
+        if raw_days:
+            try:
+                parsed_days = json.loads(raw_days)
+                horaires_ready = isinstance(parsed_days, (list, tuple)) and len(parsed_days) > 0
+            except Exception:
+                horaires_ready = bool(raw_days)
+    elif booking_days is not None:
+        horaires_ready = bool(booking_days)
+
+    onboarding_steps = {
+        "assistant_ready": bool(vapi_assistant_id and assistant_name),
+        "phone_ready": bool(voice_number),
+        "calendar_ready": calendar_provider == "google" and bool(calendar_id),
+        "horaires_ready": horaires_ready,
+        "faq_ready": False,  # Placeholder produit: la FAQ client n'est pas encore disponible.
+    }
+    # La FAQ n'est pas encore implémentée, donc elle ne doit pas bloquer la disparition de la checklist.
+    onboarding_completed = all(onboarding_steps[key] for key in ("assistant_ready", "phone_ready", "calendar_ready", "horaires_ready"))
+
     return {
         "tenant_id": tenant_id,
         "tenant_name": d.get("name", "N/A"),
@@ -234,10 +268,14 @@ def tenant_me(auth: dict = Depends(require_tenant_auth)):
         "role": auth.get("role", "owner"),
         "contact_email": params.get("contact_email", ""),
         "timezone": params.get("timezone", "Europe/Paris"),
-        "calendar_id": params.get("calendar_id", ""),
-        "calendar_provider": params.get("calendar_provider", "none"),
-        "assistant_name": params.get("assistant_name", "sophie"),
+        "calendar_id": calendar_id,
+        "calendar_provider": calendar_provider,
+        "assistant_name": assistant_name or "sophie",
         "plan_key": params.get("plan_key", "growth"),
+        "vapi_assistant_id": vapi_assistant_id,
+        "voice_number": voice_number,
+        "onboarding_steps": onboarding_steps,
+        "onboarding_completed": onboarding_completed,
     }
 
 

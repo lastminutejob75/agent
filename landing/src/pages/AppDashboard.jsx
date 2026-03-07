@@ -91,10 +91,129 @@ export default function AppDashboard() {
 
   const urgences = calls.filter((c) => c.status === "TRANSFERRED" && !dismissed);
   const aTraiter = calls.filter((c) => ["FAQ", "TRANSFERRED"].includes(c.status));
+  const onboardingSteps = me?.onboarding_steps || {};
+  const onboardingDoneCount = Object.values(onboardingSteps).filter(Boolean).length;
+  const onboardingTotal = Object.keys(onboardingSteps).length || 1;
+  const onboardingProgress = Math.round((onboardingDoneCount / onboardingTotal) * 100);
+  const onboardingItems = [
+    {
+      key: "assistant_ready",
+      icon: "🎙️",
+      label: "Assistant vocal",
+      sub: onboardingSteps.assistant_ready ? `${me?.assistant_name || "Votre assistant"} est prêt` : "Choisissez votre assistante",
+      href: "/app/settings",
+      cta: "Configurer",
+    },
+    {
+      key: "phone_ready",
+      icon: "📞",
+      label: "Numéro d'appel",
+      sub: onboardingSteps.phone_ready ? `Vos patients appellent le ${me?.voice_number}` : "Numéro non assigné — contacter UWI",
+      href: null,
+      cta: null,
+    },
+    {
+      key: "calendar_ready",
+      icon: "📅",
+      label: "Agenda connecté",
+      sub: onboardingSteps.calendar_ready ? "Google Calendar connecté" : "Connectez votre agenda",
+      href: "/app/agenda",
+      cta: "Connecter",
+    },
+    {
+      key: "horaires_ready",
+      icon: "⏰",
+      label: "Horaires configurés",
+      sub: onboardingSteps.horaires_ready ? "Horaires enregistrés" : "Définissez vos heures d'ouverture",
+      href: "/app/horaires",
+      cta: "Configurer",
+    },
+    {
+      key: "faq_ready",
+      icon: "💬",
+      label: "FAQ",
+      sub: "Bientôt disponible",
+      href: null,
+      cta: null,
+      soon: true,
+    },
+  ];
 
   return (
     <div style={S.root}>
       <style>{CSS}</style>
+
+      {me && !me.onboarding_completed && (
+        <div style={S.onboarding}>
+          <div style={S.onboardingHeader}>
+            <div>
+              <div style={S.onboardingTitle}>🚀 Activez votre assistant vocal</div>
+              <div style={S.onboardingSub}>
+                {onboardingDoneCount} / {onboardingTotal} étapes complétées
+              </div>
+            </div>
+            <div style={{ width: 120 }}>
+              <div style={{ height: 6, background: "rgba(255,255,255,0.15)", borderRadius: 3, overflow: "hidden" }}>
+                <div
+                  style={{
+                    height: "100%",
+                    width: `${onboardingProgress}%`,
+                    background: TEAL,
+                    borderRadius: 3,
+                    transition: "width 0.5s ease",
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div style={S.onboardingSteps}>
+            {onboardingItems.map((step) => {
+              const done = onboardingSteps[step.key];
+              return (
+                <div
+                  key={step.key}
+                  style={{
+                    ...S.onboardingStep,
+                    borderColor: done ? "rgba(0,212,160,0.3)" : "rgba(255,255,255,0.1)",
+                    opacity: step.soon ? 0.5 : 1,
+                  }}
+                >
+                  <div style={{ fontSize: 20, flexShrink: 0 }}>{step.icon}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: done ? TEAL : "#fff", display: "flex", alignItems: "center", gap: 6 }}>
+                      {done && <span style={{ color: TEAL }}>✓</span>}
+                      {step.label}
+                    </div>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>{step.sub}</div>
+                  </div>
+                  {!done && step.href && (
+                    <a
+                      href={step.href}
+                      style={{
+                        padding: "5px 12px",
+                        borderRadius: 6,
+                        background: TEAL,
+                        color: NAVY,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        textDecoration: "none",
+                        whiteSpace: "nowrap",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {step.cta} →
+                    </a>
+                  )}
+                  {step.soon && (
+                    <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", fontWeight: 600 }}>Bientôt</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {urgences.length > 0 && (
         <div style={S.urgBar} className="urg-bar">
@@ -137,6 +256,21 @@ export default function AppDashboard() {
                   </>
                 )}
               </div>
+              {me?.voice_number && (
+                <div
+                  style={{
+                    position: "relative",
+                    marginTop: 8,
+                    fontSize: 11,
+                    color: "rgba(255,255,255,0.6)",
+                  }}
+                >
+                  📞 Vos patients appellent le{" "}
+                  <strong style={{ color: TEAL, fontFamily: "monospace" }}>
+                    {me.voice_number}
+                  </strong>
+                </div>
+              )}
             </div>
             <div style={{ position: "relative", display: "flex", gap: 7 }}>
               {loading ? (
@@ -385,6 +519,35 @@ const S = {
     overflowY: "auto",
     display: "flex",
     flexDirection: "column",
+  },
+  onboarding: {
+    margin: "14px 28px 0",
+    background: `linear-gradient(135deg, #0a2540, ${NAVY})`,
+    border: "1px solid rgba(0,212,160,0.2)",
+    borderRadius: 12,
+    padding: "16px 20px",
+    flexShrink: 0,
+  },
+  onboardingHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 14,
+    gap: 16,
+  },
+  onboardingTitle: { fontSize: 14, fontWeight: 700, color: "#fff" },
+  onboardingSub: { fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 },
+  onboardingSteps: { display: "flex", gap: 8, flexWrap: "wrap" },
+  onboardingStep: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    padding: "10px 14px",
+    borderRadius: 10,
+    border: "1px solid",
+    background: "rgba(255,255,255,0.04)",
+    flex: "1 1 200px",
+    minWidth: 0,
   },
   urgBar: {
     display: "flex",
