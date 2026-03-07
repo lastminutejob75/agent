@@ -108,25 +108,37 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
   useEffect(() => {
     if (phase !== "loading" || leadCheckFailed !== false) return;
     const totalMs = LOADING_STEPS.reduce((s, t) => s + t.ms, 0);
+    const timeouts = [];
     let elapsed = 0;
+
+    setLoadingStep(0);
+    setLoadingProgress(0);
+
     const interval = setInterval(() => {
       elapsed += 100;
       const progress = Math.min(100, (elapsed / totalMs) * 100);
       setLoadingProgress(progress);
     }, 100);
-    let step = 0;
+
     let t = 0;
     LOADING_STEPS.forEach(({ ms }, i) => {
       t += ms;
-      setTimeout(() => setLoadingStep(i + 1), t);
+      timeouts.push(setTimeout(() => setLoadingStep(i + 1), t));
     });
-    setTimeout(() => {
+
+    timeouts.push(
+      setTimeout(() => {
+        clearInterval(interval);
+        setLoadingProgress(100);
+        setPhase("reveal");
+      }, totalMs + 200),
+    );
+
+    return () => {
       clearInterval(interval);
-      setLoadingProgress(100);
-      setPhase("reveal");
-    }, totalMs + 200);
-    return () => clearInterval(interval);
-  }, [phase]);
+      timeouts.forEach(clearTimeout);
+    };
+  }, [phase, leadCheckFailed]);
 
   const handleRevealCta = () => setPhase("congrats");
   const handleCongratsCta = () => setPhase("handoff");
