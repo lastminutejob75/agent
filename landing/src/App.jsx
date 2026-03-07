@@ -10,6 +10,7 @@ import EssaiGratuit from "./pages/EssaiGratuit";
 import DecouverteClient from "./pages/DecouverteClient";
 import CreerAssistante from "./pages/CreerAssistante";
 import AppLayout from "./pages/AppLayout";
+import AppFirstOnboarding from "./pages/AppFirstOnboarding";
 import AppDashboard from "./pages/AppDashboard";
 import AppCalls from "./pages/AppCalls";
 import AppAgenda from "./pages/AppAgenda";
@@ -92,6 +93,7 @@ export default function App() {
       </Route>
       <Route path="/app" element={<AppShell />}>
         <Route path="impersonate" element={<ImpersonatePage />} />
+        <Route path="onboarding" element={<AppFirstOnboarding />} />
         <Route element={<AppLayout />}>
           <Route index element={<AppDashboard />} />
           <Route path="appels" element={<AppCalls />} />

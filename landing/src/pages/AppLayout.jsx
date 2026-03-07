@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Outlet, NavLink, useLocation } from "react-router-dom";
+import { Outlet, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { api, clearTenantToken, isTenantUnauthorized } from "../lib/api.js";
 import { getImpersonation, setImpersonation } from "./Impersonate";
 import "./ClientDashboard.css";
@@ -112,6 +112,7 @@ export default function AppLayout() {
   const [sbOpen, setSbOpen] = useState(false);
   const [imgErr, setImgErr] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
 
   useEffect(() => {
     api
@@ -134,6 +135,13 @@ export default function AppLayout() {
       })
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (loading || !me) return;
+    if (!getImpersonation() && location.pathname.startsWith("/app") && !me?.client_onboarding_completed) {
+      navigate(`/app/onboarding${location.search || ""}`, { replace: true });
+    }
+  }, [loading, me, location.pathname, location.search, navigate]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(new Date()), 1000);

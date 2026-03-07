@@ -242,6 +242,30 @@ def pg_create_tenant(
         return None
 
 
+def pg_update_tenant_name(tenant_id: int, name: str) -> bool:
+    """Met à jour le nom public du tenant dans la table tenants."""
+    url = _pg_url()
+    if not url:
+        return False
+    clean_name = (name or "").strip()
+    if not clean_name:
+        return True
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE tenants SET name = %s WHERE tenant_id = %s",
+                    (clean_name, tenant_id),
+                )
+                conn.commit()
+                return cur.rowcount > 0
+    except Exception as e:
+        logger.warning("pg_update_tenant_name failed: %s", e)
+        return False
+
+
 def pg_update_tenant_flags(tenant_id: int, flags: dict) -> bool:
     """Met à jour flags_json (merge)."""
     url = _pg_url()
@@ -273,6 +297,8 @@ def pg_update_tenant_params(tenant_id: int, params: dict) -> bool:
         "responsible_phone", "manager_name", "billing_email", "vapi_assistant_id", "plan_key", "notes",
         "custom_included_minutes_month",
         "assistant_name", "phone_number", "sector",
+        "specialty_label", "address_line1", "postal_code", "city", "agenda_software",
+        "client_onboarding_completed",
         "booking_duration_minutes", "booking_start_hour", "booking_end_hour",
         "booking_buffer_minutes", "booking_days",
     }
