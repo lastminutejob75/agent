@@ -1051,3 +1051,91 @@ def send_agenda_contact_request_email(
         except Exception as e:
             return False, str(e)
     return False, "Email non configuré"
+
+
+def send_pre_onboarding_admin_notification_email(
+    assistant_name: str,
+    medical_specialty_label: str,
+    email: str,
+    callback_phone: str,
+    opening_hours_pretty: str,
+    source: str,
+    admin_lead_url: str = "",
+) -> Tuple[bool, Optional[str]]:
+    """
+    Email interne : nouveau lead créé depuis le wizard /creer-assistante.
+    Destinataire prioritaire : ADMIN_NOTIFICATION_EMAIL, sinon ADMIN_ALERT_EMAIL/REPORT_EMAIL/ADMIN_EMAIL.
+    """
+    to = (
+        os.getenv("ADMIN_NOTIFICATION_EMAIL")
+        or os.getenv("ADMIN_ALERT_EMAIL")
+        or os.getenv("REPORT_EMAIL")
+        or os.getenv("ADMIN_EMAIL")
+        or os.getenv("FOUNDER_EMAIL")
+        or ""
+    ).strip()
+    if not to:
+        logger.warning("send_pre_onboarding_admin_notification_email: no recipient configured")
+        return False, "ADMIN_NOTIFICATION_EMAIL non défini"
+
+    assistant_display = (assistant_name or "").strip() or "—"
+    specialty_display = (medical_specialty_label or "").strip() or "—"
+    email_display = (email or "").strip() or "non renseigné"
+    phone_display = (callback_phone or "").strip() or "non renseigné"
+    opening_hours_display = (opening_hours_pretty or "").strip() or "non renseigné"
+    source_display = (source or "").strip() or "landing_cta"
+    admin_link = (admin_lead_url or "").strip()
+    admin_link_html = ""
+    if admin_link:
+        admin_link_html = f'<p><a href="{admin_link}" style="color:#2563eb;">Ouvrir le lead dans l&apos;admin</a></p>'
+
+    subject = f"🆕 Nouveau lead wizard — {assistant_display} · {specialty_display}"
+    html = f"""
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Nouveau lead wizard</title></head>
+<body style="font-family: sans-serif; max-width: 560px; margin: 0 auto; padding: 1rem;">
+  <h1 style="font-size: 1.2rem;">Nouveau lead créé depuis le wizard</h1>
+  <ul style="color:#333; margin: 0.5rem 0 1rem 0;">
+    <li><strong>Nom assistant :</strong> {assistant_display}</li>
+    <li><strong>Spécialité :</strong> {specialty_display}</li>
+    <li><strong>Email :</strong> {email_display}</li>
+    <li><strong>Téléphone rappel :</strong> {phone_display}</li>
+    <li><strong>Horaires :</strong> {opening_hours_display}</li>
+    <li><strong>Source :</strong> {source_display}</li>
+  </ul>
+  {admin_link_html}
+  <p style="color:#666; font-size: 0.9rem;">À configurer dans l'admin.</p>
+</body>
+</html>
+"""
+    use_postmark = (os.getenv("EMAIL_PROVIDER") or "").strip().lower() == "postmark" or bool(
+        (os.getenv("POSTMARK_SERVER_TOKEN") or "").strip()
+    )
+    from_addr = (os.getenv("EMAIL_FROM") or os.getenv("SMTP_EMAIL") or os.getenv("REPORT_EMAIL") or "").strip()
+    if use_postmark and (os.getenv("POSTMARK_SERVER_TOKEN") or "").strip():
+        ok, err = _send_via_postmark(
+            from_addr or to,
+            to,
+            subject,
+            html,
+            (os.getenv("POSTMARK_SERVER_TOKEN") or "").strip(),
+        )
+        return ok, err
+    smtp_user = (os.getenv("SMTP_EMAIL") or "").strip()
+    smtp_pass = (os.getenv("SMTP_PASSWORD") or "").strip()
+    if smtp_user and smtp_pass:
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["From"] = smtp_user
+            msg["To"] = to
+            msg["Subject"] = subject
+            msg.attach(MIMEText(html, "html", "utf-8"))
+            with smtplib.SMTP(os.getenv("SMTP_HOST", "smtp.gmail.com"), int(os.getenv("SMTP_PORT", "587"))) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, [to], msg.as_string())
+            return True, None
+        except Exception as e:
+            return False, str(e)
+    return False, "Email non configuré"

@@ -57,9 +57,9 @@ export default function CreateTenantModal({ onClose, onCreated, prefill = {}, in
     name: prefill.name || "",
     email: prefill.email || "",
     phone: prefill.phone || "",
-    sector: prefill.sector || "medecin_generaliste",
-    plan_key: prefill.plan_key || "starter",
-    assistant_id: prefill.assistant_id || "sophie",
+    sector: prefill.sector || "",
+    plan_key: prefill.plan_key || "",
+    assistant_id: prefill.assistant_id || "",
     twilio_number: prefill.twilio_number || "",
     send_welcome: true,
     timezone: "Europe/Paris",
@@ -740,6 +740,19 @@ export default function CreateTenantModal({ onClose, onCreated, prefill = {}, in
     </div>
   );
 }
+
+CreateTenantModal.defaultProps = {
+  prefill: {
+    name: "",
+    email: "",
+    phone: "",
+    sector: "",
+    plan_key: "",
+    assistant_id: "",
+    twilio_number: "",
+  },
+  initialBookingRules: null,
+};
 
 function Field({ label, value, onChange, type = "text", placeholder = "" }) {
   return (

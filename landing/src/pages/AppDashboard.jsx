@@ -66,6 +66,7 @@ export default function AppDashboard() {
   }, []);
 
   const dateStr = now.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+  const showPendingSetupBanner = !loading && !me?.voice_number && !me?.vapi_assistant_id;
 
   return (
     <div style={S.root}>
@@ -106,6 +107,20 @@ export default function AppDashboard() {
           </span>
         </div>
       </div>
+
+      {showPendingSetupBanner && (
+        <div style={S.pendingBanner}>
+          <span style={{ fontSize: 16 }}>⏳</span>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#f59e0b" }}>
+              Configuration en cours
+            </div>
+            <div style={{ fontSize: 11, color: "#7c2d12", marginTop: 2 }}>
+              Notre équipe active votre assistant vocal sous 24h. Vous recevrez un email dès que votre numéro est prêt.
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={S.kpiRow}>
         {loading ? (
@@ -307,6 +322,16 @@ const S = {
   identityBadge: { fontSize: 9, fontWeight: 700, padding: "2px 7px", borderRadius: 10, background: "rgba(0,212,160,0.15)", color: TEAL, border: "1px solid rgba(0,212,160,0.3)", letterSpacing: 0.8 },
   identityPlan: { fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 },
   identityRight: { display: "flex", alignItems: "center", gap: 8 },
+  pendingBanner: {
+    background: "rgba(245,158,11,0.1)",
+    border: "1px solid rgba(245,158,11,0.25)",
+    borderRadius: 0,
+    padding: "10px 24px",
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    flexShrink: 0,
+  },
   kpiRow: { display: "flex", gap: 10, padding: "10px 24px", background: "#fff", borderBottom: "1px solid #f1f5f9", flexShrink: 0 },
   kpiCard: { flex: 1, padding: "8px 12px", borderRadius: 8, background: "#f8fafc", border: "1px solid #f1f5f9" },
   main: { display: "flex", gap: 12, flex: 1, padding: "12px 24px", overflow: "hidden", minHeight: 0 },

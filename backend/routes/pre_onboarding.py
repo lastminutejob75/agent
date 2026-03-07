@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import re
@@ -13,7 +14,10 @@ from pydantic import BaseModel, Field
 
 from backend.leads_pg import count_leads_total, get_lead, lead_exists, update_lead_callback_booking, upsert_lead
 from backend.pre_onboarding_rate_limit import check_pre_onboarding_commit
-from backend.services.email_service import send_lead_founder_email
+from backend.services.email_service import (
+    send_lead_founder_email,
+    send_pre_onboarding_admin_notification_email,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +218,30 @@ async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody)
             logger.warning("lead_founder_email on commit failed: %s", err)
     except Exception as e:
         logger.exception("lead_founder_email on commit exception: %s", e)
+
+    # Notification interne dédiée pour l'équipe UWI : nouveau lead à traiter depuis le wizard.
+    try:
+        admin_base = (
+            os.environ.get("ADMIN_BASE_URL")
+            or os.environ.get("FRONT_BASE_URL")
+            or os.environ.get("APP_BASE_URL")
+            or ""
+        ).strip().rstrip("/")
+        opening_hours_pretty = json.dumps(body.opening_hours, ensure_ascii=False)
+        admin_lead_url = f"{admin_base}/admin/leads/{lead_id}" if admin_base else ""
+        ok, err = send_pre_onboarding_admin_notification_email(
+            assistant_name=body.assistant_name.strip(),
+            medical_specialty_label=(body.medical_specialty_label or "").strip() or body.medical_specialty.strip(),
+            email=email,
+            callback_phone=callback_phone,
+            opening_hours_pretty=opening_hours_pretty,
+            source=body.source or "landing_cta",
+            admin_lead_url=admin_lead_url,
+        )
+        if not ok:
+            logger.warning("pre_onboarding_admin_notification failed: %s", err)
+    except Exception as e:
+        logger.exception("pre_onboarding_admin_notification exception: %s", e)
 
     out = {"ok": True, "lead_id": lead_id}
     return out
