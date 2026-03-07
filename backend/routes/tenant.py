@@ -33,7 +33,7 @@ from backend.routes.admin import (
 )
 from backend.services.email_service import send_agenda_contact_request_email
 from backend.tenant_config import derive_horaires_text, get_booking_rules
-from backend.tenants_pg import pg_update_tenant_params
+from backend.tenants_pg import pg_update_tenant_name, pg_update_tenant_params
 
 try:
     from zoneinfo import ZoneInfo
@@ -125,6 +125,14 @@ def require_tenant_auth(request: Request) -> Dict[str, Any]:
 def _tenant_timezone(detail: Optional[dict]) -> str:
     params = (detail or {}).get("params") or {}
     return (params.get("timezone") or (detail or {}).get("timezone") or "Europe/Paris").strip() or "Europe/Paris"
+
+
+def _is_truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "oui"}
 
 
 def _get_zoneinfo(tz_name: str):
@@ -236,6 +244,11 @@ def tenant_me(auth: dict = Depends(require_tenant_auth)):
     calendar_provider = (params.get("calendar_provider") or "none").strip() or "none"
     calendar_id = (params.get("calendar_id") or "").strip()
     assistant_name = (params.get("assistant_name") or "").strip()
+    _explicit = _is_truthy(params.get("client_onboarding_completed"))
+    _vapi_ready = bool((params.get("vapi_assistant_id") or "").strip())
+    _phone_ready = bool(voice_number)
+    _has_assistant = bool((params.get("assistant_name") or "").strip())
+    client_onboarding_completed = _explicit or (_vapi_ready and _phone_ready) or (_vapi_ready and _has_assistant)
     booking_days = params.get("booking_days")
     horaires_ready = False
     if isinstance(booking_days, (list, tuple, set)):
@@ -267,13 +280,21 @@ def tenant_me(auth: dict = Depends(require_tenant_auth)):
         "email": auth.get("email"),
         "role": auth.get("role", "owner"),
         "contact_email": params.get("contact_email", ""),
+        "phone_number": params.get("phone_number", ""),
         "timezone": params.get("timezone", "Europe/Paris"),
         "calendar_id": calendar_id,
         "calendar_provider": calendar_provider,
+        "agenda_software": params.get("agenda_software", ""),
+        "sector": params.get("sector", ""),
+        "specialty_label": params.get("specialty_label", ""),
+        "address_line1": params.get("address_line1", ""),
+        "postal_code": params.get("postal_code", ""),
+        "city": params.get("city", ""),
         "assistant_name": assistant_name or "sophie",
         "plan_key": params.get("plan_key", "growth"),
         "vapi_assistant_id": vapi_assistant_id,
         "voice_number": voice_number,
+        "client_onboarding_completed": client_onboarding_completed,
         "onboarding_steps": onboarding_steps,
         "onboarding_completed": onboarding_completed,
     }
@@ -544,17 +565,27 @@ def tenant_agenda(auth: dict = Depends(require_tenant_auth)):
 
 @router.patch("/params")
 def tenant_patch_params(
-    body: Dict[str, str],
+    body: Dict[str, Any],
     auth: dict = Depends(require_tenant_auth),
 ):
     """
-    Met à jour params (whitelist: contact_email, calendar_provider, calendar_id, timezone, consent_mode).
+    Met à jour params du tenant connecté.
     """
-    allowed = {"contact_email", "calendar_provider", "calendar_id", "timezone", "consent_mode"}
-    params = {k: str(v) for k, v in (body or {}).items() if k in allowed and v is not None}
+    allowed = {
+        "contact_email", "calendar_provider", "calendar_id", "timezone", "consent_mode",
+        "phone_number", "sector", "specialty_label", "address_line1", "postal_code", "city",
+        "assistant_name", "plan_key", "agenda_software", "client_onboarding_completed",
+    }
+    body = body or {}
+    tenant_id = auth["tenant_id"]
+    tenant_name = (body.get("tenant_name") or "").strip() if body.get("tenant_name") is not None else ""
+    params = {k: v for k, v in body.items() if k in allowed and v is not None}
+    if tenant_name:
+        ok = pg_update_tenant_name(tenant_id, tenant_name)
+        if not ok:
+            raise HTTPException(500, "Failed to update tenant name")
     if not params:
         return {"ok": True}
-    tenant_id = auth["tenant_id"]
     ok = pg_update_tenant_params(tenant_id, params)
     if not ok:
         raise HTTPException(500, "Failed to update params")
