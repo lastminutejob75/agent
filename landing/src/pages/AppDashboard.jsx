@@ -2,50 +2,24 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api.js";
 
-const TEAL = "#00d4a0";
-const TEALX = "#00b389";
-const NAVY = "#0d1b2e";
+const TEAL = "#17c3b2";
+const TEAL_DARK = "#11b1a1";
+const NAVY = "#181c27";
 
 const STATUS_CFG = {
-  TRANSFERRED: { color: "#dc2626", bg: "#fef2f2", border: "#fecaca", label: "Urgence", icon: "⚠" },
-  CONFIRMED: { color: "#00b389", bg: "#f0fdf9", border: "#99f0da", label: "Confirmé", icon: "✓" },
-  ABANDONED: { color: "#94a3b8", bg: "#f8fafc", border: "#e2e8f0", label: "Abandonné", icon: "–" },
-  FAQ: { color: "#d97706", bg: "#fffbeb", border: "#fde68a", label: "Info", icon: "◎" },
+  TRANSFERRED: { label: "Manqué", bg: "#fff1f2", color: "#e11d48", border: "#fecdd3" },
+  CONFIRMED: { label: "OK", bg: "#ecfdf5", color: "#10b981", border: "#bbf7d0" },
+  ABANDONED: { label: "Manqué", bg: "#fff1f2", color: "#e11d48", border: "#fecdd3" },
+  FAQ: { label: "Prévu", bg: "#eff6ff", color: "#60a5fa", border: "#bfdbfe" },
 };
 
-const AVATAR_GRADIENTS = {
-  sophie: "linear-gradient(135deg, #00d4a0, #3b82f6)",
-  camille: "linear-gradient(135deg, #f59e0b, #ec4899)",
-  thomas: "linear-gradient(135deg, #2563eb, #6366f1)",
-  emma: "linear-gradient(135deg, #14b8a6, #0ea5e9)",
-  clara: "linear-gradient(135deg, #22c55e, #14b8a6)",
-  laura: "linear-gradient(135deg, #8b5cf6, #ec4899)",
-  julie: "linear-gradient(135deg, #f97316, #ef4444)",
-  hugo: "linear-gradient(135deg, #3b82f6, #06b6d4)",
+const AVATAR_THEME = {
+  sophie: { ring: "#d1fae5", bg: "linear-gradient(135deg, #14c8b8, #34d399)" },
+  emma: { ring: "#fce7f3", bg: "linear-gradient(135deg, #f9a8d4, #fbcfe8)" },
+  clara: { ring: "#dbeafe", bg: "linear-gradient(135deg, #93c5fd, #c4b5fd)" },
+  camille: { ring: "#fef3c7", bg: "linear-gradient(135deg, #fcd34d, #fb7185)" },
+  thomas: { ring: "#dbeafe", bg: "linear-gradient(135deg, #60a5fa, #818cf8)" },
 };
-
-const KPI_CARDS = [
-  { key: "calls", label: "Appels aujourd'hui", icon: "📞", accent: "#3b82f6", bg: "#eff6ff" },
-  { key: "bookings", label: "RDV confirmés", icon: "📅", accent: TEALX, bg: "#ecfdf5" },
-  { key: "pickup_rate", label: "Taux décroché", icon: "📈", accent: "#14b8a6", bg: "#f0fdfa" },
-  { key: "minutes_month", label: "Min ce mois", icon: "⏱️", accent: "#8b5cf6", bg: "#f5f3ff" },
-];
-
-const SHORTCUTS = [
-  { label: "Horaires", href: "/app/horaires", icon: "⏰", color: TEAL },
-  { label: "FAQ", href: "/app/faq", icon: "💬", color: "#f59e0b" },
-  { label: "Abonnement", href: "/app/facturation", icon: "💳", color: "#8b5cf6" },
-  { label: "Paramètres", href: "/app/settings", icon: "⚙️", color: "#64748b" },
-];
-
-function Pulse({ color = TEAL, size = 8 }) {
-  return (
-    <span style={{ position: "relative", display: "inline-flex", width: size, height: size, flexShrink: 0 }}>
-      <span style={{ position: "absolute", inset: 0, borderRadius: "50%", background: color, opacity: 0.3, animation: "uwi-ping 1.8s ease-out infinite" }} />
-      <span style={{ width: "100%", height: "100%", borderRadius: "50%", background: color, display: "block" }} />
-    </span>
-  );
-}
 
 function Skeleton({ w = "100%", h = 14, radius = 8 }) {
   return (
@@ -54,27 +28,40 @@ function Skeleton({ w = "100%", h = 14, radius = 8 }) {
         width: w,
         height: h,
         borderRadius: radius,
-        background: "linear-gradient(90deg,#eef2f7 25%,#e5ebf3 50%,#eef2f7 75%)",
+        background: "linear-gradient(90deg, #f1f5f9 25%, #e8edf3 50%, #f1f5f9 75%)",
         backgroundSize: "200% 100%",
-        animation: "uwi-shimmer 1.4s infinite",
+        animation: "uwi-shimmer 1.4s infinite linear",
       }}
     />
   );
 }
 
-function getAssistantGradient(name) {
-  const key = String(name || "").trim().toLowerCase();
-  return AVATAR_GRADIENTS[key] || "linear-gradient(135deg, #00d4a0, #0d1b2e)";
+function DotPulse() {
+  return (
+    <span style={{ position: "relative", display: "inline-flex", width: 7, height: 7 }}>
+      <span style={{ position: "absolute", inset: 0, borderRadius: "50%", background: "#10b981", opacity: 0.28, animation: "uwi-ping 1.7s ease-out infinite" }} />
+      <span style={{ width: "100%", height: "100%", borderRadius: "50%", background: "#10b981" }} />
+    </span>
+  );
 }
 
-function getAssistantInitial(name) {
-  const clean = String(name || "U").trim();
-  return clean ? clean.charAt(0).toUpperCase() : "U";
+function getAvatarTheme(name) {
+  return AVATAR_THEME[String(name || "").trim().toLowerCase()] || {
+    ring: "#ccfbf1",
+    bg: "linear-gradient(135deg, #17c3b2, #93c5fd)",
+  };
 }
 
-function formatPlanLabel(planKey) {
-  const clean = String(planKey || "starter").replace(/[_-]+/g, " ");
-  return clean.charAt(0).toUpperCase() + clean.slice(1);
+function getInitial(name) {
+  const value = String(name || "U").trim();
+  return value ? value.charAt(0).toUpperCase() : "U";
+}
+
+function callIconTheme(status) {
+  if (status === "TRANSFERRED") return { bg: "#fff1f2", color: "#e11d48" };
+  if (status === "CONFIRMED") return { bg: "#ecfdf5", color: "#10b981" };
+  if (status === "FAQ") return { bg: "#eff6ff", color: "#60a5fa" };
+  return { bg: "#f8fafc", color: "#94a3b8" };
 }
 
 export default function AppDashboard() {
@@ -100,318 +87,226 @@ export default function AppDashboard() {
     });
   }, []);
 
-  const dateStr = new Date().toLocaleDateString("fr-FR", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-  });
-  const assistantName = me?.assistant_name || "Sophie";
+  const assistantName = me?.assistant_name || "Emma";
+  const avatarTheme = getAvatarTheme(assistantName);
   const callsCount = kpis?.current?.calls ?? 0;
-  const bookingCount = kpis?.current?.bookings ?? 0;
+  const bookingsCount = kpis?.current?.bookings ?? 0;
   const pickupRate = `${Math.round((kpis?.pickup_rate ?? 0) * 100)}%`;
-  const monthMinutes = kpis?.minutes_month ?? 0;
-  const showPhoneBanner = !loading && !me?.voice_number;
+  const minutesMonth = kpis?.minutes_month ?? 0;
   const agendaReady = !!me?.onboarding_steps?.calendar_ready;
+  const showPhoneBanner = !loading && !me?.voice_number;
+  const agendaSlots = (agenda?.slots || []).filter((slot) => slot.patient).slice(0, 3);
 
   const stats = [
-    { ...KPI_CARDS[0], value: callsCount },
-    { ...KPI_CARDS[1], value: bookingCount },
-    { ...KPI_CARDS[2], value: pickupRate },
-    { ...KPI_CARDS[3], value: monthMinutes },
+    { label: "Appels traités", value: callsCount, icon: "📞", iconBg: "#eef5ff", iconColor: "#4f87ff", micro: "↗ + live" },
+    { label: "RDV planifiés", value: bookingsCount, icon: "📅", iconBg: "#eefcf7", iconColor: "#17b56d", micro: "↗ agenda" },
+    { label: "Taux de réponse", value: pickupRate, icon: "📈", iconBg: "#effcf9", iconColor: "#14b8a6", micro: "↗ instant" },
+    { label: "Minutes ce mois", value: minutesMonth, icon: "◔", iconBg: "#f6f1ff", iconColor: "#8b5cf6", micro: "↗ cumul" },
   ];
 
   return (
     <div style={S.root}>
       <style>{CSS}</style>
 
-      <div className="uwi-dashboard-shell">
-        <section style={S.heroCard}>
-          <div className="uwi-hero-grid" style={S.heroGrid}>
-            <div style={S.assistantBlock}>
-              <div style={{ ...S.avatarWrap, background: getAssistantGradient(assistantName) }}>
-                <span style={S.avatarLetter}>{getAssistantInitial(assistantName)}</span>
-                <div style={S.avatarOnline}>
-                  <Pulse color="#22c55e" size={7} />
+      <div className="uwi-dashboard-wrap">
+        <div className="uwi-header-row" style={S.header}>
+          <div>
+            <div style={S.title}>Tableau de bord</div>
+            <div style={S.subtitle}>Activité de l&apos;agent médical aujourd&apos;hui</div>
+          </div>
+
+          <div style={S.headerRight}>
+            <button type="button" style={S.bellBtn} aria-label="Notifications">
+              <span style={{ fontSize: 14 }}>🔔</span>
+              <span style={S.bellDot} />
+            </button>
+            <div className="uwi-search" style={S.searchBox}>
+              <span style={{ color: "#b8c0cb", fontSize: 13 }}>⌕</span>
+              <input placeholder="Rechercher..." style={S.searchInput} />
+            </div>
+          </div>
+        </div>
+
+        <section style={S.assistantCard}>
+          <div style={S.assistantLabel}>VOTRE ASSISTANTE</div>
+          <div className="uwi-assistant-row" style={S.assistantRow}>
+            <div style={S.assistantLeft}>
+              <div style={{ ...S.avatarRing, background: avatarTheme.ring }}>
+                <div style={{ ...S.avatar, background: avatarTheme.bg }}>
+                  <span style={S.avatarLetter}>{getInitial(assistantName)}</span>
+                </div>
+                <div style={S.avatarDot}>
+                  <DotPulse />
                 </div>
               </div>
 
-              <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ minWidth: 0 }}>
                 {loading ? (
                   <>
-                    <Skeleton w={150} h={22} />
-                    <div style={{ marginTop: 8 }}>
-                      <Skeleton w={190} h={14} />
-                    </div>
-                    <div style={{ marginTop: 10 }}>
-                      <Skeleton w={220} h={14} />
+                    <Skeleton w={76} h={16} />
+                    <div style={{ marginTop: 6 }}>
+                      <Skeleton w={114} h={10} />
                     </div>
                   </>
                 ) : (
                   <>
-                    <div style={S.assistantTopLine}>
-                      <div style={S.assistantName}>{assistantName}</div>
-                      <span style={S.liveBadge}>
-                        <Pulse color="#22c55e" size={7} />
+                    <div style={S.assistantName}>{assistantName}</div>
+                    <div style={S.assistantMeta}>
+                      <span>✦ Calme · Pro</span>
+                      <span style={S.assistantOnline}>
+                        <DotPulse />
                         En ligne
                       </span>
-                    </div>
-                    <div style={S.assistantMeta}>
-                      Assistante vocale UWI · {formatPlanLabel(me?.plan_key)}
-                    </div>
-                    <div style={S.phoneLine}>
-                      <span style={{ color: "#64748b" }}>Numéro vocal :</span>{" "}
-                      <strong style={{ color: me?.voice_number ? NAVY : "#d97706", fontFamily: "monospace" }}>
-                        {me?.voice_number || "Configuration en cours"}
-                      </strong>
                     </div>
                   </>
                 )}
               </div>
             </div>
 
-            <div style={S.heroMetrics}>
-              {loading ? (
-                <>
-                  <Skeleton w={80} h={12} />
-                  <div style={{ marginTop: 6 }}>
-                    <Skeleton w={56} h={32} />
-                  </div>
-                  <div style={{ marginTop: 8 }}>
-                    <Skeleton w={120} h={12} />
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div style={S.metricLabel}>Appels du jour</div>
-                  <div style={S.metricValue}>{callsCount}</div>
-                  <div style={S.metricSub}>
-                    Cabinet {me?.tenant_name || "UWI"} · {dateStr}
-                  </div>
-                </>
-              )}
+            <div style={S.assistantCounter}>
+              <div style={S.assistantCounterLabel}>Appels aujourd&apos;hui</div>
+              <div style={S.assistantCounterValue}>{loading ? <Skeleton w={22} h={22} /> : callsCount}</div>
             </div>
           </div>
         </section>
 
-        {showPhoneBanner && (
-          <div style={S.pendingBanner}>
-            <span style={{ fontSize: 18 }}>⏳</span>
-            <div>
-              <div style={S.pendingTitle}>Configuration en cours</div>
-              <div style={S.pendingText}>
-                Notre équipe active votre numéro sous 24h.
-              </div>
-            </div>
-          </div>
-        )}
+        {showPhoneBanner ? (
+          <div style={S.banner}>⏳ Configuration en cours — Notre équipe active votre numéro sous 24h</div>
+        ) : null}
 
-        <section className="uwi-kpi-grid" style={S.kpiGrid}>
+        <section className="uwi-kpis-grid" style={S.kpiGrid}>
           {loading
             ? [1, 2, 3, 4].map((item) => (
                 <div key={item} style={S.kpiCard}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <Skeleton w={40} h={40} radius={12} />
-                    <Skeleton w={28} h={12} />
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <Skeleton w={34} h={34} radius={10} />
+                    <Skeleton w={42} h={10} />
                   </div>
                   <div style={{ marginTop: 18 }}>
-                    <Skeleton w={80} h={28} />
+                    <Skeleton w={40} h={24} />
                   </div>
                   <div style={{ marginTop: 8 }}>
-                    <Skeleton w={110} h={12} />
+                    <Skeleton w={88} h={10} />
                   </div>
                 </div>
               ))
             : stats.map((stat) => (
-                <div key={stat.key} style={S.kpiCard}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
-                    <div style={{ ...S.kpiIcon, background: stat.bg, color: stat.accent }}>{stat.icon}</div>
+                <div key={stat.label} style={S.kpiCard}>
+                  <div style={S.kpiHead}>
+                    <div style={{ ...S.kpiIcon, background: stat.iconBg, color: stat.iconColor }}>{stat.icon}</div>
+                    <div style={S.kpiMicro}>{stat.micro}</div>
                   </div>
-                  <div style={{ fontSize: 30, fontWeight: 800, color: NAVY, lineHeight: 1 }}>{stat.value}</div>
-                  <div style={{ fontSize: 13, color: "#64748b", marginTop: 8 }}>{stat.label}</div>
+                  <div style={S.kpiValue}>{stat.value}</div>
+                  <div style={S.kpiLabel}>{stat.label}</div>
                 </div>
               ))}
         </section>
 
         <section className="uwi-main-grid" style={S.mainGrid}>
-          <div style={S.mainCard}>
-            <div style={S.cardHead}>
+          <div style={S.panel}>
+            <div style={S.panelHeader}>
               <div>
-                <div style={S.cardTag}>Aujourd&apos;hui</div>
-                <div style={S.cardTitle}>Appels récents</div>
+                <div style={S.panelTitle}>Appels récents</div>
+                <div style={S.panelSubtitle}>Activité des dernières heures</div>
               </div>
-              <button type="button" onClick={() => navigate("/app/appels")} style={S.linkBtn}>
-                Voir tous →
+              <button type="button" onClick={() => navigate("/app/appels")} style={S.panelLink}>
+                Voir tout ↗
               </button>
             </div>
 
-            <div style={S.cardBodyScrollable}>
+            <div style={S.rows}>
               {loading ? (
-                <div style={{ display: "grid", gap: 12 }}>
-                  {[1, 2, 3, 4].map((item) => (
-                    <Skeleton key={item} h={88} radius={16} />
-                  ))}
-                </div>
+                [1, 2, 3, 4].map((item) => <Skeleton key={item} h={66} radius={0} />)
               ) : calls.length === 0 ? (
-                <div style={S.emptyState}>
-                  <div style={S.emptyIcon}>📵</div>
+                <div style={S.emptyBox}>
                   <div style={S.emptyTitle}>Aucun appel aujourd&apos;hui</div>
-                  <div style={S.emptyText}>Votre assistant est prêt à recevoir les prochains appels.</div>
+                  <div style={S.emptyText}>Votre journal d&apos;appels apparaîtra ici.</div>
                 </div>
               ) : (
-                <div style={{ display: "grid", gap: 12 }}>
-                  {calls.map((call) => {
-                    const status = STATUS_CFG[call.status] || STATUS_CFG.ABANDONED;
-                    return (
-                      <button
-                        key={call.id}
-                        type="button"
-                        onClick={() => navigate("/app/appels")}
-                        className="uwi-dashboard-row"
-                        style={{ ...S.callRow, borderLeft: `4px solid ${status.color}` }}
-                      >
-                        <div style={S.callTimeBlock}>
-                          <div style={S.callTime}>{call.time || "--:--"}</div>
-                          <div style={S.callDuration}>{call.duration || "—"}</div>
-                        </div>
+                calls.slice(0, 4).map((call) => {
+                  const status = STATUS_CFG[call.status] || STATUS_CFG.ABANDONED;
+                  const icon = callIconTheme(call.status);
+                  return (
+                    <button
+                      key={call.id}
+                      type="button"
+                      onClick={() => navigate("/app/appels")}
+                      style={S.callRow}
+                      className="uwi-call-row"
+                    >
+                      <div style={{ ...S.callIcon, background: icon.bg, color: icon.color }}>📞</div>
 
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={S.callTop}>
-                            <div style={S.callName}>{call.patient_name || "Patient inconnu"}</div>
-                            <span style={{ ...S.agentChip, color: TEALX }}>{call.agent_name || assistantName}</span>
-                          </div>
-                          <div style={S.callSummary}>{call.summary || "Aucun résumé disponible."}</div>
-                        </div>
+                      <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+                        <div style={S.callName}>{call.patient_name || "Patient inconnu"}</div>
+                        <div style={S.callSub}>{call.agent_name || assistantName}</div>
+                        <div style={S.callText}>{call.summary || "Aucun résumé disponible."}</div>
+                      </div>
 
-                        <span style={{ ...S.statusBadge, color: status.color, background: status.bg, borderColor: status.border }}>
-                          {status.icon} {status.label}
+                      <div style={S.callMeta}>
+                        <div style={S.callHour}>{call.time || "--:--"}</div>
+                        <span style={{ ...S.callBadge, background: status.bg, color: status.color, borderColor: status.border }}>
+                          {status.label}
                         </span>
-                      </button>
-                    );
-                  })}
-                </div>
+                        <div style={S.callDuration}>{call.duration || "—"}</div>
+                      </div>
+                    </button>
+                  );
+                })
               )}
             </div>
           </div>
 
-          <div style={S.mainCard}>
-            <div style={S.cardHead}>
+          <div style={S.panel}>
+            <div style={S.panelHeader}>
               <div>
-                <div style={S.cardTag}>Planning</div>
-                <div style={S.cardTitle}>Agenda</div>
+                <div style={S.panelTitle}>Agenda</div>
+                <div style={S.panelSubtitle}>Prochains appels</div>
               </div>
-              <button type="button" onClick={() => navigate("/app/agenda")} style={S.linkBtn}>
-                Ouvrir l&apos;agenda →
-              </button>
+              <div style={{ fontSize: 17, color: TEAL_DARK }}>〰</div>
             </div>
 
-            {loading ? (
-              <div style={{ display: "grid", gap: 12 }}>
-                <Skeleton h={72} radius={16} />
-                {[1, 2, 3, 4].map((item) => (
-                  <Skeleton key={item} h={58} radius={14} />
-                ))}
-              </div>
-            ) : !agendaReady ? (
-              <div style={S.emptyState}>
-                <div style={S.emptyIcon}>📅</div>
+            {!agendaReady && !loading ? (
+              <div style={S.emptyBox}>
                 <div style={S.emptyTitle}>Agenda non connecté</div>
-                <div style={S.emptyText}>Connectez votre agenda pour voir les rendez-vous du jour.</div>
-                <button type="button" onClick={() => navigate("/app/agenda")} style={{ ...S.primaryBtn, marginTop: 14 }}>
-                  Connecter l&apos;agenda
-                </button>
-              </div>
-            ) : !agenda?.slots?.length ? (
-              <div style={S.emptyState}>
-                <div style={S.emptyIcon}>🗓️</div>
-                <div style={S.emptyTitle}>Aucun rendez-vous aujourd&apos;hui</div>
-                <div style={S.emptyText}>Votre timeline sera affichée ici dès qu&apos;un créneau sera planifié.</div>
+                <div style={S.emptyText}>Configurez votre agenda pour afficher vos rendez-vous.</div>
               </div>
             ) : (
-              <>
-                <div style={S.agendaSummary}>
-                  {[
-                    { label: "Total", value: agenda.total ?? 0, color: NAVY },
-                    { label: "Passés", value: agenda.done ?? 0, color: TEALX },
-                    { label: "À venir", value: agenda.remaining ?? 0, color: "#3b82f6" },
-                  ].map((item) => (
-                    <div key={item.label} style={S.agendaStat}>
-                      <div style={{ fontSize: 24, fontWeight: 800, color: item.color, lineHeight: 1 }}>{item.value}</div>
-                      <div style={{ fontSize: 11, color: "#64748b", marginTop: 6 }}>{item.label}</div>
-                    </div>
-                  ))}
-                </div>
-
-                <div style={S.timeline}>
-                  {agenda.slots.map((slot, index) => {
-                    const hasPatient = !!slot.patient;
-                    return (
-                      <div key={`${slot.hour}_${index}`} style={S.timelineRow}>
-                        <div style={{ ...S.timelineHour, color: slot.current ? TEALX : "#64748b" }}>{slot.hour}</div>
-                        <div style={S.timelineLine}>
-                          <div
-                            style={{
-                              ...S.timelineDot,
-                              background: slot.current ? TEAL : slot.done ? "#c7f9ea" : hasPatient ? "#cbd5e1" : "#eef2f7",
-                              boxShadow: slot.current ? "0 0 0 4px rgba(0,212,160,0.12)" : "none",
-                            }}
-                          />
-                          {index < agenda.slots.length - 1 ? <div style={S.timelineBar} /> : null}
+              <div style={S.agendaRows}>
+                {loading ? (
+                  [1, 2, 3].map((item) => <Skeleton key={item} h={70} radius={10} />)
+                ) : agendaSlots.length > 0 ? (
+                  agendaSlots.map((slot, index) => (
+                    <div key={`${slot.hour}_${index}`} style={S.agendaRow}>
+                      <div style={S.timeCol}>
+                        <div style={S.timeBox}>
+                          <div style={S.timeTop}>{String(slot.hour || "").split(":")[0]}</div>
+                          <div style={S.timeBottom}>{String(slot.hour || "").split(":")[1] || "00"}</div>
                         </div>
-                        <div
-                          style={{
-                            ...S.timelineCard,
-                            background: slot.current ? "rgba(0,212,160,0.06)" : "#fff",
-                            borderColor: slot.current ? "rgba(0,212,160,0.22)" : "#edf2f7",
-                            opacity: slot.done ? 0.65 : 1,
-                          }}
-                        >
-                          {hasPatient ? (
-                            <>
-                              <div style={S.timelineTop}>
-                                <div style={S.timelinePatient}>
-                                  {slot.patient}
-                                  {slot.current ? (
-                                    <span style={S.timelineNow}>
-                                      <Pulse color={TEAL} size={6} />
-                                      En cours
-                                    </span>
-                                  ) : null}
-                                </div>
-                                <span style={S.sourceBadge}>{slot.source || "Agenda"}</span>
-                              </div>
-                              <div style={S.timelineType}>{slot.type || "Rendez-vous"}</div>
-                            </>
-                          ) : (
-                            <div style={{ ...S.timelineType, color: "#cbd5e1", fontStyle: "italic" }}>Libre</div>
-                          )}
-                        </div>
+                        {index < agendaSlots.length - 1 ? <div style={S.timeLine} /> : null}
                       </div>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-          </div>
-        </section>
 
-        <section className="uwi-shortcuts-grid" style={S.shortcutsGrid}>
-          {SHORTCUTS.map((shortcut) => (
-            <button
-              key={shortcut.label}
-              type="button"
-              onClick={() => navigate(shortcut.href)}
-              className="uwi-shortcut-card"
-              style={{ ...S.shortcutCard, borderColor: `${shortcut.color}2a` }}
-            >
-              <div style={{ ...S.shortcutIcon, color: shortcut.color, background: `${shortcut.color}14` }}>
-                {shortcut.icon}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={S.agendaName}>{slot.patient}</div>
+                        <div style={S.agendaText}>{slot.type || "Rendez-vous"}</div>
+                        <button type="button" onClick={() => navigate("/app/agenda")} style={S.detailBtn}>
+                          Détails ↗
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div style={S.emptyBox}>
+                    <div style={S.emptyTitle}>Aucun rendez-vous aujourd&apos;hui</div>
+                    <div style={S.emptyText}>Votre planning apparaîtra ici.</div>
+                  </div>
+                )}
               </div>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 800, color: NAVY }}>{shortcut.label}</div>
-                <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>Ouvrir</div>
-              </div>
+            )}
+
+            <button type="button" onClick={() => navigate("/app/agenda")} style={S.planBtn}>
+              ＋ Planifier un appel
             </button>
-          ))}
+          </div>
         </section>
       </div>
     </div>
@@ -420,455 +315,436 @@ export default function AppDashboard() {
 
 const S = {
   root: {
-    background: "#f4f7fb",
     minHeight: "100%",
-    fontFamily: "'DM Sans', sans-serif",
+    background: "#f7f8fa",
+    fontFamily: "'Inter', 'DM Sans', sans-serif",
     color: NAVY,
   },
-  heroCard: {
-    background: "linear-gradient(135deg, #ecfdf8 0%, #ffffff 55%, #eef6ff 100%)",
-    border: "1px solid rgba(0,212,160,0.16)",
-    borderRadius: 24,
-    boxShadow: "0 14px 40px rgba(13,27,46,0.07)",
-    padding: 24,
+  header: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 18,
+    marginBottom: 18,
   },
-  heroGrid: {
-    display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) auto",
-    gap: 20,
-    alignItems: "center",
+  title: {
+    fontSize: 24,
+    lineHeight: 1.05,
+    fontWeight: 700,
+    color: NAVY,
+    letterSpacing: "-0.02em",
   },
-  assistantBlock: {
+  subtitle: {
+    marginTop: 8,
+    fontSize: 12,
+    color: "#757f8c",
+  },
+  headerRight: {
     display: "flex",
     alignItems: "center",
-    gap: 18,
+    gap: 10,
+  },
+  bellBtn: {
+    width: 34,
+    height: 34,
+    border: "none",
+    background: "transparent",
+    borderRadius: 10,
+    cursor: "pointer",
+    position: "relative",
+    color: "#6b7280",
+  },
+  bellDot: {
+    position: "absolute",
+    top: 7,
+    right: 7,
+    width: 6,
+    height: 6,
+    borderRadius: "50%",
+    background: "#ef4444",
+  },
+  searchBox: {
+    width: 184,
+    height: 34,
+    borderRadius: 10,
+    border: "1px solid #edf1f5",
+    background: "#fff",
+    display: "flex",
+    alignItems: "center",
+    gap: 7,
+    padding: "0 10px",
+  },
+  searchInput: {
+    flex: 1,
+    border: "none",
+    outline: "none",
+    background: "transparent",
+    fontSize: 12,
+    color: "#4b5563",
+    fontFamily: "inherit",
+  },
+  assistantCard: {
+    background: "linear-gradient(135deg, #f5fffb 0%, #ffffff 100%)",
+    border: "1px solid #dff5ee",
+    borderRadius: 16,
+    padding: "13px 16px",
+    boxShadow: "0 1px 2px rgba(0,0,0,0.02)",
+  },
+  assistantLabel: {
+    fontSize: 9,
+    fontWeight: 800,
+    letterSpacing: "0.1em",
+    color: TEAL_DARK,
+    marginBottom: 9,
+  },
+  assistantRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+  },
+  assistantLeft: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
     minWidth: 0,
   },
-  avatarWrap: {
-    width: 86,
-    height: 86,
+  avatarRing: {
+    width: 50,
+    height: 50,
     borderRadius: "50%",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    color: "#fff",
-    fontSize: 32,
-    fontWeight: 800,
     position: "relative",
-    boxShadow: "0 12px 28px rgba(59,130,246,0.18)",
     flexShrink: 0,
   },
-  avatarLetter: {
-    fontFamily: "'Syne', 'DM Sans', sans-serif",
-    letterSpacing: "-0.03em",
+  avatar: {
+    width: 42,
+    height: 42,
+    borderRadius: "50%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    boxShadow: "0 8px 18px rgba(23,195,178,0.14)",
   },
-  avatarOnline: {
+  avatarLetter: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: 700,
+  },
+  avatarDot: {
     position: "absolute",
-    right: 6,
-    bottom: 6,
-    width: 18,
-    height: 18,
+    right: 2,
+    bottom: 2,
+    width: 14,
+    height: 14,
     borderRadius: "50%",
     background: "#fff",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
   },
-  assistantTopLine: {
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-    flexWrap: "wrap",
-  },
   assistantName: {
-    fontSize: 32,
-    lineHeight: 1,
-    fontWeight: 800,
-    fontFamily: "'Syne', 'DM Sans', sans-serif",
-    letterSpacing: "-0.03em",
-  },
-  liveBadge: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 7,
-    background: "rgba(34,197,94,0.1)",
-    border: "1px solid rgba(34,197,94,0.18)",
-    color: "#15803d",
-    borderRadius: 999,
-    padding: "6px 10px",
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: 700,
+    color: NAVY,
   },
   assistantMeta: {
-    marginTop: 10,
-    color: "#64748b",
-    fontSize: 14,
-  },
-  phoneLine: {
-    marginTop: 10,
-    fontSize: 14,
-    color: NAVY,
-  },
-  heroMetrics: {
-    minWidth: 170,
-    padding: "18px 20px",
-    borderRadius: 18,
-    background: "rgba(255,255,255,0.72)",
-    border: "1px solid rgba(13,27,46,0.06)",
-    boxShadow: "0 8px 22px rgba(13,27,46,0.05)",
-  },
-  metricLabel: {
-    fontSize: 12,
-    color: "#64748b",
-    textTransform: "uppercase",
-    letterSpacing: "0.08em",
-    fontWeight: 700,
-  },
-  metricValue: {
-    marginTop: 6,
-    fontSize: 42,
-    lineHeight: 1,
-    fontWeight: 800,
-    color: NAVY,
-    fontFamily: "'Syne', 'DM Sans', sans-serif",
-  },
-  metricSub: {
-    marginTop: 10,
-    color: "#64748b",
-    fontSize: 13,
-  },
-  pendingBanner: {
-    marginTop: 16,
+    marginTop: 4,
     display: "flex",
     alignItems: "center",
-    gap: 12,
-    borderRadius: 18,
-    background: "#fff8eb",
-    border: "1px solid rgba(245,158,11,0.24)",
-    padding: "14px 16px",
+    gap: 8,
+    flexWrap: "wrap",
+    fontSize: 11,
+    color: "#6b7280",
   },
-  pendingTitle: {
-    fontSize: 14,
-    color: "#b45309",
-    fontWeight: 800,
+  assistantOnline: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    color: "#16a34a",
+    fontWeight: 600,
   },
-  pendingText: {
-    marginTop: 3,
-    fontSize: 13,
-    color: "#92400e",
+  assistantCounter: {
+    textAlign: "right",
+    minWidth: 82,
+    flexShrink: 0,
+  },
+  assistantCounterLabel: {
+    fontSize: 10,
+    color: "#9ca3af",
+    marginBottom: 6,
+  },
+  assistantCounterValue: {
+    fontSize: 18,
+    fontWeight: 700,
+    color: NAVY,
+    lineHeight: 1,
+  },
+  banner: {
+    marginTop: 12,
+    padding: "10px 12px",
+    borderRadius: 12,
+    background: "#fff7ed",
+    border: "1px solid #fed7aa",
+    color: "#c2410c",
+    fontSize: 12,
+    fontWeight: 600,
   },
   kpiGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-    gap: 16,
-    marginTop: 20,
+    gap: 14,
+    marginTop: 16,
   },
   kpiCard: {
     background: "#fff",
-    border: "1px solid #e8eef5",
-    borderRadius: 22,
-    padding: 20,
-    boxShadow: "0 10px 24px rgba(13,27,46,0.04)",
+    border: "1px solid #edf1f5",
+    borderRadius: 16,
+    padding: 16,
+    boxShadow: "0 1px 2px rgba(0,0,0,0.02)",
+  },
+  kpiHead: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 16,
   },
   kpiIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
+    width: 34,
+    height: 34,
+    borderRadius: 10,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    fontSize: 24,
+    fontSize: 16,
+  },
+  kpiMicro: {
+    fontSize: 10,
+    color: "#10b981",
+    fontWeight: 600,
+  },
+  kpiValue: {
+    fontSize: 18,
+    lineHeight: 1,
+    fontWeight: 700,
+    color: NAVY,
+  },
+  kpiLabel: {
+    marginTop: 10,
+    fontSize: 11,
+    color: "#6b7280",
   },
   mainGrid: {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 2fr) minmax(320px, 1fr)",
-    gap: 18,
-    marginTop: 20,
-    alignItems: "stretch",
+    gridTemplateColumns: "minmax(0, 2fr) minmax(280px, 0.95fr)",
+    gap: 14,
+    marginTop: 16,
   },
-  mainCard: {
+  panel: {
     background: "#fff",
-    border: "1px solid #e8eef5",
-    borderRadius: 24,
-    padding: 22,
-    boxShadow: "0 14px 34px rgba(13,27,46,0.04)",
-    minWidth: 0,
-    display: "flex",
-    flexDirection: "column",
+    border: "1px solid #edf1f5",
+    borderRadius: 16,
+    overflow: "hidden",
+    boxShadow: "0 1px 2px rgba(0,0,0,0.02)",
   },
-  cardHead: {
+  panelHeader: {
+    padding: "14px 16px",
+    borderBottom: "1px solid #f1f5f9",
     display: "flex",
-    alignItems: "flex-start",
     justifyContent: "space-between",
-    gap: 12,
-    marginBottom: 18,
+    alignItems: "flex-start",
+    gap: 10,
   },
-  cardTag: {
-    fontSize: 11,
-    color: "#94a3b8",
-    textTransform: "uppercase",
-    letterSpacing: "0.12em",
+  panelTitle: {
+    fontSize: 14,
     fontWeight: 700,
-    marginBottom: 4,
-  },
-  cardTitle: {
-    fontSize: 22,
-    lineHeight: 1.15,
     color: NAVY,
-    fontWeight: 800,
-    fontFamily: "'Syne', 'DM Sans', sans-serif",
   },
-  linkBtn: {
+  panelSubtitle: {
+    marginTop: 4,
+    fontSize: 11,
+    color: "#6b7280",
+  },
+  panelLink: {
     border: "none",
-    background: "rgba(0,212,160,0.08)",
-    color: TEALX,
-    padding: "9px 12px",
-    borderRadius: 12,
-    fontSize: 13,
-    fontWeight: 700,
+    background: "transparent",
+    color: TEAL_DARK,
+    fontSize: 11,
+    fontWeight: 600,
     cursor: "pointer",
-    whiteSpace: "nowrap",
     fontFamily: "inherit",
+    whiteSpace: "nowrap",
   },
-  cardBodyScrollable: {
+  rows: {
     display: "flex",
     flexDirection: "column",
-    gap: 12,
   },
   callRow: {
     width: "100%",
-    display: "flex",
-    alignItems: "flex-start",
-    gap: 16,
-    padding: "16px 18px",
-    borderRadius: 18,
-    border: "1px solid #edf2f7",
+    border: "none",
     background: "#fff",
-    textAlign: "left",
-    cursor: "pointer",
-    transition: "transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease",
-    fontFamily: "inherit",
-  },
-  callTimeBlock: {
-    width: 60,
-    flexShrink: 0,
-  },
-  callTime: {
-    fontSize: 14,
-    fontWeight: 800,
-    color: NAVY,
-    fontFamily: "monospace",
-  },
-  callDuration: {
-    marginTop: 6,
-    fontSize: 12,
-    color: "#94a3b8",
-    fontFamily: "monospace",
-  },
-  callTop: {
+    padding: "13px 16px",
     display: "flex",
     alignItems: "center",
-    gap: 8,
-    flexWrap: "wrap",
+    gap: 12,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  callIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 16,
+    flexShrink: 0,
   },
   callName: {
-    fontSize: 15,
-    fontWeight: 800,
+    fontSize: 12,
+    fontWeight: 700,
     color: NAVY,
   },
-  agentChip: {
-    padding: "4px 8px",
-    borderRadius: 999,
-    background: "rgba(0,212,160,0.08)",
-    border: "1px solid rgba(0,212,160,0.16)",
+  callSub: {
+    marginTop: 3,
     fontSize: 11,
-    fontWeight: 700,
+    color: "#9ca3af",
   },
-  callSummary: {
+  callText: {
     marginTop: 8,
-    fontSize: 13,
-    color: "#64748b",
-    lineHeight: 1.55,
+    fontSize: 11,
+    color: "#4b5563",
+    lineHeight: 1.45,
   },
-  statusBadge: {
+  callMeta: {
+    textAlign: "right",
+    minWidth: 62,
     flexShrink: 0,
-    padding: "6px 10px",
+  },
+  callHour: {
+    fontSize: 11,
+    color: "#374151",
+    fontWeight: 600,
+  },
+  callBadge: {
+    display: "inline-flex",
+    marginTop: 8,
+    padding: "2px 7px",
     borderRadius: 999,
     border: "1px solid",
-    fontSize: 12,
-    fontWeight: 800,
-    whiteSpace: "nowrap",
+    fontSize: 10,
+    fontWeight: 600,
   },
-  emptyState: {
-    padding: "38px 16px",
-    textAlign: "center",
+  callDuration: {
+    marginTop: 8,
+    fontSize: 11,
+    color: NAVY,
+    fontWeight: 600,
+  },
+  agendaRows: {
+    padding: "14px 16px 8px",
+  },
+  agendaRow: {
+    display: "flex",
+    gap: 12,
+    marginBottom: 14,
+  },
+  timeCol: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    flexShrink: 0,
+  },
+  timeBox: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    background: `linear-gradient(135deg, ${TEAL}, ${TEAL_DARK})`,
+    color: "#fff",
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
     justifyContent: "center",
+    boxShadow: "0 10px 18px rgba(23,195,178,0.16)",
   },
-  emptyIcon: {
-    fontSize: 34,
-    marginBottom: 10,
+  timeTop: {
+    fontSize: 9,
+    lineHeight: 1,
+    fontWeight: 700,
+    opacity: 0.9,
+  },
+  timeBottom: {
+    marginTop: 2,
+    fontSize: 14,
+    lineHeight: 1,
+    fontWeight: 700,
+  },
+  timeLine: {
+    width: 2,
+    height: 24,
+    marginTop: 6,
+    borderRadius: 999,
+    background: "linear-gradient(180deg, rgba(23,195,178,0.26), transparent)",
+  },
+  agendaName: {
+    fontSize: 12,
+    fontWeight: 700,
+    color: NAVY,
+  },
+  agendaText: {
+    marginTop: 4,
+    fontSize: 11,
+    color: "#6b7280",
+  },
+  detailBtn: {
+    marginTop: 8,
+    border: "none",
+    background: "transparent",
+    padding: 0,
+    color: TEAL_DARK,
+    fontSize: 11,
+    fontWeight: 600,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  planBtn: {
+    margin: "8px 16px 16px",
+    height: 40,
+    borderRadius: 12,
+    border: "1px dashed #d1d5db",
+    background: "#fff",
+    color: "#4b5563",
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  emptyBox: {
+    padding: "28px 18px",
+    textAlign: "center",
   },
   emptyTitle: {
-    fontSize: 16,
+    fontSize: 13,
+    fontWeight: 700,
     color: NAVY,
-    fontWeight: 800,
   },
   emptyText: {
     marginTop: 8,
-    fontSize: 13,
-    color: "#64748b",
-    maxWidth: 300,
-  },
-  primaryBtn: {
-    border: "none",
-    borderRadius: 12,
-    background: `linear-gradient(135deg, ${TEAL}, ${TEALX})`,
-    color: NAVY,
-    padding: "11px 14px",
-    fontSize: 13,
-    fontWeight: 800,
-    cursor: "pointer",
-    fontFamily: "inherit",
-  },
-  agendaSummary: {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-    gap: 10,
-    marginBottom: 18,
-  },
-  agendaStat: {
-    background: "#f8fbff",
-    border: "1px solid #edf2f7",
-    borderRadius: 16,
-    padding: "16px 12px",
-    textAlign: "center",
-  },
-  timeline: {
-    display: "grid",
-    gap: 10,
-  },
-  timelineRow: {
-    display: "grid",
-    gridTemplateColumns: "58px 16px minmax(0, 1fr)",
-    gap: 12,
-    alignItems: "stretch",
-  },
-  timelineHour: {
-    paddingTop: 10,
-    fontSize: 12,
-    fontWeight: 800,
-    fontFamily: "monospace",
-    textAlign: "right",
-  },
-  timelineLine: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    paddingTop: 14,
-  },
-  timelineDot: {
-    width: 10,
-    height: 10,
-    borderRadius: "50%",
-    flexShrink: 0,
-  },
-  timelineBar: {
-    width: 2,
-    flex: 1,
-    minHeight: 26,
-    marginTop: 4,
-    background: "#eef2f7",
-    borderRadius: 999,
-  },
-  timelineCard: {
-    borderRadius: 16,
-    border: "1px solid #edf2f7",
-    padding: "12px 14px",
-    background: "#fff",
-  },
-  timelineTop: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
-    flexWrap: "wrap",
-  },
-  timelinePatient: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    fontSize: 14,
-    fontWeight: 800,
-    color: NAVY,
-  },
-  timelineNow: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 6,
     fontSize: 11,
-    fontWeight: 700,
-    color: TEALX,
-  },
-  sourceBadge: {
-    padding: "4px 8px",
-    borderRadius: 999,
-    background: "rgba(59,130,246,0.08)",
-    color: "#3b82f6",
-    fontSize: 11,
-    fontWeight: 700,
-    border: "1px solid rgba(59,130,246,0.12)",
-  },
-  timelineType: {
-    marginTop: 6,
-    fontSize: 13,
-    color: "#64748b",
-    lineHeight: 1.5,
-  },
-  shortcutsGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-    gap: 14,
-    marginTop: 20,
-    paddingBottom: 8,
-  },
-  shortcutCard: {
-    display: "flex",
-    alignItems: "center",
-    gap: 14,
-    width: "100%",
-    border: "1px solid",
-    borderRadius: 18,
-    padding: "16px 18px",
-    background: "#fff",
-    cursor: "pointer",
-    textAlign: "left",
-    boxShadow: "0 10px 24px rgba(13,27,46,0.04)",
-    transition: "transform 0.15s ease, box-shadow 0.15s ease",
-    fontFamily: "inherit",
-  },
-  shortcutIcon: {
-    width: 46,
-    height: 46,
-    borderRadius: 14,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: 22,
-    flexShrink: 0,
+    color: "#6b7280",
   },
 };
 
 const CSS = `
-  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Syne:wght@700;800&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
   * { box-sizing: border-box; }
 
   @keyframes uwi-ping {
-    0% { transform: scale(1); opacity: .4; }
-    80%, 100% { transform: scale(2.5); opacity: 0; }
+    0% { transform: scale(1); opacity: .38; }
+    80%, 100% { transform: scale(2.2); opacity: 0; }
   }
 
   @keyframes uwi-shimmer {
@@ -876,59 +752,40 @@ const CSS = `
     100% { background-position: -200% 0; }
   }
 
-  .uwi-dashboard-shell {
-    max-width: 1280px;
+  .uwi-dashboard-wrap {
+    max-width: 1040px;
     margin: 0 auto;
-    padding: 24px;
+    padding: 22px 22px 28px;
   }
 
-  .uwi-dashboard-row:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 12px 24px rgba(13,27,46,0.06);
-    background: #fbfdff !important;
+  .uwi-call-row {
+    transition: background .14s ease;
   }
 
-  .uwi-shortcut-card:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 14px 24px rgba(13,27,46,0.06);
+  .uwi-call-row:hover {
+    background: #fbfcfd;
   }
 
   @media (max-width: 1080px) {
-    .uwi-main-grid {
-      grid-template-columns: 1fr !important;
-    }
-
-    .uwi-kpi-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-    }
-
-    .uwi-shortcuts-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-    }
-  }
-
-  @media (max-width: 760px) {
-    .uwi-dashboard-shell {
-      padding: 16px;
-    }
-
-    .uwi-hero-grid {
-      grid-template-columns: 1fr !important;
-    }
-
-    .uwi-kpi-grid {
-      grid-template-columns: 1fr !important;
-    }
-
-    .uwi-shortcuts-grid {
+    .uwi-main-grid,
+    .uwi-kpis-grid {
       grid-template-columns: 1fr !important;
     }
   }
 
-  @media (max-width: 640px) {
-    .uwi-dashboard-row {
+  @media (max-width: 720px) {
+    .uwi-dashboard-wrap {
+      padding: 16px 14px 20px;
+    }
+
+    .uwi-header-row,
+    .uwi-assistant-row {
       flex-direction: column;
-      gap: 12px;
+      align-items: flex-start !important;
+    }
+
+    .uwi-search {
+      width: 100% !important;
     }
   }
 `;
