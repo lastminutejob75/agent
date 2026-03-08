@@ -88,6 +88,10 @@ async function copyToClipboard(text) {
   }
 }
 
+function getActionLabel(call) {
+  return call?.contextual_action?.label || "Voir le détail";
+}
+
 export default function AppCalls() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
@@ -184,16 +188,16 @@ export default function AppCalls() {
     return counters;
   }, [calls]);
 
-  async function saveFollowupState(nextState, notesOverride = followupNotes) {
-    if (!selectedCallId) return;
+  async function persistFollowup(callId, nextState, notesOverride = "", messageOverride = "") {
+    if (!callId) return;
     setFollowupLoading(true);
     try {
-      const data = await api.tenantUpdateCallFollowup(selectedCallId, {
+      const data = await api.tenantUpdateCallFollowup(callId, {
         followup_state: nextState,
         notes: notesOverride || "",
       });
       setCallDetail((prev) =>
-        prev
+        prev && (prev.call_id || selectedCallId) === callId
           ? {
               ...prev,
               followup_state: data?.followup_state || nextState,
@@ -205,7 +209,7 @@ export default function AppCalls() {
       setPayload((prev) => ({
         ...(prev || { calls: [] }),
         calls: (prev?.calls || []).map((call) =>
-          (call.call_id || call.id) === selectedCallId
+          (call.call_id || call.id) === callId
             ? {
                 ...call,
                 followup_state: data?.followup_state || nextState,
@@ -214,13 +218,16 @@ export default function AppCalls() {
             : call,
         ),
       }));
-      setFollowupNotes(data?.followup_notes || "");
+      if ((callDetail?.call_id || selectedCallId) === callId) {
+        setFollowupNotes(data?.followup_notes || "");
+      }
       setActionMessage(
-        nextState === "callback"
-          ? "Appel marqué à rappeler."
-          : nextState === "processed"
-            ? "Appel marqué comme traité."
-            : "Suivi réinitialisé.",
+        messageOverride ||
+          (nextState === "callback"
+            ? "Appel marqué à rappeler."
+            : nextState === "processed"
+              ? "Appel marqué comme traité."
+              : "Suivi réinitialisé."),
       );
     } catch (e) {
       setActionMessage(e?.message || "Impossible d'enregistrer le suivi.");
@@ -229,10 +236,20 @@ export default function AppCalls() {
     }
   }
 
+  async function saveFollowupState(nextState, notesOverride = followupNotes) {
+    if (!selectedCallId) return;
+    await persistFollowup(selectedCallId, nextState, notesOverride);
+  }
+
   async function runContextualAction(detail) {
     const action = detail?.contextual_action?.kind || "open_detail";
+    const callId = detail?.call_id || detail?.id || selectedCallId;
     if (action === "followup_callback") {
-      await saveFollowupState("callback");
+      await persistFollowup(callId, "callback", detail?.followup_notes || "", "Appel ajouté à la file de rappel.");
+      return;
+    }
+    if (action === "mark_processed") {
+      await persistFollowup(callId, "processed", detail?.followup_notes || "", "Appel marqué comme traité.");
       return;
     }
     if (action === "open_agenda") {
@@ -422,6 +439,26 @@ export default function AppCalls() {
                         <span>ID: {call.call_id || call.id}</span>
                       </div>
                     </div>
+                    <div style={S.rowActionWrap}>
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        style={S.rowActionButton}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          runContextualAction(call);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            runContextualAction(call);
+                          }
+                        }}
+                      >
+                        {getActionLabel(call)}
+                      </span>
+                    </div>
                   </button>
                 );
               })}
@@ -583,6 +620,34 @@ export default function AppCalls() {
                     </div>
                   </div>
                 ) : null}
+
+                <div style={S.detailSection}>
+                  <div style={S.detailSectionTitle}>Action recommandée</div>
+                  <div style={S.recommendedCard}>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={S.recommendedTitle}>{getActionLabel(callDetail)}</div>
+                      <div style={S.detailText}>
+                        {callDetail.reason_category === "urgency"
+                          ? "Placez cet appel dans la file de rappel prioritaire pour que le cabinet traite l'urgence."
+                          : callDetail.reason_category === "prescription"
+                            ? "Une fois la demande revue, marquez-la comme traitée pour sortir l'appel de la file active."
+                            : callDetail.reason_category === "agenda"
+                              ? "Ouvrez l'agenda pour confirmer, déplacer ou compléter la prise de rendez-vous."
+                              : callDetail.reason_category === "callback"
+                                ? "Ajoutez-le à la file de rappel afin de conserver la demande visible."
+                                : "Utilisez le détail et la note interne pour décider de la suite."}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      style={S.actionButtonPrimary}
+                      disabled={followupLoading}
+                      onClick={() => runContextualAction(callDetail)}
+                    >
+                      {getActionLabel(callDetail)}
+                    </button>
+                  </div>
+                </div>
 
                 <div style={S.detailSection}>
                   <div style={S.detailSectionTitle}>Suivi métier</div>
@@ -837,6 +902,23 @@ const S = {
     flex: 1,
     minWidth: 0,
   },
+  rowActionWrap: {
+    flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+  },
+  rowActionButton: {
+    border: `1px solid ${BORDER}`,
+    background: "#fff",
+    color: "#111827",
+    borderRadius: 10,
+    padding: "9px 11px",
+    fontSize: 11,
+    fontWeight: 700,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    whiteSpace: "nowrap",
+  },
   callTop: {
     display: "flex",
     justifyContent: "space-between",
@@ -1035,6 +1117,23 @@ const S = {
     padding: "14px 16px",
   },
   reasonCardTitle: {
+    fontSize: 14,
+    fontWeight: 700,
+    color: TEXT,
+    marginBottom: 6,
+  },
+  recommendedCard: {
+    border: `1px solid ${BORDER}`,
+    borderRadius: 14,
+    background: "#f8fafc",
+    padding: 14,
+    display: "flex",
+    gap: 14,
+    alignItems: "center",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+  },
+  recommendedTitle: {
     fontSize: 14,
     fontWeight: 700,
     color: TEXT,

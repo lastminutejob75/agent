@@ -2,19 +2,16 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowUpRight,
-  Bell,
   Calendar,
   CheckCircle2,
   Phone,
   PhoneCall,
   Plus,
-  Search,
   TrendingUp,
 } from "lucide-react";
 import { api } from "../lib/api.js";
 import ASSISTANTS from "../assistants.config.js";
 
-const TEAL = "#14c8b8";
 const TEAL_DARK = "#0ea899";
 const NAVY = "#111827";
 
@@ -167,6 +164,10 @@ function getReasonBadge(call) {
     default:
       return { label: "Suivi", bg: "#f8fafc", text: "#475569", border: "#e5e7eb" };
   }
+}
+
+function getActionCta(call) {
+  return call?.contextual_action?.label || "Ouvrir";
 }
 
 export default function AppDashboard() {
@@ -346,6 +347,13 @@ export default function AppDashboard() {
     },
   ];
 
+  const quickLinks = [
+    { label: "Traiter les appels", sub: "Priorités et rappels", href: "/app/appels" },
+    { label: "Gérer l'agenda", sub: "RDV et disponibilité", href: "/app/agenda" },
+    { label: "Mettre à jour les horaires", sub: "Créneaux d'ouverture", href: "/app/horaires" },
+    { label: "Compléter la FAQ", sub: "Réponses cabinet", href: "/app/faq" },
+  ];
+
   return (
     <div style={S.root}>
       <style>{CSS}</style>
@@ -354,19 +362,14 @@ export default function AppDashboard() {
         <div className="uwi-header-row" style={S.header}>
           <div>
             <h1 style={S.title}>Tableau de bord</h1>
-            <p style={S.subtitle}>Activité de l&apos;agent médical aujourd&apos;hui</p>
+            <p style={S.subtitle}>Voyez immédiatement ce qui est prêt et ce qui demande une action</p>
           </div>
 
           <div style={S.headerRight}>
-            <button type="button" style={S.iconButton} aria-label="Notifications">
-              <Bell size={18} strokeWidth={1.8} color="#6b7280" />
-              <span style={S.bellDot} />
+            <div style={S.headerChip}>{actionQueue.length} action{actionQueue.length > 1 ? "s" : ""} active{actionQueue.length > 1 ? "s" : ""}</div>
+            <button type="button" onClick={() => navigate("/app/appels")} style={S.headerButton}>
+              Ouvrir Appels
             </button>
-
-            <div className="uwi-search" style={S.searchWrap}>
-              <Search size={18} strokeWidth={1.8} color="#9ca3af" />
-              <input placeholder="Rechercher..." style={S.searchInput} />
-            </div>
           </div>
         </div>
 
@@ -381,7 +384,7 @@ export default function AppDashboard() {
         </section>
 
         <section style={S.assistantCard}>
-          <div style={S.assistantLabel}>Votre Assistante</div>
+          <div style={S.assistantLabel}>État opérationnel</div>
 
           <div className="uwi-assistant-row" style={S.assistantRow}>
             <div style={S.assistantLeft}>
@@ -416,12 +419,14 @@ export default function AppDashboard() {
                     <div style={S.assistantName}>{assistantName}</div>
                     <div style={S.assistantMetaRow}>
                       <span style={S.assistantMetaItem}>
-                        <span style={{ color: TEAL_DARK }}>✦</span>
-                        {assistantConfig?.voice || "Calme et professionnelle"}
+                        <span style={{ color: me?.assistant_live ? "#10b981" : "#f59e0b" }}>●</span>
+                        {me?.assistant_live ? "Vapi actif" : "Assistant à finaliser"}
                       </span>
-                      <span style={{ ...S.assistantMetaItem, color: "#10b981", fontWeight: 600 }}>
-                        <DotPulse size={8} />
-                        En ligne
+                      <span style={S.assistantMetaItem}>
+                        📞 {me?.voice_number || "Numéro en attente"}
+                      </span>
+                      <span style={S.assistantMetaItem}>
+                        📅 {agendaReady ? "Agenda prêt" : "Mode UWI actif"}
                       </span>
                     </div>
                   </>
@@ -430,8 +435,8 @@ export default function AppDashboard() {
             </div>
 
             <div style={S.assistantRight}>
-              <div style={S.assistantRightLabel}>Appels aujourd&apos;hui</div>
-              <div style={S.assistantRightValue}>{loading ? <Skeleton width={36} height={30} radius={8} /> : kpis?.current?.calls ?? 0}</div>
+              <div style={S.assistantRightLabel}>Actions à traiter</div>
+              <div style={S.assistantRightValue}>{loading ? <Skeleton width={36} height={30} radius={8} /> : actionQueue.length}</div>
             </div>
           </div>
         </section>
@@ -441,45 +446,11 @@ export default function AppDashboard() {
         ) : null}
 
         <section className="uwi-activation-grid" style={S.activationGrid}>
-          <div style={S.activationPanel}>
-            <div style={S.panelHeader}>
-              <div>
-                <div style={S.panelTitle}>Activation du cabinet</div>
-                <div style={S.panelSubtitle}>Suivez les étapes clés pour rendre UWI totalement opérationnel</div>
-              </div>
-              <div style={S.progressWrap}>
-                <div style={S.progressLabel}>{onboardingProgress}% prêt</div>
-                <div style={S.progressTrack}>
-                  <div style={{ ...S.progressFill, width: `${onboardingProgress}%` }} />
-                </div>
-              </div>
-            </div>
-
-            <div style={S.activationList}>
-              {onboardingCards.map((item) => (
-                <div key={item.key} style={{ ...S.activationItem, borderColor: item.done ? "#bbf7d0" : "#e5e7eb" }}>
-                  <div style={S.activationIcon}>{item.done ? "✓" : "•"}</div>
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ ...S.activationTitle, color: item.done ? "#047857" : NAVY }}>{item.title}</div>
-                    <div style={S.activationText}>{item.text}</div>
-                  </div>
-                  {item.href ? (
-                    <button type="button" onClick={() => navigate(item.href)} style={item.done ? S.activationButtonGhost : S.activationButton}>
-                      {item.cta}
-                    </button>
-                  ) : (
-                    <div style={S.activationWaiting}>{item.done ? "OK" : "UWI"}</div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-
           <div style={S.actionsPanel}>
             <div style={S.panelHeader}>
               <div>
                 <div style={S.panelTitle}>À traiter maintenant</div>
-                <div style={S.panelSubtitle}>Les appels qui demandent une action de votre part</div>
+                <div style={S.panelSubtitle}>La file de travail prioritaire du cabinet</div>
               </div>
               <button type="button" onClick={() => navigate("/app/appels")} style={S.linkButton}>
                 <span>Ouvrir Appels</span>
@@ -498,7 +469,7 @@ export default function AppDashboard() {
               ) : (
                 actionQueue.map((call) => {
                   const badge = getReasonBadge(call);
-                  const ctaLabel = call?.contextual_action?.label || "Ouvrir";
+                  const ctaLabel = getActionCta(call);
                   return (
                     <div key={call.call_id || call.id} style={S.actionQueueCard}>
                       <div style={{ minWidth: 0, flex: 1 }}>
@@ -531,42 +502,49 @@ export default function AppDashboard() {
               )}
             </div>
           </div>
+
+          <div style={S.activationPanel}>
+            <div style={S.panelHeader}>
+              <div>
+                <div style={S.panelTitle}>Activation du cabinet</div>
+                <div style={S.panelSubtitle}>Les prochains réglages qui débloquent l’autonomie du standard</div>
+              </div>
+              <div style={S.progressWrap}>
+                <div style={S.progressLabel}>{onboardingProgress}% prêt</div>
+                <div style={S.progressTrack}>
+                  <div style={{ ...S.progressFill, width: `${onboardingProgress}%` }} />
+                </div>
+              </div>
+            </div>
+
+            <div style={S.activationList}>
+              {onboardingCards.map((item) => (
+                <div key={item.key} style={{ ...S.activationItem, borderColor: item.done ? "#bbf7d0" : "#e5e7eb" }}>
+                  <div style={S.activationIcon}>{item.done ? "✓" : "•"}</div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ ...S.activationTitle, color: item.done ? "#047857" : NAVY }}>{item.title}</div>
+                    <div style={S.activationText}>{item.text}</div>
+                  </div>
+                  {item.href ? (
+                    <button type="button" onClick={() => navigate(item.href)} style={item.done ? S.activationButtonGhost : S.activationButton}>
+                      {item.cta}
+                    </button>
+                  ) : (
+                    <div style={S.activationWaiting}>{item.done ? "OK" : "UWI"}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
         </section>
 
-        <section className="uwi-kpi-grid" style={S.kpiGrid}>
-          {loading
-            ? [1, 2, 3, 4].map((item) => (
-                <div key={item} style={S.kpiCard}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                    <Skeleton width={54} height={54} radius={16} />
-                    <Skeleton width={54} height={14} radius={8} />
-                  </div>
-                  <div style={{ marginTop: 24 }}>
-                    <Skeleton width={80} height={38} radius={10} />
-                  </div>
-                  <div style={{ marginTop: 10 }}>
-                    <Skeleton width={140} height={16} radius={8} />
-                  </div>
-                </div>
-              ))
-            : stats.map((stat) => {
-                const Icon = stat.icon;
-                return (
-                  <div key={stat.label} style={S.kpiCard}>
-                    <div style={S.kpiTop}>
-                      <div style={{ ...S.kpiIconBox, background: stat.iconBg }}>
-                        <Icon size={24} strokeWidth={2} color={stat.iconColor} />
-                      </div>
-                      <div style={S.kpiChange}>
-                        <ArrowUpRight size={14} strokeWidth={2.2} />
-                        {stat.change}
-                      </div>
-                    </div>
-                    <div style={S.kpiValue}>{stat.value}</div>
-                    <div style={S.kpiLabel}>{stat.label}</div>
-                  </div>
-                );
-              })}
+        <section className="uwi-quick-links" style={S.quickLinks}>
+          {quickLinks.map((item) => (
+            <button key={item.href} type="button" onClick={() => navigate(item.href)} style={S.quickLinkCard}>
+              <div style={S.quickLinkTitle}>{item.label}</div>
+              <div style={S.quickLinkText}>{item.sub}</div>
+            </button>
+          ))}
         </section>
 
         <section className="uwi-main-grid" style={S.mainGrid}>
@@ -727,6 +705,42 @@ export default function AppDashboard() {
             </button>
           </div>
         </section>
+
+        <section className="uwi-kpi-grid" style={S.kpiGrid}>
+          {loading
+            ? [1, 2, 3, 4].map((item) => (
+                <div key={item} style={S.kpiCard}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <Skeleton width={54} height={54} radius={16} />
+                    <Skeleton width={54} height={14} radius={8} />
+                  </div>
+                  <div style={{ marginTop: 24 }}>
+                    <Skeleton width={80} height={38} radius={10} />
+                  </div>
+                  <div style={{ marginTop: 10 }}>
+                    <Skeleton width={140} height={16} radius={8} />
+                  </div>
+                </div>
+              ))
+            : stats.map((stat) => {
+                const Icon = stat.icon;
+                return (
+                  <div key={stat.label} style={S.kpiCard}>
+                    <div style={S.kpiTop}>
+                      <div style={{ ...S.kpiIconBox, background: stat.iconBg }}>
+                        <Icon size={24} strokeWidth={2} color={stat.iconColor} />
+                      </div>
+                      <div style={S.kpiChange}>
+                        <ArrowUpRight size={14} strokeWidth={2.2} />
+                        {stat.change}
+                      </div>
+                    </div>
+                    <div style={S.kpiValue}>{stat.value}</div>
+                    <div style={S.kpiLabel}>{stat.label}</div>
+                  </div>
+                );
+              })}
+        </section>
       </div>
     </div>
   );
@@ -763,45 +777,29 @@ const S = {
     alignItems: "center",
     gap: 14,
   },
-  iconButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 12,
-    border: "none",
-    background: "transparent",
-    cursor: "pointer",
-    position: "relative",
+  headerChip: {
     display: "flex",
     alignItems: "center",
-    justifyContent: "center",
+    padding: "8px 10px",
+    borderRadius: 999,
+    border: "1px solid #d1fae5",
+    background: "#ecfdf5",
+    color: "#047857",
+    fontSize: 12,
+    fontWeight: 700,
   },
-  bellDot: {
-    position: "absolute",
-    top: 10,
-    right: 10,
-    width: 7,
-    height: 7,
-    borderRadius: "50%",
-    background: "#ef4444",
-  },
-  searchWrap: {
-    width: 260,
-    height: 40,
-    borderRadius: 12,
+  headerButton: {
     border: "1px solid #e5e7eb",
     background: "#fff",
     display: "flex",
     alignItems: "center",
-    gap: 10,
-    padding: "0 14px",
-  },
-  searchInput: {
-    flex: 1,
-    border: "none",
-    outline: "none",
-    background: "transparent",
-    fontSize: 14,
-    color: "#374151",
+    justifyContent: "center",
+    color: "#111827",
+    borderRadius: 10,
+    padding: "10px 12px",
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
     fontFamily: "inherit",
   },
   controlGrid: {
@@ -1121,6 +1119,33 @@ const S = {
     fontFamily: "inherit",
     whiteSpace: "nowrap",
     flexShrink: 0,
+  },
+  quickLinks: {
+    display: "grid",
+    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+    gap: 14,
+    marginTop: 18,
+  },
+  quickLinkCard: {
+    border: "1px solid #e5e7eb",
+    background: "#fff",
+    borderRadius: 14,
+    padding: "14px 16px",
+    textAlign: "left",
+    cursor: "pointer",
+    fontFamily: "inherit",
+    boxShadow: "0 2px 10px rgba(15,23,42,.035)",
+  },
+  quickLinkTitle: {
+    fontSize: 13,
+    fontWeight: 700,
+    color: NAVY,
+  },
+  quickLinkText: {
+    marginTop: 6,
+    fontSize: 12,
+    color: "#6b7280",
+    lineHeight: 1.5,
   },
   kpiGrid: {
     display: "grid",
@@ -1459,6 +1484,7 @@ const CSS = `
   @media (max-width: 1160px) {
     .uwi-control-grid,
     .uwi-activation-grid,
+    .uwi-quick-links,
     .uwi-main-grid {
       grid-template-columns: 1fr !important;
     }

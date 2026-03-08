@@ -237,21 +237,21 @@ def _classify_call_context(status: str, detail: dict) -> Dict[str, Any]:
             "reason_label": reason or "Urgence médicale signalée",
             "reason_context": context,
             "reason_category": "urgency",
-            "contextual_action": {"kind": "followup_callback", "label": "Rappeler en priorité"},
+            "contextual_action": {"kind": "followup_callback", "label": "Rappeler maintenant"},
         }
     if any(token in haystack for token in ("ordonnance", "renouvel", "prescription", "traitement", "médicament", "medicament")):
         return {
             "reason_label": reason or "Demande d'ordonnance à traiter",
             "reason_context": context,
             "reason_category": "prescription",
-            "contextual_action": {"kind": "open_detail", "label": "Vérifier la demande"},
+            "contextual_action": {"kind": "mark_processed", "label": "Marquer traité"},
         }
     if any(token in haystack for token in ("rappel", "rappele", "rappelez", "rappeler", "callback", "recontact")):
         return {
             "reason_label": reason or "Patient à rappeler",
             "reason_context": context,
             "reason_category": "callback",
-            "contextual_action": {"kind": "followup_callback", "label": "Planifier un rappel"},
+            "contextual_action": {"kind": "followup_callback", "label": "Mettre en rappel"},
         }
     if status == "CONFIRMED" or any(token in haystack for token in ("rdv", "rendez-vous", "agenda", "créneau", "creneau", "booking", "annuler", "déplacer", "deplacer")):
         return {

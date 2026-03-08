@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Outlet, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { api, clearTenantToken, isTenantUnauthorized } from "../lib/api.js";
 import { getImpersonation, setImpersonation } from "./Impersonate";
+import ASSISTANTS from "../assistants.config.js";
 import "./ClientDashboard.css";
 
 const TEAL = "#00d4a0";
@@ -207,6 +208,16 @@ export default function AppLayout() {
   const showWelcomeSecurityBanner = new URLSearchParams(location.search).get("welcome") === "1";
   const sub = routeInfo.sub || (path === "/app" ? new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" }) : "");
   const assistantName = (me?.assistant_name || "Sophie").replace(/^./, (s) => s.toUpperCase());
+  const assistantConfig = useMemo(() => {
+    const normalized = String(me?.assistant_name || "sophie").trim().toLowerCase();
+    return (
+      ASSISTANTS.find(
+        (assistant) =>
+          assistant.id === normalized ||
+          String(assistant.prenom || "").trim().toLowerCase() === normalized,
+      ) || null
+    );
+  }, [me?.assistant_name]);
   const planLabel = (me?.plan_key || "growth").replace(/^./, (s) => s.toUpperCase());
   const clockLabel = clock.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   const callsBadge = dashboard?.counters_7d?.calls_total ?? 0;
@@ -217,6 +228,10 @@ export default function AppLayout() {
     .join("")
     .toUpperCase()
     .slice(0, 2);
+
+  useEffect(() => {
+    setImgErr(false);
+  }, [assistantConfig?.img, assistantName]);
 
   return (
     <div className="dash" style={S.root}>
@@ -288,7 +303,7 @@ export default function AppLayout() {
             <div style={{ position: "relative", flexShrink: 0 }}>
               {!imgErr ? (
                 <img
-                  src="https://randomuser.me/api/portraits/women/44.jpg"
+                  src={assistantConfig?.img || ""}
                   alt={assistantName}
                   onError={() => setImgErr(true)}
                   style={S.assistantAvatar}
@@ -300,13 +315,16 @@ export default function AppLayout() {
             </div>
             <div>
               <div style={S.assistantName}>{assistantName}</div>
-              <div style={S.assistantMeta}>🎧 Calme · pro</div>
+              <div style={S.assistantMeta}>🎧 {assistantConfig?.voice || "Calme et professionnelle"}</div>
               <div style={S.assistantStatus}>
                 <Dot color={TEAL} size={6} />
                 <span>En ligne</span>
               </div>
             </div>
           </div>
+          <button type="button" onClick={handleLogout} style={S.assistantLogoutButton}>
+            Déconnexion
+          </button>
         </div>
 
         <div style={S.sidebarFooter}>
@@ -459,6 +477,19 @@ const S = {
   assistantName: { fontSize: 14, fontWeight: 800, color: NAVY },
   assistantMeta: { fontSize: 10, color: "#64748b", marginTop: 2 },
   assistantStatus: { display: "flex", alignItems: "center", gap: 4, marginTop: 4, fontSize: 10, color: TEALX, fontWeight: 600 },
+  assistantLogoutButton: {
+    marginTop: 10,
+    width: "100%",
+    borderRadius: 9,
+    border: "1px solid rgba(13,27,46,.12)",
+    background: "#fff",
+    color: NAVY,
+    padding: "8px 10px",
+    fontSize: 11,
+    fontWeight: 700,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
   sidebarFooter: {
     padding: "12px 16px",
     borderTop: "1px solid #f1f5f9",
