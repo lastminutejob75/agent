@@ -152,6 +152,37 @@ export default function AppLayout() {
     return () => window.clearInterval(timer);
   }, []);
 
+  const impersonation = getImpersonation();
+  const path = location.pathname;
+  const routeInfo = ROUTES[path] || { title: "Mon Cabinet", sub: "" };
+  const showWelcomeSecurityBanner = new URLSearchParams(location.search).get("welcome") === "1";
+  const sub = routeInfo.sub || (path === "/app" ? new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" }) : "");
+  const assistantName = (me?.assistant_name || "Sophie").replace(/^./, (s) => s.toUpperCase());
+  const assistantConfig = useMemo(() => {
+    const normalized = String(me?.assistant_name || "sophie").trim().toLowerCase();
+    return (
+      ASSISTANTS.find(
+        (assistant) =>
+          assistant.id === normalized ||
+          String(assistant.prenom || "").trim().toLowerCase() === normalized,
+      ) || null
+    );
+  }, [me?.assistant_name]);
+  const planLabel = (me?.plan_key || "growth").replace(/^./, (s) => s.toUpperCase());
+  const clockLabel = clock.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const callsBadge = dashboard?.counters_7d?.calls_total ?? 0;
+  const urgentBadge = dashboard?.counters_7d?.transfers ?? 0;
+  const initials = (me?.tenant_name || "U")
+    .split(/\s+/)
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+
+  useEffect(() => {
+    setImgErr(false);
+  }, [assistantConfig?.img, assistantName]);
+
   const handleLogout = () => {
     setImpersonation(null);
     clearTenantToken();
@@ -201,37 +232,6 @@ export default function AppLayout() {
   }
 
   if (!me) return null;
-
-  const impersonation = getImpersonation();
-  const path = location.pathname;
-  const routeInfo = ROUTES[path] || { title: "Mon Cabinet", sub: "" };
-  const showWelcomeSecurityBanner = new URLSearchParams(location.search).get("welcome") === "1";
-  const sub = routeInfo.sub || (path === "/app" ? new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" }) : "");
-  const assistantName = (me?.assistant_name || "Sophie").replace(/^./, (s) => s.toUpperCase());
-  const assistantConfig = useMemo(() => {
-    const normalized = String(me?.assistant_name || "sophie").trim().toLowerCase();
-    return (
-      ASSISTANTS.find(
-        (assistant) =>
-          assistant.id === normalized ||
-          String(assistant.prenom || "").trim().toLowerCase() === normalized,
-      ) || null
-    );
-  }, [me?.assistant_name]);
-  const planLabel = (me?.plan_key || "growth").replace(/^./, (s) => s.toUpperCase());
-  const clockLabel = clock.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  const callsBadge = dashboard?.counters_7d?.calls_total ?? 0;
-  const urgentBadge = dashboard?.counters_7d?.transfers ?? 0;
-  const initials = (me.tenant_name || "U")
-    .split(/\s+/)
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
-
-  useEffect(() => {
-    setImgErr(false);
-  }, [assistantConfig?.img, assistantName]);
 
   return (
     <div className="dash" style={S.root}>
