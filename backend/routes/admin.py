@@ -1203,7 +1203,7 @@ def _build_onboarding_link(email: str) -> str:
         os.getenv("PUBLIC_BASE_URL")
         or os.getenv("CLIENT_APP_ORIGIN")
         or os.getenv("FRONT_BASE_URL")
-        or "https://uwiapp.com"
+        or "https://www.uwiapp.com"
     ).strip().rstrip("/")
     return f"{base}/creer-assistante?email={email}&new=1"
 
@@ -2262,7 +2262,7 @@ def admin_billing_portal_link(
         os.environ.get("STRIPE_PORTAL_RETURN_URL")
         or os.environ.get("STRIPE_CHECKOUT_SUCCESS_URL")
         or os.environ.get("FRONTEND_URL")
-        or "https://uwiapp.com"
+        or "https://www.uwiapp.com"
     ).strip().rstrip("/")
     try:
         import stripe

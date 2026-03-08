@@ -1,6 +1,6 @@
 /**
- * URL de base du dashboard client (uwiapp.com).
- * En prod : VITE_UWI_APP_URL=https://uwiapp.com si client et admin sont sur des domaines différents.
+ * URL de base du dashboard client (www.uwiapp.com).
+ * En prod : VITE_UWI_APP_URL=https://www.uwiapp.com si client et admin sont sur des domaines différents.
  * Sinon (même origine) : laisser vide ou non défini → on utilise l’origine courante.
  */
 const base = (import.meta.env.VITE_UWI_APP_URL || "").replace(/\/$/, "") || (typeof window !== "undefined" ? window.location.origin : "");
@@ -27,7 +27,7 @@ function toBase64Url(id) {
  */
 export function getClientLoginUrl(email, tenantId) {
   const path = "/login";
-  const url = new URL(path, base || "https://uwiapp.com");
+  const url = new URL(path, base || "https://www.uwiapp.com");
   const params = [];
   if (email && String(email).trim()) {
     params.push(`email=${encodeURIComponent(String(email).trim())}`);
@@ -58,7 +58,7 @@ export function getClientWelcomeLoginUrl(email) {
  * URL du dashboard client (/app) — pour affichage ou futur impersonation.
  */
 export function getClientAppUrl() {
-  const b = base || (typeof window !== "undefined" ? window.location.origin : "") || "https://uwiapp.com";
+  const b = base || (typeof window !== "undefined" ? window.location.origin : "") || "https://www.uwiapp.com";
   return `${b.replace(/\/$/, "")}/app`;
 }
 

@@ -1,17 +1,805 @@
-export default function AppCalls() {
+import { useEffect, useMemo, useState } from "react";
+import { api } from "../lib/api.js";
+
+const TEXT = "#111827";
+const MUTED = "#6b7280";
+const BORDER = "#e5e7eb";
+const BG = "#f5f6f8";
+const CARD = "#ffffff";
+const BLUE = "#2563eb";
+const SUCCESS = "#10b981";
+const WARNING = "#f59e0b";
+const DANGER = "#ef4444";
+
+const STATUS_UI = {
+  CONFIRMED: { label: "Confirmé", bg: "#dcfce7", color: "#15803d", border: "#bbf7d0" },
+  FAQ: { label: "Info", bg: "#dbeafe", color: "#1d4ed8", border: "#bfdbfe" },
+  TRANSFERRED: { label: "Transféré", bg: "#fee2e2", color: "#b91c1c", border: "#fecaca" },
+  ABANDONED: { label: "Abandonné", bg: "#fef3c7", color: "#b45309", border: "#fcd34d" },
+};
+
+function getStatusUi(status) {
+  return STATUS_UI[status] || STATUS_UI.FAQ;
+}
+
+function getCallInitials(name) {
+  return String(name || "Patient")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join("") || "PT";
+}
+
+function Skeleton({ height = 80, radius = 14 }) {
   return (
-    <div className="page">
-      <div className="dcard">
-        <div className="ch">
-          <div className="ch-left">
-            <div className="ch-ico ico-t">📋</div>
-            <div><div className="ch-title">Journal complet des appels</div></div>
-          </div>
+    <div
+      style={{
+        height,
+        borderRadius: radius,
+        background: "linear-gradient(90deg, #eef2f7 25%, #e6ebf2 50%, #eef2f7 75%)",
+        backgroundSize: "200% 100%",
+        animation: "uwi-calls-shimmer 1.35s infinite linear",
+      }}
+    />
+  );
+}
+
+async function copyToClipboard(text) {
+  if (!text || !navigator?.clipboard?.writeText) return false;
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export default function AppCalls() {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [days, setDays] = useState(7);
+  const [payload, setPayload] = useState({ calls: [], total: 0, date: "" });
+  const [selectedCallId, setSelectedCallId] = useState("");
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState("");
+  const [callDetail, setCallDetail] = useState(null);
+  const [actionMessage, setActionMessage] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    api
+      .tenantGetCalls(`?limit=50&days=${days}`)
+      .then((data) => {
+        if (!cancelled) setPayload(data || { calls: [], total: 0, date: "" });
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e?.message || "Impossible de charger les appels.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [days]);
+
+  useEffect(() => {
+    if (!selectedCallId) {
+      setCallDetail(null);
+      setDetailError("");
+      return;
+    }
+    let cancelled = false;
+    setDetailLoading(true);
+    setDetailError("");
+    api
+      .tenantGetCallDetail(selectedCallId)
+      .then((data) => {
+        if (!cancelled) setCallDetail(data || null);
+      })
+      .catch((e) => {
+        if (!cancelled) setDetailError(e?.message || "Impossible de charger le détail de l'appel.");
+      })
+      .finally(() => {
+        if (!cancelled) setDetailLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCallId]);
+
+  useEffect(() => {
+    if (!actionMessage) return undefined;
+    const timeout = window.setTimeout(() => setActionMessage(""), 2200);
+    return () => window.clearTimeout(timeout);
+  }, [actionMessage]);
+
+  const calls = payload?.calls || [];
+  const stats = useMemo(() => {
+    const counters = { total: calls.length, confirmed: 0, faq: 0, transferred: 0, abandoned: 0 };
+    calls.forEach((call) => {
+      if (call.status === "CONFIRMED") counters.confirmed += 1;
+      else if (call.status === "FAQ") counters.faq += 1;
+      else if (call.status === "TRANSFERRED") counters.transferred += 1;
+      else if (call.status === "ABANDONED") counters.abandoned += 1;
+    });
+    return counters;
+  }, [calls]);
+
+  return (
+    <div style={S.page}>
+      <style>{CSS}</style>
+
+      <div style={S.header}>
+        <div>
+          <h1 style={S.title}>Appels</h1>
+          <p style={S.subtitle}>Consultez l&apos;historique des appels traités par votre assistante</p>
         </div>
-        <div style={{ padding: '56px', textAlign: 'center', color: 'var(--muted)' }}>
-          Section à enrichir
+
+        <div style={S.filters}>
+          {[1, 7, 30].map((value) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setDays(value)}
+              style={{
+                ...S.filterButton,
+                ...(days === value ? S.filterButtonActive : null),
+              }}
+            >
+              {value === 1 ? "24h" : `${value} jours`}
+            </button>
+          ))}
         </div>
       </div>
+
+      <div className="calls-stats-grid" style={S.statsGrid}>
+        <div style={S.statCard}>
+          <div>
+            <div style={S.statLabel}>Total appels</div>
+            <div style={S.statValue}>{loading ? "—" : stats.total}</div>
+          </div>
+          <div style={{ ...S.statIcon, background: "linear-gradient(135deg, #3b82f6, #2563eb)" }}>☎</div>
+        </div>
+        <div style={S.statCard}>
+          <div>
+            <div style={S.statLabel}>RDV confirmés</div>
+            <div style={{ ...S.statValue, color: SUCCESS }}>{loading ? "—" : stats.confirmed}</div>
+          </div>
+          <div style={{ ...S.statIcon, background: "linear-gradient(135deg, #10b981, #059669)" }}>✓</div>
+        </div>
+        <div style={S.statCard}>
+          <div>
+            <div style={S.statLabel}>Infos</div>
+            <div style={{ ...S.statValue, color: BLUE }}>{loading ? "—" : stats.faq}</div>
+          </div>
+          <div style={{ ...S.statIcon, background: "linear-gradient(135deg, #60a5fa, #2563eb)" }}>i</div>
+        </div>
+        <div style={S.statCard}>
+          <div>
+            <div style={S.statLabel}>Transférés / abandonnés</div>
+            <div style={{ ...S.statValue, color: DANGER }}>{loading ? "—" : stats.transferred + stats.abandoned}</div>
+          </div>
+          <div style={{ ...S.statIcon, background: "linear-gradient(135deg, #f59e0b, #ef4444)" }}>!</div>
+        </div>
+      </div>
+
+      {error ? <div style={S.errorBox}>Erreur: {error}</div> : null}
+
+      <div style={S.panel}>
+        <div style={S.panelHeader}>
+          <div>
+            <div style={S.panelTitle}>Journal des appels</div>
+            <div style={S.panelSub}>
+              {days === 1 ? "Dernières 24 heures" : `Sur les ${days} derniers jours`}
+            </div>
+          </div>
+        </div>
+
+        <div style={S.listWrap}>
+          {loading ? (
+            <div style={S.list}>
+              {[1, 2, 3, 4, 5].map((item) => (
+                <Skeleton key={item} height={90} />
+              ))}
+            </div>
+          ) : calls.length === 0 ? (
+            <div style={S.emptyState}>
+              <div style={S.emptyTitle}>Aucun appel sur cette période</div>
+              <div style={S.emptyText}>Les appels traités par UWI apparaîtront ici automatiquement.</div>
+            </div>
+          ) : (
+            <div style={S.list}>
+              {calls.map((call) => {
+                const status = getStatusUi(call.status);
+                return (
+                  <button key={call.id} type="button" className="calls-row" style={S.callRow} onClick={() => setSelectedCallId(call.call_id || call.id)}>
+                    <div style={S.avatar}>{getCallInitials(call.patient_name)}</div>
+
+                    <div style={S.callMain}>
+                      <div style={S.callTop}>
+                        <div style={S.callName}>{call.patient_name || "Patient"}</div>
+                        <span
+                          style={{
+                            ...S.statusBadge,
+                            background: status.bg,
+                            color: status.color,
+                            borderColor: status.border,
+                          }}
+                        >
+                          {status.label}
+                        </span>
+                      </div>
+
+                      <div style={S.callAgent}>Assistante : {call.agent_name || "UWI"}</div>
+                      <div style={S.callSummary}>{call.summary || "Aucun résumé disponible."}</div>
+
+                      <div style={S.callMeta}>
+                        <span>🕘 {call.time || "—"}</span>
+                        <span>⏱ {call.duration || "—"}</span>
+                        <span>ID: {call.call_id || call.id}</span>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {selectedCallId ? (
+        <div style={S.modalOverlay} onClick={() => setSelectedCallId("")}>
+          <div style={S.modalCard} onClick={(e) => e.stopPropagation()}>
+            <div style={S.modalHeader}>
+              <div>
+                <div style={S.modalTitle}>Détail de l&apos;appel</div>
+                <div style={S.modalSub}>ID: {selectedCallId}</div>
+              </div>
+              <button type="button" style={S.closeButton} onClick={() => setSelectedCallId("")}>
+                ✕
+              </button>
+            </div>
+
+            {detailLoading ? (
+              <div style={S.modalBody}>
+                <Skeleton height={80} />
+                <Skeleton height={140} />
+              </div>
+            ) : detailError ? (
+              <div style={S.modalBody}>
+                <div style={S.errorBox}>Erreur: {detailError}</div>
+              </div>
+            ) : callDetail ? (
+              <div style={S.modalBody}>
+                <div style={S.actionRow}>
+                  <button
+                    type="button"
+                    style={S.actionButtonPrimary}
+                    onClick={async () => {
+                      const ok = await copyToClipboard(callDetail.transcript || "");
+                      setActionMessage(ok ? "Transcription copiée." : "Impossible de copier la transcription.");
+                    }}
+                  >
+                    Copier la transcription
+                  </button>
+                  <button
+                    type="button"
+                    style={S.actionButton}
+                    onClick={async () => {
+                      const ok = await copyToClipboard(callDetail.summary || "");
+                      setActionMessage(ok ? "Résumé copié." : "Impossible de copier le résumé.");
+                    }}
+                  >
+                    Copier le résumé
+                  </button>
+                  <button
+                    type="button"
+                    style={S.actionButton}
+                    onClick={async () => {
+                      const ok = await copyToClipboard(callDetail.call_id || selectedCallId);
+                      setActionMessage(ok ? "ID d'appel copié." : "Impossible de copier l'identifiant.");
+                    }}
+                  >
+                    Copier l&apos;ID
+                  </button>
+                </div>
+
+                {actionMessage ? <div style={S.successInline}>{actionMessage}</div> : null}
+
+                <div className="calls-detail-grid" style={S.detailTopGrid}>
+                  <div style={S.detailInfoCard}>
+                    <div style={S.detailLabel}>Statut</div>
+                    <div style={S.detailValue}>
+                      <span
+                        style={{
+                          ...S.statusBadge,
+                          background: getStatusUi(callDetail.status).bg,
+                          color: getStatusUi(callDetail.status).color,
+                          borderColor: getStatusUi(callDetail.status).border,
+                        }}
+                      >
+                        {getStatusUi(callDetail.status).label}
+                      </span>
+                    </div>
+                  </div>
+                  <div style={S.detailInfoCard}>
+                    <div style={S.detailLabel}>Heure</div>
+                    <div style={S.detailValue}>{callDetail.started_time || "—"}</div>
+                  </div>
+                  <div style={S.detailInfoCard}>
+                    <div style={S.detailLabel}>Durée</div>
+                    <div style={S.detailValue}>{callDetail.duration || "—"}</div>
+                  </div>
+                </div>
+
+                <div style={S.detailSection}>
+                  <div style={S.detailSectionTitle}>Résumé</div>
+                  <div style={S.detailText}>{callDetail.summary || "Aucun résumé disponible."}</div>
+                </div>
+
+                <div style={S.detailSection}>
+                  <div style={S.detailSectionTitle}>Transcription</div>
+                  <div style={S.transcriptBox}>
+                    {callDetail.transcript ? (
+                      <pre style={S.transcriptText}>{callDetail.transcript}</pre>
+                    ) : (
+                      <div style={S.detailText}>Aucune transcription disponible pour cet appel.</div>
+                    )}
+                  </div>
+                </div>
+
+                <div style={S.detailSection}>
+                  <div style={S.detailSectionTitle}>Événements</div>
+                  <div style={S.timelineList}>
+                    {(callDetail.events || []).length > 0 ? (
+                      callDetail.events.map((event, index) => (
+                        <div key={`${event.created_at || event.time}-${index}`} style={S.timelineRow}>
+                          <div style={S.timelineTime}>{event.time || "—"}</div>
+                          <div style={S.timelineContent}>
+                            <div style={S.timelineEvent}>{event.event || "event"}</div>
+                            {event.reason ? <div style={S.timelineMeta}>Raison : {event.reason}</div> : null}
+                            {event.context ? <div style={S.timelineMeta}>Contexte : {event.context}</div> : null}
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div style={S.detailText}>Aucun événement détaillé disponible.</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
+
+const S = {
+  page: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 18,
+    paddingBottom: 24,
+    color: TEXT,
+    background: BG,
+  },
+  header: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 16,
+    flexWrap: "wrap",
+  },
+  title: {
+    margin: 0,
+    fontSize: 18,
+    lineHeight: 1.1,
+    fontWeight: 800,
+    color: TEXT,
+  },
+  subtitle: {
+    margin: "6px 0 0",
+    fontSize: 12,
+    color: MUTED,
+  },
+  filters: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  filterButton: {
+    border: `1px solid ${BORDER}`,
+    background: "#fff",
+    color: "#475569",
+    borderRadius: 10,
+    padding: "9px 12px",
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  filterButtonActive: {
+    borderColor: "#bfdbfe",
+    background: "#eff6ff",
+    color: "#1d4ed8",
+  },
+  statsGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+    gap: 16,
+  },
+  statCard: {
+    background: CARD,
+    border: `1px solid ${BORDER}`,
+    borderRadius: 14,
+    padding: "14px 16px",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+    boxShadow: "0 2px 10px rgba(15,23,42,.035)",
+  },
+  statLabel: {
+    fontSize: 12,
+    color: MUTED,
+    marginBottom: 8,
+  },
+  statValue: {
+    fontSize: 18,
+    lineHeight: 1,
+    fontWeight: 700,
+    color: TEXT,
+  },
+  statIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: 800,
+    boxShadow: "0 8px 18px rgba(37,99,235,.16)",
+    flexShrink: 0,
+  },
+  errorBox: {
+    borderRadius: 14,
+    border: "1px solid #fecaca",
+    background: "#fef2f2",
+    color: "#b91c1c",
+    padding: "12px 14px",
+    fontSize: 14,
+    fontWeight: 600,
+  },
+  panel: {
+    background: CARD,
+    border: `1px solid ${BORDER}`,
+    borderRadius: 14,
+    overflow: "hidden",
+    boxShadow: "0 2px 10px rgba(15,23,42,.035)",
+  },
+  panelHeader: {
+    padding: "18px 18px 14px",
+    background: "#fafafa",
+    borderBottom: `1px solid ${BORDER}`,
+  },
+  panelTitle: {
+    fontSize: 15,
+    fontWeight: 700,
+    color: TEXT,
+  },
+  panelSub: {
+    marginTop: 4,
+    fontSize: 12,
+    color: MUTED,
+  },
+  listWrap: {
+    padding: 18,
+  },
+  list: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+  },
+  callRow: {
+    width: "100%",
+    textAlign: "left",
+    display: "flex",
+    gap: 14,
+    alignItems: "flex-start",
+    padding: "14px 16px",
+    borderRadius: 14,
+    border: `1px solid ${BORDER}`,
+    background: "#fff",
+    boxShadow: "0 1px 4px rgba(15,23,42,.02)",
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  avatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    background: "linear-gradient(135deg, #3b82f6, #2563eb)",
+    color: "#fff",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 12,
+    fontWeight: 800,
+    flexShrink: 0,
+    boxShadow: "0 6px 12px rgba(37,99,235,.12)",
+  },
+  callMain: {
+    flex: 1,
+    minWidth: 0,
+  },
+  callTop: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 12,
+    alignItems: "flex-start",
+    flexWrap: "wrap",
+  },
+  callName: {
+    fontSize: 15,
+    fontWeight: 700,
+    color: TEXT,
+    lineHeight: 1.1,
+  },
+  statusBadge: {
+    borderRadius: 999,
+    padding: "5px 10px",
+    fontSize: 10,
+    fontWeight: 700,
+    border: "1px solid",
+  },
+  callAgent: {
+    marginTop: 6,
+    fontSize: 12,
+    color: "#4b5563",
+  },
+  callSummary: {
+    marginTop: 5,
+    fontSize: 11,
+    color: "#6b7280",
+    lineHeight: 1.5,
+  },
+  callMeta: {
+    marginTop: 10,
+    display: "flex",
+    gap: 12,
+    flexWrap: "wrap",
+    fontSize: 11,
+    color: MUTED,
+  },
+  emptyState: {
+    padding: "28px 18px 20px",
+    textAlign: "center",
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: 800,
+    color: TEXT,
+  },
+  emptyText: {
+    marginTop: 8,
+    fontSize: 14,
+    color: MUTED,
+  },
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(15,23,42,.38)",
+    display: "flex",
+    justifyContent: "flex-end",
+    zIndex: 50,
+  },
+  modalCard: {
+    width: "min(640px, 100vw)",
+    height: "100%",
+    background: "#fff",
+    borderLeft: `1px solid ${BORDER}`,
+    boxShadow: "-12px 0 40px rgba(15,23,42,.12)",
+    display: "flex",
+    flexDirection: "column",
+  },
+  modalHeader: {
+    padding: "18px 18px 14px",
+    borderBottom: `1px solid ${BORDER}`,
+    background: "#fafafa",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: 700,
+    color: TEXT,
+  },
+  modalSub: {
+    marginTop: 4,
+    fontSize: 12,
+    color: MUTED,
+  },
+  closeButton: {
+    border: `1px solid ${BORDER}`,
+    background: "#fff",
+    color: "#475569",
+    borderRadius: 10,
+    width: 34,
+    height: 34,
+    cursor: "pointer",
+  },
+  actionRow: {
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
+  },
+  actionButtonPrimary: {
+    border: "none",
+    background: "linear-gradient(135deg, #3b82f6, #2563eb)",
+    color: "#fff",
+    borderRadius: 10,
+    padding: "10px 12px",
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  actionButton: {
+    border: `1px solid ${BORDER}`,
+    background: "#fff",
+    color: "#475569",
+    borderRadius: 10,
+    padding: "10px 12px",
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  modalBody: {
+    padding: 18,
+    display: "flex",
+    flexDirection: "column",
+    gap: 16,
+    overflowY: "auto",
+  },
+  detailTopGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gap: 12,
+  },
+  detailInfoCard: {
+    border: `1px solid ${BORDER}`,
+    borderRadius: 14,
+    background: "#fff",
+    padding: "14px 16px",
+  },
+  detailLabel: {
+    fontSize: 12,
+    color: MUTED,
+    marginBottom: 8,
+  },
+  detailValue: {
+    fontSize: 14,
+    fontWeight: 700,
+    color: TEXT,
+  },
+  detailSection: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+  },
+  detailSectionTitle: {
+    fontSize: 14,
+    fontWeight: 700,
+    color: TEXT,
+  },
+  detailText: {
+    fontSize: 13,
+    lineHeight: 1.6,
+    color: "#4b5563",
+  },
+  transcriptBox: {
+    border: `1px solid ${BORDER}`,
+    borderRadius: 14,
+    background: "#f8fafc",
+    padding: 14,
+  },
+  transcriptText: {
+    margin: 0,
+    whiteSpace: "pre-wrap",
+    fontFamily: "inherit",
+    fontSize: 13,
+    lineHeight: 1.7,
+    color: "#334155",
+  },
+  successInline: {
+    borderRadius: 12,
+    border: "1px solid #a7f3d0",
+    background: "#ecfdf5",
+    color: "#047857",
+    padding: "10px 12px",
+    fontSize: 13,
+    fontWeight: 600,
+  },
+  timelineList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+  },
+  timelineRow: {
+    display: "grid",
+    gridTemplateColumns: "64px 1fr",
+    gap: 12,
+    alignItems: "flex-start",
+    border: `1px solid ${BORDER}`,
+    borderRadius: 14,
+    background: "#fff",
+    padding: "12px 14px",
+  },
+  timelineTime: {
+    fontSize: 12,
+    fontWeight: 700,
+    color: "#1f2937",
+  },
+  timelineContent: {
+    minWidth: 0,
+  },
+  timelineEvent: {
+    fontSize: 13,
+    fontWeight: 700,
+    color: TEXT,
+  },
+  timelineMeta: {
+    marginTop: 4,
+    fontSize: 12,
+    color: "#64748b",
+    lineHeight: 1.5,
+  },
+};
+
+const CSS = `
+  @keyframes uwi-calls-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  .calls-row {
+    transition: background .16s ease, transform .16s ease, box-shadow .16s ease;
+  }
+
+  .calls-row:hover {
+    background: #fafcfd;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(15,23,42,.05);
+  }
+
+  @media (max-width: 1100px) {
+    .calls-stats-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .calls-stats-grid {
+      grid-template-columns: 1fr !important;
+    }
+
+    .calls-row {
+      flex-direction: column;
+    }
+  }
+
+  @media (max-width: 720px) {
+    .calls-detail-grid {
+      grid-template-columns: 1fr !important;
+    }
+  }
+`;

@@ -327,6 +327,79 @@ def pg_cancel_booking(tenant_id: int, booking: Dict[str, Any]) -> Optional[bool]
         return None
 
 
+def pg_reschedule_booking_atomic(tenant_id: int, appt_id: int, new_slot_id: int) -> Optional[bool]:
+    """Déplace un RDV local vers un nouveau slot PG dans une seule transaction."""
+    if not appt_id or not new_slot_id:
+        return False
+    url = _pg_url()
+    if not url:
+        return None
+
+    def _do() -> Optional[bool]:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT slot_id, name, contact, contact_type, motif
+                    FROM appointments
+                    WHERE tenant_id = %s AND id = %s
+                    FOR UPDATE
+                    """,
+                    (tenant_id, appt_id),
+                )
+                row = cur.fetchone()
+                if not row:
+                    conn.rollback()
+                    return False
+                old_slot_id, name, contact, contact_type, motif = row
+                if int(old_slot_id) == int(new_slot_id):
+                    conn.rollback()
+                    return False
+
+                cur.execute(
+                    """
+                    UPDATE slots SET is_booked = TRUE
+                    WHERE tenant_id = %s AND id = %s AND is_booked = FALSE
+                    RETURNING id
+                    """,
+                    (tenant_id, new_slot_id),
+                )
+                locked = cur.fetchone()
+                if not locked:
+                    conn.rollback()
+                    return False
+
+                cur.execute(
+                    """
+                    INSERT INTO appointments (tenant_id, slot_id, name, contact, contact_type, motif)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (tenant_id, new_slot_id, name, contact, contact_type, motif),
+                )
+                cur.execute(
+                    "DELETE FROM appointments WHERE tenant_id = %s AND id = %s",
+                    (tenant_id, appt_id),
+                )
+                cur.execute(
+                    "UPDATE slots SET is_booked = FALSE WHERE tenant_id = %s AND id = %s",
+                    (tenant_id, old_slot_id),
+                )
+                conn.commit()
+                return True
+
+    try:
+        return _do()
+    except Exception as e:
+        if _is_transient(e):
+            try:
+                return _do()
+            except Exception:
+                pass
+        logger.debug("pg_reschedule_booking_atomic failed: %s", e)
+        return None
+
+
 def pg_cleanup_and_ensure_slots(tenant_id: int) -> Optional[bool]:
     """
     Supprime slots passés, garantit TARGET_MIN_SLOTS futurs (weekdays).

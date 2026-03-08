@@ -110,6 +110,50 @@ function getPhoneSummary(call, fallbackAgent) {
   return call.agent_name || fallbackAgent || "UWI";
 }
 
+function getInitials(name) {
+  return String(name || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join("") || "RDV";
+}
+
+function formatAgendaTime(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "—";
+  if (/^\d{2}h$/.test(raw)) return `${raw.slice(0, 2)}:00`;
+  if (/^\d{1,2}h$/.test(raw)) return `${raw.replace("h", "").padStart(2, "0")}:00`;
+  if (/^\d{2}:\d{2}$/.test(raw)) return raw;
+  return raw;
+}
+
+function getAgendaBadge(slot) {
+  if (slot?.current) {
+    return {
+      label: "En cours",
+      bg: "#fef3c7",
+      text: "#b45309",
+      border: "#fcd34d",
+    };
+  }
+  if (slot?.done) {
+    return {
+      label: "Confirmé",
+      bg: "#dcfce7",
+      text: "#15803d",
+      border: "#bbf7d0",
+    };
+  }
+  return {
+    label: "Prévu",
+    bg: "#dbeafe",
+    text: "#1d4ed8",
+    border: "#bfdbfe",
+  };
+}
+
 export default function AppDashboard() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
@@ -191,7 +235,16 @@ export default function AppDashboard() {
     [kpis],
   );
 
-  const agendaItems = (agenda?.slots || []).filter((slot) => slot.patient).slice(0, 3);
+  const agendaItems = (agenda?.slots || [])
+    .filter((slot) => slot.patient)
+    .slice(0, 3)
+    .map((slot, index) => ({
+      ...slot,
+      key: slot.event_id || `${slot.hour || "slot"}-${index}`,
+      displayTime: formatAgendaTime(slot.hour),
+      initials: getInitials(slot.patient),
+      badge: getAgendaBadge(slot),
+    }));
 
   return (
     <div style={S.root}>
@@ -375,54 +428,84 @@ export default function AppDashboard() {
             <div style={S.panelHeader}>
               <div>
                 <div style={S.panelTitle}>Agenda</div>
-                <div style={S.panelSubtitle}>Prochains appels</div>
+                <div style={S.panelSubtitle}>
+                  {agenda?.external_connected ? "Rendez-vous du jour" : "Rendez-vous UWI du jour"}
+                </div>
               </div>
               <div style={{ color: TEAL_DARK, display: "flex", alignItems: "center" }}>
                 <TrendingUp size={18} strokeWidth={2} />
               </div>
             </div>
 
-            {!agendaReady && !loading ? (
-              <div style={S.emptyState}>
-                <div style={S.emptyTitle}>Agenda non connecté</div>
-                <div style={S.emptyText}>Configurez votre agenda pour afficher vos rendez-vous.</div>
-              </div>
-            ) : (
-              <div style={S.agendaList}>
-                {loading ? (
-                  [1, 2, 3].map((item) => <Skeleton key={item} height={90} radius={12} />)
-                ) : agendaItems.length > 0 ? (
-                  agendaItems.map((item, index) => (
-                    <div key={`${item.hour}_${index}`} style={S.agendaRow}>
-                      <div style={S.timelineCol}>
-                        <div style={S.timeCard}>
-                          <div style={S.timeTop}>{String(item.hour || "").split(":")[0]}</div>
-                          <div style={S.timeBottom}>{String(item.hour || "").split(":")[1] || "00"}</div>
+            <div style={S.agendaList}>
+              {loading ? (
+                [1, 2, 3].map((item) => <Skeleton key={item} height={96} radius={16} />)
+              ) : agendaItems.length > 0 ? (
+                <>
+                  {!agendaReady ? (
+                    <div style={S.agendaNotice}>
+                      <div>
+                        <div style={S.agendaNoticeTitle}>Agenda médecin non connecté</div>
+                        <div style={S.agendaNoticeText}>
+                          Les rendez-vous ci-dessous viennent déjà du calendrier UWI. Vous pouvez connecter Google ensuite.
                         </div>
-                        {index < agendaItems.length - 1 ? <div style={S.timelineLine} /> : null}
                       </div>
+                    </div>
+                  ) : null}
+
+                  {agendaItems.map((item) => (
+                    <div key={item.key} style={S.agendaAppointmentCard}>
+                      <div style={S.agendaAvatar}>{item.initials}</div>
 
                       <div style={{ minWidth: 0, flex: 1 }}>
                         <div style={S.agendaName}>{item.patient}</div>
                         <div style={S.agendaType}>{item.type || "Rendez-vous"}</div>
-                        <button type="button" onClick={() => navigate("/app/agenda")} style={S.detailButton}>
-                          Détails <ArrowUpRight size={13} strokeWidth={2.2} />
-                        </button>
+                        <div style={S.agendaMetaRow}>
+                          <span>🕘 {item.displayTime}</span>
+                          <span>{item.source === "UWI" ? "Téléphone" : "Agenda externe"}</span>
+                        </div>
+                      </div>
+
+                      <div style={S.agendaBadges}>
+                        <span
+                          style={{
+                            ...S.agendaStatusBadge,
+                            background: item.badge.bg,
+                            color: item.badge.text,
+                            borderColor: item.badge.border,
+                          }}
+                        >
+                          {item.badge.label}
+                        </span>
+                        <span
+                          style={{
+                            ...S.agendaSourceBadge,
+                            background: item.source === "UWI" ? "#eff6ff" : "#f1f5f9",
+                            color: item.source === "UWI" ? "#1d4ed8" : "#475569",
+                            borderColor: item.source === "UWI" ? "#bfdbfe" : "#cbd5e1",
+                          }}
+                        >
+                          {item.source === "UWI" ? "UWI" : "Externe"}
+                        </span>
                       </div>
                     </div>
-                  ))
-                ) : (
-                  <div style={S.emptyState}>
-                    <div style={S.emptyTitle}>Aucun rendez-vous aujourd&apos;hui</div>
-                    <div style={S.emptyText}>Votre planning apparaîtra ici.</div>
+                  ))}
+                </>
+              ) : (
+                <div style={S.emptyState}>
+                  <div style={S.emptyTitle}>Aucun rendez-vous aujourd&apos;hui</div>
+                  <div style={S.emptyText}>
+                    {agendaReady
+                      ? "Votre planning apparaîtra ici au fil des réservations."
+                      : "Aucun RDV pour le moment. Vous pouvez déjà connecter votre agenda ou attendre les premières réservations UWI."}
                   </div>
-                )}
-              </div>
-            )}
+                </div>
+              )}
+            </div>
 
             <button type="button" onClick={() => navigate("/app/agenda")} style={S.planButton}>
               <Plus size={16} strokeWidth={2.2} />
-              <span>Planifier un appel</span>
+              <span>Ouvrir l&apos;agenda</span>
             </button>
           </div>
         </section>
@@ -434,7 +517,7 @@ export default function AppDashboard() {
 const S = {
   root: {
     minHeight: "100%",
-    background: "#f6f7f9",
+    background: "#f5f6f8",
     fontFamily: "'Inter', 'DM Sans', sans-serif",
     color: NAVY,
   },
@@ -447,15 +530,14 @@ const S = {
   },
   title: {
     margin: 0,
-    fontSize: 40,
+    fontSize: 18,
     lineHeight: 1,
     fontWeight: 800,
     color: NAVY,
-    letterSpacing: "-0.03em",
   },
   subtitle: {
-    marginTop: 10,
-    fontSize: 16,
+    marginTop: 6,
+    fontSize: 12,
     color: "#6b7280",
   },
   headerRight: {
@@ -486,9 +568,9 @@ const S = {
   },
   searchWrap: {
     width: 260,
-    height: 46,
-    borderRadius: 14,
-    border: "1px solid #e8edf3",
+    height: 40,
+    borderRadius: 12,
+    border: "1px solid #e5e7eb",
     background: "#fff",
     display: "flex",
     alignItems: "center",
@@ -505,17 +587,17 @@ const S = {
     fontFamily: "inherit",
   },
   assistantCard: {
-    background: "linear-gradient(135deg, #f2fffb 0%, #ffffff 100%)",
-    border: "1px solid #d8f3ec",
-    borderRadius: 24,
+    background: "#fff",
+    border: "1px solid #e5e7eb",
+    borderRadius: 14,
     padding: "18px 22px",
-    boxShadow: "0 2px 8px rgba(17,24,39,0.03)",
+    boxShadow: "0 2px 10px rgba(15,23,42,.035)",
   },
   assistantLabel: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: 700,
     letterSpacing: "0.08em",
-    color: TEAL_DARK,
+    color: "#64748b",
     textTransform: "uppercase",
     marginBottom: 14,
   },
@@ -533,8 +615,8 @@ const S = {
     flex: 1,
   },
   avatarRing: {
-    width: 68,
-    height: 68,
+    width: 56,
+    height: 56,
     borderRadius: "50%",
     display: "flex",
     alignItems: "center",
@@ -543,25 +625,25 @@ const S = {
     flexShrink: 0,
   },
   avatar: {
-    width: 58,
-    height: 58,
+    width: 48,
+    height: 48,
     borderRadius: "50%",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    boxShadow: "0 12px 24px rgba(20,200,184,0.16)",
+    boxShadow: "0 6px 12px rgba(37,99,235,.12)",
   },
   avatarImg: {
-    width: 58,
-    height: 58,
+    width: 48,
+    height: 48,
     borderRadius: "50%",
     objectFit: "cover",
     display: "block",
-    boxShadow: "0 12px 24px rgba(20,200,184,0.16)",
+    boxShadow: "0 6px 12px rgba(37,99,235,.12)",
   },
   avatarText: {
     color: "#fff",
-    fontSize: 24,
+    fontSize: 18,
     fontWeight: 800,
   },
   avatarStatus: {
@@ -577,18 +659,18 @@ const S = {
     justifyContent: "center",
   },
   assistantName: {
-    fontSize: 26,
-    fontWeight: 800,
+    fontSize: 18,
+    fontWeight: 700,
     color: NAVY,
     lineHeight: 1,
   },
   assistantMetaRow: {
-    marginTop: 8,
+    marginTop: 6,
     display: "flex",
     alignItems: "center",
     gap: 14,
     flexWrap: "wrap",
-    fontSize: 14,
+    fontSize: 12,
     color: "#6b7280",
   },
   assistantMetaItem: {
@@ -602,49 +684,49 @@ const S = {
     flexShrink: 0,
   },
   assistantRightLabel: {
-    fontSize: 13,
+    fontSize: 12,
     color: "#9ca3af",
-    marginBottom: 8,
+    marginBottom: 6,
   },
   assistantRightValue: {
-    fontSize: 34,
+    fontSize: 18,
     lineHeight: 1,
-    fontWeight: 800,
+    fontWeight: 700,
     color: NAVY,
   },
   banner: {
     marginTop: 16,
     padding: "12px 14px",
-    borderRadius: 14,
+    borderRadius: 12,
     border: "1px solid #fed7aa",
     background: "#fff7ed",
-    color: "#c2410c",
-    fontSize: 13,
+    color: "#9a3412",
+    fontSize: 12,
     fontWeight: 600,
   },
   kpiGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-    gap: 18,
-    marginTop: 24,
+    gap: 16,
+    marginTop: 18,
   },
   kpiCard: {
     background: "#fff",
-    border: "1px solid #e9eef4",
-    borderRadius: 24,
-    padding: 22,
-    boxShadow: "0 2px 8px rgba(17,24,39,0.03)",
+    border: "1px solid #e5e7eb",
+    borderRadius: 14,
+    padding: "14px 16px",
+    boxShadow: "0 2px 10px rgba(15,23,42,.035)",
   },
   kpiTop: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    marginBottom: 18,
+    marginBottom: 12,
   },
   kpiIconBox: {
-    width: 52,
-    height: 52,
-    borderRadius: 16,
+    width: 34,
+    height: 34,
+    borderRadius: 10,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -653,103 +735,110 @@ const S = {
     display: "inline-flex",
     alignItems: "center",
     gap: 4,
-    fontSize: 12,
+    fontSize: 11,
     color: "#10b981",
     fontWeight: 600,
   },
   kpiValue: {
-    fontSize: 42,
+    fontSize: 18,
     lineHeight: 1,
-    fontWeight: 800,
+    fontWeight: 700,
     color: NAVY,
   },
   kpiLabel: {
-    marginTop: 12,
-    fontSize: 14,
+    marginTop: 8,
+    fontSize: 12,
     color: "#6b7280",
   },
   mainGrid: {
     display: "grid",
     gridTemplateColumns: "minmax(0, 2fr) minmax(320px, 1fr)",
-    gap: 18,
-    marginTop: 24,
+    gap: 16,
+    marginTop: 18,
   },
   panel: {
     background: "#fff",
-    border: "1px solid #e9eef4",
-    borderRadius: 24,
+    border: "1px solid #e5e7eb",
+    borderRadius: 14,
     overflow: "hidden",
-    boxShadow: "0 2px 8px rgba(17,24,39,0.03)",
+    boxShadow: "0 2px 10px rgba(15,23,42,.035)",
   },
   panelHeader: {
-    padding: "18px 22px",
-    borderBottom: "1px solid #eef2f7",
+    padding: "18px 18px 14px",
+    borderBottom: "1px solid #e5e7eb",
+    background: "#fafafa",
     display: "flex",
     justifyContent: "space-between",
     alignItems: "flex-start",
     gap: 12,
   },
   panelTitle: {
-    fontSize: 24,
+    fontSize: 15,
     lineHeight: 1.1,
     fontWeight: 700,
     color: NAVY,
   },
   panelSubtitle: {
-    marginTop: 6,
-    fontSize: 13,
+    marginTop: 4,
+    fontSize: 12,
     color: "#6b7280",
   },
-  panelLink: {
-    border: "none",
-    background: "transparent",
-    color: TEAL_DARK,
-    fontSize: 13,
-    fontWeight: 600,
+  linkButton: {
+    border: "1px solid #e5e7eb",
+    background: "#fff",
+    color: "#475569",
+    fontSize: 12,
+    fontWeight: 700,
     cursor: "pointer",
     display: "inline-flex",
     alignItems: "center",
-    gap: 4,
+    gap: 6,
     fontFamily: "inherit",
     whiteSpace: "nowrap",
+    borderRadius: 10,
+    padding: "8px 10px",
   },
   callList: {
     display: "flex",
     flexDirection: "column",
+    gap: 12,
+    padding: 18,
   },
   callRow: {
     width: "100%",
-    border: "none",
+    border: "1px solid #e5e7eb",
+    borderRadius: 14,
     background: "#fff",
-    padding: "18px 22px",
+    padding: "14px 16px",
     display: "flex",
-    alignItems: "center",
-    gap: 16,
+    alignItems: "flex-start",
+    gap: 14,
     cursor: "pointer",
     fontFamily: "inherit",
+    boxShadow: "0 1px 4px rgba(15,23,42,.02)",
   },
   callIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 14,
+    width: 40,
+    height: 40,
+    borderRadius: 10,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
   },
   callName: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: 700,
     color: NAVY,
   },
   callPhone: {
-    marginTop: 4,
-    fontSize: 13,
-    color: "#9ca3af",
+    marginTop: 6,
+    fontSize: 12,
+    color: "#4b5563",
   },
   callOutcome: {
-    marginTop: 10,
-    fontSize: 14,
+    marginTop: 5,
+    fontSize: 11,
     color: "#4b5563",
     lineHeight: 1.5,
   },
@@ -759,103 +848,123 @@ const S = {
     flexShrink: 0,
   },
   callTime: {
-    fontSize: 14,
+    fontSize: 12,
     color: "#374151",
     fontWeight: 600,
   },
   statusBadge: {
     display: "inline-flex",
-    marginTop: 8,
-    padding: "4px 10px",
+    marginTop: 6,
+    padding: "5px 10px",
     borderRadius: 999,
     border: "1px solid",
-    fontSize: 12,
-    fontWeight: 600,
+    fontSize: 10,
+    fontWeight: 700,
   },
   callDuration: {
-    marginTop: 10,
-    fontSize: 14,
+    marginTop: 8,
+    fontSize: 11,
     color: NAVY,
     fontWeight: 600,
   },
   agendaList: {
-    padding: "18px 22px 10px",
-  },
-  agendaRow: {
-    display: "flex",
-    gap: 16,
-    marginBottom: 18,
-  },
-  timelineCol: {
+    padding: 18,
     display: "flex",
     flexDirection: "column",
-    alignItems: "center",
-    flexShrink: 0,
+    gap: 12,
   },
-  timeCard: {
-    width: 56,
-    height: 56,
-    borderRadius: 16,
-    background: `linear-gradient(135deg, ${TEAL}, ${TEAL_DARK})`,
+  agendaNotice: {
+    borderRadius: 12,
+    border: "1px solid #e2e8f0",
+    background: "#f8fafc",
+    padding: "12px 14px",
+  },
+  agendaNoticeTitle: {
+    fontSize: 13,
+    fontWeight: 700,
+    color: NAVY,
+  },
+  agendaNoticeText: {
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 1.5,
+    color: "#0f766e",
+  },
+  agendaAppointmentCard: {
+    display: "flex",
+    alignItems: "center",
+    gap: 14,
+    border: "1px solid #e5e7eb",
+    borderRadius: 14,
+    background: "#ffffff",
+    padding: "14px 16px",
+    boxShadow: "0 1px 4px rgba(15,23,42,.02)",
+  },
+  agendaAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    background: "linear-gradient(135deg, #3b82f6, #2563eb)",
     color: "#fff",
     display: "flex",
-    flexDirection: "column",
     alignItems: "center",
     justifyContent: "center",
-    boxShadow: "0 12px 24px rgba(20,200,184,0.18)",
-  },
-  timeTop: {
-    fontSize: 11,
-    fontWeight: 700,
-    lineHeight: 1,
-    opacity: 0.92,
-  },
-  timeBottom: {
-    marginTop: 2,
-    fontSize: 18,
+    fontSize: 14,
     fontWeight: 800,
-    lineHeight: 1,
-  },
-  timelineLine: {
-    width: 2,
-    height: 28,
-    marginTop: 8,
-    borderRadius: 999,
-    background: "linear-gradient(180deg, rgba(20,200,184,0.25), transparent)",
+    flexShrink: 0,
+    boxShadow: "0 6px 12px rgba(37,99,235,.12)",
   },
   agendaName: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: 700,
     color: NAVY,
   },
   agendaType: {
-    marginTop: 6,
-    fontSize: 14,
+    marginTop: 5,
+    fontSize: 12,
     color: "#6b7280",
   },
-  detailButton: {
-    marginTop: 10,
-    border: "none",
-    background: "transparent",
-    padding: 0,
-    color: TEAL_DARK,
-    fontSize: 12,
-    fontWeight: 600,
-    cursor: "pointer",
-    display: "inline-flex",
+  agendaMetaRow: {
+    marginTop: 8,
+    display: "flex",
     alignItems: "center",
-    gap: 4,
-    fontFamily: "inherit",
+    gap: 12,
+    flexWrap: "wrap",
+    fontSize: 11,
+    color: "#6b7280",
+  },
+  agendaBadges: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-end",
+    gap: 8,
+    flexShrink: 0,
+  },
+  agendaStatusBadge: {
+    display: "inline-flex",
+    padding: "5px 10px",
+    borderRadius: 999,
+    border: "1px solid",
+    fontSize: 10,
+    fontWeight: 700,
+  },
+  agendaSourceBadge: {
+    display: "inline-flex",
+    padding: "5px 9px",
+    borderRadius: 999,
+    border: "1px solid",
+    fontSize: 10,
+    fontWeight: 700,
   },
   planButton: {
-    margin: "10px 22px 22px",
-    height: 46,
-    borderRadius: 14,
-    border: "1px dashed #d1d5db",
+    margin: "0 18px 18px",
+    height: 40,
+    borderRadius: 10,
+    border: "1px solid #e5e7eb",
     background: "#fff",
     color: "#4b5563",
-    fontSize: 14,
-    fontWeight: 600,
+    fontSize: 12,
+    fontWeight: 700,
     cursor: "pointer",
     display: "flex",
     alignItems: "center",
@@ -864,17 +973,17 @@ const S = {
     fontFamily: "inherit",
   },
   emptyState: {
-    padding: "48px 24px",
+    padding: "28px 18px 20px",
     textAlign: "center",
   },
   emptyTitle: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: 700,
     color: NAVY,
   },
   emptyText: {
-    marginTop: 10,
-    fontSize: 13,
+    marginTop: 8,
+    fontSize: 14,
     color: "#6b7280",
   },
 };

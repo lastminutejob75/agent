@@ -520,6 +520,79 @@ def cancel_booking_sqlite(booking: Dict, tenant_id: int = 1) -> bool:
         conn.close()
 
 
+def reschedule_booking_atomic(appt_id: int, new_slot_id: int, tenant_id: int = 1) -> bool:
+    """
+    Déplace un RDV local : réserve le nouveau slot, recrée l'appointment, libère l'ancien slot.
+    PG-first puis SQLite.
+    """
+    if not appt_id or not new_slot_id:
+        return False
+    from backend import config
+    if config.USE_PG_SLOTS:
+        try:
+            from backend.slots_pg import pg_reschedule_booking_atomic
+            result = pg_reschedule_booking_atomic(tenant_id, appt_id, new_slot_id)
+            if result is not None:
+                return result
+        except Exception:
+            pass
+
+    config._sqlite_guard("db.reschedule_booking_atomic")
+    conn = get_conn()
+    try:
+        conn.execute("BEGIN")
+        cur = conn.execute(
+            """
+            SELECT slot_id, name, contact, contact_type, motif
+            FROM appointments
+            WHERE tenant_id = ? AND id = ?
+            """,
+            (tenant_id, appt_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            conn.rollback()
+            return False
+
+        old_slot_id = row["slot_id"]
+        if int(old_slot_id) == int(new_slot_id):
+            conn.rollback()
+            return False
+
+        conn.execute(
+            "UPDATE slots SET is_booked=1 WHERE id=? AND tenant_id=? AND is_booked=0",
+            (new_slot_id, tenant_id),
+        )
+        if conn.total_changes == 0:
+            conn.rollback()
+            return False
+
+        conn.execute(
+            """
+            INSERT INTO appointments (tenant_id, slot_id, name, contact, contact_type, motif, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                tenant_id,
+                new_slot_id,
+                row["name"],
+                row["contact"],
+                row["contact_type"],
+                row["motif"],
+                datetime.utcnow().isoformat(),
+            ),
+        )
+        conn.execute("DELETE FROM appointments WHERE tenant_id = ? AND id = ?", (tenant_id, appt_id))
+        conn.execute("UPDATE slots SET is_booked = 0 WHERE id = ? AND tenant_id = ?", (old_slot_id, tenant_id))
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def get_daily_report_data(client_id: int, date_str: str) -> Dict:
     """
     Métriques IVR pour le rapport quotidien (email).

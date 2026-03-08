@@ -156,7 +156,23 @@ export const api = {
     request("/api/tenant/horaires", { method: "PATCH", body: rules, tenant: true }),
   tenantGetCalls: (params = "") =>
     request(`/api/tenant/calls${params}`, { tenant: true }),
-  tenantGetAgenda: () => request("/api/tenant/agenda", { tenant: true }),
+  tenantGetCallDetail: (callId) =>
+    request(`/api/tenant/calls/${encodeURIComponent(callId)}`, { tenant: true }),
+  tenantGetAgenda: (params = "") => request(`/api/tenant/agenda${params}`, { tenant: true }),
+  tenantGetAgendaAvailableSlots: (params = "") =>
+    request(`/api/tenant/agenda/available-slots${params}`, { tenant: true }),
+  tenantCancelAgendaAppointment: (appointmentId, body) =>
+    request(`/api/tenant/agenda/appointments/${encodeURIComponent(appointmentId)}/cancel`, {
+      method: "POST",
+      body,
+      tenant: true,
+    }),
+  tenantRescheduleAgendaAppointment: (appointmentId, body) =>
+    request(`/api/tenant/agenda/appointments/${encodeURIComponent(appointmentId)}/reschedule`, {
+      method: "POST",
+      body,
+      tenant: true,
+    }),
   tenantGetFaq: () => request("/api/tenant/faq", { tenant: true }),
   tenantUpdateFaq: (faq) =>
     request("/api/tenant/faq", { method: "PUT", body: faq, tenant: true }),
@@ -186,7 +202,11 @@ export const api = {
 export const tenantGetHoraires = () => api.tenantGetHoraires();
 export const tenantUpdateHoraires = (rules) => api.tenantUpdateHoraires(rules);
 export const tenantGetCalls = (params = "") => api.tenantGetCalls(params);
-export const tenantGetAgenda = () => api.tenantGetAgenda();
+export const tenantGetCallDetail = (callId) => api.tenantGetCallDetail(callId);
+export const tenantGetAgenda = (params = "") => api.tenantGetAgenda(params);
+export const tenantGetAgendaAvailableSlots = (params = "") => api.tenantGetAgendaAvailableSlots(params);
+export const tenantCancelAgendaAppointment = (appointmentId, body) => api.tenantCancelAgendaAppointment(appointmentId, body);
+export const tenantRescheduleAgendaAppointment = (appointmentId, body) => api.tenantRescheduleAgendaAppointment(appointmentId, body);
 export const tenantGetFaq = () => api.tenantGetFaq();
 export const tenantUpdateFaq = (faq) => api.tenantUpdateFaq(faq);
 export const tenantResetFaq = () => api.tenantResetFaq();

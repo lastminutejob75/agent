@@ -20,7 +20,13 @@ from backend.auth_pg import pg_get_tenant_user_by_id, pg_update_password
 from backend.calendar_adapter import _GoogleCalendarAdapter
 from backend import config
 from backend.config import get_service_account_email
-from backend.db import ensure_tenant_config, get_conn
+from backend.db import (
+    cancel_booking_sqlite,
+    ensure_tenant_config,
+    get_conn,
+    list_free_slots,
+    reschedule_booking_atomic,
+)
 from backend.google_calendar import GoogleCalendarNotFoundError, GoogleCalendarPermissionError, GoogleCalendarService
 from backend.routes.admin import (
     _get_call_detail,
@@ -227,6 +233,86 @@ def _extract_google_description_line(description: str, prefix: str) -> Optional[
         if line.lower().startswith(prefix.lower()):
             return line.split(":", 1)[1].strip() if ":" in line else line.strip()
     return None
+
+
+def _get_local_appointment_by_id(tenant_id: int, appointment_id: int) -> Optional[Dict[str, Any]]:
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_SLOTS_URL")
+    if url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+
+            with psycopg.connect(url, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif, s.start_ts
+                        FROM appointments a
+                        JOIN slots s ON s.id = a.slot_id
+                        WHERE a.tenant_id = %s AND a.id = %s
+                        LIMIT 1
+                        """,
+                        (tenant_id, appointment_id),
+                    )
+                    row = cur.fetchone()
+                    if not row:
+                        return None
+                    start_dt = row.get("start_ts")
+                    date_str = ""
+                    time_str = ""
+                    if start_dt:
+                        parsed = _parse_dt(start_dt)
+                        if parsed:
+                            date_str = parsed.strftime("%Y-%m-%d")
+                            time_str = parsed.strftime("%H:%M")
+                    return {
+                        "id": int(row.get("id") or 0),
+                        "slot_id": int(row.get("slot_id") or 0),
+                        "name": row.get("name") or "",
+                        "contact": row.get("contact") or "",
+                        "contact_type": row.get("contact_type") or "",
+                        "motif": row.get("motif") or "",
+                        "date": date_str,
+                        "time": time_str,
+                    }
+        except Exception as e:
+            logger.debug("local appointment lookup pg failed tenant_id=%s appointment_id=%s err=%s", tenant_id, appointment_id, e)
+
+    ensure_tenant_config()
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif, s.date, s.time
+            FROM appointments a
+            JOIN slots s ON s.id = a.slot_id AND s.tenant_id = a.tenant_id
+            WHERE a.tenant_id = ? AND a.id = ?
+            LIMIT 1
+            """,
+            (tenant_id, appointment_id),
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "id": int(row["id"] or 0),
+            "slot_id": int(row["slot_id"] or 0),
+            "name": row["name"] or "",
+            "contact": row["contact"] or "",
+            "contact_type": row["contact_type"] or "",
+            "motif": row["motif"] or "",
+            "date": row["date"] or "",
+            "time": row["time"] or "",
+        }
+    finally:
+        conn.close()
+
+
+class TenantAgendaCancelBody(BaseModel):
+    source: str = "UWI"
+
+
+class TenantAgendaRescheduleBody(BaseModel):
+    new_slot_id: int
 
 
 @router.get("/me")
@@ -436,8 +522,52 @@ def tenant_calls(
     }
 
 
+@router.get("/calls/{call_id}")
+def tenant_call_detail(
+    call_id: str,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Retourne le détail d'un appel pour le tenant connecté."""
+    tenant_id = auth["tenant_id"]
+    detail = _get_tenant_detail(tenant_id)
+    if not detail:
+        raise HTTPException(404, "Tenant not found")
+    tz_name = _tenant_timezone(detail)
+    assistant_name = (((detail.get("params") or {}).get("assistant_name")) or "Sophie").strip().title()
+    raw = _get_call_detail(tenant_id, call_id)
+    status = STATUS_MAP.get((raw.get("result") or "other").lower(), "FAQ")
+    events = []
+    for event in raw.get("events") or []:
+        events.append(
+            {
+                "created_at": event.get("created_at"),
+                "time": _format_hhmm(event.get("created_at"), tz_name),
+                "event": event.get("event") or "",
+                "reason": _humanize_reason(((event.get("meta") or {}).get("reason"))),
+                "context": ((event.get("meta") or {}).get("context")),
+            }
+        )
+    return {
+        "call_id": raw.get("call_id") or call_id,
+        "status": status,
+        "assistant_name": assistant_name,
+        "summary": _call_summary_from_detail(status, raw),
+        "started_at": raw.get("started_at"),
+        "started_time": _format_hhmm(raw.get("started_at"), tz_name),
+        "last_event_at": raw.get("last_event_at"),
+        "last_event_time": _format_hhmm(raw.get("last_event_at"), tz_name),
+        "duration": _format_duration_short(raw.get("duration_min")),
+        "duration_min": raw.get("duration_min"),
+        "transcript": raw.get("transcript"),
+        "events": events,
+    }
+
+
 @router.get("/agenda")
-def tenant_agenda(auth: dict = Depends(require_tenant_auth)):
+def tenant_agenda(
+    auth: dict = Depends(require_tenant_auth),
+    date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+):
     """Retourne les rendez-vous du jour depuis Google Calendar ou le stockage local."""
     tenant_id = auth["tenant_id"]
     detail = _get_tenant_detail(tenant_id)
@@ -447,7 +577,14 @@ def tenant_agenda(auth: dict = Depends(require_tenant_auth)):
     tz_name = _tenant_timezone(detail)
     tz = _get_zoneinfo(tz_name)
     now_local = datetime.now(tz)
-    day_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    if date:
+        try:
+            selected = datetime.strptime(date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(400, "Invalid date format")
+        day_start = selected.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=tz)
+    else:
+        day_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
     day_end = day_start + timedelta(days=1)
     slots: List[Dict[str, Any]] = []
 
@@ -483,6 +620,10 @@ def tenant_agenda(auth: dict = Depends(require_tenant_auth)):
                     "done": end_local <= now_local,
                     "current": start_local <= now_local < end_local,
                     "event_id": event.get("id") or "",
+                    "appointment_id": None,
+                    "slot_id": None,
+                    "can_cancel": source == "UWI",
+                    "can_reschedule": False,
                 })
         except Exception as e:
             logger.warning("tenant agenda google failed tenant_id=%s: %s", tenant_id, e)
@@ -496,7 +637,7 @@ def tenant_agenda(auth: dict = Depends(require_tenant_auth)):
                     with conn.cursor() as cur:
                         cur.execute(
                             """
-                            SELECT a.id, a.name, a.motif, s.start_ts
+                            SELECT a.id, a.slot_id, a.name, a.motif, s.start_ts
                             FROM appointments a
                             JOIN slots s ON s.id = a.slot_id
                             WHERE a.tenant_id = %s
@@ -520,6 +661,10 @@ def tenant_agenda(auth: dict = Depends(require_tenant_auth)):
                                 "done": end_local <= now_local,
                                 "current": start_local <= now_local < end_local,
                                 "event_id": str(row.get("id") or ""),
+                                "appointment_id": int(row.get("id") or 0),
+                                "slot_id": int(row.get("slot_id") or 0),
+                                "can_cancel": True,
+                                "can_reschedule": True,
                             })
             except Exception as e:
                 logger.warning("tenant agenda pg failed tenant_id=%s: %s", tenant_id, e)
@@ -529,7 +674,7 @@ def tenant_agenda(auth: dict = Depends(require_tenant_auth)):
             try:
                 rows = conn.execute(
                     """
-                    SELECT a.id, a.name, a.motif, s.date, s.time
+                    SELECT a.id, a.slot_id, a.name, a.motif, s.date, s.time
                     FROM appointments a
                     JOIN slots s ON s.id = a.slot_id
                     WHERE a.tenant_id = ? AND s.date = ?
@@ -538,18 +683,22 @@ def tenant_agenda(auth: dict = Depends(require_tenant_auth)):
                     (tenant_id, day_start.strftime("%Y-%m-%d")),
                 ).fetchall()
                 for row in rows:
-                    start_local = _parse_dt(f"{row[3]}T{row[4]}:00", tz_name)
+                    start_local = _parse_dt(f"{row[4]}T{row[5]}:00", tz_name)
                     if not start_local:
                         continue
                     end_local = start_local + timedelta(minutes=30)
                     slots.append({
                         "hour": start_local.strftime("%Hh"),
-                        "patient": row[1] or "Patient",
-                        "type": row[2] or "Consultation",
+                        "patient": row[2] or "Patient",
+                        "type": row[3] or "Consultation",
                         "source": "UWI",
                         "done": end_local <= now_local,
                         "current": start_local <= now_local < end_local,
                         "event_id": str(row[0] or ""),
+                        "appointment_id": int(row[0] or 0),
+                        "slot_id": int(row[1] or 0),
+                        "can_cancel": True,
+                        "can_reschedule": True,
                     })
             finally:
                 conn.close()
@@ -562,7 +711,110 @@ def tenant_agenda(auth: dict = Depends(require_tenant_auth)):
         "total": len(slots),
         "done": done_count,
         "remaining": max(0, len(slots) - done_count),
+        "provider": (params.get("calendar_provider") or "none").strip() or "none",
+        "external_connected": bool((params.get("calendar_provider") or "").strip() == "google" and (params.get("calendar_id") or "").strip()),
     }
+
+
+@router.get("/agenda/available-slots")
+def tenant_agenda_available_slots(
+    auth: dict = Depends(require_tenant_auth),
+    limit: int = Query(8, ge=1, le=20),
+):
+    """Liste des créneaux libres pour déplacer un RDV local UWI."""
+    tenant_id = auth["tenant_id"]
+    detail = _get_tenant_detail(tenant_id)
+    if not detail:
+        raise HTTPException(404, "Tenant not found")
+    params = detail.get("params") or {}
+    if (params.get("calendar_provider") or "").strip() == "google":
+        raise HTTPException(400, "Déplacement automatique indisponible avec Google Calendar")
+    raw_slots = list_free_slots(limit=limit, tenant_id=tenant_id) or []
+    items = []
+    for slot in raw_slots[:limit]:
+        items.append(
+            {
+                "slot_id": int(slot.get("id") or 0),
+                "date": slot.get("date") or "",
+                "time": slot.get("time") or "",
+                "label": f"{slot.get('date') or ''} à {slot.get('time') or ''}",
+            }
+        )
+    return {"slots": items, "total": len(items)}
+
+
+@router.post("/agenda/appointments/{appointment_id}/cancel")
+def tenant_agenda_cancel_appointment(
+    appointment_id: str,
+    body: TenantAgendaCancelBody,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Annule un RDV UWI. Les événements externes restent non modifiables."""
+    tenant_id = auth["tenant_id"]
+    detail = _get_tenant_detail(tenant_id)
+    if not detail:
+        raise HTTPException(404, "Tenant not found")
+    params = detail.get("params") or {}
+    source = (body.source or "UWI").strip().upper()
+    if source != "UWI":
+        raise HTTPException(400, "Seuls les rendez-vous UWI sont modifiables depuis cet espace")
+
+    if (params.get("calendar_provider") or "").strip() == "google":
+        event_id = (appointment_id or "").strip()
+        if not event_id:
+            raise HTTPException(400, "event_id required")
+        try:
+            service = GoogleCalendarService((params.get("calendar_id") or "").strip())
+            ok = service.cancel_appointment(event_id)
+        except Exception as e:
+            logger.warning("tenant agenda cancel google failed tenant_id=%s event_id=%s err=%s", tenant_id, event_id, e)
+            raise HTTPException(502, "Impossible d'annuler ce rendez-vous Google pour le moment")
+        if not ok:
+            raise HTTPException(400, "Annulation impossible")
+        logger.info("tenant agenda cancel google ok tenant_id=%s event_id=%s", tenant_id, event_id)
+        return {"ok": True, "cancelled": True, "provider": "google"}
+
+    try:
+        appt_id = int(appointment_id)
+    except Exception:
+        raise HTTPException(400, "appointment_id invalide")
+    booking = _get_local_appointment_by_id(tenant_id, appt_id)
+    if not booking:
+        raise HTTPException(404, "Rendez-vous introuvable")
+    ok = cancel_booking_sqlite({"id": appt_id, "slot_id": booking.get("slot_id")}, tenant_id=tenant_id)
+    if not ok:
+        raise HTTPException(400, "Annulation impossible")
+    logger.info("tenant agenda cancel local ok tenant_id=%s appointment_id=%s", tenant_id, appt_id)
+    return {"ok": True, "cancelled": True, "provider": "local"}
+
+
+@router.post("/agenda/appointments/{appointment_id}/reschedule")
+def tenant_agenda_reschedule_appointment(
+    appointment_id: int,
+    body: TenantAgendaRescheduleBody,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Déplace un RDV UWI local vers un autre créneau libre (mode local uniquement)."""
+    tenant_id = auth["tenant_id"]
+    detail = _get_tenant_detail(tenant_id)
+    if not detail:
+        raise HTTPException(404, "Tenant not found")
+    params = detail.get("params") or {}
+    if (params.get("calendar_provider") or "").strip() == "google":
+        raise HTTPException(400, "Déplacement automatique indisponible avec Google Calendar")
+    booking = _get_local_appointment_by_id(tenant_id, appointment_id)
+    if not booking:
+        raise HTTPException(404, "Rendez-vous introuvable")
+    ok = reschedule_booking_atomic(appointment_id, int(body.new_slot_id), tenant_id=tenant_id)
+    if ok is False:
+        raise HTTPException(409, "Le créneau sélectionné n'est plus disponible")
+    logger.info(
+        "tenant agenda reschedule local ok tenant_id=%s appointment_id=%s new_slot_id=%s",
+        tenant_id,
+        appointment_id,
+        body.new_slot_id,
+    )
+    return {"ok": True, "rescheduled": True, "provider": "local"}
 
 
 @router.patch("/params")
