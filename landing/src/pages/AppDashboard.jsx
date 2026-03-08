@@ -265,7 +265,13 @@ export default function AppDashboard() {
     [kpis],
   );
 
-  const agendaItems = (agenda?.slots || [])
+  const safeCalls = useMemo(() => (Array.isArray(calls) ? calls.filter(Boolean) : []), [calls]);
+  const safeAgendaSlots = useMemo(
+    () => (Array.isArray(agenda?.slots) ? agenda.slots.filter(Boolean) : []),
+    [agenda?.slots],
+  );
+
+  const agendaItems = safeAgendaSlots
     .filter((slot) => slot.patient)
     .slice(0, 3)
     .map((slot, index) => ({
@@ -328,13 +334,13 @@ export default function AppDashboard() {
 
   const actionQueue = useMemo(
     () =>
-      calls
+      safeCalls
         .filter((call) => {
           if (call.followup_state === "processed") return false;
           return call.status === "TRANSFERRED" || call.followup_state === "callback" || call.reason_category !== "general";
         })
         .slice(0, 4),
-    [calls],
+    [safeCalls],
   );
 
   const headerCards = [
@@ -576,13 +582,13 @@ export default function AppDashboard() {
             <div style={S.callList}>
               {loading ? (
                 [1, 2, 3, 4].map((item) => <Skeleton key={item} height={92} radius={0} />)
-              ) : calls.length === 0 ? (
+              ) : safeCalls.length === 0 ? (
                 <div style={S.emptyState}>
                   <div style={S.emptyTitle}>Aucun appel aujourd&apos;hui</div>
                   <div style={S.emptyText}>Votre journal d&apos;appels apparaîtra ici.</div>
                 </div>
               ) : (
-                calls.slice(0, 4).map((call) => {
+                safeCalls.slice(0, 4).map((call) => {
                   const status = STATUS_CFG[call.status] || STATUS_CFG.ABANDONED;
                   const icon = callIconTheme(call.status);
                   return (
