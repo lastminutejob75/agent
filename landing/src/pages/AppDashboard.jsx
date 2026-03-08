@@ -154,6 +154,21 @@ function getAgendaBadge(slot) {
   };
 }
 
+function getReasonBadge(call) {
+  switch (call?.reason_category) {
+    case "urgency":
+      return { label: "Urgence", bg: "#fef2f2", text: "#b91c1c", border: "#fecaca" };
+    case "callback":
+      return { label: "Rappel", bg: "#fff7ed", text: "#c2410c", border: "#fdba74" };
+    case "prescription":
+      return { label: "Ordonnance", bg: "#f5f3ff", text: "#7c3aed", border: "#ddd6fe" };
+    case "agenda":
+      return { label: "Agenda", bg: "#eff6ff", text: "#1d4ed8", border: "#bfdbfe" };
+    default:
+      return { label: "Suivi", bg: "#f8fafc", text: "#475569", border: "#e5e7eb" };
+  }
+}
+
 export default function AppDashboard() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
@@ -182,6 +197,7 @@ export default function AppDashboard() {
   const avatarTheme = getAvatarTheme(assistantName);
   const showPhoneBanner = !loading && !me?.voice_number;
   const agendaReady = !!me?.onboarding_steps?.calendar_ready;
+  const planLabel = String(me?.plan_key || "growth").replace(/^./, (char) => char.toUpperCase());
   const assistantConfig = useMemo(() => {
     const normalized = String(assistantName || "").trim().toLowerCase();
     return (
@@ -246,6 +262,90 @@ export default function AppDashboard() {
       badge: getAgendaBadge(slot),
     }));
 
+  const onboardingCards = useMemo(
+    () => [
+      {
+        key: "assistant_ready",
+        title: "Assistante choisie",
+        done: !!me?.onboarding_steps?.assistant_ready,
+        text: me?.assistant_name ? `${assistantName} est configurée` : "Choisissez une assistante",
+        href: "/app/settings",
+        cta: "Configurer",
+      },
+      {
+        key: "phone_ready",
+        title: "Numéro attribué",
+        done: !!me?.onboarding_steps?.phone_ready,
+        text: me?.voice_number ? `Vos patients appellent le ${me.voice_number}` : "Attribution en cours par UWI",
+        href: null,
+        cta: null,
+      },
+      {
+        key: "calendar_ready",
+        title: "Agenda connecté",
+        done: !!me?.onboarding_steps?.calendar_ready,
+        text: agendaReady ? "Votre agenda est prêt" : "Connectez Google ou gardez le mode UWI",
+        href: "/app/agenda",
+        cta: agendaReady ? "Ouvrir" : "Configurer",
+      },
+      {
+        key: "horaires_ready",
+        title: "Horaires OK",
+        done: !!me?.onboarding_steps?.horaires_ready,
+        text: me?.onboarding_steps?.horaires_ready ? "Les créneaux sont bien définis" : "Définissez les heures d'ouverture",
+        href: "/app/horaires",
+        cta: "Configurer",
+      },
+      {
+        key: "faq_ready",
+        title: "FAQ prête",
+        done: !!me?.onboarding_steps?.faq_ready,
+        text: me?.faq_items_count ? `${me.faq_items_count} réponses configurées` : "Ajoutez les réponses fréquentes du cabinet",
+        href: "/app/faq",
+        cta: me?.faq_items_count ? "Modifier" : "Compléter",
+      },
+    ],
+    [agendaReady, assistantName, me],
+  );
+
+  const onboardingProgress = onboardingCards.length
+    ? Math.round((onboardingCards.filter((item) => item.done).length / onboardingCards.length) * 100)
+    : 0;
+
+  const actionQueue = useMemo(
+    () =>
+      calls
+        .filter((call) => {
+          if (call.followup_state === "processed") return false;
+          return call.status === "TRANSFERRED" || call.followup_state === "callback" || call.reason_category !== "general";
+        })
+        .slice(0, 4),
+    [calls],
+  );
+
+  const headerCards = [
+    {
+      label: "Numéro patient",
+      value: me?.voice_number || "Attribution en cours",
+      hint: me?.voice_number ? "Vos patients appellent ici" : "Activation par UWI",
+    },
+    {
+      label: "Assistante",
+      value: assistantName,
+      hint: me?.assistant_live ? "Assistant vocal actif" : "Configuration en cours",
+    },
+    {
+      label: "Agenda",
+      value: agendaReady ? "Connecté" : "Mode UWI",
+      hint: agendaReady ? "Synchronisé" : "Sans connexion externe",
+    },
+    {
+      label: "Plan",
+      value: planLabel,
+      hint: "Abonnement actif",
+    },
+  ];
+
   return (
     <div style={S.root}>
       <style>{CSS}</style>
@@ -269,6 +369,16 @@ export default function AppDashboard() {
             </div>
           </div>
         </div>
+
+        <section className="uwi-control-grid" style={S.controlGrid}>
+          {headerCards.map((card) => (
+            <div key={card.label} style={S.controlCard}>
+              <div style={S.controlLabel}>{card.label}</div>
+              <div style={S.controlValue}>{loading ? <Skeleton width={120} height={24} radius={10} /> : card.value}</div>
+              <div style={S.controlHint}>{loading ? <Skeleton width={90} height={12} radius={8} /> : card.hint}</div>
+            </div>
+          ))}
+        </section>
 
         <section style={S.assistantCard}>
           <div style={S.assistantLabel}>Votre Assistante</div>
@@ -329,6 +439,99 @@ export default function AppDashboard() {
         {showPhoneBanner ? (
           <div style={S.banner}>⏳ Configuration en cours — Notre équipe active votre numéro sous 24h</div>
         ) : null}
+
+        <section className="uwi-activation-grid" style={S.activationGrid}>
+          <div style={S.activationPanel}>
+            <div style={S.panelHeader}>
+              <div>
+                <div style={S.panelTitle}>Activation du cabinet</div>
+                <div style={S.panelSubtitle}>Suivez les étapes clés pour rendre UWI totalement opérationnel</div>
+              </div>
+              <div style={S.progressWrap}>
+                <div style={S.progressLabel}>{onboardingProgress}% prêt</div>
+                <div style={S.progressTrack}>
+                  <div style={{ ...S.progressFill, width: `${onboardingProgress}%` }} />
+                </div>
+              </div>
+            </div>
+
+            <div style={S.activationList}>
+              {onboardingCards.map((item) => (
+                <div key={item.key} style={{ ...S.activationItem, borderColor: item.done ? "#bbf7d0" : "#e5e7eb" }}>
+                  <div style={S.activationIcon}>{item.done ? "✓" : "•"}</div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ ...S.activationTitle, color: item.done ? "#047857" : NAVY }}>{item.title}</div>
+                    <div style={S.activationText}>{item.text}</div>
+                  </div>
+                  {item.href ? (
+                    <button type="button" onClick={() => navigate(item.href)} style={item.done ? S.activationButtonGhost : S.activationButton}>
+                      {item.cta}
+                    </button>
+                  ) : (
+                    <div style={S.activationWaiting}>{item.done ? "OK" : "UWI"}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={S.actionsPanel}>
+            <div style={S.panelHeader}>
+              <div>
+                <div style={S.panelTitle}>À traiter maintenant</div>
+                <div style={S.panelSubtitle}>Les appels qui demandent une action de votre part</div>
+              </div>
+              <button type="button" onClick={() => navigate("/app/appels")} style={S.linkButton}>
+                <span>Ouvrir Appels</span>
+                <ArrowUpRight size={16} strokeWidth={2.2} />
+              </button>
+            </div>
+
+            <div style={S.actionQueueList}>
+              {loading ? (
+                [1, 2, 3].map((item) => <Skeleton key={item} height={90} radius={14} />)
+              ) : actionQueue.length === 0 ? (
+                <div style={S.emptyState}>
+                  <div style={S.emptyTitle}>Aucune action urgente</div>
+                  <div style={S.emptyText}>Les demandes prioritaires apparaîtront ici dès qu&apos;elles nécessiteront un suivi.</div>
+                </div>
+              ) : (
+                actionQueue.map((call) => {
+                  const badge = getReasonBadge(call);
+                  const ctaLabel = call?.contextual_action?.label || "Ouvrir";
+                  return (
+                    <div key={call.call_id || call.id} style={S.actionQueueCard}>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={S.actionQueueTop}>
+                          <span
+                            style={{
+                              ...S.actionQueueBadge,
+                              background: badge.bg,
+                              color: badge.text,
+                              borderColor: badge.border,
+                            }}
+                          >
+                            {badge.label}
+                          </span>
+                          <span style={S.actionQueueTime}>{call.time || "—"}</span>
+                        </div>
+                        <div style={S.actionQueueTitle}>{call.patient_name || "Patient"}</div>
+                        <div style={S.actionQueueText}>{call.reason_label || call.summary || "Suivi patient"}</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => navigate(call?.contextual_action?.kind === "open_agenda" ? "/app/agenda" : "/app/appels")}
+                        style={S.actionQueueButton}
+                      >
+                        {ctaLabel}
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </section>
 
         <section className="uwi-kpi-grid" style={S.kpiGrid}>
           {loading
@@ -401,6 +604,21 @@ export default function AppDashboard() {
                         <div style={S.callName}>{call.patient_name || "Patient inconnu"}</div>
                         <div style={S.callPhone}>{getPhoneSummary(call, assistantName)}</div>
                         <div style={S.callOutcome}>{call.summary || "Aucun résumé disponible."}</div>
+                        {call.reason_label ? (
+                          <div style={S.callReasonRow}>
+                            <span
+                              style={{
+                                ...S.callReasonBadge,
+                                background: getReasonBadge(call).bg,
+                                color: getReasonBadge(call).text,
+                                borderColor: getReasonBadge(call).border,
+                              }}
+                            >
+                              {getReasonBadge(call).label}
+                            </span>
+                            <span style={S.callReasonText}>{call.reason_label}</span>
+                          </div>
+                        ) : null}
                       </div>
 
                       <div style={S.callMeta}>
@@ -586,6 +804,36 @@ const S = {
     color: "#374151",
     fontFamily: "inherit",
   },
+  controlGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+    gap: 16,
+    marginBottom: 18,
+  },
+  controlCard: {
+    background: "#fff",
+    border: "1px solid #e5e7eb",
+    borderRadius: 14,
+    padding: "14px 16px",
+    boxShadow: "0 2px 10px rgba(15,23,42,.035)",
+  },
+  controlLabel: {
+    fontSize: 11,
+    color: "#6b7280",
+    marginBottom: 10,
+    fontWeight: 700,
+  },
+  controlValue: {
+    fontSize: 18,
+    lineHeight: 1.1,
+    fontWeight: 800,
+    color: NAVY,
+  },
+  controlHint: {
+    marginTop: 6,
+    fontSize: 12,
+    color: "#6b7280",
+  },
   assistantCard: {
     background: "#fff",
     border: "1px solid #e5e7eb",
@@ -703,6 +951,176 @@ const S = {
     color: "#9a3412",
     fontSize: 12,
     fontWeight: 600,
+  },
+  activationGrid: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1.35fr) minmax(320px, .95fr)",
+    gap: 16,
+    marginTop: 18,
+  },
+  activationPanel: {
+    background: "#fff",
+    border: "1px solid #e5e7eb",
+    borderRadius: 14,
+    overflow: "hidden",
+    boxShadow: "0 2px 10px rgba(15,23,42,.035)",
+  },
+  actionsPanel: {
+    background: "#fff",
+    border: "1px solid #e5e7eb",
+    borderRadius: 14,
+    overflow: "hidden",
+    boxShadow: "0 2px 10px rgba(15,23,42,.035)",
+  },
+  progressWrap: {
+    minWidth: 140,
+  },
+  progressLabel: {
+    fontSize: 12,
+    color: "#0f766e",
+    fontWeight: 700,
+    marginBottom: 6,
+    textAlign: "right",
+  },
+  progressTrack: {
+    height: 8,
+    borderRadius: 999,
+    background: "#ecfeff",
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    borderRadius: 999,
+    background: "linear-gradient(90deg, #14c8b8, #34d399)",
+  },
+  activationList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+    padding: 18,
+  },
+  activationItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    border: "1px solid #e5e7eb",
+    borderRadius: 14,
+    padding: "14px 16px",
+    background: "#fff",
+  },
+  activationIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: "50%",
+    background: "#f0fdfa",
+    color: "#0f766e",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontWeight: 800,
+    flexShrink: 0,
+  },
+  activationTitle: {
+    fontSize: 14,
+    fontWeight: 700,
+    color: NAVY,
+  },
+  activationText: {
+    marginTop: 4,
+    fontSize: 12,
+    color: "#6b7280",
+    lineHeight: 1.5,
+  },
+  activationButton: {
+    border: "none",
+    background: "linear-gradient(135deg, #14c8b8, #0ea899)",
+    color: "#fff",
+    borderRadius: 10,
+    padding: "10px 12px",
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    whiteSpace: "nowrap",
+  },
+  activationButtonGhost: {
+    border: "1px solid #d1fae5",
+    background: "#ecfdf5",
+    color: "#047857",
+    borderRadius: 10,
+    padding: "10px 12px",
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    whiteSpace: "nowrap",
+  },
+  activationWaiting: {
+    fontSize: 12,
+    fontWeight: 700,
+    color: "#9a3412",
+    whiteSpace: "nowrap",
+  },
+  actionQueueList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+    padding: 18,
+  },
+  actionQueueCard: {
+    display: "flex",
+    gap: 12,
+    alignItems: "center",
+    border: "1px solid #e5e7eb",
+    borderRadius: 14,
+    padding: "14px 16px",
+    background: "#fff",
+  },
+  actionQueueTop: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 10,
+    flexWrap: "wrap",
+  },
+  actionQueueBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    border: "1px solid",
+    borderRadius: 999,
+    padding: "4px 8px",
+    fontSize: 10,
+    fontWeight: 700,
+  },
+  actionQueueTime: {
+    fontSize: 11,
+    color: "#6b7280",
+    fontWeight: 700,
+  },
+  actionQueueTitle: {
+    marginTop: 8,
+    fontSize: 14,
+    fontWeight: 700,
+    color: NAVY,
+  },
+  actionQueueText: {
+    marginTop: 5,
+    fontSize: 12,
+    lineHeight: 1.5,
+    color: "#4b5563",
+  },
+  actionQueueButton: {
+    border: "1px solid #e5e7eb",
+    background: "#fff",
+    color: "#475569",
+    borderRadius: 10,
+    padding: "10px 12px",
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    whiteSpace: "nowrap",
+    flexShrink: 0,
   },
   kpiGrid: {
     display: "grid",
@@ -840,6 +1258,27 @@ const S = {
     marginTop: 5,
     fontSize: 11,
     color: "#4b5563",
+    lineHeight: 1.5,
+  },
+  callReasonRow: {
+    marginTop: 8,
+    display: "flex",
+    gap: 8,
+    alignItems: "center",
+    flexWrap: "wrap",
+  },
+  callReasonBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    border: "1px solid",
+    borderRadius: 999,
+    padding: "4px 8px",
+    fontSize: 10,
+    fontWeight: 700,
+  },
+  callReasonText: {
+    fontSize: 11,
+    color: "#475569",
     lineHeight: 1.5,
   },
   callMeta: {
@@ -1018,6 +1457,8 @@ const CSS = `
   }
 
   @media (max-width: 1160px) {
+    .uwi-control-grid,
+    .uwi-activation-grid,
     .uwi-main-grid {
       grid-template-columns: 1fr !important;
     }
@@ -1043,6 +1484,10 @@ const CSS = `
     }
 
     .uwi-kpi-grid {
+      grid-template-columns: 1fr !important;
+    }
+
+    .uwi-control-grid {
       grid-template-columns: 1fr !important;
     }
   }

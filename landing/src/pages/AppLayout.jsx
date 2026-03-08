@@ -141,8 +141,8 @@ export default function AppLayout() {
 
   useEffect(() => {
     if (loading || !me) return;
-    if (!getImpersonation() && location.pathname.startsWith("/app") && !me?.client_onboarding_completed) {
-      navigate(`/app/onboarding${location.search || ""}`, { replace: true });
+    if (!getImpersonation() && location.pathname === "/app/onboarding" && me?.client_onboarding_completed) {
+      navigate(`/app${location.search || ""}`, { replace: true });
     }
   }, [loading, me, location.pathname, location.search, navigate]);
 

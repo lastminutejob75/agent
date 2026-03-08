@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api.js";
 
 const TEXT = "#111827";
@@ -24,12 +25,24 @@ const FOLLOWUP_UI = {
   processed: { label: "Traité", bg: "#ecfdf5", color: "#047857", border: "#a7f3d0" },
 };
 
+const REASON_UI = {
+  urgency: { label: "Urgence", bg: "#fef2f2", color: "#b91c1c", border: "#fecaca" },
+  callback: { label: "Rappel", bg: "#fff7ed", color: "#c2410c", border: "#fdba74" },
+  prescription: { label: "Ordonnance", bg: "#f5f3ff", color: "#7c3aed", border: "#ddd6fe" },
+  agenda: { label: "Agenda", bg: "#eff6ff", color: "#1d4ed8", border: "#bfdbfe" },
+  general: { label: "Suivi", bg: "#f8fafc", color: "#475569", border: "#e2e8f0" },
+};
+
 function getStatusUi(status) {
   return STATUS_UI[status] || STATUS_UI.FAQ;
 }
 
 function getFollowupUi(state) {
   return FOLLOWUP_UI[state] || FOLLOWUP_UI.new;
+}
+
+function getReasonUi(category) {
+  return REASON_UI[category] || REASON_UI.general;
 }
 
 function getCallInitials(name) {
@@ -76,6 +89,7 @@ async function copyToClipboard(text) {
 }
 
 export default function AppCalls() {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [days, setDays] = useState(7);
@@ -215,6 +229,23 @@ export default function AppCalls() {
     }
   }
 
+  async function runContextualAction(detail) {
+    const action = detail?.contextual_action?.kind || "open_detail";
+    if (action === "followup_callback") {
+      await saveFollowupState("callback");
+      return;
+    }
+    if (action === "open_agenda") {
+      navigate("/app/agenda");
+      return;
+    }
+    if (action === "open_faq") {
+      navigate("/app/faq");
+      return;
+    }
+    setActionMessage("Les détails de l'appel sont déjà affichés.");
+  }
+
   return (
     <div style={S.page}>
       <style>{CSS}</style>
@@ -335,6 +366,7 @@ export default function AppCalls() {
               {filteredCalls.map((call) => {
                 const status = getStatusUi(call.status);
                 const followup = getFollowupUi(call.followup_state);
+                const reason = getReasonUi(call.reason_category);
                 return (
                   <button key={call.id} type="button" className="calls-row" style={S.callRow} onClick={() => setSelectedCallId(call.call_id || call.id)}>
                     <div style={S.avatar}>{getCallInitials(call.patient_name)}</div>
@@ -368,6 +400,21 @@ export default function AppCalls() {
 
                       <div style={S.callAgent}>Assistante : {call.agent_name || "UWI"}</div>
                       <div style={S.callSummary}>{call.summary || "Aucun résumé disponible."}</div>
+                      {call.reason_label ? (
+                        <div style={S.reasonRow}>
+                          <span
+                            style={{
+                              ...S.reasonBadge,
+                              background: reason.bg,
+                              color: reason.color,
+                              borderColor: reason.border,
+                            }}
+                          >
+                            {reason.label}
+                          </span>
+                          <span style={S.reasonText}>{call.reason_label}</span>
+                        </div>
+                      ) : null}
 
                       <div style={S.callMeta}>
                         <span>🕘 {call.time || "—"}</span>
@@ -454,6 +501,14 @@ export default function AppCalls() {
                   >
                     Marquer traité
                   </button>
+                  <button
+                    type="button"
+                    style={S.actionButton}
+                    disabled={followupLoading}
+                    onClick={() => runContextualAction(callDetail)}
+                  >
+                    {callDetail.contextual_action?.label || "Action conseillée"}
+                  </button>
                 </div>
 
                 {actionMessage ? <div style={S.successInline}>{actionMessage}</div> : null}
@@ -497,12 +552,37 @@ export default function AppCalls() {
                       </span>
                     </div>
                   </div>
+                  <div style={S.detailInfoCard}>
+                    <div style={S.detailLabel}>Motif</div>
+                    <div style={S.detailValue}>
+                      <span
+                        style={{
+                          ...S.statusBadge,
+                          background: getReasonUi(callDetail.reason_category).bg,
+                          color: getReasonUi(callDetail.reason_category).color,
+                          borderColor: getReasonUi(callDetail.reason_category).border,
+                        }}
+                      >
+                        {getReasonUi(callDetail.reason_category).label}
+                      </span>
+                    </div>
+                  </div>
                 </div>
 
                 <div style={S.detailSection}>
                   <div style={S.detailSectionTitle}>Résumé</div>
                   <div style={S.detailText}>{callDetail.summary || "Aucun résumé disponible."}</div>
                 </div>
+
+                {callDetail.reason_label || callDetail.reason_context ? (
+                  <div style={S.detailSection}>
+                    <div style={S.detailSectionTitle}>Raison de transfert / demande</div>
+                    <div style={S.reasonCard}>
+                      {callDetail.reason_label ? <div style={S.reasonCardTitle}>{callDetail.reason_label}</div> : null}
+                      {callDetail.reason_context ? <div style={S.detailText}>{callDetail.reason_context}</div> : null}
+                    </div>
+                  </div>
+                ) : null}
 
                 <div style={S.detailSection}>
                   <div style={S.detailSectionTitle}>Suivi métier</div>
@@ -623,7 +703,7 @@ const S = {
   },
   statsGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+    gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
     gap: 16,
   },
   statCard: {
@@ -794,6 +874,25 @@ const S = {
     color: "#6b7280",
     lineHeight: 1.5,
   },
+  reasonRow: {
+    marginTop: 8,
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  reasonBadge: {
+    borderRadius: 999,
+    padding: "4px 8px",
+    fontSize: 10,
+    fontWeight: 700,
+    border: "1px solid",
+  },
+  reasonText: {
+    fontSize: 11,
+    color: "#475569",
+    lineHeight: 1.5,
+  },
   callMeta: {
     marginTop: 10,
     display: "flex",
@@ -928,6 +1027,18 @@ const S = {
     fontSize: 13,
     lineHeight: 1.6,
     color: "#4b5563",
+  },
+  reasonCard: {
+    border: `1px solid ${BORDER}`,
+    borderRadius: 14,
+    background: "#fff",
+    padding: "14px 16px",
+  },
+  reasonCardTitle: {
+    fontSize: 14,
+    fontWeight: 700,
+    color: TEXT,
+    marginBottom: 6,
   },
   followupCard: {
     border: `1px solid ${BORDER}`,

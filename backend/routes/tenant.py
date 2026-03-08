@@ -205,6 +205,69 @@ def _humanize_reason(reason: Optional[str]) -> Optional[str]:
     return text[:1].upper() + text[1:]
 
 
+def _count_active_faq_items(faq: Any) -> int:
+    total = 0
+    for category in normalize_faq_payload(faq if isinstance(faq, list) else []):
+        for item in category.get("items") or []:
+            if item.get("active", True) and (item.get("question") or item.get("answer")):
+                total += 1
+    return total
+
+
+def _last_call_signal(detail: dict) -> Dict[str, Optional[str]]:
+    for event in reversed(detail.get("events") or []):
+        meta = event.get("meta") or {}
+        reason = _humanize_reason(meta.get("reason"))
+        context = (meta.get("context") or "").strip() or None
+        if reason or context:
+            return {"reason": reason, "context": context}
+    return {"reason": None, "context": None}
+
+
+def _classify_call_context(status: str, detail: dict) -> Dict[str, Any]:
+    signal = _last_call_signal(detail)
+    reason = signal.get("reason")
+    context = signal.get("context")
+    transcript = (detail.get("transcript") or "").strip()
+    summary = _call_summary_from_detail(status, detail)
+    haystack = " ".join(part for part in [reason, context, summary, transcript] if part).lower()
+
+    if any(token in haystack for token in ("urgence", "urgent", "15", "112", "douleur thorac", "saign", "respir")):
+        return {
+            "reason_label": reason or "Urgence médicale signalée",
+            "reason_context": context,
+            "reason_category": "urgency",
+            "contextual_action": {"kind": "followup_callback", "label": "Rappeler en priorité"},
+        }
+    if any(token in haystack for token in ("ordonnance", "renouvel", "prescription", "traitement", "médicament", "medicament")):
+        return {
+            "reason_label": reason or "Demande d'ordonnance à traiter",
+            "reason_context": context,
+            "reason_category": "prescription",
+            "contextual_action": {"kind": "open_detail", "label": "Vérifier la demande"},
+        }
+    if any(token in haystack for token in ("rappel", "rappele", "rappelez", "rappeler", "callback", "recontact")):
+        return {
+            "reason_label": reason or "Patient à rappeler",
+            "reason_context": context,
+            "reason_category": "callback",
+            "contextual_action": {"kind": "followup_callback", "label": "Planifier un rappel"},
+        }
+    if status == "CONFIRMED" or any(token in haystack for token in ("rdv", "rendez-vous", "agenda", "créneau", "creneau", "booking", "annuler", "déplacer", "deplacer")):
+        return {
+            "reason_label": reason or "Demande de rendez-vous",
+            "reason_context": context,
+            "reason_category": "agenda",
+            "contextual_action": {"kind": "open_agenda", "label": "Ouvrir l'agenda"},
+        }
+    return {
+        "reason_label": reason or ("Information transmise au cabinet" if status == "TRANSFERRED" else "Demande d'information"),
+        "reason_context": context,
+        "reason_category": "general",
+        "contextual_action": {"kind": "open_detail", "label": "Voir le détail"},
+    }
+
+
 def _call_summary_from_detail(status: str, detail: dict) -> str:
     transcript = (detail.get("transcript") or "").strip()
     user_lines = []
@@ -213,12 +276,7 @@ def _call_summary_from_detail(status: str, detail: dict) -> str:
             clean = line.strip()
             if clean.startswith("Patient:"):
                 user_lines.append(clean.replace("Patient:", "", 1).strip())
-    latest_reason = None
-    for event in reversed(detail.get("events") or []):
-        meta = event.get("meta") or {}
-        if meta.get("reason"):
-            latest_reason = _humanize_reason(meta.get("reason"))
-            break
+    latest_reason = _last_call_signal(detail).get("reason")
     if status == "TRANSFERRED":
         return f"{latest_reason} — transfert humain" if latest_reason else "Transféré à un humain"
     if status == "CONFIRMED":
@@ -339,6 +397,8 @@ def tenant_me(auth: dict = Depends(require_tenant_auth)):
     calendar_provider = (params.get("calendar_provider") or "none").strip() or "none"
     calendar_id = (params.get("calendar_id") or "").strip()
     assistant_name = (params.get("assistant_name") or "").strip()
+    faq = get_faq(tenant_id)
+    faq_ready = _count_active_faq_items(faq) > 0
     _explicit = _is_truthy(params.get("client_onboarding_completed"))
     _vapi_ready = bool((params.get("vapi_assistant_id") or "").strip())
     _phone_ready = bool(voice_number)
@@ -360,14 +420,13 @@ def tenant_me(auth: dict = Depends(require_tenant_auth)):
         horaires_ready = bool(booking_days)
 
     onboarding_steps = {
-        "assistant_ready": bool(vapi_assistant_id and assistant_name),
+        "assistant_ready": bool(assistant_name),
         "phone_ready": bool(voice_number),
-        "calendar_ready": calendar_provider == "google" and bool(calendar_id),
+        "calendar_ready": (calendar_provider == "google" and bool(calendar_id)) or calendar_provider == "none",
         "horaires_ready": horaires_ready,
-        "faq_ready": False,  # Placeholder produit: la FAQ client n'est pas encore disponible.
+        "faq_ready": faq_ready,
     }
-    # La FAQ n'est pas encore implémentée, donc elle ne doit pas bloquer la disparition de la checklist.
-    onboarding_completed = all(onboarding_steps[key] for key in ("assistant_ready", "phone_ready", "calendar_ready", "horaires_ready"))
+    onboarding_completed = all(onboarding_steps.values())
 
     return {
         "tenant_id": tenant_id,
@@ -388,10 +447,12 @@ def tenant_me(auth: dict = Depends(require_tenant_auth)):
         "assistant_name": assistant_name or "sophie",
         "plan_key": params.get("plan_key", "growth"),
         "vapi_assistant_id": vapi_assistant_id,
+        "assistant_live": _vapi_ready,
         "voice_number": voice_number,
         "client_onboarding_completed": client_onboarding_completed,
         "onboarding_steps": onboarding_steps,
         "onboarding_completed": onboarding_completed,
+        "faq_items_count": _count_active_faq_items(faq),
     }
 
 
@@ -512,6 +573,7 @@ def tenant_calls(
         call_detail = _get_call_detail(tenant_id, call_id)
         followup = get_call_followup(tenant_id, call_id) or {}
         status = STATUS_MAP.get((item.get("result") or "other").lower(), "FAQ")
+        call_context = _classify_call_context(status, call_detail)
         started_at = item.get("started_at") or item.get("last_event_at")
         calls.append({
             "id": call_id,
@@ -524,6 +586,10 @@ def tenant_calls(
             "call_id": call_id,
             "followup_state": followup.get("followup_state") or "new",
             "followup_notes": followup.get("notes") or "",
+            "reason_label": call_context.get("reason_label") or "",
+            "reason_context": call_context.get("reason_context") or "",
+            "reason_category": call_context.get("reason_category") or "general",
+            "contextual_action": call_context.get("contextual_action") or {"kind": "open_detail", "label": "Voir le détail"},
         })
     return {
         "calls": calls,
@@ -547,6 +613,7 @@ def tenant_call_detail(
     raw = _get_call_detail(tenant_id, call_id)
     followup = get_call_followup(tenant_id, call_id) or {}
     status = STATUS_MAP.get((raw.get("result") or "other").lower(), "FAQ")
+    call_context = _classify_call_context(status, raw)
     events = []
     for event in raw.get("events") or []:
         events.append(
@@ -574,6 +641,10 @@ def tenant_call_detail(
         "followup_state": followup.get("followup_state") or "new",
         "followup_notes": followup.get("notes") or "",
         "followup_updated_at": followup.get("updated_at") or "",
+        "reason_label": call_context.get("reason_label") or "",
+        "reason_context": call_context.get("reason_context") or "",
+        "reason_category": call_context.get("reason_category") or "general",
+        "contextual_action": call_context.get("contextual_action") or {"kind": "open_detail", "label": "Voir le détail"},
     }
 
 
