@@ -67,6 +67,36 @@ export default function AppDashboard() {
 
   const dateStr = now.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
   const showPendingSetupBanner = !loading && !me?.voice_number && !me?.vapi_assistant_id;
+  const quickActions = [
+    {
+      icon: "📅",
+      label: me?.onboarding_steps?.calendar_ready ? "Agenda" : "Connecter agenda",
+      sub: me?.onboarding_steps?.calendar_ready ? "Voir et gérer vos rendez-vous" : "Branchez votre agenda Google",
+      href: "/app/agenda",
+      color: "#3b82f6",
+    },
+    {
+      icon: "⏰",
+      label: me?.onboarding_steps?.horaires_ready ? "Horaires" : "Configurer horaires",
+      sub: me?.onboarding_steps?.horaires_ready ? "Modifier vos disponibilités" : "Définissez vos heures d'ouverture",
+      href: "/app/horaires",
+      color: TEAL,
+    },
+    {
+      icon: "⚙️",
+      label: "Paramètres",
+      sub: "Profil, sécurité et configuration",
+      href: "/app/settings",
+      color: "#64748b",
+    },
+    {
+      icon: "💳",
+      label: "Abonnement",
+      sub: "Facturation et période d'essai",
+      href: "/app/facturation",
+      color: "#8b5cf6",
+    },
+  ];
 
   return (
     <div style={S.root}>
@@ -121,6 +151,31 @@ export default function AppDashboard() {
           </div>
         </div>
       )}
+
+      <div style={S.actionsStrip}>
+        <div style={S.actionsHead}>
+          <div style={S.actionsLabel}>DÉMARRAGE RAPIDE</div>
+          <div style={S.actionsTitle}>Actions prioritaires</div>
+        </div>
+        <div style={S.actionsGrid}>
+          {quickActions.map((action) => (
+            <a
+              key={action.label}
+              href={action.href}
+              style={{ ...S.actionCard, borderColor: `${action.color}30` }}
+              className="uwi-action-card"
+            >
+              <div style={{ ...S.actionIcon, background: `${action.color}12`, color: action.color }}>
+                {action.icon}
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: NAVY }}>{action.label}</div>
+                <div style={{ fontSize: 11, color: "#64748b", marginTop: 3, lineHeight: 1.5 }}>{action.sub}</div>
+              </div>
+            </a>
+          ))}
+        </div>
+      </div>
 
       <div style={S.kpiRow}>
         {loading ? (
@@ -296,19 +351,6 @@ export default function AppDashboard() {
         </div>
       </div>
 
-      <div style={S.shortcuts}>
-        {[
-          { icon: "⏰", label: "Horaires", href: "/app/horaires", color: TEAL },
-          { icon: "💬", label: "FAQ", href: "/app/faq", color: "#f59e0b" },
-          { icon: "💳", label: "Abonnement", href: "/app/facturation", color: "#8b5cf6" },
-          { icon: "⚙️", label: "Paramètres", href: "/app/settings", color: "#64748b" },
-        ].map((s) => (
-          <a key={s.label} href={s.href} style={{ ...S.shortcut, borderColor: s.color + "30" }} className="uwi-shortcut">
-            <span style={{ fontSize: 20 }}>{s.icon}</span>
-            <span style={{ fontSize: 12, fontWeight: 700, color: s.color }}>{s.label}</span>
-          </a>
-        ))}
-      </div>
     </div>
   );
 }
@@ -334,6 +376,34 @@ const S = {
   },
   kpiRow: { display: "flex", gap: 10, padding: "10px 24px", background: "#fff", borderBottom: "1px solid #f1f5f9", flexShrink: 0 },
   kpiCard: { flex: 1, padding: "8px 12px", borderRadius: 8, background: "#f8fafc", border: "1px solid #f1f5f9" },
+  actionsStrip: { padding: "14px 24px 0", flexShrink: 0 },
+  actionsHead: { marginBottom: 10 },
+  actionsLabel: { fontSize: 9, color: "#94a3b8", letterSpacing: 1.6, fontWeight: 700, marginBottom: 3 },
+  actionsTitle: { fontSize: 15, fontWeight: 700, color: NAVY },
+  actionsGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 },
+  actionCard: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    padding: "14px 16px",
+    borderRadius: 12,
+    border: "1px solid",
+    background: "#fff",
+    textDecoration: "none",
+    boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
+    minHeight: 88,
+    transition: "all 0.15s",
+  },
+  actionIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 20,
+    flexShrink: 0,
+  },
   main: { display: "flex", gap: 12, flex: 1, padding: "12px 24px", overflow: "hidden", minHeight: 0 },
   panel: { flex: 1, background: "#fff", borderRadius: 12, border: "1px solid #e8ecf0", padding: "16px 18px", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.04)" },
   panelHead: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14, flexShrink: 0 },
@@ -346,8 +416,6 @@ const S = {
   btn: { padding: "6px 12px", borderRadius: 6, border: "none", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" },
   agendaSummary: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 4, marginBottom: 10, padding: "8px 0", borderTop: "1px solid #f8fafc", borderBottom: "1px solid #f8fafc", flexShrink: 0 },
   empty: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "24px 16px", textAlign: "center" },
-  shortcuts: { display: "flex", gap: 8, padding: "10px 24px 16px", flexShrink: 0 },
-  shortcut: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "10px 8px", borderRadius: 10, border: "1px solid", background: "#fff", textDecoration: "none", transition: "all 0.15s" },
 };
 
 const CSS = `
@@ -361,5 +429,8 @@ const CSS = `
   .uwi-call-row:hover { background: #fafbfc !important; box-shadow: 0 2px 8px rgba(0,0,0,0.06) !important; }
   .uwi-expand   { animation: uwi-fadeup 0.2s ease both; }
   .uwi-bar      { animation: uwi-grow 1s cubic-bezier(.4,0,.2,1) 0.3s both; }
-  .uwi-shortcut:hover { transform: translateY(-1px); box-shadow: 0 3px 10px rgba(0,0,0,0.06); }
+  .uwi-action-card:hover { transform: translateY(-1px); box-shadow: 0 3px 10px rgba(0,0,0,0.06); }
+  @media (max-width: 1100px) {
+    .uwi-action-card { min-height: 82px; }
+  }
 `;
