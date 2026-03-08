@@ -23,9 +23,11 @@ from backend.config import get_service_account_email
 from backend.db import (
     cancel_booking_sqlite,
     ensure_tenant_config,
+    get_call_followup,
     get_conn,
     list_free_slots,
     reschedule_booking_atomic,
+    upsert_call_followup,
 )
 from backend.google_calendar import GoogleCalendarNotFoundError, GoogleCalendarPermissionError, GoogleCalendarService
 from backend.routes.admin import (
@@ -315,6 +317,11 @@ class TenantAgendaRescheduleBody(BaseModel):
     new_slot_id: int
 
 
+class TenantCallFollowupBody(BaseModel):
+    followup_state: str
+    notes: str = ""
+
+
 @router.get("/me")
 def tenant_me(auth: dict = Depends(require_tenant_auth)):
     """Profil du tenant connecté."""
@@ -503,6 +510,7 @@ def tenant_calls(
         if not call_id:
             continue
         call_detail = _get_call_detail(tenant_id, call_id)
+        followup = get_call_followup(tenant_id, call_id) or {}
         status = STATUS_MAP.get((item.get("result") or "other").lower(), "FAQ")
         started_at = item.get("started_at") or item.get("last_event_at")
         calls.append({
@@ -514,6 +522,8 @@ def tenant_calls(
             "summary": _call_summary_from_detail(status, call_detail),
             "status": status,
             "call_id": call_id,
+            "followup_state": followup.get("followup_state") or "new",
+            "followup_notes": followup.get("notes") or "",
         })
     return {
         "calls": calls,
@@ -535,6 +545,7 @@ def tenant_call_detail(
     tz_name = _tenant_timezone(detail)
     assistant_name = (((detail.get("params") or {}).get("assistant_name")) or "Sophie").strip().title()
     raw = _get_call_detail(tenant_id, call_id)
+    followup = get_call_followup(tenant_id, call_id) or {}
     status = STATUS_MAP.get((raw.get("result") or "other").lower(), "FAQ")
     events = []
     for event in raw.get("events") or []:
@@ -560,6 +571,36 @@ def tenant_call_detail(
         "duration_min": raw.get("duration_min"),
         "transcript": raw.get("transcript"),
         "events": events,
+        "followup_state": followup.get("followup_state") or "new",
+        "followup_notes": followup.get("notes") or "",
+        "followup_updated_at": followup.get("updated_at") or "",
+    }
+
+
+@router.patch("/calls/{call_id}/followup")
+def tenant_call_followup_update(
+    call_id: str,
+    body: TenantCallFollowupBody,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Met à jour le suivi produit d'un appel côté tenant."""
+    tenant_id = auth["tenant_id"]
+    raw = _get_call_detail(tenant_id, call_id)
+    if not raw:
+        raise HTTPException(404, "Call not found")
+
+    state = (body.followup_state or "").strip().lower()
+    if state not in {"new", "callback", "processed"}:
+        raise HTTPException(400, "Invalid followup_state")
+    if not upsert_call_followup(tenant_id, call_id, state, body.notes or ""):
+        raise HTTPException(500, "Unable to save followup")
+    followup = get_call_followup(tenant_id, call_id) or {}
+    return {
+        "ok": True,
+        "call_id": call_id,
+        "followup_state": followup.get("followup_state") or "new",
+        "followup_notes": followup.get("notes") or "",
+        "followup_updated_at": followup.get("updated_at") or "",
     }
 
 

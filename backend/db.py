@@ -1,9 +1,10 @@
 # backend/db.py
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 DB_PATH = "agent.db"
 
@@ -116,6 +117,162 @@ def _ensure_ivr_tables(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ivr_events_client_date ON ivr_events(client_id, created_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ivr_events_client_event_date ON ivr_events(client_id, event, created_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_calls_client_date ON calls(client_id, created_at)")
+
+
+def _ensure_call_followups_table(conn: sqlite3.Connection) -> None:
+    """Crée la table de suivi d'appels côté tenant si absente."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS call_followups (
+            tenant_id INTEGER NOT NULL,
+            call_id TEXT NOT NULL,
+            followup_state TEXT NOT NULL DEFAULT 'new',
+            notes TEXT,
+            updated_at TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (tenant_id, call_id)
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_call_followups_state ON call_followups(tenant_id, followup_state, updated_at)")
+
+
+def _pg_events_url() -> Optional[str]:
+    return os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+
+
+def _ensure_call_followups_table_pg(conn: Any) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS call_followups (
+                tenant_id INTEGER NOT NULL,
+                call_id TEXT NOT NULL,
+                followup_state TEXT NOT NULL DEFAULT 'new',
+                notes TEXT,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (tenant_id, call_id)
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_call_followups_state
+            ON call_followups (tenant_id, followup_state, updated_at)
+            """
+        )
+
+
+def get_call_followup(tenant_id: int, call_id: str) -> Optional[Dict[str, Any]]:
+    """Retourne le suivi d'un appel (state + notes) depuis PG ou SQLite."""
+    call_id_norm = (call_id or "").strip()
+    if not call_id_norm:
+        return None
+
+    url = _pg_events_url()
+    if url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+
+            with psycopg.connect(url, row_factory=dict_row) as conn:
+                _ensure_call_followups_table_pg(conn)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT followup_state, notes, updated_at
+                        FROM call_followups
+                        WHERE tenant_id = %s AND call_id = %s
+                        LIMIT 1
+                        """,
+                        (tenant_id, call_id_norm),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        return {
+                            "followup_state": row.get("followup_state") or "new",
+                            "notes": row.get("notes") or "",
+                            "updated_at": str(row.get("updated_at") or ""),
+                        }
+        except Exception:
+            pass
+
+    conn = get_conn()
+    try:
+        _ensure_call_followups_table(conn)
+        row = conn.execute(
+            """
+            SELECT followup_state, notes, updated_at
+            FROM call_followups
+            WHERE tenant_id = ? AND call_id = ?
+            LIMIT 1
+            """,
+            (tenant_id, call_id_norm),
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "followup_state": row["followup_state"] or "new",
+            "notes": row["notes"] or "",
+            "updated_at": row["updated_at"] or "",
+        }
+    finally:
+        conn.close()
+
+
+def upsert_call_followup(tenant_id: int, call_id: str, followup_state: str, notes: str = "") -> bool:
+    """Crée ou met à jour le suivi d'un appel côté tenant."""
+    call_id_norm = (call_id or "").strip()
+    state = (followup_state or "new").strip().lower()
+    if not call_id_norm:
+        return False
+    if state not in {"new", "callback", "processed"}:
+        return False
+
+    clean_notes = (notes or "").strip()[:4000]
+    url = _pg_events_url()
+    if url:
+        try:
+            import psycopg
+
+            with psycopg.connect(url) as conn:
+                _ensure_call_followups_table_pg(conn)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO call_followups (tenant_id, call_id, followup_state, notes, updated_at)
+                        VALUES (%s, %s, %s, %s, now())
+                        ON CONFLICT (tenant_id, call_id)
+                        DO UPDATE SET
+                            followup_state = EXCLUDED.followup_state,
+                            notes = EXCLUDED.notes,
+                            updated_at = now()
+                        """,
+                        (tenant_id, call_id_norm, state, clean_notes or None),
+                    )
+                    conn.commit()
+                    return True
+        except Exception:
+            pass
+
+    conn = get_conn()
+    try:
+        _ensure_call_followups_table(conn)
+        conn.execute(
+            """
+            INSERT INTO call_followups (tenant_id, call_id, followup_state, notes, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(tenant_id, call_id)
+            DO UPDATE SET
+                followup_state = excluded.followup_state,
+                notes = excluded.notes,
+                updated_at = excluded.updated_at
+            """,
+            (tenant_id, call_id_norm, state, clean_notes or None, datetime.utcnow().isoformat()),
+        )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
 
 
 def consent_obtained_exists(client_id: int, call_id: str) -> bool:

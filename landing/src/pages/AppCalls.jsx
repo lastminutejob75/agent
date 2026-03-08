@@ -18,8 +18,18 @@ const STATUS_UI = {
   ABANDONED: { label: "Abandonné", bg: "#fef3c7", color: "#b45309", border: "#fcd34d" },
 };
 
+const FOLLOWUP_UI = {
+  new: { label: "Nouveau", bg: "#f8fafc", color: "#475569", border: "#e2e8f0" },
+  callback: { label: "À rappeler", bg: "#fff7ed", color: "#c2410c", border: "#fdba74" },
+  processed: { label: "Traité", bg: "#ecfdf5", color: "#047857", border: "#a7f3d0" },
+};
+
 function getStatusUi(status) {
   return STATUS_UI[status] || STATUS_UI.FAQ;
+}
+
+function getFollowupUi(state) {
+  return FOLLOWUP_UI[state] || FOLLOWUP_UI.new;
 }
 
 function getCallInitials(name) {
@@ -30,6 +40,15 @@ function getCallInitials(name) {
     .slice(0, 2)
     .map((part) => part.charAt(0).toUpperCase())
     .join("") || "PT";
+}
+
+function humanizeEventLabel(value) {
+  const text = String(value || "").trim();
+  if (!text) return "Événement";
+  return text
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .replace(/^\w/, (char) => char.toUpperCase());
 }
 
 function Skeleton({ height = 80, radius = 14 }) {
@@ -60,12 +79,15 @@ export default function AppCalls() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [days, setDays] = useState(7);
+  const [followupFilter, setFollowupFilter] = useState("all");
   const [payload, setPayload] = useState({ calls: [], total: 0, date: "" });
   const [selectedCallId, setSelectedCallId] = useState("");
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
   const [callDetail, setCallDetail] = useState(null);
   const [actionMessage, setActionMessage] = useState("");
+  const [followupNotes, setFollowupNotes] = useState("");
+  const [followupLoading, setFollowupLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -91,6 +113,7 @@ export default function AppCalls() {
     if (!selectedCallId) {
       setCallDetail(null);
       setDetailError("");
+      setFollowupNotes("");
       return;
     }
     let cancelled = false;
@@ -99,7 +122,10 @@ export default function AppCalls() {
     api
       .tenantGetCallDetail(selectedCallId)
       .then((data) => {
-        if (!cancelled) setCallDetail(data || null);
+        if (!cancelled) {
+          setCallDetail(data || null);
+          setFollowupNotes(data?.followup_notes || "");
+        }
       })
       .catch((e) => {
         if (!cancelled) setDetailError(e?.message || "Impossible de charger le détail de l'appel.");
@@ -119,16 +145,75 @@ export default function AppCalls() {
   }, [actionMessage]);
 
   const calls = payload?.calls || [];
+  const filteredCalls = useMemo(() => {
+    if (followupFilter === "all") return calls;
+    return calls.filter((call) => (call.followup_state || "new") === followupFilter);
+  }, [calls, followupFilter]);
   const stats = useMemo(() => {
-    const counters = { total: calls.length, confirmed: 0, faq: 0, transferred: 0, abandoned: 0 };
+    const counters = {
+      total: calls.length,
+      confirmed: 0,
+      faq: 0,
+      transferred: 0,
+      abandoned: 0,
+      callback: 0,
+      processed: 0,
+    };
     calls.forEach((call) => {
       if (call.status === "CONFIRMED") counters.confirmed += 1;
       else if (call.status === "FAQ") counters.faq += 1;
       else if (call.status === "TRANSFERRED") counters.transferred += 1;
       else if (call.status === "ABANDONED") counters.abandoned += 1;
+      if ((call.followup_state || "new") === "callback") counters.callback += 1;
+      if ((call.followup_state || "new") === "processed") counters.processed += 1;
     });
     return counters;
   }, [calls]);
+
+  async function saveFollowupState(nextState, notesOverride = followupNotes) {
+    if (!selectedCallId) return;
+    setFollowupLoading(true);
+    try {
+      const data = await api.tenantUpdateCallFollowup(selectedCallId, {
+        followup_state: nextState,
+        notes: notesOverride || "",
+      });
+      setCallDetail((prev) =>
+        prev
+          ? {
+              ...prev,
+              followup_state: data?.followup_state || nextState,
+              followup_notes: data?.followup_notes || "",
+              followup_updated_at: data?.followup_updated_at || "",
+            }
+          : prev,
+      );
+      setPayload((prev) => ({
+        ...(prev || { calls: [] }),
+        calls: (prev?.calls || []).map((call) =>
+          (call.call_id || call.id) === selectedCallId
+            ? {
+                ...call,
+                followup_state: data?.followup_state || nextState,
+                followup_notes: data?.followup_notes || "",
+              }
+            : call,
+        ),
+      }));
+      setFollowupNotes(data?.followup_notes || "");
+      setActionMessage(
+        nextState === "callback"
+          ? "Appel marqué à rappeler."
+          : nextState === "processed"
+            ? "Appel marqué comme traité."
+            : "Suivi réinitialisé.",
+      );
+    } catch (e) {
+      setActionMessage(e?.message || "Impossible d'enregistrer le suivi.");
+    } finally {
+      setFollowupLoading(false);
+    }
+  }
 
   return (
     <div style={S.page}>
@@ -181,10 +266,17 @@ export default function AppCalls() {
         </div>
         <div style={S.statCard}>
           <div>
-            <div style={S.statLabel}>Transférés / abandonnés</div>
-            <div style={{ ...S.statValue, color: DANGER }}>{loading ? "—" : stats.transferred + stats.abandoned}</div>
+            <div style={S.statLabel}>À rappeler</div>
+            <div style={{ ...S.statValue, color: WARNING }}>{loading ? "—" : stats.callback}</div>
           </div>
-          <div style={{ ...S.statIcon, background: "linear-gradient(135deg, #f59e0b, #ef4444)" }}>!</div>
+          <div style={{ ...S.statIcon, background: "linear-gradient(135deg, #f59e0b, #ea580c)" }}>↺</div>
+        </div>
+        <div style={S.statCard}>
+          <div>
+            <div style={S.statLabel}>Traités</div>
+            <div style={{ ...S.statValue, color: SUCCESS }}>{loading ? "—" : stats.processed}</div>
+          </div>
+          <div style={{ ...S.statIcon, background: "linear-gradient(135deg, #10b981, #047857)" }}>✓</div>
         </div>
       </div>
 
@@ -198,6 +290,26 @@ export default function AppCalls() {
               {days === 1 ? "Dernières 24 heures" : `Sur les ${days} derniers jours`}
             </div>
           </div>
+          <div style={S.followupFilters}>
+            {[
+              ["all", "Tous"],
+              ["new", "Nouveaux"],
+              ["callback", "À rappeler"],
+              ["processed", "Traités"],
+            ].map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setFollowupFilter(value)}
+                style={{
+                  ...S.followupButton,
+                  ...(followupFilter === value ? S.followupButtonActive : null),
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div style={S.listWrap}>
@@ -207,15 +319,22 @@ export default function AppCalls() {
                 <Skeleton key={item} height={90} />
               ))}
             </div>
-          ) : calls.length === 0 ? (
+          ) : filteredCalls.length === 0 ? (
             <div style={S.emptyState}>
-              <div style={S.emptyTitle}>Aucun appel sur cette période</div>
-              <div style={S.emptyText}>Les appels traités par UWI apparaîtront ici automatiquement.</div>
+              <div style={S.emptyTitle}>
+                {calls.length === 0 ? "Aucun appel sur cette période" : "Aucun appel dans ce filtre"}
+              </div>
+              <div style={S.emptyText}>
+                {calls.length === 0
+                  ? "Les appels traités par UWI apparaîtront ici automatiquement."
+                  : "Essayez un autre filtre de suivi pour retrouver vos appels."}
+              </div>
             </div>
           ) : (
             <div style={S.list}>
-              {calls.map((call) => {
+              {filteredCalls.map((call) => {
                 const status = getStatusUi(call.status);
+                const followup = getFollowupUi(call.followup_state);
                 return (
                   <button key={call.id} type="button" className="calls-row" style={S.callRow} onClick={() => setSelectedCallId(call.call_id || call.id)}>
                     <div style={S.avatar}>{getCallInitials(call.patient_name)}</div>
@@ -223,16 +342,28 @@ export default function AppCalls() {
                     <div style={S.callMain}>
                       <div style={S.callTop}>
                         <div style={S.callName}>{call.patient_name || "Patient"}</div>
-                        <span
-                          style={{
-                            ...S.statusBadge,
-                            background: status.bg,
-                            color: status.color,
-                            borderColor: status.border,
-                          }}
-                        >
-                          {status.label}
-                        </span>
+                        <div style={S.badgesRow}>
+                          <span
+                            style={{
+                              ...S.statusBadge,
+                              background: status.bg,
+                              color: status.color,
+                              borderColor: status.border,
+                            }}
+                          >
+                            {status.label}
+                          </span>
+                          <span
+                            style={{
+                              ...S.statusBadge,
+                              background: followup.bg,
+                              color: followup.color,
+                              borderColor: followup.border,
+                            }}
+                          >
+                            {followup.label}
+                          </span>
+                        </div>
                       </div>
 
                       <div style={S.callAgent}>Assistante : {call.agent_name || "UWI"}</div>
@@ -307,6 +438,22 @@ export default function AppCalls() {
                   >
                     Copier l&apos;ID
                   </button>
+                  <button
+                    type="button"
+                    style={S.actionButton}
+                    disabled={followupLoading}
+                    onClick={() => saveFollowupState("callback")}
+                  >
+                    Marquer à rappeler
+                  </button>
+                  <button
+                    type="button"
+                    style={S.actionButton}
+                    disabled={followupLoading}
+                    onClick={() => saveFollowupState("processed")}
+                  >
+                    Marquer traité
+                  </button>
                 </div>
 
                 {actionMessage ? <div style={S.successInline}>{actionMessage}</div> : null}
@@ -335,11 +482,56 @@ export default function AppCalls() {
                     <div style={S.detailLabel}>Durée</div>
                     <div style={S.detailValue}>{callDetail.duration || "—"}</div>
                   </div>
+                  <div style={S.detailInfoCard}>
+                    <div style={S.detailLabel}>Suivi</div>
+                    <div style={S.detailValue}>
+                      <span
+                        style={{
+                          ...S.statusBadge,
+                          background: getFollowupUi(callDetail.followup_state).bg,
+                          color: getFollowupUi(callDetail.followup_state).color,
+                          borderColor: getFollowupUi(callDetail.followup_state).border,
+                        }}
+                      >
+                        {getFollowupUi(callDetail.followup_state).label}
+                      </span>
+                    </div>
+                  </div>
                 </div>
 
                 <div style={S.detailSection}>
                   <div style={S.detailSectionTitle}>Résumé</div>
                   <div style={S.detailText}>{callDetail.summary || "Aucun résumé disponible."}</div>
+                </div>
+
+                <div style={S.detailSection}>
+                  <div style={S.detailSectionTitle}>Suivi métier</div>
+                  <div style={S.followupCard}>
+                    <textarea
+                      value={followupNotes}
+                      onChange={(e) => setFollowupNotes(e.target.value)}
+                      placeholder="Ajoutez une note interne, un contexte de rappel ou une action réalisée."
+                      style={S.followupTextarea}
+                    />
+                    <div style={S.followupActions}>
+                      <button
+                        type="button"
+                        style={S.actionButtonPrimary}
+                        disabled={followupLoading}
+                        onClick={() => saveFollowupState(callDetail.followup_state || "new", followupNotes)}
+                      >
+                        Enregistrer la note
+                      </button>
+                      <button
+                        type="button"
+                        style={S.actionButton}
+                        disabled={followupLoading}
+                        onClick={() => saveFollowupState("new", followupNotes)}
+                      >
+                        Réinitialiser le suivi
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 <div style={S.detailSection}>
@@ -361,7 +553,7 @@ export default function AppCalls() {
                         <div key={`${event.created_at || event.time}-${index}`} style={S.timelineRow}>
                           <div style={S.timelineTime}>{event.time || "—"}</div>
                           <div style={S.timelineContent}>
-                            <div style={S.timelineEvent}>{event.event || "event"}</div>
+                            <div style={S.timelineEvent}>{humanizeEventLabel(event.event)}</div>
                             {event.reason ? <div style={S.timelineMeta}>Raison : {event.reason}</div> : null}
                             {event.context ? <div style={S.timelineMeta}>Contexte : {event.context}</div> : null}
                           </div>
@@ -489,6 +681,11 @@ const S = {
     padding: "18px 18px 14px",
     background: "#fafafa",
     borderBottom: `1px solid ${BORDER}`,
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+    flexWrap: "wrap",
   },
   panelTitle: {
     fontSize: 15,
@@ -507,6 +704,26 @@ const S = {
     display: "flex",
     flexDirection: "column",
     gap: 12,
+  },
+  followupFilters: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  followupButton: {
+    border: `1px solid ${BORDER}`,
+    background: "#fff",
+    color: "#64748b",
+    borderRadius: 999,
+    padding: "7px 11px",
+    fontSize: 11,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  followupButtonActive: {
+    borderColor: "#99f6e4",
+    background: "#ecfeff",
+    color: "#0f766e",
   },
   callRow: {
     width: "100%",
@@ -546,6 +763,12 @@ const S = {
     gap: 12,
     alignItems: "flex-start",
     flexWrap: "wrap",
+  },
+  badgesRow: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
   },
   callName: {
     fontSize: 15,
@@ -672,7 +895,7 @@ const S = {
   },
   detailTopGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
     gap: 12,
   },
   detailInfoCard: {
@@ -705,6 +928,34 @@ const S = {
     fontSize: 13,
     lineHeight: 1.6,
     color: "#4b5563",
+  },
+  followupCard: {
+    border: `1px solid ${BORDER}`,
+    borderRadius: 14,
+    background: "#f8fafc",
+    padding: 14,
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+  },
+  followupTextarea: {
+    width: "100%",
+    minHeight: 110,
+    borderRadius: 12,
+    border: `1px solid ${BORDER}`,
+    background: "#fff",
+    padding: "12px 14px",
+    fontSize: 13,
+    lineHeight: 1.6,
+    color: TEXT,
+    resize: "vertical",
+    fontFamily: "inherit",
+    outline: "none",
+  },
+  followupActions: {
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
   },
   transcriptBox: {
     border: `1px solid ${BORDER}`,
