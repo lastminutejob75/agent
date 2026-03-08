@@ -12,6 +12,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { api } from "../lib/api.js";
+import ASSISTANTS from "../assistants.config.js";
 
 const TEAL = "#14c8b8";
 const TEAL_DARK = "#0ea899";
@@ -116,6 +117,7 @@ export default function AppDashboard() {
   const [calls, setCalls] = useState([]);
   const [agenda, setAgenda] = useState(null);
   const [me, setMe] = useState(null);
+  const [assistantImageFailed, setAssistantImageFailed] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -136,6 +138,20 @@ export default function AppDashboard() {
   const avatarTheme = getAvatarTheme(assistantName);
   const showPhoneBanner = !loading && !me?.voice_number;
   const agendaReady = !!me?.onboarding_steps?.calendar_ready;
+  const assistantConfig = useMemo(() => {
+    const normalized = String(assistantName || "").trim().toLowerCase();
+    return (
+      ASSISTANTS.find(
+        (assistant) =>
+          assistant.id === normalized ||
+          String(assistant.prenom || "").trim().toLowerCase() === normalized,
+      ) || null
+    );
+  }, [assistantName]);
+
+  useEffect(() => {
+    setAssistantImageFailed(false);
+  }, [assistantName]);
 
   const stats = useMemo(
     () => [
@@ -207,9 +223,18 @@ export default function AppDashboard() {
           <div className="uwi-assistant-row" style={S.assistantRow}>
             <div style={S.assistantLeft}>
               <div style={{ ...S.avatarRing, background: avatarTheme.ring }}>
-                <div style={{ ...S.avatar, background: avatarTheme.bg }}>
-                  <span style={S.avatarText}>{getInitial(assistantName)}</span>
-                </div>
+                {assistantConfig?.img && !assistantImageFailed ? (
+                  <img
+                    src={assistantConfig.img}
+                    alt={assistantConfig.prenom || assistantName}
+                    style={S.avatarImg}
+                    onError={() => setAssistantImageFailed(true)}
+                  />
+                ) : (
+                  <div style={{ ...S.avatar, background: avatarTheme.bg }}>
+                    <span style={S.avatarText}>{getInitial(assistantName)}</span>
+                  </div>
+                )}
                 <div style={S.avatarStatus}>
                   <DotPulse size={8} />
                 </div>
@@ -229,7 +254,7 @@ export default function AppDashboard() {
                     <div style={S.assistantMetaRow}>
                       <span style={S.assistantMetaItem}>
                         <span style={{ color: TEAL_DARK }}>✦</span>
-                        Calme · Pro
+                        {assistantConfig?.voice || "Calme et professionnelle"}
                       </span>
                       <span style={{ ...S.assistantMetaItem, color: "#10b981", fontWeight: 600 }}>
                         <DotPulse size={8} />
@@ -524,6 +549,14 @@ const S = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
+    boxShadow: "0 12px 24px rgba(20,200,184,0.16)",
+  },
+  avatarImg: {
+    width: 58,
+    height: 58,
+    borderRadius: "50%",
+    objectFit: "cover",
+    display: "block",
     boxShadow: "0 12px 24px rgba(20,200,184,0.16)",
   },
   avatarText: {
