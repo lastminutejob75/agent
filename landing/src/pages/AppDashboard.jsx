@@ -166,6 +166,19 @@ function getReasonBadge(call) {
   }
 }
 
+function callIconTheme(status) {
+  switch (status) {
+    case "TRANSFERRED":
+      return { bg: "#fee2e2", color: "#dc2626" };
+    case "CONFIRMED":
+      return { bg: "#dcfce7", color: "#10b981" };
+    case "ABANDONED":
+      return { bg: "#fef2f2", color: "#e11d48" };
+    default:
+      return { bg: "#dbeafe", color: "#2563eb" };
+  }
+}
+
 function getActionCta(call) {
   return call?.contextual_action?.label || "Ouvrir";
 }
