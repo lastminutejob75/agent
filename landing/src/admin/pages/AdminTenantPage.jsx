@@ -1,11 +1,14 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { getClientImpersonateUrl, getClientLoginUrl } from "../../lib/clientAppUrl";
 import {
+  adminApi,
   getTenant,
   getTenantDashboard,
   getTenantActivity,
   getTenantCalls,
   getCallDetail,
+  getTenantBilling,
   getTenantInvoices,
   getTenantUsage,
   getTenantQuota,
@@ -107,6 +110,55 @@ function PageError({ msg, onRetry }) {
           Réessayer
         </button>
       )}
+    </div>
+  );
+}
+
+function copyText(value) {
+  navigator.clipboard?.writeText(String(value || "")).catch(() => {});
+}
+
+function QuickStat({ label, value, tone = C.text, mono = false }) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontSize: 11, color: C.muted, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>
+        {label}
+      </div>
+      <div
+        style={{
+          fontSize: 14,
+          fontWeight: 700,
+          color: tone,
+          fontFamily: mono ? "ui-monospace, SFMono-Regular, Menlo, monospace" : "inherit",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {value || "—"}
+      </div>
+    </div>
+  );
+}
+
+function BridgeCard({ title, children, actions = null }) {
+  return (
+    <div
+      style={{
+        background: C.card,
+        border: `1px solid ${C.border}`,
+        borderRadius: 16,
+        padding: 18,
+        display: "grid",
+        gap: 14,
+        minHeight: 164,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{title}</div>
+        {actions}
+      </div>
+      {children}
     </div>
   );
 }
@@ -1095,17 +1147,28 @@ export default function AdminTenantPage() {
   const [tab, setTab] = useState("info");
   const [tenant, setTenant] = useState(null);
   const [dashboard, setDashboard] = useState(null);
+  const [billing, setBilling] = useState(null);
+  const [technicalStatus, setTechnicalStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [bridgeLoading, setBridgeLoading] = useState(false);
+  const [bridgeError, setBridgeError] = useState(null);
 
   const load = useCallback(async () => {
     if (!tenantId) return;
     setLoading(true);
     setError(null);
     try {
-      const [t, d] = await Promise.all([getTenant(tenantId), getTenantDashboard(tenantId)]);
+      const [t, d, b, tech] = await Promise.all([
+        getTenant(tenantId),
+        getTenantDashboard(tenantId),
+        getTenantBilling(tenantId).catch(() => null),
+        adminApi.getTenantTechnicalStatus(tenantId).catch(() => null),
+      ]);
       setTenant(t);
       setDashboard(d);
+      setBilling(b);
+      setTechnicalStatus(tech);
     } catch (e) {
       setError(e?.message || "Erreur chargement");
     } finally {
@@ -1116,6 +1179,42 @@ export default function AdminTenantPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const params = tenant?.params || {};
+  const routing = tenant?.routing || [];
+  const contactEmail = params.contact_email || tenant?.contact_email || "";
+  const vocalDids = routing.filter((route) => route?.channel === "vocal" && route?.key).map((route) => route.key);
+  const primaryDid = technicalStatus?.did || vocalDids[0] || "";
+  const vapiAssistantId = params.vapi_assistant_id || "";
+  const planKey = params.plan_key || billing?.plan_key || "growth";
+  const activationSteps = [
+    { label: "Assistant", done: !!params.assistant_name, action: () => setTab("actions") },
+    { label: "Vapi", done: !!vapiAssistantId, action: () => setTab("actions") },
+    { label: "Numéro vocal", done: !!primaryDid, action: () => setTab("actions") },
+    { label: "Agenda", done: technicalStatus?.calendar_status === "connected" || params.calendar_provider === "none", action: () => setTab("actions") },
+    { label: "FAQ", done: true, action: () => setTab("faq") },
+  ];
+  const activationProgress = `${activationSteps.filter((step) => step.done).length}/${activationSteps.length}`;
+
+  const openClientLogin = () => {
+    window.open(getClientLoginUrl(contactEmail, Number(tenantId)), "_blank", "noopener,noreferrer");
+  };
+
+  const openAsClient = async () => {
+    setBridgeError(null);
+    setBridgeLoading(true);
+    try {
+      const result = await adminApi.impersonate(tenantId);
+      if (!result?.token) {
+        throw new Error("Pas de token reçu");
+      }
+      window.open(getClientImpersonateUrl(result.token), "_blank", "noopener,noreferrer");
+    } catch (e) {
+      setBridgeError(e?.data?.detail ?? e?.message ?? "Erreur lors de l'ouverture du dashboard client");
+    } finally {
+      setBridgeLoading(false);
+    }
+  };
 
   if (loading && !tenant) return <PageLoader />;
   if (error && !tenant) return <PageError msg={error} onRetry={load} />;
@@ -1205,6 +1304,197 @@ export default function AdminTenantPage() {
               {t.label}
             </button>
           ))}
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+            gap: 14,
+            marginBottom: 24,
+          }}
+        >
+          <BridgeCard
+            title="Accès client"
+            actions={
+              <button
+                type="button"
+                onClick={() => copyText(tenantId)}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: `1px solid ${C.border}`,
+                  background: C.surface,
+                  color: C.muted,
+                  fontSize: 12,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Copier ID
+              </button>
+            }
+          >
+            <div style={{ display: "grid", gap: 10 }}>
+              <QuickStat label="Email client" value={contactEmail || "Non renseigné"} />
+              <QuickStat label="Progression activation" value={activationProgress} tone={C.accent} />
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  onClick={openAsClient}
+                  disabled={bridgeLoading}
+                  style={{
+                    padding: "9px 12px",
+                    borderRadius: 10,
+                    border: "none",
+                    background: `linear-gradient(135deg,${C.accent},${C.accentDim})`,
+                    color: C.bg,
+                    fontSize: 12,
+                    fontWeight: 800,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    opacity: bridgeLoading ? 0.75 : 1,
+                  }}
+                >
+                  {bridgeLoading ? "Ouverture..." : "Voir comme le client"}
+                </button>
+                <button
+                  type="button"
+                  onClick={openClientLogin}
+                  style={{
+                    padding: "9px 12px",
+                    borderRadius: 10,
+                    border: `1px solid ${C.blue}50`,
+                    background: "rgba(91,168,255,0.1)",
+                    color: C.blue,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  Ouvrir login client
+                </button>
+              </div>
+              {bridgeError && <div style={{ fontSize: 12, color: C.danger }}>{bridgeError}</div>}
+            </div>
+          </BridgeCard>
+
+          <BridgeCard
+            title="Téléphonie"
+            actions={
+              <button
+                type="button"
+                onClick={() => setTab("actions")}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: `1px solid ${C.border}`,
+                  background: C.surface,
+                  color: C.muted,
+                  fontSize: 12,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Configurer
+              </button>
+            }
+          >
+            <div style={{ display: "grid", gap: 10 }}>
+              <QuickStat label="DID principal" value={primaryDid || "Aucun numéro"} tone={primaryDid ? C.text : C.warning} mono />
+              <QuickStat
+                label="Routing vocal"
+                value={technicalStatus?.routing_status === "active" ? "Actif" : "Non configuré"}
+                tone={technicalStatus?.routing_status === "active" ? C.accent : C.warning}
+              />
+              <QuickStat label="Transfert humain" value={params.transfer_number || "Non configuré"} mono />
+            </div>
+          </BridgeCard>
+
+          <BridgeCard
+            title="Vapi & activité"
+            actions={
+              <button
+                type="button"
+                onClick={() => setTab("calls")}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: `1px solid ${C.border}`,
+                  background: C.surface,
+                  color: C.muted,
+                  fontSize: 12,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Voir appels
+              </button>
+            }
+          >
+            <div style={{ display: "grid", gap: 10 }}>
+              <QuickStat label="assistant_name" value={params.assistant_name || "Non choisi"} />
+              <QuickStat label="assistant_id Vapi" value={vapiAssistantId || "Absent"} tone={vapiAssistantId ? C.accent : C.warning} mono />
+              <QuickStat
+                label="Agent"
+                value={technicalStatus?.service_agent === "online" ? "En ligne" : "Hors ligne"}
+                tone={technicalStatus?.service_agent === "online" ? C.accent : C.warning}
+              />
+              <QuickStat label="Dernière activité" value={technicalStatus?.last_event_ago || "Jamais"} />
+            </div>
+          </BridgeCard>
+
+          <BridgeCard
+            title="Agenda & facturation"
+            actions={
+              <button
+                type="button"
+                onClick={() => setTab("faq")}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: `1px solid ${C.border}`,
+                  background: C.surface,
+                  color: C.muted,
+                  fontSize: 12,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                FAQ / prompt
+              </button>
+            }
+          >
+            <div style={{ display: "grid", gap: 10 }}>
+              <QuickStat
+                label="Agenda"
+                value={
+                  technicalStatus?.calendar_status === "connected"
+                    ? `Google connecté`
+                    : params.calendar_provider === "none"
+                      ? "Mode sans agenda"
+                      : "À configurer"
+                }
+                tone={technicalStatus?.calendar_status === "connected" || params.calendar_provider === "none" ? C.accent : C.warning}
+              />
+              <QuickStat label="Plan" value={String(planKey).replace(/^./, (char) => char.toUpperCase())} />
+              <QuickStat
+                label="Stripe"
+                value={billing?.billing_status || "Non synchronisé"}
+                tone={billing?.billing_status === "active" ? C.accent : C.warning}
+              />
+              <QuickStat
+                label="Blocage lock"
+                value={
+                  technicalStatus?.call_lock_timeout_rate_pct != null
+                    ? `${technicalStatus.call_lock_timeout_rate_pct}%`
+                    : "—"
+                }
+                tone={technicalStatus?.call_lock_timeout_alert ? C.danger : C.text}
+              />
+            </div>
+          </BridgeCard>
         </div>
 
         <div style={{ animation: "uwi-fadein 0.3s ease both" }} key={tab}>

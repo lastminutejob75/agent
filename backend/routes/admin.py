@@ -352,6 +352,213 @@ def _get_tenant_detail(tenant_id: int) -> Optional[dict]:
         conn.close()
 
 
+def _is_truthy_admin(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "oui"}
+
+
+def _count_active_faq_items_admin(faq: Any) -> int:
+    if not isinstance(faq, list):
+        return 0
+    count = 0
+    for category in faq:
+        if not isinstance(category, dict):
+            continue
+        items = category.get("items") or []
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            question = str(item.get("question") or "").strip()
+            answer = str(item.get("answer") or "").strip()
+            active = item.get("active", True)
+            if question and answer and active is not False:
+                count += 1
+    return count
+
+
+def _booking_days_ready_admin(raw_days: Any) -> bool:
+    if isinstance(raw_days, (list, tuple, set)):
+        return len(raw_days) > 0
+    if isinstance(raw_days, str):
+        raw = raw_days.strip()
+        if not raw:
+            return False
+        try:
+            parsed = json.loads(raw)
+            return isinstance(parsed, (list, tuple)) and len(parsed) > 0
+        except Exception:
+            return bool(raw)
+    return bool(raw_days)
+
+
+def _activation_summary_from_tenant_detail(detail: dict) -> dict:
+    params = (detail or {}).get("params") or {}
+    routing = (detail or {}).get("routing") or []
+    voice_number = next(
+        ((r.get("key") or "").strip() for r in routing if (r.get("channel") or "").strip() == "vocal" and (r.get("key") or "").strip()),
+        None,
+    )
+    calendar_provider = (params.get("calendar_provider") or "none").strip().lower() or "none"
+    calendar_id = (params.get("calendar_id") or "").strip()
+    faq_ready = _count_active_faq_items_admin(get_faq(detail["tenant_id"])) > 0
+    onboarding_done = _is_truthy_admin(params.get("client_onboarding_completed"))
+    assistant_name = (params.get("assistant_name") or "").strip()
+    vapi_assistant_id = (params.get("vapi_assistant_id") or "").strip()
+    horaires_ready = _booking_days_ready_admin(params.get("booking_days"))
+    technical_status = _get_technical_status(int(detail["tenant_id"])) or {}
+    billing = get_tenant_billing(int(detail["tenant_id"])) or {}
+    steps = {
+        "account": bool((params.get("contact_email") or "").strip()),
+        "assistant": bool(assistant_name and vapi_assistant_id),
+        "phone": bool(voice_number),
+        "calendar": (calendar_provider == "google" and bool(calendar_id)) or calendar_provider == "none",
+        "horaires": horaires_ready,
+        "faq": faq_ready,
+        "first_visit_done": onboarding_done,
+    }
+    missing = [key for key, done in steps.items() if not done]
+    primary_reason_map = {
+        "account": "Email client manquant",
+        "assistant": "Assistant Vapi non configuré",
+        "phone": "Numéro vocal non raccordé",
+        "calendar": "Agenda non connecté",
+        "horaires": "Horaires non configurés",
+        "faq": "FAQ vide",
+        "first_visit_done": "Première visite non finalisée",
+    }
+    critical_missing = {"account", "assistant", "phone"}
+    setup_missing = {"calendar", "horaires", "faq"}
+    stripe_status = str(billing.get("billing_status") or "").strip().lower()
+    has_billing_risk = stripe_status in {"past_due", "canceled", "unpaid"}
+    service_agent = str(technical_status.get("service_agent") or "offline").strip().lower()
+    has_technical_alert = bool(technical_status.get("call_lock_timeout_alert")) or (
+        bool(vapi_assistant_id) and bool(voice_number) and service_agent == "offline"
+    )
+    if any(step in missing for step in critical_missing):
+        priority_key = "blocking_before_launch"
+        priority_label = "Bloquant avant mise en prod"
+        priority_rank = 0
+    elif any(step in missing for step in setup_missing):
+        priority_key = "setup_pending"
+        priority_label = "Configuration à finir"
+        priority_rank = 1
+    elif "first_visit_done" in missing:
+        priority_key = "first_visit_pending"
+        priority_label = "Première visite en attente"
+        priority_rank = 2
+    elif has_technical_alert:
+        priority_key = "fragile_active"
+        priority_label = "Actif mais fragile"
+        priority_rank = 3
+    elif has_billing_risk:
+        priority_key = "billing_risk"
+        priority_label = "Billing à risque"
+        priority_rank = 4
+    else:
+        priority_key = "ready"
+        priority_label = "Cabinet activé"
+        priority_rank = 5
+
+    if priority_key == "blocking_before_launch":
+        primary_reason = primary_reason_map.get(next((step for step in missing if step in critical_missing), missing[0] if missing else None))
+    elif priority_key == "setup_pending":
+        primary_reason = primary_reason_map.get(next((step for step in missing if step in setup_missing), missing[0] if missing else None))
+    elif priority_key == "first_visit_pending":
+        primary_reason = primary_reason_map["first_visit_done"]
+    elif priority_key == "fragile_active":
+        primary_reason = "Activité présente mais fragile"
+    elif priority_key == "billing_risk":
+        primary_reason = "Facturation à sécuriser"
+    else:
+        primary_reason = "Cabinet activé"
+
+    return {
+        "tenant_id": detail.get("tenant_id"),
+        "tenant_name": detail.get("name") or f"Tenant #{detail.get('tenant_id')}",
+        "contact_email": (params.get("contact_email") or "").strip(),
+        "voice_number": voice_number,
+        "assistant_name": assistant_name,
+        "vapi_assistant_id": vapi_assistant_id,
+        "plan_key": params.get("plan_key") or "growth",
+        "calendar_provider": calendar_provider,
+        "calendar_id": calendar_id or None,
+        "onboarding_completed": onboarding_done,
+        "steps": steps,
+        "missing_steps": missing,
+        "missing_count": len(missing),
+        "primary_reason": primary_reason,
+        "priority_key": priority_key,
+        "priority_label": priority_label,
+        "priority_rank": priority_rank,
+        "stripe_status": stripe_status or None,
+        "service_agent": service_agent,
+        "call_lock_timeout_alert": bool(technical_status.get("call_lock_timeout_alert")),
+        "calendar_status": technical_status.get("calendar_status"),
+        "created_at": detail.get("created_at"),
+    }
+
+
+def _get_activation_queue(limit: int = 8) -> dict:
+    items: List[dict] = []
+    summary = {
+        "pending_total": 0,
+        "without_vapi": 0,
+        "without_phone": 0,
+        "without_calendar": 0,
+        "without_horaires": 0,
+        "without_faq": 0,
+        "first_visit_pending": 0,
+        "blocking_before_launch": 0,
+        "setup_pending": 0,
+        "fragile_active": 0,
+        "billing_risk": 0,
+    }
+    for tenant in _get_tenant_list(include_inactive=False):
+        tenant_id = tenant.get("tenant_id")
+        if not tenant_id:
+            continue
+        detail = _get_tenant_detail(int(tenant_id))
+        if not detail:
+            continue
+        activation = _activation_summary_from_tenant_detail(detail)
+        missing = activation["missing_steps"]
+        if "assistant" in missing:
+            summary["without_vapi"] += 1
+        if "phone" in missing:
+            summary["without_phone"] += 1
+        if "calendar" in missing:
+            summary["without_calendar"] += 1
+        if "horaires" in missing:
+            summary["without_horaires"] += 1
+        if "faq" in missing:
+            summary["without_faq"] += 1
+        if "first_visit_done" in missing:
+            summary["first_visit_pending"] += 1
+        if activation["priority_key"] in summary:
+            summary[activation["priority_key"]] += 1
+        if activation["priority_key"] != "ready":
+            items.append(activation)
+    items.sort(
+        key=lambda item: (
+            int(item.get("priority_rank") or 99),
+            -int(item.get("missing_count") or 0),
+            0 if "assistant" in (item.get("missing_steps") or []) else 1,
+            0 if "phone" in (item.get("missing_steps") or []) else 1,
+            str(item.get("created_at") or ""),
+        ),
+        reverse=False,
+    )
+    summary["pending_total"] = len(items)
+    return {"items": items[:limit], "summary": summary}
+
+
 def _get_kpis_weekly(tenant_id: int, start: str, end: str) -> dict:
     """Aggrège ivr_events pour la période (PG ou SQLite)."""
     url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
@@ -4249,6 +4456,7 @@ def admin_stats_dashboard_payload(
         "topTenantsCalls": _get_stats_top_tenants("calls", window_days, 10),
         "topTenantsCost": _get_stats_top_tenants("cost_usd", window_days, 10),
         "billing": _get_billing_snapshot(),
+        "activationQueue": _get_activation_queue(8),
     }
 
 

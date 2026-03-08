@@ -36,7 +36,7 @@ export default function ImpersonatePage() {
     api
       .tenantImpersonateValidate(token)
       .then((r) => {
-        setTenantToken(token);
+        setTenantToken(r?.token || "");
         setImpersonation(r.tenant_name || "Client");
         window.location.replace("/app");
       })

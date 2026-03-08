@@ -170,6 +170,50 @@ def pg_get_tenant_user_by_id(user_id: Any) -> Optional[Dict[str, Any]]:
     return None
 
 
+def pg_get_tenant_user_for_impersonation(tenant_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Retourne un tenant_user utilisable pour émettre une vraie client_session
+    lors d'une impersonation admin.
+
+    Priorité au owner, sinon premier utilisateur disponible du tenant.
+    Returns {"user_id", "tenant_id", "email", "role"} ou None.
+    """
+    url = _pg_url()
+    if not url:
+        return None
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, tenant_id, email, role
+                    FROM tenant_users
+                    WHERE tenant_id = %s
+                    ORDER BY
+                      CASE
+                        WHEN role = 'owner' THEN 0
+                        WHEN role = 'admin' THEN 1
+                        ELSE 2
+                      END,
+                      id ASC
+                    LIMIT 1
+                    """,
+                    (int(tenant_id),),
+                )
+                row = cur.fetchone()
+                if row:
+                    return {
+                        "user_id": int(row[0]),
+                        "tenant_id": int(row[1]),
+                        "email": (row[2] or "").strip(),
+                        "role": row[3] or "owner",
+                    }
+    except Exception as e:
+        logger.warning("pg_get_tenant_user_for_impersonation failed: %s", e)
+    return None
+
+
 def pg_create_tenant_user(
     tenant_id: int,
     email: str,

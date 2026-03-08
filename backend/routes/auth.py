@@ -35,6 +35,7 @@ from backend.auth_pg import (
     pg_get_tenant_user_by_email_for_google,
     pg_get_tenant_user_by_email_for_login,
     pg_get_tenant_user_by_id,
+    pg_get_tenant_user_for_impersonation,
     pg_get_tenant_user_for_reset_check,
     pg_link_google_sub,
     pg_update_password_and_clear_reset,
@@ -85,10 +86,11 @@ def _get_reset_base_url(request: Request) -> str:
 
 
 @router.get("/impersonate")
-def auth_impersonate_validate(token: str = ""):
+def auth_impersonate_validate(token: str = "", response: Response = None):
     """
     Valide un token d’impersonation (émis par POST /api/admin/tenants/{id}/impersonate).
-    Retourne tenant_id, tenant_name, expires_at pour que le client stocke le token et affiche le bandeau.
+    Retourne tenant_id, tenant_name, expires_at et échange ce jeton court
+    contre une vraie client_session pour permettre l'accès à /api/tenant/*.
     """
     if not JWT_SECRET:
         raise HTTPException(503, "JWT_SECRET not configured")
@@ -103,14 +105,33 @@ def auth_impersonate_validate(token: str = ""):
     if payload.get("scope") != "impersonate" or "tenant_id" not in payload:
         raise HTTPException(400, "Token invalide (scope)")
     tenant_id = int(payload["tenant_id"])
+    tenant_user = pg_get_tenant_user_for_impersonation(tenant_id)
+    if not tenant_user:
+        raise HTTPException(409, "Aucun utilisateur client disponible pour ce tenant")
     exp = payload.get("exp")
     expires_at = datetime.utcfromtimestamp(exp).strftime("%Y-%m-%dT%H:%M:%SZ") if exp else None
     tenant_name = _get_tenant_name(tenant_id)
+    session_token = _issue_client_session(
+        user_id=tenant_user["user_id"],
+        tenant_id=tenant_user["tenant_id"],
+        role=tenant_user["role"],
+    )
+    if response is not None:
+        response.set_cookie(
+            key=SESSION_COOKIE_NAME,
+            value=session_token,
+            httponly=True,
+            secure=COOKIE_SECURE,
+            samesite=COOKIE_SAMESITE,
+            path="/",
+            max_age=SESSION_TTL_SECONDS,
+        )
     log_auth_event(tenant_id, "impersonate", "auth_impersonate_used", None)
     return {
         "tenant_id": tenant_id,
         "tenant_name": tenant_name,
         "expires_at": expires_at,
+        "token": session_token,
     }
 
 

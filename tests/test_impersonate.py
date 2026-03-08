@@ -2,6 +2,7 @@
 Tests impersonation (Option A).
 - POST /api/admin/tenants/{id}/impersonate → token avec scope=impersonate, exp 5 min
 - GET /api/auth/impersonate?token=... → accepte scope=impersonate, rejette JWT tenant normal
+- Le endpoint d'échange retourne ensuite une vraie client_session pour /api/tenant/*
 """
 from __future__ import annotations
 
@@ -69,15 +70,23 @@ def test_auth_impersonate_rejects_wrong_scope(client):
     assert r.status_code == 400
 
 
+@patch("backend.routes.auth.pg_get_tenant_user_for_impersonation")
 @patch("backend.routes.auth._get_tenant_name")
 @patch("backend.routes.admin._get_tenant_detail")
 @patch("backend.config.USE_PG_TENANTS", False)
-def test_auth_impersonate_accepts_valid_token(mock_detail, mock_tenant_name, client, admin_headers):
+def test_auth_impersonate_accepts_valid_token(mock_detail, mock_tenant_name, mock_impersonation_user, client, admin_headers):
     """
-    Token retourné par POST impersonate → GET /api/auth/impersonate accepte et retourne tenant_id, tenant_name.
+    Token retourné par POST impersonate → GET /api/auth/impersonate accepte,
+    retourne tenant_id, tenant_name et échange vers une vraie client_session.
     """
     mock_detail.return_value = {"tenant_id": 1, "name": "Cabinet Dupont"}
     mock_tenant_name.return_value = "Cabinet Dupont"
+    mock_impersonation_user.return_value = {
+        "user_id": 42,
+        "tenant_id": 1,
+        "email": "cabinet@example.com",
+        "role": "owner",
+    }
     r_post = client.post("/api/admin/tenants/1/impersonate", headers=admin_headers)
     assert r_post.status_code == 200
     token = r_post.json().get("token")
@@ -89,3 +98,11 @@ def test_auth_impersonate_accepts_valid_token(mock_detail, mock_tenant_name, cli
     assert data.get("tenant_id") == 1
     assert data.get("tenant_name") == "Cabinet Dupont"
     assert "expires_at" in data
+    assert "token" in data
+
+    secret = os.environ.get("JWT_SECRET", "")
+    session_payload = jwt.decode(data["token"], secret, algorithms=["HS256"])
+    assert session_payload.get("typ") == "client_session"
+    assert session_payload.get("tenant_id") == "1"
+    assert session_payload.get("sub") == "42"
+    assert session_payload.get("role") == "owner"

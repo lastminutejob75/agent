@@ -215,6 +215,77 @@ function StripeBadge({ status }) {
   );
 }
 
+function MiniStatCard({ label, value, hint, tone = C.text }) {
+  return (
+    <div
+      style={{
+        background: C.card,
+        border: `1px solid ${C.border}`,
+        borderRadius: 14,
+        padding: "16px 18px",
+      }}
+    >
+      <div
+        style={{
+          fontSize: 10,
+          color: C.muted,
+          fontWeight: 700,
+          letterSpacing: 0.8,
+          textTransform: "uppercase",
+          marginBottom: 8,
+        }}
+      >
+        {label}
+      </div>
+      <div style={{ fontSize: 24, fontWeight: 800, color: tone, letterSpacing: -0.8, lineHeight: 1 }}>
+        {value}
+      </div>
+      {hint ? <div style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>{hint}</div> : null}
+    </div>
+  );
+}
+
+function PanelCard({ title, subtitle, action = null, children }) {
+  return (
+    <div
+      style={{
+        background: C.card,
+        border: `1px solid ${C.border}`,
+        borderRadius: 16,
+        padding: 22,
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 16 }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 2 }}>{title}</div>
+          {subtitle ? <div style={{ fontSize: 11, color: C.muted }}>{subtitle}</div> : null}
+        </div>
+        {action}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+const ACTIVATION_STEP_LABELS = {
+  account: "email client",
+  assistant: "assistant",
+  phone: "numéro vocal",
+  calendar: "agenda",
+  horaires: "horaires",
+  faq: "FAQ",
+  first_visit_done: "1re visite",
+};
+
+const ACTIVATION_PRIORITY_UI = {
+  blocking_before_launch: { label: "Bloquant", color: C.danger },
+  setup_pending: { label: "Configuration", color: C.warning },
+  first_visit_pending: { label: "1re visite", color: C.blue },
+  fragile_active: { label: "Fragile", color: "#f59e0b" },
+  billing_risk: { label: "Billing", color: "#fb7185" },
+  ready: { label: "Prêt", color: C.accent },
+};
+
 // ── Quota Bar ─────────────────────────────────────────────────────────────────
 function QuotaBar({ used, included }) {
   const pct = included > 0 ? Math.min((used / included) * 100, 100) : 0;
@@ -687,7 +758,92 @@ export default function AdminDashboard() {
     dur: c.duration_min != null ? `${c.duration_min}m` : "—",
     status: RESULT_MAP[c.result] ?? "info",
     num: c.call_id?.slice(0, 16) ?? "—",
+    tenantId: c.tenant_id,
+    callId: c.call_id,
   }));
+
+  const tenants = overview?.tenants ?? [];
+  const urgentBillingItems = tenants
+    .filter((item) => ["past_due", "canceled"].includes((item?.stripe_status || "").toLowerCase()))
+    .slice(0, 4)
+    .map((item) => ({
+      id: `billing-${item.tenant_id}`,
+      tenantId: item.tenant_id,
+      title: item.name || `Tenant #${item.tenant_id}`,
+      reason: item.stripe_status === "past_due" ? "Facturation en retard" : "Abonnement annulé",
+      detail:
+        item.stripe_status === "past_due"
+          ? "Relancer le client ou ouvrir le portail Stripe."
+          : "Vérifier si le cabinet doit être réactivé.",
+      tone: item.stripe_status === "past_due" ? C.danger : C.warning,
+      cta: item.stripe_status === "past_due" ? "Ouvrir la fiche" : "Vérifier le dossier",
+    }));
+
+  const quotaAlerts = tenants
+    .filter((item) => {
+      const included = item?.quota?.included ?? 0;
+      const used = item?.quota?.used ?? 0;
+      return included > 0 && used / included >= 0.85;
+    })
+    .slice(0, 4)
+    .map((item) => ({
+      id: `quota-${item.tenant_id}`,
+      tenantId: item.tenant_id,
+      title: item.name || `Tenant #${item.tenant_id}`,
+      reason: "Quota presque atteint",
+      detail: `${item?.quota?.used ?? 0}/${item?.quota?.included ?? 0} min utilisées.`,
+      tone: C.warning,
+      cta: "Ajuster le plan",
+    }));
+
+  const topActionItems = [...urgentBillingItems, ...quotaAlerts].slice(0, 6);
+
+  const operatorQueue = recentCalls
+    .filter((call) => ["transfert", "abandon"].includes(call.status))
+    .slice(0, 5)
+    .map((call) => ({
+      id: `call-${call.callId}`,
+      tenantId: call.tenantId,
+      title: call.client,
+      reason: call.status === "transfert" ? "Appel transféré" : "Abandon / friction",
+      detail: `${call.time} · ${call.dur} · ${call.num}`,
+      tone: call.status === "transfert" ? C.warning : C.danger,
+      cta: "Voir le tenant",
+    }));
+
+  const actionQueue = [...operatorQueue, ...topActionItems].slice(0, 6);
+
+  const healthSignals = [
+    {
+      label: "Past due",
+      value: overview?.summary?.tenants_past_due_count ?? 0,
+      hint: "clients à relancer",
+      tone: (overview?.summary?.tenants_past_due_count ?? 0) > 0 ? C.danger : C.accent,
+    },
+    {
+      label: "Appels transférés",
+      value: data?.global?.transfers_total ?? 0,
+      hint: `${days} derniers jours`,
+      tone: (data?.global?.transfers_total ?? 0) > 0 ? C.warning : C.text,
+    },
+    {
+      label: "Erreurs",
+      value: data?.global?.errors_total ?? 0,
+      hint: "anti-loop / incidents",
+      tone: (data?.global?.errors_total ?? 0) > 0 ? C.danger : C.text,
+    },
+    {
+      label: "Dernière activité",
+      value: data?.global?.last_activity_at
+        ? new Date(data.global.last_activity_at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })
+        : "—",
+      hint: "trace la plus récente",
+      tone: C.blue,
+    },
+  ];
+
+  const activationQueue = data?.activationQueue?.items ?? [];
+  const activationSummary = data?.activationQueue?.summary ?? {};
 
   return (
     <>
@@ -806,276 +962,486 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {/* ── KPI Grid ── */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 24 }}>
+        {/* ── Control strip ── */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 14, marginBottom: 24 }}>
           {loading
             ? Array(4)
                 .fill(0)
                 .map((_, i) => <SkeletonCard key={i} />)
-            : kpis.map((kpi) => (
-                <KpiCard key={kpi.label} {...kpi} />
-              ))}
+            : [
+                {
+                  label: "Clients actifs",
+                  value: data?.global?.tenants_active ?? 0,
+                  hint: `${data?.global?.tenants_total ?? 0} clients au total`,
+                  tone: C.text,
+                },
+                {
+                  label: "Past due",
+                  value: overview?.summary?.tenants_past_due_count ?? 0,
+                  hint: "à traiter maintenant",
+                  tone: (overview?.summary?.tenants_past_due_count ?? 0) > 0 ? C.danger : C.accent,
+                },
+                {
+                  label: "MRR",
+                  value: `${overview?.summary?.mrr_eur_total ?? 0}€`,
+                  hint: month,
+                  tone: C.accent,
+                },
+                {
+                  label: `Coût ${period}`,
+                  value: `$${(data?.global?.cost_usd_total ?? 0).toFixed(2)}`,
+                  hint: "usage Vapi",
+                  tone: C.warning,
+                },
+              ].map((item) => <MiniStatCard key={item.label} {...item} />)}
         </div>
 
-        {/* ── Sub-stats ── */}
-        <div style={{ display: "flex", gap: 10, marginBottom: 24, animation: "uwi-fadein 0.5s ease 0.25s both" }}>
-          {subStats.map(([l, v, c]) => (
-            <div
-              key={l}
-              style={{
-                background: C.card,
-                border: `1px solid ${C.border}`,
-                borderRadius: 12,
-                padding: "10px 18px",
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-              }}
-            >
-              <div style={{ width: 6, height: 6, borderRadius: "50%", background: c }} />
-              <span style={{ fontSize: 12, color: C.muted }}>{l}</span>
-              <span style={{ fontSize: 14, fontWeight: 700, color: c }}>{v}</span>
-            </div>
-          ))}
-        </div>
-
-        {/* ── Charts row ── */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginBottom: 14 }}>
-          {/* Activity chart */}
-          <div
-            style={{
-              gridColumn: "1/3",
-              background: C.card,
-              border: `1px solid ${C.border}`,
-              borderRadius: 16,
-              padding: 22,
-              animation: "uwi-fadein 0.5s ease 0.3s both",
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 2 }}>
-                  Activité — appels/jour
-                </div>
-                <div style={{ fontSize: 12, color: C.muted }}>{period} derniers jours</div>
-              </div>
-            </div>
-            <ResponsiveContainer width="100%" height={160}>
-              <AreaChart data={activityData} margin={{ top: 0, right: 0, bottom: 0, left: -20 }}>
-                <defs>
-                  <linearGradient id="accentGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={C.accent} stopOpacity={0.3} />
-                    <stop offset="100%" stopColor={C.accent} stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <XAxis dataKey="day" tick={{ fill: C.muted, fontSize: 10 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: C.muted, fontSize: 10 }} axisLine={false} tickLine={false} />
-                <Tooltip content={<CustomTooltip />} />
-                <Area type="monotone" dataKey="appels" stroke={C.accent} strokeWidth={2} fill="url(#accentGrad)" dot={false} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Billing snapshot */}
-          <div
-            style={{
-              background: C.card,
-              border: `1px solid ${C.border}`,
-              borderRadius: 16,
-              padding: 22,
-              animation: "uwi-fadein 0.5s ease 0.35s both",
-            }}
-          >
-            <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 4 }}>Billing</div>
-            <div style={{ fontSize: 11, color: C.muted, marginBottom: 20 }}>Mois en cours (UTC)</div>
-            <div style={{ fontSize: 36, fontWeight: 800, color: C.accent, letterSpacing: -1, marginBottom: 4 }}>
-              ${(data?.billing?.cost_usd_this_month ?? 0).toFixed(2)}
-            </div>
-            <div
-              style={{
-                fontSize: 11,
-                color: (data?.billing?.tenants_past_due_count ?? 0) > 0 ? C.danger : C.muted,
-                marginBottom: 20,
-              }}
-            >
-              {(data?.billing?.tenants_past_due_count ?? 0) > 0
-                ? `⚠️ ${data.billing.tenants_past_due_count} past due`
-                : "✓ Aucun past due"}
-            </div>
-          </div>
-        </div>
-
-        {/* ── Bottom row ── */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginBottom: 14 }}>
-          {/* Top clients */}
-          <div
-            style={{
-              background: C.card,
-              border: `1px solid ${C.border}`,
-              borderRadius: 16,
-              padding: 22,
-              animation: "uwi-fadein 0.5s ease 0.4s both",
-            }}
-          >
-            <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 4 }}>Top clients</div>
-            <div style={{ fontSize: 11, color: C.muted, marginBottom: 16 }}>Par volume d'appels</div>
-            {topClients.map((c, i) => (
-              <div
-                key={c.id}
-                onClick={() => navigate(`/admin/tenants/${c.id}`)}
-                style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, cursor: "pointer" }}
+        {/* ── Action panels ── */}
+        <div style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr", gap: 14, marginBottom: 24 }}>
+          <PanelCard
+            title="À traiter maintenant"
+            subtitle="Relances billing, saturation quota, appels transférés ou abandonnés."
+            action={
+              <button
+                onClick={() => navigate("/admin/tenants")}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 8,
+                  background: "transparent",
+                  border: `1px solid ${C.border}`,
+                  color: C.muted,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
               >
-                <div
-                  style={{
-                    width: 20,
-                    height: 20,
-                    borderRadius: 6,
-                    background: i === 0 ? "rgba(0,229,160,0.15)" : C.surface,
-                    border: `1px solid ${i === 0 ? C.accent : C.border}`,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: 10,
-                    fontWeight: 700,
-                    color: i === 0 ? C.accent : C.muted,
-                    flexShrink: 0,
-                  }}
-                >
-                  {i + 1}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
+                Voir clients →
+              </button>
+            }
+          >
+            {actionQueue.length === 0 ? (
+              <div style={{ fontSize: 13, color: C.muted }}>Aucune alerte prioritaire détectée.</div>
+            ) : (
+              <div style={{ display: "grid", gap: 10 }}>
+                {actionQueue.map((item) => (
                   <div
+                    key={item.id}
                     style={{
-                      fontSize: 12,
-                      fontWeight: 600,
-                      color: C.text,
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                      padding: "12px 14px",
+                      borderRadius: 12,
+                      background: C.surface,
+                      border: `1px solid ${C.border}`,
                     }}
                   >
-                    {c.name}
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: item.tone, flexShrink: 0 }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 3 }}>{item.title}</div>
+                      <div style={{ fontSize: 11, color: item.tone, marginBottom: 3 }}>{item.reason}</div>
+                      <div style={{ fontSize: 11, color: C.muted }}>{item.detail}</div>
+                    </div>
+                    <button
+                      onClick={() => navigate(`/admin/tenants/${item.tenantId}`)}
+                      style={{
+                        padding: "8px 12px",
+                        borderRadius: 9,
+                        background: `${item.tone}18`,
+                        border: `1px solid ${item.tone}40`,
+                        color: item.tone,
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        fontFamily: "inherit",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {item.cta}
+                    </button>
                   </div>
-                  <div style={{ fontSize: 10, color: C.muted }}>{c.appels} appels</div>
-                </div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: C.accent }}>${c.cost}</div>
+                ))}
               </div>
-            ))}
-          </div>
+            )}
+          </PanelCard>
 
-          {/* Appels récents */}
-          <div
-            style={{
-              gridColumn: "2/4",
-              background: C.card,
-              border: `1px solid ${C.border}`,
-              borderRadius: 16,
-              padding: 22,
-              animation: "uwi-fadein 0.5s ease 0.45s both",
-            }}
+          <PanelCard
+            title="Signaux d'exploitation"
+            subtitle="État court pour savoir si la journée dérive."
+            action={
+              <button
+                onClick={() => navigate("/admin/operations")}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 8,
+                  background: "transparent",
+                  border: `1px solid ${C.border}`,
+                  color: C.muted,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Operations →
+              </button>
+            }
           >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 2 }}>Appels récents</div>
-                <div style={{ fontSize: 11, color: C.muted }}>Aujourd'hui</div>
+            <div style={{ display: "grid", gap: 10 }}>
+              {healthSignals.map((signal) => (
+                <div
+                  key={signal.label}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    padding: "12px 14px",
+                    borderRadius: 12,
+                    background: C.surface,
+                    border: `1px solid ${C.border}`,
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: 12, color: C.muted, marginBottom: 4 }}>{signal.label}</div>
+                    <div style={{ fontSize: 11, color: C.muted }}>{signal.hint}</div>
+                  </div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: signal.tone, letterSpacing: -0.7 }}>
+                    {signal.value}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </PanelCard>
+        </div>
+
+        <PanelCard
+          title="Cabinets à activer"
+          subtitle="Priorisés par blocage réel, configuration, première visite, fragilité technique et risque billing."
+          action={
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {[
+                ["Bloquants", activationSummary.blocking_before_launch ?? 0, C.danger],
+                ["Configuration", activationSummary.setup_pending ?? 0, C.warning],
+                ["1re visite", activationSummary.first_visit_pending ?? 0, C.blue],
+                ["Fragiles", activationSummary.fragile_active ?? 0, "#f59e0b"],
+                ["Billing", activationSummary.billing_risk ?? 0, "#fb7185"],
+              ].map(([label, value, color]) => (
+                <div
+                  key={label}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "6px 10px",
+                    borderRadius: 999,
+                    background: `${color}18`,
+                    border: `1px solid ${color}30`,
+                    color,
+                    fontSize: 11,
+                    fontWeight: 700,
+                  }}
+                >
+                  <span>{label}</span>
+                  <span>{value}</span>
+                </div>
+              ))}
+            </div>
+          }
+        >
+          {activationQueue.length === 0 ? (
+            <div style={{ fontSize: 13, color: C.muted }}>Tous les cabinets actifs semblent prêts.</div>
+          ) : (
+            <div style={{ display: "grid", gap: 10 }}>
+              {activationQueue.map((item) => (
+                <div
+                  key={item.tenant_id}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1.2fr auto auto",
+                    gap: 12,
+                    alignItems: "center",
+                    padding: "12px 14px",
+                    borderRadius: 12,
+                    background: C.surface,
+                    border: `1px solid ${C.border}`,
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3, flexWrap: "wrap" }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{item.tenant_name}</div>
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 800,
+                          borderRadius: 999,
+                          padding: "3px 8px",
+                          background: `${(ACTIVATION_PRIORITY_UI[item.priority_key] || ACTIVATION_PRIORITY_UI.ready).color}18`,
+                          border: `1px solid ${(ACTIVATION_PRIORITY_UI[item.priority_key] || ACTIVATION_PRIORITY_UI.ready).color}30`,
+                          color: (ACTIVATION_PRIORITY_UI[item.priority_key] || ACTIVATION_PRIORITY_UI.ready).color,
+                        }}
+                      >
+                        {(ACTIVATION_PRIORITY_UI[item.priority_key] || ACTIVATION_PRIORITY_UI.ready).label}
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        color: (ACTIVATION_PRIORITY_UI[item.priority_key] || ACTIVATION_PRIORITY_UI.ready).color,
+                        marginBottom: 4,
+                      }}
+                    >
+                      {item.primary_reason}
+                      {item.missing_count > 0
+                        ? ` · ${item.missing_count} point${item.missing_count > 1 ? "s" : ""} à compléter`
+                        : " · suivi prioritaire"}
+                    </div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {(item.missing_steps || []).slice(0, 5).map((step) => (
+                        <span
+                          key={step}
+                          style={{
+                            fontSize: 10,
+                            color: C.muted,
+                            border: `1px solid ${C.border}`,
+                            borderRadius: 999,
+                            padding: "3px 8px",
+                          }}
+                        >
+                          {ACTIVATION_STEP_LABELS[step] || step}
+                        </span>
+                      ))}
+                      {item.call_lock_timeout_alert ? (
+                        <span
+                          style={{
+                            fontSize: 10,
+                            color: "#f59e0b",
+                            border: "1px solid rgba(245,158,11,0.3)",
+                            borderRadius: 999,
+                            padding: "3px 8px",
+                          }}
+                        >
+                          lock timeout
+                        </span>
+                      ) : null}
+                      {item.stripe_status ? (
+                        <span
+                          style={{
+                            fontSize: 10,
+                            color: "#fb7185",
+                            border: "1px solid rgba(251,113,133,0.28)",
+                            borderRadius: 999,
+                            padding: "3px 8px",
+                          }}
+                        >
+                          Stripe {item.stripe_status}
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Plan</div>
+                    <PlanBadge plan={item.plan_key} />
+                  </div>
+                  <button
+                    onClick={() => navigate(`/admin/tenants/${item.tenant_id}`)}
+                    style={{
+                      padding: "8px 12px",
+                      borderRadius: 9,
+                      background: "rgba(0,229,160,0.1)",
+                      border: "1px solid rgba(0,229,160,0.28)",
+                      color: C.accent,
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    Ouvrir le cabinet
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </PanelCard>
+
+        {/* ── Operational rows ── */}
+        <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1.4fr", gap: 14, marginBottom: 24 }}>
+          <PanelCard
+            title="Top clients"
+            subtitle="Cabinets les plus actifs sur la fenêtre."
+            action={
+              <button
+                onClick={() => navigate("/admin/tenants")}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 8,
+                  background: "transparent",
+                  border: `1px solid ${C.border}`,
+                  color: C.muted,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Tous les clients →
+              </button>
+            }
+          >
+            {topClients.length === 0 ? (
+              <div style={{ fontSize: 13, color: C.muted }}>Aucune donnée client sur la fenêtre.</div>
+            ) : (
+              <div style={{ display: "grid", gap: 10 }}>
+                {topClients.map((c, i) => (
+                  <div
+                    key={c.id}
+                    onClick={() => navigate(`/admin/tenants/${c.id}`)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "10px 12px",
+                      borderRadius: 12,
+                      background: C.surface,
+                      border: `1px solid ${C.border}`,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 22,
+                        height: 22,
+                        borderRadius: 7,
+                        background: i === 0 ? "rgba(0,229,160,0.15)" : C.card,
+                        border: `1px solid ${i === 0 ? C.accent : C.border}`,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: 10,
+                        fontWeight: 800,
+                        color: i === 0 ? C.accent : C.muted,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {i + 1}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {c.name}
+                      </div>
+                      <div style={{ fontSize: 11, color: C.muted }}>{c.appels} appels</div>
+                    </div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: C.accent }}>${c.cost}</div>
+                  </div>
+                ))}
               </div>
+            )}
+          </PanelCard>
+
+          <PanelCard
+            title="Appels récents"
+            subtitle="Transferts, abandons et trafic du jour."
+            action={
               <button
                 onClick={() => navigate("/admin/calls")}
                 style={{
-                  fontSize: 12,
-                  color: C.accent,
-                  background: "transparent",
-                  border: `1px solid rgba(0,229,160,0.3)`,
+                  padding: "6px 12px",
                   borderRadius: 8,
-                  padding: "5px 12px",
+                  background: "transparent",
+                  border: `1px solid ${C.border}`,
+                  color: C.muted,
+                  fontSize: 12,
+                  fontWeight: 700,
                   cursor: "pointer",
                   fontFamily: "inherit",
-                  fontWeight: 600,
                 }}
               >
                 Voir tout →
               </button>
-            </div>
+            }
+          >
             {recentCalls.length === 0 ? (
               <div style={{ fontSize: 13, color: C.muted }}>Aucun appel aujourd'hui</div>
             ) : (
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "auto 1fr auto auto auto",
-                  gap: "8px 14px",
-                  alignItems: "center",
-                }}
-              >
-                {["Heure", "Client", "Durée", "Statut", "ID"].map((h) => (
+              <div style={{ display: "grid", gap: 10 }}>
+                {recentCalls.map((call, i) => (
                   <div
-                    key={h}
+                    key={`${call.callId || i}`}
                     style={{
-                      fontSize: 10,
-                      color: C.muted,
-                      fontWeight: 600,
-                      letterSpacing: 0.8,
-                      textTransform: "uppercase",
-                      paddingBottom: 8,
-                      borderBottom: `1px solid ${C.border}`,
+                      display: "grid",
+                      gridTemplateColumns: "auto 1fr auto auto",
+                      alignItems: "center",
+                      gap: 12,
+                      padding: "10px 12px",
+                      borderRadius: 12,
+                      background: C.surface,
+                      border: `1px solid ${C.border}`,
                     }}
                   >
-                    {h}
-                  </div>
-                ))}
-                {recentCalls.map((call, i) => (
-                  <React.Fragment key={i}>
                     <div style={{ fontSize: 12, color: C.muted }}>{call.time}</div>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{call.client}</div>
-                    <div style={{ fontSize: 12, color: C.muted }}>{call.dur}</div>
-                    <div>
-                      <StatusBadge status={call.status} />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{call.client}</div>
+                      <div style={{ fontSize: 11, color: C.muted }}>{call.dur} · {call.num}</div>
                     </div>
-                    <div style={{ fontSize: 11, color: C.muted, fontFamily: "monospace" }}>{call.num}</div>
-                  </React.Fragment>
+                    <StatusBadge status={call.status} />
+                    <button
+                      onClick={() => navigate(call.tenantId ? `/admin/tenants/${call.tenantId}` : "/admin/calls")}
+                      style={{
+                        padding: "7px 10px",
+                        borderRadius: 8,
+                        background: "rgba(0,229,160,0.1)",
+                        border: "1px solid rgba(0,229,160,0.28)",
+                        color: C.accent,
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        fontFamily: "inherit",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      Ouvrir
+                    </button>
+                  </div>
                 ))}
               </div>
             )}
-          </div>
+          </PanelCard>
         </div>
 
-        {/* ── Quick actions ── */}
-        <div style={{ display: "flex", gap: 10, marginBottom: 24, animation: "uwi-fadein 0.5s ease 0.5s both" }}>
-          <button
-            onClick={() => navigate("/admin/tenants")}
-            style={{
-              flex: 1,
-              padding: 13,
-              borderRadius: 12,
-              background: `linear-gradient(135deg,${C.accent},${C.accentDim})`,
-              border: "none",
-              color: C.bg,
-              fontSize: 13,
-              fontWeight: 800,
-              cursor: "pointer",
-              fontFamily: "inherit",
-            }}
-          >
-            Voir tous les clients →
-          </button>
-          <button
-            onClick={() => navigate("/admin/calls")}
-            style={{
-              flex: 1,
-              padding: 13,
-              borderRadius: 12,
-              background: C.surface,
-              border: `1px solid ${C.border}`,
-              color: C.text,
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: "pointer",
-              fontFamily: "inherit",
-            }}
-          >
-            Voir tous les appels →
-          </button>
-        </div>
+        {/* ── Activity chart ── */}
+        <PanelCard
+          title="Volume d'appels"
+          subtitle={`${period} derniers jours`}
+          action={
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {subStats.map(([l, v, c]) => (
+                <div key={l} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: C.muted }}>
+                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: c }} />
+                  <span>{l}</span>
+                  <span style={{ color: c, fontWeight: 700 }}>{v}</span>
+                </div>
+              ))}
+            </div>
+          }
+        >
+          <ResponsiveContainer width="100%" height={160}>
+            <AreaChart data={activityData} margin={{ top: 0, right: 0, bottom: 0, left: -20 }}>
+              <defs>
+                <linearGradient id="accentGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={C.accent} stopOpacity={0.3} />
+                  <stop offset="100%" stopColor={C.accent} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <XAxis dataKey="day" tick={{ fill: C.muted, fontSize: 10 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: C.muted, fontSize: 10 }} axisLine={false} tickLine={false} />
+              <Tooltip content={<CustomTooltip />} />
+              <Area type="monotone" dataKey="appels" stroke={C.accent} strokeWidth={2} fill="url(#accentGrad)" dot={false} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </PanelCard>
 
         {/* ── Section Billing ── */}
         <section style={{ animation: "uwi-fadein 0.5s ease 0.55s both" }}>
