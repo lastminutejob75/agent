@@ -13,6 +13,8 @@ import httpx
 logger = logging.getLogger(__name__)
 
 VAPI_API_URL = "https://api.vapi.ai"
+FAQ_START_MARKER = "=== FAQ DU CABINET ==="
+FAQ_END_MARKER = "=== FIN FAQ ==="
 
 # Mapping assistant_id → voix Vapi (Azure)
 ASSISTANT_VOICES: Dict[str, Dict[str, str]] = {
@@ -56,6 +58,19 @@ def _vapi_webhook_url() -> str:
     return f"{base}/api/vapi/webhook"
 
 
+def _merge_prompt_with_faq(base_prompt: str, faq_text: str) -> str:
+    base = (base_prompt or "").strip()
+    if FAQ_START_MARKER in base and FAQ_END_MARKER in base:
+        before = base.split(FAQ_START_MARKER, 1)[0].rstrip()
+        base = before
+    faq_text = (faq_text or "").strip()
+    if not faq_text:
+        return base
+    if not base:
+        return faq_text
+    return f"{base}\n\n{faq_text}"
+
+
 async def create_vapi_assistant(
     tenant_id: int,
     tenant_name: str,
@@ -70,6 +85,12 @@ async def create_vapi_assistant(
     voice = ASSISTANT_VOICES.get(assistant_id, ASSISTANT_VOICES["sophie"])
     prompt_tpl = SECTOR_PROMPTS.get(sector, SECTOR_PROMPTS["medecin_generaliste"])
     sys_msg = prompt_tpl.format(name=tenant_name)
+    try:
+        from backend.tenant_config import faq_to_prompt_text, get_faq
+
+        sys_msg = _merge_prompt_with_faq(sys_msg, faq_to_prompt_text(get_faq(tenant_id)))
+    except Exception as e:
+        logger.warning("create_vapi_assistant faq merge failed tenant_id=%s: %s", tenant_id, e)
 
     webhook_url = _vapi_webhook_url()
     webhook_secret = (os.environ.get("VAPI_WEBHOOK_SECRET") or "").strip() or None
@@ -118,6 +139,62 @@ async def create_vapi_assistant(
             data.get("id", "")[:24],
         )
         return data
+
+
+async def patch_vapi_assistant_system_prompt(assistant_id: str, faq_text: str) -> None:
+    """Recharge le prompt système de l'assistant en remplaçant uniquement le bloc FAQ."""
+    assistant_id = (assistant_id or "").strip()
+    if not assistant_id:
+        return
+    headers = {
+        "Authorization": f"Bearer {_vapi_api_key()}",
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient() as client:
+        current_res = await client.get(
+            f"{VAPI_API_URL}/assistant/{assistant_id}",
+            headers=headers,
+            timeout=15,
+        )
+        current_res.raise_for_status()
+        data = current_res.json() or {}
+        model = data.get("model") or {}
+        messages = model.get("messages") or []
+        if not isinstance(messages, list):
+            messages = []
+
+        system_index = next(
+            (idx for idx, message in enumerate(messages) if isinstance(message, dict) and message.get("role") == "system"),
+            None,
+        )
+        if system_index is None:
+            messages = [{"role": "system", "content": faq_text}] + [msg for msg in messages if isinstance(msg, dict)]
+        else:
+            current_message = messages[system_index] if isinstance(messages[system_index], dict) else {"role": "system", "content": ""}
+            merged_prompt = _merge_prompt_with_faq(str(current_message.get("content") or ""), faq_text)
+            messages[system_index] = {**current_message, "role": "system", "content": merged_prompt}
+
+        patch_res = await client.patch(
+            f"{VAPI_API_URL}/assistant/{assistant_id}",
+            json={"model": {**model, "messages": messages}},
+            headers=headers,
+            timeout=15,
+        )
+        patch_res.raise_for_status()
+        logger.info("VAPI_ASSISTANT_FAQ_UPDATED assistant_id=%s", assistant_id[:24])
+
+
+async def update_vapi_assistant_faq(tenant_id: int) -> None:
+    """Injecte la FAQ du tenant dans le system prompt Vapi, sans casser la sauvegarde locale si Vapi échoue."""
+    from backend.tenant_config import faq_to_prompt_text, get_faq, get_params
+
+    params = get_params(tenant_id)
+    vapi_assistant_id = str(params.get("vapi_assistant_id") or "").strip()
+    if not vapi_assistant_id:
+        return
+    faq = get_faq(tenant_id)
+    faq_text = faq_to_prompt_text(faq)
+    await patch_vapi_assistant_system_prompt(vapi_assistant_id, faq_text)
 
 
 async def assign_twilio_to_vapi(assistant_id: str, twilio_number: str) -> None:

@@ -7,6 +7,7 @@ Fallback : config.DEFAULT_FLAGS.
 """
 from __future__ import annotations
 
+import copy
 import json
 import logging
 from dataclasses import dataclass
@@ -33,6 +34,168 @@ OPENING_DAY_MAP = {
     "friday": 4, "fri": 4, "ven": 4, "4": 4,
     "saturday": 5, "sat": 5, "sam": 5, "5": 5,
     "sunday": 6, "sun": 6, "dim": 6, "6": 6,
+}
+
+DEFAULT_FAQ = {
+    "medecin_generaliste": [
+        {
+            "category": "Horaires",
+            "items": [
+                {"id": "h1", "question": "Quels sont vos horaires d'ouverture ?", "answer": "Nous sommes ouverts du lundi au vendredi de 9h à 18h.", "active": True},
+                {"id": "h2", "question": "Êtes-vous ouvert le samedi ?", "answer": "Non, le cabinet est fermé le week-end.", "active": True},
+            ],
+        },
+        {
+            "category": "Tarifs",
+            "items": [
+                {"id": "t1", "question": "Quel est le prix d'une consultation ?", "answer": "La consultation est à 25€ en secteur 1.", "active": True},
+                {"id": "t2", "question": "Acceptez-vous la carte vitale ?", "answer": "Oui, nous acceptons la carte vitale et les mutuelles.", "active": True},
+            ],
+        },
+        {
+            "category": "Urgences",
+            "items": [
+                {"id": "u1", "question": "Que faire en cas d'urgence ?", "answer": "En cas d'urgence, appelez le 15 (SAMU) ou le 112.", "active": True},
+            ],
+        },
+        {
+            "category": "Rendez-vous",
+            "items": [
+                {"id": "r1", "question": "Comment prendre rendez-vous ?", "answer": "Vous pouvez prendre rendez-vous par téléphone ou via notre assistant vocal.", "active": True},
+                {"id": "r2", "question": "Puis-je annuler un rendez-vous ?", "answer": "Oui, merci de nous prévenir au moins 24h à l'avance.", "active": True},
+            ],
+        },
+        {
+            "category": "Ordonnances",
+            "items": [
+                {"id": "o1", "question": "Puis-je demander un renouvellement d'ordonnance ?", "answer": "Oui, laissez votre demande et le cabinet vous recontactera si nécessaire.", "active": True},
+            ],
+        },
+    ],
+    "dentiste": [
+        {
+            "category": "Horaires",
+            "items": [
+                {"id": "h1", "question": "Quels sont vos horaires ?", "answer": "Nous recevons du lundi au vendredi de 9h à 19h.", "active": True},
+            ],
+        },
+        {
+            "category": "Tarifs",
+            "items": [
+                {"id": "t1", "question": "Prenez-vous en charge les mutuelles ?", "answer": "Oui, nous travaillons avec la plupart des mutuelles.", "active": True},
+            ],
+        },
+        {
+            "category": "Urgences",
+            "items": [
+                {"id": "u1", "question": "Gérez-vous les urgences dentaires ?", "answer": "Oui, nous réservons des créneaux urgents chaque matin.", "active": True},
+            ],
+        },
+        {
+            "category": "RDV",
+            "items": [
+                {"id": "r1", "question": "Comment prendre rendez-vous ?", "answer": "Vous pouvez prendre rendez-vous par téléphone ou via l'assistant vocal du cabinet.", "active": True},
+            ],
+        },
+        {
+            "category": "Mutuelle",
+            "items": [
+                {"id": "m1", "question": "Acceptez-vous le tiers payant ?", "answer": "Selon les soins et votre mutuelle, le cabinet pourra vous préciser les modalités.", "active": True},
+            ],
+        },
+    ],
+    "kine": [
+        {
+            "category": "Horaires",
+            "items": [
+                {"id": "h1", "question": "Quels sont vos horaires ?", "answer": "Le cabinet vous reçoit du lundi au vendredi sur rendez-vous.", "active": True},
+            ],
+        },
+        {
+            "category": "Tarifs",
+            "items": [
+                {"id": "t1", "question": "Quels sont vos tarifs ?", "answer": "Les tarifs varient selon le soin. Le cabinet vous les précisera lors de la prise de rendez-vous.", "active": True},
+            ],
+        },
+        {
+            "category": "RDV",
+            "items": [
+                {"id": "r1", "question": "Faut-il une ordonnance pour prendre rendez-vous ?", "answer": "Pour les soins remboursés, une ordonnance peut être nécessaire. Le cabinet vous guidera selon votre situation.", "active": True},
+            ],
+        },
+        {
+            "category": "Remboursement",
+            "items": [
+                {"id": "rb1", "question": "Les séances sont-elles remboursées ?", "answer": "Oui, selon votre prescription et votre couverture, les séances peuvent être remboursées.", "active": True},
+            ],
+        },
+    ],
+    "specialiste": [
+        {
+            "category": "Horaires",
+            "items": [
+                {"id": "h1", "question": "Quels sont vos horaires ?", "answer": "Le cabinet vous reçoit sur rendez-vous du lundi au vendredi.", "active": True},
+            ],
+        },
+        {
+            "category": "Tarifs",
+            "items": [
+                {"id": "t1", "question": "Quels sont vos tarifs ?", "answer": "Les tarifs dépendent du type de consultation. Le cabinet pourra vous les préciser.", "active": True},
+            ],
+        },
+        {
+            "category": "RDV",
+            "items": [
+                {"id": "r1", "question": "Comment prendre rendez-vous ?", "answer": "Vous pouvez prendre rendez-vous via cet assistant vocal ou en rappelant le cabinet.", "active": True},
+            ],
+        },
+    ],
+    "infirmier": [
+        {
+            "category": "Horaires",
+            "items": [
+                {"id": "h1", "question": "Quels sont vos horaires ?", "answer": "Le cabinet et les tournées sont organisés du lundi au samedi selon disponibilité.", "active": True},
+            ],
+        },
+        {
+            "category": "Tarifs",
+            "items": [
+                {"id": "t1", "question": "Les soins sont-ils remboursés ?", "answer": "Oui, selon prescription et prise en charge habituelle de l'assurance maladie.", "active": True},
+            ],
+        },
+        {
+            "category": "Contact",
+            "items": [
+                {"id": "c1", "question": "Comment laisser un message au cabinet ?", "answer": "Vous pouvez laisser votre demande via l'assistant vocal et l'équipe vous recontactera.", "active": True},
+            ],
+        },
+    ],
+    "default": [
+        {
+            "category": "Horaires",
+            "items": [
+                {"id": "h1", "question": "Quels sont vos horaires ?", "answer": "Veuillez consulter notre site ou rappeler pendant les heures d'ouverture.", "active": True},
+            ],
+        },
+        {
+            "category": "Tarifs",
+            "items": [
+                {"id": "t1", "question": "Quels sont vos tarifs ?", "answer": "Le cabinet pourra vous communiquer les tarifs lors de votre prise de contact.", "active": True},
+            ],
+        },
+        {
+            "category": "RDV",
+            "items": [
+                {"id": "r1", "question": "Comment prendre rendez-vous ?", "answer": "Vous pouvez prendre rendez-vous via cet assistant vocal.", "active": True},
+            ],
+        },
+        {
+            "category": "Contact",
+            "items": [
+                {"id": "c1", "question": "Comment vous contacter ?", "answer": "Vous pouvez laisser un message à l'assistant vocal et l'équipe vous recontactera.", "active": True},
+            ],
+        },
+    ],
 }
 
 
@@ -209,6 +372,76 @@ def get_booking_rules(tenant_id: Optional[int] = None) -> Dict[str, Any]:
     }
 
 
+def _normalize_faq_items(raw_items: Any) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    if not isinstance(raw_items, list):
+        return items
+    for idx, item in enumerate(raw_items):
+        if not isinstance(item, dict):
+            continue
+        question = str(item.get("question") or "").strip()
+        answer = str(item.get("answer") or "").strip()
+        if not question or not answer:
+            continue
+        item_id = str(item.get("id") or f"faq_{idx + 1}").strip() or f"faq_{idx + 1}"
+        items.append(
+            {
+                "id": item_id,
+                "question": question,
+                "answer": answer,
+                "active": bool(item.get("active", True)),
+            }
+        )
+    return items
+
+
+def normalize_faq_payload(raw_faq: Any) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    if not isinstance(raw_faq, list):
+        return normalized
+    for idx, category in enumerate(raw_faq):
+        if not isinstance(category, dict):
+            continue
+        category_name = str(category.get("category") or "").strip() or f"Catégorie {idx + 1}"
+        items = _normalize_faq_items(category.get("items") or [])
+        normalized.append({"category": category_name, "items": items})
+    return normalized
+
+
+def get_faq(tenant_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Retourne la FAQ du tenant, ou la FAQ par défaut selon sa spécialité."""
+    params = get_params(tenant_id)
+    faq = params.get("faq_json")
+    if faq:
+        if isinstance(faq, str):
+            try:
+                parsed = json.loads(faq)
+                normalized = normalize_faq_payload(parsed)
+                if normalized:
+                    return normalized
+            except Exception:
+                pass
+        elif isinstance(faq, list):
+            normalized = normalize_faq_payload(faq)
+            if normalized:
+                return normalized
+    specialty = str(params.get("sector") or "default").strip() or "default"
+    return copy.deepcopy(DEFAULT_FAQ.get(specialty, DEFAULT_FAQ["default"]))
+
+
+def faq_to_prompt_text(faq: List[Dict[str, Any]]) -> str:
+    """Sérialise la FAQ pour injection dans le prompt Vapi."""
+    lines = ["=== FAQ DU CABINET ==="]
+    for cat in normalize_faq_payload(faq):
+        lines.append(f"\n[{cat['category'].upper()}]")
+        for item in cat.get("items", []):
+            if item.get("active", True):
+                lines.append(f"Q: {item['question']}")
+                lines.append(f"R: {item['answer']}")
+    lines.append("\n=== FIN FAQ ===")
+    return "\n".join(lines)
+
+
 def get_params(tenant_id: Optional[int] = None) -> Dict[str, str]:
     """
     Retourne params_json pour un tenant (calendar_provider, calendar_id, etc.).
@@ -250,6 +483,7 @@ def set_params(tenant_id: int, params: Dict[str, str]) -> None:
         "transfer_phone", "transfer_number", "horaires",
         "responsible_phone", "manager_name", "billing_email", "vapi_assistant_id", "plan_key", "notes",
         "custom_included_minutes_month",
+        "faq_json",
         "booking_duration_minutes", "booking_start_hour", "booking_end_hour",
         "booking_buffer_minutes", "booking_days",
     )
@@ -270,6 +504,8 @@ def set_params(tenant_id: int, params: Dict[str, str]) -> None:
                     filtered[k] = [0, 1, 2, 3, 4]
             else:
                 filtered[k] = [0, 1, 2, 3, 4]
+        elif k == "faq_json":
+            filtered[k] = normalize_faq_payload(v)
         else:
             filtered[k] = str(v)
     if any(k in filtered for k in ("booking_days", "booking_start_hour", "booking_end_hour")):
@@ -297,6 +533,32 @@ def set_params(tenant_id: int, params: Dict[str, str]) -> None:
             VALUES (?, ?, ?, datetime('now'))
             """,
             (tenant_id, flags, json.dumps(merged)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def reset_faq_params(tenant_id: int) -> None:
+    """Supprime faq_json du tenant en SQLite pour revenir au défaut de spécialité."""
+    db.ensure_tenant_config()
+    conn = db.get_conn()
+    try:
+        cur = conn.execute("SELECT params_json FROM tenant_config WHERE tenant_id = ?", (tenant_id,))
+        row = cur.fetchone()
+        current = json.loads(row[0]) if row and row[0] else {}
+        if not isinstance(current, dict):
+            current = {}
+        current.pop("faq_json", None)
+        cur2 = conn.execute("SELECT flags_json FROM tenant_config WHERE tenant_id = ?", (tenant_id,))
+        row2 = cur2.fetchone()
+        flags = row2[0] if row2 and row2[0] else "{}"
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO tenant_config (tenant_id, flags_json, params_json, updated_at)
+            VALUES (?, ?, ?, datetime('now'))
+            """,
+            (tenant_id, flags, json.dumps(current)),
         )
         conn.commit()
     finally:

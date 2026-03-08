@@ -9,13 +9,17 @@ import {
   getTenantInvoices,
   getTenantUsage,
   getTenantQuota,
+  getTenantFaq,
+  resetTenantFaq,
   updateTenantFlags,
+  updateTenantFaq,
   updateTenantHoraires,
   updateTenantParams,
   sendPaymentLink,
   sendTenantOnboardingLink,
 } from "../../lib/adminApi";
 import { deriveHorairesText, normalizeBookingRules } from "../../lib/bookingUtils.js";
+import FaqEditor from "../../components/FaqEditor.jsx";
 
 const C = {
   bg: "#0A1828",
@@ -37,6 +41,7 @@ const TABS = [
   { id: "calls", label: "Appels", icon: "📞" },
   { id: "invoices", label: "Factures", icon: "💳" },
   { id: "quota", label: "Quota", icon: "📊" },
+  { id: "faq", label: "FAQ", icon: "💬" },
   { id: "actions", label: "Actions", icon: "⚙️" },
 ];
 
@@ -1070,6 +1075,19 @@ function TabActions({ tenantId, tenant, onSaved }) {
   );
 }
 
+function TabFaq({ tenantId, tenant }) {
+  return (
+    <FaqEditor
+      title={`FAQ du cabinet ${tenant?.name || ""}`.trim()}
+      description="Cette FAQ est modifiable par l'admin et par le client. Chaque enregistrement met à jour la configuration locale puis tente de resynchroniser le prompt Vapi."
+      loadFaq={() => getTenantFaq(tenantId)}
+      saveFaq={(faq) => updateTenantFaq(tenantId, faq)}
+      resetFaq={() => resetTenantFaq(tenantId)}
+      variant="dark"
+    />
+  );
+}
+
 export default function AdminTenantPage() {
   const { id } = useParams();
   const tenantId = id;
@@ -1195,6 +1213,7 @@ export default function AdminTenantPage() {
           {tab === "calls" && <TabCalls tenantId={tenantId} />}
           {tab === "invoices" && <TabInvoices tenantId={tenantId} />}
           {tab === "quota" && <TabQuota tenantId={tenantId} />}
+          {tab === "faq" && <TabFaq tenantId={tenantId} tenant={tenant} />}
           {tab === "actions" && <TabActions tenantId={tenantId} tenant={tenant} onSaved={() => getTenant(tenantId).then(setTenant)} />}
         </div>
       </div>

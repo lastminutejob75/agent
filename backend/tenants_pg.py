@@ -299,6 +299,7 @@ def pg_update_tenant_params(tenant_id: int, params: dict) -> bool:
         "assistant_name", "phone_number", "sector",
         "specialty_label", "address_line1", "postal_code", "city", "agenda_software",
         "client_onboarding_completed",
+        "faq_json",
         "booking_duration_minutes", "booking_start_hour", "booking_end_hour",
         "booking_buffer_minutes", "booking_days",
     }
@@ -319,6 +320,17 @@ def pg_update_tenant_params(tenant_id: int, params: dict) -> bool:
                     filtered[k] = [0, 1, 2, 3, 4]
             else:
                 filtered[k] = [0, 1, 2, 3, 4]
+        elif k == "faq_json":
+            if isinstance(v, str):
+                try:
+                    parsed = json.loads(v)
+                    filtered[k] = parsed if isinstance(parsed, list) else []
+                except Exception:
+                    filtered[k] = []
+            elif isinstance(v, list):
+                filtered[k] = v
+            else:
+                filtered[k] = []
         else:
             filtered[k] = str(v)
     if not filtered:
@@ -348,6 +360,36 @@ def pg_update_tenant_params(tenant_id: int, params: dict) -> bool:
                 return cur.rowcount > 0
     except Exception as e:
         logger.warning("pg_update_tenant_params failed: %s", e)
+        return False
+
+
+def pg_delete_tenant_param_keys(tenant_id: int, keys: list[str]) -> bool:
+    """Supprime des clés de params_json pour revenir aux fallbacks par défaut."""
+    keys = [str(k).strip() for k in (keys or []) if str(k).strip()]
+    if not keys:
+        return True
+    url = _pg_url()
+    if not url:
+        return False
+    try:
+        import psycopg
+
+        current, _ = pg_get_tenant_params(tenant_id) or ({}, "pg")
+        if not isinstance(current, dict):
+            current = {}
+        for key in keys:
+            current.pop(key, None)
+        with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE tenant_config SET params_json = %s, updated_at = now() WHERE tenant_id = %s",
+                    (json.dumps(current), tenant_id),
+                )
+                conn.commit()
+                return cur.rowcount > 0
+    except Exception as e:
+        logger.warning("pg_delete_tenant_param_keys failed: %s", e)
         return False
 
 

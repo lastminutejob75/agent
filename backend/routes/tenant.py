@@ -13,11 +13,12 @@ from typing import Any, Dict, List, Optional
 
 import bcrypt
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from backend.auth_pg import pg_get_tenant_user_by_id, pg_update_password
 from backend.calendar_adapter import _GoogleCalendarAdapter
+from backend import config
 from backend.config import get_service_account_email
 from backend.db import ensure_tenant_config, get_conn
 from backend.google_calendar import GoogleCalendarNotFoundError, GoogleCalendarPermissionError, GoogleCalendarService
@@ -32,8 +33,9 @@ from backend.routes.admin import (
     _get_tenant_detail,
 )
 from backend.services.email_service import send_agenda_contact_request_email
-from backend.tenant_config import derive_horaires_text, get_booking_rules
-from backend.tenants_pg import pg_update_tenant_name, pg_update_tenant_params
+from backend.tenant_config import derive_horaires_text, get_booking_rules, get_faq, normalize_faq_payload, reset_faq_params, set_params
+from backend.tenants_pg import pg_delete_tenant_param_keys, pg_update_tenant_name, pg_update_tenant_params
+from backend.vapi_utils import update_vapi_assistant_faq
 
 try:
     from zoneinfo import ZoneInfo
@@ -634,6 +636,28 @@ class HorairesBody(BaseModel):
     booking_buffer_minutes: int
 
 
+def _save_tenant_faq_payload(tenant_id: int, faq_payload: List[Dict[str, Any]]) -> bool:
+    normalized = normalize_faq_payload(faq_payload)
+    if config.USE_PG_TENANTS:
+        return pg_update_tenant_params(tenant_id, {"faq_json": normalized})
+    set_params(tenant_id, {"faq_json": normalized})
+    return True
+
+
+def _reset_tenant_faq_payload(tenant_id: int) -> bool:
+    if config.USE_PG_TENANTS:
+        return pg_delete_tenant_param_keys(tenant_id, ["faq_json"])
+    reset_faq_params(tenant_id)
+    return True
+
+
+async def _sync_tenant_faq_to_vapi(tenant_id: int) -> None:
+    try:
+        await update_vapi_assistant_faq(tenant_id)
+    except Exception as e:
+        logger.error("tenant_faq_vapi_sync_failed tenant_id=%s error=%s", tenant_id, e)
+
+
 def _validate_horaires_payload(body: HorairesBody) -> Dict[str, Any]:
     booking_days = sorted({int(day) for day in (body.booking_days or []) if 0 <= int(day) <= 6})
     if not booking_days:
@@ -655,6 +679,35 @@ def _validate_horaires_payload(body: HorairesBody) -> Dict[str, Any]:
         "booking_duration_minutes": int(body.booking_duration_minutes),
         "booking_buffer_minutes": int(body.booking_buffer_minutes),
     }
+
+
+@router.get("/faq")
+def tenant_get_faq(auth: dict = Depends(require_tenant_auth)):
+    return get_faq(auth["tenant_id"])
+
+
+@router.put("/faq")
+async def tenant_put_faq(
+    body: List[Dict[str, Any]] = Body(...),
+    auth: dict = Depends(require_tenant_auth),
+):
+    tenant_id = auth["tenant_id"]
+    faq_payload = normalize_faq_payload(body)
+    if not faq_payload:
+        raise HTTPException(status_code=400, detail="FAQ invalide.")
+    if not _save_tenant_faq_payload(tenant_id, faq_payload):
+        raise HTTPException(status_code=500, detail="Impossible d'enregistrer la FAQ.")
+    await _sync_tenant_faq_to_vapi(tenant_id)
+    return {"ok": True, "faq": faq_payload}
+
+
+@router.post("/faq/reset")
+async def tenant_reset_faq(auth: dict = Depends(require_tenant_auth)):
+    tenant_id = auth["tenant_id"]
+    if not _reset_tenant_faq_payload(tenant_id):
+        raise HTTPException(status_code=500, detail="Impossible de réinitialiser la FAQ.")
+    await _sync_tenant_faq_to_vapi(tenant_id)
+    return {"ok": True, "faq": get_faq(tenant_id)}
 
 
 @router.patch("/auth/change-password")

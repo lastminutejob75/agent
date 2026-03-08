@@ -13,6 +13,7 @@ const ROUTES = {
   "/app/appels": { title: "Journal des appels", sub: "" },
   "/app/agenda": { title: "Mon agenda", sub: "" },
   "/app/horaires": { title: "Mes horaires", sub: "" },
+  "/app/faq": { title: "FAQ du cabinet", sub: "" },
   "/app/actions": { title: "Actions en attente", sub: "" },
   "/app/facturation": { title: "Facturation", sub: "" },
   "/app/profil": { title: "Mon profil", sub: "" },
@@ -30,6 +31,8 @@ const PRIMARY_NAV = [
 ];
 
 const SECONDARY_NAV = [
+  { to: "/app/horaires", label: "Horaires", icon: "⏰" },
+  { to: "/app/faq", label: "FAQ", icon: "💬" },
   { to: "/app/facturation", label: "Facturation", icon: "◇" },
   { to: "/app/profil", label: "Mon profil", icon: "○" },
   { to: "/app/config", label: "Config IA", icon: "◆" },

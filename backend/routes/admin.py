@@ -39,6 +39,7 @@ from backend.billing_pg import (
 from backend.tenants_pg import (
     pg_add_routing,
     pg_create_tenant,
+    pg_delete_tenant_param_keys,
     pg_delete_tenant,
     pg_deactivate_tenant,
     pg_fetch_tenants,
@@ -49,7 +50,8 @@ from backend.tenants_pg import (
     pg_update_tenant_flags,
     pg_update_tenant_params,
 )
-from backend.tenant_config import derive_horaires_text
+from backend.tenant_config import derive_horaires_text, get_faq, normalize_faq_payload, reset_faq_params, set_params
+from backend.vapi_utils import update_vapi_assistant_faq
 
 logger = logging.getLogger(__name__)
 
@@ -3056,6 +3058,55 @@ def admin_patch_horaires(
     from backend.tenant_config import set_params
     set_params(tenant_id, payload)
     return {"ok": True, "horaires": horaires, **rules}
+
+
+async def _sync_admin_faq_to_vapi(tenant_id: int) -> None:
+    try:
+        await update_vapi_assistant_faq(tenant_id)
+    except Exception as e:
+        logger.error("admin_faq_vapi_sync_failed tenant_id=%s error=%s", tenant_id, e)
+
+
+@router.get("/admin/tenants/{tenant_id}/faq")
+def admin_get_tenant_faq(
+    tenant_id: int = Depends(validate_tenant_id),
+    _: None = Depends(_verify_admin),
+):
+    return get_faq(tenant_id)
+
+
+@router.put("/admin/tenants/{tenant_id}/faq")
+async def admin_put_tenant_faq(
+    tenant_id: int = Depends(validate_tenant_id),
+    body: List[Dict[str, Any]] = Body(...),
+    _: None = Depends(_verify_admin),
+):
+    faq_payload = normalize_faq_payload(body)
+    if not faq_payload:
+        raise HTTPException(status_code=400, detail="FAQ invalide.")
+    if config.USE_PG_TENANTS:
+        ok = pg_update_tenant_params(tenant_id, {"faq_json": faq_payload})
+        if not ok:
+            raise HTTPException(status_code=500, detail="Impossible d'enregistrer la FAQ.")
+    else:
+        set_params(tenant_id, {"faq_json": faq_payload})
+    await _sync_admin_faq_to_vapi(tenant_id)
+    return {"ok": True, "faq": faq_payload}
+
+
+@router.post("/admin/tenants/{tenant_id}/faq/reset")
+async def admin_reset_tenant_faq(
+    tenant_id: int = Depends(validate_tenant_id),
+    _: None = Depends(_verify_admin),
+):
+    if config.USE_PG_TENANTS:
+        ok = pg_delete_tenant_param_keys(tenant_id, ["faq_json"])
+        if not ok:
+            raise HTTPException(status_code=500, detail="Impossible de réinitialiser la FAQ.")
+    else:
+        reset_faq_params(tenant_id)
+    await _sync_admin_faq_to_vapi(tenant_id)
+    return {"ok": True, "faq": get_faq(tenant_id)}
 
 
 @router.post("/admin/routing")

@@ -157,6 +157,11 @@ export const api = {
   tenantGetCalls: (params = "") =>
     request(`/api/tenant/calls${params}`, { tenant: true }),
   tenantGetAgenda: () => request("/api/tenant/agenda", { tenant: true }),
+  tenantGetFaq: () => request("/api/tenant/faq", { tenant: true }),
+  tenantUpdateFaq: (faq) =>
+    request("/api/tenant/faq", { method: "PUT", body: faq, tenant: true }),
+  tenantResetFaq: () =>
+    request("/api/tenant/faq/reset", { method: "POST", tenant: true }),
   tenantChangePassword: (newPassword) =>
     request("/api/tenant/auth/change-password", {
       method: "PATCH",
@@ -182,4 +187,7 @@ export const tenantGetHoraires = () => api.tenantGetHoraires();
 export const tenantUpdateHoraires = (rules) => api.tenantUpdateHoraires(rules);
 export const tenantGetCalls = (params = "") => api.tenantGetCalls(params);
 export const tenantGetAgenda = () => api.tenantGetAgenda();
+export const tenantGetFaq = () => api.tenantGetFaq();
+export const tenantUpdateFaq = (faq) => api.tenantUpdateFaq(faq);
+export const tenantResetFaq = () => api.tenantResetFaq();
 export const adminUpdateHoraires = (tenantId, rules) => api.adminUpdateHoraires(tenantId, rules);

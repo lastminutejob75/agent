@@ -153,6 +153,16 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify(body || {}),
     }),
+  getTenantFaq: (id) => adminFetch(`/api/admin/tenants/${id}/faq`, { method: "GET" }),
+  updateTenantFaq: (id, faq) =>
+    adminFetch(`/api/admin/tenants/${id}/faq`, {
+      method: "PUT",
+      body: JSON.stringify(faq || []),
+    }),
+  resetTenantFaq: (id) =>
+    adminFetch(`/api/admin/tenants/${id}/faq/reset`, {
+      method: "POST",
+    }),
   changeTenantPlan: (id, planKey) =>
     adminFetch(`/api/admin/tenants/${id}/billing/change-plan`, {
       method: "POST",
@@ -307,6 +317,17 @@ export const updateTenantHoraires = (tenantId, rules) =>
   adminFetch(`/api/admin/tenants/${tenantId}/horaires`, {
     method: "PATCH",
     body: JSON.stringify(rules),
+  });
+export const getTenantFaq = (tenantId) =>
+  adminFetch(`/api/admin/tenants/${tenantId}/faq`);
+export const updateTenantFaq = (tenantId, faq) =>
+  adminFetch(`/api/admin/tenants/${tenantId}/faq`, {
+    method: "PUT",
+    body: JSON.stringify(faq || []),
+  });
+export const resetTenantFaq = (tenantId) =>
+  adminFetch(`/api/admin/tenants/${tenantId}/faq/reset`, {
+    method: "POST",
   });
 export const sendPaymentLink = (tenantId) =>
   adminFetch(`/api/admin/tenants/${tenantId}/send-payment-link`, {
