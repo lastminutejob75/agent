@@ -66,7 +66,7 @@ function formatDayForDisplay(date) {
 
 const MSG_LEAD_NOT_FOUND = "Lead introuvable, lien expiré ou ancienne session. Refaites votre demande depuis l'accueil.";
 
-export default function UWIFinalization({ leadId = "", initialPhone = "", initialEmail = "", assistantName = "Emma", practitioner = "votre cabinet", onComplete }) {
+export default function UWIFinalization({ leadId = "", initialPhone = "", assistantName = "Emma", practitioner = "votre cabinet", onComplete }) {
   const navigate = useNavigate();
   const [leadCheckFailed, setLeadCheckFailed] = useState(null); // null = en cours, true = 404, false = ok
   const [phase, setPhase] = useState("loading");
@@ -78,10 +78,6 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", initia
   const [phone, setPhone] = useState(() => (initialPhone || "").replace(/\D/g, "").slice(0, 10));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [callbackError, setCallbackError] = useState(null);
-  const [createAccountLoading, setCreateAccountLoading] = useState(false);
-  const [createAccountError, setCreateAccountError] = useState(null);
-  const [leadEmail, setLeadEmail] = useState(initialEmail || "");
-  const effectiveEmail = (initialEmail || leadEmail || "").trim();
 
   const assistantInfo = ASSISTANTS[assistantName] || ASSISTANTS.Emma;
   const voiceLabel = assistantInfo.voice;
@@ -108,14 +104,6 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", initia
         setLeadCheckFailed(true);
       });
   }, [leadId]);
-
-  // Récupérer l'email du lead si absent (ex: lien admin)
-  useEffect(() => {
-    if (!leadId || initialEmail) return;
-    api.preOnboardingLeadEmail(leadId).then((r) => {
-      if (r?.email) setLeadEmail(r.email);
-    }).catch(() => {});
-  }, [leadId, initialEmail]);
 
   useEffect(() => {
     if (phase !== "loading" || leadCheckFailed !== false) return;
@@ -154,29 +142,6 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", initia
 
   const handleRevealCta = () => setPhase("congrats");
   const handleCongratsCta = () => setPhase("handoff");
-
-  const handleCreateAccount = useCallback(async () => {
-    if (!leadId || createAccountLoading) return;
-    const email = effectiveEmail;
-    if (!email) {
-      setCreateAccountError("Indiquez votre email pour créer votre compte.");
-      return;
-    }
-    setCreateAccountLoading(true);
-    setCreateAccountError(null);
-    try {
-      const res = await api.preOnboardingCreateAccount(leadId, { email });
-      if (res?.login_url) {
-        window.location.href = res.login_url;
-        return;
-      }
-      navigate("/login", { state: { email, welcome: 1 } });
-    } catch (err) {
-      setCreateAccountError(err?.message || "Erreur lors de la création du compte.");
-    } finally {
-      setCreateAccountLoading(false);
-    }
-  }, [leadId, effectiveEmail, createAccountLoading, navigate]);
 
   const handleHandoffSubmit = useCallback(async () => {
     if (!canSubmit) return;
@@ -824,33 +789,11 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", initia
           >
             {callbackError ? "Retour à l'accueil" : "Profiter du mois gratuit"}
           </button>
-          {effectiveEmail && !callbackError && (
-            <>
-              <p style={{ fontSize: 12, color: COLORS.muted, margin: "12px 0 8px", textAlign: "center" }}>ou</p>
-              <button
-                type="button"
-                onClick={handleCreateAccount}
-                disabled={createAccountLoading}
-                style={{
-                  width: "100%",
-                  padding: "12px 20px",
-                  borderRadius: 12,
-                  border: `1px solid ${COLORS.border}`,
-                  background: "transparent",
-                  color: COLORS.text,
-                  fontWeight: 700,
-                  fontSize: 14,
-                  cursor: createAccountLoading ? "not-allowed" : "pointer",
-                  opacity: createAccountLoading ? 0.7 : 1,
-                }}
-              >
-                {createAccountLoading ? "Création..." : "Créer mon compte maintenant"}
-              </button>
-              {createAccountError && (
-                <p style={{ fontSize: 12, color: "#f87171", marginTop: 8 }}>{createAccountError}</p>
-              )}
-            </>
-          )}
+          {!callbackError ? (
+            <p style={{ fontSize: 12, color: COLORS.muted, marginTop: 12, textAlign: "center", lineHeight: 1.5 }}>
+              Votre accès au dashboard vous sera envoyé automatiquement après validation.
+            </p>
+          ) : null}
         </div>
         <style>{`@keyframes popIn { 0% { transform: scale(0.3); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }`}</style>
       </div>
