@@ -2,6 +2,7 @@
 """Tests API admin / onboarding (POST /public/onboarding, GET /admin/*)."""
 
 import os
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -116,6 +117,90 @@ def test_admin_tenants_with_token(client, admin_headers):
     data = r.json()
     assert "tenants" in data
     assert isinstance(data["tenants"], list)
+
+
+def test_get_calls_list_merges_ivr_events_when_vapi_calls_exist(monkeypatch):
+    """Ne pas masquer un appel récent si vapi_calls contient déjà d'anciens appels."""
+    import psycopg
+    from backend.routes import admin as admin_routes
+
+    now = datetime.utcnow()
+    vapi_rows = [
+        {
+            "tenant_id": 1,
+            "call_id": "call_old",
+            "started_at": now - timedelta(hours=2),
+            "ended_at": now - timedelta(hours=1, minutes=57),
+            "updated_at": now - timedelta(hours=1, minutes=57),
+            "status": "ended",
+            "ended_reason": "",
+            "last_event": "booking_confirmed",
+        }
+    ]
+    ivr_rows = [
+        {
+            "client_id": 1,
+            "call_id": "call_new",
+            "started_at": now - timedelta(minutes=10),
+            "last_event_at": now - timedelta(minutes=7),
+            "last_event": "booking_confirmed",
+            "cs_started": now - timedelta(minutes=10),
+            "cs_updated": now - timedelta(minutes=7),
+        },
+        {
+            "client_id": 1,
+            "call_id": "call_old",
+            "started_at": now - timedelta(hours=2),
+            "last_event_at": now - timedelta(hours=1, minutes=57),
+            "last_event": "booking_confirmed",
+            "cs_started": now - timedelta(hours=2),
+            "cs_updated": now - timedelta(hours=1, minutes=57),
+        },
+    ]
+
+    class FakeCursor:
+        def __init__(self):
+            self.exec_count = 0
+
+        def execute(self, sql, params):
+            self.exec_count += 1
+
+        def fetchall(self):
+            if self.exec_count == 1:
+                return vapi_rows
+            if self.exec_count == 2:
+                return ivr_rows
+            return []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeConn:
+        def __init__(self):
+            self.cursor_obj = FakeCursor()
+
+        def cursor(self):
+            return self.cursor_obj
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setenv("DATABASE_URL", "postgres://fake")
+    monkeypatch.setattr(psycopg, "connect", lambda *args, **kwargs: FakeConn())
+    monkeypatch.setattr(admin_routes, "_get_tenant_detail", lambda tenant_id: {"name": "Cabinet Test"})
+
+    data = admin_routes._get_calls_list(tenant_id=1, days=1, limit=10)
+
+    call_ids = [item["call_id"] for item in data["items"]]
+    assert "call_new" in call_ids
+    assert "call_old" in call_ids
+    assert call_ids[0] == "call_new"
 
 
 @patch("backend.routes.admin.config.USE_PG_TENANTS", True)

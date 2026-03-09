@@ -1916,8 +1916,9 @@ def _get_calls_list(
                             logger.debug("admin calls vapi_calls query: %s", ve)
                         vapi_rows = []
 
+                    seen_call_ids: set[str] = set()
                     if vapi_rows:
-                        for r in vapi_rows[:limit]:
+                        for r in vapi_rows[: limit + 1]:
                             started_at = r.get("started_at")
                             ended_at = r.get("ended_at")
                             updated_at = r.get("updated_at")
@@ -1945,13 +1946,8 @@ def _get_calls_list(
                                 "result": result_val,
                                 "duration_min": duration_min,
                             })
-
-                        if len(vapi_rows) > limit:
-                            last_row = vapi_rows[limit - 1]
-                            sort_ts = last_row.get("ended_at") or last_row.get("updated_at") or last_row.get("started_at")
-                            t_iso = sort_ts.isoformat() if hasattr(sort_ts, "isoformat") else str(sort_ts or "")
-                            next_cursor = base64.urlsafe_b64encode(json.dumps({"t": t_iso, "c": last_row.get("call_id") or ""}).encode()).decode().rstrip("=")
-                        return {"items": items, "next_cursor": next_cursor, "days": days}
+                            if r.get("call_id"):
+                                seen_call_ids.add(r.get("call_id"))
 
                     # 2) Fallback ivr_events (comportement historique)
                     params = [start, end]
@@ -2002,9 +1998,18 @@ def _get_calls_list(
                     )
                     rows = cur.fetchall()
                     if not rows:
-                        return {"items": [], "next_cursor": None, "days": days}
+                        items.sort(key=lambda x: ((x.get("last_event_at") or ""), (x.get("call_id") or "")), reverse=True)
+                        if len(items) > limit:
+                            last_item = items[limit - 1]
+                            t_iso = str(last_item.get("last_event_at") or "")
+                            c_id = last_item.get("call_id") or ""
+                            next_cursor = base64.urlsafe_b64encode(json.dumps({"t": t_iso, "c": c_id}).encode()).decode().rstrip("=")
+                            items = items[:limit]
+                        return {"items": items, "next_cursor": next_cursor, "days": days}
 
                     for r in rows[:limit]:
+                        if (r.get("call_id") or "") in seen_call_ids:
+                            continue
                         started_at = r.get("started_at")
                         last_event_at = r.get("last_event_at")
                         last_event = r.get("last_event")
@@ -2032,12 +2037,13 @@ def _get_calls_list(
                             "result": _call_result_from_event(last_event),
                             "duration_min": duration_min,
                         })
-
-                    if len(rows) > limit:
-                        last_row = rows[limit - 1]
-                        t_iso = last_row["last_event_at"].isoformat() if hasattr(last_row["last_event_at"], "isoformat") else str(last_row["last_event_at"])
-                        c_id = last_row.get("call_id") or ""
+                    items.sort(key=lambda x: ((x.get("last_event_at") or ""), (x.get("call_id") or "")), reverse=True)
+                    if len(items) > limit:
+                        last_item = items[limit - 1]
+                        t_iso = str(last_item.get("last_event_at") or "")
+                        c_id = last_item.get("call_id") or ""
                         next_cursor = base64.urlsafe_b64encode(json.dumps({"t": t_iso, "c": c_id}).encode()).decode().rstrip("=")
+                        items = items[:limit]
 
         except Exception as e:
             logger.warning("admin calls list pg failed: %s", e)
