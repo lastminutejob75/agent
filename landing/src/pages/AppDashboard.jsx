@@ -104,7 +104,7 @@ function getInitial(name) {
 }
 
 function getPhoneSummary(call, fallbackAgent) {
-  return call.agent_name || fallbackAgent || "UWI";
+  return call.customer_number || call.agent_name || fallbackAgent || "Numéro non identifié";
 }
 
 function getInitials(name) {

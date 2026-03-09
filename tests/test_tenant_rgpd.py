@@ -173,6 +173,47 @@ def test_tenant_calls_keeps_items_when_call_detail_fails(mock_calls, mock_call_d
 
 
 @patch("backend.routes.tenant.pg_get_tenant_user_by_id")
+@patch("backend.routes.tenant._get_tenant_detail")
+@patch("backend.routes.tenant._get_call_detail")
+@patch("backend.routes.tenant._get_calls_list")
+def test_tenant_calls_prefers_detail_events_and_exposes_customer_number(mock_calls, mock_call_detail, mock_tenant_detail, mock_get_user, client):
+    mock_get_user.return_value = {"tenant_id": 1, "email": "test@example.com", "role": "owner"}
+    mock_tenant_detail.return_value = {
+        "tenant_id": 1,
+        "name": "Cabinet Test",
+        "timezone": "Europe/Paris",
+        "params": {"assistant_name": "sophie", "timezone": "Europe/Paris"},
+    }
+    mock_calls.return_value = {
+        "items": [
+            {
+                "call_id": "call_rdv",
+                "started_at": "2026-03-06T10:32:00Z",
+                "last_event_at": "2026-03-06T10:34:00Z",
+                "result": "other",
+                "duration_min": 2,
+                "customer_number": "+33612345678",
+            }
+        ]
+    }
+    mock_call_detail.return_value = {
+        "duration_min": 2,
+        "result": "other",
+        "customer_number": "+33612345678",
+        "events": [{"event": "booking_confirmed", "meta": {}}],
+        "transcript": "",
+    }
+    token = _make_jwt()
+    r = client.get("/api/tenant/calls?limit=10&days=1", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["calls"][0]["status"] == "CONFIRMED"
+    assert data["calls"][0]["summary"] == "Rendez-vous confirmé"
+    assert data["calls"][0]["reason_label"] == "Demande de rendez-vous"
+    assert data["calls"][0]["customer_number"] == "+33612345678"
+
+
+@patch("backend.routes.tenant.pg_get_tenant_user_by_id")
 @patch("backend.routes.tenant.GoogleCalendarService")
 @patch("backend.routes.tenant._get_tenant_detail")
 def test_tenant_agenda_google_ok(mock_tenant_detail, mock_google_service, mock_get_user, client):

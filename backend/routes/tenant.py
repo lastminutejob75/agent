@@ -288,6 +288,34 @@ def _call_summary_from_detail(status: str, detail: dict) -> str:
     return "Demande d'information traitée par l'assistant"
 
 
+def _resolve_call_status(item: Optional[dict], detail: Optional[dict]) -> str:
+    event_names = [str((event or {}).get("event") or "").strip().lower() for event in (detail or {}).get("events") or []]
+    if "booking_confirmed" in event_names:
+        return "CONFIRMED"
+    if any(name in {"transferred_human", "transferred", "transfer_human", "transfer"} for name in event_names):
+        return "TRANSFERRED"
+    if any(name in {"user_abandon", "abandon", "hangup", "user_hangup"} for name in event_names):
+        return "ABANDONED"
+
+    detail_result = str((detail or {}).get("result") or "").strip().lower()
+    if detail_result in STATUS_MAP:
+        return STATUS_MAP.get(detail_result, "FAQ")
+
+    item_result = str((item or {}).get("result") or "").strip().lower()
+    return STATUS_MAP.get(item_result, "FAQ")
+
+
+def _call_display_phone(item: Optional[dict], detail: Optional[dict]) -> str:
+    for candidate in (
+        (detail or {}).get("customer_number"),
+        (item or {}).get("customer_number"),
+    ):
+        value = str(candidate or "").strip()
+        if value:
+            return value
+    return ""
+
+
 def _extract_google_description_line(description: str, prefix: str) -> Optional[str]:
     for line in (description or "").splitlines():
         if line.lower().startswith(prefix.lower()):
@@ -569,11 +597,11 @@ def tenant_calls(
         call_id = (item.get("call_id") or "").strip()
         if not call_id:
             continue
-        status = STATUS_MAP.get((item.get("result") or "other").lower(), "FAQ")
         started_at = item.get("started_at") or item.get("last_event_at")
         fallback_detail = {
             "call_id": call_id,
             "tenant_id": tenant_id,
+            "customer_number": item.get("customer_number"),
             "started_at": item.get("started_at"),
             "last_event_at": item.get("last_event_at"),
             "duration_min": item.get("duration_min"),
@@ -593,12 +621,14 @@ def tenant_calls(
             followup = get_call_followup(tenant_id, call_id) or {}
         except Exception:
             followup = {}
+        status = _resolve_call_status(item, call_detail)
         call_context = _classify_call_context(status, call_detail)
         calls.append({
             "id": call_id,
             "time": _format_hhmm(started_at, tz_name),
             "duration": _format_duration_short(call_detail.get("duration_min") or item.get("duration_min")),
             "patient_name": "Patient",
+            "customer_number": _call_display_phone(item, call_detail),
             "agent_name": assistant_name,
             "summary": _call_summary_from_detail(status, call_detail),
             "status": status,
@@ -631,7 +661,7 @@ def tenant_call_detail(
     assistant_name = (((detail.get("params") or {}).get("assistant_name")) or "Sophie").strip().title()
     raw = _get_call_detail(tenant_id, call_id)
     followup = get_call_followup(tenant_id, call_id) or {}
-    status = STATUS_MAP.get((raw.get("result") or "other").lower(), "FAQ")
+    status = _resolve_call_status(None, raw)
     call_context = _classify_call_context(status, raw)
     events = []
     for event in raw.get("events") or []:
@@ -648,6 +678,7 @@ def tenant_call_detail(
         "call_id": raw.get("call_id") or call_id,
         "status": status,
         "assistant_name": assistant_name,
+        "customer_number": _call_display_phone(None, raw),
         "summary": _call_summary_from_detail(status, raw),
         "started_at": raw.get("started_at"),
         "started_time": _format_hhmm(raw.get("started_at"), tz_name),

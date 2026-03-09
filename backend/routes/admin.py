@@ -1898,7 +1898,7 @@ def _get_calls_list(
                                 WHERE call_id IS NOT NULL AND TRIM(call_id) != ''
                                 GROUP BY client_id, call_id
                             )
-                            SELECT v.tenant_id, v.call_id, v.started_at, v.ended_at, v.updated_at,
+                            SELECT v.tenant_id, v.call_id, v.customer_number, v.started_at, v.ended_at, v.updated_at,
                                    v.status, v.ended_reason, e.last_event
                             FROM vapi_calls v
                             LEFT JOIN ivr_agg e ON e.client_id = v.tenant_id AND e.call_id = v.call_id
@@ -1940,6 +1940,7 @@ def _get_calls_list(
                                 "call_id": r.get("call_id") or "",
                                 "tenant_id": tid,
                                 "tenant_name": (d.get("name") or "").strip() or (f"Client #{tid}" if tid else "—"),
+                                "customer_number": (r.get("customer_number") or "").strip(),
                                 "started_at": started_at.isoformat() + "Z" if hasattr(started_at, "isoformat") else str(started_at or ""),
                                 "last_event_at": sort_ts.isoformat() + "Z" if hasattr(sort_ts, "isoformat") else str(sort_ts or ""),
                                 "last_event": last_event or r.get("ended_reason") or r.get("status") or "",
@@ -2031,6 +2032,7 @@ def _get_calls_list(
                             "call_id": r.get("call_id") or "",
                             "tenant_id": tid,
                             "tenant_name": (d.get("name") or "").strip() or (f"Client #{tid}" if tid else "—"),
+                            "customer_number": "",
                             "started_at": started_at.isoformat() + "Z" if hasattr(started_at, "isoformat") else str(started_at),
                             "last_event_at": last_event_at.isoformat() + "Z" if hasattr(last_event_at, "isoformat") else str(last_event_at),
                             "last_event": last_event or "",
@@ -2087,6 +2089,7 @@ def _get_call_detail(tenant_id: int, call_id: str) -> dict:
     out: Dict[str, Any] = {
         "call_id": call_id_clean,
         "tenant_id": tenant_id,
+        "customer_number": None,
         "started_at": None,
         "last_event_at": None,
         "duration_min": None,
@@ -2154,6 +2157,21 @@ def _get_call_detail(tenant_id: int, call_id: str) -> dict:
                     delta_mins = (cs["updated_at"] - cs["started_at"]).total_seconds() / 60.0
                     delta_mins = max(0, min(MAX_SESSION_MINUTES, delta_mins))
                     out["duration_min"] = int(round(delta_mins, 0))
+                try:
+                    cur.execute(
+                        """
+                        SELECT customer_number
+                        FROM vapi_calls
+                        WHERE tenant_id = %s AND call_id = %s
+                        LIMIT 1
+                        """,
+                        (tenant_id, call_id_clean),
+                    )
+                    vc = cur.fetchone()
+                    if vc and vc.get("customer_number"):
+                        out["customer_number"] = str(vc.get("customer_number")).strip()
+                except Exception:
+                    pass
                 # Transcription depuis call_transcripts (si table existe)
                 try:
                     cur.execute(
