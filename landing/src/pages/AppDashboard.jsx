@@ -200,7 +200,7 @@ export default function AppDashboard() {
     Promise.all([
       api.tenantKpis(1).catch(() => null),
       api.tenantGetCalls("?limit=20&days=7").catch(() => ({ calls: [] })),
-      api.tenantGetAgenda().catch(() => null),
+      api.tenantGetAgenda("?upcoming_days=7").catch(() => null),
       api.tenantMe().catch(() => null),
     ]).then(([k, c, a, m]) => {
       setKpis(k);
@@ -737,7 +737,7 @@ export default function AppDashboard() {
               <div>
                 <div style={S.panelTitle}>Agenda</div>
                 <div style={S.panelSubtitle}>
-                  {agenda?.external_connected ? "Rendez-vous du jour" : "Rendez-vous UWI du jour"}
+                  {agenda?.external_connected ? "Prochains rendez-vous" : "Prochains rendez-vous UWI"}
                 </div>
               </div>
               <div style={{ color: TEAL_DARK, display: "flex", alignItems: "center" }}>
@@ -801,11 +801,11 @@ export default function AppDashboard() {
                 </>
               ) : (
                 <div style={S.emptyState}>
-                  <div style={S.emptyTitle}>Aucun rendez-vous aujourd&apos;hui</div>
+                  <div style={S.emptyTitle}>Aucun rendez-vous à venir</div>
                   <div style={S.emptyText}>
                     {agendaReady
-                      ? "Votre planning apparaîtra ici au fil des réservations."
-                      : "Aucun RDV pour le moment. Vous pouvez déjà connecter votre agenda ou attendre les premières réservations UWI."}
+                      ? "Vos prochains rendez-vous apparaîtront ici au fil des réservations."
+                      : "Aucun RDV à venir pour le moment. Vous pouvez déjà connecter votre agenda ou attendre les premières réservations UWI."}
                   </div>
                 </div>
               )}

@@ -86,7 +86,7 @@ def upsert_vapi_call(
     ended_reason: Optional[str] = None,
 ) -> bool:
     """Upsert une ligne vapi_calls (status-update)."""
-    if not call_id or not (status or started_at or ended_at or ended_reason):
+    if not call_id or not (customer_number or assistant_id or phone_number_id or status or started_at or ended_at or ended_reason):
         return False
     url = _pg_url()
     if not url:

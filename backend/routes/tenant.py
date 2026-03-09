@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -232,7 +233,19 @@ def _classify_call_context(status: str, detail: dict) -> Dict[str, Any]:
     summary = _call_summary_from_detail(status, detail)
     haystack = " ".join(part for part in [reason, context, summary, transcript] if part).lower()
 
-    if any(token in haystack for token in ("urgence", "urgent", "15", "112", "douleur thorac", "saign", "respir")):
+    if status == "CONFIRMED" or any(token in haystack for token in ("rdv", "rendez-vous", "agenda", "créneau", "creneau", "booking", "annuler", "déplacer", "deplacer")):
+        return {
+            "reason_label": reason or "Demande de rendez-vous",
+            "reason_context": context,
+            "reason_category": "agenda",
+            "contextual_action": {"kind": "open_agenda", "label": "Ouvrir l'agenda"},
+        }
+
+    emergency_number_mentioned = bool(
+        re.search(r"\b(?:appelez?|contactez?|joindre|composez?)\s+(?:le\s+)?(?:15|112)\b", haystack)
+        or re.search(r"\b(?:samu|urgence vitale|urgences?)\b", haystack)
+    )
+    if emergency_number_mentioned or any(token in haystack for token in ("urgence", "urgent", "douleur thorac", "saign", "respir")):
         return {
             "reason_label": reason or "Urgence médicale signalée",
             "reason_context": context,
@@ -252,13 +265,6 @@ def _classify_call_context(status: str, detail: dict) -> Dict[str, Any]:
             "reason_context": context,
             "reason_category": "callback",
             "contextual_action": {"kind": "followup_callback", "label": "Mettre en rappel"},
-        }
-    if status == "CONFIRMED" or any(token in haystack for token in ("rdv", "rendez-vous", "agenda", "créneau", "creneau", "booking", "annuler", "déplacer", "deplacer")):
-        return {
-            "reason_label": reason or "Demande de rendez-vous",
-            "reason_context": context,
-            "reason_category": "agenda",
-            "contextual_action": {"kind": "open_agenda", "label": "Ouvrir l'agenda"},
         }
     return {
         "reason_label": reason or ("Information transmise au cabinet" if status == "TRANSFERRED" else "Demande d'information"),
@@ -729,8 +735,9 @@ def tenant_call_followup_update(
 def tenant_agenda(
     auth: dict = Depends(require_tenant_auth),
     date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    upcoming_days: int = Query(1, ge=1, le=30),
 ):
-    """Retourne les rendez-vous du jour depuis Google Calendar ou le stockage local."""
+    """Retourne les rendez-vous du jour ou à venir depuis Google Calendar ou le stockage local."""
     tenant_id = auth["tenant_id"]
     detail = _get_tenant_detail(tenant_id)
     if not detail:
@@ -745,9 +752,10 @@ def tenant_agenda(
         except ValueError:
             raise HTTPException(400, "Invalid date format")
         day_start = selected.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=tz)
+        day_end = day_start + timedelta(days=1)
     else:
         day_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
-    day_end = day_start + timedelta(days=1)
+        day_end = day_start + timedelta(days=max(1, int(upcoming_days)))
     slots: List[Dict[str, Any]] = []
 
     if (params.get("calendar_provider") or "").strip() == "google" and (params.get("calendar_id") or "").strip():
@@ -769,6 +777,8 @@ def tenant_agenda(
                     continue
                 start_local = start_dt.astimezone(tz)
                 end_local = end_dt.astimezone(tz) if end_dt else start_local
+                if not date and start_local < now_local:
+                    continue
                 summary = (event.get("summary") or "").strip()
                 description = (event.get("description") or "").strip()
                 patient = summary.replace("RDV - ", "", 1).strip() if summary.startswith("RDV - ") else (summary or "Patient")
@@ -814,6 +824,8 @@ def tenant_agenda(
                             if not start_local:
                                 continue
                             start_local = start_local.astimezone(tz)
+                            if not date and start_local < now_local:
+                                continue
                             end_local = start_local + timedelta(minutes=30)
                             slots.append({
                                 "hour": start_local.strftime("%Hh"),
@@ -847,6 +859,8 @@ def tenant_agenda(
                 for row in rows:
                     start_local = _parse_dt(f"{row[4]}T{row[5]}:00", tz_name)
                     if not start_local:
+                        continue
+                    if not date and start_local < now_local:
                         continue
                     end_local = start_local + timedelta(minutes=30)
                     slots.append({

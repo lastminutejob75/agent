@@ -2,6 +2,8 @@
 """
 Tests P1-P4 hardening vocal : CRITICAL_TOKENS centralisés, assistant-request 204, is_critical_token.
 """
+from unittest.mock import MagicMock, patch
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -107,3 +109,31 @@ def test_assistant_request_transient_has_french_first_message(monkeypatch):
     assert "assistant" in data
     first = data["assistant"].get("firstMessage", "")
     assert "Bonjour" in first
+
+
+def test_status_update_persists_customer_number_from_fallback_field():
+    """status-update doit persister le numéro appelant même sans call.customer.number."""
+    client = TestClient(app)
+    payload = {
+        "message": {
+            "type": "status-update",
+            "status": "in-progress",
+            "call": {
+                "id": "call-status-1",
+                "from": "+33612345678",
+                "phoneNumber": {"number": "+33912345678"},
+                "startedAt": "2026-03-09T10:00:00Z",
+            },
+        }
+    }
+    fake_session = MagicMock()
+    fake_session.customer_phone = None
+    with patch("backend.routes.voice._get_or_resume_voice_session", return_value=fake_session):
+        with patch("backend.routes.voice.ENGINE") as mock_engine:
+            mock_engine.session_store = MagicMock()
+            with patch("backend.tenant_routing.resolve_tenant_id_from_vapi_payload", return_value=(2, "route")):
+                with patch("backend.vapi_calls_pg.upsert_vapi_call") as mock_upsert:
+                    response = client.post("/api/vapi/webhook", json=payload)
+    assert response.status_code == 200
+    assert mock_upsert.call_count >= 1
+    assert any(call.kwargs.get("customer_number") == "+33612345678" for call in mock_upsert.call_args_list)

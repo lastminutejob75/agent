@@ -896,13 +896,13 @@ async def vapi_webhook(request: Request):
     # status-update → vapi_calls (cycle de vie: ringing / in-progress / ended) pour dashboard + Tableau
     if msg_type == "status-update":
         try:
-            from backend.tenant_routing import resolve_tenant_id_from_vapi_payload
+            from backend.tenant_routing import extract_customer_phone_from_vapi_payload, resolve_tenant_id_from_vapi_payload
             from backend.vapi_calls_pg import upsert_vapi_call
             _cid = _webhook_extract_call_id(payload)
             _tid, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
             _call = message.get("call") or {}
-            _cust = _call.get("customer") or {}
             _pn = _call.get("phoneNumber") or {}
+            _customer_number = extract_customer_phone_from_vapi_payload(payload)
             _status = message.get("status") or _call.get("status") or "unknown"
             _started_at = None
             _ended_at = None
@@ -933,7 +933,7 @@ async def vapi_webhook(request: Request):
                 upsert_vapi_call(
                     _tid,
                     _cid,
-                    customer_number=_cust.get("number") if isinstance(_cust, dict) else None,
+                    customer_number=_customer_number,
                     assistant_id=_call.get("assistantId"),
                     phone_number_id=_call.get("phoneNumberId") or (_pn.get("id") if isinstance(_pn, dict) else None),
                     status=_status,
@@ -980,6 +980,16 @@ async def vapi_webhook(request: Request):
                 resolved_tenant_id, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
                 request.state.tenant_id = resolved_tenant_id
                 current_tenant_id.set(str(resolved_tenant_id))
+                try:
+                    from backend.vapi_calls_pg import upsert_vapi_call
+
+                    upsert_vapi_call(resolved_tenant_id, call_id, customer_number=customer_phone)
+                except Exception as persist_err:
+                    logger.warning(
+                        "CALLER_ID_VAPI_CALL_UPSERT_FAILED call_id=%s err=%s",
+                        call_id[:24] if call_id else "",
+                        str(persist_err)[:80],
+                    )
                 session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
                 if not session.customer_phone:
                     session.customer_phone = customer_phone

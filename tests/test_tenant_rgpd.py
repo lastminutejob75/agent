@@ -201,15 +201,16 @@ def test_tenant_calls_prefers_detail_events_and_exposes_customer_number(mock_cal
         "result": "other",
         "customer_number": "+33612345678",
         "events": [{"event": "booking_confirmed", "meta": {}}],
-        "transcript": "",
+        "transcript": "Patient: Ordonnance.\n\nAssistant: Mardi 10 mars à 14 heures 15.",
     }
     token = _make_jwt()
     r = client.get("/api/tenant/calls?limit=10&days=1", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200
     data = r.json()
     assert data["calls"][0]["status"] == "CONFIRMED"
-    assert data["calls"][0]["summary"] == "Rendez-vous confirmé"
+    assert data["calls"][0]["summary"] == "RDV confirmé — Ordonnance."
     assert data["calls"][0]["reason_label"] == "Demande de rendez-vous"
+    assert data["calls"][0]["reason_category"] == "agenda"
     assert data["calls"][0]["customer_number"] == "+33612345678"
 
 
@@ -217,6 +218,8 @@ def test_tenant_calls_prefers_detail_events_and_exposes_customer_number(mock_cal
 @patch("backend.routes.tenant.GoogleCalendarService")
 @patch("backend.routes.tenant._get_tenant_detail")
 def test_tenant_agenda_google_ok(mock_tenant_detail, mock_google_service, mock_get_user, client):
+    from datetime import datetime, timedelta
+
     mock_get_user.return_value = {"tenant_id": 1, "email": "test@example.com", "role": "owner"}
     mock_tenant_detail.return_value = {
         "tenant_id": 1,
@@ -228,14 +231,16 @@ def test_tenant_agenda_google_ok(mock_tenant_detail, mock_google_service, mock_g
             "calendar_id": "cabinet@test.calendar.google.com",
         },
     }
+    start_dt = datetime.utcnow() + timedelta(hours=2)
+    end_dt = start_dt + timedelta(minutes=30)
     mock_google_service.return_value.service.events.return_value.list.return_value.execute.return_value = {
         "items": [
             {
                 "id": "evt_1",
                 "summary": "RDV - Claire Fontaine",
                 "description": "Patient: Claire Fontaine\nMotif: Consultation",
-                "start": {"dateTime": "2026-03-06T09:00:00+01:00"},
-                "end": {"dateTime": "2026-03-06T09:30:00+01:00"},
+                "start": {"dateTime": start_dt.isoformat() + "Z"},
+                "end": {"dateTime": end_dt.isoformat() + "Z"},
             }
         ]
     }
@@ -245,4 +250,43 @@ def test_tenant_agenda_google_ok(mock_tenant_detail, mock_google_service, mock_g
     data = r.json()
     assert data["total"] == 1
     assert data["slots"][0]["patient"] == "Claire Fontaine"
+    assert data["slots"][0]["source"] == "UWI"
+
+
+@patch("backend.routes.tenant.pg_get_tenant_user_by_id")
+@patch("backend.routes.tenant.GoogleCalendarService")
+@patch("backend.routes.tenant._get_tenant_detail")
+def test_tenant_agenda_upcoming_days_includes_future_slots(mock_tenant_detail, mock_google_service, mock_get_user, client):
+    from datetime import datetime, timedelta
+
+    mock_get_user.return_value = {"tenant_id": 1, "email": "test@example.com", "role": "owner"}
+    mock_tenant_detail.return_value = {
+        "tenant_id": 1,
+        "name": "Cabinet Test",
+        "timezone": "Europe/Paris",
+        "params": {
+            "timezone": "Europe/Paris",
+            "calendar_provider": "google",
+            "calendar_id": "cabinet@test.calendar.google.com",
+        },
+    }
+    start_dt = datetime.utcnow() + timedelta(days=2)
+    end_dt = start_dt + timedelta(minutes=30)
+    mock_google_service.return_value.service.events.return_value.list.return_value.execute.return_value = {
+        "items": [
+            {
+                "id": "evt_2",
+                "summary": "RDV - Henri",
+                "description": "Patient: Henri\nMotif: Ordonnance",
+                "start": {"dateTime": start_dt.isoformat() + "Z"},
+                "end": {"dateTime": end_dt.isoformat() + "Z"},
+            }
+        ]
+    }
+    token = _make_jwt()
+    r = client.get("/api/tenant/agenda?upcoming_days=7", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["total"] == 1
+    assert data["slots"][0]["patient"] == "Henri"
     assert data["slots"][0]["source"] == "UWI"
