@@ -199,7 +199,7 @@ export default function AppDashboard() {
   useEffect(() => {
     Promise.all([
       api.tenantKpis(1).catch(() => null),
-      api.tenantGetCalls("?limit=20&days=1").catch(() => ({ calls: [] })),
+      api.tenantGetCalls("?limit=20&days=7").catch(() => ({ calls: [] })),
       api.tenantGetAgenda().catch(() => null),
       api.tenantMe().catch(() => null),
     ]).then(([k, c, a, m]) => {

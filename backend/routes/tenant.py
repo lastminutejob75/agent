@@ -525,7 +525,7 @@ def tenant_technical_status(auth: dict = Depends(require_tenant_auth)):
 def tenant_calls(
     auth: dict = Depends(require_tenant_auth),
     limit: int = Query(10, ge=1, le=50),
-    days: int = Query(1, ge=1, le=30),
+    days: int = Query(7, ge=1, le=30),
 ):
     """Retourne les derniers appels formatés pour le dashboard client."""
     tenant_id = auth["tenant_id"]
@@ -569,11 +569,31 @@ def tenant_calls(
         call_id = (item.get("call_id") or "").strip()
         if not call_id:
             continue
-        call_detail = _get_call_detail(tenant_id, call_id)
-        followup = get_call_followup(tenant_id, call_id) or {}
         status = STATUS_MAP.get((item.get("result") or "other").lower(), "FAQ")
-        call_context = _classify_call_context(status, call_detail)
         started_at = item.get("started_at") or item.get("last_event_at")
+        fallback_detail = {
+            "call_id": call_id,
+            "tenant_id": tenant_id,
+            "started_at": item.get("started_at"),
+            "last_event_at": item.get("last_event_at"),
+            "duration_min": item.get("duration_min"),
+            "result": item.get("result") or "other",
+            "events": [],
+            "transcript": None,
+        }
+        try:
+            call_detail = _get_call_detail(tenant_id, call_id) or fallback_detail
+        except HTTPException as e:
+            logger.warning("tenant_calls detail fallback tenant_id=%s call_id=%s status=%s", tenant_id, call_id, e.status_code)
+            call_detail = fallback_detail
+        except Exception as e:
+            logger.warning("tenant_calls detail failed tenant_id=%s call_id=%s err=%s", tenant_id, call_id, str(e)[:120])
+            call_detail = fallback_detail
+        try:
+            followup = get_call_followup(tenant_id, call_id) or {}
+        except Exception:
+            followup = {}
+        call_context = _classify_call_context(status, call_detail)
         calls.append({
             "id": call_id,
             "time": _format_hhmm(started_at, tz_name),
