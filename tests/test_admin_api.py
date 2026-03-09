@@ -203,6 +203,73 @@ def test_get_calls_list_merges_ivr_events_when_vapi_calls_exist(monkeypatch):
     assert call_ids[0] == "call_new"
 
 
+def test_get_call_detail_falls_back_to_vapi_calls_without_ivr_events(monkeypatch):
+    import psycopg
+    from backend.routes import admin as admin_routes
+
+    now = datetime.utcnow()
+    ivr_rows = []
+    call_session_row = None
+    vapi_row = {
+        "customer_number": "+33612345678",
+        "started_at": now - timedelta(minutes=12),
+        "ended_at": now - timedelta(minutes=8),
+        "updated_at": now - timedelta(minutes=8),
+        "status": "ended",
+        "ended_reason": "",
+    }
+    transcript_rows = []
+
+    class FakeCursor:
+        def __init__(self):
+            self.exec_count = 0
+
+        def execute(self, sql, params):
+            self.exec_count += 1
+
+        def fetchall(self):
+            if self.exec_count == 1:
+                return ivr_rows
+            if self.exec_count == 4:
+                return transcript_rows
+            return []
+
+        def fetchone(self):
+            if self.exec_count == 2:
+                return call_session_row
+            if self.exec_count == 3:
+                return vapi_row
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeConn:
+        def cursor(self):
+            return FakeCursor()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setenv("DATABASE_URL", "postgres://fake")
+    monkeypatch.setattr(psycopg, "connect", lambda *args, **kwargs: FakeConn())
+
+    data = admin_routes._get_call_detail(tenant_id=1, call_id="call_partial")
+
+    assert data["call_id"] == "call_partial"
+    assert data["customer_number"] == "+33612345678"
+    assert data["events"] == []
+    assert data["started_at"]
+    assert data["last_event_at"]
+    assert data["duration_min"] == 4
+
+
 @patch("backend.routes.admin.config.USE_PG_TENANTS", True)
 @patch("backend.routes.admin._get_stripe_price_ids_for_plan", return_value=("price_base", "price_meter"))
 @patch("backend.leads_pg.update_lead", return_value=True)

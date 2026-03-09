@@ -2103,6 +2103,7 @@ def _get_call_detail(tenant_id: int, call_id: str) -> dict:
         from psycopg.rows import dict_row
         with psycopg.connect(url, row_factory=dict_row) as conn:
             with conn.cursor() as cur:
+                vapi_row = None
                 cur.execute(
                     """
                     SELECT created_at, event, context, reason
@@ -2113,8 +2114,6 @@ def _get_call_detail(tenant_id: int, call_id: str) -> dict:
                     (cid, call_id_clean),
                 )
                 rows = cur.fetchall()
-                if not rows:
-                    raise HTTPException(404, "Call not found")
                 events = []
                 for r in rows:
                     meta = {}
@@ -2131,7 +2130,7 @@ def _get_call_detail(tenant_id: int, call_id: str) -> dict:
                 out["started_at"] = events[0]["created_at"] if events else None
                 out["last_event_at"] = events[-1]["created_at"] if events else None
                 last_event = rows[-1].get("event") if rows else None
-                out["result"] = _call_result_from_event(last_event)
+                out["result"] = _call_result_from_event(last_event) if last_event else "other"
                 if len(rows) >= 2:
                     from datetime import datetime
                     try:
@@ -2170,8 +2169,25 @@ def _get_call_detail(tenant_id: int, call_id: str) -> dict:
                     vc = cur.fetchone()
                     if vc and vc.get("customer_number"):
                         out["customer_number"] = str(vc.get("customer_number")).strip()
+                    vapi_row = vc
                 except Exception:
                     pass
+                if vapi_row:
+                    v_started = vapi_row.get("started_at")
+                    v_ended = vapi_row.get("ended_at")
+                    v_updated = vapi_row.get("updated_at")
+                    if not out.get("started_at"):
+                        out["started_at"] = _iso_utc(v_started) if v_started else None
+                    if not out.get("last_event_at"):
+                        fallback_last = v_ended or v_updated or v_started
+                        out["last_event_at"] = _iso_utc(fallback_last) if fallback_last else None
+                    if out.get("result") == "other":
+                        out["result"] = _vapi_call_result_from_status(vapi_row.get("status"), vapi_row.get("ended_reason"))
+                    if out.get("duration_min") is None and v_started and (v_ended or v_updated):
+                        end_ts = v_ended or v_updated
+                        delta_mins = (end_ts - v_started).total_seconds() / 60.0
+                        delta_mins = max(0, min(MAX_SESSION_MINUTES, delta_mins))
+                        out["duration_min"] = int(round(delta_mins, 0))
                 # Transcription depuis call_transcripts (si table existe)
                 try:
                     cur.execute(
@@ -2195,6 +2211,8 @@ def _get_call_detail(tenant_id: int, call_id: str) -> dict:
                         out["transcript"] = "\n\n".join(parts) if parts else None
                 except Exception:
                     pass
+                if not rows and not vapi_row:
+                    raise HTTPException(404, "Call not found")
     except HTTPException:
         raise
     except Exception as e:

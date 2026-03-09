@@ -31,13 +31,15 @@ def test_handle_book_confirmed_resets_booking_failures():
     ]
     with patch.object(tools_booking, "book_slot_from_session", return_value=(True, None)):
         with patch.object(session, "google_event_id", "evt-123", create=True):
-            payload, err = handle_book(session, "1", "Marie", "Consultation", "call-1")
+            with patch("backend.engine._persist_ivr_event") as mock_persist:
+                payload, err = handle_book(session, "1", "Marie", "Consultation", "call-1")
     assert err is None
     assert payload["status"] == "confirmed"
     assert payload["event_id"] == "evt-123"
     assert payload["start_iso"] == "2025-02-05T10:00:00"
     assert payload["end_iso"] == "2025-02-05T10:30:00"
     assert session.booking_failures == 0
+    mock_persist.assert_called_once_with(session, "booking_confirmed")
 
 
 def test_handle_book_slot_taken_once():
