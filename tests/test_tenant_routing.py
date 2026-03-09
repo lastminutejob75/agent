@@ -1,8 +1,10 @@
 """Tests tenant_routing (DID → tenant_id)."""
 import pytest
+from unittest.mock import patch
 from backend.tenant_routing import (
     normalize_did,
     resolve_tenant_id_from_vocal_call,
+    resolve_tenant_id_from_vapi_payload,
     extract_to_number_from_vapi_payload,
     extract_customer_phone_from_vapi_payload,
     add_route,
@@ -86,3 +88,21 @@ def test_extract_customer_phone_from_vapi_payload():
     # fallback: aucun numéro valide (longueur >= 10)
     assert extract_customer_phone_from_vapi_payload({}) is None
     assert extract_customer_phone_from_vapi_payload({"call": {}}) is None
+
+
+@patch("backend.tenants_pg.pg_find_tenant_id_by_vapi_assistant_id", return_value=7)
+def test_resolve_vapi_payload_falls_back_to_assistant_id(mock_lookup):
+    payload = {
+        "message": {
+            "call": {
+                "assistantId": "asst_live_123",
+            }
+        }
+    }
+
+    with patch("backend.tenant_routing.config.USE_PG_TENANTS", True):
+        tid, source = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
+
+    assert tid == 7
+    assert source == "assistant"
+    mock_lookup.assert_called_once_with("asst_live_123")

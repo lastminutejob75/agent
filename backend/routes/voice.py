@@ -896,11 +896,10 @@ async def vapi_webhook(request: Request):
     # status-update → vapi_calls (cycle de vie: ringing / in-progress / ended) pour dashboard + Tableau
     if msg_type == "status-update":
         try:
-            from backend.tenant_routing import extract_to_number_from_vapi_payload, resolve_tenant_id_from_vocal_call
+            from backend.tenant_routing import resolve_tenant_id_from_vapi_payload
             from backend.vapi_calls_pg import upsert_vapi_call
             _cid = _webhook_extract_call_id(payload)
-            _to = extract_to_number_from_vapi_payload(payload)
-            _tid, _ = resolve_tenant_id_from_vocal_call(_to or "", channel="vocal")
+            _tid, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
             _call = message.get("call") or {}
             _cust = _call.get("customer") or {}
             _pn = _call.get("phoneNumber") or {}
@@ -948,11 +947,10 @@ async def vapi_webhook(request: Request):
     # transcript → call_transcripts (user / assistant, final ou partial) pour détail appel + analyse
     if msg_type == "transcript":
         try:
-            from backend.tenant_routing import extract_to_number_from_vapi_payload, resolve_tenant_id_from_vocal_call
+            from backend.tenant_routing import resolve_tenant_id_from_vapi_payload
             from backend.vapi_calls_pg import insert_call_transcript
             _cid = _webhook_extract_call_id(payload)
-            _to = extract_to_number_from_vapi_payload(payload)
-            _tid, _ = resolve_tenant_id_from_vocal_call(_to or "", channel="vocal")
+            _tid, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
             _role = (message.get("role") or "user").lower()
             _text = (message.get("transcript") or "").strip()
             _is_final = (message.get("transcriptType") or "").lower() == "final"
@@ -965,8 +963,7 @@ async def vapi_webhook(request: Request):
     # (conversation-update / speech-update ne le contiennent pas — source: rapport Vapi)
     from backend.tenant_routing import (
         extract_customer_phone_from_vapi_payload,
-        extract_to_number_from_vapi_payload,
-        resolve_tenant_id_from_vocal_call,
+        resolve_tenant_id_from_vapi_payload,
         current_tenant_id,
     )
     call_id = _webhook_extract_call_id(payload)
@@ -980,8 +977,7 @@ async def vapi_webhook(request: Request):
         )
         if should_persist:
             try:
-                to_number = extract_to_number_from_vapi_payload(payload)
-                resolved_tenant_id, _ = resolve_tenant_id_from_vocal_call(to_number or "", channel="vocal")
+                resolved_tenant_id, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
                 request.state.tenant_id = resolved_tenant_id
                 current_tenant_id.set(str(resolved_tenant_id))
                 session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
@@ -1089,14 +1085,12 @@ async def vapi_tool(request: Request):
         )
 
         from backend.tenant_routing import (
-            extract_to_number_from_vapi_payload,
-            resolve_tenant_id_from_vocal_call,
+            resolve_tenant_id_from_vapi_payload,
             current_tenant_id,
         )
         from backend import vapi_tool_handlers as th
 
-        to_number = extract_to_number_from_vapi_payload(payload)
-        resolved_tenant_id, _ = resolve_tenant_id_from_vocal_call(to_number or "", channel="vocal")
+        resolved_tenant_id, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
         request.state.tenant_id = resolved_tenant_id
         current_tenant_id.set(str(resolved_tenant_id))
 
@@ -1295,7 +1289,7 @@ async def vapi_custom_llm(request: Request):
         from backend.tenant_routing import (
             extract_to_number_from_vapi_payload,
             extract_customer_phone_from_vapi_payload,
-            resolve_tenant_id_from_vocal_call,
+            resolve_tenant_id_from_vapi_payload,
         )
         customer_phone = extract_customer_phone_from_vapi_payload(payload)
         # Diagnostic : structure du payload (sans PII) pour savoir où Vapi envoie le caller ID
@@ -1316,7 +1310,7 @@ async def vapi_custom_llm(request: Request):
 
         # 🎯 DID → tenant_id (avant tout event, pour scoping correct)
         to_number = extract_to_number_from_vapi_payload(payload)
-        resolved_tenant_id, route_source = resolve_tenant_id_from_vocal_call(to_number, channel="vocal")
+        resolved_tenant_id, route_source = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
         logger.info(
             "[TENANT_ROUTE] to=%s tenant_id=%s source=%s",
             to_number or "(none)",

@@ -93,6 +93,45 @@ def pg_resolve_tenant_id(channel: str, did_key: str) -> Optional[Tuple[int, str]
         return None
 
 
+def pg_find_tenant_id_by_vapi_assistant_id(assistant_id: str) -> Optional[int]:
+    """
+    Retrouve un tenant_id à partir du vapi_assistant_id stocké dans tenant_config.params_json.
+    Utilisé en fallback de routage quand Vapi ne renvoie pas le DID mais inclut encore l'assistant.
+    """
+    url = _pg_url()
+    assistant_id = (assistant_id or "").strip()
+    if not url or not assistant_id:
+        return None
+
+    def _query() -> Optional[int]:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT tenant_id
+                    FROM tenant_config
+                    WHERE COALESCE(params_json->>'vapi_assistant_id', '') = %s
+                    LIMIT 1
+                    """,
+                    (assistant_id,),
+                )
+                row = cur.fetchone()
+                if row:
+                    return int(row[0])
+        return None
+
+    try:
+        return _query()
+    except Exception as e:
+        if _is_transient(e):
+            try:
+                return _query()
+            except Exception:
+                pass
+        return None
+
+
 def pg_get_tenant_flags(tenant_id: int) -> Optional[Tuple[dict, str]]:
     """
     Charge flags_json depuis PG tenant_config.

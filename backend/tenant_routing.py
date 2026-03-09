@@ -98,6 +98,65 @@ def resolve_tenant_id_from_vocal_call(to_number: Optional[str], channel: str = "
     return (config.DEFAULT_TENANT_ID, "default")
 
 
+def extract_assistant_id_from_vapi_payload(payload: dict) -> Optional[str]:
+    """
+    Extrait l'assistant Vapi depuis plusieurs formes de payload webhook.
+    Sert de fallback de routage si le DID n'est pas présent.
+    """
+    if not payload or not isinstance(payload, dict):
+        return None
+
+    message = payload.get("message") or {}
+    call = message.get("call") or {}
+    assistant = message.get("assistant") or {}
+    root_call = payload.get("call") or {}
+    root_assistant = payload.get("assistant") or {}
+
+    candidates = [
+        call.get("assistantId"),
+        assistant.get("id") if isinstance(assistant, dict) else None,
+        root_call.get("assistantId"),
+        root_assistant.get("id") if isinstance(root_assistant, dict) else None,
+        payload.get("assistantId"),
+    ]
+    for candidate in candidates:
+        value = str(candidate or "").strip()
+        if value:
+            return value
+    return None
+
+
+def resolve_tenant_id_from_vapi_payload(payload: dict, channel: str = "vocal") -> tuple[int, str]:
+    """
+    Résolution tenant Vapi:
+    1. DID/numéro appelé si disponible
+    2. fallback assistantId -> tenant_config.params_json.vapi_assistant_id
+    3. défaut
+    """
+    to_number = extract_to_number_from_vapi_payload(payload)
+    tenant_id, source = resolve_tenant_id_from_vocal_call(to_number, channel=channel)
+    if source != "default":
+        return tenant_id, source
+
+    assistant_id = extract_assistant_id_from_vapi_payload(payload)
+    if assistant_id and config.USE_PG_TENANTS:
+        try:
+            from backend.tenants_pg import pg_find_tenant_id_by_vapi_assistant_id
+
+            assistant_tenant_id = pg_find_tenant_id_by_vapi_assistant_id(assistant_id)
+            if assistant_tenant_id:
+                logger.info(
+                    "TENANT_READ source=assistant assistant_id=%s -> tenant_id=%s",
+                    assistant_id[:24],
+                    assistant_tenant_id,
+                )
+                return int(assistant_tenant_id), "assistant"
+        except Exception as e:
+            logger.debug("TENANT_READ assistant lookup failed: %s", e)
+
+    return tenant_id, source
+
+
 def resolve_tenant_from_whatsapp(to_number: str) -> int:
     """
     Résout le tenant_id à partir du numéro WhatsApp Business destinataire (To).
