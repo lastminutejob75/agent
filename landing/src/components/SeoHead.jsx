@@ -91,6 +91,26 @@ const ROUTE_META = {
     title: "RGPD — Espace Client UWi",
     description: "Consultez les informations RGPD liées à votre activité UWi.",
   },
+  "/admin": {
+    title: "Dashboard Admin — UWi",
+    description: "Pilotez les clients, leads, appels et activations depuis le cockpit admin UWi.",
+  },
+  "/admin/login": {
+    title: "Connexion Admin — UWi",
+    description: "Accédez au cockpit d'administration UWi.",
+  },
+  "/admin/leads": {
+    title: "Leads — Admin UWi",
+    description: "Suivez les prospects, conversions et actions CRM dans l'admin UWi.",
+  },
+  "/admin/calls": {
+    title: "Appels — Admin UWi",
+    description: "Supervisez les appels et les actions métier depuis l'admin UWi.",
+  },
+  "/admin/quality": {
+    title: "Qualité — Admin UWi",
+    description: "Analysez la qualité opérationnelle des appels et parcours dans l'admin UWi.",
+  },
   ...Object.fromEntries(
     SEO_VERTICAL_PATHS.map((path) => [
       path,
