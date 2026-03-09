@@ -367,6 +367,7 @@ export default function AppLayout() {
         <div style={S.content}>
           {showWelcomeSecurityBanner && (
             <div
+              data-tour="security-banner"
               style={{
                 margin: "0 24px",
                 borderRadius: 12,

@@ -120,6 +120,7 @@ def test_e2e_connexion_et_dashboard_client(mock_get_user, client, jwt_secret):
     assert "tenant_name" in me
     assert me.get("email") == "dashboard@test.fr"
     assert me.get("role") == "owner"
+    assert me.get("dashboard_tour_completed") is False
 
     # Dashboard client (même JWT)
     r_dash = client.get("/api/tenant/dashboard", headers=headers)
@@ -158,6 +159,7 @@ def test_tenant_me_onboarding_requires_real_completion(mock_get_user, mock_detai
     assert me["onboarding_steps"]["horaires_ready"] is False
     assert me["onboarding_completed"] is False
     assert me["client_onboarding_completed"] is False
+    assert me["dashboard_tour_completed"] is False
 
 
 def test_e2e_tenant_me_sans_token_401(client):

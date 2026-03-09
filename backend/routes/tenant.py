@@ -448,6 +448,7 @@ def tenant_me(auth: dict = Depends(require_tenant_auth)):
         "assistant_live": _vapi_ready,
         "voice_number": voice_number,
         "client_onboarding_completed": client_onboarding_completed,
+        "dashboard_tour_completed": _is_truthy(params.get("dashboard_tour_completed")),
         "onboarding_steps": onboarding_steps,
         "onboarding_completed": onboarding_completed,
         "faq_items_count": _count_active_faq_items(faq),
@@ -939,6 +940,7 @@ def tenant_patch_params(
         "contact_email", "calendar_provider", "calendar_id", "timezone", "consent_mode",
         "phone_number", "sector", "specialty_label", "address_line1", "postal_code", "city",
         "assistant_name", "plan_key", "agenda_software", "client_onboarding_completed",
+        "dashboard_tour_completed",
     }
     body = body or {}
     tenant_id = auth["tenant_id"]

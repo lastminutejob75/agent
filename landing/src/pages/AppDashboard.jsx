@@ -191,6 +191,10 @@ export default function AppDashboard() {
   const [agenda, setAgenda] = useState(null);
   const [me, setMe] = useState(null);
   const [assistantImageFailed, setAssistantImageFailed] = useState(false);
+  const [tourStepIndex, setTourStepIndex] = useState(-1);
+  const [tourRect, setTourRect] = useState(null);
+  const [tourPersisting, setTourPersisting] = useState(false);
+  const [tourDismissed, setTourDismissed] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -373,9 +377,192 @@ export default function AppDashboard() {
     { label: "Compléter la FAQ", sub: "Réponses cabinet", href: "/app/faq" },
   ];
 
+  const showSecurityTourStep =
+    typeof window !== "undefined" && new URLSearchParams(window.location.search).get("welcome") === "1";
+
+  const tourSteps = useMemo(() => {
+    const steps = [];
+    if (showSecurityTourStep) {
+      steps.push({
+        target: "security-banner",
+        title: "Sécurisez d'abord votre accès",
+        body: "Commencez par changer votre mot de passe temporaire. C'est la première action à faire avant de laisser l'équipe utiliser le dashboard.",
+        example: "Exemple concret : si vous partagez l'ordinateur du cabinet, ce changement évite qu'une autre personne puisse rouvrir votre espace client.",
+      });
+    }
+    steps.push(
+      {
+        target: "activation-panel",
+        title: "Finalisez la mise en route du cabinet",
+        body: "Ici, vous voyez ce qu'il reste à compléter pour que votre assistante travaille seule dans de bonnes conditions.",
+        example: "Exemple concret : vérifier les horaires, la FAQ et l'agenda avant que l'assistante réponde à des questions comme \"Êtes-vous ouvert le samedi ?\" ou propose un créneau.",
+      },
+      {
+        target: "quick-links",
+        title: "Utilisez les raccourcis métier",
+        body: "Ces accès rapides vous emmènent directement vers les réglages que vous modifierez le plus souvent au quotidien.",
+        example: "Exemples concrets : FAQ = \"Prenez-vous la carte vitale ?\" ; Horaires = \"Lun-Ven 9h-18h\" ; Agenda = connecter Google Calendar si besoin.",
+      },
+      {
+        target: "calls-panel",
+        title: "Suivez les appels importants ici",
+        body: "Cette zone vous montre les derniers appels, les résumés et les demandes qui nécessitent un suivi de votre part.",
+        example: "Exemples concrets : \"Mme Dupont demande un renouvellement\", \"Patient à rappeler après consultation\", \"Demande urgente à vérifier\".",
+      },
+      {
+        target: "agenda-panel",
+        title: "Vérifiez les rendez-vous confirmés",
+        body: "Vous voyez ici les rendez-vous du jour, y compris ceux pris directement par UWI avant même de connecter un agenda externe.",
+        example: "Exemple concret : \"Mar 10h30 - Consultation générale - confirmé par UWI\" ou \"Jeu 16h00 - Suivi - agenda externe\".",
+      },
+    );
+    return steps;
+  }, [showSecurityTourStep]);
+
+  const activeTourStep =
+    tourStepIndex >= 0 && tourStepIndex < tourSteps.length ? tourSteps[tourStepIndex] : null;
+
+  useEffect(() => {
+    if (loading || !me || me?.dashboard_tour_completed || tourDismissed || tourStepIndex !== -1) return;
+    setTourStepIndex(0);
+  }, [loading, me, tourDismissed, tourStepIndex]);
+
+  useEffect(() => {
+    if (!activeTourStep || typeof window === "undefined") return undefined;
+    const element = document.querySelector(`[data-tour="${activeTourStep.target}"]`);
+    if (!element) {
+      setTourRect(null);
+      return undefined;
+    }
+
+    let timer = null;
+    const measure = () => {
+      const rect = element.getBoundingClientRect();
+      setTourRect({
+        top: rect.top,
+        left: rect.left,
+        width: rect.width,
+        height: rect.height,
+      });
+    };
+
+    element.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    timer = window.setTimeout(measure, 260);
+    const onViewportChange = () => measure();
+    window.addEventListener("resize", onViewportChange);
+    window.addEventListener("scroll", onViewportChange, true);
+    return () => {
+      if (timer) window.clearTimeout(timer);
+      window.removeEventListener("resize", onViewportChange);
+      window.removeEventListener("scroll", onViewportChange, true);
+    };
+  }, [activeTourStep]);
+
+  const completeTour = async () => {
+    setTourDismissed(true);
+    setTourStepIndex(-1);
+    setTourRect(null);
+    if (!me || me.dashboard_tour_completed || tourPersisting) return;
+    setTourPersisting(true);
+    try {
+      await api.tenantPatchParams({ dashboard_tour_completed: true });
+      setMe((prev) => (prev ? { ...prev, dashboard_tour_completed: true } : prev));
+    } catch (_) {
+      // Fail open: ne pas bloquer l'utilisateur si le flag ne se persiste pas.
+    } finally {
+      setTourPersisting(false);
+    }
+  };
+
+  const nextTourStep = async () => {
+    if (tourStepIndex >= tourSteps.length - 1) {
+      await completeTour();
+      return;
+    }
+    setTourStepIndex((prev) => prev + 1);
+  };
+
+  const restartTour = () => {
+    setTourDismissed(false);
+    setTourRect(null);
+    setTourStepIndex(0);
+  };
+
+  const tourPopoverStyle = (() => {
+    if (!tourRect || typeof window === "undefined") return null;
+    const width = Math.min(380, window.innerWidth - 32);
+    const estimatedHeight = 260;
+    let top = tourRect.bottom + 18;
+    let placement = "bottom";
+    if (top + estimatedHeight > window.innerHeight - 16) {
+      top = Math.max(16, tourRect.top - estimatedHeight - 18);
+      placement = "top";
+    }
+    let left = tourRect.left;
+    if (left + width > window.innerWidth - 16) {
+      left = window.innerWidth - width - 16;
+    }
+    if (left < 16) left = 16;
+    return { top, left, width, placement };
+  })();
+
   return (
     <div style={S.root}>
       <style>{CSS}</style>
+
+      {activeTourStep && tourRect && tourPopoverStyle ? (
+        <div style={S.tourOverlay} role="dialog" aria-modal="true" aria-label="Guide de première connexion">
+          <div style={S.tourBackdrop} />
+          <div
+            style={{
+              ...S.tourHighlight,
+              top: Math.max(8, tourRect.top - 8),
+              left: Math.max(8, tourRect.left - 8),
+              width: Math.min(window.innerWidth - 16, tourRect.width + 16),
+              height: tourRect.height + 16,
+            }}
+          />
+          <div style={{ ...S.tourCard, ...tourPopoverStyle }}>
+            <div
+              style={{
+                ...S.tourArrow,
+                left: Math.max(28, Math.min((tourRect.left - tourPopoverStyle.left) + 36, tourPopoverStyle.width - 42)),
+                ...(tourPopoverStyle.placement === "bottom"
+                  ? { top: -10, borderBottom: "10px solid rgba(255,255,255,0.96)" }
+                  : { bottom: -10, borderTop: "10px solid rgba(255,255,255,0.96)" }),
+              }}
+            />
+            <div style={S.tourBadge}>
+              Première connexion · {tourStepIndex + 1}/{tourSteps.length}
+            </div>
+            <div style={S.tourTitle}>{activeTourStep.title}</div>
+            <div style={S.tourText}>{activeTourStep.body}</div>
+            <div style={S.tourExampleCard}>
+              <div style={S.tourExampleLabel}>Exemple concret</div>
+              <div style={S.tourExampleText}>{activeTourStep.example}</div>
+            </div>
+            <div style={S.tourProgressRow}>
+              {tourSteps.map((step, index) => (
+                <span
+                  key={step.target}
+                  style={{
+                    ...S.tourProgressDot,
+                    ...(index === tourStepIndex ? S.tourProgressDotActive : null),
+                  }}
+                />
+              ))}
+            </div>
+            <div style={S.tourActions}>
+              <button type="button" onClick={completeTour} style={S.tourGhostButton}>
+                {tourPersisting ? "Fermeture..." : "Passer"}
+              </button>
+              <button type="button" onClick={nextTourStep} style={S.tourPrimaryButton}>
+                {tourStepIndex >= tourSteps.length - 1 ? "J'ai compris" : "Suivant"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <div className="uwi-dashboard-wrap">
         <div className="uwi-header-row" style={S.header}>
@@ -386,6 +573,9 @@ export default function AppDashboard() {
 
           <div style={S.headerRight}>
             <div style={S.headerChip}>{actionQueue.length} action{actionQueue.length > 1 ? "s" : ""} active{actionQueue.length > 1 ? "s" : ""}</div>
+            <button type="button" onClick={restartTour} style={S.headerGhostButton}>
+              Revoir le guide
+            </button>
             <button type="button" onClick={() => navigate("/app/appels")} style={S.headerButton}>
               Ouvrir Appels
             </button>
@@ -465,7 +655,7 @@ export default function AppDashboard() {
         ) : null}
 
         <section className="uwi-main-grid" style={S.mainGrid}>
-          <div style={S.panel}>
+          <div style={S.panel} data-tour="calls-panel">
             <div style={S.panelHeader}>
               <div>
                 <div style={S.panelTitle}>Appels récents</div>
@@ -537,7 +727,7 @@ export default function AppDashboard() {
             </div>
           </div>
 
-          <div style={S.panel}>
+          <div style={S.panel} data-tour="agenda-panel">
             <div style={S.panelHeader}>
               <div>
                 <div style={S.panelTitle}>Agenda</div>
@@ -717,7 +907,7 @@ export default function AppDashboard() {
             </div>
           </div>
 
-          <div style={S.activationPanel}>
+          <div style={S.activationPanel} data-tour="activation-panel">
             <div style={S.panelHeader}>
               <div>
                 <div style={S.panelTitle}>Activation du cabinet</div>
@@ -752,7 +942,7 @@ export default function AppDashboard() {
           </div>
         </section>
 
-        <section className="uwi-quick-links" style={S.quickLinks}>
+        <section className="uwi-quick-links" style={S.quickLinks} data-tour="quick-links">
           {quickLinks.map((item) => (
             <button key={item.href} type="button" onClick={() => navigate(item.href)} style={S.quickLinkCard}>
               <div style={S.quickLinkTitle}>{item.label}</div>
@@ -814,6 +1004,20 @@ const S = {
     alignItems: "center",
     justifyContent: "center",
     color: "#111827",
+    borderRadius: 10,
+    padding: "10px 12px",
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  headerGhostButton: {
+    border: "1px solid #dbe4ee",
+    background: "#f8fafc",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    color: "#475569",
     borderRadius: 10,
     padding: "10px 12px",
     fontSize: 12,
@@ -1166,6 +1370,138 @@ const S = {
     color: "#6b7280",
     lineHeight: 1.5,
   },
+  tourOverlay: {
+    position: "fixed",
+    inset: 0,
+    zIndex: 120,
+    pointerEvents: "auto",
+  },
+  tourBackdrop: {
+    position: "absolute",
+    inset: 0,
+    background: "rgba(15, 23, 42, 0.14)",
+    backdropFilter: "blur(3px)",
+  },
+  tourHighlight: {
+    position: "fixed",
+    borderRadius: 22,
+    border: "1px solid rgba(20, 200, 184, 0.8)",
+    background: "rgba(255,255,255,0.04)",
+    boxShadow: "0 0 0 9999px rgba(15, 23, 42, 0.10), 0 0 0 6px rgba(20, 200, 184, 0.08), 0 18px 40px rgba(20, 200, 184, 0.12)",
+    pointerEvents: "none",
+    transition: "all .24s cubic-bezier(.2,.8,.2,1)",
+  },
+  tourCard: {
+    position: "fixed",
+    background: "linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(248,250,252,0.98) 100%)",
+    border: "1px solid rgba(209, 250, 229, 0.9)",
+    borderRadius: 22,
+    padding: 20,
+    boxShadow: "0 24px 70px rgba(15, 23, 42, 0.20), 0 6px 24px rgba(20, 200, 184, 0.08)",
+    pointerEvents: "auto",
+    overflow: "visible",
+    animation: "uwi-tour-in .28s cubic-bezier(.2,.8,.2,1)",
+  },
+  tourArrow: {
+    position: "absolute",
+    width: 0,
+    height: 0,
+    borderLeft: "10px solid transparent",
+    borderRight: "10px solid transparent",
+  },
+  tourBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "6px 11px",
+    borderRadius: 999,
+    background: "linear-gradient(135deg, #ecfdf5, #f0fdfa)",
+    color: "#047857",
+    fontSize: 11,
+    fontWeight: 800,
+    marginBottom: 12,
+    boxShadow: "inset 0 0 0 1px rgba(16, 185, 129, 0.08)",
+  },
+  tourTitle: {
+    fontSize: 19,
+    fontWeight: 800,
+    color: NAVY,
+    lineHeight: 1.2,
+    letterSpacing: "-0.02em",
+  },
+  tourText: {
+    marginTop: 9,
+    fontSize: 13,
+    lineHeight: 1.6,
+    color: "#334155",
+  },
+  tourExampleCard: {
+    marginTop: 15,
+    borderRadius: 16,
+    border: "1px solid rgba(191, 219, 254, 0.9)",
+    background: "linear-gradient(180deg, #f8fbff 0%, #f8fafc 100%)",
+    padding: 14,
+  },
+  tourExampleLabel: {
+    fontSize: 11,
+    fontWeight: 800,
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
+    color: "#0f766e",
+    marginBottom: 8,
+  },
+  tourExampleText: {
+    fontSize: 13,
+    lineHeight: 1.6,
+    color: "#334155",
+  },
+  tourProgressRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 14,
+  },
+  tourProgressDot: {
+    width: 7,
+    height: 7,
+    borderRadius: "50%",
+    background: "#cbd5e1",
+    transition: "all .18s ease",
+  },
+  tourProgressDotActive: {
+    width: 22,
+    borderRadius: 999,
+    background: "linear-gradient(90deg, #14c8b8, #0ea899)",
+  },
+  tourActions: {
+    marginTop: 16,
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  tourGhostButton: {
+    border: "1px solid #e5e7eb",
+    background: "rgba(255,255,255,0.9)",
+    color: "#475569",
+    borderRadius: 12,
+    padding: "10px 14px",
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  tourPrimaryButton: {
+    border: "none",
+    background: "linear-gradient(135deg, #14c8b8, #0ea899)",
+    color: "#fff",
+    borderRadius: 13,
+    padding: "10px 14px",
+    fontSize: 13,
+    fontWeight: 800,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    marginLeft: "auto",
+    boxShadow: "0 10px 24px rgba(20, 200, 184, 0.22)",
+  },
   kpiGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
@@ -1484,6 +1820,11 @@ const CSS = `
   @keyframes uwi-shimmer {
     0% { background-position: 200% 0; }
     100% { background-position: -200% 0; }
+  }
+
+  @keyframes uwi-tour-in {
+    0% { opacity: 0; transform: translateY(8px) scale(.985); }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
   }
 
   .uwi-dashboard-wrap {
