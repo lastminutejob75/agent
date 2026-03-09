@@ -28,6 +28,7 @@ def test_resolve_route_when_mapped():
     db.ensure_tenant_config()
     add_route("vocal", "+33123456789", 1)
     add_route("vocal", "+33612345678", 2)
+    add_route("vocal", "+33912345678", 3)
 
     tid, source = resolve_tenant_id_from_vocal_call("+33 1 23 45 67 89")
     assert tid == 1
@@ -40,6 +41,10 @@ def test_resolve_route_when_mapped():
     tid, source = resolve_tenant_id_from_vocal_call("+33876543210")
     assert tid == config.DEFAULT_TENANT_ID
     assert source == "default"
+
+    tid, source = resolve_tenant_id_from_vocal_call("09 12 34 56 78")
+    assert tid == 3
+    assert source == "route"
 
 
 def test_extract_to_number_from_vapi_payload():

@@ -56,19 +56,25 @@ def resolve_tenant_id_from_vocal_call(to_number: Optional[str], channel: str = "
     PG-first read, SQLite fallback.
     Returns: (tenant_id, source) avec source="route"|"default", logs [TENANT_READ] source=pg|sqlite
     """
-    key = normalize_did(to_number or "")
-    if not key:
+    raw_key = normalize_did(to_number or "")
+    canonical_key = normalize_did_canonical(to_number or "")
+    candidates = []
+    for key in (raw_key, canonical_key):
+        if key and key not in candidates:
+            candidates.append(key)
+    if not candidates:
         return (config.DEFAULT_TENANT_ID, "default")
 
     # PG-first (si USE_PG_TENANTS)
     if config.USE_PG_TENANTS:
         try:
             from backend.tenants_pg import pg_resolve_tenant_id
-            result = pg_resolve_tenant_id(channel, key)
-            if result:
-                tenant_id, _ = result
-                logger.debug("TENANT_READ source=pg route=%s -> tenant_id=%s", key, tenant_id)
-                return (tenant_id, "route")
+            for key in candidates:
+                result = pg_resolve_tenant_id(channel, key)
+                if result:
+                    tenant_id, _ = result
+                    logger.debug("TENANT_READ source=pg route=%s -> tenant_id=%s", key, tenant_id)
+                    return (tenant_id, "route")
         except Exception as e:
             logger.debug("TENANT_READ pg failed: %s (fallback sqlite)", e)
 
@@ -76,13 +82,14 @@ def resolve_tenant_id_from_vocal_call(to_number: Optional[str], channel: str = "
     db.ensure_tenant_config()
     conn = db.get_conn()
     try:
-        row = conn.execute(
-            "SELECT tenant_id FROM tenant_routing WHERE channel = ? AND did_key = ?",
-            (channel, key),
-        ).fetchone()
-        if row:
-            logger.debug("TENANT_READ source=sqlite route=%s -> tenant_id=%s", key, row[0])
-            return (int(row[0]), "route")
+        for key in candidates:
+            row = conn.execute(
+                "SELECT tenant_id FROM tenant_routing WHERE channel = ? AND did_key = ?",
+                (channel, key),
+            ).fetchone()
+            if row:
+                logger.debug("TENANT_READ source=sqlite route=%s -> tenant_id=%s", key, row[0])
+                return (int(row[0]), "route")
     except Exception as e:
         logger.debug("tenant_routing resolve: %s (using default)", e)
     finally:

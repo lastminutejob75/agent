@@ -251,7 +251,7 @@ export default function AppDashboard() {
       },
       {
         label: "Taux de réponse",
-        value: `${Math.round((kpis?.pickup_rate ?? 0) * 100)}%`,
+        value: `${Math.round(kpis?.pickup_rate ?? 0)}%`,
         icon: TrendingUp,
         iconBg: "#f0fdfa",
         iconColor: "#14b8a6",
@@ -567,8 +567,13 @@ export default function AppDashboard() {
       <div className="uwi-dashboard-wrap">
         <div className="uwi-header-row" style={S.header}>
           <div>
+            <div style={S.eyebrow}>
+              Cabinet · {me?.tenant_name || "Votre cabinet"}
+            </div>
             <h1 style={S.title}>Tableau de bord</h1>
-            <p style={S.subtitle}>Voyez immédiatement ce qui est prêt et ce qui demande une action</p>
+            <p style={S.subtitle}>
+              {me?.tenant_name || "Votre cabinet"} · voyez immédiatement ce qui est prêt et ce qui demande une action
+            </p>
           </div>
 
           <div style={S.headerRight}>
@@ -975,6 +980,15 @@ const S = {
     lineHeight: 1,
     fontWeight: 800,
     color: NAVY,
+  },
+  eyebrow: {
+    marginBottom: 8,
+    fontSize: 11,
+    lineHeight: 1,
+    fontWeight: 800,
+    color: "#0f766e",
+    letterSpacing: "0.06em",
+    textTransform: "uppercase",
   },
   subtitle: {
     marginTop: 6,
