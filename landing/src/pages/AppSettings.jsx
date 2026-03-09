@@ -110,7 +110,12 @@ export default function AppSettings() {
         </button>
       </form>
 
-      <form onSubmit={handlePasswordSubmit} className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm space-y-4 max-w-md">
+      <form
+        id="security"
+        onSubmit={handlePasswordSubmit}
+        className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm space-y-4 max-w-md"
+        style={{ scrollMarginTop: 96 }}
+      >
         <div>
           <h3 className="text-base font-semibold text-gray-900">Sécurité</h3>
           <p className="mt-1 text-sm text-gray-600">Changez votre mot de passe d'accès à l'espace client.</p>

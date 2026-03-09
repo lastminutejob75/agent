@@ -464,108 +464,6 @@ export default function AppDashboard() {
           <div style={S.banner}>⏳ Configuration en cours — Notre équipe active votre numéro sous 24h</div>
         ) : null}
 
-        <section className="uwi-activation-grid" style={S.activationGrid}>
-          <div style={S.actionsPanel}>
-            <div style={S.panelHeader}>
-              <div>
-                <div style={S.panelTitle}>À traiter maintenant</div>
-                <div style={S.panelSubtitle}>La file de travail prioritaire du cabinet</div>
-              </div>
-              <button type="button" onClick={() => navigate("/app/appels")} style={S.linkButton}>
-                <span>Ouvrir Appels</span>
-                <ArrowUpRight size={16} strokeWidth={2.2} />
-              </button>
-            </div>
-
-            <div style={S.actionQueueList}>
-              {loading ? (
-                [1, 2, 3].map((item) => <Skeleton key={item} height={90} radius={14} />)
-              ) : actionQueue.length === 0 ? (
-                <div style={S.emptyState}>
-                  <div style={S.emptyTitle}>Aucune action urgente</div>
-                  <div style={S.emptyText}>Les demandes prioritaires apparaîtront ici dès qu&apos;elles nécessiteront un suivi.</div>
-                </div>
-              ) : (
-                actionQueue.map((call) => {
-                  const badge = getReasonBadge(call);
-                  const ctaLabel = getActionCta(call);
-                  return (
-                    <div key={call.call_id || call.id} style={S.actionQueueCard}>
-                      <div style={{ minWidth: 0, flex: 1 }}>
-                        <div style={S.actionQueueTop}>
-                          <span
-                            style={{
-                              ...S.actionQueueBadge,
-                              background: badge.bg,
-                              color: badge.text,
-                              borderColor: badge.border,
-                            }}
-                          >
-                            {badge.label}
-                          </span>
-                          <span style={S.actionQueueTime}>{call.time || "—"}</span>
-                        </div>
-                        <div style={S.actionQueueTitle}>{call.patient_name || "Patient"}</div>
-                        <div style={S.actionQueueText}>{call.reason_label || call.summary || "Suivi patient"}</div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => navigate(call?.contextual_action?.kind === "open_agenda" ? "/app/agenda" : "/app/appels")}
-                        style={S.actionQueueButton}
-                      >
-                        {ctaLabel}
-                      </button>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-
-          <div style={S.activationPanel}>
-            <div style={S.panelHeader}>
-              <div>
-                <div style={S.panelTitle}>Activation du cabinet</div>
-                <div style={S.panelSubtitle}>Les prochains réglages qui débloquent l’autonomie du standard</div>
-              </div>
-              <div style={S.progressWrap}>
-                <div style={S.progressLabel}>{onboardingProgress}% prêt</div>
-                <div style={S.progressTrack}>
-                  <div style={{ ...S.progressFill, width: `${onboardingProgress}%` }} />
-                </div>
-              </div>
-            </div>
-
-            <div style={S.activationList}>
-              {onboardingCards.map((item) => (
-                <div key={item.key} style={{ ...S.activationItem, borderColor: item.done ? "#bbf7d0" : "#e5e7eb" }}>
-                  <div style={S.activationIcon}>{item.done ? "✓" : "•"}</div>
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ ...S.activationTitle, color: item.done ? "#047857" : NAVY }}>{item.title}</div>
-                    <div style={S.activationText}>{item.text}</div>
-                  </div>
-                  {item.href ? (
-                    <button type="button" onClick={() => navigate(item.href)} style={item.done ? S.activationButtonGhost : S.activationButton}>
-                      {item.cta}
-                    </button>
-                  ) : (
-                    <div style={S.activationWaiting}>{item.done ? "OK" : "UWI"}</div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <section className="uwi-quick-links" style={S.quickLinks}>
-          {quickLinks.map((item) => (
-            <button key={item.href} type="button" onClick={() => navigate(item.href)} style={S.quickLinkCard}>
-              <div style={S.quickLinkTitle}>{item.label}</div>
-              <div style={S.quickLinkText}>{item.sub}</div>
-            </button>
-          ))}
-        </section>
-
         <section className="uwi-main-grid" style={S.mainGrid}>
           <div style={S.panel}>
             <div style={S.panelHeader}>
@@ -759,6 +657,108 @@ export default function AppDashboard() {
                   </div>
                 );
               })}
+        </section>
+
+        <section className="uwi-activation-grid" style={S.activationGrid}>
+          <div style={S.actionsPanel}>
+            <div style={S.panelHeader}>
+              <div>
+                <div style={S.panelTitle}>À traiter maintenant</div>
+                <div style={S.panelSubtitle}>La file de travail prioritaire du cabinet</div>
+              </div>
+              <button type="button" onClick={() => navigate("/app/appels")} style={S.linkButton}>
+                <span>Ouvrir Appels</span>
+                <ArrowUpRight size={16} strokeWidth={2.2} />
+              </button>
+            </div>
+
+            <div style={S.actionQueueList}>
+              {loading ? (
+                [1, 2, 3].map((item) => <Skeleton key={item} height={90} radius={14} />)
+              ) : actionQueue.length === 0 ? (
+                <div style={S.emptyState}>
+                  <div style={S.emptyTitle}>Aucune action urgente</div>
+                  <div style={S.emptyText}>Les demandes prioritaires apparaîtront ici dès qu&apos;elles nécessiteront un suivi.</div>
+                </div>
+              ) : (
+                actionQueue.map((call) => {
+                  const badge = getReasonBadge(call);
+                  const ctaLabel = getActionCta(call);
+                  return (
+                    <div key={call.call_id || call.id} style={S.actionQueueCard}>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={S.actionQueueTop}>
+                          <span
+                            style={{
+                              ...S.actionQueueBadge,
+                              background: badge.bg,
+                              color: badge.text,
+                              borderColor: badge.border,
+                            }}
+                          >
+                            {badge.label}
+                          </span>
+                          <span style={S.actionQueueTime}>{call.time || "—"}</span>
+                        </div>
+                        <div style={S.actionQueueTitle}>{call.patient_name || "Patient"}</div>
+                        <div style={S.actionQueueText}>{call.reason_label || call.summary || "Suivi patient"}</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => navigate(call?.contextual_action?.kind === "open_agenda" ? "/app/agenda" : "/app/appels")}
+                        style={S.actionQueueButton}
+                      >
+                        {ctaLabel}
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          <div style={S.activationPanel}>
+            <div style={S.panelHeader}>
+              <div>
+                <div style={S.panelTitle}>Activation du cabinet</div>
+                <div style={S.panelSubtitle}>Les prochains réglages qui débloquent l’autonomie du standard</div>
+              </div>
+              <div style={S.progressWrap}>
+                <div style={S.progressLabel}>{onboardingProgress}% prêt</div>
+                <div style={S.progressTrack}>
+                  <div style={{ ...S.progressFill, width: `${onboardingProgress}%` }} />
+                </div>
+              </div>
+            </div>
+
+            <div style={S.activationList}>
+              {onboardingCards.map((item) => (
+                <div key={item.key} style={{ ...S.activationItem, borderColor: item.done ? "#bbf7d0" : "#e5e7eb" }}>
+                  <div style={S.activationIcon}>{item.done ? "✓" : "•"}</div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ ...S.activationTitle, color: item.done ? "#047857" : NAVY }}>{item.title}</div>
+                    <div style={S.activationText}>{item.text}</div>
+                  </div>
+                  {item.href ? (
+                    <button type="button" onClick={() => navigate(item.href)} style={item.done ? S.activationButtonGhost : S.activationButton}>
+                      {item.cta}
+                    </button>
+                  ) : (
+                    <div style={S.activationWaiting}>{item.done ? "OK" : "UWI"}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="uwi-quick-links" style={S.quickLinks}>
+          {quickLinks.map((item) => (
+            <button key={item.href} type="button" onClick={() => navigate(item.href)} style={S.quickLinkCard}>
+              <div style={S.quickLinkTitle}>{item.label}</div>
+              <div style={S.quickLinkText}>{item.sub}</div>
+            </button>
+          ))}
         </section>
       </div>
     </div>

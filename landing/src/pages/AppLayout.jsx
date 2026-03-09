@@ -378,7 +378,36 @@ export default function AppLayout() {
               }}
               role="alert"
             >
-              Votre compte utilise un mot de passe temporaire. Changez-le dès maintenant dans <code>Paramètres</code> pour sécuriser l'accès à votre espace.
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  flexWrap: "wrap",
+                }}
+              >
+                <span>
+                  Votre compte utilise un mot de passe temporaire. Changez-le dès maintenant dans <code>Paramètres</code> pour sécuriser l'accès à votre espace.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => navigate("/app/settings#security")}
+                  style={{
+                    borderRadius: 999,
+                    border: "1px solid #f59e0b",
+                    background: "#fff",
+                    color: "#92400e",
+                    padding: "8px 12px",
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Changer mon mot de passe
+                </button>
+              </div>
             </div>
           )}
 
