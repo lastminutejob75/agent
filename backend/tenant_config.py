@@ -255,6 +255,8 @@ def convert_opening_hours_to_booking_rules(opening_hours: dict) -> Dict[str, Any
         "booking_days": sorted(set(days)) or [0, 1, 2, 3, 4],
         "booking_start_hour": min(starts) if starts else 9,
         "booking_end_hour": max(ends) if ends else 18,
+        "booking_duration_minutes": 15,
+        "booking_buffer_minutes": 0,
     }
 
 

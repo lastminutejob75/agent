@@ -2,7 +2,8 @@
 """Tests API admin / onboarding (POST /public/onboarding, GET /admin/*)."""
 
 import os
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -115,6 +116,100 @@ def test_admin_tenants_with_token(client, admin_headers):
     data = r.json()
     assert "tenants" in data
     assert isinstance(data["tenants"], list)
+
+
+@patch("backend.routes.admin.config.USE_PG_TENANTS", True)
+@patch("backend.routes.admin._get_stripe_price_ids_for_plan", return_value=("price_base", "price_meter"))
+@patch("backend.leads_pg.update_lead", return_value=True)
+@patch(
+    "backend.leads_pg.get_lead",
+    return_value={
+        "id": "lead_123",
+        "source": "landing_cta",
+        "medical_specialty_label": "Médecin généraliste",
+        "daily_call_volume": "25-50",
+        "primary_pain_point": "Ne répond pas pendant les consultations",
+        "opening_hours": {
+            "0": {"open": "08:00", "close": "12:00"},
+            "1": {"open": "09:00", "close": "18:00"},
+            "4": {"open": "10:00", "close": "19:00"},
+        },
+        "notes_log": [],
+    },
+)
+@patch("backend.routes.admin.pg_get_tenant_user_by_email", return_value=None)
+@patch("backend.routes.admin.pg_create_tenant", return_value=321)
+@patch("backend.routes.admin.pg_create_tenant_user", return_value=True)
+@patch("backend.routes.admin.pg_update_tenant_flags", return_value=True)
+@patch("backend.routes.admin.pg_update_tenant_params", return_value=True)
+@patch("backend.routes.admin.upsert_billing_from_subscription", return_value=True)
+@patch("backend.services.email_service.send_welcome_email", return_value=(True, None))
+@patch("backend.vapi_utils.create_vapi_assistant", new_callable=AsyncMock, return_value={"id": "asst_123"})
+@patch("stripe.Customer.create", return_value=SimpleNamespace(id="cus_123"))
+@patch(
+    "stripe.Subscription.create",
+    return_value=SimpleNamespace(
+        id="sub_123",
+        status="trialing",
+        current_period_start=None,
+        current_period_end=None,
+        trial_end=None,
+    ),
+)
+def test_admin_create_tenant_full_prefills_params_from_lead(
+    _mock_subscription,
+    _mock_customer,
+    _mock_vapi,
+    _mock_email,
+    _mock_billing,
+    mock_update_params,
+    _mock_flags,
+    _mock_tenant_user,
+    _mock_create_tenant,
+    _mock_existing_email,
+    _mock_get_lead,
+    _mock_update_lead,
+    _mock_prices,
+    client,
+    admin_headers,
+):
+    with patch.dict(os.environ, {"STRIPE_SECRET_KEY": "sk_test_mocked"}, clear=False):
+        r = client.post(
+            "/api/admin/tenants/create",
+            headers=admin_headers,
+            json={
+                "name": "Cabinet Lead Converti",
+                "email": "lead@test.fr",
+                "phone": "0611223344",
+                "sector": "medecin_generaliste",
+                "plan_key": "growth",
+                "assistant_id": "sophie",
+                "timezone": "Europe/Paris",
+                "lead_id": "lead_123",
+                "send_welcome": False,
+            },
+        )
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["success"] is True
+    assert data["tenant_id"] == 321
+
+    payloads = [call.args[1] for call in mock_update_params.call_args_list]
+    assert any(
+        payload.get("contact_email") == "lead@test.fr"
+        and payload.get("lead_id") == "lead_123"
+        and payload.get("lead_daily_call_volume") == "25-50"
+        and payload.get("lead_primary_pain_point") == "Ne répond pas pendant les consultations"
+        and payload.get("specialty_label") == "Médecin généraliste"
+        for payload in payloads
+    )
+    assert any(
+        payload.get("booking_days") == [0, 1, 4]
+        and payload.get("booking_start_hour") == 8
+        and payload.get("booking_end_hour") == 19
+        and payload.get("horaires") == "Lun, Mar, Ven · 8h–19h"
+        for payload in payloads
+    )
 
 
 def test_admin_tenant_detail(client, admin_headers):

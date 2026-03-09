@@ -128,6 +128,38 @@ def test_e2e_connexion_et_dashboard_client(mock_get_user, client, jwt_secret):
     assert "tenant_id" in dash or "calls" in dash or "kpis" in dash or "business_name" in dash or "name" in dash
 
 
+@patch("backend.routes.tenant.get_faq")
+@patch("backend.routes.tenant._get_tenant_detail")
+@patch("backend.routes.tenant.pg_get_tenant_user_by_id")
+def test_tenant_me_onboarding_requires_real_completion(mock_get_user, mock_detail, mock_get_faq, client, jwt_secret):
+    """Un tenant avec assistante Vapi mais sans numéro ni horaires ne doit pas être considéré onboardé."""
+    tenant_id = 777
+    mock_get_user.return_value = {"tenant_id": tenant_id, "email": "client@test.fr", "role": "owner"}
+    mock_get_faq.return_value = [{"category": "Horaires", "items": [{"id": "h1", "question": "Q", "answer": "R", "active": True}]}]
+    mock_detail.return_value = {
+        "name": "Cabinet incomplet",
+        "params": {
+            "assistant_name": "sophie",
+            "vapi_assistant_id": "asst_123",
+            "calendar_provider": "none",
+            "calendar_id": "",
+            "booking_days": [],
+        },
+        "routing": [],
+    }
+    token = _make_client_jwt(tenant_id, email="client@test.fr", secret=jwt_secret)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    r_me = client.get("/api/tenant/me", headers=headers)
+    assert r_me.status_code == 200
+    me = r_me.json()
+    assert me["onboarding_steps"]["assistant_ready"] is True
+    assert me["onboarding_steps"]["phone_ready"] is False
+    assert me["onboarding_steps"]["horaires_ready"] is False
+    assert me["onboarding_completed"] is False
+    assert me["client_onboarding_completed"] is False
+
+
 def test_e2e_tenant_me_sans_token_401(client):
     """GET /api/tenant/me sans Bearer → 401."""
     r = client.get("/api/tenant/me")

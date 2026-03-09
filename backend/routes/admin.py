@@ -50,7 +50,14 @@ from backend.tenants_pg import (
     pg_update_tenant_flags,
     pg_update_tenant_params,
 )
-from backend.tenant_config import derive_horaires_text, get_faq, normalize_faq_payload, reset_faq_params, set_params
+from backend.tenant_config import (
+    convert_opening_hours_to_booking_rules,
+    derive_horaires_text,
+    get_faq,
+    normalize_faq_payload,
+    reset_faq_params,
+    set_params,
+)
 from backend.vapi_utils import update_vapi_assistant_faq
 
 logger = logging.getLogger(__name__)
@@ -261,6 +268,7 @@ class CreateTenantRequest(BaseModel):
     timezone: str = Field(default="Europe/Paris", max_length=64)
     send_welcome: bool = Field(default=True)
     booking_rules: Optional[Dict[str, Any]] = None
+    lead_id: Optional[str] = Field(default=None, max_length=64)
 
 
 class HorairesBody(BaseModel):
@@ -1398,6 +1406,7 @@ class LeadPatchBody(BaseModel):
     notes: Optional[str] = None
     notes_log: Optional[str] = None
     follow_up_at: Optional[str] = None
+    tenant_id: Optional[int] = None
 
 
 class OnboardingLinkBody(BaseModel):
@@ -1412,7 +1421,7 @@ def _build_onboarding_link(email: str) -> str:
         or os.getenv("FRONT_BASE_URL")
         or "https://www.uwiapp.com"
     ).strip().rstrip("/")
-    return f"{base}/creer-assistante?email={email}&new=1"
+    return f"{base}/creer-assistante?ref={email}&email={email}&new=1"
 
 
 def _send_onboarding_link(email: str, name: str = "") -> Dict[str, Any]:
@@ -1444,6 +1453,7 @@ def admin_lead_patch(
         notes=body.notes,
         notes_log=body.notes_log,
         follow_up_at=body.follow_up_at,
+        tenant_id=body.tenant_id,
     )
     if not ok:
         raise HTTPException(500, "Erreur mise à jour")
@@ -1456,7 +1466,7 @@ def admin_send_lead_onboarding_link(
     body: Optional[OnboardingLinkBody] = Body(default=None),
     _: None = Depends(_verify_admin),
 ):
-    from backend.leads_pg import get_lead
+    from backend.leads_pg import get_lead, update_lead
 
     lead = get_lead(lead_id)
     if not lead:
@@ -1465,7 +1475,27 @@ def admin_send_lead_onboarding_link(
     if not email:
         raise HTTPException(400, "Lead sans email")
     name = ((body.name if body else None) or lead.get("cabinet_name") or lead.get("assistant_name") or "").strip()
-    return _send_onboarding_link(email=email, name=name)
+    result = _send_onboarding_link(email=email, name=name)
+    try:
+        existing_log = lead.get("notes_log")
+        parsed = []
+        if isinstance(existing_log, str) and existing_log.strip():
+            parsed = json.loads(existing_log)
+        elif isinstance(existing_log, list):
+            parsed = list(existing_log)
+        parsed.append({
+            "text": f"Lien wizard envoyé à {email}",
+            "action": "wizard_link",
+            "created_at": datetime.utcnow().isoformat() + "Z",
+        })
+        update_lead(
+            lead_id,
+            status="contacted" if (lead.get("status") or "") == "new" else None,
+            notes_log=json.dumps(parsed, ensure_ascii=False),
+        )
+    except Exception as e:
+        logger.warning("admin_send_lead_onboarding_link patch failed lead_id=%s: %s", lead_id, e)
+    return result
 
 
 @router.post("/admin/send-onboarding-link")
@@ -3378,6 +3408,15 @@ async def admin_create_tenant_full(
     if existing:
         raise HTTPException(409, "Cet email est déjà rattaché à un autre client.")
 
+    lead = None
+    if body.lead_id:
+        try:
+            from backend.leads_pg import get_lead
+
+            lead = get_lead(body.lead_id)
+        except Exception as e:
+            logger.warning("createTenantFull lead load failed lead_id=%s: %s", body.lead_id, e)
+
     temp_password = secrets.token_urlsafe(10)
     stripe_key = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
     if not stripe_key:
@@ -3437,18 +3476,35 @@ async def admin_create_tenant_full(
             },
         ):
             raise RuntimeError("Impossible d'enregistrer les flags du tenant")
+        tenant_params_payload: Dict[str, Any] = {
+            "assistant_name": body.assistant_id,
+            "phone_number": body.phone,
+            "sector": body.sector,
+            "plan_key": body.plan_key,
+            "contact_email": contact_email,
+            "client_onboarding_completed": False,
+        }
+        if lead:
+            tenant_params_payload.update(
+                {
+                    "specialty_label": (lead.get("medical_specialty_label") or "").strip(),
+                    "lead_id": lead.get("id"),
+                    "lead_source": lead.get("source") or "landing_cta",
+                    "lead_daily_call_volume": lead.get("daily_call_volume") or "",
+                    "lead_primary_pain_point": lead.get("primary_pain_point") or "",
+                    "lead_opening_hours": lead.get("opening_hours") or {},
+                }
+            )
         if not pg_update_tenant_params(
             tid,
-            {
-                "assistant_name": body.assistant_id,
-                "phone_number": body.phone,
-                "sector": body.sector,
-                "plan_key": body.plan_key,
-            },
+            tenant_params_payload,
         ):
             raise RuntimeError("Impossible d'enregistrer les paramètres du tenant")
-        if body.booking_rules:
-            booking_rules = _validate_horaires_payload(HorairesBody(**body.booking_rules))
+        booking_rules_payload = body.booking_rules
+        if not booking_rules_payload and lead and isinstance(lead.get("opening_hours"), dict):
+            booking_rules_payload = convert_opening_hours_to_booking_rules(lead.get("opening_hours") or {})
+        if booking_rules_payload:
+            booking_rules = _validate_horaires_payload(HorairesBody(**booking_rules_payload))
             booking_rules["horaires"] = derive_horaires_text(booking_rules)
             if not pg_update_tenant_params(tid, booking_rules):
                 raise RuntimeError("Impossible d'enregistrer les horaires du tenant")
@@ -3548,6 +3604,36 @@ async def admin_create_tenant_full(
                 logger.warning("Email bienvenue échoué (non bloquant) tenant_id=%s: %s", tid, e)
                 results["warnings"].append("email_failed")
         logger.info("createTenantFull step=5 ok tenant_id=%s", tid)
+
+        if body.lead_id:
+            try:
+                from backend.leads_pg import get_lead, update_lead
+
+                lead_for_sync = lead or get_lead(body.lead_id)
+                if lead_for_sync:
+                    existing_log = lead_for_sync.get("notes_log")
+                    parsed = []
+                    if isinstance(existing_log, str) and existing_log.strip():
+                        parsed = json.loads(existing_log)
+                    elif isinstance(existing_log, list):
+                        parsed = list(existing_log)
+                    parsed.append({
+                        "text": f"Tenant créé : {body.name.strip()} (id: {tid})",
+                        "action": "conversion",
+                        "created_at": datetime.utcnow().isoformat() + "Z",
+                    })
+                    if not update_lead(
+                        body.lead_id,
+                        status="converted",
+                        tenant_id=tid,
+                        notes_log=json.dumps(parsed, ensure_ascii=False),
+                    ):
+                        results["warnings"].append("lead_link_failed")
+                else:
+                    results["warnings"].append("lead_not_found")
+            except Exception as e:
+                logger.warning("createTenantFull lead sync failed lead_id=%s tenant_id=%s: %s", body.lead_id, tid, e)
+                results["warnings"].append("lead_link_failed")
 
         return {
             "success": True,

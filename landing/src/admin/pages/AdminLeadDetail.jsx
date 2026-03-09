@@ -109,6 +109,7 @@ export default function AdminLeadDetail() {
   const VALID_ASSISTANTS = ["sophie", "laura", "emma", "julie", "clara", "hugo", "julien", "nicolas", "alexandre", "thomas"];
   const tenantPrefill = lead
     ? {
+        lead_id: lead.id,
         name: lead.cabinet_name || lead.email || "",
         email: lead.email || "",
         phone: lead.callback_phone || lead.phone || "",
@@ -155,6 +156,8 @@ export default function AdminLeadDetail() {
         email: lead.email.trim(),
         name: lead.cabinet_name || lead.assistant_name || "",
       });
+      const refreshedLead = await adminApi.leadGet(id);
+      setLead(refreshedLead);
       setTenantModalNotice(`Lien wizard envoyé à ${res?.email || lead.email.trim()} ✓`);
     } catch (e) {
       setTenantModalNotice(e?.message || "Erreur lors de l'envoi du lien wizard");
@@ -172,26 +175,12 @@ export default function AdminLeadDetail() {
 
   const handleTenantCreated = async (newTenant) => {
     if (!id) return;
-    const entry = {
-      text: `Tenant créé : ${newTenant?.name || lead?.cabinet_name || lead?.email || "Client"} (id: ${newTenant?.id || "—"})`,
-      action: "conversion",
-      created_at: new Date().toISOString(),
-    };
-    const updatedLog = [...noteLog, entry];
     try {
-      await adminApi.leadPatch(id, {
-        status: "converted",
-        notes_log: JSON.stringify(updatedLog),
-      });
-      setLead((prev) =>
-        prev
-          ? { ...prev, status: "converted", notes_log: JSON.stringify(updatedLog) }
-          : prev,
-      );
-      setNoteLog(updatedLog);
+      const refreshedLead = await adminApi.leadGet(id);
+      setLead(refreshedLead);
       setTenantModalNotice("");
     } catch (e) {
-      setTenantModalNotice("Client créé, mais impossible de marquer le lead comme converti.");
+      setTenantModalNotice("Client créé, mais impossible de recharger le lead converti.");
     } finally {
       setShowCreateTenant(false);
       clearCreateClientQuery();

@@ -126,6 +126,8 @@ def test_convert_opening_hours_to_booking_rules():
         "booking_days": [0, 1],
         "booking_start_hour": 8,
         "booking_end_hour": 18,
+        "booking_duration_minutes": 15,
+        "booking_buffer_minutes": 0,
     }
 
 

@@ -386,7 +386,7 @@ def update_lead_callback_booking(
     callback_booking_slot: Optional[str],
     callback_phone: Optional[str],
 ) -> bool:
-    """Enregistre le créneau de rappel choisi (écran finalisation). date au format YYYY-MM-DD."""
+    """Enregistre le créneau de rappel choisi (écran finalisation) et marque le lead comme contacté."""
     if not callback_booking_date or not callback_booking_slot:
         return False
     try:
@@ -395,7 +395,12 @@ def update_lead_callback_booking(
                 cur.execute(
                     """
                     UPDATE pre_onboarding_leads
-                    SET callback_booking_date = %s::date, callback_booking_slot = %s, callback_phone = COALESCE(NULLIF(TRIM(%s), ''), callback_phone), updated_at = NOW()
+                    SET callback_booking_date = %s::date,
+                        callback_booking_slot = %s,
+                        callback_phone = COALESCE(NULLIF(TRIM(%s), ''), callback_phone),
+                        status = CASE WHEN status = 'new' THEN 'contacted' ELSE status END,
+                        contacted_at = COALESCE(contacted_at, NOW()),
+                        updated_at = NOW()
                     WHERE id = %s
                     """,
                     (callback_booking_date, (callback_booking_slot or "").strip() or None, (callback_phone or "").strip() or None, lead_id),
@@ -413,8 +418,9 @@ def update_lead(
     notes: Optional[str] = None,
     notes_log: Optional[str] = None,
     follow_up_at: Optional[str] = None,
+    tenant_id: Optional[int] = None,
 ) -> bool:
-    """Update lead status, notes, notes_log and/or follow_up_at. Set contacted_at/converted_at when status changes."""
+    """Update lead status, notes, notes_log, follow_up_at and/or tenant_id. Set contacted_at/converted_at when status changes."""
     try:
         with _get_conn() as conn:
             with conn.cursor() as cur:
@@ -439,6 +445,9 @@ def update_lead(
                         params.append(follow_up_at.strip())
                     else:
                         updates.append("follow_up_at = NULL")
+                if tenant_id is not None:
+                    updates.append("tenant_id = %s")
+                    params.append(int(tenant_id))
                 if not updates:
                     return True
                 params.append(lead_id)

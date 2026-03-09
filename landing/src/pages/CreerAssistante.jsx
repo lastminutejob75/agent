@@ -234,6 +234,7 @@ export default function CreerAssistante() {
   const getRefEmail = () => {
     if (typeof window === "undefined") return "";
     const params = new URLSearchParams(window.location.search);
+    if (params.get("email")?.trim()) return params.get("email").trim();
     if (params.get("ref")?.trim()) return params.get("ref").trim();
     try {
       const stored = sessionStorage.getItem("uwi_demo_ref");
@@ -364,7 +365,7 @@ export default function CreerAssistante() {
       const contact = emailTrim || phoneTrim || "";
       const leadId = (res && res.lead_id) ? String(res.lead_id) : "";
       try {
-        sessionStorage.setItem(COMMIT_DONE_KEY, JSON.stringify({ contact, phone: phoneTrim, lead_id: leadId }));
+        sessionStorage.setItem(COMMIT_DONE_KEY, JSON.stringify({ contact, phone: phoneTrim, email: emailTrim, lead_id: leadId }));
       } catch (_) {}
       setSubmittedEmail(contact);
       setCommitDone(true);
@@ -433,12 +434,14 @@ export default function CreerAssistante() {
   if (showFinalization) {
     let leadId = leadIdFromUrl;
     let initialPhone = "";
+    let initialEmail = "";
     if (typeof window !== "undefined") {
       try {
         const raw = sessionStorage.getItem(COMMIT_DONE_KEY);
         if (raw) {
           const data = JSON.parse(raw);
           if (data && data.phone) initialPhone = String(data.phone).replace(/\D/g, "").slice(0, 10);
+          if (data && data.email) initialEmail = String(data.email).trim();
           if (!leadId) leadId = (data && data.lead_id) ? String(data.lead_id) : (state.lead_id || "");
           if (leadId && !searchParams.get("lead_id")) {
             setSearchParams({ lead_id: leadId }, { replace: true });
@@ -456,6 +459,7 @@ export default function CreerAssistante() {
         <UWIFinalization
           leadId={leadId}
           initialPhone={initialPhone}
+          initialEmail={initialEmail}
           assistantName={assistantName}
           practitioner="votre cabinet"
           onComplete={handleBackToHome}

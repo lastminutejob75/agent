@@ -1,4 +1,11 @@
 const DAY_MAP = {
+  0: 0,
+  1: 1,
+  2: 2,
+  3: 3,
+  4: 4,
+  5: 5,
+  6: 6,
   monday: 0,
   tuesday: 1,
   wednesday: 2,
@@ -6,6 +13,13 @@ const DAY_MAP = {
   friday: 4,
   saturday: 5,
   sunday: 6,
+  lun: 0,
+  mar: 1,
+  mer: 2,
+  jeu: 3,
+  ven: 4,
+  sam: 5,
+  dim: 6,
 };
 
 const DAY_LABELS = {
@@ -37,11 +51,18 @@ export function convertOpeningHours(openingHours) {
   const starts = [];
   const ends = [];
   for (const [day, value] of Object.entries(openingHours || {})) {
-    const dayIndex = DAY_MAP[String(day).toLowerCase()];
+    const rawDay = String(day).toLowerCase();
+    const parsedDay = parseInt(rawDay, 10);
+    const dayIndex =
+      Number.isInteger(parsedDay) && parsedDay >= 0 && parsedDay <= 6
+        ? parsedDay
+        : DAY_MAP[rawDay];
     if (dayIndex === undefined || !value || value.closed) continue;
     days.push(dayIndex);
-    if (value.open) starts.push(parseInt(String(value.open).split(":")[0], 10));
-    if (value.close) ends.push(parseInt(String(value.close).split(":")[0], 10));
+    const startValue = value.start || value.open || "";
+    const endValue = value.end || value.close || "";
+    if (startValue) starts.push(parseInt(String(startValue).split(":")[0], 10));
+    if (endValue) ends.push(parseInt(String(endValue).split(":")[0], 10));
   }
   return normalizeBookingRules({
     booking_days: days,

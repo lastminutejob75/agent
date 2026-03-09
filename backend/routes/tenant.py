@@ -400,10 +400,7 @@ def tenant_me(auth: dict = Depends(require_tenant_auth)):
     faq = get_faq(tenant_id)
     faq_ready = _count_active_faq_items(faq) > 0
     _explicit = _is_truthy(params.get("client_onboarding_completed"))
-    _vapi_ready = bool((params.get("vapi_assistant_id") or "").strip())
-    _phone_ready = bool(voice_number)
-    _has_assistant = bool((params.get("assistant_name") or "").strip())
-    client_onboarding_completed = _explicit or (_vapi_ready and _phone_ready) or (_vapi_ready and _has_assistant)
+    _vapi_ready = bool(vapi_assistant_id)
     booking_days = params.get("booking_days")
     horaires_ready = False
     if isinstance(booking_days, (list, tuple, set)):
@@ -420,13 +417,14 @@ def tenant_me(auth: dict = Depends(require_tenant_auth)):
         horaires_ready = bool(booking_days)
 
     onboarding_steps = {
-        "assistant_ready": bool(assistant_name),
+        "assistant_ready": bool(assistant_name and vapi_assistant_id),
         "phone_ready": bool(voice_number),
         "calendar_ready": (calendar_provider == "google" and bool(calendar_id)) or calendar_provider == "none",
         "horaires_ready": horaires_ready,
         "faq_ready": faq_ready,
     }
     onboarding_completed = all(onboarding_steps.values())
+    client_onboarding_completed = _explicit or onboarding_completed
 
     return {
         "tenant_id": tenant_id,

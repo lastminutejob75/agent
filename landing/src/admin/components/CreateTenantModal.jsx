@@ -88,6 +88,7 @@ export default function CreateTenantModal({ onClose, onCreated, prefill = {}, in
         ...form,
         twilio_number: form.twilio_number || null,
         booking_rules: bookingRules,
+        lead_id: prefill.lead_id || null,
       };
       const res = await adminApi.createTenantFull(payload);
       setResult(res);
@@ -97,6 +98,7 @@ export default function CreateTenantModal({ onClose, onCreated, prefill = {}, in
         name: form.name,
         email: form.email,
         phone_number: form.phone,
+        results: res?.results || null,
       });
     } catch (e) {
       setResult({ success: false, error: e?.message || "Erreur inconnue" });

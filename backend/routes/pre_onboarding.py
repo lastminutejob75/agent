@@ -7,12 +7,13 @@ import json
 import logging
 import os
 import re
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from backend.leads_pg import count_leads_total, get_lead, lead_exists, update_lead_callback_booking, upsert_lead
+from backend.leads_pg import count_leads_total, get_lead, lead_exists, update_lead, update_lead_callback_booking, upsert_lead
 from backend.pre_onboarding_rate_limit import check_pre_onboarding_commit
 from backend.services.email_service import (
     send_lead_founder_email,
@@ -24,6 +25,23 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/pre-onboarding", tags=["pre_onboarding"])
 
 VALID_VOLUME = {"<10", "10-25", "25-50", "50-100", "100+", "unknown"}
+
+
+def _append_lead_note(existing_notes_log: Any, text: str, action: str) -> str:
+    entries = []
+    try:
+        if isinstance(existing_notes_log, str) and existing_notes_log.strip():
+            entries = json.loads(existing_notes_log)
+        elif isinstance(existing_notes_log, list):
+            entries = list(existing_notes_log)
+    except Exception:
+        entries = []
+    entries.append({
+        "text": text,
+        "action": action,
+        "created_at": datetime.utcnow().isoformat() + "Z",
+    })
+    return json.dumps(entries, ensure_ascii=False)
 
 
 @router.get("/config")
@@ -249,6 +267,19 @@ async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody)
 
 
 
+@router.get("/leads/{lead_id}/email")
+async def get_lead_email_for_create_account(lead_id: str) -> Dict[str, Any]:
+    """
+    Retourne l'email du lead pour le flux create-account (préremplissage).
+    Ne retourne l'email que si le lead existe et en a un.
+    """
+    lead = get_lead(lead_id)
+    if not lead:
+        raise HTTPException(404, "Lead introuvable")
+    email = (lead.get("email") or "").strip()
+    return {"email": email or None}
+
+
 @router.get("/leads/{lead_id}/check")
 async def check_lead_exists(lead_id: str) -> Dict[str, Any]:
     """
@@ -308,6 +339,18 @@ async def callback_booking(lead_id: str, body: CallbackBookingBody) -> Dict[str,
     ok = update_lead_callback_booking(lead_id, callback_booking_date=date_str, callback_booking_slot=slot, callback_phone=phone or None)
     if not ok:
         raise HTTPException(status_code=500, detail="Erreur enregistrement créneau")
+    try:
+        lead_after_booking = get_lead(lead_id) or lead
+        update_lead(
+            lead_id,
+            notes_log=_append_lead_note(
+                lead_after_booking.get("notes_log"),
+                f"Rappel réservé : {date_str} à {slot}",
+                "callback_booking",
+            ),
+        )
+    except Exception as e:
+        logger.warning("callback_booking notes_log update failed lead_id=%s: %s", lead_id, e)
 
     # Envoi email avec le RDV (créneau de rappel) — un seul email par lead
     dashboard_base = (
@@ -360,3 +403,131 @@ async def callback_booking(lead_id: str, body: CallbackBookingBody) -> Dict[str,
         logger.exception("lead_founder_email after callback_booking exception: %s", e)
 
     return {"ok": True, "email_sent": email_sent, "email_error": email_error}
+
+
+class CreateAccountBody(BaseModel):
+    """Corps pour création compte self-serve depuis un lead. email optionnel si le lead a déjà un email."""
+    email: Optional[str] = Field(None, min_length=3, max_length=255)
+
+
+@router.post("/leads/{lead_id}/create-account")
+async def create_account_from_lead(lead_id: str, body: CreateAccountBody) -> Dict[str, Any]:
+    """
+    Crée un tenant + compte client depuis un lead (parcours self-serve).
+    Le prospect peut créer son compte sans passer par l'admin.
+    Envoie l'email de bienvenue avec mot de passe temporaire.
+    Met à jour le lead (status=converted, tenant_id, notes_log).
+    """
+    from backend import config
+    from backend.auth_pg import pg_create_tenant_user, pg_get_tenant_user_by_email
+    from backend.tenant_config import convert_opening_hours_to_booking_rules, derive_horaires_text
+    from backend.tenants_pg import pg_create_tenant, pg_update_tenant_flags, pg_update_tenant_params
+    from backend.services.email_service import send_welcome_email
+
+    if not config.USE_PG_TENANTS:
+        raise HTTPException(503, "Création compte self-serve requiert Postgres (USE_PG_TENANTS)")
+
+    lead = get_lead(lead_id)
+    if not lead:
+        raise HTTPException(404, "Lead introuvable")
+
+    lead_email = (lead.get("email") or "").strip().lower()
+    body_email = (body.email or "").strip().lower() if body.email else ""
+    if lead_email:
+        if body_email and body_email != lead_email:
+            raise HTTPException(400, "L'email doit correspondre à celui du lead")
+        email = lead_email
+    elif body_email:
+        email = body_email
+    else:
+        raise HTTPException(400, "email requis (le lead n'a pas d'email enregistré)")
+
+    existing = pg_get_tenant_user_by_email(email)
+    if existing:
+        raise HTTPException(409, "Cet email est déjà rattaché à un compte client")
+
+    cabinet_name = (email.split("@")[0] or "Cabinet").strip()[:120]
+    sector = (lead.get("medical_specialty") or "medecin_generaliste").strip()
+    assistant_name = (lead.get("assistant_name") or "sophie").strip().lower()
+
+    import secrets
+    temp_password = secrets.token_urlsafe(10)
+
+    tid = pg_create_tenant(
+        name=cabinet_name,
+        contact_email=email,
+        calendar_provider="none",
+        calendar_id="",
+        timezone="Europe/Paris",
+        status="active",
+        plan_key="growth",
+    )
+    if not tid:
+        raise HTTPException(500, "Impossible de créer le compte")
+
+    if not pg_create_tenant_user(tid, email, role="owner", password=temp_password):
+        raise HTTPException(500, "Impossible de créer l'utilisateur")
+
+    if not pg_update_tenant_flags(tid, {"ENABLE_BOOKING": True, "ENABLE_TRANSFER": True, "ENABLE_FAQ": True, "ENABLE_ANTI_LOOP": True}):
+        raise HTTPException(500, "Erreur configuration")
+
+    params_payload = {
+        "assistant_name": assistant_name,
+        "sector": sector,
+        "contact_email": email,
+        "specialty_label": (lead.get("medical_specialty_label") or "").strip(),
+        "client_onboarding_completed": False,
+        "lead_id": lead_id,
+        "lead_source": lead.get("source") or "landing_cta",
+    }
+    if not pg_update_tenant_params(tid, params_payload):
+        raise HTTPException(500, "Erreur paramètres")
+
+    opening_hours = lead.get("opening_hours")
+    if isinstance(opening_hours, dict):
+        try:
+            rules = convert_opening_hours_to_booking_rules(opening_hours)
+            rules["horaires"] = derive_horaires_text(rules)
+            if not pg_update_tenant_params(tid, rules):
+                logger.warning("create_account_from_lead: horaires update failed tenant_id=%s", tid)
+        except Exception as e:
+            logger.warning("create_account_from_lead: horaires conversion failed: %s", e)
+
+    ok, err = send_welcome_email(
+        email=email,
+        client_name=cabinet_name,
+        assistant_id=assistant_name,
+        plan_key="growth",
+        phone_number="",
+        temp_password=temp_password,
+    )
+    if not ok:
+        logger.warning("create_account_from_lead welcome email failed: %s", err)
+
+    base_url = (
+        os.getenv("CLIENT_APP_ORIGIN") or os.getenv("VITE_UWI_APP_URL") or os.getenv("VITE_SITE_URL") or "https://www.uwiapp.com"
+    ).strip().rstrip("/")
+    login_url = f"{base_url}/login?email={email}&welcome=1"
+
+    try:
+        existing_log = lead.get("notes_log")
+        parsed = []
+        if isinstance(existing_log, str) and existing_log.strip():
+            parsed = json.loads(existing_log)
+        elif isinstance(existing_log, list):
+            parsed = list(existing_log)
+        parsed.append({
+            "text": f"Compte créé (self-serve) : {cabinet_name} (id: {tid})",
+            "action": "conversion_self_serve",
+            "created_at": datetime.utcnow().isoformat() + "Z",
+        })
+        update_lead(lead_id, status="converted", tenant_id=tid, notes_log=json.dumps(parsed, ensure_ascii=False))
+    except Exception as e:
+        logger.warning("create_account_from_lead lead sync failed: %s", e)
+
+    return {
+        "ok": True,
+        "tenant_id": tid,
+        "login_url": login_url,
+        "message": "Compte créé. Consultez votre email pour le mot de passe temporaire.",
+    }
