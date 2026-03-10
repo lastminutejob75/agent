@@ -137,3 +137,32 @@ def test_status_update_persists_customer_number_from_fallback_field():
     assert response.status_code == 200
     assert mock_upsert.call_count >= 1
     assert any(call.kwargs.get("customer_number") == "+33612345678" for call in mock_upsert.call_args_list)
+
+
+def test_chat_completions_persists_customer_number_from_call_from():
+    """chat/completions doit aussi pousser le numéro appelant dans vapi_calls."""
+    client = TestClient(app)
+    payload = {
+        "call": {
+            "id": "call-chat-1",
+            "from": "+33612345678",
+            "phoneNumber": {"number": "+33912345678"},
+        },
+        "messages": [{"role": "user", "content": "Bonjour"}],
+        "stream": False,
+    }
+    with patch("backend.routes.voice._get_or_resume_voice_session") as mock_session_loader:
+        fake_session = MagicMock()
+        fake_session.state = "START"
+        fake_session.qualif_data = MagicMock(name=None)
+        fake_session.customer_phone = None
+        fake_session.channel = "vocal"
+        fake_session.tenant_id = 2
+        mock_session_loader.return_value = fake_session
+        with patch("backend.routes.voice._get_engine") as mock_get_engine:
+            mock_get_engine.return_value.handle_message.return_value = [MagicMock(text="Bonjour, comment puis-je vous aider ?")]
+            with patch("backend.vapi_calls_pg.upsert_vapi_call") as mock_upsert:
+                response = client.post("/api/vapi/chat/completions", json=payload)
+    assert response.status_code == 200
+    assert mock_upsert.call_count >= 1
+    assert any(call.kwargs.get("customer_number") == "+33612345678" for call in mock_upsert.call_args_list)

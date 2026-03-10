@@ -1329,6 +1329,17 @@ async def vapi_custom_llm(request: Request):
             resolved_tenant_id,
             route_source,
         )
+        if call_id and customer_phone:
+            try:
+                from backend.vapi_calls_pg import upsert_vapi_call
+
+                upsert_vapi_call(resolved_tenant_id, call_id, customer_number=customer_phone)
+            except Exception as persist_err:
+                logger.warning(
+                    "CHAT_COMPLETIONS_CALLER_UPSERT_FAILED call_id=%s err=%s",
+                    call_id[:24] if call_id else "",
+                    str(persist_err)[:80],
+                )
         if config.ENABLE_TENANT_ROUTE_MISS_GUARD and to_number and route_source == "default":
             logger.warning("[TENANT_ROUTE_MISS] to=%s tenant_id=%s numéro non onboardé", to_number, resolved_tenant_id)
 
