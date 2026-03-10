@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, Plus } from "lucide-react";
 import { api } from "../lib/api.js";
 
 const BLUE = "#2563eb";
@@ -32,6 +33,52 @@ function formatLongDate(dateStr) {
     year: "numeric",
   });
   return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function startOfWeek(dateStr) {
+  const date = new Date(`${dateStr}T12:00:00`);
+  const diff = (date.getDay() + 6) % 7;
+  date.setDate(date.getDate() - diff);
+  return date.toISOString().slice(0, 10);
+}
+
+function buildWeekDates(dateStr) {
+  const start = new Date(`${startOfWeek(dateStr)}T12:00:00`);
+  return Array.from({ length: 7 }, (_, index) => {
+    const next = new Date(start);
+    next.setDate(start.getDate() + index);
+    return next.toISOString().slice(0, 10);
+  });
+}
+
+function formatWeekTitle(dateStr) {
+  const dates = buildWeekDates(dateStr);
+  const first = new Date(`${dates[0]}T12:00:00`);
+  const last = new Date(`${dates[6]}T12:00:00`);
+  const firstLabel = first.toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
+  const lastLabel = last.toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
+  return `Semaine du ${firstLabel}${firstLabel === lastLabel ? "" : ` au ${lastLabel}`}`;
+}
+
+function shiftMonth(dateStr, diff) {
+  const date = new Date(`${dateStr}T12:00:00`);
+  date.setMonth(date.getMonth() + diff);
+  return date.toISOString().slice(0, 10);
+}
+
+function formatMonthTitle(dateStr) {
+  const date = new Date(`${dateStr}T12:00:00`);
+  const text = date.toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function formatWeekdayLabel(dateStr) {
+  const label = new Date(`${dateStr}T12:00:00`).toLocaleDateString("fr-FR", { weekday: "short" });
+  return label.replace(".", "").toUpperCase();
+}
+
+function formatDayNumber(dateStr) {
+  return new Date(`${dateStr}T12:00:00`).toLocaleDateString("fr-FR", { day: "numeric" });
 }
 
 function formatTimeLabel(hour) {
@@ -74,6 +121,38 @@ function buildEmptyTimeline(dateStr, horaires) {
   return { closed: false, rows };
 }
 
+function buildTimelineHours(horaires) {
+  const start = Number(horaires?.booking_start_hour ?? 7);
+  const end = Number(horaires?.booking_end_hour ?? 19);
+  const safeStart = Number.isFinite(start) ? start : 7;
+  const safeEnd = Number.isFinite(end) ? end : 19;
+  const first = safeStart < safeEnd ? safeStart : 7;
+  const last = safeStart < safeEnd ? safeEnd : 19;
+  const rows = [];
+  for (let hour = first; hour < last; hour += 1) {
+    rows.push(`${String(hour).padStart(2, "0")}:00`);
+  }
+  return rows;
+}
+
+function buildMonthGrid(dateStr) {
+  const anchor = new Date(`${dateStr}T12:00:00`);
+  const monthStart = new Date(anchor.getFullYear(), anchor.getMonth(), 1, 12, 0, 0);
+  const offset = (monthStart.getDay() + 6) % 7;
+  monthStart.setDate(monthStart.getDate() - offset);
+  return Array.from({ length: 35 }, (_, index) => {
+    const cell = new Date(monthStart);
+    cell.setDate(monthStart.getDate() + index);
+    return cell.toISOString().slice(0, 10);
+  });
+}
+
+function isSameMonth(dateStr, compareTo) {
+  const a = new Date(`${dateStr}T12:00:00`);
+  const b = new Date(`${compareTo}T12:00:00`);
+  return a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear();
+}
+
 function getStatus(slot) {
   if (slot?.current) {
     return { label: "En attente", bg: WARNING_SOFT, color: "#b45309", border: "#fcd34d" };
@@ -100,10 +179,12 @@ export default function AppAgenda() {
   const [me, setMe] = useState(null);
   const [config, setConfig] = useState(null);
   const [agenda, setAgenda] = useState(null);
+  const [agendaByDate, setAgendaByDate] = useState({});
   const [horaires, setHoraires] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [viewMode, setViewMode] = useState("week");
   const [calendarId, setCalendarId] = useState("");
   const [verifyLoading, setVerifyLoading] = useState(false);
   const [verifyError, setVerifyError] = useState("");
@@ -120,20 +201,31 @@ export default function AppAgenda() {
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [selectedNewSlotId, setSelectedNewSlotId] = useState("");
   const [appointmentActionLoading, setAppointmentActionLoading] = useState(false);
+  const weekDates = useMemo(() => buildWeekDates(selectedDate), [selectedDate]);
+  const visibleDates = useMemo(() => {
+    if (viewMode === "month") return buildMonthGrid(selectedDate);
+    if (viewMode === "day") return [selectedDate];
+    return weekDates;
+  }, [selectedDate, viewMode, weekDates]);
 
   const loadAgenda = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const [nextMe, nextConfig, nextAgenda, nextHoraires] = await Promise.all([
+      const [nextMe, nextConfig, nextHoraires, ...agendaResponses] = await Promise.all([
         api.tenantMe(),
         api.agendaConfig(),
-        api.tenantGetAgenda(`?date=${selectedDate}`),
         api.tenantGetHoraires(),
+        ...visibleDates.map((date) => api.tenantGetAgenda(`?date=${date}`).catch(() => ({ slots: [], date, total: 0, done: 0, remaining: 0 }))),
       ]);
+      const nextAgendaByDate = {};
+      visibleDates.forEach((date, index) => {
+        nextAgendaByDate[date] = agendaResponses[index] || { slots: [], date, total: 0, done: 0, remaining: 0 };
+      });
       setMe(nextMe);
       setConfig(nextConfig);
-      setAgenda(nextAgenda);
+      setAgenda(nextAgendaByDate[selectedDate] || null);
+      setAgendaByDate(nextAgendaByDate);
       setHoraires(nextHoraires);
       setCalendarId(nextMe?.calendar_id || "");
     } catch (e) {
@@ -141,7 +233,7 @@ export default function AppAgenda() {
     } finally {
       setLoading(false);
     }
-  }, [selectedDate]);
+  }, [selectedDate, visibleDates]);
 
   useEffect(() => {
     loadAgenda();
@@ -155,9 +247,47 @@ export default function AppAgenda() {
 
   const appointments = useMemo(
     () =>
-      (agenda?.slots || []).map((slot, index) => ({
+      visibleDates.flatMap((date) =>
+        (agendaByDate?.[date]?.slots || []).map((slot, index) => ({
+          ...slot,
+          id: `${date}-${slot.event_id || slot.appointment_id || `${slot.hour || "slot"}-${index}`}`,
+          date,
+          displayTime: formatTimeLabel(slot.hour),
+          initials: getInitials(slot.patient),
+          duration: Number(horaires?.booking_duration_minutes || 30),
+          status: getStatus(slot),
+          sourceLabel: slot.source === "UWI" ? "Téléphone" : "Agenda externe",
+          sourceBadge: slot.source === "UWI" ? "UWI" : "Externe",
+          detailLine: slot.source === "UWI" ? "Réservation via l'assistant vocal" : "Synchronisé depuis l'agenda connecté",
+          appointmentId: slot.appointment_id,
+          slotId: slot.slot_id,
+          canCancel: !!slot.can_cancel,
+          canReschedule: !!slot.can_reschedule,
+        })),
+      ),
+    [agendaByDate, horaires, visibleDates],
+  );
+
+  const emptyTimeline = useMemo(() => buildEmptyTimeline(selectedDate, horaires), [selectedDate, horaires]);
+  const totalAppointments = appointments.length;
+  const doneAppointments = appointments.filter((appointment) => appointment.done).length;
+  const upcomingAppointments = Math.max(0, totalAppointments - doneAppointments);
+  const timelineHours = useMemo(() => buildTimelineHours(horaires), [horaires]);
+  const appointmentsByCell = useMemo(() => {
+    const map = {};
+    appointments.forEach((appointment) => {
+      const key = `${appointment.date}-${appointment.displayTime}`;
+      if (!map[key]) map[key] = [];
+      map[key].push(appointment);
+    });
+    return map;
+  }, [appointments]);
+  const selectedDayAppointments = useMemo(
+    () =>
+      (agendaByDate?.[selectedDate]?.slots || []).map((slot, index) => ({
         ...slot,
-        id: slot.event_id || `${slot.hour || "slot"}-${index}`,
+        id: `${selectedDate}-${slot.event_id || slot.appointment_id || `${slot.hour || "slot"}-${index}`}`,
+        date: selectedDate,
         displayTime: formatTimeLabel(slot.hour),
         initials: getInitials(slot.patient),
         duration: Number(horaires?.booking_duration_minutes || 30),
@@ -170,13 +300,26 @@ export default function AppAgenda() {
         canCancel: !!slot.can_cancel,
         canReschedule: !!slot.can_reschedule,
       })),
-    [agenda, horaires],
+    [agendaByDate, horaires, selectedDate],
   );
-
-  const emptyTimeline = useMemo(() => buildEmptyTimeline(selectedDate, horaires), [selectedDate, horaires]);
-  const totalAppointments = agenda?.total || 0;
-  const doneAppointments = agenda?.done || 0;
-  const upcomingAppointments = agenda?.remaining || 0;
+  const currentTitle =
+    viewMode === "month" ? formatMonthTitle(selectedDate) : viewMode === "day" ? formatLongDate(selectedDate) : formatWeekTitle(selectedDate);
+  const currentPanelTitle =
+    viewMode === "month" ? "Vue mensuelle" : viewMode === "day" ? "Planning de la journée" : "Planning de la semaine";
+  const navigatePrevious = () => {
+    setSelectedDate((value) => {
+      if (viewMode === "month") return shiftMonth(value, -1);
+      if (viewMode === "day") return shiftDate(value, -1);
+      return shiftDate(value, -7);
+    });
+  };
+  const navigateNext = () => {
+    setSelectedDate((value) => {
+      if (viewMode === "month") return shiftMonth(value, 1);
+      if (viewMode === "day") return shiftDate(value, 1);
+      return shiftDate(value, 7);
+    });
+  };
 
   const scrollToSetup = () => {
     setupRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -295,7 +438,8 @@ export default function AppAgenda() {
           <p style={S.subtitle}>Gérez vos rendez-vous et appels planifiés</p>
         </div>
         <button type="button" onClick={scrollToSetup} style={S.primaryButton}>
-          + Nouveau rendez-vous
+          <Plus size={16} strokeWidth={2.4} />
+          <span>Nouveau rendez-vous</span>
         </button>
       </div>
 
@@ -305,32 +449,28 @@ export default function AppAgenda() {
             <div style={S.statLabel}>Total rendez-vous</div>
             <div style={S.statValue}>{totalAppointments}</div>
           </div>
-          <div style={{ ...S.statIcon, background: "linear-gradient(135deg, #3b82f6, #2563eb)" }}>📅</div>
+          <div style={{ ...S.statIcon, background: "linear-gradient(135deg, #3b82f6, #2563eb)" }}>
+            <CalendarDays size={16} strokeWidth={2.2} />
+          </div>
         </div>
         <div style={S.statCard}>
           <div>
-            <div style={S.statLabel}>Terminés</div>
+            <div style={S.statLabel}>Confirmés</div>
             <div style={{ ...S.statValue, color: SUCCESS }}>{doneAppointments}</div>
           </div>
-          <div style={{ ...S.statIcon, background: "linear-gradient(135deg, #10b981, #059669)" }}>✓</div>
+          <div style={{ ...S.statIcon, background: "linear-gradient(135deg, #10b981, #059669)" }}>
+            <Check size={16} strokeWidth={2.4} />
+          </div>
         </div>
         <div style={S.statCard}>
           <div>
-            <div style={S.statLabel}>À venir</div>
+            <div style={S.statLabel}>En attente</div>
             <div style={{ ...S.statValue, color: WARNING }}>{upcomingAppointments}</div>
           </div>
-          <div style={{ ...S.statIcon, background: "linear-gradient(135deg, #f59e0b, #d97706)" }}>◌</div>
+          <div style={{ ...S.statIcon, background: "linear-gradient(135deg, #f59e0b, #d97706)" }}>
+            <Clock3 size={16} strokeWidth={2.2} />
+          </div>
         </div>
-      </div>
-
-      <div style={S.dateBar}>
-        <button type="button" onClick={() => setSelectedDate((value) => shiftDate(value, -1))} style={S.navButton}>
-          ‹
-        </button>
-        <div style={S.dateTitle}>{formatLongDate(selectedDate)}</div>
-        <button type="button" onClick={() => setSelectedDate((value) => shiftDate(value, 1))} style={S.navButton}>
-          ›
-        </button>
       </div>
 
       {!isConnected ? (
@@ -360,52 +500,222 @@ export default function AppAgenda() {
       {error ? <div style={S.errorBox}>Erreur: {error}</div> : null}
 
       <div style={S.panel}>
-        <div style={S.panelHeader}>
-          <div style={S.panelTitle}>Planning du jour</div>
-        </div>
-
-        {appointments.length > 0 ? (
-          <div style={S.appointmentsWrap}>
-            <div style={S.appointmentsList}>
-            {appointments.map((appointment) => (
-              <button
-                className="agenda-appointment-card"
-                key={appointment.id}
-                type="button"
-                onClick={() => setSelectedAppointment(appointment)}
-                style={{
-                  ...S.appointmentCard,
-                  borderColor: appointment.status.border,
-                  background: "#ffffff",
-                }}
-              >
-                <div style={S.avatar}>{appointment.initials}</div>
-                <div style={S.appointmentContent}>
-                  <div style={S.patientName}>{appointment.patient || "Patient"}</div>
-                  <div style={S.appointmentType}>{appointment.type || "Consultation"}</div>
-                  <div style={S.appointmentDetail}>{appointment.detailLine}</div>
-                  <div style={S.metaRow}>
-                    <span>🕘 {appointment.displayTime}</span>
-                    <span>({appointment.duration} min)</span>
-                    <span>{appointment.sourceLabel}</span>
-                  </div>
-                </div>
-                <div className="agenda-badges-col" style={S.badgesCol}>
-                  <span
-                    style={{
-                      ...S.statusBadge,
-                      background: appointment.status.bg,
-                      color: appointment.status.color,
-                      borderColor: appointment.status.border,
-                    }}
-                  >
-                    {appointment.status.label}
-                  </span>
-                </div>
+        <div style={S.calendarTopBar}>
+          <button type="button" onClick={navigatePrevious} style={S.navButton}>
+            <ChevronLeft size={18} strokeWidth={2.2} />
+          </button>
+          <div style={S.calendarTopCenter}>
+            <div style={S.dateTitle}>{currentTitle}</div>
+            <div style={S.viewSwitch}>
+              <button type="button" onClick={() => setViewMode("month")} style={viewMode === "month" ? S.viewSwitchActive : S.viewSwitchGhost}>
+                Mois
               </button>
-            ))}
+              <button type="button" onClick={() => setViewMode("week")} style={viewMode === "week" ? S.viewSwitchActive : S.viewSwitchGhost}>
+                Semaine
+              </button>
+              <button type="button" onClick={() => setViewMode("day")} style={viewMode === "day" ? S.viewSwitchActive : S.viewSwitchGhost}>
+                Jour
+              </button>
             </div>
           </div>
+          <button type="button" onClick={navigateNext} style={S.navButton}>
+            <ChevronRight size={18} strokeWidth={2.2} />
+          </button>
+        </div>
+
+        <div style={S.calendarPanelHeader}>
+          <div style={S.panelTitle}>{currentPanelTitle}</div>
+        </div>
+
+        {timelineHours.length > 0 ? (
+          viewMode === "day" ? (
+            <div className="agenda-day-layout" style={S.dayLayout}>
+              <div style={S.dayMain}>
+                <div style={S.daySummaryBar}>
+                  <div>
+                    <div style={S.daySummaryTitle}>Planning de la journée</div>
+                    <div style={S.daySummaryText}>{selectedDayAppointments.length} rendez-vous prévus</div>
+                  </div>
+                </div>
+                <div style={S.dayTimeline}>
+                  {timelineHours.map((hour) => {
+                    const items = appointmentsByCell[`${selectedDate}-${hour}`] || [];
+                    return (
+                      <div key={hour} style={S.dayRow}>
+                        <div style={S.dayHour}>{hour}</div>
+                        <div style={S.dayCell}>
+                          {items.length > 0
+                            ? items.map((appointment) => (
+                                <button
+                                  key={appointment.id}
+                                  type="button"
+                                  onClick={() => setSelectedAppointment(appointment)}
+                                  style={{
+                                    ...S.dayAppointmentCard,
+                                    borderColor: appointment.status.border,
+                                    background: appointment.current ? "#fff7ed" : "#ffffff",
+                                  }}
+                                >
+                                  <div style={S.dayAppointmentTop}>
+                                    <div>
+                                      <div style={S.weekAppointmentName}>{appointment.patient || "Patient"}</div>
+                                      <div style={S.weekAppointmentType}>{appointment.type || "Consultation"}</div>
+                                    </div>
+                                    <span
+                                      style={{
+                                        ...S.statusBadge,
+                                        background: appointment.status.bg,
+                                        color: appointment.status.color,
+                                        borderColor: appointment.status.border,
+                                      }}
+                                    >
+                                      {appointment.status.label}
+                                    </span>
+                                  </div>
+                                  <div style={S.weekAppointmentMeta}>
+                                    <span>{appointment.displayTime}</span>
+                                    <span>{appointment.duration} min</span>
+                                    <span>{appointment.sourceLabel}</span>
+                                  </div>
+                                </button>
+                              ))
+                            : <div style={S.dayEmptyCell} />}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              <div style={S.daySidebar}>
+                <div style={S.sideCard}>
+                  <div style={S.sideCardTitle}>Détails</div>
+                  {selectedAppointment && selectedAppointment.date === selectedDate ? (
+                    <div style={S.sideDetailBody}>
+                      <div style={S.sideDetailName}>{selectedAppointment.patient || "Patient"}</div>
+                      <div style={S.sideDetailText}>{selectedAppointment.type || "Consultation"}</div>
+                      <div style={S.sideDetailText}>{selectedAppointment.displayTime || "—"} · {selectedAppointment.duration || "—"} min</div>
+                      <div style={S.sideDetailText}>{selectedAppointment.sourceLabel || "UWI"}</div>
+                    </div>
+                  ) : (
+                    <div style={S.sideEmpty}>Sélectionnez un rendez-vous pour voir les détails</div>
+                  )}
+                </div>
+                <div style={{ ...S.sideCard, ...S.quickActionsCard }}>
+                  <div style={S.sideCardTitle}>Actions rapides</div>
+                  <button type="button" onClick={scrollToSetup} style={S.quickActionButton}>+ Nouveau RDV</button>
+                  <button type="button" onClick={() => navigate("/app/appels")} style={S.quickActionButton}>Ouvrir appels</button>
+                  <button type="button" onClick={() => navigate("/app/horaires")} style={S.quickActionButton}>Modifier horaires</button>
+                </div>
+              </div>
+            </div>
+          ) : viewMode === "month" ? (
+            <div style={S.monthWrap}>
+              <div className="agenda-month-grid" style={S.monthGrid}>
+                {["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"].map((label) => (
+                  <div key={label} style={S.monthWeekday}>{label}</div>
+                ))}
+                {buildMonthGrid(selectedDate).map((date) => {
+                  const items = agendaByDate?.[date]?.slots || [];
+                  const inCurrentMonth = isSameMonth(date, selectedDate);
+                  return (
+                    <button
+                      key={date}
+                      type="button"
+                      onClick={() => {
+                        setSelectedDate(date);
+                        setViewMode("day");
+                      }}
+                      style={{
+                        ...S.monthCell,
+                        ...(date === selectedDate ? S.monthCellActive : null),
+                        ...(inCurrentMonth ? null : S.monthCellMuted),
+                      }}
+                    >
+                      <div style={S.monthCellDate}>{formatDayNumber(date)}</div>
+                      {items.length > 0 ? (
+                        <div style={S.monthDotWrap}>
+                          <span style={S.monthDot}>{items.length}</span>
+                        </div>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div style={S.weekCalendarWrap}>
+              <div className="agenda-week-calendar" style={S.weekCalendar}>
+                <div style={S.weekCorner} />
+                {weekDates.map((date) => (
+                  <button
+                    key={date}
+                    type="button"
+                    onClick={() => setSelectedDate(date)}
+                    style={{
+                      ...S.weekDayHeader,
+                      ...(date === selectedDate ? S.weekDayHeaderActive : null),
+                    }}
+                  >
+                    <span style={S.weekDayLabel}>{formatWeekdayLabel(date)}</span>
+                    <span style={S.weekDayNumber}>{formatDayNumber(date)}</span>
+                  </button>
+                ))}
+
+                {timelineHours.map((hour) => (
+                  <Fragment key={hour}>
+                    <div style={S.timeCell}>{hour}</div>
+                    {weekDates.map((date) => {
+                      const items = appointmentsByCell[`${date}-${hour}`] || [];
+                      return (
+                        <div
+                          key={`${date}-${hour}`}
+                          style={{
+                            ...S.weekCell,
+                            ...(date === selectedDate ? S.weekCellActive : null),
+                          }}
+                        >
+                          {items.length > 0
+                            ? items.map((appointment) => (
+                                <button
+                                  key={appointment.id}
+                                  className="agenda-week-appointment"
+                                  type="button"
+                                  onClick={() => setSelectedAppointment(appointment)}
+                                  style={{
+                                    ...S.weekAppointmentCard,
+                                    borderColor: appointment.status.border,
+                                    background: appointment.current ? "#fff7ed" : "#ffffff",
+                                  }}
+                                >
+                                  <div style={S.weekAppointmentTop}>
+                                    <div style={S.weekAppointmentName}>{appointment.patient || "Patient"}</div>
+                                    <span
+                                      style={{
+                                        ...S.statusBadge,
+                                        background: appointment.status.bg,
+                                        color: appointment.status.color,
+                                        borderColor: appointment.status.border,
+                                      }}
+                                    >
+                                      {appointment.status.label}
+                                    </span>
+                                  </div>
+                                  <div style={S.weekAppointmentType}>{appointment.type || "Consultation"}</div>
+                                  <div style={S.weekAppointmentMeta}>
+                                    <span>{appointment.displayTime}</span>
+                                    <span>{appointment.sourceLabel}</span>
+                                  </div>
+                                </button>
+                              ))
+                            : null}
+                        </div>
+                      );
+                    })}
+                  </Fragment>
+                ))}
+              </div>
+            </div>
+          )
         ) : emptyTimeline.closed ? (
           <div style={S.emptyState}>
             <div style={S.emptyTitle}>Cabinet fermé ce jour</div>
@@ -413,19 +723,6 @@ export default function AppAgenda() {
             <button type="button" onClick={() => navigate("/app/horaires")} style={S.secondaryButton}>
               Modifier mes horaires
             </button>
-          </div>
-        ) : emptyTimeline.rows.length > 0 ? (
-          <div style={S.emptyTimeline}>
-            <div style={S.emptyTitle}>Aucun rendez-vous planifié</div>
-            <div style={S.emptyText}>Les créneaux d'ouverture restent visibles, même si aucun agenda externe n'est connecté.</div>
-            <div style={S.emptyRows}>
-              {emptyTimeline.rows.map((row) => (
-                <div key={row} style={S.emptyRow}>
-                  <span style={S.emptyHour}>{row}</span>
-                  <span style={S.emptyLabel}>Libre</span>
-                </div>
-              ))}
-            </div>
           </div>
         ) : (
           <div style={S.emptyState}>
@@ -708,6 +1005,9 @@ const S = {
     fontWeight: 700,
     cursor: "pointer",
     boxShadow: "0 8px 18px rgba(37,99,235,.18)",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
   },
   secondaryButton: {
     border: `1px solid ${BORDER}`,
@@ -759,31 +1059,23 @@ const S = {
     boxShadow: "0 8px 18px rgba(37,99,235,.16)",
     flexShrink: 0,
   },
-  dateBar: {
-    background: CARD,
-    border: `1px solid ${BORDER}`,
-    borderRadius: 14,
-    padding: "14px 16px",
-    display: "grid",
-    gridTemplateColumns: "48px 1fr 48px",
-    alignItems: "center",
-    boxShadow: "0 2px 10px rgba(15,23,42,.035)",
-  },
   navButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    border: "none",
-    background: "#fff",
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    border: `1px solid ${BORDER}`,
+    background: "#f8fafc",
     color: "#475569",
-    fontSize: 22,
     cursor: "pointer",
     justifySelf: "center",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
   },
   dateTitle: {
     textAlign: "center",
-    fontSize: 16,
-    fontWeight: 700,
+    fontSize: 15,
+    fontWeight: 800,
     color: TEXT,
   },
   notice: {
@@ -830,10 +1122,59 @@ const S = {
   panel: {
     background: CARD,
     border: `1px solid ${BORDER}`,
-    borderRadius: 14,
+    borderRadius: 18,
     padding: 0,
     overflow: "hidden",
     boxShadow: "0 2px 10px rgba(15,23,42,.035)",
+  },
+  calendarTopBar: {
+    padding: "18px 18px 14px",
+    display: "grid",
+    gridTemplateColumns: "48px 1fr 48px",
+    alignItems: "center",
+    gap: 12,
+    borderBottom: `1px solid ${BORDER}`,
+    background: "#ffffff",
+  },
+  calendarTopCenter: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 12,
+  },
+  viewSwitch: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: 4,
+    borderRadius: 12,
+    background: "#f8fafc",
+    border: `1px solid ${BORDER}`,
+  },
+  viewSwitchGhost: {
+    border: "none",
+    background: "transparent",
+    color: "#6b7280",
+    borderRadius: 10,
+    padding: "7px 12px",
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  viewSwitchActive: {
+    border: "none",
+    background: "linear-gradient(135deg, #14b8a6, #0f766e)",
+    color: "#fff",
+    borderRadius: 10,
+    padding: "7px 12px",
+    fontSize: 12,
+    fontWeight: 700,
+    boxShadow: "0 8px 18px rgba(20,184,166,.18)",
+  },
+  calendarPanelHeader: {
+    padding: "16px 18px",
+    background: "#fafafa",
+    borderBottom: `1px solid ${BORDER}`,
   },
   panelHeader: {
     padding: "18px 18px 14px",
@@ -847,6 +1188,313 @@ const S = {
   },
   appointmentsWrap: {
     padding: 18,
+  },
+  weekCalendarWrap: {
+    padding: 18,
+    overflowX: "auto",
+  },
+  dayLayout: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1.8fr) minmax(280px, .9fr)",
+    gap: 18,
+    padding: 18,
+  },
+  dayMain: {
+    border: `1px solid ${BORDER}`,
+    borderRadius: 18,
+    overflow: "hidden",
+    background: "#fff",
+  },
+  daySummaryBar: {
+    padding: "18px 18px 16px",
+    borderBottom: `1px solid ${BORDER}`,
+    background: "#f6fffd",
+  },
+  daySummaryTitle: {
+    fontSize: 15,
+    fontWeight: 800,
+    color: TEXT,
+  },
+  daySummaryText: {
+    marginTop: 6,
+    fontSize: 13,
+    color: MUTED,
+  },
+  dayTimeline: {
+    display: "flex",
+    flexDirection: "column",
+  },
+  dayRow: {
+    display: "grid",
+    gridTemplateColumns: "72px minmax(0, 1fr)",
+    minHeight: 66,
+    borderBottom: `1px solid ${BORDER}`,
+  },
+  dayHour: {
+    padding: "12px 10px",
+    fontSize: 12,
+    fontWeight: 700,
+    color: "#6b7280",
+    background: "#fff",
+    borderRight: `1px solid ${BORDER}`,
+  },
+  dayCell: {
+    padding: 10,
+    background: "#fff",
+  },
+  dayEmptyCell: {
+    height: "100%",
+    minHeight: 42,
+    borderRadius: 12,
+    background: "#ffffff",
+  },
+  dayAppointmentCard: {
+    width: "100%",
+    border: "1px solid",
+    borderRadius: 14,
+    background: "#fff",
+    padding: "12px 14px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+    textAlign: "left",
+    cursor: "pointer",
+    fontFamily: "inherit",
+    boxShadow: "0 6px 18px rgba(15,23,42,.05)",
+  },
+  dayAppointmentTop: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  daySidebar: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 18,
+  },
+  sideCard: {
+    border: `1px solid ${BORDER}`,
+    borderRadius: 18,
+    background: "#fff",
+    padding: 18,
+    boxShadow: "0 2px 10px rgba(15,23,42,.035)",
+  },
+  sideCardTitle: {
+    fontSize: 15,
+    fontWeight: 800,
+    color: TEXT,
+  },
+  sideEmpty: {
+    marginTop: 18,
+    fontSize: 13,
+    color: MUTED,
+    lineHeight: 1.6,
+  },
+  sideDetailBody: {
+    marginTop: 16,
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+  },
+  sideDetailName: {
+    fontSize: 16,
+    fontWeight: 800,
+    color: TEXT,
+  },
+  sideDetailText: {
+    fontSize: 13,
+    color: "#4b5563",
+    lineHeight: 1.5,
+  },
+  quickActionsCard: {
+    background: "#f6fffd",
+    borderColor: "#ccfbf1",
+  },
+  quickActionButton: {
+    width: "100%",
+    marginTop: 12,
+    textAlign: "left",
+    border: "1px solid #d1fae5",
+    background: "#fff",
+    color: "#334155",
+    borderRadius: 12,
+    padding: "12px 14px",
+    fontSize: 14,
+    fontWeight: 700,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  weekCalendar: {
+    minWidth: 980,
+    display: "grid",
+    gridTemplateColumns: "88px repeat(7, minmax(120px, 1fr))",
+    borderTop: `1px solid ${BORDER}`,
+    borderLeft: `1px solid ${BORDER}`,
+    background: "#fff",
+  },
+  weekCorner: {
+    minHeight: 52,
+    background: "#fff",
+    borderRight: `1px solid ${BORDER}`,
+    borderBottom: `1px solid ${BORDER}`,
+  },
+  weekDayHeader: {
+    minHeight: 52,
+    border: "none",
+    borderRight: `1px solid ${BORDER}`,
+    borderBottom: `1px solid ${BORDER}`,
+    background: "#fff",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 2,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  weekDayHeaderActive: {
+    background: "#f0fdfa",
+  },
+  weekDayLabel: {
+    fontSize: 10,
+    fontWeight: 800,
+    color: "#6b7280",
+    letterSpacing: "0.05em",
+  },
+  weekDayNumber: {
+    fontSize: 22,
+    fontWeight: 800,
+    color: TEXT,
+    lineHeight: 1,
+  },
+  timeCell: {
+    minHeight: 92,
+    padding: "8px 10px",
+    borderRight: `1px solid ${BORDER}`,
+    borderBottom: `1px solid ${BORDER}`,
+    fontSize: 12,
+    fontWeight: 700,
+    color: "#6b7280",
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "center",
+    background: "#fff",
+  },
+  weekCell: {
+    minHeight: 92,
+    borderRight: `1px solid ${BORDER}`,
+    borderBottom: `1px solid ${BORDER}`,
+    padding: 8,
+    background: "#fff",
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+  },
+  weekCellActive: {
+    background: "#fcfffe",
+  },
+  weekAppointmentCard: {
+    width: "100%",
+    border: "1px solid",
+    borderRadius: 14,
+    background: "#fff",
+    padding: "10px 10px 9px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    textAlign: "left",
+    cursor: "pointer",
+    fontFamily: "inherit",
+    boxShadow: "0 4px 14px rgba(15,23,42,.05)",
+  },
+  weekAppointmentTop: {
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  weekAppointmentName: {
+    fontSize: 13,
+    fontWeight: 800,
+    color: TEXT,
+    lineHeight: 1.25,
+  },
+  weekAppointmentType: {
+    fontSize: 12,
+    color: "#4b5563",
+    lineHeight: 1.4,
+  },
+  weekAppointmentMeta: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+    fontSize: 11,
+    color: "#6b7280",
+  },
+  monthWrap: {
+    padding: 18,
+    overflowX: "auto",
+  },
+  monthGrid: {
+    minWidth: 860,
+    display: "grid",
+    gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+    borderTop: `1px solid ${BORDER}`,
+    borderLeft: `1px solid ${BORDER}`,
+    background: "#fff",
+  },
+  monthWeekday: {
+    padding: "14px 10px",
+    textAlign: "center",
+    fontSize: 12,
+    fontWeight: 700,
+    color: "#475569",
+    borderRight: `1px solid ${BORDER}`,
+    borderBottom: `1px solid ${BORDER}`,
+    background: "#fff",
+  },
+  monthCell: {
+    minHeight: 108,
+    border: "none",
+    borderRight: `1px solid ${BORDER}`,
+    borderBottom: `1px solid ${BORDER}`,
+    background: "#fff",
+    padding: 12,
+    textAlign: "left",
+    cursor: "pointer",
+    fontFamily: "inherit",
+    position: "relative",
+  },
+  monthCellActive: {
+    background: "#f0fdfa",
+  },
+  monthCellMuted: {
+    color: "#94a3b8",
+    background: "#fafafa",
+  },
+  monthCellDate: {
+    fontSize: 14,
+    fontWeight: 800,
+    color: "inherit",
+  },
+  monthDotWrap: {
+    marginTop: 18,
+    display: "flex",
+    justifyContent: "center",
+  },
+  monthDot: {
+    width: 28,
+    height: 28,
+    borderRadius: "50%",
+    background: "linear-gradient(135deg, #14b8a6, #0f766e)",
+    color: "#fff",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 12,
+    fontWeight: 800,
+    boxShadow: "0 8px 18px rgba(20,184,166,.18)",
   },
   appointmentsList: {
     display: "flex",
@@ -1198,10 +1846,28 @@ const CSS = `
     }
   }
 
+  @media (max-width: 1080px) {
+    .agenda-day-layout {
+      grid-template-columns: 1fr !important;
+    }
+  }
+
   @media (max-width: 720px) {
     .agenda-appointment-card {
       flex-direction: column;
       align-items: flex-start !important;
+    }
+
+    .agenda-week-calendar {
+      min-width: 760px !important;
+    }
+
+    .agenda-week-appointment {
+      padding: 8px !important;
+    }
+
+    .agenda-month-grid {
+      min-width: 760px !important;
     }
 
     .agenda-badges-col {
