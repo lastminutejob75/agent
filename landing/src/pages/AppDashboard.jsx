@@ -107,6 +107,15 @@ function getPhoneSummary(call, fallbackAgent) {
   return call.customer_number || call.agent_name || fallbackAgent || "Numéro non identifié";
 }
 
+function getDialablePhone(value) {
+  const raw = String(value || "").trim();
+  if (!raw || /num[eé]ro non identifi[eé]/i.test(raw)) return "";
+  const cleaned = raw.replace(/[^\d+]/g, "");
+  if (!cleaned) return "";
+  if (cleaned.startsWith("00")) return `+${cleaned.slice(2)}`;
+  return cleaned;
+}
+
 function getInitials(name) {
   return String(name || "")
     .trim()
@@ -275,16 +284,43 @@ export default function AppDashboard() {
     [agenda?.slots],
   );
 
-  const agendaItems = safeAgendaSlots
-    .filter((slot) => slot.patient)
-    .slice(0, 3)
-    .map((slot, index) => ({
-      ...slot,
-      key: slot.event_id || `${slot.hour || "slot"}-${index}`,
-      displayTime: formatAgendaTime(slot.hour),
-      initials: getInitials(slot.patient),
-      badge: getAgendaBadge(slot),
-    }));
+  const bookedAgendaSlots = useMemo(
+    () =>
+      safeAgendaSlots.filter(
+        (slot) =>
+          slot?.patient &&
+          (slot.source === "UWI" || slot.appointment_id || slot.can_cancel || slot.can_reschedule),
+      ),
+    [safeAgendaSlots],
+  );
+
+  const appointmentItems = useMemo(
+    () =>
+      (bookedAgendaSlots.length ? bookedAgendaSlots : safeAgendaSlots.filter((slot) => slot?.patient))
+        .slice(0, 4)
+        .map((slot, index) => ({
+          ...slot,
+          key: `rdv-${slot.event_id || slot.appointment_id || `${slot.hour || "slot"}-${index}`}`,
+          displayTime: formatAgendaTime(slot.hour),
+          initials: getInitials(slot.patient),
+          badge: getAgendaBadge(slot),
+        })),
+    [bookedAgendaSlots, safeAgendaSlots],
+  );
+
+  const externalAgendaItems = useMemo(
+    () =>
+      safeAgendaSlots
+        .filter((slot) => slot?.patient && slot.source !== "UWI")
+        .slice(0, 3)
+        .map((slot, index) => ({
+          ...slot,
+          key: `agenda-${slot.event_id || `${slot.hour || "slot"}-${index}`}`,
+          displayTime: formatAgendaTime(slot.hour),
+          initials: getInitials(slot.patient),
+        })),
+    [safeAgendaSlots],
+  );
 
   const onboardingCards = useMemo(
     () => [
@@ -681,18 +717,59 @@ export default function AppDashboard() {
                   <div style={S.emptyText}>Votre journal d&apos;appels apparaîtra ici.</div>
                 </div>
               ) : (
-                safeCalls.slice(0, 4).map((call) => {
+                safeCalls.slice(0, 4).map((call, index, rows) => {
                   const status = STATUS_CFG[call.status] || STATUS_CFG.ABANDONED;
                   const icon = callIconTheme(call.status);
+                  const phoneLabel = getPhoneSummary(call, assistantName);
+                  const dialablePhone = getDialablePhone(call.customer_number || phoneLabel);
                   return (
-                    <button key={call.id} type="button" onClick={() => navigate("/app/appels")} style={S.callRow} className="uwi-call-row">
-                      <div style={{ ...S.callIcon, background: icon.bg }}>
+                    <div
+                      key={call.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => navigate("/app/appels")}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          navigate("/app/appels");
+                        }
+                      }}
+                      style={{
+                        ...S.callRow,
+                        borderBottom: index === rows.length - 1 ? "none" : "1px solid #edf2f7",
+                      }}
+                      className="uwi-call-row"
+                    >
+                      <a
+                        href={dialablePhone ? `tel:${dialablePhone}` : undefined}
+                        onClick={(event) => {
+                          if (!dialablePhone) {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            return;
+                          }
+                          event.stopPropagation();
+                        }}
+                        aria-label={
+                          dialablePhone
+                            ? `Rappeler ${call.patient_name || "ce client"}`
+                            : "Numéro indisponible"
+                        }
+                        title={dialablePhone ? `Rappeler ${phoneLabel}` : "Numéro indisponible"}
+                        style={{
+                          ...S.callIconLink,
+                          ...S.callIcon,
+                          background: icon.bg,
+                          cursor: dialablePhone ? "pointer" : "default",
+                          opacity: dialablePhone ? 1 : 0.6,
+                        }}
+                      >
                         <PhoneCall size={22} strokeWidth={2} color={icon.color} />
-                      </div>
+                      </a>
 
                       <div style={{ minWidth: 0, flex: 1, textAlign: "left" }}>
                         <div style={S.callName}>{call.patient_name || "Patient inconnu"}</div>
-                        <div style={S.callPhone}>{getPhoneSummary(call, assistantName)}</div>
+                        <div style={S.callPhone}>{phoneLabel}</div>
                         <div style={S.callOutcome}>{call.summary || "Aucun résumé disponible."}</div>
                         {call.reason_label ? (
                           <div style={S.callReasonRow}>
@@ -725,52 +802,55 @@ export default function AppDashboard() {
                         </span>
                         <div style={S.callDuration}>{call.duration || "—"}</div>
                       </div>
-                    </button>
+                    </div>
                   );
                 })
               )}
             </div>
           </div>
 
-          <div style={S.panel} data-tour="agenda-panel">
+          <div style={S.panel} data-tour="appointments-panel">
             <div style={S.panelHeader}>
               <div>
-                <div style={S.panelTitle}>Agenda</div>
+                <div style={S.panelTitle}>Rendez-vous</div>
                 <div style={S.panelSubtitle}>
-                  {agenda?.external_connected ? "Prochains rendez-vous" : "Prochains rendez-vous UWI"}
+                  {appointmentItems.length > 0 ? "Rendez-vous pris et visibles par le cabinet" : "Les prochains rendez-vous confirmés s'afficheront ici"}
                 </div>
               </div>
-              <div style={{ color: TEAL_DARK, display: "flex", alignItems: "center" }}>
-                <TrendingUp size={18} strokeWidth={2} />
-              </div>
+              <button type="button" onClick={() => navigate("/app/agenda")} style={S.linkButton}>
+                <span>Voir les RDV</span>
+                <ArrowUpRight size={16} strokeWidth={2.2} />
+              </button>
             </div>
 
             <div style={S.agendaList}>
               {loading ? (
                 [1, 2, 3].map((item) => <Skeleton key={item} height={96} radius={16} />)
-              ) : agendaItems.length > 0 ? (
+              ) : appointmentItems.length > 0 ? (
                 <>
-                  {!agendaReady ? (
+                  {!agendaReady && bookedAgendaSlots.length > 0 ? (
                     <div style={S.agendaNotice}>
                       <div>
-                        <div style={S.agendaNoticeTitle}>Agenda médecin non connecté</div>
+                        <div style={S.agendaNoticeTitle}>Rendez-vous UWI bien remontés</div>
                         <div style={S.agendaNoticeText}>
-                          Les rendez-vous ci-dessous viennent déjà du calendrier UWI. Vous pouvez connecter Google ensuite.
+                          Les rendez-vous pris par UWI apparaissent déjà ici, même avant la connexion d&apos;un agenda externe.
                         </div>
                       </div>
                     </div>
                   ) : null}
 
-                  {agendaItems.map((item) => (
-                    <div key={item.key} style={S.agendaAppointmentCard}>
-                      <div style={S.agendaAvatar}>{item.initials}</div>
+                  {appointmentItems.map((item) => (
+                    <div key={item.key} style={S.appointmentCard}>
+                      <div style={S.appointmentTimeBox}>
+                        <div style={S.appointmentTimeValue}>{item.displayTime || "—"}</div>
+                      </div>
 
                       <div style={{ minWidth: 0, flex: 1 }}>
                         <div style={S.agendaName}>{item.patient}</div>
                         <div style={S.agendaType}>{item.type || "Rendez-vous"}</div>
                         <div style={S.agendaMetaRow}>
-                          <span>🕘 {item.displayTime}</span>
-                          <span>{item.source === "UWI" ? "Téléphone" : "Agenda externe"}</span>
+                          <span>{item.source === "UWI" ? "Pris par UWI" : "Agenda externe"}</span>
+                          <span>{item.done ? "Terminée" : "À venir"}</span>
                         </div>
                       </div>
 
@@ -803,9 +883,7 @@ export default function AppDashboard() {
                 <div style={S.emptyState}>
                   <div style={S.emptyTitle}>Aucun rendez-vous à venir</div>
                   <div style={S.emptyText}>
-                    {agendaReady
-                      ? "Vos prochains rendez-vous apparaîtront ici au fil des réservations."
-                      : "Aucun RDV à venir pour le moment. Vous pouvez déjà connecter votre agenda ou attendre les premières réservations UWI."}
+                    Les rendez-vous pris par le standard apparaîtront ici dès qu&apos;ils seront confirmés.
                   </div>
                 </div>
               )}
@@ -813,8 +891,80 @@ export default function AppDashboard() {
 
             <button type="button" onClick={() => navigate("/app/agenda")} style={S.planButton}>
               <Plus size={16} strokeWidth={2.2} />
-              <span>Ouvrir l&apos;agenda</span>
+              <span>Gérer les rendez-vous</span>
             </button>
+          </div>
+        </section>
+
+        <section style={{ ...S.panel, marginTop: 16 }} data-tour="agenda-panel">
+          <div style={S.panelHeader}>
+            <div>
+              <div style={S.panelTitle}>Agenda</div>
+              <div style={S.panelSubtitle}>
+                {agenda?.external_connected ? "Connexion et synchronisation du cabinet" : "Configuration de l'agenda du cabinet"}
+              </div>
+            </div>
+            <button type="button" onClick={() => navigate("/app/agenda")} style={S.linkButton}>
+              <span>Ouvrir agenda</span>
+              <ArrowUpRight size={16} strokeWidth={2.2} />
+            </button>
+          </div>
+
+          <div style={S.agendaOverviewGrid}>
+            <div style={S.agendaOverviewCard}>
+              <div style={S.agendaOverviewLabel}>Mode</div>
+              <div style={S.agendaOverviewValue}>{agenda?.external_connected ? "Google connecté" : "Mode UWI"}</div>
+              <div style={S.agendaOverviewText}>
+                {agenda?.external_connected ? "Les événements externes remontent dans le tableau de bord." : "UWI gère déjà les rendez-vous en attendant la connexion."}
+              </div>
+            </div>
+            <div style={S.agendaOverviewCard}>
+              <div style={S.agendaOverviewLabel}>Rendez-vous UWI</div>
+              <div style={S.agendaOverviewValue}>{bookedAgendaSlots.length}</div>
+              <div style={S.agendaOverviewText}>Rendez-vous détectés sur la période affichée.</div>
+            </div>
+            <div style={S.agendaOverviewCard}>
+              <div style={S.agendaOverviewLabel}>Agenda externe</div>
+              <div style={S.agendaOverviewValue}>{externalAgendaItems.length}</div>
+              <div style={S.agendaOverviewText}>
+                {agenda?.external_connected ? "Événements synchronisés depuis le calendrier du cabinet." : "Connectez votre agenda pour voir aussi les événements externes."}
+              </div>
+            </div>
+          </div>
+
+          <div style={S.agendaOverviewBody}>
+            {!agendaReady ? (
+              <div style={S.agendaNotice}>
+                <div>
+                  <div style={S.agendaNoticeTitle}>Agenda externe non connecté</div>
+                  <div style={S.agendaNoticeText}>
+                    La section Rendez-vous ci-dessus reste opérationnelle. Cette section Agenda servira à afficher aussi les événements du cabinet.
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {externalAgendaItems.length > 0 ? (
+              <div style={S.agendaExternalList}>
+                {externalAgendaItems.map((item) => (
+                  <div key={item.key} style={S.agendaExternalRow}>
+                    <div style={S.agendaExternalTime}>{item.displayTime || "—"}</div>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={S.agendaExternalName}>{item.patient}</div>
+                      <div style={S.agendaExternalText}>{item.type || "Événement agenda"}</div>
+                    </div>
+                    <span style={S.agendaExternalBadge}>Externe</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={S.emptyState}>
+                <div style={S.emptyTitle}>Aucun événement agenda synchronisé</div>
+                <div style={S.emptyText}>
+                  Cette section affichera les événements de votre agenda connecté sans les mélanger avec les rendez-vous pris par UWI.
+                </div>
+              </div>
+            )}
           </div>
         </section>
 
@@ -1613,46 +1763,51 @@ const S = {
   callList: {
     display: "flex",
     flexDirection: "column",
-    gap: 12,
-    padding: 18,
+    gap: 0,
+    padding: "4px 18px",
   },
   callRow: {
     width: "100%",
-    border: "1px solid #e5e7eb",
-    borderRadius: 14,
+    border: "none",
+    borderRadius: 0,
     background: "#fff",
-    padding: "14px 16px",
+    padding: "18px 0",
     display: "flex",
-    alignItems: "flex-start",
+    alignItems: "center",
     gap: 14,
     cursor: "pointer",
     fontFamily: "inherit",
-    boxShadow: "0 1px 4px rgba(15,23,42,.02)",
+    boxShadow: "none",
   },
   callIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
+    width: 46,
+    height: 46,
+    borderRadius: 14,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
+    boxShadow: "0 8px 20px rgba(20, 184, 166, 0.12)",
+  },
+  callIconLink: {
+    textDecoration: "none",
   },
   callName: {
-    fontSize: 15,
-    fontWeight: 700,
+    fontSize: 16,
+    fontWeight: 800,
     color: NAVY,
   },
   callPhone: {
-    marginTop: 6,
-    fontSize: 12,
-    color: "#4b5563",
+    marginTop: 5,
+    fontSize: 13,
+    color: "#64748b",
+    fontWeight: 600,
   },
   callOutcome: {
-    marginTop: 5,
-    fontSize: 11,
+    marginTop: 10,
+    fontSize: 13,
     color: "#4b5563",
-    lineHeight: 1.5,
+    lineHeight: 1.45,
   },
   callReasonRow: {
     marginTop: 8,
@@ -1671,34 +1826,34 @@ const S = {
     fontWeight: 700,
   },
   callReasonText: {
-    fontSize: 11,
+    fontSize: 12,
     color: "#475569",
     lineHeight: 1.5,
   },
   callMeta: {
     textAlign: "right",
-    minWidth: 84,
+    minWidth: 88,
     flexShrink: 0,
   },
   callTime: {
-    fontSize: 12,
+    fontSize: 16,
     color: "#374151",
-    fontWeight: 600,
+    fontWeight: 700,
   },
   statusBadge: {
     display: "inline-flex",
     marginTop: 6,
-    padding: "5px 10px",
+    padding: "6px 10px",
     borderRadius: 999,
     border: "1px solid",
-    fontSize: 10,
-    fontWeight: 700,
+    fontSize: 11,
+    fontWeight: 800,
   },
   callDuration: {
     marginTop: 8,
-    fontSize: 11,
+    fontSize: 14,
     color: NAVY,
-    fontWeight: 600,
+    fontWeight: 700,
   },
   agendaList: {
     padding: 18,
@@ -1722,6 +1877,36 @@ const S = {
     fontSize: 12,
     lineHeight: 1.5,
     color: "#0f766e",
+  },
+  appointmentCard: {
+    display: "flex",
+    alignItems: "center",
+    gap: 14,
+    border: "1px solid #dbeafe",
+    borderRadius: 16,
+    background: "linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)",
+    padding: "14px 16px",
+    boxShadow: "0 8px 24px rgba(37,99,235,.06)",
+  },
+  appointmentTimeBox: {
+    width: 64,
+    minHeight: 58,
+    borderRadius: 16,
+    background: "linear-gradient(135deg, #14c8b8, #0ea899)",
+    color: "#fff",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "8px 10px",
+    flexShrink: 0,
+    boxShadow: "0 10px 24px rgba(20, 184, 166, 0.20)",
+  },
+  appointmentTimeValue: {
+    fontSize: 17,
+    fontWeight: 800,
+    lineHeight: 1.05,
+    textAlign: "center",
+    letterSpacing: "-0.02em",
   },
   agendaAppointmentCard: {
     display: "flex",
@@ -1788,6 +1973,88 @@ const S = {
     border: "1px solid",
     fontSize: 10,
     fontWeight: 700,
+  },
+  agendaOverviewGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+    gap: 12,
+    padding: 18,
+    paddingBottom: 0,
+  },
+  agendaOverviewCard: {
+    border: "1px solid #e5e7eb",
+    borderRadius: 16,
+    background: "#fff",
+    padding: "14px 16px",
+    boxShadow: "0 2px 10px rgba(15,23,42,.035)",
+  },
+  agendaOverviewLabel: {
+    fontSize: 11,
+    fontWeight: 800,
+    color: "#64748b",
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
+  },
+  agendaOverviewValue: {
+    marginTop: 10,
+    fontSize: 20,
+    fontWeight: 800,
+    color: NAVY,
+  },
+  agendaOverviewText: {
+    marginTop: 6,
+    fontSize: 12,
+    color: "#6b7280",
+    lineHeight: 1.5,
+  },
+  agendaOverviewBody: {
+    padding: 18,
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+  },
+  agendaExternalList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+  },
+  agendaExternalRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    border: "1px solid #e5e7eb",
+    borderRadius: 14,
+    padding: "12px 14px",
+    background: "#fff",
+  },
+  agendaExternalTime: {
+    minWidth: 56,
+    fontSize: 13,
+    fontWeight: 800,
+    color: "#0f766e",
+  },
+  agendaExternalName: {
+    fontSize: 14,
+    fontWeight: 700,
+    color: NAVY,
+  },
+  agendaExternalText: {
+    marginTop: 4,
+    fontSize: 12,
+    color: "#6b7280",
+    lineHeight: 1.4,
+  },
+  agendaExternalBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "5px 9px",
+    borderRadius: 999,
+    border: "1px solid #cbd5e1",
+    background: "#f8fafc",
+    color: "#475569",
+    fontSize: 10,
+    fontWeight: 800,
+    flexShrink: 0,
   },
   planButton: {
     margin: "0 18px 18px",
