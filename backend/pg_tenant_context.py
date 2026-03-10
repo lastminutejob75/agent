@@ -7,6 +7,7 @@ ne retournent que les lignes du tenant courant.
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 
@@ -20,7 +21,10 @@ def set_tenant_id_on_connection(conn, tenant_id: Optional[int]) -> None:
         return
     try:
         with conn.cursor() as cur:
-            cur.execute("SET LOCAL app.current_tenant_id = %s", (str(tenant_id),))
+            tenant_id_sql = str(int(tenant_id))
+            if not re.fullmatch(r"\d+", tenant_id_sql):
+                return
+            cur.execute(f"SET LOCAL app.current_tenant_id = '{tenant_id_sql}'")
     except Exception:
         # RLS peut être désactivé ou la variable non utilisée ; rollback pour ne pas laisser la connexion en failed transaction
         try:

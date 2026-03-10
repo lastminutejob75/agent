@@ -297,9 +297,15 @@ def ensure_test_number_route() -> bool:
     add_route("vocal", test_number, test_tid)
     if config.USE_PG_TENANTS:
         try:
-            from backend.tenants_pg import pg_add_routing
+            from backend.tenants_pg import pg_add_routing, pg_tenant_exists
             key = normalize_did(test_number)
-            if key and pg_add_routing("vocal", key, test_tid):
+            if key and not pg_tenant_exists(test_tid):
+                logger.warning(
+                    "ensure_test_number_route skipped in PG: TEST_TENANT_ID=%s missing for number %s",
+                    test_tid,
+                    key,
+                )
+            elif key and pg_add_routing("vocal", key, test_tid):
                 logger.info("ensure_test_number_route: vocal %s → tenant_id=%s (pg)", key, test_tid)
         except Exception as e:
             logger.warning(

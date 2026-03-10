@@ -106,3 +106,18 @@ def test_resolve_vapi_payload_falls_back_to_assistant_id(mock_lookup):
     assert tid == 7
     assert source == "assistant"
     mock_lookup.assert_called_once_with("asst_live_123")
+
+
+@patch("backend.tenants_pg.pg_tenant_exists", return_value=False)
+def test_ensure_test_number_route_skips_missing_pg_tenant(mock_exists):
+    from backend.tenant_routing import ensure_test_number_route
+
+    with patch("backend.tenant_routing.config.USE_PG_TENANTS", True):
+        with patch("backend.tenant_routing.config.TEST_VOCAL_NUMBER", "+33939240575"):
+            with patch("backend.tenant_routing.config.TEST_TENANT_ID", 2):
+                with patch("backend.tenant_routing.add_route") as mock_add_route:
+                    with patch("backend.tenants_pg.pg_add_routing") as mock_pg_add_routing:
+                        assert ensure_test_number_route() is True
+
+    mock_add_route.assert_called_once()
+    mock_pg_add_routing.assert_not_called()

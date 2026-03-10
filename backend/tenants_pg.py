@@ -132,6 +132,30 @@ def pg_find_tenant_id_by_vapi_assistant_id(assistant_id: str) -> Optional[int]:
         return None
 
 
+def pg_tenant_exists(tenant_id: int) -> bool:
+    """Retourne True si le tenant existe dans PG."""
+    url = _pg_url()
+    if not url or int(tenant_id) < 1:
+        return False
+
+    def _query() -> bool:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM tenants WHERE tenant_id = %s LIMIT 1", (int(tenant_id),))
+                return cur.fetchone() is not None
+
+    try:
+        return _query()
+    except Exception as e:
+        if _is_transient(e):
+            try:
+                return _query()
+            except Exception:
+                pass
+        return False
+
+
 def pg_get_tenant_flags(tenant_id: int) -> Optional[Tuple[dict, str]]:
     """
     Charge flags_json depuis PG tenant_config.
@@ -443,6 +467,9 @@ def pg_add_routing(channel: str, key: str, tenant_id: int) -> bool:
     guard_demo_number_routing(channel=channel, did_key=key, tenant_id=tenant_id)
     url = _pg_url()
     if not url:
+        return False
+    if not pg_tenant_exists(tenant_id):
+        logger.warning("pg_add_routing skipped: tenant_id=%s missing in tenants", tenant_id)
         return False
     try:
         import psycopg
