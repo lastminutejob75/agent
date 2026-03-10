@@ -24,6 +24,7 @@ from backend.config import get_service_account_email
 from backend.db import (
     cancel_booking_sqlite,
     ensure_tenant_config,
+    find_slot_id_by_datetime,
     get_call_followup,
     get_conn,
     list_free_slots,
@@ -896,6 +897,8 @@ def tenant_agenda(
 def tenant_agenda_available_slots(
     auth: dict = Depends(require_tenant_auth),
     limit: int = Query(8, ge=1, le=20),
+    date: Optional[str] = Query(None),
+    time: Optional[str] = Query(None),
 ):
     """Liste des créneaux libres pour déplacer un RDV local UWI."""
     tenant_id = auth["tenant_id"]
@@ -905,6 +908,25 @@ def tenant_agenda_available_slots(
     params = detail.get("params") or {}
     if (params.get("calendar_provider") or "").strip() == "google":
         raise HTTPException(400, "Déplacement automatique indisponible avec Google Calendar")
+    if date and time:
+        slot_id = None
+        if config.USE_PG_SLOTS:
+            try:
+                from backend.slots_pg import pg_find_slot_id_by_datetime
+
+                slot_id = pg_find_slot_id_by_datetime(date, time, tenant_id=tenant_id)
+            except Exception:
+                slot_id = None
+        if slot_id is None:
+            slot_id = find_slot_id_by_datetime(date, time, tenant_id=tenant_id)
+        if slot_id is None:
+            return {"slots": [], "total": 0, "slot_id": None, "exact": True}
+        return {
+            "slots": [{"slot_id": int(slot_id), "date": date[:10], "time": (time or "")[:5], "label": f"{date[:10]} à {(time or '')[:5]}"}],
+            "total": 1,
+            "slot_id": int(slot_id),
+            "exact": True,
+        }
     raw_slots = list_free_slots(limit=limit, tenant_id=tenant_id) or []
     items = []
     for slot in raw_slots[:limit]:

@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, Plus } from "lucide-react";
+import { CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, Plus, Search } from "lucide-react";
 import { api } from "../lib/api.js";
 
 const BLUE = "#2563eb";
@@ -90,6 +90,86 @@ function formatTimeLabel(hour) {
   return value.replace("h", ":");
 }
 
+function addMinutesToTimeLabel(timeLabel, durationMinutes) {
+  const match = String(timeLabel || "").match(/^(\d{2}):(\d{2})$/);
+  if (!match) return "—";
+  const [, hh, mm] = match;
+  const total = Number(hh) * 60 + Number(mm) + Number(durationMinutes || 0);
+  const normalized = ((total % (24 * 60)) + (24 * 60)) % (24 * 60);
+  const hours = String(Math.floor(normalized / 60)).padStart(2, "0");
+  const minutes = String(normalized % 60).padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
+function createDragPreviewElement(appointment) {
+  const node = document.createElement("div");
+  node.style.position = "fixed";
+  node.style.top = "-9999px";
+  node.style.left = "-9999px";
+  node.style.width = "220px";
+  node.style.padding = "10px 12px";
+  node.style.borderRadius = "14px";
+  node.style.border = "1px solid #cbd5e1";
+  node.style.borderLeft = `4px solid ${appointment?.source === "UWI" ? "#8b5cf6" : "#14b8a6"}`;
+  node.style.background = "#ffffff";
+  node.style.boxShadow = "0 16px 32px rgba(15,23,42,.16)";
+  node.style.fontFamily = "Inter, ui-sans-serif, system-ui, sans-serif";
+  node.style.pointerEvents = "none";
+  node.style.zIndex = "99999";
+
+  const time = document.createElement("div");
+  time.textContent = `${appointment?.displayTime || "—"} - ${addMinutesToTimeLabel(appointment?.displayTime, appointment?.duration)}`;
+  time.style.fontSize = "11px";
+  time.style.fontWeight = "800";
+  time.style.letterSpacing = "0.03em";
+  time.style.color = "#0f766e";
+  time.style.marginBottom = "4px";
+
+  const titleRow = document.createElement("div");
+  titleRow.style.display = "flex";
+  titleRow.style.alignItems = "center";
+  titleRow.style.gap = "6px";
+
+  if (appointment?.source === "UWI") {
+    const badge = document.createElement("span");
+    badge.textContent = "IA";
+    badge.style.display = "inline-flex";
+    badge.style.alignItems = "center";
+    badge.style.justifyContent = "center";
+    badge.style.height = "18px";
+    badge.style.minWidth = "26px";
+    badge.style.padding = "0 6px";
+    badge.style.borderRadius = "999px";
+    badge.style.background = "#ede9fe";
+    badge.style.border = "1px solid #ddd6fe";
+    badge.style.color = "#7c3aed";
+    badge.style.fontSize = "9px";
+    badge.style.fontWeight = "900";
+    badge.style.letterSpacing = "0.05em";
+    titleRow.appendChild(badge);
+  }
+
+  const title = document.createElement("div");
+  title.textContent = appointment?.patient || "Patient";
+  title.style.fontSize = "13px";
+  title.style.fontWeight = "800";
+  title.style.color = TEXT;
+  title.style.lineHeight = "1.2";
+  titleRow.appendChild(title);
+
+  const type = document.createElement("div");
+  type.textContent = `${getTypeIcon(appointment?.type)} ${appointment?.type || "Consultation"}`;
+  type.style.fontSize = "11px";
+  type.style.color = "#475569";
+  type.style.marginTop = "4px";
+
+  node.appendChild(time);
+  node.appendChild(titleRow);
+  node.appendChild(type);
+  document.body.appendChild(node);
+  return node;
+}
+
 function getInitials(name) {
   const parts = String(name || "")
     .trim()
@@ -153,6 +233,179 @@ function isSameMonth(dateStr, compareTo) {
   return a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear();
 }
 
+function getDaysInMonth(year, month) {
+  return new Date(year, month + 1, 0).getDate();
+}
+
+function getFirstWeekday(year, month) {
+  const day = new Date(year, month, 1).getDay();
+  return day === 0 ? 6 : day - 1;
+}
+
+function formatMonthShort(year, month) {
+  const text = new Date(year, month, 1).toLocaleDateString("fr-FR", { month: "short", year: "numeric" });
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function getViewStatusKey(appointment) {
+  if (appointment?.current) return "pending";
+  if (appointment?.source === "UWI") return "ai_booked";
+  if (appointment?.done) return "arrived";
+  return "confirmed";
+}
+
+function getFilterLabel(key) {
+  if (key === "all") return "Tous";
+  return getStatusConfigByKey(key).label;
+}
+
+function getStatusConfigByKey(key) {
+  if (key === "pending") return { label: "En attente", color: "#f97316", light: "#fff7ed", border: "#fdba74", dot: "#f97316", grad: null };
+  if (key === "ai_booked") return { label: "Via IA", color: "#8b5cf6", light: "#f5f3ff", border: "#ddd6fe", dot: "#8b5cf6", grad: null };
+  if (key === "arrived") return { label: "Arrivé", color: "#10b981", light: "#f0fdf4", border: "#6ee7b7", dot: "#10b981", grad: null };
+  return { label: "Confirmé", color: "#0aaf7a", light: "#e8faf4", border: "#a7f3d0", dot: "#0dc991", grad: "linear-gradient(135deg, #0dc991, #0aaf7a)" };
+}
+
+function getTypeIcon(type) {
+  const value = String(type || "").toLowerCase();
+  if (value.includes("ordonnance")) return "💊";
+  if (value.includes("bilan")) return "📋";
+  if (value.includes("vaccin")) return "💉";
+  if (value.includes("suivi")) return "🔄";
+  if (value.includes("prem")) return "👋";
+  if (value.includes("post")) return "🏥";
+  return "🩺";
+}
+
+function MiniCalendar({ selectedDate, onSelect }) {
+  const selected = new Date(`${selectedDate}T12:00:00`);
+  const [view, setView] = useState({ y: selected.getFullYear(), m: selected.getMonth() });
+  const dim = getDaysInMonth(view.y, view.m);
+  const first = getFirstWeekday(view.y, view.m);
+  const cells = [...Array(first).fill(null), ...Array.from({ length: dim }, (_, index) => index + 1)];
+  const today = new Date();
+
+  return (
+    <div style={S.miniCalendar}>
+      <div style={S.miniCalendarHeader}>
+        <button
+          type="button"
+          onClick={() => setView((prev) => ({ y: prev.m === 0 ? prev.y - 1 : prev.y, m: prev.m === 0 ? 11 : prev.m - 1 }))}
+          style={S.miniCalendarNav}
+        >
+          ‹
+        </button>
+        <div style={S.miniCalendarTitle}>{formatMonthShort(view.y, view.m)}</div>
+        <button
+          type="button"
+          onClick={() => setView((prev) => ({ y: prev.m === 11 ? prev.y + 1 : prev.y, m: prev.m === 11 ? 0 : prev.m + 1 }))}
+          style={S.miniCalendarNav}
+        >
+          ›
+        </button>
+      </div>
+      <div style={S.miniCalendarWeekdays}>
+        {["L", "M", "M", "J", "V", "S", "D"].map((label, index) => (
+          <div key={`${label}-${index}`} style={S.miniCalendarWeekday}>{label}</div>
+        ))}
+      </div>
+      <div style={S.miniCalendarGrid}>
+        {cells.map((day, index) => {
+          if (!day) return <div key={`empty-${index}`} />;
+          const date = new Date(view.y, view.m, day, 12, 0, 0);
+          const iso = date.toISOString().slice(0, 10);
+          const isSelected = iso === selectedDate;
+          const isToday =
+            date.getDate() === today.getDate() &&
+            date.getMonth() === today.getMonth() &&
+            date.getFullYear() === today.getFullYear();
+          return (
+            <button
+              key={iso}
+              type="button"
+              onClick={() => onSelect(iso)}
+              style={{
+                ...S.miniCalendarDay,
+                ...(isSelected ? S.miniCalendarDaySelected : null),
+                ...(isToday && !isSelected ? S.miniCalendarDayToday : null),
+              }}
+            >
+              {day}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AppointmentTooltip({ appointment, rect }) {
+  if (!appointment || !rect) return null;
+  const visualStatus = getStatusConfigByKey(getViewStatusKey(appointment));
+  const safeTop = Math.min(Math.max(rect.top + rect.height / 2, 90), window.innerHeight - 150);
+  const left = Math.min(rect.right + 14, window.innerWidth - 270);
+  return (
+    <div
+      style={{
+        position: "fixed",
+        top: safeTop,
+        left,
+        transform: "translateY(-50%)",
+        zIndex: 9999,
+        background: "#fff",
+        border: `1px solid ${BORDER}`,
+        borderRadius: 14,
+        width: 250,
+        boxShadow: "0 12px 40px rgba(0,0,0,0.13)",
+        overflow: "hidden",
+        pointerEvents: "none",
+      }}
+    >
+      <div style={{ height: 4, background: visualStatus.grad || visualStatus.dot }} />
+      <div style={{ padding: "13px 15px" }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: TEXT, marginBottom: 2 }}>{appointment.patient || "Patient"}</div>
+        <div style={{ fontSize: 12, color: MUTED, marginBottom: 10 }}>
+          {getTypeIcon(appointment.type)} {appointment.type || "Consultation"}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <span style={{ fontSize: 12, color: MUTED }}>
+            {appointment.displayTime} · {appointment.duration} min
+          </span>
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              color: visualStatus.color,
+              background: visualStatus.light,
+              padding: "2px 9px",
+              borderRadius: 20,
+              border: `1px solid ${visualStatus.border}`,
+            }}
+          >
+            {visualStatus.label}
+          </span>
+        </div>
+        {appointment.source === "UWI" ? (
+          <div
+            style={{
+              marginTop: 9,
+              background: "#f5f3ff",
+              border: "1px solid #ddd6fe",
+              borderRadius: 8,
+              padding: "7px 9px",
+              fontSize: 11,
+              color: "#8b5cf6",
+              fontWeight: 600,
+            }}
+          >
+            {appointment.detailLine || "Réservé par UWI"}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function getStatus(slot) {
   if (slot?.current) {
     return { label: "En attente", bg: WARNING_SOFT, color: "#b45309", border: "#fcd34d" };
@@ -176,6 +429,7 @@ async function copyToClipboard(text) {
 export default function AppAgenda() {
   const navigate = useNavigate();
   const setupRef = useRef(null);
+  const dragPreviewRef = useRef(null);
   const [me, setMe] = useState(null);
   const [config, setConfig] = useState(null);
   const [agenda, setAgenda] = useState(null);
@@ -185,6 +439,8 @@ export default function AppAgenda() {
   const [error, setError] = useState("");
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [viewMode, setViewMode] = useState("week");
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [calendarId, setCalendarId] = useState("");
   const [verifyLoading, setVerifyLoading] = useState(false);
   const [verifyError, setVerifyError] = useState("");
@@ -196,11 +452,16 @@ export default function AppAgenda() {
   const [noneLoading, setNoneLoading] = useState(false);
   const [noneDone, setNoneDone] = useState(false);
   const [selectedAppointment, setSelectedAppointment] = useState(null);
+  const [hoveredAppointment, setHoveredAppointment] = useState(null);
+  const [hoveredRect, setHoveredRect] = useState(null);
   const [actionMessage, setActionMessage] = useState("");
   const [slotOptions, setSlotOptions] = useState([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [selectedNewSlotId, setSelectedNewSlotId] = useState("");
   const [appointmentActionLoading, setAppointmentActionLoading] = useState(false);
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  const [draggedAppointment, setDraggedAppointment] = useState(null);
+  const [dragOverCellKey, setDragOverCellKey] = useState("");
   const weekDates = useMemo(() => buildWeekDates(selectedDate), [selectedDate]);
   const visibleDates = useMemo(() => {
     if (viewMode === "month") return buildMonthGrid(selectedDate);
@@ -267,6 +528,15 @@ export default function AppAgenda() {
       ),
     [agendaByDate, horaires, visibleDates],
   );
+  const filteredAppointments = useMemo(() => {
+    return appointments.filter((appointment) => {
+      const haystack = `${appointment.patient || ""} ${appointment.type || ""} ${appointment.sourceLabel || ""}`.toLowerCase();
+      const matchesSearch = !search.trim() || haystack.includes(search.trim().toLowerCase());
+      const statusKey = getViewStatusKey(appointment);
+      const matchesStatus = statusFilter === "all" || statusKey === statusFilter;
+      return matchesSearch && matchesStatus;
+    });
+  }, [appointments, search, statusFilter]);
 
   const emptyTimeline = useMemo(() => buildEmptyTimeline(selectedDate, horaires), [selectedDate, horaires]);
   const totalAppointments = appointments.length;
@@ -275,33 +545,32 @@ export default function AppAgenda() {
   const timelineHours = useMemo(() => buildTimelineHours(horaires), [horaires]);
   const appointmentsByCell = useMemo(() => {
     const map = {};
-    appointments.forEach((appointment) => {
+    filteredAppointments.forEach((appointment) => {
       const key = `${appointment.date}-${appointment.displayTime}`;
       if (!map[key]) map[key] = [];
       map[key].push(appointment);
     });
     return map;
-  }, [appointments]);
+  }, [filteredAppointments]);
   const selectedDayAppointments = useMemo(
     () =>
-      (agendaByDate?.[selectedDate]?.slots || []).map((slot, index) => ({
-        ...slot,
-        id: `${selectedDate}-${slot.event_id || slot.appointment_id || `${slot.hour || "slot"}-${index}`}`,
-        date: selectedDate,
-        displayTime: formatTimeLabel(slot.hour),
-        initials: getInitials(slot.patient),
-        duration: Number(horaires?.booking_duration_minutes || 30),
-        status: getStatus(slot),
-        sourceLabel: slot.source === "UWI" ? "Téléphone" : "Agenda externe",
-        sourceBadge: slot.source === "UWI" ? "UWI" : "Externe",
-        detailLine: slot.source === "UWI" ? "Réservation via l'assistant vocal" : "Synchronisé depuis l'agenda connecté",
-        appointmentId: slot.appointment_id,
-        slotId: slot.slot_id,
-        canCancel: !!slot.can_cancel,
-        canReschedule: !!slot.can_reschedule,
+      filteredAppointments.filter((appointment) => appointment.date === selectedDate).map((appointment, index) => ({
+        ...appointment,
+        id: appointment.id || `${selectedDate}-${index}`,
       })),
-    [agendaByDate, horaires, selectedDate],
+    [filteredAppointments, selectedDate],
   );
+  const sidebarStats = useMemo(() => {
+    return {
+      all: appointments.length,
+      confirmed: appointments.filter((appointment) => getViewStatusKey(appointment) === "confirmed").length,
+      pending: appointments.filter((appointment) => getViewStatusKey(appointment) === "pending").length,
+      ai_booked: appointments.filter((appointment) => getViewStatusKey(appointment) === "ai_booked").length,
+      arrived: appointments.filter((appointment) => getViewStatusKey(appointment) === "arrived").length,
+    };
+  }, [appointments]);
+  const selectedDayCount = selectedDayAppointments.length;
+  const selectedDayAiCount = selectedDayAppointments.filter((appointment) => appointment.source === "UWI").length;
   const currentTitle =
     viewMode === "month" ? formatMonthTitle(selectedDate) : viewMode === "day" ? formatLongDate(selectedDate) : formatWeekTitle(selectedDate);
   const currentPanelTitle =
@@ -320,10 +589,133 @@ export default function AppAgenda() {
       return shiftDate(value, 7);
     });
   };
+  useEffect(() => {
+    const interval = window.setInterval(() => setNowTick(Date.now()), 60_000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const now = new Date(nowTick);
+  const todayIso = now.toISOString().slice(0, 10);
+  const currentHourLabel = `${String(now.getHours()).padStart(2, "0")}:00`;
+  const currentMinuteOffset = (now.getMinutes() / 60) * 100;
 
   const scrollToSetup = () => {
     setupRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
+
+  const clearDragState = useCallback(() => {
+    if (dragPreviewRef.current) {
+      dragPreviewRef.current.remove();
+      dragPreviewRef.current = null;
+    }
+    setDraggedAppointment(null);
+    setDragOverCellKey("");
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (dragPreviewRef.current) {
+        dragPreviewRef.current.remove();
+        dragPreviewRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleAppointmentDragStart = useCallback((event, appointment) => {
+    if (!appointment?.canReschedule || appointmentActionLoading) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", String(appointment.appointmentId || appointment.id || ""));
+    if (dragPreviewRef.current) {
+      dragPreviewRef.current.remove();
+      dragPreviewRef.current = null;
+    }
+    dragPreviewRef.current = createDragPreviewElement(appointment);
+    event.dataTransfer.setDragImage(dragPreviewRef.current, 26, 20);
+    setDraggedAppointment(appointment);
+    setActionMessage("");
+  }, [appointmentActionLoading]);
+
+  const handleAppointmentDragEnd = useCallback(() => {
+    clearDragState();
+  }, [clearDragState]);
+
+  const handleCellDragOver = useCallback((event, date, hour) => {
+    if (!draggedAppointment?.canReschedule || appointmentActionLoading) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDragOverCellKey(`${date}-${hour}`);
+  }, [appointmentActionLoading, draggedAppointment]);
+
+  const handleCellDragLeave = useCallback((date, hour) => {
+    if (dragOverCellKey === `${date}-${hour}`) {
+      setDragOverCellKey("");
+    }
+  }, [dragOverCellKey]);
+
+  const handleMonthCellDragOver = useCallback((event, date) => {
+    if (!draggedAppointment?.canReschedule || appointmentActionLoading) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDragOverCellKey(`month-${date}`);
+  }, [appointmentActionLoading, draggedAppointment]);
+
+  const handleMonthCellDragLeave = useCallback((date) => {
+    if (dragOverCellKey === `month-${date}`) {
+      setDragOverCellKey("");
+    }
+  }, [dragOverCellKey]);
+
+  const handleMonthCellDrop = useCallback((event, date) => {
+    event.preventDefault();
+    if (!draggedAppointment?.canReschedule) {
+      clearDragState();
+      return;
+    }
+    setSelectedDate(date);
+    setViewMode("day");
+    setSelectedAppointment(draggedAppointment);
+    setActionMessage(`Jour du ${formatLongDate(date)} ouvert. Reprenez le glisser-déposer sur un créneau horaire.`);
+    setDragOverCellKey("");
+  }, [clearDragState, draggedAppointment]);
+
+  const handleCellDrop = useCallback(async (event, date, hour) => {
+    event.preventDefault();
+    if (!draggedAppointment?.canReschedule || appointmentActionLoading) {
+      clearDragState();
+      return;
+    }
+    if (draggedAppointment.date === date && draggedAppointment.displayTime === hour) {
+      clearDragState();
+      return;
+    }
+    try {
+      setAppointmentActionLoading(true);
+      const exactSlot = await api.tenantGetAgendaAvailableSlots(
+        `?date=${encodeURIComponent(date)}&time=${encodeURIComponent(hour)}`,
+      );
+      const slotId = Number(exactSlot?.slot_id || exactSlot?.slots?.[0]?.slot_id || 0);
+      if (!slotId) {
+        setActionMessage("Ce créneau n'est pas disponible pour le moment.");
+        return;
+      }
+      await api.tenantRescheduleAgendaAppointment(draggedAppointment.appointmentId, {
+        new_slot_id: slotId,
+      });
+      if (selectedAppointment?.appointmentId === draggedAppointment.appointmentId) {
+        setSelectedAppointment(null);
+      }
+      setActionMessage("Rendez-vous déplacé.");
+      await loadAgenda();
+    } catch (e) {
+      setActionMessage(e?.message || "Impossible de déplacer ce rendez-vous.");
+    } finally {
+      setAppointmentActionLoading(false);
+      clearDragState();
+    }
+  }, [appointmentActionLoading, clearDragState, draggedAppointment, loadAgenda, selectedAppointment]);
 
   const handleVerifyGoogle = async () => {
     if (!calendarId.trim()) return;
@@ -431,75 +823,217 @@ export default function AppAgenda() {
   return (
     <div style={S.page}>
       <style>{CSS}</style>
-
-      <div style={S.header}>
-        <div>
-          <h1 style={S.title}>Agenda</h1>
-          <p style={S.subtitle}>Gérez vos rendez-vous et appels planifiés</p>
-        </div>
-        <button type="button" onClick={scrollToSetup} style={S.primaryButton}>
-          <Plus size={16} strokeWidth={2.4} />
-          <span>Nouveau rendez-vous</span>
-        </button>
-      </div>
-
-      <div className="agenda-page-stats" style={S.statsGrid}>
-        <div style={S.statCard}>
-          <div>
-            <div style={S.statLabel}>Total rendez-vous</div>
-            <div style={S.statValue}>{totalAppointments}</div>
-          </div>
-          <div style={{ ...S.statIcon, background: "linear-gradient(135deg, #3b82f6, #2563eb)" }}>
-            <CalendarDays size={16} strokeWidth={2.2} />
-          </div>
-        </div>
-        <div style={S.statCard}>
-          <div>
-            <div style={S.statLabel}>Confirmés</div>
-            <div style={{ ...S.statValue, color: SUCCESS }}>{doneAppointments}</div>
-          </div>
-          <div style={{ ...S.statIcon, background: "linear-gradient(135deg, #10b981, #059669)" }}>
-            <Check size={16} strokeWidth={2.4} />
-          </div>
-        </div>
-        <div style={S.statCard}>
-          <div>
-            <div style={S.statLabel}>En attente</div>
-            <div style={{ ...S.statValue, color: WARNING }}>{upcomingAppointments}</div>
-          </div>
-          <div style={{ ...S.statIcon, background: "linear-gradient(135deg, #f59e0b, #d97706)" }}>
-            <Clock3 size={16} strokeWidth={2.2} />
-          </div>
-        </div>
-      </div>
-
-      {!isConnected ? (
-        <div style={S.notice}>
-          <div>
-            <div style={S.noticeTitle}>Agenda UWI déjà actif</div>
-            <div style={S.noticeText}>
-              Même sans agenda Google connecté, cette vue affiche les rendez-vous pris par l'assistant dans le calendrier UWI.
+      <div className="agenda-layout-grid" style={S.layout}>
+        <aside style={S.sidebar}>
+          <div style={{ ...S.sidebarCard, ...S.sidebarHeroCard }}>
+            <div style={S.sidebarHeroTop}>
+              <div>
+                <div style={S.sidebarHeroEyebrow}>Date sélectionnée</div>
+                <div style={S.sidebarHeroTitle}>{formatLongDate(selectedDate)}</div>
+              </div>
+              <div style={S.sidebarHeroBadge}>{selectedDayCount} RDV</div>
+            </div>
+            <div style={S.sidebarHeroMeta}>
+              <span>{selectedDayAiCount} pris par UWI</span>
+              <span>{viewMode === "month" ? "Vue mois" : viewMode === "day" ? "Vue jour" : "Vue semaine"}</span>
+            </div>
+            <div style={S.sidebarQuickGrid}>
+              <button type="button" onClick={() => { setSelectedDate(todayIso); setViewMode("day"); }} style={S.sidebarQuickButton}>
+                Aujourd'hui
+              </button>
+              <button type="button" onClick={() => { setSelectedDate(shiftDate(todayIso, 1)); setViewMode("day"); }} style={S.sidebarQuickButton}>
+                Demain
+              </button>
+              <button type="button" onClick={() => { setSelectedDate(todayIso); setViewMode("week"); }} style={S.sidebarQuickButton}>
+                Cette semaine
+              </button>
+              <button type="button" onClick={() => { setSelectedDate(todayIso); setViewMode("month"); }} style={S.sidebarQuickButton}>
+                Ce mois
+              </button>
             </div>
           </div>
-          <button type="button" onClick={scrollToSetup} style={S.noticeButton}>
-            Finaliser la connexion
-          </button>
-        </div>
-      ) : (
-        <div style={{ ...S.notice, borderColor: "#bfdbfe", background: "#eff6ff" }}>
-          <div>
-            <div style={S.noticeTitle}>Agenda externe connecté</div>
-            <div style={S.noticeText}>
-              Google Calendar est bien relié. Les rendez-vous du jour remontent ici automatiquement.
+
+          <div style={S.sidebarCard}>
+            <div style={S.sidebarTitle}>Vue</div>
+            <div style={S.sidebarSegmented}>
+              <button type="button" onClick={() => setViewMode("day")} style={viewMode === "day" ? S.sidebarSegmentActive : S.sidebarSegmentButton}>
+                Jour
+              </button>
+              <button type="button" onClick={() => setViewMode("week")} style={viewMode === "week" ? S.sidebarSegmentActive : S.sidebarSegmentButton}>
+                Semaine
+              </button>
+              <button type="button" onClick={() => setViewMode("month")} style={viewMode === "month" ? S.sidebarSegmentActive : S.sidebarSegmentButton}>
+                Mois
+              </button>
             </div>
           </div>
-          <div style={S.connectedBadge}>Google actif</div>
-        </div>
-      )}
 
-      {error ? <div style={S.errorBox}>Erreur: {error}</div> : null}
+          <div style={S.sidebarCard}>
+            <div style={S.sidebarTitle}>Recherche</div>
+            <div style={S.searchBox}>
+              <Search size={15} strokeWidth={2.2} color="#94a3b8" />
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Rechercher un patient…"
+                style={S.searchInput}
+              />
+            </div>
+          </div>
 
-      <div style={S.panel}>
+          <div style={S.sidebarCard}>
+            <div style={S.sidebarTitle}>Filtrer</div>
+            <div style={S.filterPillGrid}>
+              {[
+                ["all", "Tous", "#94a3b8", sidebarStats.all],
+                ["confirmed", "Confirmés", "#0dc991", sidebarStats.confirmed],
+                ["pending", "En attente", "#f97316", sidebarStats.pending],
+                ["ai_booked", "Via IA", "#8b5cf6", sidebarStats.ai_booked],
+                ["arrived", "Arrivés", "#10b981", sidebarStats.arrived],
+              ].map(([value, label, dot, count]) => {
+                const active = statusFilter === value;
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setStatusFilter(value)}
+                    style={{
+                      ...S.filterPill,
+                      ...(active ? S.filterPillActive : null),
+                    }}
+                  >
+                    <span style={S.filterPillTop}>
+                      <span style={{ ...S.filterDot, background: dot }} />
+                      <span style={S.filterLabel}>{label}</span>
+                    </span>
+                    <span style={S.filterCount}>{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={S.sidebarCard}>
+            <div style={S.sidebarTitle}>Calendrier</div>
+            <MiniCalendar selectedDate={selectedDate} onSelect={setSelectedDate} />
+            <div style={S.miniCalendarFooter}>
+              <button type="button" onClick={() => setSelectedDate(todayIso)} style={S.miniCalendarTodayButton}>
+                Revenir à aujourd'hui
+              </button>
+            </div>
+          </div>
+
+          <div style={{ ...S.sidebarCard, ...S.agentCard }}>
+            <div style={S.agentTitle}>{isConnected ? "Agenda connecté" : "Agenda UWI actif"}</div>
+            <div style={S.agentText}>
+              <b>{sidebarStats.ai_booked}</b> rendez-vous gérés par UWI sur la période affichée.
+            </div>
+            <div style={S.agentText}>
+              {isConnected ? "Google Calendar est bien synchronisé." : "Le planning UWI continue de fonctionner même sans Google."}
+            </div>
+            <div style={S.agentStatusRow}>
+              <span style={S.agentStatusDot} />
+              <span style={S.agentStatusText}>{viewMode === "month" ? "Mode mois" : viewMode === "day" ? "Mode jour" : "Mode semaine"}</span>
+            </div>
+          </div>
+        </aside>
+
+        <div style={S.main}>
+          <div style={S.header}>
+            <div>
+              <h1 style={S.title}>Agenda</h1>
+              <p style={S.subtitle}>Gérez vos rendez-vous et appels planifiés</p>
+            </div>
+            <button type="button" onClick={scrollToSetup} style={S.primaryButton}>
+              <Plus size={16} strokeWidth={2.4} />
+              <span>Nouveau rendez-vous</span>
+            </button>
+          </div>
+
+          <div className="agenda-page-stats" style={S.statsGrid}>
+            <div style={S.statCard}>
+              <div>
+                <div style={S.statLabel}>Total rendez-vous</div>
+                <div style={S.statValue}>{totalAppointments}</div>
+              </div>
+              <div style={{ ...S.statIcon, background: "linear-gradient(135deg, #3b82f6, #2563eb)" }}>
+                <CalendarDays size={16} strokeWidth={2.2} />
+              </div>
+            </div>
+            <div style={S.statCard}>
+              <div>
+                <div style={S.statLabel}>Confirmés</div>
+                <div style={{ ...S.statValue, color: SUCCESS }}>{doneAppointments}</div>
+              </div>
+              <div style={{ ...S.statIcon, background: "linear-gradient(135deg, #10b981, #059669)" }}>
+                <Check size={16} strokeWidth={2.4} />
+              </div>
+            </div>
+            <div style={S.statCard}>
+              <div>
+                <div style={S.statLabel}>En attente</div>
+                <div style={{ ...S.statValue, color: WARNING }}>{upcomingAppointments}</div>
+              </div>
+              <div style={{ ...S.statIcon, background: "linear-gradient(135deg, #f59e0b, #d97706)" }}>
+                <Clock3 size={16} strokeWidth={2.2} />
+              </div>
+            </div>
+          </div>
+
+          {!isConnected ? (
+            <div style={S.notice}>
+              <div>
+                <div style={S.noticeTitle}>Agenda UWI déjà actif</div>
+                <div style={S.noticeText}>
+                  Même sans agenda Google connecté, cette vue affiche les rendez-vous pris par l'assistant dans le calendrier UWI.
+                </div>
+              </div>
+              <button type="button" onClick={scrollToSetup} style={S.noticeButton}>
+                Finaliser la connexion
+              </button>
+            </div>
+          ) : (
+            <div style={{ ...S.notice, borderColor: "#bfdbfe", background: "#eff6ff" }}>
+              <div>
+                <div style={S.noticeTitle}>Agenda externe connecté</div>
+                <div style={S.noticeText}>
+                  Google Calendar est bien relié. Les rendez-vous du jour remontent ici automatiquement.
+                </div>
+              </div>
+              <div style={S.connectedBadge}>Google actif</div>
+            </div>
+          )}
+
+          {error ? <div style={S.errorBox}>Erreur: {error}</div> : null}
+          {draggedAppointment ? (
+            <div style={S.dragHintBar}>
+              Déplacement de <b>{draggedAppointment.patient || "ce rendez-vous"}</b>
+              {viewMode === "month" ? " : déposez sur un jour pour ouvrir son planning." : " : déposez sur une case horaire libre."}
+            </div>
+          ) : null}
+          {actionMessage && !selectedAppointment ? <div style={S.actionToast}>{actionMessage}</div> : null}
+
+          {(search || statusFilter !== "all") ? (
+            <div style={S.activeFilterBar}>
+              <div style={S.activeFilterText}>
+                Filtre actif
+                {statusFilter !== "all" ? ` · ${getFilterLabel(statusFilter)}` : ""}
+                {search ? ` · "${search}"` : ""}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setSearch("");
+                  setStatusFilter("all");
+                }}
+                style={S.clearFilterButton}
+              >
+                Réinitialiser
+              </button>
+            </div>
+          ) : null}
+
+          <div style={S.panel}>
         <div style={S.calendarTopBar}>
           <button type="button" onClick={navigatePrevious} style={S.navButton}>
             <ChevronLeft size={18} strokeWidth={2.2} />
@@ -507,6 +1041,9 @@ export default function AppAgenda() {
           <div style={S.calendarTopCenter}>
             <div style={S.dateTitle}>{currentTitle}</div>
             <div style={S.viewSwitch}>
+              <button type="button" onClick={() => setSelectedDate(todayIso)} style={S.viewSwitchGhost}>
+                Aujourd'hui
+              </button>
               <button type="button" onClick={() => setViewMode("month")} style={viewMode === "month" ? S.viewSwitchActive : S.viewSwitchGhost}>
                 Mois
               </button>
@@ -542,44 +1079,111 @@ export default function AppAgenda() {
                     const items = appointmentsByCell[`${selectedDate}-${hour}`] || [];
                     return (
                       <div key={hour} style={S.dayRow}>
-                        <div style={S.dayHour}>{hour}</div>
-                        <div style={S.dayCell}>
+                        <div style={{ ...S.dayHour, ...(selectedDate === todayIso && hour === currentHourLabel ? S.dayHourNow : null) }}>{hour}</div>
+                        <div
+                          style={{
+                            ...S.dayCell,
+                            ...(selectedDate === todayIso && hour === currentHourLabel ? S.dayCellNow : null),
+                            ...(dragOverCellKey === `${selectedDate}-${hour}` ? S.dropCellActive : null),
+                          }}
+                          onDragOver={(event) => handleCellDragOver(event, selectedDate, hour)}
+                          onDragLeave={() => handleCellDragLeave(selectedDate, hour)}
+                          onDrop={(event) => handleCellDrop(event, selectedDate, hour)}
+                        >
+                          <div style={S.dayHalfLine} />
                           {items.length > 0
-                            ? items.map((appointment) => (
-                                <button
-                                  key={appointment.id}
-                                  type="button"
-                                  onClick={() => setSelectedAppointment(appointment)}
-                                  style={{
-                                    ...S.dayAppointmentCard,
-                                    borderColor: appointment.status.border,
-                                    background: appointment.current ? "#fff7ed" : "#ffffff",
-                                  }}
-                                >
-                                  <div style={S.dayAppointmentTop}>
-                                    <div>
-                                      <div style={S.weekAppointmentName}>{appointment.patient || "Patient"}</div>
-                                      <div style={S.weekAppointmentType}>{appointment.type || "Consultation"}</div>
+                            ? items.map((appointment) => {
+                                const visualStatus = getStatusConfigByKey(getViewStatusKey(appointment));
+                                return (
+                                  <button
+                                    key={appointment.id}
+                                    className="agenda-day-appointment"
+                                    type="button"
+                                    draggable={appointment.canReschedule}
+                                    onClick={() => setSelectedAppointment(appointment)}
+                                    onDragStart={(event) => handleAppointmentDragStart(event, appointment)}
+                                    onDragEnd={handleAppointmentDragEnd}
+                                    onMouseEnter={(event) => {
+                                      setHoveredAppointment(appointment);
+                                      setHoveredRect(event.currentTarget.getBoundingClientRect());
+                                    }}
+                                    onMouseLeave={() => {
+                                      setHoveredAppointment(null);
+                                      setHoveredRect(null);
+                                    }}
+                                    style={{
+                                      ...S.dayAppointmentCard,
+                                      ...(draggedAppointment?.id === appointment.id ? S.draggingAppointmentCard : null),
+                                      borderColor: visualStatus.border,
+                                      background: visualStatus.grad || visualStatus.light,
+                                    }}
+                                  >
+                                    <div style={S.dayAppointmentTop}>
+                                      <div>
+                                        <div style={{ ...S.appointmentTime, color: visualStatus.grad ? "rgba(255,255,255,.92)" : "#0f766e" }}>
+                                          {appointment.displayTime}
+                                        </div>
+                                        <div style={S.appointmentIdentityRow}>
+                                          {appointment.source === "UWI" ? (
+                                            <span
+                                              style={{
+                                                ...S.aiInlineBadge,
+                                                background: visualStatus.grad ? "rgba(255,255,255,.18)" : "#ede9fe",
+                                                color: visualStatus.grad ? "#fff" : "#7c3aed",
+                                                borderColor: visualStatus.grad ? "rgba(255,255,255,.25)" : "#ddd6fe",
+                                              }}
+                                            >
+                                              IA
+                                            </span>
+                                          ) : null}
+                                          <div style={{ ...S.weekAppointmentName, color: visualStatus.grad ? "#fff" : TEXT }}>
+                                            {appointment.patient || "Patient"}
+                                          </div>
+                                        </div>
+                                        <div style={{ ...S.weekAppointmentType, color: visualStatus.grad ? "rgba(255,255,255,.82)" : "#4b5563" }}>
+                                          {getTypeIcon(appointment.type)} {appointment.type || "Consultation"}
+                                        </div>
+                                      </div>
+                                      <span
+                                        style={{
+                                          ...S.statusBadge,
+                                          background: visualStatus.grad ? "rgba(255,255,255,.18)" : visualStatus.light,
+                                          color: visualStatus.grad ? "#fff" : visualStatus.color,
+                                          borderColor: visualStatus.grad ? "rgba(255,255,255,.25)" : visualStatus.border,
+                                        }}
+                                      >
+                                        {visualStatus.label}
+                                      </span>
                                     </div>
-                                    <span
-                                      style={{
-                                        ...S.statusBadge,
-                                        background: appointment.status.bg,
-                                        color: appointment.status.color,
-                                        borderColor: appointment.status.border,
-                                      }}
-                                    >
-                                      {appointment.status.label}
-                                    </span>
-                                  </div>
-                                  <div style={S.weekAppointmentMeta}>
-                                    <span>{appointment.displayTime}</span>
-                                    <span>{appointment.duration} min</span>
-                                    <span>{appointment.sourceLabel}</span>
-                                  </div>
-                                </button>
-                              ))
+                                    <div style={S.weekAppointmentPills}>
+                                      <span
+                                        style={{
+                                          ...S.sourceBadge,
+                                          background: appointment.source === "UWI" ? (visualStatus.grad ? "rgba(255,255,255,.2)" : "#ede9fe") : (visualStatus.grad ? "rgba(255,255,255,.16)" : "#eef2ff"),
+                                          color: visualStatus.grad ? "#fff" : appointment.source === "UWI" ? "#7c3aed" : "#4f46e5",
+                                          borderColor: visualStatus.grad ? "rgba(255,255,255,.28)" : appointment.source === "UWI" ? "#ddd6fe" : "#c7d2fe",
+                                        }}
+                                      >
+                                        {appointment.source === "UWI" ? "Réservé par UWI" : "Agenda connecté"}
+                                      </span>
+                                    </div>
+                                    <div style={{ ...S.appointmentRange, color: visualStatus.grad ? "rgba(255,255,255,.86)" : "#475569" }}>
+                                      {appointment.displayTime} - {addMinutesToTimeLabel(appointment.displayTime, appointment.duration)}
+                                    </div>
+                                    <div style={{ ...S.weekAppointmentMeta, color: visualStatus.grad ? "rgba(255,255,255,.76)" : "#6b7280" }}>
+                                      <span>{appointment.duration} min</span>
+                                      <span>{appointment.sourceLabel}</span>
+                                    </div>
+                                  </button>
+                                );
+                              })
                             : <div style={S.dayEmptyCell} />}
+                          {selectedDate === todayIso && hour === currentHourLabel ? (
+                            <div style={{ ...S.nowLine, top: `${currentMinuteOffset}%` }}>
+                              <span style={S.nowDot} />
+                              <span style={S.nowLabel}>{now.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                     );
@@ -625,10 +1229,14 @@ export default function AppAgenda() {
                         setSelectedDate(date);
                         setViewMode("day");
                       }}
+                      onDragOver={(event) => handleMonthCellDragOver(event, date)}
+                      onDragLeave={() => handleMonthCellDragLeave(date)}
+                      onDrop={(event) => handleMonthCellDrop(event, date)}
                       style={{
                         ...S.monthCell,
                         ...(date === selectedDate ? S.monthCellActive : null),
                         ...(inCurrentMonth ? null : S.monthCellMuted),
+                        ...(dragOverCellKey === `month-${date}` ? S.monthCellDropActive : null),
                       }}
                     >
                       <div style={S.monthCellDate}>{formatDayNumber(date)}</div>
@@ -654,60 +1262,132 @@ export default function AppAgenda() {
                     style={{
                       ...S.weekDayHeader,
                       ...(date === selectedDate ? S.weekDayHeaderActive : null),
+                      ...(date === todayIso ? S.weekDayHeaderToday : null),
                     }}
                   >
                     <span style={S.weekDayLabel}>{formatWeekdayLabel(date)}</span>
                     <span style={S.weekDayNumber}>{formatDayNumber(date)}</span>
+                    {date === todayIso ? <span style={S.todayPill}>Aujourd'hui</span> : null}
                   </button>
                 ))}
 
                 {timelineHours.map((hour) => (
                   <Fragment key={hour}>
-                    <div style={S.timeCell}>{hour}</div>
+                    <div style={S.timeCell}>
+                      <div style={S.timeHourLabel}>{hour}</div>
+                      <div style={S.timeHalfLabel}>{hour.slice(0, 2)}:30</div>
+                    </div>
                     {weekDates.map((date) => {
                       const items = appointmentsByCell[`${date}-${hour}`] || [];
+                      const isTodayColumn = date === todayIso;
                       return (
                         <div
                           key={`${date}-${hour}`}
                           style={{
                             ...S.weekCell,
                             ...(date === selectedDate ? S.weekCellActive : null),
+                            ...(isTodayColumn ? S.weekCellToday : null),
+                            ...(isTodayColumn && hour === currentHourLabel ? S.weekCellNow : null),
+                            ...(dragOverCellKey === `${date}-${hour}` ? S.dropCellActive : null),
                           }}
+                          onDragOver={(event) => handleCellDragOver(event, date, hour)}
+                          onDragLeave={() => handleCellDragLeave(date, hour)}
+                          onDrop={(event) => handleCellDrop(event, date, hour)}
                         >
+                          <div style={S.weekHalfLine} />
                           {items.length > 0
-                            ? items.map((appointment) => (
-                                <button
-                                  key={appointment.id}
-                                  className="agenda-week-appointment"
-                                  type="button"
-                                  onClick={() => setSelectedAppointment(appointment)}
-                                  style={{
-                                    ...S.weekAppointmentCard,
-                                    borderColor: appointment.status.border,
-                                    background: appointment.current ? "#fff7ed" : "#ffffff",
-                                  }}
-                                >
-                                  <div style={S.weekAppointmentTop}>
-                                    <div style={S.weekAppointmentName}>{appointment.patient || "Patient"}</div>
-                                    <span
-                                      style={{
-                                        ...S.statusBadge,
-                                        background: appointment.status.bg,
-                                        color: appointment.status.color,
-                                        borderColor: appointment.status.border,
-                                      }}
-                                    >
-                                      {appointment.status.label}
-                                    </span>
-                                  </div>
-                                  <div style={S.weekAppointmentType}>{appointment.type || "Consultation"}</div>
-                                  <div style={S.weekAppointmentMeta}>
-                                    <span>{appointment.displayTime}</span>
-                                    <span>{appointment.sourceLabel}</span>
-                                  </div>
-                                </button>
-                              ))
+                            ? items.map((appointment) => {
+                                const visualStatus = getStatusConfigByKey(getViewStatusKey(appointment));
+                                return (
+                                  <button
+                                    key={appointment.id}
+                                    className="agenda-week-appointment"
+                                    type="button"
+                                    draggable={appointment.canReschedule}
+                                    onClick={() => setSelectedAppointment(appointment)}
+                                    onDragStart={(event) => handleAppointmentDragStart(event, appointment)}
+                                    onDragEnd={handleAppointmentDragEnd}
+                                    onMouseEnter={(event) => {
+                                      setHoveredAppointment(appointment);
+                                      setHoveredRect(event.currentTarget.getBoundingClientRect());
+                                    }}
+                                    onMouseLeave={() => {
+                                      setHoveredAppointment(null);
+                                      setHoveredRect(null);
+                                    }}
+                                    style={{
+                                      ...S.weekAppointmentCard,
+                                      ...(draggedAppointment?.id === appointment.id ? S.draggingAppointmentCard : null),
+                                      borderColor: visualStatus.border,
+                                      background: visualStatus.grad || visualStatus.light,
+                                    }}
+                                  >
+                                    <div style={S.weekAppointmentTop}>
+                                      <div>
+                                        <div style={{ ...S.appointmentTime, color: visualStatus.grad ? "rgba(255,255,255,.92)" : "#0f766e" }}>
+                                          {appointment.displayTime}
+                                        </div>
+                                        <div style={S.appointmentIdentityRow}>
+                                          {appointment.source === "UWI" ? (
+                                            <span
+                                              style={{
+                                                ...S.aiInlineBadge,
+                                                background: visualStatus.grad ? "rgba(255,255,255,.18)" : "#ede9fe",
+                                                color: visualStatus.grad ? "#fff" : "#7c3aed",
+                                                borderColor: visualStatus.grad ? "rgba(255,255,255,.25)" : "#ddd6fe",
+                                              }}
+                                            >
+                                              IA
+                                            </span>
+                                          ) : null}
+                                          <div style={{ ...S.weekAppointmentName, color: visualStatus.grad ? "#fff" : TEXT }}>
+                                            {appointment.patient || "Patient"}
+                                          </div>
+                                        </div>
+                                      </div>
+                                      <span
+                                        style={{
+                                          ...S.statusBadge,
+                                          background: visualStatus.grad ? "rgba(255,255,255,.18)" : visualStatus.light,
+                                          color: visualStatus.grad ? "#fff" : visualStatus.color,
+                                          borderColor: visualStatus.grad ? "rgba(255,255,255,.25)" : visualStatus.border,
+                                        }}
+                                      >
+                                        {visualStatus.label}
+                                      </span>
+                                    </div>
+                                    <div style={{ ...S.weekAppointmentType, color: visualStatus.grad ? "rgba(255,255,255,.82)" : "#4b5563" }}>
+                                      {getTypeIcon(appointment.type)} {appointment.type || "Consultation"}
+                                    </div>
+                                    <div style={S.weekAppointmentPills}>
+                                      <span
+                                        style={{
+                                          ...S.sourceBadge,
+                                          background: appointment.source === "UWI" ? (visualStatus.grad ? "rgba(255,255,255,.2)" : "#ede9fe") : (visualStatus.grad ? "rgba(255,255,255,.16)" : "#eef2ff"),
+                                          color: visualStatus.grad ? "#fff" : appointment.source === "UWI" ? "#7c3aed" : "#4f46e5",
+                                          borderColor: visualStatus.grad ? "rgba(255,255,255,.28)" : appointment.source === "UWI" ? "#ddd6fe" : "#c7d2fe",
+                                        }}
+                                      >
+                                        {appointment.source === "UWI" ? "Réservé par UWI" : "Agenda connecté"}
+                                      </span>
+                                    </div>
+                                    <div style={{ ...S.appointmentRange, color: visualStatus.grad ? "rgba(255,255,255,.86)" : "#475569" }}>
+                                      {appointment.displayTime} - {addMinutesToTimeLabel(appointment.displayTime, appointment.duration)}
+                                    </div>
+                                    <div style={{ ...S.weekAppointmentMeta, color: visualStatus.grad ? "rgba(255,255,255,.76)" : "#6b7280" }}>
+                                      <span>{appointment.sourceLabel}</span>
+                                      <span>{appointment.duration} min</span>
+                                    </div>
+                                  </button>
+                                );
+                              })
                             : null}
+                          {isTodayColumn && hour === currentHourLabel ? (
+                            <div style={{ ...S.nowLine, top: `${currentMinuteOffset}%` }}>
+                              <span style={S.nowDot} />
+                              <span style={S.nowLabel}>{now.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>
+                            </div>
+                          ) : null}
                         </div>
                       );
                     })}
@@ -733,9 +1413,9 @@ export default function AppAgenda() {
             </button>
           </div>
         )}
-      </div>
+          </div>
 
-      <div ref={setupRef} style={S.setupGrid}>
+          <div ref={setupRef} style={S.setupGrid}>
         <div style={S.setupCard}>
           <div style={S.setupTitle}>Connecter Google Calendar</div>
           <div style={S.setupText}>
@@ -788,6 +1468,8 @@ export default function AppAgenda() {
             {noneLoading ? "Activation…" : "Activer ce mode"}
           </button>
           {noneDone ? <div style={S.successBox}>Mode agenda interne activé.</div> : null}
+        </div>
+          </div>
         </div>
       </div>
 
@@ -963,6 +1645,7 @@ export default function AppAgenda() {
           </div>
         </div>
       ) : null}
+      <AppointmentTooltip appointment={hoveredAppointment} rect={hoveredRect} />
     </div>
   );
 }
@@ -971,10 +1654,331 @@ const S = {
   page: {
     display: "flex",
     flexDirection: "column",
-    gap: 18,
     paddingBottom: 24,
     color: TEXT,
     background: BG,
+  },
+  layout: {
+    display: "grid",
+    gridTemplateColumns: "280px minmax(0, 1fr)",
+    gap: 18,
+    alignItems: "start",
+  },
+  sidebar: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 14,
+    position: "sticky",
+    top: 16,
+  },
+  main: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 18,
+    minWidth: 0,
+  },
+  sidebarCard: {
+    background: CARD,
+    border: `1px solid ${BORDER}`,
+    borderRadius: 16,
+    padding: 14,
+    boxShadow: "0 2px 10px rgba(15,23,42,.035)",
+  },
+  sidebarHeroCard: {
+    background: "linear-gradient(180deg, #ffffff 0%, #f8fffc 100%)",
+    borderColor: "#c7f9e7",
+  },
+  sidebarHeroTop: {
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  sidebarHeroEyebrow: {
+    fontSize: 11,
+    fontWeight: 800,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
+    color: "#94a3b8",
+  },
+  sidebarHeroTitle: {
+    marginTop: 8,
+    fontSize: 16,
+    lineHeight: 1.25,
+    fontWeight: 800,
+    color: TEXT,
+  },
+  sidebarHeroBadge: {
+    borderRadius: 999,
+    padding: "7px 10px",
+    background: "#ecfdf5",
+    border: "1px solid #a7f3d0",
+    color: "#047857",
+    fontSize: 12,
+    fontWeight: 800,
+    whiteSpace: "nowrap",
+  },
+  sidebarHeroMeta: {
+    marginTop: 12,
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 8,
+    fontSize: 12,
+    color: "#64748b",
+  },
+  sidebarQuickGrid: {
+    marginTop: 14,
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: 8,
+  },
+  sidebarQuickButton: {
+    border: "1px solid #dbeafe",
+    borderRadius: 12,
+    background: "#fff",
+    color: "#334155",
+    fontSize: 12,
+    fontWeight: 700,
+    padding: "10px 8px",
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  sidebarTitle: {
+    fontSize: 11,
+    fontWeight: 800,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
+    color: "#94a3b8",
+    marginBottom: 10,
+  },
+  searchBox: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    borderRadius: 12,
+    border: `1px solid ${BORDER}`,
+    background: "#f8fafc",
+    padding: "10px 12px",
+  },
+  searchInput: {
+    border: "none",
+    background: "transparent",
+    outline: "none",
+    width: "100%",
+    fontSize: 13,
+    color: TEXT,
+    fontFamily: "inherit",
+  },
+  filterList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  },
+  sidebarSegmented: {
+    display: "grid",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gap: 8,
+  },
+  sidebarSegmentButton: {
+    border: `1px solid ${BORDER}`,
+    borderRadius: 12,
+    background: "#f8fafc",
+    color: "#64748b",
+    fontSize: 12,
+    fontWeight: 700,
+    padding: "10px 0",
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  sidebarSegmentActive: {
+    border: "1px solid #99f6e4",
+    borderRadius: 12,
+    background: "linear-gradient(135deg, #14b8a6, #0f766e)",
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: 800,
+    padding: "10px 0",
+    cursor: "pointer",
+    boxShadow: "0 8px 18px rgba(20,184,166,.18)",
+    fontFamily: "inherit",
+  },
+  filterPillGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: 8,
+  },
+  filterPill: {
+    width: "100%",
+    border: "1px solid #e5e7eb",
+    background: "#fff",
+    borderRadius: 14,
+    padding: "10px 10px 9px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    textAlign: "left",
+    boxShadow: "0 1px 6px rgba(15,23,42,.03)",
+  },
+  filterPillActive: {
+    background: "#f0fdfa",
+    borderColor: "#99f6e4",
+    boxShadow: "0 8px 18px rgba(20,184,166,.08)",
+  },
+  filterPillTop: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    minWidth: 0,
+  },
+  filterItem: {
+    width: "100%",
+    border: "1px solid transparent",
+    background: "transparent",
+    borderRadius: 10,
+    padding: "9px 10px",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    textAlign: "left",
+  },
+  filterItemActive: {
+    background: "#e8faf4",
+    borderColor: "#a7f3d0",
+  },
+  filterDot: {
+    width: 8,
+    height: 8,
+    borderRadius: "50%",
+    flexShrink: 0,
+  },
+  filterLabel: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: 600,
+    color: "#334155",
+  },
+  filterCount: {
+    fontSize: 11,
+    fontWeight: 700,
+    color: "#64748b",
+    background: "rgba(148,163,184,.12)",
+    borderRadius: 999,
+    padding: "2px 8px",
+  },
+  miniCalendar: {
+    paddingTop: 4,
+  },
+  miniCalendarHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  miniCalendarNav: {
+    border: "none",
+    background: "transparent",
+    color: "#94a3b8",
+    fontSize: 16,
+    cursor: "pointer",
+    padding: "2px 6px",
+  },
+  miniCalendarTitle: {
+    fontSize: 11,
+    fontWeight: 700,
+    color: "#334155",
+  },
+  miniCalendarWeekdays: {
+    display: "grid",
+    gridTemplateColumns: "repeat(7, 1fr)",
+    marginBottom: 4,
+  },
+  miniCalendarWeekday: {
+    textAlign: "center",
+    fontSize: 9,
+    fontWeight: 800,
+    color: "#94a3b8",
+    padding: "2px 0",
+  },
+  miniCalendarGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(7, 1fr)",
+    gap: 2,
+  },
+  miniCalendarDay: {
+    border: "none",
+    background: "transparent",
+    borderRadius: 8,
+    padding: "5px 0",
+    fontSize: 11,
+    color: "#334155",
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  miniCalendarDaySelected: {
+    background: "#0dc991",
+    color: "#fff",
+    fontWeight: 800,
+  },
+  miniCalendarDayToday: {
+    background: "#e8faf4",
+    color: "#0aaf7a",
+    fontWeight: 700,
+  },
+  miniCalendarFooter: {
+    marginTop: 10,
+    display: "flex",
+    justifyContent: "center",
+  },
+  miniCalendarTodayButton: {
+    border: "none",
+    background: "transparent",
+    color: "#0f766e",
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  agentCard: {
+    background: "#e8faf4",
+    borderColor: "#a7f3d0",
+  },
+  agentTitle: {
+    fontSize: 13,
+    fontWeight: 800,
+    color: "#0aaf7a",
+  },
+  agentText: {
+    marginTop: 6,
+    fontSize: 12,
+    lineHeight: 1.5,
+    color: "#475569",
+  },
+  agentStatusRow: {
+    marginTop: 10,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    borderRadius: 999,
+    padding: "6px 10px",
+    background: "rgba(255,255,255,.72)",
+    border: "1px solid rgba(16,185,129,.2)",
+    width: "fit-content",
+  },
+  agentStatusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: "50%",
+    background: "#10b981",
+    boxShadow: "0 0 0 4px rgba(16,185,129,.12)",
+  },
+  agentStatusText: {
+    fontSize: 11,
+    fontWeight: 800,
+    color: "#047857",
   },
   header: {
     display: "flex",
@@ -1119,6 +2123,30 @@ const S = {
     fontSize: 12,
     fontWeight: 700,
   },
+  activeFilterBar: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    borderRadius: 14,
+    border: "1px solid #fef3c7",
+    background: "#fffbeb",
+    padding: "10px 12px",
+  },
+  activeFilterText: {
+    fontSize: 12,
+    color: "#92400e",
+    fontWeight: 700,
+  },
+  clearFilterButton: {
+    border: "none",
+    background: "transparent",
+    color: "#92400e",
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
   panel: {
     background: CARD,
     border: `1px solid ${BORDER}`,
@@ -1238,9 +2266,27 @@ const S = {
     background: "#fff",
     borderRight: `1px solid ${BORDER}`,
   },
+  dayHourNow: {
+    background: "#fff5f5",
+    color: "#dc2626",
+    boxShadow: "inset -2px 0 0 #fecaca",
+  },
   dayCell: {
     padding: 10,
     background: "#fff",
+    position: "relative",
+  },
+  dayCellNow: {
+    background: "linear-gradient(180deg, #fffefe 0%, #fff7f7 100%)",
+  },
+  dragHintBar: {
+    borderRadius: 12,
+    border: "1px solid #bfdbfe",
+    background: "#eff6ff",
+    color: "#1d4ed8",
+    padding: "12px 14px",
+    fontSize: 13,
+    fontWeight: 700,
   },
   dayEmptyCell: {
     height: "100%",
@@ -1248,19 +2294,28 @@ const S = {
     borderRadius: 12,
     background: "#ffffff",
   },
+  dayHalfLine: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: "50%",
+    borderTop: "1px dashed #edf2f7",
+    pointerEvents: "none",
+  },
   dayAppointmentCard: {
     width: "100%",
     border: "1px solid",
     borderRadius: 14,
     background: "#fff",
-    padding: "12px 14px",
+    padding: "10px 12px 9px",
     display: "flex",
     flexDirection: "column",
-    gap: 8,
+    gap: 6,
     textAlign: "left",
     cursor: "pointer",
     fontFamily: "inherit",
-    boxShadow: "0 6px 18px rgba(15,23,42,.05)",
+    boxShadow: "0 8px 22px rgba(15,23,42,.06)",
+    borderLeftWidth: 4,
   },
   dayAppointmentTop: {
     display: "flex",
@@ -1356,6 +2411,10 @@ const S = {
   weekDayHeaderActive: {
     background: "#f0fdfa",
   },
+  weekDayHeaderToday: {
+    background: "linear-gradient(180deg, #eff6ff 0%, #f8fbff 100%)",
+    boxShadow: "inset 0 -3px 0 #3b82f6",
+  },
   weekDayLabel: {
     fontSize: 10,
     fontWeight: 800,
@@ -1367,6 +2426,17 @@ const S = {
     fontWeight: 800,
     color: TEXT,
     lineHeight: 1,
+  },
+  todayPill: {
+    marginTop: 4,
+    borderRadius: 999,
+    padding: "2px 8px",
+    background: "#dbeafe",
+    color: "#1d4ed8",
+    fontSize: 9,
+    fontWeight: 900,
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
   },
   timeCell: {
     minHeight: 92,
@@ -1380,6 +2450,27 @@ const S = {
     alignItems: "flex-start",
     justifyContent: "center",
     background: "#fff",
+    position: "relative",
+  },
+  timeHourLabel: {
+    position: "absolute",
+    top: -8,
+    right: 10,
+    fontSize: 12,
+    fontWeight: 700,
+    color: "#64748b",
+    background: "#fff",
+    paddingLeft: 4,
+    lineHeight: 1,
+  },
+  timeHalfLabel: {
+    position: "absolute",
+    top: "50%",
+    right: 12,
+    fontSize: 10,
+    fontWeight: 500,
+    color: "#94a3b8",
+    transform: "translateY(-50%)",
   },
   weekCell: {
     minHeight: 92,
@@ -1390,23 +2481,43 @@ const S = {
     display: "flex",
     flexDirection: "column",
     gap: 8,
+    position: "relative",
   },
   weekCellActive: {
     background: "#fcfffe",
   },
+  weekCellToday: {
+    background: "#fbfffe",
+  },
+  weekCellNow: {
+    background: "linear-gradient(180deg, #fffefe 0%, #fff7f7 100%)",
+  },
+  dropCellActive: {
+    background: "linear-gradient(180deg, #ecfeff 0%, #f0fdfa 100%)",
+    boxShadow: "inset 0 0 0 2px #2dd4bf",
+  },
+  weekHalfLine: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: "50%",
+    borderTop: "1px dashed #edf2f7",
+    pointerEvents: "none",
+  },
   weekAppointmentCard: {
     width: "100%",
     border: "1px solid",
-    borderRadius: 14,
+    borderRadius: 12,
     background: "#fff",
-    padding: "10px 10px 9px",
+    padding: "8px 9px 8px",
     display: "flex",
     flexDirection: "column",
-    gap: 6,
+    gap: 5,
     textAlign: "left",
     cursor: "pointer",
     fontFamily: "inherit",
-    boxShadow: "0 4px 14px rgba(15,23,42,.05)",
+    boxShadow: "0 8px 18px rgba(15,23,42,.05)",
+    borderLeftWidth: 4,
   },
   weekAppointmentTop: {
     display: "flex",
@@ -1420,17 +2531,97 @@ const S = {
     color: TEXT,
     lineHeight: 1.25,
   },
+  appointmentIdentityRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    minWidth: 0,
+  },
+  appointmentTime: {
+    fontSize: 11,
+    fontWeight: 800,
+    letterSpacing: "0.02em",
+    marginBottom: 2,
+    textTransform: "uppercase",
+  },
+  aiInlineBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: 26,
+    height: 18,
+    padding: "0 6px",
+    borderRadius: 999,
+    border: "1px solid",
+    fontSize: 9,
+    fontWeight: 900,
+    letterSpacing: "0.05em",
+    flexShrink: 0,
+  },
   weekAppointmentType: {
-    fontSize: 12,
+    fontSize: 11,
     color: "#4b5563",
-    lineHeight: 1.4,
+    lineHeight: 1.25,
+  },
+  appointmentRange: {
+    fontSize: 10,
+    fontWeight: 700,
+    letterSpacing: "0.02em",
+  },
+  weekAppointmentPills: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 5,
+  },
+  sourceBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    border: "1px solid",
+    borderRadius: 999,
+    padding: "3px 8px",
+    fontSize: 9,
+    fontWeight: 800,
+    letterSpacing: "0.01em",
   },
   weekAppointmentMeta: {
     display: "flex",
-    gap: 8,
+    gap: 6,
     flexWrap: "wrap",
-    fontSize: 11,
+    fontSize: 10,
+    fontWeight: 600,
     color: "#6b7280",
+  },
+  nowLine: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    height: 0,
+    borderTop: "2px solid #ef4444",
+    zIndex: 4,
+    pointerEvents: "none",
+  },
+  nowDot: {
+    position: "absolute",
+    left: -1,
+    top: -5,
+    width: 10,
+    height: 10,
+    borderRadius: "50%",
+    background: "#ef4444",
+    boxShadow: "0 0 0 4px rgba(239,68,68,.14)",
+  },
+  nowLabel: {
+    position: "absolute",
+    right: 8,
+    top: -13,
+    borderRadius: 999,
+    padding: "3px 8px",
+    background: "#ef4444",
+    color: "#fff",
+    fontSize: 10,
+    fontWeight: 800,
+    letterSpacing: "0.03em",
+    boxShadow: "0 8px 18px rgba(239,68,68,.18)",
   },
   monthWrap: {
     padding: 18,
@@ -1468,6 +2659,10 @@ const S = {
   },
   monthCellActive: {
     background: "#f0fdfa",
+  },
+  monthCellDropActive: {
+    background: "linear-gradient(180deg, #ecfeff 0%, #f0fdfa 100%)",
+    boxShadow: "inset 0 0 0 2px #2dd4bf",
   },
   monthCellMuted: {
     color: "#94a3b8",
@@ -1828,6 +3023,21 @@ const S = {
     flexDirection: "column",
     gap: 10,
   },
+  actionToast: {
+    borderRadius: 12,
+    border: "1px solid #a7f3d0",
+    background: "#ecfdf5",
+    color: "#047857",
+    padding: "12px 14px",
+    fontSize: 13,
+    fontWeight: 700,
+    boxShadow: "0 8px 18px rgba(16,185,129,.08)",
+  },
+  draggingAppointmentCard: {
+    opacity: 0.48,
+    transform: "scale(.985)",
+    boxShadow: "0 16px 30px rgba(15,23,42,.14)",
+  },
   successInline: {
     borderRadius: 12,
     border: "1px solid #a7f3d0",
@@ -1840,6 +3050,56 @@ const S = {
 };
 
 const CSS = `
+  @keyframes agenda-card-enter {
+    from {
+      opacity: 0;
+      transform: translateY(6px) scale(0.985);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  .agenda-week-appointment,
+  .agenda-day-appointment {
+    animation: agenda-card-enter 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    transition: transform 180ms ease, box-shadow 180ms ease, filter 180ms ease, opacity 180ms ease;
+    will-change: transform, box-shadow, opacity;
+    transform-origin: top left;
+  }
+
+  .agenda-week-appointment:hover,
+  .agenda-day-appointment:hover {
+    transform: translateY(-2px) scale(1.01);
+    box-shadow: 0 16px 30px rgba(15, 23, 42, 0.14) !important;
+    filter: saturate(1.03);
+  }
+
+  .agenda-week-appointment[draggable="true"],
+  .agenda-day-appointment[draggable="true"] {
+    cursor: grab;
+  }
+
+  .agenda-week-appointment[draggable="true"]:active,
+  .agenda-day-appointment[draggable="true"]:active {
+    cursor: grabbing;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .agenda-week-appointment,
+    .agenda-day-appointment {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+
+  @media (max-width: 1180px) {
+    .agenda-layout-grid {
+      grid-template-columns: 1fr !important;
+    }
+  }
+
   @media (max-width: 900px) {
     .agenda-page-stats {
       grid-template-columns: 1fr !important;
