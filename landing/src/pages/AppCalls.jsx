@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { PhoneCall } from "lucide-react";
 import { api } from "../lib/api.js";
 
 const TEXT = "#111827";
@@ -90,6 +91,27 @@ async function copyToClipboard(text) {
 
 function getActionLabel(call) {
   return call?.contextual_action?.label || "Voir le détail";
+}
+
+function getDialablePhone(value) {
+  const raw = String(value || "").trim();
+  if (!raw || /num[eé]ro non identifi[eé]/i.test(raw)) return "";
+  const cleaned = raw.replace(/[^\d+]/g, "");
+  if (!cleaned) return "";
+  if (cleaned.startsWith("00")) return `+${cleaned.slice(2)}`;
+  return cleaned;
+}
+
+function getDisplayedPhone(value) {
+  const raw = String(value || "").trim();
+  return raw || "Numéro non identifié";
+}
+
+function getPhoneIconTheme(status) {
+  if (status === "CONFIRMED" || status === "FAQ") {
+    return { bg: "#ecfdf5", color: "#16a34a", border: "#bbf7d0" };
+  }
+  return { bg: "#fef2f2", color: "#dc2626", border: "#fecaca" };
 }
 
 export default function AppCalls() {
@@ -187,6 +209,12 @@ export default function AppCalls() {
     });
     return counters;
   }, [calls]);
+  const selectedCallSummary = useMemo(
+    () => calls.find((call) => (call.call_id || call.id) === selectedCallId) || null,
+    [calls, selectedCallId],
+  );
+  const detailPhone = getDisplayedPhone(callDetail?.customer_number || selectedCallSummary?.customer_number);
+  const detailDialablePhone = getDialablePhone(callDetail?.customer_number || selectedCallSummary?.customer_number);
 
   async function persistFollowup(callId, nextState, notesOverride = "", messageOverride = "") {
     if (!callId) return;
@@ -384,9 +412,47 @@ export default function AppCalls() {
                 const status = getStatusUi(call.status);
                 const followup = getFollowupUi(call.followup_state);
                 const reason = getReasonUi(call.reason_category);
+                const phoneTheme = getPhoneIconTheme(call.status);
+                const displayedPhone = getDisplayedPhone(call.customer_number);
+                const dialablePhone = getDialablePhone(call.customer_number);
                 return (
-                  <button key={call.id} type="button" className="calls-row" style={S.callRow} onClick={() => setSelectedCallId(call.call_id || call.id)}>
-                    <div style={S.avatar}>{getCallInitials(call.patient_name)}</div>
+                  <div
+                    key={call.id}
+                    role="button"
+                    tabIndex={0}
+                    className="calls-row"
+                    style={S.callRow}
+                    onClick={() => setSelectedCallId(call.call_id || call.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setSelectedCallId(call.call_id || call.id);
+                      }
+                    }}
+                  >
+                    <a
+                      href={dialablePhone ? `tel:${dialablePhone}` : undefined}
+                      onClick={(event) => {
+                        if (!dialablePhone) {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          return;
+                        }
+                        event.stopPropagation();
+                      }}
+                      aria-label={dialablePhone ? `Rappeler ${displayedPhone}` : "Numéro indisponible"}
+                      title={dialablePhone ? `Rappeler ${displayedPhone}` : "Numéro indisponible"}
+                      style={{
+                        ...S.phoneAvatar,
+                        background: phoneTheme.bg,
+                        color: phoneTheme.color,
+                        borderColor: phoneTheme.border,
+                        opacity: dialablePhone ? 1 : 0.7,
+                        cursor: dialablePhone ? "pointer" : "default",
+                      }}
+                    >
+                      <PhoneCall size={22} strokeWidth={2.1} />
+                    </a>
 
                     <div style={S.callMain}>
                       <div style={S.callTop}>
@@ -415,6 +481,27 @@ export default function AppCalls() {
                         </div>
                       </div>
 
+                      <div style={S.callPhoneRow}>
+                        <a
+                          href={dialablePhone ? `tel:${dialablePhone}` : undefined}
+                          onClick={(event) => {
+                            if (!dialablePhone) {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              return;
+                            }
+                            event.stopPropagation();
+                          }}
+                          style={{
+                            ...S.callPhoneLink,
+                            opacity: dialablePhone ? 1 : 0.7,
+                            pointerEvents: dialablePhone ? "auto" : "none",
+                          }}
+                        >
+                          {displayedPhone}
+                        </a>
+                        {dialablePhone ? <span style={S.callPhoneHint}>Cliquer pour rappeler</span> : null}
+                      </div>
                       <div style={S.callAgent}>Assistante : {call.agent_name || "UWI"}</div>
                       <div style={S.callSummary}>{call.summary || "Aucun résumé disponible."}</div>
                       {call.reason_label ? (
@@ -459,7 +546,7 @@ export default function AppCalls() {
                         {getActionLabel(call)}
                       </span>
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -492,6 +579,16 @@ export default function AppCalls() {
             ) : callDetail ? (
               <div style={S.modalBody}>
                 <div style={S.actionRow}>
+                  <a
+                    href={detailDialablePhone ? `tel:${detailDialablePhone}` : undefined}
+                    style={{
+                      ...S.actionButtonSuccess,
+                      opacity: detailDialablePhone ? 1 : 0.6,
+                      pointerEvents: detailDialablePhone ? "auto" : "none",
+                    }}
+                  >
+                    Rappeler
+                  </a>
                   <button
                     type="button"
                     style={S.actionButtonPrimary}
@@ -549,6 +646,20 @@ export default function AppCalls() {
                 </div>
 
                 {actionMessage ? <div style={S.successInline}>{actionMessage}</div> : null}
+
+                <div style={S.detailPhoneCard}>
+                  <div>
+                    <div style={S.detailLabel}>Numéro appelant</div>
+                    <div style={S.detailPhoneValue}>{detailPhone}</div>
+                  </div>
+                  {detailDialablePhone ? (
+                    <a href={`tel:${detailDialablePhone}`} style={S.detailPhoneButton}>
+                      Appeler
+                    </a>
+                  ) : (
+                    <span style={S.detailPhoneMuted}>Indisponible</span>
+                  )}
+                </div>
 
                 <div className="calls-detail-grid" style={S.detailTopGrid}>
                   <div style={S.detailInfoCard}>
