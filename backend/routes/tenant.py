@@ -323,6 +323,28 @@ def _call_display_phone(item: Optional[dict], detail: Optional[dict]) -> str:
         value = str(candidate or "").strip()
         if value:
             return value
+    booking = _latest_booking_meta(detail)
+    for candidate in (
+        booking.get("patient_contact"),
+        booking.get("contact"),
+    ):
+        value = str(candidate or "").strip()
+        if value:
+            return value
+    for event in reversed((detail or {}).get("events") or []):
+        meta = (event or {}).get("meta") or {}
+        if not isinstance(meta, dict):
+            continue
+        for candidate in (
+            meta.get("patient_contact"),
+            meta.get("customer_number"),
+            meta.get("customer_phone"),
+            meta.get("phone"),
+            meta.get("contact"),
+        ):
+            value = str(candidate or "").strip()
+            if value:
+                return value
     return ""
 
 

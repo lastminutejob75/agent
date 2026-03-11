@@ -288,6 +288,83 @@ def test_tenant_call_patient_update_validates_name(mock_call_detail, mock_upsert
     mock_upsert_profile.assert_called_once()
 
 
+@patch("backend.routes.tenant.pg_get_tenant_user_by_id")
+@patch("backend.routes.tenant._get_tenant_detail")
+@patch("backend.routes.tenant.get_cabinet_client_by_phone")
+@patch("backend.routes.tenant.upsert_cabinet_client")
+@patch("backend.routes.tenant._get_call_detail")
+def test_tenant_call_patient_update_uses_booking_contact_when_customer_number_missing(
+    mock_call_detail,
+    mock_upsert_profile,
+    mock_get_profile,
+    mock_tenant_detail,
+    mock_get_user,
+    client,
+):
+    mock_get_user.return_value = {"tenant_id": 1, "email": "test@example.com", "role": "owner"}
+    mock_tenant_detail.return_value = {
+        "tenant_id": 1,
+        "name": "Cabinet Test",
+        "timezone": "Europe/Paris",
+        "params": {"assistant_name": "sophie", "timezone": "Europe/Paris"},
+    }
+    mock_call_detail.return_value = {
+        "call_id": "call_patient",
+        "customer_number": "",
+        "events": [{
+            "event": "booking_confirmed",
+            "meta": {
+                "patient_name": "claire dupon",
+                "patient_contact": "06 12 34 56 78",
+                "motif": "Consultation",
+                "start_iso": "2026-03-10T09:00:00+01:00",
+                "end_iso": "2026-03-10T09:30:00+01:00",
+            },
+        }],
+    }
+    mock_get_profile.side_effect = [
+        None,
+        {
+            "phone": "+33612345678",
+            "raw_name": "claire dupon",
+            "validated_name": "Claire Dupont",
+            "display_name": "Claire Dupont",
+            "validation_status": "validated",
+            "source_call_id": "call_patient",
+            "updated_at": "2026-03-06T10:35:00",
+        },
+    ]
+    mock_upsert_profile.return_value = {
+        "phone": "+33612345678",
+        "raw_name": "claire dupon",
+        "validated_name": "Claire Dupont",
+        "display_name": "Claire Dupont",
+        "validation_status": "validated",
+    }
+
+    token = _make_jwt()
+    r = client.patch(
+        "/api/tenant/calls/call_patient/patient",
+        json={"validated_name": "Claire Dupont", "raw_name": "claire dupon"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["ok"] is True
+    assert data["patient"]["phone"] == "+33612345678"
+    mock_upsert_profile.assert_called_once_with(
+        1,
+        "+33612345678",
+        raw_name="claire dupon",
+        validated_name="Claire Dupont",
+        source_call_id="call_patient",
+        last_call_id="call_patient",
+        last_booking_start="2026-03-10T09:00:00+01:00",
+        last_booking_end="2026-03-10T09:30:00+01:00",
+        last_booking_motif="Consultation",
+    )
+
+
 @patch("backend.routes.tenant.get_cabinet_client_by_phone", return_value=None)
 @patch("backend.routes.tenant.pg_get_tenant_user_by_id")
 @patch("backend.routes.tenant.GoogleCalendarService")
