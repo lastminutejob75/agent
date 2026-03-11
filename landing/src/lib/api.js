@@ -173,6 +173,12 @@ export const api = {
       body,
       tenant: true,
     }),
+  tenantUpdateCallPatient: (callId, body) =>
+    request(`/api/tenant/calls/${encodeURIComponent(callId)}/patient`, {
+      method: "PATCH",
+      body,
+      tenant: true,
+    }),
   tenantGetAgenda: (params = "") => request(`/api/tenant/agenda${params}`, { tenant: true }),
   tenantGetAgendaAvailableSlots: (params = "") =>
     request(`/api/tenant/agenda/available-slots${params}`, { tenant: true }),
@@ -219,6 +225,7 @@ export const tenantUpdateHoraires = (rules) => api.tenantUpdateHoraires(rules);
 export const tenantGetCalls = (params = "") => api.tenantGetCalls(params);
 export const tenantGetCallDetail = (callId) => api.tenantGetCallDetail(callId);
 export const tenantUpdateCallFollowup = (callId, body) => api.tenantUpdateCallFollowup(callId, body);
+export const tenantUpdateCallPatient = (callId, body) => api.tenantUpdateCallPatient(callId, body);
 export const tenantGetAgenda = (params = "") => api.tenantGetAgenda(params);
 export const tenantGetAgendaAvailableSlots = (params = "") => api.tenantGetAgendaAvailableSlots(params);
 export const tenantCancelAgendaAppointment = (appointmentId, body) => api.tenantCancelAgendaAppointment(appointmentId, body);

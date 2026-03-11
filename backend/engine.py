@@ -3875,7 +3875,19 @@ class Engine:
                     slot_label,
                     name,
                 )
-                _persist_ivr_event(session, "booking_confirmed")
+                booking_context = json.dumps(
+                    {
+                        "call_id": session.conv_id,
+                        "patient_name": name,
+                        "patient_contact": session.qualif_data.contact or session.customer_phone or "",
+                        "contact_type": session.qualif_data.contact_type or "",
+                        "motif": motif,
+                        "slot_label": slot_label,
+                        "event_id": getattr(session, "google_event_id", "") or "",
+                    },
+                    ensure_ascii=False,
+                )
+                _persist_ivr_event(session, "booking_confirmed", context=booking_context)
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             

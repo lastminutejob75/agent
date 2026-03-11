@@ -2117,8 +2117,17 @@ def _get_call_detail(tenant_id: int, call_id: str) -> dict:
                 events = []
                 for r in rows:
                     meta = {}
-                    if r.get("context"):
-                        meta["context"] = r["context"]
+                    raw_context = r.get("context")
+                    if raw_context:
+                        meta["context"] = raw_context
+                        try:
+                            parsed_context = json.loads(raw_context)
+                            if isinstance(parsed_context, dict):
+                                for key, value in parsed_context.items():
+                                    if value is not None and key not in meta:
+                                        meta[key] = value
+                        except Exception:
+                            pass
                     if r.get("reason"):
                         meta["reason"] = r["reason"]
                     events.append({

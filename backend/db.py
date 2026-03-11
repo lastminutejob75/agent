@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -273,6 +274,273 @@ def upsert_call_followup(tenant_id: int, call_id: str, followup_state: str, note
         return True
     finally:
         conn.close()
+
+
+def normalize_phone_number(value: Optional[str]) -> str:
+    """Normalise un numéro pour clé métier tenant_id + téléphone."""
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    cleaned = re.sub(r"[^\d+]", "", raw)
+    if cleaned.startswith("00"):
+        cleaned = f"+{cleaned[2:]}"
+    if cleaned.startswith("+"):
+        return cleaned
+    if cleaned.startswith("0") and len(cleaned) == 10:
+        return f"+33{cleaned[1:]}"
+    return cleaned
+
+
+def _ensure_cabinet_clients_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cabinet_clients (
+            tenant_id INTEGER NOT NULL,
+            phone TEXT NOT NULL,
+            raw_name TEXT,
+            validated_name TEXT,
+            display_name TEXT,
+            validation_status TEXT NOT NULL DEFAULT 'pending',
+            source_call_id TEXT,
+            last_call_id TEXT,
+            last_booking_start TEXT,
+            last_booking_end TEXT,
+            last_booking_motif TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (tenant_id, phone)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cabinet_clients_search ON cabinet_clients(tenant_id, display_name, raw_name, updated_at)"
+    )
+
+
+def _ensure_cabinet_clients_table_pg(conn: Any) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cabinet_clients (
+                tenant_id INTEGER NOT NULL,
+                phone TEXT NOT NULL,
+                raw_name TEXT,
+                validated_name TEXT,
+                display_name TEXT,
+                validation_status TEXT NOT NULL DEFAULT 'pending',
+                source_call_id TEXT,
+                last_call_id TEXT,
+                last_booking_start TIMESTAMPTZ,
+                last_booking_end TIMESTAMPTZ,
+                last_booking_motif TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (tenant_id, phone)
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_cabinet_clients_search
+            ON cabinet_clients (tenant_id, display_name, raw_name, updated_at)
+            """
+        )
+
+
+def _cabinet_client_row_to_dict(row: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "phone": row.get("phone") or "",
+        "raw_name": row.get("raw_name") or "",
+        "validated_name": row.get("validated_name") or "",
+        "display_name": row.get("display_name") or row.get("validated_name") or row.get("raw_name") or "",
+        "validation_status": row.get("validation_status") or "pending",
+        "source_call_id": row.get("source_call_id") or "",
+        "last_call_id": row.get("last_call_id") or "",
+        "last_booking_start": str(row.get("last_booking_start") or ""),
+        "last_booking_end": str(row.get("last_booking_end") or ""),
+        "last_booking_motif": row.get("last_booking_motif") or "",
+        "created_at": str(row.get("created_at") or ""),
+        "updated_at": str(row.get("updated_at") or ""),
+    }
+
+
+def get_cabinet_client_by_phone(tenant_id: int, phone: str) -> Optional[Dict[str, Any]]:
+    phone_norm = normalize_phone_number(phone)
+    if not phone_norm:
+        return None
+
+    url = _pg_events_url()
+    if url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+
+            with psycopg.connect(url, row_factory=dict_row) as conn:
+                _ensure_cabinet_clients_table_pg(conn)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT phone, raw_name, validated_name, display_name, validation_status,
+                               source_call_id, last_call_id, last_booking_start, last_booking_end,
+                               last_booking_motif, created_at, updated_at
+                        FROM cabinet_clients
+                        WHERE tenant_id = %s AND phone = %s
+                        LIMIT 1
+                        """,
+                        (tenant_id, phone_norm),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        return _cabinet_client_row_to_dict(row)
+        except Exception:
+            pass
+
+    conn = get_conn()
+    try:
+        _ensure_cabinet_clients_table(conn)
+        row = conn.execute(
+            """
+            SELECT phone, raw_name, validated_name, display_name, validation_status,
+                   source_call_id, last_call_id, last_booking_start, last_booking_end,
+                   last_booking_motif, created_at, updated_at
+            FROM cabinet_clients
+            WHERE tenant_id = ? AND phone = ?
+            LIMIT 1
+            """,
+            (tenant_id, phone_norm),
+        ).fetchone()
+        if not row:
+            return None
+        return _cabinet_client_row_to_dict(dict(row))
+    finally:
+        conn.close()
+
+
+def upsert_cabinet_client(
+    tenant_id: int,
+    phone: str,
+    *,
+    raw_name: Optional[str] = None,
+    validated_name: Optional[str] = None,
+    source_call_id: Optional[str] = None,
+    last_call_id: Optional[str] = None,
+    last_booking_start: Optional[str] = None,
+    last_booking_end: Optional[str] = None,
+    last_booking_motif: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    phone_norm = normalize_phone_number(phone)
+    if not phone_norm:
+        return None
+
+    clean_raw_name = (raw_name or "").strip()[:160] or None
+    clean_validated_name = (validated_name or "").strip()[:160] or None
+    display_name = clean_validated_name or clean_raw_name or None
+    validation_status = "validated" if clean_validated_name else "pending"
+    clean_source_call_id = (source_call_id or "").strip()[:120] or None
+    clean_last_call_id = (last_call_id or "").strip()[:120] or None
+    clean_booking_start = (last_booking_start or "").strip()[:64] or None
+    clean_booking_end = (last_booking_end or "").strip()[:64] or None
+    clean_booking_motif = (last_booking_motif or "").strip()[:240] or None
+
+    url = _pg_events_url()
+    if url:
+        try:
+            import psycopg
+
+            with psycopg.connect(url) as conn:
+                _ensure_cabinet_clients_table_pg(conn)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO cabinet_clients (
+                            tenant_id, phone, raw_name, validated_name, display_name, validation_status,
+                            source_call_id, last_call_id, last_booking_start, last_booking_end, last_booking_motif, updated_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+                        ON CONFLICT (tenant_id, phone)
+                        DO UPDATE SET
+                            raw_name = COALESCE(EXCLUDED.raw_name, cabinet_clients.raw_name),
+                            validated_name = COALESCE(EXCLUDED.validated_name, cabinet_clients.validated_name),
+                            display_name = COALESCE(EXCLUDED.display_name, cabinet_clients.display_name, cabinet_clients.raw_name),
+                            validation_status = CASE
+                                WHEN COALESCE(EXCLUDED.validated_name, cabinet_clients.validated_name) IS NOT NULL
+                                    AND TRIM(COALESCE(EXCLUDED.validated_name, cabinet_clients.validated_name)) != ''
+                                THEN 'validated'
+                                ELSE COALESCE(EXCLUDED.validation_status, cabinet_clients.validation_status)
+                            END,
+                            source_call_id = COALESCE(EXCLUDED.source_call_id, cabinet_clients.source_call_id),
+                            last_call_id = COALESCE(EXCLUDED.last_call_id, cabinet_clients.last_call_id),
+                            last_booking_start = COALESCE(EXCLUDED.last_booking_start, cabinet_clients.last_booking_start),
+                            last_booking_end = COALESCE(EXCLUDED.last_booking_end, cabinet_clients.last_booking_end),
+                            last_booking_motif = COALESCE(EXCLUDED.last_booking_motif, cabinet_clients.last_booking_motif),
+                            updated_at = now()
+                        """,
+                        (
+                            tenant_id,
+                            phone_norm,
+                            clean_raw_name,
+                            clean_validated_name,
+                            display_name,
+                            validation_status,
+                            clean_source_call_id,
+                            clean_last_call_id,
+                            clean_booking_start,
+                            clean_booking_end,
+                            clean_booking_motif,
+                        ),
+                    )
+                    conn.commit()
+        except Exception:
+            pass
+
+    conn = get_conn()
+    try:
+        _ensure_cabinet_clients_table(conn)
+        conn.execute(
+            """
+            INSERT INTO cabinet_clients (
+                tenant_id, phone, raw_name, validated_name, display_name, validation_status,
+                source_call_id, last_call_id, last_booking_start, last_booking_end, last_booking_motif, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(tenant_id, phone)
+            DO UPDATE SET
+                raw_name = COALESCE(excluded.raw_name, cabinet_clients.raw_name),
+                validated_name = COALESCE(excluded.validated_name, cabinet_clients.validated_name),
+                display_name = COALESCE(excluded.display_name, cabinet_clients.display_name, cabinet_clients.raw_name),
+                validation_status = CASE
+                    WHEN COALESCE(excluded.validated_name, cabinet_clients.validated_name) IS NOT NULL
+                        AND TRIM(COALESCE(excluded.validated_name, cabinet_clients.validated_name)) != ''
+                    THEN 'validated'
+                    ELSE COALESCE(excluded.validation_status, cabinet_clients.validation_status)
+                END,
+                source_call_id = COALESCE(excluded.source_call_id, cabinet_clients.source_call_id),
+                last_call_id = COALESCE(excluded.last_call_id, cabinet_clients.last_call_id),
+                last_booking_start = COALESCE(excluded.last_booking_start, cabinet_clients.last_booking_start),
+                last_booking_end = COALESCE(excluded.last_booking_end, cabinet_clients.last_booking_end),
+                last_booking_motif = COALESCE(excluded.last_booking_motif, cabinet_clients.last_booking_motif),
+                updated_at = excluded.updated_at
+            """,
+            (
+                tenant_id,
+                phone_norm,
+                clean_raw_name,
+                clean_validated_name,
+                display_name,
+                validation_status,
+                clean_source_call_id,
+                clean_last_call_id,
+                clean_booking_start,
+                clean_booking_end,
+                clean_booking_motif,
+                datetime.utcnow().isoformat(),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return get_cabinet_client_by_phone(tenant_id, phone_norm)
 
 
 def consent_obtained_exists(client_id: int, call_id: str) -> bool:

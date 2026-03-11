@@ -172,11 +172,12 @@ def test_tenant_calls_keeps_items_when_call_detail_fails(mock_calls, mock_call_d
     assert data["calls"][0]["summary"] == "Transféré à un humain"
 
 
+@patch("backend.routes.tenant.get_cabinet_client_by_phone", return_value=None)
 @patch("backend.routes.tenant.pg_get_tenant_user_by_id")
 @patch("backend.routes.tenant._get_tenant_detail")
 @patch("backend.routes.tenant._get_call_detail")
 @patch("backend.routes.tenant._get_calls_list")
-def test_tenant_calls_prefers_detail_events_and_exposes_customer_number(mock_calls, mock_call_detail, mock_tenant_detail, mock_get_user, client):
+def test_tenant_calls_prefers_detail_events_and_exposes_customer_number(mock_calls, mock_call_detail, mock_tenant_detail, mock_get_user, _mock_client_profile, client):
     mock_get_user.return_value = {"tenant_id": 1, "email": "test@example.com", "role": "owner"}
     mock_tenant_detail.return_value = {
         "tenant_id": 1,
@@ -200,7 +201,16 @@ def test_tenant_calls_prefers_detail_events_and_exposes_customer_number(mock_cal
         "duration_min": 2,
         "result": "other",
         "customer_number": "+33612345678",
-        "events": [{"event": "booking_confirmed", "meta": {}}],
+        "events": [{
+            "event": "booking_confirmed",
+            "meta": {
+                "patient_name": "Claire Dupont",
+                "motif": "Ordonnance",
+                "start_iso": "2026-03-10T14:15:00+01:00",
+                "end_iso": "2026-03-10T14:30:00+01:00",
+                "slot_label": "Mardi 10 mars à 14h15",
+            },
+        }],
         "transcript": "Patient: Ordonnance.\n\nAssistant: Mardi 10 mars à 14 heures 15.",
     }
     token = _make_jwt()
@@ -212,12 +222,77 @@ def test_tenant_calls_prefers_detail_events_and_exposes_customer_number(mock_cal
     assert data["calls"][0]["reason_label"] == "Demande de rendez-vous"
     assert data["calls"][0]["reason_category"] == "agenda"
     assert data["calls"][0]["customer_number"] == "+33612345678"
+    assert data["calls"][0]["patient"]["raw_name"] == "Claire Dupont"
+    assert data["calls"][0]["patient"]["display_name"] == "Claire Dupont"
+    assert data["calls"][0]["booking"]["motif"] == "Ordonnance"
+    assert data["calls"][0]["booking"]["start_iso"] == "2026-03-10T14:15:00+01:00"
 
 
 @patch("backend.routes.tenant.pg_get_tenant_user_by_id")
+@patch("backend.routes.tenant._get_tenant_detail")
+@patch("backend.routes.tenant.get_cabinet_client_by_phone")
+@patch("backend.routes.tenant.upsert_cabinet_client")
+@patch("backend.routes.tenant._get_call_detail")
+def test_tenant_call_patient_update_validates_name(mock_call_detail, mock_upsert_profile, mock_get_profile, mock_tenant_detail, mock_get_user, client):
+    mock_get_user.return_value = {"tenant_id": 1, "email": "test@example.com", "role": "owner"}
+    mock_tenant_detail.return_value = {
+        "tenant_id": 1,
+        "name": "Cabinet Test",
+        "timezone": "Europe/Paris",
+        "params": {"assistant_name": "sophie", "timezone": "Europe/Paris"},
+    }
+    mock_call_detail.return_value = {
+        "call_id": "call_patient",
+        "customer_number": "+33612345678",
+        "events": [{
+            "event": "booking_confirmed",
+            "meta": {
+                "patient_name": "claire dupon",
+                "motif": "Consultation",
+                "start_iso": "2026-03-10T09:00:00+01:00",
+                "end_iso": "2026-03-10T09:30:00+01:00",
+            },
+        }],
+    }
+    mock_get_profile.side_effect = [
+        None,
+        {
+            "phone": "+33612345678",
+            "raw_name": "claire dupon",
+            "validated_name": "Claire Dupont",
+            "display_name": "Claire Dupont",
+            "validation_status": "validated",
+            "source_call_id": "call_patient",
+            "updated_at": "2026-03-06T10:35:00",
+        },
+    ]
+    mock_upsert_profile.return_value = {
+        "phone": "+33612345678",
+        "raw_name": "claire dupon",
+        "validated_name": "Claire Dupont",
+        "display_name": "Claire Dupont",
+        "validation_status": "validated",
+    }
+
+    token = _make_jwt()
+    r = client.patch(
+        "/api/tenant/calls/call_patient/patient",
+        json={"validated_name": "Claire Dupont", "raw_name": "claire dupon"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["ok"] is True
+    assert data["patient"]["display_name"] == "Claire Dupont"
+    assert data["patient"]["is_validated"] is True
+    mock_upsert_profile.assert_called_once()
+
+
+@patch("backend.routes.tenant.get_cabinet_client_by_phone", return_value=None)
+@patch("backend.routes.tenant.pg_get_tenant_user_by_id")
 @patch("backend.routes.tenant.GoogleCalendarService")
 @patch("backend.routes.tenant._get_tenant_detail")
-def test_tenant_agenda_google_ok(mock_tenant_detail, mock_google_service, mock_get_user, client):
+def test_tenant_agenda_google_ok(mock_tenant_detail, mock_google_service, mock_get_user, _mock_client_profile, client):
     from datetime import datetime, timedelta
 
     mock_get_user.return_value = {"tenant_id": 1, "email": "test@example.com", "role": "owner"}
@@ -251,6 +326,53 @@ def test_tenant_agenda_google_ok(mock_tenant_detail, mock_google_service, mock_g
     assert data["total"] == 1
     assert data["slots"][0]["patient"] == "Claire Fontaine"
     assert data["slots"][0]["source"] == "UWI"
+
+
+@patch(
+    "backend.routes.tenant.get_cabinet_client_by_phone",
+    return_value={
+        "phone": "+33612345678",
+        "display_name": "Claire Dupont",
+        "validated_name": "Claire Dupont",
+        "validation_status": "validated",
+    },
+)
+@patch("backend.routes.tenant.pg_get_tenant_user_by_id")
+@patch("backend.routes.tenant.GoogleCalendarService")
+@patch("backend.routes.tenant._get_tenant_detail")
+def test_tenant_agenda_google_prefers_validated_patient_name(mock_tenant_detail, mock_google_service, mock_get_user, _mock_client_profile, client):
+    from datetime import datetime, timedelta
+
+    mock_get_user.return_value = {"tenant_id": 1, "email": "test@example.com", "role": "owner"}
+    mock_tenant_detail.return_value = {
+        "tenant_id": 1,
+        "name": "Cabinet Test",
+        "timezone": "Europe/Paris",
+        "params": {
+            "timezone": "Europe/Paris",
+            "calendar_provider": "google",
+            "calendar_id": "cabinet@test.calendar.google.com",
+        },
+    }
+    start_dt = datetime.utcnow() + timedelta(hours=2)
+    end_dt = start_dt + timedelta(minutes=30)
+    mock_google_service.return_value.service.events.return_value.list.return_value.execute.return_value = {
+        "items": [
+            {
+                "id": "evt_1",
+                "summary": "RDV - Nom Brut",
+                "description": "Patient: Nom Brut\nContact: +33612345678\nMotif: Consultation",
+                "start": {"dateTime": start_dt.isoformat() + "Z"},
+                "end": {"dateTime": end_dt.isoformat() + "Z"},
+            }
+        ]
+    }
+    token = _make_jwt()
+    r = client.get("/api/tenant/agenda", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["slots"][0]["patient"] == "Claire Dupont"
+    assert data["slots"][0]["patient_phone"] == "+33612345678"
 
 
 @patch("backend.routes.tenant.pg_get_tenant_user_by_id")

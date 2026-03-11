@@ -166,6 +166,20 @@ function parseDurationMinutes(value) {
 }
 
 function extractRdv(call) {
+  const booking = call?.booking || call?.raw?.booking;
+  if (booking?.start_iso || booking?.slot_label) {
+    const start = booking?.start_iso ? new Date(booking.start_iso) : null;
+    const validStart = start && !Number.isNaN(start.getTime()) ? start : null;
+    return {
+      date: validStart
+        ? validStart.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" })
+        : booking?.slot_label || "Date à confirmer",
+      time: validStart
+        ? validStart.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })
+        : "—",
+      type: booking?.motif || call?.reason_label || "Consultation",
+    };
+  }
   const summary = String(call?.summary || "");
   const reasonLabel = String(call?.reason_label || "");
   if (!(call?.status === "CONFIRMED" || call?.reason_category === "agenda" || /rdv|rendez-vous/i.test(summary))) {
@@ -210,9 +224,10 @@ function deriveAiScore(call) {
 }
 
 function normalizeSummaryCall(call) {
+  const patient = call?.patient || {};
   return {
     id: call?.call_id || call?.id || "",
-    name: call?.patient_name || "Patient",
+    name: patient?.display_name || call?.patient_name || "Patient",
     phone: getDisplayedPhone(call?.customer_number),
     dialablePhone: getDialablePhone(call?.customer_number),
     time: call?.time || "—",
@@ -228,15 +243,18 @@ function normalizeSummaryCall(call) {
     rdv: extractRdv(call),
     aiScore: deriveAiScore(call),
     transcript: [],
+    patient,
+    booking: call?.booking || null,
     raw: call,
   };
 }
 
 function normalizeDetailCall(detail, fallback) {
   const base = detail || fallback?.raw || {};
+  const patient = base?.patient || fallback?.patient || {};
   return {
     id: base?.call_id || fallback?.id || "",
-    name: fallback?.name || base?.patient_name || "Patient",
+    name: patient?.display_name || fallback?.name || base?.patient_name || "Patient",
     phone: getDisplayedPhone(base?.customer_number || fallback?.phone),
     dialablePhone: getDialablePhone(base?.customer_number || fallback?.dialablePhone),
     time: base?.started_time || fallback?.time || "—",
@@ -252,6 +270,8 @@ function normalizeDetailCall(detail, fallback) {
     rdv: extractRdv(base) || fallback?.rdv || null,
     aiScore: deriveAiScore(base),
     transcript: buildTranscriptLines(base?.transcript),
+    patient,
+    booking: base?.booking || fallback?.booking || null,
     raw: base,
   };
 }
@@ -532,6 +552,10 @@ function CallDetailModal({
   followupNotes,
   setFollowupNotes,
   onSaveNotes,
+  patientNameDraft,
+  setPatientNameDraft,
+  onSavePatientName,
+  patientSaving,
   followupLoading,
   actionMessage,
 }) {
@@ -633,6 +657,39 @@ function CallDetailModal({
                         ? "Le rendez-vous détecté peut être revu ou confirmé dans l'agenda."
                         : "Utilisez l'action métier pour ouvrir la bonne suite côté client."}
                   </div>
+                </div>
+              </div>
+
+              <div style={{ background: "#fff", borderRadius: "12px", padding: "13px 15px", border: `1px solid ${T.borderLight}` }}>
+                <div style={{ fontSize: "10px", fontWeight: 700, color: T.textFaint, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: "8px" }}>Fiche patient cabinet</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+                  <div style={{ background: T.bg, borderRadius: 10, padding: "10px 12px", border: `1px solid ${T.borderLight}` }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: T.textFaint, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 5 }}>Nom retranscrit</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: T.text }}>{call?.patient?.raw_name || "Non capté"}</div>
+                  </div>
+                  <div style={{ background: T.bg, borderRadius: 10, padding: "10px 12px", border: `1px solid ${T.borderLight}` }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: T.textFaint, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 5 }}>Statut</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: call?.patient?.is_validated ? T.tealDark : T.orange }}>
+                      {call?.patient?.is_validated ? "Validé et enregistré" : "À valider"}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input
+                    value={patientNameDraft}
+                    onChange={(e) => setPatientNameDraft(e.target.value)}
+                    placeholder="Nom et prénom validés"
+                    style={{ flex: 1, height: 42, border: `1px solid ${T.border}`, borderRadius: 10, padding: "0 12px", fontSize: 13, color: T.text, outline: "none" }}
+                  />
+                  <button
+                    className="calls-primary-btn"
+                    type="button"
+                    onClick={onSavePatientName}
+                    disabled={patientSaving}
+                    style={{ padding: "11px 14px", background: `linear-gradient(135deg,${T.teal},${T.tealDark})`, border: "none", borderRadius: 10, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", whiteSpace: "nowrap" }}
+                  >
+                    {patientSaving ? "Enregistrement..." : "Valider le nom"}
+                  </button>
                 </div>
               </div>
 
@@ -740,6 +797,8 @@ export default function AppCalls() {
   const [actionMessage, setActionMessage] = useState("");
   const [followupNotes, setFollowupNotes] = useState("");
   const [followupLoading, setFollowupLoading] = useState(false);
+  const [patientNameDraft, setPatientNameDraft] = useState("");
+  const [patientSaving, setPatientSaving] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -766,6 +825,7 @@ export default function AppCalls() {
       setCallDetail(null);
       setDetailError("");
       setFollowupNotes("");
+      setPatientNameDraft("");
       return;
     }
     let cancelled = false;
@@ -777,6 +837,7 @@ export default function AppCalls() {
         if (!cancelled) {
           setCallDetail(data || null);
           setFollowupNotes(data?.followup_notes || "");
+          setPatientNameDraft(data?.patient?.validated_name || data?.patient?.raw_name || "");
         }
       })
       .catch((e) => {
@@ -904,6 +965,38 @@ export default function AppCalls() {
   async function saveFollowupState(nextState, notesOverride = followupNotes) {
     if (!selectedCallId) return;
     await persistFollowup(selectedCallId, nextState, notesOverride);
+  }
+
+  async function savePatientName() {
+    if (!selectedCallId) return;
+    const value = String(patientNameDraft || "").trim();
+    if (value.length < 2) {
+      setActionMessage("Le nom validé doit contenir au moins 2 caractères.");
+      return;
+    }
+    setPatientSaving(true);
+    try {
+      const data = await api.tenantUpdateCallPatient(selectedCallId, {
+        validated_name: value,
+        raw_name: callDetail?.patient?.raw_name || selectedCallSummary?.patient?.raw_name || "",
+      });
+      const nextPatient = data?.patient || {};
+      setCallDetail((prev) => (prev ? { ...prev, patient: nextPatient, patient_name: nextPatient.display_name || value } : prev));
+      setPayload((prev) => ({
+        ...(prev || { calls: [] }),
+        calls: (prev?.calls || []).map((call) =>
+          (call.call_id || call.id) === selectedCallId
+            ? { ...call, patient: nextPatient, patient_name: nextPatient.display_name || value }
+            : call,
+        ),
+      }));
+      setPatientNameDraft(nextPatient?.display_name || value);
+      setActionMessage("Nom patient validé et enregistré dans la fiche cabinet.");
+    } catch (e) {
+      setActionMessage(e?.message || "Impossible d'enregistrer le nom patient.");
+    } finally {
+      setPatientSaving(false);
+    }
   }
 
   async function runContextualAction(detail) {
@@ -1241,6 +1334,10 @@ export default function AppCalls() {
             followupNotes={followupNotes}
             setFollowupNotes={setFollowupNotes}
             onSaveNotes={() => saveFollowupState(callDetail?.followup_state || "new", followupNotes)}
+            patientNameDraft={patientNameDraft}
+            setPatientNameDraft={setPatientNameDraft}
+            onSavePatientName={savePatientName}
+            patientSaving={patientSaving}
             followupLoading={followupLoading}
             actionMessage={actionMessage}
           />

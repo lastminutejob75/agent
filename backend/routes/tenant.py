@@ -25,10 +25,13 @@ from backend.db import (
     cancel_booking_sqlite,
     ensure_tenant_config,
     find_slot_id_by_datetime,
+    get_cabinet_client_by_phone,
     get_call_followup,
     get_conn,
     list_free_slots,
+    normalize_phone_number,
     reschedule_booking_atomic,
+    upsert_cabinet_client,
     upsert_call_followup,
 )
 from backend.google_calendar import GoogleCalendarNotFoundError, GoogleCalendarPermissionError, GoogleCalendarService
@@ -323,6 +326,80 @@ def _call_display_phone(item: Optional[dict], detail: Optional[dict]) -> str:
     return ""
 
 
+def _latest_booking_meta(detail: Optional[dict]) -> Dict[str, Any]:
+    for event in reversed((detail or {}).get("events") or []):
+        if str((event or {}).get("event") or "").strip().lower() != "booking_confirmed":
+            continue
+        meta = (event or {}).get("meta") or {}
+        if isinstance(meta, dict):
+            return meta
+    return {}
+
+
+def _derive_raw_patient_name(detail: Optional[dict]) -> str:
+    booking = _latest_booking_meta(detail)
+    for candidate in (
+        booking.get("patient_name"),
+        booking.get("raw_name"),
+        (detail or {}).get("patient_name"),
+    ):
+        value = str(candidate or "").strip()
+        if value and value.lower() != "patient":
+            return value
+    return ""
+
+
+def _build_patient_payload(tenant_id: int, item: Optional[dict], detail: Optional[dict]) -> Dict[str, Any]:
+    phone = normalize_phone_number(_call_display_phone(item, detail))
+    profile = get_cabinet_client_by_phone(tenant_id, phone) if phone else None
+    raw_name = _derive_raw_patient_name(detail) or (profile or {}).get("raw_name") or ""
+    validated_name = (profile or {}).get("validated_name") or ""
+    display_name = validated_name or raw_name or "Patient"
+    return {
+        "phone": phone or "",
+        "raw_name": raw_name,
+        "validated_name": validated_name,
+        "display_name": display_name,
+        "validation_status": (profile or {}).get("validation_status") or ("validated" if validated_name else "pending"),
+        "profile_exists": bool(profile),
+        "is_validated": bool(validated_name),
+        "source_call_id": (profile or {}).get("source_call_id") or "",
+        "updated_at": (profile or {}).get("updated_at") or "",
+    }
+
+
+def _build_booking_payload(detail: Optional[dict]) -> Optional[Dict[str, Any]]:
+    booking = _latest_booking_meta(detail)
+    if not booking:
+        return None
+    start_iso = str(booking.get("start_iso") or "").strip()
+    end_iso = str(booking.get("end_iso") or "").strip()
+    slot_label = str(booking.get("slot_label") or "").strip()
+    motif = str(booking.get("motif") or "").strip()
+    event_id = str(booking.get("event_id") or "").strip()
+    if not any([start_iso, end_iso, slot_label, motif, event_id]):
+        return None
+    return {
+        "start_iso": start_iso,
+        "end_iso": end_iso,
+        "slot_label": slot_label,
+        "motif": motif,
+        "event_id": event_id,
+        "source": str(booking.get("booking_source") or ("google" if event_id else "local")).strip() or "local",
+    }
+
+
+def _resolve_agenda_patient_name(tenant_id: int, phone: Optional[str], fallback_name: Optional[str]) -> str:
+    phone_norm = normalize_phone_number(phone)
+    if phone_norm:
+        profile = get_cabinet_client_by_phone(tenant_id, phone_norm) or {}
+        display_name = str(profile.get("display_name") or "").strip()
+        if display_name:
+            return display_name
+    fallback = str(fallback_name or "").strip()
+    return fallback or "Patient"
+
+
 def _extract_google_description_line(description: str, prefix: str) -> Optional[str]:
     for line in (description or "").splitlines():
         if line.lower().startswith(prefix.lower()):
@@ -413,6 +490,11 @@ class TenantAgendaRescheduleBody(BaseModel):
 class TenantCallFollowupBody(BaseModel):
     followup_state: str
     notes: str = ""
+
+
+class TenantCallPatientBody(BaseModel):
+    validated_name: str
+    raw_name: str = ""
 
 
 @router.get("/me")
@@ -630,16 +712,20 @@ def tenant_calls(
             followup = {}
         status = _resolve_call_status(item, call_detail)
         call_context = _classify_call_context(status, call_detail)
+        patient = _build_patient_payload(tenant_id, item, call_detail)
+        booking = _build_booking_payload(call_detail)
         calls.append({
             "id": call_id,
             "time": _format_hhmm(started_at, tz_name),
             "duration": _format_duration_short(call_detail.get("duration_min") or item.get("duration_min")),
-            "patient_name": "Patient",
+            "patient_name": patient.get("display_name") or "Patient",
             "customer_number": _call_display_phone(item, call_detail),
             "agent_name": assistant_name,
             "summary": _call_summary_from_detail(status, call_detail),
             "status": status,
             "call_id": call_id,
+            "patient": patient,
+            "booking": booking,
             "followup_state": followup.get("followup_state") or "new",
             "followup_notes": followup.get("notes") or "",
             "reason_label": call_context.get("reason_label") or "",
@@ -670,6 +756,8 @@ def tenant_call_detail(
     followup = get_call_followup(tenant_id, call_id) or {}
     status = _resolve_call_status(None, raw)
     call_context = _classify_call_context(status, raw)
+    patient = _build_patient_payload(tenant_id, None, raw)
+    booking = _build_booking_payload(raw)
     events = []
     for event in raw.get("events") or []:
         events.append(
@@ -686,6 +774,9 @@ def tenant_call_detail(
         "status": status,
         "assistant_name": assistant_name,
         "customer_number": _call_display_phone(None, raw),
+        "patient_name": patient.get("display_name") or "Patient",
+        "patient": patient,
+        "booking": booking,
         "summary": _call_summary_from_detail(status, raw),
         "started_at": raw.get("started_at"),
         "started_time": _format_hhmm(raw.get("started_at"), tz_name),
@@ -730,6 +821,45 @@ def tenant_call_followup_update(
         "followup_notes": followup.get("notes") or "",
         "followup_updated_at": followup.get("updated_at") or "",
     }
+
+
+@router.patch("/calls/{call_id}/patient")
+def tenant_call_patient_update(
+    call_id: str,
+    body: TenantCallPatientBody,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Valide/corrige le nom d'un patient et l'inscrit dans la fiche client cabinet liée au téléphone."""
+    tenant_id = auth["tenant_id"]
+    raw = _get_call_detail(tenant_id, call_id)
+    if not raw:
+        raise HTTPException(404, "Call not found")
+    patient = _build_patient_payload(tenant_id, None, raw)
+    phone = patient.get("phone") or ""
+    if not phone:
+        raise HTTPException(400, "Numéro du patient introuvable pour cet appel")
+
+    validated_name = (body.validated_name or "").strip()
+    if len(validated_name) < 2:
+        raise HTTPException(400, "validated_name too short")
+
+    booking = _build_booking_payload(raw) or {}
+    profile = upsert_cabinet_client(
+        tenant_id,
+        phone,
+        raw_name=(body.raw_name or patient.get("raw_name") or "").strip() or None,
+        validated_name=validated_name,
+        source_call_id=call_id,
+        last_call_id=call_id,
+        last_booking_start=booking.get("start_iso"),
+        last_booking_end=booking.get("end_iso"),
+        last_booking_motif=booking.get("motif"),
+    )
+    if not profile:
+        raise HTTPException(500, "Impossible d'enregistrer la fiche client")
+
+    logger.info("tenant patient validated tenant_id=%s call_id=%s phone=%s", tenant_id, call_id, phone)
+    return {"ok": True, "call_id": call_id, "patient": _build_patient_payload(tenant_id, None, raw)}
 
 
 @router.get("/agenda")
@@ -783,11 +913,14 @@ def tenant_agenda(
                 summary = (event.get("summary") or "").strip()
                 description = (event.get("description") or "").strip()
                 patient = summary.replace("RDV - ", "", 1).strip() if summary.startswith("RDV - ") else (summary or "Patient")
+                patient_contact = _extract_google_description_line(description, "Contact")
+                patient = _resolve_agenda_patient_name(tenant_id, patient_contact, patient)
                 motif = _extract_google_description_line(description, "Motif") or (summary if summary and not summary.startswith("RDV - ") else "Consultation")
                 source = "UWI" if summary.startswith("RDV - ") or "Patient:" in description else "EXTERNAL"
                 slots.append({
                     "hour": start_local.strftime("%Hh"),
                     "patient": patient,
+                    "patient_phone": normalize_phone_number(patient_contact),
                     "type": motif,
                     "source": source,
                     "done": end_local <= now_local,
@@ -810,7 +943,7 @@ def tenant_agenda(
                     with conn.cursor() as cur:
                         cur.execute(
                             """
-                            SELECT a.id, a.slot_id, a.name, a.motif, s.start_ts
+                            SELECT a.id, a.slot_id, a.name, a.contact, a.motif, s.start_ts
                             FROM appointments a
                             JOIN slots s ON s.id = a.slot_id
                             WHERE a.tenant_id = %s
@@ -828,9 +961,11 @@ def tenant_agenda(
                             if not date and start_local < now_local:
                                 continue
                             end_local = start_local + timedelta(minutes=30)
+                            patient_name = _resolve_agenda_patient_name(tenant_id, row.get("contact"), row.get("name"))
                             slots.append({
                                 "hour": start_local.strftime("%Hh"),
-                                "patient": row.get("name") or "Patient",
+                                "patient": patient_name,
+                                "patient_phone": normalize_phone_number(row.get("contact")),
                                 "type": row.get("motif") or "Consultation",
                                 "source": "UWI",
                                 "done": end_local <= now_local,
@@ -849,7 +984,7 @@ def tenant_agenda(
             try:
                 rows = conn.execute(
                     """
-                    SELECT a.id, a.slot_id, a.name, a.motif, s.date, s.time
+                    SELECT a.id, a.slot_id, a.name, a.contact, a.motif, s.date, s.time
                     FROM appointments a
                     JOIN slots s ON s.id = a.slot_id
                     WHERE a.tenant_id = ? AND s.date = ?
@@ -858,16 +993,18 @@ def tenant_agenda(
                     (tenant_id, day_start.strftime("%Y-%m-%d")),
                 ).fetchall()
                 for row in rows:
-                    start_local = _parse_dt(f"{row[4]}T{row[5]}:00", tz_name)
+                    start_local = _parse_dt(f"{row[5]}T{row[6]}:00", tz_name)
                     if not start_local:
                         continue
                     if not date and start_local < now_local:
                         continue
                     end_local = start_local + timedelta(minutes=30)
+                    patient_name = _resolve_agenda_patient_name(tenant_id, row[3], row[2])
                     slots.append({
                         "hour": start_local.strftime("%Hh"),
-                        "patient": row[2] or "Patient",
-                        "type": row[3] or "Consultation",
+                        "patient": patient_name,
+                        "patient_phone": normalize_phone_number(row[3]),
+                        "type": row[4] or "Consultation",
                         "source": "UWI",
                         "done": end_local <= now_local,
                         "current": start_local <= now_local < end_local,

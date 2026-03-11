@@ -85,6 +85,31 @@ def _chosen_slot_iso(session: Any, choice: int) -> Tuple[Optional[str], Optional
     return (start or None, end or None)
 
 
+def _build_booking_event_context(
+    session: Any,
+    *,
+    choice: int,
+    call_id: str,
+    start_iso: Optional[str],
+    end_iso: Optional[str],
+    event_id: Optional[str],
+) -> str:
+    slot_label = tools_booking.get_label_for_choice(session, choice) or ""
+    payload = {
+        "call_id": (call_id or "").strip(),
+        "patient_name": (getattr(session.qualif_data, "name", None) or "").strip(),
+        "patient_contact": (getattr(session.qualif_data, "contact", None) or getattr(session, "customer_phone", None) or "").strip(),
+        "contact_type": (getattr(session.qualif_data, "contact_type", None) or "").strip(),
+        "motif": (getattr(session.qualif_data, "motif", None) or "").strip(),
+        "slot_label": slot_label,
+        "start_iso": (start_iso or "").strip(),
+        "end_iso": (end_iso or "").strip(),
+        "event_id": (event_id or "").strip(),
+        "booking_source": "google" if (event_id or "").strip() else "local",
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
+
 def handle_book(
     session: Any,
     selected_slot: Optional[str],
@@ -134,7 +159,18 @@ def handle_book(
         try:
             from backend.engine import _persist_ivr_event
 
-            _persist_ivr_event(session, "booking_confirmed")
+            _persist_ivr_event(
+                session,
+                "booking_confirmed",
+                context=_build_booking_event_context(
+                    session,
+                    choice=choice,
+                    call_id=call_id,
+                    start_iso=start_iso,
+                    end_iso=end_iso,
+                    event_id=event_id,
+                ),
+            )
         except Exception as e:
             logger.warning("BOOKING_CONFIRMED_PERSIST_FAILED call_id=%s err=%s", (call_id or "")[:24], str(e)[:120])
         logger.info(
