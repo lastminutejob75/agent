@@ -134,6 +134,57 @@ def pg_find_slot_id_by_datetime(
         return None
 
 
+def pg_ensure_slot_id_by_datetime(
+    date_str: str,
+    time_str: str,
+    tenant_id: int = 1,
+) -> Optional[int]:
+    """
+    Garantit l'existence d'un slot pour une date/heure donnée et retourne son id.
+    Utilisé pour mirrorer un RDV Google dans l'agenda interne UWI.
+    """
+    url = _pg_url()
+    if not url:
+        return None
+
+    def _do() -> Optional[int]:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO slots (tenant_id, start_ts)
+                    VALUES (%s, %s::timestamptz)
+                    ON CONFLICT (tenant_id, start_ts) DO NOTHING
+                    """,
+                    (tenant_id, f"{date_str[:10]}T{(time_str or '09:00')[:5]}:00"),
+                )
+                cur.execute(
+                    """
+                    SELECT id FROM slots
+                    WHERE tenant_id = %s
+                      AND start_ts::date = %s::date
+                      AND to_char(start_ts, 'HH24:MI') = %s
+                    LIMIT 1
+                    """,
+                    (tenant_id, date_str[:10], (time_str or "09:00")[:5]),
+                )
+                row = cur.fetchone()
+                conn.commit()
+                return int(row[0]) if row else None
+
+    try:
+        return _do()
+    except Exception as e:
+        if _is_transient(e):
+            try:
+                return _do()
+            except Exception:
+                pass
+        logger.debug("pg_ensure_slot_id_by_datetime failed: %s", e)
+        return None
+
+
 def pg_count_free_slots(tenant_id: int) -> Optional[int]:
     """Compte les créneaux libres (après cleanup)."""
     url = _pg_url()

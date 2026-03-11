@@ -545,6 +545,8 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
   const PARAM_KEYS = ["calendar_id", "phone_number", "transfer_number", "timezone", "assistant_name"];
   const bookingRules = normalizeBookingRules(params);
   const horairesPreview = deriveHorairesText(bookingRules);
+  const mirrorGoogleBookings = String(params.mirror_google_bookings_to_internal || "").toLowerCase() === "true";
+  const isGoogleProvider = (params.calendar_provider || "none") === "google";
   const normalizedTenantName = (tenant?.name || "").trim();
   const isSystemTenant = normalizedTenantName.toUpperCase() === "DEFAULT" || Number(tenantId) === 1;
   const isInactiveTenant = (tenant?.status || "").toLowerCase() === "inactive";
@@ -775,6 +777,27 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
               <option value="google">Google Calendar</option>
             </select>
           </div>
+
+          <label style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={mirrorGoogleBookings}
+              disabled={!isGoogleProvider}
+              onChange={(e) =>
+                setParams((p) => ({
+                  ...p,
+                  mirror_google_bookings_to_internal: e.target.checked ? "true" : "false",
+                }))}
+            />
+            <span style={{ fontSize: 12, color: isGoogleProvider ? C.text : C.muted }}>
+              Conserver un miroir interne UWI quand le RDV est créé dans Google Calendar
+            </span>
+          </label>
+          {!isGoogleProvider ? (
+            <div style={{ fontSize: 11, color: C.muted, marginTop: -6, marginBottom: 14 }}>
+              Active d'abord `Google Calendar` comme provider pour utiliser le mode double écriture.
+            </div>
+          ) : null}
 
           <div style={{ marginBottom: 12 }}>
             <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "block" }}>Durée RDV (minutes)</div>

@@ -817,6 +817,39 @@ def find_slot_id_by_datetime(date_str: str, time_str: str, tenant_id: int = 1) -
         conn.close()
 
 
+def ensure_slot_id_by_datetime(date_str: str, time_str: str, tenant_id: int = 1) -> Optional[int]:
+    """
+    Garantit l'existence d'un slot local pour une date/heure donnée et retourne son id.
+    PG-first puis SQLite.
+    """
+    from backend import config
+    if config.USE_PG_SLOTS:
+        try:
+            from backend.slots_pg import pg_ensure_slot_id_by_datetime
+
+            slot_id = pg_ensure_slot_id_by_datetime(date_str, time_str, tenant_id=tenant_id)
+            if slot_id is not None:
+                return slot_id
+        except Exception:
+            pass
+    config._sqlite_guard("db.ensure_slot_id_by_datetime")
+    conn = get_conn()
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO slots (tenant_id, date, time, is_booked) VALUES (?, ?, ?, 0)",
+            (tenant_id, date_str[:10], (time_str or "09:00")[:5]),
+        )
+        cur = conn.execute(
+            "SELECT id FROM slots WHERE tenant_id = ? AND date = ? AND time = ? LIMIT 1",
+            (tenant_id, date_str[:10], (time_str or "09:00")[:5]),
+        )
+        row = cur.fetchone()
+        conn.commit()
+        return int(row["id"]) if row else None
+    finally:
+        conn.close()
+
+
 def book_slot_atomic(
     slot_id: int,
     name: str,

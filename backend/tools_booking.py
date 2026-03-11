@@ -80,6 +80,76 @@ def _resolve_slot_id_from_start_iso(
         return None
 
 
+def _ensure_local_slot_id_from_start_iso(start_iso: str, tenant_id: int = 1) -> Optional[int]:
+    """
+    Garantit l'existence d'un slot local à partir d'un ISO start pour le miroir interne.
+    """
+    if not start_iso:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(start_iso).replace("Z", "+00:00"))
+        date_str = dt.strftime("%Y-%m-%d")
+        time_str = dt.strftime("%H:%M")
+        from backend.db import ensure_slot_id_by_datetime
+
+        return ensure_slot_id_by_datetime(date_str, time_str, tenant_id=tenant_id)
+    except Exception as e:
+        logger.debug("_ensure_local_slot_id_from_start_iso failed: %s", e)
+        return None
+
+
+def _mirror_google_bookings_enabled(session: Any) -> bool:
+    tenant_id = getattr(session, "tenant_id", None) or 1
+    try:
+        from backend.tenant_config import get_params
+
+        raw = (get_params(tenant_id) or {}).get("mirror_google_bookings_to_internal")
+    except Exception:
+        raw = None
+    if isinstance(raw, bool):
+        return raw
+    if raw is None:
+        return False
+    return str(raw).strip().lower() in {"1", "true", "yes", "on", "oui"}
+
+
+def _mirror_google_booking_to_internal(session: Any, start_iso: str, event_id: str) -> bool:
+    """
+    Crée un RDV miroir dans l'agenda interne UWI après un booking Google réussi.
+    Ne doit jamais faire échouer le booking Google principal.
+    """
+    tenant_id = getattr(session, "tenant_id", None) or 1
+    slot_id = _ensure_local_slot_id_from_start_iso(start_iso, tenant_id=tenant_id)
+    if slot_id is None:
+        logger.warning(
+            "BOOKING_MIRROR_INTERNAL_FAILED tenant_id=%s conv_id=%s reason=slot_unavailable start=%s event_id=%s",
+            tenant_id,
+            getattr(session, "conv_id", "")[:24],
+            (start_iso or "")[:19],
+            (event_id or "")[:24],
+        )
+        return False
+    source = "pg" if config.USE_PG_SLOTS else "sqlite"
+    ok = _book_local_by_slot_id(session, int(slot_id), source=source)
+    if ok:
+        logger.info(
+            "BOOKING_MIRROR_INTERNAL_OK tenant_id=%s conv_id=%s slot_id=%s event_id=%s",
+            tenant_id,
+            getattr(session, "conv_id", "")[:24],
+            slot_id,
+            (event_id or "")[:24],
+        )
+        return True
+    logger.warning(
+        "BOOKING_MIRROR_INTERNAL_FAILED tenant_id=%s conv_id=%s reason=book_failed slot_id=%s event_id=%s",
+        tenant_id,
+        getattr(session, "conv_id", "")[:24],
+        slot_id,
+        (event_id or "")[:24],
+    )
+    return False
+
+
 def _derive_day_from_start(start_iso: Optional[str]) -> str:
     """Dérive le jour en français (lundi, mardi...) depuis start ISO."""
     if not start_iso:
@@ -1074,6 +1144,8 @@ def _book_google_by_iso(session, start_iso: str, end_iso: str) -> tuple[bool, st
             if event_id:
                 session.google_event_id = event_id
                 logger.info("RDV Google Calendar créé: %s", event_id)
+                if _mirror_google_bookings_enabled(session):
+                    _mirror_google_booking_to_internal(session, start_iso, event_id)
                 return True, None
             return False, "slot_taken"
         except GoogleCalendarPermissionError as e:

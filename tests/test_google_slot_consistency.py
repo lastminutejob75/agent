@@ -63,3 +63,83 @@ def test_serialize_slots_for_session_adds_source():
     assert out[0]["slot_id"] == 42
     assert out[0]["start_iso"] == "2026-02-03T10:00:00"
     assert out[0]["end_iso"] is not None  # déduit start + 15 min
+
+
+def test_book_google_by_iso_mirrors_internal_when_enabled(monkeypatch):
+    """Si le miroir Google est activé, un booking Google réussi crée aussi un RDV interne UWI."""
+
+    class FakeCalendar:
+        def can_propose_slots(self):
+            return True
+
+        def book_appointment(self, **kwargs):
+            return "evt_google_123"
+
+    class Qualif:
+        name = "Jean Dupont"
+        contact = "jean@example.com"
+        motif = "Consultation"
+
+    class Session:
+        tenant_id = 7
+        conv_id = "conv-google-mirror"
+        qualif_data = Qualif()
+        google_event_id = None
+
+    mirrored = {}
+
+    monkeypatch.setattr("backend.calendar_adapter.get_calendar_adapter", lambda session: FakeCalendar())
+    monkeypatch.setattr("backend.tenant_config.get_params", lambda tenant_id: {"mirror_google_bookings_to_internal": "true"})
+    monkeypatch.setattr(tools_booking, "_ensure_local_slot_id_from_start_iso", lambda start_iso, tenant_id=1: 55)
+
+    def fake_book_local(session, slot_id, source="sqlite"):
+        mirrored["slot_id"] = slot_id
+        mirrored["source"] = source
+        return True
+
+    monkeypatch.setattr(tools_booking, "_book_local_by_slot_id", fake_book_local)
+
+    ok, reason = tools_booking._book_google_by_iso(Session(), "2026-02-04T14:00:00", "2026-02-04T14:15:00")
+
+    assert ok is True
+    assert reason is None
+    assert mirrored == {"slot_id": 55, "source": "pg" if tools_booking.config.USE_PG_SLOTS else "sqlite"}
+
+
+def test_book_google_by_iso_does_not_mirror_when_disabled(monkeypatch):
+    """Sans flag activé, le booking Google ne crée pas de RDV interne miroir."""
+
+    class FakeCalendar:
+        def can_propose_slots(self):
+            return True
+
+        def book_appointment(self, **kwargs):
+            return "evt_google_456"
+
+    class Qualif:
+        name = "Marie Dupont"
+        contact = "marie@example.com"
+        motif = "Suivi"
+
+    class Session:
+        tenant_id = 8
+        conv_id = "conv-google-no-mirror"
+        qualif_data = Qualif()
+        google_event_id = None
+
+    monkeypatch.setattr("backend.calendar_adapter.get_calendar_adapter", lambda session: FakeCalendar())
+    monkeypatch.setattr("backend.tenant_config.get_params", lambda tenant_id: {"mirror_google_bookings_to_internal": "false"})
+
+    called = []
+
+    def fake_book_local(*args, **kwargs):
+        called.append(True)
+        return True
+
+    monkeypatch.setattr(tools_booking, "_book_local_by_slot_id", fake_book_local)
+
+    ok, reason = tools_booking._book_google_by_iso(Session(), "2026-02-05T10:00:00", "2026-02-05T10:15:00")
+
+    assert ok is True
+    assert reason is None
+    assert called == []
