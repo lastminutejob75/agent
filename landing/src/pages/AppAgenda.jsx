@@ -520,7 +520,9 @@ export default function AppAgenda() {
           sourceLabel: slot.source === "UWI" ? "Téléphone" : "Agenda externe",
           sourceBadge: slot.source === "UWI" ? "UWI" : "Externe",
           detailLine: slot.source === "UWI" ? "Réservation via l'assistant vocal" : "Synchronisé depuis l'agenda connecté",
-          appointmentId: slot.appointment_id,
+          appointmentId: slot.appointment_id || null,
+          externalEventId: slot.event_id || "",
+          actionId: slot.appointment_id || slot.event_id || "",
           slotId: slot.slot_id,
           canCancel: !!slot.can_cancel,
           canReschedule: !!slot.can_reschedule,
@@ -703,6 +705,7 @@ export default function AppAgenda() {
       }
       await api.tenantRescheduleAgendaAppointment(draggedAppointment.appointmentId, {
         new_slot_id: slotId,
+        external_event_id: draggedAppointment.externalEventId || "",
       });
       if (selectedAppointment?.appointmentId === draggedAppointment.appointmentId) {
         setSelectedAppointment(null);
@@ -1518,8 +1521,11 @@ export default function AppAgenda() {
                       try {
                         setAppointmentActionLoading(true);
                         await api.tenantCancelAgendaAppointment(
-                          selectedAppointment.appointmentId || selectedAppointment.id,
-                          { source: selectedAppointment.source },
+                          selectedAppointment.actionId || selectedAppointment.appointmentId || selectedAppointment.externalEventId || selectedAppointment.id,
+                          {
+                            source: selectedAppointment.source,
+                            external_event_id: selectedAppointment.externalEventId || "",
+                          },
                         );
                         setActionMessage("Rendez-vous annulé.");
                         setSelectedAppointment(null);
@@ -1621,6 +1627,7 @@ export default function AppAgenda() {
                               setAppointmentActionLoading(true);
                               await api.tenantRescheduleAgendaAppointment(selectedAppointment.appointmentId, {
                                 new_slot_id: Number(selectedNewSlotId),
+                                external_event_id: selectedAppointment.externalEventId || "",
                               });
                               setActionMessage("Rendez-vous déplacé.");
                               setSelectedAppointment(null);

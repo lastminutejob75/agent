@@ -479,12 +479,169 @@ def _get_local_appointment_by_id(tenant_id: int, appointment_id: int) -> Optiona
         conn.close()
 
 
+def _google_mirror_enabled(detail: Optional[dict]) -> bool:
+    params = (detail or {}).get("params") or {}
+    provider = (params.get("calendar_provider") or "").strip() == "google"
+    return provider and _is_truthy(params.get("mirror_google_bookings_to_internal"))
+
+
+def _find_local_appointment_for_google_event(
+    tenant_id: int,
+    start_local: datetime,
+    patient_contact: Optional[str],
+    fallback_name: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    contact = str(patient_contact or "").strip()
+    name = str(fallback_name or "").strip()
+    if not start_local or (not contact and not name):
+        return None
+
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_SLOTS_URL")
+    if url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+
+            start_utc = start_local.astimezone(timezone.utc)
+            window_start = start_utc - timedelta(minutes=1)
+            window_end = start_utc + timedelta(minutes=1)
+            with psycopg.connect(url, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif, s.start_ts
+                        FROM appointments a
+                        JOIN slots s ON s.id = a.slot_id
+                        WHERE a.tenant_id = %s
+                          AND s.start_ts >= %s
+                          AND s.start_ts < %s
+                          AND (
+                                (%s <> '' AND LOWER(TRIM(COALESCE(a.contact, ''))) = LOWER(TRIM(%s)))
+                             OR (%s = '' AND %s <> '' AND LOWER(TRIM(COALESCE(a.name, ''))) = LOWER(TRIM(%s)))
+                          )
+                        ORDER BY a.created_at DESC
+                        LIMIT 1
+                        """,
+                        (tenant_id, window_start, window_end, contact, contact, contact, name, name),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        return {
+                            "id": int(row.get("id") or 0),
+                            "slot_id": int(row.get("slot_id") or 0),
+                            "name": row.get("name") or "",
+                            "contact": row.get("contact") or "",
+                            "contact_type": row.get("contact_type") or "",
+                            "motif": row.get("motif") or "",
+                        }
+        except Exception as e:
+            logger.debug("local appointment mirror lookup pg failed tenant_id=%s err=%s", tenant_id, e)
+
+    ensure_tenant_config()
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif
+            FROM appointments a
+            JOIN slots s ON s.id = a.slot_id AND s.tenant_id = a.tenant_id
+            WHERE a.tenant_id = ?
+              AND s.date = ?
+              AND s.time = ?
+              AND (
+                    (? <> '' AND LOWER(TRIM(COALESCE(a.contact, ''))) = LOWER(TRIM(?)))
+                 OR (? = '' AND ? <> '' AND LOWER(TRIM(COALESCE(a.name, ''))) = LOWER(TRIM(?)))
+              )
+            ORDER BY a.created_at DESC
+            LIMIT 1
+            """,
+            (
+                tenant_id,
+                start_local.strftime("%Y-%m-%d"),
+                start_local.strftime("%H:%M"),
+                contact,
+                contact,
+                contact,
+                name,
+                name,
+            ),
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "id": int(row["id"] or 0),
+            "slot_id": int(row["slot_id"] or 0),
+            "name": row["name"] or "",
+            "contact": row["contact"] or "",
+            "contact_type": row["contact_type"] or "",
+            "motif": row["motif"] or "",
+        }
+    finally:
+        conn.close()
+
+
+def _get_slot_window(
+    tenant_id: int,
+    slot_id: int,
+    tz_name: str,
+    duration_minutes: int,
+) -> Optional[tuple[datetime, datetime]]:
+    if not slot_id:
+        return None
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_SLOTS_URL")
+    if url:
+        try:
+            import psycopg
+
+            with psycopg.connect(url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT start_ts
+                        FROM slots
+                        WHERE tenant_id = %s AND id = %s
+                        LIMIT 1
+                        """,
+                        (tenant_id, slot_id),
+                    )
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        start_local = _parse_dt(row[0], tz_name)
+                        if start_local:
+                            return start_local, start_local + timedelta(minutes=duration_minutes)
+        except Exception as e:
+            logger.debug("slot window pg lookup failed tenant_id=%s slot_id=%s err=%s", tenant_id, slot_id, e)
+
+    ensure_tenant_config()
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT date, time
+            FROM slots
+            WHERE tenant_id = ? AND id = ?
+            LIMIT 1
+            """,
+            (tenant_id, slot_id),
+        ).fetchone()
+        if not row:
+            return None
+        start_local = _parse_dt(f"{row['date']}T{row['time']}:00", tz_name)
+        if not start_local:
+            return None
+        return start_local, start_local + timedelta(minutes=duration_minutes)
+    finally:
+        conn.close()
+
+
 class TenantAgendaCancelBody(BaseModel):
     source: str = "UWI"
+    external_event_id: str = ""
 
 
 class TenantAgendaRescheduleBody(BaseModel):
     new_slot_id: int
+    external_event_id: str = ""
 
 
 class TenantCallFollowupBody(BaseModel):
@@ -889,6 +1046,7 @@ def tenant_agenda(
         day_end = day_start + timedelta(days=max(1, int(upcoming_days)))
     slots: List[Dict[str, Any]] = []
 
+    mirror_enabled = _google_mirror_enabled(detail)
     if (params.get("calendar_provider") or "").strip() == "google" and (params.get("calendar_id") or "").strip():
         try:
             service = GoogleCalendarService((params.get("calendar_id") or "").strip())
@@ -917,6 +1075,14 @@ def tenant_agenda(
                 patient = _resolve_agenda_patient_name(tenant_id, patient_contact, patient)
                 motif = _extract_google_description_line(description, "Motif") or (summary if summary and not summary.startswith("RDV - ") else "Consultation")
                 source = "UWI" if summary.startswith("RDV - ") or "Patient:" in description else "EXTERNAL"
+                mirror_booking = None
+                if mirror_enabled and source == "UWI":
+                    mirror_booking = _find_local_appointment_for_google_event(
+                        tenant_id=tenant_id,
+                        start_local=start_local,
+                        patient_contact=patient_contact,
+                        fallback_name=patient,
+                    )
                 slots.append({
                     "hour": start_local.strftime("%Hh"),
                     "patient": patient,
@@ -926,10 +1092,10 @@ def tenant_agenda(
                     "done": end_local <= now_local,
                     "current": start_local <= now_local < end_local,
                     "event_id": event.get("id") or "",
-                    "appointment_id": None,
-                    "slot_id": None,
+                    "appointment_id": int(mirror_booking.get("id") or 0) if mirror_booking else None,
+                    "slot_id": int(mirror_booking.get("slot_id") or 0) if mirror_booking else None,
                     "can_cancel": source == "UWI",
-                    "can_reschedule": False,
+                    "can_reschedule": bool(mirror_booking),
                 })
         except Exception as e:
             logger.warning("tenant agenda google failed tenant_id=%s: %s", tenant_id, e)
@@ -1043,7 +1209,7 @@ def tenant_agenda_available_slots(
     if not detail:
         raise HTTPException(404, "Tenant not found")
     params = detail.get("params") or {}
-    if (params.get("calendar_provider") or "").strip() == "google":
+    if (params.get("calendar_provider") or "").strip() == "google" and not _google_mirror_enabled(detail):
         raise HTTPException(400, "Déplacement automatique indisponible avec Google Calendar")
     if date and time:
         slot_id = None
@@ -1095,19 +1261,69 @@ def tenant_agenda_cancel_appointment(
         raise HTTPException(400, "Seuls les rendez-vous UWI sont modifiables depuis cet espace")
 
     if (params.get("calendar_provider") or "").strip() == "google":
-        event_id = (appointment_id or "").strip()
-        if not event_id:
-            raise HTTPException(400, "event_id required")
-        try:
-            service = GoogleCalendarService((params.get("calendar_id") or "").strip())
-            ok = service.cancel_appointment(event_id)
-        except Exception as e:
-            logger.warning("tenant agenda cancel google failed tenant_id=%s event_id=%s err=%s", tenant_id, event_id, e)
-            raise HTTPException(502, "Impossible d'annuler ce rendez-vous Google pour le moment")
-        if not ok:
-            raise HTTPException(400, "Annulation impossible")
-        logger.info("tenant agenda cancel google ok tenant_id=%s event_id=%s", tenant_id, event_id)
-        return {"ok": True, "cancelled": True, "provider": "google"}
+        raw_appointment_id = (appointment_id or "").strip()
+        google_event_id = (body.external_event_id or "").strip()
+        local_booking = None
+        local_appt_id = None
+
+        if raw_appointment_id.isdigit():
+            local_appt_id = int(raw_appointment_id)
+            local_booking = _get_local_appointment_by_id(tenant_id, local_appt_id)
+            if not local_booking:
+                local_appt_id = None
+
+        if not google_event_id and raw_appointment_id and not raw_appointment_id.isdigit():
+            google_event_id = raw_appointment_id
+
+        if not google_event_id and local_appt_id is None:
+            raise HTTPException(400, "appointment_id ou event_id requis")
+
+        google_cancelled = False
+        local_cancelled = local_appt_id is None
+        if google_event_id:
+            try:
+                service = GoogleCalendarService((params.get("calendar_id") or "").strip())
+                ok = service.cancel_appointment(google_event_id)
+            except Exception as e:
+                logger.warning(
+                    "tenant agenda cancel google failed tenant_id=%s event_id=%s err=%s",
+                    tenant_id,
+                    google_event_id,
+                    e,
+                )
+                raise HTTPException(502, "Impossible d'annuler ce rendez-vous Google pour le moment")
+            if not ok:
+                raise HTTPException(400, "Annulation impossible")
+            google_cancelled = True
+
+        if local_appt_id is not None:
+            local_cancelled = cancel_booking_sqlite(
+                {"id": local_appt_id, "slot_id": local_booking.get("slot_id") if local_booking else None},
+                tenant_id=tenant_id,
+            )
+            if not local_cancelled:
+                logger.warning(
+                    "tenant agenda cancel mirror failed tenant_id=%s appointment_id=%s event_id=%s",
+                    tenant_id,
+                    local_appt_id,
+                    google_event_id,
+                )
+
+        logger.info(
+            "tenant agenda cancel google ok tenant_id=%s appointment_id=%s event_id=%s local_cancelled=%s",
+            tenant_id,
+            local_appt_id,
+            google_event_id,
+            local_cancelled,
+        )
+        provider = "google+local" if google_cancelled and local_appt_id is not None else ("google" if google_cancelled else "local")
+        return {
+            "ok": True,
+            "cancelled": True,
+            "provider": provider,
+            "google_cancelled": google_cancelled,
+            "local_cancelled": local_cancelled,
+        }
 
     try:
         appt_id = int(appointment_id)
@@ -1135,11 +1351,73 @@ def tenant_agenda_reschedule_appointment(
     if not detail:
         raise HTTPException(404, "Tenant not found")
     params = detail.get("params") or {}
-    if (params.get("calendar_provider") or "").strip() == "google":
-        raise HTTPException(400, "Déplacement automatique indisponible avec Google Calendar")
     booking = _get_local_appointment_by_id(tenant_id, appointment_id)
     if not booking:
         raise HTTPException(404, "Rendez-vous introuvable")
+    if (params.get("calendar_provider") or "").strip() == "google":
+        if not _google_mirror_enabled(detail):
+            raise HTTPException(400, "Déplacement automatique indisponible avec Google Calendar")
+        event_id = (body.external_event_id or "").strip()
+        if not event_id:
+            raise HTTPException(400, "external_event_id requis pour déplacer ce rendez-vous")
+        rules = get_booking_rules(tenant_id)
+        duration_minutes = int(rules.get("duration_minutes") or 15)
+        tz_name = _tenant_timezone(detail)
+        old_window = _get_slot_window(tenant_id, int(booking.get("slot_id") or 0), tz_name, duration_minutes)
+        new_window = _get_slot_window(tenant_id, int(body.new_slot_id), tz_name, duration_minutes)
+        if not old_window or not new_window:
+            raise HTTPException(400, "Créneau introuvable")
+
+        old_start, old_end = old_window
+        new_start, new_end = new_window
+        service = GoogleCalendarService((params.get("calendar_id") or "").strip())
+        try:
+            moved = service.reschedule_appointment(event_id, new_start.isoformat(), new_end.isoformat())
+        except Exception as e:
+            logger.warning(
+                "tenant agenda reschedule google failed tenant_id=%s appointment_id=%s event_id=%s err=%s",
+                tenant_id,
+                appointment_id,
+                event_id,
+                e,
+            )
+            raise HTTPException(502, "Impossible de déplacer ce rendez-vous Google pour le moment")
+        if not moved:
+            raise HTTPException(400, "Déplacement impossible")
+        try:
+            ok = reschedule_booking_atomic(appointment_id, int(body.new_slot_id), tenant_id=tenant_id)
+        except Exception as e:
+            logger.warning(
+                "tenant agenda reschedule local mirror exception tenant_id=%s appointment_id=%s new_slot_id=%s err=%s",
+                tenant_id,
+                appointment_id,
+                body.new_slot_id,
+                e,
+            )
+            rollback_ok = service.reschedule_appointment(event_id, old_start.isoformat(), old_end.isoformat())
+            if rollback_ok:
+                raise HTTPException(409, "Le créneau sélectionné n'est plus disponible")
+            raise HTTPException(502, "Le rendez-vous Google a été déplacé mais le miroir interne n'a pas pu être remis à jour")
+        if ok is False:
+            rollback_ok = service.reschedule_appointment(event_id, old_start.isoformat(), old_end.isoformat())
+            logger.warning(
+                "tenant agenda reschedule local mirror failed tenant_id=%s appointment_id=%s new_slot_id=%s rollback_ok=%s",
+                tenant_id,
+                appointment_id,
+                body.new_slot_id,
+                rollback_ok,
+            )
+            if rollback_ok:
+                raise HTTPException(409, "Le créneau sélectionné n'est plus disponible")
+            raise HTTPException(502, "Le rendez-vous Google a été déplacé mais le miroir interne n'a pas pu être remis à jour")
+        logger.info(
+            "tenant agenda reschedule google ok tenant_id=%s appointment_id=%s event_id=%s new_slot_id=%s",
+            tenant_id,
+            appointment_id,
+            event_id,
+            body.new_slot_id,
+        )
+        return {"ok": True, "rescheduled": True, "provider": "google+local"}
     ok = reschedule_booking_atomic(appointment_id, int(body.new_slot_id), tenant_id=tenant_id)
     if ok is False:
         raise HTTPException(409, "Le créneau sélectionné n'est plus disponible")

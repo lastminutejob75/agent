@@ -343,6 +343,42 @@ class GoogleCalendarService:
             logger.error(f"Error cancelling appointment: {e}")
             return False
 
+    def reschedule_appointment(self, event_id: str, start_time: str, end_time: str) -> bool:
+        """
+        Déplace un RDV existant dans Google Calendar.
+
+        Args:
+            event_id: ID de l'event Google Calendar
+            start_time: Nouveau début au format ISO
+            end_time: Nouvelle fin au format ISO
+
+        Returns:
+            True si succès, False sinon
+        """
+        try:
+            event = self.service.events().get(
+                calendarId=self.calendar_id,
+                eventId=event_id,
+            ).execute()
+            event["start"] = {
+                "dateTime": start_time,
+                "timeZone": "Europe/Paris",
+            }
+            event["end"] = {
+                "dateTime": end_time,
+                "timeZone": "Europe/Paris",
+            }
+            self.service.events().update(
+                calendarId=self.calendar_id,
+                eventId=event_id,
+                body=event,
+            ).execute()
+            logger.info("Appointment rescheduled: %s", event_id)
+            return True
+        except Exception as e:
+            logger.error("Error rescheduling appointment %s: %s", event_id, e)
+            return False
+
 
 # Helper pour tests
 def test_calendar_integration():
