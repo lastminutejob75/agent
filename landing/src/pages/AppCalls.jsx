@@ -131,6 +131,24 @@ function getModelIntentUi(call) {
   return MODEL_INTENTS[getModelIntentKey(call)] || MODEL_INTENTS.info;
 }
 
+function getIntentGlyph(intent) {
+  switch (intent) {
+    case "rdv":
+      return "📅";
+    case "cancel":
+      return "❌";
+    case "hours":
+      return "🕒";
+    case "urgent":
+      return "🚨";
+    case "reschedule":
+      return "🔁";
+    case "info":
+    default:
+      return "💬";
+  }
+}
+
 function parseHourFromTime(value) {
   const match = String(value || "").match(/(\d{1,2})[:h]/i);
   return match ? Number(match[1]) : -1;
@@ -409,7 +427,7 @@ function CallRowModel({ call, onOpen, onRecall, isLast }) {
   const [hov, setHov] = useState(false);
   const [rdvHov, setRdvHov] = useState(false);
   const dialablePhone = getDialablePhone(call?.dialablePhone || call?.phone || call?.raw?.customer_number);
-  const phoneGlyph = call.status === "missed" ? "📵" : call.status === "planned" ? "📞" : "📲";
+  const intentGlyph = getIntentGlyph(call.intent);
   return (
     <div
       className="calls-row"
@@ -424,13 +442,13 @@ function CallRowModel({ call, onOpen, onRecall, isLast }) {
           onClick={(e) => e.stopPropagation()}
           title={`Appeler ${call.name || call.phone}`}
           aria-label={`Appeler ${call.name || call.phone}`}
-          style={{ width: "40px", height: "40px", borderRadius: "11px", background: call.statusUi.bg, border: `1px solid ${call.statusUi.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "17px", flexShrink: 0, textDecoration: "none", boxShadow: hov ? "0 6px 18px rgba(15,23,42,0.08)" : "none" }}
+          style={{ width: "40px", height: "40px", borderRadius: "11px", background: call.intentUi.bg, border: `1px solid ${call.intent === "urgent" ? T.redBorder : call.intent === "reschedule" ? T.purpleBorder : call.intent === "hours" ? T.orangeBorder : call.intent === "info" ? T.blueBorder : T.tealBorder}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "17px", flexShrink: 0, textDecoration: "none", boxShadow: hov ? "0 6px 18px rgba(15,23,42,0.08)" : "none" }}
         >
-          {phoneGlyph}
+          {intentGlyph}
         </a>
       ) : (
-        <div style={{ width: "40px", height: "40px", borderRadius: "11px", background: call.statusUi.bg, border: `1px solid ${call.statusUi.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "17px", flexShrink: 0 }}>
-          {phoneGlyph}
+        <div style={{ width: "40px", height: "40px", borderRadius: "11px", background: call.intentUi.bg, border: `1px solid ${call.intent === "urgent" ? T.redBorder : call.intent === "reschedule" ? T.purpleBorder : call.intent === "hours" ? T.orangeBorder : call.intent === "info" ? T.blueBorder : T.tealBorder}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "17px", flexShrink: 0 }}>
+          {intentGlyph}
         </div>
       )}
 
@@ -520,7 +538,7 @@ function CallDetailModal({
   const [tab, setTab] = useState("summary");
   if (!call) return null;
   const dialablePhone = getDialablePhone(call?.dialablePhone || call?.phone || call?.raw?.customer_number);
-  const phoneGlyph = call.status === "missed" ? "📵" : call.status === "planned" ? "📞" : "📲";
+  const intentGlyph = getIntentGlyph(call.intent);
   const primaryActionLabel = getActionLabel(call?.raw || call);
   const followupState = call?.raw?.followup_state || "new";
   const followupBadge =
@@ -537,8 +555,8 @@ function CallDetailModal({
         <div style={{ padding: "20px 22px 0", flexShrink: 0 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-              <div style={{ width: "44px", height: "44px", borderRadius: "12px", background: call.statusUi.bg, border: `1px solid ${call.statusUi.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "20px" }}>
-                {phoneGlyph}
+              <div style={{ width: "44px", height: "44px", borderRadius: "12px", background: call.intentUi.bg, border: `1px solid ${call.intent === "urgent" ? T.redBorder : call.intent === "reschedule" ? T.purpleBorder : call.intent === "hours" ? T.orangeBorder : call.intent === "info" ? T.blueBorder : T.tealBorder}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "20px" }}>
+                {intentGlyph}
               </div>
               <div>
                 <div style={{ fontSize: "17px", fontWeight: 800, color: T.text }}>{call.name}</div>
@@ -925,6 +943,15 @@ export default function AppCalls() {
     setActionMessage("Numéro indisponible pour rappel.");
   }
 
+  const sidebarItems = [
+    { icon: "⊞", label: "Dashboard", to: "/app" },
+    { icon: "☎", label: "Appels", to: "/app/appels", active: true, badge: String(filteredCalls.length) },
+    { icon: "📅", label: "Rendez-vous", to: "/app/agenda" },
+    { icon: "👤", label: "Patients", to: "/app/profil" },
+    { icon: "📊", label: "Statistiques", to: "/app/status" },
+    { icon: "⚙", label: "Paramètres", to: "/app/settings" },
+  ];
+
   return (
     <div style={{ display: "flex", minHeight: "100vh", height: "100vh", fontFamily: "'Inter', system-ui, sans-serif", background: T.bg, color: T.text, overflow: "hidden" }}>
       <style>{CSS}</style>
@@ -939,12 +966,17 @@ export default function AppCalls() {
           </div>
 
           <div style={{ padding: "10px 10px 0" }}>
-            {[{ icon: "⊞", label: "Dashboard" }, { icon: "☎", label: "Appels", active: true, badge: String(filteredCalls.length) }, { icon: "📅", label: "Rendez-vous" }, { icon: "👤", label: "Patients" }, { icon: "📊", label: "Statistiques" }, { icon: "⚙", label: "Paramètres" }].map((item) => (
-              <div key={item.label} style={{ display: "flex", alignItems: "center", gap: "9px", padding: "8px 10px", borderRadius: "9px", marginBottom: "1px", background: item.active ? T.tealLight : "transparent", color: item.active ? T.tealDark : T.textSoft, fontSize: "13px", fontWeight: item.active ? 700 : 400 }}>
+            {sidebarItems.map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                onClick={() => navigate(item.to)}
+                style={{ width: "100%", display: "flex", alignItems: "center", gap: "9px", padding: "8px 10px", borderRadius: "9px", marginBottom: "1px", background: item.active ? T.tealLight : "transparent", color: item.active ? T.tealDark : T.textSoft, fontSize: "13px", fontWeight: item.active ? 700 : 400, border: "none", cursor: item.active ? "default" : "pointer", textAlign: "left" }}
+              >
                 <span style={{ fontSize: "14px", opacity: item.active ? 1 : 0.5 }}>{item.icon}</span>
                 <span style={{ flex: 1 }}>{item.label}</span>
                 {item.badge ? <span style={{ fontSize: "10px", fontWeight: 700, background: `${T.teal}20`, color: T.tealDark, borderRadius: "10px", padding: "1px 7px" }}>{item.badge}</span> : null}
-              </div>
+              </button>
             ))}
           </div>
 
@@ -955,11 +987,11 @@ export default function AppCalls() {
             {[["all", "Tous", "#94a3b8", normalizedCalls.length], ...Object.entries(MODEL_STATUS).map(([key, value]) => [key, value.label, value.color, normalizedCalls.filter((call) => call.status === key).length])].map(([key, label, color, count]) => {
               const active = statusFilter === key;
               return (
-                <div key={key} onClick={() => setStatusFilter(key)} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "7px 9px", borderRadius: "8px", marginBottom: "2px", cursor: "pointer", background: active ? T.tealLight : "transparent", border: active ? `1px solid ${T.tealBorder}` : "1px solid transparent" }}>
+                <button type="button" key={key} onClick={() => setStatusFilter(key)} style={{ width: "100%", display: "flex", alignItems: "center", gap: "8px", padding: "7px 9px", borderRadius: "8px", marginBottom: "2px", cursor: "pointer", background: active ? T.tealLight : "transparent", border: active ? `1px solid ${T.tealBorder}` : "1px solid transparent", textAlign: "left" }}>
                   <div style={{ width: "7px", height: "7px", borderRadius: "50%", background: color, flexShrink: 0 }} />
                   <span style={{ fontSize: "12px", fontWeight: active ? 700 : 400, color: active ? T.tealDark : T.textSoft, flex: 1 }}>{label}</span>
                   <span style={{ fontSize: "11px", fontWeight: 600, color: active ? T.tealDark : T.textFaint, background: active ? `${T.teal}15` : "rgba(148,163,184,0.1)", borderRadius: "6px", padding: "1px 7px" }}>{count}</span>
-                </div>
+                </button>
               );
             })}
           </div>
@@ -971,9 +1003,9 @@ export default function AppCalls() {
             {[["all", "Tous"], ...Object.entries(MODEL_INTENTS).map(([key, value]) => [key, value.label])].map(([key, label]) => {
               const active = intentFilter === key;
               return (
-                <div key={key} onClick={() => setIntentFilter(key)} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "6px 9px", borderRadius: "8px", marginBottom: "1px", cursor: "pointer", background: active ? T.tealLight : "transparent" }}>
+                <button type="button" key={key} onClick={() => setIntentFilter(key)} style={{ width: "100%", display: "flex", alignItems: "center", gap: "8px", padding: "6px 9px", borderRadius: "8px", marginBottom: "1px", cursor: "pointer", background: active ? T.tealLight : "transparent", border: "none", textAlign: "left" }}>
                   <span style={{ fontSize: "12px", fontWeight: active ? 700 : 400, color: active ? T.tealDark : T.textSoft }}>{label}</span>
-                </div>
+                </button>
               );
             })}
           </div>
