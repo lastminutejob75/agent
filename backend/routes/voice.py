@@ -850,9 +850,13 @@ def _vapi_assistant_request_response() -> JSONResponse:
     if assistant_id:
         return JSONResponse(content={"assistantId": assistant_id}, status_code=200)
     # Fallback: assistant transient (firstMessage FR + Custom LLM vers notre backend)
-    base = (os.environ.get("VAPI_PUBLIC_BACKEND_URL") or os.environ.get("APP_BASE_URL") or "").rstrip("/")
-    if not base:
-        logger.warning("VAPI_ASSISTANT_ID and VAPI_PUBLIC_BACKEND_URL/APP_BASE_URL unset: assistant-request returns transient with openai fallback")
+    base = ""
+    try:
+        from backend.vapi_utils import get_public_backend_base_url
+
+        base = get_public_backend_base_url()
+    except Exception:
+        logger.warning("VAPI_ASSISTANT_ID and VAPI_PUBLIC_BACKEND_URL unset: assistant-request returns transient with openai fallback")
     chat_url = f"{base}/api/vapi/chat/completions" if base else ""
     assistant = {
         "firstMessage": "Bonjour, vous appelez pour un rendez-vous ?",
@@ -1095,14 +1099,12 @@ async def vapi_tool(request: Request):
         )
 
         from backend.tenant_routing import (
-            extract_to_number_from_vapi_payload,
-            resolve_tenant_id_from_vocal_call,
+            resolve_tenant_id_from_vapi_payload,
             current_tenant_id,
         )
         from backend import vapi_tool_handlers as th
 
-        to_number = extract_to_number_from_vapi_payload(payload)
-        resolved_tenant_id, _ = resolve_tenant_id_from_vocal_call(to_number or "", channel="vocal")
+        resolved_tenant_id, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
         request.state.tenant_id = resolved_tenant_id
         current_tenant_id.set(str(resolved_tenant_id))
 

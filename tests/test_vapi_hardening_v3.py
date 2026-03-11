@@ -39,7 +39,10 @@ def test_handle_book_confirmed_resets_booking_failures():
     assert payload["start_iso"] == "2025-02-05T10:00:00"
     assert payload["end_iso"] == "2025-02-05T10:30:00"
     assert session.booking_failures == 0
-    mock_persist.assert_called_once_with(session, "booking_confirmed")
+    mock_persist.assert_called_once()
+    args, kwargs = mock_persist.call_args
+    assert args == (session, "booking_confirmed")
+    assert "context" in kwargs
 
 
 def test_handle_book_slot_taken_once():
@@ -196,3 +199,41 @@ def test_vapi_tool_book_response_contains_json_result():
     assert payload["status"] == "confirmed"
     assert payload["event_id"] == "evt-456"
     assert "start_iso" in payload and "end_iso" in payload
+
+
+def test_vapi_tool_resolves_tenant_from_assistant_when_did_missing():
+    """Le tool-call ne doit pas retomber sur DEFAULT si Vapi ne fournit pas le DID mais fournit assistantId."""
+    from fastapi.testclient import TestClient
+
+    from backend.main import app
+
+    client = TestClient(app)
+    session = _make_session()
+    with patch("backend.routes.voice._get_or_resume_voice_session", return_value=session) as mock_session_loader:
+        with patch("backend.tenant_routing.resolve_tenant_id_from_vapi_payload", return_value=(7, "assistant")):
+            with patch("backend.vapi_tool_handlers.handle_get_slots", return_value=(["Demain 10h"], "google", None)):
+                with patch("backend.routes.voice.ENGINE") as mock_engine:
+                    mock_engine.session_store = MagicMock()
+                    resp = client.post(
+                        "/api/vapi/tool",
+                        json={
+                            "message": {
+                                "call": {"id": "call-assistant-route", "assistantId": "asst_live_123"},
+                                "toolCallList": [
+                                    {
+                                        "id": "tool_1",
+                                        "function": {
+                                            "name": "function_tool",
+                                            "arguments": {
+                                                "action": "get_slots",
+                                                "patient_name": "Jean",
+                                                "motif": "Consultation",
+                                            },
+                                        },
+                                    }
+                                ],
+                            }
+                        },
+                    )
+    assert resp.status_code == 200
+    mock_session_loader.assert_called_once_with(7, "call-assistant-route")

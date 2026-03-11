@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 import os
 from typing import Any, Dict
+from urllib.parse import urlparse
 
 import httpx
 
@@ -47,14 +48,38 @@ def _vapi_api_key() -> str:
     return key
 
 
+def _looks_like_backend_base_url(value: str) -> bool:
+    parsed = urlparse((value or "").strip())
+    host = (parsed.netloc or "").lower()
+    if not host:
+        return False
+    if host.startswith("api."):
+        return True
+    if host.startswith("localhost") or host.startswith("127.0.0.1"):
+        return True
+    if host.endswith(".up.railway.app") or host.endswith(".railway.app"):
+        return True
+    return False
+
+
+def get_public_backend_base_url() -> str:
+    for env_name in ("VAPI_PUBLIC_BACKEND_URL", "PUBLIC_API_BASE_URL", "API_BASE_URL"):
+        value = (os.environ.get(env_name) or "").strip().rstrip("/")
+        if value:
+            return value
+
+    app_base = (os.environ.get("APP_BASE_URL") or "").strip().rstrip("/")
+    if app_base and _looks_like_backend_base_url(app_base):
+        logger.warning("Using APP_BASE_URL as Vapi backend base URL; prefer VAPI_PUBLIC_BACKEND_URL")
+        return app_base
+
+    raise ValueError(
+        "VAPI_PUBLIC_BACKEND_URL requis pour provisionner Vapi sur le bon backend public"
+    )
+
+
 def _vapi_webhook_url() -> str:
-    base = (
-        os.environ.get("VAPI_PUBLIC_BACKEND_URL")
-        or os.environ.get("APP_BASE_URL")
-        or ""
-    ).rstrip("/")
-    if not base:
-        raise ValueError("VAPI_PUBLIC_BACKEND_URL ou APP_BASE_URL requis")
+    base = get_public_backend_base_url()
     return f"{base}/api/vapi/webhook"
 
 

@@ -101,6 +101,7 @@ def test_assistant_request_detected_via_event_key():
 def test_assistant_request_transient_has_french_first_message(monkeypatch):
     """Sans VAPI_ASSISTANT_ID, le fallback transient a firstMessage en français (Option B)."""
     monkeypatch.delenv("VAPI_ASSISTANT_ID", raising=False)
+    monkeypatch.setenv("VAPI_PUBLIC_BACKEND_URL", "https://api.uwiapp.com")
     client = TestClient(app)
     payload = {"message": {"type": "assistant-request"}}
     response = client.post("/api/vapi/webhook", json=payload)
@@ -109,6 +110,23 @@ def test_assistant_request_transient_has_french_first_message(monkeypatch):
     assert "assistant" in data
     first = data["assistant"].get("firstMessage", "")
     assert "Bonjour" in first
+    assert data["assistant"].get("model", {}).get("provider") == "custom-llm"
+    assert data["assistant"].get("model", {}).get("url") == "https://api.uwiapp.com/api/vapi/chat/completions"
+
+
+def test_assistant_request_does_not_use_front_app_base_url_for_transient(monkeypatch):
+    """APP_BASE_URL front ne doit pas être utilisé pour construire l'URL Vapi backend."""
+    monkeypatch.delenv("VAPI_ASSISTANT_ID", raising=False)
+    monkeypatch.delenv("VAPI_PUBLIC_BACKEND_URL", raising=False)
+    monkeypatch.setenv("APP_BASE_URL", "https://uwiapp.com")
+    client = TestClient(app)
+    payload = {"message": {"type": "assistant-request"}}
+    response = client.post("/api/vapi/webhook", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert "assistant" in data
+    assert data["assistant"].get("model", {}).get("provider") == "openai"
+    assert not data["assistant"].get("model", {}).get("url")
 
 
 def test_status_update_persists_customer_number_from_fallback_field():
