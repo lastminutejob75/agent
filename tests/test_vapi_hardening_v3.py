@@ -151,6 +151,29 @@ def test_get_slots_for_display_excludes_slot():
     assert len(slots) == 2
 
 
+def test_get_slots_for_display_provider_none_uses_local_fallback():
+    """provider=none doit proposer les créneaux locaux UWI sans appeler Google."""
+    from backend.calendar_adapter import _NoneCalendarAdapter
+    from backend.tools_booking import get_slots_for_display
+
+    local_pool = [{"start_iso": "2025-02-05T10:00:00", "end_iso": "2025-02-05T10:30:00", "label": "A", "source": "sqlite"}]
+
+    class Session:
+        tenant_id = 7
+        rejected_slot_starts = []
+
+    with patch("backend.calendar_adapter.get_calendar_adapter", return_value=_NoneCalendarAdapter()):
+        with patch.object(tools_booking, "_get_calendar_service") as mock_google:
+            with patch.object(tools_booking, "_get_slots_from_sqlite", return_value=local_pool):
+                with patch.object(tools_booking, "_spread_slots", side_effect=lambda p, **kw: p[: kw.get("limit", 3)]):
+                    with patch.object(tools_booking, "_get_cached_slots", return_value=None):
+                        with patch.object(tools_booking, "_set_cached_slots"):
+                            slots = get_slots_for_display(limit=3, session=Session())
+
+    assert slots == local_pool
+    mock_google.assert_not_called()
+
+
 def test_vapi_tool_book_response_contains_json_result():
     """POST /api/vapi/tool action=book : la réponse a results[0].result = JSON string du payload."""
     from fastapi.testclient import TestClient

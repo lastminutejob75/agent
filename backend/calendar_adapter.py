@@ -26,7 +26,7 @@ CALENDAR_PROVIDER_KEY = "calendar_provider"
 CALENDAR_ID_KEY = "calendar_id"
 
 
-# Sentinel pour provider=none (pas d'accès agenda)
+# Sentinel pour provider=none (agenda externe absent, fallback local UWI)
 PROVIDER_NONE_SENTINEL = {"provider": "none"}
 
 
@@ -182,9 +182,8 @@ class _GoogleCalendarAdapter:
 
 class _NoneCalendarAdapter:
     """
-    Provider "none" : pas d'agenda connecté.
-    Ne propose pas de créneaux, ne book pas.
-    UX : collecte demande + transfert humain (flow séparé).
+    Provider "none" : pas d'agenda externe connecté.
+    Le fallback local UWI reste géré dans `tools_booking`.
     """
 
     def get_free_slots(
@@ -218,6 +217,11 @@ class _NoneCalendarAdapter:
         return False
 
 
+def is_local_only_adapter(adapter: Optional[CalendarAdapter]) -> bool:
+    """True si l'adapter représente le mode local UWI sans agenda externe."""
+    return isinstance(adapter, _NoneCalendarAdapter)
+
+
 def get_calendar_adapter(session: Any) -> Optional[CalendarAdapter]:
     """
     Retourne l'adapter calendrier pour le tenant de la session.
@@ -226,7 +230,7 @@ def get_calendar_adapter(session: Any) -> Optional[CalendarAdapter]:
     Returns:
         _GoogleCalendarAdapter | _NoneCalendarAdapter | None
         - GoogleAdapter : provider=google ou pas de config (legacy)
-        - NoneAdapter : provider=none
+        - NoneAdapter : provider=none (fallback local UWI)
         - None : pas de credentials Google (SQLite fallback)
     """
     tenant_id = getattr(session, "tenant_id", None) or config.DEFAULT_TENANT_ID
@@ -235,7 +239,7 @@ def get_calendar_adapter(session: Any) -> Optional[CalendarAdapter]:
     provider = (params.get(CALENDAR_PROVIDER_KEY) or "").strip().lower()
     calendar_id = (params.get(CALENDAR_ID_KEY) or "").strip()
 
-    # provider=none : pas de créneaux, pas de booking
+    # provider=none : pas d'agenda externe, fallback local UWI
     if provider == "none":
         logger.info("[CAL_ADAPTER] tenant_id=%s provider=none calendar_id=n/a", tenant_id)
         return _NoneCalendarAdapter()

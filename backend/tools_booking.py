@@ -536,13 +536,13 @@ def get_slots_for_display(
     tenant_id = getattr(session, "tenant_id", None) or 1
 
     # Adapter calendrier par tenant (google/none) — fallback config global
-    from backend.calendar_adapter import get_calendar_adapter
+    from backend.calendar_adapter import get_calendar_adapter, is_local_only_adapter
     adapter = get_calendar_adapter(session)
 
-    # provider=none : pas de créneaux (collecte demande + transfert, flow séparé)
-    if adapter is not None and not adapter.can_propose_slots():
-        logger.info("get_slots_for_display: tenant_id=%s provider=none → 0 slots", tenant_id)
-        return []
+    # provider=none : agenda externe absent, on bascule sur les créneaux locaux UWI.
+    use_local_fallback = is_local_only_adapter(adapter)
+    if use_local_fallback:
+        logger.info("get_slots_for_display: tenant_id=%s provider=none → local fallback", tenant_id)
 
     # Cache uniquement sans filtre préférence et sans refus en cours
     rejected = getattr(session, "rejected_slot_starts", None) if session else None
@@ -553,7 +553,7 @@ def get_slots_for_display(
             return cached
 
     # Source: adapter (google) ou legacy _get_calendar_service
-    calendar_or_adapter = adapter if adapter else _get_calendar_service()
+    calendar_or_adapter = None if use_local_fallback else (adapter if adapter else _get_calendar_service())
 
     # Récupérer le pool brut (pas encore étalé) pour pouvoir filtrer refus puis étaler
     if calendar_or_adapter:
