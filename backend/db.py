@@ -141,6 +141,20 @@ def _pg_events_url() -> Optional[str]:
     return os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
 
 
+def _should_use_pg_events_dual_write() -> bool:
+    """
+    Active l'écriture PG des ivr_events dès qu'une base PG événements est configurée.
+    Cela évite de perdre les métadonnées de booking en prod si USE_PG_EVENTS
+    n'a pas été explicitement activé alors que DATABASE_URL est bien présent.
+    """
+    try:
+        from backend import config
+
+        return bool(config.USE_PG_EVENTS or _pg_events_url())
+    except Exception:
+        return bool(_pg_events_url())
+
+
 def _ensure_call_followups_table_pg(conn: Any) -> None:
     with conn.cursor() as cur:
         cur.execute(
@@ -549,8 +563,7 @@ def consent_obtained_exists(client_id: int, call_id: str) -> bool:
     if not call_id_norm:
         return False
     try:
-        from backend import config
-        if config.USE_PG_EVENTS:
+        if _should_use_pg_events_dual_write():
             from backend.ivr_events_pg import consent_obtained_exists_pg
             if consent_obtained_exists_pg(client_id, call_id_norm):
                 return True
@@ -599,8 +612,7 @@ def create_ivr_event(
 
     # Dual-write Postgres (silencieux si échec)
     try:
-        from backend import config
-        if config.USE_PG_EVENTS:
+        if _should_use_pg_events_dual_write():
             from backend.ivr_events_pg import create_ivr_event_pg
             create_ivr_event_pg(
                 client_id, call_id_norm, event, context, reason, created_at=created_at

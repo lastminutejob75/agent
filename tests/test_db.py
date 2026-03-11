@@ -6,6 +6,7 @@ Tests pour backend/db.py
 import pytest
 from datetime import datetime, timedelta
 import os
+from unittest.mock import patch
 
 from backend.db import (
     init_db,
@@ -17,6 +18,7 @@ from backend.db import (
     find_booking_by_name,
     cancel_booking_sqlite,
     TARGET_MIN_SLOTS,
+    create_ivr_event,
 )
 
 
@@ -130,4 +132,19 @@ def test_find_booking_by_name_and_cancel_sqlite(clean_db):
     free = list_free_slots(limit=100)
     free_ids = [s["id"] for s in free]
     assert slot_id in free_ids
+
+
+@patch.dict(os.environ, {"DATABASE_URL": "postgres://example.local/db"}, clear=False)
+@patch("backend.db._pg_events_url", return_value="postgres://example.local/db")
+@patch("backend.ivr_events_pg.create_ivr_event_pg", return_value=True)
+def test_create_ivr_event_dual_writes_pg_when_pg_url_exists(mock_pg_write, _mock_pg_url, clean_db):
+    """
+    Même si USE_PG_EVENTS n'est pas explicitement activé, la présence d'une URL PG
+    doit déclencher le dual-write pour que le dashboard live voie les métadonnées
+    enrichies des nouveaux appels.
+    """
+    with patch("backend.config.USE_PG_EVENTS", False):
+        create_ivr_event(1, "call_pg_fallback", "booking_confirmed", context='{"patient_name":"Claire"}')
+
+    mock_pg_write.assert_called_once()
 
