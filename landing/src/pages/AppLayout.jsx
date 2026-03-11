@@ -42,6 +42,10 @@ const SECONDARY_NAV = [
   { to: "/app/settings", label: "Paramètres", icon: "⚙" },
 ];
 
+const IMMERSIVE_ROUTES = new Set([
+  "/app/appels",
+]);
+
 function Dot({ color = TEAL, size = 8 }) {
   return (
     <span
@@ -154,6 +158,7 @@ export default function AppLayout() {
 
   const impersonation = getImpersonation();
   const path = location.pathname;
+  const isImmersiveRoute = IMMERSIVE_ROUTES.has(path);
   const routeInfo = ROUTES[path] || { title: "Mon Cabinet", sub: "" };
   const showWelcomeSecurityBanner = new URLSearchParams(location.search).get("welcome") === "1";
   const sub = routeInfo.sub || (path === "/app" ? new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" }) : "");
@@ -232,6 +237,37 @@ export default function AppLayout() {
   }
 
   if (!me) return null;
+
+  if (isImmersiveRoute) {
+    return (
+      <div className="dash" style={S.root}>
+        <style>{SHELL_CSS}</style>
+        {impersonation && (
+          <div
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              zIndex: 60,
+              background: "#fff0f3",
+              borderBottom: "1px solid #fecdd3",
+              padding: "10px 20px",
+              fontSize: 13,
+              fontWeight: 600,
+              color: "#dc2626",
+            }}
+            role="alert"
+          >
+            Mode admin – vous visualisez le compte de <strong>{impersonation.tenant_name}</strong>
+          </div>
+        )}
+        <div style={{ flex: 1, minHeight: "100vh", paddingTop: impersonation ? 44 : 0, display: "flex", flexDirection: "column" }}>
+          <Outlet context={{ me, dashboard }} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="dash" style={S.root}>

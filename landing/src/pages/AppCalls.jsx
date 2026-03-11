@@ -926,10 +926,10 @@ export default function AppCalls() {
   }
 
   return (
-    <div style={{ display: "flex", gap: 18, minHeight: "calc(100vh - 140px)", fontFamily: "'Inter', system-ui, sans-serif", background: T.bg, color: T.text }}>
+    <div style={{ display: "flex", minHeight: "100vh", height: "100vh", fontFamily: "'Inter', system-ui, sans-serif", background: T.bg, color: T.text, overflow: "hidden" }}>
       <style>{CSS}</style>
-      <div className="calls-model-layout" style={{ display: "grid", gridTemplateColumns: "236px minmax(0, 1fr)", gap: 18, width: "100%" }}>
-        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 18, display: "flex", flexDirection: "column", minHeight: "100%", overflow: "hidden" }}>
+      <div className="calls-model-layout" style={{ display: "grid", gridTemplateColumns: "236px minmax(0, 1fr)", width: "100%", height: "100%" }}>
+        <div style={{ background: T.card, borderRight: `1px solid ${T.border}`, display: "flex", flexDirection: "column", minHeight: "100%", overflow: "hidden" }}>
           <div style={{ padding: "18px 16px 14px", borderBottom: `1px solid ${T.borderLight}`, display: "flex", alignItems: "center", gap: "10px" }}>
             <div style={{ width: "36px", height: "36px", borderRadius: "11px", background: `linear-gradient(135deg,${T.teal},${T.tealDark})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "18px" }}>🎙</div>
             <div>
@@ -989,8 +989,8 @@ export default function AppCalls() {
           </div>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
-          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "18px", padding: "15px 28px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+        <div style={{ display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0, background: T.bg }}>
+          <div style={{ background: T.card, borderBottom: `1px solid ${T.border}`, padding: "15px 28px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
             <div>
               <h1 style={{ margin: 0, fontSize: "21px", fontWeight: 800, color: T.text, letterSpacing: "-0.03em" }}>Journal d&apos;appels</h1>
               <p style={{ margin: 0, fontSize: "13px", color: T.textFaint, marginTop: "1px" }}>Activité des {days === 1 ? "dernières 24h" : `${days} derniers jours`}</p>
@@ -1007,7 +1007,7 @@ export default function AppCalls() {
             </div>
           </div>
 
-          <div style={{ flex: 1, overflowY: "auto", padding: "20px 0 0" }}>
+          <div style={{ flex: 1, overflowY: "auto", padding: "20px 28px" }}>
             {error ? <div style={{ ...ERROR_BOX, marginBottom: 14 }}>{error}</div> : null}
             {actionMessage && !selectedCallId ? <div style={{ marginBottom: 14, borderRadius: 12, border: `1px solid ${T.tealBorder}`, background: T.tealLight, color: T.tealDark, padding: "10px 12px", fontSize: 12, fontWeight: 700 }}>{actionMessage}</div> : null}
 
