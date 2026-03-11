@@ -23,6 +23,7 @@ import {
 } from "../../lib/adminApi";
 import { deriveHorairesText, normalizeBookingRules } from "../../lib/bookingUtils.js";
 import FaqEditor from "../../components/FaqEditor.jsx";
+import ConfirmDialog from "../components/ConfirmDialog";
 
 const C = {
   bg: "#0A1828",
@@ -516,7 +517,7 @@ function TabQuota({ tenantId }) {
   );
 }
 
-function TabActions({ tenantId, tenant, onSaved }) {
+function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
   const [flags, setFlags] = useState(tenant?.flags || {});
   const [params, setParams] = useState(tenant?.params || {});
   const [saving, setSaving] = useState(false);
@@ -527,6 +528,10 @@ function TabActions({ tenantId, tenant, onSaved }) {
   const [showOnboardingModal, setShowOnboardingModal] = useState(false);
   const [onboardingEmail, setOnboardingEmail] = useState("");
   const [onboardingLoading, setOnboardingLoading] = useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deleteName, setDeleteName] = useState("");
+  const [deletePhrase, setDeletePhrase] = useState("");
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   useEffect(() => {
     setFlags(tenant?.flags || {});
@@ -540,6 +545,13 @@ function TabActions({ tenantId, tenant, onSaved }) {
   const PARAM_KEYS = ["calendar_id", "phone_number", "transfer_number", "timezone", "assistant_name"];
   const bookingRules = normalizeBookingRules(params);
   const horairesPreview = deriveHorairesText(bookingRules);
+  const normalizedTenantName = (tenant?.name || "").trim();
+  const isSystemTenant = normalizedTenantName.toUpperCase() === "DEFAULT" || Number(tenantId) === 1;
+  const isInactiveTenant = (tenant?.status || "").toLowerCase() === "inactive";
+  const deleteNameMatch = deleteName.trim().toLowerCase() === normalizedTenantName.toLowerCase();
+  const deletePhraseMatch = deletePhrase.trim().toUpperCase() === "SUPPRIMER";
+  const canDelete = !isSystemTenant && !isInactiveTenant;
+  const canConfirmDelete = canDelete && deleteNameMatch && deletePhraseMatch;
 
   const saveFlags = async () => {
     setSaving(true);
@@ -634,6 +646,27 @@ function TabActions({ tenantId, tenant, onSaved }) {
   };
 
   const onboardingEligible = !((tenant?.params?.vapi_assistant_id || "").trim());
+
+  const handleDeleteTenant = async () => {
+    if (!canConfirmDelete) return;
+    setDeleteLoading(true);
+    setMsg(null);
+    try {
+      await adminApi.deleteTenant(tenantId, {
+        tenant_name: normalizedTenantName,
+        confirmation_phrase: deletePhrase.trim(),
+      });
+      setMsg({ type: "success", text: "Compte client désactivé ✓" });
+      setDeleteModalOpen(false);
+      setDeleteName("");
+      setDeletePhrase("");
+      onDeleted?.();
+    } catch (e) {
+      setMsg({ type: "error", text: e?.message || "Erreur lors de la suppression du client" });
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, maxWidth: 900 }}>
@@ -1036,6 +1069,49 @@ function TabActions({ tenantId, tenant, onSaved }) {
         </div>
       </div>
 
+      <div
+        style={{
+          gridColumn: "1/3",
+          background: "rgba(255,107,107,0.08)",
+          border: `1px solid ${C.danger}40`,
+          borderRadius: 16,
+          padding: 22,
+        }}
+      >
+        <div style={{ fontSize: 14, fontWeight: 800, color: "#FFD2D2", marginBottom: 10 }}>Zone dangereuse</div>
+        <div style={{ fontSize: 12, color: C.text, marginBottom: 8 }}>
+          Cette action effectue un soft delete : le compte client passe en <strong>inactive</strong> mais l'historique reste conservé.
+        </div>
+        <div style={{ fontSize: 12, color: C.muted, marginBottom: 16 }}>
+          Elle est réservée aux cas de doublon, erreur de provisioning ou compte à fermer. Les comptes système ne sont jamais supprimables.
+        </div>
+        {!canDelete ? (
+          <div style={{ fontSize: 12, color: C.warning }}>
+            {isSystemTenant
+              ? "Suppression désactivée : ce compte est protégé (système / DEFAULT)."
+              : "Suppression désactivée : ce client est déjà inactif."}
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setDeleteModalOpen(true)}
+            style={{
+              padding: "10px 14px",
+              borderRadius: 10,
+              border: `1px solid ${C.danger}55`,
+              background: "rgba(255,107,107,0.12)",
+              color: "#FFD2D2",
+              fontSize: 13,
+              fontWeight: 800,
+              cursor: "pointer",
+              fontFamily: "inherit",
+            }}
+          >
+            Supprimer le compte client
+          </button>
+        )}
+      </div>
+
       {msg && (
         <div
           style={{
@@ -1051,6 +1127,45 @@ function TabActions({ tenantId, tenant, onSaved }) {
           {msg.text}
         </div>
       )}
+      <ConfirmDialog
+        open={deleteModalOpen}
+        title="Supprimer le compte client"
+        message={
+          <div style={{ display: "grid", gap: 10 }}>
+            <p>
+              Pour continuer, tapez le nom exact du client : <strong>{normalizedTenantName || "(nom inconnu)"}</strong>
+            </p>
+            <input
+              type="text"
+              value={deleteName}
+              onChange={(e) => setDeleteName(e.target.value)}
+              placeholder="Nom exact du client"
+              style={{ width: "100%", borderRadius: 8, border: "1px solid #CBD5E1", padding: "10px 12px", fontSize: 13 }}
+            />
+            {deleteName && !deleteNameMatch ? <p style={{ color: "#DC2626", fontSize: 12 }}>Le nom du client ne correspond pas.</p> : null}
+            <p>Tapez ensuite <strong>SUPPRIMER</strong> pour confirmer cette action dangereuse.</p>
+            <input
+              type="text"
+              value={deletePhrase}
+              onChange={(e) => setDeletePhrase(e.target.value)}
+              placeholder="SUPPRIMER"
+              style={{ width: "100%", borderRadius: 8, border: "1px solid #CBD5E1", padding: "10px 12px", fontSize: 13 }}
+            />
+            {deletePhrase && !deletePhraseMatch ? <p style={{ color: "#DC2626", fontSize: 12 }}>Le mot de confirmation est incorrect.</p> : null}
+          </div>
+        }
+        confirmLabel="Supprimer"
+        cancelLabel="Annuler"
+        danger
+        loading={deleteLoading}
+        confirmDisabled={!canConfirmDelete}
+        onConfirm={handleDeleteTenant}
+        onCancel={() => {
+          setDeleteModalOpen(false);
+          setDeleteName("");
+          setDeletePhrase("");
+        }}
+      />
       {showOnboardingModal && (
         <div
           style={{
@@ -1504,7 +1619,14 @@ export default function AdminTenantPage() {
           {tab === "invoices" && <TabInvoices tenantId={tenantId} />}
           {tab === "quota" && <TabQuota tenantId={tenantId} />}
           {tab === "faq" && <TabFaq tenantId={tenantId} tenant={tenant} />}
-          {tab === "actions" && <TabActions tenantId={tenantId} tenant={tenant} onSaved={() => getTenant(tenantId).then(setTenant)} />}
+          {tab === "actions" && (
+            <TabActions
+              tenantId={tenantId}
+              tenant={tenant}
+              onSaved={() => getTenant(tenantId).then(setTenant)}
+              onDeleted={() => navigate("/admin")}
+            />
+          )}
         </div>
       </div>
     </div>

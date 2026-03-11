@@ -107,8 +107,11 @@ export const adminApi = {
       method: "PATCH",
       body: JSON.stringify({ flags }),
     }),
-  deleteTenant: (id) =>
-    adminFetch(`/api/admin/tenants/${id}`, { method: "DELETE" }),
+  deleteTenant: (id, body) =>
+    adminFetch(`/api/admin/tenants/${id}`, {
+      method: "DELETE",
+      body: JSON.stringify(body || {}),
+    }),
 
   addRouting: (payload) =>
     adminFetch("/api/admin/routing", {

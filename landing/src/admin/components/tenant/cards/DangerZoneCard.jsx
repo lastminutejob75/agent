@@ -6,16 +6,22 @@ import { adminApi } from "../../../../lib/adminApi";
 export default function DangerZoneCard({ tenantId, tenantName, onDeleted }) {
   const [open, setOpen] = useState(false);
   const [confirmText, setConfirmText] = useState("");
+  const [confirmPhrase, setConfirmPhrase] = useState("");
   const [err, setErr] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const nameMatch = (confirmText || "").trim().toLowerCase() === (tenantName || "").trim().toLowerCase();
+  const phraseMatch = (confirmPhrase || "").trim().toUpperCase() === "SUPPRIMER";
+  const canConfirm = nameMatch && phraseMatch;
 
   async function del() {
     setErr(null);
     setLoading(true);
     try {
-      await adminApi.deleteTenant(tenantId);
+      await adminApi.deleteTenant(tenantId, {
+        tenant_name: (tenantName || "").trim(),
+        confirmation_phrase: confirmPhrase.trim(),
+      });
       onDeleted?.();
     } catch (e) {
       setErr(e?.data?.detail ?? e?.message ?? "Erreur.");
@@ -23,6 +29,7 @@ export default function DangerZoneCard({ tenantId, tenantName, onDeleted }) {
       setLoading(false);
       setOpen(false);
       setConfirmText("");
+      setConfirmPhrase("");
     }
   }
 
@@ -31,7 +38,7 @@ export default function DangerZoneCard({ tenantId, tenantName, onDeleted }) {
       <div className="font-semibold text-red-900 mb-4">Danger zone</div>
       {err && <InlineAlert kind="error" message={err} />}
       <div className="text-sm text-gray-700 mb-3">
-        Suppression du client (soft delete). <b>Postgres uniquement</b>.
+        Désactivation du client (soft delete). L'historique reste conservé. <b>Postgres uniquement</b>.
       </div>
       <button
         type="button"
@@ -56,15 +63,24 @@ export default function DangerZoneCard({ tenantId, tenantName, onDeleted }) {
               className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
             />
             {confirmText && !nameMatch && <p className="text-red-600 text-sm">Le nom ne correspond pas.</p>}
+            <p>Tapez ensuite <strong>SUPPRIMER</strong> pour confirmer l'action.</p>
+            <input
+              type="text"
+              value={confirmPhrase}
+              onChange={(e) => setConfirmPhrase(e.target.value)}
+              placeholder="SUPPRIMER"
+              className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+            />
+            {confirmPhrase && !phraseMatch && <p className="text-red-600 text-sm">Le mot de confirmation est incorrect.</p>}
           </div>
         }
         confirmLabel="Supprimer"
         cancelLabel="Annuler"
         danger
         loading={loading}
-        confirmDisabled={!nameMatch}
-        onConfirm={() => nameMatch && del()}
-        onCancel={() => { setOpen(false); setConfirmText(""); }}
+        confirmDisabled={!canConfirm}
+        onConfirm={() => canConfirm && del()}
+        onCancel={() => { setOpen(false); setConfirmText(""); setConfirmPhrase(""); }}
       />
     </div>
   );

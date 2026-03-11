@@ -1414,6 +1414,11 @@ class OnboardingLinkBody(BaseModel):
     name: Optional[str] = Field(default="", max_length=120)
 
 
+class DeleteTenantBody(BaseModel):
+    tenant_name: str = Field(..., min_length=1, max_length=120)
+    confirmation_phrase: str = Field(..., min_length=3, max_length=32)
+
+
 def _build_onboarding_link(email: str) -> str:
     base = (
         os.getenv("PUBLIC_BASE_URL")
@@ -1770,12 +1775,29 @@ def admin_impersonate(
 
 @router.delete("/admin/tenants/{tenant_id}")
 def admin_delete_tenant(
+    body: DeleteTenantBody = Body(...),
     tenant_id: int = Depends(validate_tenant_id),
     _: None = Depends(_verify_admin),
 ):
     """Soft delete : passe le tenant en inactive (PG uniquement)."""
     if not config.USE_PG_TENANTS:
         raise HTTPException(501, "Delete tenant requires USE_PG_TENANTS (Postgres)")
+    detail = _get_tenant_detail(tenant_id)
+    if not detail:
+        raise HTTPException(404, "Tenant not found")
+    protected_ids = {
+        int(config.DEFAULT_TENANT_ID),
+        int(getattr(config, "TEST_TENANT_ID", config.DEFAULT_TENANT_ID)),
+    }
+    tenant_name = str(detail.get("name") or "").strip()
+    if tenant_id in protected_ids or tenant_name.upper() == "DEFAULT":
+        raise HTTPException(403, "Suppression interdite pour ce compte système")
+    if str(detail.get("status") or "").strip().lower() == "inactive":
+        raise HTTPException(409, "Ce client est déjà désactivé")
+    if body.tenant_name.strip().casefold() != tenant_name.casefold():
+        raise HTTPException(400, "Le nom du client ne correspond pas")
+    if body.confirmation_phrase.strip().upper() != "SUPPRIMER":
+        raise HTTPException(400, 'Tapez "SUPPRIMER" pour confirmer cette action')
     if not pg_deactivate_tenant(tenant_id):
         raise HTTPException(404, "Tenant not found or already inactive")
     return {"ok": True, "tenant_id": tenant_id}

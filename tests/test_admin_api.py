@@ -119,6 +119,38 @@ def test_admin_tenants_with_token(client, admin_headers):
     assert isinstance(data["tenants"], list)
 
 
+@patch("backend.routes.admin.pg_deactivate_tenant", return_value=True)
+@patch("backend.routes.admin._get_tenant_detail", return_value={"tenant_id": 42, "name": "Cabinet Test", "status": "active"})
+@patch("backend.tenants_pg.pg_get_tenant_full", return_value={"tenant_id": 42, "name": "Cabinet Test", "status": "active"})
+@patch("backend.routes.admin.config.USE_PG_TENANTS", True)
+def test_admin_delete_tenant_requires_strong_confirmation(_mock_pg_tenant, _mock_detail, mock_deactivate, client, admin_headers):
+    r = client.request(
+        "DELETE",
+        "/api/admin/tenants/42",
+        headers=admin_headers,
+        json={"tenant_name": "Cabinet Test", "confirmation_phrase": "SUPPRIMER"},
+    )
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+    mock_deactivate.assert_called_once_with(42)
+
+
+@patch("backend.routes.admin._get_tenant_detail", return_value={"tenant_id": 1, "name": "DEFAULT", "status": "active"})
+@patch("backend.tenants_pg.pg_get_tenant_full", return_value={"tenant_id": 1, "name": "DEFAULT", "status": "active"})
+@patch("backend.routes.admin.config.TEST_TENANT_ID", 2)
+@patch("backend.routes.admin.config.DEFAULT_TENANT_ID", 1)
+@patch("backend.routes.admin.config.USE_PG_TENANTS", True)
+def test_admin_delete_tenant_blocks_default_account(_mock_pg_tenant, _mock_detail, client, admin_headers):
+    r = client.request(
+        "DELETE",
+        "/api/admin/tenants/1",
+        headers=admin_headers,
+        json={"tenant_name": "DEFAULT", "confirmation_phrase": "SUPPRIMER"},
+    )
+    assert r.status_code == 403
+    assert "compte système" in (r.json().get("detail") or "").lower()
+
+
 def test_get_calls_list_merges_ivr_events_when_vapi_calls_exist(monkeypatch):
     """Ne pas masquer un appel récent si vapi_calls contient déjà d'anciens appels."""
     import psycopg
