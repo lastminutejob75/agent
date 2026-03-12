@@ -583,6 +583,7 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
   const [params, setParams] = useState(tenant?.params || {});
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [transferJustConfirmed, setTransferJustConfirmed] = useState(false);
   const [paymentLinkLoading, setPaymentLinkLoading] = useState(false);
   const [paymentLinkUrl, setPaymentLinkUrl] = useState("");
   const [paymentLinkEmail, setPaymentLinkEmail] = useState("");
@@ -597,6 +598,7 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
   useEffect(() => {
     setFlags(tenant?.flags || {});
     setParams(normalizeTenantPhoneParams(tenant?.params || {}));
+    setTransferJustConfirmed(false);
     setOnboardingEmail(
       tenant?.contact_email || tenant?.params?.contact_email || tenant?.params?.billing_email || "",
     );
@@ -627,7 +629,8 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
   const transferConfirmedSignature = String(params.transfer_config_confirmed_signature || "");
   const transferCurrentSignature = buildTransferConfigSignature(params);
   const transferIsConfirmed = Boolean(transferConfirmedSignature) && transferConfirmedSignature === transferCurrentSignature;
-  const transferConfirmationText = transferIsConfirmed
+  const transferConfirmedDisplay = transferIsConfirmed || transferJustConfirmed;
+  const transferConfirmationText = transferConfirmedDisplay
     ? buildTransferConfirmationText({
         cabinetPhone,
         assistantPhone: effectiveAssistantPhone,
@@ -673,6 +676,7 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
   };
 
   const setPhoneParam = useCallback((key, value, finalize = false) => {
+    setTransferJustConfirmed(false);
     setParams((p) => ({
       ...p,
       [key]: finalize ? normalizeFrenchPhone(value) : sanitizePhoneInput(value),
@@ -711,7 +715,10 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
   };
 
   const confirmTransferConfiguration = async () => {
-    await saveParams("Transfert humain confirmé ✓", { confirmTransfer: true });
+    const saved = await saveParams("Transfert humain confirmé ✓", { confirmTransfer: true });
+    if (saved) {
+      setTransferJustConfirmed(true);
+    }
   };
 
   const saveHoraires = async () => {
@@ -961,7 +968,10 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
             <input
               type="checkbox"
               checked={transferLiveEnabled}
-              onChange={(e) => setParams((p) => ({ ...p, transfer_live_enabled: e.target.checked ? "true" : "false" }))}
+              onChange={(e) => {
+                setTransferJustConfirmed(false);
+                setParams((p) => ({ ...p, transfer_live_enabled: e.target.checked ? "true" : "false" }));
+              }}
             />
             <span style={{ fontSize: 12, color: C.text }}>
               Autoriser le live transfer vocal quand un numéro humain est configuré
@@ -972,7 +982,10 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
             <input
               type="checkbox"
               checked={transferCallbackEnabled}
-              onChange={(e) => setParams((p) => ({ ...p, transfer_callback_enabled: e.target.checked ? "true" : "false" }))}
+              onChange={(e) => {
+                setTransferJustConfirmed(false);
+                setParams((p) => ({ ...p, transfer_callback_enabled: e.target.checked ? "true" : "false" }));
+              }}
             />
             <span style={{ fontSize: 12, color: C.text }}>
               Autoriser le fallback en rappel quand le direct n&apos;aboutit pas
@@ -1006,7 +1019,7 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
               <div style={{ color: C.danger, marginTop: 8 }}>{transferValidationMessage}</div>
             ) : (
               <div style={{ color: transferStatusTone, marginTop: 8, fontWeight: 700 }}>
-                {transferIsConfirmed
+                {transferConfirmedDisplay
                   ? "Configuration confirmée."
                   : hasTransferTarget
                     ? "Configuration modifiée : confirmation requise."
@@ -1015,7 +1028,7 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
             )}
           </div>
 
-          {transferIsConfirmed ? (
+          {transferConfirmedDisplay ? (
             <div
               style={{
                 marginTop: 14,
@@ -1028,9 +1041,9 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
                 lineHeight: 1.55,
               }}
             >
-              <div style={{ color: C.accent, fontWeight: 800, marginBottom: 6 }}>Configuration validée</div>
+              <div style={{ color: C.accent, fontWeight: 800, marginBottom: 6 }}>✓ Configuration validée</div>
               <div>{transferConfirmationText}</div>
-              {transferConfirmationDateLabel ? (
+              {transferIsConfirmed && transferConfirmationDateLabel ? (
                 <div style={{ color: C.muted, marginTop: 6 }}>Dernière validation : {transferConfirmationDateLabel}</div>
               ) : null}
             </div>
@@ -1039,24 +1052,24 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
           <button
             type="button"
             onClick={confirmTransferConfiguration}
-            disabled={saving || Boolean(transferValidationMessage) || transferIsConfirmed}
+            disabled={saving || Boolean(transferValidationMessage) || transferConfirmedDisplay}
             style={{
               marginTop: 14,
               width: "100%",
               padding: "12px 14px",
               borderRadius: 12,
-              background: transferIsConfirmed ? `linear-gradient(135deg,${C.accent},${C.accentDim})` : `linear-gradient(135deg,${C.blue},#7fbcff)`,
+              background: transferConfirmedDisplay ? `linear-gradient(135deg,${C.accent},${C.accentDim})` : `linear-gradient(135deg,${C.blue},#7fbcff)`,
               border: "none",
               color: C.bg,
               fontSize: 14,
               fontWeight: 800,
-              cursor: saving || transferValidationMessage || transferIsConfirmed ? "not-allowed" : "pointer",
+              cursor: saving || transferValidationMessage || transferConfirmedDisplay ? "not-allowed" : "pointer",
               fontFamily: "inherit",
-              opacity: saving || transferValidationMessage || transferIsConfirmed ? 0.7 : 1,
-              boxShadow: transferIsConfirmed ? "0 10px 24px rgba(0,229,160,0.22)" : "0 10px 24px rgba(91,168,255,0.22)",
+              opacity: saving || transferValidationMessage || transferConfirmedDisplay ? 0.7 : 1,
+              boxShadow: transferConfirmedDisplay ? "0 10px 24px rgba(0,229,160,0.22)" : "0 10px 24px rgba(91,168,255,0.22)",
             }}
           >
-            {saving ? "…" : transferIsConfirmed ? "Transfert humain déjà confirmé" : "Confirmer le transfert humain"}
+            {saving ? "…" : transferConfirmedDisplay ? "Transfert humain confirmé" : "Confirmer le transfert humain"}
           </button>
         </div>
 
