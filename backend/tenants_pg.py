@@ -368,6 +368,7 @@ def pg_update_tenant_params(tenant_id: int, params: dict) -> bool:
         "mirror_google_bookings_to_internal",
         "transfer_assistant_phone", "transfer_practitioner_phone",
         "transfer_live_enabled", "transfer_callback_enabled",
+        "transfer_config_confirmed_signature", "transfer_config_confirmed_at",
     }
     filtered = {}
     for k, v in params.items():

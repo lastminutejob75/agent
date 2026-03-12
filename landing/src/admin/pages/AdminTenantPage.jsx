@@ -165,6 +165,21 @@ function buildTransferConfirmationText({ cabinetPhone, assistantPhone, practitio
   return `Validation enregistrée : lorsqu'un appel nécessitera une intervention humaine, l'assistante redirigera les appels reçus au ${cabinet} vers ${assistant}.`;
 }
 
+function buildTransferConfigSignature(params) {
+  const cabinetPhone = normalizeFrenchPhone(params?.phone_number || "");
+  const assistantPhone = normalizeFrenchPhone(params?.transfer_number || params?.phone_number || "");
+  const practitionerPhone = normalizeFrenchPhone(params?.transfer_practitioner_phone || "");
+  const liveEnabled = String(params?.transfer_live_enabled || "").toLowerCase() === "true";
+  const callbackEnabled = String(params?.transfer_callback_enabled || "").toLowerCase() !== "false";
+  return JSON.stringify({
+    cabinetPhone,
+    assistantPhone,
+    practitionerPhone,
+    liveEnabled,
+    callbackEnabled,
+  });
+}
+
 function QuickStat({ label, value, tone = C.text, mono = false }) {
   return (
     <div style={{ minWidth: 0 }}>
@@ -568,7 +583,6 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
   const [params, setParams] = useState(tenant?.params || {});
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState(null);
-  const [transferConfirmationText, setTransferConfirmationText] = useState("");
   const [paymentLinkLoading, setPaymentLinkLoading] = useState(false);
   const [paymentLinkUrl, setPaymentLinkUrl] = useState("");
   const [paymentLinkEmail, setPaymentLinkEmail] = useState("");
@@ -588,10 +602,6 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
     );
   }, [tenant]);
 
-  useEffect(() => {
-    setTransferConfirmationText("");
-  }, [tenantId]);
-
   const FLAG_KEYS = ["ENABLE_LLM_ASSIST_START", "ENABLE_ANTI_LOOP", "ENABLE_TRANSFER", "ENABLE_BOOKING", "ENABLE_FAQ"];
   const PARAM_FIELDS = [
     { key: "calendar_id", label: "Agenda Google", placeholder: "test@group.calendar.google.com", mono: true },
@@ -610,9 +620,24 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
   const assistantSourceRaw = params.transfer_number || params.phone_number || "";
   const assistantInputValue = params.transfer_number || "";
   const effectiveAssistantPhone = normalizeFrenchPhone(assistantSourceRaw);
+  const cabinetPhone = normalizeFrenchPhone(params.phone_number || "");
   const assistantPhoneInvalid = Boolean(assistantSourceRaw) && !isValidFrenchPhone(assistantSourceRaw);
   const practitionerPhoneInvalid = Boolean(params.transfer_practitioner_phone) && !isValidFrenchPhone(params.transfer_practitioner_phone);
   const hasTransferTarget = Boolean(effectiveAssistantPhone || normalizedPractitionerPhone);
+  const transferConfirmedSignature = String(params.transfer_config_confirmed_signature || "");
+  const transferCurrentSignature = buildTransferConfigSignature(params);
+  const transferIsConfirmed = Boolean(transferConfirmedSignature) && transferConfirmedSignature === transferCurrentSignature;
+  const transferConfirmationText = transferIsConfirmed
+    ? buildTransferConfirmationText({
+        cabinetPhone,
+        assistantPhone: effectiveAssistantPhone,
+        practitionerPhone: normalizedPractitionerPhone,
+      })
+    : "";
+  const transferConfirmedAt = String(params.transfer_config_confirmed_at || "");
+  const transferConfirmationDateLabel = transferConfirmedAt
+    ? new Date(transferConfirmedAt).toLocaleString("fr-FR")
+    : "";
   const transferValidationMessage = assistantPhoneInvalid
     ? "Le numéro assistante repris automatiquement doit être au format +33XXXXXXXXX."
     : practitionerPhoneInvalid
@@ -620,6 +645,11 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
       : !hasTransferTarget && (transferLiveEnabled || transferCallbackEnabled)
         ? "Ajoute au moins un numéro humain valide pour confirmer le transfert."
         : null;
+  const transferStatusTone = transferValidationMessage
+    ? C.danger
+    : transferIsConfirmed
+      ? C.accent
+      : C.warning;
   const normalizedTenantName = (tenant?.name || "").trim();
   const isSystemTenant = normalizedTenantName.toUpperCase() === "DEFAULT" || Number(tenantId) === 1;
   const isInactiveTenant = (tenant?.status || "").toLowerCase() === "inactive";
@@ -643,19 +673,30 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
   };
 
   const setPhoneParam = useCallback((key, value, finalize = false) => {
-    setTransferConfirmationText("");
     setParams((p) => ({
       ...p,
       [key]: finalize ? normalizeFrenchPhone(value) : sanitizePhoneInput(value),
     }));
   }, []);
 
-  const saveParams = async (successText = "Params sauvegardés ✓") => {
+  const saveParams = async (successText = "Params sauvegardés ✓", options = {}) => {
+    const { confirmTransfer = false } = options;
     setSaving(true);
     setMsg(null);
     try {
       const nextParams = normalizeTenantPhoneParams(params);
       nextParams.transfer_assistant_phone = "";
+      const nextSignature = buildTransferConfigSignature(nextParams);
+      if (confirmTransfer) {
+        nextParams.transfer_config_confirmed_signature = nextSignature;
+        nextParams.transfer_config_confirmed_at = new Date().toISOString();
+      } else if (
+        String(nextParams.transfer_config_confirmed_signature || "") &&
+        String(nextParams.transfer_config_confirmed_signature || "") !== nextSignature
+      ) {
+        nextParams.transfer_config_confirmed_signature = "";
+        nextParams.transfer_config_confirmed_at = "";
+      }
       await updateTenantParams(tenantId, nextParams);
       setParams(nextParams);
       setMsg({ type: "success", text: successText });
@@ -670,15 +711,7 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
   };
 
   const confirmTransferConfiguration = async () => {
-    const savedParams = await saveParams("Transfert humain confirmé ✓");
-    if (!savedParams) return;
-    setTransferConfirmationText(
-      buildTransferConfirmationText({
-        cabinetPhone: normalizeFrenchPhone(savedParams.phone_number || ""),
-        assistantPhone: normalizeFrenchPhone(savedParams.transfer_number || savedParams.phone_number || ""),
-        practitionerPhone: normalizeFrenchPhone(savedParams.transfer_practitioner_phone || ""),
-      }),
-    );
+    await saveParams("Transfert humain confirmé ✓", { confirmTransfer: true });
   };
 
   const saveHoraires = async () => {
@@ -864,12 +897,12 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
         <div style={{ marginTop: 24, borderTop: `1px solid ${C.border}`, paddingTop: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: C.blue, marginBottom: 12 }}>📲 Transfert humain hybride</div>
           <div style={{ fontSize: 12, color: C.muted, marginBottom: 12 }}>
-            Le numéro du cabinet est repris automatiquement pour l&apos;assistante. Ne renseigne le champ ci-dessous que si le transfert doit partir vers un autre numéro.
+            `Numéro du cabinet` = ligne principale appelée par le patient. `Assistante physique` = personne vers qui l&apos;appel est transféré par défaut. `Praticien` = destination réservée aux demandes d&apos;avis médical.
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
             <div>
-              <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "block" }}>Numéro assistante spécifique</div>
+              <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "block" }}>Numéro de l&apos;assistante physique</div>
               <input
                 value={assistantInputValue}
                 placeholder="+33123456789"
@@ -892,14 +925,14 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
                 {assistantPhoneInvalid
                   ? "Format attendu : +33XXXXXXXXX."
                   : params.transfer_number
-                    ? "Utilisé pour le transfert vers l'assistante."
+                    ? "Ce numéro sera utilisé pour transférer vers l'assistante physique."
                     : params.phone_number
-                      ? "Laisse vide : le numéro du cabinet sera repris automatiquement."
-                      : "Renseigne d'abord le numéro du cabinet, ou saisis ici un numéro assistante spécifique."}
+                      ? "Laisse vide : le numéro du cabinet sera utilisé automatiquement."
+                      : "Renseigne d'abord le numéro du cabinet, ou saisis ici le numéro direct de l'assistante physique."}
               </div>
             </div>
             <div>
-              <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "block" }}>Numéro praticien</div>
+              <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "block" }}>Numéro du praticien</div>
               <input
                 value={params.transfer_practitioner_phone || ""}
                 placeholder="+33123456789"
@@ -919,7 +952,7 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
                 }}
               />
               <div style={{ marginTop: 6, fontSize: 11, color: practitionerPhoneInvalid ? C.danger : C.muted }}>
-                {practitionerPhoneInvalid ? "Format attendu : +33XXXXXXXXX" : "Réservé aux demandes de parler au médecin."}
+                {practitionerPhoneInvalid ? "Format attendu : +33XXXXXXXXX" : "Utilisé uniquement si le patient demande à parler au médecin."}
               </div>
             </div>
           </div>
@@ -928,10 +961,7 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
             <input
               type="checkbox"
               checked={transferLiveEnabled}
-              onChange={(e) => {
-                setTransferConfirmationText("");
-                setParams((p) => ({ ...p, transfer_live_enabled: e.target.checked ? "true" : "false" }));
-              }}
+              onChange={(e) => setParams((p) => ({ ...p, transfer_live_enabled: e.target.checked ? "true" : "false" }))}
             />
             <span style={{ fontSize: 12, color: C.text }}>
               Autoriser le live transfer vocal quand un numéro humain est configuré
@@ -942,10 +972,7 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
             <input
               type="checkbox"
               checked={transferCallbackEnabled}
-              onChange={(e) => {
-                setTransferConfirmationText("");
-                setParams((p) => ({ ...p, transfer_callback_enabled: e.target.checked ? "true" : "false" }));
-              }}
+              onChange={(e) => setParams((p) => ({ ...p, transfer_callback_enabled: e.target.checked ? "true" : "false" }))}
             />
             <span style={{ fontSize: 12, color: C.text }}>
               Autoriser le fallback en rappel quand le direct n&apos;aboutit pas
@@ -973,18 +1000,22 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
                     : "Transfert hybride désactivé."}
             </div>
             <div style={{ color: C.muted, marginTop: 6 }}>
-              Assistante effective : {effectiveAssistantPhone || "non renseigné"} · Praticien : {normalizedPractitionerPhone || "non renseigné"}
+              Ligne du cabinet : {cabinetPhone || "non renseigné"} · Assistante physique : {effectiveAssistantPhone || "non renseigné"} · Praticien : {normalizedPractitionerPhone || "non renseigné"}
             </div>
             {transferValidationMessage ? (
               <div style={{ color: C.danger, marginTop: 8 }}>{transferValidationMessage}</div>
             ) : (
-              <div style={{ color: C.accent, marginTop: 8 }}>
-                {hasTransferTarget ? "Configuration prête pour le transfert humain." : "Tu peux confirmer cette configuration."}
+              <div style={{ color: transferStatusTone, marginTop: 8, fontWeight: 700 }}>
+                {transferIsConfirmed
+                  ? "Configuration confirmée."
+                  : hasTransferTarget
+                    ? "Configuration modifiée : confirmation requise."
+                    : "Complète la configuration avant confirmation."}
               </div>
             )}
           </div>
 
-          {transferConfirmationText ? (
+          {transferIsConfirmed ? (
             <div
               style={{
                 marginTop: 14,
@@ -999,30 +1030,33 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
             >
               <div style={{ color: C.accent, fontWeight: 800, marginBottom: 6 }}>Configuration validée</div>
               <div>{transferConfirmationText}</div>
+              {transferConfirmationDateLabel ? (
+                <div style={{ color: C.muted, marginTop: 6 }}>Dernière validation : {transferConfirmationDateLabel}</div>
+              ) : null}
             </div>
           ) : null}
 
           <button
             type="button"
             onClick={confirmTransferConfiguration}
-            disabled={saving || Boolean(transferValidationMessage)}
+            disabled={saving || Boolean(transferValidationMessage) || transferIsConfirmed}
             style={{
               marginTop: 14,
               width: "100%",
               padding: "12px 14px",
               borderRadius: 12,
-              background: transferConfirmationText ? `linear-gradient(135deg,${C.accent},${C.accentDim})` : `linear-gradient(135deg,${C.blue},#7fbcff)`,
+              background: transferIsConfirmed ? `linear-gradient(135deg,${C.accent},${C.accentDim})` : `linear-gradient(135deg,${C.blue},#7fbcff)`,
               border: "none",
               color: C.bg,
               fontSize: 14,
               fontWeight: 800,
-              cursor: saving || transferValidationMessage ? "not-allowed" : "pointer",
+              cursor: saving || transferValidationMessage || transferIsConfirmed ? "not-allowed" : "pointer",
               fontFamily: "inherit",
-              opacity: saving || transferValidationMessage ? 0.6 : 1,
-              boxShadow: transferConfirmationText ? "0 10px 24px rgba(0,229,160,0.22)" : "0 10px 24px rgba(91,168,255,0.22)",
+              opacity: saving || transferValidationMessage || transferIsConfirmed ? 0.7 : 1,
+              boxShadow: transferIsConfirmed ? "0 10px 24px rgba(0,229,160,0.22)" : "0 10px 24px rgba(91,168,255,0.22)",
             }}
           >
-            {saving ? "…" : transferConfirmationText ? "Transfert humain confirmé" : "Confirmer le transfert humain"}
+            {saving ? "…" : transferIsConfirmed ? "Transfert humain déjà confirmé" : "Confirmer le transfert humain"}
           </button>
         </div>
 
