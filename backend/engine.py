@@ -40,6 +40,7 @@ from backend.entity_extraction import (
 from backend.start_router import route_start, FAQ_BUCKET_WHITELIST
 from backend.tenant_flags_cache import get_tenant_flags
 from backend.tenant_config import get_consent_mode
+from backend.handoffs import ensure_transfer_handoff
 
 logger = logging.getLogger(__name__)
 
@@ -495,6 +496,17 @@ def safe_reply(events: List[Event], session: Session) -> List[Event]:
             events = [events[0]]
     setattr(session, "_turn_assistant_text", (events[0].text if events and getattr(events[0], "text", None) else "") or "")
     _log_turn_debug(session)
+    if getattr(session, "state", None) == "TRANSFERRED":
+        try:
+            trigger_reason = ""
+            for ev in events:
+                reason = str(getattr(ev, "transfer_reason", "") or "").strip()
+                if reason:
+                    trigger_reason = reason
+                    break
+            ensure_transfer_handoff(session, trigger_reason=trigger_reason or "fallback_transfer")
+        except Exception as e:
+            logger.warning("handoff ensure failed conv_id=%s err=%s", getattr(session, "conv_id", ""), e)
     if getattr(session, "state", None) == "TRANSFERRED" and not getattr(session, "transfer_logged", False):
         _persist_ivr_event(session, "transferred_human")
         session.transfer_logged = True
@@ -812,6 +824,10 @@ class Engine:
             reason,
             budget,
         )
+        try:
+            ensure_transfer_handoff(session, trigger_reason=reason, user_text=user_text or "")
+        except Exception as e:
+            logger.warning("handoff create failed conv_id=%s reason=%s err=%s", session.conv_id, reason, e)
         if custom_msg:
             msg = custom_msg
         elif msg_key:

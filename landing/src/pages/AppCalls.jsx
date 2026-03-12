@@ -276,6 +276,34 @@ function normalizeDetailCall(detail, fallback) {
   };
 }
 
+function normalizeHandoffItem(item) {
+  const target = item?.target === "practitioner" ? "Praticien" : "Assistante";
+  const priority =
+    item?.priority === "urgent_non_vital"
+      ? { label: "Priorité haute", color: T.red, bg: T.redLight, border: T.redBorder }
+      : item?.priority === "high"
+        ? { label: "Important", color: T.orange, bg: T.orangeLight, border: T.orangeBorder }
+        : { label: "Normal", color: T.tealDark, bg: T.tealLight, border: T.tealBorder };
+  const status =
+    item?.status === "processed"
+      ? { label: "Traité", color: T.tealDark, bg: T.tealLight, border: T.tealBorder }
+      : item?.status === "cancelled"
+        ? { label: "Annulé", color: T.textSoft, bg: T.bg, border: T.border }
+        : { label: "À traiter", color: T.orange, bg: T.orangeLight, border: T.orangeBorder };
+  return {
+    id: item?.id || "",
+    callId: item?.call_id || "",
+    name: item?.display_name || "Patient",
+    phone: getDisplayedPhone(item?.patient_phone),
+    dialablePhone: getDialablePhone(item?.patient_phone),
+    target,
+    priority,
+    status,
+    summary: item?.summary || "Demande humaine à traiter.",
+    createdAt: item?.created_at || "",
+  };
+}
+
 function buildSparkSeries(calls) {
   const bins = [
     { min: 0, max: 8 },
@@ -799,6 +827,9 @@ export default function AppCalls() {
   const [followupLoading, setFollowupLoading] = useState(false);
   const [patientNameDraft, setPatientNameDraft] = useState("");
   const [patientSaving, setPatientSaving] = useState(false);
+  const [handoffs, setHandoffs] = useState([]);
+  const [handoffsLoading, setHandoffsLoading] = useState(false);
+  const [handoffActionLoading, setHandoffActionLoading] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -819,6 +850,25 @@ export default function AppCalls() {
       cancelled = true;
     };
   }, [days]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setHandoffsLoading(true);
+    api
+      .tenantGetHandoffs("?limit=10")
+      .then((data) => {
+        if (!cancelled) setHandoffs(data?.items || []);
+      })
+      .catch(() => {
+        if (!cancelled) setHandoffs([]);
+      })
+      .finally(() => {
+        if (!cancelled) setHandoffsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!selectedCallId) {
@@ -912,6 +962,7 @@ export default function AppCalls() {
     () => normalizedCalls.filter((call) => call.intent === "urgent" && !call.recalled).slice(0, 3),
     [normalizedCalls],
   );
+  const handoffItems = useMemo(() => (handoffs || []).map(normalizeHandoffItem), [handoffs]);
   const periodLabel = tab === "today" ? "des dernières heures" : tab === "week" ? "de la semaine en cours" : "de la période complète";
 
   async function persistFollowup(callId, nextState, notesOverride = "", messageOverride = "") {
@@ -1034,6 +1085,21 @@ export default function AppCalls() {
       return;
     }
     setActionMessage("Numéro indisponible pour rappel.");
+  }
+
+  async function markHandoffProcessed(handoffId) {
+    if (!handoffId) return;
+    setHandoffActionLoading(String(handoffId));
+    try {
+      const data = await api.tenantUpdateHandoff(handoffId, { status: "processed", notes: "" });
+      const nextItem = data?.item || null;
+      setHandoffs((prev) => (prev || []).map((item) => (String(item.id) === String(handoffId) ? { ...item, ...(nextItem || {}), status: nextItem?.status || "processed" } : item)));
+      setActionMessage("Transfert humain marqué comme traité.");
+    } catch (e) {
+      setActionMessage(e?.message || "Impossible de mettre à jour ce transfert humain.");
+    } finally {
+      setHandoffActionLoading("");
+    }
   }
 
   const sidebarItems = [
@@ -1246,6 +1312,61 @@ export default function AppCalls() {
                   <button type="button" onClick={() => navigate("/app/agenda")} style={{ width: "100%", marginTop: "12px", padding: "9px", background: "transparent", border: `1.5px dashed ${T.border}`, borderRadius: "10px", color: T.textSoft, fontSize: "12px", fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "5px" }}>
                     <span>+</span> Ouvrir l&apos;agenda
                   </button>
+                </div>
+
+                <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "18px", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+                  <div style={{ fontSize: "15px", fontWeight: 800, color: T.text, marginBottom: "2px" }}>Transferts humains</div>
+                  <div style={{ fontSize: "12px", color: T.textFaint, marginBottom: "14px" }}>Demandes à reprendre par le cabinet</div>
+                  {handoffsLoading ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      {[1, 2, 3].map((item) => <Skeleton key={item} height={72} radius={12} />)}
+                    </div>
+                  ) : handoffItems.length > 0 ? (
+                    handoffItems.map((item, index) => (
+                      <div key={item.id || index} style={{ display: "flex", gap: "10px", padding: "10px 0", borderBottom: index < handoffItems.length - 1 ? `1px solid ${T.borderLight}` : "none" }}>
+                        <div style={{ width: 42, height: 42, borderRadius: 12, background: item.priority.bg, border: `1px solid ${item.priority.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>
+                          {item.target === "Praticien" ? "🩺" : "📞"}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: "13px", fontWeight: 700, color: T.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.name}</div>
+                          <div style={{ fontSize: "11px", color: T.textFaint, marginTop: "2px" }}>{item.phone}</div>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6, marginBottom: 6 }}>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: item.priority.color, background: item.priority.bg, border: `1px solid ${item.priority.border}`, borderRadius: 999, padding: "2px 8px" }}>
+                              {item.priority.label}
+                            </span>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: T.purple, background: T.purpleLight, border: `1px solid ${T.purpleBorder}`, borderRadius: 999, padding: "2px 8px" }}>
+                              {item.target}
+                            </span>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: item.status.color, background: item.status.bg, border: `1px solid ${item.status.border}`, borderRadius: 999, padding: "2px 8px" }}>
+                              {item.status.label}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: "11px", color: T.textSoft, lineHeight: 1.45 }}>{item.summary}</div>
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end", flexShrink: 0 }}>
+                          {item.dialablePhone ? (
+                            <a href={`tel:${item.dialablePhone}`} style={{ fontSize: 11, fontWeight: 700, color: T.tealDark, background: T.tealLight, border: `1px solid ${T.tealBorder}`, borderRadius: 8, padding: "6px 10px", textDecoration: "none" }}>
+                              Appeler
+                            </a>
+                          ) : null}
+                          {item.status.label !== "Traité" ? (
+                            <button
+                              type="button"
+                              onClick={() => markHandoffProcessed(item.id)}
+                              disabled={handoffActionLoading === String(item.id)}
+                              style={{ fontSize: 11, fontWeight: 700, color: T.textSoft, background: "#fff", border: `1px solid ${T.border}`, borderRadius: 8, padding: "6px 10px", cursor: "pointer" }}
+                            >
+                              {handoffActionLoading === String(item.id) ? "..." : "Traité"}
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div style={{ fontSize: "12px", color: T.textFaint, lineHeight: 1.5 }}>
+                      Aucun transfert humain en attente pour le moment.
+                    </div>
+                  )}
                 </div>
 
                 <div style={{ background: T.purpleLight, border: `1px solid ${T.purpleBorder}`, borderRadius: "16px", padding: "16px 18px" }}>

@@ -23,6 +23,33 @@ def _auth_override():
     }
 
 
+def _handoff_item():
+    return {
+        "id": 11,
+        "tenant_id": 12,
+        "call_id": "call_handoff",
+        "channel": "vocal",
+        "reason": "explicit_human_request",
+        "target": "assistant",
+        "mode": "callback_only",
+        "priority": "normal",
+        "status": "callback_created",
+        "patient_phone": "+33612345678",
+        "raw_name": "Claire",
+        "validated_name": "",
+        "display_name": "Claire",
+        "summary": "Le patient souhaite parler à un humain.",
+        "transcript_excerpt": "Patient: Je veux parler à quelqu'un",
+        "booking_start_iso": "",
+        "booking_end_iso": "",
+        "booking_motif": "",
+        "notes": "",
+        "created_at": "2026-03-12T08:00:00Z",
+        "updated_at": "2026-03-12T08:00:00Z",
+        "processed_at": "",
+    }
+
+
 def _google_detail():
     return {
         "tenant_id": 12,
@@ -137,3 +164,30 @@ def test_tenant_agenda_reschedule_google_mirror_moves_both(client):
         new_end.isoformat(),
     )
     reschedule_local.assert_called_once_with(321, 777, tenant_id=12)
+
+
+def test_tenant_handoffs_list_and_patch(client):
+    from backend.main import app
+    from backend.routes import tenant
+
+    app.dependency_overrides[tenant.require_tenant_auth] = _auth_override
+    item = _handoff_item()
+    with patch("backend.routes.tenant.list_handoffs", return_value=[item]) as mock_list, patch(
+        "backend.routes.tenant.update_handoff_status",
+        return_value={**item, "status": "processed", "processed_at": "2026-03-12T09:00:00Z"},
+    ) as mock_update:
+        try:
+            response = client.get("/api/tenant/handoffs?limit=10")
+            patched = client.patch("/api/tenant/handoffs/11", json={"status": "processed", "notes": "Rappel fait"})
+        finally:
+            app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["call_id"] == "call_handoff"
+    mock_list.assert_called_once_with(12, status=None, target=None, limit=10)
+
+    assert patched.status_code == 200
+    assert patched.json()["ok"] is True
+    assert patched.json()["item"]["status"] == "processed"
+    mock_update.assert_called_once_with(12, 11, status="processed", notes="Rappel fait")

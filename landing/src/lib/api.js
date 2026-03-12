@@ -179,6 +179,16 @@ export const api = {
       body,
       tenant: true,
     }),
+  tenantGetHandoffs: (params = "") =>
+    request(`/api/tenant/handoffs${params}`, { tenant: true }),
+  tenantGetHandoff: (handoffId) =>
+    request(`/api/tenant/handoffs/${encodeURIComponent(handoffId)}`, { tenant: true }),
+  tenantUpdateHandoff: (handoffId, body) =>
+    request(`/api/tenant/handoffs/${encodeURIComponent(handoffId)}`, {
+      method: "PATCH",
+      body,
+      tenant: true,
+    }),
   tenantGetAgenda: (params = "") => request(`/api/tenant/agenda${params}`, { tenant: true }),
   tenantGetAgendaAvailableSlots: (params = "") =>
     request(`/api/tenant/agenda/available-slots${params}`, { tenant: true }),
@@ -226,6 +236,9 @@ export const tenantGetCalls = (params = "") => api.tenantGetCalls(params);
 export const tenantGetCallDetail = (callId) => api.tenantGetCallDetail(callId);
 export const tenantUpdateCallFollowup = (callId, body) => api.tenantUpdateCallFollowup(callId, body);
 export const tenantUpdateCallPatient = (callId, body) => api.tenantUpdateCallPatient(callId, body);
+export const tenantGetHandoffs = (params = "") => api.tenantGetHandoffs(params);
+export const tenantGetHandoff = (handoffId) => api.tenantGetHandoff(handoffId);
+export const tenantUpdateHandoff = (handoffId, body) => api.tenantUpdateHandoff(handoffId, body);
 export const tenantGetAgenda = (params = "") => api.tenantGetAgenda(params);
 export const tenantGetAgendaAvailableSlots = (params = "") => api.tenantGetAgendaAvailableSlots(params);
 export const tenantCancelAgendaAppointment = (appointmentId, body) => api.tenantCancelAgendaAppointment(appointmentId, body);

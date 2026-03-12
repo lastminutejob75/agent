@@ -35,6 +35,7 @@ from backend.db import (
     upsert_call_followup,
 )
 from backend.google_calendar import GoogleCalendarNotFoundError, GoogleCalendarPermissionError, GoogleCalendarService
+from backend.handoffs import get_handoff_by_id, list_handoffs, update_handoff_status
 from backend.routes.admin import (
     _get_call_detail,
     _get_calls_list,
@@ -676,6 +677,11 @@ class TenantCallPatientBody(BaseModel):
     raw_name: str = ""
 
 
+class TenantHandoffUpdateBody(BaseModel):
+    status: str
+    notes: str = ""
+
+
 @router.get("/me")
 def tenant_me(auth: dict = Depends(require_tenant_auth)):
     """Profil du tenant connecté."""
@@ -1039,6 +1045,46 @@ def tenant_call_patient_update(
 
     logger.info("tenant patient validated tenant_id=%s call_id=%s phone=%s", tenant_id, call_id, phone)
     return {"ok": True, "call_id": call_id, "patient": _build_patient_payload(tenant_id, None, raw)}
+
+
+@router.get("/handoffs")
+def tenant_list_handoffs(
+    auth: dict = Depends(require_tenant_auth),
+    status: Optional[str] = Query(None),
+    target: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=200),
+):
+    tenant_id = auth["tenant_id"]
+    items = list_handoffs(tenant_id, status=status, target=target, limit=limit)
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/handoffs/{handoff_id}")
+def tenant_get_handoff(
+    handoff_id: int,
+    auth: dict = Depends(require_tenant_auth),
+):
+    tenant_id = auth["tenant_id"]
+    item = get_handoff_by_id(tenant_id, handoff_id)
+    if not item:
+        raise HTTPException(404, "Handoff not found")
+    return item
+
+
+@router.patch("/handoffs/{handoff_id}")
+def tenant_patch_handoff(
+    handoff_id: int,
+    body: TenantHandoffUpdateBody,
+    auth: dict = Depends(require_tenant_auth),
+):
+    tenant_id = auth["tenant_id"]
+    status = (body.status or "").strip().lower()
+    if status not in {"processed", "cancelled"}:
+        raise HTTPException(400, "Invalid handoff status")
+    item = update_handoff_status(tenant_id, handoff_id, status=status, notes=body.notes or "")
+    if not item:
+        raise HTTPException(404, "Handoff not found")
+    return {"ok": True, "item": item}
 
 
 @router.get("/agenda")

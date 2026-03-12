@@ -137,6 +137,48 @@ def _ensure_call_followups_table(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_call_followups_state ON call_followups(tenant_id, followup_state, updated_at)")
 
 
+def _ensure_human_handoffs_table(conn: sqlite3.Connection) -> None:
+    """Crée la table des transferts / rappels humains côté tenant."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS human_handoffs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id INTEGER NOT NULL,
+            call_id TEXT NOT NULL,
+            channel TEXT NOT NULL DEFAULT 'vocal',
+            reason TEXT NOT NULL,
+            target TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            priority TEXT NOT NULL DEFAULT 'normal',
+            status TEXT NOT NULL DEFAULT 'callback_created',
+            patient_phone TEXT,
+            raw_name TEXT,
+            validated_name TEXT,
+            display_name TEXT,
+            summary TEXT,
+            transcript_excerpt TEXT,
+            booking_start_iso TEXT,
+            booking_end_iso TEXT,
+            booking_motif TEXT,
+            notes TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now')),
+            processed_at TEXT,
+            UNIQUE (tenant_id, call_id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_human_handoffs_tenant_created ON human_handoffs(tenant_id, created_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_human_handoffs_tenant_status_created ON human_handoffs(tenant_id, status, created_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_human_handoffs_tenant_target_status_created ON human_handoffs(tenant_id, target, status, created_at)"
+    )
+
+
 def _pg_events_url() -> Optional[str]:
     return os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
 
@@ -173,6 +215,57 @@ def _ensure_call_followups_table_pg(conn: Any) -> None:
             """
             CREATE INDEX IF NOT EXISTS idx_call_followups_state
             ON call_followups (tenant_id, followup_state, updated_at)
+            """
+        )
+
+
+def _ensure_human_handoffs_table_pg(conn: Any) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS human_handoffs (
+                id BIGSERIAL PRIMARY KEY,
+                tenant_id INTEGER NOT NULL,
+                call_id TEXT NOT NULL,
+                channel TEXT NOT NULL DEFAULT 'vocal',
+                reason TEXT NOT NULL,
+                target TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                priority TEXT NOT NULL DEFAULT 'normal',
+                status TEXT NOT NULL DEFAULT 'callback_created',
+                patient_phone TEXT,
+                raw_name TEXT,
+                validated_name TEXT,
+                display_name TEXT,
+                summary TEXT,
+                transcript_excerpt TEXT,
+                booking_start_iso TEXT,
+                booking_end_iso TEXT,
+                booking_motif TEXT,
+                notes TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                processed_at TIMESTAMPTZ,
+                UNIQUE (tenant_id, call_id)
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_human_handoffs_tenant_created
+            ON human_handoffs (tenant_id, created_at)
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_human_handoffs_tenant_status_created
+            ON human_handoffs (tenant_id, status, created_at)
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_human_handoffs_tenant_target_status_created
+            ON human_handoffs (tenant_id, target, status, created_at)
             """
         )
 
