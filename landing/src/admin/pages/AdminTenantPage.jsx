@@ -583,11 +583,14 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
   useEffect(() => {
     setFlags(tenant?.flags || {});
     setParams(normalizeTenantPhoneParams(tenant?.params || {}));
-    setTransferConfirmationText("");
     setOnboardingEmail(
       tenant?.contact_email || tenant?.params?.contact_email || tenant?.params?.billing_email || "",
     );
   }, [tenant]);
+
+  useEffect(() => {
+    setTransferConfirmationText("");
+  }, [tenantId]);
 
   const FLAG_KEYS = ["ENABLE_LLM_ASSIST_START", "ENABLE_ANTI_LOOP", "ENABLE_TRANSFER", "ENABLE_BOOKING", "ENABLE_FAQ"];
   const PARAM_FIELDS = [
