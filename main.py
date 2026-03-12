@@ -10,6 +10,8 @@ from typing import Dict, Optional, Any
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+import logging
+import os
 
 from backend.engine import ENGINE, Event
 from backend import config
@@ -21,13 +23,18 @@ app = FastAPI()
 # Routers (avant les mounts pour éviter les conflits)
 app.include_router(vapi.router)
 
-# Static frontend
-app.mount("/frontend", StaticFiles(directory="frontend", html=True), name="frontend")
+# Static frontend (optionnel - certains services Railway ne l'utilisent pas)
+try:
+    if os.path.exists("frontend"):
+        app.mount("/frontend", StaticFiles(directory="frontend", html=True), name="frontend")
+except Exception:
+    pass
 
-# Init DB (V1)
+# Init DB (V1) - ne pas bloquer le boot si un service secondaire n'a pas toute la config DB
 try:
     init_db()
-except Exception:
+except Exception as e:
+    logging.warning(f"DB init failed (non-critical): {e}")
     pass
 
 # SSE Streams
@@ -86,10 +93,14 @@ async def cleanup_old_conversations():
 
 @app.get("/health")
 async def health() -> dict:
+    try:
+        free_slots = count_free_slots()
+    except Exception:
+        free_slots = -1
     return {
         "status": "ok",
         "streams": len(STREAMS),
-        "free_slots": count_free_slots(),
+        "free_slots": free_slots,
     }
 
 
