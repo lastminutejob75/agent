@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from backend.handoffs import build_handoff_payload, create_handoff, get_handoff_by_call_id
+from backend.handoff_router import resolve_handoff_decision
+from backend.handoffs import build_handoff_payload, create_handoff, get_handoff_by_call_id, update_handoff_status
 from backend.session import QualifData, Session
 
 
@@ -52,3 +53,48 @@ def test_build_handoff_payload_uses_phone_and_name_from_session():
     assert payload["display_name"] == "Claire Dupont"
     assert payload["booking_motif"] == "Question de traitement"
     assert "Patient: Je veux parler au médecin." in payload["transcript_excerpt"]
+
+
+def test_resolve_handoff_decision_uses_live_then_callback_when_configured():
+    session = Session(conv_id="call_cfg", channel="vocal", tenant_id=12, customer_phone="+33698765432")
+
+    with patch(
+        "backend.handoff_router.get_params",
+        return_value={
+            "transfer_live_enabled": "true",
+            "transfer_callback_enabled": "true",
+            "transfer_assistant_phone": "+33123456789",
+        },
+    ):
+        decision = resolve_handoff_decision(
+            session,
+            trigger_reason="technical_failure",
+            channel="vocal",
+            user_text="Je veux parler à quelqu'un",
+        )
+
+    assert decision["target"] == "assistant"
+    assert decision["mode"] == "live_then_callback"
+
+
+def test_update_handoff_status_can_update_notes_without_changing_status():
+    current = {
+        "id": 11,
+        "tenant_id": 12,
+        "call_id": "call_notes",
+        "status": "callback_created",
+        "notes": "",
+    }
+    updated = {**current, "notes": "Rappel ce soir"}
+
+    with patch("backend.handoffs.get_handoff_by_id", side_effect=[current, updated]), patch(
+        "backend.handoffs.db._pg_events_url",
+        return_value="",
+    ), patch("backend.handoffs.db.get_conn") as mock_conn:
+        conn = mock_conn.return_value
+        result = update_handoff_status(12, 11, notes="Rappel ce soir")
+
+    assert result == updated
+    _, params = conn.execute.call_args_list[-1][0]
+    assert params[0] == "callback_created"
+    assert params[2] == "Rappel ce soir"

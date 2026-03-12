@@ -10,8 +10,10 @@ from backend.handoff_router import resolve_handoff_decision
 ALLOWED_STATUSES = {
     "new",
     "live_attempted",
+    "live_forwarding_confirmed",
     "live_connected",
     "live_failed",
+    "live_unconfirmed_timeout",
     "callback_created",
     "callback_scheduled",
     "processed",
@@ -352,6 +354,16 @@ def list_handoffs(
 ) -> List[Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
     clean_status = (status or "").strip().lower()
+    open_statuses = (
+        "new",
+        "live_attempted",
+        "live_forwarding_confirmed",
+        "live_connected",
+        "live_failed",
+        "live_unconfirmed_timeout",
+        "callback_created",
+        "callback_scheduled",
+    )
     clean_target = (target or "").strip().lower()
     limit = max(1, min(int(limit or 50), 200))
 
@@ -363,7 +375,10 @@ def list_handoffs(
 
             sql = "SELECT * FROM human_handoffs WHERE tenant_id = %s"
             params: List[Any] = [tenant_id]
-            if clean_status:
+            if clean_status == "open":
+                sql += " AND LOWER(status) = ANY(%s)"
+                params.append(list(open_statuses))
+            elif clean_status:
                 sql += " AND LOWER(status) = %s"
                 params.append(clean_status)
             if clean_target:
@@ -386,7 +401,11 @@ def list_handoffs(
         db._ensure_human_handoffs_table(conn)
         sql = "SELECT * FROM human_handoffs WHERE tenant_id = ?"
         params: List[Any] = [tenant_id]
-        if clean_status:
+        if clean_status == "open":
+            placeholders = ",".join("?" for _ in open_statuses)
+            sql += f" AND LOWER(status) IN ({placeholders})"
+            params.extend(open_statuses)
+        elif clean_status:
             sql += " AND LOWER(status) = ?"
             params.append(clean_status)
         if clean_target:
@@ -404,14 +423,18 @@ def update_handoff_status(
     tenant_id: int,
     handoff_id: int,
     *,
-    status: str,
-    notes: str = "",
+    status: str | None = None,
+    notes: str | None = None,
 ) -> Optional[Dict[str, Any]]:
-    clean_status = (status or "").strip().lower()
+    current = get_handoff_by_id(tenant_id, handoff_id)
+    if not current:
+        return None
+    clean_status = (status or current.get("status") or "").strip().lower()
     if clean_status not in ALLOWED_STATUSES:
         return None
-    clean_notes = (notes or "").strip()[:1000]
-    processed_at = datetime.utcnow().isoformat() if clean_status == "processed" else None
+    clean_notes = None if notes is None else (notes or "").strip()[:1000]
+    should_mark_processed = clean_status == "processed" and str(current.get("status") or "").strip().lower() != "processed"
+    processed_at = datetime.utcnow().isoformat() if should_mark_processed else None
 
     url = db._pg_events_url()
     if url:
@@ -425,12 +448,12 @@ def update_handoff_status(
                         """
                         UPDATE human_handoffs
                         SET status = %s,
-                            notes = CASE WHEN %s = '' THEN COALESCE(notes, '') ELSE %s END,
-                            processed_at = CASE WHEN %s = 'processed' THEN now() ELSE processed_at END,
+                            notes = CASE WHEN %s THEN %s ELSE COALESCE(notes, '') END,
+                            processed_at = CASE WHEN %s THEN now() ELSE processed_at END,
                             updated_at = now()
                         WHERE tenant_id = %s AND id = %s
                         """,
-                        (clean_status, clean_notes, clean_notes, clean_status, tenant_id, handoff_id),
+                        (clean_status, clean_notes is not None, clean_notes or "", should_mark_processed, tenant_id, handoff_id),
                     )
                     conn.commit()
         except Exception:
@@ -443,16 +466,16 @@ def update_handoff_status(
             """
             UPDATE human_handoffs
             SET status = ?,
-                notes = CASE WHEN ? = '' THEN COALESCE(notes, '') ELSE ? END,
-                processed_at = CASE WHEN ? = 'processed' THEN ? ELSE processed_at END,
+                notes = CASE WHEN ? THEN ? ELSE COALESCE(notes, '') END,
+                processed_at = CASE WHEN ? THEN ? ELSE processed_at END,
                 updated_at = ?
             WHERE tenant_id = ? AND id = ?
             """,
             (
                 clean_status,
-                clean_notes,
-                clean_notes,
-                clean_status,
+                clean_notes is not None,
+                clean_notes or "",
+                should_mark_processed,
                 processed_at,
                 datetime.utcnow().isoformat(),
                 tenant_id,

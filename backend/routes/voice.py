@@ -22,6 +22,7 @@ from backend.session_codec import session_to_dict
 from backend.conversational_engine import ConversationalEngine, _is_canary
 from backend.reports import get_report_generator
 from backend.validation import validate_response as validate_response_tts
+from backend.vapi_live_transfer import maybe_start_live_transfer
 from backend.stt_utils import normalize_transcript, is_filler_only
 from backend.stt_common import (
     classify_text_only,
@@ -794,6 +795,35 @@ def _compute_voice_response_sync(
     return (response_text or "", cancel_lookup_streaming)
 
 
+def _maybe_start_live_transfer_for_session(
+    payload: dict,
+    session,
+    *,
+    response_text: str,
+    user_text: str,
+    suppress_model_tts: bool,
+) -> tuple[str, bool]:
+    try:
+        result = maybe_start_live_transfer(
+            payload,
+            session,
+            response_text=response_text if suppress_model_tts else "",
+            user_text=user_text,
+        )
+        if result.get("ok"):
+            if hasattr(ENGINE.session_store, "save"):
+                ENGINE.session_store.save(session)
+            if suppress_model_tts:
+                return ("", True)
+    except Exception as exc:
+        logger.warning(
+            "LIVE_TRANSFER_HOOK_FAILED call_id=%s err=%s",
+            str(getattr(session, "conv_id", "") or "")[:24],
+            str(exc)[:160],
+        )
+    return (response_text, False)
+
+
 def _classify_stt_input(
     raw_text: str,
     confidence: Optional[float],
@@ -902,6 +932,7 @@ async def vapi_webhook(request: Request):
         try:
             from backend.tenant_routing import extract_customer_phone_from_vapi_payload, resolve_tenant_id_from_vapi_payload
             from backend.vapi_calls_pg import upsert_vapi_call
+            from backend.handoffs import get_handoff_by_call_id, update_handoff_status
             _cid = _webhook_extract_call_id(payload)
             _tid, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
             _call = message.get("call") or {}
@@ -945,6 +976,36 @@ async def vapi_webhook(request: Request):
                     ended_at=_ended_at,
                     ended_reason=_ended_reason,
                 )
+                handoff = get_handoff_by_call_id(_tid, _cid)
+                if handoff and handoff.get("id"):
+                    handoff_id = int(handoff["id"])
+                    current_status = str(handoff.get("status") or "").strip().lower()
+                    if _status == "forwarding" and current_status not in {"live_forwarding_confirmed", "live_connected"}:
+                        update_handoff_status(_tid, handoff_id, status="live_forwarding_confirmed")
+                        logger.info(
+                            "LIVE_TRANSFER_FORWARDING_CONFIRMED call_id=%s tenant_id=%s handoff_id=%s",
+                            (_cid or "")[:24],
+                            _tid,
+                            handoff_id,
+                        )
+                    elif _status == "ended" and (_ended_reason or "").strip() == "assistant-forwarded-call":
+                        update_handoff_status(_tid, handoff_id, status="live_connected")
+                        logger.info(
+                            "LIVE_TRANSFER_CONNECTED call_id=%s tenant_id=%s handoff_id=%s ended_reason=%s",
+                            (_cid or "")[:24],
+                            _tid,
+                            handoff_id,
+                            _ended_reason,
+                        )
+                    elif _status == "ended" and current_status in {"live_attempted", "live_forwarding_confirmed", "live_unconfirmed_timeout"}:
+                        update_handoff_status(_tid, handoff_id, status="live_failed")
+                        logger.warning(
+                            "LIVE_TRANSFER_ENDED_UNEXPECTED call_id=%s tenant_id=%s handoff_id=%s ended_reason=%s",
+                            (_cid or "")[:24],
+                            _tid,
+                            handoff_id,
+                            _ended_reason or "",
+                        )
         except Exception as e:
             logger.warning("VAPI_STATUS_UPDATE_PERSIST_FAILED %s", str(e)[:120])
 
@@ -1177,6 +1238,13 @@ async def vapi_tool(request: Request):
             session.tenant_id = resolved_tenant_id
             events = _get_engine(call_id).handle_message(call_id, text)
             response_text = events[0].text if events else "Je n'ai pas compris."
+            response_text, _ = _maybe_start_live_transfer_for_session(
+                payload,
+                session,
+                response_text=response_text,
+                user_text=text,
+                suppress_model_tts=False,
+            )
             if tool_call_id:
                 return JSONResponse(th.build_vapi_tool_response(tool_call_id, response_text, None), status_code=200)
             return JSONResponse({"result": response_text}, status_code=200)
@@ -1207,6 +1275,13 @@ async def vapi_tool(request: Request):
                     response_text = events[0].text if events else "Je n'ai pas compris"
                     if hasattr(ENGINE.session_store, "save"):
                         ENGINE.session_store.save(session)
+                    response_text, _ = _maybe_start_live_transfer_for_session(
+                        payload,
+                        session,
+                        response_text=response_text,
+                        user_text=message_to_use,
+                        suppress_model_tts=False,
+                    )
                     if tool_call_id:
                         return JSONResponse(th.build_vapi_tool_response(tool_call_id, response_text, None), status_code=200)
                     return JSONResponse({"result": response_text}, status_code=200)
@@ -1226,6 +1301,13 @@ async def vapi_tool(request: Request):
         response_text = events[0].text if events else "Je n'ai pas compris"
         if hasattr(ENGINE.session_store, "save"):
             ENGINE.session_store.save(session)
+        response_text, _ = _maybe_start_live_transfer_for_session(
+            payload,
+            session,
+            response_text=response_text,
+            user_text=message_to_use,
+            suppress_model_tts=False,
+        )
         if tool_call_id:
             return JSONResponse(th.build_vapi_tool_response(tool_call_id, response_text, None), status_code=200)
         return JSONResponse({"result": response_text}, status_code=200)
@@ -1449,6 +1531,14 @@ async def vapi_custom_llm(request: Request):
                     state_after, response_text or "", channel="vocal"
                 )
                 response_text = text_to_stream if not valid else (response_text or "")
+                if session_for_validation is not None:
+                    response_text, _ = _maybe_start_live_transfer_for_session(
+                        payload,
+                        session_for_validation,
+                        response_text=response_text,
+                        user_text=user_message or "",
+                        suppress_model_tts=True,
+                    )
                 words = (response_text or "").strip().split()
                 for i, word in enumerate(words):
                     content = f" {word}" if i > 0 else word

@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict
 
+from backend.tenant_config import get_params
+
 
 _PRACTITIONER_PATTERNS = [
     r"\bmedecin\b",
@@ -55,6 +57,20 @@ def resolve_handoff_decision(
     if reason == "urgent_non_vital_case":
         priority = "urgent_non_vital"
         target = "practitioner"
+
+    try:
+        params = get_params(int(getattr(session, "tenant_id", 1) or 1))
+    except Exception:
+        params = {}
+
+    live_enabled = str(params.get("transfer_live_enabled") or "").strip().lower() == "true"
+    callback_enabled = str(params.get("transfer_callback_enabled") or "").strip().lower() != "false"
+    assistant_phone = str(params.get("transfer_assistant_phone") or "").strip()
+    practitioner_phone = str(params.get("transfer_practitioner_phone") or "").strip()
+    target_phone = practitioner_phone if target == "practitioner" else assistant_phone
+
+    if channel == "vocal" and live_enabled and callback_enabled and target_phone:
+        mode = "live_then_callback"
 
     return {
         "reason": reason,

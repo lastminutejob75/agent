@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 import bcrypt
 import jwt
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.auth_pg import pg_get_tenant_user_by_id, pg_update_password
 from backend.calendar_adapter import _GoogleCalendarAdapter
@@ -678,8 +678,8 @@ class TenantCallPatientBody(BaseModel):
 
 
 class TenantHandoffUpdateBody(BaseModel):
-    status: str
-    notes: str = ""
+    status: Optional[str] = Field(default=None, max_length=32)
+    notes: Optional[str] = Field(default=None, max_length=1000)
 
 
 @router.get("/me")
@@ -1079,9 +1079,11 @@ def tenant_patch_handoff(
 ):
     tenant_id = auth["tenant_id"]
     status = (body.status or "").strip().lower()
-    if status not in {"processed", "cancelled"}:
+    if status and status not in {"processed", "cancelled"}:
         raise HTTPException(400, "Invalid handoff status")
-    item = update_handoff_status(tenant_id, handoff_id, status=status, notes=body.notes or "")
+    if not status and body.notes is None:
+        raise HTTPException(400, "Nothing to update")
+    item = update_handoff_status(tenant_id, handoff_id, status=status or None, notes=body.notes)
     if not item:
         raise HTTPException(404, "Handoff not found")
     return {"ok": True, "item": item}

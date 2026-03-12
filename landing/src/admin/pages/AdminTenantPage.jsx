@@ -542,11 +542,19 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
   }, [tenant]);
 
   const FLAG_KEYS = ["ENABLE_LLM_ASSIST_START", "ENABLE_ANTI_LOOP", "ENABLE_TRANSFER", "ENABLE_BOOKING", "ENABLE_FAQ"];
-  const PARAM_KEYS = ["calendar_id", "phone_number", "transfer_number", "timezone", "assistant_name"];
+  const PARAM_FIELDS = [
+    { key: "calendar_id", label: "calendar_id", placeholder: "test@group.calendar.google.com", mono: true },
+    { key: "phone_number", label: "phone_number", placeholder: "+33123456789", mono: true },
+    { key: "transfer_number", label: "transfer_number", placeholder: "+33123456789", mono: true },
+    { key: "timezone", label: "timezone", placeholder: "Europe/Paris", mono: true },
+    { key: "assistant_name", label: "assistant_name", placeholder: "sophie", mono: false },
+  ];
   const bookingRules = normalizeBookingRules(params);
   const horairesPreview = deriveHorairesText(bookingRules);
   const mirrorGoogleBookings = String(params.mirror_google_bookings_to_internal || "").toLowerCase() === "true";
   const isGoogleProvider = (params.calendar_provider || "none") === "google";
+  const transferLiveEnabled = String(params.transfer_live_enabled || "").toLowerCase() === "true";
+  const transferCallbackEnabled = String(params.transfer_callback_enabled || "").toLowerCase() !== "false";
   const normalizedTenantName = (tenant?.name || "").trim();
   const isSystemTenant = normalizedTenantName.toUpperCase() === "DEFAULT" || Number(tenantId) === 1;
   const isInactiveTenant = (tenant?.status || "").toLowerCase() === "inactive";
@@ -731,12 +739,13 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
 
       <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 22 }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 16 }}>Paramètres</div>
-        {PARAM_KEYS.map((key) => (
-          <div key={key} style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, fontFamily: "monospace", textTransform: "uppercase", letterSpacing: 0.5 }}>{key}</div>
+        {PARAM_FIELDS.map((field) => (
+          <div key={field.key} style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, fontFamily: "monospace", textTransform: "uppercase", letterSpacing: 0.5 }}>{field.label}</div>
             <input
-              value={params[key] || ""}
-              onChange={(e) => setParams((p) => ({ ...p, [key]: e.target.value }))}
+              value={params[field.key] || ""}
+              placeholder={field.placeholder}
+              onChange={(e) => setParams((p) => ({ ...p, [field.key]: e.target.value }))}
               style={{
                 width: "100%",
                 background: C.surface,
@@ -745,12 +754,101 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
                 padding: "8px 12px",
                 color: C.text,
                 fontSize: 13,
-                fontFamily: "monospace",
+                fontFamily: field.mono ? "monospace" : "inherit",
                 outline: "none",
               }}
             />
           </div>
         ))}
+
+        <div style={{ marginTop: 24, borderTop: `1px solid ${C.border}`, paddingTop: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: C.blue, marginBottom: 12 }}>📲 Transfert humain hybride</div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <div>
+              <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "block" }}>Numéro assistante</div>
+              <input
+                value={params.transfer_assistant_phone || ""}
+                placeholder="+33123456789"
+                onChange={(e) => setParams((p) => ({ ...p, transfer_assistant_phone: e.target.value }))}
+                style={{
+                  width: "100%",
+                  background: C.surface,
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 8,
+                  padding: "8px 12px",
+                  color: C.text,
+                  fontSize: 13,
+                  fontFamily: "monospace",
+                  outline: "none",
+                }}
+              />
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "block" }}>Numéro praticien</div>
+              <input
+                value={params.transfer_practitioner_phone || ""}
+                placeholder="+33123456789"
+                onChange={(e) => setParams((p) => ({ ...p, transfer_practitioner_phone: e.target.value }))}
+                style={{
+                  width: "100%",
+                  background: C.surface,
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 8,
+                  padding: "8px 12px",
+                  color: C.text,
+                  fontSize: 13,
+                  fontFamily: "monospace",
+                  outline: "none",
+                }}
+              />
+            </div>
+          </div>
+
+          <label style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={transferLiveEnabled}
+              onChange={(e) => setParams((p) => ({ ...p, transfer_live_enabled: e.target.checked ? "true" : "false" }))}
+            />
+            <span style={{ fontSize: 12, color: C.text }}>
+              Autoriser le live transfer vocal quand un numéro humain est configuré
+            </span>
+          </label>
+
+          <label style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={transferCallbackEnabled}
+              onChange={(e) => setParams((p) => ({ ...p, transfer_callback_enabled: e.target.checked ? "true" : "false" }))}
+            />
+            <span style={{ fontSize: 12, color: C.text }}>
+              Autoriser le fallback en rappel quand le direct n&apos;aboutit pas
+            </span>
+          </label>
+
+          <div
+            style={{
+              padding: "10px 12px",
+              borderRadius: 10,
+              background: "rgba(91,168,255,0.08)",
+              border: `1px solid ${C.blue}33`,
+              fontSize: 12,
+              color: C.text,
+            }}
+          >
+            <div style={{ color: C.blue, fontWeight: 700, marginBottom: 4 }}>Mode effectif</div>
+            <div>
+              {transferLiveEnabled && transferCallbackEnabled
+                ? "Live transfer puis rappel si échec."
+                : transferLiveEnabled
+                  ? "Live transfer uniquement."
+                  : transferCallbackEnabled
+                    ? "Rappel uniquement."
+                    : "Transfert hybride désactivé."}
+            </div>
+          </div>
+        </div>
 
         {/* Section Agenda & Booking */}
         <div style={{ marginTop: 24, borderTop: `1px solid ${C.border}`, paddingTop: 16 }}>
@@ -972,6 +1070,102 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
           >
             {saving ? "…" : "Sauvegarder les horaires"}
           </button>
+        </div>
+
+        <div style={{ marginTop: 24, borderTop: `1px solid ${C.border}`, paddingTop: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: C.accent, marginBottom: 12 }}>📞 Transfert humain</div>
+          <div style={{ fontSize: 12, color: C.muted, marginBottom: 12 }}>
+            Prépare le routage hybride par cabinet. Ces réglages alimentent déjà la file handoff et serviront au live transfer.
+          </div>
+
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "block" }}>Numéro assistante</div>
+            <input
+              value={params.transfer_assistant_phone || ""}
+              onChange={(e) => setParams((p) => ({ ...p, transfer_assistant_phone: e.target.value }))}
+              placeholder="+33612345678"
+              style={{
+                width: "100%",
+                background: C.surface,
+                border: `1px solid ${C.border}`,
+                borderRadius: 8,
+                padding: "8px 12px",
+                color: C.text,
+                fontSize: 13,
+                fontFamily: "monospace",
+                outline: "none",
+              }}
+            />
+          </div>
+
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "block" }}>Numéro praticien</div>
+            <input
+              value={params.transfer_practitioner_phone || ""}
+              onChange={(e) => setParams((p) => ({ ...p, transfer_practitioner_phone: e.target.value }))}
+              placeholder="+33698765432"
+              style={{
+                width: "100%",
+                background: C.surface,
+                border: `1px solid ${C.border}`,
+                borderRadius: 8,
+                padding: "8px 12px",
+                color: C.text,
+                fontSize: 13,
+                fontFamily: "monospace",
+                outline: "none",
+              }}
+            />
+          </div>
+
+          <label style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={transferLiveEnabled}
+              onChange={(e) =>
+                setParams((p) => ({
+                  ...p,
+                  transfer_live_enabled: e.target.checked ? "true" : "false",
+                }))}
+            />
+            <span style={{ fontSize: 12, color: C.text }}>
+              Activer le mode live transfer si un numéro cible est disponible
+            </span>
+          </label>
+
+          <label style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={transferCallbackEnabled}
+              onChange={(e) =>
+                setParams((p) => ({
+                  ...p,
+                  transfer_callback_enabled: e.target.checked ? "true" : "false",
+                }))}
+            />
+            <span style={{ fontSize: 12, color: C.text }}>
+              Autoriser le fallback en rappel organisé quand aucun humain n&apos;est joignable
+            </span>
+          </label>
+
+          <div
+            style={{
+              padding: "10px 12px",
+              borderRadius: 10,
+              background: "rgba(91,168,255,0.08)",
+              border: `1px solid ${C.blue}30`,
+              fontSize: 12,
+              color: C.text,
+            }}
+          >
+            <div style={{ color: C.blue, fontWeight: 700, marginBottom: 4 }}>Résumé</div>
+            <div>
+              {transferLiveEnabled ? "Live activé" : "Live désactivé"} · {transferCallbackEnabled ? "Rappel activé" : "Rappel désactivé"}
+            </div>
+            <div style={{ color: C.muted, marginTop: 4 }}>
+              Assistante: {params.transfer_assistant_phone || "non renseigné"} · Praticien: {params.transfer_practitioner_phone || "non renseigné"}
+            </div>
+          </div>
         </div>
 
         <button

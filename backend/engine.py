@@ -815,6 +815,7 @@ class Engine:
             "budget_remaining": budget,
             "turn_count": getattr(session, "turn_count", 0),
         })
+        session.last_transfer_reason = reason
         _persist_ivr_event(session, "transferred_human", context=ctx, reason=reason)
         logger.info(
             "[TRANSFER] conv_id=%s tenant_id=%s state=%s reason=%s budget=%s",

@@ -430,7 +430,16 @@ def test_admin_patch_params(client, admin_headers):
     r = client.patch(
         "/api/admin/tenants/1/params",
         headers=admin_headers,
-        json={"params": {"calendar_provider": "google", "calendar_id": "test@group.calendar.google.com"}},
+        json={
+            "params": {
+                "calendar_provider": "google",
+                "calendar_id": "test@group.calendar.google.com",
+                "transfer_assistant_phone": "+33123456789",
+                "transfer_practitioner_phone": "+33987654321",
+                "transfer_live_enabled": "true",
+                "transfer_callback_enabled": "true",
+            }
+        },
     )
     assert r.status_code == 200
     assert r.json().get("ok") is True

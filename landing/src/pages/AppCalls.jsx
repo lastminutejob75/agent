@@ -278,6 +278,7 @@ function normalizeDetailCall(detail, fallback) {
 
 function normalizeHandoffItem(item) {
   const target = item?.target === "practitioner" ? "Praticien" : "Assistante";
+  const targetKey = item?.target === "practitioner" ? "practitioner" : "assistant";
   const priority =
     item?.priority === "urgent_non_vital"
       ? { label: "Priorité haute", color: T.red, bg: T.redLight, border: T.redBorder }
@@ -287,19 +288,34 @@ function normalizeHandoffItem(item) {
   const status =
     item?.status === "processed"
       ? { label: "Traité", color: T.tealDark, bg: T.tealLight, border: T.tealBorder }
+      : item?.status === "live_connected"
+        ? { label: "Transféré", color: T.blue, bg: T.blueLight, border: T.blueBorder }
+        : item?.status === "live_forwarding_confirmed"
+          ? { label: "Bascule en cours", color: T.purple, bg: T.purpleLight, border: T.purpleBorder }
+          : item?.status === "live_attempted"
+            ? { label: "Tentative live", color: T.orange, bg: T.orangeLight, border: T.orangeBorder }
+            : item?.status === "live_failed"
+              ? { label: "Live échoué", color: T.red, bg: T.redLight, border: T.redBorder }
+              : item?.status === "live_unconfirmed_timeout"
+                ? { label: "Live non confirmé", color: T.red, bg: T.redLight, border: T.redBorder }
       : item?.status === "cancelled"
         ? { label: "Annulé", color: T.textSoft, bg: T.bg, border: T.border }
         : { label: "À traiter", color: T.orange, bg: T.orangeLight, border: T.orangeBorder };
   return {
     id: item?.id || "",
     callId: item?.call_id || "",
+    targetKey,
     name: item?.display_name || "Patient",
     phone: getDisplayedPhone(item?.patient_phone),
     dialablePhone: getDialablePhone(item?.patient_phone),
     target,
     priority,
+    statusKey: item?.status || "callback_created",
     status,
     summary: item?.summary || "Demande humaine à traiter.",
+    notes: item?.notes || "",
+    reason: item?.reason || "",
+    mode: item?.mode || "callback_only",
     createdAt: item?.created_at || "",
   };
 }
@@ -830,6 +846,10 @@ export default function AppCalls() {
   const [handoffs, setHandoffs] = useState([]);
   const [handoffsLoading, setHandoffsLoading] = useState(false);
   const [handoffActionLoading, setHandoffActionLoading] = useState("");
+  const [handoffStatusFilter, setHandoffStatusFilter] = useState("open");
+  const [handoffTargetFilter, setHandoffTargetFilter] = useState("all");
+  const [handoffSearch, setHandoffSearch] = useState("");
+  const [handoffNoteDrafts, setHandoffNoteDrafts] = useState({});
 
   useEffect(() => {
     let cancelled = false;
@@ -854,10 +874,27 @@ export default function AppCalls() {
   useEffect(() => {
     let cancelled = false;
     setHandoffsLoading(true);
+    const params = new URLSearchParams();
+    params.set("limit", "20");
+    if (handoffStatusFilter === "open") params.set("status", "open");
+    if (handoffStatusFilter === "processed") params.set("status", "processed");
+    if (handoffStatusFilter === "cancelled") params.set("status", "cancelled");
+    if (handoffTargetFilter !== "all") params.set("target", handoffTargetFilter);
     api
-      .tenantGetHandoffs("?limit=10")
+      .tenantGetHandoffs(`?${params.toString()}`)
       .then((data) => {
-        if (!cancelled) setHandoffs(data?.items || []);
+        if (!cancelled) {
+          const items = data?.items || [];
+          setHandoffs(items);
+          setHandoffNoteDrafts((prev) => {
+            const next = { ...prev };
+            items.forEach((item) => {
+              const key = String(item?.id || "");
+              if (key && next[key] === undefined) next[key] = item?.notes || "";
+            });
+            return next;
+          });
+        }
       })
       .catch(() => {
         if (!cancelled) setHandoffs([]);
@@ -868,7 +905,7 @@ export default function AppCalls() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [handoffStatusFilter, handoffTargetFilter]);
 
   useEffect(() => {
     if (!selectedCallId) {
@@ -962,7 +999,20 @@ export default function AppCalls() {
     () => normalizedCalls.filter((call) => call.intent === "urgent" && !call.recalled).slice(0, 3),
     [normalizedCalls],
   );
-  const handoffItems = useMemo(() => (handoffs || []).map(normalizeHandoffItem), [handoffs]);
+  const handoffItems = useMemo(() => {
+    let items = (handoffs || []).map(normalizeHandoffItem);
+    if (handoffStatusFilter === "open") {
+      items = items.filter((item) => item.statusKey !== "processed" && item.statusKey !== "cancelled");
+    }
+    const query = handoffSearch.trim().toLowerCase();
+    if (!query) return items;
+    return items.filter((item) =>
+      [item.name, item.phone, item.summary, item.notes, item.callId]
+        .join(" ")
+        .toLowerCase()
+        .includes(query),
+    );
+  }, [handoffs, handoffSearch, handoffStatusFilter]);
   const periodLabel = tab === "today" ? "des dernières heures" : tab === "week" ? "de la semaine en cours" : "de la période complète";
 
   async function persistFollowup(callId, nextState, notesOverride = "", messageOverride = "") {
@@ -1091,12 +1141,32 @@ export default function AppCalls() {
     if (!handoffId) return;
     setHandoffActionLoading(String(handoffId));
     try {
-      const data = await api.tenantUpdateHandoff(handoffId, { status: "processed", notes: "" });
+      const data = await api.tenantUpdateHandoff(handoffId, {
+        status: "processed",
+        notes: handoffNoteDrafts[String(handoffId)] || "",
+      });
       const nextItem = data?.item || null;
       setHandoffs((prev) => (prev || []).map((item) => (String(item.id) === String(handoffId) ? { ...item, ...(nextItem || {}), status: nextItem?.status || "processed" } : item)));
       setActionMessage("Transfert humain marqué comme traité.");
     } catch (e) {
       setActionMessage(e?.message || "Impossible de mettre à jour ce transfert humain.");
+    } finally {
+      setHandoffActionLoading("");
+    }
+  }
+
+  async function saveHandoffNotes(handoffId) {
+    if (!handoffId) return;
+    setHandoffActionLoading(`notes-${handoffId}`);
+    try {
+      const data = await api.tenantUpdateHandoff(handoffId, {
+        notes: handoffNoteDrafts[String(handoffId)] || "",
+      });
+      const nextItem = data?.item || null;
+      setHandoffs((prev) => (prev || []).map((item) => (String(item.id) === String(handoffId) ? { ...item, ...(nextItem || {}), notes: nextItem?.notes || "" } : item)));
+      setActionMessage("Note handoff enregistrée.");
+    } catch (e) {
+      setActionMessage(e?.message || "Impossible d'enregistrer la note.");
     } finally {
       setHandoffActionLoading("");
     }
@@ -1315,15 +1385,68 @@ export default function AppCalls() {
                 </div>
 
                 <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "18px", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-                  <div style={{ fontSize: "15px", fontWeight: 800, color: T.text, marginBottom: "2px" }}>Transferts humains</div>
-                  <div style={{ fontSize: "12px", color: T.textFaint, marginBottom: "14px" }}>Demandes à reprendre par le cabinet</div>
+                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, marginBottom: "10px" }}>
+                    <div>
+                      <div style={{ fontSize: "15px", fontWeight: 800, color: T.text, marginBottom: "2px" }}>Transferts humains</div>
+                      <div style={{ fontSize: "12px", color: T.textFaint }}>Demandes à reprendre par le cabinet</div>
+                    </div>
+                    <span style={{ fontSize: 10, fontWeight: 800, color: T.textSoft, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 999, padding: "4px 8px" }}>
+                      {handoffItems.length}
+                    </span>
+                  </div>
+
+                  <div style={{ display: "grid", gap: 8, marginBottom: 14 }}>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      {[
+                        ["open", "En attente"],
+                        ["processed", "Traités"],
+                        ["cancelled", "Annulés"],
+                      ].map(([value, label]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => setHandoffStatusFilter(value)}
+                          style={{
+                            flex: 1,
+                            padding: "7px 8px",
+                            fontSize: 11,
+                            fontWeight: 700,
+                            borderRadius: 8,
+                            border: `1px solid ${handoffStatusFilter === value ? T.tealBorder : T.border}`,
+                            background: handoffStatusFilter === value ? T.tealLight : "#fff",
+                            color: handoffStatusFilter === value ? T.tealDark : T.textSoft,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <select
+                        value={handoffTargetFilter}
+                        onChange={(e) => setHandoffTargetFilter(e.target.value)}
+                        style={{ flex: 1, borderRadius: 8, border: `1px solid ${T.border}`, background: "#fff", color: T.textMid, fontSize: 12, padding: "8px 10px", outline: "none" }}
+                      >
+                        <option value="all">Toutes cibles</option>
+                        <option value="assistant">Assistante</option>
+                        <option value="practitioner">Praticien</option>
+                      </select>
+                      <input
+                        value={handoffSearch}
+                        onChange={(e) => setHandoffSearch(e.target.value)}
+                        placeholder="Patient, résumé, ID…"
+                        style={{ flex: 1.2, borderRadius: 8, border: `1px solid ${T.border}`, background: "#fff", color: T.textMid, fontSize: 12, padding: "8px 10px", outline: "none" }}
+                      />
+                    </div>
+                  </div>
                   {handoffsLoading ? (
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                       {[1, 2, 3].map((item) => <Skeleton key={item} height={72} radius={12} />)}
                     </div>
                   ) : handoffItems.length > 0 ? (
                     handoffItems.map((item, index) => (
-                      <div key={item.id || index} style={{ display: "flex", gap: "10px", padding: "10px 0", borderBottom: index < handoffItems.length - 1 ? `1px solid ${T.borderLight}` : "none" }}>
+                      <div key={item.id || index} style={{ display: "flex", gap: "10px", padding: "12px 0", borderBottom: index < handoffItems.length - 1 ? `1px solid ${T.borderLight}` : "none" }}>
                         <div style={{ width: 42, height: 42, borderRadius: 12, background: item.priority.bg, border: `1px solid ${item.priority.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>
                           {item.target === "Praticien" ? "🩺" : "📞"}
                         </div>
@@ -1342,6 +1465,26 @@ export default function AppCalls() {
                             </span>
                           </div>
                           <div style={{ fontSize: "11px", color: T.textSoft, lineHeight: 1.45 }}>{item.summary}</div>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8, marginBottom: 8 }}>
+                            {item.callId ? (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedCallId(item.callId)}
+                                style={{ fontSize: 11, fontWeight: 700, color: T.blue, background: T.blueLight, border: `1px solid ${T.blueBorder}`, borderRadius: 8, padding: "5px 9px", cursor: "pointer" }}
+                              >
+                                Ouvrir l&apos;appel
+                              </button>
+                            ) : null}
+                            <span style={{ fontSize: 10, color: T.textFaint }}>
+                              {item.mode === "live_then_callback" ? "Live puis rappel" : "Rappel uniquement"}
+                            </span>
+                          </div>
+                          <textarea
+                            value={handoffNoteDrafts[String(item.id)] ?? item.notes}
+                            onChange={(e) => setHandoffNoteDrafts((prev) => ({ ...prev, [String(item.id)]: e.target.value }))}
+                            placeholder="Ajouter une note interne pour le cabinet"
+                            style={{ width: "100%", minHeight: 62, resize: "vertical", borderRadius: 10, border: `1px solid ${T.border}`, background: "#fff", color: T.textMid, fontSize: 12, padding: "8px 10px", outline: "none", boxSizing: "border-box" }}
+                          />
                         </div>
                         <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end", flexShrink: 0 }}>
                           {item.dialablePhone ? (
@@ -1349,6 +1492,14 @@ export default function AppCalls() {
                               Appeler
                             </a>
                           ) : null}
+                          <button
+                            type="button"
+                            onClick={() => saveHandoffNotes(item.id)}
+                            disabled={handoffActionLoading === `notes-${item.id}`}
+                            style={{ fontSize: 11, fontWeight: 700, color: T.textSoft, background: "#fff", border: `1px solid ${T.border}`, borderRadius: 8, padding: "6px 10px", cursor: "pointer" }}
+                          >
+                            {handoffActionLoading === `notes-${item.id}` ? "..." : "Sauver note"}
+                          </button>
                           {item.status.label !== "Traité" ? (
                             <button
                               type="button"

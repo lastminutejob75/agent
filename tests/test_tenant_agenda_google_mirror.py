@@ -191,3 +191,48 @@ def test_tenant_handoffs_list_and_patch(client):
     assert patched.json()["ok"] is True
     assert patched.json()["item"]["status"] == "processed"
     mock_update.assert_called_once_with(12, 11, status="processed", notes="Rappel fait")
+
+
+def test_tenant_handoffs_support_open_filter_and_notes_only_patch(client):
+    from backend.main import app
+    from backend.routes import tenant
+
+    app.dependency_overrides[tenant.require_tenant_auth] = _auth_override
+    item = _handoff_item()
+    with patch("backend.routes.tenant.list_handoffs", return_value=[item]) as mock_list, patch(
+        "backend.routes.tenant.update_handoff_status",
+        return_value={**item, "notes": "À rappeler après 17h"},
+    ) as mock_update:
+        try:
+            response = client.get("/api/tenant/handoffs?status=open&target=assistant&limit=5")
+            patched = client.patch("/api/tenant/handoffs/11", json={"notes": "À rappeler après 17h"})
+        finally:
+            app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    mock_list.assert_called_once_with(12, status="open", target="assistant", limit=5)
+
+    assert patched.status_code == 200
+    assert patched.json()["item"]["notes"] == "À rappeler après 17h"
+    mock_update.assert_called_once_with(12, 11, status=None, notes="À rappeler après 17h")
+
+
+def test_tenant_handoff_patch_notes_only(client):
+    from backend.main import app
+    from backend.routes import tenant
+
+    app.dependency_overrides[tenant.require_tenant_auth] = _auth_override
+    item = _handoff_item()
+    with patch(
+        "backend.routes.tenant.update_handoff_status",
+        return_value={**item, "notes": "Patient à rappeler après 17h"},
+    ) as mock_update:
+        try:
+            patched = client.patch("/api/tenant/handoffs/11", json={"notes": "Patient à rappeler après 17h"})
+        finally:
+            app.dependency_overrides.clear()
+
+    assert patched.status_code == 200
+    assert patched.json()["ok"] is True
+    assert patched.json()["item"]["notes"] == "Patient à rappeler après 17h"
+    mock_update.assert_called_once_with(12, 11, status=None, notes="Patient à rappeler après 17h")

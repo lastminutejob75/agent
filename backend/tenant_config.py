@@ -489,6 +489,8 @@ def set_params(tenant_id: int, params: Dict[str, str]) -> None:
         "booking_duration_minutes", "booking_start_hour", "booking_end_hour",
         "booking_buffer_minutes", "booking_days",
         "mirror_google_bookings_to_internal",
+        "transfer_assistant_phone", "transfer_practitioner_phone",
+        "transfer_live_enabled", "transfer_callback_enabled",
     )
     filtered = {}
     for k, v in params.items():
