@@ -598,7 +598,6 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
   useEffect(() => {
     setFlags(tenant?.flags || {});
     setParams(normalizeTenantPhoneParams(tenant?.params || {}));
-    setTransferJustConfirmed(false);
     setOnboardingEmail(
       tenant?.contact_email || tenant?.params?.contact_email || tenant?.params?.billing_email || "",
     );
@@ -715,9 +714,10 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
   };
 
   const confirmTransferConfiguration = async () => {
+    setTransferJustConfirmed(true);
     const saved = await saveParams("Transfert humain confirmé ✓", { confirmTransfer: true });
-    if (saved) {
-      setTransferJustConfirmed(true);
+    if (!saved) {
+      setTransferJustConfirmed(false);
     }
   };
 
