@@ -153,9 +153,6 @@ function normalizeTenantPhoneParams(input) {
     if (raw == null || raw === "") continue;
     next[key] = normalizeFrenchPhone(raw);
   }
-  if (!next.transfer_assistant_phone) {
-    next.transfer_assistant_phone = next.transfer_number || next.phone_number || "";
-  }
   return next;
 }
 
@@ -595,17 +592,15 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
   const isGoogleProvider = (params.calendar_provider || "none") === "google";
   const transferLiveEnabled = String(params.transfer_live_enabled || "").toLowerCase() === "true";
   const transferCallbackEnabled = String(params.transfer_callback_enabled || "").toLowerCase() !== "false";
-  const normalizedAssistantPhone = normalizeFrenchPhone(params.transfer_assistant_phone || "");
   const normalizedPractitionerPhone = normalizeFrenchPhone(params.transfer_practitioner_phone || "");
-  const assistantFallbackPhone = normalizeFrenchPhone(params.transfer_number || params.phone_number || "");
-  const effectiveAssistantPhone = normalizedAssistantPhone || assistantFallbackPhone;
-  const assistantUsesFallback = !normalizedAssistantPhone && Boolean(assistantFallbackPhone);
-  const assistantMatchesFallback = Boolean(assistantFallbackPhone) && normalizedAssistantPhone === assistantFallbackPhone;
-  const assistantPhoneInvalid = Boolean(params.transfer_assistant_phone) && !isValidFrenchPhone(params.transfer_assistant_phone);
+  const assistantSourceKey = params.transfer_number ? "TRANSFER_NUMBER" : params.phone_number ? "PHONE_NUMBER" : null;
+  const assistantSourceRaw = params.transfer_number || params.phone_number || "";
+  const effectiveAssistantPhone = normalizeFrenchPhone(assistantSourceRaw);
+  const assistantPhoneInvalid = Boolean(assistantSourceRaw) && !isValidFrenchPhone(assistantSourceRaw);
   const practitionerPhoneInvalid = Boolean(params.transfer_practitioner_phone) && !isValidFrenchPhone(params.transfer_practitioner_phone);
   const hasTransferTarget = Boolean(effectiveAssistantPhone || normalizedPractitionerPhone);
   const transferValidationMessage = assistantPhoneInvalid
-    ? "Le numéro assistante doit être au format +33XXXXXXXXX."
+    ? "Le numéro assistante repris automatiquement doit être au format +33XXXXXXXXX."
     : practitionerPhoneInvalid
       ? "Le numéro praticien doit être au format +33XXXXXXXXX."
       : !hasTransferTarget && (transferLiveEnabled || transferCallbackEnabled)
@@ -645,6 +640,7 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
     setMsg(null);
     try {
       const nextParams = normalizeTenantPhoneParams(params);
+      nextParams.transfer_assistant_phone = "";
       await updateTenantParams(tenantId, nextParams);
       setParams(nextParams);
       setMsg({ type: "success", text: successText });
@@ -839,18 +835,13 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
         <div style={{ marginTop: 24, borderTop: `1px solid ${C.border}`, paddingTop: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: C.blue, marginBottom: 12 }}>📲 Transfert humain hybride</div>
           <div style={{ fontSize: 12, color: C.muted, marginBottom: 12 }}>
-            Saisie imposée au format `+33`. Le système utilisera d&apos;abord le numéro assistante, puis le numéro déjà connu du cabinet si besoin.
+            Le numéro assistante est repris automatiquement depuis `TRANSFER_NUMBER`, sinon depuis `PHONE_NUMBER`. Tu ne le saisis donc plus deux fois.
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
             <div>
               <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "block" }}>Numéro assistante</div>
-              <input
-                value={params.transfer_assistant_phone || ""}
-                placeholder="+33123456789"
-                inputMode="tel"
-                onChange={(e) => setPhoneParam("transfer_assistant_phone", e.target.value)}
-                onBlur={(e) => setPhoneParam("transfer_assistant_phone", e.target.value, true)}
+              <div
                 style={{
                   width: "100%",
                   background: C.surface,
@@ -860,36 +851,20 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
                   color: C.text,
                   fontSize: 13,
                   fontFamily: "monospace",
-                  outline: "none",
+                  minHeight: 40,
+                  display: "flex",
+                  alignItems: "center",
                 }}
-              />
+              >
+                {effectiveAssistantPhone || "Non renseigné"}
+              </div>
               <div style={{ marginTop: 6, fontSize: 11, color: assistantPhoneInvalid ? C.danger : C.muted }}>
                 {assistantPhoneInvalid
-                  ? "Format attendu : +33XXXXXXXXX"
-                    : assistantUsesFallback || assistantMatchesFallback
-                    ? `Si vide, le système reprend ${assistantFallbackPhone}.`
-                    : "Exemple : +33612345678 ou +33912345678"}
+                  ? "Corrige `TRANSFER_NUMBER` ou `PHONE_NUMBER` au format +33XXXXXXXXX."
+                  : assistantSourceKey
+                    ? `Repris automatiquement depuis ${assistantSourceKey}.`
+                    : "Renseigne `TRANSFER_NUMBER` ou `PHONE_NUMBER` plus haut pour activer le transfert assistante."}
               </div>
-              {assistantFallbackPhone && assistantFallbackPhone !== normalizedAssistantPhone ? (
-                <button
-                  type="button"
-                  onClick={() => setPhoneParam("transfer_assistant_phone", assistantFallbackPhone, true)}
-                  style={{
-                    marginTop: 8,
-                    padding: "8px 10px",
-                    borderRadius: 8,
-                    border: `1px solid ${C.blue}55`,
-                    background: "rgba(91,168,255,0.1)",
-                    color: C.blue,
-                    fontSize: 12,
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                  }}
-                >
-                  Reprendre le numéro assistante ({assistantFallbackPhone})
-                </button>
-              ) : null}
             </div>
             <div>
               <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "block" }}>Numéro praticien</div>
