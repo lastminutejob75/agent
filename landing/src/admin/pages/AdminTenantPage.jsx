@@ -984,33 +984,10 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
             )}
           </div>
 
-          <button
-            type="button"
-            onClick={confirmTransferConfiguration}
-            disabled={saving || Boolean(transferValidationMessage)}
-            style={{
-              marginTop: 14,
-              width: "100%",
-              padding: "12px 14px",
-              borderRadius: 12,
-              background: `linear-gradient(135deg,${C.blue},#7fbcff)`,
-              border: "none",
-              color: C.bg,
-              fontSize: 14,
-              fontWeight: 800,
-              cursor: saving || transferValidationMessage ? "not-allowed" : "pointer",
-              fontFamily: "inherit",
-              opacity: saving || transferValidationMessage ? 0.6 : 1,
-              boxShadow: "0 10px 24px rgba(91,168,255,0.22)",
-            }}
-          >
-            {saving ? "…" : "Confirmer le transfert humain"}
-          </button>
-
           {transferConfirmationText ? (
             <div
               style={{
-                marginTop: 12,
+                marginTop: 14,
                 padding: "12px 14px",
                 borderRadius: 12,
                 background: "rgba(0,229,160,0.1)",
@@ -1024,6 +1001,29 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
               <div>{transferConfirmationText}</div>
             </div>
           ) : null}
+
+          <button
+            type="button"
+            onClick={confirmTransferConfiguration}
+            disabled={saving || Boolean(transferValidationMessage)}
+            style={{
+              marginTop: 14,
+              width: "100%",
+              padding: "12px 14px",
+              borderRadius: 12,
+              background: transferConfirmationText ? `linear-gradient(135deg,${C.accent},${C.accentDim})` : `linear-gradient(135deg,${C.blue},#7fbcff)`,
+              border: "none",
+              color: C.bg,
+              fontSize: 14,
+              fontWeight: 800,
+              cursor: saving || transferValidationMessage ? "not-allowed" : "pointer",
+              fontFamily: "inherit",
+              opacity: saving || transferValidationMessage ? 0.6 : 1,
+              boxShadow: transferConfirmationText ? "0 10px 24px rgba(0,229,160,0.22)" : "0 10px 24px rgba(91,168,255,0.22)",
+            }}
+          >
+            {saving ? "…" : transferConfirmationText ? "Transfert humain confirmé" : "Confirmer le transfert humain"}
+          </button>
         </div>
 
         {/* Section Agenda & Booking */}
