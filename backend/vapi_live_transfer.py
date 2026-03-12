@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 
 import httpx
 
-from backend.handoff_router import resolve_handoff_decision
+from backend.handoff_router import resolve_handoff_decision, resolve_handoff_target_phone
 from backend.handoffs import ensure_transfer_handoff, update_handoff_status
 from backend.tenant_config import get_params
 
@@ -153,9 +153,7 @@ def extract_control_url(payload: Optional[dict]) -> str:
 
 def _destination_phone(session: Any, target: str) -> str:
     params = get_params(int(getattr(session, "tenant_id", 1) or 1))
-    if target == "practitioner":
-        return normalize_transfer_destination_phone(str(params.get("transfer_practitioner_phone") or "").strip())
-    return normalize_transfer_destination_phone(str(params.get("transfer_assistant_phone") or "").strip())
+    return normalize_transfer_destination_phone(resolve_handoff_target_phone(params, target))
 
 
 def maybe_start_live_transfer(

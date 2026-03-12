@@ -21,6 +21,17 @@ _MEDICAL_REASON_HINTS = {
 }
 
 
+def resolve_handoff_target_phone(params: Dict[str, Any], target: str) -> str:
+    params = params or {}
+    if target == "practitioner":
+        return str(params.get("transfer_practitioner_phone") or "").strip()
+    for key in ("transfer_assistant_phone", "transfer_number", "phone_number"):
+        value = str(params.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
 def _looks_like_practitioner_request(text: str) -> bool:
     normalized = (text or "").strip().lower()
     if not normalized:
@@ -65,9 +76,7 @@ def resolve_handoff_decision(
 
     live_enabled = str(params.get("transfer_live_enabled") or "").strip().lower() == "true"
     callback_enabled = str(params.get("transfer_callback_enabled") or "").strip().lower() != "false"
-    assistant_phone = str(params.get("transfer_assistant_phone") or "").strip()
-    practitioner_phone = str(params.get("transfer_practitioner_phone") or "").strip()
-    target_phone = practitioner_phone if target == "practitioner" else assistant_phone
+    target_phone = resolve_handoff_target_phone(params, target)
 
     if channel == "vocal" and live_enabled and callback_enabled and target_phone:
         mode = "live_then_callback"

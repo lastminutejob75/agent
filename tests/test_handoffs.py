@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from backend.handoff_router import resolve_handoff_decision
+from backend.handoff_router import resolve_handoff_decision, resolve_handoff_target_phone
 from backend.handoffs import build_handoff_payload, create_handoff, get_handoff_by_call_id, update_handoff_status
 from backend.session import QualifData, Session
 
@@ -75,6 +75,45 @@ def test_resolve_handoff_decision_uses_live_then_callback_when_configured():
 
     assert decision["target"] == "assistant"
     assert decision["mode"] == "live_then_callback"
+
+
+def test_resolve_handoff_decision_accepts_legacy_assistant_phone_fields():
+    session = Session(conv_id="call_cfg_legacy", channel="vocal", tenant_id=12, customer_phone="+33698765432")
+
+    with patch(
+        "backend.handoff_router.get_params",
+        return_value={
+            "transfer_live_enabled": "true",
+            "transfer_callback_enabled": "true",
+            "phone_number": "+33123456789",
+        },
+    ):
+        decision = resolve_handoff_decision(
+            session,
+            trigger_reason="technical_failure",
+            channel="vocal",
+            user_text="Je veux parler à quelqu'un",
+        )
+
+    assert decision["target"] == "assistant"
+    assert decision["mode"] == "live_then_callback"
+
+
+def test_resolve_handoff_target_phone_prefers_dedicated_assistant_phone_then_legacy_fields():
+    assert (
+        resolve_handoff_target_phone(
+            {
+                "transfer_assistant_phone": "+33911111111",
+                "transfer_number": "+33922222222",
+                "phone_number": "+33933333333",
+            },
+            "assistant",
+        )
+        == "+33911111111"
+    )
+    assert resolve_handoff_target_phone({"transfer_number": "+33922222222"}, "assistant") == "+33922222222"
+    assert resolve_handoff_target_phone({"phone_number": "+33933333333"}, "assistant") == "+33933333333"
+    assert resolve_handoff_target_phone({"phone_number": "+33933333333"}, "practitioner") == ""
 
 
 def test_update_handoff_status_can_update_notes_without_changing_status():

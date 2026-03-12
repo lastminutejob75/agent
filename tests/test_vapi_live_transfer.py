@@ -104,6 +104,41 @@ def test_maybe_start_live_transfer_returns_failure_when_control_post_fails():
     mock_update.assert_called_once_with(12, 8, status="live_failed")
 
 
+def test_maybe_start_live_transfer_uses_legacy_phone_number_as_assistant_fallback():
+    session = Session(conv_id="call-live-fallback", channel="vocal", tenant_id=12)
+    session.state = "TRANSFERRED"
+    session.last_transfer_reason = "technical_failure"
+
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.raise_for_status.return_value = None
+    mock_client.post.return_value = mock_response
+
+    with patch("backend.vapi_live_transfer.resolve_handoff_decision", return_value={
+        "reason": "technical_failure",
+        "target": "assistant",
+        "mode": "live_then_callback",
+        "priority": "normal",
+    }), patch("backend.vapi_live_transfer.get_params", return_value={
+        "phone_number": "01 23 45 67 89",
+    }), patch("backend.vapi_live_transfer.ensure_transfer_handoff", return_value={"id": 12}), patch(
+        "backend.vapi_live_transfer.update_handoff_status"
+    ) as mock_update, patch("backend.vapi_live_transfer.schedule_transfer_confirmation"), patch(
+        "backend.vapi_live_transfer.httpx.Client"
+    ) as mock_httpx_client:
+        mock_httpx_client.return_value.__enter__.return_value = mock_client
+        result = maybe_start_live_transfer(
+            {"call": {"monitor": {"controlUrl": "https://api.vapi.test/call-fallback"}}},
+            session,
+            response_text="Je vous transfère maintenant.",
+            user_text="Je veux parler à quelqu'un",
+        )
+
+    assert result["ok"] is True
+    assert mock_client.post.call_args.kwargs["json"]["destination"]["number"] == "+33123456789"
+    mock_update.assert_called_once_with(12, 12, status="live_attempted")
+
+
 def test_voice_helper_can_suppress_followup_tts_when_live_transfer_started():
     session = Session(conv_id="call-live-helper", channel="vocal", tenant_id=12)
     session.state = "TRANSFERRED"
