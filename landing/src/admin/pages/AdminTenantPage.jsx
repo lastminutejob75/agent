@@ -119,6 +119,46 @@ function copyText(value) {
   navigator.clipboard?.writeText(String(value || "")).catch(() => {});
 }
 
+function sanitizePhoneInput(value) {
+  const raw = String(value || "");
+  const cleaned = raw.replace(/[^\d+]/g, "");
+  const hasPlus = cleaned.startsWith("+");
+  const digits = cleaned.replace(/\+/g, "");
+  return `${hasPlus ? "+" : ""}${digits.slice(0, 15)}`;
+}
+
+function normalizeFrenchPhone(value) {
+  const cleaned = sanitizePhoneInput(value);
+  if (!cleaned) return "";
+  if (cleaned.startsWith("+")) {
+    return `+${cleaned.slice(1).replace(/\D/g, "")}`;
+  }
+  const digits = cleaned.replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("00")) return `+${digits.slice(2)}`;
+  if (digits.startsWith("33")) return `+${digits}`;
+  if (digits.startsWith("0") && digits.length === 10) return `+33${digits.slice(1)}`;
+  if (digits.length === 9) return `+33${digits}`;
+  return digits;
+}
+
+function isValidFrenchPhone(value) {
+  return /^\+33\d{9}$/.test(normalizeFrenchPhone(value));
+}
+
+function normalizeTenantPhoneParams(input) {
+  const next = { ...(input || {}) };
+  for (const key of ["phone_number", "transfer_number", "transfer_assistant_phone", "transfer_practitioner_phone"]) {
+    const raw = next[key];
+    if (raw == null || raw === "") continue;
+    next[key] = normalizeFrenchPhone(raw);
+  }
+  if (!next.transfer_assistant_phone) {
+    next.transfer_assistant_phone = next.transfer_number || next.phone_number || "";
+  }
+  return next;
+}
+
 function QuickStat({ label, value, tone = C.text, mono = false }) {
   return (
     <div style={{ minWidth: 0 }}>
@@ -535,7 +575,7 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
 
   useEffect(() => {
     setFlags(tenant?.flags || {});
-    setParams(tenant?.params || {});
+    setParams(normalizeTenantPhoneParams(tenant?.params || {}));
     setOnboardingEmail(
       tenant?.contact_email || tenant?.params?.contact_email || tenant?.params?.billing_email || "",
     );
@@ -555,6 +595,22 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
   const isGoogleProvider = (params.calendar_provider || "none") === "google";
   const transferLiveEnabled = String(params.transfer_live_enabled || "").toLowerCase() === "true";
   const transferCallbackEnabled = String(params.transfer_callback_enabled || "").toLowerCase() !== "false";
+  const normalizedAssistantPhone = normalizeFrenchPhone(params.transfer_assistant_phone || "");
+  const normalizedPractitionerPhone = normalizeFrenchPhone(params.transfer_practitioner_phone || "");
+  const assistantFallbackPhone = normalizeFrenchPhone(params.transfer_number || params.phone_number || "");
+  const effectiveAssistantPhone = normalizedAssistantPhone || assistantFallbackPhone;
+  const assistantUsesFallback = !normalizedAssistantPhone && Boolean(assistantFallbackPhone);
+  const assistantMatchesFallback = Boolean(assistantFallbackPhone) && normalizedAssistantPhone === assistantFallbackPhone;
+  const assistantPhoneInvalid = Boolean(params.transfer_assistant_phone) && !isValidFrenchPhone(params.transfer_assistant_phone);
+  const practitionerPhoneInvalid = Boolean(params.transfer_practitioner_phone) && !isValidFrenchPhone(params.transfer_practitioner_phone);
+  const hasTransferTarget = Boolean(effectiveAssistantPhone || normalizedPractitionerPhone);
+  const transferValidationMessage = assistantPhoneInvalid
+    ? "Le numéro assistante doit être au format +33XXXXXXXXX."
+    : practitionerPhoneInvalid
+      ? "Le numéro praticien doit être au format +33XXXXXXXXX."
+      : !hasTransferTarget && (transferLiveEnabled || transferCallbackEnabled)
+        ? "Ajoute au moins un numéro humain valide pour confirmer le transfert."
+        : null;
   const normalizedTenantName = (tenant?.name || "").trim();
   const isSystemTenant = normalizedTenantName.toUpperCase() === "DEFAULT" || Number(tenantId) === 1;
   const isInactiveTenant = (tenant?.status || "").toLowerCase() === "inactive";
@@ -577,12 +633,21 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
     }
   };
 
-  const saveParams = async () => {
+  const setPhoneParam = useCallback((key, value, finalize = false) => {
+    setParams((p) => ({
+      ...p,
+      [key]: finalize ? normalizeFrenchPhone(value) : sanitizePhoneInput(value),
+    }));
+  }, []);
+
+  const saveParams = async (successText = "Params sauvegardés ✓") => {
     setSaving(true);
     setMsg(null);
     try {
-      await updateTenantParams(tenantId, params);
-      setMsg({ type: "success", text: "Params sauvegardés ✓" });
+      const nextParams = normalizeTenantPhoneParams(params);
+      await updateTenantParams(tenantId, nextParams);
+      setParams(nextParams);
+      setMsg({ type: "success", text: successText });
       onSaved?.();
     } catch (e) {
       setMsg({ type: "error", text: e?.message || "Erreur" });
@@ -745,7 +810,17 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
             <input
               value={params[field.key] || ""}
               placeholder={field.placeholder}
-              onChange={(e) => setParams((p) => ({ ...p, [field.key]: e.target.value }))}
+              inputMode={field.key === "phone_number" || field.key === "transfer_number" ? "tel" : undefined}
+              onChange={(e) => (
+                field.key === "phone_number" || field.key === "transfer_number"
+                  ? setPhoneParam(field.key, e.target.value)
+                  : setParams((p) => ({ ...p, [field.key]: e.target.value }))
+              )}
+              onBlur={(e) => {
+                if (field.key === "phone_number" || field.key === "transfer_number") {
+                  setPhoneParam(field.key, e.target.value, true);
+                }
+              }}
               style={{
                 width: "100%",
                 background: C.surface,
@@ -763,6 +838,9 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
 
         <div style={{ marginTop: 24, borderTop: `1px solid ${C.border}`, paddingTop: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: C.blue, marginBottom: 12 }}>📲 Transfert humain hybride</div>
+          <div style={{ fontSize: 12, color: C.muted, marginBottom: 12 }}>
+            Saisie imposée au format `+33`. Le système utilisera d&apos;abord le numéro assistante, puis le numéro déjà connu du cabinet si besoin.
+          </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
             <div>
@@ -770,11 +848,13 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
               <input
                 value={params.transfer_assistant_phone || ""}
                 placeholder="+33123456789"
-                onChange={(e) => setParams((p) => ({ ...p, transfer_assistant_phone: e.target.value }))}
+                inputMode="tel"
+                onChange={(e) => setPhoneParam("transfer_assistant_phone", e.target.value)}
+                onBlur={(e) => setPhoneParam("transfer_assistant_phone", e.target.value, true)}
                 style={{
                   width: "100%",
                   background: C.surface,
-                  border: `1px solid ${C.border}`,
+                  border: `1px solid ${assistantPhoneInvalid ? C.danger : C.border}`,
                   borderRadius: 8,
                   padding: "8px 12px",
                   color: C.text,
@@ -783,17 +863,46 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
                   outline: "none",
                 }}
               />
+              <div style={{ marginTop: 6, fontSize: 11, color: assistantPhoneInvalid ? C.danger : C.muted }}>
+                {assistantPhoneInvalid
+                  ? "Format attendu : +33XXXXXXXXX"
+                    : assistantUsesFallback || assistantMatchesFallback
+                    ? `Si vide, le système reprend ${assistantFallbackPhone}.`
+                    : "Exemple : +33612345678 ou +33912345678"}
+              </div>
+              {assistantFallbackPhone && assistantFallbackPhone !== normalizedAssistantPhone ? (
+                <button
+                  type="button"
+                  onClick={() => setPhoneParam("transfer_assistant_phone", assistantFallbackPhone, true)}
+                  style={{
+                    marginTop: 8,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: `1px solid ${C.blue}55`,
+                    background: "rgba(91,168,255,0.1)",
+                    color: C.blue,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  Reprendre le numéro assistante ({assistantFallbackPhone})
+                </button>
+              ) : null}
             </div>
             <div>
               <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "block" }}>Numéro praticien</div>
               <input
                 value={params.transfer_practitioner_phone || ""}
                 placeholder="+33123456789"
-                onChange={(e) => setParams((p) => ({ ...p, transfer_practitioner_phone: e.target.value }))}
+                inputMode="tel"
+                onChange={(e) => setPhoneParam("transfer_practitioner_phone", e.target.value)}
+                onBlur={(e) => setPhoneParam("transfer_practitioner_phone", e.target.value, true)}
                 style={{
                   width: "100%",
                   background: C.surface,
-                  border: `1px solid ${C.border}`,
+                  border: `1px solid ${practitionerPhoneInvalid ? C.danger : C.border}`,
                   borderRadius: 8,
                   padding: "8px 12px",
                   color: C.text,
@@ -802,6 +911,9 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
                   outline: "none",
                 }}
               />
+              <div style={{ marginTop: 6, fontSize: 11, color: practitionerPhoneInvalid ? C.danger : C.muted }}>
+                {practitionerPhoneInvalid ? "Format attendu : +33XXXXXXXXX" : "Réservé aux demandes de parler au médecin."}
+              </div>
             </div>
           </div>
 
@@ -847,7 +959,40 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
                     ? "Rappel uniquement."
                     : "Transfert hybride désactivé."}
             </div>
+            <div style={{ color: C.muted, marginTop: 6 }}>
+              Assistante effective : {effectiveAssistantPhone || "non renseigné"} · Praticien : {normalizedPractitionerPhone || "non renseigné"}
+            </div>
+            {transferValidationMessage ? (
+              <div style={{ color: C.danger, marginTop: 8 }}>{transferValidationMessage}</div>
+            ) : (
+              <div style={{ color: C.accent, marginTop: 8 }}>
+                {hasTransferTarget ? "Configuration prête pour le transfert humain." : "Tu peux confirmer cette configuration."}
+              </div>
+            )}
           </div>
+
+          <button
+            type="button"
+            onClick={() => saveParams("Transfert humain confirmé ✓")}
+            disabled={saving || Boolean(transferValidationMessage)}
+            style={{
+              marginTop: 14,
+              width: "100%",
+              padding: "12px 14px",
+              borderRadius: 12,
+              background: `linear-gradient(135deg,${C.blue},#7fbcff)`,
+              border: "none",
+              color: C.bg,
+              fontSize: 14,
+              fontWeight: 800,
+              cursor: saving || transferValidationMessage ? "not-allowed" : "pointer",
+              fontFamily: "inherit",
+              opacity: saving || transferValidationMessage ? 0.6 : 1,
+              boxShadow: "0 10px 24px rgba(91,168,255,0.22)",
+            }}
+          >
+            {saving ? "…" : "Confirmer le transfert humain"}
+          </button>
         </div>
 
         {/* Section Agenda & Booking */}
@@ -1072,105 +1217,9 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
           </button>
         </div>
 
-        <div style={{ marginTop: 24, borderTop: `1px solid ${C.border}`, paddingTop: 16 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: C.accent, marginBottom: 12 }}>📞 Transfert humain</div>
-          <div style={{ fontSize: 12, color: C.muted, marginBottom: 12 }}>
-            Prépare le routage hybride par cabinet. Ces réglages alimentent déjà la file handoff et serviront au live transfer.
-          </div>
-
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "block" }}>Numéro assistante</div>
-            <input
-              value={params.transfer_assistant_phone || ""}
-              onChange={(e) => setParams((p) => ({ ...p, transfer_assistant_phone: e.target.value }))}
-              placeholder="+33612345678"
-              style={{
-                width: "100%",
-                background: C.surface,
-                border: `1px solid ${C.border}`,
-                borderRadius: 8,
-                padding: "8px 12px",
-                color: C.text,
-                fontSize: 13,
-                fontFamily: "monospace",
-                outline: "none",
-              }}
-            />
-          </div>
-
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "block" }}>Numéro praticien</div>
-            <input
-              value={params.transfer_practitioner_phone || ""}
-              onChange={(e) => setParams((p) => ({ ...p, transfer_practitioner_phone: e.target.value }))}
-              placeholder="+33698765432"
-              style={{
-                width: "100%",
-                background: C.surface,
-                border: `1px solid ${C.border}`,
-                borderRadius: 8,
-                padding: "8px 12px",
-                color: C.text,
-                fontSize: 13,
-                fontFamily: "monospace",
-                outline: "none",
-              }}
-            />
-          </div>
-
-          <label style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={transferLiveEnabled}
-              onChange={(e) =>
-                setParams((p) => ({
-                  ...p,
-                  transfer_live_enabled: e.target.checked ? "true" : "false",
-                }))}
-            />
-            <span style={{ fontSize: 12, color: C.text }}>
-              Activer le mode live transfer si un numéro cible est disponible
-            </span>
-          </label>
-
-          <label style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={transferCallbackEnabled}
-              onChange={(e) =>
-                setParams((p) => ({
-                  ...p,
-                  transfer_callback_enabled: e.target.checked ? "true" : "false",
-                }))}
-            />
-            <span style={{ fontSize: 12, color: C.text }}>
-              Autoriser le fallback en rappel organisé quand aucun humain n&apos;est joignable
-            </span>
-          </label>
-
-          <div
-            style={{
-              padding: "10px 12px",
-              borderRadius: 10,
-              background: "rgba(91,168,255,0.08)",
-              border: `1px solid ${C.blue}30`,
-              fontSize: 12,
-              color: C.text,
-            }}
-          >
-            <div style={{ color: C.blue, fontWeight: 700, marginBottom: 4 }}>Résumé</div>
-            <div>
-              {transferLiveEnabled ? "Live activé" : "Live désactivé"} · {transferCallbackEnabled ? "Rappel activé" : "Rappel désactivé"}
-            </div>
-            <div style={{ color: C.muted, marginTop: 4 }}>
-              Assistante: {params.transfer_assistant_phone || "non renseigné"} · Praticien: {params.transfer_practitioner_phone || "non renseigné"}
-            </div>
-          </div>
-        </div>
-
         <button
           type="button"
-          onClick={saveParams}
+          onClick={() => saveParams()}
           disabled={saving}
           style={{
             marginTop: 4,
@@ -1186,7 +1235,7 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
             fontFamily: "inherit",
           }}
         >
-          {saving ? "…" : "Sauvegarder les params"}
+          {saving ? "…" : "Sauvegarder les autres paramètres"}
         </button>
 
         <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
