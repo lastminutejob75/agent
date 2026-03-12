@@ -580,11 +580,10 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
 
   const FLAG_KEYS = ["ENABLE_LLM_ASSIST_START", "ENABLE_ANTI_LOOP", "ENABLE_TRANSFER", "ENABLE_BOOKING", "ENABLE_FAQ"];
   const PARAM_FIELDS = [
-    { key: "calendar_id", label: "calendar_id", placeholder: "test@group.calendar.google.com", mono: true },
-    { key: "phone_number", label: "phone_number", placeholder: "+33123456789", mono: true },
-    { key: "transfer_number", label: "transfer_number", placeholder: "+33123456789", mono: true },
-    { key: "timezone", label: "timezone", placeholder: "Europe/Paris", mono: true },
-    { key: "assistant_name", label: "assistant_name", placeholder: "sophie", mono: false },
+    { key: "calendar_id", label: "Agenda Google", placeholder: "test@group.calendar.google.com", mono: true },
+    { key: "phone_number", label: "Numéro du cabinet", placeholder: "+33123456789", mono: true },
+    { key: "timezone", label: "Fuseau horaire", placeholder: "Europe/Paris", mono: true },
+    { key: "assistant_name", label: "Nom de l'assistante IA", placeholder: "sophie", mono: false },
   ];
   const bookingRules = normalizeBookingRules(params);
   const horairesPreview = deriveHorairesText(bookingRules);
@@ -593,8 +592,9 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
   const transferLiveEnabled = String(params.transfer_live_enabled || "").toLowerCase() === "true";
   const transferCallbackEnabled = String(params.transfer_callback_enabled || "").toLowerCase() !== "false";
   const normalizedPractitionerPhone = normalizeFrenchPhone(params.transfer_practitioner_phone || "");
-  const assistantSourceKey = params.transfer_number ? "TRANSFER_NUMBER" : params.phone_number ? "PHONE_NUMBER" : null;
+  const assistantSourceKey = params.transfer_number ? "numéro assistante spécifique" : params.phone_number ? "numéro du cabinet" : null;
   const assistantSourceRaw = params.transfer_number || params.phone_number || "";
+  const assistantInputValue = params.transfer_number || "";
   const effectiveAssistantPhone = normalizeFrenchPhone(assistantSourceRaw);
   const assistantPhoneInvalid = Boolean(assistantSourceRaw) && !isValidFrenchPhone(assistantSourceRaw);
   const practitionerPhoneInvalid = Boolean(params.transfer_practitioner_phone) && !isValidFrenchPhone(params.transfer_practitioner_phone);
@@ -835,13 +835,18 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
         <div style={{ marginTop: 24, borderTop: `1px solid ${C.border}`, paddingTop: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: C.blue, marginBottom: 12 }}>📲 Transfert humain hybride</div>
           <div style={{ fontSize: 12, color: C.muted, marginBottom: 12 }}>
-            Le numéro assistante est repris automatiquement depuis `TRANSFER_NUMBER`, sinon depuis `PHONE_NUMBER`. Tu ne le saisis donc plus deux fois.
+            Le numéro du cabinet est repris automatiquement pour l&apos;assistante. Ne renseigne le champ ci-dessous que si le transfert doit partir vers un autre numéro.
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
             <div>
-              <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "block" }}>Numéro assistante</div>
-              <div
+              <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, display: "block" }}>Numéro assistante spécifique</div>
+              <input
+                value={assistantInputValue}
+                placeholder="+33123456789"
+                inputMode="tel"
+                onChange={(e) => setPhoneParam("transfer_number", e.target.value)}
+                onBlur={(e) => setPhoneParam("transfer_number", e.target.value, true)}
                 style={{
                   width: "100%",
                   background: C.surface,
@@ -851,19 +856,17 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
                   color: C.text,
                   fontSize: 13,
                   fontFamily: "monospace",
-                  minHeight: 40,
-                  display: "flex",
-                  alignItems: "center",
+                  outline: "none",
                 }}
-              >
-                {effectiveAssistantPhone || "Non renseigné"}
-              </div>
+              />
               <div style={{ marginTop: 6, fontSize: 11, color: assistantPhoneInvalid ? C.danger : C.muted }}>
                 {assistantPhoneInvalid
-                  ? "Corrige `TRANSFER_NUMBER` ou `PHONE_NUMBER` au format +33XXXXXXXXX."
-                  : assistantSourceKey
-                    ? `Repris automatiquement depuis ${assistantSourceKey}.`
-                    : "Renseigne `TRANSFER_NUMBER` ou `PHONE_NUMBER` plus haut pour activer le transfert assistante."}
+                  ? "Format attendu : +33XXXXXXXXX."
+                  : params.transfer_number
+                    ? "Utilisé pour le transfert vers l'assistante."
+                    : params.phone_number
+                      ? "Laisse vide : le numéro du cabinet sera repris automatiquement."
+                      : "Renseigne d'abord le numéro du cabinet, ou saisis ici un numéro assistante spécifique."}
               </div>
             </div>
             <div>
