@@ -368,6 +368,7 @@ def pg_update_tenant_params(tenant_id: int, params: dict) -> bool:
         "mirror_google_bookings_to_internal",
         "transfer_assistant_phone", "transfer_practitioner_phone",
         "transfer_live_enabled", "transfer_callback_enabled",
+        "transfer_cases", "transfer_hours", "transfer_always_urgent", "transfer_no_consultation",
         "transfer_config_confirmed_signature", "transfer_config_confirmed_at",
     }
     filtered = {}
@@ -398,6 +399,28 @@ def pg_update_tenant_params(tenant_id: int, params: dict) -> bool:
                 filtered[k] = v
             else:
                 filtered[k] = []
+        elif k == "transfer_cases":
+            if isinstance(v, (list, tuple)):
+                filtered[k] = [str(x) for x in v if str(x).strip()]
+            elif isinstance(v, str):
+                try:
+                    parsed = json.loads(v)
+                    filtered[k] = [str(x) for x in parsed] if isinstance(parsed, (list, tuple)) else []
+                except Exception:
+                    filtered[k] = [x.strip() for x in v.split(",") if x.strip()]
+            else:
+                filtered[k] = []
+        elif k == "transfer_hours":
+            if isinstance(v, dict):
+                filtered[k] = v
+            elif isinstance(v, str):
+                try:
+                    parsed = json.loads(v)
+                    filtered[k] = parsed if isinstance(parsed, dict) else {}
+                except Exception:
+                    filtered[k] = {}
+            else:
+                filtered[k] = {}
         else:
             filtered[k] = str(v)
     if not filtered:

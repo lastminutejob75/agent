@@ -151,6 +151,39 @@ def _is_truthy(value: Any) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on", "oui"}
 
 
+def _parse_string_list(value: Any) -> List[str]:
+    if isinstance(value, (list, tuple, set)):
+        return [str(x) for x in value if str(x).strip()]
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return []
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, (list, tuple, set)):
+                return [str(x) for x in parsed if str(x).strip()]
+        except Exception:
+            pass
+        return [x.strip() for x in raw.split(",") if x.strip()]
+    return []
+
+
+def _parse_dict_value(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            return {}
+    return {}
+
+
 def _get_zoneinfo(tz_name: str):
     if ZoneInfo:
         try:
@@ -727,6 +760,8 @@ def tenant_me(auth: dict = Depends(require_tenant_auth)):
     }
     onboarding_completed = all(onboarding_steps.values())
     client_onboarding_completed = _explicit or onboarding_completed
+    transfer_hours = _parse_dict_value(params.get("transfer_hours"))
+    transfer_cases = _parse_string_list(params.get("transfer_cases"))
 
     return {
         "tenant_id": tenant_id,
@@ -751,6 +786,15 @@ def tenant_me(auth: dict = Depends(require_tenant_auth)):
         "voice_number": voice_number,
         "client_onboarding_completed": client_onboarding_completed,
         "dashboard_tour_completed": _is_truthy(params.get("dashboard_tour_completed")),
+        "transfer_number": params.get("transfer_number", ""),
+        "transfer_live_enabled": _is_truthy(params.get("transfer_live_enabled")),
+        "transfer_callback_enabled": params.get("transfer_callback_enabled") is None or _is_truthy(params.get("transfer_callback_enabled")),
+        "transfer_cases": transfer_cases,
+        "transfer_hours": transfer_hours,
+        "transfer_always_urgent": _is_truthy(params.get("transfer_always_urgent")),
+        "transfer_no_consultation": _is_truthy(params.get("transfer_no_consultation")),
+        "transfer_config_confirmed_signature": params.get("transfer_config_confirmed_signature", ""),
+        "transfer_config_confirmed_at": params.get("transfer_config_confirmed_at", ""),
         "onboarding_steps": onboarding_steps,
         "onboarding_completed": onboarding_completed,
         "faq_items_count": _count_active_faq_items(faq),
@@ -1513,6 +1557,9 @@ def tenant_patch_params(
         "phone_number", "sector", "specialty_label", "address_line1", "postal_code", "city",
         "assistant_name", "plan_key", "agenda_software", "client_onboarding_completed",
         "dashboard_tour_completed",
+        "transfer_number", "transfer_live_enabled", "transfer_callback_enabled",
+        "transfer_cases", "transfer_hours", "transfer_always_urgent", "transfer_no_consultation",
+        "transfer_config_confirmed_signature", "transfer_config_confirmed_at",
     }
     body = body or {}
     tenant_id = auth["tenant_id"]
@@ -1526,7 +1573,7 @@ def tenant_patch_params(
         return {"ok": True}
     ok = pg_update_tenant_params(tenant_id, params)
     if not ok:
-        raise HTTPException(500, "Failed to update params")
+        set_params(tenant_id, params)
     return {"ok": True}
 
 

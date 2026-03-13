@@ -162,6 +162,60 @@ def test_tenant_me_onboarding_requires_real_completion(mock_get_user, mock_detai
     assert me["dashboard_tour_completed"] is False
 
 
+@patch("backend.routes.tenant.pg_get_tenant_user_by_id")
+def test_tenant_patch_params_persists_transfer_wizard_config(mock_get_user, client, jwt_secret):
+    """Le dashboard client peut sauvegarder et relire la configuration du wizard de transfert."""
+    onboarding = client.post(
+        "/api/public/onboarding",
+        json={
+            "company_name": "Cabinet transfert client",
+            "email": "wizard-transfer@test.fr",
+            "calendar_provider": "none",
+            "calendar_id": "",
+        },
+    )
+    assert onboarding.status_code == 200
+    tenant_id = onboarding.json()["tenant_id"]
+
+    mock_get_user.return_value = {"tenant_id": tenant_id, "email": "wizard-transfer@test.fr", "role": "owner"}
+    token = _make_client_jwt(tenant_id, email="wizard-transfer@test.fr", secret=jwt_secret)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    payload = {
+        "phone_number": "+33142345678",
+        "transfer_number": "+33612345678",
+        "transfer_live_enabled": "true",
+        "transfer_callback_enabled": "true",
+        "transfer_cases": ["urgent", "insists", "other"],
+        "transfer_hours": {
+            "Lundi": {"enabled": True, "from": "09:00", "to": "18:00"},
+            "Mardi": {"enabled": True, "from": "09:00", "to": "18:00"},
+        },
+        "transfer_always_urgent": "true",
+        "transfer_no_consultation": "false",
+        "transfer_config_confirmed_signature": '{"ok":true}',
+        "transfer_config_confirmed_at": "2026-03-12T20:00:00Z",
+    }
+    r_patch = client.patch("/api/tenant/params", headers=headers, json=payload)
+    assert r_patch.status_code == 200
+    assert r_patch.json()["ok"] is True
+
+    r_me = client.get("/api/tenant/me", headers=headers)
+    assert r_me.status_code == 200
+    me = r_me.json()
+    assert me["phone_number"] == "+33142345678"
+    assert me["transfer_number"] == "+33612345678"
+    assert me["transfer_live_enabled"] is True
+    assert me["transfer_callback_enabled"] is True
+    assert me["transfer_cases"] == ["urgent", "insists", "other"]
+    assert me["transfer_hours"]["Lundi"]["enabled"] is True
+    assert me["transfer_hours"]["Lundi"]["from"] == "09:00"
+    assert me["transfer_always_urgent"] is True
+    assert me["transfer_no_consultation"] is False
+    assert me["transfer_config_confirmed_signature"] == '{"ok":true}'
+    assert me["transfer_config_confirmed_at"] == "2026-03-12T20:00:00Z"
+
+
 def test_e2e_tenant_me_sans_token_401(client):
     """GET /api/tenant/me sans Bearer → 401."""
     r = client.get("/api/tenant/me")

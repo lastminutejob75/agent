@@ -481,16 +481,20 @@ def get_params(tenant_id: Optional[int] = None) -> Dict[str, str]:
 def set_params(tenant_id: int, params: Dict[str, str]) -> None:
     """Met à jour params_json (merge shallow). Clés à plat."""
     allowed = (
-        "calendar_provider", "calendar_id", "contact_email", "consent_mode", "business_name",
+        "calendar_provider", "calendar_id", "contact_email", "timezone", "consent_mode", "business_name",
         "transfer_phone", "transfer_number", "horaires",
         "responsible_phone", "manager_name", "billing_email", "vapi_assistant_id", "plan_key", "notes",
         "custom_included_minutes_month",
+        "assistant_name", "phone_number", "sector",
+        "specialty_label", "address_line1", "postal_code", "city", "agenda_software",
+        "client_onboarding_completed", "dashboard_tour_completed",
         "faq_json",
         "booking_duration_minutes", "booking_start_hour", "booking_end_hour",
         "booking_buffer_minutes", "booking_days",
         "mirror_google_bookings_to_internal",
         "transfer_assistant_phone", "transfer_practitioner_phone",
         "transfer_live_enabled", "transfer_callback_enabled",
+        "transfer_cases", "transfer_hours", "transfer_always_urgent", "transfer_no_consultation",
         "transfer_config_confirmed_signature", "transfer_config_confirmed_at",
     )
     filtered = {}
@@ -512,6 +516,28 @@ def set_params(tenant_id: int, params: Dict[str, str]) -> None:
                 filtered[k] = [0, 1, 2, 3, 4]
         elif k == "faq_json":
             filtered[k] = normalize_faq_payload(v)
+        elif k == "transfer_cases":
+            if isinstance(v, (list, tuple)):
+                filtered[k] = [str(x) for x in v if str(x).strip()]
+            elif isinstance(v, str):
+                try:
+                    parsed = json.loads(v)
+                    filtered[k] = [str(x) for x in parsed] if isinstance(parsed, (list, tuple)) else []
+                except Exception:
+                    filtered[k] = [x.strip() for x in v.split(",") if x.strip()]
+            else:
+                filtered[k] = []
+        elif k == "transfer_hours":
+            if isinstance(v, dict):
+                filtered[k] = v
+            elif isinstance(v, str):
+                try:
+                    parsed = json.loads(v)
+                    filtered[k] = parsed if isinstance(parsed, dict) else {}
+                except Exception:
+                    filtered[k] = {}
+            else:
+                filtered[k] = {}
         else:
             filtered[k] = str(v)
     if any(k in filtered for k in ("booking_days", "booking_start_hour", "booking_end_hour")):

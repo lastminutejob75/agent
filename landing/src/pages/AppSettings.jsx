@@ -1,11 +1,71 @@
 import { useState, useEffect } from "react";
 import { api } from "../lib/api.js";
+import CallTransferSettings from "../components/CallTransferSettings.jsx";
+
+function sanitizePhoneInput(value) {
+  const raw = String(value || "");
+  const cleaned = raw.replace(/[^\d+]/g, "");
+  const hasPlus = cleaned.startsWith("+");
+  const digits = cleaned.replace(/\+/g, "");
+  return `${hasPlus ? "+" : ""}${digits.slice(0, 15)}`;
+}
+
+function normalizeFrenchPhone(value) {
+  const cleaned = sanitizePhoneInput(value);
+  if (!cleaned) return "";
+  if (cleaned.startsWith("+")) return `+${cleaned.slice(1).replace(/\D/g, "")}`;
+  const digits = cleaned.replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("00")) return `+${digits.slice(2)}`;
+  if (digits.startsWith("33")) return `+${digits}`;
+  if (digits.startsWith("0") && digits.length === 10) return `+33${digits.slice(1)}`;
+  if (digits.length === 9) return `+33${digits}`;
+  return digits;
+}
+
+function buildTransferConfigSignature({ phoneNumber, transferNumber, transferLiveEnabled, transferCallbackEnabled }) {
+  const cabinetPhone = normalizeFrenchPhone(phoneNumber || "");
+  const assistantPhone = normalizeFrenchPhone(transferNumber || phoneNumber || "");
+  const liveEnabled = String(transferLiveEnabled || "").toLowerCase() === "true";
+  const callbackEnabled = String(transferCallbackEnabled || "").toLowerCase() !== "false";
+  return JSON.stringify({
+    cabinetPhone,
+    assistantPhone,
+    practitionerPhone: "",
+    liveEnabled,
+    callbackEnabled,
+  });
+}
+
+function buildTransferInitialConfig(me) {
+  if (!me) return null;
+  const hasTransferConfig =
+    Boolean(me.transfer_config_confirmed_signature) ||
+    Boolean(me.transfer_config_confirmed_at) ||
+    Boolean(me.transfer_number) ||
+    Boolean(me.transfer_always_urgent) ||
+    Boolean(me.transfer_no_consultation) ||
+    Boolean((me.transfer_cases || []).length) ||
+    Boolean(Object.keys(me.transfer_hours || {}).length);
+  if (!hasTransferConfig) return null;
+  return {
+    main_number: me.transfer_number || me.phone_number || "",
+    always_urgent: Boolean(me.transfer_always_urgent),
+    transfer_cases: Array.isArray(me.transfer_cases) ? me.transfer_cases : [],
+    hours: me.transfer_hours || {},
+    no_consultation: Boolean(me.transfer_no_consultation),
+    confirmed: Boolean(me.transfer_config_confirmed_signature || me.transfer_config_confirmed_at),
+    confirmed_at: me.transfer_config_confirmed_at || "",
+  };
+}
 
 export default function AppSettings() {
   const [params, setParams] = useState({ contact_email: "", timezone: "", calendar_id: "" });
   const [loading, setLoading] = useState(false);
   const [saved, setSaved] = useState(false);
   const [err, setErr] = useState(null);
+  const [transferInitialConfig, setTransferInitialConfig] = useState(null);
+  const [transferSaved, setTransferSaved] = useState(false);
   const [passwords, setPasswords] = useState({ newPassword: "", confirmPassword: "" });
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordSaved, setPasswordSaved] = useState(false);
@@ -19,7 +79,9 @@ export default function AppSettings() {
           contact_email: me.contact_email || "",
           timezone: me.timezone || "Europe/Paris",
           calendar_id: me.calendar_id || "",
+          phone_number: me.phone_number || "",
         });
+        setTransferInitialConfig(buildTransferInitialConfig(me));
       })
       .catch(setErr);
   }, []);
@@ -91,6 +153,16 @@ export default function AppSettings() {
           />
         </div>
         <div>
+          <label className="block text-sm font-medium text-gray-700">Numero du cabinet</label>
+          <input
+            type="tel"
+            value={params.phone_number || ""}
+            onChange={(e) => setParams((p) => ({ ...p, phone_number: sanitizePhoneInput(e.target.value) }))}
+            placeholder="+33123456789"
+            className="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 text-gray-900"
+          />
+        </div>
+        <div>
           <label className="block text-sm font-medium text-gray-700">ID Calendrier</label>
           <input
             type="text"
@@ -109,6 +181,44 @@ export default function AppSettings() {
           {loading ? "Enregistrement..." : "Enregistrer"}
         </button>
       </form>
+
+      <CallTransferSettings
+        cabinetPhone={params.phone_number || ""}
+        initialConfig={transferInitialConfig}
+        onSave={async (payload) => {
+          const transferNumber = normalizeFrenchPhone(payload.main_number || params.phone_number || "");
+          const confirmedAt = new Date().toISOString();
+          const nextConfig = {
+            main_number: transferNumber,
+            always_urgent: Boolean(payload.always_urgent),
+            transfer_cases: payload.transfer_cases || [],
+            hours: payload.hours || {},
+            no_consultation: Boolean(payload.no_consultation),
+            confirmed: true,
+            confirmed_at: confirmedAt,
+          };
+          await api.tenantPatchParams({
+            transfer_number: transferNumber,
+            transfer_live_enabled: "true",
+            transfer_callback_enabled: "true",
+            transfer_cases: payload.transfer_cases || [],
+            transfer_hours: payload.hours || {},
+            transfer_always_urgent: payload.always_urgent ? "true" : "false",
+            transfer_no_consultation: payload.no_consultation ? "true" : "false",
+            transfer_config_confirmed_signature: buildTransferConfigSignature({
+              phoneNumber: params.phone_number || "",
+              transferNumber,
+              transferLiveEnabled: "true",
+              transferCallbackEnabled: "true",
+            }),
+            transfer_config_confirmed_at: confirmedAt,
+          });
+          setTransferInitialConfig(nextConfig);
+          setTransferSaved(true);
+          return { confirmed_at: confirmedAt };
+        }}
+      />
+      {transferSaved && <p className="text-sm text-emerald-600">Configuration du transfert enregistree.</p>}
 
       <form
         id="security"
