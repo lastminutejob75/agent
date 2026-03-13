@@ -22,6 +22,7 @@ import {
   sendTenantOnboardingLink,
 } from "../../lib/adminApi";
 import { deriveHorairesText, normalizeBookingRules } from "../../lib/bookingUtils.js";
+import { buildTransferConfigSignature, isTransferConfigConfirmed } from "../../lib/transferConfig.js";
 import FaqEditor from "../../components/FaqEditor.jsx";
 import ConfirmDialog from "../components/ConfirmDialog";
 
@@ -163,21 +164,6 @@ function buildTransferConfirmationText({ cabinetPhone, assistantPhone, practitio
     return `Validation enregistrée : lorsqu'un appel nécessitera une intervention humaine, l'assistante redirigera les appels reçus au ${cabinet} vers ${assistant}, et vers ${practitionerPhone} si le patient demande à parler au médecin.`;
   }
   return `Validation enregistrée : lorsqu'un appel nécessitera une intervention humaine, l'assistante redirigera les appels reçus au ${cabinet} vers ${assistant}.`;
-}
-
-function buildTransferConfigSignature(params) {
-  const cabinetPhone = normalizeFrenchPhone(params?.phone_number || "");
-  const assistantPhone = normalizeFrenchPhone(params?.transfer_number || params?.phone_number || "");
-  const practitionerPhone = normalizeFrenchPhone(params?.transfer_practitioner_phone || "");
-  const liveEnabled = String(params?.transfer_live_enabled || "").toLowerCase() === "true";
-  const callbackEnabled = String(params?.transfer_callback_enabled || "").toLowerCase() !== "false";
-  return JSON.stringify({
-    cabinetPhone,
-    assistantPhone,
-    practitionerPhone,
-    liveEnabled,
-    callbackEnabled,
-  });
 }
 
 const TRANSFER_CASE_LABELS = {
@@ -675,7 +661,7 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
   const hasTransferTarget = Boolean(effectiveAssistantPhone || normalizedPractitionerPhone);
   const transferConfirmedSignature = String(params.transfer_config_confirmed_signature || "");
   const transferCurrentSignature = buildTransferConfigSignature(params);
-  const transferIsConfirmed = Boolean(transferConfirmedSignature) && transferConfirmedSignature === transferCurrentSignature;
+  const transferIsConfirmed = isTransferConfigConfirmed(params);
   const transferConfirmedDisplay = transferIsConfirmed || transferJustConfirmed;
   const transferConfirmationText = transferConfirmedDisplay
     ? buildTransferConfirmationText({

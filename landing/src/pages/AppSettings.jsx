@@ -1,41 +1,12 @@
 import { useState, useEffect } from "react";
 import { api } from "../lib/api.js";
 import CallTransferSettings from "../components/CallTransferSettings.jsx";
-
-function sanitizePhoneInput(value) {
-  const raw = String(value || "");
-  const cleaned = raw.replace(/[^\d+]/g, "");
-  const hasPlus = cleaned.startsWith("+");
-  const digits = cleaned.replace(/\+/g, "");
-  return `${hasPlus ? "+" : ""}${digits.slice(0, 15)}`;
-}
-
-function normalizeFrenchPhone(value) {
-  const cleaned = sanitizePhoneInput(value);
-  if (!cleaned) return "";
-  if (cleaned.startsWith("+")) return `+${cleaned.slice(1).replace(/\D/g, "")}`;
-  const digits = cleaned.replace(/\D/g, "");
-  if (!digits) return "";
-  if (digits.startsWith("00")) return `+${digits.slice(2)}`;
-  if (digits.startsWith("33")) return `+${digits}`;
-  if (digits.startsWith("0") && digits.length === 10) return `+33${digits.slice(1)}`;
-  if (digits.length === 9) return `+33${digits}`;
-  return digits;
-}
-
-function buildTransferConfigSignature({ phoneNumber, transferNumber, transferLiveEnabled, transferCallbackEnabled }) {
-  const cabinetPhone = normalizeFrenchPhone(phoneNumber || "");
-  const assistantPhone = normalizeFrenchPhone(transferNumber || phoneNumber || "");
-  const liveEnabled = String(transferLiveEnabled || "").toLowerCase() === "true";
-  const callbackEnabled = String(transferCallbackEnabled || "").toLowerCase() !== "false";
-  return JSON.stringify({
-    cabinetPhone,
-    assistantPhone,
-    practitionerPhone: "",
-    liveEnabled,
-    callbackEnabled,
-  });
-}
+import {
+  buildTransferConfigSignature,
+  isTransferConfigConfirmed,
+  sanitizePhoneInput,
+  normalizeFrenchPhone,
+} from "../lib/transferConfig.js";
 
 function buildTransferInitialConfig(me) {
   if (!me) return null;
@@ -60,7 +31,7 @@ function buildTransferInitialConfig(me) {
     practitioner_phone: me.transfer_practitioner_phone || "",
     live_enabled: Boolean(me.transfer_live_enabled),
     callback_enabled: me.transfer_callback_enabled !== false,
-    confirmed: Boolean(me.transfer_config_confirmed_signature || me.transfer_config_confirmed_at),
+    confirmed: isTransferConfigConfirmed(me) || (!me.transfer_config_confirmed_signature && Boolean(me.transfer_config_confirmed_at)),
     confirmed_at: me.transfer_config_confirmed_at || "",
   };
 }
@@ -217,10 +188,15 @@ export default function AppSettings() {
             transfer_always_urgent: payload.always_urgent ? "true" : "false",
             transfer_no_consultation: payload.no_consultation ? "true" : "false",
             transfer_config_confirmed_signature: buildTransferConfigSignature({
-              phoneNumber: params.phone_number || "",
-              transferNumber,
-              transferLiveEnabled: liveEnabled ? "true" : "false",
-              transferCallbackEnabled: callbackEnabled ? "true" : "false",
+              phone_number: params.phone_number || "",
+              transfer_number: transferNumber,
+              transfer_practitioner_phone: transferInitialConfig?.practitioner_phone || "",
+              transfer_live_enabled: liveEnabled ? "true" : "false",
+              transfer_callback_enabled: callbackEnabled ? "true" : "false",
+              transfer_cases: payload.transfer_cases || [],
+              transfer_hours: payload.hours || {},
+              transfer_always_urgent: payload.always_urgent ? "true" : "false",
+              transfer_no_consultation: payload.no_consultation ? "true" : "false",
             }),
             transfer_config_confirmed_at: confirmedAt,
           });
