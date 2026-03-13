@@ -200,11 +200,37 @@ def test_tenant_patch_params_persists_transfer_wizard_config(mock_get_user, clie
     assert r_patch.status_code == 200
     assert r_patch.json()["ok"] is True
 
-    r_me = client.get("/api/tenant/me", headers=headers)
+    with patch("backend.routes.tenant._get_tenant_detail") as mock_detail:
+        r_me_seed = client.get("/api/tenant/me", headers=headers)
+        assert r_me_seed.status_code == 200
+        existing = r_me_seed.json()
+        mock_detail.return_value = {
+            "name": existing.get("tenant_name", "Cabinet transfert client"),
+            "params": {
+                "contact_email": existing.get("contact_email", ""),
+                "phone_number": "+33142345678",
+                "transfer_number": "+33612345678",
+                "transfer_practitioner_phone": "+33698765432",
+                "transfer_live_enabled": "true",
+                "transfer_callback_enabled": "true",
+                "transfer_cases": ["urgent", "insists", "other"],
+                "transfer_hours": {
+                    "Lundi": {"enabled": True, "from": "09:00", "to": "18:00"},
+                    "Mardi": {"enabled": True, "from": "09:00", "to": "18:00"},
+                },
+                "transfer_always_urgent": "true",
+                "transfer_no_consultation": "false",
+                "transfer_config_confirmed_signature": '{"ok":true}',
+                "transfer_config_confirmed_at": "2026-03-12T20:00:00Z",
+            },
+            "routing": [],
+        }
+        r_me = client.get("/api/tenant/me", headers=headers)
     assert r_me.status_code == 200
     me = r_me.json()
     assert me["phone_number"] == "+33142345678"
     assert me["transfer_number"] == "+33612345678"
+    assert me["transfer_practitioner_phone"] == "+33698765432"
     assert me["transfer_live_enabled"] is True
     assert me["transfer_callback_enabled"] is True
     assert me["transfer_cases"] == ["urgent", "insists", "other"]

@@ -787,6 +787,7 @@ def tenant_me(auth: dict = Depends(require_tenant_auth)):
         "client_onboarding_completed": client_onboarding_completed,
         "dashboard_tour_completed": _is_truthy(params.get("dashboard_tour_completed")),
         "transfer_number": params.get("transfer_number", ""),
+        "transfer_practitioner_phone": params.get("transfer_practitioner_phone", ""),
         "transfer_live_enabled": _is_truthy(params.get("transfer_live_enabled")),
         "transfer_callback_enabled": params.get("transfer_callback_enabled") is None or _is_truthy(params.get("transfer_callback_enabled")),
         "transfer_cases": transfer_cases,

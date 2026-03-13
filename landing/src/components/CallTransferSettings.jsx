@@ -99,6 +99,9 @@ function buildInternalConfig(initialConfig, cabinetPhone) {
     transfer_cases: Array.isArray(initialConfig.transfer_cases) ? initialConfig.transfer_cases : [],
     hours: buildDefaultHours(initialConfig.hours),
     no_consultation: Boolean(initialConfig.no_consultation),
+    practitioner_phone: initialConfig.practitioner_phone || "",
+    live_enabled: Boolean(initialConfig.live_enabled),
+    callback_enabled: initialConfig.callback_enabled !== false,
     confirmed: Boolean(initialConfig.confirmed),
   };
 }
@@ -506,7 +509,7 @@ function Step3({ data, onChange }) {
   );
 }
 
-function Recap({ step1, step2, step3, confirmedAt, onEdit }) {
+function Recap({ step1, step2, step3, confirmedAt, practitionerPhone, onEdit }) {
   const activeCases = TRANSFER_CASES.filter((item) => (step2.transfer_cases || []).includes(item.key));
   const activeDays = DAYS.filter((day) => step3.hours?.[day]?.enabled ?? DEFAULT_HOURS[day].enabled);
   const noCases = activeCases.length === 0;
@@ -528,6 +531,11 @@ function Recap({ step1, step2, step3, confirmedAt, onEdit }) {
               Transfert vers
             </div>
             <div style={{ fontSize: 14, fontWeight: 700, color: T.textMid }}>{prettyPhone(step1.number)}</div>
+            {practitionerPhone ? (
+              <div style={{ fontSize: 11, color: T.textSoft, marginTop: 2 }}>
+                Ligne praticien dediee configuree : {prettyPhone(practitionerPhone)}
+              </div>
+            ) : null}
             {step1.alwaysUrgent ? (
               <div style={{ fontSize: 11, color: T.textSoft, marginTop: 2 }}>Urgences transferees meme hors horaires</div>
             ) : null}
@@ -597,6 +605,7 @@ export default function CallTransferSettings({ cabinetPhone = "", initialConfig 
   const [step1, setStep1] = useState({ number: cabinetPhone || "", alwaysUrgent: false });
   const [step2, setStep2] = useState({ transfer_cases: [] });
   const [step3, setStep3] = useState({ hours: buildDefaultHours(), no_consultation: false });
+  const [advancedConfig, setAdvancedConfig] = useState({ practitioner_phone: "", live_enabled: true, callback_enabled: true });
 
   useEffect(() => {
     const config = buildInternalConfig(initialConfig, cabinetPhone);
@@ -606,12 +615,18 @@ export default function CallTransferSettings({ cabinetPhone = "", initialConfig 
       setStep1({ number: cabinetPhone || "", alwaysUrgent: false });
       setStep2({ transfer_cases: [] });
       setStep3({ hours: buildDefaultHours(), no_consultation: false });
+      setAdvancedConfig({ practitioner_phone: "", live_enabled: true, callback_enabled: true });
       return;
     }
     setConfirmedAt(initialConfig?.confirmed_at || "");
     setStep1({ number: config.main_number, alwaysUrgent: config.always_urgent });
     setStep2({ transfer_cases: config.transfer_cases });
     setStep3({ hours: config.hours, no_consultation: config.no_consultation });
+    setAdvancedConfig({
+      practitioner_phone: config.practitioner_phone || "",
+      live_enabled: config.live_enabled !== false,
+      callback_enabled: config.callback_enabled !== false,
+    });
     setStep(config.confirmed ? "done" : 0);
   }, [initialConfig, cabinetPhone]);
 
@@ -681,8 +696,59 @@ export default function CallTransferSettings({ cabinetPhone = "", initialConfig 
         </div>
       </div>
 
+      {advancedConfig.practitioner_phone ? (
+        <div
+          style={{
+            background: T.bg,
+            border: `1px solid ${T.borderLight}`,
+            borderRadius: 12,
+            padding: "12px 14px",
+            fontSize: 12,
+            color: T.textSoft,
+            lineHeight: 1.6,
+          }}
+        >
+          Une configuration avancee existe aussi cote administration.
+          {" "}Si le patient demande a parler au medecin, l'appel peut etre redirige vers {prettyPhone(advancedConfig.practitioner_phone)}.
+        </div>
+      ) : null}
+
+      {advancedConfig.live_enabled !== true || advancedConfig.callback_enabled !== true ? (
+        <div
+          style={{
+            background: T.bg,
+            border: `1px solid ${T.borderLight}`,
+            borderRadius: 12,
+            padding: "12px 14px",
+            fontSize: 12,
+            color: T.textSoft,
+            lineHeight: 1.6,
+          }}
+        >
+          Mode de transfert actuellement applique :
+          {" "}
+          <span style={{ color: T.textMid, fontWeight: 600 }}>
+            {advancedConfig.live_enabled && advancedConfig.callback_enabled
+              ? "Live transfer puis rappel si echec"
+              : advancedConfig.live_enabled
+                ? "Live transfer uniquement"
+                : advancedConfig.callback_enabled
+                  ? "Rappel uniquement"
+                  : "Transfert desactive"}
+          </span>
+          .
+        </div>
+      ) : null}
+
       {step === "done" ? (
-        <Recap step1={step1} step2={step2} step3={step3} confirmedAt={confirmedAt} onEdit={handleEdit} />
+        <Recap
+          step1={step1}
+          step2={step2}
+          step3={step3}
+          confirmedAt={confirmedAt}
+          practitionerPhone={advancedConfig.practitioner_phone}
+          onEdit={handleEdit}
+        />
       ) : (
         <>
           <StepBar current={step} labels={STEP_LABELS} />

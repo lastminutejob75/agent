@@ -180,6 +180,54 @@ function buildTransferConfigSignature(params) {
   });
 }
 
+const TRANSFER_CASE_LABELS = {
+  urgent: "Urgence medicale",
+  unhappy: "Patient mecontent / situation sensible",
+  complex: "Demande administrative complexe",
+  insists: "Le patient insiste pour parler a quelqu'un",
+  other: "Autre",
+};
+
+const TRANSFER_DAY_ORDER = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"];
+
+function parseTransferCases(value) {
+  if (Array.isArray(value)) return value.filter(Boolean);
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+    } catch {
+      return value.split(",").map((item) => item.trim()).filter(Boolean);
+    }
+  }
+  return [];
+}
+
+function parseTransferHours(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function formatTransferHoursSummary(value) {
+  const hours = parseTransferHours(value);
+  const lines = TRANSFER_DAY_ORDER
+    .map((day) => {
+      const slot = hours?.[day];
+      if (!slot || !slot.enabled) return null;
+      return `${day} ${slot.from || "--:--"}-${slot.to || "--:--"}`;
+    })
+    .filter(Boolean);
+  return lines.length ? lines.join(" | ") : "Aucune plage definie";
+}
+
 function QuickStat({ label, value, tone = C.text, mono = false }) {
   return (
     <div style={{ minWidth: 0 }}>
@@ -652,6 +700,19 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
     : transferIsConfirmed
       ? C.accent
       : C.warning;
+  const clientTransferCases = parseTransferCases(params.transfer_cases);
+  const clientTransferCasesSummary = clientTransferCases.length
+    ? clientTransferCases.map((item) => TRANSFER_CASE_LABELS[item] || item).join(" | ")
+    : "Uniquement si le patient demande explicitement a parler a quelqu'un";
+  const clientTransferHoursSummary = formatTransferHoursSummary(params.transfer_hours);
+  const clientTransferAlwaysUrgent = String(params.transfer_always_urgent || "").toLowerCase() === "true";
+  const clientTransferNoConsultation = String(params.transfer_no_consultation || "").toLowerCase() === "true";
+  const transferQuickStatus = transferConfirmedDisplay
+    ? "Configuration validee"
+    : hasTransferTarget
+      ? "Configuration en cours"
+      : "Non configure";
+  const transferQuickTone = transferConfirmedDisplay ? C.accent : hasTransferTarget ? C.blue : C.warning;
   const normalizedTenantName = (tenant?.name || "").trim();
   const isSystemTenant = normalizedTenantName.toUpperCase() === "DEFAULT" || Number(tenantId) === 1;
   const isInactiveTenant = (tenant?.status || "").toLowerCase() === "inactive";
@@ -1026,6 +1087,28 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
                     : "Complète la configuration avant confirmation."}
               </div>
             )}
+          </div>
+
+          <div
+            style={{
+              marginTop: 12,
+              padding: "10px 12px",
+              borderRadius: 10,
+              background: "rgba(255,255,255,0.03)",
+              border: `1px solid ${C.border}`,
+              fontSize: 12,
+              color: C.text,
+            }}
+          >
+            <div style={{ color: C.accent, fontWeight: 700, marginBottom: 6 }}>Preferences definies cote client</div>
+            <div style={{ color: C.muted }}>Quand transferer : <span style={{ color: C.text }}>{clientTransferCasesSummary}</span></div>
+            <div style={{ color: C.muted, marginTop: 4 }}>Horaires : <span style={{ color: C.text }}>{clientTransferHoursSummary}</span></div>
+            <div style={{ color: C.muted, marginTop: 4 }}>
+              Regles : <span style={{ color: C.text }}>
+                {clientTransferAlwaysUrgent ? "Urgences meme hors horaires" : "Urgences seulement sur les horaires"}{" · "}
+                {clientTransferNoConsultation ? "Pas de transfert pendant les consultations" : "Transfert possible pendant les consultations"}
+              </span>
+            </div>
           </div>
 
           {transferConfirmedDisplay ? (
@@ -1867,7 +1950,7 @@ export default function AdminTenantPage() {
                 value={technicalStatus?.routing_status === "active" ? "Actif" : "Non configuré"}
                 tone={technicalStatus?.routing_status === "active" ? C.accent : C.warning}
               />
-              <QuickStat label="Transfert humain" value={params.transfer_number || "Non configuré"} mono />
+              <QuickStat label="Transfert humain" value={transferQuickStatus} tone={transferQuickTone} />
             </div>
           </BridgeCard>
 

@@ -43,8 +43,11 @@ function buildTransferInitialConfig(me) {
     Boolean(me.transfer_config_confirmed_signature) ||
     Boolean(me.transfer_config_confirmed_at) ||
     Boolean(me.transfer_number) ||
+    Boolean(me.transfer_practitioner_phone) ||
     Boolean(me.transfer_always_urgent) ||
     Boolean(me.transfer_no_consultation) ||
+    Boolean(me.transfer_live_enabled) ||
+    me.transfer_callback_enabled === false ||
     Boolean((me.transfer_cases || []).length) ||
     Boolean(Object.keys(me.transfer_hours || {}).length);
   if (!hasTransferConfig) return null;
@@ -54,6 +57,9 @@ function buildTransferInitialConfig(me) {
     transfer_cases: Array.isArray(me.transfer_cases) ? me.transfer_cases : [],
     hours: me.transfer_hours || {},
     no_consultation: Boolean(me.transfer_no_consultation),
+    practitioner_phone: me.transfer_practitioner_phone || "",
+    live_enabled: Boolean(me.transfer_live_enabled),
+    callback_enabled: me.transfer_callback_enabled !== false,
     confirmed: Boolean(me.transfer_config_confirmed_signature || me.transfer_config_confirmed_at),
     confirmed_at: me.transfer_config_confirmed_at || "",
   };
@@ -186,6 +192,8 @@ export default function AppSettings() {
         cabinetPhone={params.phone_number || ""}
         initialConfig={transferInitialConfig}
         onSave={async (payload) => {
+          const liveEnabled = transferInitialConfig?.live_enabled !== false;
+          const callbackEnabled = transferInitialConfig?.callback_enabled !== false;
           const transferNumber = normalizeFrenchPhone(payload.main_number || params.phone_number || "");
           const confirmedAt = new Date().toISOString();
           const nextConfig = {
@@ -194,13 +202,16 @@ export default function AppSettings() {
             transfer_cases: payload.transfer_cases || [],
             hours: payload.hours || {},
             no_consultation: Boolean(payload.no_consultation),
+            practitioner_phone: transferInitialConfig?.practitioner_phone || "",
+            live_enabled: liveEnabled,
+            callback_enabled: callbackEnabled,
             confirmed: true,
             confirmed_at: confirmedAt,
           };
           await api.tenantPatchParams({
             transfer_number: transferNumber,
-            transfer_live_enabled: "true",
-            transfer_callback_enabled: "true",
+            transfer_live_enabled: liveEnabled ? "true" : "false",
+            transfer_callback_enabled: callbackEnabled ? "true" : "false",
             transfer_cases: payload.transfer_cases || [],
             transfer_hours: payload.hours || {},
             transfer_always_urgent: payload.always_urgent ? "true" : "false",
@@ -208,8 +219,8 @@ export default function AppSettings() {
             transfer_config_confirmed_signature: buildTransferConfigSignature({
               phoneNumber: params.phone_number || "",
               transferNumber,
-              transferLiveEnabled: "true",
-              transferCallbackEnabled: "true",
+              transferLiveEnabled: liveEnabled ? "true" : "false",
+              transferCallbackEnabled: callbackEnabled ? "true" : "false",
             }),
             transfer_config_confirmed_at: confirmedAt,
           });
