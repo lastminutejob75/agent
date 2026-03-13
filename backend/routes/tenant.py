@@ -917,7 +917,7 @@ def tenant_calls(
         if not call_id:
             continue
         started_at = item.get("started_at") or item.get("last_event_at")
-        fallback_detail = {
+        list_detail = {
             "call_id": call_id,
             "tenant_id": tenant_id,
             "customer_number": item.get("customer_number"),
@@ -929,29 +929,21 @@ def tenant_calls(
             "transcript": None,
         }
         try:
-            call_detail = _get_call_detail(tenant_id, call_id) or fallback_detail
-        except HTTPException as e:
-            logger.warning("tenant_calls detail fallback tenant_id=%s call_id=%s status=%s", tenant_id, call_id, e.status_code)
-            call_detail = fallback_detail
-        except Exception as e:
-            logger.warning("tenant_calls detail failed tenant_id=%s call_id=%s err=%s", tenant_id, call_id, str(e)[:120])
-            call_detail = fallback_detail
-        try:
             followup = get_call_followup(tenant_id, call_id) or {}
         except Exception:
             followup = {}
-        status = _resolve_call_status(item, call_detail)
-        call_context = _classify_call_context(status, call_detail)
-        patient = _build_patient_payload(tenant_id, item, call_detail)
-        booking = _build_booking_payload(call_detail)
+        status = _resolve_call_status(item, list_detail)
+        call_context = _classify_call_context(status, list_detail)
+        patient = _build_patient_payload(tenant_id, item, list_detail)
+        booking = _build_booking_payload(list_detail)
         calls.append({
             "id": call_id,
             "time": _format_hhmm(started_at, tz_name),
-            "duration": _format_duration_short(call_detail.get("duration_min") or item.get("duration_min")),
+            "duration": _format_duration_short(list_detail.get("duration_min") or item.get("duration_min")),
             "patient_name": patient.get("display_name") or "Patient",
-            "customer_number": _call_display_phone(item, call_detail),
+            "customer_number": _call_display_phone(item, list_detail),
             "agent_name": assistant_name,
-            "summary": _call_summary_from_detail(status, call_detail),
+            "summary": _call_summary_from_detail(status, list_detail),
             "status": status,
             "call_id": call_id,
             "patient": patient,

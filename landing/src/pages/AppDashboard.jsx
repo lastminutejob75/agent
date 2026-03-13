@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useOutletContext } from "react-router-dom";
 import {
   ArrowUpRight,
   Calendar,
@@ -194,11 +194,13 @@ function getActionCta(call) {
 
 export default function AppDashboard() {
   const navigate = useNavigate();
+  const outletContext = useOutletContext() || {};
+  const contextMe = outletContext.me || null;
   const [loading, setLoading] = useState(true);
   const [kpis, setKpis] = useState(null);
   const [calls, setCalls] = useState([]);
   const [agenda, setAgenda] = useState(null);
-  const [me, setMe] = useState(null);
+  const [me, setMe] = useState(contextMe);
   const [assistantImageFailed, setAssistantImageFailed] = useState(false);
   const [tourStepIndex, setTourStepIndex] = useState(-1);
   const [tourRect, setTourRect] = useState(null);
@@ -206,16 +208,18 @@ export default function AppDashboard() {
   const [tourDismissed, setTourDismissed] = useState(false);
 
   useEffect(() => {
+    setMe(contextMe);
+  }, [contextMe]);
+
+  useEffect(() => {
     Promise.all([
       api.tenantKpis(1).catch(() => null),
-      api.tenantGetCalls("?limit=20&days=7").catch(() => ({ calls: [] })),
+      api.tenantGetCalls("?limit=10&days=7").catch(() => ({ calls: [] })),
       api.tenantGetAgenda("?upcoming_days=7").catch(() => null),
-      api.tenantMe().catch(() => null),
-    ]).then(([k, c, a, m]) => {
+    ]).then(([k, c, a]) => {
       setKpis(k);
       setCalls(c?.calls || []);
       setAgenda(a);
-      setMe(m);
       setLoading(false);
     });
   }, []);

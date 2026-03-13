@@ -123,16 +123,24 @@ export default function AppLayout() {
   const navigate = useNavigate();
 
   useEffect(() => {
+    let mounted = true;
     api
       .tenantMe()
       .then((m) => {
+        if (!mounted) return null;
         setMe(m);
-        return api.tenantDashboard().catch(() => null);
-      })
-      .then((dash) => {
-        setDashboard(dash);
+        setLoading(false);
+        api.tenantDashboard()
+          .then((dash) => {
+            if (mounted) setDashboard(dash);
+          })
+          .catch(() => {
+            if (mounted) setDashboard(null);
+          });
+        return m;
       })
       .catch((e) => {
+        if (!mounted) return;
         if (isTenantUnauthorized(e)) {
           setImpersonation(null);
           clearTenantToken();
@@ -140,8 +148,11 @@ export default function AppLayout() {
           return;
         }
         setErr(e?.message || e?.data?.detail || "Chargement impossible. Réessayez ou déconnectez-vous.");
-      })
-      .finally(() => setLoading(false));
+        setLoading(false);
+      });
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   useEffect(() => {
