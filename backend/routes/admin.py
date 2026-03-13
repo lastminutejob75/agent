@@ -1865,6 +1865,12 @@ def _get_calls_list(
     url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
     items: List[dict] = []
     next_cursor: Optional[str] = None
+    fixed_tenant_name: Optional[str] = None
+    tenant_name_cache: Dict[int, str] = {}
+
+    if tenant_id is not None:
+        fixed_detail = _get_tenant_detail(tenant_id) or {}
+        fixed_tenant_name = (fixed_detail.get("name") or "").strip() or f"Client #{tenant_id}"
 
     if url:
         try:
@@ -1888,10 +1894,15 @@ def _get_calls_list(
                 with conn.cursor() as cur:
                     # 1) Essayer vapi_calls (tous les appels, même sans interaction engine)
                     try:
-                        vapi_params: List[Any] = [start, end, start, end]
+                        vapi_params: List[Any] = [start, end]
+                        ivr_agg_filter = " AND created_at >= %s AND created_at <= %s"
                         tenant_filter = ""
                         if tenant_id is not None:
+                            ivr_agg_filter += " AND client_id = %s"
+                            vapi_params.append(tenant_id)
                             tenant_filter = " AND v.tenant_id = %s"
+                        vapi_params.extend([start, end, start, end])
+                        if tenant_id is not None:
                             vapi_params.append(tenant_id)
 
                         cursor_filter = ""
@@ -1918,6 +1929,7 @@ def _get_calls_list(
                                        (array_agg(event ORDER BY created_at DESC))[1] AS last_event
                                 FROM ivr_events
                                 WHERE call_id IS NOT NULL AND TRIM(call_id) != ''
+                                """ + ivr_agg_filter + """
                                 GROUP BY client_id, call_id
                             )
                             SELECT v.tenant_id, v.call_id, v.customer_number, v.started_at, v.ended_at, v.updated_at,
@@ -1953,7 +1965,13 @@ def _get_calls_list(
                                 duration_min = int(round(delta_mins, 0))
 
                             tid = r.get("tenant_id")
-                            d = _get_tenant_detail(tid) if tid else {}
+                            if tid and tenant_id is None:
+                                if tid not in tenant_name_cache:
+                                    d = _get_tenant_detail(tid) or {}
+                                    tenant_name_cache[tid] = (d.get("name") or "").strip() or f"Client #{tid}"
+                                tenant_name = tenant_name_cache[tid]
+                            else:
+                                tenant_name = fixed_tenant_name or (f"Client #{tid}" if tid else "—")
                             sort_ts = ended_at or updated_at or started_at
                             result_val = _call_result_from_event(last_event) if last_event else _vapi_call_result_from_status(
                                 r.get("status"), r.get("ended_reason")
@@ -1961,7 +1979,7 @@ def _get_calls_list(
                             items.append({
                                 "call_id": r.get("call_id") or "",
                                 "tenant_id": tid,
-                                "tenant_name": (d.get("name") or "").strip() or (f"Client #{tid}" if tid else "—"),
+                                "tenant_name": tenant_name,
                                 "customer_number": (r.get("customer_number") or "").strip(),
                                 "started_at": started_at.isoformat() + "Z" if hasattr(started_at, "isoformat") else str(started_at or ""),
                                 "last_event_at": sort_ts.isoformat() + "Z" if hasattr(sort_ts, "isoformat") else str(sort_ts or ""),
@@ -2049,11 +2067,17 @@ def _get_calls_list(
                             duration_min = int(round(delta_mins, 0))
 
                         tid = r.get("client_id")
-                        d = _get_tenant_detail(tid) if tid else {}
+                        if tid and tenant_id is None:
+                            if tid not in tenant_name_cache:
+                                d = _get_tenant_detail(tid) or {}
+                                tenant_name_cache[tid] = (d.get("name") or "").strip() or f"Client #{tid}"
+                            tenant_name = tenant_name_cache[tid]
+                        else:
+                            tenant_name = fixed_tenant_name or (f"Client #{tid}" if tid else "—")
                         items.append({
                             "call_id": r.get("call_id") or "",
                             "tenant_id": tid,
-                            "tenant_name": (d.get("name") or "").strip() or (f"Client #{tid}" if tid else "—"),
+                            "tenant_name": tenant_name,
                             "customer_number": "",
                             "started_at": started_at.isoformat() + "Z" if hasattr(started_at, "isoformat") else str(started_at),
                             "last_event_at": last_event_at.isoformat() + "Z" if hasattr(last_event_at, "isoformat") else str(last_event_at),
