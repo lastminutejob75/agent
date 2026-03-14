@@ -514,6 +514,49 @@ async def debug_slots() -> dict:
     return {"free": count_free_slots(), "slots": slots}
 
 
+@app.get("/debug/call-durations")
+async def debug_call_durations():
+    """Temporaire : vérifie les données de durée dans vapi_calls et vapi_call_usage."""
+    import os
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    if not url:
+        return {"error": "no PG URL"}
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+        with psycopg.connect(url, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT call_id,
+                           started_at IS NOT NULL AS has_started,
+                           ended_at IS NOT NULL AS has_ended,
+                           updated_at IS NOT NULL AS has_updated,
+                           created_at IS NOT NULL AS has_created,
+                           CASE WHEN started_at IS NOT NULL AND (ended_at IS NOT NULL OR updated_at IS NOT NULL)
+                                THEN EXTRACT(EPOCH FROM (COALESCE(ended_at, updated_at) - started_at))::int
+                                ELSE NULL END AS calc_duration_sec
+                    FROM vapi_calls
+                    ORDER BY COALESCE(ended_at, updated_at, started_at) DESC NULLS LAST
+                    LIMIT 5
+                """)
+                calls = cur.fetchall()
+                usage_exists = False
+                usage_rows = []
+                try:
+                    cur.execute("SELECT vapi_call_id, duration_sec FROM vapi_call_usage ORDER BY updated_at DESC LIMIT 5")
+                    usage_rows = cur.fetchall()
+                    usage_exists = True
+                except Exception:
+                    pass
+                return {
+                    "vapi_calls_sample": [{**r, "started_at": str(r.get("started_at", "")), "ended_at": str(r.get("ended_at", ""))} for r in calls] if calls else [],
+                    "vapi_call_usage_exists": usage_exists,
+                    "vapi_call_usage_sample": [{**r} for r in usage_rows] if usage_rows else [],
+                }
+    except Exception as e:
+        return {"error": str(e)[:200]}
+
+
 @app.post("/chat")
 async def chat(
     payload: dict,
