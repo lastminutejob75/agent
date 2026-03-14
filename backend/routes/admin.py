@@ -1934,11 +1934,9 @@ def _get_calls_list(
                                 GROUP BY client_id, call_id
                             )
                             SELECT v.tenant_id, v.call_id, v.customer_number, v.started_at, v.ended_at, v.updated_at,
-                                   v.status, v.ended_reason, e.last_event,
-                                   u.duration_sec AS usage_duration_sec
+                                   v.status, v.ended_reason, e.last_event
                             FROM vapi_calls v
                             LEFT JOIN ivr_agg e ON e.client_id = v.tenant_id AND e.call_id = v.call_id
-                            LEFT JOIN vapi_call_usage u ON u.tenant_id = v.tenant_id AND u.vapi_call_id = v.call_id
                             WHERE ((v.started_at >= %s AND v.started_at <= %s)
                                OR (v.updated_at >= %s AND v.updated_at <= %s))
                               """ + tenant_filter + cursor_filter + result_filter_sql + """
@@ -1954,6 +1952,22 @@ def _get_calls_list(
                         vapi_rows = []
 
                     seen_call_ids: set[str] = set()
+                    # Batch lookup vapi_call_usage for real Vapi durations
+                    usage_durations: dict[str, float] = {}
+                    if vapi_rows:
+                        try:
+                            usage_call_ids = [r.get("call_id") for r in vapi_rows[:limit + 1] if r.get("call_id")]
+                            if usage_call_ids:
+                                cur.execute(
+                                    "SELECT vapi_call_id, duration_sec FROM vapi_call_usage WHERE vapi_call_id = ANY(%s)",
+                                    (usage_call_ids,),
+                                )
+                                for urow in cur.fetchall():
+                                    if urow.get("duration_sec") is not None:
+                                        usage_durations[urow["vapi_call_id"]] = float(urow["duration_sec"])
+                        except Exception:
+                            pass
+
                     if vapi_rows:
                         for r in vapi_rows[: limit + 1]:
                             started_at = r.get("started_at")
@@ -1962,14 +1976,11 @@ def _get_calls_list(
                             last_event = r.get("last_event")
                             duration_min: Optional[int] = None
                             duration_sec: Optional[int] = None
-                            usage_dur = r.get("usage_duration_sec")
-                            if usage_dur is not None:
-                                try:
-                                    duration_sec = int(float(usage_dur))
-                                    duration_min = duration_sec // 60
-                                except (TypeError, ValueError):
-                                    pass
-                            if duration_sec is None and started_at and (ended_at or updated_at):
+                            cid_for_usage = r.get("call_id") or ""
+                            if cid_for_usage in usage_durations:
+                                duration_sec = int(usage_durations[cid_for_usage])
+                                duration_min = duration_sec // 60
+                            elif started_at and (ended_at or updated_at):
                                 end_ts = ended_at or updated_at
                                 delta_secs = (end_ts - started_at).total_seconds()
                                 delta_secs = max(0, min(MAX_SESSION_MINUTES * 60, delta_secs))
