@@ -194,6 +194,8 @@ function parseDurationMinutes(value) {
 }
 
 function formatDurationFromCall(callLike) {
+  const txt = String(callLike?.duration || "").trim();
+  if (txt && txt !== "—" && txt !== "-") return txt;
   const sec = Number(callLike?.duration_sec);
   if (Number.isFinite(sec) && sec >= 0) {
     const minutes = Math.floor(sec / 60);
@@ -204,8 +206,7 @@ function formatDurationFromCall(callLike) {
   if (Number.isFinite(mins) && mins >= 0) {
     return `${Math.floor(mins)}'00`;
   }
-  const txt = String(callLike?.duration || "").trim();
-  return txt || "0'00";
+  return "0'00";
 }
 
 function parseIsoTimestamp(value) {

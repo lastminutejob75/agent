@@ -213,9 +213,9 @@ function formatCallTimeFallback(call) {
 
 function formatCallDurationFallback(call) {
   const fromText = String(call?.duration || "").trim();
-  if (fromText && fromText !== "—") return fromText;
+  if (fromText && fromText !== "—" && fromText !== "-") return fromText;
   const sec = Number(call?.duration_sec);
-  if (!Number.isFinite(sec) || sec < 0) return "Durée inconnue";
+  if (!Number.isFinite(sec) || sec < 0) return "0'00";
   const minutes = Math.floor(sec / 60);
   const seconds = sec % 60;
   return `${minutes}'${String(seconds).padStart(2, "0")}`;
@@ -525,7 +525,7 @@ export default function AppDashboard() {
           reasonLabel: call.reason_label || "",
           reasonBadge: getReasonBadge(call),
           time: call.time || formatCallTimeFallback(call),
-          duration: call.duration || formatCallDurationFallback(call),
+          duration: formatCallDurationFallback(call),
           statusBadge,
           iconBg: icon.bg,
           iconColor: icon.color,
