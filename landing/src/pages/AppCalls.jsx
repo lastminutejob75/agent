@@ -545,7 +545,7 @@ export default function AppCalls() {
     setLoading(true);
     setError("");
     api
-      .tenantGetCalls(`?limit=50&days=${days}`)
+      .tenantGetCalls(`?limit=50&days=${days}&compact=1`)
       .then((data) => {
         if (!cancelled) setPayload(data || { calls: [], total: 0, date: "" });
       })
@@ -562,6 +562,8 @@ export default function AppCalls() {
 
   useEffect(() => {
     let cancelled = false;
+    let idleId = null;
+    let timeoutId = null;
     setHandoffsLoading(true);
     const params = new URLSearchParams();
     params.set("limit", "20");
@@ -569,30 +571,45 @@ export default function AppCalls() {
     if (handoffStatusFilter === "processed") params.set("status", "processed");
     if (handoffStatusFilter === "cancelled") params.set("status", "cancelled");
     if (handoffTargetFilter !== "all") params.set("target", handoffTargetFilter);
-    api
-      .tenantGetHandoffs(`?${params.toString()}`)
-      .then((data) => {
-        if (!cancelled) {
-          const items = data?.items || [];
-          setHandoffs(items);
-          setHandoffNoteDrafts((prev) => {
-            const next = { ...prev };
-            items.forEach((item) => {
-              const key = String(item?.id || "");
-              if (key && next[key] === undefined) next[key] = item?.notes || "";
+    const loadHandoffs = () => {
+      api
+        .tenantGetHandoffs(`?${params.toString()}`)
+        .then((data) => {
+          if (!cancelled) {
+            const items = data?.items || [];
+            setHandoffs(items);
+            setHandoffNoteDrafts((prev) => {
+              const next = { ...prev };
+              items.forEach((item) => {
+                const key = String(item?.id || "");
+                if (key && next[key] === undefined) next[key] = item?.notes || "";
+              });
+              return next;
             });
-            return next;
-          });
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setHandoffs([]);
-      })
-      .finally(() => {
-        if (!cancelled) setHandoffsLoading(false);
-      });
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setHandoffs([]);
+        })
+        .finally(() => {
+          if (!cancelled) setHandoffsLoading(false);
+        });
+    };
+    if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
+      idleId = window.requestIdleCallback(loadHandoffs, { timeout: 1500 });
+    } else if (typeof window !== "undefined") {
+      timeoutId = window.setTimeout(loadHandoffs, 250);
+    } else {
+      loadHandoffs();
+    }
     return () => {
       cancelled = true;
+      if (typeof window !== "undefined" && idleId !== null && typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(idleId);
+      }
+      if (typeof window !== "undefined" && timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
     };
   }, [handoffStatusFilter, handoffTargetFilter]);
 

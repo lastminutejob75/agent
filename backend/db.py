@@ -327,6 +327,68 @@ def get_call_followup(tenant_id: int, call_id: str) -> Optional[Dict[str, Any]]:
         conn.close()
 
 
+def list_call_followups(tenant_id: int, call_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Retourne les suivis d'appels en lot, indexés par call_id."""
+    call_ids_norm = [str(call_id or "").strip() for call_id in call_ids if str(call_id or "").strip()]
+    if not call_ids_norm:
+        return {}
+    call_ids_norm = list(dict.fromkeys(call_ids_norm))
+
+    url = _pg_events_url()
+    if url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+
+            with psycopg.connect(url, row_factory=dict_row) as conn:
+                _ensure_call_followups_table_pg(conn)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT call_id, followup_state, notes, updated_at
+                        FROM call_followups
+                        WHERE tenant_id = %s AND call_id = ANY(%s)
+                        """,
+                        (tenant_id, call_ids_norm),
+                    )
+                    rows = cur.fetchall()
+                    return {
+                        str(row.get("call_id") or "").strip(): {
+                            "followup_state": row.get("followup_state") or "new",
+                            "notes": row.get("notes") or "",
+                            "updated_at": str(row.get("updated_at") or ""),
+                        }
+                        for row in rows
+                        if str(row.get("call_id") or "").strip()
+                    }
+        except Exception:
+            pass
+
+    conn = get_conn()
+    try:
+        _ensure_call_followups_table(conn)
+        placeholders = ",".join("?" for _ in call_ids_norm)
+        rows = conn.execute(
+            f"""
+            SELECT call_id, followup_state, notes, updated_at
+            FROM call_followups
+            WHERE tenant_id = ? AND call_id IN ({placeholders})
+            """,
+            [tenant_id, *call_ids_norm],
+        ).fetchall()
+        return {
+            str(row["call_id"] or "").strip(): {
+                "followup_state": row["followup_state"] or "new",
+                "notes": row["notes"] or "",
+                "updated_at": row["updated_at"] or "",
+            }
+            for row in rows
+            if str(row["call_id"] or "").strip()
+        }
+    finally:
+        conn.close()
+
+
 def upsert_call_followup(tenant_id: int, call_id: str, followup_state: str, notes: str = "") -> bool:
     """Crée ou met à jour le suivi d'un appel côté tenant."""
     call_id_norm = (call_id or "").strip()
@@ -519,6 +581,65 @@ def get_cabinet_client_by_phone(tenant_id: int, phone: str) -> Optional[Dict[str
         if not row:
             return None
         return _cabinet_client_row_to_dict(dict(row))
+    finally:
+        conn.close()
+
+
+def get_cabinet_clients_by_phones(tenant_id: int, phones: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Retourne les fiches cabinet en lot, indexées par téléphone normalisé."""
+    phone_norms = [normalize_phone_number(phone) for phone in phones]
+    phone_norms = [phone for phone in phone_norms if phone]
+    if not phone_norms:
+        return {}
+    phone_norms = list(dict.fromkeys(phone_norms))
+
+    url = _pg_events_url()
+    if url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+
+            with psycopg.connect(url, row_factory=dict_row) as conn:
+                _ensure_cabinet_clients_table_pg(conn)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT phone, raw_name, validated_name, display_name, validation_status,
+                               source_call_id, last_call_id, last_booking_start, last_booking_end,
+                               last_booking_motif, created_at, updated_at
+                        FROM cabinet_clients
+                        WHERE tenant_id = %s AND phone = ANY(%s)
+                        """,
+                        (tenant_id, phone_norms),
+                    )
+                    rows = cur.fetchall()
+                    return {
+                        str(row.get("phone") or "").strip(): _cabinet_client_row_to_dict(row)
+                        for row in rows
+                        if str(row.get("phone") or "").strip()
+                    }
+        except Exception:
+            pass
+
+    conn = get_conn()
+    try:
+        _ensure_cabinet_clients_table(conn)
+        placeholders = ",".join("?" for _ in phone_norms)
+        rows = conn.execute(
+            f"""
+            SELECT phone, raw_name, validated_name, display_name, validation_status,
+                   source_call_id, last_call_id, last_booking_start, last_booking_end,
+                   last_booking_motif, created_at, updated_at
+            FROM cabinet_clients
+            WHERE tenant_id = ? AND phone IN ({placeholders})
+            """,
+            [tenant_id, *phone_norms],
+        ).fetchall()
+        return {
+            str(row["phone"] or "").strip(): _cabinet_client_row_to_dict(dict(row))
+            for row in rows
+            if str(row["phone"] or "").strip()
+        }
     finally:
         conn.close()
 

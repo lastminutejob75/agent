@@ -24,11 +24,13 @@ from backend.config import get_service_account_email
 from backend.db import (
     cancel_booking_sqlite,
     ensure_tenant_config,
+    get_cabinet_clients_by_phones,
     find_slot_id_by_datetime,
     get_cabinet_client_by_phone,
     get_call_followup,
     get_conn,
     list_free_slots,
+    list_call_followups,
     normalize_phone_number,
     reschedule_booking_atomic,
     upsert_cabinet_client,
@@ -543,9 +545,19 @@ def _derive_raw_patient_name(detail: Optional[dict]) -> str:
     return ""
 
 
-def _build_patient_payload(tenant_id: int, item: Optional[dict], detail: Optional[dict]) -> Dict[str, Any]:
+def _build_patient_payload(
+    tenant_id: int,
+    item: Optional[dict],
+    detail: Optional[dict],
+    profile_cache: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
     phone = normalize_phone_number(_call_display_phone(item, detail))
-    profile = get_cabinet_client_by_phone(tenant_id, phone) if phone else None
+    profile = None
+    if phone:
+        if profile_cache is not None:
+            profile = profile_cache.get(phone)
+        else:
+            profile = get_cabinet_client_by_phone(tenant_id, phone)
     raw_name = _derive_raw_patient_name(detail) or (profile or {}).get("raw_name") or ""
     validated_name = (profile or {}).get("validated_name") or ""
     display_name = validated_name or raw_name or "Patient"
@@ -1144,6 +1156,7 @@ def tenant_calls(
     auth: dict = Depends(require_tenant_auth),
     limit: int = Query(10, ge=1, le=50),
     days: int = Query(7, ge=1, le=30),
+    compact: bool = Query(False),
 ):
     """Retourne les derniers appels formatés pour le dashboard client."""
     tenant_id = auth["tenant_id"]
@@ -1182,8 +1195,15 @@ def tenant_calls(
             ]
         finally:
             conn.close()
+    items = items[:limit]
+    followups_by_call = list_call_followups(tenant_id, [(item.get("call_id") or "").strip() for item in items])
+    patient_profiles_by_phone = get_cabinet_clients_by_phones(
+        tenant_id,
+        [item.get("customer_number") or "" for item in items],
+    )
+    compact_mode = bool(compact)
     calls = []
-    for item in items[:limit]:
+    for item in items:
         call_id = (item.get("call_id") or "").strip()
         if not call_id:
             continue
@@ -1200,14 +1220,11 @@ def tenant_calls(
             "transcript": None,
         }
         detail_for_display = list_detail
-        try:
-            followup = get_call_followup(tenant_id, call_id) or {}
-        except Exception:
-            followup = {}
+        followup = followups_by_call.get(call_id) or {}
         status = _resolve_call_status(item, detail_for_display)
         booking = _build_booking_payload(detail_for_display)
         # Fast path: use the list payload whenever it already carries enough signal.
-        if status == "FAQ" and booking is None and not (detail_for_display.get("transcript") or "").strip():
+        if (not compact_mode) and status == "FAQ" and booking is None and not (detail_for_display.get("transcript") or "").strip():
             try:
                 raw_detail = _get_call_detail(tenant_id, call_id) or {}
             except Exception:
@@ -1227,7 +1244,7 @@ def tenant_calls(
                 status = _resolve_call_status(item, detail_for_display)
                 booking = _build_booking_payload(detail_for_display)
         call_context = _classify_call_context(status, detail_for_display)
-        patient = _build_patient_payload(tenant_id, item, detail_for_display)
+        patient = _build_patient_payload(tenant_id, item, detail_for_display, patient_profiles_by_phone)
         calls.append({
             "id": call_id,
             "time": _format_hhmm(started_at, tz_name),
