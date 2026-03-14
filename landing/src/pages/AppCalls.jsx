@@ -1,6 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api.js";
+
+const AppCallDetailModal = lazy(() => import("../components/AppCallDetailModal.jsx"));
+const AppCallsSidePanels = lazy(() => import("../components/AppCallsSidePanels.jsx"));
 
 function Skeleton({ height = 80, radius = 14 }) {
   return (
@@ -13,6 +16,27 @@ function Skeleton({ height = 80, radius = 14 }) {
         animation: "uwi-calls-shimmer 1.35s infinite linear",
       }}
     />
+  );
+}
+
+function SidePanelsFallback() {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {[1, 2, 3].map((item, index) => (
+        <div
+          key={item}
+          style={{
+            background: "#ffffff",
+            border: `1px solid ${T.border}`,
+            borderRadius: "16px",
+            padding: "18px",
+            boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+          }}
+        >
+          <Skeleton height={index === 1 ? 120 : 84} radius={12} />
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -34,10 +58,6 @@ async function copyToClipboard(text) {
   } catch {
     return false;
   }
-}
-
-function getActionLabel(call) {
-  return call?.contextual_action?.label || "Voir le détail";
 }
 
 function getDialablePhone(value) {
@@ -374,96 +394,6 @@ function Sparkline({ data, color, w = 110, h = 34 }) {
   );
 }
 
-function AIScoreCard({ score }) {
-  if (!score) {
-    return (
-      <div style={{ background: T.bg, border: `1px solid ${T.borderLight}`, borderRadius: "12px", padding: "16px", textAlign: "center", color: T.textFaint, fontSize: "12px" }}>
-        Aucune analyse disponible pour cet appel
-      </div>
-    );
-  }
-  const confColor = score.confidence >= 90 ? T.tealDark : score.confidence >= 75 ? T.orange : T.red;
-  const sentEmoji = score.sentiment === "positif" ? "😊" : score.sentiment === "négatif" ? "😟" : "😐";
-  const sentColor = score.sentiment === "positif" ? T.tealDark : score.sentiment === "négatif" ? T.red : T.textSoft;
-  return (
-    <div style={{ background: T.purpleLight, border: `1px solid ${T.purpleBorder}`, borderRadius: "12px", padding: "16px" }}>
-      <div style={{ fontSize: "11px", fontWeight: 700, color: T.purple, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: "14px" }}>Analyse UWI</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
-        <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: "10px", color: T.purple, marginBottom: "8px" }}>Confiance</div>
-          <div style={{ position: "relative", width: "56px", height: "56px", margin: "0 auto 6px" }}>
-            <svg width="56" height="56" style={{ transform: "rotate(-90deg)" }}>
-              <circle cx="28" cy="28" r="22" fill="none" stroke={T.purpleBorder} strokeWidth="5" />
-              <circle
-                cx="28"
-                cy="28"
-                r="22"
-                fill="none"
-                stroke={confColor}
-                strokeWidth="5"
-                strokeDasharray={`${2 * Math.PI * 22}`}
-                strokeDashoffset={`${2 * Math.PI * 22 * (1 - score.confidence / 100)}`}
-                strokeLinecap="round"
-              />
-            </svg>
-            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px", fontWeight: 800, color: confColor }}>
-              {score.confidence}%
-            </div>
-          </div>
-          <div style={{ fontSize: "10px", color: confColor, fontWeight: 600 }}>
-            {score.confidence >= 90 ? "Élevée" : score.confidence >= 75 ? "Bonne" : "Faible"}
-          </div>
-        </div>
-
-        <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: "10px", color: T.purple, marginBottom: "8px" }}>Sentiment</div>
-          <div style={{ fontSize: "32px", marginBottom: "4px" }}>{sentEmoji}</div>
-          <div style={{ fontSize: "11px", fontWeight: 600, color: sentColor }}>{score.sentiment}</div>
-        </div>
-
-        <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: "10px", color: T.purple, marginBottom: "8px" }}>Résolution</div>
-          <div style={{ fontSize: "32px", marginBottom: "4px" }}>{score.resolved ? "✅" : "❌"}</div>
-          <div style={{ fontSize: "11px", fontWeight: 600, color: score.resolved ? T.tealDark : T.red }}>
-            {score.resolved ? "Résolu" : "Escalade"}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function TranscriptView({ lines }) {
-  if (!lines || lines.length === 0) {
-    return (
-      <div style={{ padding: "24px 0", textAlign: "center", color: T.textFaint, fontSize: "12px" }}>
-        <div style={{ fontSize: "28px", marginBottom: "8px" }}>💬</div>
-        Aucune transcription disponible
-      </div>
-    );
-  }
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-      {lines.map((line, index) => {
-        const isAgent = line.speaker === "agent";
-        return (
-          <div key={`${line.text}-${index}`} style={{ display: "flex", flexDirection: isAgent ? "row-reverse" : "row", alignItems: "flex-start", gap: "9px" }}>
-            <div style={{ width: "28px", height: "28px", borderRadius: "50%", background: isAgent ? T.tealLight : "#f0f4ff", border: `1px solid ${isAgent ? T.tealBorder : T.blueBorder}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px", flexShrink: 0 }}>
-              {isAgent ? "🤖" : "👤"}
-            </div>
-            <div style={{ maxWidth: "78%", background: isAgent ? T.tealLight : "#f8fafc", border: `1px solid ${isAgent ? T.tealBorder : T.borderLight}`, borderRadius: isAgent ? "14px 4px 14px 14px" : "4px 14px 14px 14px", padding: "9px 12px" }}>
-              <div style={{ fontSize: "9px", fontWeight: 700, color: isAgent ? T.tealDark : T.textFaint, marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.07em" }}>
-                {isAgent ? "Agent UWI" : "Patient"}
-              </div>
-              <div style={{ fontSize: "12px", color: T.textMid, lineHeight: 1.55 }}>{line.text}</div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function RdvTooltip({ rdv }) {
   return (
     <div style={{ position: "absolute", bottom: "calc(100% + 8px)", left: "50%", transform: "translateX(-50%)", zIndex: 999, background: T.text, borderRadius: "10px", padding: "10px 13px", width: "200px", boxShadow: "0 8px 24px rgba(0,0,0,0.18)", pointerEvents: "none", whiteSpace: "nowrap" }}>
@@ -578,247 +508,6 @@ function CallRowModel({ call, onOpen, onRecall, isLast }) {
             {call.recalled ? "✓ Rappelé" : "Rappeler"}
           </button>
         ) : null}
-      </div>
-    </div>
-  );
-}
-
-function CallDetailModal({
-  call,
-  onClose,
-  onRecall,
-  onContextAction,
-  onMarkCallback,
-  onMarkProcessed,
-  onCopyTranscript,
-  onCopySummary,
-  onCopyId,
-  followupNotes,
-  setFollowupNotes,
-  onSaveNotes,
-  patientNameDraft,
-  setPatientNameDraft,
-  onSavePatientName,
-  patientSaving,
-  followupLoading,
-  actionMessage,
-}) {
-  const [tab, setTab] = useState("summary");
-  if (!call) return null;
-  const dialablePhone = getDialablePhone(call?.dialablePhone || call?.phone || call?.raw?.customer_number);
-  const intentGlyph = getIntentGlyph(call.intent);
-  const primaryActionLabel = getActionLabel(call?.raw || call);
-  const followupState = call?.raw?.followup_state || "new";
-  const followupBadge =
-    followupState === "processed"
-      ? { label: "Traité", color: T.tealDark, bg: T.tealLight, border: T.tealBorder }
-      : followupState === "callback"
-        ? { label: "À rappeler", color: T.orange, bg: T.orangeLight, border: T.orangeBorder }
-        : { label: "Nouveau", color: T.textSoft, bg: T.bg, border: T.border };
-  return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(15,23,42,0.3)", backdropFilter: "blur(5px)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
-      <div className="calls-modal-panel" style={{ background: T.card, borderRadius: "20px", width: "540px", maxWidth: "94vw", maxHeight: "88vh", boxShadow: "0 24px 60px rgba(0,0,0,0.15)", overflow: "hidden", display: "flex", flexDirection: "column" }} onClick={(e) => e.stopPropagation()}>
-        <div style={{ height: "4px", background: call.status === "ok" ? `linear-gradient(90deg,${T.teal},${T.tealDark})` : call.statusUi.color }} />
-
-        <div style={{ padding: "20px 22px 0", flexShrink: 0 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-              <div style={{ width: "44px", height: "44px", borderRadius: "12px", background: call.intentUi.bg, border: `1px solid ${call.intent === "urgent" ? T.redBorder : call.intent === "reschedule" ? T.purpleBorder : call.intent === "hours" ? T.orangeBorder : call.intent === "info" ? T.blueBorder : T.tealBorder}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "20px" }}>
-                {intentGlyph}
-              </div>
-              <div>
-                <div style={{ fontSize: "17px", fontWeight: 800, color: T.text }}>{call.name}</div>
-                <div style={{ fontSize: "12px", color: T.textSoft, marginTop: "1px" }}>
-                  {dialablePhone ? (
-                    <a href={`tel:${dialablePhone}`} style={{ color: call.statusUi.color, fontWeight: 700, textDecoration: "none" }}>
-                      {call.phone}
-                    </a>
-                  ) : (
-                    call.phone
-                  )}
-                  {" · "}
-                  {call.time}
-                  {" · "}
-                  {call.durationFmt}
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: call.intentUi.color, background: call.intentUi.bg, borderRadius: 999, padding: "3px 8px" }}>
-                    {call.intentUi.label}
-                  </span>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: followupBadge.color, background: followupBadge.bg, border: `1px solid ${followupBadge.border}`, borderRadius: 999, padding: "3px 8px" }}>
-                    {followupBadge.label}
-                  </span>
-                </div>
-              </div>
-            </div>
-            <div style={{ display: "flex", gap: "7px", alignItems: "center" }}>
-              <span style={{ fontSize: "11px", fontWeight: 700, color: call.statusUi.color, background: call.statusUi.bg, border: `1px solid ${call.statusUi.border}`, borderRadius: "20px", padding: "3px 10px" }}>{call.statusUi.label}</span>
-              {call.aiHandled ? <span style={{ fontSize: "10px", fontWeight: 800, color: T.purple, background: T.purpleLight, border: `1px solid ${T.purpleBorder}`, borderRadius: "20px", padding: "3px 9px" }}>🤖 IA</span> : null}
-              <button type="button" onClick={onClose} style={{ background: "#f8fafc", border: `1px solid ${T.border}`, borderRadius: "8px", width: "30px", height: "30px", cursor: "pointer", color: T.textSoft, fontSize: "13px", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
-            </div>
-          </div>
-
-          <div style={{ display: "flex", borderBottom: `1px solid ${T.borderLight}` }}>
-            {[["summary", "Résumé"], ["transcript", "Transcription"], ["ai", "Analyse IA"]].map(([key, label]) => (
-              <button className="calls-modal-tab" key={key} type="button" onClick={() => setTab(key)} style={{ padding: "10px 16px", fontSize: "13px", fontWeight: tab === key ? 700 : 500, color: tab === key ? T.tealDark : T.textSoft, background: "transparent", border: "none", borderBottom: tab === key ? `2px solid ${T.teal}` : "2px solid transparent", cursor: "pointer", marginBottom: "-1px", transition: "all 0.15s" }}>
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div style={{ flex: 1, overflowY: "auto", padding: "18px 22px 22px" }}>
-          {actionMessage ? <div style={{ marginBottom: 12, borderRadius: 12, border: `1px solid ${T.tealBorder}`, background: T.tealLight, color: T.tealDark, padding: "10px 12px", fontSize: 12, fontWeight: 700 }}>{actionMessage}</div> : null}
-
-          {tab === "summary" ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
-                {[
-                  { label: "Heure", value: call.time },
-                  { label: "Durée", value: call.durationFmt },
-                  { label: "Intent", value: <span style={{ fontSize: "11px", fontWeight: 700, color: call.intentUi.color, background: call.intentUi.bg, borderRadius: "5px", padding: "2px 8px" }}>{call.intentUi.label}</span> },
-                ].map((row, index) => (
-                  <div key={`${row.label}-${index}`} style={{ background: T.bg, borderRadius: "10px", padding: "11px 13px", border: `1px solid ${T.borderLight}` }}>
-                    <div style={{ fontSize: "10px", fontWeight: 700, color: T.textFaint, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: "5px" }}>{row.label}</div>
-                    <div style={{ fontSize: "13px", fontWeight: 600, color: T.textMid }}>{row.value}</div>
-                  </div>
-                ))}
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: "12px" }}>
-                <div style={{ background: T.bg, borderRadius: "12px", padding: "13px 15px", border: `1px solid ${T.borderLight}` }}>
-                  <div style={{ fontSize: "10px", fontWeight: 700, color: T.textFaint, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: "6px" }}>Résumé</div>
-                  <div style={{ fontSize: "13px", color: T.textMid, lineHeight: 1.55 }}>{call.summary}</div>
-                </div>
-
-                <div style={{ background: "#f8fafc", borderRadius: "12px", padding: "13px 15px", border: `1px solid ${T.borderLight}` }}>
-                  <div style={{ fontSize: "10px", fontWeight: 700, color: T.textFaint, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: "8px" }}>Action recommandée</div>
-                  <div style={{ fontSize: "13px", fontWeight: 700, color: T.text, marginBottom: "4px" }}>{primaryActionLabel}</div>
-                  <div style={{ fontSize: "11px", lineHeight: 1.5, color: T.textSoft }}>
-                    {call.status === "missed" || call.status === "callback"
-                      ? "Prioriser un rappel manuel pour ne pas perdre le patient."
-                      : call.rdv
-                        ? "Le rendez-vous détecté peut être revu ou confirmé dans l'agenda."
-                        : "Utilisez l'action métier pour ouvrir la bonne suite côté client."}
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ background: "#fff", borderRadius: "12px", padding: "13px 15px", border: `1px solid ${T.borderLight}` }}>
-                <div style={{ fontSize: "10px", fontWeight: 700, color: T.textFaint, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: "8px" }}>Fiche patient cabinet</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
-                  <div style={{ background: T.bg, borderRadius: 10, padding: "10px 12px", border: `1px solid ${T.borderLight}` }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: T.textFaint, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 5 }}>Nom retranscrit</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: T.text }}>{call?.patient?.raw_name || "Non capté"}</div>
-                  </div>
-                  <div style={{ background: T.bg, borderRadius: 10, padding: "10px 12px", border: `1px solid ${T.borderLight}` }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: T.textFaint, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 5 }}>Statut</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: call?.patient?.is_validated ? T.tealDark : T.orange }}>
-                      {call?.patient?.is_validated ? "Validé et enregistré" : "À valider"}
-                    </div>
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <input
-                    value={patientNameDraft}
-                    onChange={(e) => setPatientNameDraft(e.target.value)}
-                    placeholder="Nom et prénom validés"
-                    style={{ flex: 1, height: 42, border: `1px solid ${T.border}`, borderRadius: 10, padding: "0 12px", fontSize: 13, color: T.text, outline: "none" }}
-                  />
-                  <button
-                    className="calls-primary-btn"
-                    type="button"
-                    onClick={onSavePatientName}
-                    disabled={patientSaving}
-                    style={{ padding: "11px 14px", background: `linear-gradient(135deg,${T.teal},${T.tealDark})`, border: "none", borderRadius: 10, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", whiteSpace: "nowrap" }}
-                  >
-                    {patientSaving ? "Enregistrement..." : "Valider le nom"}
-                  </button>
-                </div>
-              </div>
-
-              {call.rdv ? (
-                <div style={{ background: T.tealLight, border: `1px solid ${T.tealBorder}`, borderRadius: "12px", padding: "13px 15px", display: "flex", alignItems: "center", gap: "12px" }}>
-                  <span style={{ fontSize: "22px" }}>📅</span>
-                  <div>
-                    <div style={{ fontSize: "12px", fontWeight: 700, color: T.tealDark, marginBottom: "2px" }}>RDV détecté / créé</div>
-                    <div style={{ fontSize: "12px", color: T.textSoft }}>{call.rdv.type} · {call.rdv.date} à {call.rdv.time}</div>
-                  </div>
-                </div>
-              ) : null}
-
-              {call.status === "missed" && !call.aiHandled ? (
-                <div style={{ background: T.redLight, border: `1px solid ${T.redBorder}`, borderRadius: "12px", padding: "13px 15px" }}>
-                  <div style={{ fontSize: "12px", fontWeight: 700, color: T.red, marginBottom: "3px" }}>⚠ Appel manqué non traité par l'IA</div>
-                  <div style={{ fontSize: "11px", color: "#ef9999", lineHeight: 1.5 }}>Ce patient attend un rappel manuel.</div>
-                </div>
-              ) : null}
-
-              {call.aiScore ? (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
-                  {[
-                    { label: "Confiance IA", value: `${call.aiScore.confidence}%`, accent: call.aiScore.confidence >= 90 ? T.tealDark : call.aiScore.confidence >= 75 ? T.orange : T.red },
-                    { label: "Sentiment", value: call.aiScore.sentiment, accent: call.aiScore.sentiment === "positif" ? T.tealDark : call.aiScore.sentiment === "négatif" ? T.red : T.textSoft },
-                    { label: "Résolution", value: call.aiScore.resolved ? "Résolu" : "Escalade", accent: call.aiScore.resolved ? T.tealDark : T.red },
-                  ].map((item) => (
-                    <div key={item.label} style={{ background: "#fff", border: `1px solid ${T.borderLight}`, borderRadius: 12, padding: "12px 13px" }}>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: T.textFaint, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>{item.label}</div>
-                      <div style={{ fontSize: 14, fontWeight: 800, color: item.accent }}>{item.value}</div>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-
-              <div style={{ display: "flex", gap: "8px", marginTop: "4px", flexWrap: "wrap" }}>
-                {(call.status === "missed" || call.status === "callback") ? (
-                  <button className="calls-primary-btn" type="button" onClick={onRecall} style={{ flex: 2, padding: "11px", background: `linear-gradient(135deg,${T.teal},${T.tealDark})`, border: "none", borderRadius: "10px", color: "#fff", fontSize: "13px", fontWeight: 700, cursor: "pointer", boxShadow: `0 4px 14px ${T.teal}40` }}>
-                    📞 Rappeler maintenant
-                  </button>
-                ) : (
-                  <button className="calls-primary-btn" type="button" onClick={onContextAction} style={{ flex: 2, padding: "11px", background: `linear-gradient(135deg,${T.teal},${T.tealDark})`, border: "none", borderRadius: "10px", color: "#fff", fontSize: "13px", fontWeight: 700, cursor: "pointer", boxShadow: `0 4px 14px ${T.teal}40` }}>
-                    📅 {primaryActionLabel}
-                  </button>
-                )}
-                <button className="calls-secondary-btn" type="button" onClick={onCopySummary} style={{ flex: 1, padding: "11px", background: T.bg, border: `1px solid ${T.border}`, borderRadius: "10px", color: T.textSoft, fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
-                  Copier résumé
-                </button>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-                <button className="calls-secondary-btn" type="button" onClick={onMarkCallback} disabled={followupLoading} style={{ padding: "10px 11px", background: T.orangeLight, border: `1px solid ${T.orangeBorder}`, borderRadius: "10px", color: T.orange, fontSize: "12px", fontWeight: 700, cursor: "pointer" }}>
-                  À rappeler
-                </button>
-                <button className="calls-secondary-btn" type="button" onClick={onMarkProcessed} disabled={followupLoading} style={{ padding: "10px 11px", background: T.tealLight, border: `1px solid ${T.tealBorder}`, borderRadius: "10px", color: T.tealDark, fontSize: "12px", fontWeight: 700, cursor: "pointer" }}>
-                  Marquer traité
-                </button>
-                <button className="calls-secondary-btn" type="button" onClick={onCopyId} style={{ padding: "10px 11px", background: "#fff", border: `1px solid ${T.border}`, borderRadius: "10px", color: T.textSoft, fontSize: "12px", fontWeight: 700, cursor: "pointer" }}>
-                  Copier ID
-                </button>
-              </div>
-
-              <div style={{ background: T.bg, borderRadius: "12px", padding: "13px 15px", border: `1px solid ${T.borderLight}` }}>
-                <div style={{ fontSize: "10px", fontWeight: 700, color: T.textFaint, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: "6px" }}>Suivi métier</div>
-                <textarea
-                  value={followupNotes}
-                  onChange={(e) => setFollowupNotes(e.target.value)}
-                  placeholder="Ajoutez une note interne."
-                  style={{ width: "100%", minHeight: 86, resize: "vertical", border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, fontSize: 12, color: T.textMid, background: "#fff", fontFamily: "inherit", outline: "none", boxSizing: "border-box" }}
-                />
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 10 }}>
-                  <button className="calls-secondary-btn" type="button" onClick={onSaveNotes} disabled={followupLoading} style={{ flex: 1, padding: "10px 12px", background: "#fff", border: `1px solid ${T.border}`, borderRadius: 10, color: T.textSoft, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                    Enregistrer la note
-                  </button>
-                  <button className="calls-secondary-btn" type="button" onClick={onCopyTranscript} style={{ flex: 1, padding: "10px 12px", background: "#fff", border: `1px solid ${T.border}`, borderRadius: 10, color: T.textSoft, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                    Copier transcription
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-          {tab === "transcript" ? <TranscriptView lines={call.transcript} /> : null}
-          {tab === "ai" ? <AIScoreCard score={call.aiScore} /> : null}
-        </div>
       </div>
     </div>
   );
@@ -1384,184 +1073,29 @@ export default function AppCalls() {
                   </button>
                 </div>
 
-                <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "18px", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, marginBottom: "10px" }}>
-                    <div>
-                      <div style={{ fontSize: "15px", fontWeight: 800, color: T.text, marginBottom: "2px" }}>Transferts humains</div>
-                      <div style={{ fontSize: "12px", color: T.textFaint }}>Demandes à reprendre par le cabinet</div>
-                    </div>
-                    <span style={{ fontSize: 10, fontWeight: 800, color: T.textSoft, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 999, padding: "4px 8px" }}>
-                      {handoffItems.length}
-                    </span>
-                  </div>
-
-                  <div style={{ display: "grid", gap: 8, marginBottom: 14 }}>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      {[
-                        ["open", "En attente"],
-                        ["processed", "Traités"],
-                        ["cancelled", "Annulés"],
-                      ].map(([value, label]) => (
-                        <button
-                          key={value}
-                          type="button"
-                          onClick={() => setHandoffStatusFilter(value)}
-                          style={{
-                            flex: 1,
-                            padding: "7px 8px",
-                            fontSize: 11,
-                            fontWeight: 700,
-                            borderRadius: 8,
-                            border: `1px solid ${handoffStatusFilter === value ? T.tealBorder : T.border}`,
-                            background: handoffStatusFilter === value ? T.tealLight : "#fff",
-                            color: handoffStatusFilter === value ? T.tealDark : T.textSoft,
-                            cursor: "pointer",
-                          }}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <select
-                        value={handoffTargetFilter}
-                        onChange={(e) => setHandoffTargetFilter(e.target.value)}
-                        style={{ flex: 1, borderRadius: 8, border: `1px solid ${T.border}`, background: "#fff", color: T.textMid, fontSize: 12, padding: "8px 10px", outline: "none" }}
-                      >
-                        <option value="all">Toutes cibles</option>
-                        <option value="assistant">Assistante</option>
-                        <option value="practitioner">Praticien</option>
-                      </select>
-                      <input
-                        value={handoffSearch}
-                        onChange={(e) => setHandoffSearch(e.target.value)}
-                        placeholder="Patient, résumé, ID…"
-                        style={{ flex: 1.2, borderRadius: 8, border: `1px solid ${T.border}`, background: "#fff", color: T.textMid, fontSize: 12, padding: "8px 10px", outline: "none" }}
-                      />
-                    </div>
-                  </div>
-                  {handoffsLoading ? (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                      {[1, 2, 3].map((item) => <Skeleton key={item} height={72} radius={12} />)}
-                    </div>
-                  ) : handoffItems.length > 0 ? (
-                    handoffItems.map((item, index) => (
-                      <div key={item.id || index} style={{ display: "flex", gap: "10px", padding: "12px 0", borderBottom: index < handoffItems.length - 1 ? `1px solid ${T.borderLight}` : "none" }}>
-                        <div style={{ width: 42, height: 42, borderRadius: 12, background: item.priority.bg, border: `1px solid ${item.priority.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>
-                          {item.target === "Praticien" ? "🩺" : "📞"}
-                        </div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: "13px", fontWeight: 700, color: T.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.name}</div>
-                          <div style={{ fontSize: "11px", color: T.textFaint, marginTop: "2px" }}>{item.phone}</div>
-                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6, marginBottom: 6 }}>
-                            <span style={{ fontSize: 10, fontWeight: 700, color: item.priority.color, background: item.priority.bg, border: `1px solid ${item.priority.border}`, borderRadius: 999, padding: "2px 8px" }}>
-                              {item.priority.label}
-                            </span>
-                            <span style={{ fontSize: 10, fontWeight: 700, color: T.purple, background: T.purpleLight, border: `1px solid ${T.purpleBorder}`, borderRadius: 999, padding: "2px 8px" }}>
-                              {item.target}
-                            </span>
-                            <span style={{ fontSize: 10, fontWeight: 700, color: item.status.color, background: item.status.bg, border: `1px solid ${item.status.border}`, borderRadius: 999, padding: "2px 8px" }}>
-                              {item.status.label}
-                            </span>
-                          </div>
-                          <div style={{ fontSize: "11px", color: T.textSoft, lineHeight: 1.45 }}>{item.summary}</div>
-                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8, marginBottom: 8 }}>
-                            {item.callId ? (
-                              <button
-                                type="button"
-                                onClick={() => setSelectedCallId(item.callId)}
-                                style={{ fontSize: 11, fontWeight: 700, color: T.blue, background: T.blueLight, border: `1px solid ${T.blueBorder}`, borderRadius: 8, padding: "5px 9px", cursor: "pointer" }}
-                              >
-                                Ouvrir l&apos;appel
-                              </button>
-                            ) : null}
-                            <span style={{ fontSize: 10, color: T.textFaint }}>
-                              {item.mode === "live_then_callback" ? "Live puis rappel" : "Rappel uniquement"}
-                            </span>
-                          </div>
-                          <textarea
-                            value={handoffNoteDrafts[String(item.id)] ?? item.notes}
-                            onChange={(e) => setHandoffNoteDrafts((prev) => ({ ...prev, [String(item.id)]: e.target.value }))}
-                            placeholder="Ajouter une note interne pour le cabinet"
-                            style={{ width: "100%", minHeight: 62, resize: "vertical", borderRadius: 10, border: `1px solid ${T.border}`, background: "#fff", color: T.textMid, fontSize: 12, padding: "8px 10px", outline: "none", boxSizing: "border-box" }}
-                          />
-                        </div>
-                        <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end", flexShrink: 0 }}>
-                          {item.dialablePhone ? (
-                            <a href={`tel:${item.dialablePhone}`} style={{ fontSize: 11, fontWeight: 700, color: T.tealDark, background: T.tealLight, border: `1px solid ${T.tealBorder}`, borderRadius: 8, padding: "6px 10px", textDecoration: "none" }}>
-                              Appeler
-                            </a>
-                          ) : null}
-                          <button
-                            type="button"
-                            onClick={() => saveHandoffNotes(item.id)}
-                            disabled={handoffActionLoading === `notes-${item.id}`}
-                            style={{ fontSize: 11, fontWeight: 700, color: T.textSoft, background: "#fff", border: `1px solid ${T.border}`, borderRadius: 8, padding: "6px 10px", cursor: "pointer" }}
-                          >
-                            {handoffActionLoading === `notes-${item.id}` ? "..." : "Sauver note"}
-                          </button>
-                          {item.status.label !== "Traité" ? (
-                            <button
-                              type="button"
-                              onClick={() => markHandoffProcessed(item.id)}
-                              disabled={handoffActionLoading === String(item.id)}
-                              style={{ fontSize: 11, fontWeight: 700, color: T.textSoft, background: "#fff", border: `1px solid ${T.border}`, borderRadius: 8, padding: "6px 10px", cursor: "pointer" }}
-                            >
-                              {handoffActionLoading === String(item.id) ? "..." : "Traité"}
-                            </button>
-                          ) : null}
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div style={{ fontSize: "12px", color: T.textFaint, lineHeight: 1.5 }}>
-                      Aucun transfert humain en attente pour le moment.
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ background: T.purpleLight, border: `1px solid ${T.purpleBorder}`, borderRadius: "16px", padding: "16px 18px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
-                    <span style={{ fontSize: "17px" }}>🤖</span>
-                    <div style={{ fontSize: "14px", fontWeight: 800, color: T.purple }}>Résumé UWI du jour</div>
-                  </div>
-                  {[
-                    { icon: "📞", label: "Appels traités", value: `${normalizedCalls.length}` },
-                    { icon: "📅", label: "RDV détectés", value: `${stats.totalRdv}` },
-                    { icon: "✅", label: "Taux de résolution", value: `${stats.resolvedRate}%` },
-                    { icon: "⏱", label: "Durée moy.", value: stats.durationAverage ? `${stats.durationAverage} min` : "—" },
-                  ].map((row, index) => (
-                    <div key={row.label} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "7px 0", borderBottom: index < 3 ? `1px solid ${T.purpleBorder}` : "none" }}>
-                      <span style={{ fontSize: "12px", color: T.purple }}>{row.icon} {row.label}</span>
-                      <span style={{ fontSize: "13px", fontWeight: 700, color: T.purple }}>{row.value}</span>
-                    </div>
-                  ))}
-                  <div style={{ marginTop: 12, fontSize: 11, lineHeight: 1.55, color: T.purple }}>
-                    UWI absorbe la majorité des demandes simples et remonte surtout les urgences, rappels et cas non résolus.
-                  </div>
-                </div>
-
-                {urgentItems.length > 0 ? (
-                  <div style={{ background: T.redLight, border: `1px solid ${T.redBorder}`, borderRadius: "16px", padding: "15px 17px" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: "10px" }}>
-                      <div style={{ fontSize: "13px", fontWeight: 800, color: T.red }}>⚠ Rappels urgents</div>
-                      <span style={{ fontSize: 10, fontWeight: 800, color: T.red, background: "#fff", border: `1px solid ${T.redBorder}`, borderRadius: 999, padding: "3px 8px" }}>
-                        {urgentItems.length} priorité{urgentItems.length > 1 ? "s" : ""}
-                      </span>
-                    </div>
-                    {urgentItems.map((call, index) => (
-                      <div key={call.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "8px 0", borderBottom: index < urgentItems.length - 1 ? "1px solid #FCA5A5" : "none" }}>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: "12px", fontWeight: 700, color: T.red }}>{call.name}</div>
-                          <div style={{ fontSize: "11px", color: "#ef9999" }}>{call.phone}</div>
-                        </div>
-                        <button type="button" onClick={() => handleRecall(call)} style={{ fontSize: "11px", fontWeight: 700, color: "#fff", background: T.red, border: "none", borderRadius: "7px", padding: "4px 10px", cursor: "pointer" }}>
-                          Rappeler
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
+                <Suspense fallback={<SidePanelsFallback />}>
+                  <AppCallsSidePanels
+                    theme={T}
+                    handoffItems={handoffItems}
+                    handoffsLoading={handoffsLoading}
+                    handoffStatusFilter={handoffStatusFilter}
+                    setHandoffStatusFilter={setHandoffStatusFilter}
+                    handoffTargetFilter={handoffTargetFilter}
+                    setHandoffTargetFilter={setHandoffTargetFilter}
+                    handoffSearch={handoffSearch}
+                    setHandoffSearch={setHandoffSearch}
+                    handoffNoteDrafts={handoffNoteDrafts}
+                    setHandoffNoteDrafts={setHandoffNoteDrafts}
+                    handoffActionLoading={handoffActionLoading}
+                    onSaveHandoffNotes={saveHandoffNotes}
+                    onMarkHandoffProcessed={markHandoffProcessed}
+                    onOpenCall={setSelectedCallId}
+                    stats={stats}
+                    normalizedCalls={normalizedCalls}
+                    urgentItems={urgentItems}
+                    onRecall={handleRecall}
+                  />
+                </Suspense>
               </div>
             </div>
           </div>
@@ -1584,35 +1118,47 @@ export default function AppCalls() {
             </div>
           </div>
         ) : (
-          <CallDetailModal
-            call={detailModel}
-            onClose={() => setSelectedCallId("")}
-            onRecall={() => handleRecall(detailModel)}
-            onContextAction={() => runContextualAction(callDetail || selectedCallSummary?.raw)}
-            onMarkCallback={() => saveFollowupState("callback")}
-            onMarkProcessed={() => saveFollowupState("processed")}
-            onCopyTranscript={async () => {
-              const ok = await copyToClipboard(callDetail?.transcript || "");
-              setActionMessage(ok ? "Transcription copiée." : "Impossible de copier la transcription.");
-            }}
-            onCopySummary={async () => {
-              const ok = await copyToClipboard(callDetail?.summary || selectedCallSummary?.summary || "");
-              setActionMessage(ok ? "Résumé copié." : "Impossible de copier le résumé.");
-            }}
-            onCopyId={async () => {
-              const ok = await copyToClipboard(selectedCallId);
-              setActionMessage(ok ? "ID d'appel copié." : "Impossible de copier l'identifiant.");
-            }}
-            followupNotes={followupNotes}
-            setFollowupNotes={setFollowupNotes}
-            onSaveNotes={() => saveFollowupState(callDetail?.followup_state || "new", followupNotes)}
-            patientNameDraft={patientNameDraft}
-            setPatientNameDraft={setPatientNameDraft}
-            onSavePatientName={savePatientName}
-            patientSaving={patientSaving}
-            followupLoading={followupLoading}
-            actionMessage={actionMessage}
-          />
+          <Suspense
+            fallback={
+              <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(15,23,42,0.3)", backdropFilter: "blur(5px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ background: "#fff", borderRadius: 20, width: 540, maxWidth: "94vw", padding: 22 }}>
+                  <Skeleton height={80} />
+                  <div style={{ height: 12 }} />
+                  <Skeleton height={180} />
+                </div>
+              </div>
+            }
+          >
+            <AppCallDetailModal
+              call={detailModel}
+              onClose={() => setSelectedCallId("")}
+              onRecall={() => handleRecall(detailModel)}
+              onContextAction={() => runContextualAction(callDetail || selectedCallSummary?.raw)}
+              onMarkCallback={() => saveFollowupState("callback")}
+              onMarkProcessed={() => saveFollowupState("processed")}
+              onCopyTranscript={async () => {
+                const ok = await copyToClipboard(callDetail?.transcript || "");
+                setActionMessage(ok ? "Transcription copiée." : "Impossible de copier la transcription.");
+              }}
+              onCopySummary={async () => {
+                const ok = await copyToClipboard(callDetail?.summary || selectedCallSummary?.summary || "");
+                setActionMessage(ok ? "Résumé copié." : "Impossible de copier le résumé.");
+              }}
+              onCopyId={async () => {
+                const ok = await copyToClipboard(selectedCallId);
+                setActionMessage(ok ? "ID d'appel copié." : "Impossible de copier l'identifiant.");
+              }}
+              followupNotes={followupNotes}
+              setFollowupNotes={setFollowupNotes}
+              onSaveNotes={() => saveFollowupState(callDetail?.followup_state || "new", followupNotes)}
+              patientNameDraft={patientNameDraft}
+              setPatientNameDraft={setPatientNameDraft}
+              onSavePatientName={savePatientName}
+              patientSaving={patientSaving}
+              followupLoading={followupLoading}
+              actionMessage={actionMessage}
+            />
+          </Suspense>
         )
       ) : null}
     </div>

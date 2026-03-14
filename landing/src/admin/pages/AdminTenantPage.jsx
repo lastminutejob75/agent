@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { Suspense, lazy, useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { getClientImpersonateUrl, getClientLoginUrl } from "../../lib/clientAppUrl";
 import {
@@ -14,17 +14,11 @@ import {
   getTenantQuota,
   getTenantFaq,
   resetTenantFaq,
-  updateTenantFlags,
   updateTenantFaq,
-  updateTenantHoraires,
-  updateTenantParams,
-  sendPaymentLink,
-  sendTenantOnboardingLink,
 } from "../../lib/adminApi";
-import { deriveHorairesText, normalizeBookingRules } from "../../lib/bookingUtils.js";
-import { buildTransferConfigSignature, isTransferConfigConfirmed } from "../../lib/transferConfig.js";
-import FaqEditor from "../../components/FaqEditor.jsx";
-import ConfirmDialog from "../components/ConfirmDialog";
+
+const FaqEditor = lazy(() => import("../../components/FaqEditor.jsx"));
+const AdminTenantActionsTab = lazy(() => import("../components/AdminTenantActionsTab.jsx"));
 
 const C = {
   bg: "#0A1828",
@@ -100,6 +94,12 @@ function PageLoader() {
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 200, color: C.muted }}>
       Chargement…
     </div>
+  );
+}
+
+function InlineLoader({ text = "Chargement…" }) {
+  return (
+    <div style={{ color: C.muted, fontSize: 13, padding: "20px 0", textAlign: "center" }}>{text}</div>
   );
 }
 
@@ -1540,45 +1540,49 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
           {msg.text}
         </div>
       )}
-      <ConfirmDialog
-        open={deleteModalOpen}
-        title="Supprimer le compte client"
-        message={
-          <div style={{ display: "grid", gap: 10 }}>
-            <p>
-              Pour continuer, tapez le nom exact du client : <strong>{normalizedTenantName || "(nom inconnu)"}</strong>
-            </p>
-            <input
-              type="text"
-              value={deleteName}
-              onChange={(e) => setDeleteName(e.target.value)}
-              placeholder="Nom exact du client"
-              style={{ width: "100%", borderRadius: 8, border: "1px solid #CBD5E1", padding: "10px 12px", fontSize: 13 }}
-            />
-            {deleteName && !deleteNameMatch ? <p style={{ color: "#DC2626", fontSize: 12 }}>Le nom du client ne correspond pas.</p> : null}
-            <p>Tapez ensuite <strong>SUPPRIMER</strong> pour confirmer cette action dangereuse.</p>
-            <input
-              type="text"
-              value={deletePhrase}
-              onChange={(e) => setDeletePhrase(e.target.value)}
-              placeholder="SUPPRIMER"
-              style={{ width: "100%", borderRadius: 8, border: "1px solid #CBD5E1", padding: "10px 12px", fontSize: 13 }}
-            />
-            {deletePhrase && !deletePhraseMatch ? <p style={{ color: "#DC2626", fontSize: 12 }}>Le mot de confirmation est incorrect.</p> : null}
-          </div>
-        }
-        confirmLabel="Supprimer"
-        cancelLabel="Annuler"
-        danger
-        loading={deleteLoading}
-        confirmDisabled={!canConfirmDelete}
-        onConfirm={handleDeleteTenant}
-        onCancel={() => {
-          setDeleteModalOpen(false);
-          setDeleteName("");
-          setDeletePhrase("");
-        }}
-      />
+      {deleteModalOpen ? (
+        <Suspense fallback={null}>
+          <ConfirmDialog
+            open={deleteModalOpen}
+            title="Supprimer le compte client"
+            message={
+              <div style={{ display: "grid", gap: 10 }}>
+                <p>
+                  Pour continuer, tapez le nom exact du client : <strong>{normalizedTenantName || "(nom inconnu)"}</strong>
+                </p>
+                <input
+                  type="text"
+                  value={deleteName}
+                  onChange={(e) => setDeleteName(e.target.value)}
+                  placeholder="Nom exact du client"
+                  style={{ width: "100%", borderRadius: 8, border: "1px solid #CBD5E1", padding: "10px 12px", fontSize: 13 }}
+                />
+                {deleteName && !deleteNameMatch ? <p style={{ color: "#DC2626", fontSize: 12 }}>Le nom du client ne correspond pas.</p> : null}
+                <p>Tapez ensuite <strong>SUPPRIMER</strong> pour confirmer cette action dangereuse.</p>
+                <input
+                  type="text"
+                  value={deletePhrase}
+                  onChange={(e) => setDeletePhrase(e.target.value)}
+                  placeholder="SUPPRIMER"
+                  style={{ width: "100%", borderRadius: 8, border: "1px solid #CBD5E1", padding: "10px 12px", fontSize: 13 }}
+                />
+                {deletePhrase && !deletePhraseMatch ? <p style={{ color: "#DC2626", fontSize: 12 }}>Le mot de confirmation est incorrect.</p> : null}
+              </div>
+            }
+            confirmLabel="Supprimer"
+            cancelLabel="Annuler"
+            danger
+            loading={deleteLoading}
+            confirmDisabled={!canConfirmDelete}
+            onConfirm={handleDeleteTenant}
+            onCancel={() => {
+              setDeleteModalOpen(false);
+              setDeleteName("");
+              setDeletePhrase("");
+            }}
+          />
+        </Suspense>
+      ) : null}
       {showOnboardingModal && (
         <div
           style={{
@@ -1657,14 +1661,16 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
 
 function TabFaq({ tenantId, tenant }) {
   return (
-    <FaqEditor
-      title={`FAQ du cabinet ${tenant?.name || ""}`.trim()}
-      description="Cette FAQ est modifiable par l'admin et par le client. Chaque enregistrement met à jour la configuration locale puis tente de resynchroniser le prompt Vapi."
-      loadFaq={() => getTenantFaq(tenantId)}
-      saveFaq={(faq) => updateTenantFaq(tenantId, faq)}
-      resetFaq={() => resetTenantFaq(tenantId)}
-      variant="dark"
-    />
+    <Suspense fallback={<InlineLoader text="Chargement de l’éditeur FAQ…" />}>
+      <FaqEditor
+        title={`FAQ du cabinet ${tenant?.name || ""}`.trim()}
+        description="Cette FAQ est modifiable par l'admin et par le client. Chaque enregistrement met à jour la configuration locale puis tente de resynchroniser le prompt Vapi."
+        loadFaq={() => getTenantFaq(tenantId)}
+        saveFaq={(faq) => updateTenantFaq(tenantId, faq)}
+        resetFaq={() => resetTenantFaq(tenantId)}
+        variant="dark"
+      />
+    </Suspense>
   );
 }
 
@@ -2033,12 +2039,15 @@ export default function AdminTenantPage() {
           {tab === "quota" && <TabQuota tenantId={tenantId} />}
           {tab === "faq" && <TabFaq tenantId={tenantId} tenant={tenant} />}
           {tab === "actions" && (
-            <TabActions
-              tenantId={tenantId}
-              tenant={tenant}
-              onSaved={() => getTenant(tenantId).then(setTenant)}
-              onDeleted={() => navigate("/admin")}
-            />
+            <Suspense fallback={<InlineLoader text="Chargement des actions client…" />}>
+              <AdminTenantActionsTab
+                tenantId={tenantId}
+                tenant={tenant}
+                theme={C}
+                onSaved={() => getTenant(tenantId).then(setTenant)}
+                onDeleted={() => navigate("/admin")}
+              />
+            </Suspense>
           )}
         </div>
       </div>

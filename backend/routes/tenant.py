@@ -456,6 +456,28 @@ def _resolve_agenda_patient_name(tenant_id: int, phone: Optional[str], fallback_
     return fallback or "Patient"
 
 
+def _resolve_agenda_patient_name_cached(
+    tenant_id: int,
+    phone: Optional[str],
+    fallback_name: Optional[str],
+    profile_cache: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+) -> str:
+    phone_norm = normalize_phone_number(phone)
+    if phone_norm:
+        profile: Optional[Dict[str, Any]]
+        if profile_cache is not None and phone_norm in profile_cache:
+            profile = profile_cache.get(phone_norm)
+        else:
+            profile = get_cabinet_client_by_phone(tenant_id, phone_norm) or None
+            if profile_cache is not None:
+                profile_cache[phone_norm] = profile
+        display_name = str((profile or {}).get("display_name") or "").strip()
+        if display_name:
+            return display_name
+    fallback = str(fallback_name or "").strip()
+    return fallback or "Patient"
+
+
 def _extract_google_description_line(description: str, prefix: str) -> Optional[str]:
     for line in (description or "").splitlines():
         if line.lower().startswith(prefix.lower()):
@@ -541,12 +563,127 @@ def _google_mirror_enabled(detail: Optional[dict]) -> bool:
     return provider and _is_truthy(params.get("mirror_google_bookings_to_internal"))
 
 
+def _appointment_lookup_key(start_local: Optional[datetime]) -> str:
+    if not start_local:
+        return ""
+    return start_local.strftime("%Y-%m-%dT%H:%M")
+
+
+def _normalize_lookup_text(value: Optional[str]) -> str:
+    return str(value or "").strip().lower()
+
+
+def _appointment_matches_lookup(appointment: Dict[str, Any], patient_contact: Optional[str], fallback_name: Optional[str]) -> bool:
+    contact = str(patient_contact or "").strip()
+    name = str(fallback_name or "").strip()
+
+    if contact:
+        contact_norm = normalize_phone_number(contact)
+        appt_contact = str(appointment.get("contact") or "").strip()
+        appt_contact_norm = normalize_phone_number(appt_contact)
+        if contact_norm and appt_contact_norm:
+            return contact_norm == appt_contact_norm
+        return _normalize_lookup_text(appt_contact) == _normalize_lookup_text(contact)
+
+    if name:
+        return _normalize_lookup_text(appointment.get("name")) == _normalize_lookup_text(name)
+
+    return False
+
+
+def _load_local_appointments_for_window(
+    tenant_id: int,
+    day_start: datetime,
+    day_end: datetime,
+    tz_name: str,
+) -> Dict[str, List[Dict[str, Any]]]:
+    index: Dict[str, List[Dict[str, Any]]] = {}
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_SLOTS_URL")
+    if url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+
+            with psycopg.connect(url, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif, s.start_ts
+                        FROM appointments a
+                        JOIN slots s ON s.id = a.slot_id
+                        WHERE a.tenant_id = %s
+                          AND s.start_ts >= %s
+                          AND s.start_ts < %s
+                        ORDER BY a.created_at DESC
+                        """,
+                        (tenant_id, day_start.astimezone(timezone.utc), day_end.astimezone(timezone.utc)),
+                    )
+                    for row in cur.fetchall():
+                        start_local = _parse_dt(row.get("start_ts"), tz_name)
+                        key = _appointment_lookup_key(start_local.astimezone(_get_zoneinfo(tz_name)) if start_local else None)
+                        if not key:
+                            continue
+                        index.setdefault(key, []).append(
+                            {
+                                "id": int(row.get("id") or 0),
+                                "slot_id": int(row.get("slot_id") or 0),
+                                "name": row.get("name") or "",
+                                "contact": row.get("contact") or "",
+                                "contact_type": row.get("contact_type") or "",
+                                "motif": row.get("motif") or "",
+                            }
+                        )
+                    return index
+        except Exception as e:
+            logger.debug("local appointments window lookup pg failed tenant_id=%s err=%s", tenant_id, e)
+
+    ensure_tenant_config()
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif, s.date, s.time
+            FROM appointments a
+            JOIN slots s ON s.id = a.slot_id AND s.tenant_id = a.tenant_id
+            WHERE a.tenant_id = ?
+              AND s.date >= ?
+              AND s.date <= ?
+            ORDER BY a.created_at DESC
+            """,
+            (tenant_id, day_start.strftime("%Y-%m-%d"), (day_end - timedelta(days=1)).strftime("%Y-%m-%d")),
+        ).fetchall()
+        for row in rows:
+            start_local = _parse_dt(f"{row['date']}T{row['time']}:00", tz_name)
+            key = _appointment_lookup_key(start_local)
+            if not key:
+                continue
+            index.setdefault(key, []).append(
+                {
+                    "id": int(row["id"] or 0),
+                    "slot_id": int(row["slot_id"] or 0),
+                    "name": row["name"] or "",
+                    "contact": row["contact"] or "",
+                    "contact_type": row["contact_type"] or "",
+                    "motif": row["motif"] or "",
+                }
+            )
+        return index
+    finally:
+        conn.close()
+
+
 def _find_local_appointment_for_google_event(
     tenant_id: int,
     start_local: datetime,
     patient_contact: Optional[str],
     fallback_name: Optional[str],
+    appointments_index: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> Optional[Dict[str, Any]]:
+    if appointments_index is not None:
+        for appointment in appointments_index.get(_appointment_lookup_key(start_local), []):
+            if _appointment_matches_lookup(appointment, patient_contact, fallback_name):
+                return appointment
+
     contact = str(patient_contact or "").strip()
     name = str(fallback_name or "").strip()
     if not start_local or (not contact and not name):
@@ -925,25 +1062,46 @@ def tenant_calls(
             "last_event_at": item.get("last_event_at"),
             "duration_min": item.get("duration_min"),
             "result": item.get("result") or "other",
-            "events": [],
+            "events": [{"event": item.get("last_event"), "meta": {}}] if item.get("last_event") else [],
             "transcript": None,
         }
+        detail_for_display = list_detail
         try:
             followup = get_call_followup(tenant_id, call_id) or {}
         except Exception:
             followup = {}
-        status = _resolve_call_status(item, list_detail)
-        call_context = _classify_call_context(status, list_detail)
-        patient = _build_patient_payload(tenant_id, item, list_detail)
-        booking = _build_booking_payload(list_detail)
+        status = _resolve_call_status(item, detail_for_display)
+        booking = _build_booking_payload(detail_for_display)
+        # Fast path: use the list payload whenever it already carries enough signal.
+        if status == "FAQ" and booking is None and not (detail_for_display.get("transcript") or "").strip():
+            try:
+                raw_detail = _get_call_detail(tenant_id, call_id) or {}
+            except Exception:
+                raw_detail = {}
+            if raw_detail:
+                detail_for_display = {
+                    **list_detail,
+                    **raw_detail,
+                    "customer_number": raw_detail.get("customer_number") or list_detail.get("customer_number"),
+                    "started_at": raw_detail.get("started_at") or list_detail.get("started_at"),
+                    "last_event_at": raw_detail.get("last_event_at") or list_detail.get("last_event_at"),
+                    "duration_min": raw_detail.get("duration_min") if raw_detail.get("duration_min") is not None else list_detail.get("duration_min"),
+                    "result": raw_detail.get("result") or list_detail.get("result") or "other",
+                    "events": raw_detail.get("events") or list_detail.get("events") or [],
+                    "transcript": raw_detail.get("transcript") if raw_detail.get("transcript") is not None else list_detail.get("transcript"),
+                }
+                status = _resolve_call_status(item, detail_for_display)
+                booking = _build_booking_payload(detail_for_display)
+        call_context = _classify_call_context(status, detail_for_display)
+        patient = _build_patient_payload(tenant_id, item, detail_for_display)
         calls.append({
             "id": call_id,
             "time": _format_hhmm(started_at, tz_name),
-            "duration": _format_duration_short(list_detail.get("duration_min") or item.get("duration_min")),
+            "duration": _format_duration_short(detail_for_display.get("duration_min") or item.get("duration_min")),
             "patient_name": patient.get("display_name") or "Patient",
-            "customer_number": _call_display_phone(item, list_detail),
+            "customer_number": _call_display_phone(item, detail_for_display),
             "agent_name": assistant_name,
-            "summary": _call_summary_from_detail(status, list_detail),
+            "summary": _call_summary_from_detail(status, detail_for_display),
             "status": status,
             "call_id": call_id,
             "patient": patient,
@@ -1152,8 +1310,12 @@ def tenant_agenda(
         day_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
         day_end = day_start + timedelta(days=max(1, int(upcoming_days)))
     slots: List[Dict[str, Any]] = []
+    profile_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 
     mirror_enabled = _google_mirror_enabled(detail)
+    mirror_lookup: Optional[Dict[str, List[Dict[str, Any]]]] = None
+    if mirror_enabled:
+        mirror_lookup = _load_local_appointments_for_window(tenant_id, day_start, day_end, tz_name)
     if (params.get("calendar_provider") or "").strip() == "google" and (params.get("calendar_id") or "").strip():
         try:
             service = GoogleCalendarService((params.get("calendar_id") or "").strip())
@@ -1179,7 +1341,7 @@ def tenant_agenda(
                 description = (event.get("description") or "").strip()
                 patient = summary.replace("RDV - ", "", 1).strip() if summary.startswith("RDV - ") else (summary or "Patient")
                 patient_contact = _extract_google_description_line(description, "Contact")
-                patient = _resolve_agenda_patient_name(tenant_id, patient_contact, patient)
+                patient = _resolve_agenda_patient_name_cached(tenant_id, patient_contact, patient, profile_cache)
                 motif = _extract_google_description_line(description, "Motif") or (summary if summary and not summary.startswith("RDV - ") else "Consultation")
                 source = "UWI" if summary.startswith("RDV - ") or "Patient:" in description else "EXTERNAL"
                 mirror_booking = None
@@ -1189,6 +1351,7 @@ def tenant_agenda(
                         start_local=start_local,
                         patient_contact=patient_contact,
                         fallback_name=patient,
+                        appointments_index=mirror_lookup,
                     )
                 slots.append({
                     "hour": start_local.strftime("%Hh"),
@@ -1234,7 +1397,12 @@ def tenant_agenda(
                             if not date and start_local < now_local:
                                 continue
                             end_local = start_local + timedelta(minutes=30)
-                            patient_name = _resolve_agenda_patient_name(tenant_id, row.get("contact"), row.get("name"))
+                            patient_name = _resolve_agenda_patient_name_cached(
+                                tenant_id,
+                                row.get("contact"),
+                                row.get("name"),
+                                profile_cache,
+                            )
                             slots.append({
                                 "hour": start_local.strftime("%Hh"),
                                 "patient": patient_name,
@@ -1272,7 +1440,7 @@ def tenant_agenda(
                     if not date and start_local < now_local:
                         continue
                     end_local = start_local + timedelta(minutes=30)
-                    patient_name = _resolve_agenda_patient_name(tenant_id, row[3], row[2])
+                    patient_name = _resolve_agenda_patient_name_cached(tenant_id, row[3], row[2], profile_cache)
                     slots.append({
                         "hour": start_local.strftime("%Hh"),
                         "patient": patient_name,

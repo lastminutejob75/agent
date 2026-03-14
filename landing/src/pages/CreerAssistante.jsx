@@ -1,9 +1,10 @@
 // Wizard "Créer votre assistant" — 7 steps, diagnostic + projection ROI (1 question par écran, 0 scroll)
-import { useState, useEffect, useCallback } from "react";
+import { Suspense, lazy, useState, useEffect, useCallback } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api.js";
-import UWIFinalization from "../components/UWIFinalization.jsx";
-import AssistantSelector from "../components/AssistantSelector.jsx";
+
+const UWIFinalization = lazy(() => import("../components/UWIFinalization.jsx"));
+const AssistantSelector = lazy(() => import("../components/AssistantSelector.jsx"));
 
 const STORAGE_KEY = "uwi_creer_assistante";
 const COMMIT_DONE_KEY = "uwi_creer_assistante_done";
@@ -203,6 +204,17 @@ function clearState() {
   try {
     localStorage.removeItem(STORAGE_KEY);
   } catch (_) {}
+}
+
+function WizardPanelFallback({ text = "Chargement…" }) {
+  return (
+    <div className="w-full flex-1 min-h-[420px] flex items-center justify-center text-center px-6">
+      <div className="max-w-sm">
+        <div className="mx-auto mb-4 h-10 w-10 rounded-full border-2 border-slate-700 border-t-teal-400 animate-spin" />
+        <p className="text-sm text-slate-300">{text}</p>
+      </div>
+    </div>
+  );
 }
 
 export default function CreerAssistante() {
@@ -456,14 +468,16 @@ export default function CreerAssistante() {
     const assistantName = state.assistant_name || "Emma";
     return (
       <div className="min-h-screen w-full" style={{ backgroundColor: "#0A1828" }}>
-        <UWIFinalization
-          leadId={leadId}
-          initialPhone={initialPhone}
-          initialEmail={initialEmail}
-          assistantName={assistantName}
-          practitioner="votre cabinet"
-          onComplete={handleBackToHome}
-        />
+        <Suspense fallback={<WizardPanelFallback text="Préparation de votre assistant…" />}>
+          <UWIFinalization
+            leadId={leadId}
+            initialPhone={initialPhone}
+            initialEmail={initialEmail}
+            assistantName={assistantName}
+            practitioner="votre cabinet"
+            onComplete={handleBackToHome}
+          />
+        </Suspense>
       </div>
     );
   }
@@ -721,16 +735,18 @@ export default function CreerAssistante() {
 
           {step === 4 && (
             <div className="w-full flex-1 min-h-0 flex flex-col -mx-6 -my-6 self-stretch">
-              <AssistantSelector
-                onBack={() => persist({ step: 3 })}
-                onSelect={(assistant) => {
-                  persist({
-                    voice_gender: assistant.gender === "f" ? "female" : "male",
-                    assistant_name: assistant.prenom,
-                    step: 6,
-                  });
-                }}
-              />
+              <Suspense fallback={<WizardPanelFallback text="Chargement des assistants…" />}>
+                <AssistantSelector
+                  onBack={() => persist({ step: 3 })}
+                  onSelect={(assistant) => {
+                    persist({
+                      voice_gender: assistant.gender === "f" ? "female" : "male",
+                      assistant_name: assistant.prenom,
+                      step: 6,
+                    });
+                  }}
+                />
+              </Suspense>
             </div>
           )}
 

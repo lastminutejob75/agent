@@ -1,12 +1,12 @@
 // UWi Medical — Landing nouvelle maquette (navy, teal, mobile-first)
 // Route / — CTAs vers /creer-assistante?new=1
-import { useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Helmet } from "react-helmet-async";
 import "./UwiLandingNew.css";
-import PricingSimulator from "./PricingSimulator";
-import AgentsMarquee from "./AgentsMarquee";
-import AgentsSpotlight from "./AgentsSpotlight";
+const PricingSimulator = lazy(() => import("./PricingSimulator"));
+const AgentsMarquee = lazy(() => import("./AgentsMarquee"));
+const AgentsSpotlight = lazy(() => import("./AgentsSpotlight"));
 
 const TYPEWRITER_LINES = [
   "Cabinet du Dr. Martin, bonjour ! Je suis UWi, comment puis-je vous aider ?",
@@ -118,6 +118,10 @@ const STEPS = [
   { num: "2", title: "Paramétrage", desc: "Définissez vos horaires, la voix de l'assistant et les règles (urgences, renouvellements)." },
   { num: "3", title: "En production", desc: "UWi décroche, prend les RDV et envoie les rappels. Vous restez concentré sur vos patients." },
 ];
+
+function DeferredSectionFallback({ minHeight = 320 }) {
+  return <div style={{ minHeight }} aria-hidden="true" />;
+}
 
 export default function UwiLanding() {
   const navigate = useNavigate();
@@ -669,7 +673,9 @@ export default function UwiLanding() {
 
       {/* Spotlight — hors wrap pour pleine largeur */}
       <div className="uwi-fullwidth-section">
-        <AgentsSpotlight onSelectAgent={(a) => navigate("/creer-assistante?new=1", { state: a })} />
+        <Suspense fallback={<DeferredSectionFallback minHeight={720} />}>
+          <AgentsSpotlight onSelectAgent={(a) => navigate("/creer-assistante?new=1", { state: a })} />
+        </Suspense>
       </div>
 
       <div className="wrap">
@@ -708,7 +714,9 @@ export default function UwiLanding() {
               </div>
             ))}
           </div>
-          <PricingSimulator />
+          <Suspense fallback={<DeferredSectionFallback minHeight={260} />}>
+            <PricingSimulator />
+          </Suspense>
           <div className="pricing-guarantee">
             <span className="pricing-guarantee-icon" aria-hidden>🛡️</span>
             <div>
@@ -771,7 +779,9 @@ export default function UwiLanding() {
 
       {/* Marquee — hors wrap pour pleine largeur */}
       <div className="uwi-fullwidth-section">
-        <AgentsMarquee onSelectAgent={() => navigate("/creer-assistante?new=1")} />
+        <Suspense fallback={<DeferredSectionFallback minHeight={520} />}>
+          <AgentsMarquee onSelectAgent={() => navigate("/creer-assistante?new=1")} />
+        </Suspense>
       </div>
 
       <div className="wrap">

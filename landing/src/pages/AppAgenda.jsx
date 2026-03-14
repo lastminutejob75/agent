@@ -1,7 +1,12 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, Plus, Search } from "lucide-react";
+import { CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, Plus } from "lucide-react";
 import { api } from "../lib/api.js";
+
+const AppAgendaSidebar = lazy(() => import("../components/AppAgendaSidebar.jsx"));
+const AppAgendaAppointmentDrawer = lazy(() => import("../components/AppAgendaAppointmentDrawer.jsx"));
+const AppAgendaSetupSection = lazy(() => import("../components/AppAgendaSetupSection.jsx"));
+const AppAgendaTooltip = lazy(() => import("../components/AppAgendaTooltip.jsx"));
 
 const BLUE = "#2563eb";
 const BLUE_DARK = "#1d4ed8";
@@ -233,20 +238,6 @@ function isSameMonth(dateStr, compareTo) {
   return a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear();
 }
 
-function getDaysInMonth(year, month) {
-  return new Date(year, month + 1, 0).getDate();
-}
-
-function getFirstWeekday(year, month) {
-  const day = new Date(year, month, 1).getDay();
-  return day === 0 ? 6 : day - 1;
-}
-
-function formatMonthShort(year, month) {
-  const text = new Date(year, month, 1).toLocaleDateString("fr-FR", { month: "short", year: "numeric" });
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
 function getViewStatusKey(appointment) {
   if (appointment?.current) return "pending";
   if (appointment?.source === "UWI") return "ai_booked";
@@ -277,135 +268,6 @@ function getTypeIcon(type) {
   return "🩺";
 }
 
-function MiniCalendar({ selectedDate, onSelect }) {
-  const selected = new Date(`${selectedDate}T12:00:00`);
-  const [view, setView] = useState({ y: selected.getFullYear(), m: selected.getMonth() });
-  const dim = getDaysInMonth(view.y, view.m);
-  const first = getFirstWeekday(view.y, view.m);
-  const cells = [...Array(first).fill(null), ...Array.from({ length: dim }, (_, index) => index + 1)];
-  const today = new Date();
-
-  return (
-    <div style={S.miniCalendar}>
-      <div style={S.miniCalendarHeader}>
-        <button
-          type="button"
-          onClick={() => setView((prev) => ({ y: prev.m === 0 ? prev.y - 1 : prev.y, m: prev.m === 0 ? 11 : prev.m - 1 }))}
-          style={S.miniCalendarNav}
-        >
-          ‹
-        </button>
-        <div style={S.miniCalendarTitle}>{formatMonthShort(view.y, view.m)}</div>
-        <button
-          type="button"
-          onClick={() => setView((prev) => ({ y: prev.m === 11 ? prev.y + 1 : prev.y, m: prev.m === 11 ? 0 : prev.m + 1 }))}
-          style={S.miniCalendarNav}
-        >
-          ›
-        </button>
-      </div>
-      <div style={S.miniCalendarWeekdays}>
-        {["L", "M", "M", "J", "V", "S", "D"].map((label, index) => (
-          <div key={`${label}-${index}`} style={S.miniCalendarWeekday}>{label}</div>
-        ))}
-      </div>
-      <div style={S.miniCalendarGrid}>
-        {cells.map((day, index) => {
-          if (!day) return <div key={`empty-${index}`} />;
-          const date = new Date(view.y, view.m, day, 12, 0, 0);
-          const iso = date.toISOString().slice(0, 10);
-          const isSelected = iso === selectedDate;
-          const isToday =
-            date.getDate() === today.getDate() &&
-            date.getMonth() === today.getMonth() &&
-            date.getFullYear() === today.getFullYear();
-          return (
-            <button
-              key={iso}
-              type="button"
-              onClick={() => onSelect(iso)}
-              style={{
-                ...S.miniCalendarDay,
-                ...(isSelected ? S.miniCalendarDaySelected : null),
-                ...(isToday && !isSelected ? S.miniCalendarDayToday : null),
-              }}
-            >
-              {day}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function AppointmentTooltip({ appointment, rect }) {
-  if (!appointment || !rect) return null;
-  const visualStatus = getStatusConfigByKey(getViewStatusKey(appointment));
-  const safeTop = Math.min(Math.max(rect.top + rect.height / 2, 90), window.innerHeight - 150);
-  const left = Math.min(rect.right + 14, window.innerWidth - 270);
-  return (
-    <div
-      style={{
-        position: "fixed",
-        top: safeTop,
-        left,
-        transform: "translateY(-50%)",
-        zIndex: 9999,
-        background: "#fff",
-        border: `1px solid ${BORDER}`,
-        borderRadius: 14,
-        width: 250,
-        boxShadow: "0 12px 40px rgba(0,0,0,0.13)",
-        overflow: "hidden",
-        pointerEvents: "none",
-      }}
-    >
-      <div style={{ height: 4, background: visualStatus.grad || visualStatus.dot }} />
-      <div style={{ padding: "13px 15px" }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: TEXT, marginBottom: 2 }}>{appointment.patient || "Patient"}</div>
-        <div style={{ fontSize: 12, color: MUTED, marginBottom: 10 }}>
-          {getTypeIcon(appointment.type)} {appointment.type || "Consultation"}
-        </div>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-          <span style={{ fontSize: 12, color: MUTED }}>
-            {appointment.displayTime} · {appointment.duration} min
-          </span>
-          <span
-            style={{
-              fontSize: 11,
-              fontWeight: 700,
-              color: visualStatus.color,
-              background: visualStatus.light,
-              padding: "2px 9px",
-              borderRadius: 20,
-              border: `1px solid ${visualStatus.border}`,
-            }}
-          >
-            {visualStatus.label}
-          </span>
-        </div>
-        {appointment.source === "UWI" ? (
-          <div
-            style={{
-              marginTop: 9,
-              background: "#f5f3ff",
-              border: "1px solid #ddd6fe",
-              borderRadius: 8,
-              padding: "7px 9px",
-              fontSize: 11,
-              color: "#8b5cf6",
-              fontWeight: 600,
-            }}
-          >
-            {appointment.detailLine || "Réservé par UWI"}
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
 function getStatus(slot) {
   if (slot?.current) {
     return { label: "En attente", bg: WARNING_SOFT, color: "#b45309", border: "#fcd34d" };
@@ -424,6 +286,48 @@ async function copyToClipboard(text) {
   } catch {
     return false;
   }
+}
+
+function SetupSectionFallback() {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16 }}>
+      {[1, 2, 3].map((item) => (
+        <div
+          key={item}
+          style={{
+            background: CARD,
+            border: `1px solid ${BORDER}`,
+            borderRadius: 14,
+            padding: 18,
+            boxShadow: "0 2px 10px rgba(15,23,42,.035)",
+          }}
+        >
+          <p style={S.loading}>Chargement...</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SidebarFallback() {
+  return (
+    <aside style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {[1, 2, 3, 4, 5, 6].map((item) => (
+        <div
+          key={item}
+          style={{
+            background: CARD,
+            border: `1px solid ${BORDER}`,
+            borderRadius: 16,
+            padding: 14,
+            boxShadow: "0 2px 10px rgba(15,23,42,.035)",
+          }}
+        >
+          <p style={S.loading}>Chargement...</p>
+        </div>
+      ))}
+    </aside>
+  );
 }
 
 export default function AppAgenda() {
@@ -827,119 +731,25 @@ export default function AppAgenda() {
     <div style={S.page}>
       <style>{CSS}</style>
       <div className="agenda-layout-grid" style={S.layout}>
-        <aside style={S.sidebar}>
-          <div style={{ ...S.sidebarCard, ...S.sidebarHeroCard }}>
-            <div style={S.sidebarHeroTop}>
-              <div>
-                <div style={S.sidebarHeroEyebrow}>Date sélectionnée</div>
-                <div style={S.sidebarHeroTitle}>{formatLongDate(selectedDate)}</div>
-              </div>
-              <div style={S.sidebarHeroBadge}>{selectedDayCount} RDV</div>
-            </div>
-            <div style={S.sidebarHeroMeta}>
-              <span>{selectedDayAiCount} pris par UWI</span>
-              <span>{viewMode === "month" ? "Vue mois" : viewMode === "day" ? "Vue jour" : "Vue semaine"}</span>
-            </div>
-            <div style={S.sidebarQuickGrid}>
-              <button type="button" onClick={() => { setSelectedDate(todayIso); setViewMode("day"); }} style={S.sidebarQuickButton}>
-                Aujourd'hui
-              </button>
-              <button type="button" onClick={() => { setSelectedDate(shiftDate(todayIso, 1)); setViewMode("day"); }} style={S.sidebarQuickButton}>
-                Demain
-              </button>
-              <button type="button" onClick={() => { setSelectedDate(todayIso); setViewMode("week"); }} style={S.sidebarQuickButton}>
-                Cette semaine
-              </button>
-              <button type="button" onClick={() => { setSelectedDate(todayIso); setViewMode("month"); }} style={S.sidebarQuickButton}>
-                Ce mois
-              </button>
-            </div>
-          </div>
-
-          <div style={S.sidebarCard}>
-            <div style={S.sidebarTitle}>Vue</div>
-            <div style={S.sidebarSegmented}>
-              <button type="button" onClick={() => setViewMode("day")} style={viewMode === "day" ? S.sidebarSegmentActive : S.sidebarSegmentButton}>
-                Jour
-              </button>
-              <button type="button" onClick={() => setViewMode("week")} style={viewMode === "week" ? S.sidebarSegmentActive : S.sidebarSegmentButton}>
-                Semaine
-              </button>
-              <button type="button" onClick={() => setViewMode("month")} style={viewMode === "month" ? S.sidebarSegmentActive : S.sidebarSegmentButton}>
-                Mois
-              </button>
-            </div>
-          </div>
-
-          <div style={S.sidebarCard}>
-            <div style={S.sidebarTitle}>Recherche</div>
-            <div style={S.searchBox}>
-              <Search size={15} strokeWidth={2.2} color="#94a3b8" />
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Rechercher un patient…"
-                style={S.searchInput}
-              />
-            </div>
-          </div>
-
-          <div style={S.sidebarCard}>
-            <div style={S.sidebarTitle}>Filtrer</div>
-            <div style={S.filterPillGrid}>
-              {[
-                ["all", "Tous", "#94a3b8", sidebarStats.all],
-                ["confirmed", "Confirmés", "#0dc991", sidebarStats.confirmed],
-                ["pending", "En attente", "#f97316", sidebarStats.pending],
-                ["ai_booked", "Via IA", "#8b5cf6", sidebarStats.ai_booked],
-                ["arrived", "Arrivés", "#10b981", sidebarStats.arrived],
-              ].map(([value, label, dot, count]) => {
-                const active = statusFilter === value;
-                return (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => setStatusFilter(value)}
-                    style={{
-                      ...S.filterPill,
-                      ...(active ? S.filterPillActive : null),
-                    }}
-                  >
-                    <span style={S.filterPillTop}>
-                      <span style={{ ...S.filterDot, background: dot }} />
-                      <span style={S.filterLabel}>{label}</span>
-                    </span>
-                    <span style={S.filterCount}>{count}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div style={S.sidebarCard}>
-            <div style={S.sidebarTitle}>Calendrier</div>
-            <MiniCalendar selectedDate={selectedDate} onSelect={setSelectedDate} />
-            <div style={S.miniCalendarFooter}>
-              <button type="button" onClick={() => setSelectedDate(todayIso)} style={S.miniCalendarTodayButton}>
-                Revenir à aujourd'hui
-              </button>
-            </div>
-          </div>
-
-          <div style={{ ...S.sidebarCard, ...S.agentCard }}>
-            <div style={S.agentTitle}>{isConnected ? "Agenda connecté" : "Agenda UWI actif"}</div>
-            <div style={S.agentText}>
-              <b>{sidebarStats.ai_booked}</b> rendez-vous gérés par UWI sur la période affichée.
-            </div>
-            <div style={S.agentText}>
-              {isConnected ? "Google Calendar est bien synchronisé." : "Le planning UWI continue de fonctionner même sans Google."}
-            </div>
-            <div style={S.agentStatusRow}>
-              <span style={S.agentStatusDot} />
-              <span style={S.agentStatusText}>{viewMode === "month" ? "Mode mois" : viewMode === "day" ? "Mode jour" : "Mode semaine"}</span>
-            </div>
-          </div>
-        </aside>
+        <Suspense fallback={<SidebarFallback />}>
+          <AppAgendaSidebar
+            selectedDateLabel={formatLongDate(selectedDate)}
+            selectedDayCount={selectedDayCount}
+            selectedDayAiCount={selectedDayAiCount}
+            viewMode={viewMode}
+            onSetViewMode={setViewMode}
+            onSelectDate={setSelectedDate}
+            todayIso={todayIso}
+            tomorrowIso={shiftDate(todayIso, 1)}
+            search={search}
+            setSearch={setSearch}
+            statusFilter={statusFilter}
+            setStatusFilter={setStatusFilter}
+            sidebarStats={sidebarStats}
+            selectedDate={selectedDate}
+            isConnected={isConnected}
+          />
+        </Suspense>
 
         <div style={S.main}>
           <div style={S.header}>
@@ -1418,241 +1228,102 @@ export default function AppAgenda() {
         )}
           </div>
 
-          <div ref={setupRef} style={S.setupGrid}>
-        <div style={S.setupCard}>
-          <div style={S.setupTitle}>Connecter Google Calendar</div>
-          <div style={S.setupText}>
-            Partagez votre calendrier avec <code style={S.code}>{serviceAccountEmail}</code>, puis collez son identifiant.
-          </div>
-          <input
-            type="text"
-            value={calendarId}
-            onChange={(e) => setCalendarId(e.target.value)}
-            placeholder="xxx@group.calendar.google.com"
-            style={S.input}
-          />
-          <button type="button" onClick={handleVerifyGoogle} disabled={verifyLoading || !calendarId.trim()} style={S.primaryButton}>
-            {verifyLoading ? "Vérification…" : "Vérifier et connecter"}
-          </button>
-          {verifySuccess ? <div style={S.successBox}>Agenda connecté avec succès.</div> : null}
-          {verifyError ? <div style={S.errorInline}>{verifyError}</div> : null}
-        </div>
-
-        <div style={S.setupCard}>
-          <div style={S.setupTitle}>Logiciel métier</div>
-          <div style={S.setupText}>Pabau, Maiia, Doctolib ou autre logiciel cabinet: notre équipe finalise la connexion avec vous.</div>
-          <select value={contactSoftware} onChange={(e) => setContactSoftware(e.target.value)} style={S.input}>
-            <option value="pabau">Pabau</option>
-            <option value="maiia">Maiia</option>
-            <option value="doctolib">Doctolib</option>
-            <option value="autre">Autre</option>
-          </select>
-          {contactSoftware === "autre" ? (
-            <input
-              type="text"
-              value={contactOther}
-              onChange={(e) => setContactOther(e.target.value)}
-              placeholder="Précisez le logiciel"
-              style={S.input}
-            />
-          ) : null}
-          <button type="button" onClick={handleContactRequest} disabled={contactLoading} style={S.secondaryButton}>
-            {contactLoading ? "Envoi…" : "Demander le setup"}
-          </button>
-          {contactSent ? <div style={S.successBox}>Demande envoyée. Notre équipe vous recontacte.</div> : null}
-        </div>
-
-        <div style={S.setupCard}>
-          <div style={S.setupTitle}>Mode sans agenda externe</div>
-          <div style={S.setupText}>
-            Si vous ne connectez pas encore Google, UWI garde son propre agenda interne et continue de prendre les rendez-vous.
-          </div>
-          <button type="button" onClick={handleActivateNone} disabled={noneLoading} style={S.secondaryButton}>
-            {noneLoading ? "Activation…" : "Activer ce mode"}
-          </button>
-          {noneDone ? <div style={S.successBox}>Mode agenda interne activé.</div> : null}
-        </div>
+          <div ref={setupRef}>
+            <Suspense fallback={<SetupSectionFallback />}>
+              <AppAgendaSetupSection
+                serviceAccountEmail={serviceAccountEmail}
+                calendarId={calendarId}
+                setCalendarId={setCalendarId}
+                onVerifyGoogle={handleVerifyGoogle}
+                verifyLoading={verifyLoading}
+                verifySuccess={verifySuccess}
+                verifyError={verifyError}
+                contactSoftware={contactSoftware}
+                setContactSoftware={setContactSoftware}
+                contactOther={contactOther}
+                setContactOther={setContactOther}
+                onContactRequest={handleContactRequest}
+                contactLoading={contactLoading}
+                contactSent={contactSent}
+                onActivateNone={handleActivateNone}
+                noneLoading={noneLoading}
+                noneDone={noneDone}
+              />
+            </Suspense>
           </div>
         </div>
       </div>
 
       {selectedAppointment ? (
-        <div style={S.modalOverlay} onClick={() => setSelectedAppointment(null)}>
-          <div style={S.modalCard} onClick={(e) => e.stopPropagation()}>
-            <div style={S.modalHeader}>
-              <div>
-                <div style={S.modalTitle}>Détail du rendez-vous</div>
-                <div style={S.modalSub}>{selectedAppointment.patient || "Patient"}</div>
-              </div>
-              <button type="button" style={S.closeButton} onClick={() => setSelectedAppointment(null)}>
-                ✕
-              </button>
-            </div>
-
-            <div style={S.modalBody}>
-              <div style={S.actionRow}>
-                <button
-                  type="button"
-                  style={S.actionButtonPrimary}
-                  onClick={async () => {
-                    const ok = await copyToClipboard(
-                      [
-                        selectedAppointment.patient || "Patient",
-                        selectedAppointment.type || "Consultation",
-                        `Heure: ${selectedAppointment.displayTime || "—"}`,
-                        `Durée: ${selectedAppointment.duration || "—"} min`,
-                        `Source: ${selectedAppointment.sourceLabel || "UWI"}`,
-                      ].join("\n"),
-                    );
-                    setActionMessage(ok ? "Détails du rendez-vous copiés." : "Impossible de copier les détails.");
-                  }}
-                >
-                  Copier les détails
-                </button>
-                <button type="button" style={S.actionButton} onClick={() => navigate("/app/horaires")}>
-                  Modifier mes horaires
-                </button>
-                {selectedAppointment.canCancel ? (
-                  <button
-                    type="button"
-                    style={S.actionDangerButton}
-                    disabled={appointmentActionLoading}
-                    onClick={async () => {
-                      try {
-                        setAppointmentActionLoading(true);
-                        await api.tenantCancelAgendaAppointment(
-                          selectedAppointment.actionId || selectedAppointment.appointmentId || selectedAppointment.externalEventId || selectedAppointment.id,
-                          {
-                            source: selectedAppointment.source,
-                            external_event_id: selectedAppointment.externalEventId || "",
-                          },
-                        );
-                        setActionMessage("Rendez-vous annulé.");
-                        setSelectedAppointment(null);
-                        await loadAgenda();
-                      } catch (e) {
-                        setActionMessage(e?.message || "Impossible d'annuler ce rendez-vous.");
-                      } finally {
-                        setAppointmentActionLoading(false);
-                      }
-                    }}
-                  >
-                    Annuler le RDV
-                  </button>
-                ) : null}
-                {!isConnected ? (
-                  <button
-                    type="button"
-                    style={S.actionButton}
-                    onClick={() => {
-                      setSelectedAppointment(null);
-                      scrollToSetup();
-                    }}
-                  >
-                    Connecter Google
-                  </button>
-                ) : null}
-              </div>
-
-              {actionMessage ? <div style={S.successInline}>{actionMessage}</div> : null}
-
-              <div className="agenda-detail-grid" style={S.detailTopGrid}>
-                <div style={S.detailInfoCard}>
-                  <div style={S.detailLabel}>Heure</div>
-                  <div style={S.detailValue}>{selectedAppointment.displayTime || "—"}</div>
-                </div>
-                <div style={S.detailInfoCard}>
-                  <div style={S.detailLabel}>Durée</div>
-                  <div style={S.detailValue}>{selectedAppointment.duration || "—"} min</div>
-                </div>
-                <div style={S.detailInfoCard}>
-                  <div style={S.detailLabel}>Statut</div>
-                  <div style={S.detailValue}>
-                    <span
-                      style={{
-                        ...S.statusBadge,
-                        background: selectedAppointment.status.bg,
-                        color: selectedAppointment.status.color,
-                        borderColor: selectedAppointment.status.border,
-                      }}
-                    >
-                      {selectedAppointment.status.label}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div style={S.detailSection}>
-                <div style={S.detailSectionTitle}>Motif</div>
-                <div style={S.detailText}>{selectedAppointment.type || "Consultation"}</div>
-              </div>
-
-              <div style={S.detailSection}>
-                <div style={S.detailSectionTitle}>Source</div>
-                <div style={S.detailText}>{selectedAppointment.sourceLabel || "UWI"}</div>
-              </div>
-
-              <div style={S.detailSection}>
-                <div style={S.detailSectionTitle}>Informations</div>
-                <div style={S.transcriptBox}>
-                  <div style={S.detailText}>{selectedAppointment.detailLine || "Aucun détail supplémentaire."}</div>
-                </div>
-              </div>
-
-              {selectedAppointment.canReschedule ? (
-                <div style={S.detailSection}>
-                  <div style={S.detailSectionTitle}>Déplacer ce rendez-vous</div>
-                  <div style={S.rescheduleBox}>
-                    {slotsLoading ? (
-                      <div style={S.detailText}>Chargement des créneaux disponibles…</div>
-                    ) : slotOptions.length > 0 ? (
-                      <>
-                        <select
-                          value={selectedNewSlotId}
-                          onChange={(e) => setSelectedNewSlotId(e.target.value)}
-                          style={S.input}
-                        >
-                          {slotOptions.map((slot) => (
-                            <option key={slot.slot_id} value={slot.slot_id}>
-                              {slot.label}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          type="button"
-                          style={S.actionButtonPrimary}
-                          disabled={!selectedNewSlotId || appointmentActionLoading}
-                          onClick={async () => {
-                            try {
-                              setAppointmentActionLoading(true);
-                              await api.tenantRescheduleAgendaAppointment(selectedAppointment.appointmentId, {
-                                new_slot_id: Number(selectedNewSlotId),
-                                external_event_id: selectedAppointment.externalEventId || "",
-                              });
-                              setActionMessage("Rendez-vous déplacé.");
-                              setSelectedAppointment(null);
-                              await loadAgenda();
-                            } catch (e) {
-                              setActionMessage(e?.message || "Impossible de déplacer ce rendez-vous.");
-                            } finally {
-                              setAppointmentActionLoading(false);
-                            }
-                          }}
-                        >
-                          Déplacer vers ce créneau
-                        </button>
-                      </>
-                    ) : (
-                      <div style={S.detailText}>Aucun autre créneau libre disponible pour le moment.</div>
-                    )}
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </div>
+        <Suspense fallback={null}>
+          <AppAgendaAppointmentDrawer
+            appointment={selectedAppointment}
+            isConnected={isConnected}
+            actionMessage={actionMessage}
+            slotsLoading={slotsLoading}
+            slotOptions={slotOptions}
+            selectedNewSlotId={selectedNewSlotId}
+            appointmentActionLoading={appointmentActionLoading}
+            onClose={() => setSelectedAppointment(null)}
+            onCopyDetails={async () => {
+              const ok = await copyToClipboard(
+                [
+                  selectedAppointment.patient || "Patient",
+                  selectedAppointment.type || "Consultation",
+                  `Heure: ${selectedAppointment.displayTime || "—"}`,
+                  `Durée: ${selectedAppointment.duration || "—"} min`,
+                  `Source: ${selectedAppointment.sourceLabel || "UWI"}`,
+                ].join("\n"),
+              );
+              setActionMessage(ok ? "Détails du rendez-vous copiés." : "Impossible de copier les détails.");
+            }}
+            onGoToHoraires={() => navigate("/app/horaires")}
+            onCancelAppointment={async () => {
+              try {
+                setAppointmentActionLoading(true);
+                await api.tenantCancelAgendaAppointment(
+                  selectedAppointment.actionId || selectedAppointment.appointmentId || selectedAppointment.externalEventId || selectedAppointment.id,
+                  {
+                    source: selectedAppointment.source,
+                    external_event_id: selectedAppointment.externalEventId || "",
+                  },
+                );
+                setActionMessage("Rendez-vous annulé.");
+                setSelectedAppointment(null);
+                await loadAgenda();
+              } catch (e) {
+                setActionMessage(e?.message || "Impossible d'annuler ce rendez-vous.");
+              } finally {
+                setAppointmentActionLoading(false);
+              }
+            }}
+            onConnectGoogle={() => {
+              setSelectedAppointment(null);
+              scrollToSetup();
+            }}
+            onSlotChange={setSelectedNewSlotId}
+            onReschedule={async () => {
+              try {
+                setAppointmentActionLoading(true);
+                await api.tenantRescheduleAgendaAppointment(selectedAppointment.appointmentId, {
+                  new_slot_id: Number(selectedNewSlotId),
+                  external_event_id: selectedAppointment.externalEventId || "",
+                });
+                setActionMessage("Rendez-vous déplacé.");
+                setSelectedAppointment(null);
+                await loadAgenda();
+              } catch (e) {
+                setActionMessage(e?.message || "Impossible de déplacer ce rendez-vous.");
+              } finally {
+                setAppointmentActionLoading(false);
+              }
+            }}
+          />
+        </Suspense>
       ) : null}
-      <AppointmentTooltip appointment={hoveredAppointment} rect={hoveredRect} />
+      <Suspense fallback={null}>
+        <AppAgendaTooltip appointment={hoveredAppointment} rect={hoveredRect} />
+      </Suspense>
     </div>
   );
 }
@@ -1671,321 +1342,11 @@ const S = {
     gap: 18,
     alignItems: "start",
   },
-  sidebar: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 14,
-    position: "sticky",
-    top: 16,
-  },
   main: {
     display: "flex",
     flexDirection: "column",
     gap: 18,
     minWidth: 0,
-  },
-  sidebarCard: {
-    background: CARD,
-    border: `1px solid ${BORDER}`,
-    borderRadius: 16,
-    padding: 14,
-    boxShadow: "0 2px 10px rgba(15,23,42,.035)",
-  },
-  sidebarHeroCard: {
-    background: "linear-gradient(180deg, #ffffff 0%, #f8fffc 100%)",
-    borderColor: "#c7f9e7",
-  },
-  sidebarHeroTop: {
-    display: "flex",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 10,
-  },
-  sidebarHeroEyebrow: {
-    fontSize: 11,
-    fontWeight: 800,
-    letterSpacing: "0.08em",
-    textTransform: "uppercase",
-    color: "#94a3b8",
-  },
-  sidebarHeroTitle: {
-    marginTop: 8,
-    fontSize: 16,
-    lineHeight: 1.25,
-    fontWeight: 800,
-    color: TEXT,
-  },
-  sidebarHeroBadge: {
-    borderRadius: 999,
-    padding: "7px 10px",
-    background: "#ecfdf5",
-    border: "1px solid #a7f3d0",
-    color: "#047857",
-    fontSize: 12,
-    fontWeight: 800,
-    whiteSpace: "nowrap",
-  },
-  sidebarHeroMeta: {
-    marginTop: 12,
-    display: "flex",
-    flexWrap: "wrap",
-    gap: 8,
-    fontSize: 12,
-    color: "#64748b",
-  },
-  sidebarQuickGrid: {
-    marginTop: 14,
-    display: "grid",
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-    gap: 8,
-  },
-  sidebarQuickButton: {
-    border: "1px solid #dbeafe",
-    borderRadius: 12,
-    background: "#fff",
-    color: "#334155",
-    fontSize: 12,
-    fontWeight: 700,
-    padding: "10px 8px",
-    cursor: "pointer",
-    fontFamily: "inherit",
-  },
-  sidebarTitle: {
-    fontSize: 11,
-    fontWeight: 800,
-    letterSpacing: "0.08em",
-    textTransform: "uppercase",
-    color: "#94a3b8",
-    marginBottom: 10,
-  },
-  searchBox: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    borderRadius: 12,
-    border: `1px solid ${BORDER}`,
-    background: "#f8fafc",
-    padding: "10px 12px",
-  },
-  searchInput: {
-    border: "none",
-    background: "transparent",
-    outline: "none",
-    width: "100%",
-    fontSize: 13,
-    color: TEXT,
-    fontFamily: "inherit",
-  },
-  filterList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 6,
-  },
-  sidebarSegmented: {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-    gap: 8,
-  },
-  sidebarSegmentButton: {
-    border: `1px solid ${BORDER}`,
-    borderRadius: 12,
-    background: "#f8fafc",
-    color: "#64748b",
-    fontSize: 12,
-    fontWeight: 700,
-    padding: "10px 0",
-    cursor: "pointer",
-    fontFamily: "inherit",
-  },
-  sidebarSegmentActive: {
-    border: "1px solid #99f6e4",
-    borderRadius: 12,
-    background: "linear-gradient(135deg, #14b8a6, #0f766e)",
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: 800,
-    padding: "10px 0",
-    cursor: "pointer",
-    boxShadow: "0 8px 18px rgba(20,184,166,.18)",
-    fontFamily: "inherit",
-  },
-  filterPillGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-    gap: 8,
-  },
-  filterPill: {
-    width: "100%",
-    border: "1px solid #e5e7eb",
-    background: "#fff",
-    borderRadius: 14,
-    padding: "10px 10px 9px",
-    display: "flex",
-    flexDirection: "column",
-    gap: 8,
-    cursor: "pointer",
-    fontFamily: "inherit",
-    textAlign: "left",
-    boxShadow: "0 1px 6px rgba(15,23,42,.03)",
-  },
-  filterPillActive: {
-    background: "#f0fdfa",
-    borderColor: "#99f6e4",
-    boxShadow: "0 8px 18px rgba(20,184,166,.08)",
-  },
-  filterPillTop: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    minWidth: 0,
-  },
-  filterItem: {
-    width: "100%",
-    border: "1px solid transparent",
-    background: "transparent",
-    borderRadius: 10,
-    padding: "9px 10px",
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    cursor: "pointer",
-    fontFamily: "inherit",
-    textAlign: "left",
-  },
-  filterItemActive: {
-    background: "#e8faf4",
-    borderColor: "#a7f3d0",
-  },
-  filterDot: {
-    width: 8,
-    height: 8,
-    borderRadius: "50%",
-    flexShrink: 0,
-  },
-  filterLabel: {
-    flex: 1,
-    fontSize: 12,
-    fontWeight: 600,
-    color: "#334155",
-  },
-  filterCount: {
-    fontSize: 11,
-    fontWeight: 700,
-    color: "#64748b",
-    background: "rgba(148,163,184,.12)",
-    borderRadius: 999,
-    padding: "2px 8px",
-  },
-  miniCalendar: {
-    paddingTop: 4,
-  },
-  miniCalendarHeader: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 8,
-  },
-  miniCalendarNav: {
-    border: "none",
-    background: "transparent",
-    color: "#94a3b8",
-    fontSize: 16,
-    cursor: "pointer",
-    padding: "2px 6px",
-  },
-  miniCalendarTitle: {
-    fontSize: 11,
-    fontWeight: 700,
-    color: "#334155",
-  },
-  miniCalendarWeekdays: {
-    display: "grid",
-    gridTemplateColumns: "repeat(7, 1fr)",
-    marginBottom: 4,
-  },
-  miniCalendarWeekday: {
-    textAlign: "center",
-    fontSize: 9,
-    fontWeight: 800,
-    color: "#94a3b8",
-    padding: "2px 0",
-  },
-  miniCalendarGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(7, 1fr)",
-    gap: 2,
-  },
-  miniCalendarDay: {
-    border: "none",
-    background: "transparent",
-    borderRadius: 8,
-    padding: "5px 0",
-    fontSize: 11,
-    color: "#334155",
-    cursor: "pointer",
-    fontFamily: "inherit",
-  },
-  miniCalendarDaySelected: {
-    background: "#0dc991",
-    color: "#fff",
-    fontWeight: 800,
-  },
-  miniCalendarDayToday: {
-    background: "#e8faf4",
-    color: "#0aaf7a",
-    fontWeight: 700,
-  },
-  miniCalendarFooter: {
-    marginTop: 10,
-    display: "flex",
-    justifyContent: "center",
-  },
-  miniCalendarTodayButton: {
-    border: "none",
-    background: "transparent",
-    color: "#0f766e",
-    fontSize: 12,
-    fontWeight: 700,
-    cursor: "pointer",
-    fontFamily: "inherit",
-  },
-  agentCard: {
-    background: "#e8faf4",
-    borderColor: "#a7f3d0",
-  },
-  agentTitle: {
-    fontSize: 13,
-    fontWeight: 800,
-    color: "#0aaf7a",
-  },
-  agentText: {
-    marginTop: 6,
-    fontSize: 12,
-    lineHeight: 1.5,
-    color: "#475569",
-  },
-  agentStatusRow: {
-    marginTop: 10,
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 8,
-    borderRadius: 999,
-    padding: "6px 10px",
-    background: "rgba(255,255,255,.72)",
-    border: "1px solid rgba(16,185,129,.2)",
-    width: "fit-content",
-  },
-  agentStatusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: "50%",
-    background: "#10b981",
-    boxShadow: "0 0 0 4px rgba(16,185,129,.12)",
-  },
-  agentStatusText: {
-    fontSize: 11,
-    fontWeight: 800,
-    color: "#047857",
   },
   header: {
     display: "flex",
@@ -2816,60 +2177,6 @@ const S = {
     fontSize: 14,
     color: MUTED,
   },
-  setupGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-    gap: 16,
-  },
-  setupCard: {
-    background: CARD,
-    border: `1px solid ${BORDER}`,
-    borderRadius: 14,
-    padding: 18,
-    boxShadow: "0 2px 10px rgba(15,23,42,.035)",
-    display: "flex",
-    flexDirection: "column",
-    gap: 12,
-  },
-  setupTitle: {
-    fontSize: 17,
-    fontWeight: 800,
-    color: TEXT,
-  },
-  setupText: {
-    fontSize: 13,
-    color: MUTED,
-    lineHeight: 1.5,
-  },
-  code: {
-    display: "inline-block",
-    marginTop: 4,
-    padding: "2px 6px",
-    borderRadius: 8,
-    background: BG,
-    border: `1px solid ${BORDER}`,
-    color: TEXT,
-    fontSize: 12,
-  },
-  input: {
-    width: "100%",
-    borderRadius: 12,
-    border: `1px solid ${BORDER}`,
-    background: "#fff",
-    padding: "12px 14px",
-    fontSize: 14,
-    color: TEXT,
-    outline: "none",
-  },
-  successBox: {
-    borderRadius: 12,
-    border: "1px solid #a7f3d0",
-    background: "#ecfdf5",
-    color: "#047857",
-    padding: "10px 12px",
-    fontSize: 13,
-    fontWeight: 600,
-  },
   errorBox: {
     borderRadius: 14,
     border: "1px solid #fecaca",
@@ -2879,156 +2186,10 @@ const S = {
     fontSize: 14,
     fontWeight: 600,
   },
-  errorInline: {
-    borderRadius: 12,
-    border: "1px solid #fecaca",
-    background: "#fff1f2",
-    color: "#b91c1c",
-    padding: "10px 12px",
-    fontSize: 13,
-  },
   loading: {
     margin: 18,
     fontSize: 14,
     color: MUTED,
-  },
-  modalOverlay: {
-    position: "fixed",
-    inset: 0,
-    background: "rgba(15,23,42,.38)",
-    display: "flex",
-    justifyContent: "flex-end",
-    zIndex: 50,
-  },
-  modalCard: {
-    width: "min(560px, 100vw)",
-    height: "100%",
-    background: "#fff",
-    borderLeft: `1px solid ${BORDER}`,
-    boxShadow: "-12px 0 40px rgba(15,23,42,.12)",
-    display: "flex",
-    flexDirection: "column",
-  },
-  modalHeader: {
-    padding: "18px 18px 14px",
-    borderBottom: `1px solid ${BORDER}`,
-    background: "#fafafa",
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: 12,
-  },
-  modalTitle: {
-    fontSize: 16,
-    fontWeight: 700,
-    color: TEXT,
-  },
-  modalSub: {
-    marginTop: 4,
-    fontSize: 12,
-    color: MUTED,
-  },
-  closeButton: {
-    border: `1px solid ${BORDER}`,
-    background: "#fff",
-    color: "#475569",
-    borderRadius: 10,
-    width: 34,
-    height: 34,
-    cursor: "pointer",
-  },
-  actionRow: {
-    display: "flex",
-    gap: 10,
-    flexWrap: "wrap",
-  },
-  actionButtonPrimary: {
-    border: "none",
-    background: "linear-gradient(135deg, #3b82f6, #2563eb)",
-    color: "#fff",
-    borderRadius: 10,
-    padding: "10px 12px",
-    fontSize: 12,
-    fontWeight: 700,
-    cursor: "pointer",
-  },
-  actionButton: {
-    border: `1px solid ${BORDER}`,
-    background: "#fff",
-    color: "#475569",
-    borderRadius: 10,
-    padding: "10px 12px",
-    fontSize: 12,
-    fontWeight: 700,
-    cursor: "pointer",
-  },
-  actionDangerButton: {
-    border: "1px solid #fecaca",
-    background: "#fff1f2",
-    color: "#b91c1c",
-    borderRadius: 10,
-    padding: "10px 12px",
-    fontSize: 12,
-    fontWeight: 700,
-    cursor: "pointer",
-  },
-  modalBody: {
-    padding: 18,
-    display: "flex",
-    flexDirection: "column",
-    gap: 16,
-    overflowY: "auto",
-  },
-  detailTopGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-    gap: 12,
-  },
-  detailInfoCard: {
-    border: `1px solid ${BORDER}`,
-    borderRadius: 14,
-    background: "#fff",
-    padding: "14px 16px",
-  },
-  detailLabel: {
-    fontSize: 12,
-    color: MUTED,
-    marginBottom: 8,
-  },
-  detailValue: {
-    fontSize: 14,
-    fontWeight: 700,
-    color: TEXT,
-  },
-  detailSection: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 8,
-  },
-  detailSectionTitle: {
-    fontSize: 14,
-    fontWeight: 700,
-    color: TEXT,
-  },
-  detailText: {
-    fontSize: 13,
-    lineHeight: 1.6,
-    color: "#4b5563",
-  },
-  transcriptBox: {
-    border: `1px solid ${BORDER}`,
-    borderRadius: 14,
-    background: "#f8fafc",
-    padding: 14,
-  },
-  rescheduleBox: {
-    border: `1px solid ${BORDER}`,
-    borderRadius: 14,
-    background: "#f8fafc",
-    padding: 14,
-    display: "flex",
-    flexDirection: "column",
-    gap: 10,
   },
   actionToast: {
     borderRadius: 12,
@@ -3044,15 +2205,6 @@ const S = {
     opacity: 0.48,
     transform: "scale(.985)",
     boxShadow: "0 16px 30px rgba(15,23,42,.14)",
-  },
-  successInline: {
-    borderRadius: 12,
-    border: "1px solid #a7f3d0",
-    background: "#ecfdf5",
-    color: "#047857",
-    padding: "10px 12px",
-    fontSize: 13,
-    fontWeight: 600,
   },
 };
 

@@ -1,139 +1,175 @@
+import { Suspense, lazy } from "react";
 import { Routes, Route, Navigate, Outlet } from "react-router-dom";
 import SeoHead from "./components/SeoHead";
-import UwiLanding from "./components/UwiLanding";
 import AuthLayout from "./components/AuthLayout";
-import Login from "./pages/Login";
-import ForgotPassword from "./pages/ForgotPassword";
-import ResetPassword from "./pages/ResetPassword";
-import AuthGoogleCallback from "./pages/AuthGoogleCallback";
-import EssaiGratuit from "./pages/EssaiGratuit";
-import DecouverteClient from "./pages/DecouverteClient";
-import CreerAssistante from "./pages/CreerAssistante";
-import AppLayout from "./pages/AppLayout";
-import AppFirstOnboarding from "./pages/AppFirstOnboarding";
-import AppDashboard from "./pages/AppDashboard";
-import AppCalls from "./pages/AppCalls";
-import AppAgenda from "./pages/AppAgenda";
-import AppHoraires from "./pages/AppHoraires";
-import AppFaq from "./pages/AppFaq";
-import AppActions from "./pages/AppActions";
-import AppFacturation from "./pages/AppFacturation";
-import AppProfil from "./pages/AppProfil";
-import AppConfig from "./pages/AppConfig";
-import AppStatus from "./pages/AppStatus";
-import AppSettings from "./pages/AppSettings";
-import AppRgpd from "./pages/AppRgpd";
-import ImpersonatePage from "./pages/Impersonate";
-import CGV from "./pages/CGV";
-import CGU from "./pages/CGU";
-import MentionsLegales from "./pages/MentionsLegales";
-import Contact from "./pages/Contact";
-import Demo from "./pages/Demo";
-import SeoVerticalPage from "./pages/SeoVerticalPage";
-import Checkout from "./pages/Checkout";
-import CheckoutReturn from "./pages/CheckoutReturn";
-import BillingPage from "./pages/BillingPage";
-import NotFound from "./pages/NotFound";
+
+const publicPageModules = import.meta.glob("./pages/*.jsx", {
+  eager: import.meta.env.SSR,
+});
+
+function resolvePublicPage(modulePath) {
+  const modOrLoader = publicPageModules[modulePath];
+  if (!modOrLoader) {
+    throw new Error(`Public page module not found: ${modulePath}`);
+  }
+  return import.meta.env.SSR ? modOrLoader.default : lazy(modOrLoader);
+}
+
+const CreerAssistante = resolvePublicPage("./pages/CreerAssistante.jsx");
+const UwiLandingPage = resolvePublicPage("./pages/UwiLandingPage.jsx");
+const CGV = resolvePublicPage("./pages/CGV.jsx");
+const CGU = resolvePublicPage("./pages/CGU.jsx");
+const MentionsLegales = resolvePublicPage("./pages/MentionsLegales.jsx");
+const Contact = resolvePublicPage("./pages/Contact.jsx");
+const Demo = resolvePublicPage("./pages/Demo.jsx");
+const SeoVerticalPage = resolvePublicPage("./pages/SeoVerticalPage.jsx");
+const Login = resolvePublicPage("./pages/Login.jsx");
+const ForgotPassword = resolvePublicPage("./pages/ForgotPassword.jsx");
+const ResetPassword = resolvePublicPage("./pages/ResetPassword.jsx");
+const AuthGoogleCallback = resolvePublicPage("./pages/AuthGoogleCallback.jsx");
+const EssaiGratuit = resolvePublicPage("./pages/EssaiGratuit.jsx");
+const DecouverteClient = resolvePublicPage("./pages/DecouverteClient.jsx");
+const Checkout = resolvePublicPage("./pages/Checkout.jsx");
+const CheckoutReturn = resolvePublicPage("./pages/CheckoutReturn.jsx");
+const BillingPage = resolvePublicPage("./pages/BillingPage.jsx");
+const NotFound = resolvePublicPage("./pages/NotFound.jsx");
 
 /** Layout neutre pour /app : rend uniquement les routes enfants (impersonate ou AppLayout). */
 function AppShell() {
   return <Outlet />;
 }
 
-import { AdminAuthProvider } from "./admin/AdminAuthProvider";
-import ProtectedRoute from "./admin/ProtectedRoute";
-import AdminLayout from "./admin/AdminLayout";
-import AdminLogin from "./admin/AdminLogin";
-import AdminDashboard from "./admin/pages/AdminDashboard";
-import AdminTenantsList from "./admin/pages/AdminTenantsList";
-import AdminTenantNew from "./admin/pages/AdminTenantNew";
-import AdminTenantPage from "./admin/pages/AdminTenantPage";
-import AdminTenantDashboard from "./admin/pages/AdminTenantDashboard";
-import AdminCalls from "./admin/pages/AdminCalls";
-import AdminMonitoring from "./admin/pages/AdminMonitoring";
-import AdminAuditLog from "./admin/pages/AdminAuditLog";
-import AdminOperations from "./admin/pages/AdminOperations";
-import AdminQuality from "./admin/pages/AdminQuality";
-import AdminLeadsList from "./admin/pages/AdminLeadsList";
-import AdminLeadDetail from "./admin/pages/AdminLeadDetail";
-import AdminNotFound from "./admin/pages/AdminNotFound";
+const AppLayout = lazy(() => import("./pages/AppLayout"));
+const AppFirstOnboarding = lazy(() => import("./pages/AppFirstOnboarding"));
+const AppDashboard = lazy(() => import("./pages/AppDashboard"));
+const AppCalls = lazy(() => import("./pages/AppCalls"));
+const AppAgenda = lazy(() => import("./pages/AppAgenda"));
+const AppHoraires = lazy(() => import("./pages/AppHoraires"));
+const AppFaq = lazy(() => import("./pages/AppFaq"));
+const AppActions = lazy(() => import("./pages/AppActions"));
+const AppFacturation = lazy(() => import("./pages/AppFacturation"));
+const AppProfil = lazy(() => import("./pages/AppProfil"));
+const AppConfig = lazy(() => import("./pages/AppConfig"));
+const AppStatus = lazy(() => import("./pages/AppStatus"));
+const AppSettings = lazy(() => import("./pages/AppSettings"));
+const AppRgpd = lazy(() => import("./pages/AppRgpd"));
+const ImpersonatePage = lazy(() => import("./pages/Impersonate"));
+
+const AdminAuthProvider = lazy(() =>
+  import("./admin/AdminAuthProvider").then((module) => ({ default: module.AdminAuthProvider })),
+);
+const ProtectedRoute = lazy(() => import("./admin/ProtectedRoute"));
+const AdminLayout = lazy(() => import("./admin/AdminLayout"));
+const AdminLogin = lazy(() => import("./admin/AdminLogin"));
+const AdminDashboard = lazy(() => import("./admin/pages/AdminDashboard"));
+const AdminTenantsList = lazy(() => import("./admin/pages/AdminTenantsList"));
+const AdminTenantNew = lazy(() => import("./admin/pages/AdminTenantNew"));
+const AdminTenantPage = lazy(() => import("./admin/pages/AdminTenantPage"));
+const AdminTenantDashboard = lazy(() => import("./admin/pages/AdminTenantDashboard"));
+const AdminCalls = lazy(() => import("./admin/pages/AdminCalls"));
+const AdminMonitoring = lazy(() => import("./admin/pages/AdminMonitoring"));
+const AdminAuditLog = lazy(() => import("./admin/pages/AdminAuditLog"));
+const AdminOperations = lazy(() => import("./admin/pages/AdminOperations"));
+const AdminQuality = lazy(() => import("./admin/pages/AdminQuality"));
+const AdminLeadsList = lazy(() => import("./admin/pages/AdminLeadsList"));
+const AdminLeadDetail = lazy(() => import("./admin/pages/AdminLeadDetail"));
+const AdminNotFound = lazy(() => import("./admin/pages/AdminNotFound"));
+
+function RouteLoader() {
+  return <div style={{ minHeight: "30vh" }} />;
+}
+
+function LazyElement({ Component, ...props }) {
+  return (
+    <Suspense fallback={<RouteLoader />}>
+      <Component {...props} />
+    </Suspense>
+  );
+}
 
 export default function App() {
   return (
     <>
       <SeoHead />
       <Routes>
-      <Route path="/" element={<UwiLanding />} />
+      <Route path="/" element={<LazyElement Component={UwiLandingPage} />} />
       <Route path="/onboarding" element={<Navigate to="/creer-assistante?new=1" replace />} />
-      <Route path="/creer-assistante" element={<CreerAssistante />} />
-      <Route path="/cgv" element={<CGV />} />
-      <Route path="/cgu" element={<CGU />} />
-      <Route path="/mentions-legales" element={<MentionsLegales />} />
-      <Route path="/contact" element={<Contact />} />
-      <Route path="/demo" element={<Demo />} />
-      <Route path="/secretaire-medicale-augmentee" element={<SeoVerticalPage pageKey="/secretaire-medicale-augmentee" />} />
-      <Route path="/secretaire-medicale-augmentee-medecin" element={<SeoVerticalPage pageKey="/secretaire-medicale-augmentee-medecin" />} />
+      <Route path="/creer-assistante" element={<LazyElement Component={CreerAssistante} />} />
+      <Route path="/cgv" element={<LazyElement Component={CGV} />} />
+      <Route path="/cgu" element={<LazyElement Component={CGU} />} />
+      <Route path="/mentions-legales" element={<LazyElement Component={MentionsLegales} />} />
+      <Route path="/contact" element={<LazyElement Component={Contact} />} />
+      <Route path="/demo" element={<LazyElement Component={Demo} />} />
+      <Route path="/secretaire-medicale-augmentee" element={<LazyElement Component={SeoVerticalPage} pageKey="/secretaire-medicale-augmentee" />} />
+      <Route path="/secretaire-medicale-augmentee-medecin" element={<LazyElement Component={SeoVerticalPage} pageKey="/secretaire-medicale-augmentee-medecin" />} />
       <Route path="/agent-accueil-ia-medical" element={<Navigate to="/secretaire-medicale-augmentee" replace />} />
       <Route path="/assistant-telephone-ia-medecin" element={<Navigate to="/secretaire-medicale-augmentee-medecin" replace />} />
-      <Route path="/assistant-telephone-ia-dentiste" element={<SeoVerticalPage pageKey="/assistant-telephone-ia-dentiste" />} />
-      <Route path="/assistant-telephone-ia-kine" element={<SeoVerticalPage pageKey="/assistant-telephone-ia-kine" />} />
-      <Route path="/assistant-telephone-ia-sage-femme" element={<SeoVerticalPage pageKey="/assistant-telephone-ia-sage-femme" />} />
-      <Route path="/assistant-telephone-ia-dermatologue" element={<SeoVerticalPage pageKey="/assistant-telephone-ia-dermatologue" />} />
-      <Route path="/assistant-telephone-ia-orthophoniste" element={<SeoVerticalPage pageKey="/assistant-telephone-ia-orthophoniste" />} />
-      <Route path="/standard-telephonique-cabinet-medical" element={<SeoVerticalPage pageKey="/standard-telephonique-cabinet-medical" />} />
-      <Route path="/checkout" element={<Checkout />} />
-      <Route path="/checkout/return" element={<CheckoutReturn />} />
-      <Route path="/billing" element={<BillingPage />} />
+      <Route path="/assistant-telephone-ia-dentiste" element={<LazyElement Component={SeoVerticalPage} pageKey="/assistant-telephone-ia-dentiste" />} />
+      <Route path="/assistant-telephone-ia-kine" element={<LazyElement Component={SeoVerticalPage} pageKey="/assistant-telephone-ia-kine" />} />
+      <Route path="/assistant-telephone-ia-sage-femme" element={<LazyElement Component={SeoVerticalPage} pageKey="/assistant-telephone-ia-sage-femme" />} />
+      <Route path="/assistant-telephone-ia-dermatologue" element={<LazyElement Component={SeoVerticalPage} pageKey="/assistant-telephone-ia-dermatologue" />} />
+      <Route path="/assistant-telephone-ia-orthophoniste" element={<LazyElement Component={SeoVerticalPage} pageKey="/assistant-telephone-ia-orthophoniste" />} />
+      <Route path="/standard-telephonique-cabinet-medical" element={<LazyElement Component={SeoVerticalPage} pageKey="/standard-telephonique-cabinet-medical" />} />
+      <Route path="/checkout" element={<LazyElement Component={Checkout} />} />
+      <Route path="/checkout/return" element={<LazyElement Component={CheckoutReturn} />} />
+      <Route path="/billing" element={<LazyElement Component={BillingPage} />} />
       <Route element={<AuthLayout />}>
-        <Route path="login" element={<Login />} />
-        <Route path="forgot-password" element={<ForgotPassword />} />
-        <Route path="reset-password" element={<ResetPassword />} />
-        <Route path="essai-gratuit" element={<EssaiGratuit />} />
-        <Route path="decouverte" element={<DecouverteClient />} />
-        <Route path="auth/google/callback" element={<AuthGoogleCallback />} />
+        <Route path="login" element={<LazyElement Component={Login} />} />
+        <Route path="forgot-password" element={<LazyElement Component={ForgotPassword} />} />
+        <Route path="reset-password" element={<LazyElement Component={ResetPassword} />} />
+        <Route path="essai-gratuit" element={<LazyElement Component={EssaiGratuit} />} />
+        <Route path="decouverte" element={<LazyElement Component={DecouverteClient} />} />
+        <Route path="auth/google/callback" element={<LazyElement Component={AuthGoogleCallback} />} />
       </Route>
       <Route path="/app" element={<AppShell />}>
-        <Route path="impersonate" element={<ImpersonatePage />} />
-        <Route path="onboarding" element={<AppFirstOnboarding />} />
-        <Route element={<AppLayout />}>
-          <Route index element={<AppDashboard />} />
-          <Route path="appels" element={<AppCalls />} />
-          <Route path="agenda" element={<AppAgenda />} />
-          <Route path="horaires" element={<AppHoraires />} />
-          <Route path="faq" element={<AppFaq />} />
-          <Route path="actions" element={<AppActions />} />
-          <Route path="facturation" element={<AppFacturation />} />
-          <Route path="profil" element={<AppProfil />} />
-          <Route path="config" element={<AppConfig />} />
-          <Route path="status" element={<AppStatus />} />
-          <Route path="settings" element={<AppSettings />} />
-          <Route path="rgpd" element={<AppRgpd />} />
+        <Route path="impersonate" element={<LazyElement Component={ImpersonatePage} />} />
+        <Route path="onboarding" element={<LazyElement Component={AppFirstOnboarding} />} />
+        <Route element={<LazyElement Component={AppLayout} />}>
+          <Route index element={<LazyElement Component={AppDashboard} />} />
+          <Route path="appels" element={<LazyElement Component={AppCalls} />} />
+          <Route path="agenda" element={<LazyElement Component={AppAgenda} />} />
+          <Route path="horaires" element={<LazyElement Component={AppHoraires} />} />
+          <Route path="faq" element={<LazyElement Component={AppFaq} />} />
+          <Route path="actions" element={<LazyElement Component={AppActions} />} />
+          <Route path="facturation" element={<LazyElement Component={AppFacturation} />} />
+          <Route path="profil" element={<LazyElement Component={AppProfil} />} />
+          <Route path="config" element={<LazyElement Component={AppConfig} />} />
+          <Route path="status" element={<LazyElement Component={AppStatus} />} />
+          <Route path="settings" element={<LazyElement Component={AppSettings} />} />
+          <Route path="rgpd" element={<LazyElement Component={AppRgpd} />} />
         </Route>
       </Route>
 
-      <Route path="/admin" element={<AdminAuthProvider><Outlet /></AdminAuthProvider>}>
-        <Route path="login" element={<AdminLogin />} />
-        <Route element={<ProtectedRoute />}>
-          <Route element={<AdminLayout />}>
-            <Route index element={<AdminDashboard />} />
-            <Route path="tenants/new" element={<AdminTenantNew />} />
-            <Route path="tenants" element={<AdminTenantsList />} />
-            <Route path="tenants/:id" element={<AdminTenantPage />} />
-            <Route path="tenants/:id/dashboard" element={<AdminTenantDashboard />} />
-            <Route path="tenants/:id/calls" element={<AdminCalls />} />
-            <Route path="calls" element={<AdminCalls />} />
-            <Route path="monitoring" element={<AdminMonitoring />} />
-            <Route path="operations" element={<AdminOperations />} />
-            <Route path="quality" element={<AdminQuality />} />
-            <Route path="leads" element={<AdminLeadsList />} />
-            <Route path="leads/:id" element={<AdminLeadDetail />} />
-            <Route path="audit" element={<AdminAuditLog />} />
-            <Route path="*" element={<AdminNotFound />} />
+      <Route
+        path="/admin"
+        element={
+          <LazyElement Component={AdminAuthProvider}>
+            <Outlet />
+          </LazyElement>
+        }
+      >
+        <Route path="login" element={<LazyElement Component={AdminLogin} />} />
+        <Route element={<LazyElement Component={ProtectedRoute} />}>
+          <Route element={<LazyElement Component={AdminLayout} />}>
+            <Route index element={<LazyElement Component={AdminDashboard} />} />
+            <Route path="tenants/new" element={<LazyElement Component={AdminTenantNew} />} />
+            <Route path="tenants" element={<LazyElement Component={AdminTenantsList} />} />
+            <Route path="tenants/:id" element={<LazyElement Component={AdminTenantPage} />} />
+            <Route path="tenants/:id/dashboard" element={<LazyElement Component={AdminTenantDashboard} />} />
+            <Route path="tenants/:id/calls" element={<LazyElement Component={AdminCalls} />} />
+            <Route path="calls" element={<LazyElement Component={AdminCalls} />} />
+            <Route path="monitoring" element={<LazyElement Component={AdminMonitoring} />} />
+            <Route path="operations" element={<LazyElement Component={AdminOperations} />} />
+            <Route path="quality" element={<LazyElement Component={AdminQuality} />} />
+            <Route path="leads" element={<LazyElement Component={AdminLeadsList} />} />
+            <Route path="leads/:id" element={<LazyElement Component={AdminLeadDetail} />} />
+            <Route path="audit" element={<LazyElement Component={AdminAuditLog} />} />
+            <Route path="*" element={<LazyElement Component={AdminNotFound} />} />
           </Route>
         </Route>
       </Route>
 
-      <Route path="*" element={<NotFound />} />
+      <Route path="*" element={<LazyElement Component={NotFound} />} />
     </Routes>
     </>
   );

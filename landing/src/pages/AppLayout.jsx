@@ -46,6 +46,8 @@ const IMMERSIVE_ROUTES = new Set([
   "/app/appels",
 ]);
 
+const DASHBOARD_CACHE_KEY = "uwi_tenant_dashboard_snapshot";
+
 function Dot({ color = TEAL, size = 8 }) {
   return (
     <span
@@ -115,7 +117,15 @@ export default function AppLayout() {
   const [me, setMe] = useState(null);
   const [err, setErr] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [dashboard, setDashboard] = useState(null);
+  const [dashboard, setDashboard] = useState(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = window.sessionStorage.getItem(DASHBOARD_CACHE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  });
   const [clock, setClock] = useState(new Date());
   const [sbOpen, setSbOpen] = useState(false);
   const [imgErr, setImgErr] = useState(false);
@@ -124,19 +134,35 @@ export default function AppLayout() {
 
   useEffect(() => {
     let mounted = true;
+    let idleId = null;
+    let timeoutId = null;
     api
       .tenantMe()
       .then((m) => {
         if (!mounted) return null;
         setMe(m);
         setLoading(false);
-        api.tenantDashboard()
-          .then((dash) => {
-            if (mounted) setDashboard(dash);
-          })
-          .catch(() => {
-            if (mounted) setDashboard(null);
-          });
+        const runDashboardRefresh = () => {
+          api.tenantDashboard()
+            .then((dash) => {
+              if (!mounted) return;
+              setDashboard(dash);
+              try {
+                window.sessionStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(dash));
+              } catch {
+                // Ignore sessionStorage quota or availability issues.
+              }
+            })
+            .catch(() => {
+              if (!mounted) return;
+              setDashboard((current) => current || null);
+            });
+        };
+        if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
+          idleId = window.requestIdleCallback(runDashboardRefresh, { timeout: 1200 });
+        } else {
+          timeoutId = window.setTimeout(runDashboardRefresh, 250);
+        }
         return m;
       })
       .catch((e) => {
@@ -152,6 +178,12 @@ export default function AppLayout() {
       });
     return () => {
       mounted = false;
+      if (typeof window !== "undefined" && idleId !== null && typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(idleId);
+      }
+      if (typeof window !== "undefined" && timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
     };
   }, []);
 

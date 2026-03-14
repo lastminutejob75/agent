@@ -1,24 +1,15 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { Suspense, lazy, useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
 import {
   getDashboardPayload,
   getRecentCalls,
   getBillingOverview,
   getBillingPlans,
-  changeTenantPlan,
-  cancelTenantSubscription,
-  resumeTenantSubscription,
-  getStripePortalLink,
 } from "../../lib/adminApi";
-import CreateTenantModal from "../components/CreateTenantModal";
+
+const AdminActivityChart = lazy(() => import("../components/AdminActivityChart"));
+const AdminBillingSection = lazy(() => import("../components/AdminBillingSection"));
+const CreateTenantModal = lazy(() => import("../components/CreateTenantModal"));
 
 // ── Brand tokens ──────────────────────────────────────────────────────────────
 const C = {
@@ -144,25 +135,6 @@ function StatusBadge({ status }) {
     </span>
   );
 }
-
-// ── Tooltip chart ─────────────────────────────────────────────────────────────
-const CustomTooltip = ({ active, payload }) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div
-      style={{
-        background: C.surface,
-        border: `1px solid ${C.border}`,
-        borderRadius: 10,
-        padding: "8px 14px",
-        fontSize: 12,
-        color: C.text,
-      }}
-    >
-      <strong style={{ color: C.accent }}>{payload[0].value}</strong> appels
-    </div>
-  );
-};
 
 // ── Plan Badge ────────────────────────────────────────────────────────────────
 function PlanBadge({ plan }) {
@@ -659,6 +631,20 @@ function SkeletonCard() {
         }}
       />
     </div>
+  );
+}
+
+function InlinePanelLoader({ height = 160 }) {
+  return (
+    <div
+      style={{
+        height,
+        borderRadius: 12,
+        background: `linear-gradient(90deg, ${C.border} 25%, rgba(30,61,86,0.55) 50%, ${C.border} 75%)`,
+        backgroundSize: "200% 100%",
+        animation: "uwi-shimmer 1.5s ease infinite",
+      }}
+    />
   );
 }
 
@@ -1427,189 +1413,38 @@ export default function AdminDashboard() {
             </div>
           }
         >
-          <ResponsiveContainer width="100%" height={160}>
-            <AreaChart data={activityData} margin={{ top: 0, right: 0, bottom: 0, left: -20 }}>
-              <defs>
-                <linearGradient id="accentGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={C.accent} stopOpacity={0.3} />
-                  <stop offset="100%" stopColor={C.accent} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <XAxis dataKey="day" tick={{ fill: C.muted, fontSize: 10 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: C.muted, fontSize: 10 }} axisLine={false} tickLine={false} />
-              <Tooltip content={<CustomTooltip />} />
-              <Area type="monotone" dataKey="appels" stroke={C.accent} strokeWidth={2} fill="url(#accentGrad)" dot={false} />
-            </AreaChart>
-          </ResponsiveContainer>
+          <Suspense fallback={<InlinePanelLoader height={160} />}>
+            <AdminActivityChart data={activityData} />
+          </Suspense>
         </PanelCard>
 
-        {/* ── Section Billing ── */}
-        <section style={{ animation: "uwi-fadein 0.5s ease 0.55s both" }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              marginBottom: 16,
-              flexWrap: "wrap",
-              gap: 10,
-            }}
-          >
-            <div>
-              <div
-                style={{
-                  fontSize: 18,
-                  fontWeight: 800,
-                  color: C.text,
-                  letterSpacing: -0.5,
-                  marginBottom: 2,
-                }}
-              >
-                Billing & Abonnements
-              </div>
-              <div style={{ fontSize: 12, color: C.muted }}>Plans, statuts Stripe et usage Vapi</div>
-            </div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <input
-                type="month"
-                value={month}
-                onChange={(e) => setMonth(e.target.value)}
-                style={{
-                  background: C.card,
-                  border: `1px solid ${C.border}`,
-                  borderRadius: 9,
-                  color: C.text,
-                  padding: "6px 12px",
-                  fontSize: 13,
-                  fontFamily: "inherit",
-                }}
-              />
-              <div
-                style={{
-                  background: C.card,
-                  border: `1px solid ${C.border}`,
-                  borderRadius: 10,
-                  padding: "8px 16px",
-                  textAlign: "center",
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 10,
-                    color: C.muted,
-                    textTransform: "uppercase",
-                    letterSpacing: 0.5,
-                    marginBottom: 2,
-                  }}
-                >
-                  MRR
-                </div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: C.accent }}>
-                  {overview?.summary?.mrr_eur_total ?? 0}€
-                </div>
-              </div>
-              <div
-                style={{
-                  background: C.card,
-                  border: `1px solid ${C.border}`,
-                  borderRadius: 10,
-                  padding: "8px 16px",
-                  textAlign: "center",
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 10,
-                    color: C.muted,
-                    textTransform: "uppercase",
-                    letterSpacing: 0.5,
-                    marginBottom: 2,
-                  }}
-                >
-                  Vapi
-                </div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: C.warning }}>
-                  ${overview?.summary?.cost_usd_month_total?.toFixed(2) ?? "0.00"}
-                </div>
-              </div>
-              {(overview?.summary?.tenants_past_due_count ?? 0) > 0 && (
-                <div
-                  style={{
-                    background: "rgba(255,107,107,0.1)",
-                    border: "1px solid rgba(255,107,107,0.3)",
-                    borderRadius: 10,
-                    padding: "8px 16px",
-                  }}
-                >
-                  <div style={{ fontSize: 12, color: C.danger, fontWeight: 700 }}>
-                    ⚠️ {overview.summary.tenants_past_due_count} past due
-                  </div>
-                </div>
-              )}
-              <button
-                onClick={reloadBilling}
-                disabled={billingLoading}
-                style={{
-                  padding: "7px 14px",
-                  borderRadius: 9,
-                  fontSize: 12,
-                  fontWeight: 700,
-                  background: "transparent",
-                  border: `1px solid ${C.border}`,
-                  color: C.muted,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                }}
-              >
-                {billingLoading ? "…" : "↺"}
-              </button>
-            </div>
-          </div>
-
-          {billingError && (
-            <div
-              style={{
-                background: "rgba(255,107,107,0.1)",
-                border: "1px solid rgba(255,107,107,0.3)",
-                borderRadius: 12,
-                padding: "12px 20px",
-                marginBottom: 16,
-                fontSize: 13,
-                color: C.danger,
-              }}
-            >
-              ⚠️ {billingError}
-            </div>
-          )}
-
-          {billingLoading && !overview ? (
-            <div style={{ color: C.muted, fontSize: 13, padding: "20px 0" }}>Chargement billing…</div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {(overview?.tenants ?? []).map((item) => (
-                <TenantBillingCard
-                  key={item.tenant_id}
-                  item={item}
-                  plans={plans}
-                  onAction={reloadBilling}
-                  navigate={navigate}
-                />
-              ))}
-            </div>
-          )}
-        </section>
+        <Suspense fallback={<InlinePanelLoader height={260} />}>
+          <AdminBillingSection
+            theme={C}
+            overview={overview}
+            plans={plans}
+            loading={billingLoading}
+            error={billingError}
+            month={month}
+            setMonth={setMonth}
+            reloadBilling={reloadBilling}
+            navigate={navigate}
+          />
+        </Suspense>
       </div>
 
       {/* ── Modal création tenant ── */}
       {showCreate && (
-        <CreateTenantModal
-          onClose={() => setShowCreate(false)}
-          onCreated={() => {
-            setShowCreate(false);
-            refresh();
-            reloadBilling();
-          }}
-        />
+        <Suspense fallback={null}>
+          <CreateTenantModal
+            onClose={() => setShowCreate(false)}
+            onCreated={() => {
+              setShowCreate(false);
+              refresh();
+              reloadBilling();
+            }}
+          />
+        </Suspense>
       )}
     </>
   );

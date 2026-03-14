@@ -1,12 +1,21 @@
-import { useState, useEffect } from "react";
+import { Suspense, lazy, useState, useEffect } from "react";
 import { api } from "../lib/api.js";
-import CallTransferSettings from "../components/CallTransferSettings.jsx";
 import {
   buildTransferConfigSignature,
   isTransferConfigConfirmed,
   sanitizePhoneInput,
   normalizeFrenchPhone,
 } from "../lib/transferConfig.js";
+
+const CallTransferSettings = lazy(() => import("../components/CallTransferSettings.jsx"));
+
+function SettingsSectionFallback({ text = "Chargement…" }) {
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+      <p className="text-sm text-gray-500">{text}</p>
+    </div>
+  );
+}
 
 function buildTransferInitialConfig(me) {
   if (!me) return null;
@@ -159,52 +168,54 @@ export default function AppSettings() {
         </button>
       </form>
 
-      <CallTransferSettings
-        cabinetPhone={params.phone_number || ""}
-        initialConfig={transferInitialConfig}
-        onSave={async (payload) => {
-          const liveEnabled = transferInitialConfig?.live_enabled !== false;
-          const callbackEnabled = transferInitialConfig?.callback_enabled !== false;
-          const transferNumber = normalizeFrenchPhone(payload.main_number || params.phone_number || "");
-          const confirmedAt = new Date().toISOString();
-          const nextConfig = {
-            main_number: transferNumber,
-            always_urgent: Boolean(payload.always_urgent),
-            transfer_cases: payload.transfer_cases || [],
-            hours: payload.hours || {},
-            no_consultation: Boolean(payload.no_consultation),
-            practitioner_phone: transferInitialConfig?.practitioner_phone || "",
-            live_enabled: liveEnabled,
-            callback_enabled: callbackEnabled,
-            confirmed: true,
-            confirmed_at: confirmedAt,
-          };
-          await api.tenantPatchParams({
-            transfer_number: transferNumber,
-            transfer_live_enabled: liveEnabled ? "true" : "false",
-            transfer_callback_enabled: callbackEnabled ? "true" : "false",
-            transfer_cases: payload.transfer_cases || [],
-            transfer_hours: payload.hours || {},
-            transfer_always_urgent: payload.always_urgent ? "true" : "false",
-            transfer_no_consultation: payload.no_consultation ? "true" : "false",
-            transfer_config_confirmed_signature: buildTransferConfigSignature({
-              phone_number: params.phone_number || "",
+      <Suspense fallback={<SettingsSectionFallback text="Chargement de la configuration du transfert…" />}>
+        <CallTransferSettings
+          cabinetPhone={params.phone_number || ""}
+          initialConfig={transferInitialConfig}
+          onSave={async (payload) => {
+            const liveEnabled = transferInitialConfig?.live_enabled !== false;
+            const callbackEnabled = transferInitialConfig?.callback_enabled !== false;
+            const transferNumber = normalizeFrenchPhone(payload.main_number || params.phone_number || "");
+            const confirmedAt = new Date().toISOString();
+            const nextConfig = {
+              main_number: transferNumber,
+              always_urgent: Boolean(payload.always_urgent),
+              transfer_cases: payload.transfer_cases || [],
+              hours: payload.hours || {},
+              no_consultation: Boolean(payload.no_consultation),
+              practitioner_phone: transferInitialConfig?.practitioner_phone || "",
+              live_enabled: liveEnabled,
+              callback_enabled: callbackEnabled,
+              confirmed: true,
+              confirmed_at: confirmedAt,
+            };
+            await api.tenantPatchParams({
               transfer_number: transferNumber,
-              transfer_practitioner_phone: transferInitialConfig?.practitioner_phone || "",
               transfer_live_enabled: liveEnabled ? "true" : "false",
               transfer_callback_enabled: callbackEnabled ? "true" : "false",
               transfer_cases: payload.transfer_cases || [],
               transfer_hours: payload.hours || {},
               transfer_always_urgent: payload.always_urgent ? "true" : "false",
               transfer_no_consultation: payload.no_consultation ? "true" : "false",
-            }),
-            transfer_config_confirmed_at: confirmedAt,
-          });
-          setTransferInitialConfig(nextConfig);
-          setTransferSaved(true);
-          return { confirmed_at: confirmedAt };
-        }}
-      />
+              transfer_config_confirmed_signature: buildTransferConfigSignature({
+                phone_number: params.phone_number || "",
+                transfer_number: transferNumber,
+                transfer_practitioner_phone: transferInitialConfig?.practitioner_phone || "",
+                transfer_live_enabled: liveEnabled ? "true" : "false",
+                transfer_callback_enabled: callbackEnabled ? "true" : "false",
+                transfer_cases: payload.transfer_cases || [],
+                transfer_hours: payload.hours || {},
+                transfer_always_urgent: payload.always_urgent ? "true" : "false",
+                transfer_no_consultation: payload.no_consultation ? "true" : "false",
+              }),
+              transfer_config_confirmed_at: confirmedAt,
+            });
+            setTransferInitialConfig(nextConfig);
+            setTransferSaved(true);
+            return { confirmed_at: confirmedAt };
+          }}
+        />
+      </Suspense>
       {transferSaved && <p className="text-sm text-emerald-600">Configuration du transfert enregistree.</p>}
 
       <form
