@@ -532,7 +532,7 @@ async def debug_call_durations():
                            ended_at::text AS ended_at,
                            updated_at::text AS updated_at,
                            created_at::text AS created_at,
-                           EXTRACT(EPOCH FROM (COALESCE(ended_at, updated_at) - COALESCE(started_at, created_at)))::int AS calc_sec
+                           EXTRACT(EPOCH FROM (updated_at - COALESCE(started_at, created_at)))::int AS calc_sec
                     FROM vapi_calls
                     ORDER BY COALESCE(ended_at, updated_at, started_at) DESC NULLS LAST
                     LIMIT 5
