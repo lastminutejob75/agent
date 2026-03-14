@@ -1264,6 +1264,14 @@ def tenant_calls(
                     resolved_duration_sec = int(raw_minutes) * 60
             except Exception:
                 resolved_duration_sec = None
+        if resolved_duration_sec is None:
+            try:
+                start_dt = _parse_dt(detail_for_display.get("started_at") or item.get("started_at"), tz_name)
+                end_dt = _parse_dt(detail_for_display.get("last_event_at") or item.get("last_event_at"), tz_name)
+                if start_dt and end_dt:
+                    resolved_duration_sec = max(0, int((end_dt - start_dt).total_seconds()))
+            except Exception:
+                resolved_duration_sec = None
         calls.append({
             "id": call_id,
             "started_at": detail_for_display.get("started_at") or item.get("started_at"),

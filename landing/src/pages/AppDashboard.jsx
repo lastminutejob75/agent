@@ -215,10 +215,24 @@ function formatCallDurationFallback(call) {
   const fromText = String(call?.duration || "").trim();
   if (fromText && fromText !== "—" && fromText !== "-") return fromText;
   const sec = Number(call?.duration_sec);
-  if (!Number.isFinite(sec) || sec < 0) return "0'00";
-  const minutes = Math.floor(sec / 60);
-  const seconds = sec % 60;
-  return `${minutes}'${String(seconds).padStart(2, "0")}`;
+  if (Number.isFinite(sec) && sec >= 0) {
+    const minutes = Math.floor(sec / 60);
+    const seconds = sec % 60;
+    return `${minutes}'${String(seconds).padStart(2, "0")}`;
+  }
+  const startRaw = String(call?.started_at || "").trim();
+  const endRaw = String(call?.last_event_at || "").trim();
+  if (startRaw && endRaw) {
+    const startTs = new Date(startRaw).getTime();
+    const endTs = new Date(endRaw).getTime();
+    if (!Number.isNaN(startTs) && !Number.isNaN(endTs) && endTs >= startTs) {
+      const totalSec = Math.floor((endTs - startTs) / 1000);
+      const minutes = Math.floor(totalSec / 60);
+      const seconds = totalSec % 60;
+      return `${minutes}'${String(seconds).padStart(2, "0")}`;
+    }
+  }
+  return "0'00";
 }
 
 function getDialablePhone(value) {
