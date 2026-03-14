@@ -1856,6 +1856,7 @@ def _get_calls_list(
     limit: int,
     cursor: Optional[str] = None,
     result_filter: Optional[str] = None,
+    tenant_detail: Optional[dict] = None,
 ) -> dict:
     """Liste appels : vapi_calls (tous les appels Vapi) en priorité, fallback ivr_events."""
     from datetime import datetime, timedelta
@@ -1869,7 +1870,7 @@ def _get_calls_list(
     tenant_name_cache: Dict[int, str] = {}
 
     if tenant_id is not None:
-        fixed_detail = _get_tenant_detail(tenant_id) or {}
+        fixed_detail = tenant_detail or (_get_tenant_detail(tenant_id) or {})
         fixed_tenant_name = (fixed_detail.get("name") or "").strip() or f"Client #{tenant_id}"
 
     if url:
@@ -1989,6 +1990,16 @@ def _get_calls_list(
                             })
                             if r.get("call_id"):
                                 seen_call_ids.add(r.get("call_id"))
+
+                    if len(items) >= limit:
+                        items.sort(key=lambda x: ((x.get("last_event_at") or ""), (x.get("call_id") or "")), reverse=True)
+                        if len(items) > limit:
+                            last_item = items[limit - 1]
+                            t_iso = str(last_item.get("last_event_at") or "")
+                            c_id = last_item.get("call_id") or ""
+                            next_cursor = base64.urlsafe_b64encode(json.dumps({"t": t_iso, "c": c_id}).encode()).decode().rstrip("=")
+                            items = items[:limit]
+                        return {"items": items, "next_cursor": next_cursor, "days": days}
 
                     # 2) Fallback ivr_events (comportement historique)
                     params = [start, end]

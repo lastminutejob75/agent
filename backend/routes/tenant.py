@@ -1165,7 +1165,7 @@ def tenant_calls(
         raise HTTPException(404, "Tenant not found")
     tz_name = _tenant_timezone(detail)
     assistant_name = (((detail.get("params") or {}).get("assistant_name")) or "Sophie").strip().title()
-    raw = _get_calls_list(tenant_id=tenant_id, days=days, limit=limit)
+    raw = _get_calls_list(tenant_id=tenant_id, days=days, limit=limit, tenant_detail=detail)
     items = raw.get("items") or []
     if not items and not (os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")):
         ensure_tenant_config()
