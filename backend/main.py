@@ -527,31 +527,34 @@ async def debug_call_durations():
         with psycopg.connect(url, row_factory=dict_row) as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT call_id,
-                           started_at IS NOT NULL AS has_started,
-                           ended_at IS NOT NULL AS has_ended,
-                           updated_at IS NOT NULL AS has_updated,
-                           created_at IS NOT NULL AS has_created,
-                           CASE WHEN started_at IS NOT NULL AND (ended_at IS NOT NULL OR updated_at IS NOT NULL)
-                                THEN EXTRACT(EPOCH FROM (COALESCE(ended_at, updated_at) - started_at))::int
-                                ELSE NULL END AS calc_duration_sec
+                    SELECT call_id, tenant_id, status,
+                           started_at::text AS started_at,
+                           ended_at::text AS ended_at,
+                           updated_at::text AS updated_at,
+                           created_at::text AS created_at,
+                           EXTRACT(EPOCH FROM (COALESCE(ended_at, updated_at) - COALESCE(started_at, created_at)))::int AS calc_sec
                     FROM vapi_calls
                     ORDER BY COALESCE(ended_at, updated_at, started_at) DESC NULLS LAST
                     LIMIT 5
                 """)
-                calls = cur.fetchall()
+                calls = [dict(r) for r in cur.fetchall()]
                 usage_exists = False
                 usage_rows = []
                 try:
-                    cur.execute("SELECT vapi_call_id, duration_sec FROM vapi_call_usage ORDER BY updated_at DESC LIMIT 5")
-                    usage_rows = cur.fetchall()
+                    cur.execute("""
+                        SELECT vapi_call_id, duration_sec,
+                               started_at::text AS started_at,
+                               ended_at::text AS ended_at
+                        FROM vapi_call_usage ORDER BY updated_at DESC LIMIT 5
+                    """)
+                    usage_rows = [dict(r) for r in cur.fetchall()]
                     usage_exists = True
-                except Exception:
-                    pass
+                except Exception as ue:
+                    usage_exists = str(ue)[:100]
                 return {
-                    "vapi_calls_sample": [{**r, "started_at": str(r.get("started_at", "")), "ended_at": str(r.get("ended_at", ""))} for r in calls] if calls else [],
+                    "vapi_calls": calls,
                     "vapi_call_usage_exists": usage_exists,
-                    "vapi_call_usage_sample": [{**r} for r in usage_rows] if usage_rows else [],
+                    "vapi_call_usage": usage_rows,
                 }
     except Exception as e:
         return {"error": str(e)[:200]}
