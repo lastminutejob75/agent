@@ -152,6 +152,29 @@ export default function AppLayout() {
     let mounted = true;
     let idleId = null;
     let timeoutId = null;
+    const runDashboardRefresh = () => {
+      api.tenantDashboard()
+        .then((dash) => {
+          if (!mounted) return;
+          setDashboard(dash);
+          try {
+            window.sessionStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(dash));
+          } catch {
+            // Ignore sessionStorage quota or availability issues.
+          }
+        })
+        .catch(() => {
+          if (!mounted) return;
+          setDashboard((current) => current || null);
+        });
+    };
+
+    if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
+      idleId = window.requestIdleCallback(runDashboardRefresh, { timeout: 1200 });
+    } else {
+      timeoutId = window.setTimeout(runDashboardRefresh, 250);
+    }
+
     api
       .tenantMe()
       .then((m) => {
@@ -163,27 +186,6 @@ export default function AppLayout() {
           // Ignore sessionStorage quota or availability issues.
         }
         setLoading(false);
-        const runDashboardRefresh = () => {
-          api.tenantDashboard()
-            .then((dash) => {
-              if (!mounted) return;
-              setDashboard(dash);
-              try {
-                window.sessionStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(dash));
-              } catch {
-                // Ignore sessionStorage quota or availability issues.
-              }
-            })
-            .catch(() => {
-              if (!mounted) return;
-              setDashboard((current) => current || null);
-            });
-        };
-        if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
-          idleId = window.requestIdleCallback(runDashboardRefresh, { timeout: 1200 });
-        } else {
-          timeoutId = window.setTimeout(runDashboardRefresh, 250);
-        }
         return m;
       })
       .catch((e) => {
@@ -266,15 +268,7 @@ export default function AppLayout() {
 
   const closeSidebar = () => setSbOpen(false);
 
-  if (loading) {
-    return (
-      <div className="dash" style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#f0f4f8" }}>
-        <p style={{ color: "#64748b", fontFamily: "'DM Sans', sans-serif" }}>Chargement...</p>
-      </div>
-    );
-  }
-
-  if (err) {
+  if (err && !me) {
     const errMsg = typeof err === "string" ? err : (err?.message || err?.data?.detail || "Erreur");
     return (
       <div className="dash" style={{ minHeight: "100vh", padding: "2rem", background: "#f0f4f8", fontFamily: "'DM Sans', sans-serif" }}>
@@ -306,8 +300,6 @@ export default function AppLayout() {
     );
   }
 
-  if (!me) return null;
-
   if (isImmersiveRoute) {
     return (
       <div className="dash" style={S.root}>
@@ -333,7 +325,7 @@ export default function AppLayout() {
           </div>
         )}
         <div style={{ flex: 1, minHeight: "100vh", paddingTop: impersonation ? 44 : 0, display: "flex", flexDirection: "column" }}>
-          <Outlet context={{ me, dashboard }} />
+          <Outlet context={{ me, dashboard, meLoading: loading }} />
         </div>
       </div>
     );
@@ -407,7 +399,7 @@ export default function AppLayout() {
           <div style={S.assistantTag}>VOTRE ASSISTANTE</div>
           <div style={S.assistantInner}>
             <div style={{ position: "relative", flexShrink: 0 }}>
-              {!imgErr ? (
+              {!imgErr && assistantConfig?.img ? (
                 <img
                   src={assistantConfig?.img || ""}
                   alt={assistantName}
@@ -436,7 +428,7 @@ export default function AppLayout() {
         <div style={S.sidebarFooter}>
           <div style={S.footerAvatar}>{initials || "U"}</div>
           <div>
-            <div style={S.footerName}>{me.tenant_name || "Cabinet"}</div>
+            <div style={S.footerName}>{me?.tenant_name || "Cabinet"}</div>
             <div style={S.footerPlan}>{planLabel} · 149€/mois</div>
           </div>
         </div>
@@ -519,7 +511,7 @@ export default function AppLayout() {
           )}
 
           <div style={S.outletWrap}>
-            <Outlet context={{ me, dashboard }} />
+            <Outlet context={{ me, dashboard, meLoading: loading }} />
           </div>
         </div>
       </div>
