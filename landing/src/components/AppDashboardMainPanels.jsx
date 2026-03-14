@@ -479,7 +479,7 @@ export default function AppDashboardMainPanels({
                     >
                       {call.statusBadge.label}
                     </span>
-                    <div style={S.callDuration}>⏱ {call.duration}</div>
+                    <div style={S.callDuration}>⏱ Durée : {call.duration}</div>
                   </div>
                 </div>
               ))
