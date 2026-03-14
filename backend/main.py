@@ -211,6 +211,20 @@ def _init_heavy_sync():
             print("⚠️ PG_HEALTH down -> sqlite fallback")
     except Exception as e:
         _logger.warning("PG healthcheck failed: %s", e)
+    # Fix vapi_calls rows where started_at is NULL (backfill from created_at)
+    try:
+        _pg_url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+        if _pg_url:
+            import psycopg
+            with psycopg.connect(_pg_url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE vapi_calls SET started_at = created_at WHERE started_at IS NULL AND created_at IS NOT NULL")
+                    fixed = cur.rowcount
+                conn.commit()
+            if fixed:
+                print(f"✅ Backfilled {fixed} vapi_calls.started_at from created_at")
+    except Exception as e:
+        _logger.debug("vapi_calls backfill skipped: %s", str(e)[:80])
     # Table ivr_events (dashboards) : création automatique si USE_PG_EVENTS et DATABASE_URL
     if getattr(config, "USE_PG_EVENTS", False):
         try:
