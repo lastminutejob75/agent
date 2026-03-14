@@ -594,7 +594,13 @@ export default function AppCalls() {
     api
       .tenantGetCalls(`?limit=50&days=${days}&compact=1`)
       .then((data) => {
-        if (!cancelled) setPayload(data || { calls: [], total: 0, date: "" });
+        if (cancelled) return;
+        const result = data || { calls: [], total: 0, date: "" };
+        setPayload(result);
+        if ((result.calls || []).length === 0 && days < 30) {
+          setTab("all");
+          setDays(30);
+        }
       })
       .catch((e) => {
         if (!cancelled) setError(e?.message || "Impossible de charger les appels.");
@@ -698,7 +704,8 @@ export default function AppCalls() {
   }, [actionMessage]);
 
   useEffect(() => {
-    setDays(tab === "today" ? 1 : tab === "week" ? 7 : 30);
+    const next = tab === "today" ? 1 : tab === "week" ? 7 : 30;
+    setDays((prev) => (prev === next ? prev : next));
   }, [tab]);
 
   const calls = payload?.calls || [];

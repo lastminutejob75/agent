@@ -244,7 +244,9 @@ def _format_hour_slot(value: Any, tz_name: str) -> str:
 
 
 def _format_duration_short(duration_sec: Optional[int]) -> str:
-    total_seconds = max(0, int(duration_sec or 0))
+    if duration_sec is None:
+        return "—"
+    total_seconds = max(0, int(duration_sec))
     minutes = total_seconds // 60
     seconds = total_seconds % 60
     return f"{minutes}'{seconds:02d}"

@@ -5,6 +5,30 @@ import { adminApi } from "../../lib/adminApi";
 const RESULT_LABELS = { rdv: "RDV", transfer: "Transfert", abandoned: "Abandon", error: "Erreur", other: "Autre" };
 const DAYS_OPTIONS = [7, 14, 30];
 
+function formatDurationLabel(item) {
+  const sec = Number(item?.duration_sec);
+  if (Number.isFinite(sec) && sec >= 0) {
+    const min = Math.floor(sec / 60);
+    const rem = sec % 60;
+    return `${min}'${String(rem).padStart(2, "0")}`;
+  }
+  const mins = Number(item?.duration_min);
+  if (Number.isFinite(mins) && mins >= 0) return `${Math.floor(mins)}'00`;
+  const startRaw = String(item?.started_at || "").trim();
+  const endRaw = String(item?.last_event_at || "").trim();
+  if (startRaw && endRaw) {
+    const startTs = new Date(startRaw).getTime();
+    const endTs = new Date(endRaw).getTime();
+    if (!Number.isNaN(startTs) && !Number.isNaN(endTs) && endTs >= startTs) {
+      const total = Math.floor((endTs - startTs) / 1000);
+      const min = Math.floor(total / 60);
+      const rem = total % 60;
+      return `${min}'${String(rem).padStart(2, "0")}`;
+    }
+  }
+  return "0'00";
+}
+
 export default function AdminCalls() {
   const { id: tenantIdParam } = useParams();
   const [searchParams] = useSearchParams();
@@ -210,7 +234,7 @@ const C = {
                     {!tenantId && <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase" }}>Client</th>}
                     <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase" }}>Call ID</th>
                     <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase" }}>Début</th>
-                    <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase" }}>Durée (min)</th>
+                    <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase" }}>Durée</th>
                     <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase" }}>Résultat</th>
                     <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase" }}>Dernier event</th>
                   </tr>
@@ -233,7 +257,7 @@ const C = {
                       <td style={{ padding: "12px 16px", fontSize: 13, color: C.muted }}>
                         {row.started_at ? new Date(row.started_at).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" }) : "—"}
                       </td>
-                      <td style={{ padding: "12px 16px", fontSize: 13, color: C.muted }}>{row.duration_min ?? "—"}</td>
+                      <td style={{ padding: "12px 16px", fontSize: 13, color: C.muted }}>{formatDurationLabel(row)}</td>
                       <td style={{ padding: "12px 16px" }}>
                         <span
                           style={{
@@ -335,7 +359,7 @@ const C = {
                       {RESULT_LABELS[callDetail.result] ?? callDetail.result}
                     </span>
                   </div>
-                  <div style={{ fontSize: 13, color: C.muted }}>Durée : {callDetail.duration_min != null ? `${callDetail.duration_min} min` : "—"}</div>
+                  <div style={{ fontSize: 13, color: C.muted }}>Durée : {formatDurationLabel(callDetail)}</div>
                 </div>
                 <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
                   <button type="button" onClick={copyCallId} style={{ padding: "6px 12px", fontSize: 13, fontWeight: 600, color: C.accent, border: `1px solid ${C.accent}`, borderRadius: 8, background: "transparent", cursor: "pointer" }}>Copier call_id</button>

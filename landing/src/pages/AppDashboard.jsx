@@ -215,7 +215,7 @@ function formatCallDurationFallback(call) {
   const fromText = String(call?.duration || "").trim();
   if (fromText && fromText !== "—" && fromText !== "-") return fromText;
   const sec = Number(call?.duration_sec);
-  if (Number.isFinite(sec) && sec >= 0) {
+  if (Number.isFinite(sec) && sec > 0) {
     const minutes = Math.floor(sec / 60);
     const seconds = sec % 60;
     return `${minutes}'${String(seconds).padStart(2, "0")}`;
@@ -225,14 +225,14 @@ function formatCallDurationFallback(call) {
   if (startRaw && endRaw) {
     const startTs = new Date(startRaw).getTime();
     const endTs = new Date(endRaw).getTime();
-    if (!Number.isNaN(startTs) && !Number.isNaN(endTs) && endTs >= startTs) {
+    if (!Number.isNaN(startTs) && !Number.isNaN(endTs) && endTs > startTs) {
       const totalSec = Math.floor((endTs - startTs) / 1000);
       const minutes = Math.floor(totalSec / 60);
       const seconds = totalSec % 60;
       return `${minutes}'${String(seconds).padStart(2, "0")}`;
     }
   }
-  return "0'00";
+  return "—";
 }
 
 function getDialablePhone(value) {
@@ -371,7 +371,7 @@ export default function AppDashboard() {
         if (mounted) setKpisLoading(false);
       });
 
-    api.tenantGetCalls("?limit=4&days=7")
+    api.tenantGetCalls("?limit=4&days=30")
       .then((data) => {
         if (!mounted) return;
         const nextCalls = data?.calls || [];
