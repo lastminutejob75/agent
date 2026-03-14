@@ -193,6 +193,21 @@ function parseDurationMinutes(value) {
   return 0;
 }
 
+function formatDurationFromCall(callLike) {
+  const sec = Number(callLike?.duration_sec);
+  if (Number.isFinite(sec) && sec >= 0) {
+    const minutes = Math.floor(sec / 60);
+    const seconds = sec % 60;
+    return `${minutes}'${String(seconds).padStart(2, "0")}`;
+  }
+  const mins = Number(callLike?.duration_min);
+  if (Number.isFinite(mins) && mins >= 0) {
+    return `${Math.floor(mins)}'00`;
+  }
+  const txt = String(callLike?.duration || "").trim();
+  return txt || "0'00";
+}
+
 function parseIsoTimestamp(value) {
   const raw = String(value || "").trim();
   if (!raw) return 0;
@@ -269,7 +284,7 @@ function normalizeSummaryCall(call) {
     dialablePhone: getDialablePhone(call?.customer_number),
     time: call?.time || "—",
     hour: parseHourFromTime(call?.time),
-    durationFmt: call?.duration || "—",
+    durationFmt: formatDurationFromCall(call),
     status: getModelStatusKey(call),
     statusUi: getModelStatusUi(call),
     intent: getModelIntentKey(call),
@@ -297,7 +312,7 @@ function normalizeDetailCall(detail, fallback) {
     dialablePhone: getDialablePhone(base?.customer_number || fallback?.dialablePhone),
     time: base?.started_time || fallback?.time || "—",
     hour: parseHourFromTime(base?.started_time || fallback?.time),
-    durationFmt: base?.duration || fallback?.durationFmt || "—",
+    durationFmt: formatDurationFromCall(base) || fallback?.durationFmt || "0'00",
     status: getModelStatusKey(base),
     statusUi: getModelStatusUi(base),
     intent: getModelIntentKey(base),
@@ -507,7 +522,7 @@ function CallRowModel({ call, onOpen, onRecall, isLast }) {
         <span style={{ fontSize: "13px", fontWeight: 600, color: T.textMid }}>{call.time}</span>
         <span style={{ fontSize: "11px", fontWeight: 700, color: call.statusUi.color, background: call.statusUi.bg, border: `1px solid ${call.statusUi.border}`, borderRadius: "20px", padding: "2px 9px" }}>{call.statusUi.label}</span>
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <span style={{ fontSize: "10px", color: T.textFaint, fontWeight: 600 }}>⏱ {call.durationFmt || "—"}</span>
+          <span style={{ fontSize: "12px", color: T.textMid, fontWeight: 700 }}>⏱ Durée : {call.durationFmt || "0'00"}</span>
           {call.aiScore ? (
             <div style={{ display: "flex", alignItems: "center", gap: "3px" }}>
               <div style={{ width: "5px", height: "5px", borderRadius: "50%", background: call.aiScore.confidence >= 90 ? T.teal : call.aiScore.confidence >= 75 ? T.orange : T.red }} />

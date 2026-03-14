@@ -212,6 +212,8 @@ function formatCallTimeFallback(call) {
 }
 
 function formatCallDurationFallback(call) {
+  const fromText = String(call?.duration || "").trim();
+  if (fromText && fromText !== "—") return fromText;
   const sec = Number(call?.duration_sec);
   if (!Number.isFinite(sec) || sec < 0) return "Durée inconnue";
   const minutes = Math.floor(sec / 60);

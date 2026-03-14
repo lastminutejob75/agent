@@ -1252,13 +1252,25 @@ def tenant_calls(
                 booking = _build_booking_payload(detail_for_display)
         call_context = _classify_call_context(status, detail_for_display)
         patient = _build_patient_payload(tenant_id, item, detail_for_display, patient_profiles_by_phone)
+        resolved_duration_sec = detail_for_display.get("duration_sec")
+        if resolved_duration_sec is None:
+            resolved_duration_sec = item.get("duration_sec")
+        if resolved_duration_sec is None:
+            raw_minutes = detail_for_display.get("duration_min")
+            if raw_minutes is None:
+                raw_minutes = item.get("duration_min")
+            try:
+                if raw_minutes is not None:
+                    resolved_duration_sec = int(raw_minutes) * 60
+            except Exception:
+                resolved_duration_sec = None
         calls.append({
             "id": call_id,
             "started_at": detail_for_display.get("started_at") or item.get("started_at"),
             "last_event_at": detail_for_display.get("last_event_at") or item.get("last_event_at"),
             "time": _format_hhmm(started_at, tz_name),
-            "duration": _format_duration_short(detail_for_display.get("duration_sec") if detail_for_display.get("duration_sec") is not None else item.get("duration_sec")),
-            "duration_sec": detail_for_display.get("duration_sec") if detail_for_display.get("duration_sec") is not None else item.get("duration_sec"),
+            "duration": _format_duration_short(resolved_duration_sec),
+            "duration_sec": resolved_duration_sec,
             "patient_name": patient.get("display_name") or "Patient",
             "customer_number": _call_display_phone(item, detail_for_display),
             "agent_name": assistant_name,
