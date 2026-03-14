@@ -1982,9 +1982,14 @@ def _get_calls_list(
                             if cid_for_usage in usage_durations:
                                 duration_sec = int(usage_durations[cid_for_usage])
                                 duration_min = duration_sec // 60
-                            elif started_at and (ended_at or updated_at):
-                                end_ts = ended_at or updated_at
-                                delta_secs = (end_ts - started_at).total_seconds()
+                            elif started_at and updated_at:
+                                delta_secs = (updated_at - started_at).total_seconds()
+                                delta_secs = max(0, min(MAX_SESSION_MINUTES * 60, delta_secs))
+                                if delta_secs >= 1:
+                                    duration_sec = int(delta_secs)
+                                    duration_min = duration_sec // 60
+                            if duration_sec is None and started_at and ended_at and ended_at != started_at:
+                                delta_secs = (ended_at - started_at).total_seconds()
                                 delta_secs = max(0, min(MAX_SESSION_MINUTES * 60, delta_secs))
                                 duration_sec = int(delta_secs)
                                 duration_min = duration_sec // 60
@@ -1997,7 +2002,7 @@ def _get_calls_list(
                                 tenant_name = tenant_name_cache[tid]
                             else:
                                 tenant_name = fixed_tenant_name or (f"Client #{tid}" if tid else "—")
-                            sort_ts = ended_at or updated_at or started_at
+                            sort_ts = updated_at or ended_at or started_at
                             result_val = _call_result_from_event(last_event) if last_event else _vapi_call_result_from_status(
                                 r.get("status"), r.get("ended_reason")
                             )
@@ -2281,12 +2286,12 @@ def _get_call_detail(tenant_id: int, call_id: str) -> dict:
                         out["last_event_at"] = _iso_utc(fallback_last) if fallback_last else None
                     if out.get("result") == "other":
                         out["result"] = _vapi_call_result_from_status(vapi_row.get("status"), vapi_row.get("ended_reason"))
-                    if out.get("duration_sec") is None and v_started and (v_ended or v_updated):
-                        end_ts = v_ended or v_updated
-                        delta_secs = (end_ts - v_started).total_seconds()
+                    if out.get("duration_sec") is None and v_started and v_updated:
+                        delta_secs = (v_updated - v_started).total_seconds()
                         delta_secs = max(0, min(MAX_SESSION_MINUTES * 60, delta_secs))
-                        out["duration_sec"] = int(delta_secs)
-                        out["duration_min"] = out["duration_sec"] // 60
+                        if delta_secs >= 1:
+                            out["duration_sec"] = int(delta_secs)
+                            out["duration_min"] = out["duration_sec"] // 60
                 try:
                     cur.execute(
                         "SELECT duration_sec FROM vapi_call_usage WHERE tenant_id = %s AND vapi_call_id = %s",
