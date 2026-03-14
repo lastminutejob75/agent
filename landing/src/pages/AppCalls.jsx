@@ -174,12 +174,20 @@ function parseHourFromTime(value) {
   return match ? Number(match[1]) : -1;
 }
 
+function extractClockParts(value) {
+  const match = String(value || "").match(/(\d{1,2}):(\d{2})(?!.*\d:\d)/);
+  if (!match) return ["—", "—"];
+  return [match[1].padStart(2, "0"), match[2]];
+}
+
 function parseDurationMinutes(value) {
   const text = String(value || "").trim();
   if (!text || text === "—") return 0;
   if (/^\d+$/.test(text)) return Number(text);
   const colon = text.match(/^(\d{1,2}):(\d{2})$/);
   if (colon) return Number(colon[1]) + Math.round(Number(colon[2]) / 60);
+  const quote = text.match(/^(\d+)'(\d{2})$/);
+  if (quote) return Number(quote[1]) + Math.round(Number(quote[2]) / 60);
   const minutes = text.match(/(\d+)\s*(min|m)/i);
   if (minutes) return Number(minutes[1]);
   return 0;
@@ -1061,7 +1069,7 @@ export default function AppCalls() {
                   <div style={{ fontSize: "15px", fontWeight: 800, color: T.text, marginBottom: "2px" }}>Agenda</div>
                   <div style={{ fontSize: "12px", color: T.textFaint, marginBottom: "14px" }}>Prochains appels à traiter</div>
                   {upcomingItems.map((item) => {
-                    const [hh, mm] = String(item.time || "00:00").split(":");
+                    const [hh, mm] = extractClockParts(item.time);
                     const dialablePhone = getDialablePhone(item?.dialablePhone || item?.phone || item?.raw?.customer_number);
                     return (
                       <div key={item.id} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "10px 0", borderBottom: `1px solid ${T.borderLight}` }}>

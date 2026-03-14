@@ -1959,11 +1959,13 @@ def _get_calls_list(
                             updated_at = r.get("updated_at")
                             last_event = r.get("last_event")
                             duration_min: Optional[int] = None
+                            duration_sec: Optional[int] = None
                             if started_at and (ended_at or updated_at):
                                 end_ts = ended_at or updated_at
-                                delta_mins = (end_ts - started_at).total_seconds() / 60.0
-                                delta_mins = max(0, min(MAX_SESSION_MINUTES, delta_mins))
-                                duration_min = int(round(delta_mins, 0))
+                                delta_secs = (end_ts - started_at).total_seconds()
+                                delta_secs = max(0, min(MAX_SESSION_MINUTES * 60, delta_secs))
+                                duration_sec = int(delta_secs)
+                                duration_min = duration_sec // 60
 
                             tid = r.get("tenant_id")
                             if tid and tenant_id is None:
@@ -1987,6 +1989,7 @@ def _get_calls_list(
                                 "last_event": last_event or r.get("ended_reason") or r.get("status") or "",
                                 "result": result_val,
                                 "duration_min": duration_min,
+                                "duration_sec": duration_sec,
                             })
                             if r.get("call_id"):
                                 seen_call_ids.add(r.get("call_id"))
@@ -2068,14 +2071,17 @@ def _get_calls_list(
                         cs_started = r.get("cs_started")
                         cs_updated = r.get("cs_updated")
                         duration_min: Optional[int] = None
+                        duration_sec: Optional[int] = None
                         if cs_started and cs_updated:
-                            delta_mins = (cs_updated - cs_started).total_seconds() / 60.0
-                            delta_mins = max(0, min(MAX_SESSION_MINUTES, delta_mins))
-                            duration_min = int(round(delta_mins, 0))
+                            delta_secs = (cs_updated - cs_started).total_seconds()
+                            delta_secs = max(0, min(MAX_SESSION_MINUTES * 60, delta_secs))
+                            duration_sec = int(delta_secs)
+                            duration_min = duration_sec // 60
                         elif started_at and last_event_at:
-                            delta_mins = (last_event_at - started_at).total_seconds() / 60.0
-                            delta_mins = max(0, min(MAX_SESSION_MINUTES, delta_mins))
-                            duration_min = int(round(delta_mins, 0))
+                            delta_secs = (last_event_at - started_at).total_seconds()
+                            delta_secs = max(0, min(MAX_SESSION_MINUTES * 60, delta_secs))
+                            duration_sec = int(delta_secs)
+                            duration_min = duration_sec // 60
 
                         tid = r.get("client_id")
                         if tid and tenant_id is None:
@@ -2095,6 +2101,7 @@ def _get_calls_list(
                             "last_event": last_event or "",
                             "result": _call_result_from_event(last_event),
                             "duration_min": duration_min,
+                            "duration_sec": duration_sec,
                         })
                     items.sort(key=lambda x: ((x.get("last_event_at") or ""), (x.get("call_id") or "")), reverse=True)
                     if len(items) > limit:
@@ -2150,6 +2157,7 @@ def _get_call_detail(tenant_id: int, call_id: str) -> dict:
         "started_at": None,
         "last_event_at": None,
         "duration_min": None,
+        "duration_sec": None,
         "result": "other",
         "events": [],
     }
@@ -2203,11 +2211,12 @@ def _get_call_detail(tenant_id: int, call_id: str) -> dict:
                         first_ts = rows[0]["created_at"]
                         last_ts = rows[-1]["created_at"]
                         if hasattr(first_ts, "timestamp") and hasattr(last_ts, "timestamp"):
-                            delta_mins = (last_ts - first_ts).total_seconds() / 60.0
+                            delta_secs = (last_ts - first_ts).total_seconds()
                         else:
-                            delta_mins = 0
-                        delta_mins = max(0, min(MAX_SESSION_MINUTES, delta_mins))
-                        out["duration_min"] = int(round(delta_mins, 0))
+                            delta_secs = 0
+                        delta_secs = max(0, min(MAX_SESSION_MINUTES * 60, delta_secs))
+                        out["duration_sec"] = int(delta_secs)
+                        out["duration_min"] = out["duration_sec"] // 60
                     except Exception:
                         pass
                 cur.execute(
@@ -2219,9 +2228,10 @@ def _get_call_detail(tenant_id: int, call_id: str) -> dict:
                 )
                 cs = cur.fetchone()
                 if cs and cs.get("started_at") and cs.get("updated_at"):
-                    delta_mins = (cs["updated_at"] - cs["started_at"]).total_seconds() / 60.0
-                    delta_mins = max(0, min(MAX_SESSION_MINUTES, delta_mins))
-                    out["duration_min"] = int(round(delta_mins, 0))
+                    delta_secs = (cs["updated_at"] - cs["started_at"]).total_seconds()
+                    delta_secs = max(0, min(MAX_SESSION_MINUTES * 60, delta_secs))
+                    out["duration_sec"] = int(delta_secs)
+                    out["duration_min"] = out["duration_sec"] // 60
                 try:
                     cur.execute(
                         """
@@ -2249,11 +2259,12 @@ def _get_call_detail(tenant_id: int, call_id: str) -> dict:
                         out["last_event_at"] = _iso_utc(fallback_last) if fallback_last else None
                     if out.get("result") == "other":
                         out["result"] = _vapi_call_result_from_status(vapi_row.get("status"), vapi_row.get("ended_reason"))
-                    if out.get("duration_min") is None and v_started and (v_ended or v_updated):
+                    if out.get("duration_sec") is None and v_started and (v_ended or v_updated):
                         end_ts = v_ended or v_updated
-                        delta_mins = (end_ts - v_started).total_seconds() / 60.0
-                        delta_mins = max(0, min(MAX_SESSION_MINUTES, delta_mins))
-                        out["duration_min"] = int(round(delta_mins, 0))
+                        delta_secs = (end_ts - v_started).total_seconds()
+                        delta_secs = max(0, min(MAX_SESSION_MINUTES * 60, delta_secs))
+                        out["duration_sec"] = int(delta_secs)
+                        out["duration_min"] = out["duration_sec"] // 60
                 # Transcription depuis call_transcripts (si table existe)
                 try:
                     cur.execute(

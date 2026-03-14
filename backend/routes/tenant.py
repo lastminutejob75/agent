@@ -228,7 +228,12 @@ def _format_hhmm(value: Any, tz_name: str) -> str:
     dt = _parse_dt(value, tz_name)
     if not dt:
         return "—"
-    return dt.astimezone(_get_zoneinfo(tz_name)).strftime("%H:%M")
+    tz = _get_zoneinfo(tz_name)
+    local = dt.astimezone(tz)
+    now = datetime.now(tz)
+    if local.date() == now.date():
+        return local.strftime("%H:%M")
+    return local.strftime("%d/%m %H:%M")
 
 
 def _format_hour_slot(value: Any, tz_name: str) -> str:
@@ -238,8 +243,8 @@ def _format_hour_slot(value: Any, tz_name: str) -> str:
     return dt.astimezone(_get_zoneinfo(tz_name)).strftime("%Hh")
 
 
-def _format_duration_short(duration_min: Optional[int]) -> str:
-    total_seconds = max(0, int((duration_min or 0) * 60))
+def _format_duration_short(duration_sec: Optional[int]) -> str:
+    total_seconds = max(0, int(duration_sec or 0))
     minutes = total_seconds // 60
     seconds = total_seconds % 60
     return f"{minutes}'{seconds:02d}"
@@ -1214,6 +1219,7 @@ def tenant_calls(
             "customer_number": item.get("customer_number"),
             "started_at": item.get("started_at"),
             "last_event_at": item.get("last_event_at"),
+            "duration_sec": item.get("duration_sec"),
             "duration_min": item.get("duration_min"),
             "result": item.get("result") or "other",
             "events": [{"event": item.get("last_event"), "meta": {}}] if item.get("last_event") else [],
@@ -1236,6 +1242,7 @@ def tenant_calls(
                     "customer_number": raw_detail.get("customer_number") or list_detail.get("customer_number"),
                     "started_at": raw_detail.get("started_at") or list_detail.get("started_at"),
                     "last_event_at": raw_detail.get("last_event_at") or list_detail.get("last_event_at"),
+                    "duration_sec": raw_detail.get("duration_sec") if raw_detail.get("duration_sec") is not None else list_detail.get("duration_sec"),
                     "duration_min": raw_detail.get("duration_min") if raw_detail.get("duration_min") is not None else list_detail.get("duration_min"),
                     "result": raw_detail.get("result") or list_detail.get("result") or "other",
                     "events": raw_detail.get("events") or list_detail.get("events") or [],
@@ -1248,7 +1255,7 @@ def tenant_calls(
         calls.append({
             "id": call_id,
             "time": _format_hhmm(started_at, tz_name),
-            "duration": _format_duration_short(detail_for_display.get("duration_min") or item.get("duration_min")),
+            "duration": _format_duration_short(detail_for_display.get("duration_sec") if detail_for_display.get("duration_sec") is not None else item.get("duration_sec")),
             "patient_name": patient.get("display_name") or "Patient",
             "customer_number": _call_display_phone(item, detail_for_display),
             "agent_name": assistant_name,
@@ -1313,7 +1320,8 @@ def tenant_call_detail(
         "started_time": _format_hhmm(raw.get("started_at"), tz_name),
         "last_event_at": raw.get("last_event_at"),
         "last_event_time": _format_hhmm(raw.get("last_event_at"), tz_name),
-        "duration": _format_duration_short(raw.get("duration_min")),
+        "duration": _format_duration_short(raw.get("duration_sec")),
+        "duration_sec": raw.get("duration_sec"),
         "duration_min": raw.get("duration_min"),
         "transcript": raw.get("transcript"),
         "events": events,
