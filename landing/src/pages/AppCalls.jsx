@@ -193,6 +193,14 @@ function parseDurationMinutes(value) {
   return 0;
 }
 
+function parseIsoTimestamp(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return 0;
+  const parsed = new Date(raw);
+  const time = parsed.getTime();
+  return Number.isNaN(time) ? 0 : time;
+}
+
 function extractRdv(call) {
   const booking = call?.booking || call?.raw?.booking;
   if (booking?.start_iso || booking?.slot_label) {
@@ -253,6 +261,7 @@ function deriveAiScore(call) {
 
 function normalizeSummaryCall(call) {
   const patient = call?.patient || {};
+  const sortValue = parseIsoTimestamp(call?.last_event_at || call?.started_at);
   return {
     id: call?.call_id || call?.id || "",
     name: patient?.display_name || call?.patient_name || "Patient",
@@ -273,6 +282,7 @@ function normalizeSummaryCall(call) {
     transcript: [],
     patient,
     booking: call?.booking || null,
+    sortValue,
     raw: call,
   };
 }
@@ -300,6 +310,7 @@ function normalizeDetailCall(detail, fallback) {
     transcript: buildTranscriptLines(base?.transcript),
     patient,
     booking: base?.booking || fallback?.booking || null,
+    sortValue: parseIsoTimestamp(base?.last_event_at || base?.started_at || fallback?.raw?.last_event_at || fallback?.raw?.started_at),
     raw: base,
   };
 }
@@ -496,7 +507,7 @@ function CallRowModel({ call, onOpen, onRecall, isLast }) {
         <span style={{ fontSize: "13px", fontWeight: 600, color: T.textMid }}>{call.time}</span>
         <span style={{ fontSize: "11px", fontWeight: 700, color: call.statusUi.color, background: call.statusUi.bg, border: `1px solid ${call.statusUi.border}`, borderRadius: "20px", padding: "2px 9px" }}>{call.statusUi.label}</span>
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          {call.durationFmt !== "—" && call.durationFmt !== "0:00" ? <span style={{ fontSize: "10px", color: T.textFaint }}>{call.durationFmt}</span> : null}
+          <span style={{ fontSize: "10px", color: T.textFaint, fontWeight: 600 }}>⏱ {call.durationFmt || "—"}</span>
           {call.aiScore ? (
             <div style={{ display: "flex", alignItems: "center", gap: "3px" }}>
               <div style={{ width: "5px", height: "5px", borderRadius: "50%", background: call.aiScore.confidence >= 90 ? T.teal : call.aiScore.confidence >= 75 ? T.orange : T.red }} />
@@ -663,7 +674,10 @@ export default function AppCalls() {
   }, [tab]);
 
   const calls = payload?.calls || [];
-  const normalizedCalls = useMemo(() => calls.map(normalizeSummaryCall), [calls]);
+  const normalizedCalls = useMemo(
+    () => calls.map(normalizeSummaryCall).sort((a, b) => (b.sortValue || 0) - (a.sortValue || 0)),
+    [calls],
+  );
   const filteredCalls = useMemo(() => {
     return normalizedCalls.filter((call) => {
       const matchesSearch = !search.trim() || [call.name, call.phone, call.summary].join(" ").toLowerCase().includes(search.trim().toLowerCase());
@@ -677,7 +691,9 @@ export default function AppCalls() {
       { label: "Matin", range: "07h – 12h", calls: filteredCalls.filter((call) => call.hour >= 7 && call.hour < 12) },
       { label: "Après-midi", range: "12h – 18h", calls: filteredCalls.filter((call) => call.hour >= 12 && call.hour < 18) },
       { label: "Soir", range: "18h – 07h", calls: filteredCalls.filter((call) => call.hour < 7 || call.hour >= 18) },
-    ].filter((group) => group.calls.length > 0);
+    ]
+      .filter((group) => group.calls.length > 0)
+      .sort((a, b) => ((b.calls[0]?.sortValue || 0) - (a.calls[0]?.sortValue || 0)));
   }, [filteredCalls]);
   const sparkSeries = useMemo(() => buildSparkSeries(normalizedCalls), [normalizedCalls]);
   const stats = useMemo(() => {
