@@ -47,7 +47,15 @@ from backend.routes.admin import (
     _get_tenant_detail,
 )
 from backend.services.email_service import send_agenda_contact_request_email
-from backend.tenant_config import derive_horaires_text, get_booking_rules, get_faq, normalize_faq_payload, reset_faq_params, set_params
+from backend.tenant_config import (
+    DEFAULT_FAQ,
+    derive_horaires_text,
+    get_booking_rules,
+    get_faq,
+    normalize_faq_payload,
+    reset_faq_params,
+    set_params,
+)
 from backend.tenants_pg import pg_delete_tenant_param_keys, pg_update_tenant_name, pg_update_tenant_params
 from backend.vapi_utils import update_vapi_assistant_faq
 
@@ -251,6 +259,136 @@ def _count_active_faq_items(faq: Any) -> int:
             if item.get("active", True) and (item.get("question") or item.get("answer")):
                 total += 1
     return total
+
+
+def _faq_from_tenant_params(params: Dict[str, Any]) -> List[Dict[str, Any]]:
+    faq = params.get("faq_json")
+    if faq:
+        if isinstance(faq, str):
+            try:
+                parsed = json.loads(faq)
+                normalized = normalize_faq_payload(parsed)
+                if normalized:
+                    return normalized
+            except Exception:
+                pass
+        elif isinstance(faq, list):
+            normalized = normalize_faq_payload(faq)
+            if normalized:
+                return normalized
+    specialty = str(params.get("sector") or "default").strip() or "default"
+    return DEFAULT_FAQ.get(specialty, DEFAULT_FAQ["default"])
+
+
+def _get_tenant_me_detail(tenant_id: int) -> Optional[dict]:
+    """Charge seulement les données nécessaires à /api/tenant/me."""
+    if config.USE_PG_TENANTS:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            from backend.tenants_pg import _pg_url, set_tenant_id_on_connection
+
+            url = _pg_url()
+            if url:
+                with psycopg.connect(url, row_factory=dict_row) as conn:
+                    set_tenant_id_on_connection(conn, tenant_id)
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            SELECT
+                                t.tenant_id,
+                                t.name,
+                                t.timezone,
+                                t.status,
+                                t.created_at,
+                                tc.params_json,
+                                (
+                                    SELECT tr.key
+                                    FROM tenant_routing tr
+                                    WHERE tr.tenant_id = t.tenant_id
+                                      AND tr.channel IN ('vocal', 'voice')
+                                      AND COALESCE(tr.is_active, TRUE) = TRUE
+                                    ORDER BY tr.key
+                                    LIMIT 1
+                                ) AS voice_number
+                            FROM tenants t
+                            LEFT JOIN tenant_config tc ON tc.tenant_id = t.tenant_id
+                            WHERE t.tenant_id = %s
+                            LIMIT 1
+                            """,
+                            (tenant_id,),
+                        )
+                        row = cur.fetchone()
+                        if row:
+                            params = row.get("params_json") or {}
+                            if isinstance(params, str):
+                                try:
+                                    params = json.loads(params)
+                                except Exception:
+                                    params = {}
+                            elif not isinstance(params, dict):
+                                params = {}
+                            return {
+                                "tenant_id": row.get("tenant_id"),
+                                "name": row.get("name"),
+                                "timezone": row.get("timezone"),
+                                "status": row.get("status"),
+                                "created_at": str(row.get("created_at")) if row.get("created_at") else None,
+                                "params": params,
+                                "voice_number": row.get("voice_number") or None,
+                            }
+        except Exception as e:
+            logger.debug("tenant me detail pg failed tenant_id=%s err=%s", tenant_id, e)
+
+    ensure_tenant_config()
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT
+                t.tenant_id,
+                t.name,
+                t.timezone,
+                t.status,
+                t.created_at,
+                tc.params_json,
+                (
+                    SELECT tr.did_key
+                    FROM tenant_routing tr
+                    WHERE tr.tenant_id = t.tenant_id
+                      AND tr.channel IN ('vocal', 'voice')
+                    ORDER BY tr.did_key
+                    LIMIT 1
+                ) AS voice_number
+            FROM tenants t
+            LEFT JOIN tenant_config tc ON tc.tenant_id = t.tenant_id
+            WHERE t.tenant_id = ?
+            LIMIT 1
+            """,
+            (tenant_id,),
+        ).fetchone()
+        if not row:
+            return None
+        params = {}
+        raw_params = row["params_json"]
+        if raw_params:
+            try:
+                parsed = json.loads(raw_params)
+                if isinstance(parsed, dict):
+                    params = parsed
+            except Exception:
+                params = {}
+        return {
+            "tenant_id": row["tenant_id"],
+            "name": row["name"],
+            "timezone": row["timezone"],
+            "status": row["status"],
+            "created_at": row["created_at"],
+            "params": params,
+            "voice_number": row["voice_number"] or None,
+        }
+    finally:
+        conn.close()
 
 
 def _last_call_signal(detail: dict) -> Dict[str, Optional[str]]:
@@ -856,20 +994,16 @@ class TenantHandoffUpdateBody(BaseModel):
 def tenant_me(auth: dict = Depends(require_tenant_auth)):
     """Profil du tenant connecté."""
     tenant_id = auth["tenant_id"]
-    d = _get_tenant_detail(tenant_id)
+    d = _get_tenant_me_detail(tenant_id)
     if not d:
         raise HTTPException(404, "Tenant not found")
     params = d.get("params") or {}
-    routing = d.get("routing") or []
-    voice_number = next(
-        ((r.get("key") or "").strip() for r in routing if (r.get("channel") or "").strip() == "vocal" and (r.get("key") or "").strip()),
-        None,
-    )
+    voice_number = (d.get("voice_number") or "").strip() or None
     vapi_assistant_id = (params.get("vapi_assistant_id") or "").strip()
     calendar_provider = (params.get("calendar_provider") or "none").strip() or "none"
     calendar_id = (params.get("calendar_id") or "").strip()
     assistant_name = (params.get("assistant_name") or "").strip()
-    faq = get_faq(tenant_id)
+    faq = _faq_from_tenant_params(params)
     faq_ready = _count_active_faq_items(faq) > 0
     _explicit = _is_truthy(params.get("client_onboarding_completed"))
     _vapi_ready = bool(vapi_assistant_id)

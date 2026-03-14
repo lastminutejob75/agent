@@ -46,6 +46,7 @@ const IMMERSIVE_ROUTES = new Set([
   "/app/appels",
 ]);
 
+const TENANT_ME_CACHE_KEY = "uwi_tenant_me_snapshot";
 const DASHBOARD_CACHE_KEY = "uwi_tenant_dashboard_snapshot";
 
 function Dot({ color = TEAL, size = 8 }) {
@@ -114,9 +115,24 @@ function ShellNavItem({ to, icon, label, end = false, closeSidebar, muted = fals
 }
 
 export default function AppLayout() {
-  const [me, setMe] = useState(null);
+  const [me, setMe] = useState(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = window.sessionStorage.getItem(TENANT_ME_CACHE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  });
   const [err, setErr] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      return !window.sessionStorage.getItem(TENANT_ME_CACHE_KEY);
+    } catch {
+      return true;
+    }
+  });
   const [dashboard, setDashboard] = useState(() => {
     if (typeof window === "undefined") return null;
     try {
@@ -141,6 +157,11 @@ export default function AppLayout() {
       .then((m) => {
         if (!mounted) return null;
         setMe(m);
+        try {
+          window.sessionStorage.setItem(TENANT_ME_CACHE_KEY, JSON.stringify(m));
+        } catch {
+          // Ignore sessionStorage quota or availability issues.
+        }
         setLoading(false);
         const runDashboardRefresh = () => {
           api.tenantDashboard()
@@ -170,6 +191,12 @@ export default function AppLayout() {
         if (isTenantUnauthorized(e)) {
           setImpersonation(null);
           clearTenantToken();
+          try {
+            window.sessionStorage.removeItem(TENANT_ME_CACHE_KEY);
+            window.sessionStorage.removeItem(DASHBOARD_CACHE_KEY);
+          } catch {
+            // Ignore storage cleanup failures.
+          }
           window.location.href = "/";
           return;
         }

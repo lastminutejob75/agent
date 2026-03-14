@@ -3,12 +3,51 @@ import { Routes, Route, Navigate, Outlet } from "react-router-dom";
 import SeoHead from "./components/SeoHead";
 import AuthLayout from "./components/AuthLayout";
 
-const publicPageModules = import.meta.glob("./pages/*.jsx", {
-  eager: import.meta.env.SSR,
+const publicPageModules = import.meta.glob([
+  "./pages/CreerAssistante.jsx",
+  "./pages/UwiLandingPage.jsx",
+  "./pages/CGV.jsx",
+  "./pages/CGU.jsx",
+  "./pages/MentionsLegales.jsx",
+  "./pages/Contact.jsx",
+  "./pages/Demo.jsx",
+  "./pages/SeoVerticalPage.jsx",
+  "./pages/Login.jsx",
+  "./pages/ForgotPassword.jsx",
+  "./pages/ResetPassword.jsx",
+  "./pages/AuthGoogleCallback.jsx",
+  "./pages/EssaiGratuit.jsx",
+  "./pages/DecouverteClient.jsx",
+  "./pages/Checkout.jsx",
+  "./pages/CheckoutReturn.jsx",
+  "./pages/BillingPage.jsx",
+  "./pages/NotFound.jsx",
+]);
+const publicPageModulesEager = import.meta.glob([
+  "./pages/CreerAssistante.jsx",
+  "./pages/UwiLandingPage.jsx",
+  "./pages/CGV.jsx",
+  "./pages/CGU.jsx",
+  "./pages/MentionsLegales.jsx",
+  "./pages/Contact.jsx",
+  "./pages/Demo.jsx",
+  "./pages/SeoVerticalPage.jsx",
+  "./pages/Login.jsx",
+  "./pages/ForgotPassword.jsx",
+  "./pages/ResetPassword.jsx",
+  "./pages/AuthGoogleCallback.jsx",
+  "./pages/EssaiGratuit.jsx",
+  "./pages/DecouverteClient.jsx",
+  "./pages/Checkout.jsx",
+  "./pages/CheckoutReturn.jsx",
+  "./pages/BillingPage.jsx",
+  "./pages/NotFound.jsx",
+], {
+  eager: true,
 });
 
 function resolvePublicPage(modulePath) {
-  const modOrLoader = publicPageModules[modulePath];
+  const modOrLoader = import.meta.env.SSR ? publicPageModulesEager[modulePath] : publicPageModules[modulePath];
   if (!modOrLoader) {
     throw new Error(`Public page module not found: ${modulePath}`);
   }
