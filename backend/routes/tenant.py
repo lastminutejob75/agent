@@ -1289,6 +1289,7 @@ def tenant_agenda(
     auth: dict = Depends(require_tenant_auth),
     date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     upcoming_days: int = Query(1, ge=1, le=30),
+    compact: bool = Query(False),
 ):
     """Retourne les rendez-vous du jour ou à venir depuis Google Calendar ou le stockage local."""
     tenant_id = auth["tenant_id"]
@@ -1309,12 +1310,13 @@ def tenant_agenda(
     else:
         day_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
         day_end = day_start + timedelta(days=max(1, int(upcoming_days)))
+    compact_mode = bool(compact and not date)
     slots: List[Dict[str, Any]] = []
     profile_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 
     mirror_enabled = _google_mirror_enabled(detail)
     mirror_lookup: Optional[Dict[str, List[Dict[str, Any]]]] = None
-    if mirror_enabled:
+    if mirror_enabled and not compact_mode:
         mirror_lookup = _load_local_appointments_for_window(tenant_id, day_start, day_end, tz_name)
     if (params.get("calendar_provider") or "").strip() == "google" and (params.get("calendar_id") or "").strip():
         try:
@@ -1325,6 +1327,7 @@ def tenant_agenda(
                 timeMax=day_end.isoformat(),
                 singleEvents=True,
                 orderBy="startTime",
+                fields="items(id,summary,description,start,end)",
             ).execute()
             for event in result.get("items", []):
                 raw_start = (event.get("start") or {}).get("dateTime") or (event.get("start") or {}).get("date")
@@ -1345,7 +1348,7 @@ def tenant_agenda(
                 motif = _extract_google_description_line(description, "Motif") or (summary if summary and not summary.startswith("RDV - ") else "Consultation")
                 source = "UWI" if summary.startswith("RDV - ") or "Patient:" in description else "EXTERNAL"
                 mirror_booking = None
-                if mirror_enabled and source == "UWI":
+                if mirror_enabled and not compact_mode and source == "UWI":
                     mirror_booking = _find_local_appointment_for_google_event(
                         tenant_id=tenant_id,
                         start_local=start_local,
@@ -1364,8 +1367,8 @@ def tenant_agenda(
                     "event_id": event.get("id") or "",
                     "appointment_id": int(mirror_booking.get("id") or 0) if mirror_booking else None,
                     "slot_id": int(mirror_booking.get("slot_id") or 0) if mirror_booking else None,
-                    "can_cancel": source == "UWI",
-                    "can_reschedule": bool(mirror_booking),
+                    "can_cancel": bool(source == "UWI" and not compact_mode),
+                    "can_reschedule": bool(mirror_booking) if not compact_mode else False,
                 })
         except Exception as e:
             logger.warning("tenant agenda google failed tenant_id=%s: %s", tenant_id, e)

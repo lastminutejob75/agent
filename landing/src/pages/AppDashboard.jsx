@@ -15,6 +15,9 @@ const AppDashboardWorkflowSection = lazy(() => import("../components/AppDashboar
 
 const TEAL_DARK = "#0ea899";
 const NAVY = "#111827";
+const DASHBOARD_KPIS_CACHE_KEY = "uwi_app_dashboard_kpis";
+const DASHBOARD_CALLS_CACHE_KEY = "uwi_app_dashboard_calls";
+const DASHBOARD_AGENDA_CACHE_KEY = "uwi_app_dashboard_agenda";
 
 const STATUS_CFG = {
   TRANSFERRED: {
@@ -266,16 +269,35 @@ function getActionCta(call) {
   return call?.contextual_action?.label || "Ouvrir";
 }
 
+function readSessionCache(key, fallback = null) {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const raw = window.sessionStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeSessionCache(key, value) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Ignore storage availability or quota issues.
+  }
+}
+
 export default function AppDashboard() {
   const navigate = useNavigate();
   const outletContext = useOutletContext() || {};
   const contextMe = outletContext.me || null;
-  const [kpis, setKpis] = useState(null);
-  const [calls, setCalls] = useState([]);
-  const [agenda, setAgenda] = useState(null);
-  const [kpisLoading, setKpisLoading] = useState(true);
-  const [callsLoading, setCallsLoading] = useState(true);
-  const [agendaLoading, setAgendaLoading] = useState(true);
+  const [kpis, setKpis] = useState(() => readSessionCache(DASHBOARD_KPIS_CACHE_KEY, null));
+  const [calls, setCalls] = useState(() => readSessionCache(DASHBOARD_CALLS_CACHE_KEY, null));
+  const [agenda, setAgenda] = useState(() => readSessionCache(DASHBOARD_AGENDA_CACHE_KEY, null));
+  const [kpisLoading, setKpisLoading] = useState(() => readSessionCache(DASHBOARD_KPIS_CACHE_KEY, null) == null);
+  const [callsLoading, setCallsLoading] = useState(() => readSessionCache(DASHBOARD_CALLS_CACHE_KEY, null) == null);
+  const [agendaLoading, setAgendaLoading] = useState(() => readSessionCache(DASHBOARD_AGENDA_CACHE_KEY, null) == null);
   const [me, setMe] = useState(contextMe);
   const [assistantImageFailed, setAssistantImageFailed] = useState(false);
   const [tourStepIndex, setTourStepIndex] = useState(-1);
@@ -289,13 +311,17 @@ export default function AppDashboard() {
 
   useEffect(() => {
     let mounted = true;
-    setKpisLoading(true);
-    setCallsLoading(true);
-    setAgendaLoading(true);
+    let agendaIdleId = null;
+    let agendaTimeoutId = null;
+    setKpisLoading((current) => (kpis ? current : true));
+    setCallsLoading((current) => (Array.isArray(calls) ? current : true));
+    setAgendaLoading((current) => (agenda ? current : true));
 
     api.tenantKpis(1)
       .then((data) => {
-        if (mounted) setKpis(data);
+        if (!mounted) return;
+        setKpis(data);
+        writeSessionCache(DASHBOARD_KPIS_CACHE_KEY, data);
       })
       .catch(() => {
         if (mounted) setKpis(null);
@@ -304,9 +330,12 @@ export default function AppDashboard() {
         if (mounted) setKpisLoading(false);
       });
 
-    api.tenantGetCalls("?limit=10&days=7")
+    api.tenantGetCalls("?limit=4&days=7")
       .then((data) => {
-        if (mounted) setCalls(data?.calls || []);
+        if (!mounted) return;
+        const nextCalls = data?.calls || [];
+        setCalls(nextCalls);
+        writeSessionCache(DASHBOARD_CALLS_CACHE_KEY, nextCalls);
       })
       .catch(() => {
         if (mounted) setCalls([]);
@@ -315,19 +344,37 @@ export default function AppDashboard() {
         if (mounted) setCallsLoading(false);
       });
 
-    api.tenantGetAgenda("?upcoming_days=7")
-      .then((data) => {
-        if (mounted) setAgenda(data);
-      })
-      .catch(() => {
-        if (mounted) setAgenda(null);
-      })
-      .finally(() => {
-        if (mounted) setAgendaLoading(false);
-      });
+    const loadAgenda = () => {
+      api.tenantGetAgenda("?upcoming_days=3&compact=1")
+        .then((data) => {
+          if (!mounted) return;
+          setAgenda(data);
+          writeSessionCache(DASHBOARD_AGENDA_CACHE_KEY, data);
+        })
+        .catch(() => {
+          if (mounted) setAgenda(null);
+        })
+        .finally(() => {
+          if (mounted) setAgendaLoading(false);
+        });
+    };
+
+    if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
+      agendaIdleId = window.requestIdleCallback(loadAgenda, { timeout: 1200 });
+    } else if (typeof window !== "undefined") {
+      agendaTimeoutId = window.setTimeout(loadAgenda, 250);
+    } else {
+      loadAgenda();
+    }
 
     return () => {
       mounted = false;
+      if (typeof window !== "undefined" && agendaIdleId !== null && typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(agendaIdleId);
+      }
+      if (typeof window !== "undefined" && agendaTimeoutId !== null) {
+        window.clearTimeout(agendaTimeoutId);
+      }
     };
   }, []);
 
