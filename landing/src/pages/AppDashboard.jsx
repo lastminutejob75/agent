@@ -194,6 +194,31 @@ function getPhoneSummary(call, fallbackAgent) {
   return call.customer_number || call.agent_name || fallbackAgent || "Numéro non identifié";
 }
 
+function getCallSortValue(call) {
+  const raw = String(call?.last_event_at || call?.started_at || "").trim();
+  if (raw) {
+    const parsed = new Date(raw).getTime();
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return 0;
+}
+
+function formatCallTimeFallback(call) {
+  const raw = String(call?.started_at || call?.last_event_at || "").trim();
+  if (!raw) return "--:--";
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return "--:--";
+  return `${String(parsed.getHours()).padStart(2, "0")}:${String(parsed.getMinutes()).padStart(2, "0")}`;
+}
+
+function formatCallDurationFallback(call) {
+  const sec = Number(call?.duration_sec);
+  if (!Number.isFinite(sec) || sec < 0) return "Durée inconnue";
+  const minutes = Math.floor(sec / 60);
+  const seconds = sec % 60;
+  return `${minutes}'${String(seconds).padStart(2, "0")}`;
+}
+
 function getDialablePhone(value) {
   const raw = String(value || "").trim();
   if (!raw || /num[eé]ro non identifi[eé]/i.test(raw)) return "";
@@ -481,7 +506,11 @@ export default function AppDashboard() {
 
   const recentCallItems = useMemo(
     () =>
-      safeCalls.slice(0, 4).map((call) => {
+      safeCalls
+        .slice()
+        .sort((a, b) => getCallSortValue(b) - getCallSortValue(a))
+        .slice(0, 4)
+        .map((call) => {
         const statusBadge = STATUS_CFG[call.status] || STATUS_CFG.ABANDONED;
         const icon = callIconTheme(call.status);
         const phoneLabel = getPhoneSummary(call, assistantName);
@@ -493,8 +522,8 @@ export default function AppDashboard() {
           summary: call.summary || "Aucun résumé disponible.",
           reasonLabel: call.reason_label || "",
           reasonBadge: getReasonBadge(call),
-          time: call.time || "--:--",
-          duration: call.duration || "—",
+          time: call.time || formatCallTimeFallback(call),
+          duration: call.duration || formatCallDurationFallback(call),
           statusBadge,
           iconBg: icon.bg,
           iconColor: icon.color,
