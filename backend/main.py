@@ -552,6 +552,7 @@ async def debug_call_durations():
                 except Exception as ue:
                     usage_exists = str(ue)[:100]
                 return {
+                    "version": "v3_updated_at",
                     "vapi_calls": calls,
                     "vapi_call_usage_exists": usage_exists,
                     "vapi_call_usage": usage_rows,
