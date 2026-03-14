@@ -1984,8 +1984,8 @@ def _get_calls_list(
                                 "tenant_id": tid,
                                 "tenant_name": tenant_name,
                                 "customer_number": (r.get("customer_number") or "").strip(),
-                                "started_at": started_at.isoformat() + "Z" if hasattr(started_at, "isoformat") else str(started_at or ""),
-                                "last_event_at": sort_ts.isoformat() + "Z" if hasattr(sort_ts, "isoformat") else str(sort_ts or ""),
+                                "started_at": _iso_utc(started_at),
+                                "last_event_at": _iso_utc(sort_ts),
                                 "last_event": last_event or r.get("ended_reason") or r.get("status") or "",
                                 "result": result_val,
                                 "duration_min": duration_min,
@@ -2096,8 +2096,8 @@ def _get_calls_list(
                             "tenant_id": tid,
                             "tenant_name": tenant_name,
                             "customer_number": "",
-                            "started_at": started_at.isoformat() + "Z" if hasattr(started_at, "isoformat") else str(started_at),
-                            "last_event_at": last_event_at.isoformat() + "Z" if hasattr(last_event_at, "isoformat") else str(last_event_at),
+                            "started_at": _iso_utc(started_at),
+                            "last_event_at": _iso_utc(last_event_at),
                             "last_event": last_event or "",
                             "result": _call_result_from_event(last_event),
                             "duration_min": duration_min,
@@ -2235,7 +2235,7 @@ def _get_call_detail(tenant_id: int, call_id: str) -> dict:
                 try:
                     cur.execute(
                         """
-                        SELECT customer_number
+                        SELECT customer_number, started_at, ended_at, updated_at, status, ended_reason
                         FROM vapi_calls
                         WHERE tenant_id = %s AND call_id = %s
                         LIMIT 1
