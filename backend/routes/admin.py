@@ -1933,7 +1933,9 @@ def _get_calls_list(
                                 """ + ivr_agg_filter + """
                                 GROUP BY client_id, call_id
                             )
-                            SELECT v.tenant_id, v.call_id, v.customer_number, v.started_at, v.ended_at, v.updated_at,
+                            SELECT v.tenant_id, v.call_id, v.customer_number,
+                                   COALESCE(v.started_at, v.created_at) AS started_at,
+                                   v.ended_at, v.updated_at,
                                    v.status, v.ended_reason, e.last_event
                             FROM vapi_calls v
                             LEFT JOIN ivr_agg e ON e.client_id = v.tenant_id AND e.call_id = v.call_id

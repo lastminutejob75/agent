@@ -964,6 +964,13 @@ async def vapi_webhook(request: Request):
                 if _ended_at is None:
                     from datetime import datetime, timezone
                     _ended_at = datetime.now(timezone.utc)
+                _raw_started = _call.get("startedAt") or _call.get("createdAt")
+                if isinstance(_raw_started, str):
+                    try:
+                        from datetime import datetime as _dt
+                        _started_at = _dt.fromisoformat(_raw_started.replace("Z", "+00:00")[:26])
+                    except Exception:
+                        pass
             if _cid and _tid:
                 upsert_vapi_call(
                     _tid,
