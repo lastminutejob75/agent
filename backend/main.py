@@ -739,7 +739,12 @@ async def debug_vapi_patch_tools():
 
 @app.post("/debug/vapi-cleanup-inline-tools")
 async def debug_vapi_cleanup_inline_tools():
-    """Supprime function_tool inline de model.tools (garde endCall) pour éviter le conflit avec toolIds."""
+    """
+    Nettoie tous les assistants Vapi :
+    1. Supprime function_tool inline de model.tools (garde endCall)
+    2. Garantit que VAPI_FUNCTION_TOOL_ID est dans model.toolIds
+    Stratégie unique : model.toolIds pour le tool persisté.
+    """
     import os
     import httpx
     results = {}
@@ -747,6 +752,10 @@ async def debug_vapi_cleanup_inline_tools():
         api_key = (os.environ.get("VAPI_API_KEY") or "").strip()
         if not api_key:
             return {"error": "VAPI_API_KEY non configuré"}
+
+        function_tool_id = (os.environ.get("VAPI_FUNCTION_TOOL_ID") or "").strip()
+        if not function_tool_id:
+            return {"error": "VAPI_FUNCTION_TOOL_ID non configuré"}
 
         vapi_ids = set()
         env_id = (os.environ.get("VAPI_ASSISTANT_ID") or "").strip()
@@ -773,18 +782,33 @@ async def debug_vapi_cleanup_inline_tools():
                     data = res.json()
                     model = data.get("model") or {}
                     inline_tools = model.get("tools") or []
-                    tool_ids = model.get("toolIds") or []
+                    current_tool_ids = set(model.get("toolIds") or [])
 
                     kept = [t for t in inline_tools if t.get("type") != "function"]
                     removed = [t for t in inline_tools if t.get("type") == "function"]
 
-                    if not removed:
-                        results[vid[:24]] = {"skipped": "no inline function tool", "toolIds": tool_ids}
+                    needs_patch = False
+                    patch_model = {**model}
+
+                    if removed:
+                        patch_model["tools"] = kept
+                        needs_patch = True
+
+                    if function_tool_id not in current_tool_ids:
+                        current_tool_ids.add(function_tool_id)
+                        needs_patch = True
+                    patch_model["toolIds"] = list(current_tool_ids)
+
+                    if not needs_patch:
+                        results[vid[:24]] = {
+                            "skipped": "already clean",
+                            "toolIds": list(current_tool_ids),
+                        }
                         continue
 
                     patch_res = await client.patch(
                         f"https://api.vapi.ai/assistant/{vid}",
-                        json={"model": {**model, "tools": kept}},
+                        json={"model": patch_model},
                         headers=headers, timeout=15,
                     )
                     patch_res.raise_for_status()
@@ -798,7 +822,7 @@ async def debug_vapi_cleanup_inline_tools():
                     }
                 except Exception as e:
                     results[vid[:24]] = {"error": str(e)[:200]}
-        return {"cleaned": results}
+        return {"cleaned": results, "function_tool_id": function_tool_id}
     except Exception as e:
         return {"error": str(e)[:300]}
 
