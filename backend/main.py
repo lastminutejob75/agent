@@ -562,7 +562,7 @@ async def debug_call_durations():
 
 @app.get("/debug/calls-diag")
 async def debug_calls_diag():
-    """Diagnostic : teste la même requête que _get_calls_list."""
+    """Diagnostic : teste _get_calls_list pour chaque tenant trouvé."""
     import os
     from datetime import datetime, timedelta
     url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
@@ -573,29 +573,40 @@ async def debug_calls_diag():
     end = now.strftime("%Y-%m-%d %H:%M:%S")
     try:
         from backend.pg_pool import pg_connection
+        from backend.routes.admin import _get_calls_list
         with pg_connection() as conn:
             with conn.cursor() as cur:
+                cur.execute("SELECT DISTINCT tenant_id FROM vapi_calls WHERE updated_at >= %s LIMIT 5", (start,))
+                tenant_ids = [r["tenant_id"] for r in cur.fetchall()]
                 cur.execute(
-                    """SELECT v.tenant_id, v.call_id, v.customer_number,
-                              COALESCE(v.started_at, v.created_at)::text AS started_at,
-                              v.updated_at::text AS updated_at,
-                              v.status
-                       FROM vapi_calls v
-                       WHERE ((v.started_at >= %s AND v.started_at <= %s)
-                          OR (v.updated_at >= %s AND v.updated_at <= %s))
-                       ORDER BY COALESCE(v.ended_at, v.updated_at, v.started_at) DESC NULLS LAST
-                       LIMIT 10""",
+                    """SELECT tenant_id, COUNT(*) as cnt FROM vapi_calls
+                       WHERE ((started_at >= %s AND started_at <= %s) OR (updated_at >= %s AND updated_at <= %s))
+                       GROUP BY tenant_id""",
                     (start, end, start, end),
                 )
-                rows = [dict(r) for r in cur.fetchall()]
-                tenants = list({r.get("tenant_id") for r in rows})
-                return {
-                    "start": start,
-                    "end": end,
-                    "total_rows": len(rows),
-                    "tenants_found": tenants,
-                    "rows": rows,
-                }
+                counts_by_tenant = {r["tenant_id"]: r["cnt"] for r in cur.fetchall()}
+        results = {}
+        for tid in tenant_ids:
+            try:
+                raw = _get_calls_list(tenant_id=tid, days=30, limit=5)
+                items = raw.get("items") or []
+                results[str(tid)] = {"items_count": len(items), "first_call_id": items[0].get("call_id") if items else None}
+            except Exception as e:
+                results[str(tid)] = {"error": str(e)[:200]}
+        cur_users = []
+        try:
+            with pg_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT id, email, tenant_id, role FROM tenant_users LIMIT 10")
+                    cur_users = [dict(r) for r in cur.fetchall()]
+        except Exception:
+            pass
+        return {
+            "start": start, "end": end,
+            "raw_counts_by_tenant": counts_by_tenant,
+            "get_calls_list_results": results,
+            "tenant_users": cur_users,
+        }
     except Exception as e:
         return {"error": str(e)[:300]}
 
