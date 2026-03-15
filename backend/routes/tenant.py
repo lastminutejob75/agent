@@ -1174,6 +1174,7 @@ def tenant_calls(
     assistant_name = (((detail.get("params") or {}).get("assistant_name")) or "Sophie").strip().title()
     raw = _get_calls_list(tenant_id=tenant_id, days=days, limit=limit, tenant_detail=detail)
     items = raw.get("items") or []
+    logger.info("[tenant_calls] tenant_id=%s days=%s limit=%s compact=%s raw_items=%d", tenant_id, days, limit, compact, len(items))
     if not items and not (os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")):
         ensure_tenant_config()
         conn = get_conn()

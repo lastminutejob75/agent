@@ -560,6 +560,46 @@ async def debug_call_durations():
         return {"error": str(e)[:200]}
 
 
+@app.get("/debug/calls-diag")
+async def debug_calls_diag():
+    """Diagnostic : teste la même requête que _get_calls_list."""
+    import os
+    from datetime import datetime, timedelta
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    if not url:
+        return {"error": "no PG URL"}
+    now = datetime.utcnow()
+    start = (now - timedelta(days=30)).strftime("%Y-%m-%d 00:00:00")
+    end = now.strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        from backend.pg_pool import pg_connection
+        with pg_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT v.tenant_id, v.call_id, v.customer_number,
+                              COALESCE(v.started_at, v.created_at)::text AS started_at,
+                              v.updated_at::text AS updated_at,
+                              v.status
+                       FROM vapi_calls v
+                       WHERE ((v.started_at >= %s AND v.started_at <= %s)
+                          OR (v.updated_at >= %s AND v.updated_at <= %s))
+                       ORDER BY COALESCE(v.ended_at, v.updated_at, v.started_at) DESC NULLS LAST
+                       LIMIT 10""",
+                    (start, end, start, end),
+                )
+                rows = [dict(r) for r in cur.fetchall()]
+                tenants = list({r.get("tenant_id") for r in rows})
+                return {
+                    "start": start,
+                    "end": end,
+                    "total_rows": len(rows),
+                    "tenants_found": tenants,
+                    "rows": rows,
+                }
+    except Exception as e:
+        return {"error": str(e)[:300]}
+
+
 @app.post("/chat")
 async def chat(
     payload: dict,
