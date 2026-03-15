@@ -1893,36 +1893,7 @@ def _get_calls_list(
 
             with psycopg.connect(url, row_factory=dict_row) as conn:
                 with conn.cursor() as cur:
-                    # 1) Essayer vapi_calls (tous les appels, même sans interaction engine)
                     try:
-                        vapi_params: List[Any] = [start, end]
-                        ivr_agg_filter = " AND created_at >= %s AND created_at <= %s"
-                        tenant_filter = ""
-                        if tenant_id is not None:
-                            ivr_agg_filter += " AND client_id = %s"
-                            vapi_params.append(tenant_id)
-                            tenant_filter = " AND v.tenant_id = %s"
-                        vapi_params.extend([start, end, start, end])
-                        if tenant_id is not None:
-                            vapi_params.append(tenant_id)
-
-                        cursor_filter = ""
-                        if cursor_ts and cursor_id:
-                            cursor_filter = " AND (v.updated_at < %s::timestamptz OR (v.updated_at = %s::timestamptz AND v.call_id < %s))"
-                            vapi_params.extend([cursor_ts, cursor_ts, cursor_id])
-
-                        result_filter_sql = ""
-                        if result_filter == "rdv":
-                            result_filter_sql = " AND COALESCE(e.last_event, '') = 'booking_confirmed'"
-                        elif result_filter == "transfer":
-                            result_filter_sql = " AND (COALESCE(e.last_event, '') IN ('transferred_human', 'transferred', 'transfer_human', 'transfer') OR LOWER(COALESCE(v.ended_reason, '')) LIKE '%%transfer%%')"
-                        elif result_filter == "abandoned":
-                            result_filter_sql = " AND (COALESCE(e.last_event, '') IN ('user_abandon', 'abandon', 'hangup', 'user_hangup') OR LOWER(COALESCE(v.ended_reason, '')) LIKE '%%hangup%%')"
-                        elif result_filter == "error":
-                            result_filter_sql = " AND COALESCE(e.last_event, '') = 'anti_loop_trigger'"
-
-                        vapi_params.append(limit + 1)
-
                         vapi_only_params: list = [start, end, start, end]
                         vapi_tenant_filter = ""
                         if tenant_id is not None:

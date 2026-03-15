@@ -564,11 +564,11 @@ export default function AppCalls() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [days, setDays] = useState(7);
+  const [days, setDays] = useState(30);
   const [statusFilter, setStatusFilter] = useState("all");
   const [intentFilter, setIntentFilter] = useState("all");
   const [search, setSearch] = useState("");
-  const [tab, setTab] = useState("week");
+  const [tab, setTab] = useState("all");
   const [payload, setPayload] = useState({ calls: [], total: 0, date: "" });
   const [selectedCallId, setSelectedCallId] = useState("");
   const [detailLoading, setDetailLoading] = useState(false);
@@ -589,6 +589,18 @@ export default function AppCalls() {
 
   useEffect(() => {
     let cancelled = false;
+    const cacheKey = `uwi_calls_${days}`;
+    const cached = sessionStorage.getItem(cacheKey);
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        if (parsed && Date.now() - (parsed._ts || 0) < 60_000) {
+          setPayload(parsed);
+          setLoading(false);
+          return;
+        }
+      } catch {}
+    }
     setLoading(true);
     setError("");
     api
@@ -596,11 +608,9 @@ export default function AppCalls() {
       .then((data) => {
         if (cancelled) return;
         const result = data || { calls: [], total: 0, date: "" };
+        result._ts = Date.now();
         setPayload(result);
-        if ((result.calls || []).length === 0 && days < 30) {
-          setTab("all");
-          setDays(30);
-        }
+        try { sessionStorage.setItem(cacheKey, JSON.stringify(result)); } catch {}
       })
       .catch((e) => {
         if (!cancelled) setError(e?.message || "Impossible de charger les appels.");

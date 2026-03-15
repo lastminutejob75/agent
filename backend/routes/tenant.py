@@ -1203,11 +1203,70 @@ def tenant_calls(
         finally:
             conn.close()
     items = items[:limit]
-    followups_by_call = list_call_followups(tenant_id, [(item.get("call_id") or "").strip() for item in items])
-    patient_profiles_by_phone = get_cabinet_clients_by_phones(
-        tenant_id,
-        [item.get("customer_number") or "" for item in items],
-    )
+    call_ids_for_followup = [(item.get("call_id") or "").strip() for item in items]
+    phones_for_patients = [item.get("customer_number") or "" for item in items]
+    followups_by_call: dict = {}
+    patient_profiles_by_phone: dict = {}
+    _pg_url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    if _pg_url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            _cids = list(dict.fromkeys(c for c in call_ids_for_followup if c))
+            _phones = list(dict.fromkeys(normalize_phone_number(p) for p in phones_for_patients if p))
+            _phones = [p for p in _phones if p]
+            with psycopg.connect(_pg_url, row_factory=dict_row) as _conn:
+                with _conn.cursor() as _cur:
+                    if _cids:
+                        try:
+                            _cur.execute(
+                                "SELECT call_id, followup_state, notes, updated_at FROM call_followups WHERE tenant_id = %s AND call_id = ANY(%s)",
+                                (tenant_id, _cids),
+                            )
+                            for _r in _cur.fetchall():
+                                _k = str(_r.get("call_id") or "").strip()
+                                if _k:
+                                    followups_by_call[_k] = {
+                                        "followup_state": _r.get("followup_state") or "new",
+                                        "notes": _r.get("notes") or "",
+                                        "updated_at": str(_r.get("updated_at") or ""),
+                                    }
+                        except Exception:
+                            pass
+                    if _phones:
+                        try:
+                            _cur.execute(
+                                """SELECT phone, raw_name, validated_name, display_name, validation_status,
+                                          source_call_id, last_call_id, last_booking_start, last_booking_end,
+                                          last_booking_motif, created_at, updated_at
+                                   FROM cabinet_clients WHERE tenant_id = %s AND phone = ANY(%s)""",
+                                (tenant_id, _phones),
+                            )
+                            for _r in _cur.fetchall():
+                                _ph = str(_r.get("phone") or "").strip()
+                                if _ph:
+                                    patient_profiles_by_phone[_ph] = {
+                                        "phone": _ph,
+                                        "raw_name": _r.get("raw_name") or "",
+                                        "validated_name": _r.get("validated_name") or "",
+                                        "display_name": _r.get("display_name") or _r.get("validated_name") or _r.get("raw_name") or "",
+                                        "validation_status": _r.get("validation_status") or "pending",
+                                        "source_call_id": _r.get("source_call_id") or "",
+                                        "last_call_id": _r.get("last_call_id") or "",
+                                        "last_booking_start": str(_r.get("last_booking_start") or ""),
+                                        "last_booking_end": str(_r.get("last_booking_end") or ""),
+                                        "last_booking_motif": _r.get("last_booking_motif") or "",
+                                        "created_at": str(_r.get("created_at") or ""),
+                                        "updated_at": str(_r.get("updated_at") or ""),
+                                    }
+                        except Exception:
+                            pass
+        except Exception:
+            followups_by_call = list_call_followups(tenant_id, call_ids_for_followup)
+            patient_profiles_by_phone = get_cabinet_clients_by_phones(tenant_id, phones_for_patients)
+    else:
+        followups_by_call = list_call_followups(tenant_id, call_ids_for_followup)
+        patient_profiles_by_phone = get_cabinet_clients_by_phones(tenant_id, phones_for_patients)
     compact_mode = bool(compact)
     calls = []
     for item in items:
