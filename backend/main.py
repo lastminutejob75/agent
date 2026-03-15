@@ -837,6 +837,25 @@ Pour toute question d'information (horaires, tarifs, adresse, vacances, fermetur
 """
 
 
+@app.post("/debug/vapi-sync-faq")
+async def debug_vapi_sync_faq(tenant_id: int = 1):
+    """Force la synchronisation de la FAQ du tenant dans le system prompt Vapi."""
+    try:
+        from backend.vapi_utils import update_vapi_assistant_faq
+        from backend.tenant_config import faq_to_prompt_text, get_faq
+        faq = get_faq(tenant_id)
+        faq_text = faq_to_prompt_text(faq)
+        await update_vapi_assistant_faq(tenant_id)
+        return {
+            "ok": True,
+            "tenant_id": tenant_id,
+            "faq_categories": len(faq),
+            "faq_text_preview": faq_text[:500],
+        }
+    except Exception as e:
+        return {"error": str(e)[:300], "tenant_id": tenant_id}
+
+
 @app.post("/debug/vapi-patch-prompt-faq-rule")
 async def debug_vapi_patch_prompt_faq_rule():
     """Injecte la règle FAQ dans le system prompt de tous les assistants Vapi."""
