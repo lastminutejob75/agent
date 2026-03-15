@@ -840,15 +840,29 @@ Pour toute question d'information (horaires, tarifs, adresse, vacances, fermetur
 @app.post("/debug/vapi-sync-faq")
 async def debug_vapi_sync_faq(tenant_id: int = 1):
     """Force la synchronisation de la FAQ du tenant dans le system prompt Vapi."""
+    import os
     try:
-        from backend.vapi_utils import update_vapi_assistant_faq
-        from backend.tenant_config import faq_to_prompt_text, get_faq
+        from backend.vapi_utils import patch_vapi_assistant_system_prompt
+        from backend.tenant_config import faq_to_prompt_text, get_faq, get_params
+
         faq = get_faq(tenant_id)
         faq_text = faq_to_prompt_text(faq)
-        await update_vapi_assistant_faq(tenant_id)
+
+        params = get_params(tenant_id)
+        vapi_id = str(params.get("vapi_assistant_id") or "").strip()
+        source = "tenant_params"
+        if not vapi_id:
+            vapi_id = (os.environ.get("VAPI_ASSISTANT_ID") or "").strip()
+            source = "env_var"
+        if not vapi_id:
+            return {"error": "Aucun vapi_assistant_id trouvé (ni params, ni env var)", "tenant_id": tenant_id}
+
+        await patch_vapi_assistant_system_prompt(vapi_id, faq_text)
         return {
             "ok": True,
             "tenant_id": tenant_id,
+            "vapi_assistant_id": vapi_id[:24],
+            "source": source,
             "faq_categories": len(faq),
             "faq_text_preview": faq_text[:500],
         }
