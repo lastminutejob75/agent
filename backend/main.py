@@ -611,6 +611,73 @@ async def debug_calls_diag():
         return {"error": str(e)[:300]}
 
 
+@app.get("/debug/vapi-assistant")
+async def debug_vapi_assistant():
+    """Diagnostic : inspecte la config de l'assistant Vapi (tools, server.url) via l'API Vapi."""
+    import os
+    import httpx
+    results = {}
+    try:
+        api_key = (os.environ.get("VAPI_API_KEY") or "").strip()
+        if not api_key:
+            return {"error": "VAPI_API_KEY non configuré"}
+
+        from backend.pg_pool import pg_connection
+        assistants_db = []
+        try:
+            with pg_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT id, tenant_id, vapi_assistant_id, name FROM tenant_assistants WHERE vapi_assistant_id IS NOT NULL LIMIT 10"
+                    )
+                    assistants_db = [dict(r) for r in cur.fetchall()]
+        except Exception as e:
+            results["db_error"] = str(e)[:200]
+
+        if not assistants_db:
+            env_id = (os.environ.get("VAPI_ASSISTANT_ID") or "").strip()
+            if env_id:
+                assistants_db = [{"vapi_assistant_id": env_id, "name": "env_default", "tenant_id": "?"}]
+
+        async with httpx.AsyncClient() as client:
+            for a in assistants_db[:3]:
+                vapi_id = a.get("vapi_assistant_id") or ""
+                if not vapi_id:
+                    continue
+                try:
+                    res = await client.get(
+                        f"https://api.vapi.ai/assistant/{vapi_id}",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        timeout=10,
+                    )
+                    if res.status_code != 200:
+                        results[vapi_id[:24]] = {"http_status": res.status_code, "body": res.text[:300]}
+                        continue
+                    data = res.json()
+                    tools = data.get("tools") or []
+                    tools_summary = []
+                    for t in tools:
+                        t_info = {
+                            "type": t.get("type"),
+                            "name": (t.get("function") or {}).get("name") or t.get("name"),
+                            "server_url": (t.get("server") or {}).get("url"),
+                        }
+                        tools_summary.append(t_info)
+                    results[vapi_id[:24]] = {
+                        "name": data.get("name"),
+                        "tenant_id": a.get("tenant_id"),
+                        "server_url": (data.get("server") or {}).get("url"),
+                        "tools_count": len(tools),
+                        "tools": tools_summary,
+                        "model_provider": (data.get("model") or {}).get("provider"),
+                    }
+                except Exception as e:
+                    results[vapi_id[:24]] = {"error": str(e)[:200]}
+        return {"assistants": results}
+    except Exception as e:
+        return {"error": str(e)[:300]}
+
+
 @app.post("/chat")
 async def chat(
     payload: dict,
