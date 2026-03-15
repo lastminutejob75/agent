@@ -1115,16 +1115,24 @@ async def vapi_webhook(request: Request):
                     results.append({"toolCallId": tc_id, "result": json.dumps({"status": "received"})})
 
                 elif action == "faq":
-                    session = _get_or_resume_voice_session(resolved_tid, w_call_id)
-                    session.channel = "vocal"
-                    session.tenant_id = resolved_tid
                     if user_msg:
-                        events = _get_engine(w_call_id).handle_message(w_call_id, user_msg)
-                        result_text = events[0].text if events else "Je n'ai pas cette information."
+                        from backend.tools_faq import tenant_faq_store
+                        faq_store = tenant_faq_store(resolved_tid)
+                        faq_result = faq_store.search(user_msg)
+                        if faq_result.match and faq_result.answer:
+                            result_text = faq_result.answer
+                            logger.info("[VAPI_WEBHOOK_FAQ] tenant=%s q=%s faq_id=%s score=%.2f",
+                                        resolved_tid, user_msg[:40], faq_result.faq_id, faq_result.score)
+                        else:
+                            session = _get_or_resume_voice_session(resolved_tid, w_call_id)
+                            session.channel = "vocal"
+                            session.tenant_id = resolved_tid
+                            events = _get_engine(w_call_id).handle_message(w_call_id, user_msg)
+                            result_text = events[0].text if events else "Je n'ai pas cette information."
+                            if hasattr(ENGINE.session_store, "save"):
+                                ENGINE.session_store.save(session)
                     else:
                         result_text = "Je n'ai pas compris votre question."
-                    if hasattr(ENGINE.session_store, "save"):
-                        ENGINE.session_store.save(session)
                     results.append({"toolCallId": tc_id, "result": result_text})
 
                 else:
@@ -1378,7 +1386,7 @@ async def vapi_tool(request: Request):
                 return JSONResponse(th.build_vapi_tool_response(tool_call_id, response_text, None), status_code=200)
             return JSONResponse({"result": response_text}, status_code=200)
 
-        # --- faq ou legacy : message utilisateur → engine ---
+        # --- faq ou legacy : message utilisateur → tenant FAQ d'abord, engine en fallback ---
         if not user_message and not action:
             return JSONResponse({"result": "Je n'ai pas compris. Pouvez-vous répéter ?"}, status_code=200)
 
@@ -1392,6 +1400,18 @@ async def vapi_tool(request: Request):
             return JSONResponse({"result": out}, status_code=200)
 
         message_to_use = user_message or ""
+
+        if action == "faq" and message_to_use:
+            from backend.tools_faq import tenant_faq_store
+            faq_store = tenant_faq_store(resolved_tenant_id)
+            faq_result = faq_store.search(message_to_use)
+            if faq_result.match and faq_result.answer:
+                logger.info("[VAPI_TOOL_FAQ] tenant=%s q=%s faq_id=%s score=%.2f",
+                            resolved_tenant_id, message_to_use[:40], faq_result.faq_id, faq_result.score)
+                if tool_call_id:
+                    return JSONResponse(th.build_vapi_tool_response(tool_call_id, faq_result.answer, None), status_code=200)
+                return JSONResponse({"result": faq_result.answer}, status_code=200)
+
         if _pg_lock_ok():
             try:
                 from backend.session_pg import pg_lock_call_session, LockTimeout

@@ -83,6 +83,64 @@ def _vapi_webhook_url() -> str:
     return f"{base}/api/vapi/webhook"
 
 
+def _vapi_tool_url() -> str:
+    base = get_public_backend_base_url()
+    return f"{base}/api/vapi/tool"
+
+
+def _build_function_tool_definition() -> Dict[str, Any]:
+    """Définition du tool function_tool pour Vapi (server-side)."""
+    return {
+        "type": "function",
+        "function": {
+            "name": "function_tool",
+            "description": (
+                "Outil principal du backend. Utilisé pour : "
+                "répondre aux questions fréquentes (FAQ), "
+                "consulter les créneaux disponibles, "
+                "réserver un rendez-vous, "
+                "annuler ou modifier un rendez-vous, "
+                "transférer vers un humain. "
+                "Appelle TOUJOURS cet outil pour ces actions au lieu de répondre directement."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["faq", "get_slots", "book", "cancel", "modify", "transfer"],
+                        "description": "L'action à exécuter.",
+                    },
+                    "user_message": {
+                        "type": "string",
+                        "description": "Le message ou la question de l'utilisateur, retranscrit tel quel.",
+                    },
+                    "patient_name": {
+                        "type": "string",
+                        "description": "Nom du patient (si connu).",
+                    },
+                    "motif": {
+                        "type": "string",
+                        "description": "Motif du rendez-vous (si mentionné).",
+                    },
+                    "preference": {
+                        "type": "string",
+                        "description": "Préférence horaire du patient (matin, après-midi, jour spécifique).",
+                    },
+                    "selected_slot": {
+                        "type": "string",
+                        "description": "Créneau sélectionné pour la réservation (format ISO ou texte).",
+                    },
+                },
+                "required": ["action", "user_message"],
+            },
+        },
+        "server": {
+            "url": _vapi_tool_url(),
+        },
+    }
+
+
 def _merge_prompt_with_faq(base_prompt: str, faq_text: str) -> str:
     base = (base_prompt or "").strip()
     if FAQ_START_MARKER in base and FAQ_END_MARKER in base:
@@ -127,6 +185,8 @@ async def create_vapi_assistant(
     elif webhook_secret:
         server_config["secret"] = webhook_secret
 
+    tool_def = _build_function_tool_definition()
+
     payload = {
         "name": f"UWI-{tenant_name[:30]}-{assistant_id}",
         "voice": voice,
@@ -134,6 +194,7 @@ async def create_vapi_assistant(
             "provider": "openai",
             "model": "gpt-4o-mini",
             "messages": [{"role": "system", "content": sys_msg}],
+            "tools": [tool_def],
         },
         "firstMessage": f"Cabinet {tenant_name}, bonjour ! Je suis {assistant_id.capitalize()}, comment puis-je vous aider ?",
         "endCallFunctionEnabled": True,
@@ -220,6 +281,53 @@ async def update_vapi_assistant_faq(tenant_id: int) -> None:
     faq = get_faq(tenant_id)
     faq_text = faq_to_prompt_text(faq)
     await patch_vapi_assistant_system_prompt(vapi_assistant_id, faq_text)
+
+
+async def patch_vapi_assistant_add_tool(vapi_assistant_id: str) -> Dict[str, Any]:
+    """
+    PATCH un assistant Vapi existant pour ajouter/mettre à jour le tool function_tool.
+    Retourne la réponse Vapi ou lève en cas d'erreur.
+    """
+    vapi_assistant_id = (vapi_assistant_id or "").strip()
+    if not vapi_assistant_id:
+        raise ValueError("vapi_assistant_id requis")
+
+    tool_def = _build_function_tool_definition()
+    headers = {
+        "Authorization": f"Bearer {_vapi_api_key()}",
+        "Content-Type": "application/json",
+    }
+
+    async with httpx.AsyncClient() as client:
+        current_res = await client.get(
+            f"{VAPI_API_URL}/assistant/{vapi_assistant_id}",
+            headers=headers,
+            timeout=15,
+        )
+        current_res.raise_for_status()
+        data = current_res.json() or {}
+
+        model = data.get("model") or {}
+        existing_tools = model.get("tools") or []
+
+        new_tools = [t for t in existing_tools if (t.get("function") or {}).get("name") != "function_tool"]
+        new_tools.append(tool_def)
+
+        patch_res = await client.patch(
+            f"{VAPI_API_URL}/assistant/{vapi_assistant_id}",
+            json={"model": {**model, "tools": new_tools}},
+            headers=headers,
+            timeout=15,
+        )
+        patch_res.raise_for_status()
+        result = patch_res.json()
+        tools_count = len((result.get("model") or {}).get("tools") or [])
+        logger.info(
+            "VAPI_ASSISTANT_TOOL_PATCHED assistant_id=%s tools_count=%d",
+            vapi_assistant_id[:24],
+            tools_count,
+        )
+        return result
 
 
 async def assign_twilio_to_vapi(assistant_id: str, twilio_number: str) -> None:

@@ -1,10 +1,13 @@
 # backend/tools_faq.py
 from __future__ import annotations
+import logging
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from rapidfuzz import fuzz, process
 from backend import config
+
+logger = logging.getLogger(__name__)
 
 
 def _norm(s: str) -> str:
@@ -161,3 +164,84 @@ def default_faq_store() -> FaqStore:
         FaqItem(faq_id="FAQ_DUREE", question="c'est long", answer=REPONSE_DUREE),
     ]
     return FaqStore(items=items)
+
+
+def tenant_faq_store(tenant_id: Optional[int] = None) -> FaqStore:
+    """
+    Construit un FaqStore à partir de la FAQ configurée pour le tenant (dashboard).
+    Fallback sur default_faq_store() si la FAQ tenant est vide ou en erreur.
+    """
+    if tenant_id is None or tenant_id <= 0:
+        return default_faq_store()
+    try:
+        from backend.tenant_config import get_faq
+        faq_categories = get_faq(tenant_id)
+        if not faq_categories:
+            return default_faq_store()
+
+        items: List[FaqItem] = []
+        for cat in faq_categories:
+            if not isinstance(cat, dict):
+                continue
+            for item in cat.get("items") or []:
+                if not isinstance(item, dict):
+                    continue
+                if not item.get("active", True):
+                    continue
+                question = str(item.get("question") or "").strip()
+                answer = str(item.get("answer") or "").strip()
+                faq_id = str(item.get("id") or "").strip()
+                if question and answer:
+                    items.append(FaqItem(faq_id=faq_id or f"FAQ_{len(items)}", question=question, answer=answer))
+
+        if not items:
+            logger.debug("tenant_faq_store: tenant_id=%s returned 0 items, using default", tenant_id)
+            return default_faq_store()
+
+        logger.debug("tenant_faq_store: tenant_id=%s loaded %d FAQ items", tenant_id, len(items))
+        return FaqStore(items=items)
+    except Exception as e:
+        logger.warning("tenant_faq_store: tenant_id=%s error=%s, using default", tenant_id, e)
+        return default_faq_store()
+
+
+def tenant_faq_store(tenant_id: Optional[int] = None) -> FaqStore:
+    """
+    Construit un FaqStore à partir de la FAQ configurée par le tenant (dashboard).
+    Fallback sur default_faq_store() si aucune FAQ tenant n'est trouvée.
+    """
+    if tenant_id is None or tenant_id <= 0:
+        return default_faq_store()
+
+    try:
+        from backend.tenant_config import get_faq
+        faq_categories = get_faq(tenant_id)
+        if not faq_categories:
+            logger.debug("tenant_faq_store: no FAQ for tenant %s, using default", tenant_id)
+            return default_faq_store()
+
+        items: List[FaqItem] = []
+        for cat in faq_categories:
+            if not isinstance(cat, dict):
+                continue
+            for item in (cat.get("items") or []):
+                if not isinstance(item, dict):
+                    continue
+                if not item.get("active", True):
+                    continue
+                question = str(item.get("question") or "").strip()
+                answer = str(item.get("answer") or "").strip()
+                if not question or not answer:
+                    continue
+                faq_id = str(item.get("id") or "").strip() or "FAQ_TENANT"
+                items.append(FaqItem(faq_id=faq_id, question=question, answer=answer))
+
+        if not items:
+            logger.debug("tenant_faq_store: 0 active items for tenant %s, using default", tenant_id)
+            return default_faq_store()
+
+        logger.debug("tenant_faq_store: loaded %d items for tenant %s", len(items), tenant_id)
+        return FaqStore(items=items)
+    except Exception as e:
+        logger.warning("tenant_faq_store failed for tenant %s: %s (using default)", tenant_id, e)
+        return default_faq_store()

@@ -634,10 +634,17 @@ async def debug_vapi_assistant():
         except Exception as e:
             results["db_error"] = str(e)[:200]
 
-        if not assistants_db:
-            env_id = (os.environ.get("VAPI_ASSISTANT_ID") or "").strip()
-            if env_id:
-                assistants_db = [{"vapi_assistant_id": env_id, "name": "env_default", "tenant_id": "?"}]
+        env_id = (os.environ.get("VAPI_ASSISTANT_ID") or "").strip()
+        if env_id:
+            assistants_db.insert(0, {"vapi_assistant_id": env_id, "name": "env_default", "tenant_id": "?"})
+        vapi_ids_seen = set()
+        deduped = []
+        for a in assistants_db:
+            vid = a.get("vapi_assistant_id") or ""
+            if vid and vid not in vapi_ids_seen:
+                vapi_ids_seen.add(vid)
+                deduped.append(a)
+        assistants_db = deduped
 
         async with httpx.AsyncClient() as client:
             for a in assistants_db[:3]:
@@ -674,6 +681,47 @@ async def debug_vapi_assistant():
                 except Exception as e:
                     results[vapi_id[:24]] = {"error": str(e)[:200]}
         return {"assistants": results}
+    except Exception as e:
+        return {"error": str(e)[:300]}
+
+
+@app.post("/debug/vapi-patch-tools")
+async def debug_vapi_patch_tools():
+    """Ajoute function_tool à tous les assistants Vapi existants (one-shot migration)."""
+    import os
+    from backend.vapi_utils import patch_vapi_assistant_add_tool
+    results = {}
+    try:
+        api_key = (os.environ.get("VAPI_API_KEY") or "").strip()
+        if not api_key:
+            return {"error": "VAPI_API_KEY non configuré"}
+
+        vapi_ids = set()
+        env_id = (os.environ.get("VAPI_ASSISTANT_ID") or "").strip()
+        if env_id:
+            vapi_ids.add(env_id)
+
+        try:
+            from backend.pg_pool import pg_connection
+            with pg_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT DISTINCT vapi_assistant_id FROM tenant_assistants WHERE vapi_assistant_id IS NOT NULL")
+                    for r in cur.fetchall():
+                        vid = (r.get("vapi_assistant_id") or "").strip()
+                        if vid:
+                            vapi_ids.add(vid)
+        except Exception as e:
+            results["db_warn"] = str(e)[:200]
+
+        for vid in vapi_ids:
+            try:
+                data = await patch_vapi_assistant_add_tool(vid)
+                tools = (data.get("model") or {}).get("tools") or []
+                results[vid[:24]] = {"ok": True, "tools_count": len(tools)}
+            except Exception as e:
+                results[vid[:24]] = {"ok": False, "error": str(e)[:200]}
+
+        return {"patched": results, "total": len(vapi_ids)}
     except Exception as e:
         return {"error": str(e)[:300]}
 
