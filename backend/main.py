@@ -438,8 +438,8 @@ def _health_checks_sync() -> dict:
     postgres_error = None
     if db_url:
         try:
-            import psycopg
-            with psycopg.connect(db_url, connect_timeout=2) as conn:
+            from backend.pg_pool import pg_connection
+            with pg_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT 1")
             postgres_ok = True
@@ -522,9 +522,8 @@ async def debug_call_durations():
     if not url:
         return {"error": "no PG URL"}
     try:
-        import psycopg
-        from psycopg.rows import dict_row
-        with psycopg.connect(url, row_factory=dict_row) as conn:
+        from backend.pg_pool import pg_connection
+        with pg_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT call_id, tenant_id, status,
