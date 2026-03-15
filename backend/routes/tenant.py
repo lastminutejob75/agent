@@ -1359,6 +1359,7 @@ def tenant_calls(
         "calls": calls,
         "total": len(calls),
         "date": datetime.now(_get_zoneinfo(tz_name)).strftime("%Y-%m-%d"),
+        "_debug_tenant_id": tenant_id,
     }
 
 
