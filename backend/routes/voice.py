@@ -1321,9 +1321,13 @@ async def vapi_tool(request: Request):
 
             if faq_result is None or not faq_result.match:
                 from backend.tools_faq import default_faq_store
-                faq_store = default_faq_store()
-                faq_result = faq_store.search(user_message)
-                resolved_tid_fast = None
+                fallback_store = default_faq_store()
+                fallback_result = fallback_store.search(user_message)
+                if fallback_result.match:
+                    faq_result = fallback_result
+                    logger.info("[VAPI_TOOL_FAQ_FAST_FALLBACK] tenant FAQ miss, default matched faq_id=%s", fallback_result.faq_id)
+                elif faq_result is None:
+                    faq_result = fallback_result
 
             if faq_result.match and faq_result.answer:
                 result_text = faq_result.answer
