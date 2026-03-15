@@ -672,6 +672,13 @@ async def debug_vapi_assistant():
                             "server_url": (t.get("server") or {}).get("url"),
                         }
                         tools_summary.append(t_info)
+                    model = data.get("model") or {}
+                    messages = model.get("messages") or []
+                    sys_prompt = ""
+                    for m in messages:
+                        if isinstance(m, dict) and m.get("role") == "system":
+                            sys_prompt = str(m.get("content") or "")[:3000]
+                            break
                     results[vapi_id[:24]] = {
                         "name": data.get("name"),
                         "tenant_id": a.get("tenant_id"),
@@ -679,7 +686,8 @@ async def debug_vapi_assistant():
                         "top_tools_count": len(top_tools),
                         "model_tools_count": len(model_tools),
                         "tools": tools_summary,
-                        "model_provider": (data.get("model") or {}).get("provider"),
+                        "model_provider": model.get("provider"),
+                        "system_prompt": sys_prompt,
                     }
                 except Exception as e:
                     results[vapi_id[:24]] = {"error": str(e)[:200]}
