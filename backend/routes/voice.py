@@ -1031,6 +1031,128 @@ async def vapi_webhook(request: Request):
         except Exception as e:
             logger.warning("VAPI_TRANSCRIPT_PERSIST_FAILED %s", str(e)[:120])
 
+    # tool-calls : Vapi envoie les appels de fonction ici quand le tool est configuré avec serverUrl = webhook
+    if msg_type == "tool-calls":
+        logger.info("[VAPI_WEBHOOK] tool-calls received, routing to tool handler")
+        try:
+            tool_calls = message.get("toolCallList") or message.get("toolCalls") or []
+            if not tool_calls:
+                tool_calls = payload.get("toolCallList") or payload.get("toolCalls") or []
+            results = []
+            for tc in tool_calls:
+                tc_id = tc.get("id") or ""
+                fn = tc.get("function") or tc.get("functionCall") or {}
+                fn_name = fn.get("name") or ""
+                raw_args = fn.get("arguments")
+                params = {}
+                if isinstance(raw_args, dict):
+                    params = raw_args
+                elif isinstance(raw_args, str):
+                    try:
+                        params = json.loads(raw_args)
+                    except Exception:
+                        params = {}
+                action = (params.get("action") or "").strip().lower()
+                user_msg = (params.get("user_message") or "").strip()
+                logger.info("[VAPI_WEBHOOK_TOOL] toolCallId=%s fn=%s action=%s", tc_id[:24], fn_name, action)
+
+                from backend.tenant_routing import resolve_tenant_id_from_vapi_payload, current_tenant_id
+                resolved_tid, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
+                current_tenant_id.set(str(resolved_tid))
+                w_call_id = _webhook_extract_call_id(payload) or "unknown"
+
+                if action == "get_slots":
+                    session = _get_or_resume_voice_session(resolved_tid, w_call_id)
+                    session.channel = "vocal"
+                    session.tenant_id = resolved_tid
+                    if params.get("patient_name"):
+                        session.qualif_data.name = params["patient_name"]
+                    if params.get("motif"):
+                        session.qualif_data.motif = params["motif"]
+                    if params.get("preference"):
+                        session.qualif_data.pref = params["preference"]
+                    from backend import vapi_tool_handlers as th
+                    slots_list, source, err = th.handle_get_slots(
+                        session, params.get("preference"), w_call_id,
+                        exclude_start_iso=params.get("exclude_start_iso"),
+                        exclude_end_iso=params.get("exclude_end_iso"),
+                    )
+                    if hasattr(ENGINE.session_store, "save"):
+                        ENGINE.session_store.save(session)
+                    if err:
+                        results.append({"toolCallId": tc_id, "result": err})
+                    elif slots_list:
+                        slots_text = ", ".join(slots_list[:-1]) + " et " + slots_list[-1] if len(slots_list) > 1 else slots_list[0]
+                        results.append({"toolCallId": tc_id, "result": f"Créneaux disponibles : {slots_text}."})
+                    else:
+                        results.append({"toolCallId": tc_id, "result": "Aucun créneau disponible pour le moment."})
+
+                elif action == "book":
+                    session = _get_or_resume_voice_session(resolved_tid, w_call_id)
+                    session.channel = "vocal"
+                    session.tenant_id = resolved_tid
+                    from backend import vapi_tool_handlers as th
+                    book_payload, err = th.handle_book(
+                        session, params.get("selected_slot"), params.get("patient_name"), params.get("motif"), w_call_id,
+                    )
+                    if hasattr(ENGINE.session_store, "save"):
+                        ENGINE.session_store.save(session)
+                    if err:
+                        results.append({"toolCallId": tc_id, "result": err})
+                    else:
+                        results.append({"toolCallId": tc_id, "result": json.dumps(book_payload or {}, ensure_ascii=False)})
+
+                elif action in ("cancel", "modify"):
+                    text = user_msg or ("Je souhaite annuler mon rendez-vous" if action == "cancel" else "Je souhaite modifier mon rendez-vous")
+                    session = _get_or_resume_voice_session(resolved_tid, w_call_id)
+                    session.channel = "vocal"
+                    session.tenant_id = resolved_tid
+                    events = _get_engine(w_call_id).handle_message(w_call_id, text)
+                    result_text = events[0].text if events else "Je n'ai pas compris."
+                    results.append({"toolCallId": tc_id, "result": result_text})
+
+                elif action == "transfer":
+                    results.append({"toolCallId": tc_id, "result": json.dumps({"status": "received"})})
+
+                elif action == "faq":
+                    session = _get_or_resume_voice_session(resolved_tid, w_call_id)
+                    session.channel = "vocal"
+                    session.tenant_id = resolved_tid
+                    if user_msg:
+                        events = _get_engine(w_call_id).handle_message(w_call_id, user_msg)
+                        result_text = events[0].text if events else "Je n'ai pas cette information."
+                    else:
+                        result_text = "Je n'ai pas compris votre question."
+                    if hasattr(ENGINE.session_store, "save"):
+                        ENGINE.session_store.save(session)
+                    results.append({"toolCallId": tc_id, "result": result_text})
+
+                else:
+                    if user_msg:
+                        session = _get_or_resume_voice_session(resolved_tid, w_call_id)
+                        session.channel = "vocal"
+                        session.tenant_id = resolved_tid
+                        events = _get_engine(w_call_id).handle_message(w_call_id, user_msg)
+                        result_text = events[0].text if events else "Je n'ai pas compris."
+                        if hasattr(ENGINE.session_store, "save"):
+                            ENGINE.session_store.save(session)
+                        results.append({"toolCallId": tc_id, "result": result_text})
+                    else:
+                        results.append({"toolCallId": tc_id, "result": "Action non reconnue."})
+
+            response_body = {"results": results}
+            logger.info("[VAPI_WEBHOOK_TOOL_RESPONSE] %s", json.dumps(response_body, ensure_ascii=False)[:500])
+            return JSONResponse(response_body, status_code=200)
+        except Exception as e:
+            logger.exception("[VAPI_WEBHOOK_TOOL_ERROR] %s", e)
+            tool_calls_fallback = message.get("toolCallList") or message.get("toolCalls") or payload.get("toolCallList") or payload.get("toolCalls") or []
+            fallback_results = []
+            for tc in tool_calls_fallback:
+                fallback_results.append({"toolCallId": tc.get("id") or "", "result": "Désolé, une erreur est survenue."})
+            if not fallback_results:
+                fallback_results.append({"toolCallId": "unknown", "result": "Désolé, une erreur est survenue."})
+            return JSONResponse({"results": fallback_results}, status_code=200)
+
     # Persister customer_phone uniquement sur les webhooks qui contiennent call.customer.number
     # (conversation-update / speech-update ne le contiennent pas — source: rapport Vapi)
     from backend.tenant_routing import (
