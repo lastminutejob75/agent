@@ -1923,29 +1923,30 @@ def _get_calls_list(
 
                         vapi_params.append(limit + 1)
 
+                        vapi_only_params: list = [start, end, start, end]
+                        vapi_tenant_filter = ""
+                        if tenant_id is not None:
+                            vapi_tenant_filter = " AND v.tenant_id = %s"
+                            vapi_only_params.append(tenant_id)
+                        vapi_cursor_filter = ""
+                        if cursor_ts and cursor_id:
+                            vapi_cursor_filter = " AND (v.updated_at < %s::timestamptz OR (v.updated_at = %s::timestamptz AND v.call_id < %s))"
+                            vapi_only_params.extend([cursor_ts, cursor_ts, cursor_id])
+                        vapi_only_params.append(limit + 1)
                         cur.execute(
                             """
-                            WITH ivr_agg AS (
-                                SELECT client_id, call_id,
-                                       (array_agg(event ORDER BY created_at DESC))[1] AS last_event
-                                FROM ivr_events
-                                WHERE call_id IS NOT NULL AND TRIM(call_id) != ''
-                                """ + ivr_agg_filter + """
-                                GROUP BY client_id, call_id
-                            )
                             SELECT v.tenant_id, v.call_id, v.customer_number,
                                    COALESCE(v.started_at, v.created_at) AS started_at,
                                    v.ended_at, v.updated_at,
-                                   v.status, v.ended_reason, e.last_event
+                                   v.status, v.ended_reason
                             FROM vapi_calls v
-                            LEFT JOIN ivr_agg e ON e.client_id = v.tenant_id AND e.call_id = v.call_id
                             WHERE ((v.started_at >= %s AND v.started_at <= %s)
                                OR (v.updated_at >= %s AND v.updated_at <= %s))
-                              """ + tenant_filter + cursor_filter + result_filter_sql + """
+                              """ + vapi_tenant_filter + vapi_cursor_filter + """
                             ORDER BY COALESCE(v.ended_at, v.updated_at, v.started_at) DESC NULLS LAST, v.call_id DESC
                             LIMIT %s
                             """,
-                            tuple(vapi_params),
+                            tuple(vapi_only_params),
                         )
                         vapi_rows = cur.fetchall()
                     except Exception as ve:
@@ -1954,28 +1955,42 @@ def _get_calls_list(
                         vapi_rows = []
 
                     seen_call_ids: set[str] = set()
-                    # Batch lookup vapi_call_usage for real Vapi durations
+                    # Batch lookups: ivr last_event + vapi_call_usage durations
+                    ivr_last_events: dict[str, str] = {}
                     usage_durations: dict[str, float] = {}
                     if vapi_rows:
-                        try:
-                            usage_call_ids = [r.get("call_id") for r in vapi_rows[:limit + 1] if r.get("call_id")]
-                            if usage_call_ids:
+                        batch_cids = [r.get("call_id") for r in vapi_rows[:limit + 1] if r.get("call_id")]
+                        if batch_cids:
+                            try:
+                                cur.execute(
+                                    """SELECT call_id, (array_agg(event ORDER BY created_at DESC))[1] AS last_event
+                                       FROM ivr_events
+                                       WHERE client_id = %s AND call_id = ANY(%s)
+                                       GROUP BY call_id""",
+                                    (tenant_id if tenant_id is not None else (vapi_rows[0].get("tenant_id")), batch_cids),
+                                )
+                                for irow in cur.fetchall():
+                                    if irow.get("last_event"):
+                                        ivr_last_events[irow["call_id"]] = irow["last_event"]
+                            except Exception:
+                                pass
+                            try:
                                 cur.execute(
                                     "SELECT vapi_call_id, duration_sec FROM vapi_call_usage WHERE vapi_call_id = ANY(%s)",
-                                    (usage_call_ids,),
+                                    (batch_cids,),
                                 )
                                 for urow in cur.fetchall():
                                     if urow.get("duration_sec") is not None:
                                         usage_durations[urow["vapi_call_id"]] = float(urow["duration_sec"])
-                        except Exception:
-                            pass
+                            except Exception:
+                                pass
 
                     if vapi_rows:
                         for r in vapi_rows[: limit + 1]:
                             started_at = r.get("started_at")
                             ended_at = r.get("ended_at")
                             updated_at = r.get("updated_at")
-                            last_event = r.get("last_event")
+                            last_event = ivr_last_events.get(r.get("call_id") or "")
                             duration_min: Optional[int] = None
                             duration_sec: Optional[int] = None
                             cid_for_usage = r.get("call_id") or ""
