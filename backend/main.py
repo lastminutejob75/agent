@@ -661,9 +661,11 @@ async def debug_vapi_assistant():
                         results[vapi_id[:24]] = {"http_status": res.status_code, "body": res.text[:300]}
                         continue
                     data = res.json()
-                    tools = data.get("tools") or []
+                    top_tools = data.get("tools") or []
+                    model_tools = (data.get("model") or {}).get("tools") or []
+                    all_tools = top_tools + model_tools
                     tools_summary = []
-                    for t in tools:
+                    for t in all_tools:
                         t_info = {
                             "type": t.get("type"),
                             "name": (t.get("function") or {}).get("name") or t.get("name"),
@@ -674,7 +676,8 @@ async def debug_vapi_assistant():
                         "name": data.get("name"),
                         "tenant_id": a.get("tenant_id"),
                         "server_url": (data.get("server") or {}).get("url"),
-                        "tools_count": len(tools),
+                        "top_tools_count": len(top_tools),
+                        "model_tools_count": len(model_tools),
                         "tools": tools_summary,
                         "model_provider": (data.get("model") or {}).get("provider"),
                     }
