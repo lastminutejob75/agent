@@ -1299,47 +1299,47 @@ async def vapi_tool(request: Request):
             extra={"call_id": call_id[:24] if call_id else "", "action": action or "(legacy)", "tool_call_id": (tool_call_id or "")[:24]},
         )
 
-        # ── FAQ FAST-PATH : répondre en <2s sans dépendance PG bloquante ──
+        # ── FAQ FAST-PATH : toute l'opération (résolution tenant + FAQ) en <4s ──
         if action == "faq" and user_message:
+            def _faq_fast_work():
+                """Résolution tenant + FAQ search dans un thread avec timeout global."""
+                from backend.tools_faq import tenant_faq_store
+                from backend.tenant_routing import resolve_tenant_id_from_vapi_payload as _resolve
+                tid, _ = _resolve(payload, "vocal")
+                store = tenant_faq_store(tid)
+                return tid, store.search(user_message)
+
+            resolved_tid_fast = None
+            faq_result = None
             try:
-                from backend.tools_faq import tenant_faq_store, default_faq_store
-                resolved_tid_fast = None
-                try:
-                    from backend.tenant_routing import resolve_tenant_id_from_vapi_payload as _resolve
-                    import concurrent.futures
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                        fut = ex.submit(_resolve, payload, "vocal")
-                        resolved_tid_fast, _ = fut.result(timeout=2.0)
-                except Exception:
-                    resolved_tid_fast = None
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                    fut = ex.submit(_faq_fast_work)
+                    resolved_tid_fast, faq_result = fut.result(timeout=4.0)
+            except Exception as e:
+                logger.warning("[VAPI_TOOL_FAQ_FAST_TIMEOUT] %s", type(e).__name__)
 
-                faq_store = tenant_faq_store(resolved_tid_fast) if resolved_tid_fast else default_faq_store()
-                faq_result = faq_store.search(user_message)
-                if faq_result.match and faq_result.answer:
-                    result_text = faq_result.answer
-                else:
-                    result_text = "Je n'ai pas cette information. Souhaitez-vous que je vous mette en relation avec le cabinet ?"
-
-                elapsed = int((_time.monotonic() - _t0) * 1000)
-                logger.info("[VAPI_TOOL_FAQ_FAST] tenant=%s q=%s faq_id=%s score=%.2f elapsed=%dms",
-                            resolved_tid_fast, user_message[:40],
-                            faq_result.faq_id if faq_result.match else "-",
-                            faq_result.score, elapsed)
-
-                from backend import vapi_tool_handlers as th
-                if tool_call_id:
-                    return JSONResponse(th.build_vapi_tool_response(tool_call_id, result_text, None), status_code=200)
-                return JSONResponse({"result": result_text}, status_code=200)
-            except Exception as faq_err:
-                logger.warning("[VAPI_TOOL_FAQ_FAST_ERR] %s", faq_err)
+            if faq_result is None or not faq_result.match:
                 from backend.tools_faq import default_faq_store
                 faq_store = default_faq_store()
                 faq_result = faq_store.search(user_message)
-                result_text = faq_result.answer if faq_result.match and faq_result.answer else "Je n'ai pas cette information."
-                from backend import vapi_tool_handlers as th
-                if tool_call_id:
-                    return JSONResponse(th.build_vapi_tool_response(tool_call_id, result_text, None), status_code=200)
-                return JSONResponse({"result": result_text}, status_code=200)
+                resolved_tid_fast = None
+
+            if faq_result.match and faq_result.answer:
+                result_text = faq_result.answer
+            else:
+                result_text = "Je n'ai pas cette information. Souhaitez-vous que je vous mette en relation avec le cabinet ?"
+
+            elapsed = int((_time.monotonic() - _t0) * 1000)
+            logger.info("[VAPI_TOOL_FAQ_FAST] tenant=%s q=%s faq_id=%s score=%.2f elapsed=%dms",
+                        resolved_tid_fast, user_message[:40],
+                        faq_result.faq_id if faq_result.match else "-",
+                        faq_result.score, elapsed)
+
+            from backend import vapi_tool_handlers as th
+            if tool_call_id:
+                return JSONResponse(th.build_vapi_tool_response(tool_call_id, result_text, None), status_code=200)
+            return JSONResponse({"result": result_text}, status_code=200)
 
         from backend.tenant_routing import (
             resolve_tenant_id_from_vapi_payload,
