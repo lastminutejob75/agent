@@ -193,8 +193,6 @@ async def create_vapi_assistant(
     elif webhook_secret:
         server_config["secret"] = webhook_secret
 
-    tool_def = _build_function_tool_definition()
-
     payload = {
         "name": f"UWI-{tenant_name[:30]}-{assistant_id}",
         "voice": voice,
@@ -203,7 +201,6 @@ async def create_vapi_assistant(
             "model": "gpt-4o-mini",
             "messages": [{"role": "system", "content": sys_msg}],
         },
-        "tools": [tool_def],
         "firstMessage": f"Cabinet {tenant_name}, bonjour ! Je suis {assistant_id.capitalize()}, comment puis-je vous aider ?",
         "endCallFunctionEnabled": True,
         "recordingEnabled": True,
@@ -293,14 +290,15 @@ async def update_vapi_assistant_faq(tenant_id: int) -> None:
 
 async def patch_vapi_assistant_add_tool(vapi_assistant_id: str) -> Dict[str, Any]:
     """
-    PATCH un assistant Vapi existant pour ajouter/mettre à jour le tool function_tool.
+    PATCH un assistant Vapi existant pour SUPPRIMER les function tools inline
+    de model.tools (garder seulement endCall et autres non-function).
+    Le vrai tool est géré via model.toolIds (tool persisté côté Vapi).
     Retourne la réponse Vapi ou lève en cas d'erreur.
     """
     vapi_assistant_id = (vapi_assistant_id or "").strip()
     if not vapi_assistant_id:
         raise ValueError("vapi_assistant_id requis")
 
-    tool_def = _build_function_tool_definition()
     headers = {
         "Authorization": f"Bearer {_vapi_api_key()}",
         "Content-Type": "application/json",
@@ -318,22 +316,32 @@ async def patch_vapi_assistant_add_tool(vapi_assistant_id: str) -> Dict[str, Any
         model = data.get("model") or {}
         existing_tools = model.get("tools") or []
 
-        new_tools = [t for t in existing_tools if (t.get("function") or {}).get("name") != "function_tool"]
-        new_tools.append(tool_def)
+        kept_tools = [t for t in existing_tools if t.get("type") != "function"]
+        removed_count = len(existing_tools) - len(kept_tools)
+
+        if removed_count == 0:
+            logger.info(
+                "VAPI_ASSISTANT_NO_INLINE_FUNCTION assistant_id=%s toolIds=%s",
+                vapi_assistant_id[:24],
+                model.get("toolIds") or [],
+            )
+            return data
 
         patch_res = await client.patch(
             f"{VAPI_API_URL}/assistant/{vapi_assistant_id}",
-            json={"model": {**model, "tools": new_tools}},
+            json={"model": {**model, "tools": kept_tools}},
             headers=headers,
             timeout=15,
         )
         patch_res.raise_for_status()
         result = patch_res.json()
-        tools_count = len((result.get("model") or {}).get("tools") or [])
+        new_model = result.get("model") or {}
         logger.info(
-            "VAPI_ASSISTANT_TOOL_PATCHED assistant_id=%s tools_count=%d",
+            "VAPI_ASSISTANT_INLINE_CLEANED assistant_id=%s removed=%d remaining=%d toolIds=%s",
             vapi_assistant_id[:24],
-            tools_count,
+            removed_count,
+            len(new_model.get("tools") or []),
+            new_model.get("toolIds") or [],
         )
         return result
 

@@ -737,6 +737,72 @@ async def debug_vapi_patch_tools():
         return {"error": str(e)[:300]}
 
 
+@app.post("/debug/vapi-cleanup-inline-tools")
+async def debug_vapi_cleanup_inline_tools():
+    """Supprime function_tool inline de model.tools (garde endCall) pour éviter le conflit avec toolIds."""
+    import os
+    import httpx
+    results = {}
+    try:
+        api_key = (os.environ.get("VAPI_API_KEY") or "").strip()
+        if not api_key:
+            return {"error": "VAPI_API_KEY non configuré"}
+
+        vapi_ids = set()
+        env_id = (os.environ.get("VAPI_ASSISTANT_ID") or "").strip()
+        if env_id:
+            vapi_ids.add(env_id)
+        try:
+            from backend.pg_pool import pg_connection
+            with pg_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT DISTINCT vapi_assistant_id FROM tenant_assistants WHERE vapi_assistant_id IS NOT NULL")
+                    for r in cur.fetchall():
+                        vid = (r.get("vapi_assistant_id") or "").strip()
+                        if vid:
+                            vapi_ids.add(vid)
+        except Exception:
+            pass
+
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        async with httpx.AsyncClient() as client:
+            for vid in vapi_ids:
+                try:
+                    res = await client.get(f"https://api.vapi.ai/assistant/{vid}", headers=headers, timeout=15)
+                    res.raise_for_status()
+                    data = res.json()
+                    model = data.get("model") or {}
+                    inline_tools = model.get("tools") or []
+                    tool_ids = model.get("toolIds") or []
+
+                    kept = [t for t in inline_tools if t.get("type") != "function"]
+                    removed = [t for t in inline_tools if t.get("type") == "function"]
+
+                    if not removed:
+                        results[vid[:24]] = {"skipped": "no inline function tool", "toolIds": tool_ids}
+                        continue
+
+                    patch_res = await client.patch(
+                        f"https://api.vapi.ai/assistant/{vid}",
+                        json={"model": {**model, "tools": kept}},
+                        headers=headers, timeout=15,
+                    )
+                    patch_res.raise_for_status()
+                    new_model = patch_res.json().get("model") or {}
+                    results[vid[:24]] = {
+                        "ok": True,
+                        "removed_inline": len(removed),
+                        "kept_inline": len(kept),
+                        "toolIds": new_model.get("toolIds") or [],
+                        "remaining_inline_tools": [t.get("type") for t in (new_model.get("tools") or [])],
+                    }
+                except Exception as e:
+                    results[vid[:24]] = {"error": str(e)[:200]}
+        return {"cleaned": results}
+    except Exception as e:
+        return {"error": str(e)[:300]}
+
+
 FAQ_PROMPT_RULE = """[RÈGLE ABSOLUE — FAQ / INFORMATIONS]
 Pour toute question d'information (horaires, tarifs, adresse, vacances, fermetures, moyens de paiement, etc.) :
 → Répondre DIRECTEMENT depuis la section FAQ ci-dessous.
