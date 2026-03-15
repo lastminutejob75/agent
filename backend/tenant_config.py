@@ -41,34 +41,55 @@ DEFAULT_FAQ = {
         {
             "category": "Horaires",
             "items": [
-                {"id": "h1", "question": "Quels sont vos horaires d'ouverture ?", "answer": "Nous sommes ouverts du lundi au vendredi de 9h à 18h.", "active": True},
-                {"id": "h2", "question": "Êtes-vous ouvert le samedi ?", "answer": "Non, le cabinet est fermé le week-end.", "active": True},
+                {"id": "h1", "question": "Quels sont vos horaires d'ouverture ?", "answer": "Le cabinet est ouvert du lundi au vendredi de 9h à 12h30 et de 14h à 18h.", "active": True},
+                {"id": "h2", "question": "Êtes-vous ouvert le samedi ?", "answer": "Non, le cabinet est fermé le samedi et le dimanche.", "active": True},
+                {"id": "h3", "question": "Êtes-vous ouvert pendant les vacances ?", "answer": "Le cabinet peut être fermé pendant certaines périodes de vacances. Contactez-nous pour connaître les dates exactes.", "active": True},
             ],
         },
         {
-            "category": "Tarifs",
+            "category": "Tarifs et paiement",
             "items": [
-                {"id": "t1", "question": "Quel est le prix d'une consultation ?", "answer": "La consultation est à 25€ en secteur 1.", "active": True},
-                {"id": "t2", "question": "Acceptez-vous la carte vitale ?", "answer": "Oui, nous acceptons la carte vitale et les mutuelles.", "active": True},
+                {"id": "t1", "question": "Quel est le prix d'une consultation ?", "answer": "La consultation est à 25 euros en secteur 1, prise en charge par l'assurance maladie.", "active": True},
+                {"id": "t2", "question": "Acceptez-vous la carte vitale ?", "answer": "Oui, nous acceptons la carte vitale. Pensez à l'apporter à chaque consultation.", "active": True},
+                {"id": "t3", "question": "Quels moyens de paiement acceptez-vous ?", "answer": "Nous acceptons la carte bancaire, les espèces et les chèques.", "active": True},
+                {"id": "t4", "question": "Prenez-vous les mutuelles ?", "answer": "Oui, nous pratiquons le tiers payant avec la plupart des mutuelles.", "active": True},
+            ],
+        },
+        {
+            "category": "Adresse et accès",
+            "items": [
+                {"id": "a1", "question": "Quelle est votre adresse ?", "answer": "L'adresse du cabinet vous sera confirmée lors de la prise de rendez-vous.", "active": True},
+                {"id": "a2", "question": "Y a-t-il un parking ?", "answer": "Un parking est disponible à proximité du cabinet.", "active": True},
+                {"id": "a3", "question": "Le cabinet est-il accessible aux personnes à mobilité réduite ?", "answer": "Oui, le cabinet est accessible aux personnes à mobilité réduite.", "active": True},
             ],
         },
         {
             "category": "Urgences",
             "items": [
-                {"id": "u1", "question": "Que faire en cas d'urgence ?", "answer": "En cas d'urgence, appelez le 15 (SAMU) ou le 112.", "active": True},
+                {"id": "u1", "question": "Que faire en cas d'urgence ?", "answer": "En cas d'urgence vitale, appelez le 15 pour le SAMU ou le 112. Pour une urgence non vitale, contactez le cabinet.", "active": True},
+                {"id": "u2", "question": "Consultez-vous sans rendez-vous ?", "answer": "Le cabinet fonctionne sur rendez-vous. En cas d'urgence, appelez-nous et nous ferons notre possible pour vous recevoir.", "active": True},
             ],
         },
         {
             "category": "Rendez-vous",
             "items": [
-                {"id": "r1", "question": "Comment prendre rendez-vous ?", "answer": "Vous pouvez prendre rendez-vous par téléphone ou via notre assistant vocal.", "active": True},
-                {"id": "r2", "question": "Puis-je annuler un rendez-vous ?", "answer": "Oui, merci de nous prévenir au moins 24h à l'avance.", "active": True},
+                {"id": "r1", "question": "Comment prendre rendez-vous ?", "answer": "Vous pouvez prendre rendez-vous directement via cet assistant vocal ou en rappelant le cabinet.", "active": True},
+                {"id": "r2", "question": "Puis-je annuler un rendez-vous ?", "answer": "Oui, merci de nous prévenir au moins 24 heures à l'avance pour annuler ou reporter.", "active": True},
+                {"id": "r3", "question": "Que se passe-t-il si j'arrive en retard ?", "answer": "En cas de retard important, le médecin pourrait ne pas pouvoir vous recevoir. Merci de prévenir le cabinet.", "active": True},
             ],
         },
         {
-            "category": "Ordonnances",
+            "category": "Ordonnances et documents",
             "items": [
-                {"id": "o1", "question": "Puis-je demander un renouvellement d'ordonnance ?", "answer": "Oui, laissez votre demande et le cabinet vous recontactera si nécessaire.", "active": True},
+                {"id": "o1", "question": "Puis-je demander un renouvellement d'ordonnance ?", "answer": "Oui, laissez votre demande et le cabinet vous recontactera. Une consultation peut être nécessaire.", "active": True},
+                {"id": "o2", "question": "Comment obtenir un certificat médical ?", "answer": "Les certificats médicaux nécessitent une consultation. Prenez rendez-vous avec le médecin.", "active": True},
+            ],
+        },
+        {
+            "category": "Contact",
+            "items": [
+                {"id": "c1", "question": "Comment vous contacter ?", "answer": "Vous pouvez nous joindre par téléphone aux horaires d'ouverture ou laisser un message via cet assistant.", "active": True},
+                {"id": "c2", "question": "Peut-on vous envoyer un email ?", "answer": "Pour toute demande, le plus simple est de contacter le cabinet par téléphone ou via cet assistant vocal.", "active": True},
             ],
         },
     ],
@@ -76,31 +97,44 @@ DEFAULT_FAQ = {
         {
             "category": "Horaires",
             "items": [
-                {"id": "h1", "question": "Quels sont vos horaires ?", "answer": "Nous recevons du lundi au vendredi de 9h à 19h.", "active": True},
+                {"id": "h1", "question": "Quels sont vos horaires d'ouverture ?", "answer": "Le cabinet dentaire est ouvert du lundi au vendredi de 9h à 12h30 et de 14h à 19h.", "active": True},
+                {"id": "h2", "question": "Êtes-vous ouvert le samedi ?", "answer": "Non, le cabinet est fermé le week-end.", "active": True},
             ],
         },
         {
-            "category": "Tarifs",
+            "category": "Tarifs et paiement",
             "items": [
-                {"id": "t1", "question": "Prenez-vous en charge les mutuelles ?", "answer": "Oui, nous travaillons avec la plupart des mutuelles.", "active": True},
+                {"id": "t1", "question": "Quels sont vos tarifs ?", "answer": "Les tarifs varient selon le type de soin. Le cabinet vous fournira un devis détaillé avant tout traitement.", "active": True},
+                {"id": "t2", "question": "Prenez-vous en charge les mutuelles ?", "answer": "Oui, nous travaillons avec la plupart des mutuelles et pratiquons le tiers payant.", "active": True},
+                {"id": "t3", "question": "Quels moyens de paiement acceptez-vous ?", "answer": "Nous acceptons la carte bancaire, les espèces et les chèques. Le paiement en plusieurs fois est possible pour les gros traitements.", "active": True},
+                {"id": "t4", "question": "Acceptez-vous la carte vitale ?", "answer": "Oui, pensez à apporter votre carte vitale et votre mutuelle à chaque rendez-vous.", "active": True},
+            ],
+        },
+        {
+            "category": "Adresse et accès",
+            "items": [
+                {"id": "a1", "question": "Quelle est votre adresse ?", "answer": "L'adresse du cabinet vous sera confirmée lors de la prise de rendez-vous.", "active": True},
+                {"id": "a2", "question": "Le cabinet est-il accessible aux personnes à mobilité réduite ?", "answer": "Oui, le cabinet est accessible aux personnes à mobilité réduite.", "active": True},
             ],
         },
         {
             "category": "Urgences",
             "items": [
-                {"id": "u1", "question": "Gérez-vous les urgences dentaires ?", "answer": "Oui, nous réservons des créneaux urgents chaque matin.", "active": True},
+                {"id": "u1", "question": "Gérez-vous les urgences dentaires ?", "answer": "Oui, nous réservons des créneaux pour les urgences chaque jour. Appelez le cabinet dès que possible.", "active": True},
+                {"id": "u2", "question": "J'ai mal aux dents, que faire ?", "answer": "Contactez le cabinet rapidement. En dehors des horaires, appelez le 15 ou rendez-vous aux urgences dentaires les plus proches.", "active": True},
             ],
         },
         {
-            "category": "RDV",
+            "category": "Rendez-vous",
             "items": [
-                {"id": "r1", "question": "Comment prendre rendez-vous ?", "answer": "Vous pouvez prendre rendez-vous par téléphone ou via l'assistant vocal du cabinet.", "active": True},
+                {"id": "r1", "question": "Comment prendre rendez-vous ?", "answer": "Vous pouvez prendre rendez-vous via cet assistant vocal ou en appelant le cabinet.", "active": True},
+                {"id": "r2", "question": "Puis-je annuler un rendez-vous ?", "answer": "Oui, merci de prévenir au moins 24 heures à l'avance.", "active": True},
             ],
         },
         {
-            "category": "Mutuelle",
+            "category": "Contact",
             "items": [
-                {"id": "m1", "question": "Acceptez-vous le tiers payant ?", "answer": "Selon les soins et votre mutuelle, le cabinet pourra vous préciser les modalités.", "active": True},
+                {"id": "c1", "question": "Comment vous contacter ?", "answer": "Vous pouvez nous joindre par téléphone aux horaires d'ouverture ou laisser un message via cet assistant.", "active": True},
             ],
         },
     ],
@@ -108,25 +142,37 @@ DEFAULT_FAQ = {
         {
             "category": "Horaires",
             "items": [
-                {"id": "h1", "question": "Quels sont vos horaires ?", "answer": "Le cabinet vous reçoit du lundi au vendredi sur rendez-vous.", "active": True},
+                {"id": "h1", "question": "Quels sont vos horaires ?", "answer": "Le cabinet de kinésithérapie vous reçoit du lundi au vendredi de 8h à 20h sur rendez-vous.", "active": True},
+                {"id": "h2", "question": "Êtes-vous ouvert le samedi ?", "answer": "Non, le cabinet est fermé le week-end.", "active": True},
             ],
         },
         {
-            "category": "Tarifs",
+            "category": "Tarifs et paiement",
             "items": [
-                {"id": "t1", "question": "Quels sont vos tarifs ?", "answer": "Les tarifs varient selon le soin. Le cabinet vous les précisera lors de la prise de rendez-vous.", "active": True},
+                {"id": "t1", "question": "Quels sont vos tarifs ?", "answer": "Les tarifs sont conventionnés. Avec une ordonnance, les séances sont prises en charge par l'assurance maladie et votre mutuelle.", "active": True},
+                {"id": "t2", "question": "Les séances sont-elles remboursées ?", "answer": "Oui, avec une ordonnance médicale, les séances sont remboursées par la sécurité sociale et votre complémentaire.", "active": True},
+                {"id": "t3", "question": "Quels moyens de paiement acceptez-vous ?", "answer": "Nous acceptons la carte bancaire, les espèces et les chèques.", "active": True},
             ],
         },
         {
-            "category": "RDV",
+            "category": "Adresse et accès",
             "items": [
-                {"id": "r1", "question": "Faut-il une ordonnance pour prendre rendez-vous ?", "answer": "Pour les soins remboursés, une ordonnance peut être nécessaire. Le cabinet vous guidera selon votre situation.", "active": True},
+                {"id": "a1", "question": "Quelle est votre adresse ?", "answer": "L'adresse du cabinet vous sera confirmée lors de la prise de rendez-vous.", "active": True},
+                {"id": "a2", "question": "Le cabinet est-il accessible aux personnes à mobilité réduite ?", "answer": "Oui, le cabinet est accessible aux personnes à mobilité réduite.", "active": True},
             ],
         },
         {
-            "category": "Remboursement",
+            "category": "Rendez-vous",
             "items": [
-                {"id": "rb1", "question": "Les séances sont-elles remboursées ?", "answer": "Oui, selon votre prescription et votre couverture, les séances peuvent être remboursées.", "active": True},
+                {"id": "r1", "question": "Comment prendre rendez-vous ?", "answer": "Vous pouvez prendre rendez-vous via cet assistant vocal ou en appelant le cabinet.", "active": True},
+                {"id": "r2", "question": "Faut-il une ordonnance ?", "answer": "Pour les soins remboursés, une ordonnance du médecin est nécessaire. Apportez-la au premier rendez-vous.", "active": True},
+                {"id": "r3", "question": "Puis-je annuler un rendez-vous ?", "answer": "Oui, merci de prévenir au moins 24 heures à l'avance.", "active": True},
+            ],
+        },
+        {
+            "category": "Contact",
+            "items": [
+                {"id": "c1", "question": "Comment vous contacter ?", "answer": "Vous pouvez nous joindre par téléphone aux horaires d'ouverture ou laisser un message via cet assistant.", "active": True},
             ],
         },
     ],
@@ -134,19 +180,34 @@ DEFAULT_FAQ = {
         {
             "category": "Horaires",
             "items": [
-                {"id": "h1", "question": "Quels sont vos horaires ?", "answer": "Le cabinet vous reçoit sur rendez-vous du lundi au vendredi.", "active": True},
+                {"id": "h1", "question": "Quels sont vos horaires ?", "answer": "Le cabinet vous reçoit sur rendez-vous du lundi au vendredi. Les horaires précis dépendent du praticien.", "active": True},
             ],
         },
         {
-            "category": "Tarifs",
+            "category": "Tarifs et paiement",
             "items": [
-                {"id": "t1", "question": "Quels sont vos tarifs ?", "answer": "Les tarifs dépendent du type de consultation. Le cabinet pourra vous les préciser.", "active": True},
+                {"id": "t1", "question": "Quels sont vos tarifs ?", "answer": "Les tarifs dépendent du type de consultation et du praticien. Le cabinet vous les précisera.", "active": True},
+                {"id": "t2", "question": "Quels moyens de paiement acceptez-vous ?", "answer": "Nous acceptons la carte bancaire, les espèces et les chèques.", "active": True},
+                {"id": "t3", "question": "Acceptez-vous la carte vitale ?", "answer": "Oui, pensez à apporter votre carte vitale et votre attestation de mutuelle.", "active": True},
             ],
         },
         {
-            "category": "RDV",
+            "category": "Adresse et accès",
             "items": [
-                {"id": "r1", "question": "Comment prendre rendez-vous ?", "answer": "Vous pouvez prendre rendez-vous via cet assistant vocal ou en rappelant le cabinet.", "active": True},
+                {"id": "a1", "question": "Quelle est votre adresse ?", "answer": "L'adresse du cabinet vous sera confirmée lors de la prise de rendez-vous.", "active": True},
+            ],
+        },
+        {
+            "category": "Rendez-vous",
+            "items": [
+                {"id": "r1", "question": "Comment prendre rendez-vous ?", "answer": "Vous pouvez prendre rendez-vous via cet assistant vocal ou en appelant le cabinet.", "active": True},
+                {"id": "r2", "question": "Puis-je annuler un rendez-vous ?", "answer": "Oui, merci de prévenir au moins 48 heures à l'avance.", "active": True},
+            ],
+        },
+        {
+            "category": "Contact",
+            "items": [
+                {"id": "c1", "question": "Comment vous contacter ?", "answer": "Vous pouvez nous joindre par téléphone aux horaires d'ouverture ou laisser un message via cet assistant.", "active": True},
             ],
         },
     ],
@@ -154,19 +215,28 @@ DEFAULT_FAQ = {
         {
             "category": "Horaires",
             "items": [
-                {"id": "h1", "question": "Quels sont vos horaires ?", "answer": "Le cabinet et les tournées sont organisés du lundi au samedi selon disponibilité.", "active": True},
+                {"id": "h1", "question": "Quels sont vos horaires ?", "answer": "Le cabinet et les tournées sont organisés du lundi au samedi de 7h à 19h.", "active": True},
+                {"id": "h2", "question": "Faites-vous des visites à domicile ?", "answer": "Oui, nous effectuons des soins à domicile sur prescription médicale.", "active": True},
             ],
         },
         {
-            "category": "Tarifs",
+            "category": "Tarifs et paiement",
             "items": [
-                {"id": "t1", "question": "Les soins sont-ils remboursés ?", "answer": "Oui, selon prescription et prise en charge habituelle de l'assurance maladie.", "active": True},
+                {"id": "t1", "question": "Les soins sont-ils remboursés ?", "answer": "Oui, avec une ordonnance, les soins infirmiers sont pris en charge par l'assurance maladie.", "active": True},
+                {"id": "t2", "question": "Quels moyens de paiement acceptez-vous ?", "answer": "Nous acceptons la carte bancaire, les espèces et les chèques. Le tiers payant est pratiqué.", "active": True},
+            ],
+        },
+        {
+            "category": "Rendez-vous",
+            "items": [
+                {"id": "r1", "question": "Comment prendre rendez-vous ?", "answer": "Vous pouvez prendre rendez-vous via cet assistant vocal ou en appelant le cabinet.", "active": True},
+                {"id": "r2", "question": "Faut-il une ordonnance ?", "answer": "Oui, une ordonnance médicale est nécessaire pour les soins infirmiers remboursés.", "active": True},
             ],
         },
         {
             "category": "Contact",
             "items": [
-                {"id": "c1", "question": "Comment laisser un message au cabinet ?", "answer": "Vous pouvez laisser votre demande via l'assistant vocal et l'équipe vous recontactera.", "active": True},
+                {"id": "c1", "question": "Comment vous contacter ?", "answer": "Vous pouvez nous joindre par téléphone ou laisser un message via cet assistant. L'équipe vous recontactera.", "active": True},
             ],
         },
     ],
@@ -174,25 +244,42 @@ DEFAULT_FAQ = {
         {
             "category": "Horaires",
             "items": [
-                {"id": "h1", "question": "Quels sont vos horaires ?", "answer": "Veuillez consulter notre site ou rappeler pendant les heures d'ouverture.", "active": True},
+                {"id": "h1", "question": "Quels sont vos horaires d'ouverture ?", "answer": "Le cabinet est ouvert du lundi au vendredi de 9h à 12h30 et de 14h à 18h.", "active": True},
+                {"id": "h2", "question": "Êtes-vous ouvert le samedi ?", "answer": "Non, le cabinet est fermé le week-end.", "active": True},
             ],
         },
         {
-            "category": "Tarifs",
+            "category": "Tarifs et paiement",
             "items": [
-                {"id": "t1", "question": "Quels sont vos tarifs ?", "answer": "Le cabinet pourra vous communiquer les tarifs lors de votre prise de contact.", "active": True},
+                {"id": "t1", "question": "Quels sont vos tarifs ?", "answer": "Les tarifs dépendent du type de consultation. Le cabinet vous les précisera lors de votre rendez-vous.", "active": True},
+                {"id": "t2", "question": "Quels moyens de paiement acceptez-vous ?", "answer": "Nous acceptons la carte bancaire, les espèces et les chèques.", "active": True},
+                {"id": "t3", "question": "Acceptez-vous la carte vitale ?", "answer": "Oui, pensez à apporter votre carte vitale à chaque consultation.", "active": True},
             ],
         },
         {
-            "category": "RDV",
+            "category": "Adresse et accès",
             "items": [
-                {"id": "r1", "question": "Comment prendre rendez-vous ?", "answer": "Vous pouvez prendre rendez-vous via cet assistant vocal.", "active": True},
+                {"id": "a1", "question": "Quelle est votre adresse ?", "answer": "L'adresse du cabinet vous sera confirmée lors de la prise de rendez-vous.", "active": True},
+                {"id": "a2", "question": "Le cabinet est-il accessible aux personnes à mobilité réduite ?", "answer": "Oui, le cabinet est accessible aux personnes à mobilité réduite.", "active": True},
+            ],
+        },
+        {
+            "category": "Rendez-vous",
+            "items": [
+                {"id": "r1", "question": "Comment prendre rendez-vous ?", "answer": "Vous pouvez prendre rendez-vous directement via cet assistant vocal ou en rappelant le cabinet.", "active": True},
+                {"id": "r2", "question": "Puis-je annuler un rendez-vous ?", "answer": "Oui, merci de nous prévenir au moins 24 heures à l'avance.", "active": True},
+            ],
+        },
+        {
+            "category": "Urgences",
+            "items": [
+                {"id": "u1", "question": "Que faire en cas d'urgence ?", "answer": "En cas d'urgence vitale, appelez le 15 pour le SAMU ou le 112. Pour une urgence non vitale, contactez le cabinet.", "active": True},
             ],
         },
         {
             "category": "Contact",
             "items": [
-                {"id": "c1", "question": "Comment vous contacter ?", "answer": "Vous pouvez laisser un message à l'assistant vocal et l'équipe vous recontactera.", "active": True},
+                {"id": "c1", "question": "Comment vous contacter ?", "answer": "Vous pouvez nous joindre par téléphone aux horaires d'ouverture ou laisser un message via cet assistant.", "active": True},
             ],
         },
     ],
