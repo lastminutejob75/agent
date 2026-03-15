@@ -738,12 +738,13 @@ async def debug_vapi_patch_tools():
 
 
 @app.post("/debug/vapi-cleanup-inline-tools")
-async def debug_vapi_cleanup_inline_tools():
+async def debug_vapi_cleanup_inline_tools(tool_id: str = None):
     """
     Nettoie tous les assistants Vapi :
     1. Supprime function_tool inline de model.tools (garde endCall)
     2. Garantit que VAPI_FUNCTION_TOOL_ID est dans model.toolIds
     Stratégie unique : model.toolIds pour le tool persisté.
+    Accepte ?tool_id=xxx en query param ou lit VAPI_FUNCTION_TOOL_ID.
     """
     import os
     import httpx
@@ -753,9 +754,9 @@ async def debug_vapi_cleanup_inline_tools():
         if not api_key:
             return {"error": "VAPI_API_KEY non configuré"}
 
-        function_tool_id = (os.environ.get("VAPI_FUNCTION_TOOL_ID") or "").strip()
+        function_tool_id = (tool_id or "").strip() or (os.environ.get("VAPI_FUNCTION_TOOL_ID") or "").strip()
         if not function_tool_id:
-            return {"error": "VAPI_FUNCTION_TOOL_ID non configuré"}
+            return {"error": "VAPI_FUNCTION_TOOL_ID non configuré et ?tool_id non fourni"}
 
         vapi_ids = set()
         env_id = (os.environ.get("VAPI_ASSISTANT_ID") or "").strip()
