@@ -89,31 +89,39 @@ def _vapi_tool_url() -> str:
 
 
 def _build_function_tool_definition() -> Dict[str, Any]:
-    """Définition du tool function_tool pour Vapi (server-side)."""
+    """
+    Définition du tool function_tool pour Vapi (server-side).
+    FAQ n'est PAS dans le tool : le LLM répond aux questions FAQ directement
+    depuis son system prompt (qui contient la FAQ du cabinet, y compris
+    les fermetures exceptionnelles, vacances, etc.).
+    Le tool ne gère que les actions qui nécessitent le backend.
+    """
     return {
         "type": "function",
         "function": {
             "name": "function_tool",
             "description": (
-                "Outil principal du backend. Utilisé pour : "
-                "répondre aux questions fréquentes (FAQ), "
-                "consulter les créneaux disponibles, "
-                "réserver un rendez-vous, "
-                "annuler ou modifier un rendez-vous, "
-                "transférer vers un humain. "
-                "Appelle TOUJOURS cet outil pour ces actions au lieu de répondre directement."
+                "Outil backend pour les ACTIONS uniquement. "
+                "Utilise cet outil SEULEMENT quand le patient veut : "
+                "consulter les créneaux disponibles (get_slots), "
+                "réserver un rendez-vous (book), "
+                "annuler un rendez-vous (cancel), "
+                "modifier un rendez-vous (modify), "
+                "ou être transféré vers un humain (transfer). "
+                "Pour les questions d'information (horaires, tarifs, adresse, vacances, etc.), "
+                "réponds DIRECTEMENT depuis tes instructions sans appeler cet outil."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["faq", "get_slots", "book", "cancel", "modify", "transfer"],
+                        "enum": ["get_slots", "book", "cancel", "modify", "transfer"],
                         "description": "L'action à exécuter.",
                     },
                     "user_message": {
                         "type": "string",
-                        "description": "Le message ou la question de l'utilisateur, retranscrit tel quel.",
+                        "description": "Le message de l'utilisateur, retranscrit tel quel.",
                     },
                     "patient_name": {
                         "type": "string",
