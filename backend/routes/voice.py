@@ -1276,6 +1276,9 @@ async def vapi_tool(request: Request):
     Actions : get_slots, book, cancel, modify, faq.
     Réponse Vapi : { "results": [ { "toolCallId", "result" | "error": string } ] }.
     """
+    import time as _time
+    _t0 = _time.monotonic()
+
     try:
         payload = await request.json()
         params = _tool_extract_parameters(payload)
@@ -1295,6 +1298,48 @@ async def vapi_tool(request: Request):
             "TOOL_CALL",
             extra={"call_id": call_id[:24] if call_id else "", "action": action or "(legacy)", "tool_call_id": (tool_call_id or "")[:24]},
         )
+
+        # ── FAQ FAST-PATH : répondre en <2s sans dépendance PG bloquante ──
+        if action == "faq" and user_message:
+            try:
+                from backend.tools_faq import tenant_faq_store, default_faq_store
+                resolved_tid_fast = None
+                try:
+                    from backend.tenant_routing import resolve_tenant_id_from_vapi_payload as _resolve
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                        fut = ex.submit(_resolve, payload, "vocal")
+                        resolved_tid_fast, _ = fut.result(timeout=2.0)
+                except Exception:
+                    resolved_tid_fast = None
+
+                faq_store = tenant_faq_store(resolved_tid_fast) if resolved_tid_fast else default_faq_store()
+                faq_result = faq_store.search(user_message)
+                if faq_result.match and faq_result.answer:
+                    result_text = faq_result.answer
+                else:
+                    result_text = "Je n'ai pas cette information. Souhaitez-vous que je vous mette en relation avec le cabinet ?"
+
+                elapsed = int((_time.monotonic() - _t0) * 1000)
+                logger.info("[VAPI_TOOL_FAQ_FAST] tenant=%s q=%s faq_id=%s score=%.2f elapsed=%dms",
+                            resolved_tid_fast, user_message[:40],
+                            faq_result.faq_id if faq_result.match else "-",
+                            faq_result.score, elapsed)
+
+                from backend import vapi_tool_handlers as th
+                if tool_call_id:
+                    return JSONResponse(th.build_vapi_tool_response(tool_call_id, result_text, None), status_code=200)
+                return JSONResponse({"result": result_text}, status_code=200)
+            except Exception as faq_err:
+                logger.warning("[VAPI_TOOL_FAQ_FAST_ERR] %s", faq_err)
+                from backend.tools_faq import default_faq_store
+                faq_store = default_faq_store()
+                faq_result = faq_store.search(user_message)
+                result_text = faq_result.answer if faq_result.match and faq_result.answer else "Je n'ai pas cette information."
+                from backend import vapi_tool_handlers as th
+                if tool_call_id:
+                    return JSONResponse(th.build_vapi_tool_response(tool_call_id, result_text, None), status_code=200)
+                return JSONResponse({"result": result_text}, status_code=200)
 
         from backend.tenant_routing import (
             resolve_tenant_id_from_vapi_payload,
@@ -1400,17 +1445,6 @@ async def vapi_tool(request: Request):
             return JSONResponse({"result": out}, status_code=200)
 
         message_to_use = user_message or ""
-
-        if action == "faq" and message_to_use:
-            from backend.tools_faq import tenant_faq_store
-            faq_store = tenant_faq_store(resolved_tenant_id)
-            faq_result = faq_store.search(message_to_use)
-            if faq_result.match and faq_result.answer:
-                logger.info("[VAPI_TOOL_FAQ] tenant=%s q=%s faq_id=%s score=%.2f",
-                            resolved_tenant_id, message_to_use[:40], faq_result.faq_id, faq_result.score)
-                if tool_call_id:
-                    return JSONResponse(th.build_vapi_tool_response(tool_call_id, faq_result.answer, None), status_code=200)
-                return JSONResponse({"result": faq_result.answer}, status_code=200)
 
         if _pg_lock_ok():
             try:

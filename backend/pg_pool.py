@@ -33,7 +33,7 @@ def get_pool():
             conninfo=url,
             min_size=1,
             max_size=5,
-            timeout=10.0,
+            timeout=3.0,
             max_idle=300.0,
             kwargs={"row_factory": _dict_row_factory()},
         )
@@ -70,5 +70,5 @@ def pg_connection():
         raise RuntimeError("No PostgreSQL URL configured")
     import psycopg
     from psycopg.rows import dict_row
-    with psycopg.connect(url, row_factory=dict_row) as conn:
+    with psycopg.connect(url, row_factory=dict_row, connect_timeout=3) as conn:
         yield conn
