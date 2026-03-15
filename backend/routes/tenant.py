@@ -1210,12 +1210,11 @@ def tenant_calls(
     _pg_url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
     if _pg_url:
         try:
-            import psycopg
-            from psycopg.rows import dict_row
+            from backend.pg_pool import pg_connection
             _cids = list(dict.fromkeys(c for c in call_ids_for_followup if c))
             _phones = list(dict.fromkeys(normalize_phone_number(p) for p in phones_for_patients if p))
             _phones = [p for p in _phones if p]
-            with psycopg.connect(_pg_url, row_factory=dict_row) as _conn:
+            with pg_connection() as _conn:
                 with _conn.cursor() as _cur:
                     if _cids:
                         try:

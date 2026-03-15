@@ -545,9 +545,8 @@ def pg_get_tenant_full(tenant_id: int) -> Optional[dict]:
     if not url:
         return None
     try:
-        import psycopg
-        from psycopg.rows import dict_row
-        with psycopg.connect(url, row_factory=dict_row) as conn:
+        from backend.pg_pool import pg_connection
+        with pg_connection() as conn:
             set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute("SELECT tenant_id, name, timezone, status, created_at FROM tenants WHERE tenant_id = %s", (tenant_id,))

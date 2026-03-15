@@ -1875,8 +1875,7 @@ def _get_calls_list(
 
     if url:
         try:
-            import psycopg
-            from psycopg.rows import dict_row
+            from backend.pg_pool import pg_connection
             cursor_ts: Optional[str] = None
             cursor_id: Optional[str] = None
             if cursor:
@@ -1891,7 +1890,7 @@ def _get_calls_list(
                     if len(parts) == 2:
                         cursor_ts, cursor_id = parts[0], parts[1]
 
-            with psycopg.connect(url, row_factory=dict_row) as conn:
+            with pg_connection() as conn:
                 with conn.cursor() as cur:
                     try:
                         vapi_only_params: list = [start, end, start, end]
@@ -2177,9 +2176,8 @@ def _get_call_detail(tenant_id: int, call_id: str) -> dict:
     if not url:
         return out
     try:
-        import psycopg
-        from psycopg.rows import dict_row
-        with psycopg.connect(url, row_factory=dict_row) as conn:
+        from backend.pg_pool import pg_connection
+        with pg_connection() as conn:
             with conn.cursor() as cur:
                 vapi_row = None
                 cur.execute(

@@ -17,6 +17,7 @@ anthropic>=0.39.0
 # SQLite: standard library
 # Postgres (ivr_events dual-write): psycopg[binary]>=3.1
 psycopg[binary]>=3.1
+psycopg_pool>=3.1
 
 # Tests
 pytest==7.4.4
