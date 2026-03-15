@@ -344,7 +344,9 @@ export default function AppDashboard() {
   const [tourStepIndex, setTourStepIndex] = useState(-1);
   const [tourRect, setTourRect] = useState(null);
   const [tourPersisting, setTourPersisting] = useState(false);
-  const [tourDismissed, setTourDismissed] = useState(false);
+  const [tourDismissed, setTourDismissed] = useState(() => {
+    try { return localStorage.getItem("uwi_tour_done") === "1"; } catch { return false; }
+  });
 
   useEffect(() => {
     setMe(contextMe);
@@ -732,6 +734,7 @@ export default function AppDashboard() {
 
   const completeTour = async () => {
     setTourDismissed(true);
+    try { localStorage.setItem("uwi_tour_done", "1"); } catch {}
     setTourStepIndex(-1);
     setTourRect(null);
     if (!me || me.dashboard_tour_completed || tourPersisting) return;
@@ -756,6 +759,7 @@ export default function AppDashboard() {
 
   const restartTour = () => {
     setTourDismissed(false);
+    try { localStorage.removeItem("uwi_tour_done"); } catch {}
     setTourRect(null);
     setTourStepIndex(0);
   };
