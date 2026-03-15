@@ -166,49 +166,67 @@ def default_faq_store() -> FaqStore:
     return FaqStore(items=items)
 
 
+_CATEGORY_VARIATIONS: Dict[str, List[str]] = {
+    "horaires": [
+        "horaires", "les horaires", "quels sont vos horaires",
+        "horaires ouverture", "vous êtes ouvert quand",
+        "c'est ouvert à quelle heure", "ouvert le samedi",
+        "heures ouverture", "à quelle heure vous ouvrez",
+        "à quelle heure vous fermez", "fermé le dimanche",
+    ],
+    "tarifs": [
+        "tarifs", "quels sont vos tarifs", "combien coûte une consultation",
+        "c'est combien", "ça coûte combien", "combien",
+        "quel est le prix", "tarif consultation", "prix de la consultation",
+    ],
+    "urgences": [
+        "urgence", "en cas d'urgence", "que faire en cas d'urgence",
+        "c'est urgent", "urgences",
+    ],
+    "rendez-vous": [
+        "rendez-vous", "prendre rendez-vous", "comment prendre rendez-vous",
+        "rdv", "prendre un rdv", "je veux un rendez-vous",
+    ],
+    "annulation": [
+        "annuler", "annulation", "annuler un rendez-vous",
+        "comment annuler", "annuler mon rdv", "je veux annuler",
+    ],
+    "adresse": [
+        "adresse", "l'adresse", "quelle est votre adresse",
+        "où est le cabinet", "où êtes-vous situé", "c'est où",
+        "comment venir", "adresse du cabinet",
+    ],
+    "paiement": [
+        "paiement", "moyens de paiement", "vous prenez la carte",
+        "carte bancaire", "comment payer", "espèces",
+    ],
+    "mutuelle": [
+        "mutuelle", "carte vitale", "tiers payant",
+        "remboursement", "remboursé",
+    ],
+    "ordonnances": [
+        "ordonnance", "renouvellement ordonnance", "renouvellement",
+    ],
+    "contact": [
+        "contact", "contacter", "laisser un message", "rappeler",
+    ],
+}
+
+
+def _detect_category(category_name: str) -> Optional[str]:
+    """Détecte la catégorie normalisée à partir du nom de catégorie du dashboard."""
+    name = (category_name or "").strip().lower()
+    for key in _CATEGORY_VARIATIONS:
+        if key in name:
+            return key
+    return None
+
+
 def tenant_faq_store(tenant_id: Optional[int] = None) -> FaqStore:
     """
-    Construit un FaqStore à partir de la FAQ configurée pour le tenant (dashboard).
-    Fallback sur default_faq_store() si la FAQ tenant est vide ou en erreur.
-    """
-    if tenant_id is None or tenant_id <= 0:
-        return default_faq_store()
-    try:
-        from backend.tenant_config import get_faq
-        faq_categories = get_faq(tenant_id)
-        if not faq_categories:
-            return default_faq_store()
-
-        items: List[FaqItem] = []
-        for cat in faq_categories:
-            if not isinstance(cat, dict):
-                continue
-            for item in cat.get("items") or []:
-                if not isinstance(item, dict):
-                    continue
-                if not item.get("active", True):
-                    continue
-                question = str(item.get("question") or "").strip()
-                answer = str(item.get("answer") or "").strip()
-                faq_id = str(item.get("id") or "").strip()
-                if question and answer:
-                    items.append(FaqItem(faq_id=faq_id or f"FAQ_{len(items)}", question=question, answer=answer))
-
-        if not items:
-            logger.debug("tenant_faq_store: tenant_id=%s returned 0 items, using default", tenant_id)
-            return default_faq_store()
-
-        logger.debug("tenant_faq_store: tenant_id=%s loaded %d FAQ items", tenant_id, len(items))
-        return FaqStore(items=items)
-    except Exception as e:
-        logger.warning("tenant_faq_store: tenant_id=%s error=%s, using default", tenant_id, e)
-        return default_faq_store()
-
-
-def tenant_faq_store(tenant_id: Optional[int] = None) -> FaqStore:
-    """
-    Construit un FaqStore à partir de la FAQ configurée par le tenant (dashboard).
-    Fallback sur default_faq_store() si aucune FAQ tenant n'est trouvée.
+    Construit un FaqStore à partir de la FAQ du tenant (dashboard).
+    Ajoute des variantes automatiques par catégorie pour améliorer le fuzzy matching.
+    Fallback sur default_faq_store() si aucune FAQ tenant trouvée.
     """
     if tenant_id is None or tenant_id <= 0:
         return default_faq_store()
@@ -224,6 +242,9 @@ def tenant_faq_store(tenant_id: Optional[int] = None) -> FaqStore:
         for cat in faq_categories:
             if not isinstance(cat, dict):
                 continue
+            cat_name = str(cat.get("category") or "").strip()
+            cat_key = _detect_category(cat_name)
+
             for item in (cat.get("items") or []):
                 if not isinstance(item, dict):
                     continue
@@ -236,11 +257,18 @@ def tenant_faq_store(tenant_id: Optional[int] = None) -> FaqStore:
                 faq_id = str(item.get("id") or "").strip() or "FAQ_TENANT"
                 items.append(FaqItem(faq_id=faq_id, question=question, answer=answer))
 
+                if cat_key and cat_key in _CATEGORY_VARIATIONS:
+                    seen = {_norm(question)}
+                    for variation in _CATEGORY_VARIATIONS[cat_key]:
+                        if _norm(variation) not in seen:
+                            seen.add(_norm(variation))
+                            items.append(FaqItem(faq_id=faq_id, question=variation, answer=answer))
+
         if not items:
             logger.debug("tenant_faq_store: 0 active items for tenant %s, using default", tenant_id)
             return default_faq_store()
 
-        logger.debug("tenant_faq_store: loaded %d items for tenant %s", len(items), tenant_id)
+        logger.debug("tenant_faq_store: loaded %d items (with variations) for tenant %s", len(items), tenant_id)
         return FaqStore(items=items)
     except Exception as e:
         logger.warning("tenant_faq_store failed for tenant %s: %s (using default)", tenant_id, e)
