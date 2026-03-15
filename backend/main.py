@@ -737,6 +737,81 @@ async def debug_vapi_patch_tools():
         return {"error": str(e)[:300]}
 
 
+FAQ_PROMPT_RULE = """[RÈGLE ABSOLUE — FAQ / INFORMATIONS]
+Pour toute question d'information (horaires, tarifs, adresse, vacances, fermetures, moyens de paiement, etc.) :
+→ Répondre DIRECTEMENT depuis la section FAQ ci-dessous.
+→ Ne JAMAIS appeler function_tool pour une question d'information.
+→ Ne JAMAIS inventer de réponse. Utiliser UNIQUEMENT les informations de la FAQ.
+→ Si l'information n'est pas dans la FAQ : "Je n'ai pas cette information. Souhaitez-vous que je vous mette en relation avec le cabinet ?"
+"""
+
+
+@app.post("/debug/vapi-patch-prompt-faq-rule")
+async def debug_vapi_patch_prompt_faq_rule():
+    """Injecte la règle FAQ dans le system prompt de tous les assistants Vapi."""
+    import os
+    import httpx
+    results = {}
+    try:
+        api_key = (os.environ.get("VAPI_API_KEY") or "").strip()
+        if not api_key:
+            return {"error": "VAPI_API_KEY non configuré"}
+
+        vapi_ids = set()
+        env_id = (os.environ.get("VAPI_ASSISTANT_ID") or "").strip()
+        if env_id:
+            vapi_ids.add(env_id)
+        try:
+            from backend.pg_pool import pg_connection
+            with pg_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT DISTINCT vapi_assistant_id FROM tenant_assistants WHERE vapi_assistant_id IS NOT NULL")
+                    for r in cur.fetchall():
+                        vid = (r.get("vapi_assistant_id") or "").strip()
+                        if vid:
+                            vapi_ids.add(vid)
+        except Exception:
+            pass
+
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        async with httpx.AsyncClient() as client:
+            for vid in vapi_ids:
+                try:
+                    res = await client.get(f"https://api.vapi.ai/assistant/{vid}", headers=headers, timeout=15)
+                    res.raise_for_status()
+                    data = res.json()
+                    model = data.get("model") or {}
+                    messages = model.get("messages") or []
+                    sys_idx = next((i for i, m in enumerate(messages) if isinstance(m, dict) and m.get("role") == "system"), None)
+                    if sys_idx is None:
+                        results[vid[:24]] = {"skipped": "no system message"}
+                        continue
+                    current_content = str(messages[sys_idx].get("content") or "")
+                    if "[RÈGLE ABSOLUE — FAQ / INFORMATIONS]" in current_content:
+                        results[vid[:24]] = {"skipped": "rule already present"}
+                        continue
+                    insert_before = current_content.find("[CONTRAT TOOL")
+                    if insert_before == -1:
+                        insert_before = current_content.find("[RÈGLE ABSOLUE")
+                    if insert_before == -1:
+                        new_content = current_content + "\n\n" + FAQ_PROMPT_RULE
+                    else:
+                        new_content = current_content[:insert_before] + FAQ_PROMPT_RULE + "\n" + current_content[insert_before:]
+                    messages[sys_idx] = {**messages[sys_idx], "content": new_content}
+                    patch_res = await client.patch(
+                        f"https://api.vapi.ai/assistant/{vid}",
+                        json={"model": {**model, "messages": messages}},
+                        headers=headers, timeout=15,
+                    )
+                    patch_res.raise_for_status()
+                    results[vid[:24]] = {"ok": True, "prompt_length": len(new_content)}
+                except Exception as e:
+                    results[vid[:24]] = {"error": str(e)[:200]}
+        return {"patched": results}
+    except Exception as e:
+        return {"error": str(e)[:300]}
+
+
 @app.post("/chat")
 async def chat(
     payload: dict,
