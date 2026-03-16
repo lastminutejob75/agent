@@ -677,7 +677,7 @@ async def debug_vapi_assistant():
                     sys_prompt = ""
                     for m in messages:
                         if isinstance(m, dict) and m.get("role") == "system":
-                            sys_prompt = str(m.get("content") or "")[:3000]
+                            sys_prompt = str(m.get("content") or "")
                             break
                     results[vapi_id[:24]] = {
                         "name": data.get("name"),
