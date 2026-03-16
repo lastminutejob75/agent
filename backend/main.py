@@ -857,53 +857,14 @@ async def debug_vapi_sync_faq(tenant_id: int = 1):
         if not vapi_id:
             return {"error": "Aucun vapi_assistant_id trouvé (ni params, ni env var)", "tenant_id": tenant_id}
 
-        import httpx
-        from backend.vapi_utils import _vapi_api_key, _merge_prompt_with_faq, FAQ_START_MARKER
-        api_key = _vapi_api_key()
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        async with httpx.AsyncClient() as client:
-            get_res = await client.get(f"https://api.vapi.ai/assistant/{vapi_id}", headers=headers, timeout=15)
-            get_res.raise_for_status()
-            data = get_res.json()
-            model = data.get("model") or {}
-            messages = model.get("messages") or []
-
-            sys_idx = next((i for i, m in enumerate(messages) if isinstance(m, dict) and m.get("role") == "system"), None)
-            old_content = ""
-            if sys_idx is not None:
-                old_content = str(messages[sys_idx].get("content") or "")
-
-            merged = _merge_prompt_with_faq(old_content, faq_text)
-
-            if sys_idx is not None:
-                messages[sys_idx] = {**messages[sys_idx], "content": merged}
-            else:
-                messages.insert(0, {"role": "system", "content": merged})
-
-            patch_res = await client.patch(
-                f"https://api.vapi.ai/assistant/{vapi_id}",
-                json={"model": {**model, "messages": messages}},
-                headers=headers, timeout=15,
-            )
-            patch_res.raise_for_status()
-            result_model = patch_res.json().get("model") or {}
-            result_msgs = result_model.get("messages") or []
-            result_sys = next((m for m in result_msgs if isinstance(m, dict) and m.get("role") == "system"), {})
-            result_content = str(result_sys.get("content") or "")
-
+        await patch_vapi_assistant_system_prompt(vapi_id, faq_text)
         return {
             "ok": True,
             "tenant_id": tenant_id,
             "vapi_assistant_id": vapi_id[:24],
             "source": source,
-            "faq_categories": len(faq),
-            "old_prompt_len": len(old_content),
             "faq_text_len": len(faq_text),
-            "merged_len": len(merged),
-            "result_prompt_len": len(result_content),
-            "has_faq_marker": FAQ_START_MARKER in result_content,
-            "faq_text_preview": faq_text[:300],
-            "result_tail": result_content[-300:] if result_content else "",
+            "faq_text_preview": faq_text[:500],
         }
     except Exception as e:
         return {"error": str(e)[:300], "tenant_id": tenant_id}
