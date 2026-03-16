@@ -922,6 +922,102 @@ async def vapi_webhook(request: Request):
         return Response(status_code=200)
 
 
+def _persist_status_update_sync(payload: dict, message: dict) -> None:
+    """Persist status-update/handoff sans bloquer la réponse webhook."""
+    from backend.tenant_routing import (
+        extract_customer_phone_from_vapi_payload,
+        resolve_tenant_id_from_vapi_payload,
+    )
+    from backend.vapi_calls_pg import upsert_vapi_call
+    from backend.handoffs import get_handoff_by_call_id, update_handoff_status
+
+    _cid = _webhook_extract_call_id(payload)
+    _tid, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
+    _call = message.get("call") or {}
+    _pn = _call.get("phoneNumber") or {}
+    _customer_number = extract_customer_phone_from_vapi_payload(payload)
+    _status = message.get("status") or _call.get("status") or "unknown"
+    _started_at = None
+    _ended_at = None
+    _ended_reason = message.get("endedReason") or _call.get("endedReason")
+
+    if _status == "in-progress":
+        _started_at = _call.get("startedAt") or _call.get("createdAt")
+        if isinstance(_started_at, str):
+            try:
+                from datetime import datetime as _dt
+                _started_at = _dt.fromisoformat(_started_at.replace("Z", "+00:00")[:26])
+            except Exception:
+                _started_at = None
+        if _started_at is None:
+            from datetime import datetime, timezone
+            _started_at = datetime.now(timezone.utc)
+    elif _status == "ended":
+        _ended_at = _call.get("endedAt") or _call.get("updatedAt")
+        if isinstance(_ended_at, str):
+            try:
+                from datetime import datetime as _dt
+                _ended_at = _dt.fromisoformat(_ended_at.replace("Z", "+00:00")[:26])
+            except Exception:
+                _ended_at = None
+        if _ended_at is None:
+            from datetime import datetime, timezone
+            _ended_at = datetime.now(timezone.utc)
+        _raw_started = _call.get("startedAt") or _call.get("createdAt")
+        if isinstance(_raw_started, str):
+            try:
+                from datetime import datetime as _dt
+                _started_at = _dt.fromisoformat(_raw_started.replace("Z", "+00:00")[:26])
+            except Exception:
+                pass
+
+    if not (_cid and _tid):
+        return
+
+    upsert_vapi_call(
+        _tid,
+        _cid,
+        customer_number=_customer_number,
+        assistant_id=_call.get("assistantId"),
+        phone_number_id=_call.get("phoneNumberId") or (_pn.get("id") if isinstance(_pn, dict) else None),
+        status=_status,
+        started_at=_started_at,
+        ended_at=_ended_at,
+        ended_reason=_ended_reason,
+    )
+    handoff = get_handoff_by_call_id(_tid, _cid)
+    if not (handoff and handoff.get("id")):
+        return
+    handoff_id = int(handoff["id"])
+    current_status = str(handoff.get("status") or "").strip().lower()
+    if _status == "forwarding" and current_status not in {"live_forwarding_confirmed", "live_connected"}:
+        update_handoff_status(_tid, handoff_id, status="live_forwarding_confirmed")
+        logger.info(
+            "LIVE_TRANSFER_FORWARDING_CONFIRMED call_id=%s tenant_id=%s handoff_id=%s",
+            (_cid or "")[:24],
+            _tid,
+            handoff_id,
+        )
+    elif _status == "ended" and (_ended_reason or "").strip() == "assistant-forwarded-call":
+        update_handoff_status(_tid, handoff_id, status="live_connected")
+        logger.info(
+            "LIVE_TRANSFER_CONNECTED call_id=%s tenant_id=%s handoff_id=%s ended_reason=%s",
+            (_cid or "")[:24],
+            _tid,
+            handoff_id,
+            _ended_reason,
+        )
+    elif _status == "ended" and current_status in {"live_attempted", "live_forwarding_confirmed", "live_unconfirmed_timeout"}:
+        update_handoff_status(_tid, handoff_id, status="live_failed")
+        logger.warning(
+            "LIVE_TRANSFER_ENDED_UNEXPECTED call_id=%s tenant_id=%s handoff_id=%s ended_reason=%s",
+            (_cid or "")[:24],
+            _tid,
+            handoff_id,
+            _ended_reason or "",
+        )
+
+
 async def _vapi_webhook_inner(request: Request, payload: dict):
     """Corps du webhook Vapi — séparé pour garantir un try/except global."""
     message = payload.get("message") or {}
@@ -941,94 +1037,17 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
         except Exception as e:
             logger.warning("VAPI_USAGE_INGEST_FAILED %s", str(e)[:100])
 
-    # status-update → vapi_calls (cycle de vie: ringing / in-progress / ended) pour dashboard + Tableau
+    # status-update: ACK immédiat (<100ms) puis traitement DB en arrière-plan.
+    # Evite de retarder le démarrage vocal (firstMessage) si PG est lent.
     if msg_type == "status-update":
-        try:
-            from backend.tenant_routing import extract_customer_phone_from_vapi_payload, resolve_tenant_id_from_vapi_payload
-            from backend.vapi_calls_pg import upsert_vapi_call
-            from backend.handoffs import get_handoff_by_call_id, update_handoff_status
-            _cid = _webhook_extract_call_id(payload)
-            _tid, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
-            _call = message.get("call") or {}
-            _pn = _call.get("phoneNumber") or {}
-            _customer_number = extract_customer_phone_from_vapi_payload(payload)
-            _status = message.get("status") or _call.get("status") or "unknown"
-            _started_at = None
-            _ended_at = None
-            _ended_reason = message.get("endedReason") or _call.get("endedReason")
-            if _status == "in-progress":
-                _started_at = _call.get("startedAt") or _call.get("createdAt")
-                if isinstance(_started_at, str):
-                    try:
-                        from datetime import datetime as _dt
-                        _started_at = _dt.fromisoformat(_started_at.replace("Z", "+00:00")[:26])
-                    except Exception:
-                        _started_at = None
-                if _started_at is None:
-                    from datetime import datetime, timezone
-                    _started_at = datetime.now(timezone.utc)
-            elif _status == "ended":
-                _ended_at = _call.get("endedAt") or _call.get("updatedAt")
-                if isinstance(_ended_at, str):
-                    try:
-                        from datetime import datetime as _dt
-                        _ended_at = _dt.fromisoformat(_ended_at.replace("Z", "+00:00")[:26])
-                    except Exception:
-                        _ended_at = None
-                if _ended_at is None:
-                    from datetime import datetime, timezone
-                    _ended_at = datetime.now(timezone.utc)
-                _raw_started = _call.get("startedAt") or _call.get("createdAt")
-                if isinstance(_raw_started, str):
-                    try:
-                        from datetime import datetime as _dt
-                        _started_at = _dt.fromisoformat(_raw_started.replace("Z", "+00:00")[:26])
-                    except Exception:
-                        pass
-            if _cid and _tid:
-                upsert_vapi_call(
-                    _tid,
-                    _cid,
-                    customer_number=_customer_number,
-                    assistant_id=_call.get("assistantId"),
-                    phone_number_id=_call.get("phoneNumberId") or (_pn.get("id") if isinstance(_pn, dict) else None),
-                    status=_status,
-                    started_at=_started_at,
-                    ended_at=_ended_at,
-                    ended_reason=_ended_reason,
-                )
-                handoff = get_handoff_by_call_id(_tid, _cid)
-                if handoff and handoff.get("id"):
-                    handoff_id = int(handoff["id"])
-                    current_status = str(handoff.get("status") or "").strip().lower()
-                    if _status == "forwarding" and current_status not in {"live_forwarding_confirmed", "live_connected"}:
-                        update_handoff_status(_tid, handoff_id, status="live_forwarding_confirmed")
-                        logger.info(
-                            "LIVE_TRANSFER_FORWARDING_CONFIRMED call_id=%s tenant_id=%s handoff_id=%s",
-                            (_cid or "")[:24],
-                            _tid,
-                            handoff_id,
-                        )
-                    elif _status == "ended" and (_ended_reason or "").strip() == "assistant-forwarded-call":
-                        update_handoff_status(_tid, handoff_id, status="live_connected")
-                        logger.info(
-                            "LIVE_TRANSFER_CONNECTED call_id=%s tenant_id=%s handoff_id=%s ended_reason=%s",
-                            (_cid or "")[:24],
-                            _tid,
-                            handoff_id,
-                            _ended_reason,
-                        )
-                    elif _status == "ended" and current_status in {"live_attempted", "live_forwarding_confirmed", "live_unconfirmed_timeout"}:
-                        update_handoff_status(_tid, handoff_id, status="live_failed")
-                        logger.warning(
-                            "LIVE_TRANSFER_ENDED_UNEXPECTED call_id=%s tenant_id=%s handoff_id=%s ended_reason=%s",
-                            (_cid or "")[:24],
-                            _tid,
-                            handoff_id,
-                            _ended_reason or "",
-                        )
-        except Exception as e:
-            logger.warning("VAPI_STATUS_UPDATE_PERSIST_FAILED %s", str(e)[:120])
+        async def _persist_status_update_bg() -> None:
+            try:
+                await asyncio.to_thread(_persist_status_update_sync, payload, message)
+            except Exception as e:
+                logger.warning("VAPI_STATUS_UPDATE_BG_FAILED %s", str(e)[:120])
+
+        asyncio.create_task(_persist_status_update_bg())
+        return JSONResponse({"ok": True}, status_code=200)
 
     # transcript → call_transcripts (user / assistant, final ou partial) pour détail appel + analyse
     if msg_type == "transcript":
