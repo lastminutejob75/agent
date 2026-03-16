@@ -297,7 +297,7 @@ async def keep_alive():
             print(f"⚠️ Keep-alive ping failed: {e}")
 
         _slots_warmup_counter += 1
-        if _slots_warmup_counter % 4 == 0:
+        if _slots_warmup_counter % 3 == 0:
             await asyncio.to_thread(_warmup_slots)
 
 

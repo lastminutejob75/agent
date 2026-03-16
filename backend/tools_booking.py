@@ -240,7 +240,7 @@ _calendar_service = None  # Legacy fallback (global)
 
 _slots_cache: Dict[str, Any] = {
     "by_key": {},  # (tenant_id, pref) -> {"slots": [...], "timestamp": float}
-    "ttl_seconds": 90,
+    "ttl_seconds": 150,
 }
 
 
