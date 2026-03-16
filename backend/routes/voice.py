@@ -1351,31 +1351,56 @@ async def vapi_tool(request: Request):
         )
         from backend import vapi_tool_handlers as th
 
-        resolved_tenant_id, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
+        import concurrent.futures
+        def _resolve_tenant():
+            return resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(_resolve_tenant)
+                resolved_tenant_id, _ = fut.result(timeout=4.0)
+        except concurrent.futures.TimeoutError:
+            logger.warning("[VAPI_TOOL_TENANT_TIMEOUT] action=%s call_id=%s — fallback tenant 1", action, call_id[:24] if call_id else "")
+            resolved_tenant_id = 1
+        except Exception as e:
+            logger.warning("[VAPI_TOOL_TENANT_ERROR] %s — fallback tenant 1", type(e).__name__)
+            resolved_tenant_id = 1
         request.state.tenant_id = resolved_tenant_id
         current_tenant_id.set(str(resolved_tenant_id))
 
         def _get_session():
             return _get_or_resume_voice_session(resolved_tenant_id, call_id)
 
-        # --- get_slots : créneaux 100% backend (Google Calendar) ---
+        # --- get_slots : créneaux 100% backend (Google Calendar) avec timeout global ---
         if action == "get_slots":
-            session = _get_session()
-            session.channel = "vocal"
-            session.tenant_id = resolved_tenant_id
-            if patient_name:
-                session.qualif_data.name = patient_name
-            if motif:
-                session.qualif_data.motif = motif
-            if preference:
-                session.qualif_data.pref = preference
-            slots_list, source, err = th.handle_get_slots(
-                session, preference, call_id,
-                exclude_start_iso=exclude_start_iso,
-                exclude_end_iso=exclude_end_iso,
-            )
-            if hasattr(ENGINE.session_store, "save"):
-                ENGINE.session_store.save(session)
+            def _do_get_slots():
+                session = _get_session()
+                session.channel = "vocal"
+                session.tenant_id = resolved_tenant_id
+                if patient_name:
+                    session.qualif_data.name = patient_name
+                if motif:
+                    session.qualif_data.motif = motif
+                if preference:
+                    session.qualif_data.pref = preference
+                slots_list, source, err = th.handle_get_slots(
+                    session, preference, call_id,
+                    exclude_start_iso=exclude_start_iso,
+                    exclude_end_iso=exclude_end_iso,
+                )
+                if hasattr(ENGINE.session_store, "save"):
+                    ENGINE.session_store.save(session)
+                return slots_list, source, err
+
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                    fut = ex.submit(_do_get_slots)
+                    slots_list, source, err = fut.result(timeout=12.0)
+            except concurrent.futures.TimeoutError:
+                logger.error("[VAPI_TOOL_GET_SLOTS_TIMEOUT] call_id=%s — 12s exceeded", call_id[:24] if call_id else "")
+                err = "L'agenda met trop de temps à répondre. Souhaitez-vous qu'on vous rappelle ?"
+                slots_list = None
+
             if err:
                 return JSONResponse(
                     th.build_vapi_tool_response(tool_call_id, None, err),
@@ -1390,6 +1415,9 @@ async def vapi_tool(request: Request):
                 result_text = f"Créneaux disponibles : {slots_text}."
             else:
                 result_text = "Aucun créneau disponible pour le moment."
+            elapsed_ms = int((_time.monotonic() - _t0) * 1000)
+            logger.info("[VAPI_TOOL_GET_SLOTS] call_id=%s count=%d source=%s elapsed=%dms",
+                        call_id[:24] if call_id else "", len(slots), source or "?", elapsed_ms)
             return JSONResponse(
                 th.build_vapi_tool_response(tool_call_id, result_text, None),
                 status_code=200,
