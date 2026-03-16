@@ -846,7 +846,7 @@ async def debug_vapi_sync_faq(tenant_id: int = 1):
         from backend.tenant_config import faq_to_prompt_text, get_faq, get_params
 
         faq = get_faq(tenant_id)
-        faq_text = faq_to_prompt_text(faq)
+        faq_text = faq_to_prompt_text(faq, tenant_id=tenant_id)
 
         params = get_params(tenant_id)
         vapi_id = str(params.get("vapi_assistant_id") or "").strip()

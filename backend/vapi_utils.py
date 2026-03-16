@@ -187,7 +187,7 @@ async def create_vapi_assistant(
     try:
         from backend.tenant_config import faq_to_prompt_text, get_faq
 
-        sys_msg = _merge_prompt_with_faq(sys_msg, faq_to_prompt_text(get_faq(tenant_id)))
+        sys_msg = _merge_prompt_with_faq(sys_msg, faq_to_prompt_text(get_faq(tenant_id), tenant_id=tenant_id))
     except Exception as e:
         logger.warning("create_vapi_assistant faq merge failed tenant_id=%s: %s", tenant_id, e)
 
@@ -299,7 +299,7 @@ async def update_vapi_assistant_faq(tenant_id: int) -> None:
     if not vapi_assistant_id:
         return
     faq = get_faq(tenant_id)
-    faq_text = faq_to_prompt_text(faq)
+    faq_text = faq_to_prompt_text(faq, tenant_id=tenant_id)
     await patch_vapi_assistant_system_prompt(vapi_assistant_id, faq_text)
 
 

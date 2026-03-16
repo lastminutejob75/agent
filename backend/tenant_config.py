@@ -286,6 +286,282 @@ DEFAULT_FAQ = {
 }
 
 
+FAQ_TEMPLATE = {
+    "faq_items": [
+        {
+            "key": "opening_hours",
+            "label": "Horaires du cabinet",
+            "category": "informations_pratiques",
+            "answer": "Le cabinet est ouvert aux horaires suivants : {opening_hours}.",
+            "variable": "opening_hours",
+        },
+        {
+            "key": "address",
+            "label": "Adresse du cabinet",
+            "category": "informations_pratiques",
+            "answer": "Le cabinet se situe à l'adresse suivante : {address}.",
+            "variable": "address",
+        },
+        {
+            "key": "accessibility_pmr",
+            "label": "Accessibilité PMR",
+            "category": "informations_pratiques",
+            "answer": "{pmr_accessibility}",
+            "variable": "pmr_accessibility",
+            "fallback": "Pour toute question d'accessibilité, contactez directement le cabinet.",
+        },
+        {
+            "key": "parking_access",
+            "label": "Parking et accès",
+            "category": "informations_pratiques",
+            "answer": "{parking_access}",
+            "variable": "parking_access",
+        },
+        {
+            "key": "documents_to_bring",
+            "label": "Documents à apporter",
+            "category": "avant_rendez_vous",
+            "answer": "Merci de prévoir votre carte Vitale, votre carte de mutuelle, ainsi que vos ordonnances, examens ou documents médicaux utiles.",
+        },
+        {
+            "key": "accepted_payment_methods",
+            "label": "Moyens de paiement acceptés",
+            "category": "paiement",
+            "answer": "Les moyens de paiement acceptés sont : {payment_methods}.",
+            "variable": "payment_methods",
+            "fallback": "Les moyens de paiement acceptés sont : carte bancaire, espèces et chèques.",
+        },
+        {
+            "key": "vitale_card",
+            "label": "Carte Vitale",
+            "category": "paiement",
+            "answer": "Oui, la carte Vitale est acceptée. Merci de l'apporter lors de votre rendez-vous.",
+        },
+        {
+            "key": "third_party_payment",
+            "label": "Tiers payant",
+            "category": "paiement",
+            "answer": "{third_party_payment}",
+            "variable": "third_party_payment",
+            "fallback": "Le tiers payant peut être pratiqué selon votre situation. Contactez le cabinet pour en savoir plus.",
+        },
+        {
+            "key": "new_patients",
+            "label": "Nouveaux patients",
+            "category": "patients",
+            "answer": "{new_patients_policy}",
+            "variable": "new_patients_policy",
+            "fallback": "Oui, le cabinet accepte les nouveaux patients. N'hésitez pas à prendre rendez-vous.",
+        },
+        {
+            "key": "prescription_renewal",
+            "label": "Renouvellement d'ordonnance",
+            "category": "documents_medicaux",
+            "answer": "Une demande de renouvellement d'ordonnance peut être transmise au cabinet. Selon la situation et le type de traitement, une consultation peut être nécessaire.",
+        },
+        {
+            "key": "medical_certificate",
+            "label": "Certificat médical",
+            "category": "documents_medicaux",
+            "answer": "Un certificat médical peut être établi si nécessaire, selon le motif, et cela peut demander une consultation.",
+        },
+        {
+            "key": "results_policy",
+            "label": "Récupération des résultats",
+            "category": "suivi",
+            "answer": "{results_policy}",
+            "variable": "results_policy",
+        },
+        {
+            "key": "emergency_policy",
+            "label": "Urgences",
+            "category": "urgences",
+            "answer": "En cas d'urgence vitale, il faut appeler immédiatement le 15 ou le 112.",
+        },
+        {
+            "key": "confidentiality",
+            "label": "Confidentialité",
+            "category": "confidentialite",
+            "answer": "Oui, les informations communiquées au cabinet sont traitées de manière confidentielle, conformément au secret médical.",
+        },
+    ],
+    "appointment_workflows": [
+        {
+            "key": "book_appointment",
+            "label": "Prendre un rendez-vous",
+            "action": "get_slots",
+            "required_fields": ["nom_patient", "motif", "preference_horaire"],
+            "optional_fields": ["praticien_souhaite", "nouveau_patient"],
+            "success_rule": "Ne confirmer un rendez-vous que si le système a effectivement réservé le créneau.",
+        },
+        {
+            "key": "reschedule_appointment",
+            "label": "Modifier un rendez-vous",
+            "action": "modify",
+            "required_fields": ["nom_patient", "rendez_vous_concerne", "nouvelle_preference"],
+            "success_rule": "Ne jamais dire que le rendez-vous est modifié tant que le nouveau créneau n'a pas été confirmé.",
+        },
+        {
+            "key": "cancel_appointment",
+            "label": "Annuler un rendez-vous",
+            "action": "cancel",
+            "required_fields": ["nom_patient", "rendez_vous_concerne"],
+            "success_rule": "Confirmer l'annulation uniquement si le système l'a bien validée.",
+        },
+        {
+            "key": "late_notice",
+            "label": "Signaler un retard",
+            "action": "transfer",
+            "required_fields": ["nom_patient", "retard_estime"],
+        },
+    ],
+    "other_workflows": [
+        {
+            "key": "callback_request",
+            "label": "Demande de rappel",
+            "action": "transfer",
+            "required_fields": ["nom_patient", "telephone", "motif"],
+        },
+        {
+            "key": "leave_message",
+            "label": "Laisser un message au cabinet",
+            "action": "transfer",
+            "required_fields": ["nom_patient", "telephone", "message"],
+        },
+        {
+            "key": "prescription_request",
+            "label": "Demande liée à une ordonnance",
+            "action": "transfer",
+            "required_fields": ["nom_patient", "telephone", "medicament_ou_demande"],
+        },
+        {
+            "key": "urgent_request",
+            "label": "Demande urgente",
+            "action": "transfer",
+            "required_fields": ["nom_patient", "telephone", "motif_urgent"],
+            "safety_rule": "Si la situation semble grave ou potentiellement vitale, demander d'appeler immédiatement le 15 ou le 112.",
+        },
+    ],
+    "safety_rules": [
+        "Ne pas inventer une information absente de la fiche cabinet.",
+        "Répondre de façon courte, claire et rassurante.",
+        "Quand l'information existe dans la FAQ, la donner directement sans réponse vague.",
+        "Considérer la prise, la modification et l'annulation de rendez-vous comme des workflows, jamais comme des FAQ.",
+        "Ne jamais promettre un rendez-vous sans confirmation du système.",
+        "Ne jamais dire qu'un rendez-vous est modifié ou annulé sans validation effective.",
+        "En cas d'urgence vitale présumée, rediriger immédiatement vers le 15 ou le 112.",
+    ],
+}
+
+
+def _resolve_faq_variables(params: Dict[str, Any]) -> Dict[str, str]:
+    """Construit le dictionnaire de variables pour le template FAQ depuis les params tenant."""
+    resolved: Dict[str, str] = {}
+
+    days = _coerce_booking_days(params.get("booking_days"))
+    start = int(params.get("booking_start_hour") or params.get("start_hour") or 9)
+    end = int(params.get("booking_end_hour") or params.get("end_hour") or 18)
+    day_names = {0: "lundi", 1: "mardi", 2: "mercredi", 3: "jeudi", 4: "vendredi", 5: "samedi", 6: "dimanche"}
+    if days:
+        day_list = [day_names.get(d, "") for d in days if d in day_names]
+        if len(day_list) >= 2:
+            resolved["opening_hours"] = f"du {day_list[0]} au {day_list[-1]}, de {start}h à {end}h"
+        elif day_list:
+            resolved["opening_hours"] = f"le {day_list[0]}, de {start}h à {end}h"
+
+    addr_parts = []
+    for key in ("address_line1", "postal_code", "city"):
+        val = str(params.get(key) or "").strip()
+        if val:
+            addr_parts.append(val)
+    if addr_parts:
+        resolved["address"] = ", ".join(addr_parts)
+
+    for field in ("payment_methods", "pmr_accessibility", "parking_access",
+                  "third_party_payment", "new_patients_policy", "results_policy"):
+        val = str(params.get(field) or "").strip()
+        if val:
+            resolved[field] = val
+
+    return resolved
+
+
+def build_faq_from_template(tenant_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    """
+    Génère la FAQ résolue depuis le template + params tenant.
+    Retourne au format compatible normalize_faq_payload.
+    """
+    params = get_params(tenant_id)
+    variables = _resolve_faq_variables(params)
+
+    categories: Dict[str, List[Dict[str, Any]]] = {}
+    for item in FAQ_TEMPLATE["faq_items"]:
+        var_name = item.get("variable")
+        if var_name and var_name not in variables:
+            fallback = item.get("fallback")
+            if not fallback:
+                continue
+            answer = fallback
+        elif var_name:
+            answer = item["answer"]
+            try:
+                answer = answer.format(**variables)
+            except (KeyError, ValueError):
+                fallback = item.get("fallback")
+                answer = fallback if fallback else item["answer"]
+        else:
+            answer = item["answer"]
+
+        cat_name = item.get("category", "Autres")
+        cat_label = cat_name.replace("_", " ").title()
+        if cat_label not in categories:
+            categories[cat_label] = []
+        categories[cat_label].append({
+            "id": item["key"],
+            "question": item["label"],
+            "answer": answer,
+            "active": True,
+        })
+
+    return [{"category": cat, "items": items} for cat, items in categories.items()]
+
+
+def build_agent_prompt_text(tenant_id: Optional[int] = None) -> str:
+    """
+    Génère le texte complet à injecter dans le system prompt Vapi :
+    FAQ résolue + workflows + safety rules.
+    """
+    faq_items = build_faq_from_template(tenant_id)
+
+    lines = ["=== FAQ DU CABINET ==="]
+    for cat in faq_items:
+        lines.append(f"\n[{cat['category'].upper()}]")
+        for item in cat.get("items", []):
+            if item.get("active", True):
+                lines.append(f"Q: {item['question']}")
+                lines.append(f"R: {item['answer']}")
+    lines.append("\n=== FIN FAQ ===")
+
+    lines.append("\n\n=== WORKFLOWS ===")
+    for wf in FAQ_TEMPLATE.get("appointment_workflows", []) + FAQ_TEMPLATE.get("other_workflows", []):
+        lines.append(f"\n[{wf['label'].upper()}]")
+        lines.append(f"Action tool: {wf.get('action', 'transfer')}")
+        if wf.get("required_fields"):
+            lines.append(f"Informations à collecter: {', '.join(wf['required_fields'])}")
+        if wf.get("success_rule"):
+            lines.append(f"Règle: {wf['success_rule']}")
+        if wf.get("safety_rule"):
+            lines.append(f"SÉCURITÉ: {wf['safety_rule']}")
+    lines.append("\n=== FIN WORKFLOWS ===")
+
+    lines.append("\n\n=== RÈGLES DE SÉCURITÉ ===")
+    for rule in FAQ_TEMPLATE.get("safety_rules", []):
+        lines.append(f"- {rule}")
+    lines.append("=== FIN RÈGLES ===")
+
+    return "\n".join(lines)
+
+
 def _coerce_booking_days(raw_days: Any) -> List[int]:
     if isinstance(raw_days, (list, tuple)):
         booking_days = [int(x) for x in raw_days if str(x).strip().isdigit()]
@@ -518,8 +794,18 @@ def get_faq(tenant_id: Optional[int] = None) -> List[Dict[str, Any]]:
     return copy.deepcopy(DEFAULT_FAQ.get(specialty, DEFAULT_FAQ["default"]))
 
 
-def faq_to_prompt_text(faq: List[Dict[str, Any]]) -> str:
-    """Sérialise la FAQ pour injection dans le prompt Vapi."""
+def faq_to_prompt_text(faq: List[Dict[str, Any]], tenant_id: Optional[int] = None) -> str:
+    """
+    Sérialise la FAQ pour injection dans le prompt Vapi.
+    Si tenant_id est fourni, utilise le template dynamique (FAQ + workflows + safety rules).
+    Sinon, utilise le format legacy catégories/items.
+    """
+    if tenant_id is not None:
+        try:
+            return build_agent_prompt_text(tenant_id)
+        except Exception as e:
+            logger.warning("build_agent_prompt_text failed tenant_id=%s: %s, fallback legacy", tenant_id, e)
+
     lines = ["=== FAQ DU CABINET ==="]
     for cat in normalize_faq_payload(faq):
         lines.append(f"\n[{cat['category'].upper()}]")
@@ -583,6 +869,8 @@ def set_params(tenant_id: int, params: Dict[str, str]) -> None:
         "transfer_live_enabled", "transfer_callback_enabled",
         "transfer_cases", "transfer_hours", "transfer_always_urgent", "transfer_no_consultation",
         "transfer_config_confirmed_signature", "transfer_config_confirmed_at",
+        "payment_methods", "pmr_accessibility", "parking_access",
+        "third_party_payment", "new_patients_policy", "results_policy",
     )
     filtered = {}
     for k, v in params.items():
