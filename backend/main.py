@@ -271,6 +271,20 @@ async def keep_alive():
 
     print(f"🔄 Keep-alive started, pinging: {health_url}")
 
+    def _warmup_slots():
+        try:
+            from backend.tools_booking import get_slots_for_display
+            from backend.session import Session
+            warmup_session = Session(conv_id="__warmup__")
+            warmup_session.tenant_id = 1
+            slots = get_slots_for_display(limit=3, session=warmup_session)
+            print(f"🔥 Slots warmup: {len(slots)} slots cached")
+        except Exception as e:
+            print(f"⚠️ Slots warmup failed: {e}")
+
+    await asyncio.sleep(10)
+    _warmup_slots()
+
     _slots_warmup_counter = 0
     while True:
         await asyncio.sleep(30)
@@ -283,15 +297,7 @@ async def keep_alive():
 
         _slots_warmup_counter += 1
         if _slots_warmup_counter % 4 == 0:
-            try:
-                from backend.tools_booking import get_slots_for_display
-                from backend.session import Session
-                warmup_session = Session(conv_id="__warmup__")
-                warmup_session.tenant_id = 1
-                slots = get_slots_for_display(limit=3, session=warmup_session)
-                print(f"🔥 Slots warmup: {len(slots)} slots cached")
-            except Exception as e:
-                print(f"⚠️ Slots warmup failed: {e}")
+            _warmup_slots()
 
 
 async def cleanup_old_conversations():

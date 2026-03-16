@@ -1108,9 +1108,9 @@ async def vapi_webhook(request: Request):
 
                     try:
                         with _cf.ThreadPoolExecutor(max_workers=1) as ex:
-                            slots_list, source, err = ex.submit(_wh_get_slots).result(timeout=5.0)
+                            slots_list, source, err = ex.submit(_wh_get_slots).result(timeout=8.0)
                     except _cf.TimeoutError:
-                        logger.error("[WEBHOOK_GET_SLOTS_TIMEOUT] call_id=%s", w_call_id[:24])
+                        logger.error("[WEBHOOK_GET_SLOTS_TIMEOUT] call_id=%s — 8s exceeded", w_call_id[:24])
                         err = "Je n'arrive pas à consulter l'agenda pour le moment. Souhaitez-vous qu'on vous rappelle ?"
                         slots_list = None
 
@@ -1420,7 +1420,7 @@ async def vapi_tool(request: Request):
                 session = ENGINE.session_store.get_or_create(call_id)
             return session
 
-        # --- get_slots : créneaux 100% backend (Google Calendar) avec timeout 5s ---
+        # --- get_slots : créneaux 100% backend (Google Calendar) avec timeout 8s ---
         if action == "get_slots":
             def _do_get_slots():
                 session = _get_session_light()
@@ -1447,9 +1447,9 @@ async def vapi_tool(request: Request):
             try:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                     fut = ex.submit(_do_get_slots)
-                    slots_list, source, err = fut.result(timeout=5.0)
+                    slots_list, source, err = fut.result(timeout=8.0)
             except concurrent.futures.TimeoutError:
-                logger.error("[VAPI_TOOL_GET_SLOTS_TIMEOUT] call_id=%s — 5s exceeded", call_id[:24] if call_id else "")
+                logger.error("[VAPI_TOOL_GET_SLOTS_TIMEOUT] call_id=%s — 8s exceeded", call_id[:24] if call_id else "")
                 err = "Je n'arrive pas à consulter l'agenda pour le moment. Souhaitez-vous qu'on vous rappelle ?"
                 slots_list = None
 
