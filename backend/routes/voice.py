@@ -1064,53 +1064,68 @@ async def vapi_webhook(request: Request):
                 )
                 import concurrent.futures as _cf
 
-                _wh_fast = _fast_resolve_assistant_id(extract_assistant_id_from_vapi_payload(payload))
-                if _wh_fast is not None:
-                    resolved_tid = _wh_fast
-                else:
-                    try:
-                        with _cf.ThreadPoolExecutor(max_workers=1) as ex:
-                            resolved_tid, _ = ex.submit(
-                                lambda: resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
-                            ).result(timeout=2.0)
-                    except (_cf.TimeoutError, Exception):
-                        resolved_tid = 1
-
-                current_tenant_id.set(str(resolved_tid))
                 w_call_id = _webhook_extract_call_id(payload) or "unknown"
+                _WH_HARD_CAP_S = 8.0
 
                 if action == "get_slots":
                     from backend import vapi_tool_handlers as th
 
-                    def _wh_get_slots():
+                    def _wh_get_slots_all():
+                        """Hard cap 8s : tenant + session + calendar en un seul thread."""
+                        import time as _wt
+                        _s0 = _wt.monotonic()
+                        _fast = _fast_resolve_assistant_id(extract_assistant_id_from_vapi_payload(payload))
+                        if _fast is not None:
+                            tid = _fast
+                        else:
+                            try:
+                                tid, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
+                            except Exception:
+                                tid = 1
+                        t_tenant = int((_wt.monotonic() - _s0) * 1000)
+
+                        _s1 = _wt.monotonic()
                         session = ENGINE.session_store.get(w_call_id)
                         if session is None:
                             session = ENGINE.session_store.get_or_create(w_call_id)
                         session.channel = "vocal"
-                        session.tenant_id = resolved_tid
+                        session.tenant_id = tid
                         if params.get("patient_name"):
                             session.qualif_data.name = params["patient_name"]
                         if params.get("motif"):
                             session.qualif_data.motif = params["motif"]
                         if params.get("preference"):
                             session.qualif_data.pref = params["preference"]
+                        t_session = int((_wt.monotonic() - _s1) * 1000)
+
+                        _s2 = _wt.monotonic()
                         sl, src, err = th.handle_get_slots(
                             session, params.get("preference"), w_call_id,
                             exclude_start_iso=params.get("exclude_start_iso"),
                             exclude_end_iso=params.get("exclude_end_iso"),
                         )
+                        t_cal = int((_wt.monotonic() - _s2) * 1000)
+
                         try:
                             if hasattr(ENGINE.session_store, "save"):
                                 ENGINE.session_store.save(session)
                         except Exception:
                             pass
+
+                        t_total = int((_wt.monotonic() - _s0) * 1000)
+                        logger.info(
+                            "[WEBHOOK_GET_SLOTS_SEGMENTS] call_id=%s "
+                            "t_tenant=%dms t_session=%dms t_calendar=%dms t_total=%dms slots=%d",
+                            w_call_id[:24], t_tenant, t_session, t_cal, t_total, len(sl) if sl else 0,
+                        )
+                        current_tenant_id.set(str(tid))
                         return sl, src, err
 
                     try:
                         with _cf.ThreadPoolExecutor(max_workers=1) as ex:
-                            slots_list, source, err = ex.submit(_wh_get_slots).result(timeout=8.0)
+                            slots_list, source, err = ex.submit(_wh_get_slots_all).result(timeout=_WH_HARD_CAP_S)
                     except _cf.TimeoutError:
-                        logger.error("[WEBHOOK_GET_SLOTS_TIMEOUT] call_id=%s — 8s exceeded", w_call_id[:24])
+                        logger.error("[WEBHOOK_HARD_CAP] call_id=%s — 8s exceeded", w_call_id[:24])
                         err = "Je n'arrive pas à consulter l'agenda pour le moment. Souhaitez-vous qu'on vous rappelle ?"
                         slots_list = None
 
@@ -1122,66 +1137,81 @@ async def vapi_webhook(request: Request):
                     else:
                         results.append({"toolCallId": tc_id, "result": "Aucun créneau disponible pour le moment."})
 
-                elif action == "book":
-                    session = _get_or_resume_voice_session(resolved_tid, w_call_id)
-                    session.channel = "vocal"
-                    session.tenant_id = resolved_tid
-                    from backend import vapi_tool_handlers as th
-                    book_payload, err = th.handle_book(
-                        session, params.get("selected_slot"), params.get("patient_name"), params.get("motif"), w_call_id,
-                    )
-                    if hasattr(ENGINE.session_store, "save"):
-                        ENGINE.session_store.save(session)
-                    if err:
-                        results.append({"toolCallId": tc_id, "result": err})
+                else:
+                    # Résolution tenant pour toutes les actions non-get_slots
+                    _wh_fast_other = _fast_resolve_assistant_id(extract_assistant_id_from_vapi_payload(payload))
+                    if _wh_fast_other is not None:
+                        resolved_tid = _wh_fast_other
                     else:
-                        results.append({"toolCallId": tc_id, "result": json.dumps(book_payload or {}, ensure_ascii=False)})
+                        try:
+                            with _cf.ThreadPoolExecutor(max_workers=1) as ex:
+                                resolved_tid, _ = ex.submit(
+                                    lambda: resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
+                                ).result(timeout=2.0)
+                        except Exception:
+                            resolved_tid = 1
+                    current_tenant_id.set(str(resolved_tid))
 
-                elif action in ("cancel", "modify"):
-                    text = user_msg or ("Je souhaite annuler mon rendez-vous" if action == "cancel" else "Je souhaite modifier mon rendez-vous")
-                    session = _get_or_resume_voice_session(resolved_tid, w_call_id)
-                    session.channel = "vocal"
-                    session.tenant_id = resolved_tid
-                    events = _get_engine(w_call_id).handle_message(w_call_id, text)
-                    result_text = events[0].text if events else "Je n'ai pas compris."
-                    results.append({"toolCallId": tc_id, "result": result_text})
-
-                elif action == "transfer":
-                    results.append({"toolCallId": tc_id, "result": json.dumps({"status": "received"})})
-
-                elif action == "faq":
-                    if user_msg:
-                        from backend.tools_faq import tenant_faq_store
-                        faq_store = tenant_faq_store(resolved_tid)
-                        faq_result = faq_store.search(user_msg)
-                        if faq_result.match and faq_result.answer:
-                            result_text = faq_result.answer
-                            logger.info("[VAPI_WEBHOOK_FAQ] tenant=%s q=%s faq_id=%s score=%.2f",
-                                        resolved_tid, user_msg[:40], faq_result.faq_id, faq_result.score)
+                    if action == "book":
+                        session = _get_or_resume_voice_session(resolved_tid, w_call_id)
+                        session.channel = "vocal"
+                        session.tenant_id = resolved_tid
+                        from backend import vapi_tool_handlers as th
+                        book_payload, err = th.handle_book(
+                            session, params.get("selected_slot"), params.get("patient_name"), params.get("motif"), w_call_id,
+                        )
+                        if hasattr(ENGINE.session_store, "save"):
+                            ENGINE.session_store.save(session)
+                        if err:
+                            results.append({"toolCallId": tc_id, "result": err})
                         else:
+                            results.append({"toolCallId": tc_id, "result": json.dumps(book_payload or {}, ensure_ascii=False)})
+
+                    elif action in ("cancel", "modify"):
+                        text = user_msg or ("Je souhaite annuler mon rendez-vous" if action == "cancel" else "Je souhaite modifier mon rendez-vous")
+                        session = _get_or_resume_voice_session(resolved_tid, w_call_id)
+                        session.channel = "vocal"
+                        session.tenant_id = resolved_tid
+                        events = _get_engine(w_call_id).handle_message(w_call_id, text)
+                        result_text = events[0].text if events else "Je n'ai pas compris."
+                        results.append({"toolCallId": tc_id, "result": result_text})
+
+                    elif action == "transfer":
+                        results.append({"toolCallId": tc_id, "result": json.dumps({"status": "received"})})
+
+                    elif action == "faq":
+                        if user_msg:
+                            from backend.tools_faq import tenant_faq_store
+                            faq_store = tenant_faq_store(resolved_tid)
+                            faq_result = faq_store.search(user_msg)
+                            if faq_result.match and faq_result.answer:
+                                result_text = faq_result.answer
+                                logger.info("[VAPI_WEBHOOK_FAQ] tenant=%s q=%s faq_id=%s score=%.2f",
+                                            resolved_tid, user_msg[:40], faq_result.faq_id, faq_result.score)
+                            else:
+                                session = _get_or_resume_voice_session(resolved_tid, w_call_id)
+                                session.channel = "vocal"
+                                session.tenant_id = resolved_tid
+                                events = _get_engine(w_call_id).handle_message(w_call_id, user_msg)
+                                result_text = events[0].text if events else "Je n'ai pas cette information."
+                                if hasattr(ENGINE.session_store, "save"):
+                                    ENGINE.session_store.save(session)
+                        else:
+                            result_text = "Je n'ai pas compris votre question."
+                        results.append({"toolCallId": tc_id, "result": result_text})
+
+                    else:
+                        if user_msg:
                             session = _get_or_resume_voice_session(resolved_tid, w_call_id)
                             session.channel = "vocal"
                             session.tenant_id = resolved_tid
                             events = _get_engine(w_call_id).handle_message(w_call_id, user_msg)
-                            result_text = events[0].text if events else "Je n'ai pas cette information."
+                            result_text = events[0].text if events else "Je n'ai pas compris."
                             if hasattr(ENGINE.session_store, "save"):
                                 ENGINE.session_store.save(session)
-                    else:
-                        result_text = "Je n'ai pas compris votre question."
-                    results.append({"toolCallId": tc_id, "result": result_text})
-
-                else:
-                    if user_msg:
-                        session = _get_or_resume_voice_session(resolved_tid, w_call_id)
-                        session.channel = "vocal"
-                        session.tenant_id = resolved_tid
-                        events = _get_engine(w_call_id).handle_message(w_call_id, user_msg)
-                        result_text = events[0].text if events else "Je n'ai pas compris."
-                        if hasattr(ENGINE.session_store, "save"):
-                            ENGINE.session_store.save(session)
-                        results.append({"toolCallId": tc_id, "result": result_text})
-                    else:
-                        results.append({"toolCallId": tc_id, "result": "Action non reconnue."})
+                            results.append({"toolCallId": tc_id, "result": result_text})
+                        else:
+                            results.append({"toolCallId": tc_id, "result": "Action non reconnue."})
 
             response_body = {"results": results}
             logger.info("[VAPI_WEBHOOK_TOOL_RESPONSE] %s", json.dumps(response_body, ensure_ascii=False)[:500])
@@ -1389,69 +1419,91 @@ async def vapi_tool(request: Request):
         from backend import vapi_tool_handlers as th
         import concurrent.futures
 
-        # ── Résolution tenant : fast-path DIRECT (0ms), fallback executor (2s) ──
-        _fast_tid = _fast_resolve_assistant_id(extract_assistant_id_from_vapi_payload(payload))
-        if _fast_tid is not None:
-            resolved_tenant_id = _fast_tid
-            logger.debug("[VAPI_TOOL_TENANT_FAST] tenant=%s", resolved_tenant_id)
-        else:
-            def _resolve_tenant():
-                return resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
-            try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                    fut = ex.submit(_resolve_tenant)
-                    resolved_tenant_id, _ = fut.result(timeout=2.0)
-            except concurrent.futures.TimeoutError:
-                logger.warning("[VAPI_TOOL_TENANT_TIMEOUT] action=%s call_id=%s — fallback tenant 1", action, call_id[:24] if call_id else "")
-                resolved_tenant_id = 1
-            except Exception as e:
-                logger.warning("[VAPI_TOOL_TENANT_ERROR] %s — fallback tenant 1", type(e).__name__)
-                resolved_tenant_id = 1
-        request.state.tenant_id = resolved_tenant_id
-        current_tenant_id.set(str(resolved_tenant_id))
+        _TOOL_HARD_CAP_S = 8.0
+        _FALLBACK_MSG = "Je n'arrive pas à consulter l'agenda pour le moment. Souhaitez-vous qu'on vous rappelle ?"
 
-        def _get_session():
-            return _get_or_resume_voice_session(resolved_tenant_id, call_id)
-
-        def _get_session_light():
-            """Session légère sans PG (pour get_slots : pas besoin de reprise)."""
-            session = ENGINE.session_store.get(call_id)
-            if session is None:
-                session = ENGINE.session_store.get_or_create(call_id)
-            return session
-
-        # --- get_slots : créneaux 100% backend (Google Calendar) avec timeout 8s ---
+        # --- get_slots : HARD CAP 8s global (tenant + session + calendar en un seul thread) ---
         if action == "get_slots":
-            def _do_get_slots():
-                session = _get_session_light()
+            def _get_slots_all_in_one():
+                """Tout le travail get_slots dans un seul thread, avec logging segment."""
+                seg = {}
+                _s0 = _time.monotonic()
+
+                # 1. Tenant resolution
+                _fast_tid = _fast_resolve_assistant_id(extract_assistant_id_from_vapi_payload(payload))
+                if _fast_tid is not None:
+                    tid = _fast_tid
+                    seg["tenant"] = "fast"
+                else:
+                    try:
+                        tid, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
+                        seg["tenant"] = "resolved"
+                    except Exception:
+                        tid = 1
+                        seg["tenant"] = "fallback"
+                seg["t_tenant_ms"] = int((_time.monotonic() - _s0) * 1000)
+
+                # 2. Session (mémoire seule, pas de PG)
+                _s1 = _time.monotonic()
+                session = ENGINE.session_store.get(call_id)
+                if session is None:
+                    session = ENGINE.session_store.get_or_create(call_id)
                 session.channel = "vocal"
-                session.tenant_id = resolved_tenant_id
+                session.tenant_id = tid
                 if patient_name:
                     session.qualif_data.name = patient_name
                 if motif:
                     session.qualif_data.motif = motif
                 if preference:
                     session.qualif_data.pref = preference
+                seg["t_session_ms"] = int((_time.monotonic() - _s1) * 1000)
+
+                # 3. Google Calendar
+                _s2 = _time.monotonic()
                 slots_list, source, err = th.handle_get_slots(
                     session, preference, call_id,
                     exclude_start_iso=exclude_start_iso,
                     exclude_end_iso=exclude_end_iso,
                 )
+                seg["t_calendar_ms"] = int((_time.monotonic() - _s2) * 1000)
+                seg["t_total_ms"] = int((_time.monotonic() - _s0) * 1000)
+                seg["source"] = source or "?"
+                seg["tid"] = tid
+
                 try:
                     if hasattr(ENGINE.session_store, "save"):
                         ENGINE.session_store.save(session)
                 except Exception:
                     pass
-                return slots_list, source, err
 
+                logger.info(
+                    "[VAPI_TOOL_GET_SLOTS_SEGMENTS] call_id=%s tenant=%s(%s) "
+                    "t_tenant=%dms t_session=%dms t_calendar=%dms t_total=%dms source=%s slots=%d",
+                    call_id[:24] if call_id else "", seg["tid"], seg["tenant"],
+                    seg["t_tenant_ms"], seg["t_session_ms"], seg["t_calendar_ms"],
+                    seg["t_total_ms"], seg["source"],
+                    len(slots_list) if slots_list else 0,
+                )
+                return tid, slots_list, source, err
+
+            resolved_tenant_id = 1
             try:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                    fut = ex.submit(_do_get_slots)
-                    slots_list, source, err = fut.result(timeout=8.0)
+                    fut = ex.submit(_get_slots_all_in_one)
+                    resolved_tenant_id, slots_list, source, err = fut.result(timeout=_TOOL_HARD_CAP_S)
             except concurrent.futures.TimeoutError:
-                logger.error("[VAPI_TOOL_GET_SLOTS_TIMEOUT] call_id=%s — 8s exceeded", call_id[:24] if call_id else "")
-                err = "Je n'arrive pas à consulter l'agenda pour le moment. Souhaitez-vous qu'on vous rappelle ?"
+                elapsed_ms = int((_time.monotonic() - _t0) * 1000)
+                logger.error("[VAPI_TOOL_HARD_CAP] call_id=%s — %ds hard cap exceeded (elapsed=%dms)",
+                             call_id[:24] if call_id else "", int(_TOOL_HARD_CAP_S), elapsed_ms)
+                err = _FALLBACK_MSG
                 slots_list = None
+            except Exception as e:
+                logger.error("[VAPI_TOOL_GET_SLOTS_ERROR] call_id=%s %s", call_id[:24] if call_id else "", e)
+                err = _FALLBACK_MSG
+                slots_list = None
+
+            request.state.tenant_id = resolved_tenant_id
+            current_tenant_id.set(str(resolved_tenant_id))
 
             if err:
                 return JSONResponse(
@@ -1474,6 +1526,24 @@ async def vapi_tool(request: Request):
                 th.build_vapi_tool_response(tool_call_id, result_text, None),
                 status_code=200,
             )
+
+        # ── Résolution tenant pour les autres actions (book, cancel, etc.) ──
+        _fast_tid = _fast_resolve_assistant_id(extract_assistant_id_from_vapi_payload(payload))
+        if _fast_tid is not None:
+            resolved_tenant_id = _fast_tid
+        else:
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                    resolved_tenant_id, _ = ex.submit(
+                        lambda: resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
+                    ).result(timeout=2.0)
+            except Exception:
+                resolved_tenant_id = 1
+        request.state.tenant_id = resolved_tenant_id
+        current_tenant_id.set(str(resolved_tenant_id))
+
+        def _get_session():
+            return _get_or_resume_voice_session(resolved_tenant_id, call_id)
 
         # --- book : réservation (payload JSON strict V3) ---
         if action == "book":
