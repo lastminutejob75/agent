@@ -275,10 +275,11 @@ async def keep_alive():
         try:
             from backend.tools_booking import get_slots_for_display
             from backend.session import Session
-            warmup_session = Session(conv_id="__warmup__")
-            warmup_session.tenant_id = 1
-            slots = get_slots_for_display(limit=3, session=warmup_session)
-            print(f"🔥 Slots warmup: {len(slots)} slots cached")
+            for pref_label, pref_val in [("none", None), ("matin", "matin"), ("aprem", "après-midi")]:
+                s = Session(conv_id=f"__warmup_{pref_label}__")
+                s.tenant_id = 1
+                slots = get_slots_for_display(limit=3, pref=pref_val, session=s)
+                print(f"🔥 Slots warmup pref={pref_label}: {len(slots)} cached")
         except Exception as e:
             print(f"⚠️ Slots warmup failed: {e}")
 

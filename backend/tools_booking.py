@@ -239,30 +239,36 @@ _calendar_service = None  # Legacy fallback (global)
 # ============================================
 
 _slots_cache: Dict[str, Any] = {
-    "by_tenant": {},  # tenant_id -> {"slots": [...], "timestamp": float}
-    "ttl_seconds": 60,
+    "by_key": {},  # (tenant_id, pref) -> {"slots": [...], "timestamp": float}
+    "ttl_seconds": 90,
 }
 
 
-def _get_cached_slots(limit: int, tenant_id: int = 1) -> Optional[List[prompts.SlotDisplay]]:
-    """Récupère les slots du cache si encore valides (scopé par tenant)."""
+def _cache_key(tenant_id: int, pref: Optional[str] = None) -> tuple:
+    return (tenant_id, pref or "__none__")
+
+
+def _get_cached_slots(limit: int, tenant_id: int = 1, pref: Optional[str] = None) -> Optional[List[prompts.SlotDisplay]]:
+    """Récupère les slots du cache si encore valides (scopé par tenant + pref)."""
     import time
-    entry = _slots_cache["by_tenant"].get(tenant_id)
+    key = _cache_key(tenant_id, pref)
+    entry = _slots_cache["by_key"].get(key)
     if not entry or entry.get("slots") is None:
         return None
     age = time.time() - entry.get("timestamp", 0)
     if age > _slots_cache["ttl_seconds"]:
-        _slots_cache["by_tenant"].pop(tenant_id, None)
+        _slots_cache["by_key"].pop(key, None)
         return None
-    logger.info(f"⚡ Cache slots HIT tenant={tenant_id} ({age:.0f}s)")
+    logger.info(f"⚡ Cache slots HIT tenant={tenant_id} pref={pref} ({age:.0f}s)")
     return entry["slots"][:limit]
 
 
-def _set_cached_slots(slots: List[prompts.SlotDisplay], tenant_id: int = 1) -> None:
-    """Met à jour le cache de slots (scopé par tenant)."""
+def _set_cached_slots(slots: List[prompts.SlotDisplay], tenant_id: int = 1, pref: Optional[str] = None) -> None:
+    """Met à jour le cache de slots (scopé par tenant + pref)."""
     import time
-    _slots_cache["by_tenant"][tenant_id] = {"slots": slots, "timestamp": time.time()}
-    logger.info(f"⚡ Cache slots SET tenant={tenant_id} ({len(slots)} slots)")
+    key = _cache_key(tenant_id, pref)
+    _slots_cache["by_key"][key] = {"slots": slots, "timestamp": time.time()}
+    logger.info(f"⚡ Cache slots SET tenant={tenant_id} pref={pref} ({len(slots)} slots)")
 
 
 def _get_calendar_service():
@@ -614,12 +620,11 @@ def get_slots_for_display(
     if use_local_fallback:
         logger.info("get_slots_for_display: tenant_id=%s provider=none → local fallback", tenant_id)
 
-    # Cache uniquement sans filtre préférence et sans refus en cours
     rejected = getattr(session, "rejected_slot_starts", None) if session else None
-    if pref is None and not rejected:
-        cached = _get_cached_slots(limit, tenant_id)
+    if not rejected:
+        cached = _get_cached_slots(limit, tenant_id, pref=pref)
         if cached:
-            logger.info(f"⚡ get_slots_for_display: cache hit ({(time.time() - t_start) * 1000:.0f}ms)")
+            logger.info(f"⚡ get_slots_for_display: cache hit pref={pref} ({(time.time() - t_start) * 1000:.0f}ms)")
             return cached
 
     # Source: adapter (google) ou legacy _get_calendar_service
@@ -706,8 +711,8 @@ def get_slots_for_display(
         if ex_start or ex_end:
             logger.info("get_slots_for_display: excluded slot %s..%s → %s slots", ex_start[:19], ex_end[:19], len(slots))
 
-    if pref is None and not rejected:
-        _set_cached_slots(slots, tenant_id)
+    if not rejected:
+        _set_cached_slots(slots, tenant_id, pref=pref)
 
     log_extra = ""
     if filtered_by_time_constraint:

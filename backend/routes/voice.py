@@ -1121,10 +1121,14 @@ async def vapi_webhook(request: Request):
                         current_tenant_id.set(str(tid))
                         return sl, src, err
 
+                    import asyncio
                     try:
-                        with _cf.ThreadPoolExecutor(max_workers=1) as ex:
-                            slots_list, source, err = ex.submit(_wh_get_slots_all).result(timeout=_WH_HARD_CAP_S)
-                    except _cf.TimeoutError:
+                        loop = asyncio.get_event_loop()
+                        slots_list, source, err = await asyncio.wait_for(
+                            loop.run_in_executor(None, _wh_get_slots_all),
+                            timeout=_WH_HARD_CAP_S,
+                        )
+                    except asyncio.TimeoutError:
                         logger.error("[WEBHOOK_HARD_CAP] call_id=%s — 8s exceeded", w_call_id[:24])
                         err = "Je n'arrive pas à consulter l'agenda pour le moment. Souhaitez-vous qu'on vous rappelle ?"
                         slots_list = None
@@ -1486,12 +1490,15 @@ async def vapi_tool(request: Request):
                 )
                 return tid, slots_list, source, err
 
+            import asyncio
             resolved_tenant_id = 1
             try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                    fut = ex.submit(_get_slots_all_in_one)
-                    resolved_tenant_id, slots_list, source, err = fut.result(timeout=_TOOL_HARD_CAP_S)
-            except concurrent.futures.TimeoutError:
+                loop = asyncio.get_event_loop()
+                resolved_tenant_id, slots_list, source, err = await asyncio.wait_for(
+                    loop.run_in_executor(None, _get_slots_all_in_one),
+                    timeout=_TOOL_HARD_CAP_S,
+                )
+            except asyncio.TimeoutError:
                 elapsed_ms = int((_time.monotonic() - _t0) * 1000)
                 logger.error("[VAPI_TOOL_HARD_CAP] call_id=%s — %ds hard cap exceeded (elapsed=%dms)",
                              call_id[:24] if call_id else "", int(_TOOL_HARD_CAP_S), elapsed_ms)
