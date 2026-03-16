@@ -910,6 +910,20 @@ async def vapi_webhook(request: Request):
         payload = await request.json()
     except Exception:
         return Response(status_code=200)
+
+    if not isinstance(payload, dict):
+        logger.warning("[VAPI_WEBHOOK] payload is not a dict: %s", type(payload).__name__)
+        return Response(status_code=200)
+
+    try:
+        return await _vapi_webhook_inner(request, payload)
+    except Exception as e:
+        logger.exception("[VAPI_WEBHOOK_UNHANDLED] %s", e)
+        return Response(status_code=200)
+
+
+async def _vapi_webhook_inner(request: Request, payload: dict):
+    """Corps du webhook Vapi — séparé pour garantir un try/except global."""
     message = payload.get("message") or {}
     msg_type = message.get("type") or message.get("event") or ""
 

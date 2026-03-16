@@ -80,12 +80,19 @@ async def log_vapi_requests(request: Request, call_next):
     """Log path + status_code pour toute requête /api/vapi/* (sans body)."""
     if not request.url.path.startswith("/api/vapi/"):
         return await call_next(request)
-    response = await call_next(request)
-    _logger.info(
-        "vapi_request",
-        extra={"path": request.url.path, "method": request.method, "status_code": response.status_code},
-    )
-    return response
+    try:
+        response = await call_next(request)
+        if response is None:
+            _logger.error("[VAPI_MIDDLEWARE] No response returned for path=%s method=%s", request.url.path, request.method)
+            return JSONResponse({"error": "no_response_returned"}, status_code=500)
+        _logger.info(
+            "vapi_request",
+            extra={"path": request.url.path, "method": request.method, "status_code": response.status_code},
+        )
+        return response
+    except Exception as e:
+        _logger.exception("[VAPI_MIDDLEWARE] Unhandled error path=%s: %s", request.url.path, e)
+        return JSONResponse({"error": "internal_error"}, status_code=500)
 
 
 # Routers (avant les mounts pour éviter les conflits)
