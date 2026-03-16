@@ -1033,7 +1033,9 @@ async def vapi_webhook(request: Request):
 
     # tool-calls : Vapi envoie les appels de fonction ici quand le tool est configuré avec serverUrl = webhook
     if msg_type == "tool-calls":
-        logger.info("[VAPI_WEBHOOK] tool-calls received, routing to tool handler")
+        import time as _tc_time
+        _tc_recv_ts = _tc_time.monotonic()
+        logger.info("[VAPI_WEBHOOK] tool-calls received at %.3f", _tc_recv_ts)
         try:
             tool_calls = message.get("toolCallList") or message.get("toolCalls") or []
             if not tool_calls:
@@ -1218,7 +1220,12 @@ async def vapi_webhook(request: Request):
                             results.append({"toolCallId": tc_id, "result": "Action non reconnue."})
 
             response_body = {"results": results}
-            logger.info("[VAPI_WEBHOOK_TOOL_RESPONSE] %s", json.dumps(response_body, ensure_ascii=False)[:500])
+            _tc_body = json.dumps(response_body, ensure_ascii=False)
+            _tc_elapsed = int((_tc_time.monotonic() - _tc_recv_ts) * 1000)
+            logger.info(
+                "[VAPI_WEBHOOK_TOOL_RESPONSE] elapsed=%dms body_len=%d body=%s",
+                _tc_elapsed, len(_tc_body), _tc_body[:500],
+            )
             return JSONResponse(response_body, status_code=200)
         except Exception as e:
             logger.exception("[VAPI_WEBHOOK_TOOL_ERROR] %s", e)
@@ -1526,9 +1533,13 @@ async def vapi_tool(request: Request):
                 result_text = f"Créneaux disponibles : {slots_text}."
             else:
                 result_text = "Aucun créneau disponible pour le moment."
+            _tool_body = th.build_vapi_tool_response(tool_call_id, result_text, None)
+            _tool_body_json = json.dumps(_tool_body, ensure_ascii=False)
             elapsed_ms = int((_time.monotonic() - _t0) * 1000)
-            logger.info("[VAPI_TOOL_GET_SLOTS] call_id=%s count=%d source=%s elapsed=%dms",
-                        call_id[:24] if call_id else "", len(slots), source or "?", elapsed_ms)
+            logger.info(
+                "[VAPI_TOOL_GET_SLOTS_RETURN] call_id=%s elapsed=%dms body_len=%d count=%d source=%s",
+                call_id[:24] if call_id else "", elapsed_ms, len(_tool_body_json), len(slots), source or "?",
+            )
             return JSONResponse(
                 th.build_vapi_tool_response(tool_call_id, result_text, None),
                 status_code=200,
