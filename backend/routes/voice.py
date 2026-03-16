@@ -1056,17 +1056,36 @@ async def vapi_webhook(request: Request):
                 user_msg = (params.get("user_message") or "").strip()
                 logger.info("[VAPI_WEBHOOK_TOOL] toolCallId=%s fn=%s action=%s", tc_id[:24], fn_name, action)
 
-                from backend.tenant_routing import resolve_tenant_id_from_vapi_payload, current_tenant_id
-                resolved_tid, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
+                from backend.tenant_routing import (
+                    resolve_tenant_id_from_vapi_payload,
+                    extract_assistant_id_from_vapi_payload,
+                    _fast_resolve_assistant_id,
+                    current_tenant_id,
+                )
+                import concurrent.futures as _cf
+
+                _wh_fast = _fast_resolve_assistant_id(extract_assistant_id_from_vapi_payload(payload))
+                if _wh_fast is not None:
+                    resolved_tid = _wh_fast
+                else:
+                    try:
+                        with _cf.ThreadPoolExecutor(max_workers=1) as ex:
+                            resolved_tid, _ = ex.submit(
+                                lambda: resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
+                            ).result(timeout=2.0)
+                    except (_cf.TimeoutError, Exception):
+                        resolved_tid = 1
+
                 current_tenant_id.set(str(resolved_tid))
                 w_call_id = _webhook_extract_call_id(payload) or "unknown"
 
                 if action == "get_slots":
                     from backend import vapi_tool_handlers as th
-                    import concurrent.futures as _cf
 
                     def _wh_get_slots():
-                        session = _get_or_resume_voice_session(resolved_tid, w_call_id)
+                        session = ENGINE.session_store.get(w_call_id)
+                        if session is None:
+                            session = ENGINE.session_store.get_or_create(w_call_id)
                         session.channel = "vocal"
                         session.tenant_id = resolved_tid
                         if params.get("patient_name"):
@@ -1080,13 +1099,16 @@ async def vapi_webhook(request: Request):
                             exclude_start_iso=params.get("exclude_start_iso"),
                             exclude_end_iso=params.get("exclude_end_iso"),
                         )
-                        if hasattr(ENGINE.session_store, "save"):
-                            ENGINE.session_store.save(session)
+                        try:
+                            if hasattr(ENGINE.session_store, "save"):
+                                ENGINE.session_store.save(session)
+                        except Exception:
+                            pass
                         return sl, src, err
 
                     try:
                         with _cf.ThreadPoolExecutor(max_workers=1) as ex:
-                            slots_list, source, err = ex.submit(_wh_get_slots).result(timeout=6.0)
+                            slots_list, source, err = ex.submit(_wh_get_slots).result(timeout=5.0)
                     except _cf.TimeoutError:
                         logger.error("[WEBHOOK_GET_SLOTS_TIMEOUT] call_id=%s", w_call_id[:24])
                         err = "Je n'arrive pas à consulter l'agenda pour le moment. Souhaitez-vous qu'on vous rappelle ?"
@@ -1360,34 +1382,48 @@ async def vapi_tool(request: Request):
 
         from backend.tenant_routing import (
             resolve_tenant_id_from_vapi_payload,
+            extract_assistant_id_from_vapi_payload,
+            _fast_resolve_assistant_id,
             current_tenant_id,
         )
         from backend import vapi_tool_handlers as th
-
         import concurrent.futures
-        def _resolve_tenant():
-            return resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
 
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                fut = ex.submit(_resolve_tenant)
-                resolved_tenant_id, _ = fut.result(timeout=4.0)
-        except concurrent.futures.TimeoutError:
-            logger.warning("[VAPI_TOOL_TENANT_TIMEOUT] action=%s call_id=%s — fallback tenant 1", action, call_id[:24] if call_id else "")
-            resolved_tenant_id = 1
-        except Exception as e:
-            logger.warning("[VAPI_TOOL_TENANT_ERROR] %s — fallback tenant 1", type(e).__name__)
-            resolved_tenant_id = 1
+        # ── Résolution tenant : fast-path DIRECT (0ms), fallback executor (2s) ──
+        _fast_tid = _fast_resolve_assistant_id(extract_assistant_id_from_vapi_payload(payload))
+        if _fast_tid is not None:
+            resolved_tenant_id = _fast_tid
+            logger.debug("[VAPI_TOOL_TENANT_FAST] tenant=%s", resolved_tenant_id)
+        else:
+            def _resolve_tenant():
+                return resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                    fut = ex.submit(_resolve_tenant)
+                    resolved_tenant_id, _ = fut.result(timeout=2.0)
+            except concurrent.futures.TimeoutError:
+                logger.warning("[VAPI_TOOL_TENANT_TIMEOUT] action=%s call_id=%s — fallback tenant 1", action, call_id[:24] if call_id else "")
+                resolved_tenant_id = 1
+            except Exception as e:
+                logger.warning("[VAPI_TOOL_TENANT_ERROR] %s — fallback tenant 1", type(e).__name__)
+                resolved_tenant_id = 1
         request.state.tenant_id = resolved_tenant_id
         current_tenant_id.set(str(resolved_tenant_id))
 
         def _get_session():
             return _get_or_resume_voice_session(resolved_tenant_id, call_id)
 
-        # --- get_slots : créneaux 100% backend (Google Calendar) avec timeout global ---
+        def _get_session_light():
+            """Session légère sans PG (pour get_slots : pas besoin de reprise)."""
+            session = ENGINE.session_store.get(call_id)
+            if session is None:
+                session = ENGINE.session_store.get_or_create(call_id)
+            return session
+
+        # --- get_slots : créneaux 100% backend (Google Calendar) avec timeout 5s ---
         if action == "get_slots":
             def _do_get_slots():
-                session = _get_session()
+                session = _get_session_light()
                 session.channel = "vocal"
                 session.tenant_id = resolved_tenant_id
                 if patient_name:
@@ -1401,16 +1437,19 @@ async def vapi_tool(request: Request):
                     exclude_start_iso=exclude_start_iso,
                     exclude_end_iso=exclude_end_iso,
                 )
-                if hasattr(ENGINE.session_store, "save"):
-                    ENGINE.session_store.save(session)
+                try:
+                    if hasattr(ENGINE.session_store, "save"):
+                        ENGINE.session_store.save(session)
+                except Exception:
+                    pass
                 return slots_list, source, err
 
             try:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                     fut = ex.submit(_do_get_slots)
-                    slots_list, source, err = fut.result(timeout=6.0)
+                    slots_list, source, err = fut.result(timeout=5.0)
             except concurrent.futures.TimeoutError:
-                logger.error("[VAPI_TOOL_GET_SLOTS_TIMEOUT] call_id=%s — 6s exceeded", call_id[:24] if call_id else "")
+                logger.error("[VAPI_TOOL_GET_SLOTS_TIMEOUT] call_id=%s — 5s exceeded", call_id[:24] if call_id else "")
                 err = "Je n'arrive pas à consulter l'agenda pour le moment. Souhaitez-vous qu'on vous rappelle ?"
                 slots_list = None
 

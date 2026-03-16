@@ -258,27 +258,40 @@ def _init_heavy_sync():
 async def keep_alive():
     """
     Keep-alive: ping toutes les 30 secondes pour empêcher Railway de stopper le container.
+    Pré-charge les slots Google Calendar toutes les 2 minutes pour que get_slots soit instantané.
     """
     import httpx
     import os
-    
-    # URL de l'app (Railway ou local)
+
     base_url = os.getenv("RAILWAY_PUBLIC_DOMAIN")
     if base_url:
         health_url = f"https://{base_url}/health"
     else:
         health_url = "http://localhost:8080/health"
-    
+
     print(f"🔄 Keep-alive started, pinging: {health_url}")
-    
+
+    _slots_warmup_counter = 0
     while True:
-        await asyncio.sleep(30)  # Ping toutes les 30 secondes
+        await asyncio.sleep(30)
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(health_url, timeout=10)
                 print(f"💓 Keep-alive ping: {response.status_code}")
         except Exception as e:
             print(f"⚠️ Keep-alive ping failed: {e}")
+
+        _slots_warmup_counter += 1
+        if _slots_warmup_counter % 4 == 0:
+            try:
+                from backend.tools_booking import get_slots_for_display
+                from backend.session import Session
+                warmup_session = Session(conv_id="__warmup__")
+                warmup_session.tenant_id = 1
+                slots = get_slots_for_display(limit=3, session=warmup_session)
+                print(f"🔥 Slots warmup: {len(slots)} slots cached")
+            except Exception as e:
+                print(f"⚠️ Slots warmup failed: {e}")
 
 
 async def cleanup_old_conversations():

@@ -126,31 +126,70 @@ def extract_assistant_id_from_vapi_payload(payload: dict) -> Optional[str]:
     return None
 
 
+_ENV_VAPI_ASSISTANT_ID: Optional[str] = None
+
+def _get_env_vapi_assistant_id() -> Optional[str]:
+    global _ENV_VAPI_ASSISTANT_ID
+    if _ENV_VAPI_ASSISTANT_ID is None:
+        import os
+        _ENV_VAPI_ASSISTANT_ID = (os.environ.get("VAPI_ASSISTANT_ID") or "").strip() or ""
+    return _ENV_VAPI_ASSISTANT_ID or None
+
+
+_assistant_tenant_cache: dict[str, int] = {}
+
+
+def _fast_resolve_assistant_id(assistant_id: Optional[str]) -> Optional[int]:
+    """
+    Résolution instantanée (0 DB call) : cache mémoire + env var VAPI_ASSISTANT_ID.
+    Retourne tenant_id ou None si inconnu.
+    """
+    if not assistant_id:
+        return None
+    cached = _assistant_tenant_cache.get(assistant_id)
+    if cached is not None:
+        return cached
+    env_id = _get_env_vapi_assistant_id()
+    if env_id and assistant_id == env_id:
+        _assistant_tenant_cache[assistant_id] = config.DEFAULT_TENANT_ID
+        return config.DEFAULT_TENANT_ID
+    return None
+
+
 def resolve_tenant_id_from_vapi_payload(payload: dict, channel: str = "vocal") -> tuple[int, str]:
     """
     Résolution tenant Vapi:
+    0. FAST-PATH: assistantId == VAPI_ASSISTANT_ID env var → tenant 1 (0 DB call)
     1. DID/numéro appelé si disponible
     2. fallback assistantId -> tenant_config.params_json.vapi_assistant_id
     3. défaut
     """
+    assistant_id = extract_assistant_id_from_vapi_payload(payload)
+    fast = _fast_resolve_assistant_id(assistant_id)
+    if fast is not None:
+        logger.debug("TENANT_READ source=fast_cache assistant_id=%s -> tenant_id=%s",
+                      (assistant_id or "")[:24], fast)
+        return fast, "fast_cache"
+
     to_number = extract_to_number_from_vapi_payload(payload)
     tenant_id, source = resolve_tenant_id_from_vocal_call(to_number, channel=channel)
     if source != "default":
         return tenant_id, source
 
-    assistant_id = extract_assistant_id_from_vapi_payload(payload)
     if assistant_id and config.USE_PG_TENANTS:
         try:
             from backend.tenants_pg import pg_find_tenant_id_by_vapi_assistant_id
 
             assistant_tenant_id = pg_find_tenant_id_by_vapi_assistant_id(assistant_id)
             if assistant_tenant_id:
+                tid = int(assistant_tenant_id)
+                _assistant_tenant_cache[assistant_id] = tid
                 logger.info(
-                    "TENANT_READ source=assistant assistant_id=%s -> tenant_id=%s",
+                    "TENANT_READ source=assistant assistant_id=%s -> tenant_id=%s (cached)",
                     assistant_id[:24],
-                    assistant_tenant_id,
+                    tid,
                 )
-                return int(assistant_tenant_id), "assistant"
+                return tid, "assistant"
         except Exception as e:
             logger.debug("TENANT_READ assistant lookup failed: %s", e)
 
