@@ -858,14 +858,15 @@ Pour toute question d'information (horaires, tarifs, adresse, vacances, fermetur
 
 @app.post("/debug/vapi-sync-faq")
 async def debug_vapi_sync_faq(tenant_id: int = 1):
-    """Force la synchronisation de la FAQ du tenant dans le system prompt Vapi."""
+    """Force la synchronisation du prompt V2 complet (base + FAQ) dans l'assistant Vapi."""
     import os
     try:
-        from backend.vapi_utils import patch_vapi_assistant_system_prompt
+        from backend.vapi_utils import patch_vapi_assistant_system_prompt, _build_base_prompt
         from backend.tenant_config import faq_to_prompt_text, get_faq, get_params
 
         faq = get_faq(tenant_id)
         faq_text = faq_to_prompt_text(faq, tenant_id=tenant_id)
+        base = _build_base_prompt(tenant_id)
 
         params = get_params(tenant_id)
         vapi_id = str(params.get("vapi_assistant_id") or "").strip()
@@ -876,14 +877,15 @@ async def debug_vapi_sync_faq(tenant_id: int = 1):
         if not vapi_id:
             return {"error": "Aucun vapi_assistant_id trouvé (ni params, ni env var)", "tenant_id": tenant_id}
 
-        await patch_vapi_assistant_system_prompt(vapi_id, faq_text)
+        await patch_vapi_assistant_system_prompt(vapi_id, faq_text, base_prompt=base)
         return {
             "ok": True,
             "tenant_id": tenant_id,
             "vapi_assistant_id": vapi_id[:24],
             "source": source,
+            "prompt_version": "v2",
+            "base_len": len(base),
             "faq_text_len": len(faq_text),
-            "faq_text_preview": faq_text[:500],
         }
     except Exception as e:
         return {"error": str(e)[:300], "tenant_id": tenant_id}
