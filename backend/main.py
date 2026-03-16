@@ -125,12 +125,16 @@ except Exception as e:
     pass
 
 # Scheduler (rapports + suspension past_due à 03:00 UTC)
-try:
-    from backend.reports import setup_scheduler
-    setup_scheduler()
-except Exception as e:
-    import logging
-    logging.warning("Scheduler setup failed (reports/suspension): %s", e)
+# DISABLE_SCHEDULER=true → pas de BackgroundScheduler (économise ~1-5 MB + thread pool permanent)
+if os.getenv("DISABLE_SCHEDULER", "").lower() not in ("1", "true", "yes"):
+    try:
+        from backend.reports import setup_scheduler
+        setup_scheduler()
+    except Exception as e:
+        import logging
+        logging.warning("Scheduler setup failed (reports/suspension): %s", e)
+else:
+    print("⏸️  Scheduler disabled (DISABLE_SCHEDULER=true)")
 
 # SSE Streams
 STREAMS: Dict[str, asyncio.Queue[Optional[str]]] = {}
@@ -165,10 +169,15 @@ async def startup():
     L'init lourde (validation multi-tenant, credentials, PG) tourne en arrière-plan
     pour que /health réponde immédiatement (healthcheck Railway).
     """
-    # Ne pas bloquer le démarrage : validation multi-tenant déplacée en arrière-plan
-    # (évite crash au boot si MULTI_TENANT_MODE=true sans USE_PG_SLOTS → healthcheck fail)
+    _lean = os.getenv("DISABLE_WARMUP", "").lower() in ("1", "true", "yes")
+
     asyncio.create_task(cleanup_old_conversations())
-    asyncio.create_task(keep_alive())
+
+    if not _lean:
+        asyncio.create_task(keep_alive())
+    else:
+        print("⏸️  keep_alive disabled (DISABLE_WARMUP=true) — no keep-alive ping, no slot warmup")
+
     asyncio.create_task(_init_heavy())
     print("🚀 Server ready (heavy init in background)")
 

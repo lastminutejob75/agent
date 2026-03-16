@@ -238,6 +238,10 @@ _calendar_service = None  # Legacy fallback (global)
 # CACHE SLOTS (évite appels répétés Google Calendar)
 # ============================================
 
+import os as _os
+
+_DISABLE_SLOT_CACHE = _os.getenv("DISABLE_SLOT_CACHE", "").lower() in ("1", "true", "yes")
+
 _slots_cache: Dict[str, Any] = {
     "by_key": {},  # (tenant_id, pref) -> {"slots": [...], "timestamp": float}
     "ttl_seconds": 150,
@@ -250,6 +254,8 @@ def _cache_key(tenant_id: int, pref: Optional[str] = None) -> tuple:
 
 def _get_cached_slots(limit: int, tenant_id: int = 1, pref: Optional[str] = None) -> Optional[List[prompts.SlotDisplay]]:
     """Récupère les slots du cache si encore valides (scopé par tenant + pref)."""
+    if _DISABLE_SLOT_CACHE:
+        return None
     import time
     key = _cache_key(tenant_id, pref)
     entry = _slots_cache["by_key"].get(key)
@@ -265,6 +271,8 @@ def _get_cached_slots(limit: int, tenant_id: int = 1, pref: Optional[str] = None
 
 def _set_cached_slots(slots: List[prompts.SlotDisplay], tenant_id: int = 1, pref: Optional[str] = None) -> None:
     """Met à jour le cache de slots (scopé par tenant + pref)."""
+    if _DISABLE_SLOT_CACHE:
+        return
     import time
     key = _cache_key(tenant_id, pref)
     _slots_cache["by_key"][key] = {"slots": slots, "timestamp": time.time()}
@@ -551,6 +559,8 @@ def prefetch_slots_for_pref_question(session: Any) -> None:
     Précharge les créneaux matin/après-midi en arrière-plan pendant que l'utilisateur
     réfléchit à la question "matin ou après-midi". Fire-and-forget, ne bloque pas.
     """
+    if _DISABLE_SLOT_CACHE:
+        return
     now = time.time()
     ts = getattr(session, "_prefetch_slots_ts", 0) or 0
     if now - ts < 60:
