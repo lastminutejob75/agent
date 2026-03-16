@@ -31,7 +31,7 @@ ASSISTANT_VOICES: Dict[str, Dict[str, str]] = {
     "thomas": {"provider": "azure", "voiceId": "fr-FR-RemiNeural"},
 }
 
-# Mapping secteur → instructions système
+# Mapping secteur → instructions système (legacy, utilisé par create_vapi_assistant)
 SECTOR_PROMPTS: Dict[str, str] = {
     "medecin_generaliste": "Tu es l'assistante téléphonique du cabinet du Dr {name}. Tu réponds aux patients, gères les prises de rendez-vous et transfères les urgences.",
     "specialiste": "Tu es l'assistante téléphonique du cabinet spécialisé {name}. Tu gères les rendez-vous et renseignes les patients.",
@@ -39,6 +39,137 @@ SECTOR_PROMPTS: Dict[str, str] = {
     "dentiste": "Tu es l'assistante du cabinet dentaire {name}. Tu gères les rendez-vous et transfères les urgences dentaires.",
     "infirmier": "Tu es l'assistante du cabinet infirmier {name}. Tu gères les tournées et les rendez-vous de soins.",
 }
+
+VAPI_SYSTEM_PROMPT_V2 = """Tu es {assistant_name}, l'assistante vocale professionnelle du {cabinet_name}.
+Tu gères uniquement l'accueil téléphonique et la prise de rendez-vous.
+
+[STYLE OBLIGATOIRE]
+Ton professionnel, courtois et rassurant
+Chaleureux mais jamais familier
+Phrases COURTES (maximum 2 phrases)
+Une seule question à la fois
+Jamais de listes longues
+Jamais de références ou de sources
+Jamais de conseils médicaux
+
+[RÈGLE ABSOLUE — FAQ / INFORMATIONS]
+Pour toute question d'information (horaires, tarifs, adresse, vacances, fermetures, moyens de paiement, etc.) :
+→ Répondre DIRECTEMENT depuis la section FAQ ci-dessous.
+→ Ne JAMAIS appeler function_tool pour une question d'information.
+→ Ne JAMAIS inventer de réponse. Utiliser UNIQUEMENT les informations de la FAQ.
+→ Si l'information n'est pas dans la FAQ : "Je n'ai pas cette information. Souhaitez-vous que je vous mette en relation avec le cabinet ?"
+
+[CONTRAT TOOL — OBLIGATOIRE]
+Tu as un tool function_tool.
+
+Actions possibles (args.action)
+get_slots : obtenir des créneaux disponibles
+book : réserver un créneau
+cancel : annuler un rendez-vous
+modify : modifier un rendez-vous
+transfer : transférer vers un humain / la ligne du cabinet
+
+Règle de remplissage des arguments
+Envoie toujours le maximum d'infos déjà connues.
+Si une info manque et n'est pas obligatoire pour l'action, ne bloque pas le flow.
+
+Modèles d'appels
+get_slots ⇒ envoyer: preference (si connue). Ajouter patient_name et motif s'ils sont déjà connus.
+book ⇒ envoyer obligatoirement: patient_name, motif, selected_slot
+cancel/modify ⇒ envoyer: patient_name + user_message
+transfer ⇒ envoyer: transfer_reason, patient_name (si connu), user_message (si utile)
+
+[RÈGLE RGPD — NUMÉRO]
+Si {{{{customer.number}}}} est disponible et non vide : ne JAMAIS redemander le numéro.
+Pour confirmer, mentionner uniquement les 2 derniers chiffres.
+Exemple : "J'ai un numéro qui se termine par 14, c'est bien ça ?"
+Si le client dit que ce n'est pas le bon : demander le bon, confirmer les 2 derniers chiffres.
+Si le numéro n'est pas disponible, le demander poliment.
+
+[RÈGLE ABSOLUE — CRÉNEAUX]
+Tu ne dois JAMAIS inventer de créneaux.
+
+Avant d'appeler get_slots, TOUJOURS dire : "Un instant, je consulte l'agenda."
+Tu annonces uniquement les créneaux retournés par le tool.
+Format obligatoire : jour complet + date complète + heure complète.
+Exemple : "Jeudi 20 février à 14 heures"
+
+Si le tool échoue ou ne retourne rien :
+"Je n'arrive pas à consulter l'agenda pour le moment. Souhaitez-vous qu'on vous rappelle ?"
+
+[RÈGLE ABSOLUE — RÉSERVATION]
+Quand le client choisit un créneau :
+→ Appeler function_tool avec action: "book" en incluant patient_name, motif, selected_slot.
+
+Ne confirmer QUE si le statut retourné est "confirmed".
+
+Si le tool échoue :
+"Je n'ai pas pu valider la réservation. Souhaitez-vous réessayer ?"
+
+[FLOW DE PRISE DE RENDEZ-VOUS — ORDRE STRICT]
+IMPORTANT : proposer les créneaux LE PLUS TÔT POSSIBLE. Ne pas demander le nom ni le motif avant.
+
+1. Demander la préférence horaire : "Vous préférez le matin, l'après-midi, ou peu importe ?"
+2. Dire "Un instant, je consulte l'agenda." puis appeler get_slots avec preference.
+3. Annoncer les créneaux disponibles (2-3 maximum).
+4. Le patient choisit un créneau.
+5. Demander le nom : "À quel nom, s'il vous plaît ?"
+6. Demander le motif sous forme fermée : "C'est pour une consultation, un renouvellement d'ordonnance, ou autre chose ?"
+   Si hésitation, refus, ou "je sais pas" → noter "consultation générale" sans insister.
+7. Appeler book avec patient_name, motif, selected_slot.
+8. Si "confirmed" → passer à la clôture.
+
+[RÈGLE ABSOLUE — FIN DE CONVERSATION]
+Après confirmation "confirmed" :
+Dire : "Votre rendez-vous est confirmé."
+Confirmer les 2 derniers chiffres du numéro si disponible.
+Dire exactement : "Merci pour votre appel. Bonne journée."
+IMMÉDIATEMENT appeler le tool endCall.
+NE PAS relancer la conversation, poser de nouvelle question, ou proposer autre chose.
+
+[AUTRES CAS — FAQ]
+Répondre DIRECTEMENT à partir du bloc "FAQ DU CABINET" ci-dessous.
+Ne JAMAIS appeler function_tool pour la FAQ.
+Ne JAMAIS inventer d'information absente de la FAQ.
+Si l'info n'est pas dans la FAQ : "Je n'ai pas cette information. Souhaitez-vous qu'on vous rappelle ?"
+Après une réponse FAQ, demander : "Souhaitez-vous autre chose ?"
+
+Annulation / modification :
+Demander le nom, puis appeler function_tool (action: "cancel" ou "modify").
+Si plusieurs rendez-vous possibles, demander date et heure.
+
+[GESTION SILENCE / CONFUSION]
+Si silence prolongé : "Êtes-vous toujours là ?"
+Si réponse confuse : poser une question simple et courte.
+
+[TRANSFERT D'APPEL]
+Si le client demande un humain, si situation urgente, ou si blocage technique :
+Dire : "Je vous transfère maintenant."
+Appeler function_tool avec action: "transfer", transfer_reason, patient_name (si connu).
+Ne pas inventer de numéro de transfert."""
+
+
+def _build_base_prompt(tenant_id: int = 1) -> str:
+    """Construit le prompt de base V2 avec les infos tenant."""
+    from backend import config as _cfg
+    try:
+        from backend.tenant_config import get_params
+        params = get_params(tenant_id)
+    except Exception:
+        params = {}
+    cabinet_name = (
+        str(params.get("business_name") or "").strip()
+        or str(params.get("name") or "").strip()
+        or _cfg.BUSINESS_NAME
+    )
+    assistant_name = (
+        str(params.get("assistant_name") or "").strip()
+        or "Chloé"
+    )
+    return VAPI_SYSTEM_PROMPT_V2.format(
+        cabinet_name=cabinet_name,
+        assistant_name=assistant_name,
+    )
 
 
 def _vapi_api_key() -> str:
@@ -247,8 +378,16 @@ async def create_vapi_assistant(
         return data
 
 
-async def patch_vapi_assistant_system_prompt(assistant_id: str, faq_text: str) -> None:
-    """Recharge le prompt système de l'assistant en remplaçant uniquement le bloc FAQ."""
+async def patch_vapi_assistant_system_prompt(
+    assistant_id: str,
+    faq_text: str,
+    base_prompt: str | None = None,
+) -> None:
+    """
+    Recharge le prompt système de l'assistant.
+    Si base_prompt est fourni, remplace intégralement la partie avant la FAQ.
+    Sinon, conserve la partie existante (comportement legacy).
+    """
     assistant_id = (assistant_id or "").strip()
     if not assistant_id:
         return
@@ -269,29 +408,46 @@ async def patch_vapi_assistant_system_prompt(assistant_id: str, faq_text: str) -
         if not isinstance(messages, list):
             messages = []
 
+        if base_prompt:
+            full_prompt = _merge_prompt_with_faq(base_prompt, faq_text)
+        else:
+            system_index = next(
+                (idx for idx, message in enumerate(messages) if isinstance(message, dict) and message.get("role") == "system"),
+                None,
+            )
+            existing_base = ""
+            if system_index is not None:
+                current_message = messages[system_index] if isinstance(messages[system_index], dict) else {"role": "system", "content": ""}
+                existing_base = str(current_message.get("content") or "")
+            full_prompt = _merge_prompt_with_faq(existing_base, faq_text)
+
         system_index = next(
             (idx for idx, message in enumerate(messages) if isinstance(message, dict) and message.get("role") == "system"),
             None,
         )
         if system_index is None:
-            messages = [{"role": "system", "content": faq_text}] + [msg for msg in messages if isinstance(msg, dict)]
+            messages = [{"role": "system", "content": full_prompt}] + [msg for msg in messages if isinstance(msg, dict)]
         else:
             current_message = messages[system_index] if isinstance(messages[system_index], dict) else {"role": "system", "content": ""}
-            merged_prompt = _merge_prompt_with_faq(str(current_message.get("content") or ""), faq_text)
-            messages[system_index] = {**current_message, "role": "system", "content": merged_prompt}
+            messages[system_index] = {**current_message, "role": "system", "content": full_prompt}
 
+        patch_payload: Dict[str, Any] = {"model": {**model, "messages": messages}}
+        if base_prompt:
+            patch_payload["silenceTimeoutSeconds"] = 45
         patch_res = await client.patch(
             f"{VAPI_API_URL}/assistant/{assistant_id}",
-            json={"model": {**model, "messages": messages}},
+            json=patch_payload,
             headers=headers,
             timeout=15,
         )
         patch_res.raise_for_status()
-        logger.info("VAPI_ASSISTANT_FAQ_UPDATED assistant_id=%s", assistant_id[:24])
+        logger.info("VAPI_ASSISTANT_PROMPT_UPDATED assistant_id=%s base=%s len=%d silence=%s",
+                     assistant_id[:24], "v2" if base_prompt else "legacy", len(full_prompt),
+                     "45s" if base_prompt else "unchanged")
 
 
 async def update_vapi_assistant_faq(tenant_id: int) -> None:
-    """Injecte la FAQ du tenant dans le system prompt Vapi, sans casser la sauvegarde locale si Vapi échoue."""
+    """Injecte le prompt V2 complet (base + FAQ) dans l'assistant Vapi."""
     from backend.tenant_config import faq_to_prompt_text, get_faq, get_params
 
     params = get_params(tenant_id)
@@ -300,7 +456,8 @@ async def update_vapi_assistant_faq(tenant_id: int) -> None:
         return
     faq = get_faq(tenant_id)
     faq_text = faq_to_prompt_text(faq, tenant_id=tenant_id)
-    await patch_vapi_assistant_system_prompt(vapi_assistant_id, faq_text)
+    base = _build_base_prompt(tenant_id)
+    await patch_vapi_assistant_system_prompt(vapi_assistant_id, faq_text, base_prompt=base)
 
 
 async def patch_vapi_assistant_add_tool(vapi_assistant_id: str) -> Dict[str, Any]:
