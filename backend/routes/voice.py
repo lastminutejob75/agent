@@ -1062,23 +1062,36 @@ async def vapi_webhook(request: Request):
                 w_call_id = _webhook_extract_call_id(payload) or "unknown"
 
                 if action == "get_slots":
-                    session = _get_or_resume_voice_session(resolved_tid, w_call_id)
-                    session.channel = "vocal"
-                    session.tenant_id = resolved_tid
-                    if params.get("patient_name"):
-                        session.qualif_data.name = params["patient_name"]
-                    if params.get("motif"):
-                        session.qualif_data.motif = params["motif"]
-                    if params.get("preference"):
-                        session.qualif_data.pref = params["preference"]
                     from backend import vapi_tool_handlers as th
-                    slots_list, source, err = th.handle_get_slots(
-                        session, params.get("preference"), w_call_id,
-                        exclude_start_iso=params.get("exclude_start_iso"),
-                        exclude_end_iso=params.get("exclude_end_iso"),
-                    )
-                    if hasattr(ENGINE.session_store, "save"):
-                        ENGINE.session_store.save(session)
+                    import concurrent.futures as _cf
+
+                    def _wh_get_slots():
+                        session = _get_or_resume_voice_session(resolved_tid, w_call_id)
+                        session.channel = "vocal"
+                        session.tenant_id = resolved_tid
+                        if params.get("patient_name"):
+                            session.qualif_data.name = params["patient_name"]
+                        if params.get("motif"):
+                            session.qualif_data.motif = params["motif"]
+                        if params.get("preference"):
+                            session.qualif_data.pref = params["preference"]
+                        sl, src, err = th.handle_get_slots(
+                            session, params.get("preference"), w_call_id,
+                            exclude_start_iso=params.get("exclude_start_iso"),
+                            exclude_end_iso=params.get("exclude_end_iso"),
+                        )
+                        if hasattr(ENGINE.session_store, "save"):
+                            ENGINE.session_store.save(session)
+                        return sl, src, err
+
+                    try:
+                        with _cf.ThreadPoolExecutor(max_workers=1) as ex:
+                            slots_list, source, err = ex.submit(_wh_get_slots).result(timeout=6.0)
+                    except _cf.TimeoutError:
+                        logger.error("[WEBHOOK_GET_SLOTS_TIMEOUT] call_id=%s", w_call_id[:24])
+                        err = "Je n'arrive pas à consulter l'agenda pour le moment. Souhaitez-vous qu'on vous rappelle ?"
+                        slots_list = None
+
                     if err:
                         results.append({"toolCallId": tc_id, "result": err})
                     elif slots_list:
@@ -1395,10 +1408,10 @@ async def vapi_tool(request: Request):
             try:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                     fut = ex.submit(_do_get_slots)
-                    slots_list, source, err = fut.result(timeout=12.0)
+                    slots_list, source, err = fut.result(timeout=6.0)
             except concurrent.futures.TimeoutError:
-                logger.error("[VAPI_TOOL_GET_SLOTS_TIMEOUT] call_id=%s — 12s exceeded", call_id[:24] if call_id else "")
-                err = "L'agenda met trop de temps à répondre. Souhaitez-vous qu'on vous rappelle ?"
+                logger.error("[VAPI_TOOL_GET_SLOTS_TIMEOUT] call_id=%s — 6s exceeded", call_id[:24] if call_id else "")
+                err = "Je n'arrive pas à consulter l'agenda pour le moment. Souhaitez-vous qu'on vous rappelle ?"
                 slots_list = None
 
             if err:
