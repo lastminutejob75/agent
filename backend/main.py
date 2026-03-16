@@ -284,7 +284,7 @@ async def keep_alive():
             print(f"⚠️ Slots warmup failed: {e}")
 
     await asyncio.sleep(10)
-    _warmup_slots()
+    await asyncio.to_thread(_warmup_slots)
 
     _slots_warmup_counter = 0
     while True:
@@ -298,7 +298,7 @@ async def keep_alive():
 
         _slots_warmup_counter += 1
         if _slots_warmup_counter % 4 == 0:
-            _warmup_slots()
+            await asyncio.to_thread(_warmup_slots)
 
 
 async def cleanup_old_conversations():
