@@ -751,6 +751,8 @@ def _get_slots_from_google_calendar(
     buffer_minutes = rules["buffer_minutes"]
 
     pool: List[prompts.SlotDisplay] = []
+    # Priorité fiabilité Vapi: fournir vite 3 créneaux, même si moins "diversifiés".
+    target_pool_size = max(3, limit)
     # Plage horaire selon préférence (intersection avec règles tenant)
     if pref == "matin":
         start_hour, end_hour = max(base_start, 9), min(12, base_end)
@@ -761,10 +763,10 @@ def _get_slots_from_google_calendar(
     else:
         start_hour, end_hour = base_start, base_end
 
-    per_day = max(5, limit * 2)
+    per_day = target_pool_size
     days_fr = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
     for day_offset in range(1, 8):
-        if len(pool) >= SLOTS_POOL_SIZE:
+        if len(pool) >= target_pool_size:
             break
         date = datetime.now() + timedelta(days=day_offset)
         if date.weekday() not in booking_days:
@@ -778,7 +780,7 @@ def _get_slots_from_google_calendar(
             buffer_minutes=buffer_minutes,
         )
         for slot in day_slots:
-            if len(pool) >= SLOTS_POOL_SIZE:
+            if len(pool) >= target_pool_size:
                 break
             start_iso = slot.get('start', '')
             day_fr, hour, label_vocal = '', 0, ''
@@ -801,7 +803,7 @@ def _get_slots_from_google_calendar(
                 label_vocal=label_vocal or slot.get('label', ''),
                 source="google",
             ))
-    logger.info(f"Google Calendar: {len(pool)} créneaux en pool (pref={pref})")
+    logger.info(f"Google Calendar: {len(pool)} créneaux en pool rapide (pref={pref})")
     return pool
 
 
