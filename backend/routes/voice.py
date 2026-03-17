@@ -1215,7 +1215,31 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
                         results.append({"toolCallId": tc_id, "result": result_text})
 
                     elif action == "transfer":
-                        results.append({"toolCallId": tc_id, "result": json.dumps({"status": "received"})})
+                        transfer_reason = (params.get("transfer_reason") or "").strip()
+                        session = _get_or_resume_voice_session(resolved_tid, w_call_id)
+                        session.channel = "vocal"
+                        session.tenant_id = resolved_tid
+                        # Garde-fou prod: éviter un transfert "fantôme" juste après un get_slots réussi.
+                        # Si pas de transfer_reason explicite et qu'on a des slots en session, on les renvoie.
+                        if not transfer_reason and getattr(session, "pending_slots", None):
+                            try:
+                                from backend.tools_booking import slot_to_vocal_label
+                                pending = (session.pending_slots or [])[:3]
+                                labels = [slot_to_vocal_label(s) for s in pending if s]
+                                if labels:
+                                    slots_text = ", ".join(labels[:-1]) + " et " + labels[-1] if len(labels) > 1 else labels[0]
+                                    results.append({"toolCallId": tc_id, "result": f"Créneaux disponibles : {slots_text}."})
+                                    logger.warning(
+                                        "[VAPI_WEBHOOK_TRANSFER_GUARD] call_id=%s transfer_without_reason -> replay_slots count=%d",
+                                        w_call_id[:24],
+                                        len(labels),
+                                    )
+                                else:
+                                    results.append({"toolCallId": tc_id, "result": json.dumps({"status": "received"})})
+                            except Exception:
+                                results.append({"toolCallId": tc_id, "result": json.dumps({"status": "received"})})
+                        else:
+                            results.append({"toolCallId": tc_id, "result": json.dumps({"status": "received"})})
 
                     elif action == "faq":
                         if user_msg:
