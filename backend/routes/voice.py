@@ -1040,6 +1040,15 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
     # status-update: ACK immédiat (<100ms) puis traitement DB en arrière-plan.
     # Evite de retarder le démarrage vocal (firstMessage) si PG est lent.
     if msg_type == "status-update":
+        _call = message.get("call") or {}
+        _status = (message.get("status") or _call.get("status") or "").strip().lower()
+
+        # Fast-path prod: ne pas saturer le threadpool/DB sur les statuts intermédiaires.
+        # On garde la persistance pour les statuts finaux/structurants uniquement.
+        if _status in {"ringing", "in-progress"}:
+            logger.info("[VAPI_STATUS_UPDATE_FAST_ACK] status=%s (skip persist)", _status)
+            return JSONResponse({"ok": True}, status_code=200)
+
         async def _persist_status_update_bg() -> None:
             try:
                 await asyncio.to_thread(_persist_status_update_sync, payload, message)
