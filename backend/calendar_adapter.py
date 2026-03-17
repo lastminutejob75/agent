@@ -7,6 +7,7 @@ Ne pas imposer Google Calendar : tenant peut avoir provider=none.
 from __future__ import annotations
 
 import logging
+import threading
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Protocol
@@ -20,6 +21,11 @@ from backend.google_calendar import (
 from backend.tenant_config import get_params
 
 logger = logging.getLogger(__name__)
+
+# Cache process-local des adapters Google pour éviter de recréer le client API
+# à chaque requête vocale.
+_GOOGLE_ADAPTER_CACHE: Dict[tuple[int, str], "_GoogleCalendarAdapter"] = {}
+_GOOGLE_ADAPTER_LOCK = threading.Lock()
 
 # Schéma params_json : {"calendar_provider": "google"|"none", "calendar_id": "xxx@..."}
 CALENDAR_PROVIDER_KEY = "calendar_provider"
@@ -253,4 +259,11 @@ def get_calendar_adapter(session: Any) -> Optional[CalendarAdapter]:
 
     cal_short = calendar_id[:24] + "..." if len(calendar_id) > 24 else calendar_id
     logger.info("[CAL_ADAPTER] tenant_id=%s provider=google calendar_id=%s", tenant_id, cal_short)
-    return _GoogleCalendarAdapter(calendar_id, tenant_id)
+    key = (tenant_id, calendar_id)
+    with _GOOGLE_ADAPTER_LOCK:
+        cached = _GOOGLE_ADAPTER_CACHE.get(key)
+        if cached is not None:
+            return cached
+        adapter = _GoogleCalendarAdapter(calendar_id, tenant_id)
+        _GOOGLE_ADAPTER_CACHE[key] = adapter
+        return adapter
