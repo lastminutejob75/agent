@@ -52,13 +52,28 @@ def handle_get_slots(
             pref = None
         if pref == "apres-midi":
             pref = "après-midi"
-        slots = tools_booking.get_slots_for_display(
-            limit=3,
-            pref=pref or None,
-            session=session,
-            exclude_start_iso=exclude_start_iso or None,
-            exclude_end_iso=exclude_end_iso or None,
-        )
+        tenant_id = getattr(session, "tenant_id", None) or 1
+
+        # Fast path vocal: répondre depuis le cache chaud pour rester sous les timeouts Vapi.
+        # On tente pref demandée, puis fallback pref=None avant d'appeler Google.
+        slots = tools_booking._get_cached_slots(limit=3, tenant_id=tenant_id, pref=pref or None)
+        if not slots and pref:
+            slots = tools_booking._get_cached_slots(limit=3, tenant_id=tenant_id, pref=None)
+            if slots:
+                logger.info(
+                    "CALENDAR_FETCH_CACHE_FALLBACK",
+                    extra={"call_id": call_id[:24] if call_id else "", "from_pref": pref, "to_pref": "none"},
+                )
+
+        if not slots:
+            slots = tools_booking.get_slots_for_display(
+                limit=3,
+                pref=pref or None,
+                session=session,
+                exclude_start_iso=exclude_start_iso or None,
+                exclude_end_iso=exclude_end_iso or None,
+            )
+
         # Voice path: do not re-fetch Google full slot objects synchronously.
         # pending_slots already contains enough canonical data to book.
         tools_booking.store_pending_slots(session, slots, enrich_google=False)
