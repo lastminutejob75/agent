@@ -1372,8 +1372,10 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
                         call_id[:24] if call_id else "",
                         str(persist_err)[:80],
                     )
-                session = _get_or_resume_voice_session(resolved_tenant_id, call_id)
-                if not session.customer_phone:
+                # IMPORTANT: ne pas créer de session vide ici, sinon on peut écraser une
+                # session active (pending_slots/name) lors des webhooks parallèles.
+                session = ENGINE.session_store.get(call_id)
+                if session is not None and not session.customer_phone:
                     session.customer_phone = customer_phone
                     session.channel = "vocal"
                     session.tenant_id = resolved_tenant_id
