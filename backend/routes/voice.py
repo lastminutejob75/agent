@@ -1156,7 +1156,6 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
                         current_tenant_id.set(str(tid))
                         return sl, src, err
 
-                    import asyncio
                     try:
                         loop = asyncio.get_event_loop()
                         slots_list, source, err = await asyncio.wait_for(
@@ -1530,7 +1529,6 @@ async def vapi_tool(request: Request):
                 )
                 return tid, slots_list, source, err
 
-            import asyncio
             resolved_tenant_id = 1
             try:
                 loop = asyncio.get_event_loop()
@@ -2264,8 +2262,7 @@ async def vapi_custom_llm(request: Request):
         # Si streaming demandé, retourner SSE
         if is_streaming:
             async def generate_stream():
-                import asyncio
-                
+                    
                 chunk_role = {
                     "id": f"chatcmpl-{call_id}",
                     "object": "chat.completion.chunk",
