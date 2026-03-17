@@ -1441,6 +1441,32 @@ async def vapi_tool(request: Request):
             extra={"call_id": call_id[:24] if call_id else "", "action": action or "(legacy)", "tool_call_id": (tool_call_id or "")[:24]},
         )
 
+        # Guard: éviter de tomber dans la branche legacy + lock PG quand action est mal parsée.
+        if not action:
+            if patient_name and motif and preference:
+                action = "get_slots"
+                logger.warning(
+                    "[VAPI_TOOL_ACTION_INFERRED] call_id=%s inferred=get_slots (missing action)",
+                    call_id[:24] if call_id else "",
+                )
+            else:
+                logger.error(
+                    "[VAPI_TOOL_ACTION_MISSING] call_id=%s keys=%s",
+                    call_id[:24] if call_id else "",
+                    list((params or {}).keys())[:12],
+                )
+                if tool_call_id:
+                    from backend import vapi_tool_handlers as th
+                    return JSONResponse(
+                        th.build_vapi_tool_response(
+                            tool_call_id,
+                            None,
+                            "Paramètres d'action invalides. Merci de réessayer.",
+                        ),
+                        status_code=200,
+                    )
+                return JSONResponse({"result": "Paramètres d'action invalides. Merci de réessayer."}, status_code=200)
+
         # ── FAQ FAST-PATH : toute l'opération (résolution tenant + FAQ) en <4s ──
         if action == "faq" and user_message:
             def _faq_fast_work():
