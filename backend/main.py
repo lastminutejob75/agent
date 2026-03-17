@@ -710,6 +710,29 @@ async def debug_vapi_assistant():
                         tools_summary.append(t_info)
                     model = data.get("model") or {}
                     messages = model.get("messages") or []
+                    tool_ids = model.get("toolIds") or []
+                    tool_ids_detail = []
+                    for tid in tool_ids:
+                        try:
+                            tres = await client.get(
+                                f"https://api.vapi.ai/tool/{tid}",
+                                headers={"Authorization": f"Bearer {api_key}"},
+                                timeout=10,
+                            )
+                            if tres.status_code == 200:
+                                tdata = tres.json() or {}
+                                tool_ids_detail.append(
+                                    {
+                                        "id": tid,
+                                        "type": tdata.get("type"),
+                                        "name": (tdata.get("function") or {}).get("name") or tdata.get("name"),
+                                        "server_url": (tdata.get("server") or {}).get("url"),
+                                    }
+                                )
+                            else:
+                                tool_ids_detail.append({"id": tid, "http_status": tres.status_code})
+                        except Exception as te:
+                            tool_ids_detail.append({"id": tid, "error": str(te)[:120]})
                     sys_prompt = ""
                     for m in messages:
                         if isinstance(m, dict) and m.get("role") == "system":
@@ -722,6 +745,8 @@ async def debug_vapi_assistant():
                         "top_tools_count": len(top_tools),
                         "model_tools_count": len(model_tools),
                         "tools": tools_summary,
+                        "tool_ids": tool_ids,
+                        "tool_ids_detail": tool_ids_detail,
                         "model_provider": model.get("provider"),
                         "system_prompt": sys_prompt,
                     }
