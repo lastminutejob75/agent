@@ -1215,31 +1215,32 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
                         results.append({"toolCallId": tc_id, "result": result_text})
 
                     elif action == "transfer":
-                        transfer_reason = (params.get("transfer_reason") or "").strip()
+                        transfer_reason = (params.get("transfer_reason") or "").strip().lower()
                         session = _get_or_resume_voice_session(resolved_tid, w_call_id)
                         session.channel = "vocal"
                         session.tenant_id = resolved_tid
-                        # Garde-fou prod: éviter un transfert "fantôme" juste après un get_slots réussi.
-                        # Si pas de transfer_reason explicite et qu'on a des slots en session, on les renvoie.
-                        if not transfer_reason and getattr(session, "pending_slots", None):
+                        # Garde-fou prod strict: si on a déjà des slots proposés, ne jamais basculer
+                        # en transfer "automatique" (cause fréquente du "je ne peux pas effectuer cette action").
+                        pending_slots = getattr(session, "pending_slots", None) or []
+                        if pending_slots:
                             try:
                                 from backend.tools_booking import slot_to_vocal_label
-                                pending = (session.pending_slots or [])[:3]
-                                labels = [slot_to_vocal_label(s) for s in pending if s]
+                                labels = [slot_to_vocal_label(s) for s in pending_slots[:3] if s]
                                 if labels:
                                     slots_text = ", ".join(labels[:-1]) + " et " + labels[-1] if len(labels) > 1 else labels[0]
                                     results.append({"toolCallId": tc_id, "result": f"Créneaux disponibles : {slots_text}."})
                                     logger.warning(
-                                        "[VAPI_WEBHOOK_TRANSFER_GUARD] call_id=%s transfer_without_reason -> replay_slots count=%d",
+                                        "[VAPI_WEBHOOK_TRANSFER_GUARD] call_id=%s transfer_reason=%s -> replay_slots count=%d",
                                         w_call_id[:24],
+                                        transfer_reason or "(none)",
                                         len(labels),
                                     )
                                 else:
-                                    results.append({"toolCallId": tc_id, "result": json.dumps({"status": "received"})})
+                                    results.append({"toolCallId": tc_id, "result": "Je vous transfère maintenant."})
                             except Exception:
-                                results.append({"toolCallId": tc_id, "result": json.dumps({"status": "received"})})
+                                results.append({"toolCallId": tc_id, "result": "Je vous transfère maintenant."})
                         else:
-                            results.append({"toolCallId": tc_id, "result": json.dumps({"status": "received"})})
+                            results.append({"toolCallId": tc_id, "result": "Je vous transfère maintenant."})
 
                     elif action == "faq":
                         if user_msg:
@@ -1657,6 +1658,30 @@ async def vapi_tool(request: Request):
             if tool_call_id:
                 return JSONResponse(th.build_vapi_tool_response(tool_call_id, response_text, None), status_code=200)
             return JSONResponse({"result": response_text}, status_code=200)
+
+        # --- transfer : garde-fou identique webhook (éviter "échec action" après slots) ---
+        if action == "transfer":
+            session = _get_session()
+            session.channel = "vocal"
+            session.tenant_id = resolved_tenant_id
+            pending_slots = getattr(session, "pending_slots", None) or []
+            if pending_slots:
+                try:
+                    from backend.tools_booking import slot_to_vocal_label
+                    labels = [slot_to_vocal_label(s) for s in pending_slots[:3] if s]
+                    if labels:
+                        slots_text = ", ".join(labels[:-1]) + " et " + labels[-1] if len(labels) > 1 else labels[0]
+                        replay = f"Créneaux disponibles : {slots_text}."
+                        logger.warning(
+                            "[VAPI_TOOL_TRANSFER_GUARD] call_id=%s transfer_after_slots -> replay_slots count=%d",
+                            call_id[:24] if call_id else "",
+                            len(labels),
+                        )
+                        return JSONResponse(th.build_vapi_tool_response(tool_call_id, replay, None), status_code=200)
+                except Exception:
+                    pass
+            transfer_text = "Je vous transfère maintenant."
+            return JSONResponse(th.build_vapi_tool_response(tool_call_id, transfer_text, None), status_code=200)
 
         # --- faq ou legacy : message utilisateur → tenant FAQ d'abord, engine en fallback ---
         if not user_message and not action:
