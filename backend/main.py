@@ -799,7 +799,7 @@ async def debug_vapi_patch_tools():
 
 
 @app.post("/debug/vapi-cleanup-inline-tools")
-async def debug_vapi_cleanup_inline_tools(tool_id: str = None, strict: bool = False):
+async def debug_vapi_cleanup_inline_tools(tool_id: str = None):
     """
     Nettoie tous les assistants Vapi :
     1. Supprime function_tool inline de model.tools (garde endCall)
@@ -856,16 +856,11 @@ async def debug_vapi_cleanup_inline_tools(tool_id: str = None, strict: bool = Fa
                         patch_model["tools"] = kept
                         needs_patch = True
 
-                    if strict:
-                        desired_tool_ids = [function_tool_id]
-                        if set(current_tool_ids) != set(desired_tool_ids):
-                            needs_patch = True
-                        patch_model["toolIds"] = desired_tool_ids
-                    else:
-                        if function_tool_id not in current_tool_ids:
-                            current_tool_ids.add(function_tool_id)
-                            needs_patch = True
-                        patch_model["toolIds"] = list(current_tool_ids)
+                    # Mode strict permanent: un seul function_tool autorisé.
+                    desired_tool_ids = [function_tool_id]
+                    if set(current_tool_ids) != set(desired_tool_ids):
+                        needs_patch = True
+                    patch_model["toolIds"] = desired_tool_ids
 
                     if not needs_patch:
                         results[vid[:24]] = {
