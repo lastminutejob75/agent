@@ -920,7 +920,7 @@ def slot_to_vocal_label(slot: Any) -> str:
     return _format_slot_label_vocal(date_str, time_str)
 
 
-def store_pending_slots(session, slots: List[Any]) -> None:
+def store_pending_slots(session, slots: List[Any], enrich_google: bool = True) -> None:
     """
     Stocke les créneaux proposés dans la session (Fix 3: format canonique unique).
     slots: SlotDisplay ou dicts → convertis en format canonique.
@@ -945,7 +945,7 @@ def store_pending_slots(session, slots: List[Any]) -> None:
     from backend.calendar_adapter import get_calendar_adapter
     adapter = get_calendar_adapter(session)
     calendar = None if (adapter and not adapter.can_propose_slots()) else (adapter or _get_calendar_service())
-    if calendar and slots and (source or "").lower() == "google":
+    if enrich_google and calendar and slots and (source or "").lower() == "google":
         _store_google_calendar_slots(session, slots, calendar)
 
 

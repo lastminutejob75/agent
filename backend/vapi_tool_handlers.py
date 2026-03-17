@@ -59,7 +59,9 @@ def handle_get_slots(
             exclude_start_iso=exclude_start_iso or None,
             exclude_end_iso=exclude_end_iso or None,
         )
-        tools_booking.store_pending_slots(session, slots)
+        # Voice path: do not re-fetch Google full slot objects synchronously.
+        # pending_slots already contains enough canonical data to book.
+        tools_booking.store_pending_slots(session, slots, enrich_google=False)
         labels = [_slot_to_vocal_label(s) for s in slots]
         _src = getattr(session, "_slots_source", None) or ""
         source = "google_calendar" if (_src == "google") else "sqlite"
