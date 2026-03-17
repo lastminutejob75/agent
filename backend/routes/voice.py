@@ -12,6 +12,7 @@ import json
 import re
 import time
 import uuid
+import threading
 from typing import Optional, TYPE_CHECKING
 
 from backend.engine import ENGINE
@@ -33,6 +34,33 @@ from backend.stt_common import (
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Déduplication des tool-call results (évite répétitions audio si Vapi renvoie le même toolCallId).
+_TOOL_RESULT_CACHE = {}
+_TOOL_RESULT_CACHE_LOCK = threading.Lock()
+_TOOL_RESULT_CACHE_TTL_S = 120
+
+
+def _tool_result_cache_get(tool_call_id: str):
+    if not tool_call_id:
+        return None
+    now = time.time()
+    with _TOOL_RESULT_CACHE_LOCK:
+        # purge opportuniste
+        expired = [k for k, v in _TOOL_RESULT_CACHE.items() if now - v.get("ts", 0) > _TOOL_RESULT_CACHE_TTL_S]
+        for k in expired:
+            _TOOL_RESULT_CACHE.pop(k, None)
+        entry = _TOOL_RESULT_CACHE.get(tool_call_id)
+        if not entry:
+            return None
+        return entry.get("value")
+
+
+def _tool_result_cache_set(tool_call_id: str, value: str):
+    if not tool_call_id:
+        return
+    with _TOOL_RESULT_CACHE_LOCK:
+        _TOOL_RESULT_CACHE[tool_call_id] = {"value": value, "ts": time.time()}
 
 # Instances singleton
 client_memory = get_client_memory()
@@ -1085,6 +1113,11 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
             results = []
             for tc in tool_calls:
                 tc_id = tc.get("id") or ""
+                cached_result = _tool_result_cache_get(tc_id)
+                if cached_result is not None:
+                    logger.info("[VAPI_WEBHOOK_TOOL_DEDUP_HIT] toolCallId=%s", tc_id[:24])
+                    results.append({"toolCallId": tc_id, "result": cached_result})
+                    continue
                 fn = tc.get("function") or tc.get("functionCall") or {}
                 fn_name = fn.get("name") or ""
                 raw_args = fn.get("arguments")
@@ -1286,6 +1319,11 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
                             results.append({"toolCallId": tc_id, "result": "Action non reconnue."})
 
             response_body = {"results": results}
+            for r in results:
+                try:
+                    _tool_result_cache_set((r or {}).get("toolCallId") or "", (r or {}).get("result") or "")
+                except Exception:
+                    pass
             _tc_body = json.dumps(response_body, ensure_ascii=False)
             _tc_elapsed = int((_tc_time.monotonic() - _tc_recv_ts) * 1000)
             logger.info(

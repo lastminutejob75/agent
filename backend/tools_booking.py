@@ -773,7 +773,7 @@ def _get_slots_from_google_calendar(
     else:
         start_hour, end_hour = base_start, base_end
 
-    per_day = target_pool_size
+    per_day = 1
     days_fr = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
     for day_offset in range(1, 8):
         if len(pool) >= target_pool_size:
@@ -789,30 +789,30 @@ def _get_slots_from_google_calendar(
             limit=per_day,
             buffer_minutes=buffer_minutes,
         )
-        for slot in day_slots:
-            if len(pool) >= target_pool_size:
-                break
-            start_iso = slot.get('start', '')
-            day_fr, hour, label_vocal = '', 0, ''
-            try:
-                dt = datetime.fromisoformat(start_iso.replace('Z', '+00:00'))
-                if dt.tzinfo:
-                    dt = dt.replace(tzinfo=None)
-                day_fr = days_fr[dt.weekday()]
-                hour = dt.hour
-                label_vocal = f"{day_fr} à {hour}h"
-            except Exception:
-                pass
-            pool.append(prompts.SlotDisplay(
-                idx=len(pool) + 1,
-                label=slot['label'],
-                slot_id=len(pool),
-                start=start_iso,
-                day=day_fr,
-                hour=hour,
-                label_vocal=label_vocal or slot.get('label', ''),
-                source="google",
-            ))
+        if not day_slots:
+            continue
+        slot = day_slots[0]  # max 1 créneau par jour → propositions sur jours différents
+        start_iso = slot.get('start', '')
+        day_fr, hour, label_vocal = '', 0, ''
+        try:
+            dt = datetime.fromisoformat(start_iso.replace('Z', '+00:00'))
+            if dt.tzinfo:
+                dt = dt.replace(tzinfo=None)
+            day_fr = days_fr[dt.weekday()]
+            hour = dt.hour
+            label_vocal = f"{day_fr} à {hour}h"
+        except Exception:
+            pass
+        pool.append(prompts.SlotDisplay(
+            idx=len(pool) + 1,
+            label=slot['label'],
+            slot_id=len(pool),
+            start=start_iso,
+            day=day_fr,
+            hour=hour,
+            label_vocal=label_vocal or slot.get('label', ''),
+            source="google",
+        ))
     logger.info(f"Google Calendar: {len(pool)} créneaux en pool rapide (pref={pref})")
     return pool
 
