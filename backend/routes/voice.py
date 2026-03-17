@@ -1382,6 +1382,34 @@ def _tool_extract_parameters(payload: dict) -> dict:
     - message.toolCallList[0].function.arguments (objet ou JSON string)
     - message.toolCalls[0].function.arguments (objet ou JSON string)
     """
+    def _from_raw_string(raw: str) -> dict:
+        """Fallback permissif quand arguments n'est pas un JSON strict."""
+        out = {}
+        txt = (raw or "").strip()
+        if not txt:
+            return out
+        keys = (
+            "action",
+            "user_message",
+            "patient_name",
+            "motif",
+            "preference",
+            "selected_slot",
+            "transfer_reason",
+            "exclude_start_iso",
+            "exclude_end_iso",
+        )
+        for k in keys:
+            m = re.search(rf'"{k}"\s*:\s*"([^"]*)"', txt)
+            if m:
+                out[k] = m.group(1)
+        # Alias fréquents côté modèles
+        if "preference" not in out:
+            m = re.search(r'"preference_horaire"\s*:\s*"([^"]*)"', txt)
+            if m:
+                out["preference"] = m.group(1)
+        return out
+
     params = payload.get("parameters")
     if isinstance(params, dict) and params:
         return params
@@ -1407,7 +1435,9 @@ def _tool_extract_parameters(payload: dict) -> dict:
             try:
                 return json.loads(raw)
             except Exception:
-                pass
+                fallback = _from_raw_string(raw)
+                if fallback:
+                    return fallback
     return {}
 
 
@@ -1439,6 +1469,13 @@ async def vapi_tool(request: Request):
         logger.info(
             "TOOL_CALL",
             extra={"call_id": call_id[:24] if call_id else "", "action": action or "(legacy)", "tool_call_id": (tool_call_id or "")[:24]},
+        )
+        logger.info(
+            "[VAPI_TOOL_CALL] call_id=%s tool_call_id=%s action=%s keys=%s",
+            call_id[:24] if call_id else "",
+            (tool_call_id or "")[:24],
+            action or "(legacy)",
+            list((params or {}).keys())[:12],
         )
 
         # Guard: éviter de tomber dans la branche legacy + lock PG quand action est mal parsée.
