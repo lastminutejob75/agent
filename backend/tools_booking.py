@@ -425,6 +425,16 @@ def _spread_slots(
             last_dt = dt
             last_day = day
 
+    # Phase 3 : si toujours insuffisant, compléter sans contrainte d'écart.
+    # Priorité fiabilité vocale: mieux vaut 3 créneaux proches que 1 seul créneau.
+    if len(picked) < limit:
+        for s in remaining:
+            if len(picked) >= limit:
+                break
+            if s in picked:
+                continue
+            picked.append(s)
+
     # Ré-indexer idx 1..limit — P0: préserver source (évite sqlite par défaut sur slots Google)
     out = []
     for i, s in enumerate(picked, start=1):
