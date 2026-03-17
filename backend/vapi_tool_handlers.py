@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import concurrent.futures
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from backend import tools_booking
@@ -66,13 +67,26 @@ def handle_get_slots(
                 )
 
         if not slots:
-            slots = tools_booking.get_slots_for_display(
-                limit=3,
-                pref=pref or None,
-                session=session,
-                exclude_start_iso=exclude_start_iso or None,
-                exclude_end_iso=exclude_end_iso or None,
-            )
+            # Fallback borné: évite d'attendre trop longtemps Google pendant un call vocal.
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                    fut = ex.submit(
+                        tools_booking.get_slots_for_display,
+                        3,
+                        pref or None,
+                        session,
+                        exclude_start_iso or None,
+                        exclude_end_iso or None,
+                    )
+                    slots = fut.result(timeout=2.2)
+            except Exception as e:
+                logger.warning(
+                    "CALENDAR_FETCH_BOUNDED_TIMEOUT call_id=%s pref=%s err=%s",
+                    call_id[:24] if call_id else "",
+                    pref or "any",
+                    type(e).__name__,
+                )
+                return (None, None, "Impossible de consulter l'agenda pour le moment.")
 
         # Voice path: do not re-fetch Google full slot objects synchronously.
         # pending_slots already contains enough canonical data to book.
