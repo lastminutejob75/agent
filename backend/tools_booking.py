@@ -317,8 +317,9 @@ MIN_SLOT_GAP_MINUTES = 120  # 2h ou jour différent
 # Fenêtre d'exclusion autour d'un créneau refusé (ne pas reproposer un "voisin")
 REJECTED_SLOT_WINDOW_MINUTES = 90  # ±90 min
 
-# Nombre de créneaux à récupérer avant étalement (pool pour diversifier)
-SLOTS_POOL_SIZE = 15
+# Nombre de créneaux à récupérer avant étalement (pool pour diversifier).
+# Réduit pour accélérer la réponse Vapi sur get_slots (moins d'appels Google).
+SLOTS_POOL_SIZE = 9
 
 # Périodes UX : 1 créneau par (jour, période) quand possible
 # MORNING 8-12, AFTERNOON 13-18, EVENING 18+
