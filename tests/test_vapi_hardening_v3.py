@@ -225,15 +225,17 @@ def test_vapi_tool_book_response_contains_json_result():
 
 
 def test_vapi_tool_resolves_tenant_from_assistant_when_did_missing():
-    """Le tool-call ne doit pas retomber sur DEFAULT si Vapi ne fournit pas le DID mais fournit assistantId."""
+    """Le tool-call doit appeler la résolution tenant normale même si le fast-cache renvoie 1."""
     from fastapi.testclient import TestClient
 
     from backend.main import app
 
     client = TestClient(app)
-    session = _make_session()
-    with patch("backend.routes.voice._get_or_resume_voice_session", return_value=session) as mock_session_loader:
-        with patch("backend.tenant_routing.resolve_tenant_id_from_vapi_payload", return_value=(7, "assistant")):
+    with patch("backend.tenant_routing._fast_resolve_assistant_id", return_value=1):
+        with patch(
+            "backend.tenant_routing.resolve_tenant_id_from_vapi_payload",
+            return_value=(7, "assistant"),
+        ) as mock_resolve:
             with patch("backend.vapi_tool_handlers.handle_get_slots", return_value=(["Demain 10h"], "google", None)):
                 with patch("backend.routes.voice.ENGINE") as mock_engine:
                     mock_engine.session_store = MagicMock()
@@ -259,4 +261,4 @@ def test_vapi_tool_resolves_tenant_from_assistant_when_did_missing():
                         },
                     )
     assert resp.status_code == 200
-    mock_session_loader.assert_called_once_with(7, "call-assistant-route")
+    mock_resolve.assert_called_once()
