@@ -16,6 +16,8 @@ def test_normalize_did():
     assert normalize_did("+33 1 23 45 67 89") == "+33123456789"
     assert normalize_did("0033123456789") == "+33123456789"
     assert normalize_did("  +33 6 12 34 56 78  ") == "+33612345678"
+    assert normalize_did("sip:+33612345678@sip.twilio.com;transport=tls") == "+33612345678"
+    assert normalize_did("tel:+33612345678") == "+33612345678"
     assert normalize_did("") == ""
     assert normalize_did(None) == ""
 
@@ -37,6 +39,10 @@ def test_resolve_route_when_mapped():
     assert source == "route"
 
     tid, source = resolve_tenant_id_from_vocal_call("+33612345678")
+    assert tid == 2
+    assert source == "route"
+
+    tid, source = resolve_tenant_id_from_vocal_call("sip:+33612345678@sip.twilio.com;transport=tls")
     assert tid == 2
     assert source == "route"
 

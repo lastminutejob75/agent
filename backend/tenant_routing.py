@@ -21,7 +21,17 @@ current_tenant_id: ContextVar[Optional[str]] = ContextVar("current_tenant_id", d
 def normalize_did(raw: str) -> str:
     if not raw or not isinstance(raw, str):
         return ""
-    s = re.sub(r"\s+", "", raw.strip())
+    s = raw.strip()
+    for prefix in ("whatsapp:", "tel:", "sip:"):
+        if s.lower().startswith(prefix):
+            s = s[len(prefix):].strip()
+            break
+    # SIP URI possible: sip:+33939240575@sip.provider;transport=tls
+    if "@" in s:
+        s = s.split("@", 1)[0].strip()
+    if ";" in s:
+        s = s.split(";", 1)[0].strip()
+    s = re.sub(r"[\s\-\(\)\._]", "", s)
     if s.startswith("00"):
         s = "+" + s[2:]
     if not s.startswith("+"):
