@@ -46,9 +46,6 @@ const IMMERSIVE_ROUTES = new Set([
   "/app/appels",
 ]);
 
-const TENANT_ME_CACHE_KEY = "uwi_tenant_me_snapshot";
-const DASHBOARD_CACHE_KEY = "uwi_tenant_dashboard_snapshot";
-
 function Dot({ color = TEAL, size = 8 }) {
   return (
     <span
@@ -115,33 +112,10 @@ function ShellNavItem({ to, icon, label, end = false, closeSidebar, muted = fals
 }
 
 export default function AppLayout() {
-  const [me, setMe] = useState(() => {
-    if (typeof window === "undefined") return null;
-    try {
-      const raw = window.sessionStorage.getItem(TENANT_ME_CACHE_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
-  });
+  const [me, setMe] = useState(null);
   const [err, setErr] = useState(null);
-  const [loading, setLoading] = useState(() => {
-    if (typeof window === "undefined") return true;
-    try {
-      return !window.sessionStorage.getItem(TENANT_ME_CACHE_KEY);
-    } catch {
-      return true;
-    }
-  });
-  const [dashboard, setDashboard] = useState(() => {
-    if (typeof window === "undefined") return null;
-    try {
-      const raw = window.sessionStorage.getItem(DASHBOARD_CACHE_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
-  });
+  const [loading, setLoading] = useState(true);
+  const [dashboard, setDashboard] = useState(null);
   const [clock, setClock] = useState(new Date());
   const [sbOpen, setSbOpen] = useState(false);
   const [imgErr, setImgErr] = useState(false);
@@ -157,11 +131,6 @@ export default function AppLayout() {
         .then((dash) => {
           if (!mounted) return;
           setDashboard(dash);
-          try {
-            window.sessionStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(dash));
-          } catch {
-            // Ignore sessionStorage quota or availability issues.
-          }
         })
         .catch(() => {
           if (!mounted) return;
@@ -180,11 +149,6 @@ export default function AppLayout() {
       .then((m) => {
         if (!mounted) return null;
         setMe(m);
-        try {
-          window.sessionStorage.setItem(TENANT_ME_CACHE_KEY, JSON.stringify(m));
-        } catch {
-          // Ignore sessionStorage quota or availability issues.
-        }
         setLoading(false);
         return m;
       })
@@ -193,12 +157,6 @@ export default function AppLayout() {
         if (isTenantUnauthorized(e)) {
           setImpersonation(null);
           clearTenantToken();
-          try {
-            window.sessionStorage.removeItem(TENANT_ME_CACHE_KEY);
-            window.sessionStorage.removeItem(DASHBOARD_CACHE_KEY);
-          } catch {
-            // Ignore storage cleanup failures.
-          }
           window.location.href = "/";
           return;
         }

@@ -589,28 +589,13 @@ export default function AppCalls() {
 
   useEffect(() => {
     let cancelled = false;
-    const cacheKey = `uwi_calls_${days}`;
-    const cached = sessionStorage.getItem(cacheKey);
-    if (cached) {
-      try {
-        const parsed = JSON.parse(cached);
-        if (parsed && Date.now() - (parsed._ts || 0) < 60_000) {
-          setPayload(parsed);
-          setLoading(false);
-          return;
-        }
-      } catch {}
-    }
     setLoading(true);
     setError("");
     api
       .tenantGetCalls(`?limit=50&days=${days}&compact=1`)
       .then((data) => {
         if (cancelled) return;
-        const result = data || { calls: [], total: 0, date: "" };
-        result._ts = Date.now();
-        setPayload(result);
-        try { sessionStorage.setItem(cacheKey, JSON.stringify(result)); } catch {}
+        setPayload(data || { calls: [], total: 0, date: "" });
       })
       .catch((e) => {
         if (!cancelled) setError(e?.message || "Impossible de charger les appels.");
