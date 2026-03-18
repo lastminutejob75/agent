@@ -114,6 +114,155 @@ def _get_vapi_usage_for_window(
         return (None, None)
 
 
+def _normalize_call_result(result: Optional[str]) -> str:
+    value = (result or "").strip().lower()
+    if value in {"rdv", "transfer", "abandoned", "error", "other"}:
+        return value
+    return "other"
+
+
+def _snapshot_outcome_from_sources(last_event: Optional[str], status: Optional[str], ended_reason: Optional[str]) -> str:
+    event = (last_event or "").strip()
+    if event == "booking_confirmed":
+        return "booking_confirmed"
+    if event in ("transferred_human", "transferred", "transfer_human", "transfer"):
+        return "transferred_human"
+    if event in ("user_abandon", "abandon", "hangup", "user_hangup"):
+        return "user_abandon"
+    result_val = _normalize_call_result(_vapi_call_result_from_status(status, ended_reason))
+    if result_val == "transfer":
+        return "transferred_human"
+    if result_val == "abandoned":
+        return "user_abandon"
+    return "unknown"
+
+
+def _build_call_item_from_vapi_row(row: dict, tenant_name: str) -> dict:
+    started_at = row.get("started_at")
+    sort_ts = row.get("sort_ts") or row.get("ended_at") or row.get("updated_at") or started_at
+    duration_sec: Optional[int] = None
+    raw_duration = row.get("duration_sec")
+    if raw_duration is not None:
+        duration_sec = int(float(raw_duration))
+    elif started_at and sort_ts:
+        delta_secs = (sort_ts - started_at).total_seconds()
+        delta_secs = max(0, min(MAX_SESSION_MINUTES * 60, delta_secs))
+        if delta_secs >= 1:
+            duration_sec = int(delta_secs)
+    result_val = _normalize_call_result(
+        _call_result_from_event(row.get("last_event"))
+        if row.get("last_event")
+        else _vapi_call_result_from_status(row.get("status"), row.get("ended_reason"))
+    )
+    return {
+        "call_id": row.get("call_id") or "",
+        "tenant_id": row.get("tenant_id"),
+        "tenant_name": tenant_name,
+        "customer_number": (row.get("customer_number") or "").strip(),
+        "started_at": _iso_utc(started_at),
+        "last_event_at": _iso_utc(sort_ts),
+        "last_event": row.get("last_event") or row.get("ended_reason") or row.get("status") or "",
+        "result": result_val,
+        "duration_min": (duration_sec // 60) if duration_sec is not None else None,
+        "duration_sec": duration_sec,
+    }
+
+
+def _fetch_vapi_call_items_pg(
+    tenant_id: int,
+    start: str,
+    end: str,
+    limit: int,
+    tenant_name: str,
+    cursor: Optional[str] = None,
+    result_filter: Optional[str] = None,
+) -> tuple[list[dict], Optional[str]]:
+    from backend.pg_pool import pg_connection
+
+    cursor_ts: Optional[str] = None
+    cursor_id: Optional[str] = None
+    if cursor:
+        try:
+            padded = cursor + ("=" * (4 - len(cursor) % 4)) if len(cursor) % 4 else cursor
+            raw = base64.urlsafe_b64decode(padded.encode()).decode()
+            obj = json.loads(raw)
+            cursor_ts = obj.get("t")
+            cursor_id = obj.get("c")
+        except Exception:
+            parts = cursor.split("|", 1)
+            if len(parts) == 2:
+                cursor_ts, cursor_id = parts[0], parts[1]
+
+    items: list[dict] = []
+    next_cursor: Optional[str] = None
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            params: list = [tenant_id, start, end]
+            cursor_filter = ""
+            if cursor_ts and cursor_id:
+                cursor_filter = """
+                    AND (
+                        COALESCE(v.ended_at, v.updated_at, v.started_at, v.created_at) < %s::timestamptz
+                        OR (
+                            COALESCE(v.ended_at, v.updated_at, v.started_at, v.created_at) = %s::timestamptz
+                            AND v.call_id < %s
+                        )
+                    )
+                """
+                params.extend([cursor_ts, cursor_ts, cursor_id])
+            params.append(limit + 1)
+            cur.execute(
+                """
+                SELECT
+                    v.tenant_id,
+                    v.call_id,
+                    v.customer_number,
+                    COALESCE(v.started_at, v.created_at) AS started_at,
+                    v.ended_at,
+                    v.updated_at,
+                    COALESCE(v.ended_at, v.updated_at, v.started_at, v.created_at) AS sort_ts,
+                    v.status,
+                    v.ended_reason,
+                    u.duration_sec,
+                    ie.last_event
+                FROM vapi_calls v
+                LEFT JOIN vapi_call_usage u
+                    ON u.tenant_id = v.tenant_id
+                   AND u.vapi_call_id = v.call_id
+                LEFT JOIN LATERAL (
+                    SELECT event AS last_event
+                    FROM ivr_events
+                    WHERE client_id = v.tenant_id AND call_id = v.call_id
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                ) ie ON TRUE
+                WHERE v.tenant_id = %s
+                  AND COALESCE(v.ended_at, v.updated_at, v.started_at, v.created_at) >= %s
+                  AND COALESCE(v.ended_at, v.updated_at, v.started_at, v.created_at) <= %s
+                  """ + cursor_filter + """
+                ORDER BY COALESCE(v.ended_at, v.updated_at, v.started_at, v.created_at) DESC, v.call_id DESC
+                LIMIT %s
+                """,
+                tuple(params),
+            )
+            rows = [dict(r) for r in cur.fetchall()]
+
+    for row in rows[: limit + 1]:
+        item = _build_call_item_from_vapi_row(row, tenant_name)
+        if result_filter and item["result"] != result_filter:
+            continue
+        items.append(item)
+
+    items.sort(key=lambda x: ((x.get("last_event_at") or ""), (x.get("call_id") or "")), reverse=True)
+    if len(items) > limit:
+        last_item = items[limit - 1]
+        t_iso = str(last_item.get("last_event_at") or "")
+        c_id = last_item.get("call_id") or ""
+        next_cursor = base64.urlsafe_b64encode(json.dumps({"t": t_iso, "c": c_id}).encode()).decode().rstrip("=")
+        items = items[:limit]
+    return items, next_cursor
+
+
 router = APIRouter(prefix="/api", tags=["admin"])
 _security = HTTPBearer(auto_error=False)
 
@@ -647,28 +796,16 @@ def _get_dashboard_snapshot(tenant_id: int, tenant_name: str) -> dict:
 
     if url_events:
         try:
-            import psycopg
-            from psycopg.rows import dict_row
-            with psycopg.connect(url_events, row_factory=dict_row) as conn:
+            from backend.pg_pool import pg_connection
+            with pg_connection() as conn:
                 with conn.cursor() as cur:
-                    # Dernier event pour service_status — fallback vapi_calls si ivr_events vide
+                    # Dernière activité: source canonique vapi_calls
                     cur.execute(
-                        "SELECT MAX(created_at) as m FROM ivr_events WHERE client_id = %s",
+                        "SELECT MAX(COALESCE(ended_at, updated_at, started_at, created_at)) as m FROM vapi_calls WHERE tenant_id = %s",
                         (tenant_id,),
                     )
                     row = cur.fetchone()
-                    last_ts = row["m"] if row and row["m"] else None
-                    if not last_ts:
-                        try:
-                            cur.execute(
-                                "SELECT MAX(COALESCE(ended_at, updated_at, started_at)) as m FROM vapi_calls WHERE tenant_id = %s",
-                                (tenant_id,),
-                            )
-                            vapi_row = cur.fetchone()
-                            if vapi_row and vapi_row.get("m"):
-                                last_ts = vapi_row["m"]
-                        except Exception:
-                            pass
+                    last_ts = row["m"] if row and row.get("m") else None
                     if last_ts:
                         try:
                             ts = last_ts
@@ -691,31 +828,17 @@ def _get_dashboard_snapshot(tenant_id: int, tenant_name: str) -> dict:
                     )
                     by_event = {r["event"]: r["cnt"] for r in cur.fetchall()}
                     cur.execute(
-                        "SELECT COUNT(DISTINCT call_id) as n FROM ivr_events WHERE client_id = %s AND created_at >= %s AND created_at <= %s AND call_id != ''",
+                        """
+                        SELECT COUNT(DISTINCT v.call_id) AS c
+                        FROM vapi_calls v
+                        WHERE v.tenant_id = %s
+                          AND COALESCE(v.ended_at, v.updated_at, v.started_at, v.created_at) >= %s
+                          AND COALESCE(v.ended_at, v.updated_at, v.started_at, v.created_at) <= %s
+                        """,
                         (tenant_id, start_7d, end_7d),
                     )
                     r = cur.fetchone()
-                    calls_total = int(r["n"]) if r and r["n"] else 0
-                    if not calls_total and by_event:
-                        calls_total = sum(by_event.values())  # fallback
-                    # Fallback vapi_calls si ivr_events vide pour le nombre d'appels
-                    if calls_total == 0:
-                        try:
-                            cur.execute(
-                                """
-                                SELECT COUNT(DISTINCT v.call_id) AS c
-                                FROM vapi_calls v
-                                WHERE v.tenant_id = %s
-                                  AND ((v.started_at >= %s AND v.started_at <= %s)
-                                    OR (v.updated_at >= %s AND v.updated_at <= %s))
-                                """,
-                                (tenant_id, start_7d, end_7d, start_7d, end_7d),
-                            )
-                            r = cur.fetchone()
-                            if r and r.get("c"):
-                                calls_total = int(r["c"])
-                        except Exception:
-                            pass
+                    calls_total = int(r["c"]) if r and r.get("c") else 0
                     counters_7d = {
                         "calls_total": calls_total,
                         "bookings_confirmed": by_event.get("booking_confirmed", 0),
@@ -723,67 +846,46 @@ def _get_dashboard_snapshot(tenant_id: int, tenant_name: str) -> dict:
                         "abandons": by_event.get("user_abandon", 0),
                     }
 
-                    # last_call: dernier call_id (7j), outcome par priorité — fallback vapi_calls si ivr_events vide
+                    # last_call: source canonique vapi_calls, enrichissement last_event si disponible
                     cur.execute(
-                        "SELECT call_id, created_at FROM ivr_events WHERE client_id = %s AND created_at >= %s AND call_id != '' ORDER BY created_at DESC LIMIT 1",
-                        (tenant_id, start_7d),
+                        """
+                        SELECT
+                            v.call_id,
+                            COALESCE(v.ended_at, v.updated_at, v.started_at, v.created_at) AS ts,
+                            v.status,
+                            v.ended_reason,
+                            ie.last_event
+                        FROM vapi_calls v
+                        LEFT JOIN LATERAL (
+                            SELECT event AS last_event
+                            FROM ivr_events
+                            WHERE client_id = v.tenant_id AND call_id = v.call_id
+                            ORDER BY created_at DESC
+                            LIMIT 1
+                        ) ie ON TRUE
+                        WHERE v.tenant_id = %s
+                          AND COALESCE(v.ended_at, v.updated_at, v.started_at, v.created_at) >= %s
+                          AND COALESCE(v.ended_at, v.updated_at, v.started_at, v.created_at) <= %s
+                        ORDER BY COALESCE(v.ended_at, v.updated_at, v.started_at, v.created_at) DESC NULLS LAST
+                        LIMIT 1
+                        """,
+                        (tenant_id, start_7d, end_7d),
                     )
-                    row = cur.fetchone()
-                    if row:
-                        cid = row["call_id"]
-                        cur.execute(
-                            "SELECT event, created_at FROM ivr_events WHERE client_id = %s AND call_id = %s",
-                            (tenant_id, cid),
+                    vapi_row = cur.fetchone()
+                    if vapi_row:
+                        outcome = _snapshot_outcome_from_sources(
+                            vapi_row.get("last_event"),
+                            vapi_row.get("status"),
+                            vapi_row.get("ended_reason"),
                         )
-                        evts = cur.fetchall()
-                        outcome = None
-                        for e in evts:
-                            if e["event"] == "booking_confirmed":
-                                outcome = "booking_confirmed"
-                                break
-                            if e["event"] in ("transferred_human", "transferred"):
-                                outcome = outcome or "transferred_human"
-                            if e["event"] == "user_abandon":
-                                outcome = outcome or "user_abandon"
-                        outcome = outcome or "unknown"
-                        last_ts = max((e["created_at"] for e in evts), default=row["created_at"])
                         last_call = {
-                            "call_id": cid,
-                            "created_at": str(last_ts),
+                            "call_id": vapi_row.get("call_id") or "",
+                            "created_at": str(vapi_row.get("ts") or ""),
                             "name": None,
                             "motif": None,
                             "slot_label": None,
                             "outcome": outcome,
                         }
-                    elif calls_total > 0:
-                        try:
-                            cur.execute(
-                                """
-                                SELECT v.call_id, COALESCE(v.ended_at, v.updated_at, v.started_at) AS ts,
-                                       v.status, v.ended_reason
-                                FROM vapi_calls v
-                                WHERE v.tenant_id = %s
-                                  AND ((v.started_at >= %s AND v.started_at <= %s)
-                                    OR (v.updated_at >= %s AND v.updated_at <= %s))
-                                ORDER BY COALESCE(v.ended_at, v.updated_at, v.started_at) DESC NULLS LAST
-                                LIMIT 1
-                                """,
-                                (tenant_id, start_7d, end_7d, start_7d, end_7d),
-                            )
-                            vapi_row = cur.fetchone()
-                            if vapi_row:
-                                last_call = {
-                                    "call_id": vapi_row.get("call_id") or "",
-                                    "created_at": str(vapi_row.get("ts") or ""),
-                                    "name": None,
-                                    "motif": None,
-                                    "slot_label": None,
-                                    "outcome": _vapi_call_result_from_status(
-                                        vapi_row.get("status"), vapi_row.get("ended_reason")
-                                    ),
-                                }
-                        except Exception:
-                            pass
         except Exception as e:
             logger.warning("dashboard ivr_events failed: %s", e)
     else:
@@ -1063,14 +1165,37 @@ def _get_kpis_daily(tenant_id: int, days: int = 7) -> dict:
 
     if url:
         try:
-            import psycopg
-            from psycopg.rows import dict_row
-            with psycopg.connect(url, row_factory=dict_row) as conn:
+            from backend.pg_pool import pg_connection
+            with pg_connection() as conn:
                 with conn.cursor() as cur:
+                    # Calls: source canonique vapi_calls
+                    calls_by_day: Dict[str, int] = {}
+                    try:
+                        cur.execute(
+                            """
+                            SELECT DATE(COALESCE(v.started_at, v.created_at) AT TIME ZONE 'UTC') as d,
+                                   COUNT(DISTINCT v.call_id) as calls
+                            FROM vapi_calls v
+                            WHERE v.tenant_id = %s
+                              AND COALESCE(v.ended_at, v.updated_at, v.started_at, v.created_at) >= %s
+                              AND COALESCE(v.ended_at, v.updated_at, v.started_at, v.created_at) < %s
+                            GROUP BY DATE(COALESCE(v.started_at, v.created_at) AT TIME ZONE 'UTC')
+                            ORDER BY d
+                            """,
+                            (tenant_id, start_prev, end_curr),
+                        )
+                        for r in cur.fetchall():
+                            d = str(r["d"]) if r.get("d") else ""
+                            if d:
+                                calls_by_day[d] = int(r["calls"] or 0)
+                    except Exception as ve:
+                        if "does not exist" not in str(ve).lower():
+                            logger.debug("kpis_daily canonical vapi_calls failed: %s", ve)
+
+                    metric_by_day: Dict[str, Dict[str, int]] = {}
                     cur.execute(
                         """
                         SELECT DATE(created_at AT TIME ZONE 'UTC') as d,
-                               COUNT(DISTINCT CASE WHEN call_id != '' THEN call_id END) as calls,
                                COUNT(*) FILTER (WHERE event = 'booking_confirmed') as bookings,
                                COUNT(*) FILTER (WHERE event IN ('transferred_human', 'transferred')) as transfers
                         FROM ivr_events
@@ -1082,9 +1207,15 @@ def _get_kpis_daily(tenant_id: int, days: int = 7) -> dict:
                     )
                     for r in cur.fetchall():
                         d = str(r["d"]) if r.get("d") else ""
-                        c = int(r["calls"] or 0)
                         b = int(r["bookings"] or 0)
                         t = int(r["transfers"] or 0)
+                        metric_by_day[d] = {"bookings": b, "transfers": t}
+
+                    merged_days = sorted(set(calls_by_day.keys()) | set(metric_by_day.keys()))
+                    for d in merged_days:
+                        c = int(calls_by_day.get(d, 0))
+                        b = int((metric_by_day.get(d) or {}).get("bookings", 0))
+                        t = int((metric_by_day.get(d) or {}).get("transfers", 0))
                         if d >= start_curr[:10]:
                             days_data.append({"date": d, "calls": c, "bookings": b, "transfers": t})
                             current["calls"] += c
@@ -1094,47 +1225,6 @@ def _get_kpis_daily(tenant_id: int, days: int = 7) -> dict:
                             previous["calls"] += c
                             previous["bookings"] += b
                             previous["transfers"] += t
-            # Fallback vapi_calls si ivr_events vide (dual-write PG échoué ou USE_PG_EVENTS=false)
-            if current["calls"] == 0 and previous["calls"] == 0:
-                try:
-                    with psycopg.connect(url, row_factory=dict_row) as conn2:
-                        with conn2.cursor() as cur2:
-                            vapi_tenant_filter = ""
-                            vapi_params: list = [start_prev, end_curr, start_prev, end_curr]
-                            if tenant_id is not None:
-                                vapi_tenant_filter = " AND v.tenant_id = %s"
-                                vapi_params.append(tenant_id)
-                            cur2.execute(
-                                """
-                                SELECT DATE(COALESCE(v.started_at, v.created_at) AT TIME ZONE 'UTC') as d,
-                                       COUNT(DISTINCT v.call_id) as calls
-                                FROM vapi_calls v
-                                WHERE ((v.started_at >= %s AND v.started_at < %s)
-                                   OR (v.updated_at >= %s AND v.updated_at < %s))
-                                """ + vapi_tenant_filter + """
-                                GROUP BY DATE(COALESCE(v.started_at, v.created_at) AT TIME ZONE 'UTC')
-                                ORDER BY d
-                                """,
-                                tuple(vapi_params),
-                            )
-                            for r in cur2.fetchall():
-                                d = str(r["d"]) if r.get("d") else ""
-                                c = int(r["calls"] or 0)
-                                if d >= start_curr[:10]:
-                                    existing = next((x for x in days_data if x["date"] == d), None)
-                                    if existing:
-                                        existing["calls"] = max(existing["calls"], c)
-                                    else:
-                                        days_data.append({"date": d, "calls": c, "bookings": 0, "transfers": 0})
-                                    current["calls"] += c
-                                else:
-                                    previous["calls"] += c
-                            if current["calls"] > 0 or previous["calls"] > 0:
-                                logger.info("kpis_daily vapi_calls fallback tenant_id=%s curr=%d prev=%d",
-                                            tenant_id, current["calls"], previous["calls"])
-                except Exception as ve:
-                    if "does not exist" not in str(ve).lower():
-                        logger.debug("kpis_daily vapi_calls fallback failed: %s", ve)
         except Exception as e:
             logger.warning("pg kpis_daily failed: %s", e)
     else:
@@ -1957,7 +2047,7 @@ def _get_calls_list(
     result_filter: Optional[str] = None,
     tenant_detail: Optional[dict] = None,
 ) -> dict:
-    """Liste appels : vapi_calls (tous les appels Vapi) en priorité, fallback ivr_events."""
+    """Liste appels canonique tenant: vapi_calls/vapi_call_usage en priorité, fallback ivr_events."""
     from datetime import datetime, timedelta
     now = datetime.utcnow()
     start = (now - timedelta(days=days)).strftime("%Y-%m-%d 00:00:00")
@@ -1974,146 +2064,23 @@ def _get_calls_list(
 
     if url:
         try:
-            from backend.pg_pool import pg_connection
-            cursor_ts: Optional[str] = None
-            cursor_id: Optional[str] = None
-            if cursor:
-                try:
-                    padded = cursor + ("=" * (4 - len(cursor) % 4)) if len(cursor) % 4 else cursor
-                    raw = base64.urlsafe_b64decode(padded.encode()).decode()
-                    obj = json.loads(raw)
-                    cursor_ts = obj.get("t")
-                    cursor_id = obj.get("c")
-                except Exception:
-                    parts = cursor.split("|", 1)
-                    if len(parts) == 2:
-                        cursor_ts, cursor_id = parts[0], parts[1]
+            if tenant_id is not None:
+                canonical_items, next_cursor = _fetch_vapi_call_items_pg(
+                    tenant_id=tenant_id,
+                    start=start,
+                    end=end,
+                    limit=limit,
+                    tenant_name=fixed_tenant_name or f"Client #{tenant_id}",
+                    cursor=cursor,
+                    result_filter=result_filter,
+                )
+                if canonical_items:
+                    return {"items": canonical_items, "next_cursor": next_cursor, "days": days}
 
+            from backend.pg_pool import pg_connection
             with pg_connection() as conn:
                 with conn.cursor() as cur:
-                    try:
-                        vapi_only_params: list = [start, end, start, end]
-                        vapi_tenant_filter = ""
-                        if tenant_id is not None:
-                            vapi_tenant_filter = " AND v.tenant_id = %s"
-                            vapi_only_params.append(tenant_id)
-                        vapi_cursor_filter = ""
-                        if cursor_ts and cursor_id:
-                            vapi_cursor_filter = " AND (v.updated_at < %s::timestamptz OR (v.updated_at = %s::timestamptz AND v.call_id < %s))"
-                            vapi_only_params.extend([cursor_ts, cursor_ts, cursor_id])
-                        vapi_only_params.append(limit + 1)
-                        cur.execute(
-                            """
-                            SELECT v.tenant_id, v.call_id, v.customer_number,
-                                   COALESCE(v.started_at, v.created_at) AS started_at,
-                                   v.ended_at, v.updated_at,
-                                   v.status, v.ended_reason
-                            FROM vapi_calls v
-                            WHERE ((v.started_at >= %s AND v.started_at <= %s)
-                               OR (v.updated_at >= %s AND v.updated_at <= %s))
-                              """ + vapi_tenant_filter + vapi_cursor_filter + """
-                            ORDER BY COALESCE(v.ended_at, v.updated_at, v.started_at) DESC NULLS LAST, v.call_id DESC
-                            LIMIT %s
-                            """,
-                            tuple(vapi_only_params),
-                        )
-                        vapi_rows = cur.fetchall()
-                    except Exception as ve:
-                        if "does not exist" not in str(ve).lower() and "vapi_calls" not in str(ve).lower():
-                            logger.debug("admin calls vapi_calls query: %s", ve)
-                        vapi_rows = []
-
                     seen_call_ids: set[str] = set()
-                    # Batch lookups: ivr last_event + vapi_call_usage durations
-                    ivr_last_events: dict[str, str] = {}
-                    usage_durations: dict[str, float] = {}
-                    if vapi_rows:
-                        batch_cids = [r.get("call_id") for r in vapi_rows[:limit + 1] if r.get("call_id")]
-                        if batch_cids:
-                            try:
-                                cur.execute(
-                                    """SELECT call_id, (array_agg(event ORDER BY created_at DESC))[1] AS last_event
-                                       FROM ivr_events
-                                       WHERE client_id = %s AND call_id = ANY(%s)
-                                       GROUP BY call_id""",
-                                    (tenant_id if tenant_id is not None else (vapi_rows[0].get("tenant_id")), batch_cids),
-                                )
-                                for irow in cur.fetchall():
-                                    if irow.get("last_event"):
-                                        ivr_last_events[irow["call_id"]] = irow["last_event"]
-                            except Exception:
-                                pass
-                            try:
-                                cur.execute(
-                                    "SELECT vapi_call_id, duration_sec FROM vapi_call_usage WHERE vapi_call_id = ANY(%s)",
-                                    (batch_cids,),
-                                )
-                                for urow in cur.fetchall():
-                                    if urow.get("duration_sec") is not None:
-                                        usage_durations[urow["vapi_call_id"]] = float(urow["duration_sec"])
-                            except Exception:
-                                pass
-
-                    if vapi_rows:
-                        for r in vapi_rows[: limit + 1]:
-                            started_at = r.get("started_at")
-                            ended_at = r.get("ended_at")
-                            updated_at = r.get("updated_at")
-                            last_event = ivr_last_events.get(r.get("call_id") or "")
-                            duration_min: Optional[int] = None
-                            duration_sec: Optional[int] = None
-                            cid_for_usage = r.get("call_id") or ""
-                            if cid_for_usage in usage_durations:
-                                duration_sec = int(usage_durations[cid_for_usage])
-                                duration_min = duration_sec // 60
-                            elif started_at and updated_at:
-                                delta_secs = (updated_at - started_at).total_seconds()
-                                delta_secs = max(0, min(MAX_SESSION_MINUTES * 60, delta_secs))
-                                if delta_secs >= 1:
-                                    duration_sec = int(delta_secs)
-                                    duration_min = duration_sec // 60
-                            if duration_sec is None and started_at and ended_at and ended_at != started_at:
-                                delta_secs = (ended_at - started_at).total_seconds()
-                                delta_secs = max(0, min(MAX_SESSION_MINUTES * 60, delta_secs))
-                                duration_sec = int(delta_secs)
-                                duration_min = duration_sec // 60
-
-                            tid = r.get("tenant_id")
-                            if tid and tenant_id is None:
-                                if tid not in tenant_name_cache:
-                                    d = _get_tenant_detail(tid) or {}
-                                    tenant_name_cache[tid] = (d.get("name") or "").strip() or f"Client #{tid}"
-                                tenant_name = tenant_name_cache[tid]
-                            else:
-                                tenant_name = fixed_tenant_name or (f"Client #{tid}" if tid else "—")
-                            sort_ts = updated_at or ended_at or started_at
-                            result_val = _call_result_from_event(last_event) if last_event else _vapi_call_result_from_status(
-                                r.get("status"), r.get("ended_reason")
-                            )
-                            items.append({
-                                "call_id": r.get("call_id") or "",
-                                "tenant_id": tid,
-                                "tenant_name": tenant_name,
-                                "customer_number": (r.get("customer_number") or "").strip(),
-                                "started_at": _iso_utc(started_at),
-                                "last_event_at": _iso_utc(sort_ts),
-                                "last_event": last_event or r.get("ended_reason") or r.get("status") or "",
-                                "result": result_val,
-                                "duration_min": duration_min,
-                                "duration_sec": duration_sec,
-                            })
-                            if r.get("call_id"):
-                                seen_call_ids.add(r.get("call_id"))
-
-                    if len(items) >= limit:
-                        items.sort(key=lambda x: ((x.get("last_event_at") or ""), (x.get("call_id") or "")), reverse=True)
-                        if len(items) > limit:
-                            last_item = items[limit - 1]
-                            t_iso = str(last_item.get("last_event_at") or "")
-                            c_id = last_item.get("call_id") or ""
-                            next_cursor = base64.urlsafe_b64encode(json.dumps({"t": t_iso, "c": c_id}).encode()).decode().rstrip("=")
-                            items = items[:limit]
-                        return {"items": items, "next_cursor": next_cursor, "days": days}
 
                     # 2) Fallback ivr_events (comportement historique)
                     params = [start, end]
