@@ -824,15 +824,19 @@ def create_ivr_event(
     finally:
         conn.close()
 
-    # Dual-write Postgres (silencieux si échec)
+    # Dual-write Postgres (warning si échec — les dashboards lisent Postgres)
     try:
         if _should_use_pg_events_dual_write():
             from backend.ivr_events_pg import create_ivr_event_pg
-            create_ivr_event_pg(
+            ok = create_ivr_event_pg(
                 client_id, call_id_norm, event, context, reason, created_at=created_at
             )
-    except Exception:
-        pass
+            if not ok:
+                logger.warning("ivr_events pg dual-write returned False client_id=%s event=%s call_id=%s",
+                               client_id, event, (call_id_norm or "")[:24])
+    except Exception as e:
+        logger.warning("ivr_events pg dual-write exception client_id=%s event=%s err=%s",
+                       client_id, event, str(e)[:100])
 
 
 def _migrate_sqlite_add_tenant_id(conn: sqlite3.Connection) -> None:

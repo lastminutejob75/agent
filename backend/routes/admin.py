@@ -651,13 +651,24 @@ def _get_dashboard_snapshot(tenant_id: int, tenant_name: str) -> dict:
             from psycopg.rows import dict_row
             with psycopg.connect(url_events, row_factory=dict_row) as conn:
                 with conn.cursor() as cur:
-                    # Dernier event pour service_status
+                    # Dernier event pour service_status — fallback vapi_calls si ivr_events vide
                     cur.execute(
                         "SELECT MAX(created_at) as m FROM ivr_events WHERE client_id = %s",
                         (tenant_id,),
                     )
                     row = cur.fetchone()
                     last_ts = row["m"] if row and row["m"] else None
+                    if not last_ts:
+                        try:
+                            cur.execute(
+                                "SELECT MAX(COALESCE(ended_at, updated_at, started_at)) as m FROM vapi_calls WHERE tenant_id = %s",
+                                (tenant_id,),
+                            )
+                            vapi_row = cur.fetchone()
+                            if vapi_row and vapi_row.get("m"):
+                                last_ts = vapi_row["m"]
+                        except Exception:
+                            pass
                     if last_ts:
                         try:
                             ts = last_ts
@@ -687,6 +698,24 @@ def _get_dashboard_snapshot(tenant_id: int, tenant_name: str) -> dict:
                     calls_total = int(r["n"]) if r and r["n"] else 0
                     if not calls_total and by_event:
                         calls_total = sum(by_event.values())  # fallback
+                    # Fallback vapi_calls si ivr_events vide pour le nombre d'appels
+                    if calls_total == 0:
+                        try:
+                            cur.execute(
+                                """
+                                SELECT COUNT(DISTINCT v.call_id) AS c
+                                FROM vapi_calls v
+                                WHERE v.tenant_id = %s
+                                  AND ((v.started_at >= %s AND v.started_at <= %s)
+                                    OR (v.updated_at >= %s AND v.updated_at <= %s))
+                                """,
+                                (tenant_id, start_7d, end_7d, start_7d, end_7d),
+                            )
+                            r = cur.fetchone()
+                            if r and r.get("c"):
+                                calls_total = int(r["c"])
+                        except Exception:
+                            pass
                     counters_7d = {
                         "calls_total": calls_total,
                         "bookings_confirmed": by_event.get("booking_confirmed", 0),
@@ -694,7 +723,7 @@ def _get_dashboard_snapshot(tenant_id: int, tenant_name: str) -> dict:
                         "abandons": by_event.get("user_abandon", 0),
                     }
 
-                    # last_call: dernier call_id (7j), outcome par priorité
+                    # last_call: dernier call_id (7j), outcome par priorité — fallback vapi_calls si ivr_events vide
                     cur.execute(
                         "SELECT call_id, created_at FROM ivr_events WHERE client_id = %s AND created_at >= %s AND call_id != '' ORDER BY created_at DESC LIMIT 1",
                         (tenant_id, start_7d),
@@ -726,6 +755,35 @@ def _get_dashboard_snapshot(tenant_id: int, tenant_name: str) -> dict:
                             "slot_label": None,
                             "outcome": outcome,
                         }
+                    elif calls_total > 0:
+                        try:
+                            cur.execute(
+                                """
+                                SELECT v.call_id, COALESCE(v.ended_at, v.updated_at, v.started_at) AS ts,
+                                       v.status, v.ended_reason
+                                FROM vapi_calls v
+                                WHERE v.tenant_id = %s
+                                  AND ((v.started_at >= %s AND v.started_at <= %s)
+                                    OR (v.updated_at >= %s AND v.updated_at <= %s))
+                                ORDER BY COALESCE(v.ended_at, v.updated_at, v.started_at) DESC NULLS LAST
+                                LIMIT 1
+                                """,
+                                (tenant_id, start_7d, end_7d, start_7d, end_7d),
+                            )
+                            vapi_row = cur.fetchone()
+                            if vapi_row:
+                                last_call = {
+                                    "call_id": vapi_row.get("call_id") or "",
+                                    "created_at": str(vapi_row.get("ts") or ""),
+                                    "name": None,
+                                    "motif": None,
+                                    "slot_label": None,
+                                    "outcome": _vapi_call_result_from_status(
+                                        vapi_row.get("status"), vapi_row.get("ended_reason")
+                                    ),
+                                }
+                        except Exception:
+                            pass
         except Exception as e:
             logger.warning("dashboard ivr_events failed: %s", e)
     else:
@@ -1036,6 +1094,47 @@ def _get_kpis_daily(tenant_id: int, days: int = 7) -> dict:
                             previous["calls"] += c
                             previous["bookings"] += b
                             previous["transfers"] += t
+            # Fallback vapi_calls si ivr_events vide (dual-write PG échoué ou USE_PG_EVENTS=false)
+            if current["calls"] == 0 and previous["calls"] == 0:
+                try:
+                    with psycopg.connect(url, row_factory=dict_row) as conn2:
+                        with conn2.cursor() as cur2:
+                            vapi_tenant_filter = ""
+                            vapi_params: list = [start_prev, end_curr, start_prev, end_curr]
+                            if tenant_id is not None:
+                                vapi_tenant_filter = " AND v.tenant_id = %s"
+                                vapi_params.append(tenant_id)
+                            cur2.execute(
+                                """
+                                SELECT DATE(COALESCE(v.started_at, v.created_at) AT TIME ZONE 'UTC') as d,
+                                       COUNT(DISTINCT v.call_id) as calls
+                                FROM vapi_calls v
+                                WHERE ((v.started_at >= %s AND v.started_at < %s)
+                                   OR (v.updated_at >= %s AND v.updated_at < %s))
+                                """ + vapi_tenant_filter + """
+                                GROUP BY DATE(COALESCE(v.started_at, v.created_at) AT TIME ZONE 'UTC')
+                                ORDER BY d
+                                """,
+                                tuple(vapi_params),
+                            )
+                            for r in cur2.fetchall():
+                                d = str(r["d"]) if r.get("d") else ""
+                                c = int(r["calls"] or 0)
+                                if d >= start_curr[:10]:
+                                    existing = next((x for x in days_data if x["date"] == d), None)
+                                    if existing:
+                                        existing["calls"] = max(existing["calls"], c)
+                                    else:
+                                        days_data.append({"date": d, "calls": c, "bookings": 0, "transfers": 0})
+                                    current["calls"] += c
+                                else:
+                                    previous["calls"] += c
+                            if current["calls"] > 0 or previous["calls"] > 0:
+                                logger.info("kpis_daily vapi_calls fallback tenant_id=%s curr=%d prev=%d",
+                                            tenant_id, current["calls"], previous["calls"])
+                except Exception as ve:
+                    if "does not exist" not in str(ve).lower():
+                        logger.debug("kpis_daily vapi_calls fallback failed: %s", ve)
         except Exception as e:
             logger.warning("pg kpis_daily failed: %s", e)
     else:

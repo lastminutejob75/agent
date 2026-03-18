@@ -195,7 +195,8 @@ def _persist_ivr_event(
         if scope_id is None:
             scope_id = getattr(session, "client_id", None)
         if scope_id is None:
-            logger.debug("persist_ivr_event skip: reason=missing_scope event=%s", event)
+            logger.warning("persist_ivr_event skip: reason=missing_scope event=%s conv_id=%s channel=%s",
+                           event, getattr(session, "conv_id", ""), getattr(session, "channel", ""))
             return
         call_id = session.conv_id or ""
         if event == "booking_confirmed" and not call_id.strip():
@@ -209,7 +210,8 @@ def _persist_ivr_event(
             reason=reason,
         )
     except Exception as e:
-        logger.debug("persist_ivr_event skip: %s", e)
+        logger.warning("persist_ivr_event failed: event=%s conv_id=%s err=%s",
+                       event, getattr(session, "conv_id", ""), str(e)[:120])
 
 
 def log_ivr_event(
