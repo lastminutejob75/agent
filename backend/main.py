@@ -227,7 +227,7 @@ def _init_heavy_sync():
             print("⚠️ PG_HEALTH down -> sqlite fallback")
     except Exception as e:
         _logger.warning("PG healthcheck failed: %s", e)
-    # Fix vapi_calls rows where started_at is NULL (backfill from created_at)
+    # Fix vapi_calls rows: backfill missing data
     try:
         _pg_url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
         if _pg_url:
@@ -235,10 +235,22 @@ def _init_heavy_sync():
             with psycopg.connect(_pg_url) as conn:
                 with conn.cursor() as cur:
                     cur.execute("UPDATE vapi_calls SET started_at = created_at WHERE started_at IS NULL AND created_at IS NOT NULL")
-                    fixed = cur.rowcount
+                    fixed_started = cur.rowcount
+                    cur.execute(
+                        "UPDATE vapi_calls SET ended_at = updated_at "
+                        "WHERE ended_at IS NOT NULL AND started_at IS NOT NULL "
+                        "AND ended_at = started_at AND updated_at > started_at"
+                    )
+                    fixed_ended = cur.rowcount
+                    cur.execute(
+                        "UPDATE vapi_calls SET status = 'ended' "
+                        "WHERE status = 'unknown' AND ended_reason IS NOT NULL AND ended_reason != ''"
+                    )
+                    fixed_status = cur.rowcount
                 conn.commit()
-            if fixed:
-                print(f"✅ Backfilled {fixed} vapi_calls.started_at from created_at")
+            _fixed_total = fixed_started + fixed_ended + fixed_status
+            if _fixed_total:
+                print(f"✅ Backfilled vapi_calls: started_at={fixed_started} ended_at={fixed_ended} status={fixed_status}")
     except Exception as e:
         _logger.debug("vapi_calls backfill skipped: %s", str(e)[:80])
     # Table ivr_events (dashboards) : création automatique si USE_PG_EVENTS et DATABASE_URL

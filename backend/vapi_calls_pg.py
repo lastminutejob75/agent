@@ -105,7 +105,10 @@ def upsert_vapi_call(
                         customer_number = COALESCE(EXCLUDED.customer_number, vapi_calls.customer_number),
                         assistant_id = COALESCE(EXCLUDED.assistant_id, vapi_calls.assistant_id),
                         phone_number_id = COALESCE(EXCLUDED.phone_number_id, vapi_calls.phone_number_id),
-                        status = COALESCE(EXCLUDED.status, vapi_calls.status),
+                        status = CASE
+                            WHEN EXCLUDED.status = 'unknown' THEN COALESCE(vapi_calls.status, 'unknown')
+                            ELSE COALESCE(EXCLUDED.status, vapi_calls.status, 'unknown')
+                        END,
                         started_at = COALESCE(EXCLUDED.started_at, vapi_calls.started_at),
                         ended_at = COALESCE(EXCLUDED.ended_at, vapi_calls.ended_at),
                         ended_reason = COALESCE(EXCLUDED.ended_reason, vapi_calls.ended_reason),

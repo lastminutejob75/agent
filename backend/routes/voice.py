@@ -960,7 +960,7 @@ def _persist_status_update_sync(payload: dict, message: dict) -> None:
     from backend.handoffs import get_handoff_by_call_id, update_handoff_status
 
     _cid = _webhook_extract_call_id(payload)
-    _tid, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
+    _tid, _route_src = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
     _call = message.get("call") or {}
     _pn = _call.get("phoneNumber") or {}
     _customer_number = extract_customer_phone_from_vapi_payload(payload)
@@ -1000,7 +1000,17 @@ def _persist_status_update_sync(payload: dict, message: dict) -> None:
                 pass
 
     if not (_cid and _tid):
+        logger.warning(
+            "PERSIST_STATUS_UPDATE_SKIP no cid/tid: cid=%s tid=%s status=%s",
+            (_cid or "")[:24], _tid, _status,
+        )
         return
+
+    logger.info(
+        "PERSIST_STATUS_UPDATE call_id=%s tenant=%s(%s) status=%s started=%s ended=%s reason=%s",
+        (_cid or "")[:24], _tid, _route_src, _status,
+        _started_at, _ended_at, (_ended_reason or "")[:40],
+    )
 
     upsert_vapi_call(
         _tid,
@@ -1056,6 +1066,7 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
         return _vapi_assistant_request_response()
 
     # end-of-call-report : ingérer conso Vapi (durée, coût) dans vapi_call_usage (source de vérité billing)
+    # + mettre à jour vapi_calls avec status/timestamps fiables (filet si status-update bg échoue)
     if msg_type == "end-of-call-report":
         try:
             from backend.vapi_usage_pg import ingest_end_of_call_report
@@ -1064,6 +1075,46 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
                 logger.info("VAPI_USAGE_INGESTED call_id=%s", (_cid or "")[:24])
         except Exception as e:
             logger.warning("VAPI_USAGE_INGEST_FAILED %s", str(e)[:100])
+        try:
+            _eocr_call = message.get("call") or {}
+            _eocr_cid = _eocr_call.get("id") or ""
+            if _eocr_cid:
+                from backend.vapi_calls_pg import upsert_vapi_call
+                from backend.tenant_routing import (
+                    extract_customer_phone_from_vapi_payload,
+                    resolve_tenant_id_from_vapi_payload,
+                )
+                _eocr_tid, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
+                _eocr_started = None
+                _eocr_ended = None
+                _raw_s = _eocr_call.get("startedAt") or _eocr_call.get("createdAt")
+                _raw_e = _eocr_call.get("endedAt") or _eocr_call.get("updatedAt")
+                if isinstance(_raw_s, str):
+                    try:
+                        from datetime import datetime as _dt
+                        _eocr_started = _dt.fromisoformat(_raw_s.replace("Z", "+00:00")[:26])
+                    except Exception:
+                        pass
+                if isinstance(_raw_e, str):
+                    try:
+                        from datetime import datetime as _dt
+                        _eocr_ended = _dt.fromisoformat(_raw_e.replace("Z", "+00:00")[:26])
+                    except Exception:
+                        pass
+                _eocr_reason = message.get("endedReason") or _eocr_call.get("endedReason")
+                _eocr_phone = extract_customer_phone_from_vapi_payload(payload)
+                upsert_vapi_call(
+                    _eocr_tid, _eocr_cid,
+                    customer_number=_eocr_phone,
+                    assistant_id=_eocr_call.get("assistantId"),
+                    status="ended",
+                    started_at=_eocr_started,
+                    ended_at=_eocr_ended,
+                    ended_reason=_eocr_reason,
+                )
+                logger.info("VAPI_EOCR_CALL_UPSERTED call_id=%s tenant=%s", _eocr_cid[:24], _eocr_tid)
+        except Exception as e:
+            logger.warning("VAPI_EOCR_CALL_UPSERT_FAILED %s", str(e)[:120])
 
     # status-update: ACK immédiat (<100ms) puis traitement DB en arrière-plan.
     # Evite de retarder le démarrage vocal (firstMessage) si PG est lent.

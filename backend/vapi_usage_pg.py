@@ -143,7 +143,8 @@ def ingest_end_of_call_report(payload: dict) -> bool:
     Retrouve tenant_id via DID (normalisé sip: / E.164) → tenant_routing.
     Upsert vapi_call_usage. Retourne True si upsert OK.
     """
-    call = payload.get("call") or (payload.get("message") or {}).get("call") or {}
+    message = payload.get("message") or {}
+    call = payload.get("call") or message.get("call") or {}
     vapi_call_id = (
         _get_any(call, ["id", "callId"])
         or payload.get("callId")
@@ -167,8 +168,12 @@ def ingest_end_of_call_report(payload: dict) -> bool:
 
     started_at = _parse_iso_or_ts(_get_any(call, ["startedAt", "started_at", "startTime", "started_time"]))
     ended_at = _parse_iso_or_ts(_get_any(call, ["endedAt", "ended_at", "endTime", "ended_time"]))
+
     duration_sec = None
-    raw_duration = _get_any(call, ["duration", "durationSec", "duration_sec"])
+    _duration_keys = ["duration", "durationSec", "duration_sec", "durationSeconds"]
+    raw_duration = _get_any(call, _duration_keys)
+    if raw_duration is None:
+        raw_duration = _get_any(message, _duration_keys)
     if raw_duration is not None:
         try:
             duration_sec = float(raw_duration)
@@ -179,13 +184,19 @@ def ingest_end_of_call_report(payload: dict) -> bool:
     if duration_sec is None and started_at and ended_at:
         duration_sec = (ended_at - started_at).total_seconds()
 
-    costs = call.get("costs") or call.get("cost") or []
+    costs = call.get("costs") or call.get("cost") or message.get("costs") or message.get("cost") or []
     if not isinstance(costs, list):
         costs = [costs] if costs else []
     cost_usd = _sum_cost_usd(costs)
     costs_json = None
     if costs:
         costs_json = {"items": costs}
+
+    if duration_sec is None and started_at is None and ended_at is None and not costs:
+        logger.warning(
+            "end-of-call-report: no duration/timestamps/costs extracted call_id=%s msg_keys=%s call_keys=%s",
+            vapi_call_id[:24], sorted(message.keys())[:12], sorted(call.keys())[:12],
+        )
 
     return upsert_vapi_call_usage(
         tenant_id=tenant_id,
