@@ -77,6 +77,8 @@ STATUS_MAP = {
     "rdv": "CONFIRMED",
     "transfer": "TRANSFERRED",
     "abandoned": "ABANDONED",
+    "cancelled": "CANCELLED",
+    "rescheduled": "RESCHEDULED",
     "other": "FAQ",
 }
 
@@ -418,7 +420,7 @@ def _classify_call_context(status: str, detail: dict) -> Dict[str, Any]:
     summary = _call_summary_from_detail(status, detail)
     haystack = " ".join(part for part in [reason, context, summary, transcript] if part).lower()
 
-    if status == "CONFIRMED" or any(token in haystack for token in ("rdv", "rendez-vous", "agenda", "créneau", "creneau", "booking", "annuler", "déplacer", "deplacer")):
+    if status in {"CONFIRMED", "CANCELLED", "RESCHEDULED"} or any(token in haystack for token in ("rdv", "rendez-vous", "agenda", "créneau", "creneau", "booking", "annuler", "déplacer", "deplacer")):
         return {
             "reason_label": reason or "Demande de rendez-vous",
             "reason_context": context,
@@ -470,6 +472,10 @@ def _call_summary_from_detail(status: str, detail: dict) -> str:
     latest_reason = _last_call_signal(detail).get("reason")
     if status == "TRANSFERRED":
         return f"{latest_reason} — transfert humain" if latest_reason else "Transféré à un humain"
+    if status == "CANCELLED":
+        return "Rendez-vous annulé" if not user_lines else f"RDV annulé — {user_lines[0][:72]}"
+    if status == "RESCHEDULED":
+        return "Rendez-vous déplacé" if not user_lines else f"RDV déplacé — {user_lines[0][:72]}"
     if status == "CONFIRMED":
         return "Rendez-vous confirmé" if not user_lines else f"RDV confirmé — {user_lines[0][:72]}"
     if status == "ABANDONED":
@@ -481,6 +487,10 @@ def _call_summary_from_detail(status: str, detail: dict) -> str:
 
 def _resolve_call_status(item: Optional[dict], detail: Optional[dict]) -> str:
     event_names = [str((event or {}).get("event") or "").strip().lower() for event in (detail or {}).get("events") or []]
+    if "modify_done" in event_names:
+        return "RESCHEDULED"
+    if "cancel_done" in event_names:
+        return "CANCELLED"
     if "booking_confirmed" in event_names:
         return "CONFIRMED"
     if any(name in {"transferred_human", "transferred", "transfer_human", "transfer"} for name in event_names):

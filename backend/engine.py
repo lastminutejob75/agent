@@ -3912,6 +3912,8 @@ class Engine:
                     ensure_ascii=False,
                 )
                 _persist_ivr_event(session, "booking_confirmed", context=booking_context)
+                if old_slot:
+                    _persist_ivr_event(session, "modify_done", context=booking_context)
                 session.add_message("agent", msg)
                 return [Event("final", msg, conv_state=session.state)]
             
