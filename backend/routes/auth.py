@@ -173,7 +173,8 @@ def _read_client_session_cookie(request: Request) -> Optional[dict]:
 @router.post("/login")
 def auth_login(request: Request, body: LoginBody, response: Response):
     """
-    Login email + mot de passe. Pose le cookie uwi_session (JWT).
+    Login email + mot de passe. Pose le cookie uwi_session (JWT) et renvoie aussi
+    le token pour fallback Bearer quand les cookies cross-site sont bloqués.
     Réponse neutre en cas d'échec (anti-enumération).
     Rate limit: 10/min par IP.
     """
@@ -215,7 +216,7 @@ def auth_login(request: Request, body: LoginBody, response: Response):
         max_age=SESSION_TTL_SECONDS,
     )
     log_auth_event(row["tenant_id"], email, "auth_login_password", None)
-    return {"ok": True}
+    return {"ok": True, "token": token, "tenant_id": int(row["tenant_id"])}
 
 
 # --- Mot de passe oublié ---
