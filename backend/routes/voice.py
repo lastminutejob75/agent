@@ -69,6 +69,55 @@ report_generator = get_report_generator()
 # Mode conversationnel P0 (lazy)
 _conversational_engine = None
 
+
+def _resolve_terminal_reporting(session) -> Optional[dict]:
+    outcome_event = getattr(session, "last_outcome_event", None)
+    if outcome_event == "booking_confirmed":
+        return {"intent": "BOOKING", "outcome": "confirmed", "record_booking": True}
+    if outcome_event == "cancel_done":
+        return {"intent": "CANCEL", "outcome": "confirmed", "record_booking": False}
+    if outcome_event == "cancel_kept":
+        return {"intent": "CANCEL", "outcome": "kept", "record_booking": False}
+    if outcome_event == "modify_done":
+        return {"intent": "MODIFY", "outcome": "confirmed", "record_booking": False}
+    if outcome_event == "modify_kept":
+        return {"intent": "MODIFY", "outcome": "kept", "record_booking": False}
+    if session.state == "TRANSFERRED":
+        return {"intent": "TRANSFER", "outcome": "transferred", "record_booking": False}
+    if session.state == "CONFIRMED":
+        return {"intent": "BOOKING", "outcome": "confirmed", "record_booking": True}
+    return None
+
+
+def _record_terminal_side_effects(session, call_id: str, customer_phone: Optional[str], t_start: float) -> None:
+    reporting = _resolve_terminal_reporting(session)
+    if not reporting:
+        return
+    report_generator.record_interaction(
+        call_id=call_id,
+        intent=reporting["intent"],
+        outcome=reporting["outcome"],
+        channel="vocal",
+        duration_ms=int((time.time() - t_start) * 1000),
+        motif=getattr(session.qualif_data, "motif", None),
+        client_name=getattr(session.qualif_data, "name", None),
+        client_phone=customer_phone,
+    )
+    if reporting["record_booking"] and getattr(session.qualif_data, "name", None):
+        client = client_memory.get_or_create(
+            phone=customer_phone,
+            name=session.qualif_data.name,
+            email=session.qualif_data.contact if getattr(session.qualif_data, "contact_type", None) == "email" else None,
+            tenant_id=getattr(session, "tenant_id", None),
+        )
+        slot_label = tools_booking.get_label_for_choice(session, session.pending_slot_choice or 1) or "RDV"
+        client_memory.record_booking(
+            client_id=client.id,
+            slot_label=slot_label,
+            motif=session.qualif_data.motif or "consultation",
+            tenant_id=getattr(session, "tenant_id", None),
+        )
+
 def _get_or_resume_voice_session(tenant_id: int, call_id: str):
     """
     Phase 2: PG-first read pour reprise après restart/multi-instance.
@@ -793,31 +842,7 @@ def _compute_voice_response_sync(
                 session.speaking_until_ts = time.time() + tts_duration
         if not cancel_lookup_streaming and session.state in ("CONFIRMED", "TRANSFERRED"):
             try:
-                intent = "BOOKING" if session.state == "CONFIRMED" else "TRANSFER"
-                report_generator.record_interaction(
-                    call_id=call_id,
-                    intent=intent,
-                    outcome="confirmed" if session.state == "CONFIRMED" else "transferred",
-                    channel="vocal",
-                    duration_ms=int((time.time() - t_start) * 1000),
-                    motif=getattr(session.qualif_data, "motif", None),
-                    client_name=getattr(session.qualif_data, "name", None),
-                    client_phone=customer_phone,
-                )
-                if session.state == "CONFIRMED" and getattr(session.qualif_data, "name", None):
-                    client = client_memory.get_or_create(
-                        phone=customer_phone,
-                        name=session.qualif_data.name,
-                        email=session.qualif_data.contact if getattr(session.qualif_data, "contact_type", None) == "email" else None,
-                        tenant_id=getattr(session, "tenant_id", None),
-                    )
-                    slot_label = tools_booking.get_label_for_choice(session, session.pending_slot_choice or 1) or "RDV"
-                    client_memory.record_booking(
-                        client_id=client.id,
-                        slot_label=slot_label,
-                        motif=session.qualif_data.motif or "consultation",
-                        tenant_id=getattr(session, "tenant_id", None),
-                    )
+                _record_terminal_side_effects(session, call_id, customer_phone, t_start)
             except Exception:
                 pass
     return (response_text or "", cancel_lookup_streaming)
@@ -2391,38 +2416,10 @@ async def vapi_custom_llm(request: Request):
                 if not cancel_lookup_streaming:
                     try:
                         if session.state in ["CONFIRMED", "TRANSFERRED"]:
-                            intent = "BOOKING" if session.state == "CONFIRMED" else "TRANSFER"
-                            outcome = "confirmed" if session.state == "CONFIRMED" else "transferred"
-                            duration_ms = int((time.time() - t_start) * 1000)
-                            report_generator.record_interaction(
-                                call_id=call_id,
-                                intent=intent,
-                                outcome=outcome,
-                                channel="vocal",
-                                duration_ms=duration_ms,
-                                motif=session.qualif_data.motif if hasattr(session, 'qualif_data') else None,
-                                client_name=session.qualif_data.name if hasattr(session, 'qualif_data') else None,
-                                client_phone=customer_phone
-                            )
-                            print(f"📊 Stats recorded: {intent} → {outcome}")
-                            if session.state == "CONFIRMED" and session.qualif_data.name:
-                                try:
-                                    client = client_memory.get_or_create(
-                                        phone=customer_phone,
-                                        name=session.qualif_data.name,
-                                        email=session.qualif_data.contact if session.qualif_data.contact_type == "email" else None,
-                                        tenant_id=getattr(session, "tenant_id", None),
-                                    )
-                                    slot_label = tools_booking.get_label_for_choice(session, session.pending_slot_choice or 1) or "RDV"
-                                    client_memory.record_booking(
-                                        client_id=client.id,
-                                        slot_label=slot_label,
-                                        motif=session.qualif_data.motif or "consultation",
-                                        tenant_id=getattr(session, "tenant_id", None),
-                                    )
-                                    print(f"🧠 Client saved: {client.name} (id={client.id})")
-                                except Exception as e:
-                                    print(f"⚠️ Client save error: {e}")
+                            reporting = _resolve_terminal_reporting(session)
+                            _record_terminal_side_effects(session, call_id, customer_phone, t_start)
+                            if reporting:
+                                print(f"📊 Stats recorded: {reporting['intent']} → {reporting['outcome']}")
                     except Exception as e:
                         print(f"⚠️ Stats recording error: {e}")
         
@@ -2460,29 +2457,7 @@ async def vapi_custom_llm(request: Request):
                     # Stats (même logique qu'en non-streaming)
                     if session_after and session_after.state in ["CONFIRMED", "TRANSFERRED"]:
                         try:
-                            intent = "BOOKING" if session_after.state == "CONFIRMED" else "TRANSFER"
-                            outcome = "confirmed" if session_after.state == "CONFIRMED" else "transferred"
-                            report_generator.record_interaction(
-                                call_id=call_id, intent=intent, outcome=outcome, channel="vocal",
-                                duration_ms=int((time.time() - t_start) * 1000),
-                                motif=getattr(session_after.qualif_data, "motif", None),
-                                client_name=getattr(session_after.qualif_data, "name", None),
-                                client_phone=customer_phone
-                            )
-                            if session_after.state == "CONFIRMED" and session_after.qualif_data.name:
-                                client = client_memory.get_or_create(
-                                    phone=customer_phone,
-                                    name=session_after.qualif_data.name,
-                                    email=session_after.qualif_data.contact if getattr(session_after.qualif_data, "contact_type", None) == "email" else None,
-                                    tenant_id=getattr(session_after, "tenant_id", None),
-                                )
-                                slot_label = tools_booking.get_label_for_choice(session_after, session_after.pending_slot_choice or 1) or "RDV"
-                                client_memory.record_booking(
-                                    client_id=client.id,
-                                    slot_label=slot_label,
-                                    motif=session_after.qualif_data.motif or "consultation",
-                                    tenant_id=getattr(session_after, "tenant_id", None),
-                                )
+                            _record_terminal_side_effects(session_after, call_id, customer_phone, t_start)
                         except Exception:
                             pass
                 

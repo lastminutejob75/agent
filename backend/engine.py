@@ -3356,6 +3356,7 @@ class Engine:
                 if ok:
                     log_ivr_event(logger, session, "cancel_success")
                     _persist_ivr_event(session, "cancel_done")
+                    setattr(session, "last_outcome_event", "cancel_done")
                     session.state = "CONFIRMED"
                     msg = prompts.VOCAL_CANCEL_DONE if channel == "vocal" else prompts.MSG_CANCEL_DONE_WEB
                     session.add_message("agent", msg)
@@ -3372,6 +3373,7 @@ class Engine:
             elif intent == "NO":
                 session.awaiting_confirmation = None
                 # Garder le RDV
+                setattr(session, "last_outcome_event", "cancel_kept")
                 session.state = "CONFIRMED"
                 msg = prompts.VOCAL_CANCEL_KEPT if channel == "vocal" else prompts.MSG_CANCEL_KEPT_WEB
                 session.add_message("agent", msg)
@@ -3529,6 +3531,7 @@ class Engine:
             elif intent == "NO":
                 session.awaiting_confirmation = None
                 # Garder le RDV
+                setattr(session, "last_outcome_event", "modify_kept")
                 session.state = "CONFIRMED"
                 msg = prompts.VOCAL_CANCEL_KEPT if channel == "vocal" else prompts.MSG_CANCEL_KEPT_WEB
                 session.add_message("agent", msg)
@@ -3877,12 +3880,14 @@ class Engine:
                 if old_slot:
                     tools_booking.cancel_booking(old_slot, session)
                     session.pending_cancel_slot = None
+                    setattr(session, "last_outcome_event", "modify_done")
                     slot_label = tools_booking.get_label_for_choice(session, slot_idx) or ""
                     msg = prompts.VOCAL_MODIFY_MOVED.format(new_label=slot_label) if channel == "vocal" else prompts.MSG_MODIFY_MOVED_WEB.format(new_label=slot_label)
                 else:
                     slot_label = tools_booking.get_label_for_choice(session, slot_idx) or ""
                     name = session.qualif_data.name or ""
                     motif = session.qualif_data.motif or ""
+                    setattr(session, "last_outcome_event", "booking_confirmed")
                     msg = prompts.format_booking_confirmed(slot_label, name=name, motif=motif, channel=channel)
                 session.state = "CONFIRMED"
                 session.rejected_slot_starts = []

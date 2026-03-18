@@ -97,6 +97,7 @@ def test_cancel_yes_tool_success_confirms(engine, monkeypatch):
     e = engine.handle_message(conv_id, "oui")
     session = engine.session_store.get(conv_id)
     assert session.state == "CONFIRMED"
+    assert getattr(session, "last_outcome_event", None) == "cancel_done"
     txt = _last_text(e).lower()
     assert "annul" in txt or "c'est fait" in txt
 
@@ -116,5 +117,6 @@ def test_cancel_yes_sqlite_slot_id_success(engine, monkeypatch):
     e = engine.handle_message(conv_id, "oui")
     session = engine.session_store.get(conv_id)
     assert session.state == "CONFIRMED"
+    assert getattr(session, "last_outcome_event", None) == "cancel_done"
     txt = _last_text(e).lower()
     assert "annul" in txt or "c'est fait" in txt
