@@ -418,6 +418,149 @@ async def debug_env_vars():
     }
 
 
+@app.get("/debug/tenant-route")
+async def debug_tenant_route(
+    to_number: str,
+    assistant_id: Optional[str] = None,
+    phone_number_id: Optional[str] = None,
+):
+    """
+    Diagnostic ciblé du routage vocal pour un DID donné.
+    Retourne la résolution actuelle + les lignes brutes PG/SQLite utiles.
+    """
+    from backend.tenant_routing import (
+        normalize_did,
+        normalize_did_canonical,
+        resolve_tenant_id_from_vocal_call,
+    )
+
+    raw_key = normalize_did(to_number or "")
+    canonical_key = normalize_did_canonical(to_number or "")
+    resolved_tenant_id, resolved_source = resolve_tenant_id_from_vocal_call(to_number, channel="vocal")
+
+    out: dict = {
+        "input": {
+            "to_number": to_number,
+            "assistant_id": assistant_id,
+            "phone_number_id": phone_number_id,
+        },
+        "normalized": {
+            "raw_key": raw_key,
+            "canonical_key": canonical_key,
+        },
+        "resolved": {
+            "tenant_id": resolved_tenant_id,
+            "source": resolved_source,
+        },
+        "config": {
+            "default_tenant_id": getattr(config, "DEFAULT_TENANT_ID", None),
+            "test_tenant_id": getattr(config, "TEST_TENANT_ID", None),
+            "test_vocal_number": getattr(config, "TEST_VOCAL_NUMBER", None),
+            "onboarding_demo_vocal_number": getattr(config, "ONBOARDING_DEMO_VOCAL_NUMBER", None),
+            "use_pg_tenants": getattr(config, "USE_PG_TENANTS", None),
+            "env_vapi_assistant_id": (os.environ.get("VAPI_ASSISTANT_ID") or "").strip() or None,
+        },
+        "pg": {},
+        "sqlite": {},
+    }
+
+    keys = [k for k in (raw_key, canonical_key) if k]
+
+    # PG routing + assistant + recent calls
+    try:
+        from backend.pg_pool import pg_connection
+
+        with pg_connection() as conn:
+            with conn.cursor() as cur:
+                if keys:
+                    cur.execute(
+                        """
+                        SELECT channel, key, tenant_id, is_active, updated_at::text AS updated_at
+                        FROM tenant_routing
+                        WHERE channel IN ('vocal', 'voice') AND key = ANY(%s)
+                        ORDER BY updated_at DESC NULLS LAST
+                        """,
+                        (keys,),
+                    )
+                    out["pg"]["tenant_routing_rows"] = [dict(r) for r in cur.fetchall()]
+                else:
+                    out["pg"]["tenant_routing_rows"] = []
+
+                if assistant_id:
+                    cur.execute(
+                        """
+                        SELECT tenant_id, params_json->>'vapi_assistant_id' AS vapi_assistant_id
+                        FROM tenant_config
+                        WHERE COALESCE(params_json->>'vapi_assistant_id', '') = %s
+                        """,
+                        (assistant_id,),
+                    )
+                    out["pg"]["assistant_rows"] = [dict(r) for r in cur.fetchall()]
+                else:
+                    out["pg"]["assistant_rows"] = []
+
+                filters = []
+                params: list = []
+                if assistant_id:
+                    filters.append("assistant_id = %s")
+                    params.append(assistant_id)
+                if phone_number_id:
+                    filters.append("phone_number_id = %s")
+                    params.append(phone_number_id)
+                if filters:
+                    cur.execute(
+                        f"""
+                        SELECT call_id, tenant_id, assistant_id, phone_number_id, status,
+                               created_at::text AS created_at, updated_at::text AS updated_at
+                        FROM vapi_calls
+                        WHERE {' OR '.join(filters)}
+                        ORDER BY updated_at DESC NULLS LAST
+                        LIMIT 10
+                        """,
+                        tuple(params),
+                    )
+                    out["pg"]["recent_vapi_calls"] = [dict(r) for r in cur.fetchall()]
+                else:
+                    out["pg"]["recent_vapi_calls"] = []
+    except Exception as e:
+        out["pg"]["error"] = str(e)[:200]
+
+    # SQLite routing fallback visibility
+    try:
+        import backend.db as db
+
+        db.ensure_tenant_config()
+        conn = db.get_conn()
+        try:
+            rows = []
+            for key in keys:
+                rows.extend(
+                    conn.execute(
+                        """
+                        SELECT channel, did_key, tenant_id, created_at
+                        FROM tenant_routing
+                        WHERE channel = ? AND did_key = ?
+                        """,
+                        ("vocal", key),
+                    ).fetchall()
+                )
+            out["sqlite"]["tenant_routing_rows"] = [
+                {
+                    "channel": r[0],
+                    "did_key": r[1],
+                    "tenant_id": r[2],
+                    "created_at": r[3],
+                }
+                for r in rows
+            ]
+        finally:
+            conn.close()
+    except Exception as e:
+        out["sqlite"]["error"] = str(e)[:200]
+
+    return out
+
+
 @app.get("/api/stats/bookings")
 async def get_booking_stats() -> dict:
     """Stats des RDV des dernières 24h (sessions par état final)."""
