@@ -70,8 +70,8 @@ def pg_resolve_tenant_id(channel: str, did_key: str) -> Optional[Tuple[int, str]
         return None
 
     def _query() -> Optional[Tuple[int, str]]:
-        import psycopg
-        with psycopg.connect(url) as conn:
+        from backend.pg_pool import pg_connection
+        with pg_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT tenant_id FROM tenant_routing WHERE channel = %s AND key = %s AND is_active = TRUE",
@@ -79,7 +79,8 @@ def pg_resolve_tenant_id(channel: str, did_key: str) -> Optional[Tuple[int, str]
                 )
                 row = cur.fetchone()
                 if row:
-                    return (int(row[0]), "pg")
+                    tenant_id = row.get("tenant_id") if isinstance(row, dict) else row[0]
+                    return (int(tenant_id), "pg")
         return None
 
     try:
@@ -90,6 +91,7 @@ def pg_resolve_tenant_id(channel: str, did_key: str) -> Optional[Tuple[int, str]
                 return _query()
             except Exception:
                 pass
+        logger.warning("pg_resolve_tenant_id failed channel=%s key=%s err=%s", channel, did_key, str(e)[:120])
         return None
 
 
@@ -104,8 +106,8 @@ def pg_find_tenant_id_by_vapi_assistant_id(assistant_id: str) -> Optional[int]:
         return None
 
     def _query() -> Optional[int]:
-        import psycopg
-        with psycopg.connect(url) as conn:
+        from backend.pg_pool import pg_connection
+        with pg_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -118,7 +120,8 @@ def pg_find_tenant_id_by_vapi_assistant_id(assistant_id: str) -> Optional[int]:
                 )
                 row = cur.fetchone()
                 if row:
-                    return int(row[0])
+                    tenant_id = row.get("tenant_id") if isinstance(row, dict) else row[0]
+                    return int(tenant_id)
         return None
 
     try:
@@ -129,6 +132,7 @@ def pg_find_tenant_id_by_vapi_assistant_id(assistant_id: str) -> Optional[int]:
                 return _query()
             except Exception:
                 pass
+        logger.warning("pg_find_tenant_id_by_vapi_assistant_id failed assistant_id=%s err=%s", assistant_id[:24], str(e)[:120])
         return None
 
 
@@ -139,8 +143,8 @@ def pg_tenant_exists(tenant_id: int) -> bool:
         return False
 
     def _query() -> bool:
-        import psycopg
-        with psycopg.connect(url) as conn:
+        from backend.pg_pool import pg_connection
+        with pg_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1 FROM tenants WHERE tenant_id = %s LIMIT 1", (int(tenant_id),))
                 return cur.fetchone() is not None
@@ -153,6 +157,7 @@ def pg_tenant_exists(tenant_id: int) -> bool:
                 return _query()
             except Exception:
                 pass
+        logger.warning("pg_tenant_exists failed tenant_id=%s err=%s", tenant_id, str(e)[:120])
         return False
 
 

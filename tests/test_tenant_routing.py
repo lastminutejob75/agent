@@ -60,6 +60,10 @@ def test_extract_to_number_from_vapi_payload():
     p = {"phoneNumber": {"number": "+33123456789"}}
     assert extract_to_number_from_vapi_payload(p) == "+33123456789"
 
+    # call.to must win over call.phoneNumber.number when both exist
+    p = {"message": {"call": {"to": "+33765432109", "phoneNumber": {"number": "+33612345678"}}}}
+    assert extract_to_number_from_vapi_payload(p) == "+33765432109"
+
     # call.phoneNumber.number
     p = {"call": {"phoneNumber": {"number": "+33612345678"}}}
     assert extract_to_number_from_vapi_payload(p) == "+33612345678"

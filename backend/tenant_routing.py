@@ -369,33 +369,33 @@ def ensure_test_number_route() -> bool:
 def extract_to_number_from_vapi_payload(payload: dict) -> Optional[str]:
     """
     Extrait le numéro appelé (DID) du payload Vapi.
-    Ordre de priorité: message.call (webhook), phoneNumber, call.phoneNumber, call.to
+    Ordre de priorité: message.call.to (numéro réellement composé), puis phoneNumber,
+    puis racine call.to.
     """
-    # Webhook Vapi : message.call.phoneNumber.number / message.call.to
+    # Webhook Vapi : privilégier call.to si présent (DID appelé), sinon phoneNumber.number
     message = payload.get("message") or {}
     call = message.get("call") or {}
+    if call.get("to"):
+        return str(call["to"])
     pn = call.get("phoneNumber")
     if isinstance(pn, dict) and pn.get("number"):
         return str(pn["number"])
-    if call.get("to"):
-        return str(call["to"])
 
     # Chat Completions / racine
+    call = payload.get("call") or {}
+    if call.get("to"):
+        return str(call["to"])
     pn = payload.get("phoneNumber")
     if isinstance(pn, dict) and pn.get("number"):
         return str(pn["number"])
     if isinstance(pn, str):
         return pn
 
-    call = payload.get("call") or {}
     pn = call.get("phoneNumber")
     if isinstance(pn, dict) and pn.get("number"):
         return str(pn["number"])
     if isinstance(pn, str):
         return pn
-
-    if call.get("to"):
-        return str(call["to"])
 
     return None
 
