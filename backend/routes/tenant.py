@@ -53,6 +53,7 @@ from backend.tenant_config import (
     DEFAULT_FAQ,
     derive_horaires_text,
     get_booking_rules,
+    get_tenant_display_config,
     get_faq,
     normalize_faq_payload,
     reset_faq_params,
@@ -85,10 +86,15 @@ STATUS_MAP = {
 
 def _tenant_display_name(detail: Optional[dict], tenant_id: Optional[int] = None) -> str:
     params = (detail or {}).get("params") or {}
-    preferred = str(params.get("business_name") or "").strip()
-    if preferred:
-        return preferred
+    for key in ("business_name", "tenant_name", "company_name", "cabinet_name"):
+        preferred = str(params.get(key) or "").strip()
+        if preferred:
+            return preferred
     fallback = str((detail or {}).get("name") or "").strip()
+    if fallback.lower() in {"uwi", "cabinet uwi"} and tenant_id is not None:
+        configured = str((get_tenant_display_config(tenant_id) or {}).get("business_name") or "").strip()
+        if configured:
+            return configured
     if fallback:
         return fallback
     if tenant_id is not None:
