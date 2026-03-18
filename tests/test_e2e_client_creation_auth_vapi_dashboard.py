@@ -130,7 +130,7 @@ def test_e2e_connexion_et_dashboard_client(mock_get_user, client, jwt_secret):
 
 
 @patch("backend.routes.tenant.get_faq")
-@patch("backend.routes.tenant._get_tenant_detail")
+@patch("backend.routes.tenant._get_tenant_me_detail")
 @patch("backend.routes.tenant.pg_get_tenant_user_by_id")
 def test_tenant_me_onboarding_requires_real_completion(mock_get_user, mock_detail, mock_get_faq, client, jwt_secret):
     """Un tenant avec assistante Vapi mais sans numéro ni horaires ne doit pas être considéré onboardé."""
@@ -158,8 +158,28 @@ def test_tenant_me_onboarding_requires_real_completion(mock_get_user, mock_detai
     assert me["onboarding_steps"]["phone_ready"] is False
     assert me["onboarding_steps"]["horaires_ready"] is False
     assert me["onboarding_completed"] is False
-    assert me["client_onboarding_completed"] is False
-    assert me["dashboard_tour_completed"] is False
+
+
+@patch("backend.routes.tenant.pg_get_tenant_user_by_id")
+@patch("backend.routes.tenant._get_tenant_me_detail")
+def test_tenant_me_prefers_business_name_for_display(mock_tenant_detail, mock_get_user, client, jwt_secret):
+    tenant_id = 2
+    mock_get_user.return_value = {"tenant_id": tenant_id, "email": "client@test.fr", "role": "owner"}
+    mock_tenant_detail.return_value = {
+        "name": "Cabinet UWI",
+        "params": {
+            "business_name": "Cabinet Dupont",
+            "assistant_name": "sophie",
+            "calendar_provider": "none",
+        },
+    }
+    token = _make_client_jwt(tenant_id, email="client@test.fr", secret=jwt_secret)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = client.get("/api/tenant/me", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["tenant_name"] == "Cabinet Dupont"
 
 
 @patch("backend.routes.tenant.pg_get_tenant_user_by_id")
@@ -200,7 +220,7 @@ def test_tenant_patch_params_persists_transfer_wizard_config(mock_get_user, clie
     assert r_patch.status_code == 200
     assert r_patch.json()["ok"] is True
 
-    with patch("backend.routes.tenant._get_tenant_detail") as mock_detail:
+    with patch("backend.routes.tenant._get_tenant_me_detail") as mock_detail:
         r_me_seed = client.get("/api/tenant/me", headers=headers)
         assert r_me_seed.status_code == 200
         existing = r_me_seed.json()

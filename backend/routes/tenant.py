@@ -83,6 +83,19 @@ STATUS_MAP = {
 }
 
 
+def _tenant_display_name(detail: Optional[dict], tenant_id: Optional[int] = None) -> str:
+    params = (detail or {}).get("params") or {}
+    preferred = str(params.get("business_name") or "").strip()
+    if preferred:
+        return preferred
+    fallback = str((detail or {}).get("name") or "").strip()
+    if fallback:
+        return fallback
+    if tenant_id is not None:
+        return f"Client #{tenant_id}"
+    return "N/A"
+
+
 def _decode_jwt(token: str) -> Optional[Dict[str, Any]]:
     if not JWT_SECRET or not token:
         return None
@@ -1062,10 +1075,11 @@ def tenant_me(auth: dict = Depends(require_tenant_auth)):
     client_onboarding_completed = _explicit or onboarding_completed
     transfer_hours = _parse_dict_value(params.get("transfer_hours"))
     transfer_cases = _parse_string_list(params.get("transfer_cases"))
+    tenant_display_name = _tenant_display_name(d, tenant_id)
 
     return {
         "tenant_id": tenant_id,
-        "tenant_name": d.get("name", "N/A"),
+        "tenant_name": tenant_display_name,
         "email": auth.get("email"),
         "role": auth.get("role", "owner"),
         "contact_email": params.get("contact_email", ""),
@@ -1127,7 +1141,7 @@ def tenant_dashboard(auth: dict = Depends(require_tenant_auth)):
     d = _get_tenant_detail(tenant_id)
     if not d:
         raise HTTPException(404, "Tenant not found")
-    return _safe_dashboard_snapshot(tenant_id, d.get("name", "N/A"))
+    return _safe_dashboard_snapshot(tenant_id, _tenant_display_name(d, tenant_id))
 
 
 @router.get("/kpis")
