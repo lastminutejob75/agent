@@ -38,6 +38,7 @@ def upsert_vapi_call_usage(
     vapi_call_id = (vapi_call_id or "").strip()
     try:
         import psycopg
+        from psycopg.types.json import Json
         with psycopg.connect(url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -67,7 +68,7 @@ def upsert_vapi_call_usage(
                         float(duration_sec) if duration_sec is not None else None,
                         float(cost_usd) if cost_usd is not None else None,
                         cost_currency or "USD",
-                        costs_json,
+                        Json(costs_json) if costs_json is not None else None,
                     ),
                 )
                 conn.commit()

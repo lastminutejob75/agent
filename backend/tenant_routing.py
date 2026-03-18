@@ -159,22 +159,25 @@ def _fast_resolve_assistant_id(assistant_id: Optional[str]) -> Optional[int]:
 def resolve_tenant_id_from_vapi_payload(payload: dict, channel: str = "vocal") -> tuple[int, str]:
     """
     Résolution tenant Vapi:
-    0. FAST-PATH: assistantId == VAPI_ASSISTANT_ID env var → tenant 1 (0 DB call)
-    1. DID/numéro appelé si disponible
+    0. DID/numéro appelé si disponible (source de vérité multi-tenant)
+    1. FAST-PATH: assistantId == VAPI_ASSISTANT_ID env var → tenant 1 (0 DB call)
     2. fallback assistantId -> tenant_config.params_json.vapi_assistant_id
     3. défaut
     """
     assistant_id = extract_assistant_id_from_vapi_payload(payload)
-    fast = _fast_resolve_assistant_id(assistant_id)
-    if fast is not None:
-        logger.debug("TENANT_READ source=fast_cache assistant_id=%s -> tenant_id=%s",
-                      (assistant_id or "")[:24], fast)
-        return fast, "fast_cache"
-
     to_number = extract_to_number_from_vapi_payload(payload)
     tenant_id, source = resolve_tenant_id_from_vocal_call(to_number, channel=channel)
     if source != "default":
         return tenant_id, source
+
+    fast = _fast_resolve_assistant_id(assistant_id)
+    if fast is not None:
+        logger.debug(
+            "TENANT_READ source=fast_cache assistant_id=%s -> tenant_id=%s",
+            (assistant_id or "")[:24],
+            fast,
+        )
+        return fast, "fast_cache"
 
     if assistant_id and config.USE_PG_TENANTS:
         try:

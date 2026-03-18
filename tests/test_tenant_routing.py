@@ -108,6 +108,23 @@ def test_resolve_vapi_payload_falls_back_to_assistant_id(mock_lookup):
     mock_lookup.assert_called_once_with("asst_live_123")
 
 
+def test_resolve_vapi_payload_prefers_did_over_fast_cache():
+    payload = {
+        "message": {
+            "call": {
+                "assistantId": "asst_default_1",
+                "phoneNumber": {"number": "+33612345678"},
+            }
+        }
+    }
+
+    with patch("backend.tenant_routing._fast_resolve_assistant_id", return_value=1):
+        tid, source = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
+
+    assert tid == 2
+    assert source == "route"
+
+
 @patch("backend.tenants_pg.pg_tenant_exists", return_value=False)
 def test_ensure_test_number_route_skips_missing_pg_tenant(mock_exists):
     from backend.tenant_routing import ensure_test_number_route
