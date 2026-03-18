@@ -1188,7 +1188,6 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
                     resolve_tenant_id_from_vapi_payload,
                     current_tenant_id,
                 )
-                import concurrent.futures as _cf
 
                 w_call_id = _webhook_extract_call_id(payload) or "unknown"
                 _WH_HARD_CAP_S = 8.0
@@ -1200,10 +1199,7 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
                         """Hard cap 8s : tenant + session + calendar en un seul thread."""
                         import time as _wt
                         _s0 = _wt.monotonic()
-                        try:
-                            tid, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
-                        except Exception:
-                            tid = 1
+                        tid, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
                         t_tenant = int((_wt.monotonic() - _s0) * 1000)
 
                         _s1 = _wt.monotonic()
@@ -1264,13 +1260,7 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
 
                 else:
                     # Résolution tenant pour toutes les actions non-get_slots
-                    try:
-                        with _cf.ThreadPoolExecutor(max_workers=1) as ex:
-                            resolved_tid, _ = ex.submit(
-                                lambda: resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
-                            ).result(timeout=2.0)
-                    except Exception:
-                        resolved_tid = 1
+                    resolved_tid, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
                     current_tenant_id.set(str(resolved_tid))
 
                     if action == "book":
@@ -1649,12 +1639,8 @@ async def vapi_tool(request: Request):
                 _s0 = _time.monotonic()
 
                 # 1. Tenant resolution
-                try:
-                    tid, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
-                    seg["tenant"] = "resolved"
-                except Exception:
-                    tid = 1
-                    seg["tenant"] = "fallback"
+                tid, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
+                seg["tenant"] = "resolved"
                 seg["t_tenant_ms"] = int((_time.monotonic() - _s0) * 1000)
 
                 # 2. Session (mémoire seule, pas de PG)
@@ -1748,13 +1734,7 @@ async def vapi_tool(request: Request):
             )
 
         # ── Résolution tenant pour les autres actions (book, cancel, etc.) ──
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                resolved_tenant_id, _ = ex.submit(
-                    lambda: resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
-                ).result(timeout=2.0)
-        except Exception:
-            resolved_tenant_id = 1
+        resolved_tenant_id, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
         request.state.tenant_id = resolved_tenant_id
         current_tenant_id.set(str(resolved_tenant_id))
 
