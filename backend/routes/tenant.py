@@ -1985,7 +1985,7 @@ def tenant_patch_params(
     Met à jour params du tenant connecté.
     """
     allowed = {
-        "contact_email", "calendar_provider", "calendar_id", "timezone", "consent_mode",
+        "contact_email", "calendar_provider", "calendar_id", "timezone", "consent_mode", "business_name",
         "phone_number", "sector", "specialty_label", "address_line1", "postal_code", "city",
         "assistant_name", "plan_key", "agenda_software", "client_onboarding_completed",
         "dashboard_tour_completed",
@@ -1996,9 +1996,13 @@ def tenant_patch_params(
     body = body or {}
     tenant_id = auth["tenant_id"]
     tenant_name = (body.get("tenant_name") or "").strip() if body.get("tenant_name") is not None else ""
+    business_name = (body.get("business_name") or "").strip() if body.get("business_name") is not None else ""
     params = {k: v for k, v in body.items() if k in allowed and v is not None}
-    if tenant_name:
-        ok = pg_update_tenant_name(tenant_id, tenant_name)
+    synced_display_name = business_name or tenant_name
+    if synced_display_name and "business_name" not in params:
+        params["business_name"] = synced_display_name
+    if synced_display_name:
+        ok = pg_update_tenant_name(tenant_id, synced_display_name)
         if not ok:
             raise HTTPException(500, "Failed to update tenant name")
     if not params:
