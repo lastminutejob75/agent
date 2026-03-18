@@ -632,6 +632,14 @@ def get_slots_for_display(
     t_start = time.time()
     tenant_id = getattr(session, "tenant_id", None) or 1
 
+    # Fast-path absolu : cache avant toute résolution adapter/tenant-config (évite overhead DB).
+    rejected = getattr(session, "rejected_slot_starts", None) if session else None
+    if not rejected:
+        cached = _get_cached_slots(limit, tenant_id, pref=pref)
+        if cached:
+            logger.info(f"⚡ get_slots_for_display: cache hit pref={pref} ({(time.time() - t_start) * 1000:.0f}ms)")
+            return cached
+
     # Adapter calendrier par tenant (google/none) — fallback config global
     from backend.calendar_adapter import get_calendar_adapter, is_local_only_adapter
     adapter = get_calendar_adapter(session)
@@ -640,13 +648,6 @@ def get_slots_for_display(
     use_local_fallback = is_local_only_adapter(adapter)
     if use_local_fallback:
         logger.info("get_slots_for_display: tenant_id=%s provider=none → local fallback", tenant_id)
-
-    rejected = getattr(session, "rejected_slot_starts", None) if session else None
-    if not rejected:
-        cached = _get_cached_slots(limit, tenant_id, pref=pref)
-        if cached:
-            logger.info(f"⚡ get_slots_for_display: cache hit pref={pref} ({(time.time() - t_start) * 1000:.0f}ms)")
-            return cached
 
     # Source: adapter (google) ou legacy _get_calendar_service
     calendar_or_adapter = None if use_local_fallback else (adapter if adapter else _get_calendar_service())
@@ -1173,7 +1174,12 @@ def _book_google_by_iso(session, start_iso: str, end_iso: str) -> tuple[bool, st
                 session.google_event_id = event_id
                 logger.info("RDV Google Calendar créé: %s", event_id)
                 if _mirror_google_bookings_enabled(session):
-                    _mirror_google_booking_to_internal(session, start_iso, event_id)
+                    # Non bloquant : le miroir interne est auxiliaire et ne doit pas rallonger la confirmation vocale.
+                    threading.Thread(
+                        target=_mirror_google_booking_to_internal,
+                        args=(session, start_iso, event_id),
+                        daemon=True,
+                    ).start()
                 return True, None
             return False, "slot_taken"
         except GoogleCalendarPermissionError as e:

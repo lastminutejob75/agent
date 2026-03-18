@@ -189,23 +189,27 @@ def handle_book(
             start_iso, end_iso = _chosen_slot_iso(session, choice)
         start_iso = start_iso or ""
         end_iso = end_iso or ""
-        try:
-            from backend.engine import _persist_ivr_event
+        # Non bloquant: persistance analytics hors chemin critique de réponse tool.
+        def _persist_booking_event_bg() -> None:
+            try:
+                from backend.engine import _persist_ivr_event
 
-            _persist_ivr_event(
-                session,
-                "booking_confirmed",
-                context=_build_booking_event_context(
+                _persist_ivr_event(
                     session,
-                    choice=choice,
-                    call_id=call_id,
-                    start_iso=start_iso,
-                    end_iso=end_iso,
-                    event_id=event_id,
-                ),
-            )
-        except Exception as e:
-            logger.warning("BOOKING_CONFIRMED_PERSIST_FAILED call_id=%s err=%s", (call_id or "")[:24], str(e)[:120])
+                    "booking_confirmed",
+                    context=_build_booking_event_context(
+                        session,
+                        choice=choice,
+                        call_id=call_id,
+                        start_iso=start_iso,
+                        end_iso=end_iso,
+                        event_id=event_id,
+                    ),
+                )
+            except Exception as e:
+                logger.warning("BOOKING_CONFIRMED_PERSIST_FAILED call_id=%s err=%s", (call_id or "")[:24], str(e)[:120])
+
+        threading.Thread(target=_persist_booking_event_bg, daemon=True).start()
         logger.info(
             "BOOKING_CONFIRMED",
             extra={"call_id": (call_id or "")[:24], "event_id": (event_id or "")[:24]},
