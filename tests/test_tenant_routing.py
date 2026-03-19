@@ -118,6 +118,15 @@ def test_resolve_vapi_payload_falls_back_to_assistant_id(mock_lookup):
     mock_lookup.assert_called_once_with("asst_live_123")
 
 
+def test_fast_resolve_assistant_id_ignores_env_in_pg_multi_tenant(monkeypatch):
+    from backend import tenant_routing as tr
+
+    monkeypatch.setenv("VAPI_ASSISTANT_ID", "asst_env")
+    monkeypatch.setattr(tr, "_ENV_VAPI_ASSISTANT_ID", None)
+    with patch("backend.tenant_routing.config.USE_PG_TENANTS", True):
+        assert tr._fast_resolve_assistant_id("asst_env") is None
+
+
 def test_resolve_vapi_payload_prefers_did_over_fast_cache():
     payload = {
         "message": {

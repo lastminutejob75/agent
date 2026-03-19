@@ -151,7 +151,10 @@ _assistant_tenant_cache: dict[str, int] = {}
 
 def _fast_resolve_assistant_id(assistant_id: Optional[str]) -> Optional[int]:
     """
-    Résolution instantanée (0 DB call) : cache mémoire + env var VAPI_ASSISTANT_ID.
+    Résolution instantanée (0 DB call) : cache mémoire.
+    En mode PG multi-tenant, ne jamais déduire le tenant depuis VAPI_ASSISTANT_ID
+    d'environnement, sinon on risque d'écrire un appel sur le tenant par défaut
+    quand le DID n'est pas présent dans un webhook.
     Retourne tenant_id ou None si inconnu.
     """
     if not assistant_id:
@@ -159,6 +162,8 @@ def _fast_resolve_assistant_id(assistant_id: Optional[str]) -> Optional[int]:
     cached = _assistant_tenant_cache.get(assistant_id)
     if cached is not None:
         return cached
+    if config.USE_PG_TENANTS:
+        return None
     env_id = _get_env_vapi_assistant_id()
     if env_id and assistant_id == env_id:
         _assistant_tenant_cache[assistant_id] = config.DEFAULT_TENANT_ID
