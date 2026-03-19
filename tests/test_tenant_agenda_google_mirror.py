@@ -103,6 +103,50 @@ def test_tenant_agenda_google_mirror_exposes_local_actions(client):
     assert data["slots"][0]["can_reschedule"] is True
 
 
+def test_google_mirror_enabled_by_default_when_provider_google_and_flag_missing(client):
+    from backend.main import app
+    from backend.routes import tenant
+
+    app.dependency_overrides[tenant.require_tenant_auth] = _auth_override
+    start_dt = datetime.utcnow() + timedelta(hours=2)
+    end_dt = start_dt + timedelta(minutes=15)
+    detail = _google_detail()
+    detail["params"] = {
+        "timezone": "Europe/Paris",
+        "calendar_provider": "google",
+        "calendar_id": "cabinet@test.calendar.google.com",
+    }
+    with patch("backend.routes.tenant._get_tenant_detail", return_value=detail), patch(
+        "backend.routes.tenant._find_local_appointment_for_google_event",
+        return_value={"id": 654, "slot_id": 987},
+    ), patch("backend.routes.tenant.get_cabinet_client_by_phone", return_value=None), patch(
+        "backend.routes.tenant.GoogleCalendarService"
+    ) as mock_google_service:
+        mock_google_service.return_value.service.events.return_value.list.return_value.execute.return_value = {
+            "items": [
+                {
+                    "id": "evt_default",
+                    "summary": "RDV - Claire Fontaine",
+                    "description": "Patient: Claire Fontaine\nContact: +33612345678\nMotif: Consultation",
+                    "start": {"dateTime": start_dt.isoformat() + "Z"},
+                    "end": {"dateTime": end_dt.isoformat() + "Z"},
+                }
+            ]
+        }
+        try:
+            response = client.get("/api/tenant/agenda")
+        finally:
+            app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 1
+    assert data["slots"][0]["appointment_id"] == 654
+    assert data["slots"][0]["slot_id"] == 987
+    assert data["slots"][0]["can_cancel"] is True
+    assert data["slots"][0]["can_reschedule"] is True
+
+
 def test_tenant_agenda_cancel_google_mirror_cancels_both(client):
     from backend.main import app
     from backend.routes import tenant

@@ -174,6 +174,37 @@ def test_get_slots_for_display_provider_none_uses_local_fallback():
     mock_google.assert_not_called()
 
 
+def test_get_slots_for_display_google_provider_does_not_fallback_to_local_on_permission():
+    """provider=google explicite: si Google échoue, ne jamais peupler des slots UWI en secours."""
+    from backend.google_calendar import GoogleCalendarPermissionError
+    from backend.tools_booking import get_slots_for_display
+
+    class Session:
+        tenant_id = 9
+        rejected_slot_starts = []
+
+    class FakeGoogleAdapter:
+        def can_propose_slots(self):
+            return True
+
+    sqlite_called = {"value": False}
+
+    def _fake_sqlite(*args, **kwargs):
+        sqlite_called["value"] = True
+        return [{"start_iso": "2025-02-05T10:00:00", "end_iso": "2025-02-05T10:30:00", "label": "A", "source": "sqlite"}]
+
+    with patch("backend.tenant_config.get_params", return_value={"calendar_provider": "google", "calendar_id": "cabinet@test"}):
+        with patch("backend.calendar_adapter.get_calendar_adapter", return_value=FakeGoogleAdapter()):
+            with patch.object(tools_booking, "_get_slots_from_google_calendar", side_effect=GoogleCalendarPermissionError(Exception("403"))):
+                with patch.object(tools_booking, "_get_slots_from_sqlite", side_effect=_fake_sqlite):
+                    with patch.object(tools_booking, "_get_cached_slots", return_value=None):
+                        with patch.object(tools_booking, "_set_cached_slots"):
+                            slots = get_slots_for_display(limit=3, session=Session())
+
+    assert slots == []
+    assert sqlite_called["value"] is False
+
+
 def test_vapi_tool_book_response_contains_json_result():
     """POST /api/vapi/tool action=book : la réponse a results[0].result = JSON string du payload."""
     from fastapi.testclient import TestClient

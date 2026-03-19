@@ -106,6 +106,47 @@ def test_book_google_by_iso_mirrors_internal_when_enabled(monkeypatch):
     assert mirrored == {"slot_id": 55, "source": "pg" if tools_booking.config.USE_PG_SLOTS else "sqlite"}
 
 
+def test_book_google_by_iso_mirrors_internal_by_default_for_google_provider(monkeypatch):
+    """provider=google sans flag explicite doit quand même créer le miroir UWI par défaut."""
+
+    class FakeCalendar:
+        def can_propose_slots(self):
+            return True
+
+        def book_appointment(self, **kwargs):
+            return "evt_google_default"
+
+    class Qualif:
+        name = "Julie Dupont"
+        contact = "julie@example.com"
+        motif = "Controle"
+
+    class Session:
+        tenant_id = 17
+        conv_id = "conv-google-default-mirror"
+        qualif_data = Qualif()
+        google_event_id = None
+
+    mirrored = {}
+
+    monkeypatch.setattr("backend.calendar_adapter.get_calendar_adapter", lambda session: FakeCalendar())
+    monkeypatch.setattr("backend.tenant_config.get_params", lambda tenant_id: {"calendar_provider": "google", "calendar_id": "cabinet@test"})
+    monkeypatch.setattr(tools_booking, "_ensure_local_slot_id_from_start_iso", lambda start_iso, tenant_id=1: 77)
+
+    def fake_book_local(session, slot_id, source="sqlite"):
+        mirrored["slot_id"] = slot_id
+        mirrored["source"] = source
+        return True
+
+    monkeypatch.setattr(tools_booking, "_book_local_by_slot_id", fake_book_local)
+
+    ok, reason = tools_booking._book_google_by_iso(Session(), "2026-02-06T11:00:00", "2026-02-06T11:15:00")
+
+    assert ok is True
+    assert reason is None
+    assert mirrored == {"slot_id": 77, "source": "pg" if tools_booking.config.USE_PG_SLOTS else "sqlite"}
+
+
 def test_book_google_by_iso_does_not_mirror_when_disabled(monkeypatch):
     """Sans flag activé, le booking Google ne crée pas de RDV interne miroir."""
 

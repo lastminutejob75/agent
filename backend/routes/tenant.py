@@ -746,7 +746,10 @@ def _get_local_appointment_by_id(tenant_id: int, appointment_id: int) -> Optiona
 def _google_mirror_enabled(detail: Optional[dict]) -> bool:
     params = (detail or {}).get("params") or {}
     provider = (params.get("calendar_provider") or "").strip() == "google"
-    return provider and _is_truthy(params.get("mirror_google_bookings_to_internal"))
+    raw = params.get("mirror_google_bookings_to_internal")
+    if provider and raw is None:
+        return True
+    return provider and _is_truthy(raw)
 
 
 def _appointment_lookup_key(start_local: Optional[datetime]) -> str:

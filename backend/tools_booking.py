@@ -103,9 +103,14 @@ def _mirror_google_bookings_enabled(session: Any) -> bool:
     try:
         from backend.tenant_config import get_params
 
-        raw = (get_params(tenant_id) or {}).get("mirror_google_bookings_to_internal")
+        params = get_params(tenant_id) or {}
+        provider = str(params.get("calendar_provider") or "").strip().lower()
+        raw = params.get("mirror_google_bookings_to_internal")
     except Exception:
+        provider = ""
         raw = None
+    if provider == "google" and raw is None:
+        return True
     if isinstance(raw, bool):
         return raw
     if raw is None:
@@ -631,6 +636,13 @@ def get_slots_for_display(
     import time
     t_start = time.time()
     tenant_id = getattr(session, "tenant_id", None) or 1
+    strict_google_mode = False
+    try:
+        from backend.tenant_config import get_params
+        _params = get_params(tenant_id) or {}
+        strict_google_mode = ((_params.get("calendar_provider") or "").strip().lower() == "google")
+    except Exception:
+        strict_google_mode = False
 
     # Fast-path absolu : cache avant toute résolution adapter/tenant-config (évite overhead DB).
     rejected = getattr(session, "rejected_slot_starts", None) if session else None
@@ -651,12 +663,23 @@ def get_slots_for_display(
 
     # Source: adapter (google) ou legacy _get_calendar_service
     calendar_or_adapter = None if use_local_fallback else (adapter if adapter else _get_calendar_service())
+    if strict_google_mode and not use_local_fallback and not calendar_or_adapter:
+        logger.warning("GOOGLE_CALENDAR_STRICT_NO_SERVICE tenant_id=%s pref=%s", tenant_id, pref)
+        return []
 
     # Récupérer le pool brut (pas encore étalé) pour pouvoir filtrer refus puis étaler
     if calendar_or_adapter:
         try:
             pool = _get_slots_from_google_calendar(calendar_or_adapter, limit, pref=pref, tenant_id=tenant_id)
         except GoogleCalendarPermissionError as e:
+            if strict_google_mode:
+                logger.warning(
+                    "GOOGLE_CALENDAR_PERMISSION_STRICT tenant_id=%s pref=%s error=%s",
+                    tenant_id,
+                    pref,
+                    e,
+                )
+                return []
             logger.warning(
                 "GOOGLE_CALENDAR_PERMISSION_FALLBACK tenant_id=%s pref=%s error=%s",
                 tenant_id,
@@ -665,6 +688,14 @@ def get_slots_for_display(
             )
             pool = _get_slots_from_sqlite(limit, pref=pref, tenant_id=tenant_id)
         except (GoogleCalendarNotFoundError, GoogleCalendarError) as e:
+            if strict_google_mode:
+                logger.warning(
+                    "GOOGLE_CALENDAR_READ_STRICT tenant_id=%s pref=%s error=%s",
+                    tenant_id,
+                    pref,
+                    e,
+                )
+                return []
             logger.warning(
                 "GOOGLE_CALENDAR_READ_FALLBACK tenant_id=%s pref=%s error=%s",
                 tenant_id,
@@ -673,6 +704,9 @@ def get_slots_for_display(
             )
             pool = _get_slots_from_sqlite(limit, pref=pref, tenant_id=tenant_id)
     else:
+        if strict_google_mode and not use_local_fallback:
+            logger.warning("GOOGLE_CALENDAR_STRICT_NO_FALLBACK tenant_id=%s pref=%s", tenant_id, pref)
+            return []
         pool = _get_slots_from_sqlite(limit, pref=pref, tenant_id=tenant_id)
 
     # Si préférence demandée mais aucun créneau trouvé, fallback sans filtre (ne pas bloquer)
@@ -682,6 +716,14 @@ def get_slots_for_display(
             try:
                 pool = _get_slots_from_google_calendar(calendar_or_adapter, limit, pref=None, tenant_id=tenant_id)
             except GoogleCalendarPermissionError as e:
+                if strict_google_mode:
+                    logger.warning(
+                        "GOOGLE_CALENDAR_PERMISSION_STRICT tenant_id=%s pref=%s error=%s",
+                        tenant_id,
+                        pref,
+                        e,
+                    )
+                    return []
                 logger.warning(
                     "GOOGLE_CALENDAR_PERMISSION_FALLBACK tenant_id=%s pref=%s error=%s",
                     tenant_id,
@@ -690,6 +732,14 @@ def get_slots_for_display(
                 )
                 pool = _get_slots_from_sqlite(limit, pref=None, tenant_id=tenant_id)
             except (GoogleCalendarNotFoundError, GoogleCalendarError) as e:
+                if strict_google_mode:
+                    logger.warning(
+                        "GOOGLE_CALENDAR_READ_STRICT tenant_id=%s pref=%s error=%s",
+                        tenant_id,
+                        pref,
+                        e,
+                    )
+                    return []
                 logger.warning(
                     "GOOGLE_CALENDAR_READ_FALLBACK tenant_id=%s pref=%s error=%s",
                     tenant_id,
@@ -698,6 +748,9 @@ def get_slots_for_display(
                 )
                 pool = _get_slots_from_sqlite(limit, pref=None, tenant_id=tenant_id)
         else:
+            if strict_google_mode and not use_local_fallback:
+                logger.warning("GOOGLE_CALENDAR_STRICT_NO_FALLBACK tenant_id=%s pref=%s", tenant_id, pref)
+                return []
             pool = _get_slots_from_sqlite(limit, pref=None, tenant_id=tenant_id)
 
     # Exclure créneaux "voisins" des refus (±90 min) pour ne pas reproposer la même plage
