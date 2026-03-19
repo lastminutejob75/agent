@@ -343,6 +343,20 @@ function normalizeDetailCall(detail, fallback) {
   };
 }
 
+function normalizeCallsPayload(payload) {
+  const sourceCalls = Array.isArray(payload?.calls)
+    ? payload.calls
+    : Array.isArray(payload?.items)
+      ? payload.items
+      : [];
+  return {
+    ...(payload && typeof payload === "object" ? payload : {}),
+    calls: sourceCalls,
+    total: Number.isFinite(Number(payload?.total)) ? Number(payload.total) : sourceCalls.length,
+    date: payload?.date || "",
+  };
+}
+
 function normalizeHandoffItem(item) {
   const target = item?.target === "practitioner" ? "Praticien" : "Assistante";
   const targetKey = item?.target === "practitioner" ? "practitioner" : "assistant";
@@ -592,10 +606,10 @@ export default function AppCalls() {
     setLoading(true);
     setError("");
     api
-      .tenantGetCalls(`?limit=50&days=${days}&compact=1`)
+      .tenantGetCalls(`?limit=50&days=${days}`)
       .then((data) => {
         if (cancelled) return;
-        setPayload(data || { calls: [], total: 0, date: "" });
+        setPayload(normalizeCallsPayload(data));
       })
       .catch((e) => {
         if (!cancelled) setError(e?.message || "Impossible de charger les appels.");
