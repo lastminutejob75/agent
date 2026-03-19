@@ -158,11 +158,8 @@ def ingest_end_of_call_report(payload: dict) -> bool:
         logger.debug("end-of-call-report: no call id in payload")
         return False
 
-    from backend.tenant_routing import extract_to_number_from_vapi_payload, resolve_tenant_id_from_vocal_call
-    to_number = extract_to_number_from_vapi_payload(payload)
-    if to_number and isinstance(to_number, str):
-        to_number = to_number.replace("sip:", "").strip() or to_number
-    tenant_id, _ = resolve_tenant_id_from_vocal_call(to_number or "", channel="vocal")
+    from backend.tenant_routing import resolve_tenant_id_from_vapi_payload
+    tenant_id, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
     if tenant_id is None:
         logger.debug("end-of-call-report: could not resolve tenant for call_id=%s", vapi_call_id[:24])
         return False
