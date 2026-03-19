@@ -183,6 +183,33 @@ def test_tenant_me_prefers_business_name_for_display(mock_tenant_detail, mock_ge
 
 
 @patch("backend.routes.tenant.pg_get_tenant_user_by_id")
+@patch("backend.routes.tenant._get_tenant_me_detail")
+def test_tenant_me_marks_service_account_calendar_as_not_ready(mock_tenant_detail, mock_get_user, client, jwt_secret):
+    tenant_id = 2
+    mock_get_user.return_value = {"tenant_id": tenant_id, "email": "client@test.fr", "role": "owner"}
+    mock_tenant_detail.return_value = {
+        "name": "Cabinet Test",
+        "params": {
+            "assistant_name": "sophie",
+            "vapi_assistant_id": "asst_123",
+            "calendar_provider": "google",
+            "calendar_id": "uwi-calendar@lastminutejob-uwi.iam.gserviceaccount.com",
+            "booking_days": [0, 1, 2, 3, 4],
+        },
+        "routing": [],
+    }
+    token = _make_client_jwt(tenant_id, email="client@test.fr", secret=jwt_secret)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = client.get("/api/tenant/me", headers=headers)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["calendar_id"] == "uwi-calendar@lastminutejob-uwi.iam.gserviceaccount.com"
+    assert data["onboarding_steps"]["calendar_ready"] is False
+
+
+@patch("backend.routes.tenant.pg_get_tenant_user_by_id")
 def test_tenant_patch_params_persists_transfer_wizard_config(mock_get_user, client, jwt_secret):
     """Le dashboard client peut sauvegarder et relire la configuration du wizard de transfert."""
     onboarding = client.post(

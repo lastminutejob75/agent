@@ -106,6 +106,11 @@ function addMinutesToTimeLabel(timeLabel, durationMinutes) {
   return `${hours}:${minutes}`;
 }
 
+function looksLikeServiceAccountEmail(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  return raw.endsWith(".iam.gserviceaccount.com");
+}
+
 function createDragPreviewElement(appointment) {
   const node = document.createElement("div");
   node.style.position = "fixed";
@@ -428,7 +433,7 @@ export default function AppAgenda() {
     loadAgenda();
   }, [loadAgenda]);
 
-  const isConnected = me?.calendar_provider === "google" && me?.calendar_id;
+  const isConnected = me?.calendar_provider === "google" && me?.calendar_id && !looksLikeServiceAccountEmail(me?.calendar_id);
   const serviceAccountEmail =
     config?.service_account_email ||
     import.meta.env.VITE_SERVICE_ACCOUNT_EMAIL ||
@@ -662,6 +667,8 @@ export default function AppAgenda() {
       }
       if (res?.reason === "permission") {
         setVerifyError(`Accès refusé. Vérifiez le partage avec ${serviceAccountEmail}`);
+      } else if (res?.reason === "service_account_email") {
+        setVerifyError("Vous avez collé l'email du service account. Collez l'identifiant du calendrier Google du cabinet.");
       } else if (res?.reason === "not_found") {
         setVerifyError("Calendrier introuvable. Vérifiez l'ID copié.");
       } else if (res?.reason === "error") {

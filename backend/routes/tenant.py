@@ -182,6 +182,11 @@ def _is_truthy(value: Any) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on", "oui"}
 
 
+def _looks_like_service_account_email(value: Optional[str]) -> bool:
+    raw = str(value or "").strip().lower()
+    return raw.endswith(".iam.gserviceaccount.com")
+
+
 def _parse_string_list(value: Any) -> List[str]:
     if isinstance(value, (list, tuple, set)):
         return [str(x) for x in value if str(x).strip()]
@@ -1073,10 +1078,11 @@ def tenant_me(auth: dict = Depends(require_tenant_auth)):
     elif booking_days is not None:
         horaires_ready = bool(booking_days)
 
+    calendar_configured = bool(calendar_id) and not _looks_like_service_account_email(calendar_id)
     onboarding_steps = {
         "assistant_ready": bool(assistant_name and vapi_assistant_id),
         "phone_ready": bool(voice_number),
-        "calendar_ready": (calendar_provider == "google" and bool(calendar_id)) or calendar_provider == "none",
+        "calendar_ready": (calendar_provider == "google" and calendar_configured) or calendar_provider == "none",
         "horaires_ready": horaires_ready,
         "faq_ready": faq_ready,
     }
@@ -1813,7 +1819,11 @@ def tenant_agenda(
         "done": done_count,
         "remaining": max(0, len(slots) - done_count),
         "provider": (params.get("calendar_provider") or "none").strip() or "none",
-        "external_connected": bool((params.get("calendar_provider") or "").strip() == "google" and (params.get("calendar_id") or "").strip()),
+        "external_connected": bool(
+            (params.get("calendar_provider") or "").strip() == "google"
+            and (params.get("calendar_id") or "").strip()
+            and not _looks_like_service_account_email(params.get("calendar_id"))
+        ),
     }
 
 
@@ -2261,6 +2271,12 @@ def tenant_agenda_verify_google(
     calendar_id = (body.calendar_id or "").strip()
     if not calendar_id:
         return {"ok": False, "reason": "calendar_id_required"}
+    if _looks_like_service_account_email(calendar_id):
+        return {
+            "ok": False,
+            "reason": "service_account_email",
+            "message": "L'email du service account n'est pas l'ID du calendrier. Collez l'identifiant du calendrier Google du cabinet.",
+        }
     tenant_id = auth["tenant_id"]
     try:
         adapter = _GoogleCalendarAdapter(calendar_id, tenant_id)

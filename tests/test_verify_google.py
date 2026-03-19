@@ -60,6 +60,24 @@ def test_verify_google_not_found_returns_reason_not_found(client):
     assert r.json()["reason"] == "not_found"
 
 
+def test_verify_google_rejects_service_account_email(client):
+    from backend.main import app
+    from backend.routes import tenant
+
+    app.dependency_overrides[tenant.require_tenant_auth] = _auth_override
+    try:
+        r = client.post(
+            "/api/tenant/agenda/verify-google",
+            json={"calendar_id": "uwi-calendar@lastminutejob-uwi.iam.gserviceaccount.com"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert r.status_code == 200
+    assert r.json()["ok"] is False
+    assert r.json()["reason"] == "service_account_email"
+
+
 def test_verify_google_valid_calendar_returns_ok_true(client):
     from backend.main import app
     from backend.routes import tenant
