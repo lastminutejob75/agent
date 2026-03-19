@@ -205,6 +205,32 @@ def test_get_slots_for_display_google_provider_does_not_fallback_to_local_on_per
     assert sqlite_called["value"] is False
 
 
+def test_handle_get_slots_uses_short_sync_fetch_on_cold_cache():
+    """Sur cache froid, le tool vocal doit tenter une lecture courte et rendre des slots dès le premier essai."""
+    session = _make_session()
+
+    fresh_slots = [
+        {"start_iso": "2025-02-05T14:00:00", "end_iso": "2025-02-05T14:15:00", "label": "Mercredi 5 février à 14h00", "source": "google"},
+        {"start_iso": "2025-02-06T15:00:00", "end_iso": "2025-02-06T15:15:00", "label": "Jeudi 6 février à 15h00", "source": "google"},
+    ]
+
+    with patch.object(tools_booking, "_get_cached_slots", return_value=None):
+        with patch.object(tools_booking, "get_slots_for_display", return_value=fresh_slots) as mock_fetch:
+            def _capture_store(sess, slots, enrich_google=False):
+                sess._slots_source = "google"
+                sess.pending_slots = slots
+
+            with patch.object(tools_booking, "store_pending_slots", side_effect=_capture_store) as mock_store:
+                labels, source, err = handle_get_slots(session, "après-midi", "call-cold-cache")
+
+    assert err == ""
+    assert source == "google_calendar"
+    assert labels is not None
+    assert len(labels) == 2
+    assert mock_fetch.called is True
+    mock_store.assert_called_once_with(session, fresh_slots, enrich_google=False)
+
+
 def test_vapi_tool_book_response_contains_json_result():
     """POST /api/vapi/tool action=book : la réponse a results[0].result = JSON string du payload."""
     from fastapi.testclient import TestClient

@@ -68,8 +68,38 @@ def handle_get_slots(
                 )
 
         if not slots:
-            # Mode ultra-réactif vocal: ne jamais bloquer l'appel sur Google.
-            # On déclenche un refresh asynchrone du cache pour les tours suivants.
+            # Cache froid : tenter une lecture synchrone courte avant d'échouer.
+            # Cela évite le faux négatif "agenda indisponible" au premier essai.
+            def _load_slots_sync():
+                return tools_booking.get_slots_for_display(
+                    limit=3,
+                    pref=pref or None,
+                    session=session,
+                    exclude_start_iso=exclude_start_iso or None,
+                    exclude_end_iso=exclude_end_iso or None,
+                )
+
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                    slots = ex.submit(_load_slots_sync).result(timeout=3.5)
+            except concurrent.futures.TimeoutError:
+                slots = None
+                logger.warning(
+                    "CALENDAR_FETCH_SYNC_TIMEOUT call_id=%s pref=%s",
+                    call_id[:24] if call_id else "",
+                    pref or "any",
+                )
+            except Exception as e:
+                slots = None
+                logger.warning(
+                    "CALENDAR_FETCH_SYNC_ERROR call_id=%s pref=%s err=%s",
+                    call_id[:24] if call_id else "",
+                    pref or "any",
+                    str(e)[:120],
+                )
+
+        if not slots:
+            # On garde un refresh asynchrone pour les tours suivants si la tentative courte a échoué.
             def _refresh_cache_async() -> None:
                 try:
                     tools_booking.get_slots_for_display(
