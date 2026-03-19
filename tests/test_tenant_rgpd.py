@@ -172,6 +172,42 @@ def test_tenant_calls_keeps_items_when_call_detail_fails(mock_calls, mock_call_d
     assert data["calls"][0]["summary"] == "Transféré à un humain"
 
 
+@patch("backend.routes.tenant.pg_get_tenant_user_by_id")
+@patch("backend.routes.tenant._get_tenant_detail")
+@patch("backend.routes.tenant._get_call_detail")
+@patch("backend.routes.tenant._get_calls_list")
+def test_tenant_calls_compact_skips_call_detail(mock_calls, mock_call_detail, mock_tenant_detail, mock_get_user, client):
+    mock_get_user.return_value = {"tenant_id": 1, "email": "test@example.com", "role": "owner"}
+    mock_tenant_detail.return_value = {
+        "tenant_id": 1,
+        "name": "Cabinet Test",
+        "timezone": "Europe/Paris",
+        "params": {"assistant_name": "sophie", "timezone": "Europe/Paris"},
+    }
+    mock_calls.return_value = {
+        "items": [
+            {
+                "call_id": "call_compact",
+                "started_at": "2026-03-06T10:32:00Z",
+                "last_event_at": "2026-03-06T10:34:00Z",
+                "result": "transfer",
+                "last_event": "transferred_human",
+                "duration_sec": 120,
+                "customer_number": "+33612345678",
+            }
+        ]
+    }
+    token = _make_jwt()
+    r = client.get("/api/tenant/calls?limit=10&days=1&compact=1", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["total"] == 1
+    assert data["calls"][0]["call_id"] == "call_compact"
+    assert data["calls"][0]["status"] == "TRANSFERRED"
+    assert data["calls"][0]["customer_number"] == "+33612345678"
+    mock_call_detail.assert_not_called()
+
+
 @patch("backend.routes.tenant.get_cabinet_client_by_phone", return_value=None)
 @patch("backend.routes.tenant.pg_get_tenant_user_by_id")
 @patch("backend.routes.tenant._get_tenant_detail")

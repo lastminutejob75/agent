@@ -1234,6 +1234,73 @@ def tenant_calls(
         finally:
             conn.close()
     items = items[:limit]
+    compact_mode = bool(compact)
+    if compact_mode:
+        calls = []
+        for item in items:
+            call_id = (item.get("call_id") or "").strip()
+            if not call_id:
+                continue
+            started_at = item.get("started_at") or item.get("last_event_at")
+            detail_for_display = {
+                "call_id": call_id,
+                "tenant_id": tenant_id,
+                "customer_number": item.get("customer_number"),
+                "started_at": item.get("started_at"),
+                "last_event_at": item.get("last_event_at"),
+                "duration_sec": item.get("duration_sec"),
+                "duration_min": item.get("duration_min"),
+                "result": item.get("result") or "other",
+                "events": [{"event": item.get("last_event"), "meta": {}}] if item.get("last_event") else [],
+                "transcript": None,
+            }
+            status = _resolve_call_status(item, detail_for_display)
+            booking = _build_booking_payload(detail_for_display)
+            call_context = _classify_call_context(status, detail_for_display)
+            resolved_duration_sec = detail_for_display.get("duration_sec")
+            if resolved_duration_sec is None:
+                raw_minutes = detail_for_display.get("duration_min")
+                try:
+                    if raw_minutes is not None:
+                        resolved_duration_sec = int(raw_minutes) * 60
+                except Exception:
+                    resolved_duration_sec = None
+            if resolved_duration_sec is None:
+                try:
+                    start_dt = _parse_dt(detail_for_display.get("started_at") or item.get("started_at"), tz_name)
+                    end_dt = _parse_dt(detail_for_display.get("last_event_at") or item.get("last_event_at"), tz_name)
+                    if start_dt and end_dt:
+                        resolved_duration_sec = max(0, int((end_dt - start_dt).total_seconds()))
+                except Exception:
+                    resolved_duration_sec = None
+            calls.append({
+                "id": call_id,
+                "started_at": detail_for_display.get("started_at") or item.get("started_at"),
+                "last_event_at": detail_for_display.get("last_event_at") or item.get("last_event_at"),
+                "time": _format_hhmm(started_at, tz_name),
+                "duration": _format_duration_short(resolved_duration_sec),
+                "duration_sec": resolved_duration_sec,
+                "patient_name": "Patient",
+                "customer_number": _call_display_phone(item, detail_for_display),
+                "agent_name": assistant_name,
+                "summary": _call_summary_from_detail(status, detail_for_display),
+                "status": status,
+                "call_id": call_id,
+                "patient": {"raw_name": "", "validated_name": "", "display_name": "Patient", "validation_status": "pending", "is_validated": False, "phone": item.get("customer_number") or ""},
+                "booking": booking,
+                "followup_state": "new",
+                "followup_notes": "",
+                "reason_label": call_context.get("reason_label") or "",
+                "reason_context": call_context.get("reason_context") or "",
+                "reason_category": call_context.get("reason_category") or "general",
+                "contextual_action": call_context.get("contextual_action") or {"kind": "open_detail", "label": "Voir le détail"},
+            })
+        return {
+            "calls": calls,
+            "total": len(calls),
+            "date": datetime.now(_get_zoneinfo(tz_name)).strftime("%Y-%m-%d"),
+            "_debug_tenant_id": tenant_id,
+        }
     call_ids_for_followup = [(item.get("call_id") or "").strip() for item in items]
     phones_for_patients = [item.get("customer_number") or "" for item in items]
     followups_by_call: dict = {}
@@ -1297,7 +1364,6 @@ def tenant_calls(
     else:
         followups_by_call = list_call_followups(tenant_id, call_ids_for_followup)
         patient_profiles_by_phone = get_cabinet_clients_by_phones(tenant_id, phones_for_patients)
-    compact_mode = bool(compact)
     calls = []
     for item in items:
         call_id = (item.get("call_id") or "").strip()

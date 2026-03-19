@@ -606,7 +606,7 @@ export default function AppCalls() {
     setLoading(true);
     setError("");
     api
-      .tenantGetCalls(`?limit=50&days=${days}`)
+      .tenantGetCalls(`?limit=50&days=${days}&compact=1`)
       .then((data) => {
         if (cancelled) return;
         setPayload(normalizeCallsPayload(data));
