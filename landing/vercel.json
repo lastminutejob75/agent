@@ -12,6 +12,10 @@
     { "source": "/sitemap.xml", "headers": [{ "key": "Content-Type", "value": "application/xml" }] }
   ],
   "rewrites": [
+    { "source": "/assets/(.*)", "destination": "/assets/$1" },
+    { "source": "/favicon.ico", "destination": "/favicon.ico" },
+    { "source": "/favicon.png", "destination": "/favicon.png" },
+    { "source": "/favicon.svg", "destination": "/favicon.svg" },
     { "source": "/robots.txt", "destination": "/robots.txt" },
     { "source": "/sitemap.xml", "destination": "/sitemap.xml" },
     { "source": "/creer-assistante", "destination": "/creer-assistante/index.html" },
