@@ -190,6 +190,8 @@ export const api = {
       tenant: true,
     }),
   tenantGetAgenda: (params = "") => request(`/api/tenant/agenda${params}`, { tenant: true }),
+  tenantGetAgendaBulk: (dates) =>
+    request(`/api/tenant/agenda/bulk?dates=${encodeURIComponent((dates || []).join(","))}`, { tenant: true }),
   tenantGetAgendaAvailableSlots: (params = "") =>
     request(`/api/tenant/agenda/available-slots${params}`, { tenant: true }),
   tenantCancelAgendaAppointment: (appointmentId, body) =>

@@ -147,12 +147,12 @@ def pg_get_tenant_user_by_id(user_id: Any) -> Optional[Dict[str, Any]]:
     Lookup tenant_user par id (pour validation session).
     Returns {"tenant_id", "email", "role"} ou None.
     """
-    url = _pg_url()
-    if not url:
+    if not _pg_url():
         return None
     try:
-        import psycopg
-        with psycopg.connect(url) as conn:
+        from backend.tenants_pg import pg_tenants_connection
+
+        with pg_tenants_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT tenant_id, email, role FROM tenant_users WHERE id = %s LIMIT 1",
@@ -161,9 +161,9 @@ def pg_get_tenant_user_by_id(user_id: Any) -> Optional[Dict[str, Any]]:
                 row = cur.fetchone()
                 if row:
                     return {
-                        "tenant_id": int(row[0]),
-                        "email": (row[1] or "").strip(),
-                        "role": row[2] or "owner",
+                        "tenant_id": int(row.get("tenant_id") if isinstance(row, dict) else row[0]),
+                        "email": ((row.get("email") if isinstance(row, dict) else row[1]) or "").strip(),
+                        "role": (row.get("role") if isinstance(row, dict) else row[2]) or "owner",
                     }
     except Exception as e:
         logger.warning("pg_get_tenant_user_by_id failed: %s", e)

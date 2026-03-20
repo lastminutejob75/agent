@@ -319,13 +319,11 @@ def _get_tenant_me_detail(tenant_id: int) -> Optional[dict]:
     """Charge seulement les données nécessaires à /api/tenant/me."""
     if config.USE_PG_TENANTS:
         try:
-            import psycopg
-            from psycopg.rows import dict_row
-            from backend.tenants_pg import _pg_url, set_tenant_id_on_connection
+            from backend.tenants_pg import _pg_url, pg_tenants_connection, set_tenant_id_on_connection
 
             url = _pg_url()
             if url:
-                with psycopg.connect(url, row_factory=dict_row) as conn:
+                with pg_tenants_connection() as conn:
                     set_tenant_id_on_connection(conn, tenant_id)
                     with conn.cursor() as cur:
                         cur.execute(
@@ -1633,6 +1631,29 @@ def tenant_patch_handoff(
     return {"ok": True, "item": item}
 
 
+def _build_agenda_day_payload(date_str: str, provider: str, external_connected: bool) -> Dict[str, Any]:
+    return {
+        "slots": [],
+        "date": date_str,
+        "total": 0,
+        "done": 0,
+        "remaining": 0,
+        "provider": provider,
+        "external_connected": external_connected,
+    }
+
+
+def _finalize_agenda_day_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    slots = list(payload.get("slots") or [])
+    slots.sort(key=lambda item: item.get("hour") or "")
+    done_count = sum(1 for item in slots if item.get("done"))
+    payload["slots"] = slots
+    payload["total"] = len(slots)
+    payload["done"] = done_count
+    payload["remaining"] = max(0, len(slots) - done_count)
+    return payload
+
+
 @router.get("/agenda")
 def tenant_agenda(
     auth: dict = Depends(require_tenant_auth),
@@ -1825,6 +1846,215 @@ def tenant_agenda(
             and not _looks_like_service_account_email(params.get("calendar_id"))
         ),
     }
+
+
+@router.get("/agenda/bulk")
+def tenant_agenda_bulk(
+    auth: dict = Depends(require_tenant_auth),
+    dates: str = Query(..., description="Liste CSV de dates YYYY-MM-DD"),
+):
+    """Retourne plusieurs jours d'agenda en une seule réponse pour limiter le fan-out frontend."""
+    tenant_id = auth["tenant_id"]
+    detail = _get_tenant_detail(tenant_id)
+    if not detail:
+        raise HTTPException(404, "Tenant not found")
+
+    requested_dates: List[str] = []
+    for raw in str(dates or "").split(","):
+        value = raw.strip()
+        if not value or value in requested_dates:
+            continue
+        try:
+            datetime.strptime(value, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(400, f"Invalid date format: {value}")
+        requested_dates.append(value)
+    if not requested_dates:
+        return {"dates": {}}
+
+    requested_dates.sort()
+    params = detail.get("params") or {}
+    tz_name = _tenant_timezone(detail)
+    tz = _get_zoneinfo(tz_name)
+    now_local = datetime.now(tz)
+    provider = (params.get("calendar_provider") or "none").strip() or "none"
+    external_connected = bool(
+        (params.get("calendar_provider") or "").strip() == "google"
+        and (params.get("calendar_id") or "").strip()
+        and not _looks_like_service_account_email(params.get("calendar_id"))
+    )
+    payloads = {
+        date_str: _build_agenda_day_payload(date_str, provider, external_connected)
+        for date_str in requested_dates
+    }
+    profile_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+    day_start = datetime.strptime(requested_dates[0], "%Y-%m-%d").replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=tz)
+    day_end = (
+        datetime.strptime(requested_dates[-1], "%Y-%m-%d").replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=tz)
+        + timedelta(days=1)
+    )
+
+    mirror_enabled = _google_mirror_enabled(detail)
+    mirror_lookup: Optional[Dict[str, List[Dict[str, Any]]]] = None
+    if mirror_enabled:
+        mirror_lookup = _load_local_appointments_for_window(tenant_id, day_start, day_end, tz_name)
+
+    if (params.get("calendar_provider") or "").strip() == "google" and (params.get("calendar_id") or "").strip():
+        try:
+            service = GoogleCalendarService((params.get("calendar_id") or "").strip())
+            result = service.service.events().list(
+                calendarId=(params.get("calendar_id") or "").strip(),
+                timeMin=day_start.isoformat(),
+                timeMax=day_end.isoformat(),
+                singleEvents=True,
+                orderBy="startTime",
+                fields="items(id,summary,description,start,end)",
+            ).execute()
+            for event in result.get("items", []):
+                raw_start = (event.get("start") or {}).get("dateTime") or (event.get("start") or {}).get("date")
+                raw_end = (event.get("end") or {}).get("dateTime") or (event.get("end") or {}).get("date")
+                start_dt = _parse_dt(raw_start, tz_name)
+                end_dt = _parse_dt(raw_end, tz_name)
+                if not start_dt:
+                    continue
+                start_local = start_dt.astimezone(tz)
+                end_local = end_dt.astimezone(tz) if end_dt else start_local
+                date_key = start_local.strftime("%Y-%m-%d")
+                if date_key not in payloads:
+                    continue
+                summary = (event.get("summary") or "").strip()
+                description = (event.get("description") or "").strip()
+                patient = summary.replace("RDV - ", "", 1).strip() if summary.startswith("RDV - ") else (summary or "Patient")
+                patient_contact = _extract_google_description_line(description, "Contact")
+                patient = _resolve_agenda_patient_name_cached(tenant_id, patient_contact, patient, profile_cache)
+                motif = _extract_google_description_line(description, "Motif") or (summary if summary and not summary.startswith("RDV - ") else "Consultation")
+                source = "UWI" if summary.startswith("RDV - ") or "Patient:" in description else "EXTERNAL"
+                mirror_booking = None
+                if mirror_enabled and source == "UWI":
+                    mirror_booking = _find_local_appointment_for_google_event(
+                        tenant_id=tenant_id,
+                        start_local=start_local,
+                        patient_contact=patient_contact,
+                        fallback_name=patient,
+                        appointments_index=mirror_lookup,
+                    )
+                payloads[date_key]["slots"].append(
+                    {
+                        "hour": start_local.strftime("%Hh"),
+                        "patient": patient,
+                        "patient_phone": normalize_phone_number(patient_contact),
+                        "type": motif,
+                        "source": source,
+                        "done": end_local <= now_local,
+                        "current": start_local <= now_local < end_local,
+                        "event_id": event.get("id") or "",
+                        "appointment_id": int(mirror_booking.get("id") or 0) if mirror_booking else None,
+                        "slot_id": int(mirror_booking.get("slot_id") or 0) if mirror_booking else None,
+                        "can_cancel": bool(source == "UWI"),
+                        "can_reschedule": bool(mirror_booking),
+                    }
+                )
+        except Exception as e:
+            logger.warning("tenant agenda bulk google failed tenant_id=%s: %s", tenant_id, e)
+    else:
+        url = os.environ.get("DATABASE_URL") or os.environ.get("PG_SLOTS_URL")
+        if url:
+            try:
+                import psycopg
+                from psycopg.rows import dict_row
+
+                with psycopg.connect(url, row_factory=dict_row) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            SELECT a.id, a.slot_id, a.name, a.contact, a.motif, s.start_ts
+                            FROM appointments a
+                            JOIN slots s ON s.id = a.slot_id
+                            WHERE a.tenant_id = %s
+                              AND s.start_ts >= %s
+                              AND s.start_ts < %s
+                            ORDER BY s.start_ts ASC
+                            """,
+                            (tenant_id, day_start.astimezone(timezone.utc), day_end.astimezone(timezone.utc)),
+                        )
+                        for row in cur.fetchall():
+                            start_local = _parse_dt(row.get("start_ts"), tz_name)
+                            if not start_local:
+                                continue
+                            start_local = start_local.astimezone(tz)
+                            date_key = start_local.strftime("%Y-%m-%d")
+                            if date_key not in payloads:
+                                continue
+                            end_local = start_local + timedelta(minutes=30)
+                            patient_name = _resolve_agenda_patient_name_cached(
+                                tenant_id,
+                                row.get("contact"),
+                                row.get("name"),
+                                profile_cache,
+                            )
+                            payloads[date_key]["slots"].append(
+                                {
+                                    "hour": start_local.strftime("%Hh"),
+                                    "patient": patient_name,
+                                    "patient_phone": normalize_phone_number(row.get("contact")),
+                                    "type": row.get("motif") or "Consultation",
+                                    "source": "UWI",
+                                    "done": end_local <= now_local,
+                                    "current": start_local <= now_local < end_local,
+                                    "event_id": str(row.get("id") or ""),
+                                    "appointment_id": int(row.get("id") or 0),
+                                    "slot_id": int(row.get("slot_id") or 0),
+                                    "can_cancel": True,
+                                    "can_reschedule": True,
+                                }
+                            )
+            except Exception as e:
+                logger.warning("tenant agenda bulk pg failed tenant_id=%s: %s", tenant_id, e)
+        else:
+            ensure_tenant_config()
+            conn = get_conn()
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT a.id, a.slot_id, a.name, a.contact, a.motif, s.date, s.time
+                    FROM appointments a
+                    JOIN slots s ON s.id = a.slot_id AND s.tenant_id = a.tenant_id
+                    WHERE a.tenant_id = ?
+                      AND s.date >= ?
+                      AND s.date <= ?
+                    ORDER BY s.date ASC, s.time ASC
+                    """,
+                    (tenant_id, requested_dates[0], requested_dates[-1]),
+                ).fetchall()
+                for row in rows:
+                    start_local = _parse_dt(f"{row['date']}T{row['time']}:00", tz_name)
+                    if not start_local:
+                        continue
+                    date_key = start_local.strftime("%Y-%m-%d")
+                    if date_key not in payloads:
+                        continue
+                    end_local = start_local + timedelta(minutes=30)
+                    patient_name = _resolve_agenda_patient_name_cached(tenant_id, row["contact"], row["name"], profile_cache)
+                    payloads[date_key]["slots"].append(
+                        {
+                            "hour": start_local.strftime("%Hh"),
+                            "patient": patient_name,
+                            "patient_phone": normalize_phone_number(row["contact"]),
+                            "type": row["motif"] or "Consultation",
+                            "source": "UWI",
+                            "done": end_local <= now_local,
+                            "current": start_local <= now_local < end_local,
+                            "event_id": str(row["id"] or ""),
+                            "appointment_id": int(row["id"] or 0),
+                            "slot_id": int(row["slot_id"] or 0),
+                            "can_cancel": True,
+                            "can_reschedule": True,
+                        }
+                    )
+            finally:
+                conn.close()
+
+    return {"dates": {date_str: _finalize_agenda_day_payload(payload) for date_str, payload in payloads.items()}}
 
 
 @router.get("/agenda/available-slots")

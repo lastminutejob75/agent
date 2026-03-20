@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from contextlib import contextmanager
 from typing import Optional, Tuple
 
 from backend.pg_tenant_context import set_tenant_id_on_connection
@@ -18,10 +19,64 @@ logger = logging.getLogger(__name__)
 _PG_OK: Optional[bool] = None
 _PG_LAST_CHECK: float = 0
 _HEALTHCHECK_INTERVAL_SEC = 60
+_TENANT_POOL = None
+_TENANT_POOL_URL: Optional[str] = None
 
 
 def _pg_url() -> Optional[str]:
     return os.environ.get("DATABASE_URL") or os.environ.get("PG_TENANTS_URL")
+
+
+def _dict_row_factory():
+    from psycopg.rows import dict_row
+
+    return dict_row
+
+
+def _get_tenant_pool():
+    global _TENANT_POOL, _TENANT_POOL_URL
+    url = _pg_url()
+    if not url:
+        return None
+    if _TENANT_POOL is not None and _TENANT_POOL_URL == url:
+        return _TENANT_POOL
+    try:
+        from psycopg_pool import ConnectionPool
+
+        _TENANT_POOL = ConnectionPool(
+            conninfo=url,
+            min_size=1,
+            max_size=5,
+            timeout=3.0,
+            max_idle=300.0,
+            kwargs={"row_factory": _dict_row_factory()},
+        )
+        _TENANT_POOL_URL = url
+        logger.info("PG tenant connection pool created (min=1, max=5)")
+        return _TENANT_POOL
+    except Exception as e:
+        logger.debug("Failed to create tenant PG pool, fallback direct connect: %s", e)
+        return None
+
+
+@contextmanager
+def pg_tenants_connection():
+    pool = _get_tenant_pool()
+    if pool is not None:
+        try:
+            with pool.connection() as conn:
+                yield conn
+                return
+        except Exception as e:
+            logger.debug("Tenant PG pool connection failed, fallback direct: %s", e)
+
+    url = _pg_url()
+    if not url:
+        raise RuntimeError("No tenant PostgreSQL URL configured")
+    import psycopg
+
+    with psycopg.connect(url, row_factory=_dict_row_factory(), connect_timeout=3) as conn:
+        yield conn
 
 
 def _is_transient(e: Exception) -> bool:
@@ -171,8 +226,7 @@ def pg_get_tenant_flags(tenant_id: int) -> Optional[Tuple[dict, str]]:
         return None
 
     def _query() -> Optional[Tuple[dict, str]]:
-        import psycopg
-        with psycopg.connect(url) as conn:
+        with pg_tenants_connection() as conn:
             set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute(
@@ -210,8 +264,7 @@ def pg_get_tenant_params(tenant_id: int) -> Optional[Tuple[dict, str]]:
         return None
 
     def _query() -> Optional[Tuple[dict, str]]:
-        import psycopg
-        with psycopg.connect(url) as conn:
+        with pg_tenants_connection() as conn:
             set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute(
@@ -550,8 +603,7 @@ def pg_get_tenant_full(tenant_id: int) -> Optional[dict]:
     if not url:
         return None
     try:
-        from backend.pg_pool import pg_connection
-        with pg_connection() as conn:
+        with pg_tenants_connection() as conn:
             set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute("SELECT tenant_id, name, timezone, status, created_at FROM tenants WHERE tenant_id = %s", (tenant_id,))

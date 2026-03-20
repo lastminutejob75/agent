@@ -406,16 +406,31 @@ export default function AppAgenda() {
     setLoading(true);
     setError("");
     try {
-      const [nextMe, nextConfig, nextHoraires, ...agendaResponses] = await Promise.all([
+      const bulkAgendaPromise = api
+        .tenantGetAgendaBulk(visibleDates)
+        .then((data) => data?.dates || null)
+        .catch(() => null);
+      const [nextMe, nextConfig, nextHoraires, bulkAgenda] = await Promise.all([
         api.tenantMe(),
         api.agendaConfig(),
         api.tenantGetHoraires(),
-        ...visibleDates.map((date) => api.tenantGetAgenda(`?date=${date}`).catch(() => ({ slots: [], date, total: 0, done: 0, remaining: 0 }))),
+        bulkAgendaPromise,
       ]);
       const nextAgendaByDate = {};
-      visibleDates.forEach((date, index) => {
-        nextAgendaByDate[date] = agendaResponses[index] || { slots: [], date, total: 0, done: 0, remaining: 0 };
-      });
+      if (bulkAgenda) {
+        visibleDates.forEach((date) => {
+          nextAgendaByDate[date] = bulkAgenda[date] || { slots: [], date, total: 0, done: 0, remaining: 0 };
+        });
+      } else {
+        const agendaResponses = await Promise.all(
+          visibleDates.map((date) =>
+            api.tenantGetAgenda(`?date=${date}`).catch(() => ({ slots: [], date, total: 0, done: 0, remaining: 0 })),
+          ),
+        );
+        visibleDates.forEach((date, index) => {
+          nextAgendaByDate[date] = agendaResponses[index] || { slots: [], date, total: 0, done: 0, remaining: 0 };
+        });
+      }
       setMe(nextMe);
       setConfig(nextConfig);
       setAgenda(nextAgendaByDate[selectedDate] || null);

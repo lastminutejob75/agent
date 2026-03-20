@@ -147,6 +147,51 @@ def test_google_mirror_enabled_by_default_when_provider_google_and_flag_missing(
     assert data["slots"][0]["can_reschedule"] is True
 
 
+def test_tenant_agenda_bulk_groups_multiple_days_with_single_google_fetch(client):
+    from backend.main import app
+    from backend.routes import tenant
+
+    app.dependency_overrides[tenant.require_tenant_auth] = _auth_override
+    detail = _google_detail()
+    detail["params"]["mirror_google_bookings_to_internal"] = False
+    first_start = datetime(2026, 3, 12, 9, 0)
+    second_start = datetime(2026, 3, 13, 14, 0)
+    with patch("backend.routes.tenant._get_tenant_detail", return_value=detail), patch(
+        "backend.routes.tenant.get_cabinet_client_by_phone",
+        return_value=None,
+    ), patch("backend.routes.tenant.GoogleCalendarService") as mock_google_service:
+        mock_google_service.return_value.service.events.return_value.list.return_value.execute.return_value = {
+            "items": [
+                {
+                    "id": "evt_day_1",
+                    "summary": "RDV - Claire Fontaine",
+                    "description": "Patient: Claire Fontaine\nContact: +33612345678\nMotif: Consultation",
+                    "start": {"dateTime": first_start.isoformat() + "Z"},
+                    "end": {"dateTime": (first_start + timedelta(minutes=15)).isoformat() + "Z"},
+                },
+                {
+                    "id": "evt_day_2",
+                    "summary": "RDV - Marc Durand",
+                    "description": "Patient: Marc Durand\nContact: +33600000000\nMotif: Contrôle",
+                    "start": {"dateTime": second_start.isoformat() + "Z"},
+                    "end": {"dateTime": (second_start + timedelta(minutes=15)).isoformat() + "Z"},
+                },
+            ]
+        }
+        try:
+            response = client.get("/api/tenant/agenda/bulk?dates=2026-03-12,2026-03-13")
+        finally:
+            app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["dates"]["2026-03-12"]["total"] == 1
+    assert data["dates"]["2026-03-13"]["total"] == 1
+    assert data["dates"]["2026-03-12"]["slots"][0]["event_id"] == "evt_day_1"
+    assert data["dates"]["2026-03-13"]["slots"][0]["event_id"] == "evt_day_2"
+    mock_google_service.return_value.service.events.return_value.list.assert_called_once()
+
+
 def test_tenant_agenda_cancel_google_mirror_cancels_both(client):
     from backend.main import app
     from backend.routes import tenant
