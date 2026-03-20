@@ -119,6 +119,30 @@ class _GoogleCalendarAdapter:
         except (GoogleCalendarPermissionError, GoogleCalendarNotFoundError, GoogleCalendarError):
             raise
 
+    def get_free_slots_range(
+        self,
+        dates: List[datetime],
+        duration_minutes: int = 15,
+        start_hour: int = 9,
+        end_hour: int = 18,
+        limit: int = 3,
+        buffer_minutes: int = 0,
+    ) -> List[Dict[str, Any]]:
+        svc = self._get_service()
+        if not svc:
+            return []
+        try:
+            return svc.get_free_slots_range(
+                dates=dates,
+                duration_minutes=duration_minutes,
+                start_hour=start_hour,
+                end_hour=end_hour,
+                limit=limit,
+                buffer_minutes=buffer_minutes,
+            )
+        except (GoogleCalendarPermissionError, GoogleCalendarNotFoundError, GoogleCalendarError):
+            raise
+
     def book_appointment(
         self,
         start_time: str,

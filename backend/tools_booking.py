@@ -827,14 +827,55 @@ def _get_slots_from_google_calendar(
     else:
         start_hour, end_hour = base_start, base_end
 
-    per_day = 1
-    days_fr = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
+    candidate_dates = []
     for day_offset in range(1, 8):
-        if len(pool) >= target_pool_size:
-            break
         date = datetime.now() + timedelta(days=day_offset)
         if date.weekday() not in booking_days:
             continue
+        candidate_dates.append(date)
+
+    batched_getter = getattr(calendar, "get_free_slots_range", None)
+    if callable(batched_getter) and candidate_dates:
+        batch_slots = batched_getter(
+            dates=candidate_dates,
+            duration_minutes=duration_minutes,
+            start_hour=start_hour,
+            end_hour=end_hour,
+            limit=target_pool_size,
+            buffer_minutes=buffer_minutes,
+        )
+        if batch_slots:
+            days_fr = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
+            for slot in batch_slots:
+                start_iso = slot.get('start', '')
+                day_fr, hour, label_vocal = '', 0, ''
+                try:
+                    dt = datetime.fromisoformat(start_iso.replace('Z', '+00:00'))
+                    if dt.tzinfo:
+                        dt = dt.replace(tzinfo=None)
+                    day_fr = days_fr[dt.weekday()]
+                    hour = dt.hour
+                    label_vocal = f"{day_fr} à {hour}h"
+                except Exception:
+                    pass
+                pool.append(prompts.SlotDisplay(
+                    idx=len(pool) + 1,
+                    label=slot['label'],
+                    slot_id=len(pool),
+                    start=start_iso,
+                    day=day_fr,
+                    hour=hour,
+                    label_vocal=label_vocal or slot.get('label', ''),
+                    source="google",
+                ))
+            logger.info(f"Google Calendar: {len(pool)} créneaux en pool batch (pref={pref})")
+            return pool
+
+    per_day = 1
+    days_fr = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
+    for date in candidate_dates:
+        if len(pool) >= target_pool_size:
+            break
         day_slots = calendar.get_free_slots(
             date=date,
             duration_minutes=duration_minutes,

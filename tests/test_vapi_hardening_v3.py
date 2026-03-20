@@ -1,5 +1,6 @@
 # tests/test_vapi_hardening_v3.py
 """Tests Hardening V3 : payload book strict, booking_failures, get_slots exclude, log."""
+from datetime import datetime
 import json
 from unittest.mock import MagicMock, patch
 
@@ -229,6 +230,58 @@ def test_handle_get_slots_uses_short_sync_fetch_on_cold_cache():
     assert len(labels) == 2
     assert mock_fetch.called is True
     mock_store.assert_called_once_with(session, fresh_slots, enrich_google=False)
+
+
+def test_get_slots_from_google_calendar_prefers_batched_range_call():
+    """Le fetch Google multi-jours doit utiliser la lecture groupée pour éviter 1 appel API par jour."""
+
+    class FakeCalendar:
+        def __init__(self):
+            self.range_calls = 0
+            self.single_calls = 0
+
+        def get_free_slots_range(self, **kwargs):
+            self.range_calls += 1
+            dates = kwargs["dates"]
+            return [
+                {
+                    "start": dates[0].replace(hour=14, minute=0, second=0, microsecond=0).isoformat(),
+                    "end": dates[0].replace(hour=14, minute=15, second=0, microsecond=0).isoformat(),
+                    "label": "Premier",
+                },
+                {
+                    "start": dates[1].replace(hour=15, minute=0, second=0, microsecond=0).isoformat(),
+                    "end": dates[1].replace(hour=15, minute=15, second=0, microsecond=0).isoformat(),
+                    "label": "Deuxième",
+                },
+                {
+                    "start": dates[2].replace(hour=16, minute=0, second=0, microsecond=0).isoformat(),
+                    "end": dates[2].replace(hour=16, minute=15, second=0, microsecond=0).isoformat(),
+                    "label": "Troisième",
+                },
+            ]
+
+        def get_free_slots(self, **kwargs):
+            self.single_calls += 1
+            return []
+
+    rules = {
+        "duration_minutes": 15,
+        "start_hour": 9,
+        "end_hour": 18,
+        "booking_days": [0, 1, 2, 3, 4],
+        "buffer_minutes": 0,
+    }
+    calendar = FakeCalendar()
+
+    with patch("backend.tenant_config.get_booking_rules", return_value=rules):
+        slots = tools_booking._get_slots_from_google_calendar(calendar, limit=3, pref="après-midi", tenant_id=2)
+
+    assert len(slots) == 3
+    assert calendar.range_calls == 1
+    assert calendar.single_calls == 0
+    assert all(getattr(slot, "source", "") == "google" for slot in slots)
+    assert all(isinstance(datetime.fromisoformat(slot.start), datetime) for slot in slots)
 
 
 def test_vapi_tool_book_response_contains_json_result():

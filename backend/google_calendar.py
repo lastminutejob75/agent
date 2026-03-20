@@ -194,6 +194,112 @@ class GoogleCalendarService:
         except Exception as e:
             logger.error("Error getting free slots: %s", e, exc_info=True)
             raise GoogleCalendarError(e)
+
+    def get_free_slots_range(
+        self,
+        dates: List[datetime],
+        duration_minutes: int = 15,
+        start_hour: int = 9,
+        end_hour: int = 18,
+        limit: int = 3,
+        buffer_minutes: int = 0,
+    ) -> List[Dict]:
+        """
+        Récupère en une seule requête Google le premier créneau libre de plusieurs jours.
+
+        Cette variante évite de faire 1 appel API par jour dans le parcours vocal,
+        ce qui réduit fortement le risque de timeout Vapi.
+        """
+        if not dates or limit <= 0:
+            return []
+        try:
+            tz = ZoneInfo(CALENDAR_TZ) if ZoneInfo else timezone(timedelta(hours=1))
+            normalized_dates: List[datetime] = []
+            for raw_date in dates:
+                current = raw_date
+                if current.tzinfo is None:
+                    current = current.replace(tzinfo=tz)
+                else:
+                    current = current.astimezone(tz)
+                normalized_dates.append(current)
+            normalized_dates.sort()
+
+            range_start = normalized_dates[0].replace(hour=start_hour, minute=0, second=0, microsecond=0)
+            range_end = normalized_dates[-1].replace(hour=end_hour, minute=0, second=0, microsecond=0)
+            time_min = range_start.isoformat().replace('+00:00', 'Z') if range_start.tzinfo else range_start.isoformat() + 'Z'
+            time_max = range_end.isoformat().replace('+00:00', 'Z') if range_end.tzinfo else range_end.isoformat() + 'Z'
+            events_result = self.service.events().list(
+                calendarId=self.calendar_id,
+                timeMin=time_min,
+                timeMax=time_max,
+                singleEvents=True,
+                orderBy='startTime'
+            ).execute()
+            events = events_result.get('items', [])
+            events_busy = len(events)
+
+            parsed_events = []
+            for event in events:
+                raw_start = event['start'].get('dateTime', event['start'].get('date', ''))
+                raw_end = event['end'].get('dateTime', event['end'].get('date', ''))
+                event_start = datetime.fromisoformat(raw_start.replace('Z', '+00:00'))
+                event_end = datetime.fromisoformat(raw_end.replace('Z', '+00:00'))
+                if event_start.tzinfo is not None:
+                    event_start = event_start.astimezone(tz)
+                    event_end = event_end.astimezone(tz)
+                else:
+                    event_start = event_start.replace(tzinfo=tz)
+                    event_end = event_end.replace(tzinfo=tz)
+                parsed_events.append((event_start, event_end))
+
+            free_slots: List[Dict] = []
+            buffer_td = timedelta(minutes=int(buffer_minutes or 0))
+            for current_date in normalized_dates:
+                day_start = current_date.replace(hour=start_hour, minute=0, second=0, microsecond=0)
+                day_end = current_date.replace(hour=end_hour, minute=0, second=0, microsecond=0)
+                current = day_start
+                while current < day_end:
+                    slot_end = current + timedelta(minutes=duration_minutes)
+                    effective_end = slot_end + buffer_td
+                    if effective_end > day_end:
+                        break
+                    is_free = True
+                    for event_start, event_end in parsed_events:
+                        if current < event_end and effective_end > event_start:
+                            is_free = False
+                            break
+                    if is_free:
+                        free_slots.append({
+                            'start': current.isoformat(),
+                            'end': slot_end.isoformat(),
+                            'label': self._format_slot_label(current),
+                        })
+                        break
+                    current += timedelta(minutes=duration_minutes)
+                if len(free_slots) >= limit:
+                    break
+
+            logger.info(
+                "get_free_slots_range: days=%s start_hour=%s end_hour=%s events_busy=%s free_slots=%s",
+                len(normalized_dates),
+                start_hour,
+                end_hour,
+                events_busy,
+                len(free_slots),
+            )
+            return free_slots
+        except HttpError as e:
+            status = getattr(e.resp, "status", None)
+            err_txt = str(e)
+            logger.error("Error getting free slots range: HTTP %s - %s", status, err_txt)
+            if status == 403 or "insufficientPermissions" in err_txt:
+                raise GoogleCalendarPermissionError(e)
+            if status == 404 or "notFound" in err_txt:
+                raise GoogleCalendarNotFoundError(e)
+            raise GoogleCalendarError(e)
+        except Exception as e:
+            logger.error("Error getting free slots range: %s", e, exc_info=True)
+            raise GoogleCalendarError(e)
     
     def _format_slot_label(self, dt: datetime) -> str:
         """Formate un créneau en français."""
