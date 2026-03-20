@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from backend import tools_booking
 
 logger = logging.getLogger(__name__)
+_VOICE_SYNC_FETCH_TIMEOUT_S = 6.5
 
 
 def _slot_to_vocal_label(slot: Any) -> str:
@@ -81,7 +82,9 @@ def handle_get_slots(
 
             try:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                    slots = ex.submit(_load_slots_sync).result(timeout=3.5)
+                    # En prod, une lecture Google multi-jours peut prendre ~6s.
+                    # On laisse plus de marge ici tout en restant sous le hard cap global du webhook.
+                    slots = ex.submit(_load_slots_sync).result(timeout=_VOICE_SYNC_FETCH_TIMEOUT_S)
             except concurrent.futures.TimeoutError:
                 slots = None
                 logger.warning(

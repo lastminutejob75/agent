@@ -303,11 +303,12 @@ async def keep_alive():
         try:
             from backend.tools_booking import get_slots_for_display
             from backend.session import Session
+            warmup_tenant_id = int(getattr(config, "TEST_TENANT_ID", config.DEFAULT_TENANT_ID) or config.DEFAULT_TENANT_ID)
             for pref_label, pref_val in [("none", None), ("matin", "matin"), ("aprem", "après-midi")]:
                 s = Session(conv_id=f"__warmup_{pref_label}__")
-                s.tenant_id = 1
+                s.tenant_id = warmup_tenant_id
                 slots = get_slots_for_display(limit=3, pref=pref_val, session=s)
-                print(f"🔥 Slots warmup pref={pref_label}: {len(slots)} cached")
+                print(f"🔥 Slots warmup tenant={warmup_tenant_id} pref={pref_label}: {len(slots)} cached")
         except Exception as e:
             print(f"⚠️ Slots warmup failed: {e}")
 
