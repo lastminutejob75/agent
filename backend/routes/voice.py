@@ -1081,6 +1081,30 @@ def _persist_status_update_sync(payload: dict, message: dict) -> None:
         )
 
 
+def _persist_transcript_sync(payload: dict, message: dict) -> None:
+    """Persist transcript webhook hors chemin critique pour ne pas bloquer les tool-calls."""
+    from backend.tenant_routing import resolve_tenant_id_from_vapi_payload
+    from backend.vapi_calls_pg import insert_call_transcript
+
+    _cid = _webhook_extract_call_id(payload)
+    _tid, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
+    _role = (message.get("role") or "user").lower()
+    _text = (message.get("transcript") or "").strip()
+    _is_final = (message.get("transcriptType") or "").lower() == "final"
+    if _cid and _tid and _text:
+        insert_call_transcript(_tid, _cid, _role, _text, is_final=_is_final)
+
+
+def _schedule_transcript_persist(payload: dict, message: dict) -> None:
+    async def _persist_transcript_bg() -> None:
+        try:
+            await asyncio.to_thread(_persist_transcript_sync, payload, message)
+        except Exception as e:
+            logger.warning("VAPI_TRANSCRIPT_PERSIST_FAILED %s", str(e)[:120])
+
+    asyncio.create_task(_persist_transcript_bg())
+
+
 async def _vapi_webhook_inner(request: Request, payload: dict):
     """Corps du webhook Vapi — séparé pour garantir un try/except global."""
     message = payload.get("message") or {}
@@ -1165,17 +1189,10 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
     # transcript → call_transcripts (user / assistant, final ou partial) pour détail appel + analyse
     if msg_type == "transcript":
         try:
-            from backend.tenant_routing import resolve_tenant_id_from_vapi_payload
-            from backend.vapi_calls_pg import insert_call_transcript
-            _cid = _webhook_extract_call_id(payload)
-            _tid, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
-            _role = (message.get("role") or "user").lower()
-            _text = (message.get("transcript") or "").strip()
-            _is_final = (message.get("transcriptType") or "").lower() == "final"
-            if _cid and _tid and _text:
-                insert_call_transcript(_tid, _cid, _role, _text, is_final=_is_final)
+            _schedule_transcript_persist(payload, message)
         except Exception as e:
             logger.warning("VAPI_TRANSCRIPT_PERSIST_FAILED %s", str(e)[:120])
+        return Response(status_code=200)
 
     # tool-calls : Vapi envoie les appels de fonction ici quand le tool est configuré avec serverUrl = webhook
     if msg_type == "tool-calls":

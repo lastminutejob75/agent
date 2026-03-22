@@ -157,6 +157,26 @@ def test_status_update_persists_customer_number_from_fallback_field():
     assert any(call.kwargs.get("customer_number") == "+33612345678" for call in mock_upsert.call_args_list)
 
 
+def test_transcript_webhook_fast_acks_without_inline_insert():
+    """transcript doit répondre 200 sans insert synchrone sur le chemin webhook."""
+    client = TestClient(app)
+    payload = {
+        "message": {
+            "type": "transcript",
+            "role": "assistant",
+            "transcript": "Bonjour",
+            "transcriptType": "final",
+            "call": {"id": "call-transcript-1"},
+        }
+    }
+    with patch("backend.routes.voice._schedule_transcript_persist") as mock_schedule:
+        with patch("backend.vapi_calls_pg.insert_call_transcript") as mock_insert:
+            response = client.post("/api/vapi/webhook", json=payload)
+    assert response.status_code == 200
+    mock_schedule.assert_called_once()
+    mock_insert.assert_not_called()
+
+
 def test_chat_completions_persists_customer_number_from_call_from():
     """chat/completions doit aussi pousser le numéro appelant dans vapi_calls."""
     client = TestClient(app)

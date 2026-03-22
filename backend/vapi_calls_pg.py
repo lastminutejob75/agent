@@ -10,6 +10,8 @@ import os
 from datetime import datetime, timezone
 from typing import Optional
 
+from backend.pg_pool import pg_connection
+
 logger = logging.getLogger(__name__)
 
 _TABLES_CREATED = False
@@ -57,8 +59,7 @@ def ensure_tables() -> bool:
     if not url:
         return False
     try:
-        import psycopg
-        with psycopg.connect(url) as conn:
+        with pg_connection() as conn:
             with conn.cursor() as cur:
                 for stmt in _CREATE_SQL.strip().split(";"):
                     stmt = stmt.strip()
@@ -94,8 +95,7 @@ def upsert_vapi_call(
     if not ensure_tables():
         return False
     try:
-        import psycopg
-        with psycopg.connect(url) as conn:
+        with pg_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -149,8 +149,7 @@ def insert_call_transcript(
     if not ensure_tables():
         return False
     try:
-        import psycopg
-        with psycopg.connect(url) as conn:
+        with pg_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
