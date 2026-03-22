@@ -1289,15 +1289,28 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
                     current_tenant_id.set(str(resolved_tid))
 
                     if action == "book":
+                        import time as _bt
+                        _b0 = _bt.monotonic()
                         session = _get_or_resume_voice_session(resolved_tid, w_call_id)
                         session.channel = "vocal"
                         session.tenant_id = resolved_tid
                         from backend import vapi_tool_handlers as th
+                        _b1 = _bt.monotonic()
                         book_payload, err = th.handle_book(
                             session, params.get("selected_slot"), params.get("patient_name"), params.get("motif"), w_call_id,
                         )
+                        t_book = int((_bt.monotonic() - _b1) * 1000)
                         if hasattr(ENGINE.session_store, "save"):
                             ENGINE.session_store.save(session)
+                        t_total = int((_bt.monotonic() - _b0) * 1000)
+                        logger.info(
+                            "[WEBHOOK_BOOK_SEGMENTS] call_id=%s tenant_id=%s t_book=%dms t_total=%dms confirmed=%s",
+                            w_call_id,
+                            resolved_tid,
+                            t_book,
+                            t_total,
+                            bool((book_payload or {}).get("status") == "confirmed"),
+                        )
                         if err:
                             results.append({"toolCallId": tc_id, "result": err})
                         else:
@@ -1382,9 +1395,10 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
                     pass
             _tc_body = json.dumps(response_body, ensure_ascii=False)
             _tc_elapsed = int((_tc_time.monotonic() - _tc_recv_ts) * 1000)
+            _tc_call_id = _webhook_extract_call_id(payload) or "unknown"
             logger.info(
-                "[VAPI_WEBHOOK_TOOL_RESPONSE] elapsed=%dms body_len=%d body=%s",
-                _tc_elapsed, len(_tc_body), _tc_body[:500],
+                "[VAPI_WEBHOOK_TOOL_RESPONSE] call_id=%s elapsed=%dms body_len=%d body=%s",
+                _tc_call_id, _tc_elapsed, len(_tc_body), _tc_body[:500],
             )
             return JSONResponse(response_body, status_code=200)
         except Exception as e:
@@ -1768,11 +1782,21 @@ async def vapi_tool(request: Request):
 
         # --- book : réservation (payload JSON strict V3) ---
         if action == "book":
+            _book_t0 = _time.monotonic()
             session = _get_session()
             session.channel = "vocal"
             session.tenant_id = resolved_tenant_id
+            _book_t1 = _time.monotonic()
             payload, err = th.handle_book(session, selected_slot, patient_name, motif, call_id)
+            _book_handle_ms = int((_time.monotonic() - _book_t1) * 1000)
             if err:
+                _book_elapsed_ms = int((_time.monotonic() - _book_t0) * 1000)
+                logger.info(
+                    "[VAPI_TOOL_BOOK_RETURN] call_id=%s elapsed=%dms t_book=%dms error=1",
+                    call_id,
+                    _book_elapsed_ms,
+                    _book_handle_ms,
+                )
                 return JSONResponse(
                     th.build_vapi_tool_response(tool_call_id, None, err),
                     status_code=200,
@@ -1785,6 +1809,15 @@ async def vapi_tool(request: Request):
             result_str = json.dumps(payload or {}, ensure_ascii=False)
             logger.info("[VAPI_TOOL_RESPONSE] payload=%s result=%s", payload, result_str)
             body = th.build_vapi_tool_response(tool_call_id, result_str, None)
+            _book_elapsed_ms = int((_time.monotonic() - _book_t0) * 1000)
+            logger.info(
+                "[VAPI_TOOL_BOOK_RETURN] call_id=%s elapsed=%dms t_book=%dms body_len=%d confirmed=%s",
+                call_id,
+                _book_elapsed_ms,
+                _book_handle_ms,
+                len(result_str),
+                bool((payload or {}).get("status") == "confirmed"),
+            )
             return JSONResponse(body, status_code=200)
 
         # --- cancel / modify : déléguer à l'engine avec user_message ---

@@ -636,13 +636,6 @@ def get_slots_for_display(
     import time
     t_start = time.time()
     tenant_id = getattr(session, "tenant_id", None) or 1
-    strict_google_mode = False
-    try:
-        from backend.tenant_config import get_params
-        _params = get_params(tenant_id) or {}
-        strict_google_mode = ((_params.get("calendar_provider") or "").strip().lower() == "google")
-    except Exception:
-        strict_google_mode = False
 
     # Fast-path absolu : cache avant toute résolution adapter/tenant-config (évite overhead DB).
     rejected = getattr(session, "rejected_slot_starts", None) if session else None
@@ -651,6 +644,14 @@ def get_slots_for_display(
         if cached:
             logger.info(f"⚡ get_slots_for_display: cache hit pref={pref} ({(time.time() - t_start) * 1000:.0f}ms)")
             return cached
+
+    strict_google_mode = False
+    try:
+        from backend.tenant_config import get_params
+        _params = get_params(tenant_id) or {}
+        strict_google_mode = ((_params.get("calendar_provider") or "").strip().lower() == "google")
+    except Exception:
+        strict_google_mode = False
 
     # Adapter calendrier par tenant (google/none) — fallback config global
     from backend.calendar_adapter import get_calendar_adapter, is_local_only_adapter

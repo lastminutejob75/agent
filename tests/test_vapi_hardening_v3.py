@@ -206,6 +206,23 @@ def test_get_slots_for_display_google_provider_does_not_fallback_to_local_on_per
     assert sqlite_called["value"] is False
 
 
+def test_get_slots_for_display_cache_hit_skips_tenant_params_lookup():
+    """Un cache hit chaud ne doit pas relire tenant_config avant de répondre."""
+    from backend.tools_booking import get_slots_for_display
+
+    class Session:
+        tenant_id = 9
+        rejected_slot_starts = []
+
+    cached_slots = [{"start_iso": "2025-02-05T10:00:00", "end_iso": "2025-02-05T10:15:00", "label": "A", "source": "google"}]
+
+    with patch.object(tools_booking, "_get_cached_slots", return_value=cached_slots):
+        with patch("backend.tenant_config.get_params", side_effect=AssertionError("get_params should not be called on cache hit")):
+            slots = get_slots_for_display(limit=3, pref="matin", session=Session())
+
+    assert slots == cached_slots
+
+
 def test_handle_get_slots_uses_short_sync_fetch_on_cold_cache():
     """Sur cache froid, le tool vocal doit tenter une lecture courte et rendre des slots dès le premier essai."""
     session = _make_session()
