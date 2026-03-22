@@ -1350,7 +1350,8 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
                         # Garde-fou prod strict: si on a déjà des slots proposés, ne jamais basculer
                         # en transfer "automatique" (cause fréquente du "je ne peux pas effectuer cette action").
                         pending_slots = getattr(session, "pending_slots", None) or []
-                        if pending_slots:
+                        should_replay_slots = bool(pending_slots) and not transfer_reason
+                        if should_replay_slots:
                             try:
                                 from backend.tools_booking import slot_to_vocal_label
                                 labels = [slot_to_vocal_label(s) for s in pending_slots[:3] if s]
@@ -1861,8 +1862,9 @@ async def vapi_tool(request: Request):
             session = _get_session()
             session.channel = "vocal"
             session.tenant_id = resolved_tenant_id
+            transfer_reason = (params.get("transfer_reason") or "").strip().lower()
             pending_slots = getattr(session, "pending_slots", None) or []
-            if pending_slots:
+            if pending_slots and not transfer_reason:
                 try:
                     from backend.tools_booking import slot_to_vocal_label
                     labels = [slot_to_vocal_label(s) for s in pending_slots[:3] if s]

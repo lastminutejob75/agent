@@ -38,15 +38,7 @@ def build_book_tool_result(session: Any, payload: Optional[Dict[str, Any]]) -> s
     status = str((payload or {}).get("status") or "").strip().lower()
     if status != "confirmed":
         return _vapi_result_string(payload or {})
-
-    first_line = ""
-    try:
-        first_line = ((prompts.format_booking_confirmed("RDV", channel="web") or "").splitlines() or [""])[0].strip()
-    except Exception:
-        first_line = ""
-    closing_line = (prompts.pick_close(0) or "").strip()
-    parts = [part for part in (first_line, closing_line) if part]
-    return " ".join(parts) if parts else _vapi_result_string(payload or {})
+    return "Votre rendez-vous est confirmé. Merci pour votre appel. Bonne journée."
 
 
 def handle_get_slots(

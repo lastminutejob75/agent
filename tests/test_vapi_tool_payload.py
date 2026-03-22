@@ -75,6 +75,4 @@ def test_build_book_tool_result_returns_spoken_confirmation_for_confirmed():
         customer_phone = "+33612345678"
 
     result = build_book_tool_result(SessionStub(), {"status": "confirmed", "event_id": "evt_1"})
-    assert "Votre rendez-vous est confirmé" in result
-    assert "Merci pour votre appel. Bonne journée." in result
-    assert not result.strip().startswith("{")
+    assert result == "Votre rendez-vous est confirmé. Merci pour votre appel. Bonne journée."

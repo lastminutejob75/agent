@@ -177,6 +177,38 @@ def test_transcript_webhook_fast_acks_without_inline_insert():
     mock_insert.assert_not_called()
 
 
+def test_transfer_with_explicit_reason_does_not_replay_pending_slots():
+    client = TestClient(app)
+    payload = {
+        "message": {
+            "type": "tool-calls",
+            "toolCallList": [
+                {
+                    "id": "call-transfer-1",
+                    "function": {
+                        "name": "function_tool",
+                        "arguments": {
+                            "action": "transfer",
+                            "transfer_reason": "probleme_agenda",
+                            "patient_name": "Pierre",
+                        },
+                    },
+                }
+            ],
+            "call": {"id": "call-voice-transfer-1"},
+        }
+    }
+    fake_session = MagicMock()
+    fake_session.pending_slots = [{"start_iso": "2026-03-24T14:00:00+01:00", "end_iso": "2026-03-24T14:15:00+01:00"}]
+    with patch("backend.routes.voice._get_or_resume_voice_session", return_value=fake_session):
+        with patch("backend.tenant_routing.resolve_tenant_id_from_vapi_payload", return_value=(2, "route")):
+            response = client.post("/api/vapi/webhook", json=payload)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["results"][0]["result"] == "Je vous transfère maintenant."
+
+
 def test_chat_completions_persists_customer_number_from_call_from():
     """chat/completions doit aussi pousser le numéro appelant dans vapi_calls."""
     client = TestClient(app)
