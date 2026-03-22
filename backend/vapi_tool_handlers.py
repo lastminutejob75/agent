@@ -13,7 +13,7 @@ import concurrent.futures
 import threading
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from backend import tools_booking
+from backend import prompts, tools_booking
 
 logger = logging.getLogger(__name__)
 _VOICE_SYNC_FETCH_TIMEOUT_S = 6.5
@@ -27,6 +27,26 @@ def _slot_to_vocal_label(slot: Any) -> str:
 def _vapi_result_string(data: Dict[str, Any]) -> str:
     """Sérialise le résultat en une seule ligne (Vapi exige result = string)."""
     return json.dumps(data, ensure_ascii=False)
+
+
+def build_book_tool_result(session: Any, payload: Optional[Dict[str, Any]]) -> str:
+    """
+    Retour tool Vapi pour `book`.
+    - `confirmed` : renvoyer un texte final court, déjà prêt à prononcer.
+    - autres statuts : conserver le JSON strict existant.
+    """
+    status = str((payload or {}).get("status") or "").strip().lower()
+    if status != "confirmed":
+        return _vapi_result_string(payload or {})
+
+    first_line = ""
+    try:
+        first_line = ((prompts.format_booking_confirmed("RDV", channel="web") or "").splitlines() or [""])[0].strip()
+    except Exception:
+        first_line = ""
+    closing_line = (prompts.pick_close(0) or "").strip()
+    parts = [part for part in (first_line, closing_line) if part]
+    return " ".join(parts) if parts else _vapi_result_string(payload or {})
 
 
 def handle_get_slots(

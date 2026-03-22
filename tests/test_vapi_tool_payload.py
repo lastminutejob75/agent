@@ -2,6 +2,7 @@
 """Test extraction des paramètres du tool Vapi (message.toolCallList / toolCalls)."""
 import pytest
 from backend.routes.voice import _tool_extract_parameters, _tool_extract_tool_call_id
+from backend.vapi_tool_handlers import build_book_tool_result
 
 
 def test_extract_parameters_from_tool_call_list():
@@ -67,3 +68,13 @@ def test_extract_parameters_legacy_top_level_parameters():
     assert params.get("action") == "book"
     assert params.get("patient_name") == "Marie"
     assert params.get("selected_slot") == "2"
+
+
+def test_build_book_tool_result_returns_spoken_confirmation_for_confirmed():
+    class SessionStub:
+        customer_phone = "+33612345678"
+
+    result = build_book_tool_result(SessionStub(), {"status": "confirmed", "event_id": "evt_1"})
+    assert "Votre rendez-vous est confirmé" in result
+    assert "Merci pour votre appel. Bonne journée." in result
+    assert not result.strip().startswith("{")

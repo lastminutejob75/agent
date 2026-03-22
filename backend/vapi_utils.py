@@ -109,6 +109,8 @@ Quand le client choisit un créneau :
 → Appeler function_tool avec action: "book" en incluant patient_name, motif, selected_slot.
 
 Ne confirmer QUE si le statut retourné est "confirmed".
+Si le résultat du tool `book` est un texte simple, le lire EXACTEMENT tel quel.
+Après un `book` confirmé, ne jamais ajouter de préface, ne jamais reformuler, et appeler immédiatement `endCall`.
 
 Si le tool échoue :
 Dire exactement :
@@ -252,6 +254,19 @@ def _vapi_tool_url() -> str:
     return f"{base}/api/vapi/tool"
 
 
+def _build_function_tool_messages() -> list[Dict[str, Any]]:
+    """Messages Vapi du function tool: courts et neutres pour éviter une répétition lourde."""
+    return [
+        {"type": "request-start", "content": "Un instant.", "blocking": True},
+        {"type": "request-response-delayed", "content": "Encore une seconde."},
+        {
+            "type": "request-failed",
+            "content": "Je n'arrive pas à consulter l'agenda pour le moment. Souhaitez-vous qu'on vous rappelle ?",
+            "endCallAfterSpokenEnabled": False,
+        },
+    ]
+
+
 def _build_function_tool_definition() -> Dict[str, Any]:
     """
     Définition du tool function_tool pour Vapi (server-side).
@@ -310,6 +325,8 @@ def _build_function_tool_definition() -> Dict[str, Any]:
         "server": {
             "url": _vapi_tool_url(),
         },
+        "messages": _build_function_tool_messages(),
+        "async": False,
     }
 
 
@@ -555,6 +572,42 @@ async def patch_vapi_assistant_add_tool(vapi_assistant_id: str) -> Dict[str, Any
             len(new_model.get("tools") or []),
         )
         return result
+
+
+async def patch_vapi_function_tool(tool_id: str | None = None) -> Dict[str, Any]:
+    """Synchronise le tool persistant Vapi avec des messages de maintien courts."""
+    target_tool_id = (tool_id or "").strip() or _vapi_function_tool_id()
+    headers = {
+        "Authorization": f"Bearer {_vapi_api_key()}",
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient() as client:
+        current_res = await client.get(
+            f"{VAPI_API_URL}/tool/{target_tool_id}",
+            headers=headers,
+            timeout=15,
+        )
+        current_res.raise_for_status()
+        current = current_res.json() or {}
+        patch_payload = {
+            "messages": _build_function_tool_messages(),
+            "async": False,
+        }
+        patch_res = await client.patch(
+            f"{VAPI_API_URL}/tool/{target_tool_id}",
+            json=patch_payload,
+            headers=headers,
+            timeout=15,
+        )
+        patch_res.raise_for_status()
+        result = patch_res.json() or {}
+        logger.info(
+            "VAPI_FUNCTION_TOOL_SYNCED tool_id=%s request_start=%s delayed=%s",
+            target_tool_id[:24],
+            ((result.get("messages") or [{}])[0].get("content") if isinstance(result.get("messages"), list) and result.get("messages") else ""),
+            ((result.get("messages") or [{}, {}])[1].get("content") if isinstance(result.get("messages"), list) and len(result.get("messages") or []) > 1 else ""),
+        )
+        return {"before": current, "after": result}
 
 
 async def assign_twilio_to_vapi(assistant_id: str, twilio_number: str) -> None:

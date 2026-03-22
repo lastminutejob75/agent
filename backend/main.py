@@ -1090,6 +1090,24 @@ async def debug_vapi_sync_faq(tenant_id: int = 1):
         return {"error": str(e)[:300], "tenant_id": tenant_id}
 
 
+@app.post("/debug/vapi-sync-function-tool")
+async def debug_vapi_sync_function_tool(tool_id: str = None):
+    """Synchronise le tool function_tool persistant Vapi (messages courts, mode bloquant conservé)."""
+    try:
+        from backend.vapi_utils import patch_vapi_function_tool
+
+        result = await patch_vapi_function_tool(tool_id)
+        after = result.get("after") or {}
+        return {
+            "ok": True,
+            "tool_id": str(after.get("id") or tool_id or "")[:24],
+            "messages": after.get("messages") or [],
+            "async": after.get("async"),
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
 @app.post("/debug/vapi-patch-prompt-faq-rule")
 async def debug_vapi_patch_prompt_faq_rule():
     """Injecte la règle FAQ dans le system prompt de tous les assistants Vapi."""

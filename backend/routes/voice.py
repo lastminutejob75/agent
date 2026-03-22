@@ -1331,7 +1331,7 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
                         if err:
                             results.append({"toolCallId": tc_id, "result": err})
                         else:
-                            results.append({"toolCallId": tc_id, "result": json.dumps(book_payload or {}, ensure_ascii=False)})
+                            results.append({"toolCallId": tc_id, "result": th.build_book_tool_result(session, book_payload)})
 
                     elif action in ("cancel", "modify"):
                         text = user_msg or ("Je souhaite annuler mon rendez-vous" if action == "cancel" else "Je souhaite modifier mon rendez-vous")
@@ -1823,7 +1823,7 @@ async def vapi_tool(request: Request):
                     ENGINE.session_store.save(session)
             except Exception as save_err:
                 logger.warning("Tool book: save session failed (booking already done): %s", save_err)
-            result_str = json.dumps(payload or {}, ensure_ascii=False)
+            result_str = th.build_book_tool_result(session, payload)
             logger.info("[VAPI_TOOL_RESPONSE] payload=%s result=%s", payload, result_str)
             body = th.build_vapi_tool_response(tool_call_id, result_str, None)
             _book_elapsed_ms = int((_time.monotonic() - _book_t0) * 1000)
