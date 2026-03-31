@@ -3,10 +3,14 @@
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Helmet } from "react-helmet-async";
+import { Facebook, Linkedin } from "lucide-react";
 import "./UwiLandingNew.css";
 const PricingSimulator = lazy(() => import("./PricingSimulator"));
 const AgentsMarquee = lazy(() => import("./AgentsMarquee"));
 const AgentsSpotlight = lazy(() => import("./AgentsSpotlight"));
+
+const UWI_FACEBOOK_URL = "https://www.facebook.com/profile.php?id=61579544710923";
+const UWI_LINKEDIN_URL = "https://www.linkedin.com/company/uwi-medical/";
 
 const TYPEWRITER_LINES = [
   "Cabinet du Dr. Martin, bonjour ! Je suis UWi, comment puis-je vous aider ?",
@@ -800,6 +804,26 @@ export default function UwiLanding() {
           <Link to="/cgv">CGV</Link>
           <Link to="/cgu">CGU</Link>
           <Link to="/mentions-legales">Mentions légales</Link>
+          <div className="landing-footer-socials" aria-label="Réseaux sociaux UWi">
+            <a
+              href={UWI_LINKEDIN_URL}
+              target="_blank"
+              rel="noreferrer"
+              aria-label="LinkedIn UWi"
+              title="LinkedIn UWi"
+            >
+              <Linkedin size={16} />
+            </a>
+            <a
+              href={UWI_FACEBOOK_URL}
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Facebook UWi"
+              title="Facebook UWi"
+            >
+              <Facebook size={16} />
+            </a>
+          </div>
           <span>© UWi Medical</span>
         </footer>
       </div>

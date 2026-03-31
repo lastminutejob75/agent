@@ -782,6 +782,16 @@
 }
 .uwi-landing-new .landing-footer a { color: var(--muted-hi); text-decoration: none; }
 .uwi-landing-new .landing-footer a:hover { color: var(--teal); }
+.uwi-landing-new .landing-footer-socials {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+.uwi-landing-new .landing-footer-socials a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 
 /* Pricing section — fond gris très clair, cartes blanches pour contraste (comme maquette) */
 .uwi-landing-new .pricing-section {
