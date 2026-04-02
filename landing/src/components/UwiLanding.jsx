@@ -789,13 +789,6 @@ export default function UwiLanding() {
       </div>
 
       <div className="wrap">
-        {/* Sticky CTA — mobile uniquement */}
-        <div className="sticky-cta">
-          <Link to="/creer-assistante?new=1" className="sticky-cta-btn">
-            Créer mon assistant — gratuit 1 mois →
-          </Link>
-        </div>
-
         <footer className="landing-footer">
           <Link to="/creer-assistante?new=1">Créer mon assistant</Link>
           <Link to="/checkout">Paiement</Link>
