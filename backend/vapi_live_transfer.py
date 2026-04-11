@@ -174,45 +174,61 @@ def maybe_start_terminal_booking_end(
 
     started_at = time.perf_counter()
     control_host = urlparse(control_url).netloc or ""
-    _SAY_SETTLE_SECONDS = 7.0
-    body_say = {
-        "type": "say",
-        "content": (message or _BOOKING_END_MESSAGE).strip() or _BOOKING_END_MESSAGE,
-        "endCallAfterSpoken": True,
+    _SETTLE_SECONDS = 8.0
+    final_text = (message or _BOOKING_END_MESSAGE).strip() or _BOOKING_END_MESSAGE
+    body_add_msg = {
+        "type": "add-message",
+        "message": {
+            "role": "system",
+            "content": (
+                f"INSTRUCTION PRIORITAIRE — Dis EXACTEMENT cette phrase, mot pour mot, "
+                f"sans rien ajouter, modifier ou reformuler : "
+                f"« {final_text} » "
+                f"Puis raccroche immédiatement."
+            ),
+        },
+        "triggerResponseEnabled": True,
     }
+    body_end = {"type": "end-call"}
 
     try:
         with httpx.Client(timeout=_BOOKING_END_CONTROL_TIMEOUT_SECONDS) as client:
-            t_say_0 = time.perf_counter()
-            say_response = client.post(
+            t0 = time.perf_counter()
+            add_resp = client.post(
                 control_url,
-                json=body_say,
+                json=body_add_msg,
                 headers={"Content-Type": "application/json"},
             )
-            say_response.raise_for_status()
-            t_say_ms = round((time.perf_counter() - t_say_0) * 1000, 0)
+            add_resp.raise_for_status()
+            t_add_ms = round((time.perf_counter() - t0) * 1000, 0)
+
+            time.sleep(_SETTLE_SECONDS)
+
+            try:
+                client.post(
+                    control_url,
+                    json=body_end,
+                    headers={"Content-Type": "application/json"},
+                )
+            except Exception:
+                pass
+
+        elapsed_ms = round((time.perf_counter() - started_at) * 1000, 0)
         setattr(session, "booking_end_control_requested", True)
         logger.info(
-            "BOOKING_END_CONTROL_TRIGGERED call_id=%s tenant_id=%s control_host=%s t_say_ms=%s end_after_spoken=%s message=%s — sleeping %.1fs before returning tool response",
+            "BOOKING_END_CONTROL_TRIGGERED call_id=%s tenant_id=%s control_host=%s t_add_msg_ms=%s settle_s=%.1f elapsed_ms=%s message=%s",
             str(getattr(session, "conv_id", "") or "")[:24],
             int(getattr(session, "tenant_id", 1) or 1),
             control_host,
-            t_say_ms,
-            True,
-            body_say["content"][:120],
-            _SAY_SETTLE_SECONDS,
-        )
-        time.sleep(_SAY_SETTLE_SECONDS)
-        elapsed_ms = round((time.perf_counter() - started_at) * 1000, 0)
-        logger.info(
-            "BOOKING_END_CONTROL_SETTLED call_id=%s elapsed_ms=%s",
-            str(getattr(session, "conv_id", "") or "")[:24],
+            t_add_ms,
+            _SETTLE_SECONDS,
             elapsed_ms,
+            final_text[:120],
         )
         return {
             "attempted": True,
             "ok": True,
-            "message": body_say["content"],
+            "message": final_text,
         }
     except Exception as exc:
         status_code = getattr(getattr(exc, "response", None), "status_code", None)
