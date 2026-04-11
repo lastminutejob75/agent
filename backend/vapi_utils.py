@@ -75,15 +75,21 @@ Si une info manque, pose une question pour la collecter, puis appelle le tool.
 
 Modèles d'appels (exemples)
 get_slots ⇒ envoyer toujours: patient_name, motif, preference
+Si le patient précise une heure souhaitée, ajouter aussi preferred_time au format HH:MM et preferred_time_type selon ce mapping :
+- "à partir de 16h30", "pas avant 16h30" ⇒ preferred_time_type = "min"
+- "avant 16h30", "au plus tard 16h30" ⇒ preferred_time_type = "max"
+- "vers 16h30", "plutôt vers 16h30" ⇒ preferred_time_type = "around"
+- "à 16h30", "16h30 pile" ⇒ preferred_time_type = "exact"
 book ⇒ envoyer toujours: patient_name, motif, selected_slot
 cancel/modify ⇒ envoyer toujours: patient_name + user_message (le message brut du patient)
 transfer ⇒ envoyer toujours: transfer_reason, et inclure patient_name si connu, et user_message si utile
 
 [RÈGLE RGPD — NUMÉRO]
 Si {{{{customer.number}}}} est disponible et non vide : ne JAMAIS redemander le numéro.
-Pour confirmer le numéro, mentionne uniquement les 2 derniers chiffres.
-Exemple : "J'ai un numéro qui se termine par 14, c'est bien ça ?"
-Si le client dit que ce n'est pas le bon numéro : demander le bon numéro, puis confirmer uniquement les 2 derniers chiffres.
+Pour confirmer le numéro déjà connu, dis simplement :
+"J'ai bien votre numéro de téléphone. Est-ce bien cela ?"
+Ne JAMAIS prononcer de placeholder, de variable technique, ni de texte comme "number minus two" ou "customer.number".
+Si le client dit que ce n'est pas le bon numéro : demander le bon numéro, puis le confirmer simplement.
 Si le numéro n'est pas disponible, demande-le poliment.
 
 [RÈGLE ABSOLUE — CRÉNEAUX]
@@ -93,28 +99,80 @@ Après avoir reçu :
 - le nom (patient_name)
 - le motif (motif)
 - la préférence (preference: matin / après-midi)
-→ Tu DOIS appeler function_tool avec action: "get_slots" en incluant patient_name, motif, preference.
+- si le patient donne aussi une heure précise, preferred_time au format HH:MM
+- et preferred_time_type si le sens est clair (min / max / around / exact)
+→ Tu DOIS appeler function_tool avec action: "get_slots" en incluant patient_name, motif, preference, preferred_time et preferred_time_type si disponibles.
+
+Si le patient demande une heure qui ne correspond pas exactement à un des créneaux proposés, ne corrige pas toi-même le calendrier.
+Soit tu rappelles les créneaux proposés et demandes d'en choisir un, soit tu rappelles get_slots avec preferred_time si le patient exprime une nouvelle préférence horaire précise.
+Tu n'as jamais le droit d'inventer qu'un jour "n'existe pas".
 
 Tu annonces uniquement les créneaux retournés.
+Le résultat du tool `function_tool` est toujours un JSON stringifié.
+Tu dois prendre tes décisions UNIQUEMENT à partir de `status`, `slots` et `reason`.
+Tu n'as pas le droit de déduire une action à partir d'une chaîne libre.
 
 Format obligatoire : jour complet + date complète + heure complète.
 Exemple : "Jeudi 20 février à 14 heures"
 
-Si le tool échoue ou ne retourne rien :
-Dire exactement :
+Contrat de lecture OBLIGATOIRE pour `get_slots` :
+- si `status = "ok"` : annonce uniquement les éléments de `slots[].label`, sans rien inventer ;
+- si `status = "no_slots"` : dire exactement :
+"Je n'ai pas de créneau disponible pour cette demande. Souhaitez-vous que je recherche une autre heure ou un autre jour ?"
+- si `status = "agenda_unavailable"` : dire exactement :
 "Je n'arrive pas à consulter l'agenda pour le moment. Souhaitez-vous qu'on vous rappelle ?"
+
+Règles absolues :
+- ne JAMAIS traiter `no_slots` comme une panne agenda ;
+- ne JAMAIS traiter `agenda_unavailable` comme un simple manque de disponibilité ;
+- ne JAMAIS prendre une décision à partir du texte brut du tool.
+
+[RÈGLE ABSOLUE — ACCEPTATION DU RAPPEL]
+Si tu viens de dire :
+"Je n'arrive pas à consulter l'agenda pour le moment. Souhaitez-vous qu'on vous rappelle ?"
+et que le client répond oui (exemples : "oui", "oui d'accord", "volontiers", "bien sûr", "pourquoi pas") :
+Dire exactement :
+"Très bien. Le cabinet vous rappellera dès que possible. Merci pour votre appel. Bonne journée."
+Puis appeler immédiatement `endCall`.
+
+Si le client répond non :
+Dire exactement :
+"Très bien. N'hésitez pas à rappeler. Bonne journée."
+Puis appeler immédiatement `endCall`.
+
+Dans ce sous-flow de rappel :
+Ne pose aucune autre question.
+Ne propose pas de transfert.
+Ne reformule pas.
+Ne continue pas la conversation après la phrase de clôture.
+
+[RÈGLE ABSOLUE — AUCUN CRÉNEAU DISPONIBLE]
+Si le dernier résultat tool `get_slots` a `status = "no_slots"` et que tu viens de dire qu'aucun créneau n'est disponible pour la demande courante :
+tu dois proposer une autre heure ou un autre jour.
+Si le patient demande "pourquoi" après cette réponse, dire exactement :
+"Je n'ai pas de disponibilité correspondant à cette demande dans l'agenda actuel. Souhaitez-vous une autre heure ou un autre jour ?"
+Ne transfère pas. Ne parle pas de panne agenda. Ne reformule pas en échec technique.
 
 [RÈGLE ABSOLUE — RÉSERVATION]
 Quand le client choisit un créneau :
 → Appeler function_tool avec action: "book" en incluant patient_name, motif, selected_slot.
 
-Ne confirmer QUE si le statut retourné est "confirmed".
-Si le résultat du tool `book` est un texte simple, le lire EXACTEMENT tel quel.
-Après un `book` confirmé, ne jamais ajouter de préface, ne jamais reformuler, et appeler immédiatement `endCall`.
-Après un `book` confirmé, tu n'as PAS le droit de dire "Un instant." ni "Au revoir.".
-Ta seule réponse autorisée est le texte exact du résultat tool, puis `endCall`.
+Contrat de lecture OBLIGATOIRE pour `book` :
+- si `status = "confirmed"` :
+- ne lis PAS le contenu du tool,
+- ne prononce aucun texte libre,
+- appelle immédiatement le tool natif `endCall`.
+Le message vocal de clôture est déjà géré par `endCallMessage`.
+Après un `book` confirmé, tu n'as PAS le droit de dire "Un instant.", "Au revoir.", ni aucune autre phrase.
 
-Si le tool échoue :
+Après avoir appelé `endCall`, ignore totalement le contenu de retour du tool `endCall`,
+y compris s'il contient des textes comme :
+"Tool Result Still Pending But Proceed Further If Possible."
+ou
+"Success."
+Après l'appel de `endCall`, tu n'as plus le droit de produire un nouveau message.
+
+- si `status = "failed"` :
 Dire exactement :
 "Je n'ai pas pu valider la réservation. Souhaitez-vous réessayer ?"
 
@@ -131,16 +189,12 @@ Si "confirmed" → passer à la clôture.
 [RÈGLE ABSOLUE — FIN DE CONVERSATION]
 ⚠️ IMPORTANT — AUCUNE HÉSITATION POSSIBLE
 
-Après confirmation "confirmed" :
-Dire :
-"Votre rendez-vous est confirmé."
-
-Confirmer les 2 derniers chiffres du numéro si disponible.
-
-Dire exactement :
-"Merci pour votre appel. Bonne journée."
-
-IMMÉDIATEMENT appeler le tool endCall.
+Après confirmation `book.status = "confirmed"` :
+N'énonce AUCUN texte toi-même.
+N'essaie PAS de lire le résultat tool.
+Appelle UNIQUEMENT `endCall`.
+Le message "Votre rendez-vous est confirmé. Merci pour votre appel. Bonne journée." est déjà géré par `endCallMessage`.
+Si `endCall` est déjà appelé, tu ne dois plus rien dire du tout, même si Vapi t'envoie ensuite un résultat tool.
 
 NE PAS :
 relancer la conversation
@@ -148,6 +202,7 @@ poser une nouvelle question
 proposer autre chose
 reformuler
 continuer à parler
+prononcer un placeholder technique de numéro
 
 [AUTRES CAS — FAQ (horaires, adresse, tarifs, vacances, fermetures…)]
 Réponds DIRECTEMENT à partir du bloc "FAQ DU CABINET" ci-dessous.
@@ -175,7 +230,9 @@ Appeler function_tool avec :
 action: "transfer"
 transfer_reason (ex: "demande_humain", "urgence", "probleme_agenda", "probleme_reservation", "autre")
 inclure patient_name si connu, et user_message si utile
-Ne pas inventer de numéro de transfert : le backend décide selon ses règles."""
+Ne pas inventer de numéro de transfert : le backend décide selon ses règles.
+Pour un simple échec de consultation agenda, utiliser le message de rappel exact ci-dessus et ne pas transférer automatiquement.
+Pour un cas "aucun créneau disponible", ne jamais transférer automatiquement."""
 
 
 def _build_base_prompt(tenant_id: int = 1) -> str:
@@ -285,10 +342,13 @@ def _build_function_tool_definition() -> Dict[str, Any]:
                 "Outil backend pour les ACTIONS uniquement. "
                 "Utilise cet outil SEULEMENT quand le patient veut : "
                 "consulter les créneaux disponibles (get_slots), "
+                    "valider le numéro de téléphone avant réservation (validate_contact), "
                 "réserver un rendez-vous (book), "
                 "annuler un rendez-vous (cancel), "
                 "modifier un rendez-vous (modify), "
                 "ou être transféré vers un humain (transfer). "
+                "Le backend renvoie toujours un JSON stringifié avec un champ status. "
+                "Tu dois interpréter le résultat uniquement via status, slots et reason. "
                 "Pour les questions d'information (horaires, tarifs, adresse, vacances, etc.), "
                 "réponds DIRECTEMENT depuis tes instructions sans appeler cet outil."
             ),
@@ -297,7 +357,7 @@ def _build_function_tool_definition() -> Dict[str, Any]:
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["get_slots", "book", "cancel", "modify", "transfer"],
+                        "enum": ["get_slots", "validate_contact", "book", "cancel", "modify", "transfer"],
                         "description": "L'action à exécuter.",
                     },
                     "user_message": {
@@ -316,12 +376,29 @@ def _build_function_tool_definition() -> Dict[str, Any]:
                         "type": "string",
                         "description": "Préférence horaire du patient (matin, après-midi, jour spécifique).",
                     },
+                    "preferred_time": {
+                        "type": "string",
+                        "description": "Heure souhaitée précise au format HH:MM (ex: 16:00) si le patient demande un horaire comme 'vers 16h'.",
+                    },
+                    "preferred_time_type": {
+                        "type": "string",
+                        "enum": ["exact", "min", "max", "around"],
+                        "description": "Sens de la contrainte horaire: exact (= a 16h30), min (= a partir de 16h30), max (= avant / au plus tard 16h30), around (= vers 16h30).",
+                    },
                     "selected_slot": {
                         "type": "string",
                         "description": "Créneau sélectionné pour la réservation (format ISO ou texte).",
                     },
+                    "phone_number": {
+                        "type": "string",
+                        "description": "Numéro de téléphone fourni ou corrigé par le patient. Ne jamais le relire intégralement à voix haute.",
+                    },
+                    "confirmation_last4": {
+                        "type": "string",
+                        "description": "4 derniers chiffres confirmés par le patient pour valider un numéro déjà connu.",
+                    },
                 },
-                "required": ["action", "user_message"],
+                "required": ["action"],
             },
         },
         "server": {
@@ -610,6 +687,128 @@ async def patch_vapi_function_tool(tool_id: str | None = None) -> Dict[str, Any]
             ((result.get("messages") or [{}, {}])[1].get("content") if isinstance(result.get("messages"), list) and len(result.get("messages") or []) > 1 else ""),
         )
         return {"before": current, "after": result}
+
+
+async def patch_vapi_function_tool_server(tool_id: str, server_url: str) -> Dict[str, Any]:
+    """Met à jour uniquement l'URL server d'un tool Vapi existant."""
+    target_tool_id = (tool_id or "").strip()
+    target_server_url = (server_url or "").strip()
+    if not target_tool_id:
+        raise ValueError("tool_id requis")
+    if not target_server_url:
+        raise ValueError("server_url requis")
+
+    headers = {
+        "Authorization": f"Bearer {_vapi_api_key()}",
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient() as client:
+        current_res = await client.get(
+            f"{VAPI_API_URL}/tool/{target_tool_id}",
+            headers=headers,
+            timeout=15,
+        )
+        current_res.raise_for_status()
+        current = current_res.json() or {}
+        patch_payload = {
+            "server": {"url": target_server_url},
+        }
+        patch_res = await client.patch(
+            f"{VAPI_API_URL}/tool/{target_tool_id}",
+            json=patch_payload,
+            headers=headers,
+            timeout=15,
+        )
+        patch_res.raise_for_status()
+        result = patch_res.json() or {}
+        logger.info(
+            "VAPI_FUNCTION_TOOL_SERVER_UPDATED tool_id=%s server_url=%s",
+            target_tool_id[:24],
+            target_server_url[:80],
+        )
+        return {"before": current, "after": result}
+
+
+async def create_vapi_function_tool_clone(source_tool_id: str) -> Dict[str, Any]:
+    """Crée un nouveau tool Vapi dédié à partir d'un tool existant."""
+    source_tool_id = (source_tool_id or "").strip()
+    if not source_tool_id:
+        raise ValueError("source_tool_id requis")
+    headers = {
+        "Authorization": f"Bearer {_vapi_api_key()}",
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient() as client:
+        current_res = await client.get(
+            f"{VAPI_API_URL}/tool/{source_tool_id}",
+            headers=headers,
+            timeout=15,
+        )
+        current_res.raise_for_status()
+        source = current_res.json() or {}
+        payload = {
+            "type": source.get("type") or "function",
+            "function": source.get("function") or _build_function_tool_definition().get("function"),
+            "server": source.get("server") or {"url": _vapi_tool_url()},
+            "messages": source.get("messages") or _build_function_tool_messages(),
+            "async": bool(source.get("async", False)),
+        }
+        create_res = await client.post(
+            f"{VAPI_API_URL}/tool",
+            json=payload,
+            headers=headers,
+            timeout=15,
+        )
+        create_res.raise_for_status()
+        created = create_res.json() or {}
+        logger.info(
+            "VAPI_FUNCTION_TOOL_CLONED source_tool_id=%s new_tool_id=%s",
+            source_tool_id[:24],
+            str(created.get("id") or "")[:24],
+        )
+        return {"source": source, "created": created}
+
+
+async def patch_vapi_assistant_set_function_tool(vapi_assistant_id: str, function_tool_id: str) -> Dict[str, Any]:
+    """Remplace le function tool persistant d'un assistant par un tool dédié."""
+    vapi_assistant_id = (vapi_assistant_id or "").strip()
+    function_tool_id = (function_tool_id or "").strip()
+    if not vapi_assistant_id:
+        raise ValueError("vapi_assistant_id requis")
+    if not function_tool_id:
+        raise ValueError("function_tool_id requis")
+
+    headers = {
+        "Authorization": f"Bearer {_vapi_api_key()}",
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient() as client:
+        current_res = await client.get(
+            f"{VAPI_API_URL}/assistant/{vapi_assistant_id}",
+            headers=headers,
+            timeout=15,
+        )
+        current_res.raise_for_status()
+        data = current_res.json() or {}
+        model = data.get("model") or {}
+        inline_tools = model.get("tools") or []
+        kept_inline = [t for t in inline_tools if t.get("type") != "function"]
+        patch_model = {**model, "toolIds": [function_tool_id], "tools": kept_inline}
+
+        patch_res = await client.patch(
+            f"{VAPI_API_URL}/assistant/{vapi_assistant_id}",
+            json={"model": patch_model},
+            headers=headers,
+            timeout=15,
+        )
+        patch_res.raise_for_status()
+        result = patch_res.json() or {}
+        logger.info(
+            "VAPI_ASSISTANT_SET_FUNCTION_TOOL assistant_id=%s function_tool_id=%s",
+            vapi_assistant_id[:24],
+            function_tool_id[:24],
+        )
+        return {"before": data, "after": result}
 
 
 async def assign_twilio_to_vapi(assistant_id: str, twilio_number: str) -> None:

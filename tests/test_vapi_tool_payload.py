@@ -70,9 +70,32 @@ def test_extract_parameters_legacy_top_level_parameters():
     assert params.get("selected_slot") == "2"
 
 
-def test_build_book_tool_result_returns_spoken_confirmation_for_confirmed():
+def test_extract_parameters_validate_contact_fields():
+    payload = {
+        "message": {
+            "toolCallList": [
+                {
+                    "id": "call_validate_1",
+                    "function": {
+                        "arguments": {
+                            "action": "validate_contact",
+                            "confirmation_last4": "8414",
+                            "phone_number": "06 12 34 56 78",
+                        }
+                    },
+                }
+            ]
+        }
+    }
+    params = _tool_extract_parameters(payload)
+    assert params.get("action") == "validate_contact"
+    assert params.get("confirmation_last4") == "8414"
+    assert params.get("phone_number") == "06 12 34 56 78"
+
+
+def test_build_book_tool_result_returns_structured_confirmation_for_confirmed():
     class SessionStub:
         customer_phone = "+33612345678"
 
     result = build_book_tool_result(SessionStub(), {"status": "confirmed", "event_id": "evt_1"})
-    assert result == "Votre rendez-vous est confirmé. Merci pour votre appel. Bonne journée."
+    assert result == '{"status": "confirmed", "event_id": "evt_1"}'

@@ -301,8 +301,16 @@ async def keep_alive():
 
     def _warmup_slots():
         try:
+            from backend.calendar_adapter import warmup_calendar_adapter
             from backend.tools_booking import get_slots_for_display
             from backend.session import Session
+            warmup_tenant_ids = {
+                int(getattr(config, "DEFAULT_TENANT_ID", 1) or 1),
+                int(getattr(config, "TEST_TENANT_ID", config.DEFAULT_TENANT_ID) or config.DEFAULT_TENANT_ID),
+            }
+            for tenant_id in sorted(warmup_tenant_ids):
+                adapter_ready = warmup_calendar_adapter(tenant_id)
+                print(f"🔥 Calendar adapter warmup tenant={tenant_id}: ready={adapter_ready}")
             warmup_tenant_id = int(getattr(config, "TEST_TENANT_ID", config.DEFAULT_TENANT_ID) or config.DEFAULT_TENANT_ID)
             for pref_label, pref_val in [("none", None), ("matin", "matin"), ("aprem", "après-midi")]:
                 s = Session(conv_id=f"__warmup_{pref_label}__")
@@ -332,7 +340,8 @@ async def keep_alive():
 
 async def cleanup_old_conversations():
     """
-    Purge les conversations/streams expirés toutes les 60s.
+    Purge les streams web expirés et les sessions inactives toutes les 60s.
+    Sans ce nettoyage global, les appels vocaux sans SSE restent en cache mémoire.
     """
     while True:
         await asyncio.sleep(60)
@@ -350,6 +359,13 @@ async def cleanup_old_conversations():
                 pass
             STREAMS.pop(conv_id, None)
             ENGINE.session_store.delete(conv_id)
+
+        cleanup_expired = getattr(ENGINE.session_store, "cleanup_expired_sessions", None)
+        if callable(cleanup_expired):
+            try:
+                cleanup_expired()
+            except Exception as e:
+                _logger.warning("cleanup_expired_sessions failed: %s", e)
 
 
 @app.get("/debug/force-load-credentials")
@@ -650,6 +666,7 @@ async def health() -> dict:
     """
     out: dict = {"status": "ok"}
     try:
+        deep_checks_enabled = os.getenv("HEALTH_DEEP_CHECKS", "true").lower() in ("1", "true", "yes")
         out["streams"] = len(STREAMS)
         # Infos instantanées (pas d'I/O)
         service_account_file = getattr(config, "SERVICE_ACCOUNT_FILE", None)
@@ -670,24 +687,31 @@ async def health() -> dict:
         out["admin_base_url_configured"] = bool(
             (os.environ.get("ADMIN_BASE_URL") or os.environ.get("FRONT_BASE_URL") or os.environ.get("APP_BASE_URL") or "").strip()
         )
+        out["health_deep_checks_enabled"] = deep_checks_enabled
 
-        # Checks I/O (slots, Postgres) avec timeout 2s
-        try:
-            detail = await asyncio.wait_for(
-                asyncio.to_thread(_health_checks_sync),
-                timeout=2.0,
-            )
-            out.update(detail)
-        except asyncio.TimeoutError:
-            out["health_timeout"] = True
+        # Checks I/O (slots, Postgres) avec timeout 2s.
+        # Désactivables en prod pour éviter que le healthcheck fasse du travail coûteux en boucle.
+        if deep_checks_enabled:
+            try:
+                detail = await asyncio.wait_for(
+                    asyncio.to_thread(_health_checks_sync),
+                    timeout=2.0,
+                )
+                out.update(detail)
+            except asyncio.TimeoutError:
+                out["health_timeout"] = True
+                out["free_slots"] = -1
+                out["postgres_ok"] = False
+                out["postgres_error"] = "health check timeout (2s)"
+            except Exception as e:
+                _logger.warning("health check partial failure: %s", e)
+                out["health_detail_error"] = str(e)[:200]
+                out.setdefault("free_slots", -1)
+                out.setdefault("postgres_ok", False)
+        else:
             out["free_slots"] = -1
-            out["postgres_ok"] = False
-            out["postgres_error"] = "health check timeout (2s)"
-        except Exception as e:
-            _logger.warning("health check partial failure: %s", e)
-            out["health_detail_error"] = str(e)[:200]
-            out.setdefault("free_slots", -1)
-            out.setdefault("postgres_ok", False)
+            out["postgres_ok"] = None
+            out["postgres_error"] = None
     except Exception as e:
         _logger.warning("health check error: %s", e, exc_info=True)
         out["health_detail_error"] = str(e)[:200]
@@ -750,6 +774,100 @@ async def debug_call_durations():
                 }
     except Exception as e:
         return {"error": str(e)[:200]}
+
+
+@app.get("/debug/longest-calls")
+async def debug_longest_calls(limit: int = 10, tenant_id: int | None = None):
+    """Retourne les appels les plus longs depuis PG."""
+    import os
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    if not url:
+        return {"error": "no PG URL"}
+    limit = max(1, min(int(limit or 10), 50))
+    try:
+        from backend.pg_pool import pg_connection
+        with pg_connection() as conn:
+            with conn.cursor() as cur:
+                if tenant_id:
+                    cur.execute(
+                        """
+                        WITH calls AS (
+                            SELECT
+                                vc.tenant_id,
+                                vc.call_id,
+                                vc.status,
+                                vc.ended_reason,
+                                vc.started_at,
+                                vc.ended_at,
+                                vc.updated_at,
+                                COALESCE(
+                                    vcu.duration_sec,
+                                    EXTRACT(EPOCH FROM (COALESCE(vc.ended_at, vc.updated_at) - COALESCE(vc.started_at, vc.created_at)))
+                                ) AS resolved_duration_sec
+                            FROM vapi_calls vc
+                            LEFT JOIN vapi_call_usage vcu
+                              ON vcu.tenant_id = vc.tenant_id AND vcu.vapi_call_id = vc.call_id
+                            WHERE vc.tenant_id = %s
+                        )
+                        SELECT
+                            tenant_id,
+                            call_id,
+                            status,
+                            ended_reason,
+                            started_at::text AS started_at,
+                            ended_at::text AS ended_at,
+                            ROUND(resolved_duration_sec::numeric, 1) AS duration_sec,
+                            ROUND((resolved_duration_sec / 60.0)::numeric, 2) AS duration_min
+                        FROM calls
+                        WHERE resolved_duration_sec IS NOT NULL
+                        ORDER BY resolved_duration_sec DESC NULLS LAST
+                        LIMIT %s
+                        """,
+                        (tenant_id, limit),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        WITH calls AS (
+                            SELECT
+                                vc.tenant_id,
+                                vc.call_id,
+                                vc.status,
+                                vc.ended_reason,
+                                vc.started_at,
+                                vc.ended_at,
+                                vc.updated_at,
+                                COALESCE(
+                                    vcu.duration_sec,
+                                    EXTRACT(EPOCH FROM (COALESCE(vc.ended_at, vc.updated_at) - COALESCE(vc.started_at, vc.created_at)))
+                                ) AS resolved_duration_sec
+                            FROM vapi_calls vc
+                            LEFT JOIN vapi_call_usage vcu
+                              ON vcu.tenant_id = vc.tenant_id AND vcu.vapi_call_id = vc.call_id
+                        )
+                        SELECT
+                            tenant_id,
+                            call_id,
+                            status,
+                            ended_reason,
+                            started_at::text AS started_at,
+                            ended_at::text AS ended_at,
+                            ROUND(resolved_duration_sec::numeric, 1) AS duration_sec,
+                            ROUND((resolved_duration_sec / 60.0)::numeric, 2) AS duration_min
+                        FROM calls
+                        WHERE resolved_duration_sec IS NOT NULL
+                        ORDER BY resolved_duration_sec DESC NULLS LAST
+                        LIMIT %s
+                        """,
+                        (limit,),
+                    )
+                return {
+                    "limit": limit,
+                    "tenant_id": tenant_id,
+                    "items": [dict(r) for r in cur.fetchall()],
+                }
+    except Exception as e:
+        return {"error": str(e)[:200], "limit": limit, "tenant_id": tenant_id}
 
 
 @app.get("/debug/calls-diag")
@@ -911,6 +1029,126 @@ async def debug_vapi_assistant():
         return {"assistants": results}
     except Exception as e:
         return {"error": str(e)[:300]}
+
+
+@app.get("/debug/vapi-assistant-by-id")
+async def debug_vapi_assistant_by_id(assistant_id: str):
+    """Inspecte en lecture seule un assistant Vapi précis par assistant_id."""
+    import os
+    import httpx
+
+    try:
+        vapi_id = (assistant_id or "").strip()
+        if not vapi_id:
+            return {"ok": False, "error": "assistant_id requis"}
+        api_key = (os.environ.get("VAPI_API_KEY") or "").strip()
+        if not api_key:
+            return {"ok": False, "error": "VAPI_API_KEY non configuré"}
+
+        async with httpx.AsyncClient() as client:
+            res = await client.get(
+                f"https://api.vapi.ai/assistant/{vapi_id}",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=15,
+            )
+            res.raise_for_status()
+            data = res.json() or {}
+            model = data.get("model") or {}
+            tool_ids = model.get("toolIds") or []
+            tool_ids_detail = []
+            for tid in tool_ids:
+                try:
+                    tres = await client.get(
+                        f"https://api.vapi.ai/tool/{tid}",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        timeout=10,
+                    )
+                    if tres.status_code == 200:
+                        tdata = tres.json() or {}
+                        tool_ids_detail.append(
+                            {
+                                "id": tid,
+                                "type": tdata.get("type"),
+                                "name": (tdata.get("function") or {}).get("name") or tdata.get("name"),
+                                "server_url": (tdata.get("server") or {}).get("url"),
+                            }
+                        )
+                    else:
+                        tool_ids_detail.append({"id": tid, "http_status": tres.status_code})
+                except Exception as te:
+                    tool_ids_detail.append({"id": tid, "error": str(te)[:120]})
+
+            return {
+                "ok": True,
+                "assistant_id": vapi_id[:24],
+                "name": data.get("name"),
+                "server_url": (data.get("server") or {}).get("url"),
+                "tool_ids": tool_ids,
+                "tool_ids_detail": tool_ids_detail,
+            }
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
+@app.post("/debug/vapi-patch-assistant-prompt-by-id")
+async def debug_vapi_patch_assistant_prompt_by_id(request: Request):
+    """Patche le prompt système d'un assistant Vapi précis en conservant la FAQ existante."""
+    import os
+    import httpx
+
+    try:
+        payload = await request.json()
+        assistant_id = str((payload or {}).get("assistant_id") or "").strip()
+        base_prompt = str((payload or {}).get("base_prompt") or "").strip()
+        if not assistant_id:
+            return {"ok": False, "error": "assistant_id requis"}
+        if not base_prompt:
+            return {"ok": False, "error": "base_prompt requis"}
+
+        api_key = (os.environ.get("VAPI_API_KEY") or "").strip()
+        if not api_key:
+            return {"ok": False, "error": "VAPI_API_KEY non configuré"}
+
+        from backend.vapi_utils import (
+            FAQ_END_MARKER,
+            FAQ_START_MARKER,
+            patch_vapi_assistant_system_prompt,
+        )
+
+        headers = {"Authorization": f"Bearer {api_key}"}
+        faq_text = ""
+        async with httpx.AsyncClient() as client:
+            res = await client.get(
+                f"https://api.vapi.ai/assistant/{assistant_id}",
+                headers=headers,
+                timeout=15,
+            )
+            res.raise_for_status()
+            data = res.json() or {}
+            model = data.get("model") or {}
+            messages = model.get("messages") or []
+            system_prompt = next(
+                (
+                    str(message.get("content") or "")
+                    for message in messages
+                    if isinstance(message, dict) and message.get("role") == "system"
+                ),
+                "",
+            )
+            if FAQ_START_MARKER in system_prompt and FAQ_END_MARKER in system_prompt:
+                start = system_prompt.index(FAQ_START_MARKER)
+                end = system_prompt.index(FAQ_END_MARKER) + len(FAQ_END_MARKER)
+                faq_text = system_prompt[start:end].strip()
+
+        await patch_vapi_assistant_system_prompt(assistant_id, faq_text, base_prompt=base_prompt)
+        return {
+            "ok": True,
+            "assistant_id": assistant_id[:24],
+            "base_len": len(base_prompt),
+            "faq_len": len(faq_text),
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
 
 
 @app.post("/debug/vapi-patch-tools")
@@ -1103,6 +1341,103 @@ async def debug_vapi_sync_function_tool(tool_id: str = None):
             "tool_id": str(after.get("id") or tool_id or "")[:24],
             "messages": after.get("messages") or [],
             "async": after.get("async"),
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
+@app.post("/debug/vapi-set-function-tool-server")
+async def debug_vapi_set_function_tool_server(tool_id: str, server_url: str):
+    """Met à jour l'URL server d'un function tool Vapi précis."""
+    try:
+        from backend.vapi_utils import patch_vapi_function_tool_server
+
+        result = await patch_vapi_function_tool_server(tool_id, server_url)
+        before = result.get("before") or {}
+        after = result.get("after") or {}
+        return {
+            "ok": True,
+            "tool_id": str(after.get("id") or tool_id or "")[:24],
+            "before_server": (before.get("server") or {}).get("url"),
+            "after_server": (after.get("server") or {}).get("url"),
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
+@app.post("/debug/vapi-patch-function-tool-messages")
+async def debug_vapi_patch_function_tool_messages(request: Request):
+    """Patche les messages d'un function tool Vapi précis."""
+    import os
+    import httpx
+
+    try:
+        payload = await request.json()
+        tool_id = str((payload or {}).get("tool_id") or "").strip()
+        messages = (payload or {}).get("messages")
+        is_async = (payload or {}).get("async")
+        if not tool_id:
+            return {"ok": False, "error": "tool_id requis"}
+        if not isinstance(messages, list):
+            return {"ok": False, "error": "messages doit être une liste"}
+
+        api_key = (os.environ.get("VAPI_API_KEY") or "").strip()
+        if not api_key:
+            return {"ok": False, "error": "VAPI_API_KEY non configuré"}
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        patch_payload = {"messages": messages}
+        if isinstance(is_async, bool):
+            patch_payload["async"] = is_async
+
+        async with httpx.AsyncClient() as client:
+            patch_res = await client.patch(
+                f"https://api.vapi.ai/tool/{tool_id}",
+                json=patch_payload,
+                headers=headers,
+                timeout=15,
+            )
+            patch_res.raise_for_status()
+            data = patch_res.json() or {}
+
+        return {
+            "ok": True,
+            "tool_id": str(data.get("id") or tool_id)[:24],
+            "messages": data.get("messages") or [],
+            "async": data.get("async"),
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
+@app.post("/debug/vapi-clone-function-tool-for-assistant")
+async def debug_vapi_clone_function_tool_for_assistant(assistant_id: str, source_tool_id: str):
+    """Clone un function tool Vapi existant et l'attache uniquement à un assistant cible."""
+    try:
+        from backend.vapi_utils import (
+            create_vapi_function_tool_clone,
+            patch_vapi_assistant_set_function_tool,
+        )
+
+        clone_result = await create_vapi_function_tool_clone(source_tool_id)
+        created = clone_result.get("created") or {}
+        new_tool_id = str(created.get("id") or "").strip()
+        if not new_tool_id:
+            return {"ok": False, "error": "new_tool_id introuvable"}
+
+        patch_result = await patch_vapi_assistant_set_function_tool(assistant_id, new_tool_id)
+        before = (patch_result.get("before") or {}).get("model") or {}
+        after = (patch_result.get("after") or {}).get("model") or {}
+        return {
+            "ok": True,
+            "assistant_id": assistant_id[:24],
+            "source_tool_id": source_tool_id[:24],
+            "new_tool_id": new_tool_id[:24],
+            "before_tool_ids": before.get("toolIds") or [],
+            "after_tool_ids": after.get("toolIds") or [],
         }
     except Exception as e:
         return {"ok": False, "error": str(e)[:300]}

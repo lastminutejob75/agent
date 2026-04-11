@@ -10,12 +10,17 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import threading
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from backend import config, db
 
 logger = logging.getLogger(__name__)
+_PARAMS_CACHE_TTL_S = 300
+_PARAMS_CACHE: Dict[int, tuple[float, Dict[str, str]]] = {}
+_PARAMS_CACHE_LOCK = threading.Lock()
 
 FLAG_KEYS = (
     "ENABLE_LLM_ASSIST_START",
@@ -823,6 +828,13 @@ def get_params(tenant_id: Optional[int] = None) -> Dict[str, str]:
     PG-first read, SQLite fallback.
     """
     tid = tenant_id if tenant_id is not None and tenant_id > 0 else config.DEFAULT_TENANT_ID
+    now = time.time()
+    with _PARAMS_CACHE_LOCK:
+        cached = _PARAMS_CACHE.get(tid)
+        if cached and now < cached[0]:
+            return copy.deepcopy(cached[1])
+
+    result_dict: Dict[str, str] = {}
     if config.USE_PG_TENANTS:
         try:
             from backend.tenants_pg import pg_get_tenant_params
@@ -831,24 +843,38 @@ def get_params(tenant_id: Optional[int] = None) -> Dict[str, str]:
                 params_dict, _ = result
                 if isinstance(params_dict, dict):
                     logger.debug("TENANT_READ source=pg get_params tenant_id=%s", tid)
-                    return params_dict
+                    result_dict = params_dict
         except Exception as e:
             logger.debug("TENANT_READ pg get_params failed: %s (fallback sqlite)", e)
-    db.ensure_tenant_config()
-    conn = db.get_conn()
-    try:
-        row = conn.execute(
-            "SELECT params_json FROM tenant_config WHERE tenant_id = ?",
-            (tid,),
-        ).fetchone()
-        if row and row[0]:
-            data = json.loads(row[0])
-            return data if isinstance(data, dict) else {}
-    except Exception as e:
-        logger.debug("get_params: %s", e)
-    finally:
-        conn.close()
-    return {}
+    if not result_dict:
+        db.ensure_tenant_config()
+        conn = db.get_conn()
+        try:
+            row = conn.execute(
+                "SELECT params_json FROM tenant_config WHERE tenant_id = ?",
+                (tid,),
+            ).fetchone()
+            if row and row[0]:
+                data = json.loads(row[0])
+                result_dict = data if isinstance(data, dict) else {}
+        except Exception as e:
+            logger.debug("get_params: %s", e)
+        finally:
+            conn.close()
+
+    with _PARAMS_CACHE_LOCK:
+        _PARAMS_CACHE[tid] = (now + _PARAMS_CACHE_TTL_S, copy.deepcopy(result_dict))
+    return copy.deepcopy(result_dict)
+
+
+def invalidate_params_cache(tenant_id: Optional[int] = None) -> None:
+    if tenant_id is None:
+        with _PARAMS_CACHE_LOCK:
+            _PARAMS_CACHE.clear()
+        return
+    tid = tenant_id if tenant_id > 0 else config.DEFAULT_TENANT_ID
+    with _PARAMS_CACHE_LOCK:
+        _PARAMS_CACHE.pop(tid, None)
 
 
 def set_params(tenant_id: int, params: Dict[str, str]) -> None:
@@ -944,6 +970,7 @@ def set_params(tenant_id: int, params: Dict[str, str]) -> None:
         conn.commit()
     finally:
         conn.close()
+    invalidate_params_cache(tenant_id)
 
 
 def reset_faq_params(tenant_id: int) -> None:
@@ -970,6 +997,7 @@ def reset_faq_params(tenant_id: int) -> None:
         conn.commit()
     finally:
         conn.close()
+    invalidate_params_cache(tenant_id)
 
 
 def set_flags(tenant_id: int, flags: Dict[str, bool]) -> None:

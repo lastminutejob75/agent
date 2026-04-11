@@ -10,9 +10,12 @@ from backend import tools_booking
 from backend.session import Session, QualifData
 from backend.vapi_tool_handlers import (
     _chosen_slot_iso,
+    build_get_slots_tool_result,
+    build_validate_contact_tool_result,
     build_vapi_tool_response,
     handle_book,
     handle_get_slots,
+    handle_validate_contact,
 )
 
 
@@ -21,6 +24,93 @@ def _make_session(conv_id: str = "test-conv", pending_slots: list = None):
     s.qualif_data = QualifData(name="Test", motif="Consultation", pref=None, contact="c", contact_type="email")
     s.pending_slots = pending_slots or []
     return s
+
+
+def test_handle_validate_contact_accepts_confirmed_last4():
+    session = _make_session()
+    session.customer_phone = "+33612348414"
+    payload, err = handle_validate_contact(
+        session,
+        call_id="call-contact-1",
+        selected_slot=None,
+        patient_name="Marie",
+        phone_number=None,
+        confirmation_last4="8414",
+    )
+    assert err is None
+    assert payload["status"] == "validated"
+    assert payload["validated_via"] == "confirmation_last4"
+    assert payload["last4"] == "8414"
+    assert session.qualif_data.contact == "+33612348414"
+    assert session.qualif_data.contact_type == "phone"
+
+
+def test_handle_validate_contact_accepts_corrected_phone_number():
+    session = _make_session()
+    payload, err = handle_validate_contact(
+        session,
+        call_id="call-contact-2",
+        selected_slot=None,
+        patient_name="Marie",
+        phone_number="06 12 34 56 78",
+        confirmation_last4=None,
+    )
+    assert err is None
+    assert payload["status"] == "validated"
+    assert payload["validated_via"] == "phone_number"
+    assert payload["last4"] == "5678"
+    assert session.customer_phone == "+33612345678"
+    assert session.qualif_data.contact == "+33612345678"
+
+
+def test_handle_validate_contact_rejects_invalid_phone_number():
+    session = _make_session()
+    payload, err = handle_validate_contact(
+        session,
+        call_id="call-contact-invalid",
+        selected_slot=None,
+        patient_name="Marie",
+        phone_number="06",
+        confirmation_last4=None,
+    )
+    assert err is None
+    assert payload["status"] == "failed"
+    assert payload["reason"] == "invalid_phone_number"
+    assert session.customer_phone is None
+    assert session.qualif_data.contact == "c"
+
+
+def test_handle_book_rejects_when_contact_validation_started_but_not_completed():
+    session = _make_session(
+        pending_slots=[
+            {"start_iso": "2025-02-05T10:00:00", "end_iso": "2025-02-05T10:30:00", "source": "google"},
+        ]
+    )
+    session.customer_phone = "+33612348414"
+    payload, err = handle_validate_contact(
+        session,
+        call_id="call-contact-3",
+        selected_slot="1",
+        patient_name="Marie",
+        phone_number=None,
+        confirmation_last4=None,
+    )
+    assert err is None
+    assert payload["status"] == "failed"
+    assert payload["reason"] == "missing_confirmation_last4"
+
+    with patch.object(tools_booking, "book_slot_from_session") as mock_book:
+        book_payload, book_err = handle_book(session, "1", "Marie", "Consultation", "call-contact-3")
+
+    assert book_err is None
+    assert book_payload["status"] == "failed"
+    assert book_payload["reason"] == "contact_not_validated"
+    mock_book.assert_not_called()
+
+
+def test_build_validate_contact_tool_result_returns_json_string():
+    result = build_validate_contact_tool_result({"status": "validated", "last4": "8414"})
+    assert json.loads(result) == {"status": "validated", "last4": "8414"}
 
 
 def test_handle_book_confirmed_resets_booking_failures():
@@ -46,8 +136,55 @@ def test_handle_book_confirmed_resets_booking_failures():
     assert "context" in kwargs
 
 
+def test_handle_book_matches_selected_slot_iso_exactly():
+    session = _make_session(
+        pending_slots=[
+            {"start_iso": "2025-02-05T10:00:00+01:00", "end_iso": "2025-02-05T10:30:00+01:00", "source": "google"},
+            {"start_iso": "2025-02-06T15:00:00+01:00", "end_iso": "2025-02-06T15:15:00+01:00", "source": "google"},
+        ]
+    )
+    with patch.object(tools_booking, "book_slot_from_session", return_value=(True, None)) as mock_book:
+        with patch.object(session, "google_event_id", "evt-iso", create=True):
+            with patch("backend.engine._persist_ivr_event"):
+                payload, err = handle_book(
+                    session,
+                    "2025-02-06T15:00:00+01:00",
+                    "Marie",
+                    "Consultation",
+                    "call-slot-iso",
+                )
+    assert err is None
+    assert payload["status"] == "confirmed"
+    assert payload["event_id"] == "evt-iso"
+    assert payload["start_iso"] == "2025-02-06T15:00:00+01:00"
+    assert payload["end_iso"] == "2025-02-06T15:15:00+01:00"
+    assert session.pending_slot_choice == 2
+    mock_book.assert_called_once_with(session, 2)
+
+
+def test_handle_book_fails_when_selected_slot_does_not_match_pending_slots():
+    session = _make_session(
+        pending_slots=[
+            {"start_iso": "2025-02-05T10:00:00+01:00", "end_iso": "2025-02-05T10:30:00+01:00", "source": "google"},
+            {"start_iso": "2025-02-06T15:00:00+01:00", "end_iso": "2025-02-06T15:15:00+01:00", "source": "google"},
+        ]
+    )
+    with patch.object(tools_booking, "book_slot_from_session") as mock_book:
+        payload, err = handle_book(
+            session,
+            "2025-02-07T15:00:00+01:00",
+            "Marie",
+            "Consultation",
+            "call-slot-invalid",
+        )
+    assert err is None
+    assert payload["status"] == "failed"
+    assert payload["reason"] == "invalid_selected_slot"
+    mock_book.assert_not_called()
+
+
 def test_handle_book_slot_taken_once():
-    """book → slot_taken une fois : payload slot_taken, booking_failures == 1."""
+    """book → slot_taken une fois : payload failed/slot_taken, booking_failures == 1."""
     session = _make_session()
     session.pending_slots = [
         {"start_iso": "2025-02-05T14:00:00", "end_iso": "2025-02-05T14:30:00", "source": "google"},
@@ -55,14 +192,15 @@ def test_handle_book_slot_taken_once():
     with patch.object(tools_booking, "book_slot_from_session", return_value=(False, "slot_taken")):
         payload, err = handle_book(session, "1", None, None, "call-1")
     assert err is None
-    assert payload["status"] == "slot_taken"
+    assert payload["status"] == "failed"
+    assert payload["reason"] == "slot_taken"
     assert payload["start_iso"] == "2025-02-05T14:00:00"
     assert payload["end_iso"] == "2025-02-05T14:30:00"
     assert session.booking_failures == 1
 
 
 def test_handle_book_slot_taken_twice_fallback_transfer():
-    """book → slot_taken deux fois : payload fallback_transfer, booking_failures == 2."""
+    """book → slot_taken deux fois : payload failed/fallback_transfer, booking_failures == 2."""
     session = _make_session()
     session.booking_failures = 1
     session.pending_slots = [
@@ -71,30 +209,31 @@ def test_handle_book_slot_taken_twice_fallback_transfer():
     with patch.object(tools_booking, "book_slot_from_session", return_value=(False, "slot_taken")):
         payload, err = handle_book(session, "1", None, None, "call-1")
     assert err is None
-    assert payload["status"] == "fallback_transfer"
+    assert payload["status"] == "failed"
+    assert payload["reason"] == "fallback_transfer"
     assert session.booking_failures == 2
 
 
 def test_handle_book_technical_error():
-    """book → technical : payload technical_error, code calendar_unavailable."""
+    """book → technical : payload failed/technical."""
     session = _make_session()
     session.pending_slots = [{"start_iso": "2025-02-05T10:00:00", "end_iso": "2025-02-05T10:30:00"}]
     with patch.object(tools_booking, "book_slot_from_session", return_value=(False, "technical")):
         payload, err = handle_book(session, "1", None, None, "call-1")
     assert err is None
-    assert payload["status"] == "technical_error"
-    assert payload.get("code") == "calendar_unavailable"
+    assert payload["status"] == "failed"
+    assert payload.get("reason") == "technical"
 
 
 def test_handle_book_permission_error():
-    """book → permission : payload technical_error, code permission."""
+    """book → permission : payload failed/permission."""
     session = _make_session()
     session.pending_slots = [{"start_iso": "2025-02-05T10:00:00", "end_iso": "2025-02-05T10:30:00"}]
     with patch.object(tools_booking, "book_slot_from_session", return_value=(False, "permission")):
         payload, err = handle_book(session, "1", None, None, "call-1")
     assert err is None
-    assert payload["status"] == "technical_error"
-    assert payload.get("code") == "permission"
+    assert payload["status"] == "failed"
+    assert payload.get("reason") == "permission"
 
 
 def test_chosen_slot_iso():
@@ -126,6 +265,56 @@ def test_build_vapi_tool_response_result_is_string():
     parsed = json.loads(result_str)
     assert parsed["status"] == "confirmed"
     assert parsed["event_id"] == "e1"
+
+
+def test_build_get_slots_tool_result_returns_structured_ok_payload():
+    session = _make_session(
+        pending_slots=[
+            {
+                "start_iso": "2025-02-05T16:30:00",
+                "end_iso": "2025-02-05T16:45:00",
+                "label": "Mercredi 5 février à 16 heures trente",
+                "source": "google",
+            }
+        ]
+    )
+    result = build_get_slots_tool_result(
+        session,
+        ["mercredi 5 février à 16 heures trente"],
+        "google_calendar",
+        None,
+        preferred_time="16:30",
+        preferred_time_type="min",
+    )
+    payload = json.loads(result)
+    assert payload["status"] == "ok"
+    assert payload["slots"][0]["start_iso"] == "2025-02-05T16:30:00"
+    assert payload["constraint"]["preferred_time"] == "16:30"
+    assert payload["constraint"]["type"] == "min"
+
+
+def test_build_get_slots_tool_result_returns_structured_no_slots_payload():
+    session = _make_session()
+    result = build_get_slots_tool_result(
+        session,
+        [],
+        "google_calendar",
+        None,
+        preferred_time="16:30",
+        preferred_time_type="min",
+    )
+    payload = json.loads(result)
+    assert payload["status"] == "no_slots"
+    assert payload["slots"] == []
+    assert payload["constraint"]["type"] == "min"
+
+
+def test_build_get_slots_tool_result_returns_structured_agenda_unavailable_payload():
+    session = _make_session()
+    result = build_get_slots_tool_result(session, None, None, "timeout")
+    payload = json.loads(result)
+    assert payload["status"] == "agenda_unavailable"
+    assert payload["reason"] == "timeout"
 
 
 def test_get_slots_for_display_excludes_slot():
@@ -239,9 +428,10 @@ def test_handle_get_slots_uses_short_sync_fetch_on_cold_cache():
                 sess.pending_slots = slots
 
             with patch.object(tools_booking, "store_pending_slots", side_effect=_capture_store) as mock_store:
-                labels, source, err = handle_get_slots(session, "après-midi", "call-cold-cache")
+                labels, source, err, err_reason = handle_get_slots(session, "après-midi", "call-cold-cache")
 
     assert err == ""
+    assert err_reason is None
     assert source == "google_calendar"
     assert labels is not None
     assert len(labels) == 2
@@ -363,7 +553,7 @@ def test_vapi_tool_resolves_tenant_from_assistant_when_did_missing():
             "backend.tenant_routing.resolve_tenant_id_from_vapi_payload",
             return_value=(7, "assistant"),
         ) as mock_resolve:
-            with patch("backend.vapi_tool_handlers.handle_get_slots", return_value=(["Demain 10h"], "google", None)):
+            with patch("backend.vapi_tool_handlers.handle_get_slots", return_value=(["Demain 10h"], "google", None, None)):
                 with patch("backend.routes.voice.ENGINE") as mock_engine:
                     mock_engine.session_store = MagicMock()
                     resp = client.post(

@@ -171,3 +171,24 @@ class HybridSessionStore:
         if hasattr(self._sqlite, "cleanup_old_sessions"):
             return self._sqlite.cleanup_old_sessions(hours)
         return 0
+
+    def cleanup_expired_sessions(self, ttl_minutes: Optional[int] = None) -> int:
+        """
+        Purge les sessions expirées du cache mémoire et du fallback SQLite.
+        Important pour les appels vocaux sans stream web, sinon le cache grossit indéfiniment.
+        """
+        expired_ids = [
+            conv_id
+            for conv_id, session in list(self._memory_cache.items())
+            if session is None or session.is_expired()
+        ]
+        for conv_id in expired_ids:
+            self._memory_cache.pop(conv_id, None)
+
+        deleted = len(expired_ids)
+        if hasattr(self._sqlite, "cleanup_expired_sessions"):
+            try:
+                deleted += int(self._sqlite.cleanup_expired_sessions(ttl_minutes=ttl_minutes) or 0)
+            except Exception:
+                pass
+        return deleted

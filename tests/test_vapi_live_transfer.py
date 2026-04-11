@@ -10,6 +10,7 @@ from backend.main import app
 from backend.vapi_live_transfer import (
     extract_control_url,
     maybe_start_live_transfer,
+    maybe_start_terminal_booking_end,
     normalize_transfer_destination_phone,
     poll_transfer_confirmation,
 )
@@ -157,6 +158,45 @@ def test_voice_helper_can_suppress_followup_tts_when_live_transfer_started():
 
     assert response_text == ""
     assert suppressed is True
+
+
+def test_maybe_start_terminal_booking_end_mutes_assistant_then_says_and_hangs_up():
+    session = Session(conv_id="call-book-end-ok", channel="vocal", tenant_id=12)
+
+    mock_client = MagicMock()
+    mute_response = MagicMock()
+    mute_response.raise_for_status.return_value = None
+    say_response = MagicMock()
+    say_response.raise_for_status.return_value = None
+    mock_client.post.side_effect = [mute_response, say_response]
+
+    with patch("backend.vapi_live_transfer.httpx.Client") as mock_httpx_client:
+        mock_httpx_client.return_value.__enter__.return_value = mock_client
+        result = maybe_start_terminal_booking_end(
+            {"call": {"monitor": {"controlUrl": "https://api.vapi.test/call-book-end"}}},
+            session,
+        )
+
+    assert result["ok"] is True
+    assert session.booking_end_control_requested is True
+    assert mock_client.post.call_count == 2
+    assert mock_client.post.call_args_list[0].kwargs["json"] == {"type": "control", "control": "mute-assistant"}
+    assert mock_client.post.call_args_list[1].kwargs["json"] == {
+        "type": "say",
+        "content": "Votre rendez-vous est confirmé. Merci pour votre appel. Bonne journée.",
+        "endCallAfterSpoken": True,
+    }
+
+
+def test_maybe_start_terminal_booking_end_returns_failure_when_control_url_missing():
+    session = Session(conv_id="call-book-end-missing", channel="vocal", tenant_id=12)
+
+    result = maybe_start_terminal_booking_end({}, session)
+
+    assert result["attempted"] is False
+    assert result["ok"] is False
+    assert result["reason"] == "missing_control_url"
+    assert not getattr(session, "booking_end_control_requested", False)
 
 
 def test_poll_transfer_confirmation_marks_timeout_when_unconfirmed():

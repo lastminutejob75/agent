@@ -127,6 +127,7 @@ class _GoogleCalendarAdapter:
         end_hour: int = 18,
         limit: int = 3,
         buffer_minutes: int = 0,
+        per_day_limit: int = 1,
     ) -> List[Dict[str, Any]]:
         svc = self._get_service()
         if not svc:
@@ -139,6 +140,7 @@ class _GoogleCalendarAdapter:
                 end_hour=end_hour,
                 limit=limit,
                 buffer_minutes=buffer_minutes,
+                per_day_limit=per_day_limit,
             )
         except (GoogleCalendarPermissionError, GoogleCalendarNotFoundError, GoogleCalendarError):
             raise
@@ -291,3 +293,19 @@ def get_calendar_adapter(session: Any) -> Optional[CalendarAdapter]:
         adapter = _GoogleCalendarAdapter(calendar_id, tenant_id)
         _GOOGLE_ADAPTER_CACHE[key] = adapter
         return adapter
+
+
+def warmup_calendar_adapter(tenant_id: int) -> bool:
+    """
+    Force l'initialisation du client Google Calendar pour un tenant.
+    Retourne True si le service est prêt ou non applicable.
+    """
+    session = type("_WarmupSession", (), {"tenant_id": tenant_id})()
+    adapter = get_calendar_adapter(session)
+    if adapter is None:
+        return False
+    if isinstance(adapter, _NoneCalendarAdapter):
+        return True
+    if isinstance(adapter, _GoogleCalendarAdapter):
+        return adapter._get_service() is not None
+    return True

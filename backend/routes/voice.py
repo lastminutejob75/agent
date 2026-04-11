@@ -23,7 +23,8 @@ from backend.session_codec import session_to_dict
 from backend.conversational_engine import ConversationalEngine, _is_canary
 from backend.reports import get_report_generator
 from backend.validation import validate_response as validate_response_tts
-from backend.vapi_live_transfer import maybe_start_live_transfer
+from backend.vapi_live_transfer import maybe_start_live_transfer, maybe_start_terminal_booking_end, extract_control_url
+from backend.vapi_control_cache import set_control_url, get_control_url
 from backend.stt_utils import normalize_transcript, is_filler_only
 from backend.stt_common import (
     classify_text_only,
@@ -61,6 +62,67 @@ def _tool_result_cache_set(tool_call_id: str, value: str):
         return
     with _TOOL_RESULT_CACHE_LOCK:
         _TOOL_RESULT_CACHE[tool_call_id] = {"value": value, "ts": time.time()}
+
+
+def _schedule_terminal_booking_end(payload: dict, session, *, delay_s: float = 0.0) -> dict:
+    """
+    Envoie mute-assistant + say de manière SYNCHRONE avant le retour de la réponse tool.
+    Le say doit être accepté par Vapi AVANT que le LLM reçoive le résultat confirmed,
+    sinon le LLM génère sa propre phrase de fin et raccroche.
+    """
+    call_id = str(getattr(session, "conv_id", "") or "")[:24]
+    tenant_id = int(getattr(session, "tenant_id", 1) or 1)
+    try:
+        result = maybe_start_terminal_booking_end(payload, session)
+        logger.info(
+            "BOOKING_END_CONTROL_ASYNC_RESULT call_id=%s tenant_id=%s ok=%s reason=%s",
+            call_id,
+            tenant_id,
+            result.get("ok"),
+            result.get("reason"),
+        )
+        return result
+    except Exception as exc:
+        logger.warning(
+            "BOOKING_END_CONTROL_ASYNC_FAILED call_id=%s tenant_id=%s err=%s",
+            call_id,
+            tenant_id,
+            str(exc)[:160],
+        )
+        return {"attempted": True, "ok": False, "reason": "exception"}
+
+
+def _capture_control_url(payload: dict) -> None:
+    call_id = _webhook_extract_call_id(payload) or _tool_extract_call_id(payload)
+    control_url = extract_control_url(payload)
+    if call_id and control_url:
+        set_control_url(call_id, control_url)
+        logger.info(
+            "VAPI_CONTROL_URL_CAPTURED call_id=%s has_control=%s",
+            str(call_id)[:24],
+            True,
+        )
+
+
+def _payload_with_cached_control_url(payload: dict, call_id: str) -> dict:
+    control_url = get_control_url(call_id)
+    if not control_url:
+        return payload
+    clone = dict(payload or {})
+    message = dict((clone.get("message") or {}))
+    call = dict((message.get("call") or clone.get("call") or {}))
+    monitor = dict(call.get("monitor") or {})
+    if monitor.get("controlUrl") or monitor.get("controlURL"):
+        return payload
+    monitor["controlUrl"] = control_url
+    call["monitor"] = monitor
+    if message:
+        message["call"] = call
+        clone["message"] = message
+    else:
+        clone["call"] = call
+    return clone
+
 
 # Instances singleton
 client_memory = get_client_memory()
@@ -1109,6 +1171,10 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
     """Corps du webhook Vapi — séparé pour garantir un try/except global."""
     message = payload.get("message") or {}
     msg_type = message.get("type") or message.get("event") or ""
+    try:
+        _capture_control_url(payload)
+    except Exception as e:
+        logger.warning("VAPI_CONTROL_URL_CAPTURE_FAILED %s", str(e)[:120])
 
     # assistant-request : répondre immédiatement avec assistantId ou assistant (évite 5.8s + PG puis {} → Vapi fallback anglais)
     if msg_type == "assistant-request":
@@ -1232,17 +1298,25 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
                 )
 
                 w_call_id = _webhook_extract_call_id(payload) or "unknown"
-                _WH_HARD_CAP_S = 8.0
+                _WH_HARD_CAP_S = 12.0
 
                 if action == "get_slots":
                     from backend import vapi_tool_handlers as th
+                    _wh_seg_ctx = {
+                        "tenant_id": None,
+                        "tenant_source": None,
+                        "t_tenant_ms": None,
+                    }
 
                     def _wh_get_slots_all():
-                        """Hard cap 8s : tenant + session + calendar en un seul thread."""
+                        """Hard cap webhook : tenant + session + agenda en un seul thread."""
                         import time as _wt
                         _s0 = _wt.monotonic()
-                        tid, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
+                        tid, tenant_source = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
                         t_tenant = int((_wt.monotonic() - _s0) * 1000)
+                        _wh_seg_ctx["tenant_id"] = tid
+                        _wh_seg_ctx["tenant_source"] = tenant_source
+                        _wh_seg_ctx["t_tenant_ms"] = t_tenant
 
                         _s1 = _wt.monotonic()
                         session = ENGINE.session_store.get(w_call_id)
@@ -1259,8 +1333,10 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
                         t_session = int((_wt.monotonic() - _s1) * 1000)
 
                         _s2 = _wt.monotonic()
-                        sl, src, err = th.handle_get_slots(
+                        sl, src, err, err_reason = th.handle_get_slots(
                             session, params.get("preference"), w_call_id,
+                            preferred_time=params.get("preferred_time"),
+                            preferred_time_type=params.get("preferred_time_type"),
                             exclude_start_iso=params.get("exclude_start_iso"),
                             exclude_end_iso=params.get("exclude_end_iso"),
                         )
@@ -1274,63 +1350,143 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
 
                         t_total = int((_wt.monotonic() - _s0) * 1000)
                         logger.info(
-                            "[WEBHOOK_GET_SLOTS_SEGMENTS] call_id=%s "
-                            "t_tenant=%dms t_session=%dms t_calendar=%dms t_total=%dms slots=%d",
-                            w_call_id[:24], t_tenant, t_session, t_cal, t_total, len(sl) if sl else 0,
+                            "[WEBHOOK_GET_SLOTS_SEGMENTS] call_id=%s tenant_id=%s tenant_source=%s "
+                            "t_tenant=%dms t_session=%dms t_calendar=%dms t_total=%dms slots=%d err=%s",
+                            w_call_id[:24],
+                            tid,
+                            tenant_source,
+                            t_tenant,
+                            t_session,
+                            t_cal,
+                            t_total,
+                            len(sl) if sl else 0,
+                            bool(err),
                         )
                         current_tenant_id.set(str(tid))
-                        return sl, src, err
+                        return session, sl, src, err, err_reason
 
                     try:
                         loop = asyncio.get_event_loop()
-                        slots_list, source, err = await asyncio.wait_for(
+                        session, slots_list, source, err, err_reason = await asyncio.wait_for(
                             loop.run_in_executor(None, _wh_get_slots_all),
                             timeout=_WH_HARD_CAP_S,
                         )
                     except asyncio.TimeoutError:
-                        logger.error("[WEBHOOK_HARD_CAP] call_id=%s — 8s exceeded", w_call_id[:24])
-                        err = "Je n'arrive pas à consulter l'agenda pour le moment. Souhaitez-vous qu'on vous rappelle ?"
+                        logger.error(
+                            "[WEBHOOK_HARD_CAP] call_id=%s hard_cap=%ss elapsed>=%sms tenant_id=%s tenant_source=%s pref=%s",
+                            w_call_id[:24],
+                            _WH_HARD_CAP_S,
+                            int(_WH_HARD_CAP_S * 1000),
+                            _wh_seg_ctx.get("tenant_id"),
+                            _wh_seg_ctx.get("tenant_source"),
+                            (params.get("preference") or "any"),
+                        )
+                        err = th.AGENDA_UNAVAILABLE_MSG
                         slots_list = None
+                        source = None
+                        err_reason = "timeout"
+                        session = None
+                    except Exception as e:
+                        logger.error(
+                            "[WEBHOOK_GET_SLOTS_ERROR] call_id=%s tenant_id=%s tenant_source=%s err_type=%s err=%s",
+                            w_call_id[:24],
+                            _wh_seg_ctx.get("tenant_id"),
+                            _wh_seg_ctx.get("tenant_source"),
+                            type(e).__name__,
+                            str(e)[:160],
+                        )
+                        err = th.AGENDA_UNAVAILABLE_MSG
+                        slots_list = None
+                        source = None
+                        err_reason = "technical"
+                        session = None
 
-                    if err:
-                        results.append({"toolCallId": tc_id, "result": err})
-                    elif slots_list:
-                        slots_text = ", ".join(slots_list[:-1]) + " et " + slots_list[-1] if len(slots_list) > 1 else slots_list[0]
-                        results.append({"toolCallId": tc_id, "result": f"Créneaux disponibles : {slots_text}."})
-                    else:
-                        results.append({"toolCallId": tc_id, "result": "Aucun créneau disponible pour le moment."})
+                    results.append(
+                        {
+                            "toolCallId": tc_id,
+                            "result": th.build_get_slots_tool_result(
+                                session,
+                                slots_list,
+                                source,
+                                err_reason if err else None,
+                                preferred_time=params.get("preferred_time"),
+                                preferred_time_type=params.get("preferred_time_type"),
+                            ),
+                        }
+                    )
 
                 else:
                     # Résolution tenant pour toutes les actions non-get_slots
                     resolved_tid, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
                     current_tenant_id.set(str(resolved_tid))
 
-                    if action == "book":
+                    if action == "validate_contact":
+                        session = _get_or_resume_voice_session(resolved_tid, w_call_id)
+                        session.channel = "vocal"
+                        session.tenant_id = resolved_tid
+                        from backend.tenant_routing import extract_customer_phone_from_vapi_payload
+                        from backend import vapi_tool_handlers as th
+
+                        payload_customer_phone = extract_customer_phone_from_vapi_payload(payload)
+                        if payload_customer_phone and not session.customer_phone:
+                            session.customer_phone = payload_customer_phone
+                        validate_payload, err = th.handle_validate_contact(
+                            session,
+                            call_id=w_call_id,
+                            selected_slot=params.get("selected_slot"),
+                            patient_name=params.get("patient_name"),
+                            phone_number=params.get("phone_number"),
+                            confirmation_last4=params.get("confirmation_last4"),
+                        )
+                        if hasattr(ENGINE.session_store, "save"):
+                            ENGINE.session_store.save(session)
+                        if err:
+                            results.append({"toolCallId": tc_id, "result": err})
+                        else:
+                            results.append({"toolCallId": tc_id, "result": th.build_validate_contact_tool_result(validate_payload)})
+
+                    elif action == "book":
                         import time as _bt
                         _b0 = _bt.monotonic()
                         session = _get_or_resume_voice_session(resolved_tid, w_call_id)
                         session.channel = "vocal"
                         session.tenant_id = resolved_tid
+                        from backend.tenant_routing import extract_customer_phone_from_vapi_payload
                         from backend import vapi_tool_handlers as th
+
+                        payload_customer_phone = extract_customer_phone_from_vapi_payload(payload)
+                        if payload_customer_phone and not session.customer_phone:
+                            session.customer_phone = payload_customer_phone
                         _b1 = _bt.monotonic()
                         book_payload, err = th.handle_book(
                             session, params.get("selected_slot"), params.get("patient_name"), params.get("motif"), w_call_id,
                         )
                         t_book = int((_bt.monotonic() - _b1) * 1000)
+                        t_save = 0
                         if hasattr(ENGINE.session_store, "save"):
+                            _b_save = _bt.monotonic()
                             ENGINE.session_store.save(session)
+                            t_save = int((_bt.monotonic() - _b_save) * 1000)
                         t_total = int((_bt.monotonic() - _b0) * 1000)
                         logger.info(
-                            "[WEBHOOK_BOOK_SEGMENTS] call_id=%s tenant_id=%s t_book=%dms t_total=%dms confirmed=%s",
+                            "[WEBHOOK_BOOK_SEGMENTS] call_id=%s tenant_id=%s t_book=%dms t_save=%dms t_booking_end_schedule=%dms t_total=%dms confirmed=%s booking_end_scheduled=%s",
                             w_call_id,
                             resolved_tid,
                             t_book,
+                            t_save,
+                            0,
                             t_total,
                             bool((book_payload or {}).get("status") == "confirmed"),
+                            False,
                         )
                         if err:
                             results.append({"toolCallId": tc_id, "result": err})
                         else:
+                            if (book_payload or {}).get("status") == "confirmed":
+                                _schedule_terminal_booking_end(
+                                    _payload_with_cached_control_url(payload, w_call_id),
+                                    session,
+                                )
                             results.append({"toolCallId": tc_id, "result": th.build_book_tool_result(session, book_payload)})
 
                     elif action in ("cancel", "modify"):
@@ -1523,6 +1679,8 @@ def _tool_extract_parameters(payload: dict) -> dict:
             "motif",
             "preference",
             "selected_slot",
+            "phone_number",
+            "confirmation_last4",
             "transfer_reason",
             "exclude_start_iso",
             "exclude_end_iso",
@@ -1573,7 +1731,7 @@ def _tool_extract_parameters(payload: dict) -> dict:
 async def vapi_tool(request: Request):
     """
     Endpoint pour Vapi function_tool (OpenAI direct + tool obligatoire).
-    Actions : get_slots, book, cancel, modify, faq.
+    Actions : get_slots, validate_contact, book, cancel, modify, faq.
     Réponse Vapi : { "results": [ { "toolCallId", "result" | "error": string } ] }.
     """
     import time as _time
@@ -1581,13 +1739,21 @@ async def vapi_tool(request: Request):
 
     try:
         payload = await request.json()
+        try:
+            _capture_control_url(payload)
+        except Exception as e:
+            logger.warning("VAPI_CONTROL_URL_CAPTURE_FAILED %s", str(e)[:120])
         params = _tool_extract_parameters(payload)
         action = (params.get("action") or "").strip().lower()
         user_message = (params.get("user_message") or "").strip()
         patient_name = (params.get("patient_name") or "").strip() or None
         motif = (params.get("motif") or "").strip() or None
         preference = (params.get("preference") or "").strip() or None
+        preferred_time = (params.get("preferred_time") or "").strip() or None
+        preferred_time_type = (params.get("preferred_time_type") or "").strip() or None
         selected_slot = (params.get("selected_slot") or "").strip() or None
+        phone_number = (params.get("phone_number") or "").strip() or None
+        confirmation_last4 = (params.get("confirmation_last4") or "").strip() or None
         exclude_start_iso = (params.get("exclude_start_iso") or "").strip() or None
         exclude_end_iso = (params.get("exclude_end_iso") or "").strip() or None
 
@@ -1685,20 +1851,28 @@ async def vapi_tool(request: Request):
         from backend import vapi_tool_handlers as th
         import concurrent.futures
 
-        _TOOL_HARD_CAP_S = 8.0
-        _FALLBACK_MSG = "Je n'arrive pas à consulter l'agenda pour le moment. Souhaitez-vous qu'on vous rappelle ?"
+        _TOOL_HARD_CAP_S = 12.0
+        _FALLBACK_MSG = th.AGENDA_UNAVAILABLE_MSG
 
         # --- get_slots : HARD CAP 8s global (tenant + session + calendar en un seul thread) ---
         if action == "get_slots":
+            _seg_ctx = {
+                "tenant_id": None,
+                "tenant_source": None,
+                "t_tenant_ms": None,
+            }
             def _get_slots_all_in_one():
                 """Tout le travail get_slots dans un seul thread, avec logging segment."""
                 seg = {}
                 _s0 = _time.monotonic()
 
                 # 1. Tenant resolution
-                tid, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
-                seg["tenant"] = "resolved"
+                tid, tenant_source = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
+                seg["tenant_source"] = tenant_source
                 seg["t_tenant_ms"] = int((_time.monotonic() - _s0) * 1000)
+                _seg_ctx["tenant_id"] = tid
+                _seg_ctx["tenant_source"] = tenant_source
+                _seg_ctx["t_tenant_ms"] = seg["t_tenant_ms"]
 
                 # 2. Session (mémoire seule, pas de PG)
                 _s1 = _time.monotonic()
@@ -1717,8 +1891,10 @@ async def vapi_tool(request: Request):
 
                 # 3. Google Calendar
                 _s2 = _time.monotonic()
-                slots_list, source, err = th.handle_get_slots(
+                slots_list, source, err, err_reason = th.handle_get_slots(
                     session, preference, call_id,
+                    preferred_time=preferred_time,
+                    preferred_time_type=preferred_time_type,
                     exclude_start_iso=exclude_start_iso,
                     exclude_end_iso=exclude_end_iso,
                 )
@@ -1734,51 +1910,67 @@ async def vapi_tool(request: Request):
                     pass
 
                 logger.info(
-                    "[VAPI_TOOL_GET_SLOTS_SEGMENTS] call_id=%s tenant=%s(%s) "
-                    "t_tenant=%dms t_session=%dms t_calendar=%dms t_total=%dms source=%s slots=%d",
-                    call_id[:24] if call_id else "", seg["tid"], seg["tenant"],
+                    "[VAPI_TOOL_GET_SLOTS_SEGMENTS] call_id=%s tenant_id=%s tenant_source=%s "
+                    "t_tenant=%dms t_session=%dms t_calendar=%dms t_total=%dms source=%s slots=%d err=%s",
+                    call_id[:24] if call_id else "", seg["tid"], seg["tenant_source"],
                     seg["t_tenant_ms"], seg["t_session_ms"], seg["t_calendar_ms"],
                     seg["t_total_ms"], seg["source"],
                     len(slots_list) if slots_list else 0,
+                    bool(err),
                 )
-                return tid, slots_list, source, err
+                return tid, session, slots_list, source, err, err_reason
 
             resolved_tenant_id = 1
             try:
                 loop = asyncio.get_event_loop()
-                resolved_tenant_id, slots_list, source, err = await asyncio.wait_for(
+                resolved_tenant_id, session, slots_list, source, err, err_reason = await asyncio.wait_for(
                     loop.run_in_executor(None, _get_slots_all_in_one),
                     timeout=_TOOL_HARD_CAP_S,
                 )
             except asyncio.TimeoutError:
                 elapsed_ms = int((_time.monotonic() - _t0) * 1000)
-                logger.error("[VAPI_TOOL_HARD_CAP] call_id=%s — %ds hard cap exceeded (elapsed=%dms)",
-                             call_id[:24] if call_id else "", int(_TOOL_HARD_CAP_S), elapsed_ms)
+                logger.error(
+                    "[VAPI_TOOL_HARD_CAP] call_id=%s hard_cap=%ss elapsed=%dms tenant_id=%s tenant_source=%s pref=%s",
+                    call_id[:24] if call_id else "",
+                    int(_TOOL_HARD_CAP_S),
+                    elapsed_ms,
+                    _seg_ctx.get("tenant_id"),
+                    _seg_ctx.get("tenant_source"),
+                    preference or "any",
+                )
                 err = _FALLBACK_MSG
                 slots_list = None
+                source = None
+                err_reason = "timeout"
+                session = None
             except Exception as e:
-                logger.error("[VAPI_TOOL_GET_SLOTS_ERROR] call_id=%s %s", call_id[:24] if call_id else "", e)
+                logger.error(
+                    "[VAPI_TOOL_GET_SLOTS_ERROR] call_id=%s tenant_id=%s tenant_source=%s err_type=%s err=%s",
+                    call_id[:24] if call_id else "",
+                    _seg_ctx.get("tenant_id"),
+                    _seg_ctx.get("tenant_source"),
+                    type(e).__name__,
+                    str(e)[:160],
+                )
                 err = _FALLBACK_MSG
                 slots_list = None
+                source = None
+                err_reason = "technical"
+                session = None
 
             request.state.tenant_id = resolved_tenant_id
             current_tenant_id.set(str(resolved_tenant_id))
 
-            if err:
-                return JSONResponse(
-                    th.build_vapi_tool_response(tool_call_id, None, err),
-                    status_code=200,
-                )
             slots = slots_list or []
-            if slots:
-                if len(slots) == 1:
-                    slots_text = slots[0]
-                else:
-                    slots_text = ", ".join(slots[:-1]) + " et " + slots[-1]
-                result_text = f"Créneaux disponibles : {slots_text}."
-            else:
-                result_text = "Aucun créneau disponible pour le moment."
-            _tool_body = th.build_vapi_tool_response(tool_call_id, result_text, None)
+            result_payload = th.build_get_slots_tool_result(
+                session,
+                slots_list,
+                source,
+                err_reason if err else None,
+                preferred_time=preferred_time,
+                preferred_time_type=preferred_time_type,
+            )
+            _tool_body = th.build_vapi_tool_response(tool_call_id, result_payload, None)
             _tool_body_json = json.dumps(_tool_body, ensure_ascii=False)
             elapsed_ms = int((_time.monotonic() - _t0) * 1000)
             logger.info(
@@ -1786,7 +1978,7 @@ async def vapi_tool(request: Request):
                 call_id[:24] if call_id else "", elapsed_ms, len(_tool_body_json), len(slots), source or "?",
             )
             return JSONResponse(
-                th.build_vapi_tool_response(tool_call_id, result_text, None),
+                th.build_vapi_tool_response(tool_call_id, result_payload, None),
                 status_code=200,
             )
 
@@ -1798,14 +1990,48 @@ async def vapi_tool(request: Request):
         def _get_session():
             return _get_or_resume_voice_session(resolved_tenant_id, call_id)
 
+        from backend.tenant_routing import extract_customer_phone_from_vapi_payload
+
+        payload_customer_phone = extract_customer_phone_from_vapi_payload(payload)
+
+        if action == "validate_contact":
+            session = _get_session()
+            session.channel = "vocal"
+            session.tenant_id = resolved_tenant_id
+            if payload_customer_phone and not session.customer_phone:
+                session.customer_phone = payload_customer_phone
+            validate_payload, err = th.handle_validate_contact(
+                session,
+                call_id=call_id,
+                selected_slot=selected_slot,
+                patient_name=patient_name,
+                phone_number=phone_number,
+                confirmation_last4=confirmation_last4,
+            )
+            try:
+                if hasattr(ENGINE.session_store, "save"):
+                    ENGINE.session_store.save(session)
+            except Exception as save_err:
+                logger.warning("Tool validate_contact: save session failed: %s", save_err)
+            return JSONResponse(
+                th.build_vapi_tool_response(
+                    tool_call_id,
+                    th.build_validate_contact_tool_result(validate_payload),
+                    err,
+                ),
+                status_code=200,
+            )
+
         # --- book : réservation (payload JSON strict V3) ---
         if action == "book":
             _book_t0 = _time.monotonic()
             session = _get_session()
             session.channel = "vocal"
             session.tenant_id = resolved_tenant_id
+            if payload_customer_phone and not session.customer_phone:
+                session.customer_phone = payload_customer_phone
             _book_t1 = _time.monotonic()
-            payload, err = th.handle_book(session, selected_slot, patient_name, motif, call_id)
+            book_payload, err = th.handle_book(session, selected_slot, patient_name, motif, call_id)
             _book_handle_ms = int((_time.monotonic() - _book_t1) * 1000)
             if err:
                 _book_elapsed_ms = int((_time.monotonic() - _book_t0) * 1000)
@@ -1820,21 +2046,34 @@ async def vapi_tool(request: Request):
                     status_code=200,
                 )
             try:
+                t_save = 0
                 if hasattr(ENGINE.session_store, "save"):
+                    _book_save_t0 = _time.monotonic()
                     ENGINE.session_store.save(session)
+                    t_save = int((_time.monotonic() - _book_save_t0) * 1000)
             except Exception as save_err:
                 logger.warning("Tool book: save session failed (booking already done): %s", save_err)
-            result_str = th.build_book_tool_result(session, payload)
-            logger.info("[VAPI_TOOL_RESPONSE] payload=%s result=%s", payload, result_str)
+                t_save = -1
+            result_str = th.build_book_tool_result(session, book_payload)
+            logger.info("[VAPI_TOOL_RESPONSE] payload=%s result=%s", book_payload, result_str)
             body = th.build_vapi_tool_response(tool_call_id, result_str, None)
+            booking_end_schedule = {"attempted": False, "ok": False, "reason": "not_confirmed"}
+            if (book_payload or {}).get("status") == "confirmed":
+                booking_end_schedule = _schedule_terminal_booking_end(
+                    _payload_with_cached_control_url(payload, call_id),
+                    session,
+                )
             _book_elapsed_ms = int((_time.monotonic() - _book_t0) * 1000)
             logger.info(
-                "[VAPI_TOOL_BOOK_RETURN] call_id=%s elapsed=%dms t_book=%dms body_len=%d confirmed=%s",
+                "[VAPI_TOOL_BOOK_RETURN] call_id=%s elapsed=%dms t_book=%dms t_save=%dms t_booking_end_schedule=%dms body_len=%d confirmed=%s booking_end_scheduled=%s",
                 call_id,
                 _book_elapsed_ms,
                 _book_handle_ms,
+                t_save,
+                0,
                 len(result_str),
-                bool((payload or {}).get("status") == "confirmed"),
+                bool((book_payload or {}).get("status") == "confirmed"),
+                bool(booking_end_schedule.get("ok")),
             )
             return JSONResponse(body, status_code=200)
 

@@ -144,7 +144,7 @@ class Session:
     modify_rdv_not_found_count: int = 0  # MODIFY : nb fois "RDV pas trouvé"
     faq_fails: int = 0  # FAQ : question pas comprise (reformulation → exemples → INTENT_ROUTER)
     # RÈGLE 7 : contrainte horaire explicite (ex: "après 17h")
-    time_constraint_type: str = ""  # "after" | "before" | ""
+    time_constraint_type: str = ""  # "after" | "before" | "around" | "exact" | ""
     time_constraint_minute: int = -1  # minute_of_day (ex 17h00 -> 1020), -1 si absent
     # Flow ordonnance (conversation naturelle RDV vs message)
     ordonnance_choice_fails: int = 0

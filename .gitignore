@@ -34,6 +34,9 @@ node_modules/
 
 # Credentials / env (ne pas committer les secrets)
 .env
+.env.railway
+.env.before-cleanup
+.env.local-safe
 credentials/
 *.json
 !package.json

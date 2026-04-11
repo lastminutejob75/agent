@@ -3,6 +3,7 @@
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from datetime import datetime, timedelta, timezone
+import time
 from typing import List, Dict, Optional
 import logging
 from googleapiclient.errors import HttpError
@@ -53,6 +54,7 @@ class GoogleCalendarService:
 
     def _build_service(self):
         """Crée le service Google Calendar."""
+        t0 = time.perf_counter()
         try:
             if not cfg.SERVICE_ACCOUNT_FILE:
                 raise Exception("❌ SERVICE_ACCOUNT_FILE not initialized - startup not run?")
@@ -61,7 +63,7 @@ class GoogleCalendarService:
                 scopes=SCOPES
             )
             service = build('calendar', 'v3', credentials=credentials)
-            logger.info("Google Calendar service initialized")
+            logger.info("Google Calendar service initialized in %.0fms", (time.perf_counter() - t0) * 1000)
             return service
         except Exception as e:
             logger.error(f"Failed to initialize Google Calendar: {e}")
@@ -203,6 +205,7 @@ class GoogleCalendarService:
         end_hour: int = 18,
         limit: int = 3,
         buffer_minutes: int = 0,
+        per_day_limit: int = 1,
     ) -> List[Dict]:
         """
         Récupère en une seule requête Google le premier créneau libre de plusieurs jours.
@@ -213,6 +216,7 @@ class GoogleCalendarService:
         if not dates or limit <= 0:
             return []
         try:
+            per_day_limit = max(1, int(per_day_limit or 1))
             tz = ZoneInfo(CALENDAR_TZ) if ZoneInfo else timezone(timedelta(hours=1))
             normalized_dates: List[datetime] = []
             for raw_date in dates:
@@ -258,6 +262,7 @@ class GoogleCalendarService:
                 day_start = current_date.replace(hour=start_hour, minute=0, second=0, microsecond=0)
                 day_end = current_date.replace(hour=end_hour, minute=0, second=0, microsecond=0)
                 current = day_start
+                day_count = 0
                 while current < day_end:
                     slot_end = current + timedelta(minutes=duration_minutes)
                     effective_end = slot_end + buffer_td
@@ -274,7 +279,9 @@ class GoogleCalendarService:
                             'end': slot_end.isoformat(),
                             'label': self._format_slot_label(current),
                         })
-                        break
+                        day_count += 1
+                        if len(free_slots) >= limit or day_count >= per_day_limit:
+                            break
                     current += timedelta(minutes=duration_minutes)
                 if len(free_slots) >= limit:
                     break
@@ -341,6 +348,7 @@ class GoogleCalendarService:
         # Log pour debug (sans données sensibles)
         cal_mask = (self.calendar_id[:20] + "…") if self.calendar_id and len(self.calendar_id) > 20 else (self.calendar_id or "None")
         logger.info(f"Booking: calendar_id={cal_mask} start={start_time} end={end_time} name={patient_name!r}")
+        t0 = time.perf_counter()
         try:
             event = {
                 'summary': f'RDV - {patient_name}',
@@ -365,14 +373,20 @@ class GoogleCalendarService:
                     ],
                 },
             }
-            
+            t_insert_0 = time.perf_counter()
             created_event = self.service.events().insert(
                 calendarId=self.calendar_id,
                 body=event
             ).execute()
-            
+            t_insert_ms = round((time.perf_counter() - t_insert_0) * 1000, 0)
             event_id = created_event.get('id')
-            logger.info(f"Appointment booked: event_id={event_id} calendar_id={cal_mask}")
+            logger.info(
+                "GOOGLE_BOOK_OK calendar_id=%s event_id=%s t_insert_ms=%s t_total_ms=%s",
+                cal_mask,
+                event_id,
+                t_insert_ms,
+                round((time.perf_counter() - t0) * 1000, 0),
+            )
             
             return event_id
         
@@ -389,17 +403,23 @@ class GoogleCalendarService:
                 else:
                     label = "other"
                 logger.error(
-                    "Error booking appointment: HTTP %s (%s) %s - %s",
+                    "Error booking appointment: HTTP %s (%s) %s - %s (t_total_ms=%s)",
                     status,
                     label,
                     e.resp.reason,
                     e,
+                    round((time.perf_counter() - t0) * 1000, 0),
                 )
                 # 403 = droits insuffisants (writer) → exception typée pour raison "permission"
                 if status == 403:
                     raise GoogleCalendarPermissionError(e)
             else:
-                logger.error("Error booking appointment: %s", e, exc_info=True)
+                logger.error(
+                    "Error booking appointment: %s (t_total_ms=%s)",
+                    e,
+                    round((time.perf_counter() - t0) * 1000, 0),
+                    exc_info=True,
+                )
             return None
     
     def list_upcoming_events(self, days: int = 30) -> List[Dict]:

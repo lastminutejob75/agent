@@ -375,6 +375,43 @@ class SQLiteSessionStore:
         
         if conv_id in self._memory_cache:
             del self._memory_cache[conv_id]
+
+    def cleanup_expired_sessions(self, ttl_minutes: Optional[int] = None) -> int:
+        """
+        Supprime les sessions expirées du cache mémoire et de SQLite.
+
+        Returns:
+            Nombre total de sessions supprimées
+        """
+        from backend import config
+        config._sqlite_guard("session_store_sqlite.cleanup_expired_sessions")
+        from datetime import timedelta
+
+        ttl = ttl_minutes if ttl_minutes is not None else config.SESSION_TTL_MINUTES
+        cutoff_dt = datetime.utcnow() - timedelta(minutes=ttl)
+        cutoff = cutoff_dt.isoformat()
+
+        expired_in_memory = [
+            conv_id
+            for conv_id, session in list(self._memory_cache.items())
+            if session is None or session.is_expired()
+        ]
+        for conv_id in expired_in_memory:
+            self._memory_cache.pop(conv_id, None)
+
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM sessions WHERE last_seen_at < ?", (cutoff,))
+        deleted_db = cursor.rowcount
+        conn.commit()
+        conn.close()
+
+        deleted_total = max(deleted_db, 0) + len(expired_in_memory)
+        if deleted_total:
+            print(
+                f"🧹 Cleaned expired sessions: memory={len(expired_in_memory)} db={max(deleted_db, 0)}"
+            )
+        return deleted_total
     
     def cleanup_old_sessions(self, hours: int = 24) -> int:
         """

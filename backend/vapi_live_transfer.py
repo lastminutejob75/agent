@@ -20,6 +20,8 @@ _E164_RE = re.compile(r"^\+[1-9]\d{7,14}$")
 _VAPI_API_URL = "https://api.vapi.ai"
 _TRANSFER_CONFIRMATION_TIMEOUT_SECONDS = 20
 _TRANSFER_CONFIRMATION_POLL_SECONDS = 1
+_BOOKING_END_CONTROL_TIMEOUT_SECONDS = 5.0
+_BOOKING_END_MESSAGE = "Votre rendez-vous est confirmé. Merci pour votre appel. Bonne journée."
 
 
 def mask_phone_last4(value: str) -> str:
@@ -149,6 +151,92 @@ def extract_control_url(payload: Optional[dict]) -> str:
         if raw:
             return raw if raw.endswith("/control") else f"{raw.rstrip('/')}/control"
     return ""
+
+
+def maybe_start_terminal_booking_end(
+    payload: Optional[dict],
+    session: Any,
+    *,
+    message: str = _BOOKING_END_MESSAGE,
+) -> Dict[str, Any]:
+    if not session or getattr(session, "channel", "") != "vocal":
+        return {"attempted": False, "ok": False, "reason": "not_vocal"}
+    if getattr(session, "booking_end_control_requested", False):
+        return {"attempted": False, "ok": True, "reason": "already_requested"}
+
+    control_url = extract_control_url(payload)
+    if not control_url:
+        logger.warning(
+            "BOOKING_END_CONTROL_SKIPPED call_id=%s reason=missing_control_url",
+            str(getattr(session, "conv_id", "") or "")[:24],
+        )
+        return {"attempted": False, "ok": False, "reason": "missing_control_url"}
+
+    started_at = time.perf_counter()
+    control_host = urlparse(control_url).netloc or ""
+    _SAY_SETTLE_SECONDS = 7.0
+    body_say = {
+        "type": "say",
+        "content": (message or _BOOKING_END_MESSAGE).strip() or _BOOKING_END_MESSAGE,
+        "endCallAfterSpoken": True,
+    }
+
+    try:
+        with httpx.Client(timeout=_BOOKING_END_CONTROL_TIMEOUT_SECONDS) as client:
+            t_say_0 = time.perf_counter()
+            say_response = client.post(
+                control_url,
+                json=body_say,
+                headers={"Content-Type": "application/json"},
+            )
+            say_response.raise_for_status()
+            t_say_ms = round((time.perf_counter() - t_say_0) * 1000, 0)
+        setattr(session, "booking_end_control_requested", True)
+        logger.info(
+            "BOOKING_END_CONTROL_TRIGGERED call_id=%s tenant_id=%s control_host=%s t_say_ms=%s end_after_spoken=%s message=%s — sleeping %.1fs before returning tool response",
+            str(getattr(session, "conv_id", "") or "")[:24],
+            int(getattr(session, "tenant_id", 1) or 1),
+            control_host,
+            t_say_ms,
+            True,
+            body_say["content"][:120],
+            _SAY_SETTLE_SECONDS,
+        )
+        time.sleep(_SAY_SETTLE_SECONDS)
+        elapsed_ms = round((time.perf_counter() - started_at) * 1000, 0)
+        logger.info(
+            "BOOKING_END_CONTROL_SETTLED call_id=%s elapsed_ms=%s",
+            str(getattr(session, "conv_id", "") or "")[:24],
+            elapsed_ms,
+        )
+        return {
+            "attempted": True,
+            "ok": True,
+            "message": body_say["content"],
+        }
+    except Exception as exc:
+        status_code = getattr(getattr(exc, "response", None), "status_code", None)
+        response_text = ""
+        if getattr(exc, "response", None) is not None:
+            try:
+                response_text = str(exc.response.text or "")[:800]
+            except Exception:
+                response_text = ""
+        logger.warning(
+            "BOOKING_END_CONTROL_FAILED call_id=%s tenant_id=%s control_host=%s status_code=%s err_type=%s err=%s body=%s",
+            str(getattr(session, "conv_id", "") or "")[:24],
+            int(getattr(session, "tenant_id", 1) or 1),
+            control_host,
+            status_code,
+            exc.__class__.__name__,
+            str(exc)[:160],
+            response_text,
+        )
+        return {
+            "attempted": True,
+            "ok": False,
+            "reason": "control_request_failed",
+        }
 
 
 def _destination_phone(session: Any, target: str) -> str:

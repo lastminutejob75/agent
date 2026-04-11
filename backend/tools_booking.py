@@ -542,11 +542,23 @@ def _slot_minute_of_day(slot) -> int:
     return hour * 60
 
 
+def _sort_slots_by_target_minute(slots: List, target_minute: int) -> List:
+    """Trie les créneaux par proximité avec une heure cible."""
+    if target_minute is None or target_minute < 0:
+        return list(slots or [])
+    return sorted(
+        slots or [],
+        key=lambda s: (abs(_slot_minute_of_day(s) - target_minute), _slot_minute_of_day(s)),
+    )
+
+
 def filter_slots_by_time_constraint(slots: List, session) -> List:
     """
     RÈGLE 7: Filtre les créneaux selon la contrainte horaire explicite.
     - after: garder slots >= constraint
     - before: garder slots <= constraint
+    - around: trier par proximité avec l'heure cible
+    - exact: garder slots == constraint
     """
     t = getattr(session, "time_constraint_type", "") or ""
     m = getattr(session, "time_constraint_minute", -1)
@@ -563,6 +575,12 @@ def filter_slots_by_time_constraint(slots: List, session) -> List:
             out.append(s)
         elif t == "before" and minute <= m:
             out.append(s)
+        elif t == "exact" and minute == m:
+            out.append(s)
+        elif t == "around":
+            out.append(s)
+    if t == "around":
+        return _sort_slots_by_target_minute(out, m)
     return out
 
 
@@ -636,10 +654,17 @@ def get_slots_for_display(
     import time
     t_start = time.time()
     tenant_id = getattr(session, "tenant_id", None) or 1
+    preferred_minute = getattr(session, "time_constraint_minute", -1) if session is not None else -1
+    has_time_constraint = bool(
+        session is not None
+        and (getattr(session, "time_constraint_type", "") or "")
+        and getattr(session, "time_constraint_minute", -1) is not None
+        and getattr(session, "time_constraint_minute", -1) >= 0
+    )
 
     # Fast-path absolu : cache avant toute résolution adapter/tenant-config (évite overhead DB).
     rejected = getattr(session, "rejected_slot_starts", None) if session else None
-    if not rejected:
+    if not rejected and not has_time_constraint:
         cached = _get_cached_slots(limit, tenant_id, pref=pref)
         if cached:
             logger.info(f"⚡ get_slots_for_display: cache hit pref={pref} ({(time.time() - t_start) * 1000:.0f}ms)")
@@ -671,7 +696,14 @@ def get_slots_for_display(
     # Récupérer le pool brut (pas encore étalé) pour pouvoir filtrer refus puis étaler
     if calendar_or_adapter:
         try:
-            pool = _get_slots_from_google_calendar(calendar_or_adapter, limit, pref=pref, tenant_id=tenant_id)
+            pool = _get_slots_from_google_calendar(
+                calendar_or_adapter,
+                limit,
+                pref=pref,
+                tenant_id=tenant_id,
+                preferred_minute=preferred_minute if has_time_constraint else None,
+                preferred_time_type=(getattr(session, "time_constraint_type", "") or "") if has_time_constraint else None,
+            )
         except GoogleCalendarPermissionError as e:
             if strict_google_mode:
                 logger.warning(
@@ -715,7 +747,14 @@ def get_slots_for_display(
         logger.info(f"⚠️ Aucun créneau pour pref={pref}, fallback sans filtre")
         if calendar_or_adapter:
             try:
-                pool = _get_slots_from_google_calendar(calendar_or_adapter, limit, pref=None, tenant_id=tenant_id)
+                pool = _get_slots_from_google_calendar(
+                    calendar_or_adapter,
+                    limit,
+                    pref=None,
+                    tenant_id=tenant_id,
+                    preferred_minute=preferred_minute if has_time_constraint else None,
+                    preferred_time_type=(getattr(session, "time_constraint_type", "") or "") if has_time_constraint else None,
+                )
             except GoogleCalendarPermissionError as e:
                 if strict_google_mode:
                     logger.warning(
@@ -787,7 +826,7 @@ def get_slots_for_display(
         if ex_start or ex_end:
             logger.info("get_slots_for_display: excluded slot %s..%s → %s slots", ex_start[:19], ex_end[:19], len(slots))
 
-    if not rejected:
+    if not rejected and not has_time_constraint:
         _set_cached_slots(slots, tenant_id, pref=pref)
 
     log_extra = ""
@@ -804,6 +843,8 @@ def _get_slots_from_google_calendar(
     limit: int,
     pref: Optional[str] = None,
     tenant_id: int = 1,
+    preferred_minute: Optional[int] = None,
+    preferred_time_type: Optional[str] = None,
 ) -> List[prompts.SlotDisplay]:
     """Récupère le pool de créneaux via Google Calendar (étalement fait dans get_slots_for_display)."""
     from backend.tenant_config import get_booking_rules
@@ -816,10 +857,31 @@ def _get_slots_from_google_calendar(
     buffer_minutes = rules["buffer_minutes"]
 
     pool: List[prompts.SlotDisplay] = []
-    # Priorité fiabilité Vapi: fournir vite 3 créneaux, même si moins "diversifiés".
+    has_explicit_time_constraint = preferred_minute is not None and preferred_minute >= 0
+    # Avec une contrainte horaire explicite, il faut récupérer un pool plus large
+    # avant filtrage ; sinon on peut éliminer à tort les 3 premiers créneaux.
     target_pool_size = max(3, limit)
+    per_day_limit = 1
+    if has_explicit_time_constraint:
+        target_pool_size = max(12, limit * 4)
+        per_day_limit = max(4, limit)
     # Plage horaire selon préférence (intersection avec règles tenant)
-    if pref == "matin":
+    if preferred_minute is not None and preferred_minute >= 0:
+        preferred_hour = preferred_minute // 60
+        constraint_type = (preferred_time_type or "").strip().lower()
+        if constraint_type == "before":
+            start_hour = base_start
+            end_hour = min(base_end, max(base_start + 1, preferred_hour + 1))
+        elif constraint_type == "exact":
+            start_hour = max(base_start, preferred_hour)
+            end_hour = min(base_end, max(start_hour + 1, preferred_hour + 1))
+        elif constraint_type == "after":
+            start_hour = max(base_start, preferred_hour)
+            end_hour = base_end
+        else:
+            start_hour = max(base_start, preferred_hour)
+            end_hour = min(base_end, max(start_hour + 1, preferred_hour + 3))
+    elif pref == "matin":
         start_hour, end_hour = max(base_start, 9), min(12, base_end)
     elif pref == "après-midi":
         start_hour, end_hour = max(14, base_start), min(18, base_end)
@@ -844,6 +906,7 @@ def _get_slots_from_google_calendar(
             end_hour=end_hour,
             limit=target_pool_size,
             buffer_minutes=buffer_minutes,
+            per_day_limit=per_day_limit,
         )
         if batch_slots:
             days_fr = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
@@ -872,7 +935,6 @@ def _get_slots_from_google_calendar(
             logger.info(f"Google Calendar: {len(pool)} créneaux en pool batch (pref={pref})")
             return pool
 
-    per_day = 1
     days_fr = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
     for date in candidate_dates:
         if len(pool) >= target_pool_size:
@@ -882,33 +944,35 @@ def _get_slots_from_google_calendar(
             duration_minutes=duration_minutes,
             start_hour=start_hour,
             end_hour=end_hour,
-            limit=per_day,
+            limit=per_day_limit,
             buffer_minutes=buffer_minutes,
         )
         if not day_slots:
             continue
-        slot = day_slots[0]  # max 1 créneau par jour → propositions sur jours différents
-        start_iso = slot.get('start', '')
-        day_fr, hour, label_vocal = '', 0, ''
-        try:
-            dt = datetime.fromisoformat(start_iso.replace('Z', '+00:00'))
-            if dt.tzinfo:
-                dt = dt.replace(tzinfo=None)
-            day_fr = days_fr[dt.weekday()]
-            hour = dt.hour
-            label_vocal = f"{day_fr} à {hour}h"
-        except Exception:
-            pass
-        pool.append(prompts.SlotDisplay(
-            idx=len(pool) + 1,
-            label=slot['label'],
-            slot_id=len(pool),
-            start=start_iso,
-            day=day_fr,
-            hour=hour,
-            label_vocal=label_vocal or slot.get('label', ''),
-            source="google",
-        ))
+        for slot in day_slots:
+            start_iso = slot.get('start', '')
+            day_fr, hour, label_vocal = '', 0, ''
+            try:
+                dt = datetime.fromisoformat(start_iso.replace('Z', '+00:00'))
+                if dt.tzinfo:
+                    dt = dt.replace(tzinfo=None)
+                day_fr = days_fr[dt.weekday()]
+                hour = dt.hour
+                label_vocal = f"{day_fr} à {hour}h"
+            except Exception:
+                pass
+            pool.append(prompts.SlotDisplay(
+                idx=len(pool) + 1,
+                label=slot['label'],
+                slot_id=len(pool),
+                start=start_iso,
+                day=day_fr,
+                hour=hour,
+                label_vocal=label_vocal or slot.get('label', ''),
+                source="google",
+            ))
+            if len(pool) >= target_pool_size:
+                break
     logger.info(f"Google Calendar: {len(pool)} créneaux en pool rapide (pref={pref})")
     return pool
 
@@ -1108,6 +1172,7 @@ def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str
     """
     conv_id = getattr(session, "conv_id", "")
     slots = getattr(session, "pending_slots", None) or []
+    t0 = time.perf_counter()
 
     logger.info(
         "[BOOKING_ENTER] conv_id=%s choice=%s pending_len=%s first_keys=%s",
@@ -1150,7 +1215,16 @@ def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str
                 end_iso,
                 len(slots),
             )
+            t_google_0 = time.perf_counter()
             ok, reason = _book_google_by_iso(session, start_iso, end_iso)
+            logger.info(
+                "[BOOKING_SEGMENTS] conv_id=%s source=google t_book_provider_ms=%s t_total_ms=%s success=%s reason=%s",
+                conv_id[:20],
+                round((time.perf_counter() - t_google_0) * 1000, 0),
+                round((time.perf_counter() - t0) * 1000, 0),
+                ok,
+                reason,
+            )
             logger.info("[SLOT_BOOK_RESULT] conv_id=%s success=%s reason=%s slot_id=%s", conv_id[:20], ok, reason, slot_id_val)
             return (ok, reason)
         if src in ("sqlite", "pg"):
@@ -1168,7 +1242,17 @@ def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str
                 )
                 logger.info("[SLOT_BOOK_RESULT] conv_id=%s success=False reason=technical slot_id=missing", conv_id[:20])
                 return False, "technical"
+            t_local_0 = time.perf_counter()
             ok = _book_local_by_slot_id(session, int(slot_id), source=src)
+            logger.info(
+                "[BOOKING_SEGMENTS] conv_id=%s source=%s t_book_provider_ms=%s t_total_ms=%s success=%s reason=%s",
+                conv_id[:20],
+                src,
+                round((time.perf_counter() - t_local_0) * 1000, 0),
+                round((time.perf_counter() - t0) * 1000, 0),
+                ok,
+                None if ok else "slot_taken",
+            )
             logger.info("[SLOT_BOOK_RESULT] conv_id=%s success=%s reason=%s slot_id=%s", conv_id[:20], ok, None if ok else "slot_taken", slot_id)
             return (ok, None if ok else "slot_taken")
 
@@ -1246,8 +1330,11 @@ def _book_google_by_iso(session, start_iso: str, end_iso: str) -> tuple[bool, st
     Utilise get_calendar_adapter(session) pour multi-tenant.
     Returns (success, reason) with reason in ("slot_taken", "technical", "permission", None).
     """
+    t0 = time.perf_counter()
     from backend.calendar_adapter import get_calendar_adapter
+    t_adapter_0 = time.perf_counter()
     adapter = get_calendar_adapter(session)
+    t_adapter_ms = round((time.perf_counter() - t_adapter_0) * 1000, 0)
     if adapter is not None and not adapter.can_propose_slots():
         logger.warning("[BOOKING_TECH_REASON] adapter.can_propose_slots=False")
         return False, "technical"
@@ -1284,14 +1371,48 @@ def _book_google_by_iso(session, start_iso: str, end_iso: str) -> tuple[bool, st
             raise
 
     try:
+        t_try1_0 = time.perf_counter()
         ok, reason = _try_once()
+        t_try1_ms = round((time.perf_counter() - t_try1_0) * 1000, 0)
         if ok:
+            logger.info(
+                "[BOOKING_GOOGLE_SEGMENTS] conv_id=%s t_adapter_ms=%s t_try1_ms=%s retried=%s t_total_ms=%s success=%s",
+                getattr(session, "conv_id", "")[:20],
+                t_adapter_ms,
+                t_try1_ms,
+                False,
+                round((time.perf_counter() - t0) * 1000, 0),
+                True,
+            )
             return True, None
         # Pas de retry pour permission ni technical (403 / timeouts / 5xx / 400)
         if reason in ("technical", "permission"):
+            logger.info(
+                "[BOOKING_GOOGLE_SEGMENTS] conv_id=%s t_adapter_ms=%s t_try1_ms=%s retried=%s t_total_ms=%s success=%s reason=%s",
+                getattr(session, "conv_id", "")[:20],
+                t_adapter_ms,
+                t_try1_ms,
+                False,
+                round((time.perf_counter() - t0) * 1000, 0),
+                False,
+                reason,
+            )
             return False, reason
         logger.info("Retry booking Google Calendar pour conv_id=%s", getattr(session, "conv_id", ""))
+        t_try2_0 = time.perf_counter()
         ok2, reason2 = _try_once()
+        t_try2_ms = round((time.perf_counter() - t_try2_0) * 1000, 0)
+        logger.info(
+            "[BOOKING_GOOGLE_SEGMENTS] conv_id=%s t_adapter_ms=%s t_try1_ms=%s t_try2_ms=%s retried=%s t_total_ms=%s success=%s reason=%s",
+            getattr(session, "conv_id", "")[:20],
+            t_adapter_ms,
+            t_try1_ms,
+            t_try2_ms,
+            True,
+            round((time.perf_counter() - t0) * 1000, 0),
+            ok2,
+            None if ok2 else (reason2 or "slot_taken"),
+        )
         if ok2:
             return True, None
         return False, reason2 or "slot_taken"
