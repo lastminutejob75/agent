@@ -153,12 +153,21 @@ def extract_control_url(payload: Optional[dict]) -> str:
     return ""
 
 
+_BOOKING_END_CALL_DELAY_SECONDS = 10.0
+
+
 def maybe_start_terminal_booking_end(
     payload: Optional[dict],
     session: Any,
     *,
     message: str = _BOOKING_END_MESSAGE,
 ) -> Dict[str, Any]:
+    """Schedule end-call via controlUrl in a background thread after a delay.
+
+    The actual phrase is now embedded in the tool response (assistant_says),
+    so the LLM speaks it with its configured French voice. This function
+    only handles the delayed end-call to ensure the call terminates cleanly.
+    """
     if not session or getattr(session, "channel", "") != "vocal":
         return {"attempted": False, "ok": False, "reason": "not_vocal"}
     if getattr(session, "booking_end_control_requested", False):
@@ -172,63 +181,45 @@ def maybe_start_terminal_booking_end(
         )
         return {"attempted": False, "ok": False, "reason": "missing_control_url"}
 
-    started_at = time.perf_counter()
+    call_id = str(getattr(session, "conv_id", "") or "")[:24]
+    tenant_id = int(getattr(session, "tenant_id", 1) or 1)
     control_host = urlparse(control_url).netloc or ""
-    _SETTLE_SECONDS = 8.0
-    final_text = (message or _BOOKING_END_MESSAGE).strip() or _BOOKING_END_MESSAGE
-    body_add_msg = {
-        "type": "add-message",
-        "message": {
-            "role": "system",
-            "content": (
-                f"INSTRUCTION PRIORITAIRE — Reponds uniquement avec la phrase suivante, "
-                f"mot pour mot, sans rien ajouter, modifier, reformuler ni ponctuation additionnelle : "
-                f"'{final_text}'"
-            ),
-        },
-        "triggerResponseEnabled": True,
-    }
-    body_end = {"type": "end-call"}
+    setattr(session, "booking_end_control_requested", True)
 
-    try:
-        with httpx.Client(timeout=_BOOKING_END_CONTROL_TIMEOUT_SECONDS) as client:
-            t0 = time.perf_counter()
-            add_resp = client.post(
-                control_url,
-                json=body_add_msg,
-                headers={"Content-Type": "application/json"},
-            )
-            add_resp.raise_for_status()
-            t_add_ms = round((time.perf_counter() - t0) * 1000, 0)
-
-            time.sleep(_SETTLE_SECONDS)
-
-            try:
-                client.post(
+    def _delayed_end_call():
+        time.sleep(_BOOKING_END_CALL_DELAY_SECONDS)
+        try:
+            with httpx.Client(timeout=_BOOKING_END_CONTROL_TIMEOUT_SECONDS) as client:
+                resp = client.post(
                     control_url,
-                    json=body_end,
+                    json={"type": "end-call"},
                     headers={"Content-Type": "application/json"},
                 )
-            except Exception:
-                pass
+                logger.info(
+                    "BOOKING_END_CALL_SENT call_id=%s tenant_id=%s control_host=%s status=%s delay_s=%.1f",
+                    call_id, tenant_id, control_host, resp.status_code, _BOOKING_END_CALL_DELAY_SECONDS,
+                )
+        except Exception as exc:
+            logger.warning(
+                "BOOKING_END_CALL_FAILED call_id=%s tenant_id=%s err=%s",
+                call_id, tenant_id, str(exc)[:160],
+            )
 
-        elapsed_ms = round((time.perf_counter() - started_at) * 1000, 0)
-        setattr(session, "booking_end_control_requested", True)
-        logger.info(
-            "BOOKING_END_CONTROL_TRIGGERED call_id=%s tenant_id=%s control_host=%s t_add_msg_ms=%s settle_s=%.1f elapsed_ms=%s message=%s",
-            str(getattr(session, "conv_id", "") or "")[:24],
-            int(getattr(session, "tenant_id", 1) or 1),
-            control_host,
-            t_add_ms,
-            _SETTLE_SECONDS,
-            elapsed_ms,
-            final_text[:120],
-        )
-        return {
-            "attempted": True,
-            "ok": True,
-            "message": final_text,
-        }
+    threading.Thread(
+        target=_delayed_end_call,
+        daemon=True,
+        name=f"uwi-booking-end-{call_id[:8]}",
+    ).start()
+
+    logger.info(
+        "BOOKING_END_CONTROL_SCHEDULED call_id=%s tenant_id=%s control_host=%s delay_s=%.1f",
+        call_id, tenant_id, control_host, _BOOKING_END_CALL_DELAY_SECONDS,
+    )
+    return {
+        "attempted": True,
+        "ok": True,
+        "message": message,
+    }
     except Exception as exc:
         status_code = getattr(getattr(exc, "response", None), "status_code", None)
         response_text = ""

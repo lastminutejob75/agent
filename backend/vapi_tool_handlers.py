@@ -32,15 +32,19 @@ def _vapi_result_string(data: Dict[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False)
 
 
+_BOOKING_CONFIRMED_PHRASE = "Votre rendez-vous est confirmé. Merci pour votre appel. Bonne journée."
+
+
 def build_book_tool_result(session: Any, payload: Optional[Dict[str, Any]]) -> str:
     """
     Retour tool Vapi pour `book`.
-    - `confirmed` : renvoyer un statut structuré pour que le prompt pilote `endCall`
-      sans relecture libre du texte.
+    - `confirmed` : inclut la phrase exacte à prononcer mot pour mot.
     - autres statuts : conserver le JSON strict existant.
     """
-    status = str((payload or {}).get("status") or "").strip().lower()
-    return _vapi_result_string(payload or {})
+    data = dict(payload or {})
+    if data.get("status") == "confirmed":
+        data["assistant_says"] = _BOOKING_CONFIRMED_PHRASE
+    return _vapi_result_string(data)
 
 
 def build_validate_contact_tool_result(payload: Optional[Dict[str, Any]]) -> str:
@@ -101,6 +105,7 @@ def handle_get_slots(
         preferred_time_constraint = _normalize_preferred_time_type(preferred_time_type) if preferred_time_minute is not None else ""
         cache_disabled = preferred_time_minute is not None
         if preferred_time_minute is not None:
+            pref = None
             session.time_constraint_type = preferred_time_constraint
             session.time_constraint_minute = preferred_time_minute
         else:
