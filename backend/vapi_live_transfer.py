@@ -181,10 +181,9 @@ def maybe_start_terminal_booking_end(
         "message": {
             "role": "system",
             "content": (
-                f"INSTRUCTION PRIORITAIRE — Dis EXACTEMENT cette phrase, mot pour mot, "
-                f"sans rien ajouter, modifier ou reformuler : "
-                f"« {final_text} » "
-                f"Puis raccroche immédiatement."
+                f"INSTRUCTION PRIORITAIRE — Reponds uniquement avec la phrase suivante, "
+                f"mot pour mot, sans rien ajouter, modifier, reformuler ni ponctuation additionnelle : "
+                f"'{final_text}'"
             ),
         },
         "triggerResponseEnabled": True,
