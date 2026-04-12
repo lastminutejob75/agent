@@ -220,29 +220,6 @@ def maybe_start_terminal_booking_end(
         "ok": True,
         "message": message,
     }
-    except Exception as exc:
-        status_code = getattr(getattr(exc, "response", None), "status_code", None)
-        response_text = ""
-        if getattr(exc, "response", None) is not None:
-            try:
-                response_text = str(exc.response.text or "")[:800]
-            except Exception:
-                response_text = ""
-        logger.warning(
-            "BOOKING_END_CONTROL_FAILED call_id=%s tenant_id=%s control_host=%s status_code=%s err_type=%s err=%s body=%s",
-            str(getattr(session, "conv_id", "") or "")[:24],
-            int(getattr(session, "tenant_id", 1) or 1),
-            control_host,
-            status_code,
-            exc.__class__.__name__,
-            str(exc)[:160],
-            response_text,
-        )
-        return {
-            "attempted": True,
-            "ok": False,
-            "reason": "control_request_failed",
-        }
 
 
 def _destination_phone(session: Any, target: str) -> str:
