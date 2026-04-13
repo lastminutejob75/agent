@@ -38,13 +38,13 @@ _BOOKING_CONFIRMED_PHRASE = "Votre rendez-vous est confirmé. Merci pour votre a
 def build_book_tool_result(session: Any, payload: Optional[Dict[str, Any]]) -> str:
     """
     Retour tool Vapi pour `book`.
-    - `confirmed` : inclut la phrase exacte à prononcer mot pour mot.
+    - `confirmed` : renvoyer UNIQUEMENT la phrase à prononcer (pas de JSON),
+      pour que le LLM la répète telle quelle sans charabia.
     - autres statuts : conserver le JSON strict existant.
     """
-    data = dict(payload or {})
-    if data.get("status") == "confirmed":
-        data["assistant_says"] = _BOOKING_CONFIRMED_PHRASE
-    return _vapi_result_string(data)
+    if (payload or {}).get("status") == "confirmed":
+        return _BOOKING_CONFIRMED_PHRASE
+    return _vapi_result_string(payload or {})
 
 
 def build_validate_contact_tool_result(payload: Optional[Dict[str, Any]]) -> str:
