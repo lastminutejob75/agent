@@ -1024,6 +1024,71 @@ class TenantAgendaCancelBody(BaseModel):
     external_event_id: str = ""
 
 
+def _get_voice_number_from_detail(detail: Optional[dict]) -> Optional[str]:
+    """Extrait le numéro vocal du tenant depuis le detail (routing)."""
+    if not detail:
+        return None
+    voice = (detail.get("voice_number") or "").strip()
+    if voice:
+        return voice
+    routing = detail.get("routing") or []
+    for r in routing:
+        if (r.get("channel") or "").strip() in ("vocal", "voice") and (r.get("key") or "").strip():
+            return (r.get("key") or "").strip()
+    return None
+
+
+def _send_cancel_notification_sms(
+    tenant_id: int,
+    patient_phone: Optional[str],
+    rdv_label: str,
+    detail: Optional[dict],
+) -> bool:
+    """
+    Envoie un SMS au patient pour l'informer de l'annulation de son RDV.
+    Best-effort : ne lève jamais d'exception, retourne False en cas d'échec.
+    """
+    if not patient_phone:
+        logger.warning("cancel_sms: no patient phone tenant_id=%s", tenant_id)
+        return False
+    phone_norm = normalize_phone_number(patient_phone)
+    if not phone_norm:
+        logger.warning("cancel_sms: invalid phone tenant_id=%s phone=%s", tenant_id, patient_phone[:6])
+        return False
+
+    voice_number = _get_voice_number_from_detail(detail)
+    cabinet_name = ""
+    if detail:
+        cabinet_name = (detail.get("name") or "").strip()
+        if not cabinet_name:
+            params = detail.get("params") or {}
+            cabinet_name = (params.get("business_name") or "").strip()
+
+    callback_part = f" Pour reprendre rendez-vous, appelez le {voice_number}." if voice_number else ""
+    cabinet_part = f" au cabinet {cabinet_name}" if cabinet_name else ""
+    message = (
+        f"Bonjour, votre rendez-vous du {rdv_label}{cabinet_part} a été annulé."
+        f"{callback_part}"
+    )
+
+    try:
+        from backend.reports import SMSChannel
+        sms = SMSChannel()
+        if not sms.is_configured():
+            logger.warning("cancel_sms: Twilio not configured tenant_id=%s", tenant_id)
+            return False
+        sms.to_number = phone_norm
+        ok = sms.send(message)
+        if ok:
+            logger.info("cancel_sms: sent tenant_id=%s phone=%s", tenant_id, phone_norm[:6] + "***")
+        else:
+            logger.warning("cancel_sms: send failed tenant_id=%s", tenant_id)
+        return ok
+    except Exception as e:
+        logger.error("cancel_sms: exception tenant_id=%s err=%s", tenant_id, str(e)[:120])
+        return False
+
+
 class TenantAgendaRescheduleBody(BaseModel):
     new_slot_id: int
     external_event_id: str = ""
@@ -2139,6 +2204,29 @@ def tenant_agenda_cancel_appointment(
         if not google_event_id and local_appt_id is None:
             raise HTTPException(400, "appointment_id ou event_id requis")
 
+        patient_phone = None
+        rdv_label = ""
+        if local_booking:
+            patient_phone = (local_booking.get("contact") or "").strip()
+            rdv_label = f"{local_booking.get('date', '')} à {local_booking.get('time', '')}"
+        elif google_event_id:
+            try:
+                service_read = GoogleCalendarService((params.get("calendar_id") or "").strip())
+                event_data = service_read.service.events().get(
+                    calendarId=service_read.calendar_id, eventId=google_event_id
+                ).execute()
+                desc = event_data.get("description") or ""
+                patient_phone = _extract_google_description_line(desc, "Contact")
+                start_dt = event_data.get("start", {}).get("dateTime", "")
+                if start_dt:
+                    try:
+                        dt = datetime.fromisoformat(start_dt.replace("Z", "+00:00"))
+                        rdv_label = dt.strftime("%d/%m/%Y à %Hh%M")
+                    except Exception:
+                        rdv_label = start_dt
+            except Exception as e:
+                logger.debug("cancel_sms: could not read event before delete tenant_id=%s err=%s", tenant_id, str(e)[:80])
+
         google_cancelled = False
         local_cancelled = local_appt_id is None
         if google_event_id:
@@ -2178,6 +2266,9 @@ def tenant_agenda_cancel_appointment(
             local_cancelled,
         )
         provider = "google+local" if google_cancelled and local_appt_id is not None else ("google" if google_cancelled else "local")
+        from backend.tools_booking import invalidate_slots_cache
+        invalidate_slots_cache(tenant_id)
+        _send_cancel_notification_sms(tenant_id, patient_phone, rdv_label, detail)
         return {
             "ok": True,
             "cancelled": True,
@@ -2193,9 +2284,14 @@ def tenant_agenda_cancel_appointment(
     booking = _get_local_appointment_by_id(tenant_id, appt_id)
     if not booking:
         raise HTTPException(404, "Rendez-vous introuvable")
+    patient_phone = (booking.get("contact") or "").strip()
+    rdv_label = f"{booking.get('date', '')} à {booking.get('time', '')}"
     ok = cancel_booking_sqlite({"id": appt_id, "slot_id": booking.get("slot_id")}, tenant_id=tenant_id)
     if not ok:
         raise HTTPException(400, "Annulation impossible")
+    from backend.tools_booking import invalidate_slots_cache
+    invalidate_slots_cache(tenant_id)
+    _send_cancel_notification_sms(tenant_id, patient_phone, rdv_label, detail)
     logger.info("tenant agenda cancel local ok tenant_id=%s appointment_id=%s", tenant_id, appt_id)
     return {"ok": True, "cancelled": True, "provider": "local"}
 

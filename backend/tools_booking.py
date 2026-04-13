@@ -284,6 +284,15 @@ def _set_cached_slots(slots: List[prompts.SlotDisplay], tenant_id: int = 1, pref
     logger.info(f"⚡ Cache slots SET tenant={tenant_id} pref={pref} ({len(slots)} slots)")
 
 
+def invalidate_slots_cache(tenant_id: int = 1) -> None:
+    """Invalide toutes les entrées du cache de slots pour un tenant (après annulation/modification)."""
+    keys_to_remove = [k for k in _slots_cache["by_key"] if k[0] == tenant_id]
+    for k in keys_to_remove:
+        _slots_cache["by_key"].pop(k, None)
+    if keys_to_remove:
+        logger.info("Cache slots INVALIDATED tenant=%s (%s entries)", tenant_id, len(keys_to_remove))
+
+
 def _get_calendar_service():
     """
     Récupère le service Google Calendar (lazy loading).
@@ -1548,6 +1557,7 @@ def cancel_booking(slot_or_session, session: Any = None) -> bool:
     Returns:
         True si annulation réussie.
     """
+    tenant_id = getattr(session, "tenant_id", None) or 1
     event_id = None
     slot_id = None
     appt_id = None
@@ -1561,28 +1571,31 @@ def cancel_booking(slot_or_session, session: Any = None) -> bool:
         slot_id = getattr(slot_or_session, "slot_id", None)
         appt_id = getattr(slot_or_session, "id", None)
 
+    ok = False
     if event_id:
         from backend.calendar_adapter import get_calendar_adapter
         adapter = get_calendar_adapter(session) if session else None
         if adapter and adapter.can_propose_slots():
-            return adapter.cancel_booking(event_id)
-        # Legacy: pas de session ou adapter SQLite
-        calendar = _get_calendar_service()
-        if not calendar:
-            return False
-        return calendar.cancel_appointment(event_id)
-
-    if slot_id is not None or appt_id is not None:
+            ok = adapter.cancel_booking(event_id)
+        else:
+            calendar = _get_calendar_service()
+            if not calendar:
+                return False
+            ok = calendar.cancel_appointment(event_id)
+    elif slot_id is not None or appt_id is not None:
         try:
             from backend.db import cancel_booking_sqlite
-            tenant_id = getattr(session, "tenant_id", None) or 1
-            return cancel_booking_sqlite({"slot_id": slot_id, "id": appt_id}, tenant_id=tenant_id)
+            ok = cancel_booking_sqlite({"slot_id": slot_id, "id": appt_id}, tenant_id=tenant_id)
         except Exception as e:
             logger.error("Erreur annulation local: %s", e)
             return False
+    else:
+        logger.warning("Pas d'event_id ni slot_id pour annuler")
+        return False
 
-    logger.warning("Pas d'event_id ni slot_id pour annuler")
-    return False
+    if ok:
+        invalidate_slots_cache(tenant_id)
+    return ok
 
 
 def find_booking_by_name(name: str, session: Any = None) -> Optional[Dict[str, Any]]:
