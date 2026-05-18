@@ -13,6 +13,8 @@ import App from "./App.jsx";
 const ROUTES = [
   "/",
   "/creer-assistante",
+  "/securite",
+  "/pricing",
   "/demo",
   "/contact",
   "/cgv",

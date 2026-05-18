@@ -6,6 +6,8 @@ import AuthLayout from "./components/AuthLayout";
 const publicPageModules = import.meta.glob([
   "./pages/CreerAssistante.jsx",
   "./pages/UwiLandingPage.jsx",
+  "./pages/UwiSecuritePage.jsx",
+  "./pages/UwiPricingPage.jsx",
   "./pages/CGV.jsx",
   "./pages/CGU.jsx",
   "./pages/MentionsLegales.jsx",
@@ -26,6 +28,8 @@ const publicPageModules = import.meta.glob([
 const publicPageModulesEager = import.meta.glob([
   "./pages/CreerAssistante.jsx",
   "./pages/UwiLandingPage.jsx",
+  "./pages/UwiSecuritePage.jsx",
+  "./pages/UwiPricingPage.jsx",
   "./pages/CGV.jsx",
   "./pages/CGU.jsx",
   "./pages/MentionsLegales.jsx",
@@ -56,6 +60,8 @@ function resolvePublicPage(modulePath) {
 
 const CreerAssistante = resolvePublicPage("./pages/CreerAssistante.jsx");
 const UwiLandingPage = resolvePublicPage("./pages/UwiLandingPage.jsx");
+const UwiSecuritePage = resolvePublicPage("./pages/UwiSecuritePage.jsx");
+const UwiPricingPage = resolvePublicPage("./pages/UwiPricingPage.jsx");
 const CGV = resolvePublicPage("./pages/CGV.jsx");
 const CGU = resolvePublicPage("./pages/CGU.jsx");
 const MentionsLegales = resolvePublicPage("./pages/MentionsLegales.jsx");
@@ -154,6 +160,8 @@ export default function App() {
       <Route path="/" element={<LazyElement Component={UwiLandingPage} />} />
       <Route path="/onboarding" element={<Navigate to="/creer-assistante?new=1" replace />} />
       <Route path="/creer-assistante" element={<LazyElement Component={CreerAssistante} />} />
+      <Route path="/securite" element={<LazyElement Component={UwiSecuritePage} />} />
+      <Route path="/pricing" element={<LazyElement Component={UwiPricingPage} />} />
       <Route path="/cgv" element={<LazyElement Component={CGV} />} />
       <Route path="/cgu" element={<LazyElement Component={CGU} />} />
       <Route path="/mentions-legales" element={<LazyElement Component={MentionsLegales} />} />
