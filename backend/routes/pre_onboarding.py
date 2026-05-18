@@ -571,6 +571,10 @@ async def create_account_from_lead(lead_id: str, body: CreateAccountBody) -> Dic
     """
     from backend import config
     from backend.auth_pg import pg_create_tenant_user, pg_get_tenant_user_by_email
+    from backend.cabinet_profile_pg import (
+        sync_normalized_from_params,
+        sync_opening_hours_from_booking_rules,
+    )
     from backend.tenant_config import convert_opening_hours_to_booking_rules, derive_horaires_text
     from backend.tenants_pg import pg_create_tenant, pg_update_tenant_flags, pg_update_tenant_params
     from backend.services.email_service import send_welcome_email
@@ -616,7 +620,13 @@ async def create_account_from_lead(lead_id: str, body: CreateAccountBody) -> Dic
     if not tid:
         raise HTTPException(500, "Impossible de créer le compte")
 
-    if not pg_create_tenant_user(tid, email, role="owner", password=temp_password):
+    if not pg_create_tenant_user(
+        tid,
+        email,
+        role="owner",
+        password=temp_password,
+        must_change_password=True,
+    ):
         raise HTTPException(500, "Impossible de créer l'utilisateur")
 
     if not pg_update_tenant_flags(tid, {"ENABLE_BOOKING": True, "ENABLE_TRANSFER": True, "ENABLE_FAQ": True, "ENABLE_ANTI_LOOP": True}):
@@ -634,15 +644,28 @@ async def create_account_from_lead(lead_id: str, body: CreateAccountBody) -> Dic
     if not pg_update_tenant_params(tid, params_payload):
         raise HTTPException(500, "Erreur paramètres")
 
+    booking_rules_final: Dict[str, Any] = {}
     opening_hours = lead.get("opening_hours")
     if isinstance(opening_hours, dict):
         try:
-            rules = convert_opening_hours_to_booking_rules(opening_hours)
-            rules["horaires"] = derive_horaires_text(rules)
-            if not pg_update_tenant_params(tid, rules):
+            booking_rules_final = convert_opening_hours_to_booking_rules(opening_hours)
+            booking_rules_final["horaires"] = derive_horaires_text(booking_rules_final)
+            if not pg_update_tenant_params(tid, booking_rules_final):
                 logger.warning("create_account_from_lead: horaires update failed tenant_id=%s", tid)
         except Exception as e:
             logger.warning("create_account_from_lead: horaires conversion failed: %s", e)
+            booking_rules_final = {}
+
+    # Init des tables normalisées "Mon cabinet" (non bloquant)
+    try:
+        sync_normalized_from_params(tid, params_payload)
+    except Exception as e:
+        logger.warning("create_account_from_lead: sync_normalized_from_params failed tenant_id=%s: %s", tid, e)
+    if booking_rules_final:
+        try:
+            sync_opening_hours_from_booking_rules(tid, booking_rules_final)
+        except Exception as e:
+            logger.warning("create_account_from_lead: sync_opening_hours failed tenant_id=%s: %s", tid, e)
 
     ok, err = send_welcome_email(
         email=email,

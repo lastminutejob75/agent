@@ -428,6 +428,45 @@ def pg_update_tenant_params(tenant_id: int, params: dict) -> bool:
         "transfer_live_enabled", "transfer_callback_enabled",
         "transfer_cases", "transfer_hours", "transfer_always_urgent", "transfer_no_consultation",
         "transfer_config_confirmed_signature", "transfer_config_confirmed_at",
+        # --- "Mon cabinet" : champs profil ---
+        "practitioner_name", "website_url", "languages", "accepts_new_patients",
+        "practitioner_photo_url", "public_slug", "address_line",
+        # --- "Mon cabinet" : horaires / fermetures ---
+        "opening_hours_json",
+        "temporary_closure_enabled", "temporary_closure_start", "temporary_closure_end",
+        "temporary_closure_message",
+        # --- "Mon cabinet" : règles RDV ---
+        "default_appointment_duration_minutes", "minimum_booking_notice_hours",
+        "appointment_reschedule_allowed", "appointment_reschedule_notice_hours",
+        "appointment_cancel_allowed", "appointment_cancel_notice_hours",
+        "emergency_instruction", "new_patient_instruction", "booking_notes",
+        "appointment_reasons_json",
+        # --- "Mon cabinet" : Clara / instructions assistant ---
+        "welcome_message", "documents_to_bring", "access_instructions", "payment_methods",
+        "parking_info", "pmr_access", "sensitive_medical_instruction",
+        "escalation_instruction", "human_handoff_instruction", "faq_items_json",
+        # --- meta lead (set à la création depuis l'admin) ---
+        "lead_id", "lead_source", "lead_daily_call_volume", "lead_primary_pain_point",
+        "lead_opening_hours",
+    }
+    bool_keys = {
+        "accepts_new_patients",
+        "temporary_closure_enabled",
+        "appointment_reschedule_allowed", "appointment_cancel_allowed",
+        "mirror_google_bookings_to_internal",
+        "transfer_live_enabled", "transfer_callback_enabled",
+        "transfer_always_urgent", "transfer_no_consultation",
+        "client_onboarding_completed",
+    }
+    int_keys = {
+        "default_appointment_duration_minutes", "minimum_booking_notice_hours",
+        "appointment_reschedule_notice_hours", "appointment_cancel_notice_hours",
+        "booking_duration_minutes", "booking_buffer_minutes",
+        "custom_included_minutes_month",
+    }
+    json_keys = {
+        "languages", "opening_hours_json", "appointment_reasons_json",
+        "faq_items_json", "lead_opening_hours",
     }
     filtered = {}
     for k, v in params.items():
@@ -479,6 +518,30 @@ def pg_update_tenant_params(tenant_id: int, params: dict) -> bool:
                     filtered[k] = {}
             else:
                 filtered[k] = {}
+        elif k in bool_keys:
+            if isinstance(v, bool):
+                filtered[k] = v
+            elif isinstance(v, (int, float)):
+                filtered[k] = bool(v)
+            elif isinstance(v, str):
+                filtered[k] = v.strip().lower() in ("1", "true", "yes", "on", "oui")
+            else:
+                filtered[k] = bool(v)
+        elif k in int_keys:
+            try:
+                filtered[k] = int(v)
+            except (TypeError, ValueError):
+                continue
+        elif k in json_keys:
+            if isinstance(v, (list, dict)):
+                filtered[k] = v
+            elif isinstance(v, str):
+                try:
+                    filtered[k] = json.loads(v)
+                except Exception:
+                    continue
+            else:
+                continue
         else:
             filtered[k] = str(v)
     if not filtered:

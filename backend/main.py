@@ -30,7 +30,7 @@ from backend.db import init_db, list_free_slots, count_free_slots
 from backend.tenant_routing import current_tenant_id
 from backend.deps import require_tenant_web, TenantIdWeb
 # Nouvelle architecture multi-canal
-from backend.routes import voice, whatsapp, bland, reports, admin, auth, tenant, client, stripe_webhook, pre_onboarding, checkout_embedded
+from backend.routes import voice, whatsapp, bland, reports, admin, auth, tenant, client, stripe_webhook, pre_onboarding, checkout_embedded, public_praticien
 
 app = FastAPI()
 _logger = logging.getLogger(__name__)
@@ -108,6 +108,7 @@ app.include_router(client.router)     # /api/client/*
 app.include_router(stripe_webhook.router)  # POST /api/stripe/webhook
 app.include_router(pre_onboarding.router)  # POST /api/pre-onboarding/commit
 app.include_router(pre_onboarding.public_router)  # POST /api/public/leads
+app.include_router(public_praticien.router)  # GET /api/public/praticiens/{slug}
 app.include_router(checkout_embedded.router)  # POST /create-checkout-session (embedded, pour landing /checkout)
 
 # Static frontend (optionnel - peut ne pas exister)

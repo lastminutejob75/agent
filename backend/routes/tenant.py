@@ -1285,12 +1285,18 @@ def tenant_me(auth: dict = Depends(require_tenant_auth)):
     transfer_hours = _parse_dict_value(params.get("transfer_hours"))
     transfer_cases = _parse_string_list(params.get("transfer_cases"))
     tenant_display_name = _tenant_display_name(d, tenant_id)
+    try:
+        from backend.auth_pg import pg_get_must_change_password
+        must_change_password = pg_get_must_change_password(int(auth["sub"]))
+    except Exception:
+        must_change_password = False
 
     return {
         "tenant_id": tenant_id,
         "tenant_name": tenant_display_name,
         "email": auth.get("email"),
         "role": auth.get("role", "owner"),
+        "must_change_password": must_change_password,
         "contact_email": params.get("contact_email", ""),
         "phone_number": params.get("phone_number", ""),
         "timezone": params.get("timezone", "Europe/Paris"),

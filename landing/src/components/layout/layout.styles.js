@@ -221,25 +221,18 @@ export function createShellCss(colors) {
   }
   @media (max-width: 1024px) {
     .uwi-sidebar {
-      transform: translateX(-100%);
-      transition: transform .22s ease;
-      box-shadow: 0 20px 40px rgba(15, 23, 42, .16);
+      display: none !important;
     }
-    .uwi-sidebar.open {
-      transform: translateX(0);
+    .uwi-overlay {
+      display: none !important;
+    }
+    .uwi-burger-btn {
+      display: none !important;
     }
     .uwi-main {
       margin-left: 0 !important;
       width: 100% !important;
       padding-bottom: 64px;
-    }
-    .uwi-overlay.open {
-      opacity: 1;
-      pointer-events: auto;
-    }
-    .uwi-burger-btn {
-      display: inline-grid !important;
-      place-items: center;
     }
     .uwi-mobile-nav {
       position: fixed;

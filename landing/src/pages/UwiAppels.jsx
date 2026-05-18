@@ -1086,10 +1086,20 @@ export default function UwiAppels() {
             width: 0;
             height: 0;
           }
+          @media (max-width: 1024px) {
+            .uwi-appels-shell { display: block !important; }
+            .uwi-appels-inner-sidebar { display: none !important; }
+            .uwi-appels-main { padding: 14px 12px 24px !important; }
+          }
+          @media (max-width: 760px) {
+            .uwi-appels-main header h1 { font-size: 22px !important; }
+            .uwi-appels-main header p { font-size: 13px !important; }
+          }
         `}
       </style>
-      <div style={{ display: "flex", minHeight: "100vh" }}>
+      <div className="uwi-appels-shell" style={{ display: "flex", minHeight: "100vh" }}>
         <aside
+          className="uwi-appels-inner-sidebar"
           style={{
             position: "sticky",
             top: 0,
@@ -1163,7 +1173,7 @@ export default function UwiAppels() {
           </div>
         </aside>
 
-        <main style={{ flex: 1, minWidth: 0, padding: "28px 32px" }}>
+        <main className="uwi-appels-main" style={{ flex: 1, minWidth: 0, padding: "28px 32px" }}>
           <header
             style={{
               display: "flex",

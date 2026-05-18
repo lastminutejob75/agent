@@ -5682,7 +5682,13 @@ async def admin_create_tenant_full(
         created["tenant_id"] = tid
         results["tenant_id"] = tid
 
-        if not pg_create_tenant_user(tid, contact_email, role="owner", password=temp_password):
+        if not pg_create_tenant_user(
+            tid,
+            contact_email,
+            role="owner",
+            password=temp_password,
+            must_change_password=True,
+        ):
             raise RuntimeError("Impossible de créer le tenant_user")
         if not pg_update_tenant_flags(
             tid,
@@ -5721,11 +5727,25 @@ async def admin_create_tenant_full(
         booking_rules_payload = body.booking_rules
         if not booking_rules_payload and lead and isinstance(lead.get("opening_hours"), dict):
             booking_rules_payload = convert_opening_hours_to_booking_rules(lead.get("opening_hours") or {})
+        booking_rules_final: Dict[str, Any] = {}
         if booking_rules_payload:
-            booking_rules = _validate_horaires_payload(HorairesBody(**booking_rules_payload))
-            booking_rules["horaires"] = derive_horaires_text(booking_rules)
-            if not pg_update_tenant_params(tid, booking_rules):
+            booking_rules_final = _validate_horaires_payload(HorairesBody(**booking_rules_payload))
+            booking_rules_final["horaires"] = derive_horaires_text(booking_rules_final)
+            if not pg_update_tenant_params(tid, booking_rules_final):
                 raise RuntimeError("Impossible d'enregistrer les horaires du tenant")
+
+        # Init des tables normalisées "Mon cabinet" à partir de params_json + booking_rules
+        try:
+            sync_normalized_from_params(tid, tenant_params_payload)
+        except Exception as sync_exc:
+            logger.warning("createTenantFull sync_normalized_from_params non bloquant tenant_id=%s: %s", tid, sync_exc)
+            results["warnings"].append("cabinet_profile_sync_failed")
+        if booking_rules_final:
+            try:
+                sync_opening_hours_from_booking_rules(tid, booking_rules_final)
+            except Exception as sync_exc:
+                logger.warning("createTenantFull sync_opening_hours non bloquant tenant_id=%s: %s", tid, sync_exc)
+                results["warnings"].append("opening_hours_sync_failed")
         logger.info("createTenantFull step=1 ok tenant_id=%s", tid)
 
         current_step = 2

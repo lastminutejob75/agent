@@ -822,28 +822,29 @@ export default function AdminTenantsList() {
           next = [...next].sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "fr"));
         }
 
-        let activityMap = {};
-        const isRealTenantRows = next.length > 0 && !next[0]?.__sample;
-        if (!cancelled && isRealTenantRows) {
-          try {
-            const grid = await adminApi.tenantsActivityGrid(windowDays);
-            activityMap = grid?.by_tenant_id ?? {};
-          } catch (_) {
-            /* grille activité optionnelle si le backend refuse ou est indisponible */
-          }
-        }
-
         if (cancelled) return;
         setListTotal(
           serverAppliedStatusFilter && typeof listRes?.total === "number" ? listRes.total : null,
         );
         setBillingMap(bMap);
         setSummary(sumRes && typeof sumRes === "object" ? sumRes : null);
-        setActivityByTenant(activityMap);
+        setActivityByTenant({});
 
         if (next.length > 0) {
           setTenants(next);
           setIsSampleMode(false);
+          if (!next[0]?.__sample) {
+            adminApi
+              .tenantsActivityGrid(windowDays)
+              .then((grid) => {
+                if (cancelled) return;
+                setActivityByTenant(grid?.by_tenant_id ?? {});
+              })
+              .catch(() => {
+                if (cancelled) return;
+                /* grille activité optionnelle si le backend refuse ou est indisponible */
+              });
+          }
         } else {
           const demoRows = SAMPLE_TENANTS_EXTENDED;
           const demoBilling = buildSampleBillingMap(demoRows);

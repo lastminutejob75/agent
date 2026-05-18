@@ -21,6 +21,40 @@ def _jsonable(value: Any):
     return value
 
 
+def get_tenant_id_by_public_slug(slug: str) -> Optional[int]:
+    """Retourne le tenant_id correspondant au public_slug (page publique du cabinet)."""
+    slug = (slug or "").strip().lower()
+    if not slug or not _pg_url():
+        return None
+    try:
+        # Pas de set_tenant_id_on_connection : lecture cross-tenant publique.
+        with pg_tenants_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT tenant_id FROM tenant_profiles WHERE LOWER(public_slug) = %s LIMIT 1",
+                    (slug,),
+                )
+                row = cur.fetchone()
+                if row:
+                    return int(row.get("tenant_id") if hasattr(row, "get") else row[0])
+                # Fallback : scan params_json pour les anciens tenants pas encore migrés.
+                cur.execute(
+                    """
+                    SELECT tenant_id
+                    FROM tenant_config
+                    WHERE LOWER(params_json->>'public_slug') = %s
+                    LIMIT 1
+                    """,
+                    (slug,),
+                )
+                row = cur.fetchone()
+                if row:
+                    return int(row.get("tenant_id") if hasattr(row, "get") else row[0])
+    except Exception as e:
+        logger.debug("get_tenant_id_by_public_slug failed slug=%s err=%s", slug[:80], e)
+    return None
+
+
 def get_profile(tenant_id: int) -> Optional[Dict[str, Any]]:
     if not _pg_url():
         return None

@@ -41,9 +41,15 @@ def _sqlite_fallback_conn():
             email_verified INTEGER DEFAULT 0,
             password_reset_token_hash TEXT,
             password_reset_expires_at TEXT,
+            must_change_password INTEGER DEFAULT 0,
             created_at TEXT DEFAULT (datetime('now'))
         )
     """)
+    # Migration douce pour les DB locales existantes (SQLite ignore IF NOT EXISTS sur ADD).
+    try:
+        conn.execute("ALTER TABLE tenant_users ADD COLUMN must_change_password INTEGER DEFAULT 0")
+    except Exception:
+        pass
     conn.commit()
     return conn
 
@@ -289,8 +295,13 @@ def pg_create_tenant_user(
     email: str,
     role: str = "owner",
     password: Optional[str] = None,
+    must_change_password: bool = False,
 ) -> bool:
-    """Crée ou ignore (ON CONFLICT) un tenant_user, avec mot de passe hashé optionnel."""
+    """
+    Crée ou met à jour (ON CONFLICT) un tenant_user, avec mot de passe hashé optionnel.
+    must_change_password=True : flag à activer pour forcer le client à changer son mot
+    de passe temporaire au premier login.
+    """
     url = _pg_url()
     if not url:
         return False
@@ -305,14 +316,15 @@ def pg_create_tenant_user(
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO tenant_users (tenant_id, email, role, password_hash)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO tenant_users (tenant_id, email, role, password_hash, must_change_password)
+                    VALUES (%s, %s, %s, %s, %s)
                     ON CONFLICT (email) DO UPDATE SET
                         role = EXCLUDED.role,
-                        password_hash = COALESCE(EXCLUDED.password_hash, tenant_users.password_hash)
+                        password_hash = COALESCE(EXCLUDED.password_hash, tenant_users.password_hash),
+                        must_change_password = EXCLUDED.must_change_password OR tenant_users.must_change_password
                     WHERE tenant_users.tenant_id = EXCLUDED.tenant_id
                     """,
-                    (tenant_id, email.strip().lower(), role, password_hash),
+                    (tenant_id, email.strip().lower(), role, password_hash, bool(must_change_password)),
                 )
                 conn.commit()
                 return cur.rowcount > 0
@@ -459,6 +471,7 @@ def pg_get_tenant_user_for_reset_check(email: str) -> Optional[Dict[str, Any]]:
 def pg_update_password_and_clear_reset(user_id: int, password_hash: str) -> None:
     """
     Met à jour le mot de passe et efface le token reset (usage unique).
+    Clear aussi must_change_password (le client vient de choisir un vrai mot de passe).
     """
     url = _pg_url()
     if not url:
@@ -470,7 +483,10 @@ def pg_update_password_and_clear_reset(user_id: int, password_hash: str) -> None
                 cur.execute(
                     """
                     UPDATE tenant_users
-                    SET password_hash = %s, password_reset_token_hash = NULL, password_reset_expires_at = NULL
+                    SET password_hash = %s,
+                        password_reset_token_hash = NULL,
+                        password_reset_expires_at = NULL,
+                        must_change_password = FALSE
                     WHERE id = %s
                     """,
                     (password_hash, user_id),
@@ -484,6 +500,7 @@ def pg_update_password_and_clear_reset(user_id: int, password_hash: str) -> None
 def pg_update_password(user_id: int, password_hash: str) -> None:
     """
     Met à jour le mot de passe sans toucher aux éventuels tokens de reset.
+    Clear must_change_password (le client vient de changer son mot de passe).
     """
     url = _pg_url()
     if not url:
@@ -495,7 +512,8 @@ def pg_update_password(user_id: int, password_hash: str) -> None:
                 cur.execute(
                     """
                     UPDATE tenant_users
-                    SET password_hash = %s
+                    SET password_hash = %s,
+                        must_change_password = FALSE
                     WHERE id = %s
                     """,
                     (password_hash, user_id),
@@ -504,6 +522,39 @@ def pg_update_password(user_id: int, password_hash: str) -> None:
     except Exception as e:
         logger.warning("pg_update_password failed: %s", e)
         raise
+
+
+def pg_get_must_change_password(user_id: int) -> bool:
+    """Retourne True si l'utilisateur doit changer son mot de passe au prochain login."""
+    url = _pg_url()
+    if url:
+        try:
+            import psycopg
+            with psycopg.connect(url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT must_change_password FROM tenant_users WHERE id = %s LIMIT 1",
+                        (user_id,),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        val = row[0] if not hasattr(row, "get") else row.get("must_change_password")
+                        return bool(val)
+        except Exception as e:
+            logger.debug("pg_get_must_change_password failed: %s", e)
+    # Fallback SQLite local
+    try:
+        conn = _sqlite_fallback_conn()
+        row = conn.execute(
+            "SELECT must_change_password FROM tenant_users WHERE id = ? LIMIT 1",
+            (user_id,),
+        ).fetchone()
+        conn.close()
+        if row:
+            return bool(row["must_change_password"])
+    except Exception:
+        pass
+    return False
 
 
 def pg_reset_password_with_token(token: str, new_password_hash: str) -> bool:

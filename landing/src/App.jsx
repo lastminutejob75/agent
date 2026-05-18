@@ -89,6 +89,7 @@ const ClientCabinetProfilePage = lazy(() => import("./pages/ClientCabinetProfile
 const PatientDashboardPage = lazy(() => import("./pages/PatientDashboardPage"));
 const AppRequests = lazy(() => import("./pages/AppRequests"));
 const ImpersonatePage = lazy(() => import("./pages/Impersonate"));
+const PublicPraticienPage = lazy(() => import("./pages/PublicPraticienPage"));
 
 const AdminAuthProvider = lazy(() =>
   import("./admin/AdminAuthProvider").then((module) => ({ default: module.AdminAuthProvider })),
@@ -171,6 +172,7 @@ export default function App() {
       <Route path="/checkout" element={<LazyElement Component={Checkout} />} />
       <Route path="/checkout/return" element={<LazyElement Component={CheckoutReturn} />} />
       <Route path="/billing" element={<LazyElement Component={BillingPage} />} />
+      <Route path="/praticiens/:slug" element={<LazyElement Component={PublicPraticienPage} />} />
       <Route element={<AuthLayout />}>
         <Route path="login" element={<LazyElement Component={Login} />} />
         <Route path="forgot-password" element={<LazyElement Component={ForgotPassword} />} />

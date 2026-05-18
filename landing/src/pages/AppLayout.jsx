@@ -21,6 +21,7 @@ export default function AppLayout() {
   const [notificationsItems, setNotificationsItems] = useState([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [claraRulesSummary, setClaraRulesSummary] = useState({ configured: 0, total: 4 });
+  const [forcePwd, setForcePwd] = useState({ value: "", confirm: "", saving: false, error: "" });
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -160,6 +161,39 @@ export default function AppLayout() {
   };
 
   const layoutTopOffset = impersonation ? 46 : 0;
+
+  const mustChangePassword = Boolean(me?.must_change_password) && !impersonation;
+
+  async function handleForcePasswordSubmit(e) {
+    e?.preventDefault?.();
+    const next = (forcePwd.value || "").trim();
+    const confirm = (forcePwd.confirm || "").trim();
+    if (next.length < 8) {
+      setForcePwd((s) => ({ ...s, error: "Au moins 8 caractères." }));
+      return;
+    }
+    if (next !== confirm) {
+      setForcePwd((s) => ({ ...s, error: "Les deux mots de passe ne correspondent pas." }));
+      return;
+    }
+    setForcePwd((s) => ({ ...s, saving: true, error: "" }));
+    try {
+      await api.tenantChangePassword(next);
+      try {
+        const refreshed = await api.tenantMe();
+        setMe(refreshed);
+      } catch {
+        // refetch best-effort, on continue
+      }
+      setForcePwd({ value: "", confirm: "", saving: false, error: "" });
+    } catch (err2) {
+      setForcePwd((s) => ({
+        ...s,
+        saving: false,
+        error: err2?.data?.detail || err2?.message || "Erreur lors du changement de mot de passe.",
+      }));
+    }
+  }
 
   if (err && !me) {
     return (
@@ -402,6 +436,119 @@ export default function AppLayout() {
       </div>
 
       <AppMobileBottomNav navItems={NAV_ITEMS} demandBadge={demandBadge} colors={COLORS} />
+
+      {mustChangePassword ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Définir votre mot de passe"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(7,26,51,0.55)",
+            display: "grid",
+            placeItems: "center",
+            padding: 16,
+            zIndex: 999,
+          }}
+        >
+          <form
+            onSubmit={handleForcePasswordSubmit}
+            style={{
+              width: "min(440px, 100%)",
+              background: "#fff",
+              borderRadius: 18,
+              padding: 22,
+              boxShadow: "0 30px 60px rgba(7,26,51,0.35)",
+            }}
+          >
+            <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: COLORS.title }}>
+              Définissez votre mot de passe
+            </h2>
+            <p style={{ margin: "8px 0 16px", fontSize: 13.5, color: COLORS.text, lineHeight: 1.5 }}>
+              Vous utilisez actuellement le mot de passe temporaire envoyé par email.
+              Pour la sécurité de votre cabinet, merci de choisir un mot de passe personnel.
+            </p>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: COLORS.title, marginBottom: 4 }}>
+              Nouveau mot de passe (8 caractères min.)
+            </label>
+            <input
+              type="password"
+              autoComplete="new-password"
+              autoFocus
+              value={forcePwd.value}
+              onChange={(e) => setForcePwd((s) => ({ ...s, value: e.target.value, error: "" }))}
+              disabled={forcePwd.saving}
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                padding: "11px 14px",
+                fontSize: 14,
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: 12,
+                marginBottom: 12,
+                outline: "none",
+              }}
+            />
+            <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: COLORS.title, marginBottom: 4 }}>
+              Confirmer le mot de passe
+            </label>
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={forcePwd.confirm}
+              onChange={(e) => setForcePwd((s) => ({ ...s, confirm: e.target.value, error: "" }))}
+              disabled={forcePwd.saving}
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                padding: "11px 14px",
+                fontSize: 14,
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: 12,
+                marginBottom: 12,
+                outline: "none",
+              }}
+            />
+            {forcePwd.error ? (
+              <div
+                style={{
+                  background: "#FEF2F2",
+                  border: "1px solid #FECACA",
+                  color: "#B91C1C",
+                  borderRadius: 10,
+                  padding: "8px 12px",
+                  fontSize: 13,
+                  marginBottom: 12,
+                }}
+              >
+                {forcePwd.error}
+              </div>
+            ) : null}
+            <button
+              type="submit"
+              disabled={forcePwd.saving || !forcePwd.value || !forcePwd.confirm}
+              style={{
+                width: "100%",
+                padding: "12px 16px",
+                background: COLORS.teal,
+                color: "#fff",
+                border: 0,
+                borderRadius: 12,
+                fontSize: 14,
+                fontWeight: 800,
+                cursor: forcePwd.saving ? "default" : "pointer",
+                opacity: forcePwd.saving || !forcePwd.value || !forcePwd.confirm ? 0.6 : 1,
+              }}
+            >
+              {forcePwd.saving ? "Enregistrement…" : "Enregistrer mon mot de passe"}
+            </button>
+            <p style={{ margin: "12px 0 0", fontSize: 11.5, color: COLORS.muted, textAlign: "center" }}>
+              Vous ne pourrez accéder à votre dashboard qu'après avoir choisi un mot de passe.
+            </p>
+          </form>
+        </div>
+      ) : null}
     </div>
   );
 }

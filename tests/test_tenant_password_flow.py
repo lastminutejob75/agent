@@ -60,7 +60,9 @@ def test_pg_create_tenant_user_hashes_password():
 
     assert ok is True
     assert "password_hash" in executed["query"]
-    assert executed["params"] == (12, "cabinet@test.fr", "owner", "hashed-password")
+    assert "must_change_password" in executed["query"]
+    # 5e tuple : must_change_password (False par défaut quand non précisé)
+    assert executed["params"] == (12, "cabinet@test.fr", "owner", "hashed-password", False)
     assert executed["committed"] is True
 
 
