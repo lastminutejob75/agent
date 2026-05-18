@@ -85,6 +85,19 @@ def test_cockpit_watchlist_200(client, admin_headers):
     assert isinstance(r.json().get("items"), list)
 
 
+def test_dash_lead_activity_uses_last_submitted_not_only_created():
+    """Re-commit wizard (UPDATE) bump last_submitted_at ; cockpit fenêtre doit suivre cette activité."""
+    from backend.dashboard_cockpit import dash_lead_activity_utc, dash_leads_cutoff_utc
+
+    old_created = "2020-06-01T12:00:00+00:00"
+    recent_touch = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    row = {"created_at": old_created, "last_submitted_at": recent_touch, "updated_at": recent_touch}
+    act = dash_lead_activity_utc(row)
+    assert act is not None
+    window_cut = dash_leads_cutoff_utc("7d")
+    assert act >= window_cut
+
+
 def test_dash_leads_cutoff_shapes():
     from backend.dashboard_cockpit import dash_leads_cutoff_utc
 

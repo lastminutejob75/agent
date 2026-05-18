@@ -37,6 +37,36 @@ def dash_leads_cutoff_utc(period: str) -> datetime:
     return now - timedelta(days=7)
 
 
+def dash_parse_dt_utc(val: Any) -> Optional[datetime]:
+    """Parse une date renvoyée par PG ou sérialisée JSON vers UTC timezone-aware."""
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        dt = val
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    raw = str(val).replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(raw).astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def dash_lead_activity_utc(row: dict) -> Optional[datetime]:
+    """
+    Dernière activité utile pour le bloc leads cockpit.
+    Un re-commit wizard (même email) fait UPDATE et met à jour last_submitted_at sans toucher
+    created_at : filtrer uniquement sur created_at faisait « disparaître » le lead de la fenêtre.
+    """
+    ts: List[datetime] = []
+    for key in ("last_submitted_at", "updated_at", "created_at"):
+        dt = dash_parse_dt_utc(row.get(key))
+        if dt:
+            ts.append(dt)
+    return max(ts) if ts else None
+
+
 def dash_pct_change(cur_val: Optional[float], prev_val: Optional[float]) -> Optional[float]:
     try:
         if cur_val is None or prev_val is None:
@@ -353,26 +383,20 @@ def dash_leads_block(ctx: Any, period: str = "7d") -> dict:
     from backend.leads_pg import count_new_leads, list_leads
 
     p = dash_normalize_period(period)
-    leads = list_leads(limit=400)
+    leads_payload = list_leads(limit=400)
+    leads: List[dict] = list(leads_payload.get("items") or [])
     window_cut = dash_leads_cutoff_utc(p)
-
-    def _parse_ca(val: Any) -> Optional[datetime]:
-        if val is None:
-            return None
-        if isinstance(val, datetime):
-            return val.astimezone(timezone.utc)
-        raw = str(val).replace("Z", "+00:00")
-        try:
-            return datetime.fromisoformat(raw).astimezone(timezone.utc)
-        except Exception:
-            return None
 
     window_rows: List[dict] = []
     for row in leads:
-        ca = _parse_ca(row.get("created_at"))
-        if ca and ca >= window_cut:
+        act = dash_lead_activity_utc(row)
+        if act and act >= window_cut:
             window_rows.append(row)
-    latest_sorted = sorted(window_rows, key=lambda r: _parse_ca(r.get("created_at")) or window_cut, reverse=True)
+    latest_sorted = sorted(
+        window_rows,
+        key=lambda r: dash_lead_activity_utc(r) or window_cut,
+        reverse=True,
+    )
 
     def _lead_row_compact(r: dict) -> dict:
         return {
@@ -388,7 +412,7 @@ def dash_leads_block(ctx: Any, period: str = "7d") -> dict:
     if not latest and leads:
         latest = [
             _lead_row_compact(r)
-            for r in sorted(leads, key=lambda rr: _parse_ca(rr.get("created_at")) or window_cut, reverse=True)[:3]
+            for r in sorted(leads, key=lambda rr: dash_lead_activity_utc(rr) or window_cut, reverse=True)[:3]
         ]
 
     return {
