@@ -2,12 +2,37 @@
 <html lang="fr">
   <head>
     <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="apple-touch-icon" href="/favicon.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0a8f9a" />
+    <meta name="format-detection" content="telephone=yes" />
     <meta name="google-site-verification" content="Z4gxpehslGttdkhfjEsc2gXKuTdpBq_YnRdWM003lQA" />
+
     <!-- Titre et meta (canonical, description, og, twitter) sont injectés par le prerender par route ; fallback ci-dessous pour routes non pré-rendues -->
     <title>UWi — Agent d'accueil IA multicanal (téléphone, web, WhatsApp)</title>
+    <meta name="description" content="UWi est la secrétaire médicale augmentée des cabinets libéraux : réponse aux appels 24/7, prise de rendez-vous automatique, filtrage des urgences. Essai gratuit 1 mois." />
+
+    <!-- Open Graph (fallback) -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="UWi" />
+    <meta property="og:locale" content="fr_FR" />
+    <meta property="og:title" content="UWi — Agent d'accueil IA multicanal (téléphone, web, WhatsApp)" />
+    <meta property="og:description" content="UWi est la secrétaire médicale augmentée des cabinets libéraux : réponse aux appels 24/7, prise de rendez-vous automatique, filtrage des urgences." />
+    <meta property="og:url" content="https://www.uwiapp.com/" />
+    <meta property="og:image" content="https://www.uwiapp.com/uwi-og-image.png" />
+    <meta property="og:image:width" content="1536" />
+    <meta property="og:image:height" content="1024" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:alt" content="UWi — La secrétaire médicale augmentée pour cabinets libéraux" />
+
+    <!-- Twitter Card (fallback) -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="UWi — Agent d'accueil IA multicanal (téléphone, web, WhatsApp)" />
+    <meta name="twitter:description" content="Secrétaire médicale augmentée pour cabinets libéraux : réponse 24/7, prise de RDV automatique, filtrage des urgences." />
+    <meta name="twitter:image" content="https://www.uwiapp.com/uwi-og-image.png" />
+    <meta name="twitter:image:alt" content="UWi — La secrétaire médicale augmentée pour cabinets libéraux" />
 
     <script type="application/ld+json">
     {
@@ -15,25 +40,77 @@
       "@graph": [
         {
           "@type": "Organization",
+          "@id": "https://www.uwiapp.com/#organization",
           "name": "UWi",
+          "alternateName": "UWi Medical",
+          "legalName": "TROOPER",
           "url": "https://www.uwiapp.com",
-          "logo": "https://www.uwiapp.com/favicon.svg"
+          "logo": {
+            "@type": "ImageObject",
+            "url": "https://www.uwiapp.com/favicon.png",
+            "width": 512,
+            "height": 512
+          },
+          "image": "https://www.uwiapp.com/uwi-og-image.png",
+          "description": "UWi est la secrétaire médicale augmentée des cabinets libéraux : réponse aux appels 24/7, prise de rendez-vous, filtrage des urgences.",
+          "address": {
+            "@type": "PostalAddress",
+            "streetAddress": "60 rue François Ier",
+            "postalCode": "75008",
+            "addressLocality": "Paris",
+            "addressCountry": "FR"
+          },
+          "contactPoint": [{
+            "@type": "ContactPoint",
+            "telephone": "+33-9-39-24-05-75",
+            "email": "contact@uwiapp.com",
+            "contactType": "customer service",
+            "areaServed": "FR",
+            "availableLanguage": ["French"]
+          }],
+          "sameAs": [
+            "https://www.linkedin.com/company/uwi-medical/",
+            "https://www.facebook.com/profile.php?id=61579544710923"
+          ]
         },
         {
           "@type": "WebSite",
+          "@id": "https://www.uwiapp.com/#website",
+          "url": "https://www.uwiapp.com",
           "name": "UWi",
-          "url": "https://www.uwiapp.com"
+          "inLanguage": "fr-FR",
+          "publisher": { "@id": "https://www.uwiapp.com/#organization" },
+          "potentialAction": {
+            "@type": "SearchAction",
+            "target": "https://www.uwiapp.com/?s={search_term_string}",
+            "query-input": "required name=search_term_string"
+          }
         },
         {
           "@type": "SoftwareApplication",
           "name": "UWi",
           "applicationCategory": "BusinessApplication",
           "operatingSystem": "Web",
-          "description": "Agent d'accueil IA multicanal pour PME : appels, qualification et prise de rendez-vous.",
+          "description": "Agent d'accueil IA multicanal pour cabinets médicaux libéraux : appels, qualification et prise de rendez-vous.",
           "offers": {
             "@type": "Offer",
             "priceCurrency": "EUR",
-            "price": "149"
+            "price": "149",
+            "url": "https://www.uwiapp.com/pricing"
+          },
+          "publisher": { "@id": "https://www.uwiapp.com/#organization" }
+        },
+        {
+          "@type": "ProfessionalService",
+          "@id": "https://www.uwiapp.com/#service",
+          "name": "UWi — Secrétaire médicale augmentée",
+          "url": "https://www.uwiapp.com",
+          "provider": { "@id": "https://www.uwiapp.com/#organization" },
+          "areaServed": { "@type": "Country", "name": "France" },
+          "serviceType": "Standard téléphonique IA pour cabinets médicaux libéraux",
+          "audience": {
+            "@type": "Audience",
+            "audienceType": "Professionnels de santé libéraux (médecins, dentistes, kinésithérapeutes, sages-femmes, orthophonistes, dermatologues)"
           }
         }
       ]
@@ -41,7 +118,17 @@
     </script>
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;0,9..40,800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;0,9..40,800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&family=Playfair+Display:ital,wght@0,600;0,700;1,600&display=swap" rel="stylesheet" />
+
+    <!-- GA4 / GTM bootstrap : bufferise les events tant que le tag n'est pas chargé.
+         Le script GA4 (gtag.js) est injecte dynamiquement par main.jsx si
+         VITE_GA_MEASUREMENT_ID est defini (ex. G-XXXXXXXXXX) sur l'hebergement. -->
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      window.gtag = window.gtag || function () { window.dataLayer.push(arguments); };
+      window.gtag('js', new Date());
+    </script>
+
     <!-- Meta Pixel Code -->
     <script>
       !function(f,b,e,v,n,t,s)

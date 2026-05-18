@@ -31,6 +31,7 @@
     { "source": "/assistant-telephone-ia-dermatologue", "destination": "/assistant-telephone-ia-dermatologue/index.html" },
     { "source": "/assistant-telephone-ia-orthophoniste", "destination": "/assistant-telephone-ia-orthophoniste/index.html" },
     { "source": "/standard-telephonique-cabinet-medical", "destination": "/standard-telephonique-cabinet-medical/index.html" },
+    { "source": "/p/(.*)", "destination": "/index.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

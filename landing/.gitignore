@@ -3,6 +3,10 @@ node_modules/
 dist/
 build/
 
+# Playwright generated reports / test artifacts
+playwright-report/
+test-results/
+
 # Python
 __pycache__/
 *.pyc

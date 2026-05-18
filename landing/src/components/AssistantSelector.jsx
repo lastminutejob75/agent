@@ -3,14 +3,14 @@ import { useState, useEffect } from "react";
 import ASSISTANTS from "../assistants.config.js";
 
 const C = {
-  bg: "#0A1828",
-  surface: "#0F2236",
-  card: "#132840",
-  border: "#1E3D56",
-  accent: "#00E5A0",
-  accentDim: "#00b87c",
-  text: "#FFFFFF",
-  muted: "#6B90A8",
+  bg: "#FFFFFF",
+  surface: "#f8fafc",
+  card: "#FFFFFF",
+  border: "#e2e8f0",
+  accent: "#0a8f9a",
+  accentDim: "#006b75",
+  text: "#0A1F24",
+  muted: "#64748b",
 };
 
 export default function AssistantSelector({ onSelect, onBack }) {
@@ -49,7 +49,7 @@ export default function AssistantSelector({ onSelect, onBack }) {
           left: 0,
           right: 0,
           height: 3,
-          background: "linear-gradient(90deg, #00E5A0, transparent)",
+          background: "linear-gradient(90deg, #0a8f9a, transparent)",
           zIndex: 1,
         }}
       />
@@ -59,8 +59,8 @@ export default function AssistantSelector({ onSelect, onBack }) {
           position: "absolute",
           inset: 0,
           pointerEvents: "none",
-          background: `radial-gradient(ellipse 80% 50% at 50% 0%, rgba(0,229,160,0.06), transparent 50%),
-            radial-gradient(ellipse 60% 40% at 80% 60%, rgba(0,184,124,0.05), transparent 40%),
+          background: `radial-gradient(ellipse 80% 50% at 50% 0%, rgba(10,143,154,0.06), transparent 50%),
+            radial-gradient(ellipse 60% 40% at 80% 60%, rgba(0,107,117,0.05), transparent 40%),
             linear-gradient(to right, ${C.border} 1px, transparent 1px),
             linear-gradient(to bottom, ${C.border} 1px, transparent 1px)`,
           backgroundSize: "40px 40px",
@@ -139,14 +139,14 @@ export default function AssistantSelector({ onSelect, onBack }) {
                     overflow: "hidden",
                     cursor: "pointer",
                     background: C.card,
-                    border: isSelected ? "2px solid #00E5A0" : "1.5px solid #1E3D56",
+                    border: isSelected ? "2px solid #0a8f9a" : "1.5px solid #e2e8f0",
                     boxShadow: isSelected
-                      ? "0 0 0 3px rgba(0,229,160,0.15), 0 8px 30px rgba(0,229,160,0.2)"
+                      ? "0 0 0 3px rgba(10,143,154,0.15), 0 8px 30px rgba(10,143,154,0.2)"
                       : "none",
                   }}
                   onMouseEnter={(e) => {
                     if (!isSelected) {
-                      e.currentTarget.style.borderColor = "rgba(0,229,160,0.4)";
+                      e.currentTarget.style.borderColor = "rgba(10,143,154,0.4)";
                       e.currentTarget.style.transform = "translateY(-1px)";
                     }
                   }}
@@ -217,7 +217,7 @@ export default function AssistantSelector({ onSelect, onBack }) {
                           left: 0,
                           right: 0,
                           height: "40%",
-                          background: "linear-gradient(to top, rgba(0,229,160,0.15), transparent)",
+                          background: "linear-gradient(to top, rgba(10,143,154,0.15), transparent)",
                           pointerEvents: "none",
                         }}
                       />
@@ -226,7 +226,7 @@ export default function AssistantSelector({ onSelect, onBack }) {
                   <div
                     style={{
                       padding: "10px 12px",
-                      background: isSelected ? "rgba(0,229,160,0.08)" : "transparent",
+                      background: isSelected ? "rgba(10,143,154,0.08)" : "transparent",
                     }}
                   >
                     <div style={{ fontSize: 15, fontWeight: 700, color: isSelected ? C.accent : C.text }}>
@@ -270,11 +270,11 @@ export default function AssistantSelector({ onSelect, onBack }) {
               cursor: selected ? "pointer" : "not-allowed",
               opacity: selected ? 1 : 0.5,
               background: selected
-                ? "linear-gradient(135deg, #00E5A0, #00b87c)"
+                ? "linear-gradient(135deg, #0a8f9a, #006b75)"
                 : C.card,
               color: selected ? C.bg : C.muted,
-              border: selected ? "none" : "1px solid #1E3D56",
-              boxShadow: selected ? "0 4px 20px rgba(0,229,160,0.3)" : "none",
+              border: selected ? "none" : "1px solid #e2e8f0",
+              boxShadow: selected ? "0 4px 20px rgba(10,143,154,0.3)" : "none",
               animation: selected ? "subtlePulse 2s ease-in-out infinite" : "none",
             }}
           >
@@ -285,8 +285,8 @@ export default function AssistantSelector({ onSelect, onBack }) {
 
       <style>{`
         @keyframes subtlePulse {
-          0%, 100% { box-shadow: 0 4px 20px rgba(0,229,160,0.25); }
-          50% { box-shadow: 0 4px 30px rgba(0,229,160,0.45); }
+          0%, 100% { box-shadow: 0 4px 20px rgba(10,143,154,0.25); }
+          50% { box-shadow: 0 4px 30px rgba(10,143,154,0.45); }
         }
       `}</style>
     </div>

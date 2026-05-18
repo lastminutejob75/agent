@@ -4,10 +4,10 @@ import LegalPageLayout from "../components/LegalPageLayout";
 export default function CGU() {
   return (
     <LegalPageLayout title="Conditions générales d'utilisation">
-      <p><strong>Dernière mise à jour :</strong> janvier 2025</p>
+      <p><strong>Dernière mise à jour :</strong> mai 2026</p>
 
       <h2>1. Objet et acceptation</h2>
-      <p>Les présentes Conditions Générales d'Utilisation (CGU) régissent l'accès et l'utilisation des services et du site proposés par UWi Medical. L'accès au site et à la plateforme constitue une acceptation sans réserve des présentes CGU.</p>
+      <p>Les présentes Conditions Générales d'Utilisation (CGU) régissent l'accès et l'utilisation des services et du site proposés sous la marque UWi Medical, exploitée par la société <strong>TROOPER</strong>, SASU dont le siège social est situé au 60 rue François Ier, 75008 Paris, immatriculée au RCS de Paris sous le numéro 990 375 149. L'accès au site et à la plateforme constitue une acceptation sans réserve des présentes CGU.</p>
 
       <h2>2. Description du service</h2>
       <p>UWi Medical met à disposition une plateforme d'assistant vocal IA destinée aux professionnels de santé (cabinets, centres médicaux) pour la gestion des appels, des rendez-vous et des rappels patients, dans le respect des exigences HDS et RGPD.</p>

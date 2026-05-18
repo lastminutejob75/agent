@@ -4,10 +4,10 @@ import LegalPageLayout from "../components/LegalPageLayout";
 export default function CGV() {
   return (
     <LegalPageLayout title="Conditions générales de vente">
-      <p><strong>Dernière mise à jour :</strong> janvier 2025</p>
+      <p><strong>Dernière mise à jour :</strong> mai 2026</p>
 
       <h2>1. Objet</h2>
-      <p>Les présentes Conditions Générales de Vente (CGV) régissent les ventes de services proposés par UWi Medical (ci-après « le Prestataire ») à ses clients (ci-après « le Client »), notamment l'accès à la plateforme d'assistant vocal IA pour cabinets médicaux et professionnels de santé.</p>
+      <p>Les présentes Conditions Générales de Vente (CGV) régissent les ventes de services proposés sous la marque UWi Medical, exploitée par la société <strong>TROOPER</strong>, SASU au capital social variable, dont le siège social est situé au 60 rue François Ier, 75008 Paris, immatriculée au RCS de Paris sous le numéro 990 375 149 (ci-après « le Prestataire »), à ses clients (ci-après « le Client »), notamment l'accès à la plateforme d'assistant vocal IA pour cabinets médicaux et professionnels de santé.</p>
 
       <h2>2. Services</h2>
       <p>Le Prestataire propose un service d'assistant vocal intelligent (IA) permettant la prise de rendez-vous, le triage des appels et la gestion des rappels patients. Les fonctionnalités détaillées sont décrites sur le site et dans l'offre souscrite.</p>

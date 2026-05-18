@@ -4,28 +4,37 @@ import LegalPageLayout from "../components/LegalPageLayout";
 export default function MentionsLegales() {
   return (
     <LegalPageLayout title="Mentions légales">
-      <p><strong>Dernière mise à jour :</strong> janvier 2025</p>
+      <p><strong>Dernière mise à jour :</strong> mai 2026</p>
 
       <h2>1. Éditeur du site</h2>
       <p>
-        <strong>UWi Medical</strong><br />
-        [Raison sociale / forme juridique]<br />
-        [Siège social : adresse]<br />
-        [SIRET]<br />
-        [RCS]
+        <strong>TROOPER</strong>, société par actions simplifiée unipersonnelle (SASU)<br />
+        Siège social : 60 rue François Ier, 75008 Paris, France<br />
+        RCS Paris 990 375 149<br />
+        Représentée par M. Heni Goutal, en sa qualité de Président<br />
+        Email : <a href="mailto:contact@uwiapp.com">contact@uwiapp.com</a><br />
+        Téléphone : <a href="tel:0939240575">09 39 24 05 75</a>
       </p>
-      <p><em>À compléter avec les informations légales de votre société.</em></p>
 
-      <h2>2. Hébergeur</h2>
+      <h2>2. Hébergement</h2>
       <p>
-        [Nom de l'hébergeur]<br />
-        [Adresse]<br />
-        [Contact]
+        <strong>Hébergement du site web (front)</strong><br />
+        Vercel Inc., 440 N Barranca Avenue #4133, Covina, CA 91723, États-Unis<br />
+        <a href="https://vercel.com" target="_blank" rel="noopener noreferrer">vercel.com</a>
       </p>
-      <p><em>À compléter (ex. Vercel, OVH, etc.).</em></p>
+      <p>
+        <strong>Hébergement de l'API et du backend applicatif</strong><br />
+        Railway Corp., 410 Townsend Street, Suite 220, San Francisco, CA 94107, États-Unis<br />
+        <a href="https://railway.app" target="_blank" rel="noopener noreferrer">railway.app</a>
+      </p>
+      <p>
+        <strong>Nom de domaine et services associés</strong><br />
+        OVH SAS, 2 rue Kellermann, 59100 Roubaix, France<br />
+        RCS Lille Métropole 424 761 419 — <a href="https://www.ovhcloud.com" target="_blank" rel="noopener noreferrer">ovhcloud.com</a>
+      </p>
 
       <h2>3. Directeur de la publication</h2>
-      <p>Le directeur de la publication du site est [Nom du responsable].</p>
+      <p>Le directeur de la publication du site est M. Heni Goutal, Président de TROOPER.</p>
 
       <h2>4. Données personnelles et cookies</h2>
       <p>Les données collectées via le site et la plateforme sont traitées conformément au Règlement général sur la protection des données (RGPD) et à la loi « Informatique et Libertés ». Les données de santé font l'objet de mesures renforcées et d'un hébergement certifié HDS.</p>

@@ -9,6 +9,8 @@ import {
   SEO_VERTICAL_LABELS,
 } from "../config/seoVerticalPages.config";
 
+const SITE_URL = (import.meta.env.VITE_SITE_URL || "https://www.uwiapp.com").replace(/\/$/, "");
+
 export default function SeoVerticalPage({ pageKey }) {
   const page = SEO_VERTICAL_PAGES[pageKey];
   if (!page) return null;
@@ -23,12 +25,39 @@ export default function SeoVerticalPage({ pageKey }) {
     })),
   };
 
+  // BreadcrumbList : Accueil > [Page pilier] > Page courante
+  // Donne à Google un fil d'Ariane visible dans les SERP.
+  const breadcrumbItems = [
+    { name: "Accueil", url: `${SITE_URL}/` },
+  ];
+  if (pageKey !== PILLAR_PATH) {
+    breadcrumbItems.push({
+      name: SEO_VERTICAL_LABELS[PILLAR_PATH],
+      url: `${SITE_URL}${PILLAR_PATH}`,
+    });
+  }
+  breadcrumbItems.push({
+    name: SEO_VERTICAL_LABELS[pageKey] || page.h1 || pageKey,
+    url: `${SITE_URL}${pageKey}`,
+  });
+  const breadcrumbJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: breadcrumbItems.map((item, i) => ({
+      "@type": "ListItem",
+      position: i + 1,
+      name: item.name,
+      item: item.url,
+    })),
+  };
+
   const otherPaths = SEO_VERTICAL_PATHS.filter((p) => p !== pageKey);
 
   return (
     <>
       <Helmet>
         <script type="application/ld+json">{JSON.stringify(faqJsonLd)}</script>
+        <script type="application/ld+json">{JSON.stringify(breadcrumbJsonLd)}</script>
       </Helmet>
       <LegalPageLayout
         title={page.hero ? undefined : page.h1}

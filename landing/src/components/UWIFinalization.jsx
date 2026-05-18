@@ -5,15 +5,15 @@ import { api, getApiBaseUrl } from "../lib/api.js";
 import ASSISTANTS_CONFIG from "../assistants.config.js";
 
 const COLORS = {
-  bg: "#0A1828",
-  surface: "#0F2236",
-  card: "#132840",
-  border: "#1E3D56",
-  accent: "#00E5A0",
-  accentDim: "#00b87c",
-  text: "#FFFFFF",
-  muted: "#6B90A8",
-  subtle: "#1A3550",
+  bg: "#FFFFFF",
+  surface: "#f8fafc",
+  card: "#FFFFFF",
+  border: "#e2e8f0",
+  accent: "#0a8f9a",
+  accentDim: "#006b75",
+  text: "#0A1F24",
+  muted: "#64748b",
+  subtle: "#f1f5f9",
 };
 
 const LOADING_STEPS = [
@@ -44,7 +44,7 @@ const EXPERTS = [
 ];
 
 const SLOTS = ["9h00", "10h00", "11h00", "14h00", "15h00", "16h00", "17h00"];
-const CONFETTI_COLORS = ["#00E5A0", "#5BA8FF", "#FFD700", "#FF6B9D"];
+const CONFETTI_COLORS = ["#0a8f9a", "#5BA8FF", "#FFD700", "#FF6B9D"];
 
 function getNextWorkingDays(count) {
   const out = [];
@@ -66,7 +66,7 @@ function formatDayForDisplay(date) {
 
 const MSG_LEAD_NOT_FOUND = "Lead introuvable, lien expiré ou ancienne session. Refaites votre demande depuis l'accueil.";
 
-export default function UWIFinalization({ leadId = "", initialPhone = "", assistantName = "Emma", practitioner = "votre cabinet", onComplete }) {
+export default function UWIFinalization({ leadId = "", leadToken = "", initialPhone = "", assistantName = "Emma", practitioner = "votre cabinet", onComplete }) {
   const navigate = useNavigate();
   const [leadCheckFailed, setLeadCheckFailed] = useState(null); // null = en cours, true = 404, false = ok
   const [phase, setPhase] = useState("loading");
@@ -91,19 +91,25 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
   const canSubmit = selectedDay && selectedSlot && phoneValid;
 
   // Vérifier que le lead existe au chargement (diagnostic : même backend que le commit ?)
+  // Necessite un token signe (sinon 401/403). Si pas de token (ancien sessionStorage),
+  // on bascule directement en erreur.
   useEffect(() => {
     const id = (leadId || "").trim();
     if (!id) return;
     setLeadCheckFailed(null);
+    if (!leadToken) {
+      setLeadCheckFailed(true);
+      return;
+    }
     api
-      .preOnboardingLeadCheck(id)
+      .preOnboardingLeadCheck(id, leadToken)
       .then(() => setLeadCheckFailed(false))
       .catch((err) => {
-        // 404, erreur réseau, CORS, etc. → afficher l'écran d'erreur (ne pas continuer)
+        // 401/403 (token), 404, 410 (expire), reseau, CORS, etc. → ecran d'erreur
         const notFound = err?.status === 404 || (err?.message || "").includes("introuvable");
         setLeadCheckFailed(true);
       });
-  }, [leadId]);
+  }, [leadId, leadToken]);
 
   useEffect(() => {
     if (phase !== "loading" || leadCheckFailed !== false) return;
@@ -153,11 +159,15 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
       setCallbackError(MSG_LEAD_NOT_FOUND);
     } else if (dateIso && selectedSlot && phoneDigitsOnly.length >= 10) {
       try {
-        await api.preOnboardingCallbackBooking(leadId, {
-          date: dateIso,
-          slot: selectedSlot,
-          phone: phoneDigitsOnly,
-        });
+        await api.preOnboardingCallbackBooking(
+          leadId,
+          {
+            date: dateIso,
+            slot: selectedSlot,
+            phone: phoneDigitsOnly,
+          },
+          leadToken
+        );
       } catch (err) {
         const msg = err?.message || "Erreur serveur";
         const isNotFound = msg.includes("introuvable") || err?.status === 404;
@@ -173,7 +183,7 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
       setIsSubmitting(false);
       setPhase("done");
     }, 800);
-  }, [canSubmit, leadId, selectedDay, selectedSlot, phone]);
+  }, [canSubmit, leadId, leadToken, selectedDay, selectedSlot, phone]);
 
   // Lead manquant dès le départ → écran dédié (pas de flow inutile)
   if (!(leadId || "").trim()) {
@@ -351,8 +361,8 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
                   marginBottom: 14,
                   padding: "10px 14px",
                   borderRadius: 12,
-                  background: i < loadingStep ? "rgba(0,229,160,0.1)" : COLORS.surface,
-                  border: `1px solid ${i < loadingStep ? "rgba(0,229,160,0.25)" : COLORS.border}`,
+                  background: i < loadingStep ? "rgba(10,143,154,0.1)" : COLORS.surface,
+                  border: `1px solid ${i < loadingStep ? "rgba(10,143,154,0.25)" : COLORS.border}`,
                   color: i < loadingStep ? COLORS.accent : COLORS.muted,
                   fontWeight: i < loadingStep ? 600 : 400,
                 }}
@@ -392,7 +402,7 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
                 height: "100%",
                 width: `${loadingProgress}%`,
                 background: `linear-gradient(90deg, ${COLORS.accent}, ${COLORS.accentDim})`,
-                boxShadow: "0 0 12px rgba(0,229,160,0.4)",
+                boxShadow: "0 0 12px rgba(10,143,154,0.4)",
                 transition: "width 0.15s ease",
               }}
             />
@@ -429,7 +439,7 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
               fontSize: 48,
               position: "relative",
               overflow: "hidden",
-              boxShadow: "0 0 0 0 rgba(0,229,160,0.4)",
+              boxShadow: "0 0 0 0 rgba(10,143,154,0.4)",
               animation: "pingRing 1.8s ease-in-out infinite",
             }}
           >
@@ -452,8 +462,8 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
               display: "inline-block",
               padding: "6px 14px",
               borderRadius: 20,
-              background: "rgba(0,229,160,0.1)",
-              border: "1px solid rgba(0,229,160,0.25)",
+              background: "rgba(10,143,154,0.1)",
+              border: "1px solid rgba(10,143,154,0.25)",
               color: COLORS.accent,
               fontSize: 12,
               fontWeight: 600,
@@ -484,13 +494,13 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
               fontWeight: 800,
               fontSize: 15,
               cursor: "pointer",
-              boxShadow: "0 4px 20px rgba(0,229,160,0.25)",
+              boxShadow: "0 4px 20px rgba(10,143,154,0.25)",
             }}
           >
             Continuer →
           </button>
         </div>
-        <style>{`@keyframes pingRing { 0%,100% { box-shadow: 0 0 0 0 rgba(0,229,160,0.4); } 50% { box-shadow: 0 0 0 12px rgba(0,229,160,0); } }`}</style>
+        <style>{`@keyframes pingRing { 0%,100% { box-shadow: 0 0 0 0 rgba(10,143,154,0.4); } 50% { box-shadow: 0 0 0 12px rgba(10,143,154,0); } }`}</style>
       </div>
     );
   }
@@ -528,8 +538,8 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
           </p>
           <div
             style={{
-              background: "rgba(0,229,160,0.07)",
-              border: "1.5px solid rgba(0,229,160,0.35)",
+              background: "rgba(10,143,154,0.07)",
+              border: "1.5px solid rgba(10,143,154,0.35)",
               borderRadius: 16,
               padding: "18px 20px",
               marginBottom: 24,
@@ -559,7 +569,7 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
               fontWeight: 800,
               fontSize: 15,
               cursor: "pointer",
-              boxShadow: "0 4px 20px rgba(0,229,160,0.25)",
+              boxShadow: "0 4px 20px rgba(10,143,154,0.25)",
             }}
           >
             Choisir mon créneau de rappel →
@@ -585,7 +595,7 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
               <div style={{ fontSize: 12, color: COLORS.muted }}>{expert.role}</div>
               <div style={{ fontSize: 11, color: COLORS.muted }}>★ {expert.reviews} avis</div>
             </div>
-            <span style={{ padding: "4px 10px", borderRadius: 20, background: "rgba(0,229,160,0.1)", border: "1px solid rgba(0,229,160,0.25)", color: COLORS.accent, fontSize: 11, fontWeight: 600 }}>Expert dédié</span>
+            <span style={{ padding: "4px 10px", borderRadius: 20, background: "rgba(10,143,154,0.1)", border: "1px solid rgba(10,143,154,0.25)", color: COLORS.accent, fontSize: 11, fontWeight: 600 }}>Expert dédié</span>
           </div>
           <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>Quand souhaitez-vous être rappelé ?</h2>
           <p style={{ fontSize: 13, color: COLORS.accent, marginBottom: 16 }}>Pour activer {assistantName}</p>
@@ -690,7 +700,7 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
               fontSize: 15,
               cursor: canSubmit && !isSubmitting ? "pointer" : "not-allowed",
               opacity: canSubmit ? 1 : 0.4,
-              boxShadow: "0 4px 20px rgba(0,229,160,0.25)",
+              boxShadow: "0 4px 20px rgba(10,143,154,0.25)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -741,7 +751,7 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
               )}
             </div>
           )}
-          <div style={{ width: 64, height: 64, margin: "0 auto 20px", borderRadius: "50%", background: callbackError ? COLORS.surface : COLORS.accent, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, animation: "popIn 0.5s cubic-bezier(0.34,1.56,0.64,1) forwards", boxShadow: callbackError ? "none" : "0 0 24px rgba(0,229,160,0.4)" }}>{callbackError ? "⚠️" : "✅"}</div>
+          <div style={{ width: 64, height: 64, margin: "0 auto 20px", borderRadius: "50%", background: callbackError ? COLORS.surface : COLORS.accent, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, animation: "popIn 0.5s cubic-bezier(0.34,1.56,0.64,1) forwards", boxShadow: callbackError ? "none" : "0 0 24px rgba(10,143,154,0.4)" }}>{callbackError ? "⚠️" : "✅"}</div>
           <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 12 }}>{callbackError ? "Erreur" : "RDV confirmé !"}</h1>
           <p style={{ fontSize: 14, color: COLORS.muted, marginBottom: 24, lineHeight: 1.5 }}>
             {callbackError ? "Votre créneau n'a pas pu être enregistré." : `${expert.name} vous appellera le ${dayStr} à ${selectedSlot} pour activer ${assistantName}.`}
@@ -762,7 +772,7 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
             <p style={{ fontSize: 12, color: COLORS.muted, marginBottom: 4 }}>🎯 Objectif</p>
             <p style={{ fontWeight: 600 }}>Activer {assistantName}</p>
           </div>
-          <div style={{ background: "rgba(0,229,160,0.05)", border: "1px solid rgba(0,229,160,0.2)", borderRadius: 12, padding: 12, marginBottom: 24, fontSize: 12, color: COLORS.muted, textAlign: "left" }}>
+          <div style={{ background: "rgba(10,143,154,0.05)", border: "1px solid rgba(10,143,154,0.2)", borderRadius: 12, padding: 12, marginBottom: 24, fontSize: 12, color: COLORS.muted, textAlign: "left" }}>
             📩 SMS de rappel envoyé sur votre mobile
           </div>
           <button
@@ -784,7 +794,7 @@ export default function UWIFinalization({ leadId = "", initialPhone = "", assist
               fontWeight: 800,
               fontSize: 15,
               cursor: "pointer",
-              boxShadow: "0 4px 20px rgba(0,229,160,0.25)",
+              boxShadow: "0 4px 20px rgba(10,143,154,0.25)",
             }}
           >
             {callbackError ? "Retour à l'accueil" : "Profiter du mois gratuit"}
