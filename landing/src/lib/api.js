@@ -102,8 +102,6 @@ export const api = {
     request(`/api/pre-onboarding/leads/${encodeURIComponent(leadId)}/check`, { method: "GET" }),
   preOnboardingLeadEmail: (leadId) =>
     request(`/api/pre-onboarding/leads/${encodeURIComponent(leadId)}/email`, { method: "GET" }),
-  preOnboardingLeadEmail: (leadId) =>
-    request(`/api/pre-onboarding/leads/${encodeURIComponent(leadId)}/email`, { method: "GET" }),
   preOnboardingCallbackBooking: (leadId, payload) =>
     request(`/api/pre-onboarding/leads/${encodeURIComponent(leadId)}/callback-booking`, {
       method: "POST",

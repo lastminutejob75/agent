@@ -28,6 +28,15 @@ const AssistantSelector = lazy(() => import("../components/AssistantSelector.jsx
 
 const STORAGE_KEY = "uwi_creer_assistante";
 const COMMIT_DONE_KEY = "uwi_creer_assistante_done";
+
+/** POST /commit : id renvoyé par FastAPI (`lead_id`), ou variantes si proxy / ancienne API. */
+function parseCommitLeadId(res) {
+  if (!res || typeof res !== "object") return "";
+  const v = res.lead_id ?? res.leadId ?? res.id;
+  if (v == null) return "";
+  return String(v).trim();
+}
+
 const DAYS = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
 const TOTAL_STEPS = 6;
 
@@ -824,17 +833,20 @@ export default function CreerAssistante() {
   const [commitDone, setCommitDone] = useState(() => {
     try {
       const raw = typeof window !== "undefined" && sessionStorage.getItem(COMMIT_DONE_KEY);
-      if (raw) return true;
-    } catch (_) {}
-    return false;
+      if (!raw) return false;
+      const data = JSON.parse(raw);
+      return Boolean(String(data?.lead_id ?? "").trim());
+    } catch (_) {
+      return false;
+    }
   });
   const [submittedEmail, setSubmittedEmail] = useState(() => {
     try {
       const raw = typeof window !== "undefined" && sessionStorage.getItem(COMMIT_DONE_KEY);
-      if (raw) {
-        const { contact } = JSON.parse(raw);
-        return contact || "";
-      }
+      if (!raw) return "";
+      const data = JSON.parse(raw);
+      if (!String(data?.lead_id ?? "").trim()) return "";
+      return data.contact != null ? String(data.contact) : "";
     } catch (_) {}
     return "";
   });
@@ -842,19 +854,22 @@ export default function CreerAssistante() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // Restaurer l'écran de finalisation si déjà soumis (remontage ou retour)
+  // Restaurer la finalisation uniquement si sessionStorage contient un lead_id valide (sinon écran « lien expiré » vide).
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
       const raw = sessionStorage.getItem(COMMIT_DONE_KEY);
-      if (raw) {
-        const data = JSON.parse(raw);
-        if (data != null) {
-          setCommitDone(true);
-          setSubmittedEmail(data.contact != null ? String(data.contact) : "");
-          if (data.lead_id) setState((s) => ({ ...s, lead_id: data.lead_id }));
-        }
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      const lid = String(data?.lead_id ?? "").trim();
+      if (!lid) {
+        sessionStorage.removeItem(COMMIT_DONE_KEY);
+        setCommitDone(false);
+        return;
       }
+      setCommitDone(true);
+      setSubmittedEmail(data.contact != null ? String(data.contact) : "");
+      setState((s) => ({ ...s, lead_id: lid }));
     } catch (_) {}
   }, []);
 
@@ -924,10 +939,12 @@ export default function CreerAssistante() {
       };
       const res = await api.preOnboardingCommit(payload);
       const contact = emailTrim || phoneTrim || "";
-      const leadId = res && res.lead_id ? String(res.lead_id) : "";
-      // Token signe (HMAC) emis par le backend pour les endpoints sensibles
-      // (lead/email, lead/check, callback-booking, create-account). Sans ce
-      // token, ces endpoints renvoient 401/403 (audit securite 2026-05).
+      const leadId = parseCommitLeadId(res);
+      if (!leadId) {
+        throw new Error(
+          "Réponse serveur incomplète (pas d’identifiant de demande). Réessayez dans un instant ou vérifiez que le site pointe vers le bon backend.",
+        );
+      }
       const leadToken = res && res.token ? String(res.token) : "";
       try {
         sessionStorage.setItem(
@@ -938,15 +955,21 @@ export default function CreerAssistante() {
             email: emailTrim,
             lead_id: leadId,
             token: leadToken,
-          })
+          }),
         );
       } catch (_) {}
+      setSearchParams(
+        (prev) => {
+          const p = new URLSearchParams(prev);
+          p.set("lead_id", leadId);
+          return p;
+        },
+        { replace: true },
+      );
       setSubmittedEmail(contact);
       setCommitDone(true);
-      if (leadId) {
-        setState((s) => ({ ...s, lead_id: leadId, lead_token: leadToken }));
-        persist({ lead_id: leadId, lead_token: leadToken });
-      }
+      setState((s) => ({ ...s, lead_id: leadId, lead_token: leadToken }));
+      persist({ lead_id: leadId, lead_token: leadToken });
       setModalOpen(false);
     } catch (e) {
       setCommitError(e.message || "Erreur enregistrement");
@@ -1011,7 +1034,32 @@ export default function CreerAssistante() {
 
   // Si lead déjà créé : afficher l'écran de finalisation (UWIFinalization)
   const leadIdFromUrl = (searchParams.get("lead_id") || "").trim();
-  const showFinalization = commitDone || leadIdFromUrl;
+  const showFinalization = commitDone || Boolean(leadIdFromUrl);
+
+  /** Sync lead_id dans l'URL (hors rendu) pour éviter une course où UWIFinalization monte sans id. */
+  useEffect(() => {
+    if (!showFinalization || typeof window === "undefined") return;
+    if (leadIdFromUrl) return;
+    let id = "";
+    try {
+      const raw = sessionStorage.getItem(COMMIT_DONE_KEY);
+      if (raw) {
+        const data = JSON.parse(raw);
+        id = String(data?.lead_id || "").trim();
+      }
+    } catch (_) {}
+    if (!id) id = String(state.lead_id || "").trim();
+    if (!id) return;
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        p.set("lead_id", id);
+        return p;
+      },
+      { replace: true },
+    );
+  }, [showFinalization, leadIdFromUrl, setSearchParams, state.lead_id]);
+
   if (showFinalization) {
     let leadId = leadIdFromUrl;
     let initialPhone = "";
@@ -1025,18 +1073,12 @@ export default function CreerAssistante() {
           if (data && data.phone) initialPhone = String(data.phone).replace(/\D/g, "").slice(0, 10);
           if (data && data.email) initialEmail = String(data.email).trim();
           if (data && data.token) leadToken = String(data.token);
-          if (!leadId) leadId = (data && data.lead_id) ? String(data.lead_id) : (state.lead_id || "");
-          if (leadId && !searchParams.get("lead_id")) {
-            setSearchParams({ lead_id: leadId }, { replace: true });
-          }
+          if (!leadId) leadId = data?.lead_id ? String(data.lead_id) : state.lead_id || "";
         }
       } catch (_) {}
     }
     if (!leadId) leadId = state.lead_id || "";
     if (!leadToken) leadToken = state.lead_token || "";
-    if (leadId && !searchParams.get("lead_id")) {
-      setSearchParams({ lead_id: leadId }, { replace: true });
-    }
     const assistantName = state.assistant_name || "Emma";
     return (
       <div className="min-h-screen w-full bg-white">

@@ -1,7 +1,7 @@
 // Écran de finalisation UWI — 5 phases: loading → reveal → congrats → handoff → done
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, getApiBaseUrl } from "../lib/api.js";
+import { api } from "../lib/api.js";
 import ASSISTANTS_CONFIG from "../assistants.config.js";
 
 const COLORS = {
@@ -66,9 +66,15 @@ function formatDayForDisplay(date) {
 
 const MSG_LEAD_NOT_FOUND = "Lead introuvable, lien expiré ou ancienne session. Refaites votre demande depuis l'accueil.";
 
-export default function UWIFinalization({ leadId = "", leadToken = "", initialPhone = "", assistantName = "Emma", practitioner = "votre cabinet", onComplete }) {
+export default function UWIFinalization({
+  leadId = "",
+  leadToken: _reservedLeadToken = "",
+  initialPhone = "",
+  assistantName = "Emma",
+  practitioner = "votre cabinet",
+  onComplete,
+}) {
   const navigate = useNavigate();
-  const [leadCheckFailed, setLeadCheckFailed] = useState(null); // null = en cours, true = 404, false = ok
   const [phase, setPhase] = useState("loading");
   const [loadingStep, setLoadingStep] = useState(0);
   const [loadingProgress, setLoadingProgress] = useState(0);
@@ -90,29 +96,12 @@ export default function UWIFinalization({ leadId = "", leadToken = "", initialPh
   const phoneValid = phoneDigits.length >= 10;
   const canSubmit = selectedDay && selectedSlot && phoneValid;
 
-  // Vérifier que le lead existe au chargement (diagnostic : même backend que le commit ?)
-  // Necessite un token signe (sinon 401/403). Si pas de token (ancien sessionStorage),
-  // on bascule directement en erreur.
-  useEffect(() => {
-    const id = (leadId || "").trim();
-    if (!id) return;
-    setLeadCheckFailed(null);
-    if (!leadToken) {
-      setLeadCheckFailed(true);
-      return;
-    }
-    api
-      .preOnboardingLeadCheck(id, leadToken)
-      .then(() => setLeadCheckFailed(false))
-      .catch((err) => {
-        // 401/403 (token), 404, 410 (expire), reseau, CORS, etc. → ecran d'erreur
-        const notFound = err?.status === 404 || (err?.message || "").includes("introuvable");
-        setLeadCheckFailed(true);
-      });
-  }, [leadId, leadToken]);
+  // Pas d'appel GET /leads/:id/check ici : il provoquait des faux « lead introuvable »
+  // (CORS intermittents, réseau, ou décalage URL/session) juste après un commit réussi.
+  // Le lead est validé au moment du POST callback-booking.
 
   useEffect(() => {
-    if (phase !== "loading" || leadCheckFailed !== false) return;
+    if (phase !== "loading") return;
     const totalMs = LOADING_STEPS.reduce((s, t) => s + t.ms, 0);
     const timeouts = [];
     let elapsed = 0;
@@ -144,7 +133,7 @@ export default function UWIFinalization({ leadId = "", leadToken = "", initialPh
       clearInterval(interval);
       timeouts.forEach(clearTimeout);
     };
-  }, [phase, leadCheckFailed]);
+  }, [phase]);
 
   const handleRevealCta = () => setPhase("congrats");
   const handleCongratsCta = () => setPhase("handoff");
@@ -159,15 +148,11 @@ export default function UWIFinalization({ leadId = "", leadToken = "", initialPh
       setCallbackError(MSG_LEAD_NOT_FOUND);
     } else if (dateIso && selectedSlot && phoneDigitsOnly.length >= 10) {
       try {
-        await api.preOnboardingCallbackBooking(
-          leadId,
-          {
-            date: dateIso,
-            slot: selectedSlot,
-            phone: phoneDigitsOnly,
-          },
-          leadToken
-        );
+        await api.preOnboardingCallbackBooking(leadId, {
+          date: dateIso,
+          slot: selectedSlot,
+          phone: phoneDigitsOnly,
+        });
       } catch (err) {
         const msg = err?.message || "Erreur serveur";
         const isNotFound = msg.includes("introuvable") || err?.status === 404;
@@ -183,7 +168,7 @@ export default function UWIFinalization({ leadId = "", leadToken = "", initialPh
       setIsSubmitting(false);
       setPhase("done");
     }, 800);
-  }, [canSubmit, leadId, leadToken, selectedDay, selectedSlot, phone]);
+  }, [canSubmit, leadId, selectedDay, selectedSlot, phone]);
 
   // Lead manquant dès le départ → écran dédié (pas de flow inutile)
   if (!(leadId || "").trim()) {
@@ -191,45 +176,6 @@ export default function UWIFinalization({ leadId = "", leadToken = "", initialPh
       <div style={{ fontFamily: "'DM Sans', -apple-system, sans-serif", maxWidth: 420, margin: "0 auto", padding: "48px 24px", minHeight: "100vh", background: COLORS.bg, color: COLORS.text, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center" }}>
         <div style={{ width: 64, height: 64, borderRadius: "50%", background: COLORS.surface, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, marginBottom: 24 }}>⚠️</div>
         <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 12 }}>Lien expiré ou ancienne session</h1>
-        <p style={{ fontSize: 14, color: COLORS.muted, marginBottom: 24, lineHeight: 1.5 }}>
-          Lead introuvable, lien expiré ou ancienne session. Refaites votre demande depuis{" "}
-          <button
-            type="button"
-            onClick={() => onComplete?.() || navigate("/")}
-            style={{ background: "none", border: "none", padding: 0, color: COLORS.accent, textDecoration: "underline", cursor: "pointer", fontSize: "inherit", fontFamily: "inherit" }}
-          >
-            l'accueil
-          </button>
-          .
-        </p>
-        <button
-          type="button"
-          onClick={() => onComplete?.() || navigate("/")}
-          style={{
-            padding: "14px 24px",
-            borderRadius: 12,
-            border: "none",
-            background: `linear-gradient(135deg, ${COLORS.accent}, ${COLORS.accentDim})`,
-            color: COLORS.bg,
-            fontWeight: 700,
-            fontSize: 15,
-            cursor: "pointer",
-          }}
-        >
-          Retour à l'accueil
-        </button>
-      </div>
-    );
-  }
-
-  // Lead introuvable (404 sur check) → env/backend différent entre commit et callback
-  if (leadCheckFailed === true) {
-    const apiBase = getApiBaseUrl() || "(non configuré)";
-    return (
-      <div style={{ fontFamily: "'DM Sans', -apple-system, sans-serif", maxWidth: 420, margin: "0 auto", padding: "48px 24px", minHeight: "100vh", background: COLORS.bg, color: COLORS.text, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center" }}>
-        <div style={{ width: 64, height: 64, borderRadius: "50%", background: COLORS.surface, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, marginBottom: 24 }}>⚠️</div>
-        <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 12 }}>Lien expiré ou ancienne session</h1>
-        <p style={{ fontSize: 12, color: COLORS.muted, marginBottom: 8, wordBreak: "break-all" }}>Backend : {apiBase}</p>
         <p style={{ fontSize: 14, color: COLORS.muted, marginBottom: 24, lineHeight: 1.5 }}>
           Lead introuvable, lien expiré ou ancienne session. Refaites votre demande depuis{" "}
           <button
@@ -313,19 +259,6 @@ export default function UWIFinalization({ leadId = "", leadToken = "", initialPh
   };
 
   if (phase === "loading") {
-    if (leadCheckFailed === null) {
-      return (
-        <div style={baseStyle}>
-          <div style={gridBg} />
-          <div style={barAccent} />
-          <div style={{ position: "relative", zIndex: 1, paddingTop: 120, textAlign: "center" }}>
-            <div style={{ width: 40, height: 40, margin: "0 auto 20px", border: `3px solid ${COLORS.border}`, borderTopColor: COLORS.accent, borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
-            <p style={{ fontSize: 14, color: COLORS.muted }}>Vérification...</p>
-          </div>
-          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-        </div>
-      );
-    }
     return (
       <div style={baseStyle}>
         <div style={gridBg} />
