@@ -94,6 +94,21 @@ def _build_summary(
     return f"Demande à reprendre par le {role} du cabinet."
 
 
+def _auto_note_exists_for_call(tenant_id: int, patient_phone: str, call_id: str) -> bool:
+    if not patient_phone or not call_id:
+        return False
+    marker = f"[call:{call_id}]"
+    try:
+        recent_notes = db.list_patient_notes(tenant_id, patient_phone, limit=80)
+    except Exception:
+        return False
+    for note in recent_notes:
+        text = str(note.get("note_text") or "").strip()
+        if marker in text and text.startswith("[VAPI transfert]"):
+            return True
+    return False
+
+
 def build_handoff_payload(
     session: Any,
     *,
@@ -514,7 +529,7 @@ def ensure_transfer_handoff(
         mode=decision["mode"],
         priority=decision["priority"],
     )
-    return create_handoff(
+    created = create_handoff(
         tenant_id,
         call_id,
         channel=payload["channel"],
@@ -534,3 +549,36 @@ def ensure_transfer_handoff(
         booking_motif=payload["booking_motif"],
         notes=payload["notes"],
     )
+    patient_phone = payload.get("patient_phone") or ""
+    if patient_phone:
+        try:
+            db.upsert_cabinet_client(
+                tenant_id,
+                patient_phone,
+                raw_name=payload.get("raw_name") or None,
+                validated_name=payload.get("validated_name") or None,
+                source_call_id=call_id,
+                last_call_id=call_id,
+                last_booking_start=payload.get("booking_start_iso") or None,
+                last_booking_end=payload.get("booking_end_iso") or None,
+                last_booking_motif=payload.get("booking_motif") or None,
+            )
+        except Exception:
+            pass
+        try:
+            summary = str(payload.get("summary") or "").strip()
+            reason = str(payload.get("reason") or "").strip()
+            if summary:
+                note_text = f"[VAPI transfert] [call:{call_id}] {summary}"
+                if reason:
+                    note_text = f"{note_text} (raison: {reason})"
+                if not _auto_note_exists_for_call(tenant_id, patient_phone, call_id):
+                    db.insert_patient_note(
+                        tenant_id,
+                        patient_phone,
+                        note_text=note_text[:4000],
+                        author="Clara (auto)",
+                    )
+        except Exception:
+            pass
+    return created

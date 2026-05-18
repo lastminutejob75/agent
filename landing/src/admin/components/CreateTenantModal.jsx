@@ -4,16 +4,17 @@ import { adminApi } from "../../lib/adminApi";
 import { getClientWelcomeLoginUrl } from "../../lib/clientAppUrl.js";
 import { deriveHorairesText, normalizeBookingRules } from "../../lib/bookingUtils.js";
 
+import { T } from "../theme.js";
 const C = {
-  bg: "#0A1828",
-  surface: "#0F2236",
-  card: "#132840",
-  border: "#1E3D56",
-  accent: "#00E5A0",
-  accentDim: "#00b87c",
-  text: "#FFFFFF",
-  muted: "#6B90A8",
-  danger: "#FF6B6B",
+  bg: T.bgPage,
+  surface: T.bgSubtle,
+  card: T.bgCard,
+  border: T.border,
+  accent: T.teal,
+  accentDim: T.tealDark,
+  text: T.text,
+  muted: T.textMuted,
+  danger: T.red,
 };
 
 const ASSISTANTS = [
@@ -113,7 +114,7 @@ export default function CreateTenantModal({ onClose, onCreated, prefill = {}, in
       style={{
         position: "fixed",
         inset: 0,
-        background: "rgba(0,0,0,0.7)",
+        background: "rgba(15, 23, 42, 0.45)",
         backdropFilter: "blur(4px)",
         zIndex: 1000,
         display: "flex",
@@ -132,7 +133,7 @@ export default function CreateTenantModal({ onClose, onCreated, prefill = {}, in
           borderRadius: 24,
           width: "100%",
           maxWidth: 560,
-          boxShadow: "0 32px 80px rgba(0,0,0,0.6)",
+          boxShadow: "0 16px 48px rgba(15,23,42,0.16)",
           overflow: "hidden",
         }}
       >
@@ -200,14 +201,14 @@ export default function CreateTenantModal({ onClose, onCreated, prefill = {}, in
                 label="Nom du cabinet"
                 value={form.name}
                 onChange={(v) => set("name", v)}
-                placeholder="Cabinet Dr Martin"
+                placeholder="Nom du cabinet"
               />
               <Field
                 label="Email"
                 type="email"
                 value={form.email}
                 onChange={(v) => set("email", v)}
-                placeholder="contact@cabinet-martin.fr"
+                placeholder="contact@cabinet.fr"
               />
               <Field
                 label="Téléphone cabinet"
@@ -244,7 +245,7 @@ export default function CreateTenantModal({ onClose, onCreated, prefill = {}, in
                         padding: "10px 14px",
                         borderRadius: 10,
                         cursor: "pointer",
-                        background: form.sector === s.id ? "rgba(0,229,160,0.08)" : C.card,
+                        background: form.sector === s.id ? T.tealLight : C.card,
                         border: `1px solid ${form.sector === s.id ? C.accent : C.border}`,
                         color: form.sector === s.id ? C.accent : C.text,
                         fontSize: 13,
@@ -280,7 +281,7 @@ export default function CreateTenantModal({ onClose, onCreated, prefill = {}, in
                         padding: "10px 14px",
                         borderRadius: 10,
                         cursor: "pointer",
-                        background: form.plan_key === p.id ? "rgba(0,229,160,0.08)" : C.card,
+                        background: form.plan_key === p.id ? T.tealLight : C.card,
                         border: `1px solid ${form.plan_key === p.id ? C.accent : C.border}`,
                         display: "flex",
                         justifyContent: "space-between",
@@ -369,7 +370,7 @@ export default function CreateTenantModal({ onClose, onCreated, prefill = {}, in
                         overflow: "hidden",
                         cursor: "pointer",
                         border: `2px solid ${active ? C.accent : C.border}`,
-                        boxShadow: active ? "0 0 16px rgba(0,229,160,0.25)" : "none",
+                        boxShadow: active ? `0 0 0 3px ${T.teal}30` : "none",
                         transform: active ? "scale(1.02)" : "scale(1)",
                         transition: "all 0.2s",
                         background: C.bg,
@@ -418,7 +419,7 @@ export default function CreateTenantModal({ onClose, onCreated, prefill = {}, in
                       <div
                         style={{
                           padding: "8px 10px",
-                          background: active ? "rgba(0,229,160,0.08)" : C.card,
+                          background: active ? T.tealLight : C.card,
                         }}
                       >
                         <div
@@ -529,13 +530,13 @@ export default function CreateTenantModal({ onClose, onCreated, prefill = {}, in
                   {result.results?.errors?.length > 0 && (
                     <div
                       style={{
-                        background: "rgba(255,179,71,0.1)",
-                        border: "1px solid rgba(255,179,71,0.3)",
+                        background: T.yellowLight,
+                        border: `1px solid ${T.yellow}66`,
                         borderRadius: 10,
                         padding: 12,
                         marginBottom: 16,
                         fontSize: 12,
-                        color: "#FFB347",
+                        color: T.yellowText,
                         textAlign: "left",
                       }}
                     >
@@ -762,7 +763,7 @@ function Field({ label, value, onChange, type = "text", placeholder = "" }) {
       <div
         style={{
           fontSize: 12,
-          color: "#6B90A8",
+          color: T.textMuted,
           fontWeight: 600,
           marginBottom: 6,
           textTransform: "uppercase",
@@ -778,11 +779,11 @@ function Field({ label, value, onChange, type = "text", placeholder = "" }) {
         onChange={(e) => onChange(e.target.value)}
         style={{
           width: "100%",
-          background: "#132840",
-          border: "1px solid #1E3D56",
+          background: T.bgCard,
+          border: `1px solid ${T.border}`,
           borderRadius: 10,
           padding: "11px 14px",
-          color: "#FFFFFF",
+          color: T.text,
           fontSize: 13,
           fontFamily: "inherit",
           outline: "none",

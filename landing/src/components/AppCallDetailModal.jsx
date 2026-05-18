@@ -1,35 +1,11 @@
 import { useState } from "react";
 
-const T = {
-  teal: "#0DC991",
-  tealDark: "#0AAF7A",
-  tealLight: "#E8FAF4",
-  tealBorder: "#A7F3D0",
-  orange: "#F97316",
-  orangeLight: "#FFF7ED",
-  orangeBorder: "#FDBA74",
-  purple: "#8B5CF6",
-  purpleLight: "#F5F3FF",
-  purpleBorder: "#DDD6FE",
-  red: "#EF4444",
-  redLight: "#FEF2F2",
-  redBorder: "#FCA5A5",
-  blue: "#3B82F6",
-  blueLight: "#EFF6FF",
-  blueBorder: "#BFDBFE",
-  text: "#0f172a",
-  textMid: "#334155",
-  textSoft: "#64748b",
-  textFaint: "#94a3b8",
-  border: "#e2e8f0",
-  borderLight: "#f1f5f9",
-  bg: "#f1f5f9",
-  card: "#ffffff",
-};
-
-function getActionLabel(call) {
-  return call?.contextual_action?.label || "Voir le détail";
-}
+const NAVY = "#0f172a";
+const TEAL = "#0DC991";
+const TEAL_DARK = "#0AAF7A";
+const BORDER = "#e2e8f0";
+const MUTED = "#64748b";
+const ORANGE = "#f59e0b";
 
 function getDialablePhone(value) {
   const raw = String(value || "").trim();
@@ -40,352 +16,351 @@ function getDialablePhone(value) {
   return cleaned;
 }
 
-function getIntentGlyph(intent) {
-  switch (intent) {
-    case "rdv":
-      return "📅";
-    case "cancel":
-      return "❌";
-    case "hours":
-      return "🕒";
-    case "urgent":
-      return "🚨";
-    case "reschedule":
-      return "🔁";
-    case "info":
-    default:
-      return "💬";
-  }
+function IntentBadge({ call }) {
+  const ui = call?.intentUi;
+  if (!ui) return null;
+  return <span style={{ fontSize: 10, fontWeight: 700, color: ui.color, background: ui.bg, borderRadius: 999, padding: "3px 9px" }}>{ui.label}</span>;
 }
 
-function AIScoreCard({ score }) {
-  if (!score) {
-    return (
-      <div style={{ background: T.bg, border: `1px solid ${T.borderLight}`, borderRadius: "12px", padding: "16px", textAlign: "center", color: T.textFaint, fontSize: "12px" }}>
-        Aucune analyse disponible pour cet appel
-      </div>
-    );
-  }
-  const confColor = score.confidence >= 90 ? T.tealDark : score.confidence >= 75 ? T.orange : T.red;
-  const sentEmoji = score.sentiment === "positif" ? "😊" : score.sentiment === "négatif" ? "😟" : "😐";
-  const sentColor = score.sentiment === "positif" ? T.tealDark : score.sentiment === "négatif" ? T.red : T.textSoft;
-  return (
-    <div style={{ background: T.purpleLight, border: `1px solid ${T.purpleBorder}`, borderRadius: "12px", padding: "16px" }}>
-      <div style={{ fontSize: "11px", fontWeight: 700, color: T.purple, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: "14px" }}>Analyse UWI</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
-        <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: "10px", color: T.purple, marginBottom: "8px" }}>Confiance</div>
-          <div style={{ position: "relative", width: "56px", height: "56px", margin: "0 auto 6px" }}>
-            <svg width="56" height="56" style={{ transform: "rotate(-90deg)" }}>
-              <circle cx="28" cy="28" r="22" fill="none" stroke={T.purpleBorder} strokeWidth="5" />
-              <circle
-                cx="28"
-                cy="28"
-                r="22"
-                fill="none"
-                stroke={confColor}
-                strokeWidth="5"
-                strokeDasharray={`${2 * Math.PI * 22}`}
-                strokeDashoffset={`${2 * Math.PI * 22 * (1 - score.confidence / 100)}`}
-                strokeLinecap="round"
-              />
-            </svg>
-            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px", fontWeight: 800, color: confColor }}>
-              {score.confidence}%
-            </div>
-          </div>
-          <div style={{ fontSize: "10px", color: confColor, fontWeight: 600 }}>
-            {score.confidence >= 90 ? "Élevée" : score.confidence >= 75 ? "Bonne" : "Faible"}
-          </div>
-        </div>
-
-        <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: "10px", color: T.purple, marginBottom: "8px" }}>Sentiment</div>
-          <div style={{ fontSize: "32px", marginBottom: "4px" }}>{sentEmoji}</div>
-          <div style={{ fontSize: "11px", fontWeight: 600, color: sentColor }}>{score.sentiment}</div>
-        </div>
-
-        <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: "10px", color: T.purple, marginBottom: "8px" }}>Résolution</div>
-          <div style={{ fontSize: "32px", marginBottom: "4px" }}>{score.resolved ? "✅" : "❌"}</div>
-          <div style={{ fontSize: "11px", fontWeight: 600, color: score.resolved ? T.tealDark : T.red }}>
-            {score.resolved ? "Résolu" : "Escalade"}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function TranscriptView({ lines }) {
-  if (!lines || lines.length === 0) {
-    return (
-      <div style={{ padding: "24px 0", textAlign: "center", color: T.textFaint, fontSize: "12px" }}>
-        <div style={{ fontSize: "28px", marginBottom: "8px" }}>💬</div>
-        Aucune transcription disponible
-      </div>
-    );
-  }
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-      {lines.map((line, index) => {
-        const isAgent = line.speaker === "agent";
-        return (
-          <div key={`${line.text}-${index}`} style={{ display: "flex", flexDirection: isAgent ? "row-reverse" : "row", alignItems: "flex-start", gap: "9px" }}>
-            <div style={{ width: "28px", height: "28px", borderRadius: "50%", background: isAgent ? T.tealLight : "#f0f4ff", border: `1px solid ${isAgent ? T.tealBorder : T.blueBorder}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px", flexShrink: 0 }}>
-              {isAgent ? "🤖" : "👤"}
-            </div>
-            <div style={{ maxWidth: "78%", background: isAgent ? T.tealLight : "#f8fafc", border: `1px solid ${isAgent ? T.tealBorder : T.borderLight}`, borderRadius: isAgent ? "14px 4px 14px 14px" : "4px 14px 14px 14px", padding: "9px 12px" }}>
-              <div style={{ fontSize: "9px", fontWeight: 700, color: isAgent ? T.tealDark : T.textFaint, marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.07em" }}>
-                {isAgent ? "Agent UWI" : "Patient"}
-              </div>
-              <div style={{ fontSize: "12px", color: T.textMid, lineHeight: 1.55 }}>{line.text}</div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
+function FollowupBadge({ state }) {
+  if (state === "processed") return <span style={{ fontSize: 10, fontWeight: 700, color: TEAL_DARK, background: "#e8faf4", border: "1px solid #a7f3d0", borderRadius: 999, padding: "3px 9px" }}>Traité</span>;
+  if (state === "callback") return <span style={{ fontSize: 10, fontWeight: 700, color: ORANGE, background: "#fff7ed", border: "1px solid #fdba74", borderRadius: 999, padding: "3px 9px" }}>À rappeler</span>;
+  return <span style={{ fontSize: 10, fontWeight: 700, color: MUTED, background: "#f1f5f9", border: `1px solid ${BORDER}`, borderRadius: 999, padding: "3px 9px" }}>Nouveau</span>;
 }
 
 export default function AppCallDetailModal({
   call,
   onClose,
   onRecall,
-  onContextAction,
   onMarkCallback,
   onMarkProcessed,
-  onCopyTranscript,
-  onCopySummary,
-  onCopyId,
   followupNotes,
   setFollowupNotes,
   onSaveNotes,
   patientNameDraft,
   setPatientNameDraft,
+  patientEmailDraft,
+  setPatientEmailDraft,
+  patientInitialNoteDraft,
+  setPatientInitialNoteDraft,
+  patientDocFiles,
+  setPatientDocFiles,
   onSavePatientName,
   patientSaving,
   followupLoading,
   actionMessage,
+  // unused props kept for backwards compatibility
+  onContextAction,
+  onCopyTranscript,
+  onCopySummary,
+  onCopyId,
 }) {
   const [tab, setTab] = useState("summary");
   if (!call) return null;
+
   const dialablePhone = getDialablePhone(call?.dialablePhone || call?.phone || call?.raw?.customer_number);
-  const intentGlyph = getIntentGlyph(call.intent);
-  const primaryActionLabel = getActionLabel(call?.raw || call);
   const followupState = call?.raw?.followup_state || "new";
-  const followupBadge =
-    followupState === "processed"
-      ? { label: "Traité", color: T.tealDark, bg: T.tealLight, border: T.tealBorder }
-      : followupState === "callback"
-        ? { label: "À rappeler", color: T.orange, bg: T.orangeLight, border: T.orangeBorder }
-        : { label: "Nouveau", color: T.textSoft, bg: T.bg, border: T.border };
+  const isMissed = call.status === "missed" || call.status === "callback";
+  const transcript = call.transcript || [];
 
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(15,23,42,0.3)", backdropFilter: "blur(5px)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
-      <div className="calls-modal-panel" style={{ background: T.card, borderRadius: "20px", width: "540px", maxWidth: "94vw", maxHeight: "88vh", boxShadow: "0 24px 60px rgba(0,0,0,0.15)", overflow: "hidden", display: "flex", flexDirection: "column" }} onClick={(e) => e.stopPropagation()}>
-        <div style={{ height: "4px", background: call.status === "ok" ? `linear-gradient(90deg,${T.teal},${T.tealDark})` : call.statusUi.color }} />
+    <div style={S.overlay} onClick={onClose}>
+      <div style={S.panel} onClick={(e) => e.stopPropagation()}>
+        {/* Status bar */}
+        <div style={{ height: 3, background: call.status === "ok" ? `linear-gradient(90deg,${TEAL},${TEAL_DARK})` : (call.statusUi?.color || MUTED) }} />
 
-        <div style={{ padding: "20px 22px 0", flexShrink: 0 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-              <div style={{ width: "44px", height: "44px", borderRadius: "12px", background: call.intentUi.bg, border: `1px solid ${call.intent === "urgent" ? T.redBorder : call.intent === "reschedule" ? T.purpleBorder : call.intent === "hours" ? T.orangeBorder : call.intent === "info" ? T.blueBorder : T.tealBorder}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "20px" }}>
-                {intentGlyph}
+        {/* Header */}
+        <div style={S.header}>
+          <div style={S.headerLeft}>
+            <div style={S.avatar}>{(call.name || "?")[0]?.toUpperCase()}</div>
+            <div>
+              <div style={S.name}>{call.name || "Patient"}</div>
+              <div style={S.meta}>
+                {dialablePhone ? (
+                  <a href={`tel:${dialablePhone}`} style={S.phoneLink}>{call.phone}</a>
+                ) : (
+                  <span>{call.phone}</span>
+                )}
+                <span style={S.dot}>·</span>
+                <span>{call.time}</span>
+                <span style={S.dot}>·</span>
+                <span>{call.durationFmt}</span>
               </div>
-              <div>
-                <div style={{ fontSize: "17px", fontWeight: 800, color: T.text }}>{call.name}</div>
-                <div style={{ fontSize: "12px", color: T.textSoft, marginTop: "1px" }}>
-                  {dialablePhone ? (
-                    <a href={`tel:${dialablePhone}`} style={{ color: call.statusUi.color, fontWeight: 700, textDecoration: "none" }}>
-                      {call.phone}
-                    </a>
-                  ) : (
-                    call.phone
-                  )}
-                  {" · "}
-                  {call.time}
-                  {" · "}
-                  {call.durationFmt}
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: call.intentUi.color, background: call.intentUi.bg, borderRadius: 999, padding: "3px 8px" }}>
-                    {call.intentUi.label}
-                  </span>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: followupBadge.color, background: followupBadge.bg, border: `1px solid ${followupBadge.border}`, borderRadius: 999, padding: "3px 8px" }}>
-                    {followupBadge.label}
-                  </span>
-                </div>
+              <div style={S.badges}>
+                <IntentBadge call={call} />
+                <FollowupBadge state={followupState} />
               </div>
             </div>
-            <div style={{ display: "flex", gap: "7px", alignItems: "center" }}>
-              <span style={{ fontSize: "11px", fontWeight: 700, color: call.statusUi.color, background: call.statusUi.bg, border: `1px solid ${call.statusUi.border}`, borderRadius: "20px", padding: "3px 10px" }}>{call.statusUi.label}</span>
-              {call.aiHandled ? <span style={{ fontSize: "10px", fontWeight: 800, color: T.purple, background: T.purpleLight, border: `1px solid ${T.purpleBorder}`, borderRadius: "20px", padding: "3px 9px" }}>🤖 IA</span> : null}
-              <button type="button" onClick={onClose} style={{ background: "#f8fafc", border: `1px solid ${T.border}`, borderRadius: "8px", width: "30px", height: "30px", cursor: "pointer", color: T.textSoft, fontSize: "13px", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
-            </div>
           </div>
-
-          <div style={{ display: "flex", borderBottom: `1px solid ${T.borderLight}` }}>
-            {[["summary", "Résumé"], ["transcript", "Transcription"], ["ai", "Analyse IA"]].map(([key, label]) => (
-              <button className="calls-modal-tab" key={key} type="button" onClick={() => setTab(key)} style={{ padding: "10px 16px", fontSize: "13px", fontWeight: tab === key ? 700 : 500, color: tab === key ? T.tealDark : T.textSoft, background: "transparent", border: "none", borderBottom: tab === key ? `2px solid ${T.teal}` : "2px solid transparent", cursor: "pointer", marginBottom: "-1px", transition: "all 0.15s" }}>
-                {label}
-              </button>
-            ))}
-          </div>
+          <button type="button" onClick={onClose} style={S.closeBtn}>✕</button>
         </div>
 
-        <div style={{ flex: 1, overflowY: "auto", padding: "18px 22px 22px" }}>
-          {actionMessage ? <div style={{ marginBottom: 12, borderRadius: 12, border: `1px solid ${T.tealBorder}`, background: T.tealLight, color: T.tealDark, padding: "10px 12px", fontSize: 12, fontWeight: 700 }}>{actionMessage}</div> : null}
+        {/* Tabs */}
+        <div style={S.tabBar}>
+          {[["summary", "Résumé"], ["transcript", "Transcription"]].map(([key, label]) => (
+            <button key={key} type="button" onClick={() => setTab(key)} style={tab === key ? S.tabActive : S.tab}>{label}</button>
+          ))}
+        </div>
+
+        {/* Content */}
+        <div style={S.body}>
+          {actionMessage ? <div style={S.toast}>{actionMessage}</div> : null}
 
           {tab === "summary" ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
-                {[
-                  { label: "Heure", value: call.time },
-                  { label: "Durée", value: call.durationFmt },
-                  { label: "Intent", value: <span style={{ fontSize: "11px", fontWeight: 700, color: call.intentUi.color, background: call.intentUi.bg, borderRadius: "5px", padding: "2px 8px" }}>{call.intentUi.label}</span> },
-                ].map((row, index) => (
-                  <div key={`${row.label}-${index}`} style={{ background: T.bg, borderRadius: "10px", padding: "11px 13px", border: `1px solid ${T.borderLight}` }}>
-                    <div style={{ fontSize: "10px", fontWeight: 700, color: T.textFaint, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: "5px" }}>{row.label}</div>
-                    <div style={{ fontSize: "13px", fontWeight: 600, color: T.textMid }}>{row.value}</div>
-                  </div>
-                ))}
-              </div>
+            <div style={S.content}>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: "12px" }}>
-                <div style={{ background: T.bg, borderRadius: "12px", padding: "13px 15px", border: `1px solid ${T.borderLight}` }}>
-                  <div style={{ fontSize: "10px", fontWeight: 700, color: T.textFaint, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: "6px" }}>Résumé</div>
-                  <div style={{ fontSize: "13px", color: T.textMid, lineHeight: 1.55 }}>{call.summary}</div>
+              {/* AI Summary */}
+              {call.summary ? (
+                <div style={S.summaryCard}>
+                  <div style={S.summaryLabel}>🧠 Résumé IA</div>
+                  <div style={S.summaryText}>{call.summary}</div>
                 </div>
+              ) : null}
 
-                <div style={{ background: "#f8fafc", borderRadius: "12px", padding: "13px 15px", border: `1px solid ${T.borderLight}` }}>
-                  <div style={{ fontSize: "10px", fontWeight: 700, color: T.textFaint, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: "8px" }}>Action recommandée</div>
-                  <div style={{ fontSize: "13px", fontWeight: 700, color: T.text, marginBottom: "4px" }}>{primaryActionLabel}</div>
-                  <div style={{ fontSize: "11px", lineHeight: 1.5, color: T.textSoft }}>
-                    {call.status === "missed" || call.status === "callback"
-                      ? "Prioriser un rappel manuel pour ne pas perdre le patient."
-                      : call.rdv
-                        ? "Le rendez-vous détecté peut être revu ou confirmé dans l'agenda."
-                        : "Utilisez l'action métier pour ouvrir la bonne suite côté client."}
+              {/* Missed call alert */}
+              {isMissed && !call.aiHandled ? (
+                <div style={S.alertCard}>
+                  <span>⚠️</span>
+                  <div>
+                    <div style={S.alertTitle}>Appel manqué</div>
+                    <div style={S.alertText}>Ce patient attend un rappel.</div>
                   </div>
                 </div>
-              </div>
+              ) : null}
 
-              <div style={{ background: "#fff", borderRadius: "12px", padding: "13px 15px", border: `1px solid ${T.borderLight}` }}>
-                <div style={{ fontSize: "10px", fontWeight: 700, color: T.textFaint, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: "8px" }}>Fiche patient cabinet</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
-                  <div style={{ background: T.bg, borderRadius: 10, padding: "10px 12px", border: `1px solid ${T.borderLight}` }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: T.textFaint, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 5 }}>Nom retranscrit</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: T.text }}>{call?.patient?.raw_name || "Non capté"}</div>
-                  </div>
-                  <div style={{ background: T.bg, borderRadius: 10, padding: "10px 12px", border: `1px solid ${T.borderLight}` }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: T.textFaint, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 5 }}>Statut</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: call?.patient?.is_validated ? T.tealDark : T.orange }}>
-                      {call?.patient?.is_validated ? "Validé et enregistré" : "À valider"}
-                    </div>
+              {/* RDV detected */}
+              {call.rdv ? (
+                <div style={S.rdvCard}>
+                  <span style={{ fontSize: 18 }}>📅</span>
+                  <div>
+                    <div style={S.rdvTitle}>RDV confirmé</div>
+                    <div style={S.rdvDetail}>{call.rdv.type} · {call.rdv.date} à {call.rdv.time}</div>
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              ) : null}
+
+              {/* Patient name validation */}
+              <div style={S.section}>
+                <div style={S.sectionTitle}>Fiche patient</div>
+                <div style={S.patientStatus}>
+                  <span style={S.patientLabel}>Nom IA :</span>
+                  <span style={S.patientRaw}>{call?.patient?.raw_name || "Non capté"}</span>
+                  <span style={S.dot}>·</span>
+                  <span style={{ color: call?.patient?.is_validated ? TEAL_DARK : ORANGE, fontWeight: 700, fontSize: 12 }}>
+                    {call?.patient?.is_validated ? "✓ Confirmé" : "À confirmer"}
+                  </span>
+                </div>
+                <div style={S.nameRow}>
                   <input
                     value={patientNameDraft}
                     onChange={(e) => setPatientNameDraft(e.target.value)}
-                    placeholder="Nom et prénom validés"
-                    style={{ flex: 1, height: 42, border: `1px solid ${T.border}`, borderRadius: 10, padding: "0 12px", fontSize: 13, color: T.text, outline: "none" }}
+                    placeholder="Nom et prénom du patient"
+                    style={S.nameInput}
                   />
-                  <button
-                    className="calls-primary-btn"
-                    type="button"
-                    onClick={onSavePatientName}
-                    disabled={patientSaving}
-                    style={{ padding: "11px 14px", background: `linear-gradient(135deg,${T.teal},${T.tealDark})`, border: "none", borderRadius: 10, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", whiteSpace: "nowrap" }}
-                  >
-                    {patientSaving ? "Enregistrement..." : "Valider le nom"}
+                  <button type="button" onClick={onSavePatientName} disabled={patientSaving} style={S.nameBtn}>
+                    {patientSaving ? "…" : "Valider"}
                   </button>
                 </div>
-              </div>
-
-              {call.rdv ? (
-                <div style={{ background: T.tealLight, border: `1px solid ${T.tealBorder}`, borderRadius: "12px", padding: "13px 15px", display: "flex", alignItems: "center", gap: "12px" }}>
-                  <span style={{ fontSize: "22px" }}>📅</span>
-                  <div>
-                    <div style={{ fontSize: "12px", fontWeight: 700, color: T.tealDark, marginBottom: "2px" }}>RDV détecté / créé</div>
-                    <div style={{ fontSize: "12px", color: T.textSoft }}>{call.rdv.type} · {call.rdv.date} à {call.rdv.time}</div>
-                  </div>
+                <div style={{ ...S.nameRow, marginTop: 8 }}>
+                  <input
+                    value={patientEmailDraft || ""}
+                    onChange={(e) => setPatientEmailDraft(e.target.value)}
+                    placeholder="Email patient (optionnel)"
+                    style={S.nameInput}
+                  />
                 </div>
-              ) : null}
-
-              {call.status === "missed" && !call.aiHandled ? (
-                <div style={{ background: T.redLight, border: `1px solid ${T.redBorder}`, borderRadius: "12px", padding: "13px 15px" }}>
-                  <div style={{ fontSize: "12px", fontWeight: 700, color: T.red, marginBottom: "3px" }}>⚠ Appel manqué non traité par l'IA</div>
-                  <div style={{ fontSize: "11px", color: "#ef9999", lineHeight: 1.5 }}>Ce patient attend un rappel manuel.</div>
+                <div style={{ marginTop: 8 }}>
+                  <textarea
+                    value={patientInitialNoteDraft || ""}
+                    onChange={(e) => setPatientInitialNoteDraft(e.target.value)}
+                    placeholder="Note initiale de création de fiche (optionnel)"
+                    rows={2}
+                    style={S.noteInput}
+                  />
                 </div>
-              ) : null}
-
-              {call.aiScore ? (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
-                  {[
-                    { label: "Confiance IA", value: `${call.aiScore.confidence}%`, accent: call.aiScore.confidence >= 90 ? T.tealDark : call.aiScore.confidence >= 75 ? T.orange : T.red },
-                    { label: "Sentiment", value: call.aiScore.sentiment, accent: call.aiScore.sentiment === "positif" ? T.tealDark : call.aiScore.sentiment === "négatif" ? T.red : T.textSoft },
-                    { label: "Résolution", value: call.aiScore.resolved ? "Résolu" : "Escalade", accent: call.aiScore.resolved ? T.tealDark : T.red },
-                  ].map((item) => (
-                    <div key={item.label} style={{ background: "#fff", border: `1px solid ${T.borderLight}`, borderRadius: 12, padding: "12px 13px" }}>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: T.textFaint, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>{item.label}</div>
-                      <div style={{ fontSize: 14, fontWeight: 800, color: item.accent }}>{item.value}</div>
+                <div style={{ marginTop: 8 }}>
+                  <label style={S.uploadBtn}>
+                    📎 Joindre des documents (optionnel)
+                    <input
+                      type="file"
+                      multiple
+                      onChange={(e) => {
+                        const files = Array.from(e.target.files || []);
+                        if (!files.length) return;
+                        setPatientDocFiles([...(patientDocFiles || []), ...files]);
+                        e.target.value = "";
+                      }}
+                      style={{ display: "none" }}
+                    />
+                  </label>
+                  {Array.isArray(patientDocFiles) && patientDocFiles.length > 0 ? (
+                    <div style={S.fileList}>
+                      {patientDocFiles.map((file, idx) => (
+                        <div key={`${file.name}-${idx}`} style={S.fileItem}>
+                          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</span>
+                          <button
+                            type="button"
+                            onClick={() => setPatientDocFiles((patientDocFiles || []).filter((_, i) => i !== idx))}
+                            style={S.fileRemoveBtn}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  ) : null}
                 </div>
-              ) : null}
-
-              <div style={{ display: "flex", gap: "8px", marginTop: "4px", flexWrap: "wrap" }}>
-                {(call.status === "missed" || call.status === "callback") ? (
-                  <button className="calls-primary-btn" type="button" onClick={onRecall} style={{ flex: 2, padding: "11px", background: `linear-gradient(135deg,${T.teal},${T.tealDark})`, border: "none", borderRadius: "10px", color: "#fff", fontSize: "13px", fontWeight: 700, cursor: "pointer", boxShadow: `0 4px 14px ${T.teal}40` }}>
-                    📞 Rappeler maintenant
-                  </button>
-                ) : (
-                  <button className="calls-primary-btn" type="button" onClick={onContextAction} style={{ flex: 2, padding: "11px", background: `linear-gradient(135deg,${T.teal},${T.tealDark})`, border: "none", borderRadius: "10px", color: "#fff", fontSize: "13px", fontWeight: 700, cursor: "pointer", boxShadow: `0 4px 14px ${T.teal}40` }}>
-                    📅 {primaryActionLabel}
-                  </button>
-                )}
-                <button className="calls-secondary-btn" type="button" onClick={onCopySummary} style={{ flex: 1, padding: "11px", background: T.bg, border: `1px solid ${T.border}`, borderRadius: "10px", color: T.textSoft, fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
-                  Copier résumé
-                </button>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-                <button className="calls-secondary-btn" type="button" onClick={onMarkCallback} disabled={followupLoading} style={{ padding: "10px 11px", background: T.orangeLight, border: `1px solid ${T.orangeBorder}`, borderRadius: "10px", color: T.orange, fontSize: "12px", fontWeight: 700, cursor: "pointer" }}>
-                  À rappeler
-                </button>
-                <button className="calls-secondary-btn" type="button" onClick={onMarkProcessed} disabled={followupLoading} style={{ padding: "10px 11px", background: T.tealLight, border: `1px solid ${T.tealBorder}`, borderRadius: "10px", color: T.tealDark, fontSize: "12px", fontWeight: 700, cursor: "pointer" }}>
-                  Marquer traité
-                </button>
-                <button className="calls-secondary-btn" type="button" onClick={onCopyId} style={{ padding: "10px 11px", background: "#fff", border: `1px solid ${T.border}`, borderRadius: "10px", color: T.textSoft, fontSize: "12px", fontWeight: 700, cursor: "pointer" }}>
-                  Copier ID
-                </button>
+              {/* Actions */}
+              <div style={S.actionsRow}>
+                {isMissed ? (
+                  <button type="button" onClick={onRecall} style={S.primaryBtn}>📞 Rappeler</button>
+                ) : null}
+                <button type="button" onClick={onMarkCallback} disabled={followupLoading} style={S.orangeBtn}>À rappeler</button>
+                <button type="button" onClick={onMarkProcessed} disabled={followupLoading} style={S.greenBtn}>Traité</button>
               </div>
 
-              <div style={{ background: T.bg, borderRadius: "12px", padding: "13px 15px", border: `1px solid ${T.borderLight}` }}>
-                <div style={{ fontSize: "10px", fontWeight: 700, color: T.textFaint, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: "6px" }}>Suivi métier</div>
+              {/* Notes */}
+              <div style={S.section}>
+                <div style={S.sectionTitle}>Note interne</div>
                 <textarea
                   value={followupNotes}
                   onChange={(e) => setFollowupNotes(e.target.value)}
-                  placeholder="Ajoutez une note interne."
-                  style={{ width: "100%", minHeight: 86, resize: "vertical", border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, fontSize: 12, color: T.textMid, background: "#fff", fontFamily: "inherit", outline: "none", boxSizing: "border-box" }}
+                  placeholder="Ajouter une note…"
+                  style={S.noteInput}
+                  rows={3}
                 />
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 10 }}>
-                  <button className="calls-secondary-btn" type="button" onClick={onSaveNotes} disabled={followupLoading} style={{ flex: 1, padding: "10px 12px", background: "#fff", border: `1px solid ${T.border}`, borderRadius: 10, color: T.textSoft, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                    Enregistrer la note
-                  </button>
-                  <button className="calls-secondary-btn" type="button" onClick={onCopyTranscript} style={{ flex: 1, padding: "10px 12px", background: "#fff", border: `1px solid ${T.border}`, borderRadius: 10, color: T.textSoft, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                    Copier transcription
-                  </button>
-                </div>
+                <button type="button" onClick={onSaveNotes} disabled={followupLoading} style={S.saveNoteBtn}>Enregistrer</button>
               </div>
             </div>
           ) : null}
 
-          {tab === "transcript" ? <TranscriptView lines={call.transcript} /> : null}
-          {tab === "ai" ? <AIScoreCard score={call.aiScore} /> : null}
+          {tab === "transcript" ? (
+            transcript.length === 0 ? (
+              <div style={S.emptyTranscript}>
+                <div style={{ fontSize: 24 }}>💬</div>
+                <div style={{ fontSize: 13, color: MUTED, marginTop: 8 }}>Aucune transcription disponible</div>
+              </div>
+            ) : (
+              <div style={S.transcriptList}>
+                {transcript.map((line, i) => {
+                  const isAgent = line.speaker === "agent";
+                  return (
+                    <div key={i} style={{ ...S.bubble, flexDirection: isAgent ? "row-reverse" : "row" }}>
+                      <div style={{ ...S.bubbleAvatar, background: isAgent ? "#e8faf4" : "#f0f4ff", borderColor: isAgent ? "#a7f3d0" : "#bfdbfe" }}>
+                        {isAgent ? "🤖" : "👤"}
+                      </div>
+                      <div style={{ ...S.bubbleContent, background: isAgent ? "#e8faf4" : "#f8fafc", borderRadius: isAgent ? "12px 4px 12px 12px" : "4px 12px 12px 12px" }}>
+                        <div style={{ fontSize: 9, fontWeight: 700, color: isAgent ? TEAL_DARK : MUTED, textTransform: "uppercase", marginBottom: 3 }}>
+                          {isAgent ? "Agent UWI" : "Patient"}
+                        </div>
+                        <div style={{ fontSize: 12, color: "#334155", lineHeight: 1.5 }}>{line.text}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )
+          ) : null}
         </div>
       </div>
     </div>
   );
 }
+
+const S = {
+  overlay: { position: "fixed", inset: 0, zIndex: 2000, background: "rgba(15,23,42,0.3)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center" },
+  panel: { background: "#fff", borderRadius: 16, width: 480, maxWidth: "94vw", maxHeight: "85vh", boxShadow: "0 20px 50px rgba(0,0,0,0.15)", overflow: "hidden", display: "flex", flexDirection: "column" },
+
+  header: { padding: "18px 20px 14px", display: "flex", justifyContent: "space-between", alignItems: "flex-start" },
+  headerLeft: { display: "flex", gap: 12, alignItems: "flex-start" },
+  avatar: { width: 40, height: 40, borderRadius: 12, background: `linear-gradient(135deg, ${TEAL}, ${TEAL_DARK})`, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, flexShrink: 0 },
+  name: { fontSize: 16, fontWeight: 800, color: NAVY },
+  meta: { fontSize: 12, color: MUTED, marginTop: 2, display: "flex", alignItems: "center", gap: 4 },
+  phoneLink: { color: TEAL_DARK, fontWeight: 700, textDecoration: "none" },
+  dot: { color: "#d1d5db" },
+  badges: { display: "flex", gap: 6, marginTop: 8 },
+  closeBtn: { width: 28, height: 28, borderRadius: 8, border: `1px solid ${BORDER}`, background: "#f8fafc", color: MUTED, fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit", flexShrink: 0 },
+
+  tabBar: { display: "flex", borderBottom: `1px solid #f1f5f9`, padding: "0 20px" },
+  tab: { padding: "9px 14px", fontSize: 13, fontWeight: 500, color: MUTED, background: "none", border: "none", borderBottom: "2px solid transparent", cursor: "pointer", fontFamily: "inherit" },
+  tabActive: { padding: "9px 14px", fontSize: 13, fontWeight: 700, color: TEAL_DARK, background: "none", border: "none", borderBottom: `2px solid ${TEAL}`, cursor: "pointer", fontFamily: "inherit", marginBottom: -1 },
+
+  body: { flex: 1, overflowY: "auto", padding: "16px 20px 20px" },
+  toast: { marginBottom: 12, borderRadius: 10, border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#047857", padding: "9px 12px", fontSize: 12, fontWeight: 700 },
+
+  content: { display: "flex", flexDirection: "column", gap: 12 },
+
+  summaryCard: { padding: "14px 16px", background: "#f0fdf4", borderRadius: 12, border: "1px solid #bbf7d0" },
+  summaryLabel: { fontSize: 11, fontWeight: 800, color: TEAL_DARK, marginBottom: 4 },
+  summaryText: { fontSize: 13, color: "#1e3a2f", lineHeight: 1.5 },
+
+  alertCard: { display: "flex", gap: 10, padding: "12px 14px", background: "#fef2f2", borderRadius: 10, border: "1px solid #fecaca" },
+  alertTitle: { fontSize: 12, fontWeight: 700, color: "#dc2626" },
+  alertText: { fontSize: 11, color: "#ef9999", marginTop: 2 },
+
+  rdvCard: { display: "flex", gap: 10, padding: "12px 14px", background: "#e8faf4", borderRadius: 10, border: "1px solid #a7f3d0", alignItems: "center" },
+  rdvTitle: { fontSize: 12, fontWeight: 700, color: TEAL_DARK },
+  rdvDetail: { fontSize: 12, color: MUTED, marginTop: 1 },
+
+  section: { background: "#f9fafb", borderRadius: 12, padding: "14px 16px", border: `1px solid #f1f5f9` },
+  sectionTitle: { fontSize: 11, fontWeight: 700, color: MUTED, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 },
+
+  patientStatus: { display: "flex", alignItems: "center", gap: 6, marginBottom: 10, fontSize: 12 },
+  patientLabel: { color: MUTED },
+  patientRaw: { fontWeight: 600, color: NAVY },
+
+  nameRow: { display: "flex", gap: 8 },
+  nameInput: { flex: 1, border: `1px solid ${BORDER}`, borderRadius: 8, padding: "8px 12px", fontSize: 13, color: NAVY, outline: "none", fontFamily: "inherit" },
+  nameBtn: { padding: "8px 16px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${TEAL}, ${TEAL_DARK})`, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" },
+  uploadBtn: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    border: `1px dashed ${BORDER}`,
+    background: "#fff",
+    color: MUTED,
+    borderRadius: 8,
+    padding: "7px 10px",
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  fileList: { marginTop: 6, display: "flex", flexDirection: "column", gap: 4, maxHeight: 90, overflowY: "auto" },
+  fileItem: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    border: `1px solid ${BORDER}`,
+    borderRadius: 8,
+    padding: "4px 8px",
+    fontSize: 11,
+    color: NAVY,
+    background: "#fff",
+  },
+  fileRemoveBtn: {
+    border: "none",
+    background: "transparent",
+    color: MUTED,
+    cursor: "pointer",
+    fontSize: 11,
+    fontFamily: "inherit",
+  },
+
+  actionsRow: { display: "flex", gap: 8 },
+  primaryBtn: { flex: 1, padding: "10px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${TEAL}, ${TEAL_DARK})`, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" },
+  orangeBtn: { flex: 1, padding: "10px", borderRadius: 8, border: "1px solid #fdba74", background: "#fff7ed", color: "#d97706", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" },
+  greenBtn: { flex: 1, padding: "10px", borderRadius: 8, border: "1px solid #a7f3d0", background: "#e8faf4", color: TEAL_DARK, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" },
+
+  noteInput: { width: "100%", border: `1px solid ${BORDER}`, borderRadius: 8, padding: "8px 10px", fontSize: 12, color: NAVY, outline: "none", fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" },
+  saveNoteBtn: { marginTop: 8, width: "100%", padding: "8px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "#fff", color: MUTED, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" },
+
+  emptyTranscript: { padding: "32px 0", textAlign: "center" },
+  transcriptList: { display: "flex", flexDirection: "column", gap: 10 },
+  bubble: { display: "flex", alignItems: "flex-start", gap: 8 },
+  bubbleAvatar: { width: 26, height: 26, borderRadius: "50%", border: "1px solid", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flexShrink: 0 },
+  bubbleContent: { maxWidth: "80%", padding: "8px 12px" },
+};

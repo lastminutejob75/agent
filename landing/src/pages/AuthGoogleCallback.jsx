@@ -9,9 +9,6 @@ export default function AuthGoogleCallback() {
   React.useEffect(() => {
     const run = async () => {
       try {
-        if (!API_URL) {
-          throw new Error("Backend non configuré (VITE_UWI_API_BASE_URL).");
-        }
         const params = new URLSearchParams(window.location.search);
         const code = params.get("code") || "";
         const state = params.get("state") || "";

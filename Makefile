@@ -1,4 +1,4 @@
-.PHONY: help install test run docker clean check-report-env export-kpis migrate migrate-007 migrate-008 migrate-018 migrate-026 migrate-027 migrate-leads migrate-003 migrate-004 migrate-ivr-events migrate-railway migrate-railway-029 railway-fix-vars onboard-tenant-users backfill-tenant-users add-tenant-user test-postgres test-email
+.PHONY: help install test run docker clean check-report-env export-kpis migrate migrate-007 migrate-008 migrate-018 migrate-026 migrate-027 migrate-leads migrate-003 migrate-004 migrate-ivr-events migrate-railway migrate-railway-029 railway-fix-vars onboard-tenant-users backfill-tenant-users backfill-cabinet-profile add-tenant-user test-postgres test-email migrate-032 migrate-railway-032
 
 help:
 	@echo "Commandes disponibles :"
@@ -16,12 +16,14 @@ help:
 	@echo "  make migrate-028     - Run migration 028 (vapi_calls + call_transcripts)"
 	@echo "  make migrate-029     - Run migration 029 (pre_onboarding_leads callback_booking_date/slot)"
 	@echo "  make migrate-031     - Run migration 031 (pre_onboarding_leads notes_log, follow_up_at)"
+	@echo "  make migrate-032     - Run migration 032 (tables Mon cabinet normalisées)"
 	@echo "  make migrate-leads   - Run migrations 026+027 (leads)"
 	@echo "  make migrate-ivr-events - Run migrations 003+004 (table ivr_events, dashboards)"
 	@echo "  make migrate-railway - Run migrations sur Railway"
 	@echo "  make migrate-railway-029 - Run migration 029 sur Railway (après railway link)"
 	@echo "  make railway-fix-vars - Réappliquer variables TWILIO/SMTP (depuis .env)"
 	@echo "  make backfill-tenant-users - Backfill tenant_users (tenants existants)"
+	@echo "  make backfill-cabinet-profile - Backfill tables Mon cabinet depuis tenant_config"
 	@echo "  make add-tenant-user EMAIL=x@y.com - Ajouter un email pour connexion dashboard"
 	@echo "  make test-email EMAIL=x@y.com     - Envoyer email test (API_URL + ADMIN_API_TOKEN dans .env)"
 	@echo "  make gh-secret-sync   - Configurer UWI_LANDING_PAT (gh secret set)"
@@ -53,6 +55,9 @@ migrate-029:
 migrate-031:
 	python3 -m backend.run_migration 031_pre_onboarding_leads_notes_log_follow_up.sql
 
+migrate-032:
+	python3 -m backend.run_migration 032_client_cabinet_profile_tables.sql
+
 # Migration 029 sur la DB de prod. Récupère l'URL dans Railway → Postgres → Connect → "Postgres Connection URL", puis :
 #   DATABASE_URL='postgresql://...' make migrate-029
 # Ou avec une URL en variable : make migrate-029 PG_URL='postgresql://...'
@@ -78,12 +83,18 @@ migrate-railway:
 migrate-railway-029:
 	npx --yes @railway/cli run make migrate-029
 
+migrate-railway-032:
+	npx --yes @railway/cli run make migrate-032
+
 # Réappliquer variables TWILIO/SMTP sur Railway (depuis .env). Fix "inactive"
 railway-fix-vars:
 	@chmod +x scripts/railway-fix-variables.sh && ./scripts/railway-fix-variables.sh
 
 backfill-tenant-users:
 	python3 scripts/backfill_tenant_users.py
+
+backfill-cabinet-profile:
+	python3 scripts/backfill_cabinet_profile.py
 
 # Ajouter un tenant_user pour connexion Magic Link (tenant_id=1 par défaut)
 add-tenant-user:

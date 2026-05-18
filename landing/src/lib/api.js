@@ -31,16 +31,23 @@ export function clearTenantToken() {
 }
 
 export function isTenantUnauthorized(err) {
-  return err && (err.status === 401 || err.message?.includes("401") || err.message?.includes("Token"));
+  if (!err) return false;
+  const msg = String(err.message || "").toLowerCase();
+  return (
+    err.status === 401 ||
+    err.status === 403 ||
+    msg.includes("401") ||
+    msg.includes("403") ||
+    msg.includes("unauthorized") ||
+    msg.includes("not authenticated") ||
+    msg.includes("token")
+  );
 }
 
 const MSG_BACKEND_UNREACHABLE =
   "Impossible de joindre le serveur. Vérifiez VITE_UWI_API_BASE_URL, CORS et que le backend est démarré.";
 
 async function request(path, { method = "GET", body, admin = false, tenant = false } = {}) {
-  if (!BASE_URL) {
-    throw new Error("Backend non configuré : définir VITE_UWI_API_BASE_URL (ex. URL de l'API).");
-  }
   const url = `${BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
 
   const headers = { "Content-Type": "application/json" };
@@ -179,6 +186,33 @@ export const api = {
       body,
       tenant: true,
     }),
+  tenantGetPatients: (params = "") =>
+    request(`/api/tenant/patients${params}`, { tenant: true }),
+  tenantGetPatient: (phone) =>
+    request(`/api/tenant/patients/${encodeURIComponent(phone)}`, { tenant: true }),
+  tenantUpdatePatient: (phone, body) =>
+    request(`/api/tenant/patients/${encodeURIComponent(phone)}`, { method: "PATCH", body, tenant: true }),
+  tenantGetPatientNotes: (phone, params = "") =>
+    request(`/api/tenant/patients/${encodeURIComponent(phone)}/notes${params}`, { tenant: true }),
+  tenantCreatePatientNote: (phone, body) =>
+    request(`/api/tenant/patients/${encodeURIComponent(phone)}/notes`, { method: "POST", body, tenant: true }),
+  tenantDeletePatientNote: (phone, noteId) =>
+    request(`/api/tenant/patients/${encodeURIComponent(phone)}/notes/${encodeURIComponent(noteId)}`, { method: "DELETE", tenant: true }),
+  tenantUploadPatientDocument: async (phone, file) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const base = (typeof import.meta !== "undefined" && import.meta.env?.VITE_UWI_API_BASE_URL) || "";
+    const url = `${base}/api/tenant/patients/${encodeURIComponent(phone)}/documents`;
+    const res = await fetch(url, { method: "POST", body: formData, credentials: "include" });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || res.statusText); }
+    return res.json();
+  },
+  tenantDownloadPatientDocument: (phone, docId) =>
+    `${(typeof import.meta !== "undefined" && import.meta.env?.VITE_UWI_API_BASE_URL) || ""}/api/tenant/patients/${encodeURIComponent(phone)}/documents/${docId}/download`,
+  tenantDeletePatientDocument: (phone, docId) =>
+    request(`/api/tenant/patients/${encodeURIComponent(phone)}/documents/${docId}`, { method: "DELETE", tenant: true }),
+  tenantSendPatientDocument: (phone, docId) =>
+    request(`/api/tenant/patients/${encodeURIComponent(phone)}/documents/${docId}/send`, { method: "POST", tenant: true }),
   tenantGetHandoffs: (params = "") =>
     request(`/api/tenant/handoffs${params}`, { tenant: true }),
   tenantGetHandoff: (handoffId) =>
@@ -194,6 +228,8 @@ export const api = {
     request(`/api/tenant/agenda/bulk?dates=${encodeURIComponent((dates || []).join(","))}`, { tenant: true }),
   tenantGetAgendaAvailableSlots: (params = "") =>
     request(`/api/tenant/agenda/available-slots${params}`, { tenant: true }),
+  tenantGetAgendaAvailableDates: (month) =>
+    request(`/api/tenant/agenda/available-dates?month=${encodeURIComponent(month)}`, { tenant: true }),
   tenantCancelAgendaAppointment: (appointmentId, body) =>
     request(`/api/tenant/agenda/appointments/${encodeURIComponent(appointmentId)}/cancel`, {
       method: "POST",
@@ -211,12 +247,44 @@ export const api = {
     request("/api/tenant/faq", { method: "PUT", body: faq, tenant: true }),
   tenantResetFaq: () =>
     request("/api/tenant/faq/reset", { method: "POST", tenant: true }),
+  tenantVapiStatus: () => request("/api/tenant/vapi/status", { tenant: true }),
   tenantChangePassword: (newPassword) =>
     request("/api/tenant/auth/change-password", {
       method: "PATCH",
       body: { new_password: newPassword },
       tenant: true,
     }),
+  tenantGetProfileSummary: () => request("/api/tenant/profile-summary", { tenant: true }),
+  tenantGetProfile: () => request("/api/tenant/profile", { tenant: true }),
+  tenantPatchProfile: (body) => request("/api/tenant/profile", { method: "PATCH", body, tenant: true }),
+  tenantGetOpeningHours: () => request("/api/tenant/opening-hours", { tenant: true }),
+  tenantPatchOpeningHours: (body) => request("/api/tenant/opening-hours", { method: "PATCH", body, tenant: true }),
+  tenantGetAvailabilitySettings: () => request("/api/tenant/availability-settings", { tenant: true }),
+  tenantPatchAvailabilitySettings: (body) =>
+    request("/api/tenant/availability-settings", { method: "PATCH", body, tenant: true }),
+  tenantGetBookingRules: () => request("/api/tenant/booking-rules", { tenant: true }),
+  tenantPatchBookingRules: (body) => request("/api/tenant/booking-rules", { method: "PATCH", body, tenant: true }),
+  tenantGetAppointmentReasons: () => request("/api/tenant/appointment-reasons", { tenant: true }),
+  tenantCreateAppointmentReason: (body) =>
+    request("/api/tenant/appointment-reasons", { method: "POST", body, tenant: true }),
+  tenantPatchAppointmentReason: (reasonId, body) =>
+    request(`/api/tenant/appointment-reasons/${encodeURIComponent(reasonId)}`, { method: "PATCH", body, tenant: true }),
+  tenantDeleteAppointmentReason: (reasonId) =>
+    request(`/api/tenant/appointment-reasons/${encodeURIComponent(reasonId)}`, { method: "DELETE", tenant: true }),
+  tenantGetAssistantSettings: () => request("/api/tenant/assistant-settings", { tenant: true }),
+  tenantPatchAssistantSettings: (body) =>
+    request("/api/tenant/assistant-settings", { method: "PATCH", body, tenant: true }),
+  tenantAssistantPreview: (message) =>
+    request("/api/tenant/assistant-preview", { method: "POST", body: { message }, tenant: true }),
+  tenantTestBookingRule: (message) =>
+    request("/api/tenant/test-booking-rule", { method: "POST", body: { message }, tenant: true }),
+  tenantGetCalendarStatus: () => request("/api/tenant/calendar/status", { tenant: true }),
+  tenantGetBillingSummary: () => request("/api/tenant/billing/summary", { tenant: true }),
+  tenantGetBillingInvoices: () => request("/api/tenant/billing/invoices", { tenant: true }),
+  tenantBillingPortalSession: () =>
+    request("/api/tenant/billing/portal-session", { method: "POST", tenant: true }),
+  tenantBillingChangePlan: (planKey) =>
+    request("/api/tenant/billing/change-plan", { method: "POST", body: { plan_key: planKey }, tenant: true }),
 
   // Agenda setup
   agendaConfig: () => request("/api/tenant/agenda/config", { tenant: true }),
@@ -243,6 +311,7 @@ export const tenantGetHandoff = (handoffId) => api.tenantGetHandoff(handoffId);
 export const tenantUpdateHandoff = (handoffId, body) => api.tenantUpdateHandoff(handoffId, body);
 export const tenantGetAgenda = (params = "") => api.tenantGetAgenda(params);
 export const tenantGetAgendaAvailableSlots = (params = "") => api.tenantGetAgendaAvailableSlots(params);
+export const tenantGetAgendaAvailableDates = (month) => api.tenantGetAgendaAvailableDates(month);
 export const tenantCancelAgendaAppointment = (appointmentId, body) => api.tenantCancelAgendaAppointment(appointmentId, body);
 export const tenantRescheduleAgendaAppointment = (appointmentId, body) => api.tenantRescheduleAgendaAppointment(appointmentId, body);
 export const tenantGetFaq = () => api.tenantGetFaq();

@@ -30,7 +30,7 @@ from backend.db import init_db, list_free_slots, count_free_slots
 from backend.tenant_routing import current_tenant_id
 from backend.deps import require_tenant_web, TenantIdWeb
 # Nouvelle architecture multi-canal
-from backend.routes import voice, whatsapp, bland, reports, admin, auth, tenant, stripe_webhook, pre_onboarding, checkout_embedded
+from backend.routes import voice, whatsapp, bland, reports, admin, auth, tenant, client, stripe_webhook, pre_onboarding, checkout_embedded
 
 app = FastAPI()
 _logger = logging.getLogger(__name__)
@@ -104,8 +104,10 @@ app.include_router(reports.router)    # /api/reports/*
 app.include_router(admin.router)      # /api/public/onboarding, /api/admin/*
 app.include_router(auth.router)       # /api/auth/*
 app.include_router(tenant.router)     # /api/tenant/*
+app.include_router(client.router)     # /api/client/*
 app.include_router(stripe_webhook.router)  # POST /api/stripe/webhook
 app.include_router(pre_onboarding.router)  # POST /api/pre-onboarding/commit
+app.include_router(pre_onboarding.public_router)  # POST /api/public/leads
 app.include_router(checkout_embedded.router)  # POST /create-checkout-session (embedded, pour landing /checkout)
 
 # Static frontend (optionnel - peut ne pas exister)
@@ -280,6 +282,19 @@ def _init_heavy_sync():
             "Admin and tenant dashboards read from Postgres ivr_events, which will stay empty. Set USE_PG_EVENTS=true and run migrations/003_postgres_ivr_events.sql."
         )
         print("⚠️ DASHBOARD: Set USE_PG_EVENTS=true so appels/RDV appear in dashboards (see .env.example)")
+    # Job de réconciliation Google Calendar ↔ miroir UWI
+    # Détecte et corrige les divergences silencieuses (ex : annulation OK côté Google
+    # mais miroir local KO). Désactivable via UWI_RECONCILE_DISABLED=1.
+    try:
+        from backend.reconcile_calendar import start_background_job as _start_reconcile_job
+        _interval = int(os.environ.get("UWI_RECONCILE_INTERVAL_SECONDS", "600") or 600)
+        _window = int(os.environ.get("UWI_RECONCILE_WINDOW_DAYS", "30") or 30)
+        if _start_reconcile_job(interval_seconds=_interval, window_days=_window):
+            print(f"✅ Reconcile job started (interval={_interval}s window={_window}d)")
+        else:
+            print("⏸️  Reconcile job not started (already running or disabled)")
+    except Exception as e:
+        _logger.warning("reconcile job startup failed: %s", e)
     print("✅ Heavy init done")
 
 

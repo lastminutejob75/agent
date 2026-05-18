@@ -921,6 +921,27 @@ def _webhook_extract_call_id(payload: dict) -> Optional[str]:
     return call.get("id") or payload.get("call", {}).get("id")
 
 
+def _extract_customer_name_from_vapi_payload(payload: dict) -> str:
+    """Best-effort extraction du nom patient depuis payload Vapi."""
+    message = payload.get("message") or {}
+    call = message.get("call") or {}
+    customer = call.get("customer") or message.get("customer") or {}
+    root_call = payload.get("call") or {}
+    root_customer = root_call.get("customer") or payload.get("customer") or {}
+    candidates = [
+        customer.get("name"),
+        customer.get("fullName"),
+        root_customer.get("name"),
+        root_customer.get("fullName"),
+        payload.get("customerName"),
+    ]
+    for value in candidates:
+        text = str(value or "").strip()
+        if text and text.lower() not in {"unknown", "n/a", "anonymous"}:
+            return text[:160]
+    return ""
+
+
 def _vapi_assistant_request_response() -> JSONResponse:
     """
     Réponse pour message.type === "assistant-request".
@@ -1438,6 +1459,7 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
     )
     call_id = _webhook_extract_call_id(payload)
     customer_phone = extract_customer_phone_from_vapi_payload(payload)
+    customer_name = _extract_customer_name_from_vapi_payload(payload)
     if call_id and customer_phone:
         status = message.get("status") or message.get("call", {}).get("status") or ""
         should_persist = (
@@ -1459,6 +1481,21 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
                         "CALLER_ID_VAPI_CALL_UPSERT_FAILED call_id=%s err=%s",
                         call_id[:24] if call_id else "",
                         str(persist_err)[:80],
+                    )
+                try:
+                    import backend.db as _db
+                    _db.upsert_cabinet_client(
+                        resolved_tenant_id,
+                        customer_phone,
+                        raw_name=customer_name or None,
+                        source_call_id=call_id,
+                        last_call_id=call_id,
+                    )
+                except Exception as profile_err:
+                    logger.warning(
+                        "AUTO_PATIENT_PROFILE_UPSERT_FAILED call_id=%s err=%s",
+                        call_id[:24] if call_id else "",
+                        str(profile_err)[:120],
                     )
                 # IMPORTANT: ne pas créer de session vide ici, sinon on peut écraser une
                 # session active (pending_slots/name) lors des webhooks parallèles.

@@ -11,11 +11,6 @@ export function GoogleLoginButton() {
     // Laisser le navigateur peindre "Redirection..." avant de lancer le fetch (évite "Event handlers blocked UI")
     const run = async () => {
       try {
-        if (!API_URL) {
-          setError("Backend non configuré : définir VITE_UWI_API_BASE_URL (ex. URL de l'API).");
-          setLoading(false);
-          return;
-        }
         if (!GOOGLE_REDIRECT_URI) {
           setError("Redirect URI non configurée : définir VITE_GOOGLE_REDIRECT_URI ou ouvrir depuis le bon domaine.");
           setLoading(false);

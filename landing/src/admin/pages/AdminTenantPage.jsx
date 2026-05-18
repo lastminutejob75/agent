@@ -1,5 +1,6 @@
 import { Suspense, lazy, useState, useEffect, useCallback } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
+import { isTransferConfigConfirmed } from "../../lib/transferConfig.js";
 import { getClientImpersonateUrl, getClientLoginUrl } from "../../lib/clientAppUrl";
 import {
   adminApi,
@@ -16,32 +17,39 @@ import {
   resetTenantFaq,
   updateTenantFaq,
 } from "../../lib/adminApi";
+import { resolveDemoCabinetPreviewState } from "../demoCabinetPreview.js";
 
 const FaqEditor = lazy(() => import("../../components/FaqEditor.jsx"));
 const AdminTenantActionsTab = lazy(() => import("../components/AdminTenantActionsTab.jsx"));
 
+import { T } from "../theme.js";
 const C = {
-  bg: "#0A1828",
-  surface: "#0F2236",
-  card: "#132840",
-  border: "#1E3D56",
-  accent: "#00E5A0",
-  accentDim: "#00b87c",
-  blue: "#5BA8FF",
-  text: "#FFFFFF",
-  muted: "#6B90A8",
-  danger: "#FF6B6B",
-  warning: "#FFB347",
+  bg: T.bgPage,
+  surface: T.bgSubtle,
+  card: T.bgCard,
+  border: T.border,
+  accent: T.teal,
+  accentDim: T.tealDark,
+  blue: "#3B82F6",
+  text: T.text,
+  muted: T.textMuted,
+  danger: T.red,
+  warning: T.orange,
 };
 
 const TABS = [
-  { id: "info", label: "Infos", icon: "🏥" },
-  { id: "timeline", label: "Timeline", icon: "📋" },
-  { id: "calls", label: "Appels", icon: "📞" },
-  { id: "invoices", label: "Factures", icon: "💳" },
-  { id: "quota", label: "Quota", icon: "📊" },
-  { id: "faq", label: "FAQ", icon: "💬" },
-  { id: "actions", label: "Actions", icon: "⚙️" },
+  { id: "overview", label: "Vue d'ensemble", icon: "▦" },
+  { id: "requests", label: "Demandes patients", icon: "✦" },
+  { id: "calls", label: "Appels", icon: "☎" },
+  { id: "agenda", label: "RDV / Agenda", icon: "□" },
+  { id: "assistant", label: "Assistant", icon: "✧" },
+  { id: "phone", label: "Téléphonie", icon: "☎" },
+  { id: "public", label: "Page publique", icon: "◇" },
+  { id: "billing", label: "Billing", icon: "€" },
+  { id: "access", label: "Accès client", icon: "●" },
+  { id: "timeline", label: "Timeline", icon: "◷" },
+  { id: "faq", label: "Règles d'accueil / FAQ", icon: "💬" },
+  { id: "advanced", label: "Configuration", icon: "⚙" },
 ];
 
 function ServiceStatusBadge({ status }) {
@@ -89,6 +97,14 @@ function Empty({ text }) {
   );
 }
 
+function DemoTabNotice({ title }) {
+  return (
+    <Empty
+      text={`Prévisualisation fictive (${title}). Retirez « ?demo=1 » ou ouvrez un cabinet réel pour charger cet onglet depuis l’API.`}
+    />
+  );
+}
+
 function PageLoader() {
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 200, color: C.muted }}>
@@ -105,7 +121,7 @@ function InlineLoader({ text = "Chargement…" }) {
 
 function PageError({ msg, onRetry }) {
   return (
-    <div style={{ padding: 24, background: "rgba(255,107,107,0.1)", border: `1px solid ${C.danger}40`, borderRadius: 12, color: C.danger }}>
+    <div style={{ padding: 24, background: T.redLight, border: `1px solid ${C.danger}40`, borderRadius: 12, color: C.danger }}>
       ⚠️ {msg}
       {onRetry && (
         <button type="button" onClick={onRetry} style={{ marginLeft: 12, padding: "6px 12px", background: "transparent", border: `1px solid ${C.danger}`, borderRadius: 8, color: C.danger, cursor: "pointer", fontWeight: 600 }}>
@@ -259,12 +275,232 @@ function BridgeCard({ title, children, actions = null }) {
   );
 }
 
+function TabPlaceholder({ title, detail }) {
+  return (
+    <div style={{ padding: 22, borderRadius: 18, border: `1px solid ${C.border}`, background: C.card, maxWidth: 720 }}>
+      <div style={{ fontSize: 17, fontWeight: 900, color: C.text, marginBottom: 10 }}>{title}</div>
+      <p style={{ fontSize: 14, color: C.muted, lineHeight: 1.65, margin: 0 }}>{detail}</p>
+    </div>
+  );
+}
+
+function TabPatientRequests({ tenantId }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setErr(null);
+    adminApi
+      .tenantPatientRequests(Number(tenantId), { limit: 200 })
+      .then((r) => {
+        if (!cancelled) setItems(Array.isArray(r?.items) ? r.items : []);
+      })
+      .catch((e) => {
+        if (!cancelled) setErr(e?.message || "Erreur de chargement");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId]);
+
+  if (loading) return <Spinner />;
+  if (err) return <PageError msg={err} />;
+  if (!items.length) return <Empty text="Aucune demande patient (handoffs / transferts) pour ce cabinet." />;
+
+  return (
+    <div style={{ overflowX: "auto", borderRadius: 16, border: `1px solid ${C.border}`, background: C.card }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <thead>
+          <tr
+            style={{
+              textAlign: "left",
+              color: C.muted,
+              fontSize: 11,
+              fontWeight: 800,
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              background: C.surface,
+            }}
+          >
+            <th style={{ padding: "12px 14px", borderBottom: `1px solid ${C.border}` }}>Patient</th>
+            <th style={{ padding: "12px 14px", borderBottom: `1px solid ${C.border}` }}>Canal</th>
+            <th style={{ padding: "12px 14px", borderBottom: `1px solid ${C.border}` }}>Motif</th>
+            <th style={{ padding: "12px 14px", borderBottom: `1px solid ${C.border}` }}>Statut</th>
+            <th style={{ padding: "12px 14px", borderBottom: `1px solid ${C.border}` }}>Date</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((row) => (
+            <tr key={String(row.handoff_id ?? row.id ?? "")} style={{ borderBottom: `1px solid ${C.border}` }}>
+              <td style={{ padding: "12px 14px", fontWeight: 700, color: C.text }}>{row.patientName || "—"}</td>
+              <td style={{ padding: "12px 14px", color: C.muted }}>{row.source || "—"}</td>
+              <td style={{ padding: "12px 14px", color: C.text, maxWidth: 280 }}>{row.summary || row.type || "—"}</td>
+              <td style={{ padding: "12px 14px", fontWeight: 700 }}>{row.status || "—"}</td>
+              <td style={{ padding: "12px 14px", color: C.muted, whiteSpace: "nowrap" }}>{row.createdAtLabel || row.created_at || "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function TabAgendaMini({ tenant, technicalStatus }) {
+  const p = tenant?.params || {};
+  const connected = technicalStatus?.calendar_status === "connected";
+  const modeNone = (p.calendar_provider || "none") === "none";
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 14 }}>
+      <InfoCard title="État agenda">
+        <InfoRow label="Statut technique" value={connected ? "Connecté" : modeNone ? "Sans agenda (none)" : "À configurer"} />
+        <InfoRow label="Fournisseur" value={p.calendar_provider || "—"} />
+        <InfoRow label="Calendar ID" value={p.calendar_id || "—"} />
+      </InfoCard>
+      <InfoCard title="Actions">
+        <div style={{ fontSize: 13, color: C.muted, lineHeight: 1.6 }}>
+          Connexion OAuth, tests lecture/écriture et diagnostics writer access se configurent depuis l’onglet <strong>Configuration</strong>.
+        </div>
+      </InfoCard>
+    </div>
+  );
+}
+
+function TabAssistantMini({ tenant, technicalStatus }) {
+  const p = tenant?.params || {};
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 14 }}>
+      <InfoCard title="Assistant Vapi">
+        <InfoRow label="assistant_name" value={p.assistant_name || "—"} />
+        <InfoRow label="vapi_assistant_id" value={p.vapi_assistant_id || "—"} />
+        <InfoRow label="Agent service" value={technicalStatus?.service_agent === "online" ? "En ligne" : "Hors ligne"} />
+      </InfoCard>
+      <InfoCard title="Rappel">
+        <div style={{ fontSize: 13, color: C.muted, lineHeight: 1.6 }}>
+          Aucun appel direct Vapi depuis le navigateur : création, liaison et test passent par le backend UWi.
+        </div>
+      </InfoCard>
+    </div>
+  );
+}
+
+function TabPhoneMini({ primaryDid, technicalStatus, routingCount }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 14 }}>
+      <InfoCard title="Téléphonie">
+        <InfoRow label="DID principal" value={primaryDid || "—"} />
+        <InfoRow label="Routing vocal" value={technicalStatus?.routing_status === "active" ? "Actif" : "Non configuré"} />
+        <InfoRow label="Entrées routing" value={String(routingCount ?? 0)} />
+      </InfoCard>
+    </div>
+  );
+}
+
+function TabPublicMini({ tenant }) {
+  const p = tenant?.params || {};
+  const slug = p.public_page_slug || p.public_page_slug_hint || "";
+  const url = p.public_page_url || "";
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 14 }}>
+      <InfoCard title="Page publique">
+        <InfoRow label="Slug (param)" value={slug || "—"} />
+        <InfoRow label="URL enregistrée" value={url || "—"} />
+      </InfoCard>
+      {url ? (
+        <InfoCard title="Ouverture">
+          <a href={url} target="_blank" rel="noreferrer" style={{ fontSize: 14, fontWeight: 800, color: C.blue }}>
+            Voir la page ↗
+          </a>
+        </InfoCard>
+      ) : (
+        <TabPlaceholder
+          title="Pas encore publiée"
+          detail="L’URL sera renseignée côté client ou via le provisionnement automatique lorsque la page sera activée."
+        />
+      )}
+    </div>
+  );
+}
+
+function TabAccessClient({
+  tenantId,
+  contactEmail,
+  bridgeLoading,
+  bridgeError,
+  openAsClient,
+  openClientLogin,
+  demoPreview,
+}) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
+      <InfoCard title="Accès client">
+        <InfoRow label="Email client" value={contactEmail || "—"} />
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+          <button
+            type="button"
+            onClick={openAsClient}
+            disabled={bridgeLoading || demoPreview}
+            style={{
+              padding: "10px 14px",
+              borderRadius: 12,
+              border: "none",
+              background: `linear-gradient(135deg,${C.accent},${C.accentDim})`,
+              color: C.bg,
+              fontSize: 12,
+              fontWeight: 800,
+              cursor: demoPreview ? "not-allowed" : "pointer",
+              opacity: bridgeLoading || demoPreview ? 0.55 : 1,
+            }}
+          >
+            {bridgeLoading ? "Ouverture…" : "Voir comme le client"}
+          </button>
+          <button
+            type="button"
+            onClick={openClientLogin}
+            disabled={demoPreview}
+            style={{
+              padding: "10px 14px",
+              borderRadius: 12,
+              border: `1px solid ${C.blue}50`,
+              background: "#EFF6FF",
+              color: C.blue,
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: demoPreview ? "not-allowed" : "pointer",
+              opacity: demoPreview ? 0.55 : 1,
+            }}
+          >
+            Ouvrir login client
+          </button>
+        </div>
+        {demoPreview ? (
+          <div style={{ marginTop: 10, fontSize: 12, color: C.muted, fontWeight: 600 }}>
+            Désactivé pour les cabinets d’exemple (aucun utilisateur backend).
+          </div>
+        ) : null}
+        {bridgeError && <div style={{ marginTop: 10, fontSize: 12, color: C.danger }}>{bridgeError}</div>}
+        <div style={{ marginTop: 12, fontSize: 12, color: C.muted, lineHeight: 1.55 }}>
+          L’impersonation est journalisée côté serveur. Durée du token courte (5 min).
+        </div>
+      </InfoCard>
+    </div>
+  );
+}
+
 function TabInfo({ tenant, dashboard }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>
       <InfoCard title="Informations générales">
         {[
           ["Nom", tenant?.name],
+          ["Praticien (params)", tenant?.params?.primary_practitioner_name],
+          ["Profession", tenant?.params?.profession],
+          ["Ville", tenant?.params?.city],
           ["Timezone", tenant?.timezone || "Europe/Paris"],
           ["Statut", tenant?.status],
           ["Créé le", tenant?.created_at ? new Date(tenant.created_at).toLocaleDateString("fr-FR") : "—"],
@@ -391,7 +627,7 @@ function TabCalls({ tenantId }) {
   };
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: selected ? "1fr 1fr" : "1fr", gap: 14 }}>
+    <div style={{ display: "grid", gridTemplateColumns: selected ? "repeat(auto-fit, minmax(320px, 1fr))" : "1fr", gap: 14 }}>
       <div>
         {loading ? (
           <Spinner />
@@ -405,7 +641,7 @@ function TabCalls({ tenantId }) {
                 key={c.call_id}
                 onClick={() => openCall(c)}
                 style={{
-                  background: selected?.call_id === c.call_id ? "rgba(0,229,160,0.05)" : C.card,
+                  background: selected?.call_id === c.call_id ? T.tealLight : C.card,
                   border: `1px solid ${selected?.call_id === c.call_id ? C.accent : C.border}`,
                   borderRadius: 12,
                   padding: "12px 16px",
@@ -520,7 +756,7 @@ function TabInvoices({ tenantId }) {
             </span>
             <span
               style={{
-                background: inv.status === "paid" ? "rgba(0,229,160,0.12)" : "rgba(255,107,107,0.12)",
+                background: inv.status === "paid" ? T.tealLight : T.redLight,
                 color: inv.status === "paid" ? C.accent : C.danger,
                 border: `1px solid ${inv.status === "paid" ? C.accent + "40" : C.danger + "40"}`,
                 borderRadius: 6,
@@ -639,10 +875,10 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
 
   const FLAG_KEYS = ["ENABLE_LLM_ASSIST_START", "ENABLE_ANTI_LOOP", "ENABLE_TRANSFER", "ENABLE_BOOKING", "ENABLE_FAQ"];
   const PARAM_FIELDS = [
-    { key: "calendar_id", label: "Agenda Google", placeholder: "test@group.calendar.google.com", mono: true },
+    { key: "calendar_id", label: "Agenda Google", placeholder: "agenda@group.calendar.google.com", mono: true },
     { key: "phone_number", label: "Numéro du cabinet", placeholder: "+33123456789", mono: true },
     { key: "timezone", label: "Fuseau horaire", placeholder: "Europe/Paris", mono: true },
-    { key: "assistant_name", label: "Nom de l'assistante IA", placeholder: "sophie", mono: false },
+    { key: "assistant_name", label: "Nom de l'assistante IA", placeholder: "assistante", mono: false },
   ];
   const bookingRules = normalizeBookingRules(params);
   const horairesPreview = deriveHorairesText(bookingRules);
@@ -1043,7 +1279,7 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
             style={{
               padding: "10px 12px",
               borderRadius: 10,
-              background: "rgba(91,168,255,0.08)",
+              background: "#EFF6FF",
               border: `1px solid ${C.blue}33`,
               fontSize: 12,
               color: C.text,
@@ -1080,7 +1316,7 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
               marginTop: 12,
               padding: "10px 12px",
               borderRadius: 10,
-              background: "rgba(255,255,255,0.03)",
+              background: T.bgSubtle,
               border: `1px solid ${C.border}`,
               fontSize: 12,
               color: C.text,
@@ -1103,7 +1339,7 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
                 marginTop: 14,
                 padding: "12px 14px",
                 borderRadius: 12,
-                background: "rgba(0,229,160,0.1)",
+                background: T.tealLight,
                 border: `1px solid ${C.accent}55`,
                 color: C.text,
                 fontSize: 12,
@@ -1127,15 +1363,15 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
               width: "100%",
               padding: "12px 14px",
               borderRadius: 12,
-              background: transferConfirmedDisplay ? `linear-gradient(135deg,${C.accent},${C.accentDim})` : `linear-gradient(135deg,${C.blue},#7fbcff)`,
+              background: transferConfirmedDisplay ? C.accent : C.blue,
               border: "none",
-              color: C.bg,
+              color: "#FFFFFF",
               fontSize: 14,
               fontWeight: 800,
               cursor: saving || transferValidationMessage || transferConfirmedDisplay ? "not-allowed" : "pointer",
               fontFamily: "inherit",
               opacity: saving || transferValidationMessage || transferConfirmedDisplay ? 0.7 : 1,
-              boxShadow: transferConfirmedDisplay ? "0 10px 24px rgba(0,229,160,0.22)" : "0 10px 24px rgba(91,168,255,0.22)",
+              boxShadow: transferConfirmedDisplay ? `0 4px 12px ${T.teal}33` : `0 4px 12px ${C.blue}33`,
             }}
           >
             {saving ? "…" : transferConfirmedDisplay ? "Transfert humain confirmé" : "Confirmer le transfert humain"}
@@ -1328,8 +1564,8 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
               marginBottom: 12,
               padding: "10px 12px",
               borderRadius: 10,
-              background: "rgba(0,229,160,0.08)",
-              border: `1px solid rgba(0,229,160,0.18)`,
+              background: T.tealLight,
+              border: `1px solid ${T.teal}33`,
               fontSize: 12,
               color: C.text,
             }}
@@ -1350,9 +1586,9 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
               width: "100%",
               padding: 10,
               borderRadius: 10,
-              background: `linear-gradient(135deg,${C.accent},${C.accentDim})`,
+              background: C.accent,
               border: "none",
-              color: C.bg,
+              color: "#FFFFFF",
               fontSize: 13,
               fontWeight: 700,
               cursor: "pointer",
@@ -1399,7 +1635,7 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
                   width: "100%",
                   padding: 10,
                   borderRadius: 10,
-                  background: "rgba(91,168,255,0.12)",
+                  background: "#EFF6FF",
                   border: `1px solid ${C.blue}55`,
                   color: C.blue,
                   fontSize: 13,
@@ -1485,13 +1721,13 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
       <div
         style={{
           gridColumn: "1/3",
-          background: "rgba(255,107,107,0.08)",
+          background: T.redLight,
           border: `1px solid ${C.danger}40`,
           borderRadius: 16,
           padding: 22,
         }}
       >
-        <div style={{ fontSize: 14, fontWeight: 800, color: "#FFD2D2", marginBottom: 10 }}>Zone dangereuse</div>
+        <div style={{ fontSize: 14, fontWeight: 800, color: C.danger, marginBottom: 10 }}>Zone dangereuse</div>
         <div style={{ fontSize: 12, color: C.text, marginBottom: 8 }}>
           Cette action effectue un soft delete : le compte client passe en <strong>inactive</strong> mais l'historique reste conservé.
         </div>
@@ -1512,8 +1748,8 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
               padding: "10px 14px",
               borderRadius: 10,
               border: `1px solid ${C.danger}55`,
-              background: "rgba(255,107,107,0.12)",
-              color: "#FFD2D2",
+              background: C.danger,
+              color: "#FFFFFF",
               fontSize: 13,
               fontWeight: 800,
               cursor: "pointer",
@@ -1529,7 +1765,7 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
         <div
           style={{
             gridColumn: "1/3",
-            background: msg.type === "success" ? "rgba(0,229,160,0.08)" : "rgba(255,107,107,0.08)",
+            background: msg.type === "success" ? T.tealLight : T.redLight,
             border: `1px solid ${msg.type === "success" ? C.accent + "40" : C.danger + "40"}`,
             borderRadius: 10,
             padding: "12px 16px",
@@ -1588,7 +1824,7 @@ function TabActions({ tenantId, tenant, onSaved, onDeleted }) {
           style={{
             position: "fixed",
             inset: 0,
-            background: "rgba(3, 10, 18, 0.75)",
+            background: "rgba(15, 23, 42, 0.45)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -1678,7 +1914,8 @@ export default function AdminTenantPage() {
   const { id } = useParams();
   const tenantId = id;
   const navigate = useNavigate();
-  const [tab, setTab] = useState("info");
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState("overview");
   const [tenant, setTenant] = useState(null);
   const [dashboard, setDashboard] = useState(null);
   const [billing, setBilling] = useState(null);
@@ -1687,11 +1924,26 @@ export default function AdminTenantPage() {
   const [error, setError] = useState(null);
   const [bridgeLoading, setBridgeLoading] = useState(false);
   const [bridgeError, setBridgeError] = useState(null);
+  const [demoPreview, setDemoPreview] = useState(false);
 
   const load = useCallback(async () => {
     if (!tenantId) return;
     setLoading(true);
     setError(null);
+
+    const preview = resolveDemoCabinetPreviewState(tenantId, searchParams);
+    if (preview) {
+      setDemoPreview(true);
+      setTenant(preview.tenant);
+      setDashboard(preview.dashboard);
+      setBilling(preview.billing);
+      setTechnicalStatus(preview.technicalStatus);
+      setLoading(false);
+      return;
+    }
+
+    setDemoPreview(false);
+
     try {
       const [t, d, b, tech] = await Promise.all([
         getTenant(tenantId),
@@ -1708,7 +1960,7 @@ export default function AdminTenantPage() {
     } finally {
       setLoading(false);
     }
-  }, [tenantId]);
+  }, [tenantId, searchParams]);
 
   useEffect(() => {
     load();
@@ -1722,19 +1974,30 @@ export default function AdminTenantPage() {
   const vapiAssistantId = params.vapi_assistant_id || "";
   const planKey = params.plan_key || billing?.plan_key || "growth";
   const activationSteps = [
-    { label: "Assistant", done: !!params.assistant_name, action: () => setTab("actions") },
-    { label: "Vapi", done: !!vapiAssistantId, action: () => setTab("actions") },
-    { label: "Numéro vocal", done: !!primaryDid, action: () => setTab("actions") },
-    { label: "Agenda", done: technicalStatus?.calendar_status === "connected" || params.calendar_provider === "none", action: () => setTab("actions") },
+    { label: "Assistant", done: !!params.assistant_name, action: () => setTab("advanced") },
+    { label: "Vapi", done: !!vapiAssistantId, action: () => setTab("advanced") },
+    { label: "Numéro vocal", done: !!primaryDid, action: () => setTab("advanced") },
+    { label: "Agenda", done: technicalStatus?.calendar_status === "connected" || params.calendar_provider === "none", action: () => setTab("agenda") },
     { label: "FAQ", done: true, action: () => setTab("faq") },
   ];
   const activationProgress = `${activationSteps.filter((step) => step.done).length}/${activationSteps.length}`;
 
+  const normalizedParams = normalizeTenantPhoneParams(params);
+  const transferAssistantPhone = normalizeFrenchPhone(normalizedParams.transfer_number || normalizedParams.phone_number || "");
+  const transferPractitionerPhone = normalizeFrenchPhone(normalizedParams.transfer_practitioner_phone || "");
+  const hasTransferTarget = Boolean(transferAssistantPhone || transferPractitionerPhone);
+  const transferConfirmed = isTransferConfigConfirmed(normalizedParams);
+  const transferQuickStatus = transferConfirmed ? "Configuration validée" : hasTransferTarget ? "Configuration en cours" : "Non configuré";
+  const transferQuickTone = transferConfirmed ? C.accent : hasTransferTarget ? C.blue : C.warning;
+  const routingCount = routing.length;
+
   const openClientLogin = () => {
+    if (demoPreview) return;
     window.open(getClientLoginUrl(contactEmail, Number(tenantId)), "_blank", "noopener,noreferrer");
   };
 
   const openAsClient = async () => {
+    if (demoPreview) return;
     setBridgeError(null);
     setBridgeLoading(true);
     try {
@@ -1754,40 +2017,100 @@ export default function AdminTenantPage() {
   if (error && !tenant) return <PageError msg={error} onRetry={load} />;
 
   return (
-    <div style={{ minHeight: "100%", background: C.bg, fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+    <div className="uwi-tenant-page" style={{ minHeight: "100%", background: C.bg, fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');
         * { box-sizing: border-box; }
         @keyframes uwi-fadein { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
         @keyframes uwi-pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
         ::-webkit-scrollbar{width:4px} ::-webkit-scrollbar-thumb{background:${C.border};border-radius:2px}
+        .uwi-tenant-bridge-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:14px; margin-bottom:24px; }
+        @media (max-width: 1024px) {
+          .uwi-tenant-wrap { padding: 18px 16px !important; }
+          .uwi-tenant-header { flex-direction: column; align-items: stretch !important; gap: 12px !important; margin-bottom: 16px !important; }
+          .uwi-tenant-breadcrumbs { width: 100%; }
+          .uwi-tenant-title { font-size: 22px !important; margin-bottom: 2px !important; }
+          .uwi-tenant-meta { flex-wrap: wrap; row-gap: 4px; }
+          .uwi-tenant-counters { width: 100%; display: grid !important; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px !important; }
+          .uwi-tenant-tabs-shell { margin-bottom: 16px !important; }
+        }
+        @media (max-width: 767px) {
+          .uwi-tenant-wrap { padding: 14px 12px 20px !important; }
+          .uwi-tenant-breadcrumbs { display: grid !important; grid-template-columns: 1fr 1fr; gap: 8px !important; }
+          .uwi-tenant-breadcrumbs > button { width: 100%; padding: 8px 10px !important; font-size: 12px !important; }
+          .uwi-tenant-title { font-size: 20px !important; }
+          .uwi-tenant-counters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+          .uwi-tenant-kpi-mini { min-width: 0 !important; padding: 8px 8px !important; }
+          .uwi-tenant-kpi-mini-value { font-size: 14px !important; }
+          .uwi-tenant-kpi-mini-label { font-size: 9px !important; }
+          .uwi-tenant-tab-btn { padding: 9px 11px !important; font-size: 12px !important; }
+          .uwi-tenant-bridge-grid { grid-template-columns: 1fr; gap: 12px; margin-bottom: 18px; }
+          .uwi-tenant-tab-content { animation-duration: .2s !important; }
+        }
       `}</style>
 
-      <div style={{ padding: "24px 32px", maxWidth: 1200, margin: "0 auto" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 28 }}>
-          <button
-            type="button"
-            onClick={() => navigate("/admin")}
+      <div className="uwi-tenant-wrap" style={{ padding: "24px 32px", maxWidth: 1200, margin: "0 auto" }}>
+        {demoPreview ? (
+          <div
             style={{
-              background: C.surface,
-              border: `1px solid ${C.border}`,
-              borderRadius: 9,
-              padding: "7px 14px",
-              color: C.muted,
+              marginBottom: 20,
+              padding: "12px 14px",
+              borderRadius: 12,
+              border: `1px solid ${T.yellow}66`,
+              background: T.yellowLight,
+              color: T.yellowText,
               fontSize: 13,
               fontWeight: 600,
-              cursor: "pointer",
-              fontFamily: "inherit",
+              lineHeight: 1.5,
             }}
           >
-            ← Dashboard
-          </button>
+            Prévisualisation fictive (?demo=1) : aucun tenant réel ; les actions API sensibles sont limitées dans les
+            onglets dédiés.
+          </div>
+        ) : null}
+        <div className="uwi-tenant-header" style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 28 }}>
+          <div className="uwi-tenant-breadcrumbs" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <button
+              type="button"
+              onClick={() => navigate("/admin/tenants")}
+              style={{
+                background: C.surface,
+                border: `1px solid ${C.border}`,
+                borderRadius: 9,
+                padding: "7px 14px",
+                color: C.muted,
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              ← Clients
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate("/admin")}
+              style={{
+                background: C.surface,
+                border: `1px solid ${C.border}`,
+                borderRadius: 9,
+                padding: "7px 14px",
+                color: C.muted,
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              Dashboard
+            </button>
+          </div>
 
           <div style={{ flex: 1 }}>
-            <h1 style={{ fontSize: 24, fontWeight: 800, color: C.text, letterSpacing: -0.8, marginBottom: 3 }}>
+            <h1 className="uwi-tenant-title" style={{ fontSize: 24, fontWeight: 800, color: C.text, letterSpacing: -0.8, marginBottom: 3 }}>
               {tenant?.name ?? `Tenant #${tenantId}`}
             </h1>
-            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <div className="uwi-tenant-meta" style={{ display: "flex", gap: 10, alignItems: "center" }}>
               <ServiceStatusBadge status={dashboard?.service_status?.status} />
               <span style={{ fontSize: 12, color: C.muted }}>ID #{tenantId}</span>
               {tenant?.timezone && <span style={{ fontSize: 12, color: C.muted }}>· {tenant.timezone}</span>}
@@ -1795,30 +2118,32 @@ export default function AdminTenantPage() {
           </div>
 
           {dashboard?.counters_7d && (
-            <div style={{ display: "flex", gap: 8 }}>
+            <div className="uwi-tenant-counters" style={{ display: "flex", gap: 8 }}>
               {[
                 ["📞", dashboard.counters_7d.calls_total, "appels"],
                 ["✅", dashboard.counters_7d.bookings_confirmed, "RDV"],
                 ["↗", dashboard.counters_7d.transfers, "transferts"],
                 ["✕", dashboard.counters_7d.abandons, "abandons"],
               ].map(([ic, val, lbl]) => (
-                <div key={lbl} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: "8px 12px", textAlign: "center", minWidth: 56 }}>
-                  <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>{val ?? 0}</div>
-                  <div style={{ fontSize: 9, color: C.muted, textTransform: "uppercase", letterSpacing: 0.5 }}>{lbl}</div>
+                <div className="uwi-tenant-kpi-mini" key={lbl} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: "8px 12px", textAlign: "center", minWidth: 56 }}>
+                  <div className="uwi-tenant-kpi-mini-value" style={{ fontSize: 16, fontWeight: 800, color: C.text }}>{val ?? 0}</div>
+                  <div className="uwi-tenant-kpi-mini-label" style={{ fontSize: 9, color: C.muted, textTransform: "uppercase", letterSpacing: 0.5 }}>{lbl}</div>
                 </div>
               ))}
             </div>
           )}
         </div>
 
-        <div style={{ display: "flex", gap: 4, marginBottom: 24, borderBottom: `1px solid ${C.border}`, paddingBottom: 0 }}>
+        <div className="uwi-tenant-tabs-shell" style={{ overflowX: "auto", marginBottom: 24, borderBottom: `1px solid ${C.border}`, paddingBottom: 0 }}>
+          <div style={{ display: "flex", gap: 4, minWidth: "max-content", paddingBottom: 2 }}>
           {TABS.map((t) => (
             <button
+              className="uwi-tenant-tab-btn"
               key={t.id}
               type="button"
               onClick={() => setTab(t.id)}
               style={{
-                padding: "10px 16px",
+                padding: "10px 14px",
                 background: "transparent",
                 border: "none",
                 borderBottom: `2px solid ${tab === t.id ? C.accent : "transparent"}`,
@@ -1832,22 +2157,17 @@ export default function AdminTenantPage() {
                 gap: 6,
                 transition: "all 0.15s",
                 marginBottom: -1,
+                whiteSpace: "nowrap",
               }}
             >
               <span>{t.icon}</span>
               {t.label}
             </button>
           ))}
+          </div>
         </div>
 
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-            gap: 14,
-            marginBottom: 24,
-          }}
-        >
+        <div className="uwi-tenant-bridge-grid">
           <BridgeCard
             title="Accès client"
             actions={
@@ -1876,7 +2196,7 @@ export default function AdminTenantPage() {
                 <button
                   type="button"
                   onClick={openAsClient}
-                  disabled={bridgeLoading}
+                  disabled={bridgeLoading || demoPreview}
                   style={{
                     padding: "9px 12px",
                     borderRadius: 10,
@@ -1885,9 +2205,9 @@ export default function AdminTenantPage() {
                     color: C.bg,
                     fontSize: 12,
                     fontWeight: 800,
-                    cursor: "pointer",
+                    cursor: demoPreview ? "not-allowed" : "pointer",
                     fontFamily: "inherit",
-                    opacity: bridgeLoading ? 0.75 : 1,
+                    opacity: bridgeLoading || demoPreview ? 0.55 : 1,
                   }}
                 >
                   {bridgeLoading ? "Ouverture..." : "Voir comme le client"}
@@ -1895,16 +2215,18 @@ export default function AdminTenantPage() {
                 <button
                   type="button"
                   onClick={openClientLogin}
+                  disabled={demoPreview}
                   style={{
                     padding: "9px 12px",
                     borderRadius: 10,
                     border: `1px solid ${C.blue}50`,
-                    background: "rgba(91,168,255,0.1)",
+                    background: "#EFF6FF",
                     color: C.blue,
                     fontSize: 12,
                     fontWeight: 700,
-                    cursor: "pointer",
+                    cursor: demoPreview ? "not-allowed" : "pointer",
                     fontFamily: "inherit",
+                    opacity: demoPreview ? 0.55 : 1,
                   }}
                 >
                   Ouvrir login client
@@ -1919,7 +2241,7 @@ export default function AdminTenantPage() {
             actions={
               <button
                 type="button"
-                onClick={() => setTab("actions")}
+                onClick={() => setTab("advanced")}
                 style={{
                   padding: "6px 10px",
                   borderRadius: 8,
@@ -2031,24 +2353,50 @@ export default function AdminTenantPage() {
           </BridgeCard>
         </div>
 
-        <div style={{ animation: "uwi-fadein 0.3s ease both" }} key={tab}>
-          {tab === "info" && <TabInfo tenant={tenant} dashboard={dashboard} />}
-          {tab === "timeline" && <TabTimeline tenantId={tenantId} />}
-          {tab === "calls" && <TabCalls tenantId={tenantId} />}
-          {tab === "invoices" && <TabInvoices tenantId={tenantId} />}
-          {tab === "quota" && <TabQuota tenantId={tenantId} />}
-          {tab === "faq" && <TabFaq tenantId={tenantId} tenant={tenant} />}
-          {tab === "actions" && (
-            <Suspense fallback={<InlineLoader text="Chargement des actions client…" />}>
-              <AdminTenantActionsTab
-                tenantId={tenantId}
-                tenant={tenant}
-                theme={C}
-                onSaved={() => getTenant(tenantId).then(setTenant)}
-                onDeleted={() => navigate("/admin")}
-              />
-            </Suspense>
+        <div className="uwi-tenant-tab-content" style={{ animation: "uwi-fadein 0.3s ease both" }} key={tab}>
+          {tab === "overview" && <TabInfo tenant={tenant} dashboard={dashboard} />}
+          {tab === "requests" && (demoPreview ? <DemoTabNotice title="Demandes patients" /> : <TabPatientRequests tenantId={tenantId} />)}
+          {tab === "calls" && (demoPreview ? <DemoTabNotice title="Appels" /> : <TabCalls tenantId={tenantId} />)}
+          {tab === "agenda" && <TabAgendaMini tenant={tenant} technicalStatus={technicalStatus} />}
+          {tab === "assistant" && <TabAssistantMini tenant={tenant} technicalStatus={technicalStatus} />}
+          {tab === "phone" && <TabPhoneMini primaryDid={primaryDid} technicalStatus={technicalStatus} routingCount={routingCount} />}
+          {tab === "public" && <TabPublicMini tenant={tenant} />}
+          {tab === "billing" &&
+            (demoPreview ? (
+              <DemoTabNotice title="Facturation / quotas" />
+            ) : (
+              <div style={{ display: "grid", gap: 20 }}>
+                <TabQuota tenantId={tenantId} />
+                <TabInvoices tenantId={tenantId} />
+              </div>
+            ))}
+          {tab === "access" && (
+            <TabAccessClient
+              tenantId={tenantId}
+              contactEmail={contactEmail}
+              bridgeLoading={bridgeLoading}
+              bridgeError={bridgeError}
+              openAsClient={openAsClient}
+              openClientLogin={openClientLogin}
+              demoPreview={demoPreview}
+            />
           )}
+          {tab === "timeline" && (demoPreview ? <DemoTabNotice title="Timeline" /> : <TabTimeline tenantId={tenantId} />)}
+          {tab === "faq" && (demoPreview ? <DemoTabNotice title="FAQ" /> : <TabFaq tenantId={tenantId} tenant={tenant} />)}
+          {tab === "advanced" &&
+            (demoPreview ? (
+              <DemoTabNotice title="Configuration avancée" />
+            ) : (
+              <Suspense fallback={<InlineLoader text="Chargement des actions client…" />}>
+                <AdminTenantActionsTab
+                  tenantId={tenantId}
+                  tenant={tenant}
+                  theme={C}
+                  onSaved={() => getTenant(tenantId).then(setTenant)}
+                  onDeleted={() => navigate("/admin")}
+                />
+              </Suspense>
+            ))}
         </div>
       </div>
     </div>

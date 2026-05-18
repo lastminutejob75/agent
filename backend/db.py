@@ -9,9 +9,18 @@ from typing import Any, Dict, List, Optional
 
 DB_PATH = "agent.db"
 
-SLOT_TIMES = ["10:00", "14:00", "16:00"]
-TARGET_MIN_SLOTS = 15  # 5 jours ouvrés * 3 slots
-MAX_DAYS_AHEAD = 30  # Limite de sécurité pour éviter boucle infinie
+SLOT_TIMES = [
+    "08:00", "08:15", "08:30", "08:45",
+    "09:00", "09:15", "09:30", "09:45",
+    "10:00", "10:15", "10:30", "10:45",
+    "11:00", "11:15", "11:30", "11:45",
+    "14:00", "14:15", "14:30", "14:45",
+    "15:00", "15:15", "15:30", "15:45",
+    "16:00", "16:15", "16:30", "16:45",
+    "17:00", "17:15", "17:30", "17:45",
+]
+TARGET_MIN_SLOTS = 240
+MAX_DAYS_AHEAD = 60
 
 
 def get_conn() -> sqlite3.Connection:
@@ -470,6 +479,7 @@ def _ensure_cabinet_clients_table(conn: sqlite3.Connection) -> None:
             validated_name TEXT,
             display_name TEXT,
             validation_status TEXT NOT NULL DEFAULT 'pending',
+            email TEXT,
             source_call_id TEXT,
             last_call_id TEXT,
             last_booking_start TEXT,
@@ -484,6 +494,14 @@ def _ensure_cabinet_clients_table(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_cabinet_clients_search ON cabinet_clients(tenant_id, display_name, raw_name, updated_at)"
     )
+    # migrate: add email column if missing
+    try:
+        conn.execute("SELECT email FROM cabinet_clients LIMIT 0")
+    except Exception:
+        conn.execute("ALTER TABLE cabinet_clients ADD COLUMN email TEXT")
+
+    _ensure_patient_documents_table(conn)
+    _ensure_patient_notes_table(conn)
 
 
 def _ensure_cabinet_clients_table_pg(conn: Any) -> None:
@@ -497,6 +515,7 @@ def _ensure_cabinet_clients_table_pg(conn: Any) -> None:
                 validated_name TEXT,
                 display_name TEXT,
                 validation_status TEXT NOT NULL DEFAULT 'pending',
+                email TEXT,
                 source_call_id TEXT,
                 last_call_id TEXT,
                 last_booking_start TIMESTAMPTZ,
@@ -514,6 +533,17 @@ def _ensure_cabinet_clients_table_pg(conn: Any) -> None:
             ON cabinet_clients (tenant_id, display_name, raw_name, updated_at)
             """
         )
+        # migrate: add email column if missing
+        cur.execute(
+            """
+            DO $$ BEGIN
+                ALTER TABLE cabinet_clients ADD COLUMN email TEXT;
+            EXCEPTION WHEN duplicate_column THEN NULL;
+            END $$;
+            """
+        )
+        _ensure_patient_documents_table_pg(conn)
+        _ensure_patient_notes_table_pg(conn)
 
 
 def _cabinet_client_row_to_dict(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -523,6 +553,7 @@ def _cabinet_client_row_to_dict(row: Dict[str, Any]) -> Dict[str, Any]:
         "validated_name": row.get("validated_name") or "",
         "display_name": row.get("display_name") or row.get("validated_name") or row.get("raw_name") or "",
         "validation_status": row.get("validation_status") or "pending",
+        "email": row.get("email") or "",
         "source_call_id": row.get("source_call_id") or "",
         "last_call_id": row.get("last_call_id") or "",
         "last_booking_start": str(row.get("last_booking_start") or ""),
@@ -531,6 +562,311 @@ def _cabinet_client_row_to_dict(row: Dict[str, Any]) -> Dict[str, Any]:
         "created_at": str(row.get("created_at") or ""),
         "updated_at": str(row.get("updated_at") or ""),
     }
+
+
+# ─── Patient documents ───────────────────────────────────────
+
+def _ensure_patient_documents_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS patient_documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id INTEGER NOT NULL,
+            patient_phone TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            original_name TEXT NOT NULL,
+            mime_type TEXT,
+            size_bytes INTEGER,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+        """
+    )
+
+
+def _ensure_patient_documents_table_pg(conn: Any) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS patient_documents (
+                id SERIAL PRIMARY KEY,
+                tenant_id INTEGER NOT NULL,
+                patient_phone TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                original_name TEXT NOT NULL,
+                mime_type TEXT,
+                size_bytes INTEGER,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+
+
+def _ensure_patient_notes_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS patient_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id INTEGER NOT NULL,
+            patient_phone TEXT NOT NULL,
+            note_text TEXT NOT NULL,
+            author TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+        """
+    )
+
+
+def _ensure_patient_notes_table_pg(conn: Any) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS patient_notes (
+                id SERIAL PRIMARY KEY,
+                tenant_id INTEGER NOT NULL,
+                patient_phone TEXT NOT NULL,
+                note_text TEXT NOT NULL,
+                author TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+
+
+def update_patient_fields(tenant_id: int, phone: str, *, email: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Update specific fields on an existing cabinet_client row."""
+    phone_norm = normalize_phone_number(phone)
+    if not phone_norm:
+        return None
+
+    sets = []
+    params: list = []
+    if email is not None:
+        clean_email = email.strip()[:254]
+        sets.append("email = ?")
+        params.append(clean_email)
+    if not sets:
+        return get_cabinet_client_by_phone(tenant_id, phone)
+
+    sets.append("updated_at = datetime('now')")
+    params.extend([tenant_id, phone_norm])
+
+    url = _pg_events_url()
+    if url:
+        try:
+            import psycopg
+            pg_sets = [s.replace("?", "%s").replace("datetime('now')", "now()") for s in sets]
+            with psycopg.connect(url) as conn:
+                _ensure_cabinet_clients_table_pg(conn)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"UPDATE cabinet_clients SET {', '.join(pg_sets)} WHERE tenant_id = %s AND phone = %s",
+                        params,
+                    )
+                conn.commit()
+            return get_cabinet_client_by_phone(tenant_id, phone)
+        except Exception as exc:
+            logging.getLogger(__name__).warning("pg update_patient_fields failed: %s", exc)
+
+    conn = get_conn()
+    _ensure_cabinet_clients_table(conn)
+    conn.execute(
+        f"UPDATE cabinet_clients SET {', '.join(sets)} WHERE tenant_id = ? AND phone = ?",
+        params,
+    )
+    conn.commit()
+    return get_cabinet_client_by_phone(tenant_id, phone)
+
+
+def list_patient_documents(tenant_id: int, phone: str) -> List[Dict[str, Any]]:
+    phone_norm = normalize_phone_number(phone) or phone.strip()
+    url = _pg_events_url()
+    if url:
+        try:
+            import psycopg
+            with psycopg.connect(url, row_factory=psycopg.rows.dict_row) as conn:
+                _ensure_patient_documents_table_pg(conn)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT * FROM patient_documents WHERE tenant_id = %s AND patient_phone = %s ORDER BY created_at DESC",
+                        (tenant_id, phone_norm),
+                    )
+                    return [dict(r) for r in cur.fetchall()]
+        except Exception:
+            pass
+    conn = get_conn()
+    _ensure_patient_documents_table(conn)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT * FROM patient_documents WHERE tenant_id = ? AND patient_phone = ? ORDER BY created_at DESC",
+        (tenant_id, phone_norm),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def insert_patient_document(
+    tenant_id: int, phone: str, *, filename: str, original_name: str, mime_type: str, size_bytes: int,
+) -> Dict[str, Any]:
+    phone_norm = normalize_phone_number(phone) or phone.strip()
+    url = _pg_events_url()
+    if url:
+        try:
+            import psycopg
+            with psycopg.connect(url, row_factory=psycopg.rows.dict_row) as conn:
+                _ensure_patient_documents_table_pg(conn)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """INSERT INTO patient_documents (tenant_id, patient_phone, filename, original_name, mime_type, size_bytes)
+                           VALUES (%s, %s, %s, %s, %s, %s) RETURNING *""",
+                        (tenant_id, phone_norm, filename, original_name, mime_type, size_bytes),
+                    )
+                    row = cur.fetchone()
+                conn.commit()
+                return dict(row) if row else {}
+        except Exception:
+            pass
+    conn = get_conn()
+    _ensure_patient_documents_table(conn)
+    cur = conn.execute(
+        """INSERT INTO patient_documents (tenant_id, patient_phone, filename, original_name, mime_type, size_bytes)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (tenant_id, phone_norm, filename, original_name, mime_type, size_bytes),
+    )
+    conn.commit()
+    return {"id": cur.lastrowid, "tenant_id": tenant_id, "patient_phone": phone_norm,
+            "filename": filename, "original_name": original_name, "mime_type": mime_type,
+            "size_bytes": size_bytes, "created_at": ""}
+
+
+def delete_patient_document(tenant_id: int, doc_id: int) -> bool:
+    url = _pg_events_url()
+    if url:
+        try:
+            import psycopg
+            with psycopg.connect(url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM patient_documents WHERE id = %s AND tenant_id = %s", (doc_id, tenant_id))
+                    deleted = cur.rowcount > 0
+                conn.commit()
+                return deleted
+        except Exception:
+            pass
+    conn = get_conn()
+    _ensure_patient_documents_table(conn)
+    cur = conn.execute("DELETE FROM patient_documents WHERE id = ? AND tenant_id = ?", (doc_id, tenant_id))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def list_patient_notes(tenant_id: int, phone: str, *, limit: int = 100) -> List[Dict[str, Any]]:
+    phone_norm = normalize_phone_number(phone) or phone.strip()
+    limit = max(1, min(int(limit or 100), 300))
+    url = _pg_events_url()
+    if url:
+        try:
+            import psycopg
+            with psycopg.connect(url, row_factory=psycopg.rows.dict_row) as conn:
+                _ensure_patient_notes_table_pg(conn)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT id, tenant_id, patient_phone, note_text, author, created_at
+                        FROM patient_notes
+                        WHERE tenant_id = %s AND patient_phone = %s
+                        ORDER BY created_at DESC
+                        LIMIT %s
+                        """,
+                        (tenant_id, phone_norm, limit),
+                    )
+                    return [dict(r) for r in cur.fetchall()]
+        except Exception:
+            pass
+    conn = get_conn()
+    _ensure_patient_notes_table(conn)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """
+        SELECT id, tenant_id, patient_phone, note_text, author, created_at
+        FROM patient_notes
+        WHERE tenant_id = ? AND patient_phone = ?
+        ORDER BY created_at DESC
+        LIMIT ?
+        """,
+        (tenant_id, phone_norm, limit),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def insert_patient_note(
+    tenant_id: int,
+    phone: str,
+    *,
+    note_text: str,
+    author: str = "",
+) -> Dict[str, Any]:
+    phone_norm = normalize_phone_number(phone) or phone.strip()
+    text = (note_text or "").strip()[:4000]
+    if not text:
+        return {}
+    author_clean = (author or "").strip()[:120]
+    url = _pg_events_url()
+    if url:
+        try:
+            import psycopg
+            with psycopg.connect(url, row_factory=psycopg.rows.dict_row) as conn:
+                _ensure_patient_notes_table_pg(conn)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO patient_notes (tenant_id, patient_phone, note_text, author)
+                        VALUES (%s, %s, %s, %s)
+                        RETURNING id, tenant_id, patient_phone, note_text, author, created_at
+                        """,
+                        (tenant_id, phone_norm, text, author_clean or None),
+                    )
+                    row = cur.fetchone()
+                conn.commit()
+                return dict(row) if row else {}
+        except Exception:
+            pass
+    conn = get_conn()
+    _ensure_patient_notes_table(conn)
+    cur = conn.execute(
+        """
+        INSERT INTO patient_notes (tenant_id, patient_phone, note_text, author)
+        VALUES (?, ?, ?, ?)
+        """,
+        (tenant_id, phone_norm, text, author_clean or None),
+    )
+    conn.commit()
+    return {
+        "id": cur.lastrowid,
+        "tenant_id": tenant_id,
+        "patient_phone": phone_norm,
+        "note_text": text,
+        "author": author_clean,
+        "created_at": "",
+    }
+
+
+def delete_patient_note(tenant_id: int, note_id: int) -> bool:
+    url = _pg_events_url()
+    if url:
+        try:
+            import psycopg
+            with psycopg.connect(url) as conn:
+                _ensure_patient_notes_table_pg(conn)
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM patient_notes WHERE id = %s AND tenant_id = %s", (note_id, tenant_id))
+                    deleted = cur.rowcount > 0
+                conn.commit()
+                return deleted
+        except Exception:
+            pass
+    conn = get_conn()
+    _ensure_patient_notes_table(conn)
+    cur = conn.execute("DELETE FROM patient_notes WHERE id = ? AND tenant_id = ?", (note_id, tenant_id))
+    conn.commit()
+    return cur.rowcount > 0
 
 
 def get_cabinet_client_by_phone(tenant_id: int, phone: str) -> Optional[Dict[str, Any]]:
@@ -640,6 +976,46 @@ def get_cabinet_clients_by_phones(tenant_id: int, phones: List[str]) -> Dict[str
             for row in rows
             if str(row["phone"] or "").strip()
         }
+    finally:
+        conn.close()
+
+
+def list_cabinet_clients(tenant_id: int, *, limit: int = 200, offset: int = 0) -> List[Dict[str, Any]]:
+    """Liste tous les patients/clients d'un tenant, triés par dernière mise à jour."""
+    _select = """
+        SELECT phone, raw_name, validated_name, display_name, validation_status,
+               source_call_id, last_call_id, last_booking_start, last_booking_end,
+               last_booking_motif, created_at, updated_at
+        FROM cabinet_clients
+        WHERE tenant_id = {ph}
+        ORDER BY updated_at DESC
+        LIMIT {lph} OFFSET {oph}
+    """
+    url = _pg_events_url()
+    if url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+
+            with psycopg.connect(url, row_factory=dict_row) as conn:
+                _ensure_cabinet_clients_table_pg(conn)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        _select.format(ph="%s", lph="%s", oph="%s"),
+                        (tenant_id, limit, offset),
+                    )
+                    return [_cabinet_client_row_to_dict(dict(r)) for r in cur.fetchall()]
+        except Exception:
+            pass
+
+    conn = get_conn()
+    try:
+        _ensure_cabinet_clients_table(conn)
+        rows = conn.execute(
+            _select.format(ph="?", lph="?", oph="?"),
+            (tenant_id, limit, offset),
+        ).fetchall()
+        return [_cabinet_client_row_to_dict(dict(r)) for r in rows]
     finally:
         conn.close()
 
@@ -851,7 +1227,7 @@ def _migrate_sqlite_add_tenant_id(conn: sqlite3.Connection) -> None:
             pass
 
 
-def init_db(days: int = 7) -> None:
+def init_db(days: int = 30) -> None:
     conn = get_conn()
     try:
         conn.execute("""
@@ -881,10 +1257,10 @@ def init_db(days: int = 7) -> None:
         _ensure_ivr_tables(conn)
         _ensure_tenants_tables(conn)
 
-        # Seed slots (SKIP WEEKENDS) — tenant_id=1 par défaut
+        # Seed slots (Lundi-Samedi) — tenant_id=1 par défaut
         for day in range(1, days + 1):
             target_date = datetime.now() + timedelta(days=day)
-            if target_date.weekday() < 5:  # Lundi-Vendredi
+            if target_date.weekday() < 6:  # Lundi-Samedi
                 d = target_date.strftime("%Y-%m-%d")
                 for t in SLOT_TIMES:
                     conn.execute(
@@ -924,7 +1300,7 @@ def cleanup_old_slots(tenant_id: int = 1) -> None:
             if day_offset > MAX_DAYS_AHEAD:
                 break
             target_date = datetime.now() + timedelta(days=day_offset)
-            if target_date.weekday() < 5:
+            if target_date.weekday() < 6:  # Lundi-Samedi
                 d = target_date.strftime("%Y-%m-%d")
                 for t in SLOT_TIMES:
                     if added >= missing:
@@ -1272,6 +1648,18 @@ def reschedule_booking_atomic(appt_id: int, new_slot_id: int, tenant_id: int = 1
         )
         conn.execute("DELETE FROM appointments WHERE tenant_id = ? AND id = ?", (tenant_id, appt_id))
         conn.execute("UPDATE slots SET is_booked = 0 WHERE id = ? AND tenant_id = ?", (old_slot_id, tenant_id))
+
+        slot_cur = conn.execute("SELECT date, time FROM slots WHERE id = ? AND tenant_id = ?", (new_slot_id, tenant_id))
+        slot_row = slot_cur.fetchone()
+        if slot_row:
+            new_dt = f"{slot_row['date']}T{slot_row['time']}:00"
+            contact = row["contact"]
+            if contact:
+                conn.execute(
+                    "UPDATE cabinet_clients SET last_booking_start = ?, updated_at = ? WHERE tenant_id = ? AND phone = ?",
+                    (new_dt, datetime.utcnow().isoformat(), tenant_id, contact),
+                )
+
         conn.commit()
         return True
     except Exception:

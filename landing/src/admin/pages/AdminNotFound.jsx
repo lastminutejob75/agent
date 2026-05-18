@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 
-const C = { bg: "#0A1828", text: "#FFFFFF", muted: "#6B90A8", accent: "#00E5A0" };
+import { T } from "../theme.js";
+const C = { bg: T.bgPage, text: T.text, muted: T.textMuted, accent: T.teal };
 
 export default function AdminNotFound() {
   return (

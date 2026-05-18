@@ -141,7 +141,7 @@ export default function BillingPage() {
       <p style={{ marginTop: 32 }}>
         <Link to="/" style={linkStyle}>← Retour à l'accueil</Link>
         {" · "}
-        <Link to="/app/facturation" style={linkStyle}>Facturation détaillée</Link>
+        <Link to="/app" style={linkStyle}>Mon tableau de bord</Link>
       </p>
     </div>
   );

@@ -1223,3 +1223,80 @@ def send_pre_onboarding_admin_notification_email(
         except Exception as e:
             return False, str(e)
     return False, "Email non configuré"
+
+
+# ─── Patient document email (with attachment) ─────────────────
+
+def send_patient_document_email(
+    to: str, patient_name: str, cabinet_name: str,
+    doc_original_name: str, doc_path: str, doc_mime_type: str,
+) -> Tuple[bool, Optional[str]]:
+    """Envoie un document au patient par email avec pièce jointe (Postmark ou SMTP)."""
+    import base64
+    from email.mime.base import MIMEBase
+    from email import encoders as _encoders
+
+    to_addr = (to or "").strip().lower()
+    if not to_addr:
+        return False, "Adresse email du patient manquante"
+    if not os.path.isfile(doc_path):
+        return False, "Fichier introuvable sur le serveur"
+
+    _subject = f"Document de votre cabinet – {cabinet_name or 'Votre cabinet'}"
+    _html = f"""<!DOCTYPE html><html><body style="font-family:sans-serif;color:#333;">
+<p>Bonjour {patient_name or ''},</p>
+<p>Veuillez trouver ci-joint un document de votre cabinet <strong>{cabinet_name or ''}</strong>.</p>
+<p>Document : <strong>{doc_original_name}</strong></p>
+<p style="color:#666;font-size:0.85rem;">Pour toute question, contactez directement votre cabinet.</p>
+</body></html>"""
+
+    with open(doc_path, "rb") as _fh:
+        _file_bytes = _fh.read()
+
+    _pm_token = (os.getenv("POSTMARK_SERVER_TOKEN") or "").strip()
+    _pm_from = (os.getenv("POSTMARK_FROM_EMAIL") or os.getenv("EMAIL_FROM") or os.getenv("SMTP_EMAIL") or "").strip()
+    if _pm_token and _pm_from:
+        try:
+            import httpx
+            with httpx.Client(timeout=30.0) as _hc:
+                _r = _hc.post(POSTMARK_API_URL, json={
+                    "From": _pm_from, "To": to_addr, "Subject": _subject, "HtmlBody": _html,
+                    "MessageStream": "outbound",
+                    "Attachments": [{"Name": doc_original_name,
+                                     "Content": base64.b64encode(_file_bytes).decode("ascii"),
+                                     "ContentType": doc_mime_type or "application/octet-stream"}],
+                }, headers={"Accept": "application/json", "Content-Type": "application/json",
+                            "X-Postmark-Server-Token": _pm_token})
+            if _r.status_code == 200:
+                logger.info("patient_doc_email via postmark to=%s doc=%s", to_addr[:50], doc_original_name[:40])
+                return True, None
+            return False, f"Postmark {_r.status_code}"
+        except Exception as _exc:
+            logger.exception("patient_doc_email postmark err: %s", _exc)
+
+    _su = (os.getenv("SMTP_EMAIL") or "").strip()
+    _sp = (os.getenv("SMTP_PASSWORD") or "").strip()
+    if _su and _sp:
+        _h = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        _p = int(os.getenv("SMTP_PORT", "587"))
+        try:
+            _msg = MIMEMultipart("mixed")
+            _msg["From"] = _su
+            _msg["To"] = to_addr
+            _msg["Subject"] = _subject
+            _msg.attach(MIMEText(_html, "html", "utf-8"))
+            _att = MIMEBase("application", "octet-stream")
+            _att.set_payload(_file_bytes)
+            _encoders.encode_base64(_att)
+            _att.add_header("Content-Disposition", f'attachment; filename="{doc_original_name}"')
+            _msg.attach(_att)
+            with smtplib.SMTP(_h, _p) as _srv:
+                _srv.starttls()
+                _srv.login(_su, _sp)
+                _srv.sendmail(_su, [to_addr], _msg.as_string())
+            logger.info("patient_doc_email via smtp to=%s doc=%s", to_addr[:50], doc_original_name[:40])
+            return True, None
+        except Exception as _exc:
+            logger.exception("patient_doc_email smtp err: %s", _exc)
+            return False, str(_exc)
+    return False, "Email non configuré pour envoi de documents"

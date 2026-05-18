@@ -1,11 +1,12 @@
 import React, { useMemo, useState } from "react";
+import { T } from "../theme.js";
 
 const C = {
-  surface: "#0F2236",
-  border: "#1E3D56",
-  accent: "#00E5A0",
-  text: "#FFFFFF",
-  muted: "#6B90A8",
+  surface: T.bgCard,
+  border: T.border,
+  accent: T.teal,
+  text: T.text,
+  muted: T.textMuted,
 };
 
 function clamp(value, min, max) {
@@ -71,7 +72,7 @@ function TooltipCard({ point, position }) {
           padding: "8px 14px",
           fontSize: 12,
           color: C.text,
-          boxShadow: "0 10px 22px rgba(0,0,0,0.18)",
+          boxShadow: "0 4px 16px rgba(15,23,42,0.08)",
           whiteSpace: "nowrap",
         }}
       >

@@ -1,1451 +1,1287 @@
-import React, { Suspense, lazy, useState, useEffect, useCallback } from "react";
+/**
+ * Cockpit pilotage plateforme — route /admin
+ * Cf. CdC : 7 KPI, leads, actions prioritaires, watchlist, panneau contexte.
+ * Style inline + tokens theme (pas Tailwind).
+ */
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  getDashboardPayload,
-  getRecentCalls,
-  getBillingOverview,
-  getBillingPlans,
-} from "../../lib/adminApi";
+  Building2,
+  Phone,
+  Globe,
+  Calendar,
+  Clock,
+  Euro,
+  AlertTriangle,
+  Sparkles,
+  ChevronRight,
+  Plus,
+  RefreshCw,
+} from "lucide-react";
+import {
+  getAdminDashboardSummary,
+  getAdminDashboardActionItems,
+  getAdminDashboardTenantWatchlist,
+  getAdminDashboardLeads,
+} from "../../lib/adminApi.js";
+import { T, radius, shadow, font, keyframes } from "../theme.js";
 
-const AdminActivityChart = lazy(() => import("../components/AdminActivityChart"));
-const AdminBillingSection = lazy(() => import("../components/AdminBillingSection"));
-const CreateTenantModal = lazy(() => import("../components/CreateTenantModal"));
+const CreateTenantModal = lazy(() => import("../components/CreateTenantModal.jsx"));
 
-// ── Brand tokens ──────────────────────────────────────────────────────────────
-const C = {
-  bg: "#0A1828",
-  surface: "#0F2236",
-  card: "#132840",
-  border: "#1E3D56",
-  accent: "#00E5A0",
-  accentDim: "#00b87c",
-  blue: "#5BA8FF",
-  text: "#FFFFFF",
-  muted: "#6B90A8",
-  danger: "#FF6B6B",
-  warning: "#FFB347",
-};
+const NAVY = "#071A33";
+const CDC_BG = "#F4F8FA";
+const CDC_BORDER = "#DCE8EC";
 
-// ── KPI Card ──────────────────────────────────────────────────────────────────
-function KpiCard({ label, value, sub, trend, color, delay }) {
-  return (
-    <div
-      style={{
-        background: C.card,
-        border: `1px solid ${C.border}`,
-        borderRadius: 16,
-        padding: "20px 22px",
-        position: "relative",
-        overflow: "hidden",
-        animation: `uwi-fadein 0.5s ease ${delay}s both`,
-      }}
-    >
-      <div
-        style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          right: 0,
-          height: 2,
-          background: `linear-gradient(90deg,${color},transparent)`,
-        }}
-      />
-      <div
-        style={{
-          fontSize: 11,
-          color: C.muted,
-          fontWeight: 600,
-          letterSpacing: 1.5,
-          textTransform: "uppercase",
-          marginBottom: 10,
-        }}
-      >
-        {label}
-      </div>
-      <div
-        style={{
-          fontSize: 32,
-          fontWeight: 800,
-          color: C.text,
-          letterSpacing: -1,
-          lineHeight: 1,
-          marginBottom: 6,
-        }}
-      >
-        {value}
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        {trend != null && (
-          <span
-            style={{
-              fontSize: 11,
-              color: trend > 0 ? C.accent : C.danger,
-              fontWeight: 600,
-            }}
-          >
-            {trend > 0 ? "↑" : "↓"} {Math.abs(trend)}%
-          </span>
-        )}
-        <span style={{ fontSize: 11, color: C.muted }}>{sub}</span>
-      </div>
-      <div
-        style={{
-          position: "absolute",
-          bottom: -20,
-          right: -20,
-          width: 80,
-          height: 80,
-          borderRadius: "50%",
-          background: `radial-gradient(circle,${color}18,transparent)`,
-          pointerEvents: "none",
-        }}
-      />
-    </div>
-  );
+function formatIntlNumber(n) {
+  if (n === null || n === undefined || Number.isNaN(Number(n))) return "—";
+  return Number(n).toLocaleString("fr-FR");
 }
 
-// ── Status Badge ──────────────────────────────────────────────────────────────
-function StatusBadge({ status }) {
-  const map = {
-    booking_confirmed: { label: "RDV", color: C.accent },
-    transferred_human: { label: "Transfert", color: C.warning },
-    transferred: { label: "Transfert", color: C.warning },
-    user_abandon: { label: "Abandon", color: C.danger },
-    abandon: { label: "Abandon", color: C.danger },
-    error: { label: "Erreur", color: C.danger },
-    rdv: { label: "RDV", color: C.accent },
-    info: { label: "Info", color: C.blue },
-    abandon_: { label: "Abandon", color: C.danger },
-    transfert: { label: "Transfert", color: C.warning },
-  };
-  const s = map[status] || { label: "Info", color: C.blue };
+function formatEuro2(n, currency = "EUR") {
+  if (n === null || n === undefined || Number.isNaN(Number(n))) return "—";
+  const cur = (currency || "EUR").toUpperCase();
+  return new Intl.NumberFormat("fr-FR", { style: "currency", currency: cur === "USD" ? "USD" : "EUR", maximumFractionDigits: 2 }).format(Number(n));
+}
+
+function deltaMonthText(v) {
+  if (v === null || v === undefined || v === "") return "";
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "";
+  if (n === 0) return "Stable ce mois-ci";
+  return n > 0 ? `+${formatIntlNumber(n)} ce mois-ci` : `${formatIntlNumber(n)} ce mois-ci`;
+}
+
+function deltaPercentDetail(p, fallback = "") {
+  if (p === null || p === undefined || p === "") return fallback;
+  const n = Number(p);
+  if (!Number.isFinite(n)) return fallback;
+  const sign = n > 0 ? "+" : "";
+  return `${sign}${formatIntlNumber(n)}% vs période précédente`;
+}
+
+function pickKpisPayload(raw) {
+  if (!raw) return {};
+  if (raw.kpis && typeof raw.kpis === "object") return raw.kpis;
+  return raw;
+}
+
+function pickLeadsBlock(summary, standalone) {
+  if (summary?.leads && typeof summary.leads === "object") return summary.leads;
+  if (!standalone) return {};
+  if (standalone.leads && typeof standalone.leads === "object") return standalone.leads;
+  if (Array.isArray(standalone.latest)) return { latest: standalone.latest };
+  if (Array.isArray(standalone.latest_leads)) return { latest: standalone.latest_leads };
+  if (standalone.new_leads_count != null || standalone.latest_leads || standalone.latest) return standalone;
+  return {};
+}
+
+function normalizeActionItems(payload) {
+  const arr = Array.isArray(payload) ? payload : payload?.items ?? payload?.action_items ?? [];
+  return arr.map((row, idx) => ({
+    id: row.id != null ? String(row.id) : `ai-${idx}-${row.title || ""}`,
+    severity: row.severity || "info",
+    tenant_id: row.tenant_id,
+    tenant_name: row.tenant_name || row.tenant || "—",
+    lead_id: row.lead_id,
+    title: row.title || "Sans titre",
+    description: row.description || row.meta || "",
+    target_label: row.target_label || row.target || "",
+    primary_action_label: row.primary_action_label || "Ouvrir",
+    primary_action_url: row.primary_action_url || "",
+    secondary_action_label: row.secondary_action_label || "",
+    secondary_action_url: row.secondary_action_url || "",
+    created_at: row.created_at,
+  }));
+}
+
+function normalizeWatchlist(payload) {
+  const arr = Array.isArray(payload) ? payload : payload?.items ?? payload?.watchlist ?? [];
+  return arr.map((row, idx) => ({
+    tenant_id: row.tenant_id,
+    tenant_name: row.tenant_name || row.name || row.tenant || "—",
+    label: row.label || row.signal_type || "Signal",
+    value: row.value != null ? String(row.value) : "—",
+    trend: row.trend || "",
+    severity: row.severity || "info",
+    target_url:
+      row.target_url ||
+      (row.tenant_id != null ? `/admin/tenants/${row.tenant_id}` : ""),
+    key: row.tenant_id != null ? `wl-${row.tenant_id}-${idx}` : `wl-${idx}`,
+  }));
+}
+
+const PERIOD_UI = [
+  ["24h", "24h"],
+  ["7j", "7d"],
+  ["30j", "30d"],
+  ["mois", "month"],
+];
+
+/** Bandeau « volume » leads : titre aligné sur le sélecteur de période du cockpit. */
+function leadsVolumeHeading(apiPeriod) {
+  switch (apiPeriod) {
+    case "24h":
+      return "24 dernières heures";
+    case "7d":
+      return "7 derniers jours";
+    case "30d":
+      return "30 derniers jours";
+    case "month":
+      return "Mois en cours (UTC)";
+    default:
+      return "Période sélectionnée";
+  }
+}
+
+function leadsVolumeExplanation(apiPeriod) {
+  if (apiPeriod === "month") {
+    return "Nombre de leads créés depuis le 1er du mois (UTC). Suit le sélecteur de période en haut de page.";
+  }
+  return `Nombre de leads créés sur ${leadsVolumeHeading(apiPeriod).toLowerCase()} (fenêtre glissante). Suit le sélecteur de période en haut de page.`;
+}
+
+const QUALIFY_TOOLTIP =
+  "File opérationnelle : compteur métier côté serveur (ex. statut « nouveau » / à traiter). Il ne change pas quand vous passez de 24 h à 7 jours ou au mois — ouvrez la liste leads pour la traiter.";
+
+function toneSurface(tone) {
+  switch (tone) {
+    case "teal":
+      return { fg: T.teal, bg: T.tealLight, border: `${T.teal}33` };
+    case "navy":
+      return { fg: NAVY, bg: "#EAF0F6", border: `${NAVY}22` };
+    case "blue":
+      return { fg: "#2563EB", bg: "#EAF1FF", border: "#2563EB22" };
+    case "green":
+      return { fg: "#039855", bg: "#EAF8F0", border: "#03985533" };
+    case "orange":
+      return { fg: T.orange, bg: T.orangeLight, border: `${T.orange}44` };
+    case "red":
+      return { fg: T.red, bg: T.redLight, border: `${T.red}44` };
+    default:
+      return { fg: T.textMuted, bg: T.neutralLight, border: T.border };
+  }
+}
+
+function SeverityBadge({ severity }) {
+  const label =
+    severity === "critical" ? "Critique" : severity === "warning" ? "À surveiller" : "Info";
+  const tone = severity === "critical" ? "red" : severity === "warning" ? "orange" : "blue";
+  const s = toneSurface(tone);
   return (
     <span
       style={{
-        background: `${s.color}18`,
-        color: s.color,
-        border: `1px solid ${s.color}40`,
-        borderRadius: 6,
-        padding: "2px 8px",
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "3px 9px",
+        borderRadius: radius.pill,
         fontSize: 11,
-        fontWeight: 700,
-      }}
-    >
-      {s.label}
-    </span>
-  );
-}
-
-// ── Plan Badge ────────────────────────────────────────────────────────────────
-function PlanBadge({ plan }) {
-  const map = {
-    free: { label: "Free", color: C.muted, bg: "rgba(107,144,168,0.12)" },
-    starter: { label: "Starter", color: C.blue, bg: "rgba(91,168,255,0.12)" },
-    growth: { label: "Growth", color: C.warning, bg: "rgba(255,179,71,0.12)" },
-    pro: { label: "Pro", color: C.accent, bg: "rgba(0,229,160,0.12)" },
-  };
-  const s = map[plan?.toLowerCase()] || map.free;
-  return (
-    <span
-      style={{
+        fontWeight: 800,
+        color: s.fg,
         background: s.bg,
-        color: s.color,
-        border: `1px solid ${s.color}40`,
-        borderRadius: 6,
-        padding: "3px 10px",
-        fontSize: 11,
-        fontWeight: 700,
+        border: `1px solid ${s.border}`,
       }}
     >
-      {s.label}
+      {label}
     </span>
   );
 }
 
-// ── Stripe Badge ──────────────────────────────────────────────────────────────
-function StripeBadge({ status }) {
-  const map = {
-    active: { label: "Actif", color: C.accent },
-    past_due: { label: "Past due", color: C.danger },
-    canceled: { label: "Annulé", color: C.muted },
-    trialing: { label: "Essai", color: C.warning },
-  };
-  const s = map[status] || { label: "Non config", color: C.muted };
-  return (
-    <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: s.color, fontWeight: 600 }}>
-      <span
-        style={{
-          width: 6,
-          height: 6,
-          borderRadius: "50%",
-          background: s.color,
-          display: "inline-block",
-        }}
-      />
-      {s.label}
-    </span>
-  );
-}
-
-function MiniStatCard({ label, value, hint, tone = C.text }) {
-  return (
-    <div
-      style={{
-        background: C.card,
-        border: `1px solid ${C.border}`,
-        borderRadius: 14,
-        padding: "16px 18px",
-      }}
-    >
-      <div
-        style={{
-          fontSize: 10,
-          color: C.muted,
-          fontWeight: 700,
-          letterSpacing: 0.8,
-          textTransform: "uppercase",
-          marginBottom: 8,
-        }}
-      >
-        {label}
-      </div>
-      <div style={{ fontSize: 24, fontWeight: 800, color: tone, letterSpacing: -0.8, lineHeight: 1 }}>
-        {value}
-      </div>
-      {hint ? <div style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>{hint}</div> : null}
-    </div>
-  );
-}
-
-function PanelCard({ title, subtitle, action = null, children }) {
-  return (
-    <div
-      style={{
-        background: C.card,
-        border: `1px solid ${C.border}`,
-        borderRadius: 16,
-        padding: 22,
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 16 }}>
-        <div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 2 }}>{title}</div>
-          {subtitle ? <div style={{ fontSize: 11, color: C.muted }}>{subtitle}</div> : null}
-        </div>
-        {action}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-const ACTIVATION_STEP_LABELS = {
-  account: "email client",
-  assistant: "assistant",
-  phone: "numéro vocal",
-  calendar: "agenda",
-  horaires: "horaires",
-  faq: "FAQ",
-  first_visit_done: "1re visite",
+const SAMPLE_SUMMARY = {
+  period: "30d",
+  kpis: {
+    active_tenants_count: 18,
+    active_tenants_delta_month: 3,
+    calls_handled_count: 1248,
+    calls_delta_percent: 18,
+    web_requests_count: 186,
+    web_requests_delta_percent: 11,
+    appointments_created_count: 342,
+    appointments_created_delta_percent: 14,
+    voice_minutes_used: 4820,
+    included_minutes_total: 7100,
+    usage_percent: 68,
+    vapi_cost_current_period: 864.42,
+    vapi_cost_currency: "EUR",
+    vapi_cost_is_estimate: true,
+    critical_alerts_count: 3,
+  },
+  leads: {
+    new_leads_count: 5,
+    to_qualify_today_count: 2,
+    latest: [
+      { id: "s1", name: "Dr Martin", source: "LinkedIn", status: "Nouveau", note: "Intéressé par essai gratuit" },
+      { id: "s2", name: "Cabinet Dentaire Lille", source: "Formulaire", status: "À rappeler", note: "Landing praticien" },
+      { id: "s3", name: "Dr Bernard", source: "Réseau", status: "Démo", note: "Attend créneau présentation" },
+    ],
+  },
 };
 
-const ACTIVATION_PRIORITY_UI = {
-  blocking_before_launch: { label: "Bloquant", color: C.danger },
-  setup_pending: { label: "Configuration", color: C.warning },
-  first_visit_pending: { label: "1re visite", color: C.blue },
-  fragile_active: { label: "Fragile", color: "#f59e0b" },
-  billing_risk: { label: "Billing", color: "#fb7185" },
-  ready: { label: "Prêt", color: C.accent },
-};
+const SAMPLE_ACTIONS = [
+  {
+    id: "demo-1",
+    severity: "critical",
+    tenant_id: 2001,
+    tenant_name: "Cabinet Durand",
+    title: "Agenda Google déconnecté",
+    description: "12 tentatives de booking bloquées depuis ce matin",
+    target_label: "Agenda",
+    primary_action_label: "Voir fiche",
+    primary_action_url: "/admin/tenants/2001",
+    secondary_action_label: "Reconnecter",
+    secondary_action_url: "/admin/tenants/2001",
+  },
+  {
+    id: "demo-2",
+    severity: "critical",
+    tenant_id: 2002,
+    tenant_name: "Cabinet Martin",
+    title: "Paiement en échec depuis 5 jours",
+    description: "Abonnement Growth · relance Stripe échouée",
+    target_label: "Billing",
+    primary_action_label: "Voir billing",
+    primary_action_url: "/admin/tenants/2002",
+    secondary_action_label: "Contacter",
+    secondary_action_url: "/admin/leads",
+  },
+  {
+    id: "demo-3",
+    severity: "warning",
+    tenant_id: 2003,
+    tenant_name: "Cabinet Lopez",
+    title: "12 demandes patients non traitées",
+    description: "Issues de la page publique praticien",
+    target_label: "Demandes patients",
+    primary_action_label: "Voir fiche",
+    primary_action_url: "/admin/tenants/2003",
+    secondary_action_label: "Notifier",
+    secondary_action_url: "/admin/tenants/2003",
+  },
+  {
+    id: "demo-4",
+    severity: "warning",
+    tenant_id: 2004,
+    tenant_name: "Cabinet Petit",
+    title: "Quota minutes à 87%",
+    description: "Starter · dépassement probable sous 4 jours",
+    target_label: "Usage",
+    primary_action_label: "Voir consommation",
+    primary_action_url: "/admin/billing?tenant=2004&sort=usage_desc",
+    secondary_action_label: "Proposer Growth",
+    secondary_action_url: "/admin/tenants/2004",
+  },
+  {
+    id: "demo-5",
+    severity: "info",
+    tenant_id: null,
+    tenant_name: "Dr Bernard",
+    lead_id: "s3",
+    title: "Nouveau lead à qualifier",
+    description: "Demande d'essai gratuit reçue hier soir",
+    target_label: "Leads",
+    primary_action_label: "Voir lead",
+    primary_action_url: "/admin/leads/s3",
+    secondary_action_label: "Planifier relance",
+    secondary_action_url: "/admin/leads",
+  },
+];
 
-// ── Quota Bar ─────────────────────────────────────────────────────────────────
-function QuotaBar({ used, included }) {
-  const pct = included > 0 ? Math.min((used / included) * 100, 100) : 0;
-  const color = pct > 90 ? C.danger : pct > 70 ? C.warning : C.accent;
-  return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: C.muted, marginBottom: 5 }}>
-        <span>{used} min utilisées</span>
-        <span>{included} min incluses</span>
-      </div>
-      <div style={{ height: 5, background: C.border, borderRadius: 3, overflow: "hidden" }}>
-        <div
-          style={{
-            width: `${pct}%`,
-            height: "100%",
-            background: color,
-            borderRadius: 3,
-            transition: "width 0.6s ease",
-          }}
-        />
-      </div>
-      <div style={{ fontSize: 10, color: C.muted, marginTop: 4, textAlign: "right" }}>
-        {Math.max(0, included - used)} min restantes
-      </div>
-    </div>
-  );
-}
+const SAMPLE_WATCH = [
+  {
+    tenant_id: 2003,
+    tenant_name: "Cabinet Lopez",
+    label: "Demandes web",
+    value: "42",
+    trend: "+31%",
+    severity: "info",
+    target_url: "/admin/tenants/2003",
+    key: "w1",
+  },
+  {
+    tenant_id: 2004,
+    tenant_name: "Cabinet Petit",
+    label: "Minutes",
+    value: "684",
+    trend: "87% quota",
+    severity: "warning",
+    target_url: "/admin/tenants/2004",
+    key: "w2",
+  },
+  {
+    tenant_id: 2001,
+    tenant_name: "Cabinet Durand",
+    label: "Erreurs booking",
+    value: "12",
+    trend: "critique",
+    severity: "critical",
+    target_url: "/admin/tenants/2001",
+    key: "w3",
+  },
+  {
+    tenant_id: 2005,
+    tenant_name: "Cabinet Moreau",
+    label: "RDV créés",
+    value: "58",
+    trend: "+22%",
+    severity: "info",
+    target_url: "/admin/tenants/2005",
+    key: "w4",
+  },
+];
 
-// ── Tenant Billing Card ───────────────────────────────────────────────────────
-function TenantBillingCard({ item, plans, onAction, navigate }) {
-  const [expanded, setExpanded] = useState(false);
-  const [actionMsg, setActionMsg] = useState(null);
+export default function AdminDashboard() {
+  const navigate = useNavigate();
+  const isDev = import.meta.env.DEV;
 
-  const handlePortal = async () => {
-    try {
-      const { url } = await getStripePortalLink(item.tenant_id);
-      window.open(url, "_blank");
-    } catch (e) {
-      setActionMsg("Portail indisponible : " + e.message);
-    }
-  };
-
-  const handleCancel = async () => {
-    if (!confirm(`Annuler l'abonnement de ${item.name} ?`)) return;
-    try {
-      await cancelTenantSubscription(item.tenant_id);
-      setActionMsg("Abonnement annulé.");
-      onAction();
-    } catch (e) {
-      setActionMsg("Erreur : " + e.message);
-    }
-  };
-
-  const handleResume = async () => {
-    try {
-      await resumeTenantSubscription(item.tenant_id);
-      setActionMsg("Abonnement réactivé.");
-      onAction();
-    } catch (e) {
-      setActionMsg("Erreur : " + e.message);
-    }
-  };
-
-  const isCanceled = item.stripe_status === "canceled";
-
-  return (
-    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, overflow: "hidden" }}>
-      <div
-        onClick={() => setExpanded((e) => !e)}
-        style={{
-          padding: "18px 20px",
-          cursor: "pointer",
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-        }}
-      >
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div
-            onClick={(e) => {
-              e.stopPropagation();
-              navigate(`/admin/tenants/${item.tenant_id}`);
-            }}
-            style={{
-              fontSize: 14,
-              fontWeight: 700,
-              color: C.text,
-              marginBottom: 5,
-              cursor: "pointer",
-              textDecoration: "underline",
-              textDecorationColor: "transparent",
-            }}
-            onMouseEnter={(e) => (e.target.style.color = C.accent)}
-            onMouseLeave={(e) => (e.target.style.color = C.text)}
-          >
-            {item.name}
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <PlanBadge plan={item.plan_key} />
-            <StripeBadge status={item.stripe_status} />
-          </div>
-        </div>
-        <div style={{ textAlign: "right", flexShrink: 0 }}>
-          <div style={{ fontSize: 20, fontWeight: 800, color: C.accent, letterSpacing: -0.5 }}>
-            ${(item.usage?.cost_usd ?? 0).toFixed(2)}
-          </div>
-          <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: 0.5 }}>
-            ce mois
-          </div>
-        </div>
-        <div
-          style={{
-            color: C.muted,
-            fontSize: 12,
-            transform: expanded ? "rotate(180deg)" : "none",
-            transition: "transform 0.2s",
-          }}
-        >
-          ▼
-        </div>
-      </div>
-
-      {expanded && (
-        <div style={{ padding: "0 20px 20px", borderTop: `1px solid ${C.border}` }}>
-          {item.quota && (
-            <div style={{ marginTop: 16, marginBottom: 16 }}>
-              <QuotaBar used={item.quota.used ?? 0} included={item.quota.included ?? 0} />
-            </div>
-          )}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>
-            {[
-              ["Customer ID", item.stripe_customer_id || "—"],
-              ["Subscription", item.stripe_subscription_id || "—"],
-              [
-                "Prochain débit",
-                item.current_period_end ? new Date(item.current_period_end * 1000).toLocaleDateString("fr-FR") : "—",
-              ],
-              ["MRR", item.mrr_eur ? `${item.mrr_eur}€` : "—"],
-            ].map(([l, v]) => (
-              <div key={l} style={{ background: C.surface, borderRadius: 8, padding: "8px 12px" }}>
-                <div
-                  style={{
-                    fontSize: 10,
-                    color: C.muted,
-                    marginBottom: 3,
-                    textTransform: "uppercase",
-                    letterSpacing: 0.5,
-                  }}
-                >
-                  {l}
-                </div>
-                <div
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 600,
-                    color: C.text,
-                    fontFamily: "monospace",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {v}
-                </div>
-              </div>
-            ))}
-          </div>
-          <div style={{ marginBottom: 14 }}>
-            <div
-              style={{
-                fontSize: 11,
-                color: C.muted,
-                marginBottom: 8,
-                fontWeight: 600,
-                textTransform: "uppercase",
-                letterSpacing: 0.5,
-              }}
-            >
-              Changer de plan
-            </div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {(plans || []).map((p) => (
-                <button
-                  key={p.id}
-                  onClick={async () => {
-                    if (!confirm(`Passer ${item.name} au plan ${p.name} ?`)) return;
-                    try {
-                      await changeTenantPlan(item.tenant_id, p.id || p.plan_key);
-                      setActionMsg(`Plan → ${p.name}`);
-                      onAction();
-                    } catch (e) {
-                      setActionMsg("Erreur : " + e.message);
-                    }
-                  }}
-                  style={{
-                    padding: "6px 14px",
-                    borderRadius: 8,
-                    fontSize: 12,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                    background: item.plan_key === (p.id || p.plan_key) ? "rgba(0,229,160,0.15)" : C.surface,
-                    border: `1px solid ${item.plan_key === (p.id || p.plan_key) ? C.accent : C.border}`,
-                    color: item.plan_key === (p.id || p.plan_key) ? C.accent : C.muted,
-                  }}
-                >
-                  {p.name}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button
-              onClick={handlePortal}
-              style={{
-                padding: "8px 14px",
-                borderRadius: 9,
-                fontSize: 12,
-                fontWeight: 700,
-                cursor: "pointer",
-                fontFamily: "inherit",
-                background: "rgba(91,168,255,0.1)",
-                border: "1px solid rgba(91,168,255,0.3)",
-                color: C.blue,
-              }}
-            >
-              ↗ Portail Stripe
-            </button>
-            {isCanceled ? (
-              <button
-                onClick={handleResume}
-                style={{
-                  padding: "8px 14px",
-                  borderRadius: 9,
-                  fontSize: 12,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                  background: "rgba(0,229,160,0.1)",
-                  border: "1px solid rgba(0,229,160,0.3)",
-                  color: C.accent,
-                }}
-              >
-                ↺ Réactiver
-              </button>
-            ) : (
-              <button
-                onClick={handleCancel}
-                style={{
-                  padding: "8px 14px",
-                  borderRadius: 9,
-                  fontSize: 12,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                  background: "rgba(255,107,107,0.1)",
-                  border: "1px solid rgba(255,107,107,0.3)",
-                  color: C.danger,
-                }}
-              >
-                ✕ Annuler
-              </button>
-            )}
-          </div>
-          {actionMsg && (
-            <div
-              style={{
-                marginTop: 10,
-                fontSize: 12,
-                color: C.accent,
-                padding: "8px 12px",
-                background: "rgba(0,229,160,0.08)",
-                borderRadius: 8,
-              }}
-            >
-              {actionMsg}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Hooks ─────────────────────────────────────────────────────────────────────
-function useDashboard(days) {
-  const [data, setData] = useState(null);
-  const [calls, setCalls] = useState([]);
+  const [periodUi, setPeriodUi] = useState("30j");
+  const [summary, setSummary] = useState(null);
+  const [actions, setActions] = useState([]);
+  const [watchlist, setWatchlist] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [fetchError, setFetchError] = useState(null);
+  const [isSampleMode, setIsSampleMode] = useState(false);
+  const [severityFilter, setSeverityFilter] = useState("all");
+  const [showCreate, setShowCreate] = useState(false);
+  const [selection, setSelection] = useState({ kind: "kpi", id: "alerts" });
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [payload, callsRes] = await Promise.all([
-        getDashboardPayload(days),
-        getRecentCalls(1, 5),
-      ]);
-      setData(payload);
-      setCalls(callsRes?.items || []);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [days]);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-  return { data, calls, loading, error, refresh };
-}
-
-function useBillingOverview() {
-  const [overview, setOverview] = useState(null);
-  const [plans, setPlans] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const apiPeriod = useMemo(() => PERIOD_UI.find(([u]) => u === periodUi)?.[1] || "30d", [periodUi]);
+  const leadsVolTitle = leadsVolumeHeading(apiPeriod);
+  const leadsVolCaption = leadsVolumeExplanation(apiPeriod);
+  const leadsEmptyMessage = `Aucun nouveau lead sur ${leadsVolTitle.toLowerCase()}.`;
 
   const load = useCallback(async () => {
     setLoading(true);
-    setError(null);
+    setFetchError(null);
+    let usedSample = false;
+    let nextSummary = null;
+    let nextActions = [];
+    let nextWatch = [];
+    let errMsg = null;
+
     try {
-      const [ov, pl] = await Promise.all([getBillingOverview(month), getBillingPlans()]);
-      setOverview(ov);
-      setPlans(pl?.items ?? []);
+      const [sumRes, aiRes, wlRes, leadsRes] = await Promise.allSettled([
+        getAdminDashboardSummary(apiPeriod),
+        getAdminDashboardActionItems({ period: apiPeriod, severity: "all" }),
+        getAdminDashboardTenantWatchlist(apiPeriod),
+        getAdminDashboardLeads(apiPeriod),
+      ]);
+
+      if (sumRes.status === "fulfilled" && sumRes.value) {
+        nextSummary = sumRes.value;
+      } else if (isDev) {
+        nextSummary = SAMPLE_SUMMARY;
+        usedSample = true;
+      } else {
+        errMsg =
+          sumRes.status === "rejected"
+            ? sumRes.reason?.message || "Impossible de charger le dashboard."
+            : "Réponse dashboard vide.";
+      }
+
+      if (aiRes.status === "fulfilled") {
+        nextActions = normalizeActionItems(aiRes.value);
+      } else if (isDev && nextSummary) {
+        nextActions = SAMPLE_ACTIONS;
+        usedSample = true;
+      }
+
+      if (wlRes.status === "fulfilled") {
+        nextWatch = normalizeWatchlist(wlRes.value);
+      } else if (isDev && nextSummary) {
+        nextWatch = SAMPLE_WATCH;
+        usedSample = true;
+      }
+
+      if (nextSummary && leadsRes.status === "fulfilled" && leadsRes.value) {
+        const lb = pickLeadsBlock(nextSummary, leadsRes.value);
+        if (!nextSummary.leads && Object.keys(lb).length) {
+          nextSummary = { ...nextSummary, leads: lb };
+        }
+      }
+
+      if (!nextSummary?.leads && isDev && nextSummary) {
+        nextSummary = { ...nextSummary, leads: SAMPLE_SUMMARY.leads };
+        usedSample = true;
+      }
     } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
+      errMsg = e?.message || "Erreur réseau";
+      if (isDev) {
+        nextSummary = SAMPLE_SUMMARY;
+        nextActions = SAMPLE_ACTIONS;
+        nextWatch = SAMPLE_WATCH;
+        usedSample = true;
+      }
     }
-  }, [month]);
+
+    setSummary(nextSummary);
+    setActions(nextActions);
+    setWatchlist(nextWatch);
+    setIsSampleMode(usedSample);
+    setFetchError(errMsg);
+    setLoading(false);
+  }, [apiPeriod, isDev]);
 
   useEffect(() => {
     load();
   }, [load]);
-  return { overview, plans, loading, error, month, setMonth, reload: load };
-}
 
-// ── Skeleton ──────────────────────────────────────────────────────────────────
-function SkeletonCard() {
-  return (
-    <div
-      style={{
-        background: C.card,
-        border: `1px solid ${C.border}`,
-        borderRadius: 16,
-        padding: "20px 22px",
-        height: 100,
-      }}
-    >
-      <div
-        style={{
-          width: 60,
-          height: 10,
-          borderRadius: 4,
-          background: C.border,
-          marginBottom: 12,
-          animation: "uwi-shimmer 1.5s ease infinite",
-        }}
-      />
-      <div
-        style={{
-          width: 80,
-          height: 28,
-          borderRadius: 6,
-          background: C.border,
-          animation: "uwi-shimmer 1.5s ease 0.1s infinite",
-        }}
-      />
-    </div>
-  );
-}
+  const kpis = pickKpisPayload(summary);
 
-function InlinePanelLoader({ height = 160 }) {
-  return (
-    <div
-      style={{
-        height,
-        borderRadius: 12,
-        background: `linear-gradient(90deg, ${C.border} 25%, rgba(30,61,86,0.55) 50%, ${C.border} 75%)`,
-        backgroundSize: "200% 100%",
-        animation: "uwi-shimmer 1.5s ease infinite",
-      }}
-    />
-  );
-}
+  const kpiCards = useMemo(() => {
+    const k = kpis;
+    const vapiLabel = k.vapi_cost_is_estimate ? "estimation période" : "réel période";
+    const vapiExtra = k.vapi_cost_estimation_label || vapiLabel;
 
-// ── MAIN DASHBOARD ────────────────────────────────────────────────────────────
-export default function AdminDashboard() {
-  const navigate = useNavigate();
-  const [period, setPeriod] = useState("30j");
-  const [showCreate, setShowCreate] = useState(false);
+    return [
+      {
+        id: "clients",
+        label: "Cabinets actifs",
+        value: formatIntlNumber(k.active_tenants_count),
+        detail: deltaMonthText(k.active_tenants_delta_month),
+        route: "/admin/tenants?status=active",
+        description: "Parc client réellement en service, tous canaux confondus.",
+        tone: "teal",
+        Icon: Building2,
+      },
+      {
+        id: "calls",
+        label: "Appels traités",
+        value: formatIntlNumber(k.calls_handled_count),
+        detail: deltaPercentDetail(k.calls_delta_percent, "Volume vocal sur la période"),
+        route: "/admin/tenants?sort=calls_desc",
+        description: "Volume vocal global traité par UWi sur la période.",
+        tone: "navy",
+        Icon: Phone,
+      },
+      {
+        id: "web",
+        label: "Demandes web",
+        value: formatIntlNumber(k.web_requests_count),
+        detail: deltaPercentDetail(k.web_requests_delta_percent, "via pages publiques praticiens"),
+        route: "/admin/tenants?sort=web_requests_desc",
+        description: "Demandes de RDV et contacts issus des pages publiques praticiens.",
+        tone: "blue",
+        Icon: Globe,
+      },
+      {
+        id: "appointments",
+        label: "RDV créés",
+        value: formatIntlNumber(k.appointments_created_count),
+        detail: deltaPercentDetail(k.appointments_created_delta_percent, "téléphone + web"),
+        route: "/admin/tenants?sort=appointments_desc",
+        description: "Rendez-vous créés ou confirmés dans les agendas.",
+        tone: "green",
+        Icon: Calendar,
+      },
+      {
+        id: "minutes",
+        label: "Minutes consommées",
+        value: formatIntlNumber(k.voice_minutes_used),
+        detail:
+          k.usage_percent != null
+            ? `${formatIntlNumber(k.usage_percent)}% du volume inclus`
+            : k.included_minutes_total
+              ? `sur ${formatIntlNumber(k.included_minutes_total)} min incluses`
+              : "",
+        route: "/admin/billing?sort=usage_desc",
+        description: "Usage vocal et risque de dépassement par cabinet.",
+        tone: "orange",
+        Icon: Clock,
+      },
+      {
+        id: "vapiCost",
+        label: "Coût Vapi en cours",
+        value: formatEuro2(k.vapi_cost_current_period, k.vapi_cost_currency),
+        detail: vapiExtra,
+        route: "/admin/billing?vendor=vapi",
+        description:
+          "Coût Vapi sur la période (estimation si l’API fournisseur n’est pas disponible). Pilotage marge plateforme.",
+        tone: "orange",
+        Icon: Euro,
+      },
+      {
+        id: "alerts",
+        label: "Alertes critiques",
+        value: formatIntlNumber(k.critical_alerts_count),
+        detail: "à traiter maintenant",
+        route: "/admin/operations?severity=critical",
+        description: "Incidents bloquants : agenda, paiement, assistant, routage, booking, webhooks…",
+        tone: "red",
+        Icon: AlertTriangle,
+      },
+    ];
+  }, [kpis]);
 
-  const days = period === "7j" ? 7 : period === "90j" ? 90 : 30;
-  const { data, calls, loading, error, refresh } = useDashboard(days);
-  const {
-    overview,
-    plans,
-    loading: billingLoading,
-    error: billingError,
-    month,
-    setMonth,
-    reload: reloadBilling,
-  } = useBillingOverview();
+  const leadsBlock = pickLeadsBlock(summary, null);
+  const newLeadsCount =
+    leadsBlock.new_leads_count ?? leadsBlock.new_leads ?? leadsBlock.count ?? (leadsBlock.latest?.length || 0);
+  const qualifyToday =
+    leadsBlock.to_qualify_today_count ?? leadsBlock.leads_to_qualify_today_count ?? 0;
+  const latestLeads = (leadsBlock.latest ?? leadsBlock.latest_leads ?? []).slice(0, 3);
 
-  // ── Mapping données API → UI ──
-  const RESULT_MAP = {
-    booking_confirmed: "rdv",
-    transferred_human: "transfert",
-    transferred: "transfert",
-    user_abandon: "abandon",
-    abandon: "abandon",
-    error: "abandon",
-  };
+  const filteredActions = useMemo(() => {
+    if (severityFilter === "all") return actions;
+    if (severityFilter === "critical") return actions.filter((a) => a.severity === "critical");
+    return actions.filter((a) => a.severity === "warning" || a.severity === "info");
+  }, [actions, severityFilter]);
 
-  const kpis = data
-    ? [
-        {
-          label: "Appels",
-          value: data.global?.calls_total ?? 0,
-          sub: `${data.global?.errors_total ?? 0} erreurs`,
-          trend: null,
-          color: C.accent,
-          delay: 0.05,
-        },
-        {
-          label: "RDV confirmés",
-          value: data.global?.appointments_total ?? 0,
-          sub: "ce mois",
-          trend: null,
-          color: C.blue,
-          delay: 0.1,
-        },
-        {
-          label: `Coût ${period}`,
-          value: `$${(data.global?.cost_usd_total ?? 0).toFixed(2)}`,
-          sub: "via Vapi",
-          trend: null,
-          color: C.warning,
-          delay: 0.15,
-        },
-        {
-          label: "Clients actifs",
-          value: data.global?.tenants_active ?? 0,
-          sub: `/${data.global?.tenants_total ?? 0} total`,
-          trend: null,
-          color: C.muted,
-          delay: 0.2,
-        },
-      ]
-    : [];
+  const selectedKpi = kpiCards.find((c) => c.id === selection.id);
 
-  const activityData =
-    data?.timeseries?.points?.map((p) => ({
-      day: new Date(p.date).toLocaleDateString("fr-FR", { weekday: "short" }).slice(0, 1).toUpperCase(),
-      appels: p.value,
-    })) ?? [];
-
-  const topClients =
-    data?.topTenantsCalls?.items?.slice(0, 4).map((item) => {
-      const costItem = data.topTenantsCost?.items?.find((c) => c.tenant_id === item.tenant_id);
+  const detail = useMemo(() => {
+    if (selection.kind === "kpi" && selectedKpi) {
       return {
-        id: item.tenant_id,
-        name: item.name ?? `Tenant #${item.tenant_id}`,
-        appels: item.value,
-        cost: (costItem?.value ?? 0).toFixed(2),
+        title: selectedKpi.label,
+        body: selectedKpi.description,
+        primaryLabel: "Ouvrir",
+        primaryTo: selectedKpi.route,
+        secondaryLabel: "Créer un client",
+        secondaryTo: null,
+        onSecondary: () => setShowCreate(true),
       };
-    }) ?? [];
-
-  const subStats = data
-    ? [
-        ["Transferts", data.global?.transfers_total ?? 0, C.blue],
-        ["Minutes", data.global?.minutes_total ?? 0, C.accent],
-        ["Erreurs", data.global?.errors_total ?? 0, C.danger],
-      ]
-    : [];
-
-  const recentCalls = calls.map((c) => ({
-    time: new Date(c.started_at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }),
-    client: c.tenant_name ?? "—",
-    dur: c.duration_min != null ? `${c.duration_min}m` : "—",
-    status: RESULT_MAP[c.result] ?? "info",
-    num: c.call_id?.slice(0, 16) ?? "—",
-    tenantId: c.tenant_id,
-    callId: c.call_id,
-  }));
-
-  const tenants = overview?.tenants ?? [];
-  const urgentBillingItems = tenants
-    .filter((item) => ["past_due", "canceled"].includes((item?.stripe_status || "").toLowerCase()))
-    .slice(0, 4)
-    .map((item) => ({
-      id: `billing-${item.tenant_id}`,
-      tenantId: item.tenant_id,
-      title: item.name || `Tenant #${item.tenant_id}`,
-      reason: item.stripe_status === "past_due" ? "Facturation en retard" : "Abonnement annulé",
-      detail:
-        item.stripe_status === "past_due"
-          ? "Relancer le client ou ouvrir le portail Stripe."
-          : "Vérifier si le cabinet doit être réactivé.",
-      tone: item.stripe_status === "past_due" ? C.danger : C.warning,
-      cta: item.stripe_status === "past_due" ? "Ouvrir la fiche" : "Vérifier le dossier",
-    }));
-
-  const quotaAlerts = tenants
-    .filter((item) => {
-      const included = item?.quota?.included ?? 0;
-      const used = item?.quota?.used ?? 0;
-      return included > 0 && used / included >= 0.85;
-    })
-    .slice(0, 4)
-    .map((item) => ({
-      id: `quota-${item.tenant_id}`,
-      tenantId: item.tenant_id,
-      title: item.name || `Tenant #${item.tenant_id}`,
-      reason: "Quota presque atteint",
-      detail: `${item?.quota?.used ?? 0}/${item?.quota?.included ?? 0} min utilisées.`,
-      tone: C.warning,
-      cta: "Ajuster le plan",
-    }));
-
-  const topActionItems = [...urgentBillingItems, ...quotaAlerts].slice(0, 6);
-
-  const operatorQueue = recentCalls
-    .filter((call) => ["transfert", "abandon"].includes(call.status))
-    .slice(0, 5)
-    .map((call) => ({
-      id: `call-${call.callId}`,
-      tenantId: call.tenantId,
-      title: call.client,
-      reason: call.status === "transfert" ? "Appel transféré" : "Abandon / friction",
-      detail: `${call.time} · ${call.dur} · ${call.num}`,
-      tone: call.status === "transfert" ? C.warning : C.danger,
-      cta: "Voir le tenant",
-    }));
-
-  const actionQueue = [...operatorQueue, ...topActionItems].slice(0, 6);
-
-  const healthSignals = [
-    {
-      label: "Past due",
-      value: overview?.summary?.tenants_past_due_count ?? 0,
-      hint: "clients à relancer",
-      tone: (overview?.summary?.tenants_past_due_count ?? 0) > 0 ? C.danger : C.accent,
-    },
-    {
-      label: "Appels transférés",
-      value: data?.global?.transfers_total ?? 0,
-      hint: `${days} derniers jours`,
-      tone: (data?.global?.transfers_total ?? 0) > 0 ? C.warning : C.text,
-    },
-    {
-      label: "Erreurs",
-      value: data?.global?.errors_total ?? 0,
-      hint: "anti-loop / incidents",
-      tone: (data?.global?.errors_total ?? 0) > 0 ? C.danger : C.text,
-    },
-    {
-      label: "Dernière activité",
-      value: data?.global?.last_activity_at
-        ? new Date(data.global.last_activity_at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })
-        : "—",
-      hint: "trace la plus récente",
-      tone: C.blue,
-    },
-  ];
-
-  const activationQueue = data?.activationQueue?.items ?? [];
-  const activationSummary = data?.activationQueue?.summary ?? {};
+    }
+    if (selection.kind === "lead" && selection.lead) {
+      const L = selection.lead;
+      const id = L.id;
+      return {
+        title: L.name,
+        body: [L.note, L.source && `Source : ${L.source}`, L.status && `Statut : ${L.status}`].filter(Boolean).join(" · "),
+        primaryLabel: "Ouvrir le lead",
+        primaryTo: id ? `/admin/leads/${id}` : "/admin/leads",
+        secondaryLabel: "Tous les leads",
+        secondaryTo: "/admin/leads",
+        onSecondary: null,
+      };
+    }
+    if (selection.kind === "task" && selection.task) {
+      const t = selection.task;
+      return {
+        title: t.tenant_name,
+        body: `${t.title} · ${t.description}`,
+        primaryLabel: t.primary_action_label || "Ouvrir",
+        primaryTo: t.primary_action_url || (t.tenant_id != null ? `/admin/tenants/${t.tenant_id}` : "/admin/operations"),
+        secondaryLabel: t.secondary_action_label || "",
+        secondaryTo: t.secondary_action_url || "",
+        onSecondary: null,
+      };
+    }
+    if (selection.kind === "watch" && selection.watch) {
+      const w = selection.watch;
+      return {
+        title: w.tenant_name,
+        body: `${w.label} · ${w.value} · ${w.trend}`,
+        primaryLabel: "Ouvrir le cabinet",
+        primaryTo: w.target_url || (w.tenant_id != null ? `/admin/tenants/${w.tenant_id}` : "/admin/tenants"),
+        secondaryLabel: "",
+        secondaryTo: "",
+        onSecondary: null,
+      };
+    }
+    return {
+      title: "Sélection",
+      body: "Clique sur une carte pour afficher le contexte et les actions.",
+      primaryLabel: "Clients",
+      primaryTo: "/admin/tenants",
+      secondaryLabel: "",
+      secondaryTo: "",
+      onSecondary: null,
+    };
+  }, [selection, selectedKpi]);
 
   return (
     <>
       <style>{`
-        @keyframes uwi-fadein  { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
-        @keyframes uwi-pulse   { 0%,100%{opacity:1} 50%{opacity:.4} }
-        @keyframes uwi-shimmer { 0%,100%{opacity:.4} 50%{opacity:.8} }
+        ${keyframes}
+        * { box-sizing: border-box; }
       `}</style>
 
-      <div style={{ padding: "32px", minWidth: 0 }}>
-        {/* ── Header ── */}
-        <div
+      <div style={{ padding: "28px 32px 40px", minWidth: 0, background: CDC_BG, fontFamily: font.body, color: T.text }}>
+        <header
           style={{
             display: "flex",
+            flexWrap: "wrap",
+            gap: 16,
             alignItems: "flex-start",
             justifyContent: "space-between",
-            marginBottom: 32,
-            animation: "uwi-fadein 0.4s ease both",
-            flexWrap: "wrap",
-            gap: 12,
+            marginBottom: 22,
+            animation: "uwi-fadein 0.35s ease both",
           }}
         >
           <div>
-            <h1 style={{ fontSize: 28, fontWeight: 800, color: C.text, letterSpacing: -1, marginBottom: 4 }}>
-              Dashboard
-            </h1>
-            <div style={{ fontSize: 13, color: C.muted }}>
-              Vue d'ensemble ·{" "}
-              <span style={{ color: C.accent }}>
-                Mis à jour à {new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
-              </span>
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            {["7j", "30j", "90j"].map((p) => (
-              <button
-                key={p}
-                onClick={() => setPeriod(p)}
-                style={{
-                  padding: "7px 16px",
-                  borderRadius: 10,
-                  border: `1px solid ${period === p ? C.accent : C.border}`,
-                  background: period === p ? "rgba(0,229,160,0.1)" : "transparent",
-                  color: period === p ? C.accent : C.muted,
-                  fontSize: 13,
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                  transition: "all 0.15s",
-                }}
-              >
-                {p}
-              </button>
-            ))}
-            <button
-              onClick={refresh}
-              disabled={loading}
+            <div
               style={{
-                padding: "7px 16px",
-                borderRadius: 10,
-                background: `linear-gradient(135deg,${C.accent},${C.accentDim})`,
-                border: "none",
-                color: C.bg,
-                fontSize: 13,
-                fontWeight: 700,
-                cursor: "pointer",
-                fontFamily: "inherit",
-              }}
-            >
-              {loading ? "…" : "↺ Rafraîchir"}
-            </button>
-            <button
-              onClick={() => setShowCreate(true)}
-              style={{
-                padding: "7px 16px",
-                borderRadius: 10,
-                background: `linear-gradient(135deg,${C.accent},${C.accentDim})`,
-                border: "none",
-                color: C.bg,
-                fontSize: 13,
-                fontWeight: 800,
-                cursor: "pointer",
-                fontFamily: "inherit",
-                display: "flex",
+                display: "inline-flex",
                 alignItems: "center",
                 gap: 6,
+                padding: "5px 12px",
+                borderRadius: radius.pill,
+                border: `1px solid #BFE9EC`,
+                background: T.bgCard,
+                fontSize: 11,
+                fontWeight: 800,
+                color: T.tealDark,
+                marginBottom: 10,
+                boxShadow: shadow.card,
               }}
             >
-              + Nouveau client
+              <Sparkles size={14} /> Accueil admin · aujourd&apos;hui
+            </div>
+            <h1 style={{ fontSize: 30, fontWeight: 800, color: NAVY, letterSpacing: -1, margin: 0, lineHeight: 1.1 }}>
+              Pilotage UWi
+            </h1>
+            <p style={{ margin: "8px 0 0", fontSize: 14, color: T.textSecondary, maxWidth: 640, lineHeight: 1.5 }}>
+              Vue macro : activité, valeur délivrée, coûts, risques et opportunités commerciales — détail dans les fiches
+              clients.
+            </p>
+          </div>
+
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 4,
+                padding: 4,
+                borderRadius: radius.xxl,
+                border: `1px solid ${CDC_BORDER}`,
+                background: T.bgCard,
+                boxShadow: shadow.card,
+              }}
+            >
+              {PERIOD_UI.map(([label, key]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setPeriodUi(label)}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: radius.lg,
+                    border: "none",
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    fontSize: 13,
+                    fontWeight: 800,
+                    background: periodUi === label ? NAVY : "transparent",
+                    color: periodUi === label ? "#fff" : T.textMuted,
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={load}
+              disabled={loading}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "9px 14px",
+                borderRadius: radius.lg,
+                border: `1px solid ${CDC_BORDER}`,
+                background: T.bgCard,
+                cursor: loading ? "wait" : "pointer",
+                fontFamily: "inherit",
+                fontWeight: 700,
+                fontSize: 13,
+                color: T.text,
+              }}
+            >
+              <RefreshCw size={15} className={loading ? "spin" : ""} />
+              Rafraîchir
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowCreate(true)}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "9px 14px",
+                borderRadius: radius.lg,
+                border: "none",
+                cursor: "pointer",
+                fontFamily: "inherit",
+                fontWeight: 800,
+                fontSize: 13,
+                color: "#fff",
+                background: `linear-gradient(135deg,${T.teal},${T.tealDark})`,
+                boxShadow: shadow.card,
+              }}
+            >
+              <Plus size={16} />
+              Nouveau client
             </button>
           </div>
-        </div>
+        </header>
 
-        {/* ── Erreur globale ── */}
-        {error && (
+        {fetchError ? (
           <div
             style={{
-              background: "rgba(255,107,107,0.1)",
-              border: "1px solid rgba(255,107,107,0.3)",
-              borderRadius: 12,
-              padding: "12px 20px",
-              marginBottom: 20,
-              fontSize: 13,
-              color: C.danger,
+              background: T.redLight,
+              border: `1px solid ${T.red}40`,
+              borderRadius: radius.xl,
+              padding: "12px 16px",
+              marginBottom: 16,
               display: "flex",
               justifyContent: "space-between",
+              alignItems: "center",
+              gap: 12,
+              flexWrap: "wrap",
             }}
           >
-            <span>⚠️ {error}</span>
+            <span style={{ fontSize: 13, color: T.red, fontWeight: 600 }}>{fetchError}</span>
             <button
-              onClick={refresh}
-              style={{ background: "transparent", border: "none", color: C.danger, cursor: "pointer", fontWeight: 700 }}
+              type="button"
+              onClick={load}
+              style={{ border: "none", background: "transparent", color: T.red, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}
             >
               Réessayer
             </button>
           </div>
-        )}
+        ) : null}
 
-        {/* ── Control strip ── */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 14, marginBottom: 24 }}>
-          {loading
-            ? Array(4)
-                .fill(0)
-                .map((_, i) => <SkeletonCard key={i} />)
-            : [
-                {
-                  label: "Clients actifs",
-                  value: data?.global?.tenants_active ?? 0,
-                  hint: `${data?.global?.tenants_total ?? 0} clients au total`,
-                  tone: C.text,
-                },
-                {
-                  label: "Past due",
-                  value: overview?.summary?.tenants_past_due_count ?? 0,
-                  hint: "à traiter maintenant",
-                  tone: (overview?.summary?.tenants_past_due_count ?? 0) > 0 ? C.danger : C.accent,
-                },
-                {
-                  label: "MRR",
-                  value: `${overview?.summary?.mrr_eur_total ?? 0}€`,
-                  hint: month,
-                  tone: C.accent,
-                },
-                {
-                  label: `Coût ${period}`,
-                  value: `$${(data?.global?.cost_usd_total ?? 0).toFixed(2)}`,
-                  hint: "usage Vapi",
-                  tone: C.warning,
-                },
-              ].map((item) => <MiniStatCard key={item.label} {...item} />)}
-        </div>
-
-        {/* ── Action panels ── */}
-        <div style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr", gap: 14, marginBottom: 24 }}>
-          <PanelCard
-            title="À traiter maintenant"
-            subtitle="Relances billing, saturation quota, appels transférés ou abandonnés."
-            action={
-              <button
-                onClick={() => navigate("/admin/tenants")}
-                style={{
-                  padding: "6px 12px",
-                  borderRadius: 8,
-                  background: "transparent",
-                  border: `1px solid ${C.border}`,
-                  color: C.muted,
-                  fontSize: 12,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                }}
-              >
-                Voir clients →
-              </button>
-            }
+        {isSampleMode ? (
+          <div
+            style={{
+              background: T.yellowLight,
+              border: `1px solid ${T.yellow}55`,
+              borderRadius: radius.xl,
+              padding: "10px 16px",
+              marginBottom: 16,
+              fontSize: 13,
+              color: T.yellowText,
+              fontWeight: 600,
+            }}
           >
-            {actionQueue.length === 0 ? (
-              <div style={{ fontSize: 13, color: C.muted }}>Aucune alerte prioritaire détectée.</div>
-            ) : (
-              <div style={{ display: "grid", gap: 10 }}>
-                {actionQueue.map((item) => (
-                  <div
-                    key={item.id}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 12,
-                      padding: "12px 14px",
-                      borderRadius: 12,
-                      background: C.surface,
-                      border: `1px solid ${C.border}`,
-                    }}
-                  >
-                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: item.tone, flexShrink: 0 }} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 3 }}>{item.title}</div>
-                      <div style={{ fontSize: 11, color: item.tone, marginBottom: 3 }}>{item.reason}</div>
-                      <div style={{ fontSize: 11, color: C.muted }}>{item.detail}</div>
-                    </div>
-                    <button
-                      onClick={() => navigate(`/admin/tenants/${item.tenantId}`)}
-                      style={{
-                        padding: "8px 12px",
-                        borderRadius: 9,
-                        background: `${item.tone}18`,
-                        border: `1px solid ${item.tone}40`,
-                        color: item.tone,
-                        fontSize: 12,
-                        fontWeight: 700,
-                        cursor: "pointer",
-                        fontFamily: "inherit",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {item.cta}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </PanelCard>
+            Mode démonstration (données fictives) : les endpoints{" "}
+            <code style={{ fontSize: 12 }}>/api/admin/dashboard/*</code> ne sont pas disponibles ou vides.
+          </div>
+        ) : null}
 
-          <PanelCard
-            title="Signaux d'exploitation"
-            subtitle="État court pour savoir si la journée dérive."
-            action={
-              <button
-                onClick={() => navigate("/admin/operations")}
-                style={{
-                  padding: "6px 12px",
-                  borderRadius: 8,
-                  background: "transparent",
-                  border: `1px solid ${C.border}`,
-                  color: C.muted,
-                  fontSize: 12,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                }}
-              >
-                Operations →
-              </button>
-            }
-          >
-            <div style={{ display: "grid", gap: 10 }}>
-              {healthSignals.map((signal) => (
-                <div
-                  key={signal.label}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 12,
-                    padding: "12px 14px",
-                    borderRadius: 12,
-                    background: C.surface,
-                    border: `1px solid ${C.border}`,
-                  }}
-                >
-                  <div>
-                    <div style={{ fontSize: 12, color: C.muted, marginBottom: 4 }}>{signal.label}</div>
-                    <div style={{ fontSize: 11, color: C.muted }}>{signal.hint}</div>
-                  </div>
-                  <div style={{ fontSize: 22, fontWeight: 800, color: signal.tone, letterSpacing: -0.7 }}>
-                    {signal.value}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </PanelCard>
-        </div>
-
-        <PanelCard
-          title="Cabinets à activer"
-          subtitle="Priorisés par blocage réel, configuration, première visite, fragilité technique et risque billing."
-          action={
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {[
-                ["Bloquants", activationSummary.blocking_before_launch ?? 0, C.danger],
-                ["Configuration", activationSummary.setup_pending ?? 0, C.warning],
-                ["1re visite", activationSummary.first_visit_pending ?? 0, C.blue],
-                ["Fragiles", activationSummary.fragile_active ?? 0, "#f59e0b"],
-                ["Billing", activationSummary.billing_risk ?? 0, "#fb7185"],
-              ].map(([label, value, color]) => (
-                <div
-                  key={label}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    padding: "6px 10px",
-                    borderRadius: 999,
-                    background: `${color}18`,
-                    border: `1px solid ${color}30`,
-                    color,
-                    fontSize: 11,
-                    fontWeight: 700,
-                  }}
-                >
-                  <span>{label}</span>
-                  <span>{value}</span>
-                </div>
-              ))}
-            </div>
-          }
+        {/* 7 KPI */}
+        <section
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(min(150px, 100%), 1fr))",
+            gap: 10,
+            marginBottom: 22,
+          }}
         >
-          {activationQueue.length === 0 ? (
-            <div style={{ fontSize: 13, color: C.muted }}>Tous les cabinets actifs semblent prêts.</div>
-          ) : (
-            <div style={{ display: "grid", gap: 10 }}>
-              {activationQueue.map((item) => (
-                <div
-                  key={item.tenant_id}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1.2fr auto auto",
-                    gap: 12,
-                    alignItems: "center",
-                    padding: "12px 14px",
-                    borderRadius: 12,
-                    background: C.surface,
-                    border: `1px solid ${C.border}`,
-                  }}
-                >
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3, flexWrap: "wrap" }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{item.tenant_name}</div>
-                      <span
-                        style={{
-                          fontSize: 10,
-                          fontWeight: 800,
-                          borderRadius: 999,
-                          padding: "3px 8px",
-                          background: `${(ACTIVATION_PRIORITY_UI[item.priority_key] || ACTIVATION_PRIORITY_UI.ready).color}18`,
-                          border: `1px solid ${(ACTIVATION_PRIORITY_UI[item.priority_key] || ACTIVATION_PRIORITY_UI.ready).color}30`,
-                          color: (ACTIVATION_PRIORITY_UI[item.priority_key] || ACTIVATION_PRIORITY_UI.ready).color,
-                        }}
-                      >
-                        {(ACTIVATION_PRIORITY_UI[item.priority_key] || ACTIVATION_PRIORITY_UI.ready).label}
-                      </span>
-                    </div>
-                    <div
-                      style={{
-                        fontSize: 11,
-                        color: (ACTIVATION_PRIORITY_UI[item.priority_key] || ACTIVATION_PRIORITY_UI.ready).color,
-                        marginBottom: 4,
-                      }}
-                    >
-                      {item.primary_reason}
-                      {item.missing_count > 0
-                        ? ` · ${item.missing_count} point${item.missing_count > 1 ? "s" : ""} à compléter`
-                        : " · suivi prioritaire"}
-                    </div>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      {(item.missing_steps || []).slice(0, 5).map((step) => (
-                        <span
-                          key={step}
-                          style={{
-                            fontSize: 10,
-                            color: C.muted,
-                            border: `1px solid ${C.border}`,
-                            borderRadius: 999,
-                            padding: "3px 8px",
-                          }}
-                        >
-                          {ACTIVATION_STEP_LABELS[step] || step}
-                        </span>
-                      ))}
-                      {item.call_lock_timeout_alert ? (
-                        <span
-                          style={{
-                            fontSize: 10,
-                            color: "#f59e0b",
-                            border: "1px solid rgba(245,158,11,0.3)",
-                            borderRadius: 999,
-                            padding: "3px 8px",
-                          }}
-                        >
-                          lock timeout
-                        </span>
-                      ) : null}
-                      {item.stripe_status ? (
-                        <span
-                          style={{
-                            fontSize: 10,
-                            color: "#fb7185",
-                            border: "1px solid rgba(251,113,133,0.28)",
-                            borderRadius: 999,
-                            padding: "3px 8px",
-                          }}
-                        >
-                          Stripe {item.stripe_status}
-                        </span>
-                      ) : null}
-                    </div>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Plan</div>
-                    <PlanBadge plan={item.plan_key} />
-                  </div>
+          {loading
+            ? Array.from({ length: 7 }).map((_, i) => <KpiSkeleton key={i} />)
+            : kpiCards.map((card) => {
+                const active = selection.kind === "kpi" && selection.id === card.id;
+                const s = toneSurface(card.tone);
+                const Icon = card.Icon;
+                return (
                   <button
-                    onClick={() => navigate(`/admin/tenants/${item.tenant_id}`)}
+                    key={card.id}
+                    type="button"
+                    onClick={() => setSelection({ kind: "kpi", id: card.id })}
                     style={{
-                      padding: "8px 12px",
-                      borderRadius: 9,
-                      background: "rgba(0,229,160,0.1)",
-                      border: "1px solid rgba(0,229,160,0.28)",
-                      color: C.accent,
-                      fontSize: 12,
-                      fontWeight: 700,
+                      textAlign: "left",
+                      padding: 16,
+                      borderRadius: 22,
+                      border: `1px solid ${active ? s.fg : CDC_BORDER}`,
+                      background: T.bgCard,
+                      boxShadow: active ? shadow.cardHover : shadow.card,
                       cursor: "pointer",
                       fontFamily: "inherit",
-                      whiteSpace: "nowrap",
+                      transition: "transform 0.12s, box-shadow 0.12s",
+                      transform: active ? "translateY(-1px)" : "none",
                     }}
                   >
-                    Ouvrir le cabinet
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                      <span
+                        style={{
+                          width: 40,
+                          height: 40,
+                          borderRadius: 16,
+                          display: "grid",
+                          placeItems: "center",
+                          border: `1px solid ${s.border}`,
+                          background: s.bg,
+                          color: s.fg,
+                        }}
+                      >
+                        <Icon size={20} />
+                      </span>
+                      <ChevronRight size={18} style={{ opacity: active ? 0.9 : 0.35, color: active ? T.teal : T.textMuted }} />
+                    </div>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: T.textMuted, marginBottom: 4 }}>{card.label}</div>
+                    <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: -0.03, color: NAVY }}>{card.value}</div>
+                    <div style={{ marginTop: 6, fontSize: 11, fontWeight: 700, color: T.textMuted, lineHeight: 1.35 }}>{card.detail}</div>
                   </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </PanelCard>
+                );
+              })}
+        </section>
 
-        {/* ── Operational rows ── */}
-        <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1.4fr", gap: 14, marginBottom: 24 }}>
-          <PanelCard
-            title="Top clients"
-            subtitle="Cabinets les plus actifs sur la fenêtre."
-            action={
-              <button
-                onClick={() => navigate("/admin/tenants")}
-                style={{
-                  padding: "6px 12px",
-                  borderRadius: 8,
-                  background: "transparent",
-                  border: `1px solid ${C.border}`,
-                  color: C.muted,
-                  fontSize: 12,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                }}
-              >
-                Tous les clients →
-              </button>
-            }
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 360px), 1fr))", gap: 18 }}>
+          {/* Actions */}
+          <section
+            style={{
+              background: T.bgCard,
+              border: `1px solid ${CDC_BORDER}`,
+              borderRadius: 28,
+              padding: 22,
+              boxShadow: shadow.card,
+            }}
           >
-            {topClients.length === 0 ? (
-              <div style={{ fontSize: 13, color: C.muted }}>Aucune donnée client sur la fenêtre.</div>
-            ) : (
-              <div style={{ display: "grid", gap: 10 }}>
-                {topClients.map((c, i) => (
-                  <div
-                    key={c.id}
-                    onClick={() => navigate(`/admin/tenants/${c.id}`)}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16 }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: NAVY }}>À traiter maintenant</h2>
+                <p style={{ margin: "6px 0 0", fontSize: 13, color: T.textMuted, maxWidth: 520 }}>
+                  Actions concrètes avant les statistiques détaillées — liens vers fiches tenants ou leads.
+                </p>
+              </div>
+              <div style={{ display: "flex", gap: 4, padding: 4, borderRadius: radius.lg, border: `1px solid ${CDC_BORDER}`, background: T.bgSubtle }}>
+                {[
+                  ["all", "Tout"],
+                  ["critical", "Critique"],
+                  ["warning", "À surveiller"],
+                ].map(([id, lbl]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setSeverityFilter(id)}
                     style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                      padding: "10px 12px",
-                      borderRadius: 12,
-                      background: C.surface,
-                      border: `1px solid ${C.border}`,
+                      padding: "7px 12px",
+                      borderRadius: 10,
+                      border: "none",
                       cursor: "pointer",
+                      fontFamily: "inherit",
+                      fontSize: 11,
+                      fontWeight: 800,
+                      background: severityFilter === id ? NAVY : "transparent",
+                      color: severityFilter === id ? "#fff" : T.textMuted,
                     }}
                   >
-                    <div
-                      style={{
-                        width: 22,
-                        height: 22,
-                        borderRadius: 7,
-                        background: i === 0 ? "rgba(0,229,160,0.15)" : C.card,
-                        border: `1px solid ${i === 0 ? C.accent : C.border}`,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: 10,
-                        fontWeight: 800,
-                        color: i === 0 ? C.accent : C.muted,
-                        flexShrink: 0,
-                      }}
-                    >
-                      {i + 1}
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {c.name}
-                      </div>
-                      <div style={{ fontSize: 11, color: C.muted }}>{c.appels} appels</div>
-                    </div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: C.accent }}>${c.cost}</div>
-                  </div>
+                    {lbl}
+                  </button>
                 ))}
               </div>
-            )}
-          </PanelCard>
+            </div>
 
-          <PanelCard
-            title="Appels récents"
-            subtitle="Transferts, abandons et trafic du jour."
-            action={
-              <button
-                onClick={() => navigate("/admin/calls")}
-                style={{
-                  padding: "6px 12px",
-                  borderRadius: 8,
-                  background: "transparent",
-                  border: `1px solid ${C.border}`,
-                  color: C.muted,
-                  fontSize: 12,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                }}
-              >
-                Voir tout →
-              </button>
-            }
-          >
-            {recentCalls.length === 0 ? (
-              <div style={{ fontSize: 13, color: C.muted }}>Aucun appel aujourd'hui</div>
+            {loading ? (
+              <ColumnSkeleton rows={5} />
+            ) : filteredActions.length === 0 ? (
+              <div style={{ fontSize: 14, color: T.textMuted, padding: "12px 4px" }}>Aucun élément dans ce filtre.</div>
             ) : (
-              <div style={{ display: "grid", gap: 10 }}>
-                {recentCalls.map((call, i) => (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {filteredActions.map((t, idx) => (
                   <div
-                    key={`${call.callId || i}`}
+                    key={t.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setSelection({ kind: "task", task: t })}
+                    onKeyDown={(e) => e.key === "Enter" && setSelection({ kind: "task", task: t })}
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "auto 1fr auto auto",
+                      gridTemplateColumns: "auto 1fr auto",
+                      gap: 14,
                       alignItems: "center",
-                      gap: 12,
-                      padding: "10px 12px",
-                      borderRadius: 12,
-                      background: C.surface,
-                      border: `1px solid ${C.border}`,
+                      padding: 14,
+                      borderRadius: 22,
+                      border: `1px solid #E4ECEF`,
+                      background: "#FBFDFD",
+                      cursor: "pointer",
+                      transition: "border-color 0.12s",
                     }}
                   >
-                    <div style={{ fontSize: 12, color: C.muted }}>{call.time}</div>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{call.client}</div>
-                      <div style={{ fontSize: 11, color: C.muted }}>{call.dur} · {call.num}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span
+                        style={{
+                          width: 40,
+                          height: 40,
+                          borderRadius: 16,
+                          display: "grid",
+                          placeItems: "center",
+                          fontWeight: 900,
+                          fontSize: 14,
+                          color: toneSurface(t.severity === "critical" ? "red" : t.severity === "warning" ? "orange" : "blue").fg,
+                          background: toneSurface(t.severity === "critical" ? "red" : t.severity === "warning" ? "orange" : "blue").bg,
+                        }}
+                      >
+                        {idx + 1}
+                      </span>
+                      <SeverityBadge severity={t.severity} />
                     </div>
-                    <StatusBadge status={call.status} />
-                    <button
-                      onClick={() => navigate(call.tenantId ? `/admin/tenants/${call.tenantId}` : "/admin/calls")}
-                      style={{
-                        padding: "7px 10px",
-                        borderRadius: 8,
-                        background: "rgba(0,229,160,0.1)",
-                        border: "1px solid rgba(0,229,160,0.28)",
-                        color: C.accent,
-                        fontSize: 12,
-                        fontWeight: 700,
-                        cursor: "pointer",
-                        fontFamily: "inherit",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      Ouvrir
-                    </button>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginBottom: 4 }}>
+                        <span style={{ fontWeight: 800, color: NAVY }}>{t.tenant_name}</span>
+                        {t.target_label ? (
+                          <span style={{ fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: radius.pill, background: T.neutralLight, color: T.textMuted }}>
+                            {t.target_label}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div style={{ fontSize: 14, fontWeight: 800 }}>{t.title}</div>
+                      <div style={{ fontSize: 13, color: T.textMuted, marginTop: 2 }}>{t.description}</div>
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "flex-end" }}>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(t.primary_action_url || (t.tenant_id != null ? `/admin/tenants/${t.tenant_id}` : "/admin/leads"));
+                        }}
+                        style={btnPrimarySmall()}
+                      >
+                        {t.primary_action_label}
+                      </button>
+                      {t.secondary_action_label ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(t.secondary_action_url || "/admin/tenants");
+                          }}
+                          style={btnGhostSmall()}
+                        >
+                          {t.secondary_action_label}
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                 ))}
               </div>
             )}
-          </PanelCard>
+          </section>
+
+          {/* Leads + panneau détail */}
+          <aside style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <section
+              style={{
+                background: T.bgCard,
+                border: `1px solid ${CDC_BORDER}`,
+                borderRadius: 28,
+                padding: 20,
+                boxShadow: shadow.card,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 14 }}>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: NAVY }}>Leads</h2>
+                  <p style={{ margin: "6px 0 0", fontSize: 13, color: T.textMuted, maxWidth: 320 }}>
+                    Deux indicateurs : volume sur la période (sélecteur en haut) et file à qualifier (règle opérationnelle, indépendante).
+                  </p>
+                </div>
+                <button type="button" onClick={() => navigate("/admin/leads")} style={btnPrimarySmall()}>
+                  Voir les leads
+                </button>
+              </div>
+              <div
+                style={{
+                  borderRadius: 22,
+                  border: `1px solid #BFE9EC`,
+                  background: T.tealLight,
+                  padding: 14,
+                  marginBottom: 12,
+                }}
+              >
+                <div style={{ fontSize: 13, fontWeight: 800, color: T.tealDark }}>Volume — {leadsVolTitle}</div>
+                <p style={{ margin: "4px 0 0", fontSize: 11, fontWeight: 600, color: T.textMuted, lineHeight: 1.45 }}>
+                  {leadsVolCaption}
+                </p>
+                {loading ? (
+                  <div style={{ marginTop: 8, ...shimmerBar(120, 36) }} />
+                ) : (
+                  <div style={{ fontSize: 32, fontWeight: 900, color: NAVY, marginTop: 8 }}>{formatIntlNumber(newLeadsCount)}</div>
+                )}
+                <div
+                  title={QUALIFY_TOOLTIP}
+                  role="note"
+                  style={{
+                    marginTop: 12,
+                    paddingTop: 12,
+                    borderTop: `1px dashed rgba(15,118,142,0.35)`,
+                  }}
+                >
+                  <div style={{ fontSize: 12, fontWeight: 900, color: T.tealDark, letterSpacing: "0.02em" }}>
+                    À qualifier · vue live
+                  </div>
+                  {loading ? (
+                    <div style={{ marginTop: 8, ...shimmerBar(180, 14) }} />
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 15, fontWeight: 800, color: NAVY, marginTop: 4 }}>
+                        {qualifyToday ? `${formatIntlNumber(qualifyToday)} lead(s)` : "0 lead en file (règles actuelles)"}
+                      </div>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: T.textMuted, marginTop: 4, lineHeight: 1.45 }}>
+                        Indépendant du sélecteur de période — survolez cette zone pour le détail.
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+              {loading ? (
+                <ColumnSkeleton rows={3} />
+              ) : latestLeads.length === 0 ? (
+                <div style={{ fontSize: 13, color: T.textMuted }}>{leadsEmptyMessage}</div>
+              ) : (
+                <>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: T.textMuted, marginBottom: 6 }}>
+                    Derniers entrants — {leadsVolTitle.toLowerCase()}
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {latestLeads.map((lead) => (
+                    <button
+                      key={lead.id || lead.name}
+                      type="button"
+                      onClick={() => setSelection({ kind: "lead", lead })}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 8,
+                        textAlign: "left",
+                        padding: 12,
+                        borderRadius: 16,
+                        border: `1px solid #E4ECEF`,
+                        background: "#FBFDFD",
+                        cursor: "pointer",
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      <span>
+                        <span style={{ display: "block", fontSize: 14, fontWeight: 800, color: NAVY }}>{lead.name}</span>
+                        <span style={{ display: "block", fontSize: 11, fontWeight: 700, color: T.textMuted, marginTop: 2 }}>
+                          {lead.source} · {lead.status}
+                        </span>
+                      </span>
+                      <ChevronRight size={18} color={T.teal} />
+                    </button>
+                  ))}
+                </div>
+                </>
+              )}
+            </section>
+
+            <section
+              style={{
+                background: NAVY,
+                borderRadius: 28,
+                padding: 20,
+                color: "#fff",
+                boxShadow: shadow.card,
+                flex: 1,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 14 }}>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Panneau détail</h2>
+                  <p style={{ margin: "6px 0 0", fontSize: 13, color: "rgba(255,255,255,0.65)", maxWidth: 320 }}>
+                    Contexte pour la carte sélectionnée.
+                  </p>
+                </div>
+              </div>
+              <div style={{ borderRadius: 22, border: "1px solid rgba(255,255,255,0.12)", padding: 16, background: "rgba(255,255,255,0.06)" }}>
+                <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: "0.16em", color: T.yellow, marginBottom: 6 }}>SÉLECTION</div>
+                <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 8, lineHeight: 1.2 }}>{detail.title}</div>
+                <p style={{ margin: 0, fontSize: 14, color: "rgba(255,255,255,0.76)", lineHeight: 1.55 }}>{detail.body}</p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 14 }}>
+                  <button type="button" onClick={() => navigate(detail.primaryTo)} style={ctaYellow()}>
+                    {detail.primaryLabel}
+                  </button>
+                  {detail.secondaryLabel ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (detail.onSecondary) detail.onSecondary();
+                        else navigate(detail.secondaryTo);
+                      }}
+                      style={ctaGhost()}
+                    >
+                      {detail.secondaryLabel}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            </section>
+          </aside>
         </div>
 
-        {/* ── Activity chart ── */}
-        <PanelCard
-          title="Volume d'appels"
-          subtitle={`${period} derniers jours`}
-          action={
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              {subStats.map(([l, v, c]) => (
-                <div key={l} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: C.muted }}>
-                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: c }} />
-                  <span>{l}</span>
-                  <span style={{ color: c, fontWeight: 700 }}>{v}</span>
-                </div>
+        {/* Watchlist */}
+        <section
+          style={{
+            marginTop: 20,
+            background: T.bgCard,
+            border: `1px solid ${CDC_BORDER}`,
+            borderRadius: 28,
+            padding: 22,
+            boxShadow: shadow.card,
+          }}
+        >
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, justifyContent: "space-between", marginBottom: 14 }}>
+            <div>
+              <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: NAVY }}>Top cabinets à surveiller</h2>
+              <p style={{ margin: "6px 0 0", fontSize: 13, color: T.textMuted }}>
+                Signaux agrégés (pas la liste brute des appels) — ouvrir le tenant pour creuser.
+              </p>
+            </div>
+          </div>
+          {loading ? (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 10 }}>
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} style={{ height: 120, borderRadius: 22, ...shimmerBlock() }} />
               ))}
             </div>
-          }
-        >
-          <Suspense fallback={<InlinePanelLoader height={160} />}>
-            <AdminActivityChart data={activityData} />
-          </Suspense>
-        </PanelCard>
-
-        <Suspense fallback={<InlinePanelLoader height={260} />}>
-          <AdminBillingSection
-            theme={C}
-            overview={overview}
-            plans={plans}
-            loading={billingLoading}
-            error={billingError}
-            month={month}
-            setMonth={setMonth}
-            reloadBilling={reloadBilling}
-            navigate={navigate}
-          />
-        </Suspense>
+          ) : watchlist.length === 0 ? (
+            <div style={{ fontSize: 13, color: T.textMuted }}>Aucun cabinet sorti sur cette période.</div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 10 }}>
+              {watchlist.map((w) => {
+                const sev = w.severity === "critical" ? "red" : w.severity === "warning" ? "orange" : "teal";
+                const s = toneSurface(sev);
+                return (
+                  <button
+                    key={w.key}
+                    type="button"
+                    onClick={() => setSelection({ kind: "watch", watch: w })}
+                    style={{
+                      textAlign: "left",
+                      padding: 16,
+                      borderRadius: 22,
+                      border: `1px solid #E4ECEF`,
+                      background: "#FBFDFD",
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                      transition: "box-shadow 0.12s",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 900,
+                          padding: "3px 8px",
+                          borderRadius: radius.pill,
+                          background: s.bg,
+                          color: s.fg,
+                          border: `1px solid ${s.border}`,
+                        }}
+                      >
+                        {w.label}
+                      </span>
+                      <ChevronRight size={16} style={{ opacity: 0.4 }} />
+                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: NAVY }}>{w.tenant_name}</div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginTop: 8, gap: 8 }}>
+                      <span style={{ fontSize: 26, fontWeight: 900, color: NAVY }}>{w.value}</span>
+                      <span style={{ fontSize: 11, fontWeight: 800, color: T.textMuted, paddingBottom: 4 }}>{w.trend}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </section>
       </div>
 
-      {/* ── Modal création tenant ── */}
-      {showCreate && (
+      {showCreate ? (
         <Suspense fallback={null}>
           <CreateTenantModal
             onClose={() => setShowCreate(false)}
             onCreated={() => {
               setShowCreate(false);
-              refresh();
-              reloadBilling();
+              load();
             }}
           />
         </Suspense>
-      )}
+      ) : null}
     </>
   );
+}
+
+function btnPrimarySmall() {
+  return {
+    padding: "8px 12px",
+    borderRadius: 14,
+    border: "none",
+    cursor: "pointer",
+    fontFamily: "inherit",
+    fontSize: 11,
+    fontWeight: 800,
+    background: `linear-gradient(135deg,${T.teal},${T.tealDark})`,
+    color: "#fff",
+  };
+}
+
+function btnGhostSmall() {
+  return {
+    padding: "8px 12px",
+    borderRadius: 14,
+    border: `1px solid ${CDC_BORDER}`,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    fontSize: 11,
+    fontWeight: 800,
+    background: T.bgCard,
+    color: T.text,
+  };
+}
+
+function ctaYellow() {
+  return {
+    padding: "10px 16px",
+    borderRadius: 14,
+    border: "none",
+    cursor: "pointer",
+    fontFamily: "inherit",
+    fontSize: 13,
+    fontWeight: 900,
+    background: "#F5C842",
+    color: NAVY,
+  };
+}
+
+function ctaGhost() {
+  return {
+    padding: "10px 16px",
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.22)",
+    cursor: "pointer",
+    fontFamily: "inherit",
+    fontSize: 13,
+    fontWeight: 800,
+    background: "transparent",
+    color: "rgba(255,255,255,0.9)",
+  };
+}
+
+function KpiSkeleton() {
+  return (
+    <div style={{ padding: 16, borderRadius: 22, border: `1px solid ${CDC_BORDER}`, background: T.bgCard }}>
+      <div style={{ ...shimmerBlock(), height: 40, width: 40, borderRadius: 14, marginBottom: 10 }} />
+      <div style={{ ...shimmerBlock(), height: 12, width: "55%", marginBottom: 8 }} />
+      <div style={{ ...shimmerBlock(), height: 28, width: "40%" }} />
+    </div>
+  );
+}
+
+function ColumnSkeleton({ rows }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} style={{ height: 88, borderRadius: 20, ...shimmerBlock() }} />
+      ))}
+    </div>
+  );
+}
+
+function shimmerBlock() {
+  return {
+    background: `linear-gradient(90deg, ${T.border} 25%, ${T.bgSubtle} 50%, ${T.border} 75%)`,
+    backgroundSize: "200% 100%",
+    animation: "uwi-shimmer 1.4s ease infinite",
+  };
+}
+
+function shimmerBar(w, h) {
+  return {
+    width: w,
+    height: h,
+    borderRadius: 10,
+    ...shimmerBlock(),
+  };
 }

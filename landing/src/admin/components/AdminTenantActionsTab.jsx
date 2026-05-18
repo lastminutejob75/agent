@@ -1,5 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { adminApi, sendPaymentLink, sendTenantOnboardingLink, updateTenantFlags, updateTenantHoraires, updateTenantParams } from "../../lib/adminApi";
+import { T } from "../theme.js";
 import { deriveHorairesText, normalizeBookingRules } from "../../lib/bookingUtils.js";
 import {
   buildTransferConfigSignature,
@@ -83,10 +84,10 @@ export default function AdminTenantActionsTab({ tenantId, tenant, onSaved, onDel
 
   const FLAG_KEYS = ["ENABLE_LLM_ASSIST_START", "ENABLE_ANTI_LOOP", "ENABLE_TRANSFER", "ENABLE_BOOKING", "ENABLE_FAQ"];
   const PARAM_FIELDS = [
-    { key: "calendar_id", label: "Agenda Google", placeholder: "test@group.calendar.google.com", mono: true },
+    { key: "calendar_id", label: "Agenda Google", placeholder: "agenda@group.calendar.google.com", mono: true },
     { key: "phone_number", label: "Numero du cabinet", placeholder: "+33123456789", mono: true },
     { key: "timezone", label: "Fuseau horaire", placeholder: "Europe/Paris", mono: true },
-    { key: "assistant_name", label: "Nom de l'assistante IA", placeholder: "sophie", mono: false },
+    { key: "assistant_name", label: "Nom de l'assistante IA", placeholder: "assistante", mono: false },
   ];
 
   const bookingRules = normalizeBookingRules(params);
@@ -468,7 +469,7 @@ export default function AdminTenantActionsTab({ tenantId, tenant, onSaved, onDel
             style={{
               padding: "10px 12px",
               borderRadius: 10,
-              background: "rgba(91,168,255,0.08)",
+              background: "#EFF6FF",
               border: `1px solid ${C.blue}33`,
               fontSize: 12,
               color: C.text,
@@ -505,7 +506,7 @@ export default function AdminTenantActionsTab({ tenantId, tenant, onSaved, onDel
               marginTop: 12,
               padding: "10px 12px",
               borderRadius: 10,
-              background: "rgba(255,255,255,0.03)",
+              background: T.bgSubtle,
               border: `1px solid ${C.border}`,
               fontSize: 12,
               color: C.text,
@@ -529,7 +530,7 @@ export default function AdminTenantActionsTab({ tenantId, tenant, onSaved, onDel
                 marginTop: 14,
                 padding: "12px 14px",
                 borderRadius: 12,
-                background: "rgba(0,229,160,0.1)",
+                background: T.tealLight,
                 border: `1px solid ${C.accent}55`,
                 color: C.text,
                 fontSize: 12,
@@ -553,15 +554,15 @@ export default function AdminTenantActionsTab({ tenantId, tenant, onSaved, onDel
               width: "100%",
               padding: "12px 14px",
               borderRadius: 12,
-              background: transferConfirmedDisplay ? `linear-gradient(135deg,${C.accent},${C.accentDim})` : `linear-gradient(135deg,${C.blue},#7fbcff)`,
+              background: transferConfirmedDisplay ? C.accent : C.blue,
               border: "none",
-              color: C.bg,
+              color: "#FFFFFF",
               fontSize: 14,
               fontWeight: 800,
               cursor: saving || transferValidationMessage || transferConfirmedDisplay ? "not-allowed" : "pointer",
               fontFamily: "inherit",
               opacity: saving || transferValidationMessage || transferConfirmedDisplay ? 0.7 : 1,
-              boxShadow: transferConfirmedDisplay ? "0 10px 24px rgba(0,229,160,0.22)" : "0 10px 24px rgba(91,168,255,0.22)",
+              boxShadow: transferConfirmedDisplay ? `0 4px 12px ${T.teal}33` : `0 4px 12px ${C.blue}33`,
             }}
           >
             {saving ? "…" : transferConfirmedDisplay ? "Transfert humain confirme" : "Confirmer le transfert humain"}
@@ -753,8 +754,8 @@ export default function AdminTenantActionsTab({ tenantId, tenant, onSaved, onDel
               marginBottom: 12,
               padding: "10px 12px",
               borderRadius: 10,
-              background: "rgba(0,229,160,0.08)",
-              border: "1px solid rgba(0,229,160,0.18)",
+              background: T.tealLight,
+              border: `1px solid ${T.teal}33`,
               fontSize: 12,
               color: C.text,
             }}
@@ -824,7 +825,7 @@ export default function AdminTenantActionsTab({ tenantId, tenant, onSaved, onDel
                   width: "100%",
                   padding: 10,
                   borderRadius: 10,
-                  background: "rgba(91,168,255,0.12)",
+                  background: "#EFF6FF",
                   border: `1px solid ${C.blue}55`,
                   color: C.blue,
                   fontSize: 13,
@@ -911,13 +912,13 @@ export default function AdminTenantActionsTab({ tenantId, tenant, onSaved, onDel
       <div
         style={{
           gridColumn: "1/3",
-          background: "rgba(255,107,107,0.08)",
+          background: T.redLight,
           border: `1px solid ${C.danger}40`,
           borderRadius: 16,
           padding: 22,
         }}
       >
-        <div style={{ fontSize: 14, fontWeight: 800, color: "#FFD2D2", marginBottom: 10 }}>Zone dangereuse</div>
+        <div style={{ fontSize: 14, fontWeight: 800, color: C.danger, marginBottom: 10 }}>Zone dangereuse</div>
         <div style={{ fontSize: 12, color: C.text, marginBottom: 8 }}>
           Cette action effectue un soft delete : le compte client passe en <strong>inactive</strong> mais l&apos;historique reste conserve.
         </div>
@@ -938,8 +939,8 @@ export default function AdminTenantActionsTab({ tenantId, tenant, onSaved, onDel
               padding: "10px 14px",
               borderRadius: 10,
               border: `1px solid ${C.danger}55`,
-              background: "rgba(255,107,107,0.12)",
-              color: "#FFD2D2",
+              background: C.danger,
+              color: "#FFFFFF",
               fontSize: 13,
               fontWeight: 800,
               cursor: "pointer",
@@ -955,7 +956,7 @@ export default function AdminTenantActionsTab({ tenantId, tenant, onSaved, onDel
         <div
           style={{
             gridColumn: "1/3",
-            background: msg.type === "success" ? "rgba(0,229,160,0.08)" : "rgba(255,107,107,0.08)",
+            background: msg.type === "success" ? T.tealLight : T.redLight,
             border: `1px solid ${msg.type === "success" ? `${C.accent}40` : `${C.danger}40`}`,
             borderRadius: 10,
             padding: "12px 16px",
@@ -1016,7 +1017,7 @@ export default function AdminTenantActionsTab({ tenantId, tenant, onSaved, onDel
           style={{
             position: "fixed",
             inset: 0,
-            background: "rgba(3, 10, 18, 0.75)",
+            background: "rgba(15, 23, 42, 0.45)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",

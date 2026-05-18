@@ -1,5 +1,5 @@
 import { Suspense, lazy } from "react";
-import { Routes, Route, Navigate, Outlet } from "react-router-dom";
+import { Routes, Route, Navigate, Outlet, useLocation, useParams } from "react-router-dom";
 import SeoHead from "./components/SeoHead";
 import AuthLayout from "./components/AuthLayout";
 
@@ -81,17 +81,13 @@ function AppShell() {
 const AppLayout = lazy(() => import("./pages/AppLayout"));
 const AppFirstOnboarding = lazy(() => import("./pages/AppFirstOnboarding"));
 const AppDashboard = lazy(() => import("./pages/AppDashboard"));
-const AppCalls = lazy(() => import("./pages/AppCalls"));
+const ClaraPilotagePage = lazy(() => import("./pages/ClaraPilotagePage"));
+const AppCalls = lazy(() => import("./pages/AppCallsV2"));
 const AppAgenda = lazy(() => import("./pages/AppAgenda"));
-const AppHoraires = lazy(() => import("./pages/AppHoraires"));
-const AppFaq = lazy(() => import("./pages/AppFaq"));
-const AppActions = lazy(() => import("./pages/AppActions"));
-const AppFacturation = lazy(() => import("./pages/AppFacturation"));
-const AppProfil = lazy(() => import("./pages/AppProfil"));
-const AppConfig = lazy(() => import("./pages/AppConfig"));
-const AppStatus = lazy(() => import("./pages/AppStatus"));
 const AppSettings = lazy(() => import("./pages/AppSettings"));
-const AppRgpd = lazy(() => import("./pages/AppRgpd"));
+const ClientCabinetProfilePage = lazy(() => import("./pages/ClientCabinetProfilePage"));
+const PatientDashboardPage = lazy(() => import("./pages/PatientDashboardPage"));
+const AppRequests = lazy(() => import("./pages/AppRequests"));
 const ImpersonatePage = lazy(() => import("./pages/Impersonate"));
 
 const AdminAuthProvider = lazy(() =>
@@ -103,13 +99,14 @@ const AdminLogin = lazy(() => import("./admin/AdminLogin"));
 const AdminDashboard = lazy(() => import("./admin/pages/AdminDashboard"));
 const AdminTenantsList = lazy(() => import("./admin/pages/AdminTenantsList"));
 const AdminTenantNew = lazy(() => import("./admin/pages/AdminTenantNew"));
-const AdminTenantPage = lazy(() => import("./admin/pages/AdminTenantPage"));
+const AdminTenantPage = lazy(() => import("./admin/pages/tenants/AdminTenantDetail.jsx"));
 const AdminTenantDashboard = lazy(() => import("./admin/pages/AdminTenantDashboard"));
 const AdminCalls = lazy(() => import("./admin/pages/AdminCalls"));
-const AdminMonitoring = lazy(() => import("./admin/pages/AdminMonitoring"));
-const AdminAuditLog = lazy(() => import("./admin/pages/AdminAuditLog"));
 const AdminOperations = lazy(() => import("./admin/pages/AdminOperations"));
 const AdminQuality = lazy(() => import("./admin/pages/AdminQuality"));
+const AdminBillingPage = lazy(() => import("./admin/pages/AdminBillingPage"));
+const AdminMonitoringPage = lazy(() => import("./admin/pages/AdminMonitoringPage"));
+const AdminAuditLogPage = lazy(() => import("./admin/pages/AdminAuditLogPage"));
 const AdminLeadsList = lazy(() => import("./admin/pages/AdminLeadsList"));
 const AdminLeadDetail = lazy(() => import("./admin/pages/AdminLeadDetail"));
 const AdminNotFound = lazy(() => import("./admin/pages/AdminNotFound"));
@@ -124,6 +121,28 @@ function LazyElement({ Component, ...props }) {
       <Component {...props} />
     </Suspense>
   );
+}
+
+function LegacyPatientsRedirect() {
+  const { phone } = useParams();
+  const location = useLocation();
+  const params = new URLSearchParams(location.search || "");
+  if (phone && !params.get("phone")) {
+    let decoded = phone;
+    try {
+      decoded = decodeURIComponent(phone);
+    } catch {
+      decoded = phone;
+    }
+    params.set("phone", decoded);
+  }
+  const query = params.toString();
+  return <Navigate to={`/app/patient-dashboard${query ? `?${query}` : ""}`} replace />;
+}
+
+function AdminTenantBillingRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/admin/billing/${encodeURIComponent(id || "")}`} replace />;
 }
 
 export default function App() {
@@ -165,17 +184,15 @@ export default function App() {
         <Route path="onboarding" element={<LazyElement Component={AppFirstOnboarding} />} />
         <Route element={<LazyElement Component={AppLayout} />}>
           <Route index element={<LazyElement Component={AppDashboard} />} />
+          <Route path="clara" element={<LazyElement Component={ClaraPilotagePage} />} />
           <Route path="appels" element={<LazyElement Component={AppCalls} />} />
           <Route path="agenda" element={<LazyElement Component={AppAgenda} />} />
-          <Route path="horaires" element={<LazyElement Component={AppHoraires} />} />
-          <Route path="faq" element={<LazyElement Component={AppFaq} />} />
-          <Route path="actions" element={<LazyElement Component={AppActions} />} />
-          <Route path="facturation" element={<LazyElement Component={AppFacturation} />} />
-          <Route path="profil" element={<LazyElement Component={AppProfil} />} />
-          <Route path="config" element={<LazyElement Component={AppConfig} />} />
-          <Route path="status" element={<LazyElement Component={AppStatus} />} />
+          <Route path="patients" element={<Navigate to="/app/patient-dashboard" replace />} />
+          <Route path="patients/:phone" element={<LegacyPatientsRedirect />} />
+          <Route path="patient-dashboard" element={<LazyElement Component={PatientDashboardPage} />} />
+          <Route path="demandes" element={<LazyElement Component={AppRequests} />} />
+          <Route path="profile" element={<LazyElement Component={ClientCabinetProfilePage} />} />
           <Route path="settings" element={<LazyElement Component={AppSettings} />} />
-          <Route path="rgpd" element={<LazyElement Component={AppRgpd} />} />
         </Route>
       </Route>
 
@@ -191,18 +208,23 @@ export default function App() {
         <Route element={<LazyElement Component={ProtectedRoute} />}>
           <Route element={<LazyElement Component={AdminLayout} />}>
             <Route index element={<LazyElement Component={AdminDashboard} />} />
-            <Route path="tenants/new" element={<LazyElement Component={AdminTenantNew} />} />
-            <Route path="tenants" element={<LazyElement Component={AdminTenantsList} />} />
-            <Route path="tenants/:id" element={<LazyElement Component={AdminTenantPage} />} />
-            <Route path="tenants/:id/dashboard" element={<LazyElement Component={AdminTenantDashboard} />} />
-            <Route path="tenants/:id/calls" element={<LazyElement Component={AdminCalls} />} />
+            <Route path="tenants" element={<Outlet />}>
+              <Route index element={<LazyElement Component={AdminTenantsList} />} />
+              <Route path="new" element={<LazyElement Component={AdminTenantNew} />} />
+              <Route path=":id" element={<LazyElement Component={AdminTenantPage} />} />
+              <Route path=":id/billing" element={<AdminTenantBillingRedirect />} />
+              <Route path=":id/dashboard" element={<LazyElement Component={AdminTenantDashboard} />} />
+              <Route path=":id/calls" element={<LazyElement Component={AdminCalls} />} />
+            </Route>
             <Route path="calls" element={<LazyElement Component={AdminCalls} />} />
-            <Route path="monitoring" element={<LazyElement Component={AdminMonitoring} />} />
+            <Route path="billing" element={<LazyElement Component={AdminBillingPage} />} />
+            <Route path="billing/:tenantId" element={<LazyElement Component={AdminBillingPage} />} />
             <Route path="operations" element={<LazyElement Component={AdminOperations} />} />
             <Route path="quality" element={<LazyElement Component={AdminQuality} />} />
+            <Route path="monitoring" element={<LazyElement Component={AdminMonitoringPage} />} />
+            <Route path="audit-log" element={<LazyElement Component={AdminAuditLogPage} />} />
             <Route path="leads" element={<LazyElement Component={AdminLeadsList} />} />
             <Route path="leads/:id" element={<LazyElement Component={AdminLeadDetail} />} />
-            <Route path="audit" element={<LazyElement Component={AdminAuditLog} />} />
             <Route path="*" element={<LazyElement Component={AdminNotFound} />} />
           </Route>
         </Route>

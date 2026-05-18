@@ -1,17 +1,18 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   changeTenantPlan,
   cancelTenantSubscription,
   resumeTenantSubscription,
   getStripePortalLink,
 } from "../../lib/adminApi";
+import { T } from "../theme.js";
 
 function PlanBadge({ plan, theme }) {
   const map = {
-    free: { label: "Free", color: theme.muted, bg: "rgba(107,144,168,0.12)" },
-    starter: { label: "Starter", color: theme.blue, bg: "rgba(91,168,255,0.12)" },
-    growth: { label: "Growth", color: theme.warning, bg: "rgba(255,179,71,0.12)" },
-    pro: { label: "Pro", color: theme.accent, bg: "rgba(0,229,160,0.12)" },
+    free: { label: "Free", color: theme.muted, bg: T.neutralLight },
+    starter: { label: "Starter", color: theme.blue, bg: "#EFF6FF" },
+    growth: { label: "Growth", color: theme.warning, bg: T.yellowLight },
+    pro: { label: "Pro", color: theme.accent, bg: T.tealLight },
   };
   const s = map[plan?.toLowerCase()] || map.free;
   return (
@@ -82,7 +83,7 @@ function QuotaBar({ used, included, theme }) {
   );
 }
 
-function TenantBillingCard({ item, plans, onAction, navigate, theme }) {
+function TenantBillingCard({ item, plans, onAction, navigate, theme, isNarrow = false }) {
   const [expanded, setExpanded] = useState(false);
   const [actionMsg, setActionMsg] = useState(null);
 
@@ -119,11 +120,11 @@ function TenantBillingCard({ item, plans, onAction, navigate, theme }) {
   const isCanceled = item.stripe_status === "canceled";
 
   return (
-    <div style={{ background: theme.card, border: `1px solid ${theme.border}`, borderRadius: 16, overflow: "hidden" }}>
+    <div style={{ background: theme.card, border: `1px solid ${theme.border}`, borderRadius: isNarrow ? 12 : 16, overflow: "hidden" }}>
       <div
         onClick={() => setExpanded((current) => !current)}
         style={{
-          padding: "18px 20px",
+          padding: isNarrow ? "12px 12px" : "18px 20px",
           cursor: "pointer",
           display: "flex",
           alignItems: "center",
@@ -176,13 +177,13 @@ function TenantBillingCard({ item, plans, onAction, navigate, theme }) {
       </div>
 
       {expanded ? (
-        <div style={{ padding: "0 20px 20px", borderTop: `1px solid ${theme.border}` }}>
+        <div style={{ padding: isNarrow ? "0 12px 12px" : "0 20px 20px", borderTop: `1px solid ${theme.border}` }}>
           {item.quota ? (
             <div style={{ marginTop: 16, marginBottom: 16 }}>
               <QuotaBar used={item.quota.used ?? 0} included={item.quota.included ?? 0} theme={theme} />
             </div>
           ) : null}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "1fr 1fr", gap: 8, marginBottom: 16 }}>
             {[
               ["Customer ID", item.stripe_customer_id || "—"],
               ["Subscription", item.stripe_subscription_id || "—"],
@@ -254,7 +255,7 @@ function TenantBillingCard({ item, plans, onAction, navigate, theme }) {
                     fontWeight: 600,
                     cursor: "pointer",
                     fontFamily: "inherit",
-                    background: item.plan_key === (plan.id || plan.plan_key) ? "rgba(0,229,160,0.15)" : theme.surface,
+                    background: item.plan_key === (plan.id || plan.plan_key) ? T.tealLight : theme.surface,
                     border: `1px solid ${item.plan_key === (plan.id || plan.plan_key) ? theme.accent : theme.border}`,
                     color: item.plan_key === (plan.id || plan.plan_key) ? theme.accent : theme.muted,
                   }}
@@ -274,8 +275,8 @@ function TenantBillingCard({ item, plans, onAction, navigate, theme }) {
                 fontWeight: 700,
                 cursor: "pointer",
                 fontFamily: "inherit",
-                background: "rgba(91,168,255,0.1)",
-                border: "1px solid rgba(91,168,255,0.3)",
+                background: "#EFF6FF",
+                border: `1px solid ${theme.blue}40`,
                 color: theme.blue,
               }}
             >
@@ -291,8 +292,8 @@ function TenantBillingCard({ item, plans, onAction, navigate, theme }) {
                   fontWeight: 700,
                   cursor: "pointer",
                   fontFamily: "inherit",
-                  background: "rgba(0,229,160,0.1)",
-                  border: "1px solid rgba(0,229,160,0.3)",
+                  background: T.tealLight,
+                  border: `1px solid ${T.teal}40`,
                   color: theme.accent,
                 }}
               >
@@ -308,8 +309,8 @@ function TenantBillingCard({ item, plans, onAction, navigate, theme }) {
                   fontWeight: 700,
                   cursor: "pointer",
                   fontFamily: "inherit",
-                  background: "rgba(255,107,107,0.1)",
-                  border: "1px solid rgba(255,107,107,0.3)",
+                  background: T.redLight,
+                  border: `1px solid ${T.red}40`,
                   color: theme.danger,
                 }}
               >
@@ -324,7 +325,7 @@ function TenantBillingCard({ item, plans, onAction, navigate, theme }) {
                 fontSize: 12,
                 color: theme.accent,
                 padding: "8px 12px",
-                background: "rgba(0,229,160,0.08)",
+                background: T.tealLight,
                 borderRadius: 8,
               }}
             >
@@ -349,6 +350,45 @@ export default function AdminBillingSection({
   navigate,
 }) {
   const C = theme;
+  const [isNarrow, setIsNarrow] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth <= 900 : false,
+  );
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [sortMode, setSortMode] = useState("cost_desc");
+
+  useEffect(() => {
+    function onResize() {
+      setIsNarrow(window.innerWidth <= 900);
+    }
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const tenants = overview?.tenants ?? [];
+  const filteredTenants = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    let rows = [...tenants];
+    if (q) {
+      rows = rows.filter((item) => {
+        const haystack = `${item.name || ""} ${item.plan_key || ""} ${item.stripe_status || ""} ${item.tenant_id || ""}`.toLowerCase();
+        return haystack.includes(q);
+      });
+    }
+    if (statusFilter !== "all") {
+      rows = rows.filter((item) => (item.stripe_status || "none") === statusFilter);
+    }
+    rows.sort((a, b) => {
+      if (sortMode === "name_asc") return String(a.name || "").localeCompare(String(b.name || ""), "fr");
+      if (sortMode === "name_desc") return String(b.name || "").localeCompare(String(a.name || ""), "fr");
+      if (sortMode === "mrr_desc") return Number(b.mrr_eur || 0) - Number(a.mrr_eur || 0);
+      if (sortMode === "mrr_asc") return Number(a.mrr_eur || 0) - Number(b.mrr_eur || 0);
+      if (sortMode === "cost_asc") return Number(a.usage?.cost_usd || 0) - Number(b.usage?.cost_usd || 0);
+      return Number(b.usage?.cost_usd || 0) - Number(a.usage?.cost_usd || 0);
+    });
+    return rows;
+  }, [tenants, query, statusFilter, sortMode]);
 
   return (
     <section style={{ animation: "uwi-fadein 0.5s ease 0.55s both" }}>
@@ -420,8 +460,8 @@ export default function AdminBillingSection({
           {(overview?.summary?.tenants_past_due_count ?? 0) > 0 ? (
             <div
               style={{
-                background: "rgba(255,107,107,0.1)",
-                border: "1px solid rgba(255,107,107,0.3)",
+                background: T.redLight,
+                border: `1px solid ${T.red}40`,
                 borderRadius: 10,
                 padding: "8px 16px",
               }}
@@ -451,11 +491,72 @@ export default function AdminBillingSection({
         </div>
       </div>
 
+      <div
+        style={{
+          marginBottom: 12,
+          display: "grid",
+          gap: 8,
+          gridTemplateColumns: isNarrow ? "1fr" : "minmax(200px,1fr) auto auto auto",
+          alignItems: "center",
+        }}
+      >
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Rechercher un client (nom, plan, statut, ID)..."
+          style={{
+            width: "100%",
+            border: `1px solid ${C.border}`,
+            borderRadius: 10,
+            background: C.card,
+            color: C.text,
+            padding: "8px 10px",
+            fontSize: 12,
+            fontFamily: "inherit",
+          }}
+        />
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          style={{ border: `1px solid ${C.border}`, borderRadius: 9, background: C.card, color: C.text, padding: "8px 10px", fontSize: 12, fontFamily: "inherit" }}
+        >
+          <option value="all">Tous statuts</option>
+          <option value="active">Actif</option>
+          <option value="trialing">Essai</option>
+          <option value="past_due">Past due</option>
+          <option value="canceled">Annulé</option>
+          <option value="none">Non config</option>
+        </select>
+        <select
+          value={sortMode}
+          onChange={(e) => setSortMode(e.target.value)}
+          style={{ border: `1px solid ${C.border}`, borderRadius: 9, background: C.card, color: C.text, padding: "8px 10px", fontSize: 12, fontFamily: "inherit" }}
+        >
+          <option value="cost_desc">Coût Vapi ↓</option>
+          <option value="cost_asc">Coût Vapi ↑</option>
+          <option value="mrr_desc">MRR ↓</option>
+          <option value="mrr_asc">MRR ↑</option>
+          <option value="name_asc">Nom A-Z</option>
+          <option value="name_desc">Nom Z-A</option>
+        </select>
+        <button
+          type="button"
+          onClick={() => {
+            setQuery("");
+            setStatusFilter("all");
+            setSortMode("cost_desc");
+          }}
+          style={{ borderRadius: 9, border: `1px solid ${C.border}`, background: C.card, color: C.muted, padding: "8px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+        >
+          Reset
+        </button>
+      </div>
+
       {error ? (
         <div
           style={{
-            background: "rgba(255,107,107,0.1)",
-            border: "1px solid rgba(255,107,107,0.3)",
+            background: T.redLight,
+            border: `1px solid ${T.red}40`,
             borderRadius: 12,
             padding: "12px 20px",
             marginBottom: 16,
@@ -471,7 +572,10 @@ export default function AdminBillingSection({
         <div style={{ color: C.muted, fontSize: 13, padding: "20px 0" }}>Chargement billing…</div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {(overview?.tenants ?? []).map((item) => (
+          <div style={{ fontSize: 12, color: C.muted, fontWeight: 700 }}>
+            {filteredTenants.length} résultat(s) sur {tenants.length}
+          </div>
+          {filteredTenants.map((item) => (
             <TenantBillingCard
               key={item.tenant_id}
               item={item}
@@ -479,8 +583,14 @@ export default function AdminBillingSection({
               onAction={reloadBilling}
               navigate={navigate}
               theme={theme}
+              isNarrow={isNarrow}
             />
           ))}
+          {!filteredTenants.length ? (
+            <div style={{ borderRadius: 12, border: `1px dashed ${C.border}`, background: C.card, color: C.muted, fontSize: 13, fontWeight: 700, padding: "16px 14px", textAlign: "center" }}>
+              Aucun client ne correspond aux filtres.
+            </div>
+          ) : null}
         </div>
       )}
     </section>

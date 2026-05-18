@@ -45,6 +45,19 @@ async function adminFetch(path, options = {}) {
   return data;
 }
 
+/** Chemins relatifs `/api/admin/…` sans base (`VITE_UWI_API_BASE_URL`) ni réseau. Utiles aux tests smoke. */
+export function buildTenantPatientRequestsPath(tenantId, opts = {}) {
+  const params = new URLSearchParams();
+  if (opts.status) params.set("status", opts.status);
+  if (opts.limit != null) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  return `/api/admin/tenants/${encodeURIComponent(tenantId)}/patient-requests${qs ? `?${qs}` : ""}`;
+}
+
+export function buildTenantsActivityGridPath(windowDays = 30) {
+  return `/api/admin/tenants/activity-grid?window_days=${encodeURIComponent(windowDays)}`;
+}
+
 export const adminApi = {
   /** Diagnostic sans auth : config backend (email_set, password_hash_set, admin_token_set). */
   authStatus: () => adminFetch("/api/admin/auth/status", { method: "GET" }),
@@ -57,6 +70,11 @@ export const adminApi = {
   logout: () => adminFetch("/api/admin/auth/logout", { method: "POST" }),
 
   listTenants: (params = "") => adminFetch(`/api/admin/tenants${params}`, { method: "GET" }),
+  /** Grille liste cabinets : calls, RDV, web_handoffs, demandes ouvertes, hints configuration. */
+  tenantsActivityGrid: (windowDays = 30) =>
+    adminFetch(buildTenantsActivityGridPath(windowDays), { method: "GET" }),
+  tenantsSummary: (periodDays = 30) =>
+    adminFetch(`/api/admin/tenants/summary?period=${encodeURIComponent(periodDays)}`, { method: "GET" }),
   getTenant: (id) => adminFetch(`/api/admin/tenants/${id}`, { method: "GET" }),
   /** Token 5 min pour ouvrir /app/impersonate?token=... (voir comme le client). */
   impersonate: (tenantId) =>
@@ -126,6 +144,46 @@ export const adminApi = {
     adminFetch(`/api/admin/tenants/${id}/billing`, { method: "GET" }),
   getBillingPlans: () =>
     adminFetch("/api/admin/billing/plans", { method: "GET" }),
+  getBillingSummary: (period = "month") =>
+    adminFetch(`/api/admin/billing/summary?period=${encodeURIComponent(period)}`, { method: "GET" }),
+  getBillingActionItems: (period = "month") =>
+    adminFetch(`/api/admin/billing/action-items?period=${encodeURIComponent(period)}`, { method: "GET" }),
+  listBillingTenants: ({ period = "month", filter = "all", sort = "margin_low", search = "", page = 1, limit = 25 } = {}) => {
+    const params = new URLSearchParams();
+    params.set("period", period);
+    if (filter && filter !== "all") params.set("filter", filter);
+    if (sort) params.set("sort", sort);
+    if (search) params.set("search", search);
+    params.set("page", String(page));
+    params.set("limit", String(limit));
+    return adminFetch(`/api/admin/billing/tenants?${params.toString()}`, { method: "GET" });
+  },
+  getBillingTenantOverview: (id, period = "month") =>
+    adminFetch(`/api/admin/billing/tenants/${id}/overview?period=${encodeURIComponent(period)}`, { method: "GET" }),
+  getBillingTenantUsage: (id, period = "month") =>
+    adminFetch(`/api/admin/billing/tenants/${id}/usage?period=${encodeURIComponent(period)}`, { method: "GET" }),
+  getBillingTenantStripe: (id) =>
+    adminFetch(`/api/admin/billing/tenants/${id}/stripe`, { method: "GET" }),
+  getBillingTenantInvoices: (id, limit = 10) =>
+    adminFetch(`/api/admin/billing/tenants/${id}/invoices?limit=${encodeURIComponent(limit)}`, { method: "GET" }),
+  syncStripeBilling: (period = "month") =>
+    adminFetch(`/api/admin/billing/sync-stripe?period=${encodeURIComponent(period)}`, { method: "POST" }),
+  syncStripeBillingTenant: (id) =>
+    adminFetch(`/api/admin/billing/tenants/${id}/sync-stripe`, { method: "POST" }),
+  pushUsageBilling: (targetDate) =>
+    adminFetch(`/api/admin/billing/push-usage${targetDate ? `?target_date=${encodeURIComponent(targetDate)}` : ""}`, { method: "POST" }),
+  pushUsageBillingTenant: (id, targetDate) =>
+    adminFetch(`/api/admin/billing/tenants/${id}/push-usage${targetDate ? `?target_date=${encodeURIComponent(targetDate)}` : ""}`, { method: "POST" }),
+  patchBillingTenantPlan: (id, planKey) =>
+    adminFetch(`/api/admin/billing/tenants/${id}/plan`, {
+      method: "PATCH",
+      body: JSON.stringify({ plan_key: planKey }),
+    }),
+  suspendBillingTenant: (id, mode = "hard") =>
+    adminFetch(`/api/admin/billing/tenants/${id}/suspend`, {
+      method: "POST",
+      body: JSON.stringify({ mode }),
+    }),
   getTenantQuota: (id, month) =>
     adminFetch(`/api/admin/tenants/${id}/quota?month=${encodeURIComponent(month)}`, { method: "GET" }),
   tenantSuspend: (id, mode = "hard") =>
@@ -201,6 +259,28 @@ export const adminApi = {
   operationsSnapshot: (windowDays = 7) =>
     adminFetch(`/api/admin/stats/operations-snapshot?window_days=${windowDays}`, { method: "GET" }),
 
+  getDashboardSummary: (period = "30d") =>
+    adminFetch(`/api/admin/dashboard/summary?period=${encodeURIComponent(period)}`, { method: "GET" }),
+  getDashboardActionItems: ({ period = "30d", severity = "all" } = {}) => {
+    const params = new URLSearchParams();
+    params.set("period", period);
+    if (severity && severity !== "all") params.set("severity", severity);
+    return adminFetch(`/api/admin/dashboard/action-items?${params.toString()}`, { method: "GET" });
+  },
+  getDashboardTenantWatchlist: (period = "30d") =>
+    adminFetch(`/api/admin/dashboard/tenant-watchlist?period=${encodeURIComponent(period)}`, { method: "GET" }),
+  getDashboardNewLeads: (period = "7d") =>
+    adminFetch(`/api/admin/dashboard/new-leads?period=${encodeURIComponent(period)}`, { method: "GET" }),
+
+  cabinetProfileAudit: ({ includeInactive = false, onlyMismatch = true, limit = 10, offset = 0 } = {}) => {
+    const params = new URLSearchParams();
+    params.set("include_inactive", includeInactive ? "true" : "false");
+    params.set("only_mismatch", onlyMismatch ? "true" : "false");
+    params.set("limit", String(limit));
+    params.set("offset", String(offset));
+    return adminFetch(`/api/admin/cabinet-profile-audit?${params.toString()}`, { method: "GET" });
+  },
+
   qualitySnapshot: (windowDays = 7) =>
     adminFetch(`/api/admin/stats/quality-snapshot?window_days=${windowDays}`, { method: "GET" }),
 
@@ -230,12 +310,34 @@ export const adminApi = {
     const params = new URLSearchParams();
     if (opts.status) params.set("status", opts.status);
     if (opts.enterprise === true || opts.enterprise === 1) params.set("enterprise", "1");
+    if (opts.search) params.set("search", opts.search);
+    if (opts.source) params.set("source", opts.source);
+    if (opts.priority) params.set("priority", opts.priority);
+    if (opts.segment) params.set("segment", opts.segment);
+    if (opts.sort) params.set("sort", opts.sort);
+    if (opts.follow_up) params.set("follow_up", opts.follow_up);
+    if (opts.page != null) params.set("page", String(opts.page));
+    if (opts.limit != null) params.set("limit", String(opts.limit));
     const qs = params.toString();
     return adminFetch(`/api/admin/leads${qs ? `?${qs}` : ""}`, { method: "GET" });
   },
+  leadsSummary: (period = "30d") =>
+    adminFetch(`/api/admin/leads/summary?period=${encodeURIComponent(String(period).replace(/d$/i, ""))}`, { method: "GET" }),
+  leadsStats: (period = "30d") =>
+    adminFetch(`/api/admin/leads/stats?period=${encodeURIComponent(String(period).replace(/d$/i, ""))}`, { method: "GET" }),
   leadGet: (leadId) => adminFetch(`/api/admin/leads/${leadId}`, { method: "GET" }),
+  leadCreate: (body) =>
+    adminFetch("/api/admin/leads", { method: "POST", body: JSON.stringify(body || {}) }),
   leadPatch: (leadId, body) =>
     adminFetch(`/api/admin/leads/${leadId}`, { method: "PATCH", body: JSON.stringify(body) }),
+  leadSetStatus: (leadId, body) =>
+    adminFetch(`/api/admin/leads/${leadId}/status`, { method: "PATCH", body: JSON.stringify(body || {}) }),
+  leadFollowUp: (leadId, body) =>
+    adminFetch(`/api/admin/leads/${leadId}/follow-up`, { method: "POST", body: JSON.stringify(body || {}) }),
+  leadMarkLost: (leadId, body) =>
+    adminFetch(`/api/admin/leads/${leadId}/mark-lost`, { method: "POST", body: JSON.stringify(body || {}) }),
+  leadConvert: (leadId, body) =>
+    adminFetch(`/api/admin/leads/${leadId}/convert`, { method: "POST", body: JSON.stringify(body || {}) }),
   sendLeadOnboardingLink: (leadId, body) =>
     adminFetch(`/api/admin/leads/${leadId}/send-onboarding-link`, {
       method: "POST",
@@ -246,9 +348,36 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  patientRequests: (opts = {}) => {
+    const params = new URLSearchParams();
+    if (opts.tenantId != null) params.set("tenant_id", String(opts.tenantId));
+    if (opts.status) params.set("status", opts.status);
+    if (opts.limit != null) params.set("limit", String(opts.limit));
+    const qs = params.toString();
+    return adminFetch(`/api/admin/patient-requests${qs ? `?${qs}` : ""}`, { method: "GET" });
+  },
+  /** Même réponse que patientRequests mais tenant dans le chemin REST. */
+  tenantPatientRequests: (tenantId, opts = {}) =>
+    adminFetch(buildTenantPatientRequestsPath(tenantId, opts), { method: "GET" }),
+  patientRequestDetail: (requestId, opts = {}) => {
+    const params = new URLSearchParams();
+    if (opts.tenantId != null) params.set("tenant_id", String(opts.tenantId));
+    const qs = params.toString();
+    return adminFetch(`/api/admin/patient-requests/${encodeURIComponent(requestId)}${qs ? `?${qs}` : ""}`, { method: "GET" });
+  },
+  patchPatientRequest: (requestId, body, opts = {}) => {
+    const params = new URLSearchParams();
+    if (opts.tenantId != null) params.set("tenant_id", String(opts.tenantId));
+    const qs = params.toString();
+    return adminFetch(`/api/admin/patient-requests/${encodeURIComponent(requestId)}${qs ? `?${qs}` : ""}`, {
+      method: "PATCH",
+      body: JSON.stringify(body || {}),
+    });
+  },
 };
 
-// ── Exports nommés pour UWIDashboard ───────────────────────────────────────────
+// ── Exports nommes (consommes par AdminDashboard) ────────────────────────────
 export const getDashboardPayload = (windowDays = 30) =>
   adminFetch(`/api/admin/stats/dashboard-payload?window_days=${windowDays}`);
 export const getRecentCalls = (days = 1, limit = 5) =>
@@ -287,6 +416,19 @@ export const getStripePortalLink = (tenantId) =>
   adminFetch(`/api/admin/tenants/${tenantId}/billing/portal-link`, { method: "POST" });
 export const getTenantInvoices = (tenantId) =>
   adminFetch(`/api/admin/tenants/${tenantId}/billing/invoices`);
+
+export const getAdminDashboardSummary = (period = "30d") =>
+  adminFetch(`/api/admin/dashboard/summary?period=${encodeURIComponent(period)}`);
+export const getAdminDashboardActionItems = ({ period = "30d", severity = "all" } = {}) => {
+  const params = new URLSearchParams();
+  params.set("period", period);
+  if (severity && severity !== "all") params.set("severity", severity);
+  return adminFetch(`/api/admin/dashboard/action-items?${params.toString()}`);
+};
+export const getAdminDashboardTenantWatchlist = (period = "30d") =>
+  adminFetch(`/api/admin/dashboard/tenant-watchlist?period=${encodeURIComponent(period)}`);
+export const getAdminDashboardLeads = (period = "7d") =>
+  adminFetch(`/api/admin/dashboard/new-leads?period=${encodeURIComponent(period)}`);
 
 // ── Tenant detail page ────────────────────────────────────────────────────────
 export const getTenant = (tenantId) => adminFetch(`/api/admin/tenants/${tenantId}`);

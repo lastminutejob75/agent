@@ -9,12 +9,14 @@ import json
 import logging
 import os
 import re
+from uuid import uuid4
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import bcrypt
 import jwt
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, UploadFile, File
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from backend.auth_pg import pg_get_tenant_user_by_id, pg_update_password
@@ -23,16 +25,24 @@ from backend import config
 from backend.config import get_service_account_email
 from backend.db import (
     cancel_booking_sqlite,
+    delete_patient_note,
+    delete_patient_document,
     ensure_tenant_config,
     get_cabinet_clients_by_phones,
     find_slot_id_by_datetime,
     get_cabinet_client_by_phone,
     get_call_followup,
     get_conn,
+    insert_patient_note,
+    insert_patient_document,
+    list_cabinet_clients,
     list_free_slots,
     list_call_followups,
+    list_patient_notes,
+    list_patient_documents,
     normalize_phone_number,
     reschedule_booking_atomic,
+    update_patient_fields,
     upsert_cabinet_client,
     upsert_call_followup,
 )
@@ -43,12 +53,38 @@ from backend.routes.admin import (
     _get_calls_list,
     _get_dashboard_snapshot,
     _get_kpis_daily,
+    _get_stripe_price_ids_for_plan,
     _get_quota_used_minutes,
     _get_rgpd_extended,
     _get_technical_status,
     _get_tenant_detail,
 )
-from backend.services.email_service import send_agenda_contact_request_email
+from backend.billing_pg import (
+    get_billing_plans,
+    get_plan_included_minutes,
+    get_plan_overage_rate,
+    get_tenant_billing,
+    upsert_billing_from_subscription,
+)
+from backend.cabinet_profile_pg import (
+    create_appointment_reason as pg_create_appointment_reason,
+    disable_appointment_reason as pg_disable_appointment_reason,
+    get_assistant_settings as pg_get_assistant_settings,
+    get_availability_settings as pg_get_availability_settings,
+    get_booking_rules as pg_get_booking_rules,
+    get_opening_hours as pg_get_opening_hours,
+    get_profile as pg_get_profile,
+    list_appointment_reasons as pg_list_appointment_reasons,
+    replace_opening_hours as pg_replace_opening_hours,
+    update_appointment_reason as pg_update_appointment_reason,
+    upsert_assistant_settings as pg_upsert_assistant_settings,
+    upsert_availability_settings as pg_upsert_availability_settings,
+    upsert_booking_rules as pg_upsert_booking_rules,
+    upsert_profile as pg_upsert_profile,
+    sync_normalized_from_params as pg_sync_normalized_from_params,
+    sync_opening_hours_from_booking_rules as pg_sync_opening_hours_from_booking_rules,
+)
+from backend.services.email_service import send_agenda_contact_request_email, send_patient_document_email
 from backend.tenant_config import (
     DEFAULT_FAQ,
     derive_horaires_text,
@@ -218,6 +254,95 @@ def _parse_dict_value(value: Any) -> Dict[str, Any]:
         except Exception:
             return {}
     return {}
+
+
+DAY_ORDER = [
+    ("monday", "Lundi"),
+    ("tuesday", "Mardi"),
+    ("wednesday", "Mercredi"),
+    ("thursday", "Jeudi"),
+    ("friday", "Vendredi"),
+    ("saturday", "Samedi"),
+    ("sunday", "Dimanche"),
+]
+
+
+def _slugify(value: str) -> str:
+    raw = (value or "").strip().lower()
+    if not raw:
+        return ""
+    raw = re.sub(r"[^\w\s-]", "", raw, flags=re.UNICODE)
+    return re.sub(r"[-\s]+", "-", raw).strip("-")
+
+
+def _build_default_opening_hours(params: Dict[str, Any]) -> List[Dict[str, Any]]:
+    booking_days = params.get("booking_days") or [0, 1, 2, 3, 4]
+    if isinstance(booking_days, str):
+        try:
+            booking_days = json.loads(booking_days)
+        except Exception:
+            booking_days = [0, 1, 2, 3, 4]
+    day_set = {int(d) for d in booking_days if str(d).strip().isdigit()}
+    start_hour = int(params.get("booking_start_hour") or 9)
+    end_hour = int(params.get("booking_end_hour") or 18)
+    start = f"{start_hour:02d}:00"
+    end = f"{end_hour:02d}:00"
+    rows: List[Dict[str, Any]] = []
+    for idx, (day_key, _label) in enumerate(DAY_ORDER):
+        is_open = idx in day_set
+        rows.append(
+            {
+                "day": day_key,
+                "is_open": is_open,
+                "morning_start": start if is_open else "",
+                "morning_end": "12:30" if is_open else "",
+                "afternoon_start": "14:00" if is_open else "",
+                "afternoon_end": end if is_open else "",
+            }
+        )
+    return rows
+
+
+def _normalize_opening_hours_payload(payload: Any) -> List[Dict[str, Any]]:
+    if not isinstance(payload, list):
+        return []
+    by_key: Dict[str, Dict[str, Any]] = {}
+    for row in payload:
+        if not isinstance(row, dict):
+            continue
+        day = str(row.get("day") or "").strip().lower()
+        if day not in {d for d, _ in DAY_ORDER}:
+            continue
+        by_key[day] = {
+            "day": day,
+            "is_open": _is_truthy(row.get("is_open")),
+            "morning_start": str(row.get("morning_start") or "").strip(),
+            "morning_end": str(row.get("morning_end") or "").strip(),
+            "afternoon_start": str(row.get("afternoon_start") or "").strip(),
+            "afternoon_end": str(row.get("afternoon_end") or "").strip(),
+        }
+    return [by_key.get(day, {"day": day, "is_open": False, "morning_start": "", "morning_end": "", "afternoon_start": "", "afternoon_end": ""}) for day, _ in DAY_ORDER]
+
+
+def _normalize_faq_items(value: Any) -> List[Dict[str, Any]]:
+    items = value if isinstance(value, list) else []
+    out: List[Dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        q = str(item.get("question") or "").strip()
+        a = str(item.get("answer") or "").strip()
+        if not q and not a:
+            continue
+        out.append(
+            {
+                "id": str(item.get("id") or uuid4().hex),
+                "question": q,
+                "answer": a,
+                "enabled": _is_truthy(item.get("enabled", True)),
+            }
+        )
+    return out
 
 
 def _get_zoneinfo(tz_name: str):
@@ -1037,11 +1162,82 @@ class TenantCallFollowupBody(BaseModel):
 class TenantCallPatientBody(BaseModel):
     validated_name: str
     raw_name: str = ""
+    patient_phone: str = ""
 
 
 class TenantHandoffUpdateBody(BaseModel):
     status: Optional[str] = Field(default=None, max_length=32)
     notes: Optional[str] = Field(default=None, max_length=1000)
+
+
+class TenantProfileBody(BaseModel):
+    practitioner_name: Optional[str] = None
+    cabinet_name: Optional[str] = None
+    specialty: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    address_line: Optional[str] = None
+    postal_code: Optional[str] = None
+    city: Optional[str] = None
+    website_url: Optional[str] = None
+    languages: Optional[List[str]] = None
+    accepts_new_patients: Optional[bool] = None
+    practitioner_photo_url: Optional[str] = None
+    public_slug: Optional[str] = None
+
+
+class OpeningHoursBody(BaseModel):
+    opening_hours: List[Dict[str, Any]]
+
+
+class AvailabilitySettingsBody(BaseModel):
+    temporary_closure_enabled: Optional[bool] = None
+    temporary_closure_start: Optional[str] = None
+    temporary_closure_end: Optional[str] = None
+    temporary_closure_message: Optional[str] = None
+
+
+class BookingRulesBody(BaseModel):
+    default_appointment_duration_minutes: Optional[int] = None
+    minimum_booking_notice_hours: Optional[int] = None
+    accepts_new_patients: Optional[bool] = None
+    appointment_reschedule_allowed: Optional[bool] = None
+    appointment_reschedule_notice_hours: Optional[int] = None
+    appointment_cancel_allowed: Optional[bool] = None
+    appointment_cancel_notice_hours: Optional[int] = None
+    emergency_instruction: Optional[str] = None
+    new_patient_instruction: Optional[str] = None
+    booking_notes: Optional[str] = None
+
+
+class AppointmentReasonBody(BaseModel):
+    label: str
+    duration_minutes: int = 30
+    enabled: bool = True
+    description: str = ""
+    allowed_for_new_patients: Optional[bool] = None
+
+
+class AssistantSettingsBody(BaseModel):
+    assistant_name: Optional[str] = None
+    welcome_message: Optional[str] = None
+    documents_to_bring: Optional[str] = None
+    access_instructions: Optional[str] = None
+    payment_methods: Optional[str] = None
+    parking_info: Optional[str] = None
+    pmr_access: Optional[str] = None
+    sensitive_medical_instruction: Optional[str] = None
+    escalation_instruction: Optional[str] = None
+    human_handoff_instruction: Optional[str] = None
+    faq_items: Optional[List[Dict[str, Any]]] = None
+
+
+class PreviewMessageBody(BaseModel):
+    message: str = Field(default="", max_length=2000)
+
+
+class BillingChangePlanBody(BaseModel):
+    plan_key: str
 
 
 @router.get("/me")
@@ -1126,6 +1322,619 @@ def tenant_me(auth: dict = Depends(require_tenant_auth)):
         "onboarding_steps": onboarding_steps,
         "onboarding_completed": onboarding_completed,
         "faq_items_count": _count_active_faq_items(faq),
+    }
+
+
+@router.get("/profile-summary")
+def tenant_profile_summary(auth: dict = Depends(require_tenant_auth)):
+    tenant_id = auth["tenant_id"]
+    detail = _get_tenant_me_detail(tenant_id)
+    if not detail:
+        raise HTTPException(404, "Tenant not found")
+    params = detail.get("params") or {}
+    pg_profile = pg_get_profile(tenant_id) or {}
+    pg_opening = pg_get_opening_hours(tenant_id) or []
+    pg_rules = pg_get_booking_rules(tenant_id) or {}
+    pg_assistant = pg_get_assistant_settings(tenant_id) or {}
+    tech = _get_technical_status(tenant_id) or {}
+    calendar_connected = (tech.get("calendar_status") or "") == "connected"
+    billing = get_tenant_billing(tenant_id) or {}
+
+    now = datetime.utcnow()
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if now.month < 12:
+        month_end = now.replace(month=now.month + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:
+        month_end = now.replace(year=now.year + 1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    used_minutes = int(round(_get_quota_used_minutes(tenant_id, month_start.strftime("%Y-%m-%d %H:%M:%S"), month_end.strftime("%Y-%m-%d %H:%M:%S")), 0))
+
+    checks = {
+        "identity": bool((pg_profile.get("cabinet_name") or params.get("business_name") or params.get("practitioner_name") or detail.get("name")) and (pg_profile.get("email") or params.get("contact_email")) and (pg_profile.get("phone") or params.get("phone_number"))),
+        "horaires": bool(pg_opening or params.get("opening_hours_json") or params.get("booking_days")),
+        "agenda": calendar_connected,
+        "rules": bool(pg_rules.get("default_appointment_duration_minutes") or params.get("default_appointment_duration_minutes") or params.get("booking_duration_minutes")),
+        "clara": bool(pg_assistant.get("welcome_message") or pg_assistant.get("sensitive_medical_instruction") or params.get("welcome_message") or params.get("sensitive_medical_instruction")),
+        "billing": bool(billing.get("plan_key") or params.get("plan_key")),
+    }
+    score = int(round((sum(1 for ok in checks.values() if ok) / len(checks)) * 100))
+
+    missing_items: List[Dict[str, Any]] = []
+    if not (pg_rules.get("new_patient_instruction") or params.get("new_patient_instruction")):
+        missing_items.append({"key": "new_patient_instruction", "label": "Ajouter les consignes pour nouveaux patients", "severity": "warning"})
+    if not pg_opening and not params.get("opening_hours_json") and not params.get("booking_days"):
+        missing_items.append({"key": "opening_hours", "label": "Completer les horaires du cabinet", "severity": "warning"})
+    if not calendar_connected:
+        missing_items.append({"key": "calendar", "label": "Reconnecter l'agenda Google", "severity": "warning"})
+
+    return {
+        "profile_completion_percentage": score,
+        "calendar_connected": calendar_connected,
+        "billing_status": (billing.get("billing_status") or "unknown"),
+        "current_plan": (billing.get("plan_key") or params.get("plan_key") or "growth"),
+        "used_minutes_current_month": used_minutes,
+        "missing_items": missing_items,
+    }
+
+
+@router.get("/profile")
+def tenant_get_profile(auth: dict = Depends(require_tenant_auth)):
+    tenant_id = auth["tenant_id"]
+    detail = _get_tenant_me_detail(tenant_id)
+    if not detail:
+        raise HTTPException(404, "Tenant not found")
+    params = detail.get("params") or {}
+    pg_profile = pg_get_profile(tenant_id) or {}
+    public_slug = (params.get("public_slug") or "").strip() or _slugify(str(params.get("business_name") or detail.get("name") or "cabinet"))
+    languages = _parse_string_list(params.get("languages"))
+    if pg_profile:
+        public_slug = pg_profile.get("public_slug") or public_slug
+        if pg_profile.get("languages"):
+            languages = pg_profile.get("languages")
+    return {
+        "tenant_id": tenant_id,
+        "practitioner_name": pg_profile.get("practitioner_name") or params.get("practitioner_name") or params.get("business_name") or detail.get("name") or "",
+        "cabinet_name": pg_profile.get("cabinet_name") or params.get("business_name") or detail.get("name") or "",
+        "specialty": pg_profile.get("specialty") or params.get("specialty_label") or "",
+        "phone": pg_profile.get("phone") or params.get("phone_number") or "",
+        "email": pg_profile.get("email") or params.get("contact_email") or "",
+        "address_line": pg_profile.get("address_line") or params.get("address_line1") or "",
+        "postal_code": pg_profile.get("postal_code") or params.get("postal_code") or "",
+        "city": pg_profile.get("city") or params.get("city") or "",
+        "website_url": pg_profile.get("website_url") or params.get("website_url") or "",
+        "languages": languages,
+        "accepts_new_patients": bool(pg_profile.get("accepts_new_patients")) if "accepts_new_patients" in pg_profile else _is_truthy(params.get("accepts_new_patients", True)),
+        "public_page_url": f"/praticiens/{public_slug}" if public_slug else "",
+        "practitioner_photo_url": pg_profile.get("practitioner_photo_url") or params.get("practitioner_photo_url") or "",
+    }
+
+
+@router.patch("/profile")
+def tenant_patch_profile(body: TenantProfileBody, auth: dict = Depends(require_tenant_auth)):
+    tenant_id = auth["tenant_id"]
+    payload = body.model_dump(exclude_none=True)
+    params: Dict[str, Any] = {}
+    mapping = {
+        "practitioner_name": "practitioner_name",
+        "cabinet_name": "business_name",
+        "specialty": "specialty_label",
+        "phone": "phone_number",
+        "email": "contact_email",
+        "address_line": "address_line1",
+        "postal_code": "postal_code",
+        "city": "city",
+        "website_url": "website_url",
+        "accepts_new_patients": "accepts_new_patients",
+        "practitioner_photo_url": "practitioner_photo_url",
+        "public_slug": "public_slug",
+    }
+    for source_key, target_key in mapping.items():
+        if source_key in payload:
+            params[target_key] = payload[source_key]
+    if "languages" in payload:
+        params["languages"] = [str(item).strip() for item in (payload.get("languages") or []) if str(item).strip()]
+    if payload.get("cabinet_name"):
+        pg_update_tenant_name(tenant_id, str(payload.get("cabinet_name")).strip())
+    pg_payload = {
+        "practitioner_name": payload.get("practitioner_name"),
+        "cabinet_name": payload.get("cabinet_name"),
+        "specialty": payload.get("specialty"),
+        "phone": payload.get("phone"),
+        "email": payload.get("email"),
+        "address_line": payload.get("address_line"),
+        "postal_code": payload.get("postal_code"),
+        "city": payload.get("city"),
+        "website_url": payload.get("website_url"),
+        "languages": payload.get("languages"),
+        "accepts_new_patients": payload.get("accepts_new_patients"),
+        "practitioner_photo_url": payload.get("practitioner_photo_url"),
+        "public_slug": payload.get("public_slug"),
+    }
+    pg_upsert_profile(tenant_id, pg_payload)
+    if params:
+        ok = pg_update_tenant_params(tenant_id, params)
+        if not ok:
+            raise HTTPException(500, "Failed to update profile")
+    return {"ok": True}
+
+
+@router.get("/opening-hours")
+def tenant_get_opening_hours(auth: dict = Depends(require_tenant_auth)):
+    tenant_id = auth["tenant_id"]
+    detail = _get_tenant_me_detail(tenant_id)
+    if not detail:
+        raise HTTPException(404, "Tenant not found")
+    params = detail.get("params") or {}
+    opening = pg_get_opening_hours(tenant_id) or _normalize_opening_hours_payload(_parse_dict_value(params.get("opening_hours_json")).get("opening_hours"))
+    if not opening:
+        opening = _build_default_opening_hours(params)
+    return {"opening_hours": opening}
+
+
+@router.patch("/opening-hours")
+def tenant_patch_opening_hours(body: OpeningHoursBody, auth: dict = Depends(require_tenant_auth)):
+    tenant_id = auth["tenant_id"]
+    opening = _normalize_opening_hours_payload(body.opening_hours)
+    if not opening:
+        raise HTTPException(400, "opening_hours invalide")
+    open_indexes = [idx for idx, row in enumerate(opening) if row.get("is_open")]
+    start_hour = min([to_hour for to_hour in [int(str(row.get("morning_start") or "09:00").split(":")[0]) for row in opening if row.get("is_open")] or [9]])
+    end_hour = max([to_hour for to_hour in [int(str(row.get("afternoon_end") or row.get("morning_end") or "18:00").split(":")[0]) for row in opening if row.get("is_open")] or [18]])
+    payload = {
+        "opening_hours_json": {"opening_hours": opening},
+        "booking_days": open_indexes,
+        "booking_start_hour": start_hour,
+        "booking_end_hour": end_hour,
+    }
+    pg_replace_opening_hours(tenant_id, opening)
+    if not pg_update_tenant_params(tenant_id, payload):
+        raise HTTPException(500, "Failed to update opening hours")
+    return {"ok": True, "opening_hours": opening}
+
+
+@router.get("/availability-settings")
+def tenant_get_availability_settings(auth: dict = Depends(require_tenant_auth)):
+    tenant_id = auth["tenant_id"]
+    detail = _get_tenant_me_detail(tenant_id)
+    if not detail:
+        raise HTTPException(404, "Tenant not found")
+    params = detail.get("params") or {}
+    pg_row = pg_get_availability_settings(tenant_id) or {}
+    return {
+        "temporary_closure_enabled": bool(pg_row.get("temporary_closure_enabled")) if "temporary_closure_enabled" in pg_row else _is_truthy(params.get("temporary_closure_enabled")),
+        "temporary_closure_start": pg_row.get("temporary_closure_start") or params.get("temporary_closure_start") or "",
+        "temporary_closure_end": pg_row.get("temporary_closure_end") or params.get("temporary_closure_end") or "",
+        "temporary_closure_message": pg_row.get("temporary_closure_message") or params.get("temporary_closure_message") or "",
+    }
+
+
+@router.patch("/availability-settings")
+def tenant_patch_availability_settings(body: AvailabilitySettingsBody, auth: dict = Depends(require_tenant_auth)):
+    tenant_id = auth["tenant_id"]
+    payload = body.model_dump(exclude_none=True)
+    pg_upsert_availability_settings(tenant_id, payload)
+    if payload and not pg_update_tenant_params(tenant_id, payload):
+        raise HTTPException(500, "Failed to update availability settings")
+    return {"ok": True}
+
+
+@router.get("/booking-rules")
+def tenant_get_booking_rules(auth: dict = Depends(require_tenant_auth)):
+    tenant_id = auth["tenant_id"]
+    detail = _get_tenant_me_detail(tenant_id)
+    if not detail:
+        raise HTTPException(404, "Tenant not found")
+    params = detail.get("params") or {}
+    pg_rules = pg_get_booking_rules(tenant_id) or {}
+    return {
+        "default_appointment_duration_minutes": int(pg_rules.get("default_appointment_duration_minutes") or params.get("default_appointment_duration_minutes") or params.get("booking_duration_minutes") or 30),
+        "minimum_booking_notice_hours": int(pg_rules.get("minimum_booking_notice_hours") or params.get("minimum_booking_notice_hours") or 24),
+        "accepts_new_patients": bool(pg_rules.get("accepts_new_patients")) if "accepts_new_patients" in pg_rules else _is_truthy(params.get("accepts_new_patients", True)),
+        "appointment_reschedule_allowed": bool(pg_rules.get("appointment_reschedule_allowed")) if "appointment_reschedule_allowed" in pg_rules else _is_truthy(params.get("appointment_reschedule_allowed", True)),
+        "appointment_reschedule_notice_hours": int(pg_rules.get("appointment_reschedule_notice_hours") or params.get("appointment_reschedule_notice_hours") or 24),
+        "appointment_cancel_allowed": bool(pg_rules.get("appointment_cancel_allowed")) if "appointment_cancel_allowed" in pg_rules else _is_truthy(params.get("appointment_cancel_allowed", True)),
+        "appointment_cancel_notice_hours": int(pg_rules.get("appointment_cancel_notice_hours") or params.get("appointment_cancel_notice_hours") or 24),
+        "emergency_instruction": pg_rules.get("emergency_instruction") or params.get("emergency_instruction") or "",
+        "new_patient_instruction": pg_rules.get("new_patient_instruction") or params.get("new_patient_instruction") or "",
+        "booking_notes": pg_rules.get("booking_notes") or params.get("booking_notes") or "",
+    }
+
+
+@router.patch("/booking-rules")
+def tenant_patch_booking_rules(body: BookingRulesBody, auth: dict = Depends(require_tenant_auth)):
+    tenant_id = auth["tenant_id"]
+    payload = body.model_dump(exclude_none=True)
+    pg_upsert_booking_rules(tenant_id, payload)
+    if payload and not pg_update_tenant_params(tenant_id, payload):
+        raise HTTPException(500, "Failed to update booking rules")
+    return {"ok": True}
+
+
+def _get_appointment_reasons_from_params(params: Dict[str, Any]) -> List[Dict[str, Any]]:
+    raw = params.get("appointment_reasons_json")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            raw = []
+    if not isinstance(raw, list):
+        raw = []
+    out: List[Dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        out.append(
+            {
+                "id": str(item.get("id") or uuid4().hex),
+                "label": str(item.get("label") or "").strip(),
+                "duration_minutes": int(item.get("duration_minutes") or 30),
+                "description": str(item.get("description") or "").strip(),
+                "enabled": _is_truthy(item.get("enabled", True)),
+                "allowed_for_new_patients": _is_truthy(item.get("allowed_for_new_patients", True)),
+            }
+        )
+    return [item for item in out if item["label"]]
+
+
+@router.get("/appointment-reasons")
+def tenant_get_appointment_reasons(auth: dict = Depends(require_tenant_auth)):
+    tenant_id = auth["tenant_id"]
+    detail = _get_tenant_me_detail(tenant_id)
+    if not detail:
+        raise HTTPException(404, "Tenant not found")
+    items = pg_list_appointment_reasons(tenant_id) or _get_appointment_reasons_from_params(detail.get("params") or {})
+    return {"items": items}
+
+
+@router.post("/appointment-reasons")
+def tenant_create_appointment_reason(body: AppointmentReasonBody, auth: dict = Depends(require_tenant_auth)):
+    tenant_id = auth["tenant_id"]
+    detail = _get_tenant_me_detail(tenant_id)
+    if not detail:
+        raise HTTPException(404, "Tenant not found")
+    created = {
+        "id": uuid4().hex,
+        "label": body.label.strip(),
+        "duration_minutes": int(body.duration_minutes or 30),
+        "description": body.description.strip(),
+        "enabled": bool(body.enabled),
+        "allowed_for_new_patients": True if body.allowed_for_new_patients is None else bool(body.allowed_for_new_patients),
+    }
+    pg_created = pg_create_appointment_reason(tenant_id, created)
+    if pg_created:
+        created = pg_created
+    items = _get_appointment_reasons_from_params(detail.get("params") or {})
+    items.append(created)
+    if not pg_update_tenant_params(tenant_id, {"appointment_reasons_json": items}):
+        raise HTTPException(500, "Failed to update appointment reasons")
+    return created
+
+
+@router.patch("/appointment-reasons/{reason_id}")
+def tenant_patch_appointment_reason(reason_id: str, body: Dict[str, Any], auth: dict = Depends(require_tenant_auth)):
+    tenant_id = auth["tenant_id"]
+    detail = _get_tenant_me_detail(tenant_id)
+    if not detail:
+        raise HTTPException(404, "Tenant not found")
+    pg_updated = pg_update_appointment_reason(tenant_id, reason_id, body)
+    items = _get_appointment_reasons_from_params(detail.get("params") or {})
+    updated = None
+    for item in items:
+        if item["id"] != reason_id:
+            continue
+        for key in ("label", "description"):
+            if key in body and body[key] is not None:
+                item[key] = str(body[key]).strip()
+        for key in ("enabled", "allowed_for_new_patients"):
+            if key in body and body[key] is not None:
+                item[key] = bool(body[key])
+        if "duration_minutes" in body and body["duration_minutes"] is not None:
+            item["duration_minutes"] = int(body["duration_minutes"])
+        updated = item
+        break
+    if not updated and pg_updated:
+        updated = pg_updated
+    if not updated:
+        raise HTTPException(404, "Reason not found")
+    if not pg_update_tenant_params(tenant_id, {"appointment_reasons_json": items}):
+        raise HTTPException(500, "Failed to update appointment reasons")
+    return updated
+
+
+@router.delete("/appointment-reasons/{reason_id}")
+def tenant_delete_appointment_reason(reason_id: str, auth: dict = Depends(require_tenant_auth)):
+    tenant_id = auth["tenant_id"]
+    detail = _get_tenant_me_detail(tenant_id)
+    if not detail:
+        raise HTTPException(404, "Tenant not found")
+    pg_disable_appointment_reason(tenant_id, reason_id)
+    items = _get_appointment_reasons_from_params(detail.get("params") or {})
+    found = False
+    for item in items:
+        if item["id"] == reason_id:
+            item["enabled"] = False
+            found = True
+            break
+    if not found:
+        raise HTTPException(404, "Reason not found")
+    if not pg_update_tenant_params(tenant_id, {"appointment_reasons_json": items}):
+        raise HTTPException(500, "Failed to update appointment reasons")
+    return {"ok": True}
+
+
+@router.get("/assistant-settings")
+def tenant_get_assistant_settings(auth: dict = Depends(require_tenant_auth)):
+    tenant_id = auth["tenant_id"]
+    detail = _get_tenant_me_detail(tenant_id)
+    if not detail:
+        raise HTTPException(404, "Tenant not found")
+    params = detail.get("params") or {}
+    pg_settings = pg_get_assistant_settings(tenant_id) or {}
+    return {
+        "assistant_name": pg_settings.get("assistant_name") or params.get("assistant_name") or "Clara",
+        "welcome_message": pg_settings.get("welcome_message") or params.get("welcome_message") or "",
+        "documents_to_bring": pg_settings.get("documents_to_bring") or params.get("documents_to_bring") or "",
+        "access_instructions": pg_settings.get("access_instructions") or params.get("access_instructions") or "",
+        "payment_methods": pg_settings.get("payment_methods") or params.get("payment_methods") or "",
+        "parking_info": pg_settings.get("parking_info") or params.get("parking_info") or "",
+        "pmr_access": pg_settings.get("pmr_access") or params.get("pmr_access") or "",
+        "sensitive_medical_instruction": pg_settings.get("sensitive_medical_instruction") or params.get("sensitive_medical_instruction") or "Clara ne donne jamais d'avis médical.",
+        "escalation_instruction": pg_settings.get("escalation_instruction") or params.get("escalation_instruction") or "",
+        "human_handoff_instruction": pg_settings.get("human_handoff_instruction") or params.get("human_handoff_instruction") or "",
+        "faq_items": _normalize_faq_items(pg_settings.get("faq_items") if pg_settings else params.get("faq_items_json")),
+    }
+
+
+@router.patch("/assistant-settings")
+def tenant_patch_assistant_settings(body: AssistantSettingsBody, auth: dict = Depends(require_tenant_auth)):
+    tenant_id = auth["tenant_id"]
+    payload = body.model_dump(exclude_none=True)
+    if "faq_items" in payload:
+        faq_items = _normalize_faq_items(payload.get("faq_items"))
+        payload["faq_items_json"] = faq_items
+        payload.pop("faq_items", None)
+    pg_payload = dict(payload)
+    if "faq_items_json" in pg_payload:
+        pg_payload["faq_items"] = pg_payload.pop("faq_items_json")
+    pg_upsert_assistant_settings(tenant_id, pg_payload)
+    if payload and not pg_update_tenant_params(tenant_id, payload):
+        raise HTTPException(500, "Failed to update assistant settings")
+    return {"ok": True}
+
+
+@router.post("/assistant-preview")
+def tenant_assistant_preview(body: PreviewMessageBody, auth: dict = Depends(require_tenant_auth)):
+    tenant_id = auth["tenant_id"]
+    detail = _get_tenant_me_detail(tenant_id)
+    if not detail:
+        raise HTTPException(404, "Tenant not found")
+    params = detail.get("params") or {}
+    text = (body.message or "").strip().lower()
+    used_sources = ["assistant_settings"]
+    if any(token in text for token in ["douleur", "thoracique", "urgence", "essoufflement", "malaise"]):
+        answer = params.get("sensitive_medical_instruction") or "En cas de symptomes inquietants, veuillez appeler le 15 ou le 112 immediatement."
+        used_sources.append("sensitive_medical_instruction")
+    elif "samedi" in text:
+        opening = _normalize_opening_hours_payload(_parse_dict_value(params.get("opening_hours_json")).get("opening_hours")) or _build_default_opening_hours(params)
+        sat = next((row for row in opening if row.get("day") == "saturday"), {"is_open": False})
+        answer = "Le cabinet est ouvert le samedi." if sat.get("is_open") else "Le cabinet est ferme le samedi."
+        used_sources.append("opening_hours")
+    elif "document" in text:
+        answer = params.get("documents_to_bring") or "Pensez a apporter votre carte Vitale, ordonnance et vos derniers examens."
+        used_sources.append("documents_to_bring")
+    else:
+        answer = params.get("welcome_message") or "Bonjour, vous etes bien au cabinet. Je suis Clara, comment puis-je vous aider ?"
+    return {"answer": answer, "used_sources": used_sources}
+
+
+@router.post("/test-booking-rule")
+def tenant_test_booking_rule(body: PreviewMessageBody, auth: dict = Depends(require_tenant_auth)):
+    tenant_id = auth["tenant_id"]
+    detail = _get_tenant_me_detail(tenant_id)
+    if not detail:
+        raise HTTPException(404, "Tenant not found")
+    params = detail.get("params") or {}
+    reasons = _get_appointment_reasons_from_params(params)
+    msg = (body.message or "").strip().lower()
+    detected = next((reason for reason in reasons if reason.get("enabled") and reason.get("label", "").lower() in msg), None)
+    duration = int((detected or {}).get("duration_minutes") or params.get("default_appointment_duration_minutes") or params.get("booking_duration_minutes") or 30)
+    allowed = bool(detected) or bool(reasons) is False
+    return {
+        "allowed": allowed,
+        "detected_reason": (detected or {}).get("label"),
+        "duration_minutes": duration,
+        "simulated_answer": "Bien sur, je peux vous proposer un rendez-vous selon les disponibilites du cabinet." if allowed else "Je ne peux pas confirmer ce type de demande avec les regles actuelles.",
+    }
+
+
+@router.get("/calendar/status")
+def tenant_calendar_status(auth: dict = Depends(require_tenant_auth)):
+    tenant_id = auth["tenant_id"]
+    tech = _get_technical_status(tenant_id) or {}
+    connected = (tech.get("calendar_status") or "") == "connected"
+    return {
+        "connected": connected,
+        "email": tech.get("calendar_id"),
+        "last_sync_at": tech.get("last_event_at"),
+        "permission_status": "ok" if connected else "missing",
+    }
+
+
+@router.get("/billing/summary")
+def tenant_billing_summary(auth: dict = Depends(require_tenant_auth)):
+    tenant_id = auth["tenant_id"]
+    billing = get_tenant_billing(tenant_id) or {}
+    plan_key = (billing.get("plan_key") or "growth").strip().lower()
+    included = int(get_plan_included_minutes(plan_key) or 0)
+    overage_rate = float(get_plan_overage_rate(plan_key) or 0)
+    now = datetime.utcnow()
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if now.month < 12:
+        month_end = now.replace(month=now.month + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:
+        month_end = now.replace(year=now.year + 1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    used_minutes = int(round(_get_quota_used_minutes(tenant_id, month_start.strftime("%Y-%m-%d %H:%M:%S"), month_end.strftime("%Y-%m-%d %H:%M:%S")), 0))
+    usage_pct = int(round((used_minutes / included) * 100)) if included > 0 else 0
+    overage_minutes = max(0, used_minutes - included) if included > 0 else 0
+    overage_cost = round(overage_minutes * overage_rate, 2)
+    monthly_prices = {"starter": 99, "growth": 149, "pro": 199}
+    plans = get_billing_plans()
+    return {
+        "current_plan": plan_key,
+        "monthly_price": monthly_prices.get(plan_key, 0),
+        "included_minutes": included,
+        "used_minutes_current_month": used_minutes,
+        "usage_percentage": usage_pct,
+        "estimated_overage_minutes": overage_minutes,
+        "estimated_overage_cost": overage_cost,
+        "billing_status": billing.get("billing_status") or "unknown",
+        "payment_method_brand": billing.get("payment_method_brand") or "",
+        "payment_method_last4": billing.get("payment_method_last4") or "",
+        "next_invoice_date": (billing.get("current_period_end") or "")[:10] if billing.get("current_period_end") else "",
+        "plans": plans,
+    }
+
+
+@router.get("/billing/invoices")
+def tenant_billing_invoices(
+    auth: dict = Depends(require_tenant_auth),
+    limit: int = Query(10, ge=1, le=50),
+):
+    tenant_id = auth["tenant_id"]
+    billing = get_tenant_billing(tenant_id) or {}
+    customer_id = (billing.get("stripe_customer_id") or "").strip()
+    if not customer_id:
+        return {"items": []}
+    stripe_key = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
+    if not stripe_key:
+        return {"items": []}
+    try:
+        import stripe
+
+        stripe.api_key = stripe_key
+        invoices = stripe.Invoice.list(customer=customer_id, limit=limit)
+        items = []
+        for inv in (invoices.get("data") or []):
+            items.append(
+                {
+                    "id": inv.get("id"),
+                    "number": inv.get("number"),
+                    "status": inv.get("status"),
+                    "amount_due": (inv.get("amount_due") or 0) / 100,
+                    "currency": inv.get("currency", "eur").upper(),
+                    "created": inv.get("created"),
+                    "invoice_pdf": (inv.get("invoice_pdf") or "").strip() or None,
+                }
+            )
+        return {"items": items}
+    except Exception as e:
+        logger.warning("tenant billing invoices failed tenant_id=%s error=%s", tenant_id, e)
+        return {"items": []}
+
+
+@router.post("/billing/portal-session")
+def tenant_billing_portal_session(auth: dict = Depends(require_tenant_auth)):
+    tenant_id = auth["tenant_id"]
+    billing = get_tenant_billing(tenant_id) or {}
+    customer_id = (billing.get("stripe_customer_id") or "").strip()
+    if not customer_id:
+        raise HTTPException(400, "No Stripe customer for this tenant")
+    stripe_key = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
+    if not stripe_key:
+        raise HTTPException(503, "Stripe not configured")
+    return_url = (
+        os.environ.get("STRIPE_PORTAL_RETURN_URL")
+        or os.environ.get("STRIPE_CHECKOUT_SUCCESS_URL")
+        or os.environ.get("FRONTEND_URL")
+        or "https://www.uwiapp.com"
+    ).strip().rstrip("/")
+    try:
+        import stripe
+
+        stripe.api_key = stripe_key
+        session = stripe.billing_portal.Session.create(customer=customer_id, return_url=return_url)
+        url = (session.get("url") or "").strip()
+        if not url:
+            raise HTTPException(500, "Stripe portal did not return URL")
+        return {"url": url}
+    except Exception as e:
+        logger.warning("tenant billing portal failed tenant_id=%s error=%s", tenant_id, e)
+        raise HTTPException(502, "Stripe error")
+
+
+@router.post("/billing/change-plan")
+def tenant_billing_change_plan(body: BillingChangePlanBody, auth: dict = Depends(require_tenant_auth)):
+    tenant_id = auth["tenant_id"]
+    plan_key = (body.plan_key or "").strip().lower()
+    if plan_key not in {"starter", "growth", "pro"}:
+        raise HTTPException(400, "Invalid plan_key")
+    billing = get_tenant_billing(tenant_id) or {}
+    sub_id = (billing.get("stripe_subscription_id") or "").strip()
+    if not sub_id:
+        raise HTTPException(400, "No Stripe subscription for this tenant")
+    stripe_key = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
+    if not stripe_key:
+        raise HTTPException(503, "Stripe not configured")
+    base_price_id, metered_price_id = _get_stripe_price_ids_for_plan(plan_key)
+    if not base_price_id or not metered_price_id:
+        raise HTTPException(400, "Stripe prices not configured for this plan")
+    try:
+        import stripe
+
+        stripe.api_key = stripe_key
+        sub = stripe.Subscription.retrieve(sub_id, expand=["items.data.price"])
+        items = sub.get("items", {}).get("data", []) or []
+        base_item_id = None
+        metered_item_id = (billing.get("stripe_metered_item_id") or "").strip()
+        for item in items:
+            price = item.get("price") or {}
+            recurring = price.get("recurring") or {}
+            if recurring.get("usage_type") == "metered":
+                metered_item_id = (item.get("id") or "").strip() or metered_item_id
+            else:
+                base_item_id = (item.get("id") or "").strip()
+        if not base_item_id or not metered_item_id:
+            raise HTTPException(400, "Could not resolve subscription items")
+        stripe.Subscription.modify(
+            sub_id,
+            items=[
+                {"id": base_item_id, "price": base_price_id},
+                {"id": metered_item_id, "price": metered_price_id},
+            ],
+            metadata={"tenant_id": str(tenant_id), "plan_key": plan_key},
+        )
+        upsert_billing_from_subscription(
+            tenant_id,
+            stripe_subscription_id=sub_id,
+            billing_status="active",
+            plan_key=plan_key,
+            stripe_customer_id=billing.get("stripe_customer_id"),
+        )
+        return {"ok": True, "plan_key": plan_key}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("tenant billing change-plan failed tenant_id=%s error=%s", tenant_id, e)
+        raise HTTPException(502, "Stripe error")
+
+
+@router.get("/vapi/status")
+def tenant_vapi_status(auth: dict = Depends(require_tenant_auth)):
+    """Retourne l'état de connexion de l'assistant VAPI pour le tenant."""
+    tenant_id = auth["tenant_id"]
+    detail = _get_tenant_me_detail(tenant_id)
+    if not detail:
+        raise HTTPException(404, "Tenant not found")
+    params = detail.get("params") or {}
+    vapi_assistant_id = (params.get("vapi_assistant_id") or "").strip()
+    assistant_name = ((params.get("assistant_name") or "Sophie").strip() or "Sophie").title()
+    voice_number = (detail.get("voice_number") or "").strip()
+    return {
+        "tenant_id": tenant_id,
+        "connected": bool(vapi_assistant_id),
+        "assistant_live": bool(vapi_assistant_id),
+        "vapi_assistant_id": vapi_assistant_id,
+        "assistant_name": assistant_name,
+        "voice_number": voice_number,
     }
 
 
@@ -1562,7 +2371,9 @@ def tenant_call_patient_update(
     if not raw:
         raise HTTPException(404, "Call not found")
     patient = _build_patient_payload(tenant_id, None, raw)
-    phone = patient.get("phone") or ""
+    phone_from_call = patient.get("phone") or ""
+    phone_from_body = normalize_phone_number(body.patient_phone or "")
+    phone = phone_from_call or phone_from_body
     if not phone:
         raise HTTPException(400, "Numéro du patient introuvable pour cet appel")
 
@@ -1585,8 +2396,332 @@ def tenant_call_patient_update(
     if not profile:
         raise HTTPException(500, "Impossible d'enregistrer la fiche client")
 
+    profile_payload = _build_patient_payload(tenant_id, None, raw)
+    if not profile_payload.get("phone"):
+        profile_payload = {
+            "phone": phone,
+            "raw_name": profile.get("raw_name") or "",
+            "validated_name": profile.get("validated_name") or validated_name,
+            "display_name": profile.get("display_name") or validated_name,
+            "validation_status": profile.get("validation_status") or "validated",
+            "profile_exists": True,
+            "is_validated": bool(profile.get("validated_name") or validated_name),
+            "source_call_id": profile.get("source_call_id") or call_id,
+            "updated_at": str(profile.get("updated_at") or ""),
+        }
+
     logger.info("tenant patient validated tenant_id=%s call_id=%s phone=%s", tenant_id, call_id, phone)
-    return {"ok": True, "call_id": call_id, "patient": _build_patient_payload(tenant_id, None, raw)}
+    return {"ok": True, "call_id": call_id, "patient": profile_payload}
+
+
+@router.get("/patients")
+def tenant_list_patients(
+    auth: dict = Depends(require_tenant_auth),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    """Liste les patients/clients du cabinet."""
+    tenant_id = auth["tenant_id"]
+    items = list_cabinet_clients(tenant_id, limit=limit, offset=offset)
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/patients/{phone}")
+def tenant_get_patient(
+    phone: str,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Fiche patient complète : profil, appels liés, handoffs liés."""
+    tenant_id = auth["tenant_id"]
+    profile = get_cabinet_client_by_phone(tenant_id, phone)
+    if not profile:
+        raise HTTPException(404, "Patient not found")
+
+    phone_norm = normalize_phone_number(phone)
+
+    related_calls = []
+    detail = _get_tenant_detail(tenant_id)
+    if detail:
+        tz_name = _tenant_timezone(detail)
+        assistant_name = (((detail.get("params") or {}).get("assistant_name")) or "Sophie").strip().title()
+        raw = _get_calls_list(tenant_id=tenant_id, days=90, limit=50, tenant_detail=detail)
+        items = raw.get("items") or []
+        for item in items:
+            item_phone = normalize_phone_number(item.get("customer_number") or "")
+            if item_phone == phone_norm:
+                call_id = (item.get("call_id") or "").strip()
+                started_at = item.get("started_at") or item.get("last_event_at")
+                status = _resolve_call_status(item.get("result"), item, None)
+                duration_sec = item.get("duration_sec") or 0
+                related_calls.append({
+                    "call_id": call_id,
+                    "status": status,
+                    "time": _format_hhmm(started_at, tz_name) if started_at else "—",
+                    "duration": _format_duration_short(duration_sec),
+                    "summary": item.get("summary") or "",
+                    "reason_category": item.get("reason_category") or "general",
+                    "followup_state": item.get("followup_state") or "new",
+                    "started_at": item.get("started_at") or "",
+                })
+
+    related_handoffs = []
+    try:
+        all_handoffs = list_handoffs(tenant_id, status=None, target=None, limit=50)
+        for h in all_handoffs:
+            h_phone = normalize_phone_number(h.get("patient_phone") or "")
+            if h_phone == phone_norm:
+                related_handoffs.append(h)
+    except Exception:
+        pass
+
+    docs = list_patient_documents(tenant_id, phone)
+    notes = list_patient_notes(tenant_id, phone, limit=200)
+    return {
+        "patient": profile,
+        "calls": related_calls,
+        "handoffs": related_handoffs,
+        "notes": [
+            {
+                "id": n.get("id"),
+                "text": n.get("note_text") or "",
+                "author": n.get("author") or "Cabinet",
+                "created_at": str(n.get("created_at", "")),
+            }
+            for n in notes
+        ],
+        "documents": [
+            {"id": d.get("id"), "original_name": d.get("original_name"), "mime_type": d.get("mime_type"),
+             "size_bytes": d.get("size_bytes"), "created_at": str(d.get("created_at", ""))}
+            for d in docs
+        ],
+    }
+
+
+class PatientUpdateBody(BaseModel):
+    email: Optional[str] = None
+
+
+class PatientNoteCreateBody(BaseModel):
+    text: str = Field(..., min_length=1, max_length=4000)
+    author: Optional[str] = Field(default="Praticien", max_length=120)
+
+
+@router.patch("/patients/{phone}")
+def tenant_update_patient(
+    phone: str,
+    body: PatientUpdateBody,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Met à jour les champs modifiables d'un patient (email, etc.)."""
+    tenant_id = auth["tenant_id"]
+    profile = get_cabinet_client_by_phone(tenant_id, phone)
+    if not profile:
+        raise HTTPException(404, "Patient not found")
+
+    updated = update_patient_fields(tenant_id, phone, email=body.email)
+    if not updated:
+        raise HTTPException(500, "Impossible de mettre à jour")
+    return {"ok": True, "patient": updated}
+
+
+@router.get("/patients/{phone}/notes")
+def tenant_list_patient_notes(
+    phone: str,
+    auth: dict = Depends(require_tenant_auth),
+    limit: int = Query(100, ge=1, le=300),
+):
+    tenant_id = auth["tenant_id"]
+    profile = get_cabinet_client_by_phone(tenant_id, phone)
+    if not profile:
+        raise HTTPException(404, "Patient not found")
+    notes = list_patient_notes(tenant_id, phone, limit=limit)
+    return {
+        "items": [
+            {
+                "id": n.get("id"),
+                "text": n.get("note_text") or "",
+                "author": n.get("author") or "Cabinet",
+                "created_at": str(n.get("created_at", "")),
+            }
+            for n in notes
+        ]
+    }
+
+
+@router.post("/patients/{phone}/notes")
+def tenant_create_patient_note(
+    phone: str,
+    body: PatientNoteCreateBody,
+    auth: dict = Depends(require_tenant_auth),
+):
+    tenant_id = auth["tenant_id"]
+    profile = get_cabinet_client_by_phone(tenant_id, phone)
+    if not profile:
+        raise HTTPException(404, "Patient not found")
+    created = insert_patient_note(
+        tenant_id,
+        phone,
+        note_text=body.text,
+        author=(body.author or "Praticien"),
+    )
+    if not created:
+        raise HTTPException(500, "Impossible d'enregistrer la note")
+    return {
+        "ok": True,
+        "item": {
+            "id": created.get("id"),
+            "text": created.get("note_text") or "",
+            "author": created.get("author") or "Cabinet",
+            "created_at": str(created.get("created_at", "")),
+        },
+    }
+
+
+@router.delete("/patients/{phone}/notes/{note_id}")
+def tenant_delete_patient_note(
+    phone: str,
+    note_id: int,
+    auth: dict = Depends(require_tenant_auth),
+):
+    tenant_id = auth["tenant_id"]
+    profile = get_cabinet_client_by_phone(tenant_id, phone)
+    if not profile:
+        raise HTTPException(404, "Patient not found")
+    if not delete_patient_note(tenant_id, note_id):
+        raise HTTPException(404, "Note not found")
+    return {"ok": True}
+
+
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads", "patient_docs")
+
+
+@router.post("/patients/{phone}/documents")
+async def tenant_upload_patient_document(
+    phone: str,
+    file: UploadFile = File(...),
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Upload un document sur la fiche patient."""
+    tenant_id = auth["tenant_id"]
+    profile = get_cabinet_client_by_phone(tenant_id, phone)
+    if not profile:
+        raise HTTPException(404, "Patient not found")
+
+    if not file.filename:
+        raise HTTPException(400, "Fichier invalide")
+
+    MAX_SIZE = 10 * 1024 * 1024  # 10 MB
+    content = await file.read()
+    if len(content) > MAX_SIZE:
+        raise HTTPException(413, "Fichier trop volumineux (max 10 Mo)")
+
+    phone_norm = normalize_phone_number(phone) or phone.strip()
+    safe_dir = os.path.join(UPLOAD_DIR, str(tenant_id), phone_norm)
+    os.makedirs(safe_dir, exist_ok=True)
+
+    import uuid as _uuid
+    ext = os.path.splitext(file.filename)[1][:10]
+    stored_name = f"{_uuid.uuid4().hex}{ext}"
+    filepath = os.path.join(safe_dir, stored_name)
+    with open(filepath, "wb") as f:
+        f.write(content)
+
+    doc = insert_patient_document(
+        tenant_id, phone,
+        filename=stored_name,
+        original_name=file.filename,
+        mime_type=file.content_type or "application/octet-stream",
+        size_bytes=len(content),
+    )
+    return {"ok": True, "document": {"id": doc.get("id"), "original_name": file.filename,
+            "mime_type": file.content_type, "size_bytes": len(content), "created_at": str(doc.get("created_at", ""))}}
+
+
+@router.get("/patients/{phone}/documents/{doc_id}/download")
+def tenant_download_patient_document(
+    phone: str,
+    doc_id: int,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Télécharge un document patient."""
+    tenant_id = auth["tenant_id"]
+    docs = list_patient_documents(tenant_id, phone)
+    doc = next((d for d in docs if d.get("id") == doc_id), None)
+    if not doc:
+        raise HTTPException(404, "Document not found")
+
+    phone_norm = normalize_phone_number(phone) or phone.strip()
+    filepath = os.path.join(UPLOAD_DIR, str(tenant_id), phone_norm, doc["filename"])
+    if not os.path.isfile(filepath):
+        raise HTTPException(404, "File not found on disk")
+
+    return FileResponse(filepath, filename=doc["original_name"], media_type=doc.get("mime_type") or "application/octet-stream")
+
+
+@router.delete("/patients/{phone}/documents/{doc_id}")
+def tenant_delete_patient_document(
+    phone: str,
+    doc_id: int,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Supprime un document patient."""
+    tenant_id = auth["tenant_id"]
+    docs = list_patient_documents(tenant_id, phone)
+    doc = next((d for d in docs if d.get("id") == doc_id), None)
+    if not doc:
+        raise HTTPException(404, "Document not found")
+
+    phone_norm = normalize_phone_number(phone) or phone.strip()
+    filepath = os.path.join(UPLOAD_DIR, str(tenant_id), phone_norm, doc["filename"])
+    if os.path.isfile(filepath):
+        os.remove(filepath)
+
+    delete_patient_document(tenant_id, doc_id)
+    return {"ok": True}
+
+
+@router.post("/patients/{phone}/documents/{doc_id}/send")
+def tenant_send_patient_document(
+    phone: str,
+    doc_id: int,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Envoie un document au patient par email."""
+    tenant_id = auth["tenant_id"]
+    profile = get_cabinet_client_by_phone(tenant_id, phone)
+    if not profile:
+        raise HTTPException(404, "Patient not found")
+
+    patient_email = (profile.get("email") or "").strip()
+    if not patient_email:
+        raise HTTPException(400, "Le patient n'a pas d'adresse email renseignée. Ajoutez-la d'abord sur sa fiche.")
+
+    docs = list_patient_documents(tenant_id, phone)
+    doc = next((d for d in docs if d.get("id") == doc_id), None)
+    if not doc:
+        raise HTTPException(404, "Document not found")
+
+    phone_norm = normalize_phone_number(phone) or phone.strip()
+    filepath = os.path.join(UPLOAD_DIR, str(tenant_id), phone_norm, doc["filename"])
+    if not os.path.isfile(filepath):
+        raise HTTPException(404, "Fichier introuvable sur le serveur")
+
+    detail = _get_tenant_detail(tenant_id)
+    cabinet_name = (detail or {}).get("name") or ""
+    patient_name = profile.get("display_name") or profile.get("raw_name") or ""
+
+    ok, err = send_patient_document_email(
+        to=patient_email,
+        patient_name=patient_name,
+        cabinet_name=cabinet_name,
+        doc_original_name=doc.get("original_name", "document"),
+        doc_path=filepath,
+        doc_mime_type=doc.get("mime_type", "application/octet-stream"),
+    )
+    if not ok:
+        raise HTTPException(500, err or "Impossible d'envoyer l'email")
+
+    return {"ok": True, "sent_to": patient_email}
 
 
 @router.get("/handoffs")
@@ -2060,7 +3195,7 @@ def tenant_agenda_bulk(
 @router.get("/agenda/available-slots")
 def tenant_agenda_available_slots(
     auth: dict = Depends(require_tenant_auth),
-    limit: int = Query(8, ge=1, le=20),
+    limit: int = Query(8, ge=1, le=100),
     date: Optional[str] = Query(None),
     time: Optional[str] = Query(None),
 ):
@@ -2091,6 +3226,18 @@ def tenant_agenda_available_slots(
             "slot_id": int(slot_id),
             "exact": True,
         }
+    if date and not time:
+        from backend.db import get_conn as _get_conn
+        conn = _get_conn()
+        try:
+            cur = conn.execute(
+                "SELECT id, date, time FROM slots WHERE tenant_id = ? AND date = ? AND is_booked = 0 ORDER BY time ASC",
+                (tenant_id, date[:10]),
+            )
+            items = [{"slot_id": int(r["id"]), "date": r["date"], "time": r["time"], "label": f"{r['date']} à {r['time']}"} for r in cur.fetchall()]
+            return {"slots": items, "total": len(items)}
+        finally:
+            conn.close()
     raw_slots = list_free_slots(limit=limit, tenant_id=tenant_id) or []
     items = []
     for slot in raw_slots[:limit]:
@@ -2103,6 +3250,26 @@ def tenant_agenda_available_slots(
             }
         )
     return {"slots": items, "total": len(items)}
+
+
+@router.get("/agenda/available-dates")
+def tenant_agenda_available_dates(
+    auth: dict = Depends(require_tenant_auth),
+    month: str = Query(..., description="YYYY-MM"),
+):
+    """Retourne les dates du mois ayant au moins 1 créneau libre."""
+    tenant_id = auth["tenant_id"]
+    from backend.db import get_conn as _get_conn
+    conn = _get_conn()
+    try:
+        cur = conn.execute(
+            "SELECT date, COUNT(*) as cnt FROM slots WHERE tenant_id = ? AND date LIKE ? AND is_booked = 0 GROUP BY date ORDER BY date",
+            (tenant_id, f"{month[:7]}%"),
+        )
+        dates = {r["date"]: int(r["cnt"]) for r in cur.fetchall()}
+        return {"dates": dates, "month": month[:7]}
+    finally:
+        conn.close()
 
 
 @router.post("/agenda/appointments/{appointment_id}/cancel")
@@ -2200,6 +3367,22 @@ def tenant_agenda_cancel_appointment(
     return {"ok": True, "cancelled": True, "provider": "local"}
 
 
+def _mark_pending_handoffs_processed(tenant_id: int, booking: dict) -> None:
+    """Marque les handoffs en attente du patient comme traités après un reschedule."""
+    patient_phone = normalize_phone_number(booking.get("contact") or "")
+    if not patient_phone:
+        return
+    try:
+        pending = list_handoffs(tenant_id, status="callback_created", limit=50)
+        for h in (pending or []):
+            hp = normalize_phone_number(h.get("patient_phone") or "")
+            if hp == patient_phone:
+                update_handoff_status(tenant_id, h["id"], status="processed", notes="RDV déplacé depuis le dashboard")
+                logger.info("handoff %s marked processed after reschedule for %s", h["id"], patient_phone)
+    except Exception as e:
+        logger.warning("_mark_pending_handoffs_processed failed tenant_id=%s phone=%s: %s", tenant_id, patient_phone, e)
+
+
 @router.post("/agenda/appointments/{appointment_id}/reschedule")
 def tenant_agenda_reschedule_appointment(
     appointment_id: int,
@@ -2278,6 +3461,7 @@ def tenant_agenda_reschedule_appointment(
             event_id,
             body.new_slot_id,
         )
+        _mark_pending_handoffs_processed(tenant_id, booking)
         return {"ok": True, "rescheduled": True, "provider": "google+local"}
     ok = reschedule_booking_atomic(appointment_id, int(body.new_slot_id), tenant_id=tenant_id)
     if ok is False:
@@ -2288,6 +3472,7 @@ def tenant_agenda_reschedule_appointment(
         appointment_id,
         body.new_slot_id,
     )
+    _mark_pending_handoffs_processed(tenant_id, booking)
     return {"ok": True, "rescheduled": True, "provider": "local"}
 
 
@@ -2307,6 +3492,13 @@ def tenant_patch_params(
         "transfer_number", "transfer_live_enabled", "transfer_callback_enabled",
         "transfer_cases", "transfer_hours", "transfer_always_urgent", "transfer_no_consultation",
         "transfer_config_confirmed_signature", "transfer_config_confirmed_at",
+        "practitioner_name", "website_url", "languages", "accepts_new_patients", "practitioner_photo_url", "public_slug",
+        "opening_hours_json", "temporary_closure_enabled", "temporary_closure_start", "temporary_closure_end", "temporary_closure_message",
+        "default_appointment_duration_minutes", "minimum_booking_notice_hours", "appointment_reschedule_allowed",
+        "appointment_reschedule_notice_hours", "appointment_cancel_allowed", "appointment_cancel_notice_hours",
+        "emergency_instruction", "new_patient_instruction", "booking_notes", "appointment_reasons_json",
+        "welcome_message", "documents_to_bring", "access_instructions", "payment_methods", "parking_info", "pmr_access",
+        "sensitive_medical_instruction", "escalation_instruction", "human_handoff_instruction", "faq_items_json",
     }
     body = body or {}
     tenant_id = auth["tenant_id"]
@@ -2322,6 +3514,9 @@ def tenant_patch_params(
             raise HTTPException(500, "Failed to update tenant name")
     if not params:
         return {"ok": True}
+    pg_sync_normalized_from_params(tenant_id, params)
+    if any(key in params for key in ("booking_days", "booking_start_hour", "booking_end_hour")):
+        pg_sync_opening_hours_from_booking_rules(tenant_id, params)
     ok = pg_update_tenant_params(tenant_id, params)
     if not ok:
         set_params(tenant_id, params)

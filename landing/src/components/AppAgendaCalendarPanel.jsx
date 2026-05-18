@@ -328,7 +328,7 @@ export default function AppAgendaCalendarPanel({
                   <div style={S.sideCardTitle}>Actions rapides</div>
                   <button type="button" onClick={scrollToSetup} style={S.quickActionButton}>+ Nouveau RDV</button>
                   <button type="button" onClick={() => navigate("/app/appels")} style={S.quickActionButton}>Ouvrir appels</button>
-                  <button type="button" onClick={() => navigate("/app/horaires")} style={S.quickActionButton}>Modifier horaires</button>
+                  <button type="button" onClick={() => navigate("/app/settings")} style={S.quickActionButton}>Modifier horaires</button>
                 </div>
               </div>
             </div>
@@ -520,7 +520,7 @@ export default function AppAgendaCalendarPanel({
           <div style={S.emptyState}>
             <div style={S.emptyTitle}>Cabinet fermé ce jour</div>
             <div style={S.emptyText}>Aucun créneau prévu selon vos horaires actuels.</div>
-            <button type="button" onClick={() => navigate("/app/horaires")} style={S.secondaryButton}>
+            <button type="button" onClick={() => navigate("/app/settings")} style={S.secondaryButton}>
               Modifier mes horaires
             </button>
           </div>
@@ -528,7 +528,7 @@ export default function AppAgendaCalendarPanel({
           <div style={S.emptyState}>
             <div style={S.emptyTitle}>Aucun horaire configuré</div>
             <div style={S.emptyText}>Définissez vos horaires pour afficher un agenda exploitable par l'assistant.</div>
-            <button type="button" onClick={() => navigate("/app/horaires")} style={S.secondaryButton}>
+            <button type="button" onClick={() => navigate("/app/settings")} style={S.secondaryButton}>
               Configurer mes horaires
             </button>
           </div>

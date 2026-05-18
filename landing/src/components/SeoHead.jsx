@@ -55,41 +55,17 @@ const ROUTE_META = {
     title: "Agenda — Espace Client UWi",
     description: "Gérez les rendez-vous pris par UWi et la connexion de votre agenda.",
   },
-  "/app/horaires": {
-    title: "Horaires — Espace Client UWi",
-    description: "Définissez les horaires d'ouverture et de prise de rendez-vous de votre cabinet.",
+  "/app/patients": {
+    title: "Patients — Espace Client UWi",
+    description: "Consultez et confirmez les fiches patients de votre cabinet UWi.",
   },
-  "/app/faq": {
-    title: "FAQ — Espace Client UWi",
-    description: "Configurez les réponses fréquentes de votre cabinet pour votre assistante UWi.",
-  },
-  "/app/actions": {
-    title: "Actions — Espace Client UWi",
-    description: "Retrouvez les actions en attente et les priorités du cabinet.",
-  },
-  "/app/facturation": {
-    title: "Facturation — Espace Client UWi",
-    description: "Consultez votre facturation et votre formule UWi.",
-  },
-  "/app/profil": {
-    title: "Profil — Espace Client UWi",
-    description: "Mettez à jour les informations de votre cabinet.",
-  },
-  "/app/config": {
-    title: "Configuration IA — Espace Client UWi",
-    description: "Paramétrez votre assistante UWi et votre configuration IA.",
-  },
-  "/app/status": {
-    title: "Statut — Espace Client UWi",
-    description: "Consultez l'état de votre configuration et de vos services UWi.",
+  "/app/demandes": {
+    title: "Demandes — Espace Client UWi",
+    description: "Suivez les demandes patients : renouvellements, rappels et urgences.",
   },
   "/app/settings": {
     title: "Paramètres — Espace Client UWi",
     description: "Gérez les paramètres de votre espace client UWi.",
-  },
-  "/app/rgpd": {
-    title: "RGPD — Espace Client UWi",
-    description: "Consultez les informations RGPD liées à votre activité UWi.",
   },
   "/admin": {
     title: "Dashboard Admin — UWi",

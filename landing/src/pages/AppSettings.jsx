@@ -118,7 +118,16 @@ export default function AppSettings() {
   return (
     <div className="space-y-6">
       <h2 className="text-lg font-semibold text-gray-900">Paramètres</h2>
-      <form onSubmit={handleSubmit} className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm space-y-4 max-w-md">
+      <form
+        id="profile"
+        onSubmit={handleSubmit}
+        className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm space-y-4 max-w-md"
+        style={{ scrollMarginTop: 96 }}
+      >
+        <div>
+          <h3 className="text-base font-semibold text-gray-900">Profil du cabinet</h3>
+          <p className="mt-1 text-sm text-gray-600">Mettez à jour vos informations principales de contact.</p>
+        </div>
         <div>
           <label className="block text-sm font-medium text-gray-700">Email de contact</label>
           <input
@@ -139,7 +148,7 @@ export default function AppSettings() {
           />
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700">Numero du cabinet</label>
+          <label className="block text-sm font-medium text-gray-700">Numéro du cabinet</label>
           <input
             type="tel"
             value={params.phone_number || ""}
@@ -149,7 +158,7 @@ export default function AppSettings() {
           />
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700">ID Calendrier</label>
+          <label className="block text-sm font-medium text-gray-700">ID calendrier</label>
           <input
             type="text"
             value={params.calendar_id}
@@ -216,7 +225,7 @@ export default function AppSettings() {
           }}
         />
       </Suspense>
-      {transferSaved && <p className="text-sm text-emerald-600">Configuration du transfert enregistree.</p>}
+      {transferSaved && <p className="text-sm text-emerald-600">Configuration du transfert enregistrée.</p>}
 
       <form
         id="security"
@@ -258,6 +267,21 @@ export default function AppSettings() {
           {passwordLoading ? "Enregistrement..." : "Enregistrer"}
         </button>
       </form>
+
+      <section
+        id="help"
+        className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm max-w-md space-y-2"
+        style={{ scrollMarginTop: 96 }}
+      >
+        <h3 className="text-base font-semibold text-gray-900">Aide</h3>
+        <p className="text-sm text-gray-600">
+          Besoin d'assistance ? Écrivez-nous à{" "}
+          <a className="text-blue-600 hover:text-blue-700 underline" href="mailto:support@uwi.ai">
+            support@uwi.ai
+          </a>
+          .
+        </p>
+      </section>
     </div>
   );
 }

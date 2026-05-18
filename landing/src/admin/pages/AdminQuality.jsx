@@ -2,14 +2,15 @@ import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { adminApi } from "../../lib/adminApi";
 
-const C = { bg: "#0A1828", card: "#132840", border: "#1E3D56", accent: "#00E5A0", text: "#FFFFFF", muted: "#6B90A8", warning: "#FFB347" };
+import { T } from "../theme.js";
+const C = { bg: T.bgPage, card: T.bgCard, border: T.border, accent: T.teal, text: T.text, muted: T.textMuted, warning: T.orange };
 const WINDOW_OPTIONS = [7, 14, 30];
 
 const sectionStyle = { background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20 };
 const h2Style = { fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 12 };
 const linkStyle = { color: C.accent, fontWeight: 600 };
-const btnStyle = { padding: "8px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: "linear-gradient(135deg, #00E5A0, #00b87c)", color: C.bg, border: "none", cursor: "pointer" };
-const btnLinkStyle = { display: "inline-block", padding: "6px 12px", fontSize: 12, fontWeight: 600, color: C.accent, background: "rgba(0,229,160,0.1)", border: `1px solid rgba(0,229,160,0.2)`, borderRadius: 8, textDecoration: "none" };
+const btnStyle = { padding: "8px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: T.teal, color: "#FFFFFF", border: "none", cursor: "pointer" };
+const btnLinkStyle = { display: "inline-block", padding: "6px 12px", fontSize: 12, fontWeight: 600, color: C.accent, background: T.tealLight, border: `1px solid ${T.teal}40`, borderRadius: 8, textDecoration: "none" };
 
 function TopTable({ title, items, resultFilter, windowDays }) {
   if (!items?.length) {
@@ -93,7 +94,7 @@ export default function AdminQuality() {
   if (err && !data) {
     return (
       <div style={{ padding: "32px", background: C.bg, minHeight: "100vh" }}>
-        <div style={{ ...sectionStyle, borderColor: "rgba(255,107,107,0.3)", background: "rgba(255,107,107,0.1)", color: "#FF6B6B" }}>
+        <div style={{ ...sectionStyle, borderColor: `${T.red}40`, background: T.redLight, color: T.red }}>
           <p style={{ fontWeight: 600 }}>Erreur</p>
           <p style={{ fontSize: 13, marginTop: 4 }}>{err}</p>
           <button type="button" onClick={load} style={{ ...btnStyle, marginTop: 16 }}>
@@ -139,7 +140,7 @@ export default function AdminQuality() {
       </div>
 
       {err && data && (
-        <div style={{ marginBottom: 16, padding: "12px 16px", background: "rgba(255,179,71,0.1)", border: "1px solid rgba(255,179,71,0.3)", borderRadius: 12, color: C.warning, fontSize: 13 }}>
+        <div style={{ marginBottom: 16, padding: "12px 16px", background: T.yellowLight, border: `1px solid ${T.yellow}66`, borderRadius: 12, color: T.yellowText, fontSize: 13 }}>
           {err}
         </div>
       )}

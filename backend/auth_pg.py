@@ -20,27 +20,66 @@ def _pg_url() -> Optional[str]:
     return os.environ.get("DATABASE_URL") or os.environ.get("PG_TENANTS_URL")
 
 
+def _sqlite_fallback_conn():
+    """SQLite fallback for local dev when no Postgres is available."""
+    import sqlite3
+    from pathlib import Path
+    db_path = Path(__file__).resolve().parent.parent / "data" / "tenants_local.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tenant_users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id INTEGER NOT NULL DEFAULT 1,
+            email TEXT NOT NULL UNIQUE,
+            role TEXT NOT NULL DEFAULT 'owner',
+            password_hash TEXT,
+            google_sub TEXT,
+            google_email TEXT,
+            auth_provider TEXT DEFAULT 'email',
+            email_verified INTEGER DEFAULT 0,
+            password_reset_token_hash TEXT,
+            password_reset_expires_at TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    conn.commit()
+    return conn
+
+
 def pg_get_tenant_user_by_email(email: str) -> Optional[Tuple[int, int, str]]:
     """
     Lookup tenant_user par email.
     Returns (tenant_id, user_id, role) ou None.
     """
     url = _pg_url()
-    if not url:
-        return None
+    if url:
+        try:
+            import psycopg
+            with psycopg.connect(url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT tenant_id, id, role FROM tenant_users WHERE email = %s",
+                        (email.strip().lower(),),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        return (int(row[0]), int(row[1]), row[2] or "owner")
+        except Exception as e:
+            logger.warning("pg_get_tenant_user_by_email failed: %s", e)
+
     try:
-        import psycopg
-        with psycopg.connect(url) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT tenant_id, id, role FROM tenant_users WHERE email = %s",
-                    (email.strip().lower(),),
-                )
-                row = cur.fetchone()
-                if row:
-                    return (int(row[0]), int(row[1]), row[2] or "owner")
+        conn = _sqlite_fallback_conn()
+        row = conn.execute(
+            "SELECT tenant_id, id, role FROM tenant_users WHERE email = ? LIMIT 1",
+            (email.strip().lower(),),
+        ).fetchone()
+        conn.close()
+        if row:
+            return (int(row["tenant_id"]), int(row["id"]), row["role"] or "owner")
     except Exception as e:
-        logger.warning("pg_get_tenant_user_by_email failed: %s", e)
+        logger.warning("sqlite fallback pg_get_tenant_user_by_email failed: %s", e)
     return None
 
 
@@ -51,26 +90,42 @@ def pg_get_tenant_user_by_email_for_login(email: str) -> Optional[Dict[str, Any]
     password_hash nullable : si NULL → login password doit répondre 401 neutre.
     """
     url = _pg_url()
-    if not url:
-        return None
+    if url:
+        try:
+            import psycopg
+            with psycopg.connect(url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT tenant_id, id AS user_id, role, password_hash FROM tenant_users WHERE email = %s LIMIT 1",
+                        (email.strip().lower(),),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        return {
+                            "tenant_id": int(row[0]),
+                            "user_id": int(row[1]),
+                            "role": row[2] or "owner",
+                            "password_hash": row[3],
+                        }
+        except Exception as e:
+            logger.warning("pg_get_tenant_user_by_email_for_login failed: %s", e)
+
     try:
-        import psycopg
-        with psycopg.connect(url) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT tenant_id, id AS user_id, role, password_hash FROM tenant_users WHERE email = %s LIMIT 1",
-                    (email.strip().lower(),),
-                )
-                row = cur.fetchone()
-                if row:
-                    return {
-                        "tenant_id": int(row[0]),
-                        "user_id": int(row[1]),
-                        "role": row[2] or "owner",
-                        "password_hash": row[3],
-                    }
+        conn = _sqlite_fallback_conn()
+        row = conn.execute(
+            "SELECT tenant_id, id AS user_id, role, password_hash FROM tenant_users WHERE email = ? LIMIT 1",
+            (email.strip().lower(),),
+        ).fetchone()
+        conn.close()
+        if row:
+            return {
+                "tenant_id": int(row["tenant_id"]),
+                "user_id": int(row["user_id"]),
+                "role": row["role"] or "owner",
+                "password_hash": row["password_hash"],
+            }
     except Exception as e:
-        logger.warning("pg_get_tenant_user_by_email_for_login failed: %s", e)
+        logger.warning("sqlite fallback pg_get_tenant_user_by_email_for_login failed: %s", e)
     return None
 
 
@@ -147,26 +202,41 @@ def pg_get_tenant_user_by_id(user_id: Any) -> Optional[Dict[str, Any]]:
     Lookup tenant_user par id (pour validation session).
     Returns {"tenant_id", "email", "role"} ou None.
     """
-    if not _pg_url():
-        return None
-    try:
-        from backend.tenants_pg import pg_tenants_connection
+    if _pg_url():
+        try:
+            from backend.tenants_pg import pg_tenants_connection
 
-        with pg_tenants_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT tenant_id, email, role FROM tenant_users WHERE id = %s LIMIT 1",
-                    (int(user_id),),
-                )
-                row = cur.fetchone()
-                if row:
-                    return {
-                        "tenant_id": int(row.get("tenant_id") if isinstance(row, dict) else row[0]),
-                        "email": ((row.get("email") if isinstance(row, dict) else row[1]) or "").strip(),
-                        "role": (row.get("role") if isinstance(row, dict) else row[2]) or "owner",
-                    }
+            with pg_tenants_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT tenant_id, email, role FROM tenant_users WHERE id = %s LIMIT 1",
+                        (int(user_id),),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        return {
+                            "tenant_id": int(row.get("tenant_id") if isinstance(row, dict) else row[0]),
+                            "email": ((row.get("email") if isinstance(row, dict) else row[1]) or "").strip(),
+                            "role": (row.get("role") if isinstance(row, dict) else row[2]) or "owner",
+                        }
+        except Exception as e:
+            logger.warning("pg_get_tenant_user_by_id failed: %s", e)
+
+    try:
+        conn = _sqlite_fallback_conn()
+        row = conn.execute(
+            "SELECT tenant_id, email, role FROM tenant_users WHERE id = ? LIMIT 1",
+            (int(user_id),),
+        ).fetchone()
+        conn.close()
+        if row:
+            return {
+                "tenant_id": int(row["tenant_id"]),
+                "email": (row["email"] or "").strip(),
+                "role": row["role"] or "owner",
+            }
     except Exception as e:
-        logger.warning("pg_get_tenant_user_by_id failed: %s", e)
+        logger.warning("sqlite fallback pg_get_tenant_user_by_id failed: %s", e)
     return None
 
 

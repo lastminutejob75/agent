@@ -12,10 +12,13 @@ echo "=== Réinitialisation mot de passe admin ==="
 echo "Nouveau mot de passe: $PWD"
 echo ""
 
-# Vérifier que railway est lié
-if ! npx railway status 2>/dev/null | grep -q .; then
+# Vérifier que Railway est lié (nouveau CLI @railway/cli)
+if ! npx --yes @railway/cli status 2>/dev/null | grep -q .; then
   echo "❌ Aucun service Railway lié."
-  echo "   Lance dans ce dossier: npx railway link"
+  echo "   Lance dans ce dossier:"
+  echo "   1) npx --yes @railway/cli login"
+  echo "   2) npx --yes @railway/cli init   (choisir le projet existant + service backend + env prod)"
+  echo "   3) npx --yes @railway/cli status (doit afficher project/service/env)"
   echo "   (choisis le projet + le service backend)"
   exit 1
 fi

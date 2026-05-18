@@ -1,176 +1,118 @@
-import { useState, useEffect, useMemo } from "react";
-import { Outlet, NavLink, useLocation, useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { api, clearTenantToken, isTenantUnauthorized } from "../lib/api.js";
 import { getImpersonation, setImpersonation } from "./Impersonate";
-import ASSISTANTS from "../assistants.config.js";
-import "./ClientDashboard.css";
+import AppSidebar from "../components/layout/AppSidebar.jsx";
+import AppTopbar from "../components/layout/AppTopbar.jsx";
+import AppMobileBottomNav from "../components/layout/AppMobileBottomNav.jsx";
+import { COLORS, NAV_ITEMS, ROUTES } from "../components/layout/layout.constants.js";
+import { createLayoutStyles, createShellCss } from "../components/layout/layout.styles.js";
 
-const TEAL = "#00d4a0";
-const TEALX = "#00b389";
-const NAVY = "#0d1b2e";
-
-const ROUTES = {
-  "/app": { title: "Vue d'ensemble", sub: "" },
-  "/app/appels": { title: "Journal des appels", sub: "" },
-  "/app/agenda": { title: "Mon agenda", sub: "" },
-  "/app/horaires": { title: "Mes horaires", sub: "" },
-  "/app/faq": { title: "FAQ du cabinet", sub: "" },
-  "/app/actions": { title: "Actions en attente", sub: "" },
-  "/app/facturation": { title: "Facturation", sub: "" },
-  "/app/profil": { title: "Mon profil", sub: "" },
-  "/app/config": { title: "Configuration IA", sub: "" },
-  "/app/status": { title: "Statut", sub: "" },
-  "/app/settings": { title: "Paramètres", sub: "" },
-  "/app/rgpd": { title: "RGPD", sub: "" },
-};
-
-const PRIMARY_NAV = [
-  { to: "/app", label: "Vue d'ensemble", icon: "⊞", end: true },
-  { to: "/app/appels", label: "Appels", icon: "◎" },
-  { to: "/app/agenda", label: "Agenda", icon: "▦" },
-  { to: "/app/actions", label: "Actions", icon: "◈" },
-];
-
-const SECONDARY_NAV = [
-  { to: "/app/horaires", label: "Horaires", icon: "⏰" },
-  { to: "/app/faq", label: "FAQ", icon: "💬" },
-  { to: "/app/facturation", label: "Facturation", icon: "◇" },
-  { to: "/app/profil", label: "Mon profil", icon: "○" },
-  { to: "/app/config", label: "Config IA", icon: "◆" },
-  { to: "/app/status", label: "Statut", icon: "◉" },
-  { to: "/app/rgpd", label: "RGPD", icon: "⊙" },
-  { to: "/app/settings", label: "Paramètres", icon: "⚙" },
-];
-
-const IMMERSIVE_ROUTES = new Set([
-  "/app/appels",
-]);
-
-function Dot({ color = TEAL, size = 8 }) {
-  return (
-    <span
-      style={{
-        position: "relative",
-        display: "inline-flex",
-        width: size,
-        height: size,
-        borderRadius: "50%",
-        background: color,
-        flexShrink: 0,
-      }}
-    />
-  );
-}
-
-function ShellNavItem({ to, icon, label, end = false, closeSidebar, muted = false, badge = null }) {
-  return (
-    <NavLink to={to} end={end} onClick={closeSidebar} style={{ textDecoration: "none" }}>
-      {({ isActive }) => (
-        <div
-          className={`client-shell-nav-item ${isActive ? "on" : ""} ${muted ? "muted" : ""}`}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 9,
-            padding: muted ? "7px 10px" : "8px 10px",
-            borderRadius: 7,
-            fontSize: muted ? 12 : 13,
-            cursor: "pointer",
-            fontWeight: isActive && !muted ? 700 : muted ? 500 : 500,
-            color: muted ? "#94a3b8" : isActive ? NAVY : "#64748b",
-            background: isActive && !muted ? "rgba(0,212,160,.09)" : "transparent",
-            border: isActive && !muted ? "1px solid rgba(0,212,160,.15)" : "1px solid transparent",
-            transition: "all .15s ease",
-          }}
-        >
-          <span>{icon}</span>
-          <span>{label}</span>
-          {badge != null && badge > 0 ? (
-            <span
-              style={{
-                marginLeft: "auto",
-                minWidth: 18,
-                height: 18,
-                padding: "0 6px",
-                borderRadius: 999,
-                background: "#dc2626",
-                color: "#fff",
-                fontSize: 10,
-                fontWeight: 800,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              {badge}
-            </span>
-          ) : null}
-        </div>
-      )}
-    </NavLink>
-  );
-}
+const S = createLayoutStyles(COLORS);
+const SHELL_CSS = createShellCss(COLORS);
 
 export default function AppLayout() {
   const [me, setMe] = useState(null);
-  const [err, setErr] = useState(null);
+  const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
   const [dashboard, setDashboard] = useState(null);
-  const [clock, setClock] = useState(new Date());
-  const [sbOpen, setSbOpen] = useState(false);
-  const [imgErr, setImgErr] = useState(false);
-  const location = useLocation();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notificationsItems, setNotificationsItems] = useState([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [claraRulesSummary, setClaraRulesSummary] = useState({ configured: 0, total: 4 });
+
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const impersonation = getImpersonation();
+  const path = location.pathname;
+  const isPatientDetail = path.startsWith("/app/patients/") && path !== "/app/patients";
+  const hideTopbar = path.startsWith("/app/patient-dashboard");
+  const demandBadge = dashboard?.counters_7d?.transfers ?? 0;
+  const hideToProcessStrip =
+    hideTopbar ||
+    path.startsWith("/app/demandes") ||
+    path.startsWith("/app/onboarding") ||
+    path.startsWith("/app/impersonate");
+  const initials = (me?.tenant_name || "U")
+    .split(/\s+/)
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+  const showWelcomeSecurityBanner = new URLSearchParams(location.search).get("welcome") === "1";
+  const routeMeta = ROUTES[path] || null;
+  const isClaraPage = path.startsWith("/app/clara");
 
   useEffect(() => {
-    let mounted = true;
-    let idleId = null;
-    let timeoutId = null;
-    const runDashboardRefresh = () => {
-      api.tenantDashboard()
-        .then((dash) => {
-          if (!mounted) return;
-          setDashboard(dash);
-        })
-        .catch(() => {
-          if (!mounted) return;
-          setDashboard((current) => current || null);
-        });
-    };
-
-    if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
-      idleId = window.requestIdleCallback(runDashboardRefresh, { timeout: 1200 });
-    } else {
-      timeoutId = window.setTimeout(runDashboardRefresh, 250);
+    function readSummary() {
+      try {
+        const raw = window.localStorage.getItem("uwi_clara_rules_summary");
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        const configured = Number(parsed?.configured);
+        const total = Number(parsed?.total);
+        if (Number.isFinite(configured) && Number.isFinite(total) && total > 0) {
+          setClaraRulesSummary({ configured, total });
+        }
+      } catch {
+        // no-op
+      }
     }
+    readSummary();
+    function onCustom(event) {
+      const configured = Number(event?.detail?.configured);
+      const total = Number(event?.detail?.total);
+      if (Number.isFinite(configured) && Number.isFinite(total) && total > 0) {
+        setClaraRulesSummary({ configured, total });
+      }
+    }
+    function onStorage(e) {
+      if (e.key === "uwi_clara_rules_summary") readSummary();
+    }
+    window.addEventListener("uwi:clara-rules-summary", onCustom);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener("uwi:clara-rules-summary", onCustom);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
 
     api
       .tenantMe()
-      .then((m) => {
-        if (!mounted) return null;
-        setMe(m);
+      .then((data) => {
+        if (cancelled) return;
+        setMe(data);
         setLoading(false);
-        return m;
       })
       .catch((e) => {
-        if (!mounted) return;
+        if (cancelled) return;
         if (isTenantUnauthorized(e)) {
           setImpersonation(null);
           clearTenantToken();
-          window.location.href = "/";
+          const nextPath = `${location.pathname || "/app"}${location.search || ""}`;
+          navigate(`/login?next=${encodeURIComponent(nextPath)}`, { replace: true });
           return;
         }
-        setErr(e?.message || e?.data?.detail || "Chargement impossible. Réessayez ou déconnectez-vous.");
+        setErr(e?.message || e?.data?.detail || "Chargement impossible.");
         setLoading(false);
       });
+
+    api
+      .tenantDashboard()
+      .then((data) => {
+        if (!cancelled) setDashboard(data);
+      })
+      .catch(() => {
+        if (!cancelled) setDashboard(null);
+      });
+
     return () => {
-      mounted = false;
-      if (typeof window !== "undefined" && idleId !== null && typeof window.cancelIdleCallback === "function") {
-        window.cancelIdleCallback(idleId);
-      }
-      if (typeof window !== "undefined" && timeoutId !== null) {
-        window.clearTimeout(timeoutId);
-      }
+      cancelled = true;
     };
   }, []);
 
@@ -181,75 +123,64 @@ export default function AppLayout() {
     }
   }, [loading, me, location.pathname, location.search, navigate]);
 
-  useEffect(() => {
-    const timer = window.setInterval(() => setClock(new Date()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  const impersonation = getImpersonation();
-  const path = location.pathname;
-  const isImmersiveRoute = IMMERSIVE_ROUTES.has(path);
-  const routeInfo = ROUTES[path] || { title: "Mon Cabinet", sub: "" };
-  const showWelcomeSecurityBanner = new URLSearchParams(location.search).get("welcome") === "1";
-  const sub = routeInfo.sub || (path === "/app" ? new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" }) : "");
-  const assistantName = (me?.assistant_name || "Sophie").replace(/^./, (s) => s.toUpperCase());
-  const assistantConfig = useMemo(() => {
-    const normalized = String(me?.assistant_name || "sophie").trim().toLowerCase();
-    return (
-      ASSISTANTS.find(
-        (assistant) =>
-          assistant.id === normalized ||
-          String(assistant.prenom || "").trim().toLowerCase() === normalized,
-      ) || null
-    );
-  }, [me?.assistant_name]);
-  const planLabel = (me?.plan_key || "growth").replace(/^./, (s) => s.toUpperCase());
-  const clockLabel = clock.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  const callsBadge = dashboard?.counters_7d?.calls_total ?? 0;
-  const urgentBadge = dashboard?.counters_7d?.transfers ?? 0;
-  const initials = (me?.tenant_name || "U")
-    .split(/\s+/)
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
-
-  useEffect(() => {
-    setImgErr(false);
-  }, [assistantConfig?.img, assistantName]);
-
   const handleLogout = () => {
     setImpersonation(null);
     clearTenantToken();
     window.location.href = "/";
   };
 
-  const closeSidebar = () => setSbOpen(false);
+  const navigateFromTopbar = (to) => {
+    setSidebarOpen(false);
+    setNotificationsOpen(false);
+    navigate(to);
+  };
+
+  const openNotifications = async () => {
+    setSidebarOpen(false);
+    setNotificationsOpen((prev) => !prev);
+    if (!notificationsOpen) {
+      setNotificationsLoading(true);
+      try {
+        const data = await api.tenantGetHandoffs("?limit=10&days=30");
+        const items = Array.isArray(data?.items) ? data.items : [];
+        setNotificationsItems(
+          items
+            .filter((h) => {
+              const s = String(h?.status || "").toLowerCase();
+              return s !== "processed" && s !== "cancelled";
+            })
+            .slice(0, 8),
+        );
+      } catch {
+        setNotificationsItems([]);
+      } finally {
+        setNotificationsLoading(false);
+      }
+    }
+  };
+
+  const layoutTopOffset = impersonation ? 46 : 0;
 
   if (err && !me) {
-    const errMsg = typeof err === "string" ? err : (err?.message || err?.data?.detail || "Erreur");
     return (
-      <div className="dash" style={{ minHeight: "100vh", padding: "2rem", background: "#f0f4f8", fontFamily: "'DM Sans', sans-serif" }}>
-        <div style={{ maxWidth: 560, margin: "0 auto", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: 24, color: "#dc2626" }}>
-          <p><strong>Chargement échoué</strong></p>
-          <p style={{ marginTop: "0.5rem", fontSize: "0.95rem", color: "#475569" }}>{errMsg}</p>
-          <div style={{ marginTop: "1rem", display: "flex", gap: 10 }}>
-            <button
-              type="button"
-              onClick={() => {
-                setErr(null);
-                setLoading(true);
-                window.location.reload();
-              }}
-              style={{ borderRadius: 10, border: "1px solid #cbd5e1", background: "#0f172a", color: "#fff", padding: "10px 14px", fontSize: 13, cursor: "pointer" }}
-            >
+      <div style={{ minHeight: "100vh", background: COLORS.bg, padding: 24 }}>
+        <div
+          style={{
+            maxWidth: 560,
+            margin: "0 auto",
+            background: "#fff",
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: 14,
+            padding: 22,
+          }}
+        >
+          <h2 style={{ margin: 0, color: COLORS.title, fontSize: 18 }}>Chargement échoué</h2>
+          <p style={{ margin: "8px 0 0", color: COLORS.text, fontSize: 14 }}>{err}</p>
+          <div style={{ marginTop: 14, display: "flex", gap: 10 }}>
+            <button type="button" onClick={() => window.location.reload()} style={S.primaryBtn}>
               Réessayer
             </button>
-            <button
-              type="button"
-              onClick={handleLogout}
-              style={{ borderRadius: 10, border: "1px solid #cbd5e1", background: "#fff", color: "#334155", padding: "10px 14px", fontSize: 13, cursor: "pointer" }}
-            >
+            <button type="button" onClick={handleLogout} style={S.secondaryBtn}>
               Se déconnecter
             </button>
           </div>
@@ -258,481 +189,219 @@ export default function AppLayout() {
     );
   }
 
-  if (isImmersiveRoute) {
-    return (
-      <div className="dash" style={S.root}>
-        <style>{SHELL_CSS}</style>
-        {impersonation && (
-          <div
-            style={{
-              position: "fixed",
-              top: 0,
-              left: 0,
-              right: 0,
-              zIndex: 60,
-              background: "#fff0f3",
-              borderBottom: "1px solid #fecdd3",
-              padding: "10px 20px",
-              fontSize: 13,
-              fontWeight: 600,
-              color: "#dc2626",
-            }}
-            role="alert"
-          >
-            Mode admin – vous visualisez le compte de <strong>{impersonation.tenant_name}</strong>
-          </div>
-        )}
-        <div style={{ flex: 1, minHeight: "100vh", paddingTop: impersonation ? 44 : 0, display: "flex", flexDirection: "column" }}>
-          <Outlet context={{ me, dashboard, meLoading: loading }} />
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="dash" style={S.root}>
+    <div style={{ minHeight: "100vh", background: COLORS.bg, color: COLORS.title }}>
       <style>{SHELL_CSS}</style>
 
-      {impersonation && (
-        <div
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            zIndex: 60,
-            background: "#fff0f3",
-            borderBottom: "1px solid #fecdd3",
-            padding: "10px 20px",
-            fontSize: 13,
-            fontWeight: 600,
-            color: "#dc2626",
-          }}
-          role="alert"
-        >
-          Mode admin – vous visualisez le compte de <strong>{impersonation.tenant_name}</strong>
+      {impersonation ? (
+        <div style={S.adminBanner}>
+          Mode admin - vous visualisez le compte de <strong>{impersonation.tenant_name}</strong>
         </div>
-      )}
+      ) : null}
 
-      <aside className={`client-shell-sidebar ${sbOpen ? "open" : ""}`} style={{ ...S.sidebar, top: impersonation ? 44 : 0 }}>
-        <div style={S.brand}>
-          <div style={S.brandIcon}>
-            <span style={{ fontSize: 11, fontWeight: 800, color: NAVY }}>UW</span>
-          </div>
-          <div>
-            <div style={S.brandName}>UWI Medical</div>
-            <div style={S.brandSub}>IA SECRÉTARIAT</div>
-          </div>
-        </div>
-
-        <div style={S.navWrap}>
-          {PRIMARY_NAV.map((item) => (
-            <ShellNavItem
-              key={item.to}
-              to={item.to}
-              icon={item.icon}
-              label={item.label}
-              end={item.end}
-              closeSidebar={closeSidebar}
-              badge={item.to === "/app/appels" ? (callsBadge > 0 ? callsBadge : null) : null}
-            />
-          ))}
-        </div>
-
-        <div style={S.paramTitle}>PARAMÈTRES</div>
-        <div style={S.navWrapSecondary}>
-          {SECONDARY_NAV.map((item) => (
-            <ShellNavItem
-              key={item.to}
-              to={item.to}
-              icon={item.icon}
-              label={item.label}
-              closeSidebar={closeSidebar}
-              muted
-            />
-          ))}
-        </div>
-
-        <div style={S.assistantCard}>
-          <div style={S.assistantTag}>VOTRE ASSISTANTE</div>
-          <div style={S.assistantInner}>
-            <div style={{ position: "relative", flexShrink: 0 }}>
-              {!imgErr && assistantConfig?.img ? (
-                <img
-                  src={assistantConfig?.img || ""}
-                  alt={assistantName}
-                  onError={() => setImgErr(true)}
-                  style={S.assistantAvatar}
-                />
-              ) : (
-                <div style={S.assistantFallback}>{assistantName.slice(0, 1)}</div>
-              )}
-              <div style={S.assistantOnline} />
-            </div>
-            <div>
-              <div style={S.assistantName}>{assistantName}</div>
-              <div style={S.assistantMeta}>🎧 {assistantConfig?.voice || "Calme et professionnelle"}</div>
-              <div style={S.assistantStatus}>
-                <Dot color={TEAL} size={6} />
-                <span>En ligne</span>
-              </div>
-            </div>
-          </div>
-          <button type="button" onClick={handleLogout} style={S.assistantLogoutButton}>
-            Déconnexion
-          </button>
-        </div>
-
-        <div style={S.sidebarFooter}>
-          <div style={S.footerAvatar}>{initials || "U"}</div>
-          <div>
-            <div style={S.footerName}>{me?.tenant_name || "Cabinet"}</div>
-            <div style={S.footerPlan}>{planLabel} · 149€/mois</div>
-          </div>
-        </div>
-      </aside>
+      <AppSidebar
+        navItems={NAV_ITEMS}
+        demandBadge={demandBadge}
+        sidebarOpen={sidebarOpen}
+        layoutTopOffset={layoutTopOffset}
+        navigate={navigate}
+        onClose={() => setSidebarOpen(false)}
+        initials={initials}
+        tenantName={me?.tenant_name}
+        onLogout={handleLogout}
+        styles={S}
+        colors={COLORS}
+      />
 
       <div
-        className={`client-shell-overlay ${sbOpen ? "open" : ""}`}
-        onClick={closeSidebar}
+        className={`uwi-overlay ${sidebarOpen ? "open" : ""}`}
+        onClick={() => setSidebarOpen(false)}
         aria-hidden="true"
       />
 
-      <div className="client-shell-main" style={{ ...S.main, paddingTop: impersonation ? 44 : 0 }}>
-        <header style={S.topbar}>
-          <div>
-            <h1 style={S.title}>{routeInfo.title}</h1>
-            <p style={S.subtitle}>{sub}</p>
-          </div>
-          <div style={S.topbarRight}>
-            <div style={S.liveBadge}>
-              <Dot color={TEAL} size={8} />
-              <span style={{ fontSize: 11, color: TEALX, fontWeight: 700 }}>IA ACTIVE</span>
-            </div>
-            <div style={S.clockBox}>{clockLabel}</div>
-            <div style={S.bellBtn}>
-              <span style={{ fontSize: 14 }}>🔔</span>
-              {urgentBadge > 0 && <div style={S.bellDot} />}
-            </div>
-            <button type="button" className="client-shell-hamburger" style={S.hamburger} onClick={() => setSbOpen(true)} aria-label="Menu">
-              ☰
-            </button>
-          </div>
-        </header>
+      <div className="uwi-main" style={{ paddingTop: layoutTopOffset }}>
+        {!hideTopbar ? (
+          <AppTopbar
+            routeMeta={routeMeta}
+            isClaraPage={isClaraPage}
+            claraRulesSummary={claraRulesSummary}
+            onOpenNotifications={openNotifications}
+            onOpenProfile={() => navigateFromTopbar("/app/profile")}
+            onOpenMenu={() => setSidebarOpen(true)}
+            notificationsCount={demandBadge}
+            styles={S}
+          />
+        ) : null}
 
-        <div style={S.content}>
-          {showWelcomeSecurityBanner && (
+        {notificationsOpen ? (
+          <>
             <div
-              data-tour="security-banner"
+              role="button"
+              tabIndex={-1}
+              aria-label="Fermer les notifications"
+              onClick={() => setNotificationsOpen(false)}
+              style={{ position: "fixed", inset: 0, background: "rgba(7,26,51,0.18)", zIndex: 90 }}
+            />
+            <div
+              role="dialog"
+              aria-label="Notifications"
               style={{
-                margin: "0 24px",
-                borderRadius: 12,
-                border: "1px solid #fcd34d",
-                background: "#fffbeb",
-                padding: "12px 16px",
-                fontSize: 14,
-                color: "#92400e",
+                position: "fixed",
+                top: 60,
+                right: 14,
+                width: "min(360px, calc(100vw - 28px))",
+                maxHeight: "70vh",
+                overflowY: "auto",
+                background: "#fff",
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: 18,
+                boxShadow: "0 24px 60px rgba(7,26,51,0.18)",
+                zIndex: 100,
               }}
-              role="alert"
             >
               <div
                 style={{
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "space-between",
-                  gap: 12,
-                  flexWrap: "wrap",
+                  padding: "12px 14px",
+                  borderBottom: `1px solid ${COLORS.border}`,
                 }}
               >
-                <span>
-                  Votre compte utilise un mot de passe temporaire. Changez-le dès maintenant dans <code>Paramètres</code> pour sécuriser l'accès à votre espace.
-                </span>
+                <strong style={{ fontSize: 14, color: COLORS.title }}>Notifications</strong>
                 <button
                   type="button"
-                  onClick={() => navigate("/app/settings#security")}
-                  style={{
-                    borderRadius: 999,
-                    border: "1px solid #f59e0b",
-                    background: "#fff",
-                    color: "#92400e",
-                    padding: "8px 12px",
-                    fontSize: 13,
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    whiteSpace: "nowrap",
-                  }}
+                  onClick={() => setNotificationsOpen(false)}
+                  aria-label="Fermer"
+                  style={{ border: 0, background: "transparent", fontSize: 18, cursor: "pointer", color: COLORS.title }}
                 >
-                  Changer mon mot de passe
+                  ×
+                </button>
+              </div>
+              {notificationsLoading ? (
+                <div style={{ padding: 16, color: COLORS.text, fontSize: 13 }}>Chargement…</div>
+              ) : notificationsItems.length === 0 ? (
+                <div style={{ padding: 16, color: COLORS.text, fontSize: 13 }}>Aucune notification pour le moment.</div>
+              ) : (
+                <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                  {notificationsItems.map((item) => {
+                    const id = item?.id ?? Math.random();
+                    const title = String(item?.summary || item?.reason || item?.label || "Nouvelle demande patient");
+                    const dt = new Date(String(item?.created_at || ""));
+                    const when = Number.isNaN(dt.getTime())
+                      ? ""
+                      : dt.toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+                    const urgent = String(item?.priority || "").toLowerCase().includes("urgent");
+                    return (
+                      <li key={id} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+                        <button
+                          type="button"
+                          onClick={() => navigateFromTopbar("/app/demandes")}
+                          style={{
+                            display: "flex",
+                            width: "100%",
+                            gap: 10,
+                            alignItems: "flex-start",
+                            border: 0,
+                            background: "transparent",
+                            padding: "12px 14px",
+                            textAlign: "left",
+                            cursor: "pointer",
+                            fontFamily: "inherit",
+                          }}
+                        >
+                          <span
+                            aria-hidden="true"
+                            style={{
+                              width: 8,
+                              height: 8,
+                              marginTop: 6,
+                              borderRadius: 999,
+                              background: urgent ? "#EF4444" : "#F59E0B",
+                              flexShrink: 0,
+                            }}
+                          />
+                          <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.title, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                              {title}
+                            </span>
+                            {when ? (
+                              <span style={{ fontSize: 12, color: COLORS.text }}>{when}</span>
+                            ) : null}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              <div style={{ padding: 10, borderTop: `1px solid ${COLORS.border}`, display: "flex", justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  onClick={() => navigateFromTopbar("/app/demandes")}
+                  style={{ border: 0, background: "transparent", color: COLORS.title, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}
+                >
+                  Tout voir →
                 </button>
               </div>
             </div>
-          )}
+          </>
+        ) : null}
 
-          <div style={S.outletWrap}>
-            <Outlet context={{ me, dashboard, meLoading: loading }} />
-          </div>
-        </div>
+        {!hideToProcessStrip ? (
+          <button
+            type="button"
+            onClick={() => navigateFromTopbar("/app/demandes?status=%C3%80%20traiter&priority=Urgence")}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              width: "calc(100% - 32px)",
+              margin: "8px 16px 0",
+              padding: "10px 14px",
+              borderRadius: 14,
+              border: "1px solid #FED7AA",
+              background: demandBadge > 0 ? "#FFF7ED" : "#F8FAFC",
+              color: demandBadge > 0 ? "#9A3412" : "#475569",
+              fontWeight: 800,
+              fontSize: 14,
+              cursor: "pointer",
+              fontFamily: "inherit",
+              boxShadow: "0 4px 14px rgba(7,26,51,.05)",
+            }}
+          >
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+                <path d="M12 9v4M12 17h.01" />
+              </svg>
+              {demandBadge > 0
+                ? `A traiter (${demandBadge})`
+                : "A traiter"}
+            </span>
+            <span aria-hidden="true" style={{ fontSize: 16, opacity: 0.7 }}>›</span>
+          </button>
+        ) : null}
+
+        <main style={S.content}>
+          {showWelcomeSecurityBanner ? (
+            <div style={S.securityBanner}>
+              <span>Votre compte utilise un mot de passe temporaire.</span>
+              <button
+                type="button"
+                onClick={() => navigate("/app/settings#security")}
+                style={{ ...S.secondaryBtn, padding: "7px 10px", fontSize: 12 }}
+              >
+                Changer mon mot de passe
+              </button>
+            </div>
+          ) : null}
+          <Outlet context={{ me, dashboard, meLoading: loading }} />
+        </main>
       </div>
+
+      <AppMobileBottomNav navItems={NAV_ITEMS} demandBadge={demandBadge} colors={COLORS} />
     </div>
   );
 }
-
-const S = {
-  root: {
-    display: "flex",
-    minHeight: "100vh",
-    background: "#f0f4f8",
-    color: NAVY,
-    fontFamily: "'DM Sans', sans-serif",
-  },
-  sidebar: {
-    width: 220,
-    minWidth: 220,
-    background: "#fff",
-    borderRight: "1px solid #e2e8f0",
-    display: "flex",
-    flexDirection: "column",
-    position: "fixed",
-    left: 0,
-    bottom: 0,
-    zIndex: 40,
-  },
-  brand: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    padding: "18px 16px",
-    borderBottom: "1px solid #f1f5f9",
-  },
-  brandIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    background: "linear-gradient(135deg,#00d4a0,#00a87d)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  brandName: { fontSize: 13, fontWeight: 700, color: NAVY },
-  brandSub: { fontSize: 9, color: TEALX, fontWeight: 700, letterSpacing: 1.5 },
-  navWrap: { padding: "8px 8px", display: "flex", flexDirection: "column", gap: 1 },
-  navWrapSecondary: { padding: "0 8px", display: "flex", flexDirection: "column", gap: 1 },
-  paramTitle: { fontSize: 9, color: "#cbd5e1", letterSpacing: 1.8, fontWeight: 700, padding: "12px 18px 4px" },
-  assistantCard: {
-    margin: "auto 10px 10px",
-    background: "linear-gradient(135deg,rgba(0,212,160,.07),rgba(0,212,160,.02))",
-    border: "1px solid rgba(0,212,160,.2)",
-    borderRadius: 11,
-    padding: "11px 12px",
-  },
-  assistantTag: { fontSize: 9, color: TEALX, letterSpacing: 1.5, fontWeight: 700, marginBottom: 9 },
-  assistantInner: { display: "flex", alignItems: "center", gap: 10 },
-  assistantAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: "50%",
-    objectFit: "cover",
-    border: "2px solid #00d4a0",
-    display: "block",
-  },
-  assistantFallback: {
-    width: 44,
-    height: 44,
-    borderRadius: "50%",
-    background: "linear-gradient(135deg,#00d4a0,#60a5fa)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: 16,
-    fontWeight: 800,
-    color: NAVY,
-    border: "2px solid #00d4a0",
-    textTransform: "uppercase",
-  },
-  assistantOnline: {
-    position: "absolute",
-    bottom: 1,
-    right: 1,
-    width: 10,
-    height: 10,
-    borderRadius: "50%",
-    background: "#00d4a0",
-    border: "2px solid #fff",
-  },
-  assistantName: { fontSize: 14, fontWeight: 800, color: NAVY },
-  assistantMeta: { fontSize: 10, color: "#64748b", marginTop: 2 },
-  assistantStatus: { display: "flex", alignItems: "center", gap: 4, marginTop: 4, fontSize: 10, color: TEALX, fontWeight: 600 },
-  assistantLogoutButton: {
-    marginTop: 10,
-    width: "100%",
-    borderRadius: 9,
-    border: "1px solid rgba(13,27,46,.12)",
-    background: "#fff",
-    color: NAVY,
-    padding: "8px 10px",
-    fontSize: 11,
-    fontWeight: 700,
-    cursor: "pointer",
-    fontFamily: "inherit",
-  },
-  sidebarFooter: {
-    padding: "12px 16px",
-    borderTop: "1px solid #f1f5f9",
-    display: "flex",
-    alignItems: "center",
-    gap: 9,
-  },
-  footerAvatar: {
-    width: 28,
-    height: 28,
-    borderRadius: "50%",
-    background: "linear-gradient(135deg,#00d4a0,#60a5fa)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: 11,
-    fontWeight: 800,
-    color: NAVY,
-    textTransform: "uppercase",
-  },
-  footerName: { fontSize: 12, fontWeight: 700, color: NAVY },
-  footerPlan: { fontSize: 10, color: TEALX, fontWeight: 700 },
-  main: {
-    marginLeft: 220,
-    width: "calc(100% - 220px)",
-    minHeight: "100vh",
-    display: "flex",
-    flexDirection: "column",
-    minWidth: 0,
-    flex: 1,
-  },
-  topbar: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: "14px 24px",
-    background: "#fff",
-    borderBottom: "1px solid #f1f5f9",
-    flexShrink: 0,
-    position: "sticky",
-    top: 0,
-    zIndex: 20,
-  },
-  title: { fontSize: 18, fontWeight: 700, color: NAVY, margin: 0 },
-  subtitle: { fontSize: 11, color: "#94a3b8", margin: "1px 0 0" },
-  topbarRight: { display: "flex", alignItems: "center", gap: 10 },
-  liveBadge: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    background: "rgba(0,212,160,.08)",
-    border: "1px solid rgba(0,212,160,.2)",
-    borderRadius: 20,
-    padding: "5px 11px",
-  },
-  clockBox: {
-    background: "#f8fafc",
-    border: "1px solid #e2e8f0",
-    borderRadius: 7,
-    padding: "5px 10px",
-    fontSize: 12,
-    fontFamily: "monospace",
-    fontWeight: 700,
-    color: NAVY,
-  },
-  bellBtn: {
-    position: "relative",
-    width: 32,
-    height: 32,
-    borderRadius: 7,
-    background: "#fff",
-    border: "1px solid #e2e8f0",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    cursor: "pointer",
-  },
-  bellDot: {
-    position: "absolute",
-    top: 4,
-    right: 4,
-    width: 6,
-    height: 6,
-    borderRadius: "50%",
-    background: "#dc2626",
-    border: "2px solid #fff",
-  },
-  hamburger: {
-    display: "none",
-    width: 32,
-    height: 32,
-    borderRadius: 7,
-    border: "1px solid #e2e8f0",
-    background: "#fff",
-    alignItems: "center",
-    justifyContent: "center",
-    cursor: "pointer",
-    color: NAVY,
-    fontSize: 14,
-  },
-  content: {
-    flex: 1,
-    minHeight: 0,
-    display: "flex",
-    flexDirection: "column",
-    overflow: "hidden",
-    background: "#f0f4f8",
-  },
-  outletWrap: {
-    flex: 1,
-    minHeight: 0,
-    display: "flex",
-    flexDirection: "column",
-    overflow: "hidden",
-  },
-};
-
-const SHELL_CSS = `
-  @media (max-width: 1024px) {
-    .client-shell-sidebar {
-      transform: translateX(-100%);
-      transition: transform .22s ease;
-      box-shadow: 0 20px 50px rgba(13,27,46,.16);
-    }
-    .client-shell-sidebar.open {
-      transform: translateX(0);
-    }
-    .client-shell-main {
-      margin-left: 0 !important;
-      width: 100% !important;
-    }
-    .client-shell-overlay {
-      position: fixed;
-      inset: 0;
-      background: rgba(15,23,42,.35);
-      z-index: 30;
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity .2s ease;
-    }
-    .client-shell-overlay.open {
-      opacity: 1;
-      pointer-events: auto;
-    }
-    .client-shell-hamburger {
-      display: flex !important;
-    }
-  }
-
-  @media (min-width: 1025px) {
-    .client-shell-overlay {
-      display: none;
-    }
-  }
-
-  .client-shell-nav-item:hover {
-    background: #f8fafc !important;
-    color: ${NAVY} !important;
-  }
-`;

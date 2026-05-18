@@ -23,6 +23,7 @@ from backend.services.email_service import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/pre-onboarding", tags=["pre_onboarding"])
+public_router = APIRouter(prefix="/api/public", tags=["public_leads"])
 
 VALID_VOLUME = {"<10", "10-25", "25-50", "50-100", "100+", "unknown"}
 
@@ -116,6 +117,63 @@ class PreOnboardingCommitBody(BaseModel):
     source: str = Field(default="landing_cta")
     wants_callback: bool = False
     callback_phone: str = Field(default="")  # optionnel si email fourni ; au moins un des deux requis
+
+
+class PublicLeadBody(BaseModel):
+    source: str = Field(default="landing_create_assistant")
+    landing_path: str = Field(default="/creer-assistante")
+    cabinet_name: str = Field(default="")
+    contact_name: str = Field(default="")
+    email: str = Field(default="")
+    phone: str = Field(default="")
+    profession: str = Field(default="")
+    specialty: str = Field(default="")
+    city: str = Field(default="")
+    tenant_type: str = Field(default="")
+    calls_per_day: str = Field(default="unknown")
+    has_assistant: Optional[bool] = None
+    assistant_name: str = Field(default="")
+    pain_point: str = Field(default="")
+    desired_channel: str = Field(default="")
+    message: str = Field(default="")
+    consent: bool = False
+    utm_source: Optional[str] = None
+    utm_medium: Optional[str] = None
+    utm_campaign: Optional[str] = None
+    utm_content: Optional[str] = None
+    utm_term: Optional[str] = None
+    referrer: Optional[str] = None
+    gclid: Optional[str] = None
+    fbclid: Optional[str] = None
+    honeypot: str = Field(default="")
+
+
+def _public_calls_to_internal(value: str) -> str:
+    raw = (value or "").strip()
+    if raw in VALID_VOLUME:
+        return raw
+    if raw in {"0-10", "0_10"}:
+        return "<10"
+    if raw in {"10-25", "25-50", "50-100", "100+"}:
+        return raw
+    return "unknown"
+
+
+def _public_profession_to_internal_slug(profession: str, specialty: str) -> str:
+    p = (profession or "").strip().lower()
+    s = (specialty or "").strip().lower()
+    merged = f"{p} {s}"
+    if "dent" in merged:
+        return "dentiste"
+    if "kine" in merged or "kiné" in merged:
+        return "kinesitherapeute"
+    if "infirm" in merged:
+        return "infirmier_liberal"
+    if "centre" in merged or "maison de santé" in merged:
+        return "centre_medical"
+    if "général" in merged or "generaliste" in merged or "médecin" in merged or "medecin" in merged:
+        return "medecin_generaliste"
+    return "autre"
 
 
 def _validate_email(email: str) -> bool:
@@ -263,6 +321,99 @@ async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody)
 
     out = {"ok": True, "lead_id": lead_id}
     return out
+
+
+@public_router.post("/leads")
+async def public_leads_create(request: Request, body: PublicLeadBody) -> Dict[str, Any]:
+    """Endpoint public landing -> CRM leads admin."""
+    if (body.honeypot or "").strip():
+        raise HTTPException(status_code=400, detail="Requête invalide")
+    if not body.consent:
+        raise HTTPException(status_code=400, detail="consent requis")
+
+    email = (body.email or "").strip().lower()
+    phone = (body.phone or "").strip()
+    if not email and not phone:
+        raise HTTPException(status_code=400, detail="email ou phone requis")
+    if email and not _validate_email(email):
+        raise HTTPException(status_code=400, detail="email invalide")
+
+    cabinet_name = (body.cabinet_name or "").strip()
+    contact_name = (body.contact_name or "").strip()
+    if not cabinet_name and not contact_name:
+        raise HTTPException(status_code=400, detail="cabinet_name ou contact_name requis")
+
+    # Anti-spam / rate limit partagé avec le wizard.
+    check_pre_onboarding_commit(request, email or phone)
+
+    internal_calls = _public_calls_to_internal(body.calls_per_day)
+    specialty_slug = _public_profession_to_internal_slug(body.profession, body.specialty)
+    specialty_label = (body.specialty or body.profession or "").strip() or "Cabinet médical"
+    assistant_name = (body.assistant_name or "").strip() or ("Assistante" if body.has_assistant is True else "none")
+    pain = (body.pain_point or body.message or "Lead landing").strip()
+    opening_hours_default = {
+        "monday": {"start": "09:00", "end": "18:00", "closed": False},
+        "tuesday": {"start": "09:00", "end": "18:00", "closed": False},
+        "wednesday": {"start": "09:00", "end": "18:00", "closed": False},
+        "thursday": {"start": "09:00", "end": "18:00", "closed": False},
+        "friday": {"start": "09:00", "end": "18:00", "closed": False},
+        "saturday": {"start": "09:00", "end": "12:00", "closed": True},
+        "sunday": {"start": "09:00", "end": "12:00", "closed": True},
+    }
+
+    source = (body.source or "landing_create_assistant").strip() or "landing_create_assistant"
+    lead_id = upsert_lead(
+        email=email or None,
+        daily_call_volume=internal_calls,
+        medical_specialty=specialty_slug,
+        medical_specialty_label=specialty_label,
+        specialty_other=(body.specialty or "").strip() or None,
+        primary_pain_point=pain[:400],
+        assistant_name=assistant_name[:80] or "none",
+        voice_gender="female",
+        opening_hours=opening_hours_default,
+        wants_callback=bool(phone),
+        callback_phone=phone or None,
+        source=source,
+    )
+    if not lead_id:
+        raise HTTPException(status_code=500, detail="Erreur création lead")
+
+    try:
+        lead = get_lead(lead_id)
+        existing_log = lead.get("notes_log") if lead else None
+        entries = []
+        if isinstance(existing_log, str) and existing_log.strip():
+            entries = json.loads(existing_log)
+        elif isinstance(existing_log, list):
+            entries = list(existing_log)
+        entries.append(
+            {
+                "text": f"Lead public: {cabinet_name or contact_name} · source={source}",
+                "action": "lead_created_from_landing",
+                "created_at": datetime.utcnow().isoformat() + "Z",
+                "meta": {
+                    "landing_path": body.landing_path,
+                    "contact_name": contact_name,
+                    "city": body.city,
+                    "tenant_type": body.tenant_type,
+                    "desired_channel": body.desired_channel,
+                    "utm_source": body.utm_source,
+                    "utm_medium": body.utm_medium,
+                    "utm_campaign": body.utm_campaign,
+                    "utm_content": body.utm_content,
+                    "utm_term": body.utm_term,
+                    "referrer": body.referrer,
+                    "gclid": body.gclid,
+                    "fbclid": body.fbclid,
+                },
+            }
+        )
+        update_lead(lead_id, notes_log=json.dumps(entries, ensure_ascii=False))
+    except Exception as e:
+        logger.warning("public_leads_create notes_log failed lead_id=%s err=%s", lead_id, e)
+
+    return {"ok": True, "lead_id": lead_id, "message": "Votre demande a bien été reçue."}
 
 
 

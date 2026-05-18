@@ -12,6 +12,7 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const isWelcome = searchParams.get("welcome") === "1";
   const emailFromUrl = searchParams.get("email") || "";
+  const nextFromUrl = searchParams.get("next") || "";
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
   const [backendCheck, setBackendCheck] = useState("idle"); // idle | checking | ok | fail
@@ -20,33 +21,31 @@ export default function Login() {
   const userHasInteractedWithForm = useRef(false);
 
   const apiUrl = getApiUrl();
+  const nextPath = nextFromUrl.startsWith("/app") ? nextFromUrl : "/app";
 
   // Pré-remplir l'email depuis ?email=
   useEffect(() => {
     if (emailFromUrl) setEmail(decodeURIComponent(emailFromUrl));
   }, [emailFromUrl]);
 
+  const effectiveApiUrl = apiUrl || "";
+
   // Vérification « déjà connecté » au montage : on affiche un bandeau + lien au lieu de rediriger automatiquement.
   useEffect(() => {
-    if (!apiUrl) return;
-    fetch(`${apiUrl}/api/auth/me`, { method: "GET", credentials: "include" })
+    fetch(`${effectiveApiUrl}/api/auth/me`, { method: "GET", credentials: "include" })
       .then((r) => {
         if (r.ok) setAlreadyLoggedIn(true);
       })
       .catch(() => {});
-  }, [apiUrl]);
+  }, [effectiveApiUrl]);
 
   // Test /health au chargement pour afficher si le backend est joignable (diagnostic CORS / URL).
   useEffect(() => {
-    if (!apiUrl) {
-      setBackendCheck("idle");
-      return;
-    }
     setBackendCheck("checking");
-    fetch(`${apiUrl}/health`, { method: "GET", credentials: "include" })
+    fetch(`${effectiveApiUrl}/health`, { method: "GET", credentials: "include" })
       .then((r) => setBackendCheck(r.ok ? "ok" : "fail"))
       .catch(() => setBackendCheck("fail"));
-  }, [apiUrl]);
+  }, [effectiveApiUrl]);
 
   // Ne pas rediriger sur le seul token localStorage (il peut être expiré) → seule la réponse /api/auth/me (cookie valide) déclenche la redirection.
 
@@ -65,7 +64,7 @@ export default function Login() {
       if (result?.token) {
         setTenantToken(result.token);
       }
-      window.location.replace(isWelcome ? "/app?welcome=1" : "/app");
+      window.location.replace(isWelcome ? "/app?welcome=1" : nextPath);
     } catch (e) {
       setErr(e.message || "Erreur de connexion");
     } finally {
@@ -88,15 +87,10 @@ export default function Login() {
         {alreadyLoggedIn && (
           <div className="mb-4 rounded-xl bg-green-500/20 border border-green-500/50 text-green-200 text-sm p-3 flex items-center justify-between gap-3">
             <span>Vous êtes déjà connecté.</span>
-            <Link to="/app" className="font-semibold text-green-300 hover:text-green-100 underline shrink-0">Accéder au dashboard →</Link>
+            <Link to={nextPath} className="font-semibold text-green-300 hover:text-green-100 underline shrink-0">Accéder au dashboard →</Link>
           </div>
         )}
-        {!apiUrl && (
-          <p className="mb-4 rounded-xl bg-amber-500/20 border border-amber-500/50 text-amber-200 text-sm p-3" role="alert">
-            Backend non configuré : définir <code className="font-mono text-xs">VITE_UWI_API_BASE_URL</code> (ex. URL de l'API), puis reconstruire le front.
-          </p>
-        )}
-        {apiUrl && backendCheck === "fail" && (
+        {backendCheck === "fail" && (
           <div className="mb-4 rounded-xl border border-slate-600 bg-slate-800/80 p-3 text-xs text-slate-300">
             <p className="font-semibold text-slate-200 mb-1">Diagnostic</p>
             <p>Origine : <code className="font-mono text-cyan-300 break-all">{typeof window !== "undefined" ? window.location.origin : ""}</code></p>

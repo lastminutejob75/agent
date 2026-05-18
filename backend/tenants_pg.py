@@ -635,8 +635,8 @@ def pg_get_tenant_full(tenant_id: int) -> Optional[dict]:
 
 def pg_fetch_tenants(include_inactive: bool = False) -> Optional[Tuple[list, str]]:
     """
-    Charge tous les tenants depuis PG.
-    Returns ([{"tenant_id", "name", "status"}, ...], "pg") ou None si échec.
+    Charge tous les tenants depuis PG (+ champs utiles liste admin depuis tenant_config.params_json).
+    Returns ([{"tenant_id", "name", "status", "contact_email", ...}, ...], "pg") ou None si échec.
     """
     url = _pg_url()
     if not url:
@@ -645,15 +645,25 @@ def pg_fetch_tenants(include_inactive: bool = False) -> Optional[Tuple[list, str
     def _query() -> Optional[Tuple[list, str]]:
         import psycopg
         from psycopg.rows import dict_row
+        base_sql = """
+            SELECT t.tenant_id,
+                   t.name,
+                   t.status,
+                   COALESCE(tc.params_json->>'contact_email', '') AS contact_email,
+                   COALESCE(tc.params_json->>'profession', '') AS profession,
+                   COALESCE(tc.params_json->>'city', '') AS city,
+                   COALESCE(tc.params_json->>'primary_practitioner_name', '') AS primary_practitioner_name,
+                   COALESCE(tc.params_json->>'plan_key', '') AS plan_key_params
+            FROM tenants t
+            LEFT JOIN tenant_config tc ON tc.tenant_id = t.tenant_id
+        """
         with psycopg.connect(url, row_factory=dict_row) as conn:
             with conn.cursor() as cur:
                 if include_inactive:
-                    cur.execute(
-                        "SELECT tenant_id, name, status FROM tenants ORDER BY tenant_id"
-                    )
+                    cur.execute(base_sql + " ORDER BY t.tenant_id")
                 else:
                     cur.execute(
-                        "SELECT tenant_id, name, status FROM tenants WHERE COALESCE(status, 'active') = 'active' ORDER BY tenant_id"
+                        base_sql + " WHERE COALESCE(t.status, 'active') = 'active' ORDER BY t.tenant_id"
                     )
                 rows = cur.fetchall()
                 return ([dict(r) for r in rows], "pg")
