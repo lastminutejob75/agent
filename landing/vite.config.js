@@ -14,11 +14,30 @@ export default defineConfig({
       prerenderScript: path.resolve(__dirname, 'src/prerender.jsx'),
     }),
   ],
+  test: {
+    environment: 'node',
+    environmentMatchGlobs: [['**/*.dom.test.{js,jsx,mjs}', 'jsdom']],
+    include: ['src/**/*.test.{js,mjs,jsx}'],
+  },
   build: {
     outDir: 'dist',
     emptyOutDir: true,
   },
   server: {
-    port: 3000,
+    port: 5173,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/auth': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/health': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+    },
   },
 })

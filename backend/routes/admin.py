@@ -13,7 +13,7 @@ import json
 import logging
 import os
 import secrets
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import jwt
@@ -59,6 +59,18 @@ from backend.tenant_config import (
     set_params,
 )
 from backend.vapi_utils import update_vapi_assistant_faq
+from backend.cabinet_profile_pg import (
+    DAY_KEYS,
+    get_assistant_settings as pg_get_assistant_settings,
+    get_availability_settings as pg_get_availability_settings,
+    get_booking_rules as pg_get_booking_rules,
+    get_opening_hours as pg_get_opening_hours,
+    get_profile as pg_get_profile,
+    list_appointment_reasons as pg_list_appointment_reasons,
+    sync_normalized_from_params,
+    sync_opening_hours_from_booking_rules,
+)
+from backend.dashboard_cockpit import dash_build_action_items, dash_build_summary, dash_leads_block, dash_watchlist_items
 
 logger = logging.getLogger(__name__)
 
@@ -454,8 +466,267 @@ def _validate_horaires_payload(body: HorairesBody) -> Dict[str, Any]:
     }
 
 
+def _norm_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _norm_bool(value: Any, fallback: bool = False) -> bool:
+    if value is None:
+        return fallback
+    if isinstance(value, bool):
+        return value
+    txt = str(value).strip().lower()
+    return txt in {"1", "true", "yes", "oui", "on"}
+
+
+def _norm_int(value: Any, fallback: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return fallback
+
+
+def _norm_list_of_text(value: Any) -> list[str]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except Exception:
+            value = []
+    if not isinstance(value, list):
+        return []
+    return [str(v).strip() for v in value if str(v).strip()]
+
+
+def _build_expected_opening_hours_from_params(params: dict) -> list[dict]:
+    booking_days = params.get("booking_days")
+    if isinstance(booking_days, str):
+        try:
+            booking_days = json.loads(booking_days)
+        except Exception:
+            booking_days = []
+    if not isinstance(booking_days, list):
+        booking_days = []
+    open_idx = {int(v) for v in booking_days if str(v).strip().isdigit()}
+    start_hour = _norm_int(params.get("booking_start_hour"), 9)
+    end_hour = _norm_int(params.get("booking_end_hour"), 18)
+    rows = []
+    for idx, day in enumerate(DAY_KEYS):
+        is_open = idx in open_idx
+        rows.append(
+            {
+                "day": day,
+                "is_open": is_open,
+                "morning_start": f"{start_hour:02d}:00" if is_open else "",
+                "morning_end": "12:30" if is_open else "",
+                "afternoon_start": "14:00" if is_open else "",
+                "afternoon_end": f"{end_hour:02d}:00" if is_open else "",
+            }
+        )
+    return rows
+
+
+def _audit_mismatch_map(expected: dict, actual: Optional[dict], defaults: Optional[dict] = None) -> dict:
+    defaults = defaults or {}
+    actual = actual or {}
+    mismatches: list[dict] = []
+    for key, exp in expected.items():
+        act = actual.get(key, defaults.get(key))
+        if act != exp:
+            mismatches.append({"field": key, "expected": exp, "actual": act})
+    return {"total_fields": len(expected), "mismatch_count": len(mismatches), "mismatches": mismatches}
+
+
+def _audit_opening_hours(expected_rows: list[dict], actual_rows: Optional[list[dict]]) -> dict:
+    actual_rows = actual_rows or []
+    by_day = {str(r.get("day")): r for r in actual_rows if isinstance(r, dict)}
+    mismatches: list[dict] = []
+    for row in expected_rows:
+        day = row.get("day")
+        actual = by_day.get(day) or {}
+        for key in ("is_open", "morning_start", "morning_end", "afternoon_start", "afternoon_end"):
+            exp = row.get(key)
+            act = actual.get(key, "" if key != "is_open" else False)
+            if act != exp:
+                mismatches.append(
+                    {
+                        "day": day,
+                        "field": key,
+                        "expected": exp,
+                        "actual": act,
+                    }
+                )
+    return {"expected_days": len(expected_rows), "actual_days": len(actual_rows), "mismatch_count": len(mismatches), "mismatches": mismatches}
+
+
+def _audit_appointment_reasons(expected_rows: list[dict], actual_rows: Optional[list[dict]]) -> dict:
+    actual_rows = actual_rows or []
+    expected_by_id = {str(r.get("id")): r for r in expected_rows if str(r.get("id", "")).strip()}
+    actual_by_id = {str(r.get("id")): r for r in actual_rows if str(r.get("id", "")).strip()}
+    mismatches: list[dict] = []
+    missing_ids = sorted([rid for rid in expected_by_id if rid not in actual_by_id])
+    extra_ids = sorted([rid for rid in actual_by_id if rid not in expected_by_id])
+    for rid, exp in expected_by_id.items():
+        act = actual_by_id.get(rid)
+        if not act:
+            continue
+        for field in ("label", "duration_minutes", "description", "enabled", "allowed_for_new_patients"):
+            if act.get(field) != exp.get(field):
+                mismatches.append(
+                    {
+                        "id": rid,
+                        "field": field,
+                        "expected": exp.get(field),
+                        "actual": act.get(field),
+                    }
+                )
+    return {
+        "expected_count": len(expected_rows),
+        "actual_count": len(actual_rows),
+        "missing_ids": missing_ids,
+        "extra_ids": extra_ids,
+        "mismatch_count": len(mismatches) + len(missing_ids) + len(extra_ids),
+        "mismatches": mismatches,
+    }
+
+
+def _build_cabinet_profile_audit(tenant_id: int) -> dict:
+    params_payload = pg_get_tenant_params(tenant_id)
+    params = (params_payload or ({}, "none"))[0] or {}
+    source = (params_payload or ({}, "none"))[1]
+
+    profile_expected = {
+        "practitioner_name": _norm_text(params.get("practitioner_name")),
+        "cabinet_name": _norm_text(params.get("business_name")),
+        "specialty": _norm_text(params.get("specialty_label")),
+        "phone": _norm_text(params.get("phone_number")),
+        "email": _norm_text(params.get("contact_email")),
+        "address_line": _norm_text(params.get("address_line1")),
+        "postal_code": _norm_text(params.get("postal_code")),
+        "city": _norm_text(params.get("city")),
+        "website_url": _norm_text(params.get("website_url")),
+        "languages": _norm_list_of_text(params.get("languages")),
+        "accepts_new_patients": _norm_bool(params.get("accepts_new_patients"), True),
+        "practitioner_photo_url": _norm_text(params.get("practitioner_photo_url")),
+        "public_slug": _norm_text(params.get("public_slug")),
+    }
+    profile_actual = pg_get_profile(tenant_id)
+
+    availability_expected = {
+        "temporary_closure_enabled": _norm_bool(params.get("temporary_closure_enabled"), False),
+        "temporary_closure_start": _norm_text(params.get("temporary_closure_start")),
+        "temporary_closure_end": _norm_text(params.get("temporary_closure_end")),
+        "temporary_closure_message": _norm_text(params.get("temporary_closure_message")),
+    }
+    availability_actual = pg_get_availability_settings(tenant_id)
+
+    booking_expected = {
+        "default_appointment_duration_minutes": _norm_int(params.get("default_appointment_duration_minutes"), 30),
+        "minimum_booking_notice_hours": _norm_int(params.get("minimum_booking_notice_hours"), 24),
+        "accepts_new_patients": _norm_bool(params.get("accepts_new_patients"), True),
+        "appointment_reschedule_allowed": _norm_bool(params.get("appointment_reschedule_allowed"), True),
+        "appointment_reschedule_notice_hours": _norm_int(params.get("appointment_reschedule_notice_hours"), 24),
+        "appointment_cancel_allowed": _norm_bool(params.get("appointment_cancel_allowed"), True),
+        "appointment_cancel_notice_hours": _norm_int(params.get("appointment_cancel_notice_hours"), 24),
+        "emergency_instruction": _norm_text(params.get("emergency_instruction")),
+        "new_patient_instruction": _norm_text(params.get("new_patient_instruction")),
+        "booking_notes": _norm_text(params.get("booking_notes")),
+    }
+    booking_actual = pg_get_booking_rules(tenant_id)
+
+    assistant_expected = {
+        "assistant_name": _norm_text(params.get("assistant_name")),
+        "welcome_message": _norm_text(params.get("welcome_message")),
+        "documents_to_bring": _norm_text(params.get("documents_to_bring")),
+        "access_instructions": _norm_text(params.get("access_instructions")),
+        "payment_methods": _norm_text(params.get("payment_methods")),
+        "parking_info": _norm_text(params.get("parking_info")),
+        "pmr_access": _norm_text(params.get("pmr_access")),
+        "sensitive_medical_instruction": _norm_text(params.get("sensitive_medical_instruction")),
+        "escalation_instruction": _norm_text(params.get("escalation_instruction")),
+        "human_handoff_instruction": _norm_text(params.get("human_handoff_instruction")),
+        "faq_items": params.get("faq_items_json") if isinstance(params.get("faq_items_json"), list) else [],
+    }
+    assistant_actual = pg_get_assistant_settings(tenant_id)
+
+    expected_opening_hours = _build_expected_opening_hours_from_params(params)
+    actual_opening_hours = pg_get_opening_hours(tenant_id)
+
+    reasons_expected_raw = params.get("appointment_reasons_json")
+    if isinstance(reasons_expected_raw, str):
+        try:
+            reasons_expected_raw = json.loads(reasons_expected_raw)
+        except Exception:
+            reasons_expected_raw = []
+    if not isinstance(reasons_expected_raw, list):
+        reasons_expected_raw = []
+    reasons_expected = []
+    for row in reasons_expected_raw:
+        if not isinstance(row, dict):
+            continue
+        rid = _norm_text(row.get("id"))
+        if not rid:
+            continue
+        reasons_expected.append(
+            {
+                "id": rid,
+                "label": _norm_text(row.get("label")),
+                "duration_minutes": _norm_int(row.get("duration_minutes"), 30),
+                "description": _norm_text(row.get("description")),
+                "enabled": _norm_bool(row.get("enabled"), True),
+                "allowed_for_new_patients": _norm_bool(row.get("allowed_for_new_patients"), True),
+            }
+        )
+    reasons_actual = pg_list_appointment_reasons(tenant_id)
+
+    profile_audit = _audit_mismatch_map(profile_expected, profile_actual, defaults={"accepts_new_patients": True, "languages": []})
+    availability_audit = _audit_mismatch_map(availability_expected, availability_actual, defaults={"temporary_closure_enabled": False})
+    booking_audit = _audit_mismatch_map(
+        booking_expected,
+        booking_actual,
+        defaults={
+            "default_appointment_duration_minutes": 30,
+            "minimum_booking_notice_hours": 24,
+            "accepts_new_patients": True,
+            "appointment_reschedule_allowed": True,
+            "appointment_reschedule_notice_hours": 24,
+            "appointment_cancel_allowed": True,
+            "appointment_cancel_notice_hours": 24,
+        },
+    )
+    assistant_audit = _audit_mismatch_map(assistant_expected, assistant_actual, defaults={"faq_items": []})
+    opening_hours_audit = _audit_opening_hours(expected_opening_hours, actual_opening_hours)
+    reasons_audit = _audit_appointment_reasons(reasons_expected, reasons_actual)
+
+    total_mismatches = (
+        profile_audit["mismatch_count"]
+        + availability_audit["mismatch_count"]
+        + booking_audit["mismatch_count"]
+        + assistant_audit["mismatch_count"]
+        + opening_hours_audit["mismatch_count"]
+        + reasons_audit["mismatch_count"]
+    )
+
+    return {
+        "tenant_id": tenant_id,
+        "params_source": source,
+        "params_present": bool(params),
+        "summary": {
+            "total_mismatch_count": total_mismatches,
+            "is_fully_synced": total_mismatches == 0,
+        },
+        "sections": {
+            "profile": profile_audit,
+            "availability_settings": availability_audit,
+            "booking_rules": booking_audit,
+            "assistant_settings": assistant_audit,
+            "opening_hours": opening_hours_audit,
+            "appointment_reasons": reasons_audit,
+        },
+    }
+
+
 def _get_tenant_list(include_inactive: bool = False) -> List[dict]:
-    """Liste tenants (PG-first, fallback SQLite)."""
+    """Liste tenants (PG-first, fallback SQLite). Enrichit avec params tenant_config pour recherche admin."""
     if config.USE_PG_TENANTS:
         result = pg_fetch_tenants(include_inactive=include_inactive)
         if result:
@@ -466,14 +737,110 @@ def _get_tenant_list(include_inactive: bool = False) -> List[dict]:
     conn = db.get_conn()
     try:
         if include_inactive:
-            rows = conn.execute("SELECT tenant_id, name, status FROM tenants ORDER BY tenant_id").fetchall()
+            rows = conn.execute(
+                """
+                SELECT t.tenant_id, t.name, t.status, tc.params_json
+                FROM tenants t
+                LEFT JOIN tenant_config tc ON tc.tenant_id = t.tenant_id
+                ORDER BY t.tenant_id
+                """
+            ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT tenant_id, name, status FROM tenants WHERE COALESCE(status,'active')='active' ORDER BY tenant_id"
+                """
+                SELECT t.tenant_id, t.name, t.status, tc.params_json
+                FROM tenants t
+                LEFT JOIN tenant_config tc ON tc.tenant_id = t.tenant_id
+                WHERE COALESCE(t.status,'active')='active'
+                ORDER BY t.tenant_id
+                """
             ).fetchall()
-        return [{"tenant_id": r[0], "name": r[1], "status": r[2]} for r in rows]
+        out: List[dict] = []
+        for r in rows:
+            params = {}
+            if r[3]:
+                try:
+                    params = json.loads(r[3]) if isinstance(r[3], str) else (r[3] if isinstance(r[3], dict) else {})
+                except Exception:
+                    params = {}
+            out.append({
+                "tenant_id": r[0],
+                "name": r[1],
+                "status": r[2],
+                "contact_email": (params.get("contact_email") or "").strip(),
+                "profession": (params.get("profession") or "").strip(),
+                "city": (params.get("city") or "").strip(),
+                "primary_practitioner_name": (params.get("primary_practitioner_name") or "").strip(),
+                "plan_key_params": (params.get("plan_key") or "").strip(),
+            })
+        return out
     finally:
         conn.close()
+
+
+def _get_admin_tenants_summary(period_days: int) -> dict:
+    """Agrégats pour la liste admin clients : effectifs, alertes synthétiques, minutes vocales parc."""
+    period_days = int(max(1, min(int(period_days or 30), 366)))
+    tenants = _get_tenant_list(include_inactive=True) or []
+
+    active = 0
+    onboarding = 0
+    suspended = 0
+    for t in tenants:
+        st = str(t.get("status") or "active").strip().lower()
+        if st == "active":
+            active += 1
+        elif st == "suspended":
+            suspended += 1
+        elif st in ("pending_payment", "inactive"):
+            onboarding += 1
+
+    alert_tids: set = set()
+    try:
+        for it in (_get_activation_queue(400).get("items") or []):
+            tid = it.get("tenant_id")
+            if tid is not None:
+                alert_tids.add(int(tid))
+    except Exception:
+        pass
+    try:
+        bill = _get_billing_snapshot()
+        for row in bill.get("tenants_past_due") or []:
+            tid = row.get("tenant_id")
+            if tid is not None:
+                alert_tids.add(int(tid))
+    except Exception:
+        pass
+    try:
+        ops = _get_operations_snapshot(window_days=min(30, period_days))
+        for row in (ops.get("quota") or {}).get("over_100") or []:
+            tid = row.get("tenant_id")
+            if tid is not None:
+                alert_tids.add(int(tid))
+        for row in (ops.get("errors") or {}).get("top_tenants") or []:
+            if int(row.get("errors_total") or 0) >= 8:
+                tid = row.get("tenant_id")
+                if tid is not None:
+                    alert_tids.add(int(tid))
+    except Exception:
+        pass
+
+    now = datetime.now(timezone.utc)
+    end = now.strftime("%Y-%m-%d %H:%M:%S")
+    start = (now - timedelta(days=period_days)).strftime("%Y-%m-%d %H:%M:%S")
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    mins, _cost = _get_vapi_usage_for_window(url, start, end, None)
+    total_mins = int(round(float(mins))) if mins is not None else 0
+
+    return {
+        "period_days": period_days,
+        "active_tenants_count": active,
+        "onboarding_tenants_count": onboarding,
+        "suspended_tenants_count": suspended,
+        "alerts_count": len(alert_tids),
+        "alert_tenant_ids": sorted(alert_tids)[:500],
+        "total_voice_minutes_current_period": total_mins,
+    }
 
 
 def _get_tenant_detail(tenant_id: int) -> Optional[dict]:
@@ -1568,13 +1935,160 @@ def admin_leads_count_new(_: None = Depends(_verify_admin)):
 def admin_leads_list(
     status: Optional[str] = Query(None, description="Filter by status: new, contacted, converted, lost"),
     enterprise: Optional[int] = Query(None, description="Filter grands comptes only: 1"),
+    search: Optional[str] = Query(None),
+    source: Optional[str] = Query(None),
+    priority: Optional[str] = Query(None, description="high|medium|low"),
+    segment: Optional[str] = Query(None),
+    sort: str = Query("created_desc", description="created_desc|score_desc|calls_desc|next_action_asc|name_asc"),
+    follow_up: Optional[str] = Query(None, description="today"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(25, ge=1, le=500),
     _: None = Depends(_verify_admin),
 ):
-    """Liste des leads. Query: ?status=new & ?enterprise=1 (combinaison possible)."""
+    """Liste des leads avec filtres commerciaux + pagination."""
     from backend.leads_pg import list_leads
-    items = list_leads(status=status, enterprise_only=(enterprise == 1))
-    logger.info("admin_leads_list status=%s enterprise=%s count=%s", status, enterprise, len(items))
-    return {"leads": items}
+    status_norm = (status or "").strip().lower() or None
+    if status_norm == "to_contact":
+        status_norm = "new"
+    elif status_norm == "demo":
+        status_norm = "demo_scheduled"
+    elif status_norm == "trial":
+        status_norm = "trial_started"
+    payload = list_leads(
+        status=status_norm,
+        enterprise_only=(enterprise == 1),
+        search=search,
+        source=source,
+        priority=priority,
+        segment=segment,
+        sort=sort,
+        page=page,
+        limit=limit,
+        follow_up_today=(str(follow_up or "").strip().lower() == "today"),
+    )
+    items = payload.get("items") or []
+    logger.info("admin_leads_list status=%s enterprise=%s count=%s page=%s limit=%s", status, enterprise, len(items), page, limit)
+    return {
+        "items": items,
+        "leads": items,  # compat historique frontend
+        "total": payload.get("total", len(items)),
+        "page": payload.get("page", page),
+        "limit": payload.get("limit", limit),
+        "pipeline": payload.get("pipeline", {}),
+    }
+
+
+@router.post("/admin/leads")
+def admin_leads_create(
+    body: Dict[str, Any] = Body(...),
+    _: None = Depends(_verify_admin),
+):
+    """Création manuelle d'un lead commercial depuis l'admin."""
+    from backend.leads_pg import get_lead, update_lead, upsert_lead
+
+    payload = LeadCreateBody.model_validate(body or {})
+    email = (str(payload.email or "").strip().lower() or None)
+    phone = str(payload.phone or "").strip()
+    if not email and not phone:
+        raise HTTPException(400, "email ou phone requis")
+
+    profession = (payload.profession or payload.specialty or "").strip()
+    specialty_slug = (profession.lower().replace(" ", "_").replace("-", "_") or "autre")[:64]
+    calls = (payload.calls_per_day or "unknown").strip()
+    if calls not in {"<10", "10-25", "25-50", "50-100", "100+", "unknown"}:
+        calls = "unknown"
+    assistant_name = (payload.assistant_name or "").strip()
+    if payload.has_assistant is False and not assistant_name:
+        assistant_name = "none"
+    if not assistant_name:
+        assistant_name = "Assistante"
+    pain = (payload.pain_point or payload.message or "Lead manuel").strip()
+    opening_hours_default = {
+        "monday": {"start": "09:00", "end": "18:00", "closed": False},
+        "tuesday": {"start": "09:00", "end": "18:00", "closed": False},
+        "wednesday": {"start": "09:00", "end": "18:00", "closed": False},
+        "thursday": {"start": "09:00", "end": "18:00", "closed": False},
+        "friday": {"start": "09:00", "end": "18:00", "closed": False},
+        "saturday": {"start": "09:00", "end": "12:00", "closed": True},
+        "sunday": {"start": "09:00", "end": "12:00", "closed": True},
+    }
+
+    lead_id = upsert_lead(
+        email=email,
+        daily_call_volume=calls,
+        medical_specialty=specialty_slug,
+        medical_specialty_label=profession or None,
+        specialty_other=(payload.specialty or "").strip() or None,
+        primary_pain_point=pain[:400],
+        assistant_name=assistant_name[:80],
+        voice_gender="female",
+        opening_hours=opening_hours_default,
+        wants_callback=bool(phone),
+        callback_phone=phone or None,
+        source=(payload.source or "manual").strip() or "manual",
+    )
+    if not lead_id:
+        raise HTTPException(500, "Erreur création lead")
+
+    lead = get_lead(lead_id)
+    log = []
+    existing = lead.get("notes_log") if lead else None
+    try:
+        if isinstance(existing, str) and existing.strip():
+            log = json.loads(existing)
+        elif isinstance(existing, list):
+            log = list(existing)
+    except Exception:
+        log = []
+    log.append(
+        {
+            "text": f"Lead créé manuellement: {payload.cabinet_name or payload.contact_name or (email or phone)}",
+            "action": "lead_created_manual",
+            "created_at": datetime.utcnow().isoformat() + "Z",
+            "meta": {
+                "cabinet_name": payload.cabinet_name,
+                "contact_name": payload.contact_name,
+                "contact_role": payload.contact_role,
+                "city": payload.city,
+                "tenant_type": payload.tenant_type,
+                "source_detail": payload.source_detail,
+                "priority": payload.priority,
+                "score": payload.score,
+                "segment": payload.segment,
+                "offer_suggested": payload.offer_suggested,
+                "objection": payload.objection,
+                "next_action": payload.next_action,
+            },
+        }
+    )
+    normalized_status = "new" if payload.status == "to_contact" else payload.status
+    update_lead(
+        lead_id,
+        status=normalized_status,
+        notes=(payload.message or payload.pain_point or None),
+        follow_up_at=(payload.next_action_at or ""),
+        notes_log=json.dumps(log, ensure_ascii=False),
+    )
+    refreshed = get_lead(lead_id) or {"id": lead_id}
+    return {"ok": True, "lead_id": lead_id, "lead": refreshed}
+
+
+@router.get("/admin/leads/summary")
+def admin_leads_summary(
+    period: int = Query(30, ge=1, le=366),
+    _: None = Depends(_verify_admin),
+):
+    from backend.leads_pg import leads_summary
+    return leads_summary(period)
+
+
+@router.get("/admin/leads/stats")
+def admin_leads_stats(
+    period: int = Query(30, ge=1, le=366),
+    _: None = Depends(_verify_admin),
+):
+    from backend.leads_pg import leads_stats
+    return leads_stats(period)
 
 
 @router.get("/admin/leads/{lead_id}")
@@ -1591,16 +2105,334 @@ def admin_lead_detail(
 
 
 class LeadPatchBody(BaseModel):
-    status: Optional[str] = Field(None, pattern="^(new|contacted|converted|lost)$")
+    status: Optional[str] = Field(None, pattern="^(new|to_contact|contacted|interested|demo_scheduled|trial_offered|trial_started|converted|lost|later)$")
     notes: Optional[str] = None
     notes_log: Optional[str] = None
     follow_up_at: Optional[str] = None
     tenant_id: Optional[int] = None
 
 
+class LeadCreateBody(BaseModel):
+    cabinet_name: str = Field(default="", max_length=160)
+    contact_name: str = Field(default="", max_length=120)
+    contact_role: str = Field(default="", max_length=120)
+    email: Optional[EmailStr] = None
+    phone: str = Field(default="", max_length=32)
+    profession: str = Field(default="", max_length=120)
+    specialty: str = Field(default="", max_length=120)
+    city: str = Field(default="", max_length=120)
+    tenant_type: str = Field(default="", max_length=64)
+    source: str = Field(default="manual", max_length=64)
+    source_detail: str = Field(default="Saisie admin", max_length=120)
+    status: str = Field(default="new", pattern="^(new|to_contact|contacted|interested|demo_scheduled|trial_offered|trial_started|converted|lost|later)$")
+    priority: Optional[str] = Field(default=None, pattern="^(high|medium|low)$")
+    score: Optional[int] = Field(default=None, ge=0, le=100)
+    segment: str = Field(default="", max_length=64)
+    calls_per_day: str = Field(default="unknown", max_length=32)
+    has_assistant: Optional[bool] = None
+    assistant_name: str = Field(default="", max_length=120)
+    pain_point: str = Field(default="", max_length=800)
+    objection: str = Field(default="", max_length=800)
+    offer_suggested: str = Field(default="", max_length=64)
+    next_action: str = Field(default="", max_length=400)
+    next_action_at: Optional[str] = None
+    message: str = Field(default="", max_length=1200)
+
+
 class OnboardingLinkBody(BaseModel):
     email: EmailStr
     name: Optional[str] = Field(default="", max_length=120)
+
+
+class LeadStatusBody(BaseModel):
+    status: str = Field(..., pattern="^(new|to_contact|contacted|interested|demo_scheduled|trial_offered|trial_started|converted|lost|later)$")
+    reason: Optional[str] = None
+    next_action: Optional[str] = None
+    next_action_at: Optional[str] = None
+
+
+class LeadMarkLostBody(BaseModel):
+    lost_reason: Optional[str] = None
+    note: Optional[str] = None
+
+
+class LeadFollowUpBody(BaseModel):
+    next_action: Optional[str] = None
+    next_action_at: str = Field(..., min_length=8)
+    note: Optional[str] = None
+
+
+class LeadConvertBody(BaseModel):
+    tenant_id: Optional[int] = None
+    note: Optional[str] = None
+
+
+class AdminPatientRequestPatchBody(BaseModel):
+    status: str = Field(..., pattern="^(processed|cancelled)$")
+    notes: Optional[str] = Field(default=None, max_length=1000)
+
+
+def _slugify_patient_name(value: str) -> str:
+    raw = (value or "").strip().lower()
+    if not raw:
+        return "patient"
+    letters = []
+    for ch in raw:
+        if ("a" <= ch <= "z") or ("0" <= ch <= "9"):
+            letters.append(ch)
+        elif ch in {" ", "-", "_", "."}:
+            letters.append("-")
+    slug = "".join(letters).strip("-")
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug or "patient"
+
+
+def _to_ui_request_status(raw_status: str) -> str:
+    status = (raw_status or "").strip().lower()
+    if status in {"processed", "cancelled"}:
+        return "Traitées"
+    if status in {"live_attempted", "live_forwarding_confirmed", "live_connected", "live_failed", "live_unconfirmed_timeout", "callback_scheduled"}:
+        return "En cours"
+    return "À traiter"
+
+
+def _to_ui_priority(raw_priority: str) -> str:
+    value = (raw_priority or "").strip().lower()
+    if value in {"urgent", "high", "haute", "urgence"}:
+        return "Urgence"
+    if value in {"low", "faible"}:
+        return "Faible"
+    return "Standard"
+
+
+def _to_ui_type(reason: str, summary: str, status: str) -> tuple[str, str]:
+    haystack = f"{reason or ''} {summary or ''}".lower()
+    if "renew" in haystack or "renouvel" in haystack or "ordonnance" in haystack:
+        return ("Renouvellement", "renewal")
+    if "document" in haystack or "certificat" in haystack or "arret" in haystack:
+        return ("Document", "document")
+    if "question" in haystack:
+        return ("Question", "question")
+    if "callback" in (status or "").lower():
+        return ("Rappel", "callback")
+    return ("Transfert humain", "transfer")
+
+
+def _parse_any_datetime(value: Any) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _format_waiting_time(created_at: Optional[datetime]) -> str:
+    if not created_at:
+        return "—"
+    now = datetime.utcnow().replace(tzinfo=created_at.tzinfo)
+    delta = max(0, int((now - created_at).total_seconds()))
+    minutes = delta // 60
+    if minutes < 60:
+        return f"{minutes} min"
+    hours = minutes // 60
+    rem = minutes % 60
+    if hours < 24:
+        return f"{hours}h{rem:02d}"
+    days = hours // 24
+    rem_h = hours % 24
+    return f"{days}j {rem_h}h"
+
+
+def _format_created_label(created_at: Optional[datetime]) -> str:
+    if not created_at:
+        return "—"
+    now = datetime.utcnow().replace(tzinfo=created_at.tzinfo)
+    if created_at.date() == now.date():
+        return f"Aujourd'hui {created_at.strftime('%H:%M')}"
+    if (now.date() - created_at.date()).days == 1:
+        return f"Hier {created_at.strftime('%H:%M')}"
+    return created_at.strftime("%d/%m %H:%M")
+
+
+def _admin_patient_requests_payload(tenant_id: int, status_q: Optional[str], limit: int) -> Dict[str, Any]:
+    from backend.db import get_cabinet_clients_by_phones
+    from backend.handoffs import list_handoffs
+
+    status_filter = (status_q or "").strip()
+    handoffs = list_handoffs(tenant_id, status=None, target=None, limit=limit)
+    phones = [str(h.get("patient_phone") or "").strip() for h in handoffs if str(h.get("patient_phone") or "").strip()]
+    patient_by_phone = get_cabinet_clients_by_phones(tenant_id, phones) if phones else {}
+    items: List[Dict[str, Any]] = []
+
+    for h in handoffs:
+        hid = int(h.get("id") or 0)
+        request_id = f"req-{hid:03d}"
+        ui_status = _to_ui_request_status(str(h.get("status") or ""))
+        if status_filter and ui_status != status_filter:
+            continue
+
+        raw_phone = str(h.get("patient_phone") or "").strip()
+        profile = patient_by_phone.get(raw_phone) or {}
+        patient_name = (
+            str(profile.get("display_name") or "").strip()
+            or str(h.get("display_name") or "").strip()
+            or "Patient"
+        )
+        patient_slug = _slugify_patient_name(patient_name)
+        patient_id = f"patient-{patient_slug}"
+        created_at_dt = _parse_any_datetime(h.get("created_at"))
+        request_type, request_type_key = _to_ui_type(
+            str(h.get("reason") or ""),
+            str(h.get("summary") or ""),
+            str(h.get("status") or ""),
+        )
+        priority = _to_ui_priority(str(h.get("priority") or ""))
+        initials = "".join([part[:1].upper() for part in patient_name.split()[:2]]) or "PT"
+
+        items.append(
+            {
+                "id": request_id,
+                "handoff_id": hid,
+                "tenant_id": tenant_id,
+                "patientId": patient_id,
+                "patientName": patient_name,
+                "initials": initials,
+                "type": request_type,
+                "typeKey": request_type_key,
+                "priority": priority,
+                "status": ui_status,
+                "status_raw": str(h.get("status") or "").strip().lower(),
+                "summary": str(h.get("summary") or "").strip() or "Demande transférée car elle nécessite une action humaine.",
+                "phone": raw_phone or "—",
+                "createdAtLabel": _format_created_label(created_at_dt),
+                "source": "Via transfert",
+                "waitingTime": _format_waiting_time(created_at_dt),
+                "created_at": str(h.get("created_at") or ""),
+            }
+        )
+
+    urgent_count = sum(1 for item in items if item.get("priority") == "Urgence")
+    transfer_count = sum(1 for item in items if item.get("type") == "Transfert humain")
+    to_process_count = sum(1 for item in items if item.get("status") == "À traiter")
+    return {
+        "items": items,
+        "kpis": {
+            "to_process": to_process_count,
+            "urgent": urgent_count,
+            "transfers": transfer_count,
+            "delay_urgent": "48 min",
+            "delay_standard": "3h12",
+        },
+    }
+
+
+@router.get("/admin/patient-requests")
+def admin_patient_requests(
+    tenant_id: int = Query(1, ge=1),
+    status: Optional[str] = Query(None, description="À traiter | En cours | Traitées"),
+    limit: int = Query(200, ge=1, le=500),
+    _: None = Depends(_verify_admin),
+):
+    return _admin_patient_requests_payload(tenant_id, status, limit)
+
+
+@router.get("/admin/tenants/{tenant_id}/patient-requests")
+def admin_tenant_patient_requests_list(
+    tenant_id: int = Depends(validate_tenant_id),
+    status: Optional[str] = Query(None, description="À traiter | En cours | Traitées"),
+    limit: int = Query(200, ge=1, le=500),
+    _: None = Depends(_verify_admin),
+):
+    """Même réponse que GET /admin/patient-requests avec tenant_id dans le chemin."""
+    return _admin_patient_requests_payload(tenant_id, status, limit)
+
+
+@router.get("/admin/patient-requests/{request_id}")
+def admin_patient_request_detail(
+    request_id: str,
+    tenant_id: int = Query(1, ge=1),
+    _: None = Depends(_verify_admin),
+):
+    from backend.db import get_cabinet_client_by_phone
+    from backend.handoffs import get_handoff_by_id
+
+    token = (request_id or "").strip().lower()
+    if token.startswith("req-"):
+        token = token[4:]
+    try:
+        handoff_id = int(token)
+    except Exception:
+        raise HTTPException(400, "request_id invalide")
+
+    handoff = get_handoff_by_id(tenant_id, handoff_id)
+    if not handoff:
+        raise HTTPException(404, "Demande introuvable")
+
+    phone = str(handoff.get("patient_phone") or "").strip()
+    profile = get_cabinet_client_by_phone(tenant_id, phone) if phone else None
+    patient_name = (
+        str((profile or {}).get("display_name") or "").strip()
+        or str(handoff.get("display_name") or "").strip()
+        or "Patient"
+    )
+    patient_slug = _slugify_patient_name(patient_name)
+    patient_id = f"patient-{patient_slug}"
+    created_at_dt = _parse_any_datetime(handoff.get("created_at"))
+    request_type, request_type_key = _to_ui_type(
+        str(handoff.get("reason") or ""),
+        str(handoff.get("summary") or ""),
+        str(handoff.get("status") or ""),
+    )
+    priority = _to_ui_priority(str(handoff.get("priority") or ""))
+
+    return {
+        "id": f"req-{handoff_id:03d}",
+        "handoff_id": handoff_id,
+        "tenant_id": tenant_id,
+        "patientId": patient_id,
+        "patientName": patient_name,
+        "phone": phone or "—",
+        "email": str((profile or {}).get("email") or "").strip() or "—",
+        "type": request_type,
+        "typeKey": request_type_key,
+        "priority": priority,
+        "status": _to_ui_request_status(str(handoff.get("status") or "")),
+        "status_raw": str(handoff.get("status") or "").strip().lower(),
+        "summary": str(handoff.get("summary") or "").strip() or "Demande transférée car elle nécessite une action humaine.",
+        "createdAtLabel": _format_created_label(created_at_dt),
+        "source": "Via transfert",
+        "waitingTime": _format_waiting_time(created_at_dt),
+    }
+
+
+@router.patch("/admin/patient-requests/{request_id}")
+def admin_patient_request_patch(
+    request_id: str,
+    body: AdminPatientRequestPatchBody,
+    tenant_id: int = Query(1, ge=1),
+    _: None = Depends(_verify_admin),
+):
+    from backend.handoffs import update_handoff_status
+
+    token = (request_id or "").strip().lower()
+    if token.startswith("req-"):
+        token = token[4:]
+    try:
+        handoff_id = int(token)
+    except Exception:
+        raise HTTPException(400, "request_id invalide")
+
+    updated = update_handoff_status(
+        tenant_id,
+        handoff_id,
+        status=body.status,
+        notes=body.notes,
+    )
+    if not updated:
+        raise HTTPException(404, "Demande introuvable")
+    return {"ok": True, "id": f"req-{handoff_id:03d}", "status": _to_ui_request_status(str(updated.get("status") or ""))}
 
 
 class DeleteTenantBody(BaseModel):
@@ -1652,6 +2484,153 @@ def admin_lead_patch(
     if not ok:
         raise HTTPException(500, "Erreur mise à jour")
     return {"ok": True}
+
+
+@router.patch("/admin/leads/{lead_id}/status")
+def admin_lead_set_status(
+    lead_id: str,
+    body: LeadStatusBody,
+    _: None = Depends(_verify_admin),
+):
+    from backend.leads_pg import get_lead, update_lead
+
+    lead = get_lead(lead_id)
+    if not lead:
+        raise HTTPException(404, "Lead non trouvé")
+    log = []
+    existing = lead.get("notes_log")
+    try:
+        if isinstance(existing, str) and existing.strip():
+            log = json.loads(existing)
+        elif isinstance(existing, list):
+            log = list(existing)
+    except Exception:
+        log = []
+    normalized_status = "new" if body.status == "to_contact" else body.status
+    note_parts = [f"Statut changé: {body.status}"]
+    if body.reason:
+        note_parts.append(f"raison={body.reason}")
+    if body.next_action:
+        note_parts.append(f"next_action={body.next_action}")
+    if body.next_action_at:
+        note_parts.append(f"next_action_at={body.next_action_at}")
+    log.append(
+        {
+            "text": " · ".join(note_parts),
+            "action": "status_changed",
+            "created_at": datetime.utcnow().isoformat() + "Z",
+        }
+    )
+    ok = update_lead(
+        lead_id,
+        status=normalized_status,
+        follow_up_at=(body.next_action_at or ""),
+        notes_log=json.dumps(log, ensure_ascii=False),
+    )
+    if not ok:
+        raise HTTPException(500, "Erreur mise à jour statut")
+    return {"ok": True}
+
+
+@router.post("/admin/leads/{lead_id}/follow-up")
+def admin_lead_follow_up(
+    lead_id: str,
+    body: LeadFollowUpBody,
+    _: None = Depends(_verify_admin),
+):
+    from backend.leads_pg import get_lead, update_lead
+
+    lead = get_lead(lead_id)
+    if not lead:
+        raise HTTPException(404, "Lead non trouvé")
+    log = []
+    existing = lead.get("notes_log")
+    try:
+        if isinstance(existing, str) and existing.strip():
+            log = json.loads(existing)
+        elif isinstance(existing, list):
+            log = list(existing)
+    except Exception:
+        log = []
+    text = f"Relance planifiée: {body.next_action_at}"
+    if body.next_action:
+        text += f" · {body.next_action}"
+    if body.note:
+        text += f" · {body.note}"
+    log.append({"text": text, "action": "follow_up", "created_at": datetime.utcnow().isoformat() + "Z"})
+    ok = update_lead(
+        lead_id,
+        follow_up_at=body.next_action_at,
+        notes_log=json.dumps(log, ensure_ascii=False),
+    )
+    if not ok:
+        raise HTTPException(500, "Erreur planification relance")
+    return {"ok": True}
+
+
+@router.post("/admin/leads/{lead_id}/mark-lost")
+def admin_lead_mark_lost(
+    lead_id: str,
+    body: LeadMarkLostBody,
+    _: None = Depends(_verify_admin),
+):
+    from backend.leads_pg import get_lead, update_lead
+
+    lead = get_lead(lead_id)
+    if not lead:
+        raise HTTPException(404, "Lead non trouvé")
+    log = []
+    existing = lead.get("notes_log")
+    try:
+        if isinstance(existing, str) and existing.strip():
+            log = json.loads(existing)
+        elif isinstance(existing, list):
+            log = list(existing)
+    except Exception:
+        log = []
+    note = body.note or body.lost_reason or "Lead marqué perdu"
+    log.append({"text": note, "action": "marked_lost", "created_at": datetime.utcnow().isoformat() + "Z"})
+    ok = update_lead(lead_id, status="lost", notes_log=json.dumps(log, ensure_ascii=False))
+    if not ok:
+        raise HTTPException(500, "Erreur mise à jour lead perdu")
+    return {"ok": True}
+
+
+@router.post("/admin/leads/{lead_id}/convert")
+def admin_lead_convert(
+    lead_id: str,
+    body: LeadConvertBody = Body(default=LeadConvertBody()),
+    _: None = Depends(_verify_admin),
+):
+    from backend.leads_pg import get_lead, update_lead
+
+    lead = get_lead(lead_id)
+    if not lead:
+        raise HTTPException(404, "Lead non trouvé")
+    log = []
+    existing = lead.get("notes_log")
+    try:
+        if isinstance(existing, str) and existing.strip():
+            log = json.loads(existing)
+        elif isinstance(existing, list):
+            log = list(existing)
+    except Exception:
+        log = []
+    txt = f"Lead converti en cabinet client"
+    if body.tenant_id:
+        txt += f" (tenant_id={body.tenant_id})"
+    if body.note:
+        txt += f" · {body.note}"
+    log.append({"text": txt, "action": "lead_converted_to_tenant", "created_at": datetime.utcnow().isoformat() + "Z"})
+    ok = update_lead(
+        lead_id,
+        status="converted",
+        tenant_id=body.tenant_id if body.tenant_id else None,
+        notes_log=json.dumps(log, ensure_ascii=False),
+    )
+    if not ok:
+        raise HTTPException(500, "Erreur conversion lead")
+    return {"ok": True, "lead_id": lead_id, "tenant_id": body.tenant_id}
 
 
 @router.post("/admin/leads/{lead_id}/send-onboarding-link")
@@ -1758,11 +2737,464 @@ def public_onboarding(body: OnboardingRequest):
 @router.get("/admin/tenants")
 def admin_list_tenants(
     include_inactive: bool = Query(False),
+    search: Optional[str] = Query(
+        None,
+        description="Filtre serveur optionnel sur id, nom, email (PG : nom + id uniquement)",
+    ),
+    status: Optional[str] = Query(None, description="Statut exact (insensible à la casse), ex. active"),
+    status_in: Optional[str] = Query(None, description="Liste séparée par des virgules, ex. pending_payment,inactive"),
+    page: Optional[int] = Query(None, ge=1),
+    limit: Optional[int] = Query(None, ge=1, le=500),
     _: None = Depends(_verify_admin),
 ):
-    """Liste tous les tenants."""
-    items = _get_tenant_list(include_inactive=include_inactive)
-    return {"tenants": items}
+    """Liste tous les tenants. Pagination optionnelle via page + limit (sinon liste complète)."""
+    items = list(_get_tenant_list(include_inactive=include_inactive) or [])
+    q = (search or "").strip().lower()
+    if q:
+        enriched = []
+        for t in items:
+            tid = str(t.get("tenant_id") or t.get("id") or "")
+            name = str(t.get("name") or "").lower()
+            email = str(t.get("contact_email") or "").lower()
+            st = str(t.get("status") or "").lower()
+            profession = str(t.get("profession") or "").lower()
+            city = str(t.get("city") or "").lower()
+            pract = str(t.get("primary_practitioner_name") or "").lower()
+            pk = str(t.get("plan_key_params") or "").lower()
+            blob = f"{tid} {name} {email} {st} {profession} {city} {pract} {pk}"
+            if q in blob:
+                enriched.append(t)
+        items = enriched
+
+    status_one = (status or "").strip().lower() if status else None
+    status_csv = (status_in or "").strip().lower() if status_in else None
+    if status_one:
+        items = [
+            t for t in items if str(t.get("status") or "active").strip().lower() == status_one
+        ]
+    elif status_csv:
+        allowed = {s.strip() for s in status_csv.split(",") if s.strip()}
+        items = [
+            t for t in items if str(t.get("status") or "active").strip().lower() in allowed
+        ]
+
+    total = len(items)
+    meta: Dict[str, Any] = {}
+    if page is not None and limit is not None:
+        start = (int(page) - 1) * int(limit)
+        items = items[start : start + int(limit)]
+        meta = {"total": total, "page": int(page), "limit": int(limit)}
+    return {"tenants": items, **meta}
+
+
+# Statuts human_handoffs considérés comme « En cours » ou « Traitées » (aligné avec _to_ui_request_status).
+_HANDOFF_NOT_PENDING_STATUSES = frozenset(
+    {
+        "processed",
+        "cancelled",
+        "live_attempted",
+        "live_forwarding_confirmed",
+        "live_connected",
+        "live_failed",
+        "live_unconfirmed_timeout",
+        "callback_scheduled",
+    }
+)
+
+
+def _tenant_list_activity_hints(status: Optional[str], params: Any) -> List[str]:
+    """Indices légers depuis tenant_config (pas d’IO calendrier en direct)."""
+    if not isinstance(params, dict):
+        params = {}
+    st = str(status or "active").strip().lower()
+    hints: List[str] = []
+    vapi_id = str(params.get("vapi_assistant_id") or "").strip()
+    cal_provider = str(params.get("calendar_provider") or "none").strip().lower()
+    cal_id = str(params.get("calendar_id") or "").strip()
+
+    if st == "active" and not vapi_id:
+        hints.append("Assistant incomplet")
+
+    # Google OAuth sans agenda choisi ⇒ UX « agenda pas prêt » comme sur la fiche cabinet.
+    if cal_provider == "google" and not cal_id:
+        hints.append("Agenda incomplet")
+
+    return hints
+
+
+def _bulk_merge_tenant_list_activity_hints(by_id: Dict[str, Dict[str, Any]]) -> None:
+    """Enrichit by_id avec des indices config (PostgreSQL puis SQLite fallback)."""
+    from backend.db import ensure_tenant_config, get_conn
+
+    def upsert_hints(tenant_id_ish: Any, hints: List[str]) -> None:
+        try:
+            tid = int(tenant_id_ish)
+        except (TypeError, ValueError):
+            return
+        if tid < 1:
+            return
+        k = str(tid)
+        if k not in by_id:
+            by_id[k] = {
+                "calls": 0,
+                "appointments": 0,
+                "web_handoffs": 0,
+                "patient_requests_pending": 0,
+                "hints": [],
+            }
+        seen = set(by_id[k].get("hints") or [])
+        for h in hints:
+            hh = str(h).strip()
+            if hh and hh not in seen:
+                seen.add(hh)
+                (by_id[k].setdefault("hints", []).append(hh))
+
+    try:
+        if config.USE_PG_TENANTS:
+            url = os.environ.get("DATABASE_URL") or os.environ.get("PG_TENANTS_URL")
+            if url:
+                import psycopg
+                from psycopg.rows import dict_row
+
+                with psycopg.connect(url, row_factory=dict_row) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            SELECT t.tenant_id AS tenant_id, t.status AS status, tc.params_json AS params_json
+                            FROM tenants t
+                            LEFT JOIN tenant_config tc ON tc.tenant_id = t.tenant_id
+                            ORDER BY t.tenant_id
+                            """
+                        )
+                        for row in cur.fetchall():
+                            tid = row.get("tenant_id")
+                            params_raw = row.get("params_json")
+                            params_obj: Dict[str, Any] = {}
+                            if isinstance(params_raw, dict):
+                                params_obj = params_raw
+                            elif isinstance(params_raw, str) and params_raw.strip():
+                                try:
+                                    pj = json.loads(params_raw)
+                                    if isinstance(pj, dict):
+                                        params_obj = pj
+                                except Exception:
+                                    params_obj = {}
+                            for hh in _tenant_list_activity_hints(row.get("status"), params_obj):
+                                upsert_hints(tid, [hh])
+                return
+    except Exception as e:
+        logger.debug("activity_grid hints PG tenants: %s", e)
+
+    try:
+        ensure_tenant_config()
+        conn = get_conn()
+        try:
+            rows = conn.execute(
+                """
+                SELECT t.tenant_id, t.status, tc.params_json
+                FROM tenants t
+                LEFT JOIN tenant_config tc ON tc.tenant_id = t.tenant_id
+                ORDER BY t.tenant_id
+                """
+            ).fetchall()
+            for r in rows:
+                pj: Dict[str, Any] = {}
+                if len(r) > 2 and r[2]:
+                    try:
+                        pj = json.loads(r[2]) if isinstance(r[2], str) else (r[2] if isinstance(r[2], dict) else {})
+                    except Exception:
+                        pj = {}
+                for hh in _tenant_list_activity_hints(r[1] if len(r) > 1 else None, pj):
+                    upsert_hints(r[0], [hh])
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.debug("activity_grid hints sqlite: %s", e)
+
+
+def _get_tenant_list_activity_grid(window_days: int) -> Dict[str, Any]:
+    """Agrège appels, RDV confirmés, handoffs hors vocal sur la fenêtre, file patient en attente, et indices config."""
+    now = datetime.utcnow()
+    start = (now - timedelta(days=max(1, min(int(window_days), 90)))).strftime("%Y-%m-%d %H:%M:%S")
+    end = now.strftime("%Y-%m-%d %H:%M:%S")
+    wdays = max(1, min(int(window_days), 90))
+
+    by_id: Dict[str, Dict[str, Any]] = {}
+
+    def ensure_row(tenant_id_key: Any) -> Dict[str, Any]:
+        try:
+            tid = int(tenant_id_key)
+        except (TypeError, ValueError):
+            tid = -1
+        k = str(tid)
+        if k not in by_id:
+            by_id[k] = {
+                "calls": 0,
+                "appointments": 0,
+                "web_handoffs": 0,
+                "patient_requests_pending": 0,
+                "hints": [],
+            }
+        return by_id[k]
+
+    # ── ivr_events (appels & RDV) ───────────────────────────────────────────
+    url_events = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    if url_events:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+
+            with psycopg.connect(url_events, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT client_id AS tenant_id, COUNT(DISTINCT call_id) AS value
+                        FROM ivr_events
+                        WHERE call_id IS NOT NULL AND TRIM(call_id) != ''
+                          AND created_at >= %s AND created_at <= %s
+                        GROUP BY client_id
+                        """,
+                        (start, end),
+                    )
+                    for r in cur.fetchall():
+                        tid = r.get("tenant_id")
+                        row = ensure_row(tid)
+                        row["calls"] = int(r.get("value") or 0)
+
+                    cur.execute(
+                        """
+                        SELECT client_id AS tenant_id, COUNT(*) AS value
+                        FROM ivr_events
+                        WHERE event = 'booking_confirmed' AND created_at >= %s AND created_at <= %s
+                        GROUP BY client_id
+                        """,
+                        (start, end),
+                    )
+                    for r in cur.fetchall():
+                        tid = r.get("tenant_id")
+                        row = ensure_row(tid)
+                        row["appointments"] = int(r.get("value") or 0)
+        except Exception as e:
+            logger.warning("activity_grid ivr PG: %s", e)
+    else:
+        import backend.db as db
+
+        conn_sql = db.get_conn()
+        try:
+            db._ensure_ivr_tables(conn_sql)
+            cur_c = conn_sql.execute(
+                """
+                SELECT client_id, COUNT(DISTINCT call_id) AS value FROM ivr_events
+                WHERE call_id != '' AND created_at >= ? AND created_at <= ?
+                GROUP BY client_id
+                """,
+                (start, end),
+            )
+            for row in cur_c.fetchall():
+                rr = ensure_row(row[0])
+                rr["calls"] = int(row[1] or 0)
+
+            cur_ap = conn_sql.execute(
+                """
+                SELECT client_id, COUNT(*) AS value FROM ivr_events
+                WHERE event = 'booking_confirmed' AND created_at >= ? AND created_at <= ?
+                GROUP BY client_id
+                """,
+                (start, end),
+            )
+            for row in cur_ap.fetchall():
+                rr = ensure_row(row[0])
+                rr["appointments"] = int(row[1] or 0)
+        except Exception as e:
+            logger.warning("activity_grid ivr sqlite: %s", e)
+        finally:
+            conn_sql.close()
+
+    # ── human_handoffs (web & demandes ouvertes) ────────────────────────────
+    from backend.db import _ensure_human_handoffs_table_pg, _pg_events_url
+
+    _pending_statuses_sorted = tuple(sorted(_HANDOFF_NOT_PENDING_STATUSES))
+    _pending_in_pg = ",".join(["%s"] * len(_HANDOFF_NOT_PENDING_STATUSES))
+
+    pg_handoff_url = _pg_events_url() or ""
+    url_tenants_alt = os.environ.get("DATABASE_URL") or os.environ.get("PG_TENANTS_URL") or ""
+
+    def _merge_web_sqlite(conn_hand) -> None:
+        import backend.db as db
+
+        db._ensure_human_handoffs_table(conn_hand)
+        try:
+            q_web = conn_hand.execute(
+                """
+                SELECT tenant_id, COUNT(*) AS cnt FROM human_handoffs
+                WHERE datetime(created_at) >= datetime(?) AND datetime(created_at) <= datetime(?)
+                  AND LOWER(TRIM(COALESCE(channel, ''))) NOT IN ('', 'vocal', 'voice', 'phone')
+                GROUP BY tenant_id
+                """,
+                (start, end),
+            ).fetchall()
+            for tid, cnt in q_web:
+                rr = ensure_row(tid)
+                rr["web_handoffs"] = int(cnt or 0)
+
+            qi = "?," * len(_HANDOFF_NOT_PENDING_STATUSES)
+            qi = qi[:-1]
+            pend_params = _pending_statuses_sorted
+            q_pend = conn_hand.execute(
+                f"""
+                SELECT tenant_id, COUNT(*) AS cnt FROM human_handoffs
+                WHERE LOWER(TRIM(COALESCE(status, ''))) NOT IN ({qi})
+                GROUP BY tenant_id
+                """,
+                pend_params,
+            ).fetchall()
+            for tid, cnt in q_pend:
+                rr = ensure_row(tid)
+                rr["patient_requests_pending"] = int(cnt or 0)
+        except Exception as e_sql:
+            logger.debug("activity_grid handoffs sqlite: %s", e_sql)
+
+    if pg_handoff_url:
+        pg_ok = False
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+
+            with psycopg.connect(pg_handoff_url, row_factory=dict_row) as conn_h:
+                _ensure_human_handoffs_table_pg(conn_h)
+                conn_h.commit()
+                with conn_h.cursor() as cur_h:
+                    try:
+                        cur_h.execute(
+                            """
+                            SELECT tenant_id, COUNT(*) AS value
+                            FROM human_handoffs
+                            WHERE created_at >= %s::timestamptz AND created_at <= %s::timestamptz
+                              AND LOWER(TRIM(COALESCE(channel, ''))) NOT IN ('', 'vocal', 'voice', 'phone')
+                            GROUP BY tenant_id
+                            """,
+                            (start, end),
+                        )
+                        for r in cur_h.fetchall():
+                            tid = r.get("tenant_id")
+                            rr = ensure_row(tid)
+                            rr["web_handoffs"] = int(r.get("value") or 0)
+
+                        cur_h.execute(
+                            f"""
+                            SELECT tenant_id, COUNT(*) AS value
+                            FROM human_handoffs
+                            WHERE LOWER(TRIM(COALESCE(status, ''))) NOT IN ({_pending_in_pg})
+                            GROUP BY tenant_id
+                            """,
+                            _pending_statuses_sorted,
+                        )
+                        for r in cur_h.fetchall():
+                            tid = r.get("tenant_id")
+                            rr = ensure_row(tid)
+                            rr["patient_requests_pending"] = int(r.get("value") or 0)
+                        pg_ok = True
+                    except Exception as e_inner:
+                        if "human_handoffs" not in str(e_inner).lower() and "does not exist" not in str(e_inner).lower():
+                            logger.warning("activity_grid human_handoffs pg (events DB): %s", e_inner)
+        except Exception as e_outer:
+            logger.debug("activity_grid PG handoffs conn: %s", e_outer)
+
+        if (
+            not pg_ok
+            and url_tenants_alt
+            and pg_handoff_url.strip() != url_tenants_alt.strip()
+        ):
+            try:
+                import psycopg
+                from psycopg.rows import dict_row
+
+                with psycopg.connect(url_tenants_alt, row_factory=dict_row) as conn_t:
+                    _ensure_human_handoffs_table_pg(conn_t)
+                    conn_t.commit()
+                    with conn_t.cursor() as cur_tt:
+                        cur_tt.execute(
+                            """
+                            SELECT tenant_id, COUNT(*) AS value
+                            FROM human_handoffs
+                            WHERE created_at >= %s::timestamptz AND created_at <= %s::timestamptz
+                              AND LOWER(TRIM(COALESCE(channel, ''))) NOT IN ('', 'vocal', 'voice', 'phone')
+                            GROUP BY tenant_id
+                            """,
+                            (start, end),
+                        )
+                        for r in cur_tt.fetchall():
+                            rr = ensure_row(r.get("tenant_id"))
+                            rr["web_handoffs"] = max(rr["web_handoffs"], int(r.get("value") or 0))
+                        cur_tt.execute(
+                            f"""
+                            SELECT tenant_id, COUNT(*) AS value
+                            FROM human_handoffs
+                            WHERE LOWER(TRIM(COALESCE(status, ''))) NOT IN ({_pending_in_pg})
+                            GROUP BY tenant_id
+                            """,
+                            _pending_statuses_sorted,
+                        )
+                        for r in cur_tt.fetchall():
+                            rr = ensure_row(r.get("tenant_id"))
+                            rr["patient_requests_pending"] = max(
+                                rr["patient_requests_pending"],
+                                int(r.get("value") or 0),
+                            )
+                        pg_ok = True
+            except Exception as e2:
+                logger.debug("activity_grid human_handoffs pg (tenants DB fallback): %s", e2)
+
+        if not pg_ok:
+            import backend.db as db
+
+            cx = db.get_conn()
+            try:
+                _merge_web_sqlite(cx)
+            finally:
+                cx.close()
+    else:
+        import backend.db as db
+
+        cx = db.get_conn()
+        try:
+            _merge_web_sqlite(cx)
+        finally:
+            cx.close()
+
+    for k in list(by_id.keys()):
+        pr = int(by_id[k].get("patient_requests_pending") or 0)
+        hint_list = list(by_id[k].get("hints") or [])
+        if pr > 0:
+            label = "1 demande patient" if pr == 1 else f"{pr} demandes patient"
+            if label not in hint_list:
+                hint_list.insert(0, label)
+        by_id[k]["hints"] = hint_list[:4]
+
+    _bulk_merge_tenant_list_activity_hints(by_id)
+
+    for bad in ("-1", "0"):
+        by_id.pop(bad, None)
+
+    return {"window_days": wdays, "by_tenant_id": by_id}
+
+
+@router.get("/admin/tenants/activity-grid")
+def admin_tenants_activity_grid(
+    window_days: int = Query(30, ge=1, le=90, description="Fenêtre glissante UTC pour appels/RDV/handoffs web"),
+    _: None = Depends(_verify_admin),
+):
+    """Agrégats liste cabinets : volume ivr_events + human_handoffs + indices légers depuis tenant_config."""
+    return _get_tenant_list_activity_grid(window_days)
+
+
+@router.get("/admin/tenants/summary")
+def admin_tenants_summary(
+    period: int = Query(30, ge=1, le=366, description="Fenêtre glissante (jours UTC) pour total minutes vocales parc"),
+    _: None = Depends(_verify_admin),
+):
+    """KPIs liste clients : effectifs, alertes agrégées, minutes Vapi."""
+    return _get_admin_tenants_summary(period)
 
 
 def _admin_create_tenant_impl(body: TenantCreateIn) -> TenantOut:
@@ -3370,6 +4802,498 @@ def admin_get_billing_plans(_: None = Depends(_verify_admin)):
     return {"items": out}
 
 
+_PLAN_INCLUDED_MIN = {"starter": 400, "growth": 800, "pro": 1200, "trial": 200, "free": 0}
+_PLAN_OVERAGE_EUR = {"starter": 0.19, "growth": 0.17, "pro": 0.15, "trial": 0.0, "free": 0.0}
+
+
+def _period_to_month(period: str) -> str:
+    token = (period or "").strip().lower()
+    now = datetime.utcnow()
+    if token in {"", "month", "current", "current_month"}:
+        return now.strftime("%Y-%m")
+    if token in {"prev_month", "previous_month", "last_month"}:
+        y = now.year
+        m = now.month - 1
+        if m == 0:
+            y -= 1
+            m = 12
+        return f"{y}-{m:02d}"
+    if len(token) == 7 and token[4] == "-" and token[:4].isdigit() and token[5:7].isdigit():
+        return token
+    return now.strftime("%Y-%m")
+
+
+def _enrich_billing_tenant(item: Dict[str, Any]) -> Dict[str, Any]:
+    plan_key = str(item.get("plan_key") or "free").strip().lower()
+    included = int(item.get("quota", {}).get("included") or _PLAN_INCLUDED_MIN.get(plan_key, 0))
+    used = float(item.get("usage", {}).get("minutes") or item.get("quota", {}).get("used") or 0)
+    overage_price = float(_PLAN_OVERAGE_EUR.get(plan_key, 0.0))
+    over_minutes = max(0, int(round(used - included)))
+    over_amount = round(over_minutes * overage_price, 2)
+    mrr = float(item.get("mrr_eur") or PLAN_MRR_EUR.get(plan_key, 0))
+    vapi_cost = float(item.get("usage", {}).get("cost_usd") or 0)
+    expected_revenue = round(mrr + over_amount, 2)
+    margin = round(expected_revenue - vapi_cost, 2)
+    margin_rate = round((margin / expected_revenue), 4) if expected_revenue > 0 else 0.0
+    usage_pct = int(round((used / included) * 100)) if included > 0 else 0
+    alerts: List[str] = []
+    stripe_customer_id = item.get("stripe_customer_id")
+    stripe_subscription_id = item.get("stripe_subscription_id")
+    stripe_status = str(item.get("stripe_status") or "").strip().lower()
+    if not stripe_customer_id:
+        alerts.append("stripe_customer_missing")
+    if not stripe_subscription_id:
+        alerts.append("subscription_missing")
+    if stripe_status in {"past_due", "unpaid"}:
+        alerts.append("payment_failed")
+    if stripe_status in {"incomplete", "incomplete_expired"}:
+        alerts.append("stripe_incomplete")
+    if usage_pct >= 85:
+        alerts.append("quota_high")
+    if over_minutes > 0:
+        alerts.append("overage")
+    if margin < 0:
+        alerts.append("margin_negative")
+    if stripe_status == "trialing":
+        alerts.append("trial_expiring")
+
+    return {
+        **item,
+        "included_minutes": included,
+        "voice_minutes_used": round(used, 2),
+        "overage_price_per_minute": overage_price,
+        "overage_minutes": over_minutes,
+        "overage_amount_estimate": over_amount,
+        "vapi_cost_estimate": round(vapi_cost, 4),
+        "vapi_cost_is_estimate": True,
+        "estimated_revenue": expected_revenue,
+        "estimated_margin": margin,
+        "estimated_margin_rate": margin_rate,
+        "usage_percent": usage_pct,
+        "alerts": alerts,
+        "alerts_count": len(alerts),
+    }
+
+
+@router.get("/admin/billing/summary")
+def admin_billing_summary(
+    period: str = Query("month"),
+    _: None = Depends(_verify_admin),
+):
+    """Résumé agrégé billing pour cockpit admin."""
+    month = _period_to_month(period)
+    payload = _get_billing_overview(month)
+    tenants = [_enrich_billing_tenant(item) for item in (payload.get("tenants") or [])]
+    mrr = round(sum(float(t.get("mrr_eur") or 0) for t in tenants), 2)
+    estimated_revenue = round(sum(float(t.get("estimated_revenue") or 0) for t in tenants), 2)
+    vapi_cost = round(sum(float(t.get("vapi_cost_estimate") or 0) for t in tenants), 2)
+    margin = round(estimated_revenue - vapi_cost, 2)
+    margin_rate = round((margin / estimated_revenue), 4) if estimated_revenue > 0 else 0.0
+    minutes = round(sum(float(t.get("voice_minutes_used") or 0) for t in tenants), 2)
+    overage = round(sum(float(t.get("overage_amount_estimate") or 0) for t in tenants), 2)
+    alerts_count = int(sum(int(t.get("alerts_count") or 0) for t in tenants))
+    return {
+        "period": month,
+        "mrr": mrr,
+        "estimated_revenue": estimated_revenue,
+        "vapi_cost_estimate": vapi_cost,
+        "vapi_cost_currency": "EUR",
+        "vapi_cost_is_estimate": True,
+        "estimated_margin": margin,
+        "estimated_margin_rate": margin_rate,
+        "voice_minutes_used": minutes,
+        "estimated_overage_amount": overage,
+        "billing_alerts_count": alerts_count,
+    }
+
+
+@router.get("/admin/billing/action-items")
+def admin_billing_action_items(
+    period: str = Query("month"),
+    _: None = Depends(_verify_admin),
+):
+    """Actions billing prioritaires (paiement, quota, marge)."""
+    month = _period_to_month(period)
+    payload = _get_billing_overview(month)
+    tenants = [_enrich_billing_tenant(item) for item in (payload.get("tenants") or [])]
+    items: List[Dict[str, Any]] = []
+    for tenant in tenants:
+        tid = int(tenant.get("tenant_id") or 0)
+        tname = str(tenant.get("name") or f"Tenant #{tid}")
+        if "stripe_customer_missing" in tenant.get("alerts", []):
+            items.append(
+                {
+                    "id": f"{tid}:stripe_missing",
+                    "severity": "critical",
+                    "tenant_id": tid,
+                    "tenant_name": tname,
+                    "type": "stripe_missing",
+                    "title": "Stripe customer manquant",
+                    "description": "Créer checkout + synchroniser la fiche Stripe.",
+                    "primary_action_label": "Créer checkout",
+                    "primary_action_url": f"/admin/billing/{tid}?tab=actions",
+                    "secondary_action_label": "Voir fiche",
+                    "secondary_action_url": f"/admin/tenants/{tid}",
+                    "created_at": datetime.utcnow().isoformat() + "Z",
+                }
+            )
+        if "margin_negative" in tenant.get("alerts", []):
+            items.append(
+                {
+                    "id": f"{tid}:margin_negative",
+                    "severity": "critical",
+                    "tenant_id": tid,
+                    "tenant_name": tname,
+                    "type": "margin_negative",
+                    "title": "Marge négative estimée",
+                    "description": "Le coût Vapi dépasse le revenu estimé sur la période.",
+                    "primary_action_label": "Voir usage",
+                    "primary_action_url": f"/admin/billing/{tid}?tab=usage",
+                    "secondary_action_label": "Changer plan",
+                    "secondary_action_url": f"/admin/billing/{tid}?tab=actions",
+                    "created_at": datetime.utcnow().isoformat() + "Z",
+                }
+            )
+        if "quota_high" in tenant.get("alerts", []):
+            items.append(
+                {
+                    "id": f"{tid}:quota_high",
+                    "severity": "warning",
+                    "tenant_id": tid,
+                    "tenant_name": tname,
+                    "type": "quota_high",
+                    "title": f"Quota à {tenant.get('usage_percent', 0)}%",
+                    "description": "Dépassement probable avant fin de mois.",
+                    "primary_action_label": "Proposer Growth",
+                    "primary_action_url": f"/admin/billing/{tid}?tab=actions",
+                    "secondary_action_label": "Voir billing",
+                    "secondary_action_url": f"/admin/billing/{tid}",
+                    "created_at": datetime.utcnow().isoformat() + "Z",
+                }
+            )
+        if "trial_expiring" in tenant.get("alerts", []):
+            items.append(
+                {
+                    "id": f"{tid}:trial_expiring",
+                    "severity": "warning",
+                    "tenant_id": tid,
+                    "tenant_name": tname,
+                    "type": "trial_expiring",
+                    "title": "Essai gratuit actif",
+                    "description": "Prévoir la conversion vers un plan Starter/Growth.",
+                    "primary_action_label": "Relancer",
+                    "primary_action_url": f"/admin/billing/{tid}?tab=actions",
+                    "secondary_action_label": "Créer checkout",
+                    "secondary_action_url": f"/admin/billing/{tid}?tab=actions",
+                    "created_at": datetime.utcnow().isoformat() + "Z",
+                }
+            )
+    severity_order = {"critical": 0, "warning": 1, "info": 2}
+    items.sort(key=lambda it: (severity_order.get(str(it.get("severity")), 9), str(it.get("tenant_name") or "")))
+    return {"items": items}
+
+
+@router.get("/admin/billing/tenants")
+def admin_billing_tenants(
+    period: str = Query("month"),
+    filter: str = Query("all"),
+    sort: str = Query("margin_low"),
+    search: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(25, ge=1, le=200),
+    _: None = Depends(_verify_admin),
+):
+    """Liste des tenants enrichie pour cockpit billing (filtres/tri/pagination)."""
+    month = _period_to_month(period)
+    payload = _get_billing_overview(month)
+    rows = [_enrich_billing_tenant(item) for item in (payload.get("tenants") or [])]
+    q = (search or "").strip().lower()
+    if q:
+        rows = [r for r in rows if q in f"{r.get('name','')} {r.get('plan_key','')} {r.get('stripe_status','')} {r.get('tenant_id','')}".lower()]
+    f = (filter or "all").strip().lower()
+    if f in {"active", "actifs"}:
+        rows = [r for r in rows if str(r.get("stripe_status") or "").lower() == "active"]
+    elif f in {"trial", "essais", "trialing"}:
+        rows = [r for r in rows if str(r.get("stripe_status") or "").lower() == "trialing"]
+    elif f in {"quota_high", "quota élevé", "quota_eleve"}:
+        rows = [r for r in rows if int(r.get("usage_percent") or 0) >= 85]
+    elif f in {"overage", "depassement", "dépassement"}:
+        rows = [r for r in rows if int(r.get("overage_minutes") or 0) > 0]
+    elif f in {"margin_low", "marge_faible", "marge faible"}:
+        rows = [r for r in rows if float(r.get("estimated_margin") or 0) < 30]
+    elif f in {"stripe_incomplete", "stripe incomplet"}:
+        rows = [r for r in rows if (not r.get("stripe_customer_id")) or (not r.get("stripe_subscription_id")) or str(r.get("stripe_status") or "").lower() == "incomplete"]
+    elif f in {"alerts", "alertes"}:
+        rows = [r for r in rows if int(r.get("alerts_count") or 0) > 0]
+
+    s = (sort or "margin_low").strip().lower()
+    if s in {"mrr_desc", "mrr"}:
+        rows.sort(key=lambda r: float(r.get("mrr_eur") or 0), reverse=True)
+    elif s in {"vapi_cost_desc", "vapi"}:
+        rows.sort(key=lambda r: float(r.get("vapi_cost_estimate") or 0), reverse=True)
+    elif s in {"usage_desc", "usage"}:
+        rows.sort(key=lambda r: float(r.get("usage_percent") or 0), reverse=True)
+    elif s in {"name_asc", "name"}:
+        rows.sort(key=lambda r: str(r.get("name") or "").lower())
+    elif s in {"next_invoice_asc", "invoice"}:
+        rows.sort(key=lambda r: int(r.get("current_period_end") or 0))
+    elif s in {"last_stripe_sync_desc"}:
+        rows.sort(key=lambda r: str(r.get("updated_at") or ""), reverse=True)
+    else:
+        rows.sort(key=lambda r: float(r.get("estimated_margin") or 0))
+
+    total = len(rows)
+    start = (page - 1) * limit
+    items = rows[start : start + limit]
+    return {"period": month, "items": items, "total": total, "page": page, "limit": limit}
+
+
+@router.get("/admin/billing/tenants/{tenant_id}/overview")
+def admin_billing_tenant_overview(
+    tenant_id: int = Depends(validate_tenant_id),
+    period: str = Query("month"),
+    _: None = Depends(_verify_admin),
+):
+    month = _period_to_month(period)
+    payload = _get_billing_overview(month)
+    for item in payload.get("tenants") or []:
+        if int(item.get("tenant_id") or 0) == tenant_id:
+            enriched = _enrich_billing_tenant(item)
+            return {"period": month, "tenant": enriched}
+    raise HTTPException(404, "Tenant billing overview not found")
+
+
+@router.get("/admin/billing/tenants/{tenant_id}/usage")
+def admin_billing_tenant_usage(
+    tenant_id: int = Depends(validate_tenant_id),
+    period: str = Query("month"),
+    _: None = Depends(_verify_admin),
+):
+    month = _period_to_month(period)
+    usage = _get_tenant_usage(tenant_id, month)
+    quota = admin_get_tenant_quota(tenant_id=tenant_id, month=month, _=None)  # type: ignore[arg-type]
+    used = float(usage.get("minutes_total") or 0)
+    included = int(quota.get("included_minutes_month") or 0)
+    over = max(0, round(used - included, 2))
+    plan_key = str(quota.get("plan_key") or "free").lower()
+    overage_amount = round(over * float(_PLAN_OVERAGE_EUR.get(plan_key, 0.0)), 2)
+    return {
+        "tenant_id": tenant_id,
+        "period": month,
+        "voice_minutes_used": used,
+        "included_minutes": included,
+        "overage_minutes": over,
+        "overage_amount": overage_amount,
+        "vapi_cost_estimate": float(usage.get("cost_usd") or 0),
+        "vapi_cost_is_estimate": True,
+        "projected_minutes_end_period": round(used * 1.18, 2),
+        "projected_overage_amount": round(max(0, (used * 1.18) - included) * float(_PLAN_OVERAGE_EUR.get(plan_key, 0.0)), 2),
+    }
+
+
+@router.get("/admin/billing/tenants/{tenant_id}/stripe")
+def admin_billing_tenant_stripe(
+    tenant_id: int = Depends(validate_tenant_id),
+    _: None = Depends(_verify_admin),
+):
+    billing = get_tenant_billing(tenant_id)
+    if billing is None:
+        raise HTTPException(404, "Tenant billing not found")
+    return {
+        "tenant_id": tenant_id,
+        "stripe_customer_id": billing.get("stripe_customer_id"),
+        "stripe_subscription_id": billing.get("stripe_subscription_id"),
+        "stripe_metered_item_id": billing.get("stripe_metered_item_id"),
+        "billing_status": billing.get("billing_status"),
+        "plan_key": billing.get("plan_key"),
+        "current_period_start": billing.get("current_period_start"),
+        "current_period_end": billing.get("current_period_end"),
+        "trial_ends_at": billing.get("trial_ends_at"),
+        "updated_at": billing.get("updated_at"),
+    }
+
+
+@router.get("/admin/billing/tenants/{tenant_id}/invoices")
+def admin_billing_tenant_invoices(
+    tenant_id: int = Depends(validate_tenant_id),
+    limit: int = Query(10, ge=1, le=50),
+    _: None = Depends(_verify_admin),
+):
+    return admin_billing_invoices(tenant_id=tenant_id, limit=limit, _=None)  # type: ignore[arg-type]
+
+
+def _admin_actor_label(request: Optional[Request]) -> str:
+    if not request:
+        return "admin"
+    return _get_admin_email_from_cookie(request) or "admin_token"
+
+
+@router.post("/admin/billing/sync-stripe")
+def admin_billing_sync_stripe(
+    period: str = Query("month"),
+    request: Request = None,
+    _: None = Depends(_verify_admin),
+):
+    """Resync metered item pour tous les tenants présents dans la vue billing."""
+    from backend.routes.stripe_webhook import resync_metered_item_for_tenant
+
+    actor = _admin_actor_label(request)
+    month = _period_to_month(period)
+    payload = _get_billing_overview(month)
+    results = []
+    for item in payload.get("tenants") or []:
+        tid = int(item.get("tenant_id") or 0)
+        if tid < 1:
+            continue
+        result = resync_metered_item_for_tenant(tid)
+        results.append({"tenant_id": tid, **result})
+    logger.info("BILLING_SYNC_STRIPE actor=%s period=%s tenants=%s", actor, month, len(results))
+    return {"period": month, "items": results}
+
+
+@router.post("/admin/billing/tenants/{tenant_id}/sync-stripe")
+def admin_billing_sync_stripe_tenant(
+    tenant_id: int = Depends(validate_tenant_id),
+    request: Request = None,
+    _: None = Depends(_verify_admin),
+):
+    from backend.routes.stripe_webhook import resync_metered_item_for_tenant
+
+    actor = _admin_actor_label(request)
+    result = resync_metered_item_for_tenant(tenant_id)
+    logger.info("BILLING_SYNC_STRIPE_TENANT actor=%s tenant_id=%s ok=%s", actor, tenant_id, bool(result.get("ok")))
+    return {"tenant_id": tenant_id, **result}
+
+
+def _push_usage_for_single_tenant(tenant_id: int, date_utc: date) -> Dict[str, Any]:
+    """Push usage journalier pour un tenant (idempotent via stripe_usage_push_log)."""
+    from backend.billing_pg import get_tenant_billing as _get_tb
+    from backend.stripe_usage import (
+        _aggregate_usage_by_tenant_for_day,  # pylint: disable=protected-access
+        try_acquire_usage_push,
+        mark_usage_push_failed,
+        mark_usage_push_sent,
+    )
+
+    rows = {int(tid): int(minutes) for tid, minutes in (_aggregate_usage_by_tenant_for_day(date_utc) or [])}
+    minutes = int(rows.get(int(tenant_id), 0))
+    if minutes <= 0:
+        return {"ok": True, "tenant_id": tenant_id, "date_utc": date_utc.isoformat(), "status": "skipped", "reason": "no_usage"}
+
+    billing = _get_tb(tenant_id) or {}
+    metered_item_id = str(billing.get("stripe_metered_item_id") or "").strip()
+    if not metered_item_id:
+        return {"ok": False, "tenant_id": tenant_id, "date_utc": date_utc.isoformat(), "status": "failed", "reason": "no_metered_item"}
+
+    acquired = try_acquire_usage_push(tenant_id, date_utc, minutes)
+    if not acquired:
+        return {"ok": True, "tenant_id": tenant_id, "date_utc": date_utc.isoformat(), "status": "skipped", "reason": "already_sent_or_pending"}
+
+    stripe_key = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
+    if not stripe_key:
+        mark_usage_push_failed(tenant_id, date_utc, "STRIPE_SECRET_KEY not set")
+        return {"ok": False, "tenant_id": tenant_id, "date_utc": date_utc.isoformat(), "status": "failed", "reason": "stripe_key_missing"}
+    try:
+        import stripe
+
+        stripe.api_key = stripe_key
+        end_of_day_ts = int(datetime(date_utc.year, date_utc.month, date_utc.day, 23, 59, 59, tzinfo=timezone.utc).timestamp())
+        record = stripe.UsageRecord.create(
+            subscription_item=metered_item_id,
+            quantity=minutes,
+            timestamp=end_of_day_ts,
+            action="set",
+        )
+        usage_record_id = getattr(record, "id", None) if record else None
+        mark_usage_push_sent(tenant_id, date_utc, stripe_usage_record_id=usage_record_id)
+        return {
+            "ok": True,
+            "tenant_id": tenant_id,
+            "date_utc": date_utc.isoformat(),
+            "status": "sent",
+            "minutes_pushed": minutes,
+            "stripe_usage_record_id": usage_record_id,
+        }
+    except Exception as e:
+        mark_usage_push_failed(tenant_id, date_utc, str(e)[:255])
+        return {"ok": False, "tenant_id": tenant_id, "date_utc": date_utc.isoformat(), "status": "failed", "reason": str(e)[:200]}
+
+
+@router.post("/admin/billing/tenants/{tenant_id}/push-usage")
+def admin_billing_push_usage_tenant(
+    tenant_id: int = Depends(validate_tenant_id),
+    target_date: Optional[str] = Query(None, description="YYYY-MM-DD (UTC), default yesterday"),
+    request: Request = None,
+    _: None = Depends(_verify_admin),
+):
+    try:
+        if target_date:
+            d = datetime.fromisoformat(target_date).date()
+        else:
+            d = (datetime.now(timezone.utc) - timedelta(days=1)).date()
+    except Exception:
+        raise HTTPException(400, "target_date must be YYYY-MM-DD")
+    result = _push_usage_for_single_tenant(tenant_id, d)
+    actor = _admin_actor_label(request)
+    logger.info(
+        "BILLING_PUSH_USAGE_TENANT actor=%s tenant_id=%s date_utc=%s status=%s",
+        actor,
+        tenant_id,
+        d.isoformat(),
+        result.get("status"),
+    )
+    return result
+
+
+@router.post("/admin/billing/push-usage")
+def admin_billing_push_usage_global(
+    target_date: Optional[str] = Query(None, description="YYYY-MM-DD (UTC), default yesterday"),
+    request: Request = None,
+    _: None = Depends(_verify_admin),
+):
+    from backend.stripe_usage import push_daily_usage_to_stripe
+
+    try:
+        if target_date:
+            d = datetime.fromisoformat(target_date).date()
+        else:
+            d = (datetime.now(timezone.utc) - timedelta(days=1)).date()
+    except Exception:
+        raise HTTPException(400, "target_date must be YYYY-MM-DD")
+    result = push_daily_usage_to_stripe(d)
+    actor = _admin_actor_label(request)
+    logger.info("BILLING_PUSH_USAGE_GLOBAL actor=%s date_utc=%s ok=%s", actor, d.isoformat(), bool(result.get("ok")))
+    return {"date_utc": d.isoformat(), **result}
+
+
+@router.patch("/admin/billing/tenants/{tenant_id}/plan")
+def admin_billing_patch_plan(
+    body: ChangePlanBody,
+    tenant_id: int = Depends(validate_tenant_id),
+    _: None = Depends(_verify_admin),
+):
+    return admin_billing_change_plan(tenant_id=tenant_id, body=body, _=None)  # type: ignore[arg-type]
+
+
+class BillingSuspendBody(BaseModel):
+    mode: str = Field(default="hard", pattern="^(hard|soft)$")
+
+
+@router.post("/admin/billing/tenants/{tenant_id}/suspend")
+def admin_billing_suspend_tenant(
+    body: BillingSuspendBody,
+    tenant_id: int = Depends(validate_tenant_id),
+    request: Request = None,
+    _: None = Depends(_verify_admin),
+):
+    ok = set_tenant_suspended(tenant_id, reason="manual", mode=body.mode)
+    if not ok:
+        raise HTTPException(500, "Failed to suspend tenant")
+    actor = _admin_actor_label(request)
+    logger.info("BILLING_SUSPEND_TENANT actor=%s tenant_id=%s mode=%s", actor, tenant_id, body.mode)
+    return {"ok": True, "tenant_id": tenant_id, "mode": body.mode}
+
+
 @router.get("/admin/tenants/{tenant_id}/quota")
 def admin_get_tenant_quota(
     tenant_id: int = Depends(validate_tenant_id),
@@ -3479,6 +5403,7 @@ def admin_patch_params(
     if config.USE_PG_TENANTS:
         ok = pg_update_tenant_params(tenant_id, body.params)
         if ok:
+            sync_normalized_from_params(tenant_id, body.params)
             return {"ok": True}
     from backend.tenant_config import set_params
     set_params(tenant_id, body.params)
@@ -3498,10 +5423,96 @@ def admin_patch_horaires(
     if config.USE_PG_TENANTS:
         ok = pg_update_tenant_params(tenant_id, payload)
         if ok:
+            sync_opening_hours_from_booking_rules(tenant_id, payload)
             return {"ok": True, "horaires": horaires, **rules}
     from backend.tenant_config import set_params
     set_params(tenant_id, payload)
     return {"ok": True, "horaires": horaires, **rules}
+
+
+@router.get("/admin/tenants/{tenant_id}/cabinet-profile-audit")
+def admin_get_cabinet_profile_audit(
+    tenant_id: int = Depends(validate_tenant_id),
+    _: None = Depends(_verify_admin),
+):
+    """
+    Audit post-backfill: compare tenant_config.params_json vs tables normalisées
+    utilisées par la page "Mon cabinet".
+    """
+    return _build_cabinet_profile_audit(tenant_id)
+
+
+@router.get("/admin/cabinet-profile-audit")
+def admin_get_cabinet_profile_audit_all(
+    include_inactive: bool = Query(False, description="Inclure les tenants inactifs"),
+    only_mismatch: bool = Query(False, description="Ne retourner que les tenants avec mismatch"),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    _: None = Depends(_verify_admin),
+):
+    """
+    Audit global post-backfill sur plusieurs tenants.
+    """
+    tenants = _get_tenant_list(include_inactive=include_inactive)
+    rows: list[dict] = []
+    for tenant in tenants:
+        tid = int(tenant.get("tenant_id") or 0)
+        if tid < 1:
+            continue
+        try:
+            audit = _build_cabinet_profile_audit(tid)
+            mismatch_count = int(audit.get("summary", {}).get("total_mismatch_count") or 0)
+            if only_mismatch and mismatch_count == 0:
+                continue
+            rows.append(
+                {
+                    "tenant_id": tid,
+                    "tenant_name": tenant.get("name") or "",
+                    "tenant_status": tenant.get("status") or "active",
+                    "is_fully_synced": bool(audit.get("summary", {}).get("is_fully_synced")),
+                    "total_mismatch_count": mismatch_count,
+                    "sections": {
+                        "profile": int(audit["sections"]["profile"]["mismatch_count"]),
+                        "availability_settings": int(audit["sections"]["availability_settings"]["mismatch_count"]),
+                        "booking_rules": int(audit["sections"]["booking_rules"]["mismatch_count"]),
+                        "assistant_settings": int(audit["sections"]["assistant_settings"]["mismatch_count"]),
+                        "opening_hours": int(audit["sections"]["opening_hours"]["mismatch_count"]),
+                        "appointment_reasons": int(audit["sections"]["appointment_reasons"]["mismatch_count"]),
+                    },
+                }
+            )
+        except Exception as e:
+            rows.append(
+                {
+                    "tenant_id": tid,
+                    "tenant_name": tenant.get("name") or "",
+                    "tenant_status": tenant.get("status") or "active",
+                    "error": str(e)[:300],
+                }
+            )
+
+    rows.sort(key=lambda item: int(item.get("total_mismatch_count") or -1), reverse=True)
+    total = len(rows)
+    paged = rows[offset: offset + limit]
+    synced = sum(1 for item in rows if item.get("is_fully_synced") is True)
+    mismatch = sum(1 for item in rows if int(item.get("total_mismatch_count") or 0) > 0)
+    errored = sum(1 for item in rows if "error" in item)
+
+    return {
+        "summary": {
+            "total_tenants": total,
+            "fully_synced_tenants": synced,
+            "tenants_with_mismatch": mismatch,
+            "tenants_with_error": errored,
+        },
+        "pagination": {
+            "limit": limit,
+            "offset": offset,
+            "returned": len(paged),
+            "has_more": (offset + limit) < total,
+        },
+        "rows": paged,
+    }
 
 
 async def _sync_admin_faq_to_vapi(tenant_id: int) -> None:
@@ -4196,8 +6207,61 @@ def _get_stats_top_tenants(metric: str, window_days: int, limit: int) -> dict:
     """Top tenants par métrique. Sources = Postgres (Railway) en prod."""
     from datetime import datetime, timedelta
     now = datetime.utcnow()
-    start = (now - timedelta(days=window_days)).strftime("%Y-%m-%d 00:00:00")
+    start = (now - timedelta(days=window_days)).strftime("%Y-%m-%d %H:%M:%S")
     end = now.strftime("%Y-%m-%d %H:%M:%S")
+    if metric == "web_handoffs":
+        items_wb: List[dict] = []
+        url_tenants = os.environ.get("DATABASE_URL") or os.environ.get("PG_TENANTS_URL")
+        if url_tenants:
+            try:
+                import psycopg
+                from psycopg.rows import dict_row
+                with psycopg.connect(url_tenants, row_factory=dict_row) as conn_h:
+                    with conn_h.cursor() as cur_h:
+                        cur_h.execute(
+                            """
+                            SELECT tenant_id, COUNT(*) AS value
+                            FROM human_handoffs
+                            WHERE created_at >= %s::timestamptz AND created_at <= %s::timestamptz
+                              AND LOWER(TRIM(COALESCE(channel, ''))) NOT IN ('', 'vocal', 'voice', 'phone')
+                            GROUP BY tenant_id ORDER BY value DESC LIMIT %s
+                            """,
+                            (start, end, limit),
+                        )
+                        for r in cur_h.fetchall():
+                            tid = r.get("tenant_id")
+                            if tid is None:
+                                continue
+                            d = _get_tenant_detail(tid) if tid else {}
+                            items_wb.append({
+                                "tenant_id": tid,
+                                "name": d.get("name") or f"Tenant #{tid}",
+                                "value": int(r.get("value") or 0),
+                                "last_activity_at": None,
+                            })
+            except Exception as e:
+                if "human_handoffs" not in str(e).lower() and "does not exist" not in str(e).lower():
+                    logger.warning("stats top_tenants web_handoffs pg: %s", e)
+        else:
+            import backend.db as db
+            conn = db.get_conn()
+            try:
+                db._ensure_human_handoffs_table(conn)
+                cur_sql = conn.execute(
+                    """SELECT tenant_id, COUNT(*) AS cnt FROM human_handoffs
+                       WHERE datetime(created_at) >= datetime(?) AND datetime(created_at) <= datetime(?)
+                       GROUP BY tenant_id ORDER BY cnt DESC LIMIT ?""",
+                    (start, end, limit),
+                )
+                for row in cur_sql.fetchall() or []:
+                    tid = row[0]
+                    d = _get_tenant_detail(tid) if tid else {}
+                    items_wb.append({"tenant_id": tid, "name": d.get("name") or f"Tenant #{tid}", "value": row[1] or 0, "last_activity_at": None})
+            except Exception:
+                pass
+            finally:
+                conn.close()
+        return {"metric": metric, "window_days": window_days, "items": items_wb}
     url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
     items: List[dict] = []
     if url:
@@ -5104,6 +7168,73 @@ def _get_quality_snapshot(window_days: int = 7) -> dict:
     }
 
 
+_ALLOWED_DASHBOARD_PERIODS = frozenset({"24h", "7d", "30d", "month"})
+
+
+def _normalize_dashboard_period(period: Optional[str]) -> str:
+    p = (period or "30d").strip()
+    return p if p in _ALLOWED_DASHBOARD_PERIODS else "30d"
+
+
+def _admin_cockpit_ctx() -> Dict[str, Any]:
+    """Context injecté dans dashboard_cockpit (helpers définis ci-dessus)."""
+    return {
+        "_get_tenant_list": _get_tenant_list,
+        "_get_tenant_detail": _get_tenant_detail,
+        "_get_vapi_usage_for_window": _get_vapi_usage_for_window,
+        "_get_operations_snapshot": _get_operations_snapshot,
+        "_get_quality_snapshot": _get_quality_snapshot,
+        "_get_stats_top_tenants": _get_stats_top_tenants,
+        "_get_billing_snapshot": _get_billing_snapshot,
+        "_get_activation_queue": _get_activation_queue,
+    }
+
+
+@router.get("/admin/dashboard/summary")
+def admin_dashboard_summary(
+    period: str = Query("30d", description="24h, 7d, 30d, month"),
+    _: None = Depends(_verify_admin),
+):
+    """Cockpit : KPI fenêtrés, leads bloc, hints (sans dépendances circulaires)."""
+    p = _normalize_dashboard_period(period)
+    return dash_build_summary(_admin_cockpit_ctx(), p)
+
+
+@router.get("/admin/dashboard/new-leads")
+def admin_dashboard_new_leads(
+    period: str = Query("7d", description="24h, 7d, 30d, month — fenêtre glissante (sauf month = depuis le 1er du mois UTC)"),
+    _: None = Depends(_verify_admin),
+):
+    """Bloc leads cockpit (nouveaux, à qualifier, derniers entrées). Fenêtre pilotée par `period`."""
+    p = _normalize_dashboard_period(period)
+    return dash_leads_block(_admin_cockpit_ctx(), p)
+
+
+@router.get("/admin/dashboard/action-items")
+def admin_dashboard_action_items(
+    period: str = Query("30d", description="Fenêtre relative pour quotas / erreurs agrégées"),
+    severity: Optional[str] = Query(None, description="critical, warning ou omis (= tout)"),
+    _: None = Depends(_verify_admin),
+):
+    """File d’actions prioritaires cockpit (Stripe, onboarding, quotas, anomalies)."""
+    p = _normalize_dashboard_period(period)
+    sf = (severity or "").strip().lower()
+    filt = sf if sf in ("critical", "warning") else None
+    items = dash_build_action_items(_admin_cockpit_ctx(), p, filt)
+    return {"items": items}
+
+
+@router.get("/admin/dashboard/tenant-watchlist")
+def admin_dashboard_tenant_watchlist(
+    period: str = Query("30d", description="24h, 7d, 30d, month"),
+    _: None = Depends(_verify_admin),
+):
+    """Signaux métiers condensés (demandes web fortes, dépassement quota, friction quality)."""
+    p = _normalize_dashboard_period(period)
+    items = dash_watchlist_items(_admin_cockpit_ctx(), p)
+    return {"items": items}
+
+
 @router.get("/admin/stats/billing-snapshot")
 def admin_stats_billing_snapshot(
     _: None = Depends(_verify_admin),
@@ -5248,13 +7379,13 @@ def admin_stats_timeseries(
 
 @router.get("/admin/stats/top-tenants")
 def admin_stats_top_tenants(
-    metric: str = Query("minutes", description="minutes | calls | appointments | cost_usd"),
+    metric: str = Query("minutes", description="minutes | calls | appointments | cost_usd | web_handoffs"),
     window_days: int = Query(30, ge=1, le=90),
     limit: int = Query(10, ge=1, le=50),
     _: None = Depends(_verify_admin),
 ):
     """Top tenants par métrique."""
-    if metric not in ("minutes", "calls", "appointments", "cost_usd"):
+    if metric not in ("minutes", "calls", "appointments", "cost_usd", "web_handoffs"):
         metric = "calls"
     return _get_stats_top_tenants(metric, window_days, limit)
 
@@ -5310,3 +7441,25 @@ def admin_rgpd(
     if len(end) == 10:
         end = end + " 23:59:59"
     return _get_rgpd(tenant_id, start, end)
+
+
+@router.post("/admin/calendar/reconcile")
+def admin_calendar_reconcile(
+    tenant_id: Optional[int] = Query(None, description="tenant_id (optionnel : si absent, tous les tenants Google)"),
+    window_days: int = Query(30, ge=1, le=90),
+    dry_run: bool = Query(False, description="True = simule sans modifier le miroir"),
+    _: None = Depends(require_admin),
+):
+    """
+    Lance une réconciliation Google Calendar ↔ miroir UWI à la demande.
+
+    - Détecte les miroirs UWI orphelins (event Google supprimé) et les nettoie.
+    - Logue les events Google UWI orphelins (sans miroir).
+    - Conservatif : ne touche jamais à Google.
+    """
+    from backend.reconcile_calendar import reconcile_tenant, reconcile_all_tenants
+    if tenant_id is not None:
+        report = reconcile_tenant(int(tenant_id), window_days=window_days, dry_run=dry_run)
+        return {"ok": True, "reports": [report]}
+    reports = reconcile_all_tenants(window_days=window_days, dry_run=dry_run)
+    return {"ok": True, "reports": reports}
