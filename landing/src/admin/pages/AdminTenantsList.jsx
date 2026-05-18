@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback } from "react";
+import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { adminApi, getBillingOverview } from "../../lib/adminApi.js";
 import { buildTenantsListQuery } from "../../lib/adminTenantsApi.js";
@@ -20,6 +20,12 @@ const SORT_METRICS = {
   appointments_desc: "appointments",
   web_requests_desc: "web_handoffs",
 };
+
+/** Pagination API : réduit la charge réseau / JSON (le serveur agrège encore tout le parc). */
+const DEFAULT_TENANTS_PAGE_SIZE = 50;
+
+/** Évite un POST liste à chaque frappe dans la recherche. */
+const SEARCH_DEBOUNCE_MS = 400;
 
 /** Palette alignée maquette Cabinets clients */
 const BRAND = {
@@ -54,9 +60,11 @@ function parsePageParam(raw) {
   return Math.floor(n);
 }
 
-/** @returns {number|null} */
+/** @returns {number | "all" | null} — null = défaut rapide (DEFAULT_TENANTS_PAGE_SIZE), "all" = liste complète */
 function parseLimitParam(raw) {
   if (raw == null || raw === "") return null;
+  const s = String(raw).trim().toLowerCase();
+  if (s === "all") return "all";
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 1 || n > 500) return null;
   return Math.floor(n);
@@ -645,6 +653,7 @@ function StatKpiCard({ icon, label, value, detail, tone = "neutral", periodBadge
 
 export default function AdminTenantsList() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const fetchGenRef = useRef(0);
   const [tenants, setTenants] = useState([]);
   const [billingMap, setBillingMap] = useState({});
   const [summary, setSummary] = useState(null);
@@ -667,10 +676,18 @@ export default function AdminTenantsList() {
   const summaryPeriod = parseSummaryPeriod(searchParams.get("summary_period"));
   const qParam = (searchParams.get("q") || "").trim();
 
+  const qFromUrl = searchParams.get("q") ?? "";
+  const [searchDraft, setSearchDraft] = useState(qFromUrl);
+
+  useEffect(() => {
+    setSearchDraft(qFromUrl);
+  }, [qFromUrl]);
+
   const demoExamplesRaw = String(searchParams.get("demo") ?? "").trim().toLowerCase();
   const forcedDemoExamples = ["1", "true", "oui", "yes", "exemple", "exemples", "examples", "demo"].includes(demoExamplesRaw);
 
-  const parsedLimit = parseLimitParam(searchParams.get("limit"));
+  const explicitLimit = parseLimitParam(searchParams.get("limit"));
+  const wantsFullTenantList = explicitLimit === "all";
   const parsedPage = parsePageParam(searchParams.get("page"));
 
   const filterBlocksPagination =
@@ -682,10 +699,15 @@ export default function AdminTenantsList() {
     sortParam === "plan_asc" ||
     Boolean(SORT_METRICS[sortParam]);
 
-  const serverAppliedStatusFilter =
-    parsedLimit != null &&
-    !filterBlocksPagination &&
-    ["all", "active", "onboarding", "suspended"].includes(effectiveFilter);
+  const paginationAllowed =
+    !filterBlocksPagination && ["all", "active", "onboarding", "suspended"].includes(effectiveFilter);
+
+  const serverPagingActive = paginationAllowed && !wantsFullTenantList;
+
+  const apiPageLimit =
+    typeof explicitLimit === "number" ? explicitLimit : DEFAULT_TENANTS_PAGE_SIZE;
+
+  const effectivePageSize = serverPagingActive ? apiPageLimit : null;
 
   const alertIdSet = useMemo(() => {
     const xs = summary?.alert_tenant_ids || [];
@@ -703,6 +725,16 @@ export default function AdminTenantsList() {
     },
     [searchParams, setSearchParams]
   );
+
+  useEffect(() => {
+    const trimmed = searchDraft.trim();
+    const urlTrimmed = qParam.trim();
+    if (trimmed === urlTrimmed) return undefined;
+    const t = setTimeout(() => {
+      setQuery({ q: trimmed || null, page: "1" });
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [searchDraft, qParam, setQuery]);
 
   useEffect(() => {
     let cancelled = false;
@@ -727,6 +759,9 @@ export default function AdminTenantsList() {
       }
 
       try {
+        const gen = ++fetchGenRef.current;
+        const summaryPromise = adminApi.tenantsSummary(summaryPeriod).catch(() => null);
+
         const needBilling =
           Boolean(
             sortParam === "minutes_desc" ||
@@ -734,28 +769,27 @@ export default function AdminTenantsList() {
               sortParam === "plan_asc" ||
               effectiveFilter === "trial",
           );
+        const overviewPromise = needBilling ? getBillingOverview().catch(() => null) : Promise.resolve(null);
+
         const tenantQs = buildTenantsListQuery({
           includeInactive: true,
           search: qParam.trim() || undefined,
-          page: serverAppliedStatusFilter ? parsedPage : undefined,
-          limit: serverAppliedStatusFilter ? parsedLimit : undefined,
+          page: serverPagingActive ? parsedPage : undefined,
+          limit: serverPagingActive ? apiPageLimit : undefined,
           status:
-            serverAppliedStatusFilter && effectiveFilter === "active"
+            serverPagingActive && effectiveFilter === "active"
               ? "active"
-              : serverAppliedStatusFilter && effectiveFilter === "suspended"
+              : serverPagingActive && effectiveFilter === "suspended"
                 ? "suspended"
                 : undefined,
           statusIn:
-            serverAppliedStatusFilter && effectiveFilter === "onboarding"
+            serverPagingActive && effectiveFilter === "onboarding"
               ? "pending_payment,inactive"
               : undefined,
         });
 
-        const [listRes, sumRes, overviewRes] = await Promise.all([
-          adminApi.listTenants(tenantQs),
-          adminApi.tenantsSummary(summaryPeriod).catch(() => null),
-          needBilling ? getBillingOverview().catch(() => null) : Promise.resolve(null),
-        ]);
+        const listRes = await adminApi.listTenants(tenantQs);
+        const overviewRes = needBilling ? await overviewPromise : null;
 
         const raw = listRes?.tenants ?? listRes;
         let next = Array.isArray(raw) ? raw : [];
@@ -823,21 +857,22 @@ export default function AdminTenantsList() {
         }
 
         if (cancelled) return;
-        setListTotal(
-          serverAppliedStatusFilter && typeof listRes?.total === "number" ? listRes.total : null,
-        );
+        setListTotal(serverPagingActive && typeof listRes?.total === "number" ? listRes.total : null);
         setBillingMap(bMap);
-        setSummary(sumRes && typeof sumRes === "object" ? sumRes : null);
         setActivityByTenant({});
 
         if (next.length > 0) {
           setTenants(next);
           setIsSampleMode(false);
+          summaryPromise.then((sumRes) => {
+            if (cancelled || fetchGenRef.current !== gen) return;
+            setSummary(sumRes && typeof sumRes === "object" ? sumRes : null);
+          });
           if (!next[0]?.__sample) {
             adminApi
               .tenantsActivityGrid(windowDays)
               .then((grid) => {
-                if (cancelled) return;
+                if (cancelled || fetchGenRef.current !== gen) return;
                 setActivityByTenant(grid?.by_tenant_id ?? {});
               })
               .catch(() => {
@@ -879,10 +914,10 @@ export default function AdminTenantsList() {
     return () => {
       cancelled = true;
     };
-  }, [sortParam, windowDays, summaryPeriod, effectiveFilter, qParam, parsedLimit, parsedPage, serverAppliedStatusFilter, forcedDemoExamples]);
+  }, [sortParam, windowDays, summaryPeriod, effectiveFilter, qParam, explicitLimit, wantsFullTenantList, serverPagingActive, parsedPage, apiPageLimit, forcedDemoExamples]);
 
   const filtered = useMemo(() => {
-    const q = qParam.toLowerCase();
+    const q = searchDraft.trim().toLowerCase();
 
     return tenants.filter((t) => {
       const id = Number(t.tenant_id ?? t.id);
@@ -892,7 +927,7 @@ export default function AdminTenantsList() {
       const incl = Number(b?.quota?.included ?? 0);
       const pct = usagePct(used, incl);
 
-      if (!serverAppliedStatusFilter) {
+      if (!serverPagingActive) {
         switch (effectiveFilter) {
           case "active":
             if (st !== "active") return false;
@@ -943,7 +978,7 @@ export default function AdminTenantsList() {
         String(t.tenant_id ?? t.id).includes(q)
       );
     });
-  }, [tenants, qParam, effectiveFilter, billingMap, alertIdSet, serverAppliedStatusFilter]);
+  }, [tenants, searchDraft, effectiveFilter, billingMap, alertIdSet, serverPagingActive]);
 
   if (loading) {
     return (
@@ -1376,8 +1411,8 @@ export default function AdminTenantsList() {
             <span style={{ color: "#98A2B3", fontSize: 18 }}>⌕</span>
             <input
               className="admin-search-input"
-              value={searchParams.get("q") || ""}
-              onChange={(e) => setQuery({ q: e.target.value || null })}
+              value={searchDraft}
+              onChange={(e) => setSearchDraft(e.target.value)}
               placeholder="Rechercher cabinet, praticien, ville, profession…"
               style={{ flex: 1, border: "none", background: "transparent", fontSize: 14, fontWeight: 700, color: BRAND.navy, outline: "none" }}
             />
@@ -1495,21 +1530,22 @@ export default function AdminTenantsList() {
             Page serveur
             <select
               className="uwi-small-control-select"
-              value={parsedLimit != null ? String(parsedLimit) : ""}
+              value={wantsFullTenantList ? "all" : typeof explicitLimit === "number" ? String(explicitLimit) : "50"}
               onChange={(e) => {
                 const v = e.target.value;
-                setQuery({ limit: v || null, page: v ? "1" : null });
+                if (v === "50") setQuery({ limit: null, page: "1" });
+                else setQuery({ limit: v, page: "1" });
               }}
               style={{ padding: "6px 10px", borderRadius: 10, border: `1px solid ${C.border}` }}
             >
-              <option value="">Tout charger</option>
+              <option value="50">50 lignes (défaut)</option>
               <option value="25">25 lignes</option>
-              <option value="50">50 lignes</option>
               <option value="100">100 lignes</option>
+              <option value="all">Tout charger (peut être lent)</option>
             </select>
           </label>
         </div>
-        {parsedLimit != null && !serverAppliedStatusFilter ? (
+        {typeof explicitLimit === "number" && !paginationAllowed ? (
           <div style={{ marginTop: 12, fontSize: 12, fontWeight: 600, color: T.orange }}>
             Avec ce filtre ou ce tri, la liste complète est chargée (pagination serveur désactivée).
           </div>
@@ -1764,7 +1800,7 @@ export default function AdminTenantsList() {
             </ul>
           </>
         )}
-        {serverAppliedStatusFilter && listTotal != null && parsedLimit != null ? (
+        {serverPagingActive && listTotal != null && effectivePageSize != null ? (
           <div
             style={{
               display: "flex",
@@ -1799,7 +1835,7 @@ export default function AdminTenantsList() {
               </button>
               <button
                 type="button"
-                disabled={parsedPage * parsedLimit >= listTotal}
+                disabled={parsedPage * effectivePageSize >= listTotal}
                 onClick={() => setQuery({ page: String(parsedPage + 1) })}
                 style={{
                   padding: "8px 14px",
@@ -1807,8 +1843,8 @@ export default function AdminTenantsList() {
                   border: `1px solid ${C.border}`,
                   background: C.card,
                   fontWeight: 700,
-                  cursor: parsedPage * parsedLimit >= listTotal ? "default" : "pointer",
-                  opacity: parsedPage * parsedLimit >= listTotal ? 0.45 : 1,
+                  cursor: parsedPage * effectivePageSize >= listTotal ? "default" : "pointer",
+                  opacity: parsedPage * effectivePageSize >= listTotal ? 0.45 : 1,
                 }}
               >
                 Suivant
