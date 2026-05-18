@@ -28,6 +28,16 @@ const ROUTE_META = {
     description:
       "Configurez votre assistant vocal IA en quelques minutes. Essai gratuit 1 mois, sans carte bancaire.",
   },
+  "/pricing": {
+    title: "Tarifs UWi — Forfaits sans engagement pour cabinets médicaux",
+    description:
+      "Tarifs UWi pour cabinets médicaux libéraux : forfait ajusté à votre volume d'appels, facturation juste, sans engagement. À partir de 99 € / mois.",
+  },
+  "/securite": {
+    title: "Sécurité & RGPD — UWi pour cabinets médicaux",
+    description:
+      "Sécurité, hébergement et conformité RGPD pour les cabinets médicaux : chiffrement, hébergement européen, contrat de traitement des données disponible.",
+  },
   "/contact": {
     title: "Contact — UWi",
     description: "Contactez l'équipe UWi pour une démo ou un accompagnement.",
