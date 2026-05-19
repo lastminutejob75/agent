@@ -2104,6 +2104,19 @@ def admin_lead_detail(
     return lead
 
 
+@router.delete("/admin/leads/{lead_id}")
+def admin_lead_delete(
+    lead_id: str,
+    _: None = Depends(_verify_admin),
+):
+    """Suppression définitive (nettoyage base). Réservé admin."""
+    from backend.leads_pg import delete_lead
+
+    if delete_lead(lead_id):
+        return {"ok": True}
+    raise HTTPException(404, "Lead introuvable")
+
+
 class LeadPatchBody(BaseModel):
     status: Optional[str] = Field(None, pattern="^(new|to_contact|contacted|interested|demo_scheduled|trial_offered|trial_started|converted|lost|later)$")
     notes: Optional[str] = None

@@ -334,6 +334,23 @@ def insert_lead(
         return None
 
 
+def delete_lead(lead_id: str) -> bool:
+    """Supprime définitivement un lead (admin / nettoyage). Retourne True si une ligne a été supprimée."""
+    lid = str(lead_id or "").strip()
+    if not lid:
+        return False
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM pre_onboarding_leads WHERE id = %s", (lid,))
+                deleted = cur.rowcount > 0
+            conn.commit()
+        return deleted
+    except Exception as e:
+        logger.exception("delete_lead failed: %s", e)
+        return False
+
+
 def _json_dumps(obj: Any) -> str:
     import json
     return json.dumps(obj, ensure_ascii=False)

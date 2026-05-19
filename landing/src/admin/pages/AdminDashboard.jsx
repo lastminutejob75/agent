@@ -17,8 +17,10 @@ import {
   ChevronRight,
   Plus,
   RefreshCw,
+  Trash2,
 } from "lucide-react";
 import {
+  adminApi,
   getAdminDashboardSummary,
   getAdminDashboardActionItems,
   getAdminDashboardTenantWatchlist,
@@ -341,6 +343,7 @@ export default function AdminDashboard() {
   const [isSampleMode, setIsSampleMode] = useState(false);
   const [severityFilter, setSeverityFilter] = useState("all");
   const [showCreate, setShowCreate] = useState(false);
+  const [deletingLeadId, setDeletingLeadId] = useState(null);
   const [selection, setSelection] = useState({ kind: "kpi", id: "alerts" });
 
   const apiPeriod = useMemo(() => PERIOD_UI.find(([u]) => u === periodUi)?.[1] || "30d", [periodUi]);
@@ -423,6 +426,34 @@ export default function AdminDashboard() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const handleDeleteLead = useCallback(
+    async (lead) => {
+      const id = lead?.id;
+      if (!id) return;
+      const label = String(lead.name || id || "").slice(0, 120);
+      if (
+        !window.confirm(
+          `Supprimer définitivement ce lead (${label}) ? Cette action est irréversible.`,
+        )
+      ) {
+        return;
+      }
+      setDeletingLeadId(id);
+      try {
+        await adminApi.leadDelete(id);
+        setSelection((prev) =>
+          prev.kind === "lead" && prev.lead?.id === id ? { kind: "kpi", id: "clients" } : prev,
+        );
+        await load();
+      } catch (e) {
+        window.alert(e?.message || "Échec de la suppression.");
+      } finally {
+        setDeletingLeadId(null);
+      }
+    },
+    [load],
+  );
 
   const kpis = pickKpisPayload(summary);
 
@@ -516,7 +547,7 @@ export default function AdminDashboard() {
     leadsBlock.new_leads_count ?? leadsBlock.new_leads ?? leadsBlock.count ?? (leadsBlock.latest?.length || 0);
   const qualifyToday =
     leadsBlock.to_qualify_today_count ?? leadsBlock.leads_to_qualify_today_count ?? 0;
-  const latestLeads = (leadsBlock.latest ?? leadsBlock.latest_leads ?? []).slice(0, 3);
+  const latestLeads = leadsBlock.latest ?? leadsBlock.latest_leads ?? [];
 
   const filteredActions = useMemo(() => {
     if (severityFilter === "all") return actions;
@@ -1021,38 +1052,91 @@ export default function AdminDashboard() {
               ) : (
                 <>
                   <div style={{ fontSize: 11, fontWeight: 800, color: T.textMuted, marginBottom: 6 }}>
-                    Derniers entrants — {leadsVolTitle.toLowerCase()}
+                    Leads ({leadsVolTitle.toLowerCase()}) — jusqu’à 80 · suppression définitive
                   </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 8,
+                      maxHeight: 440,
+                      overflowY: "auto",
+                      paddingRight: 4,
+                    }}
+                  >
                     {latestLeads.map((lead) => (
-                    <button
-                      key={lead.id || lead.name}
-                      type="button"
-                      onClick={() => setSelection({ kind: "lead", lead })}
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        gap: 8,
-                        textAlign: "left",
-                        padding: 12,
-                        borderRadius: 16,
-                        border: `1px solid #E4ECEF`,
-                        background: "#FBFDFD",
-                        cursor: "pointer",
-                        fontFamily: "inherit",
-                      }}
-                    >
-                      <span>
-                        <span style={{ display: "block", fontSize: 14, fontWeight: 800, color: NAVY }}>{lead.name}</span>
-                        <span style={{ display: "block", fontSize: 11, fontWeight: 700, color: T.textMuted, marginTop: 2 }}>
-                          {lead.source} · {lead.status}
-                        </span>
-                      </span>
-                      <ChevronRight size={18} color={T.teal} />
-                    </button>
-                  ))}
-                </div>
+                      <div
+                        key={lead.id || lead.name}
+                        style={{
+                          display: "flex",
+                          gap: 8,
+                          alignItems: "stretch",
+                        }}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setSelection({ kind: "lead", lead })}
+                          style={{
+                            flex: 1,
+                            minWidth: 0,
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: 8,
+                            textAlign: "left",
+                            padding: 12,
+                            borderRadius: 16,
+                            border: `1px solid #E4ECEF`,
+                            background: "#FBFDFD",
+                            cursor: "pointer",
+                            fontFamily: "inherit",
+                          }}
+                        >
+                          <span style={{ minWidth: 0 }}>
+                            <span style={{ display: "block", fontSize: 14, fontWeight: 800, color: NAVY }}>{lead.name}</span>
+                            <span
+                              style={{
+                                display: "block",
+                                fontSize: 11,
+                                fontWeight: 700,
+                                color: T.textMuted,
+                                marginTop: 2,
+                              }}
+                            >
+                              {lead.source} · {lead.status}
+                            </span>
+                          </span>
+                          <ChevronRight size={18} color={T.teal} style={{ flexShrink: 0 }} />
+                        </button>
+                        <button
+                          type="button"
+                          title="Supprimer définitivement ce lead"
+                          aria-label={`Supprimer le lead ${lead.name || lead.id || ""}`}
+                          disabled={deletingLeadId === lead.id}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleDeleteLead(lead);
+                          }}
+                          style={{
+                            flexShrink: 0,
+                            width: 46,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            borderRadius: 16,
+                            border: "1px solid #F5C6CB",
+                            background: deletingLeadId === lead.id ? "#F3F4F6" : "#FFF5F5",
+                            cursor: deletingLeadId === lead.id ? "wait" : "pointer",
+                            color: "#B71C1C",
+                            fontFamily: "inherit",
+                          }}
+                        >
+                          <Trash2 size={18} strokeWidth={2} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </>
               )}
             </section>

@@ -3,6 +3,8 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
+os.environ.setdefault("ADMIN_API_TOKEN", "test-admin-token-pytest")
+
 
 @pytest.fixture
 def client():
@@ -66,3 +68,24 @@ def test_admin_leads_list_follow_up_today_flag(client, admin_headers, monkeypatc
     res = client.get("/api/admin/leads?follow_up=today", headers=admin_headers)
     assert res.status_code == 200
     assert called.get("follow_up_today") is True
+
+
+def test_admin_lead_delete_requires_auth(client):
+    assert client.delete("/api/admin/leads/some-uuid").status_code == 401
+
+
+def test_admin_lead_delete_success(client, admin_headers, monkeypatch):
+    import backend.leads_pg as leads_pg
+
+    monkeypatch.setattr(leads_pg, "delete_lead", lambda lead_id: lead_id == "lead-del-1")
+    res = client.delete("/api/admin/leads/lead-del-1", headers=admin_headers)
+    assert res.status_code == 200
+    assert res.json().get("ok") is True
+
+
+def test_admin_lead_delete_404(client, admin_headers, monkeypatch):
+    import backend.leads_pg as leads_pg
+
+    monkeypatch.setattr(leads_pg, "delete_lead", lambda lead_id: False)
+    res = client.delete("/api/admin/leads/missing", headers=admin_headers)
+    assert res.status_code == 404

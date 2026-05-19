@@ -118,6 +118,8 @@ export const api = {
   adminLeadsList: (status) =>
     request(`/api/admin/leads${status ? `?status=${encodeURIComponent(status)}` : ""}`, { admin: true }),
   adminLeadGet: (leadId) => request(`/api/admin/leads/${leadId}`, { admin: true }),
+  adminLeadDelete: (leadId) =>
+    request(`/api/admin/leads/${encodeURIComponent(leadId)}`, { method: "DELETE", admin: true }),
   adminLeadPatch: (leadId, body) =>
     request(`/api/admin/leads/${leadId}`, { method: "PATCH", body, admin: true }),
 

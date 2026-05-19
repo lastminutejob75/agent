@@ -408,11 +408,15 @@ def dash_leads_block(ctx: Any, period: str = "7d") -> dict:
             "created_at": str(r.get("created_at") or ""),
         }
 
-    latest = [_lead_row_compact(r) for r in latest_sorted[:3]]
+    # Liste cockpit : assez large pour permettre nettoyage depuis l’admin (bouton supprimer par ligne).
+    cockpit_leads_cap = 80
+    latest = [_lead_row_compact(r) for r in latest_sorted[:cockpit_leads_cap]]
     if not latest and leads:
         latest = [
             _lead_row_compact(r)
-            for r in sorted(leads, key=lambda rr: dash_lead_activity_utc(rr) or window_cut, reverse=True)[:3]
+            for r in sorted(leads, key=lambda rr: dash_lead_activity_utc(rr) or window_cut, reverse=True)[
+                :cockpit_leads_cap
+            ]
         ]
 
     return {

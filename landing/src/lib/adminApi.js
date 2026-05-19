@@ -326,6 +326,8 @@ export const adminApi = {
   leadsStats: (period = "30d") =>
     adminFetch(`/api/admin/leads/stats?period=${encodeURIComponent(String(period).replace(/d$/i, ""))}`, { method: "GET" }),
   leadGet: (leadId) => adminFetch(`/api/admin/leads/${leadId}`, { method: "GET" }),
+  leadDelete: (leadId) =>
+    adminFetch(`/api/admin/leads/${encodeURIComponent(leadId)}`, { method: "DELETE" }),
   leadCreate: (body) =>
     adminFetch("/api/admin/leads", { method: "POST", body: JSON.stringify(body || {}) }),
   leadPatch: (leadId, body) =>
