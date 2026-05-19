@@ -8,7 +8,7 @@ Document de référence : comment le dashboard admin est alimenté et ce qu’il
 
 | Page admin | Endpoint principal | Données affichées |
 |------------|--------------------|-------------------|
-| **Cockpit** (`/admin` accueil) | **`GET /api/admin/dashboard/bundle`** (agrège KPI + leads + actions + watchlist ; ~1 RTT navigateur au lieu de 4) ; endpoints unitaires encore dispos : `summary`, `action-items`, `tenant-watchlist`, `new-leads` |
+| **Cockpit** (`/admin` accueil) | **`GET /api/admin/dashboard/bundle`** | KPIs fenêtre, bloc leads, file d’actions, watchlist (1 requête HTTP ; billing/ops lus une fois). Endpoints fins toujours dispos : `summary`, `action-items`, `tenant-watchlist`, `new-leads`. |
 | **Tenants** (liste) | `GET /api/admin/tenants` | Liste des clients (PG ou SQLite) |
 | **Fiche tenant** | `GET /api/admin/tenants/{id}` + `GET /api/admin/tenants/{id}/billing` | Détail client, facturation, params |
 | **Appels** | `GET /api/admin/calls?tenant_id=&days=&limit=&result=` | Liste des appels (filtrable par tenant) |
