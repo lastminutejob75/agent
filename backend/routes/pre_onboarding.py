@@ -634,9 +634,12 @@ async def create_account_from_lead(lead_id: str, body: CreateAccountBody) -> Dic
 
     params_payload = {
         "assistant_name": assistant_name,
+        "business_name": cabinet_name,
         "sector": sector,
         "contact_email": email,
         "specialty_label": (lead.get("medical_specialty_label") or "").strip(),
+        "city": (lead.get("city") or "").strip(),
+        "phone_number": (lead.get("callback_phone") or "").strip(),
         "client_onboarding_completed": False,
         "lead_id": lead_id,
         "lead_source": lead.get("source") or "landing_cta",

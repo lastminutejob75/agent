@@ -168,6 +168,83 @@ def test_pg_update_tenant_params_normalizes_bools_and_ints():
     assert merged["languages"] == ["fr", "en"]
 
 
+def test_canonicalize_cabinet_params_maps_legacy_wizard_keys():
+    from backend.cabinet_profile_pg import canonicalize_cabinet_params
+
+    out = canonicalize_cabinet_params(
+        {
+            "primary_practitioner_name": "Dr Legacy",
+            "address": "12 rue Example",
+            "current_phone_number": "+33123456789",
+            "profession": "Médecine générale",
+        }
+    )
+    assert out["practitioner_name"] == "Dr Legacy"
+    assert out["address_line1"] == "12 rue Example"
+    assert out["address_line"] == "12 rue Example"
+    assert out["phone_number"] == "+33123456789"
+    assert out["specialty_label"] == "Médecine générale"
+
+
+def test_pg_update_tenant_params_canonicalizes_legacy_wizard_keys():
+    from backend import tenants_pg
+
+    captured_payload = {}
+
+    def _fake_connect(url):
+        class Cur:
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *a):
+                return False
+
+            def execute(self_inner, q, params):
+                if "UPDATE tenant_config" in q:
+                    captured_payload["merged"] = params[0]
+
+            @property
+            def rowcount(self_inner):
+                return 1
+
+        class Conn:
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *a):
+                return False
+
+            def cursor(self_inner):
+                return Cur()
+
+            def commit(self_inner):
+                pass
+
+        return Conn()
+
+    fake_psycopg = type("M", (), {"connect": staticmethod(_fake_connect)})()
+
+    with patch.dict(sys.modules, {"psycopg": fake_psycopg}):
+        with patch("backend.tenants_pg._pg_url", return_value="postgres://test"):
+            with patch("backend.tenants_pg.pg_get_tenant_params", return_value=({}, "pg")):
+                with patch("backend.tenants_pg.set_tenant_id_on_connection"):
+                    tenants_pg.pg_update_tenant_params(
+                        11,
+                        {
+                            "primary_practitioner_name": "Dr Wizard",
+                            "address": "1 avenue Test",
+                            "current_phone_number": "+33987654321",
+                        },
+                    )
+
+    import json as _json
+
+    merged = _json.loads(captured_payload["merged"])
+    assert merged["practitioner_name"] == "Dr Wizard"
+    assert merged["address_line1"] == "1 avenue Test"
+    assert merged["phone_number"] == "+33987654321"
+
+
 def test_pg_update_tenant_params_drops_unknown_keys():
     from backend import tenants_pg
 

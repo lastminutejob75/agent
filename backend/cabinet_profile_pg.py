@@ -609,9 +609,44 @@ def upsert_assistant_settings(tenant_id: int, payload: Dict[str, Any]) -> bool:
         return False
 
 
+def _non_empty_str(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def canonicalize_cabinet_params(params: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Aligne les clés du wizard admin / anciennes créations avec params_json
+    consommés par GET/PATCH /api/tenant/profile.
+    """
+    if not isinstance(params, dict):
+        return {}
+    out = dict(params)
+    alias_map = (
+        ("primary_practitioner_name", "practitioner_name"),
+        ("current_phone_number", "phone_number"),
+        ("address", "address_line1"),
+        ("profession", "specialty_label"),
+    )
+    for src, dst in alias_map:
+        src_val = _non_empty_str(out.get(src))
+        dst_val = _non_empty_str(out.get(dst))
+        if src_val and not dst_val:
+            out[dst] = src_val
+    line1 = _non_empty_str(out.get("address_line1"))
+    line_alt = _non_empty_str(out.get("address_line"))
+    if line1 and not line_alt:
+        out["address_line"] = line1
+    elif line_alt and not line1:
+        out["address_line1"] = line_alt
+    return out
+
+
 def sync_normalized_from_params(tenant_id: int, params: Dict[str, Any]) -> None:
     if not isinstance(params, dict) or not params:
         return
+    params = canonicalize_cabinet_params(params)
     profile_payload = {
         "practitioner_name": params.get("practitioner_name"),
         "cabinet_name": params.get("business_name"),

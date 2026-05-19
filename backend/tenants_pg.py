@@ -412,6 +412,9 @@ def pg_update_tenant_flags(tenant_id: int, flags: dict) -> bool:
 
 def pg_update_tenant_params(tenant_id: int, params: dict) -> bool:
     """Met à jour params_json (merge shallow). Clés à plat pour éviter merge profond."""
+    from backend.cabinet_profile_pg import canonicalize_cabinet_params
+
+    params = canonicalize_cabinet_params(params or {})
     allowed = {
         "calendar_provider", "calendar_id", "contact_email", "timezone", "consent_mode", "business_name",
         "transfer_phone", "transfer_number", "horaires",

@@ -516,7 +516,10 @@ def dash_build_action_items(
 ) -> List[dict]:
     wd = max(7, min(90, dash_window_days(period)))
     billing = billing_snap if billing_snap is not None else ctx["_get_billing_snapshot"]()
-    ops = ops_snap if ops_snap is not None else ctx["_get_operations_snapshot"](window_days=min(wd, 30))
+    ops = ops_snap if ops_snap is not None else ctx["_get_operations_snapshot"](
+        window_days=min(wd, 30),
+        billing_snapshot=billing,
+    )
     activation = ctx["_get_activation_queue"](40).get("items") or []
 
     items: List[dict] = []
@@ -659,7 +662,10 @@ def dash_build_summary(
     if billing_snap is None:
         billing_snap = ctx["_get_billing_snapshot"]()
     if ops_snap is None:
-        ops_snap = ctx["_get_operations_snapshot"](window_days=ops_window)
+        ops_snap = ctx["_get_operations_snapshot"](
+            window_days=ops_window,
+            billing_snapshot=billing_snap,
+        )
     if activation_slice is None:
         activation_slice = ctx["_get_activation_queue"](42).get("items") or []
 

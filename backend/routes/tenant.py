@@ -1390,6 +1390,15 @@ def tenant_get_profile(auth: dict = Depends(require_tenant_auth)):
         raise HTTPException(404, "Tenant not found")
     params = detail.get("params") or {}
     pg_profile = pg_get_profile(tenant_id) or {}
+    voice_number = (detail.get("voice_number") or "").strip()
+
+    def _param_str(*keys: str) -> str:
+        for key in keys:
+            val = params.get(key)
+            if val is not None and str(val).strip():
+                return str(val).strip()
+        return ""
+
     public_slug = (params.get("public_slug") or "").strip() or _slugify(str(params.get("business_name") or detail.get("name") or "cabinet"))
     languages = _parse_string_list(params.get("languages"))
     if pg_profile:
@@ -1398,12 +1407,12 @@ def tenant_get_profile(auth: dict = Depends(require_tenant_auth)):
             languages = pg_profile.get("languages")
     return {
         "tenant_id": tenant_id,
-        "practitioner_name": pg_profile.get("practitioner_name") or params.get("practitioner_name") or params.get("business_name") or detail.get("name") or "",
+        "practitioner_name": pg_profile.get("practitioner_name") or _param_str("practitioner_name", "primary_practitioner_name") or params.get("business_name") or detail.get("name") or "",
         "cabinet_name": pg_profile.get("cabinet_name") or params.get("business_name") or detail.get("name") or "",
-        "specialty": pg_profile.get("specialty") or params.get("specialty_label") or "",
-        "phone": pg_profile.get("phone") or params.get("phone_number") or "",
+        "specialty": pg_profile.get("specialty") or _param_str("specialty_label", "profession") or "",
+        "phone": pg_profile.get("phone") or _param_str("phone_number", "current_phone_number") or voice_number or "",
         "email": pg_profile.get("email") or params.get("contact_email") or "",
-        "address_line": pg_profile.get("address_line") or params.get("address_line1") or "",
+        "address_line": pg_profile.get("address_line") or _param_str("address_line1", "address_line", "address") or "",
         "postal_code": pg_profile.get("postal_code") or params.get("postal_code") or "",
         "city": pg_profile.get("city") or params.get("city") or "",
         "website_url": pg_profile.get("website_url") or params.get("website_url") or "",

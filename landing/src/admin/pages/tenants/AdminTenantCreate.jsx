@@ -199,12 +199,14 @@ export default function AdminTenantCreate() {
 
       const tenantId = created.tenant_id;
       const params = {
-        primary_practitioner_name: form.practitionerName.trim(),
-        tenant_type: form.tenantType,
-        profession: (form.profession || "").trim(),
+        practitioner_name: form.practitionerName.trim(),
+        business_name: name,
+        specialty_label: (form.profession || "").trim(),
+        contact_email: email,
         city: (form.city || "").trim(),
-        address: (form.address || "").trim(),
-        current_phone_number: (form.currentPhone || "").trim(),
+        address_line1: (form.address || "").trim(),
+        phone_number: (form.currentPhone || "").trim(),
+        tenant_type: form.tenantType,
         channel_voice_enabled: form.channelVoice ? "true" : "false",
         channel_public_page_enabled: form.channelPublicPage ? "true" : "false",
         channel_web_chat_enabled: form.channelWebChat ? "true" : "false",

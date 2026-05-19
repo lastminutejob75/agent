@@ -5440,10 +5440,13 @@ def admin_patch_params(
     _: None = Depends(_verify_admin),
 ):
     """Met à jour les params (merge)."""
+    from backend.cabinet_profile_pg import canonicalize_cabinet_params
+
+    params = canonicalize_cabinet_params(body.params or {})
     if config.USE_PG_TENANTS:
-        ok = pg_update_tenant_params(tenant_id, body.params)
+        ok = pg_update_tenant_params(tenant_id, params)
         if ok:
-            sync_normalized_from_params(tenant_id, body.params)
+            sync_normalized_from_params(tenant_id, params)
             return {"ok": True}
     from backend.tenant_config import set_params
     set_params(tenant_id, body.params)
@@ -5742,6 +5745,7 @@ async def admin_create_tenant_full(
             raise RuntimeError("Impossible d'enregistrer les flags du tenant")
         tenant_params_payload: Dict[str, Any] = {
             "assistant_name": body.assistant_id,
+            "business_name": body.name.strip(),
             "phone_number": body.phone,
             "sector": body.sector,
             "plan_key": body.plan_key,
@@ -5752,6 +5756,7 @@ async def admin_create_tenant_full(
             tenant_params_payload.update(
                 {
                     "specialty_label": (lead.get("medical_specialty_label") or "").strip(),
+                    "city": (lead.get("city") or "").strip(),
                     "lead_id": lead.get("id"),
                     "lead_source": lead.get("source") or "landing_cta",
                     "lead_daily_call_volume": lead.get("daily_call_volume") or "",
@@ -6759,6 +6764,43 @@ def _get_tenant_activity(tenant_id: int, limit: int) -> dict:
     return {"tenant_id": tenant_id, "event_count": len(items), "items": items}
 
 
+def _batch_tenant_names_from_pg(tenant_ids: List[int]) -> Dict[int, str]:
+    """
+    Résout tenant_id -> nom en une requête PG.
+    Évite jusqu'à 10 appels pg_get_tenant_full dans _get_billing_snapshot (top coût Vapi).
+    """
+    out: Dict[int, str] = {}
+    ids = sorted({int(t) for t in tenant_ids if t is not None})
+    if not ids:
+        return out
+    if not getattr(config, "USE_PG_TENANTS", False):
+        return out
+    url_billing = os.environ.get("DATABASE_URL") or os.environ.get("PG_TENANTS_URL")
+    if not url_billing:
+        return out
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+
+        with psycopg.connect(url_billing, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT tenant_id, name FROM tenants WHERE tenant_id = ANY(%s)",
+                    (ids,),
+                )
+                for r in cur.fetchall():
+                    tid = r.get("tenant_id")
+                    if tid is None:
+                        continue
+                    tid_int = int(tid)
+                    nm = (r.get("name") or "").strip()
+                    out[tid_int] = nm if nm else f"Tenant #{tid_int}"
+    except Exception as e:
+        if "does not exist" not in str(e).lower():
+            logger.warning("batch_tenant_names_from_pg: %s", e)
+    return out
+
+
 def _get_billing_snapshot() -> dict:
     """Coût Vapi ce mois (UTC), top tenants par coût ce mois, tenants past_due. Ne dépend d'aucun prix Stripe."""
     from datetime import datetime, timezone
@@ -6805,12 +6847,23 @@ def _get_billing_snapshot() -> dict:
                         """,
                         (start_str, end_str),
                     )
-                    for r in cur.fetchall():
+                    cost_rows = cur.fetchall()
+                    tids_for_names = [int(r["tenant_id"]) for r in cost_rows if r.get("tenant_id") is not None]
+                    names_map = _batch_tenant_names_from_pg(tids_for_names)
+                    for r in cost_rows:
                         tid = r.get("tenant_id")
-                        d = _get_tenant_detail(tid) if tid else {}
+                        if tid is None:
+                            continue
+                        tid_int = int(tid)
+                        name = names_map.get(tid_int)
+                        if name is None and not getattr(config, "USE_PG_TENANTS", False):
+                            d = _get_tenant_detail(tid_int) or {}
+                            name = d.get("name") or f"Tenant #{tid_int}"
+                        elif name is None:
+                            name = f"Tenant #{tid_int}"
                         out["top_tenants_by_cost_this_month"].append({
-                            "tenant_id": tid,
-                            "name": d.get("name") or f"Tenant #{tid}",
+                            "tenant_id": tid_int,
+                            "name": name,
                             "value": round(float(r.get("value") or 0), 4),
                         })
         except Exception as e:
@@ -6877,19 +6930,25 @@ def admin_stats_dashboard_payload(
     }
 
 
-def _get_operations_snapshot(window_days: int = 7) -> dict:
+def _get_operations_snapshot(window_days: int = 7, billing_snapshot: Optional[dict] = None) -> dict:
     """
     Snapshot unique pour /admin/operations : billing, suspensions, cost today/7d, errors.
     Tout en 1 appel. Today = UTC.
     Errors = event anti_loop_trigger (liste stricte).
+
+    Args:
+        billing_snapshot: si fourni (ex. bundle cockpit), évite un second _get_billing_snapshot().
     """
     from datetime import datetime, timezone, timedelta
 
     now = datetime.now(timezone.utc)
     generated_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Billing : réutilise _get_billing_snapshot + month_utc
-    billing = _get_billing_snapshot()
+    # Billing : réutilise _get_billing_snapshot + month_utc (ou snapshot déjà calculé pour /dashboard/bundle)
+    if billing_snapshot is not None:
+        billing = {**billing_snapshot}
+    else:
+        billing = _get_billing_snapshot()
     billing["month_utc"] = now.strftime("%Y-%m")
     # Enrichir top_tenants_by_cost_this_month avec last_activity_at (1 seule requête groupée, pas de N+1)
     url_events = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
@@ -7265,7 +7324,8 @@ def admin_dashboard_bundle(
     wd_ops = max(7, min(90, dash_window_days(p)))
     ops_window = min(wd_ops, 30)
     billing_snap = ctx["_get_billing_snapshot"]()
-    ops_snap = ctx["_get_operations_snapshot"](window_days=ops_window)
+    # Réutilise le même billing_snap : sinon _get_operations_snapshot refait tout le snapshot (+ N+1 historique).
+    ops_snap = ctx["_get_operations_snapshot"](window_days=ops_window, billing_snapshot=billing_snap)
     activation_slice = ctx["_get_activation_queue"](42).get("items") or []
 
     sf = (severity or "").strip().lower()
