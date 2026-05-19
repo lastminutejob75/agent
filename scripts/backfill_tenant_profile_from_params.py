@@ -173,7 +173,8 @@ def main() -> int:
             updated += 1
             continue
 
-        existing, _ = pg_get_tenant_params(tid)
+        existing_pair = pg_get_tenant_params(tid)
+        existing = (existing_pair or ({}, "none"))[0] if existing_pair else {}
         merged = dict(existing or {})
         merged.update(patch)
         if not pg_update_tenant_params(tid, patch):
