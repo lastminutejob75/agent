@@ -19,13 +19,36 @@ python scripts/run_migration.py 034
 
 Active l’isolation par `tenant_id` en base. L’application pose `SET LOCAL app.current_tenant_id` sur chaque connexion tenant.
 
-**Important :** le rôle `postgres` Railway **contourne** le RLS. Pour une isolation effective :
+**Important :** sur Railway, `DATABASE_URL` pointe souvent vers l’utilisateur **`postgres`** (superutilisateur). En PostgreSQL, un superuser **contourne toujours le RLS**, même avec la migration 034.
 
-1. Créer un rôle `uwi_app` (LOGIN, non superuser).
-2. `GRANT` SELECT/INSERT/UPDATE/DELETE sur les tables applicatives.
-3. Pointer `DATABASE_URL` vers `uwi_app` (pas `postgres`).
+### Procédure Railway (PostgreSQL)
 
-Les routes admin authentifiées peuvent poser `SET LOCAL app.bypass_tenant_rls = 'on'` (voir `backend/pg_tenant_context.py`).
+1. Appliquer le RLS :
+   ```bash
+   railway run python scripts/run_migration.py 034
+   ```
+
+2. Créer le rôle applicatif (une seule fois) :
+   ```bash
+   railway run python scripts/setup_uwi_app_role.py
+   ```
+   Le script affiche :
+   - le nouveau `DATABASE_URL` avec `uwi_app`
+   - le mot de passe généré (ou utilisez `UWI_APP_PASSWORD=...` avant la commande)
+
+3. Dans le **service backend** Railway → Variables :
+   - Renommer l’ancienne URL : `DATABASE_URL_MIGRATE` = URL `postgres` actuelle (migrations uniquement)
+   - Remplacer `DATABASE_URL` (et `PG_TENANTS_URL` si présent) par l’URL `uwi_app` affichée
+
+4. Redéployer le backend.
+
+5. Migrations futures (toujours avec le superuser) :
+   ```bash
+   railway run python scripts/run_migration.py 036
+   ```
+   (Railway injecte `DATABASE_URL` ; utilisez `DATABASE_URL_MIGRATE` en local si besoin.)
+
+Les routes admin authentifiées posent `SET LOCAL app.bypass_tenant_rls = 'on'` pour les listes cross-tenant (voir `backend/pg_tenant_context.py`).
 
 ## Rôles applicatifs (RBAC)
 
