@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { Trash2 } from "lucide-react";
 import { adminApi } from "../../lib/adminApi.js";
 import { getLeadsSummary, listAdminLeads } from "../../lib/adminLeadsApi.js";
 import { applySearchParamsUpdates, kpiQueryUpdates } from "../../lib/adminLeadsFilters.js";
@@ -190,6 +191,7 @@ export default function AdminLeadsList() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [importingCsv, setImportingCsv] = useState(false);
   const [importReport, setImportReport] = useState(null);
+  const [deletingLeadId, setDeletingLeadId] = useState(null);
   const [isNarrow, setIsNarrow] = useState(() =>
     typeof window !== "undefined" ? window.innerWidth <= 820 : false,
   );
@@ -307,6 +309,24 @@ export default function AdminLeadsList() {
       setRefreshKey((v) => v + 1);
     } catch (e) {
       setError(e?.message || "Erreur mise à jour statut");
+    }
+  }
+
+  async function handleDeleteLead(lead) {
+    const id = lead?.id;
+    if (!id) return;
+    const label = String(lead.cabinet || lead.contact || id || "").slice(0, 120);
+    if (!window.confirm(`Supprimer définitivement ce lead (« ${label} ») ? Cette action est irréversible.`)) return;
+    setDeletingLeadId(id);
+    setError("");
+    try {
+      await adminApi.leadDelete(id);
+      if (String(selectedLeadId) === String(id)) setSelectedLeadId("");
+      setRefreshKey((v) => v + 1);
+    } catch (e) {
+      setError(e?.message || "Échec de la suppression.");
+    } finally {
+      setDeletingLeadId(null);
     }
   }
 
@@ -776,23 +796,27 @@ export default function AdminLeadsList() {
               {leads.map((lead) => {
                 const selected = String(selectedLeadId) === String(lead.id);
                 return (
-                  <button
-                    key={lead.id}
-                    onClick={() => {
-                      setSelectedLeadId(String(lead.id));
-                      setConvertMode(false);
-                    }}
-                    style={{
-                      width: "100%",
-                      textAlign: "left",
-                      borderRadius: isNarrow ? 16 : 22,
-                      border: `1px solid ${selected ? BRAND.teal : BRAND.border}`,
-                      background: "#fff",
-                      padding: isNarrow ? 11 : 14,
-                      cursor: "pointer",
-                      boxShadow: selected ? "0 8px 24px rgba(0,156,164,0.12)" : "0 2px 8px rgba(10,22,40,0.06)",
-                    }}
-                  >
+                  <div key={lead.id} style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedLeadId(String(lead.id));
+                        setConvertMode(false);
+                      }}
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        width: "100%",
+                        textAlign: "left",
+                        borderRadius: isNarrow ? 16 : 22,
+                        border: `1px solid ${selected ? BRAND.teal : BRAND.border}`,
+                        background: "#fff",
+                        padding: isNarrow ? 11 : 14,
+                        cursor: "pointer",
+                        boxShadow: selected ? "0 8px 24px rgba(0,156,164,0.12)" : "0 2px 8px rgba(10,22,40,0.06)",
+                        fontFamily: "inherit",
+                      }}
+                    >
                     <div style={{ marginBottom: 8, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: isNarrow ? 6 : 8 }}>
                       <div style={{ display: "flex", gap: 10, minWidth: 0 }}>
                         <div style={{ ...tone(statusTone(lead.status)), width: isNarrow ? 36 : 42, height: isNarrow ? 36 : 42, border: "1px solid", borderRadius: isNarrow ? 12 : 14, display: "grid", placeItems: "center", fontWeight: 900, fontSize: isNarrow ? 12 : 14 }}>
@@ -835,6 +859,34 @@ export default function AdminLeadsList() {
                       <span style={{ color: BRAND.teal, fontSize: 20, fontWeight: 900 }}>›</span>
                     </div>
                   </button>
+                    <button
+                      type="button"
+                      title="Supprimer définitivement ce lead"
+                      aria-label={`Supprimer le lead ${lead.cabinet || lead.id}`}
+                      disabled={deletingLeadId === lead.id}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleDeleteLead(lead);
+                      }}
+                      style={{
+                        flexShrink: 0,
+                        alignSelf: "stretch",
+                        width: isNarrow ? 44 : 48,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        borderRadius: isNarrow ? 14 : 18,
+                        border: `1px solid #F5C6CB`,
+                        background: deletingLeadId === lead.id ? "#F3F4F6" : "#FFF5F5",
+                        cursor: deletingLeadId === lead.id ? "wait" : "pointer",
+                        color: BRAND.red,
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      <Trash2 size={isNarrow ? 17 : 18} strokeWidth={2} />
+                    </button>
+                  </div>
                 );
               })}
               {leads.length === 0 ? (
@@ -850,6 +902,8 @@ export default function AdminLeadsList() {
                 convertMode={convertMode}
                 setConvertMode={setConvertMode}
                 onStatusChange={quickStatusUpdate}
+                onDelete={handleDeleteLead}
+                deletingLeadId={deletingLeadId}
                 isNarrow={isNarrow}
               />
             ) : (
@@ -950,7 +1004,7 @@ function MiniInfo({ label, value }) {
   );
 }
 
-function DetailPanel({ lead, convertMode, setConvertMode, onStatusChange, isNarrow = false }) {
+function DetailPanel({ lead, convertMode, setConvertMode, onStatusChange, onDelete, deletingLeadId, isNarrow = false }) {
   const plan = lead.callsPerDay === "100+" ? "Growth" : lead.callsPerDay === "50-100" ? "Starter" : "Essai gratuit";
   const transitions = {
     new: ["contacted", "interested", "later", "lost"],
@@ -1081,6 +1135,37 @@ function DetailPanel({ lead, convertMode, setConvertMode, onStatusChange, isNarr
             </div>
           </div>
         )}
+      </section>
+
+      <section style={{ borderRadius: isNarrow ? 18 : 24, border: `1px solid ${BRAND.red}44`, background: "#FFF5F5", padding: 12 }}>
+        <div style={{ fontSize: 12, fontWeight: 900, color: BRAND.red, marginBottom: 8 }}>Supprimer ce lead</div>
+        <p style={{ margin: "0 0 10px", fontSize: 12, fontWeight: 700, color: BRAND.muted, lineHeight: 1.45 }}>
+          Retrait définitif de la base (pré-onboarding). Irréversible.
+        </p>
+        <button
+          type="button"
+          disabled={deletingLeadId === lead.id}
+          onClick={() => onDelete?.(lead)}
+          style={{
+            width: "100%",
+            borderRadius: 14,
+            border: `1px solid ${BRAND.red}`,
+            background: deletingLeadId === lead.id ? "#F3F4F6" : "#fff",
+            color: BRAND.red,
+            padding: "10px 12px",
+            fontWeight: 900,
+            fontSize: 13,
+            cursor: deletingLeadId === lead.id ? "wait" : "pointer",
+            fontFamily: "inherit",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+          }}
+        >
+          <Trash2 size={17} strokeWidth={2} />
+          {deletingLeadId === lead.id ? "Suppression…" : "Supprimer définitivement"}
+        </button>
       </section>
     </aside>
   );
