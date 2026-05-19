@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 _root = Path(__file__).resolve().parent.parent
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
 _env = _root / ".env"
 if _env.exists():
     try:

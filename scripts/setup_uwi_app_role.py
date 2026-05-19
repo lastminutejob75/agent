@@ -138,21 +138,20 @@ def main() -> int:
                 cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,))
                 exists = cur.fetchone() is not None
                 ident = sql.Identifier(role)
+                pwd = sql.Literal(password)
                 if exists:
                     cur.execute(
                         sql.SQL(
-                            "ALTER ROLE {} WITH LOGIN PASSWORD %s "
+                            "ALTER ROLE {} WITH LOGIN PASSWORD {} "
                             "NOSUPERUSER NOCREATEDB NOCREATEROLE"
-                        ).format(ident),
-                        (password,),
+                        ).format(ident, pwd),
                     )
                 else:
                     cur.execute(
                         sql.SQL(
-                            "CREATE ROLE {} LOGIN PASSWORD %s "
+                            "CREATE ROLE {} LOGIN PASSWORD {} "
                             "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
-                        ).format(ident),
-                        (password,),
+                        ).format(ident, pwd),
                     )
                 print(f"OK — rôle {role} créé ou mis à jour")
             conn.autocommit = False
