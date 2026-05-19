@@ -255,6 +255,12 @@ function normalizeHoursForUi(payload) {
 export default function ClientCabinetProfilePage() {
   const restrictedMode = true;
   const editableTabs = new Set(["cabinet", "horaires"]);
+  const [userRole, setUserRole] = useState("owner");
+  const isOwner = userRole === "owner";
+  const visibleTabs = useMemo(
+    () => TABS.filter((tab) => isOwner || tab.id !== "abonnement"),
+    [isOwner],
+  );
   const [active, setActive] = useState("cabinet");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -312,6 +318,31 @@ export default function ClientCabinetProfilePage() {
       setLoading(true);
       setError("");
       try {
+        const me = await api.tenantMe().catch(() => null);
+        const role = String(me?.role || "owner").toLowerCase();
+        const owner = role === "owner";
+        if (!cancelled) {
+          setUserRole(role);
+          if (!owner && active === "abonnement") {
+            setActive("cabinet");
+          }
+        }
+
+        const baseRequests = [
+          api.tenantGetProfile(),
+          api.tenantGetOpeningHours(),
+          api.tenantGetAvailabilitySettings(),
+          api.tenantGetBookingRules(),
+          api.tenantGetAppointmentReasons(),
+          api.tenantGetAssistantSettings(),
+          api.tenantGetCalendarStatus().catch(() => ({ connected: false, permission_status: "unknown" })),
+          api.tenantGetProfileSummary().catch(() => null),
+        ];
+        if (owner) {
+          baseRequests.push(api.tenantGetBillingSummary().catch(() => null));
+        }
+
+        const results = await Promise.all(baseRequests);
         const [
           profileData,
           openingData,
@@ -322,17 +353,10 @@ export default function ClientCabinetProfilePage() {
           calendarData,
           summaryData,
           billingData,
-        ] = await Promise.all([
-          api.tenantGetProfile(),
-          api.tenantGetOpeningHours(),
-          api.tenantGetAvailabilitySettings(),
-          api.tenantGetBookingRules(),
-          api.tenantGetAppointmentReasons(),
-          api.tenantGetAssistantSettings(),
-          api.tenantGetCalendarStatus().catch(() => ({ connected: false, permission_status: "unknown" })),
-          api.tenantGetProfileSummary().catch(() => null),
-          api.tenantGetBillingSummary().catch(() => null),
-        ]);
+        ] = owner
+          ? results
+          : [...results, null];
+
         if (cancelled) return;
         setProfile({ ...emptyProfile, ...(profileData || {}) });
         setOpeningHours(normalizeHoursForUi(openingData || {}));
@@ -539,6 +563,10 @@ export default function ClientCabinetProfilePage() {
   }
 
   function goToBilling() {
+    if (!isOwner) {
+      setError("La facturation est reservee au titulaire du cabinet.");
+      return;
+    }
     setTab("abonnement");
     setTimeout(() => billingRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 40);
   }
@@ -615,7 +643,7 @@ export default function ClientCabinetProfilePage() {
         <div className="sticky top-0 z-20 mt-5 rounded-[1.7rem] border border-slate-200 bg-white/90 p-2 shadow-sm backdrop-blur">
           <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
             <nav className="flex gap-2 overflow-x-auto">
-              {TABS.map((tab) => {
+              {visibleTabs.map((tab) => {
                 const Icon = tab.icon;
                 const selected = active === tab.id;
                 return (
@@ -655,6 +683,11 @@ export default function ClientCabinetProfilePage() {
           </div>
         </div>
 
+        {!isOwner ? (
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
+            Compte collaborateur : la facturation et les parametres systeme sont reserves au titulaire du cabinet.
+          </div>
+        ) : null}
         {restrictedMode ? (
           <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
             Mode lancement: les sections <strong>Cabinet</strong> et <strong>Horaires / conges</strong> sont actives.

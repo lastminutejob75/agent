@@ -68,7 +68,25 @@ Checklist à valider côté organisation (hors code) :
 - [ ] Analyse d’impact (AIPD) si traitement à risque
 - [ ] Hébergement : clarifier si HDS requis selon votre activité (non substituable par ce document)
 
-## Déploiement sécurité
+## Déploiement sécurité (script tout-en-un)
+
+```bash
+export DATABASE_URL='postgresql://postgres:...@...railway.app:5432/railway'
+./scripts/prod_security_bootstrap.sh
+```
+
+Puis configurer les variables affichées et redéployer.
+
+## Rattrapage profils cabinets (adresses / téléphones manquants)
+
+```bash
+python3 scripts/backfill_tenant_profile_from_params.py --dry-run
+python3 scripts/backfill_tenant_profile_from_params.py
+# un seul tenant :
+python3 scripts/backfill_tenant_profile_from_params.py --tenant-id 2
+```
+
+## Déploiement sécurité (manuel)
 
 1. `git pull` + redéploiement Railway (backend + front).
 2. `python scripts/run_migration.py 034` sur la base prod.
