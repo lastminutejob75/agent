@@ -6,9 +6,12 @@ Permet de router un appel vocal ou WhatsApp vers le bon tenant selon le numéro 
 from __future__ import annotations
 
 import logging
+import os
 import re
 from contextvars import ContextVar
 from typing import Optional
+
+from fastapi import HTTPException
 
 from backend import config, db
 
@@ -211,6 +214,24 @@ def resolve_tenant_id_from_vapi_payload(payload: dict, channel: str = "vocal") -
         except Exception as e:
             logger.debug("TENANT_READ assistant lookup failed: %s", e)
 
+    from backend.security import is_production
+
+    allow_fallback = (os.environ.get("VAPI_ALLOW_DEFAULT_TENANT_FALLBACK") or "").strip().lower() in ("1", "true", "yes")
+    if (
+        is_production()
+        and not allow_fallback
+        and int(tenant_id) == int(config.DEFAULT_TENANT_ID)
+        and source == "default"
+    ):
+        logger.error(
+            "VAPI routing refused: tenant unresolved → DEFAULT in production "
+            "(set VAPI_ALLOW_DEFAULT_TENANT_FALLBACK=true for legacy fallback)"
+        )
+        raise HTTPException(
+            status_code=422,
+            detail="Impossible d'associer cet appel à un cabinet (numéro / assistant).",
+        )
+
     return tenant_id, source
 
 
@@ -220,7 +241,6 @@ def resolve_tenant_from_whatsapp(to_number: str) -> int:
     Utilise tenant_routing(channel='whatsapp', key=E.164).
     Lève HTTPException(404) si aucun route trouvée pour ce numéro.
     """
-    from fastapi import HTTPException
     from backend.utils.phone import normalize_e164
     try:
         key = normalize_e164(to_number or "")
@@ -265,7 +285,6 @@ def resolve_tenant_from_api_key(api_key: Optional[str]) -> int:
     - Si api_key vide/absent : retourne DEFAULT_TENANT_ID (rétrocompat).
     - Si api_key fourni mais inconnu : lève HTTPException 401.
     """
-    from fastapi import HTTPException
 
     key = (api_key or "").strip()
     if not key:

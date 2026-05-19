@@ -4,7 +4,7 @@ Route pour le canal Voix (Vapi) - DEBUG COMPLET + TIMERS
 Avec mémoire client et stats pour rapports.
 """
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import Response, JSONResponse, StreamingResponse
 import asyncio
 import logging
@@ -2059,7 +2059,7 @@ async def vapi_custom_llm(request: Request):
         from backend.tenant_routing import (
             extract_to_number_from_vapi_payload,
             extract_customer_phone_from_vapi_payload,
-            resolve_tenant_id_from_vocal_call,
+            resolve_tenant_id_from_vapi_payload,
         )
         customer_phone = extract_customer_phone_from_vapi_payload(payload)
         # Diagnostic : structure du payload (sans PII) pour savoir où Vapi envoie le caller ID
@@ -2080,7 +2080,7 @@ async def vapi_custom_llm(request: Request):
 
         # 🎯 DID → tenant_id (avant tout event, pour scoping correct)
         to_number = extract_to_number_from_vapi_payload(payload)
-        resolved_tenant_id, route_source = resolve_tenant_id_from_vocal_call(to_number, channel="vocal")
+        resolved_tenant_id, route_source = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
         logger.info(
             "[TENANT_ROUTE] to=%s tenant_id=%s source=%s",
             to_number or "(none)",
@@ -2584,6 +2584,8 @@ async def vapi_custom_llm(request: Request):
         # Format OpenAI-compatible (non-streaming), compatibilité max + Content-Type strict
         return _make_chat_response(call_id, response_text, is_streaming)
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"❌ Custom LLM error: {e}")
         import traceback

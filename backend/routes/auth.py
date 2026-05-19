@@ -91,21 +91,21 @@ class ImpersonateBody(BaseModel):
 
 
 @router.post("/impersonate")
-def auth_impersonate_validate_post(body: ImpersonateBody, response: Response = None):
-    return _auth_impersonate_exchange(body.token, response)
+def auth_impersonate_validate_post(body: ImpersonateBody, request: Request, response: Response = None):
+    return _auth_impersonate_exchange(body.token, response, request=request)
 
 
 @router.get("/impersonate")
-def auth_impersonate_validate_get(token: str = "", response: Response = None):
+def auth_impersonate_validate_get(request: Request, token: str = "", response: Response = None):
     """Déprécié : préférer POST /api/auth/impersonate (évite fuite token dans logs/proxy)."""
     from backend.security import is_production
 
     if is_production():
         raise HTTPException(405, "Utiliser POST /api/auth/impersonate")
-    return _auth_impersonate_exchange(token, response)
+    return _auth_impersonate_exchange(token, response, request=request)
 
 
-def _auth_impersonate_exchange(token: str, response: Response = None):
+def _auth_impersonate_exchange(token: str, response: Response = None, request: Optional[Request] = None):
     """
     Valide un token d’impersonation (émis par POST /api/admin/tenants/{id}/impersonate).
     Retourne tenant_id, tenant_name, expires_at et échange ce jeton court
@@ -113,6 +113,13 @@ def _auth_impersonate_exchange(token: str, response: Response = None):
     """
     if not JWT_SECRET:
         raise HTTPException(503, "JWT_SECRET not configured")
+    if request is not None:
+        try:
+            from backend.auth_rate_limit import check_impersonate_exchange
+
+            check_impersonate_exchange(request)
+        except RuntimeError as e:
+            raise HTTPException(status_code=429, detail=str(e))
     if not token:
         raise HTTPException(400, "token missing")
     try:
@@ -126,7 +133,9 @@ def _auth_impersonate_exchange(token: str, response: Response = None):
     from backend.security import register_impersonate_jti
 
     jti = (payload.get("jti") or "").strip()
-    if jti and not register_impersonate_jti(jti):
+    if not jti:
+        raise HTTPException(400, "Token invalide (jti requis)")
+    if not register_impersonate_jti(jti):
         raise HTTPException(400, "Token déjà utilisé")
     tenant_id = int(payload["tenant_id"])
     tenant_user = pg_get_tenant_user_for_impersonation(tenant_id)

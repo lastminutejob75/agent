@@ -1879,6 +1879,12 @@ def admin_auth_status():
 @router.post("/admin/auth/login")
 def admin_auth_login(body: AdminLoginBody, request: Request):
     """Connexion admin par email + mot de passe. Pose un cookie HttpOnly (uwi_admin_session)."""
+    try:
+        from backend.auth_rate_limit import check_admin_login
+
+        check_admin_login(request)
+    except RuntimeError as e:
+        raise HTTPException(status_code=429, detail=str(e))
     if not ADMIN_EMAIL:
         raise HTTPException(503, "Admin login not configured (ADMIN_EMAIL)")
     if not ADMIN_PASSWORD_HASH and not ADMIN_PASSWORD:

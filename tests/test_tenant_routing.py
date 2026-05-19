@@ -157,3 +157,29 @@ def test_ensure_test_number_route_skips_missing_pg_tenant(mock_exists):
 
     mock_add_route.assert_called_once()
     mock_pg_add_routing.assert_not_called()
+
+
+def test_resolve_vapi_payload_rejects_plain_default_in_production(monkeypatch):
+    """Production : sans opt-in, résolution invalide ≠ silencieusement DEFAULT."""
+    from fastapi import HTTPException
+
+    monkeypatch.delenv("VAPI_ALLOW_DEFAULT_TENANT_FALLBACK", raising=False)
+    payload = {"message": {}}
+
+    with patch("backend.security.is_production", return_value=True):
+        with patch("backend.tenant_routing.config.USE_PG_TENANTS", False):
+            with pytest.raises(HTTPException) as ei:
+                resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
+    assert ei.value.status_code == 422
+
+
+def test_resolve_vapi_payload_allows_default_with_env_opt_in(monkeypatch):
+    monkeypatch.setenv("VAPI_ALLOW_DEFAULT_TENANT_FALLBACK", "true")
+    payload = {"message": {}}
+
+    with patch("backend.security.is_production", return_value=True):
+        with patch("backend.tenant_routing.config.USE_PG_TENANTS", False):
+            tid, source = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
+
+    assert tid == config.DEFAULT_TENANT_ID
+    assert source == "default"

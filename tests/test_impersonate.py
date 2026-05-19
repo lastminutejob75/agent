@@ -106,3 +106,49 @@ def test_auth_impersonate_accepts_valid_token(mock_detail, mock_tenant_name, moc
     assert session_payload.get("tenant_id") == "1"
     assert session_payload.get("sub") == "42"
     assert session_payload.get("role") == "owner"
+
+
+@patch("backend.routes.auth.pg_get_tenant_user_for_impersonation")
+@patch("backend.routes.auth._get_tenant_name")
+@patch("backend.routes.admin._get_tenant_detail")
+@patch("backend.config.USE_PG_TENANTS", False)
+def test_auth_impersonate_token_single_use(mock_detail, mock_tenant_name, mock_impersonation_user, client, admin_headers):
+    """Le même JWT impersonate ne doit établir qu'une session (anti-rejeu)."""
+    mock_detail.return_value = {"tenant_id": 1, "name": "Cabinet Dupont"}
+    mock_tenant_name.return_value = "Cabinet Dupont"
+    mock_impersonation_user.return_value = {
+        "user_id": 42,
+        "tenant_id": 1,
+        "email": "cabinet@example.com",
+        "role": "owner",
+    }
+    r_post = client.post("/api/admin/tenants/1/impersonate", headers=admin_headers)
+    assert r_post.status_code == 200
+    token = r_post.json().get("token")
+    assert token
+
+    r_ok = client.get(f"/api/auth/impersonate?token={token}")
+    assert r_ok.status_code == 200
+
+    r_reply = client.get(f"/api/auth/impersonate?token={token}")
+    assert r_reply.status_code == 400
+    assert "déjà" in r_reply.json().get("detail", "").lower() or "utilisé" in r_reply.json().get("detail", "").lower()
+
+
+def test_impersonate_requires_jti_in_token(client):
+    """Sans jti dans le JWT, l'échange est refusé (jetons forgés anciens formats)."""
+    secret = os.environ.get("JWT_SECRET", "")
+    payload = {
+        "sub": "admin",
+        "tenant_id": 1,
+        "email": "admin",
+        "role": "owner",
+        "scope": "impersonate",
+        "exp": int(time.time()) + 3600,
+        "iat": int(time.time()),
+        # intentionally no jti
+    }
+    token = jwt.encode(payload, secret, algorithm="HS256")
+    r = client.get(f"/api/auth/impersonate?token={token}")
+    assert r.status_code == 400
+
