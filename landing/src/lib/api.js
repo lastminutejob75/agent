@@ -47,7 +47,7 @@ export function isTenantUnauthorized(err) {
 const MSG_BACKEND_UNREACHABLE =
   "Impossible de joindre le serveur. Vérifiez VITE_UWI_API_BASE_URL, CORS et que le backend est démarré.";
 
-async function request(path, { method = "GET", body, admin = false, tenant = false } = {}) {
+async function request(path, { method = "GET", body, admin = false, tenant = false, leadToken = "" } = {}) {
   const url = `${BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
 
   const headers = { "Content-Type": "application/json" };
@@ -58,6 +58,9 @@ async function request(path, { method = "GET", body, admin = false, tenant = fal
   if (tenant) {
     const tok = getTenantToken();
     if (tok) headers["Authorization"] = `Bearer ${tok}`;
+  }
+  if (leadToken) {
+    headers["X-Lead-Token"] = String(leadToken);
   }
 
   let res;
@@ -157,7 +160,7 @@ export const api = {
       body: { email, token, new_password: newPassword },
     }),
   tenantImpersonateValidate: (token) =>
-    request(`/api/auth/impersonate?token=${encodeURIComponent(token)}`),
+    request("/api/auth/impersonate", { method: "POST", body: { token } }),
 
   // tenant ( protégé JWT )
   tenantMe: () => request("/api/tenant/me", { tenant: true }),

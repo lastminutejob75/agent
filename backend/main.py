@@ -60,6 +60,27 @@ app.add_middleware(
 
 
 @app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    return response
+
+
+@app.middleware("http")
+async def block_debug_routes_middleware(request: Request, call_next):
+    """Bloque /debug/* en production (données sensibles, PHI, secrets)."""
+    if request.url.path.startswith("/debug"):
+        from backend.security import debug_routes_enabled
+
+        if not debug_routes_enabled():
+            return JSONResponse(status_code=404, content={"detail": "Not found"})
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def admin_cors_guard(request: Request, call_next):
     """Refuse /api/admin/* si Origin présente et non autorisée. Ne jamais bloquer OPTIONS (preflight CORS)."""
     if not request.url.path.startswith("/api/admin/"):
@@ -1212,13 +1233,18 @@ async def chat(
 
 @app.get("/stream/{conv_id}")
 async def stream(conv_id: str):
-    # Tenant déjà fixé sur la session au premier POST /chat ; sinon défaut
-    session = ENGINE.session_store.get_or_create(conv_id)
+    from backend.security import is_production
+
+    session = ENGINE.session_store.get(conv_id) if is_production() else ENGINE.session_store.get_or_create(conv_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Conversation introuvable")
     tid = getattr(session, "tenant_id", None)
     if tid is not None:
         current_tenant_id.set(str(tid))
-    else:
+    elif not is_production():
         current_tenant_id.set(str(config.DEFAULT_TENANT_ID))
+    else:
+        raise HTTPException(status_code=404, detail="Conversation introuvable")
 
     ensure_stream(conv_id)
 

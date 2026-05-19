@@ -980,6 +980,9 @@ async def vapi_webhook(request: Request):
     - assistant-request : obligatoire de retourner assistantId ou assistant (sinon Vapi → fallback anglais / endedReason no-assistant).
     - On persiste le caller ID (message.call.customer.number) dès assistant.started ou status-update in-progress.
     """
+    from backend.security import assert_vapi_webhook
+
+    assert_vapi_webhook(request)
     try:
         payload = await request.json()
     except Exception:

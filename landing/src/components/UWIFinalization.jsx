@@ -68,7 +68,7 @@ const MSG_LEAD_NOT_FOUND = "Lead introuvable, lien expiré ou ancienne session. 
 
 export default function UWIFinalization({
   leadId = "",
-  leadToken: _reservedLeadToken = "",
+  leadToken = "",
   initialPhone = "",
   assistantName = "Emma",
   practitioner = "votre cabinet",
@@ -133,7 +133,7 @@ export default function UWIFinalization({
       clearInterval(interval);
       timeouts.forEach(clearTimeout);
     };
-  }, [phase]);
+  }, [phase, leadToken]);
 
   const handleRevealCta = () => setPhase("congrats");
   const handleCongratsCta = () => setPhase("handoff");
@@ -148,11 +148,15 @@ export default function UWIFinalization({
       setCallbackError(MSG_LEAD_NOT_FOUND);
     } else if (dateIso && selectedSlot && phoneDigitsOnly.length >= 10) {
       try {
-        await api.preOnboardingCallbackBooking(leadId, {
-          date: dateIso,
-          slot: selectedSlot,
-          phone: phoneDigitsOnly,
-        });
+        await api.preOnboardingCallbackBooking(
+          leadId,
+          {
+            date: dateIso,
+            slot: selectedSlot,
+            phone: phoneDigitsOnly,
+          },
+          leadToken,
+        );
       } catch (err) {
         const msg = err?.message || "Erreur serveur";
         const isNotFound = msg.includes("introuvable") || err?.status === 404;
@@ -168,7 +172,7 @@ export default function UWIFinalization({
       setIsSubmitting(false);
       setPhase("done");
     }, 800);
-  }, [canSubmit, leadId, selectedDay, selectedSlot, phone]);
+  }, [canSubmit, leadId, leadToken, selectedDay, selectedSlot, phone]);
 
   // Lead manquant dès le départ → écran dédié (pas de flow inutile)
   if (!(leadId || "").trim()) {

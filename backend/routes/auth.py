@@ -27,7 +27,7 @@ from typing import Optional
 import bcrypt
 import jwt
 from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 from backend.auth_events_pg import log_auth_event
 from backend.auth_pg import (
@@ -86,8 +86,26 @@ def _get_reset_base_url(request: Request) -> str:
     return ""
 
 
+class ImpersonateBody(BaseModel):
+    token: str = Field(..., min_length=10)
+
+
+@router.post("/impersonate")
+def auth_impersonate_validate_post(body: ImpersonateBody, response: Response = None):
+    return _auth_impersonate_exchange(body.token, response)
+
+
 @router.get("/impersonate")
-def auth_impersonate_validate(token: str = "", response: Response = None):
+def auth_impersonate_validate_get(token: str = "", response: Response = None):
+    """Déprécié : préférer POST /api/auth/impersonate (évite fuite token dans logs/proxy)."""
+    from backend.security import is_production
+
+    if is_production():
+        raise HTTPException(405, "Utiliser POST /api/auth/impersonate")
+    return _auth_impersonate_exchange(token, response)
+
+
+def _auth_impersonate_exchange(token: str, response: Response = None):
     """
     Valide un token d’impersonation (émis par POST /api/admin/tenants/{id}/impersonate).
     Retourne tenant_id, tenant_name, expires_at et échange ce jeton court
@@ -105,6 +123,11 @@ def auth_impersonate_validate(token: str = "", response: Response = None):
         raise HTTPException(400, "Token invalide")
     if payload.get("scope") != "impersonate" or "tenant_id" not in payload:
         raise HTTPException(400, "Token invalide (scope)")
+    from backend.security import register_impersonate_jti
+
+    jti = (payload.get("jti") or "").strip()
+    if jti and not register_impersonate_jti(jti):
+        raise HTTPException(400, "Token déjà utilisé")
     tenant_id = int(payload["tenant_id"])
     tenant_user = pg_get_tenant_user_for_impersonation(tenant_id)
     if not tenant_user:
@@ -493,6 +516,9 @@ def auth_google_start(redirect_uri: Optional[str] = None):
     redirect = (redirect_uri or GOOGLE_REDIRECT_URI_DEFAULT).strip()
     if not redirect:
         raise HTTPException(400, "redirect_uri required (query or GOOGLE_REDIRECT_URI)")
+    from backend.security import assert_google_redirect_allowed
+
+    assert_google_redirect_allowed(redirect)
     code_verifier, code_challenge = _pkce_code_verifier_and_challenge()
     state = _issue_oauth_state(code_verifier)
     try:
@@ -592,6 +618,9 @@ def auth_google_callback(body: GoogleCallbackBody, response: Response):
     if not code_verifier:
         raise HTTPException(400, "code_verifier required (session perdue ou state expiré)")
     redirect_uri = body.redirect_uri.strip()
+    from backend.security import assert_google_redirect_allowed
+
+    assert_google_redirect_allowed(redirect_uri)
     tokens = _exchange_code_for_tokens(body.code, redirect_uri, code_verifier)
     if not tokens or "id_token" not in tokens:
         raise HTTPException(400, "Token exchange failed")

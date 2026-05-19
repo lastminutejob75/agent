@@ -294,7 +294,13 @@ ADMIN_EMAIL = (os.environ.get("ADMIN_EMAIL") or "").strip().lower()
 ADMIN_PASSWORD = (os.environ.get("ADMIN_PASSWORD") or "").strip()  # Déprécié : préférer ADMIN_PASSWORD_HASH
 ADMIN_PASSWORD_HASH = (os.environ.get("ADMIN_PASSWORD_HASH") or "").strip()  # bcrypt hash (recommandé en prod)
 ADMIN_SESSION_COOKIE = "uwi_admin_session"
-JWT_SECRET_ADMIN = (os.environ.get("JWT_SECRET") or os.environ.get("ADMIN_SESSION_SECRET") or "").strip()
+def _jwt_secret_admin() -> str:
+    from backend.security import admin_session_secret
+
+    return admin_session_secret()
+
+
+JWT_SECRET_ADMIN = _jwt_secret_admin()
 ADMIN_SESSION_EXPIRES_HOURS = int(os.environ.get("ADMIN_SESSION_EXPIRES_HOURS") or "8")
 # Cross-domain (front uwiapp.com / API Railway) : SameSite=None; Secure. Même domaine (api.uwiapp.com) : Lax.
 ADMIN_COOKIE_SAMESITE = (os.environ.get("ADMIN_COOKIE_SAMESITE") or "").strip().lower() or None
@@ -383,7 +389,6 @@ class OnboardingRequest(BaseModel):
 class OnboardingResponse(BaseModel):
     tenant_id: int
     message: str
-    admin_setup_token: Optional[str] = None  # P0: same as ADMIN_API_TOKEN for internal use
 
 
 class AdminLoginBody(BaseModel):
@@ -1845,8 +1850,11 @@ def _verify_admin_password(password: str) -> bool:
             logger.warning("admin_password_hash_check failed: %s", e)
             return False
     if ADMIN_PASSWORD:
-        if (os.environ.get("ENV") or os.environ.get("RAILWAY_ENVIRONMENT") or "").lower() in ("production", "prod"):
-            logger.warning("ADMIN_PASSWORD in plain text is deprecated in production; use ADMIN_PASSWORD_HASH (bcrypt)")
+        from backend.security import is_production
+
+        if is_production():
+            logger.error("ADMIN_PASSWORD en clair refusé en production — définir ADMIN_PASSWORD_HASH")
+            return False
         return pwd == ADMIN_PASSWORD
     return False
 
@@ -1854,16 +1862,17 @@ def _verify_admin_password(password: str) -> bool:
 @router.get("/admin/auth/status")
 def admin_auth_status():
     """
-    Diagnostic (sans auth) : indique si le login email/mot de passe et token sont configurés.
-    Permet de vérifier que ADMIN_EMAIL, ADMIN_PASSWORD/HASH et ADMIN_API_TOKEN sont bien pris en compte.
+    Diagnostic (sans auth) : indique si le login email/mot de passe est configuré.
+    Ne divulgue pas la présence de secrets machine (ADMIN_API_TOKEN).
     """
+    from backend.security import is_production
+
+    if is_production():
+        return {"login_configured": bool(ADMIN_EMAIL and (ADMIN_PASSWORD_HASH) and JWT_SECRET_ADMIN)}
     return {
         "login_configured": bool(ADMIN_EMAIL and (ADMIN_PASSWORD or ADMIN_PASSWORD_HASH) and JWT_SECRET_ADMIN),
         "email_set": bool(ADMIN_EMAIL),
-        "password_plain_set": bool(ADMIN_PASSWORD),
         "password_hash_set": bool(ADMIN_PASSWORD_HASH),
-        "jwt_secret_set": bool(JWT_SECRET_ADMIN),
-        "admin_token_set": bool(ADMIN_TOKEN),
     }
 
 
@@ -2735,7 +2744,6 @@ def public_onboarding(body: OnboardingRequest):
             return OnboardingResponse(
                 tenant_id=tid,
                 message="Compte créé. Connectez-vous avec cet email pour accéder à votre dashboard. Pour tester l'IA en voix, appelez le numéro de démo 09 39 24 05 75 (démo partagée).",
-                admin_setup_token=ADMIN_TOKEN if ADMIN_TOKEN else None,
             )
     # Fallback SQLite
     import backend.db as db
@@ -2764,7 +2772,6 @@ def public_onboarding(body: OnboardingRequest):
         return OnboardingResponse(
             tenant_id=tid,
             message="Compte créé. Connectez-vous avec cet email pour accéder à votre dashboard. Pour tester l'IA en voix, appelez le numéro de démo 09 39 24 05 75 (démo partagée).",
-            admin_setup_token=ADMIN_TOKEN if ADMIN_TOKEN else None,
         )
     except Exception as e:
         conn.rollback()
@@ -3418,6 +3425,8 @@ def admin_impersonate(
     admin_id = (admin_email or "admin").strip() or "admin"
     now = datetime.utcnow()
     exp = now + timedelta(minutes=IMPERSONATE_TTL_MINUTES)
+    import uuid
+
     payload = {
         "sub": admin_id,
         "tenant_id": tenant_id,
@@ -3425,6 +3434,7 @@ def admin_impersonate(
         "role": "owner",
         "scope": "impersonate",
         "impersonated_by": admin_id,
+        "jti": str(uuid.uuid4()),
         "exp": exp,
         "iat": now,
     }

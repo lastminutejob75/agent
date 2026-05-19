@@ -10,7 +10,7 @@ import re
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Header, Query, Request
 from pydantic import BaseModel, Field
 
 from backend.leads_pg import count_leads_total, get_lead, lead_exists, update_lead, update_lead_callback_booking, upsert_lead
@@ -64,17 +64,22 @@ async def pre_onboarding_config() -> Dict[str, Any]:
     postmark = bool((os.environ.get("POSTMARK_SERVER_TOKEN") or "").strip())
     smtp = bool((os.environ.get("SMTP_EMAIL") or "").strip() and (os.environ.get("SMTP_PASSWORD") or "").strip())
     email_sender_ok = postmark or smtp
-    total_leads = count_leads_total() if db_ok else -1
+    from backend.security import is_production
+
     backend_hint = (os.environ.get("RAILWAY_PUBLIC_DOMAIN") or os.environ.get("VERCEL_URL") or "unknown")[:64]
-    return {
+    out = {
         "db_configured": db_ok,
         "email_recipient_configured": email_recipient_ok,
         "email_sender_configured": email_sender_ok,
         "leads_ok": db_ok,
         "emails_ok": email_recipient_ok and email_sender_ok,
-        "total_leads_in_db": total_leads,
-        "backend_hint": backend_hint,
     }
+    if not is_production():
+        out["total_leads_in_db"] = count_leads_total() if db_ok else -1
+        out["backend_hint"] = backend_hint
+    return out
+
+
 VALID_VOICE = {"female", "male"}
 
 # Spécialités médicales (step 1 : slugs normalisés)
@@ -418,12 +423,28 @@ async def public_leads_create(request: Request, body: PublicLeadBody) -> Dict[st
 
 
 
+def _lead_token_from_request(
+    request: Request,
+    x_lead_token: Optional[str] = Header(None, alias="X-Lead-Token"),
+    token: Optional[str] = Query(None),
+) -> Optional[str]:
+    return (x_lead_token or token or request.headers.get("x-lead-token") or "").strip() or None
+
+
 @router.get("/leads/{lead_id}/email")
-async def get_lead_email_for_create_account(lead_id: str) -> Dict[str, Any]:
+async def get_lead_email_for_create_account(
+    lead_id: str,
+    request: Request,
+    x_lead_token: Optional[str] = Header(None, alias="X-Lead-Token"),
+    token: Optional[str] = Query(None),
+) -> Dict[str, Any]:
     """
     Retourne l'email du lead pour le flux create-account (préremplissage).
     Ne retourne l'email que si le lead existe et en a un.
     """
+    from backend.security import assert_lead_access
+
+    assert_lead_access(lead_id, _lead_token_from_request(request, x_lead_token, token))
     lead = get_lead(lead_id)
     if not lead:
         raise HTTPException(404, "Lead introuvable")
@@ -432,36 +453,51 @@ async def get_lead_email_for_create_account(lead_id: str) -> Dict[str, Any]:
 
 
 @router.get("/leads/{lead_id}/check")
-async def check_lead_exists(lead_id: str) -> Dict[str, Any]:
+async def check_lead_exists(
+    lead_id: str,
+    request: Request,
+    x_lead_token: Optional[str] = Header(None, alias="X-Lead-Token"),
+    token: Optional[str] = Query(None),
+) -> Dict[str, Any]:
     """
     Vérifie si un lead existe (pour diagnostic : landing vs backend même env ?).
     Utilise lead_exists (requête minimale) pour éviter les faux 404 si get_lead échoue (schema).
     Retourne 200 si existe, 404 sinon.
     """
+    from backend.security import assert_lead_access, is_production
+
+    assert_lead_access(lead_id, _lead_token_from_request(request, x_lead_token, token))
     if lead_exists(lead_id):
         return {"exists": True}
-    total = count_leads_total()
     lead = get_lead(lead_id)
     if lead:
         return {"exists": True}
-    # lead_exists=False et get_lead=None → lead absent ou DB différente
-    logger.warning(
-        "check_lead_404",
-        extra={
-            "lead_id": (lead_id or "")[:36],
-            "total_leads_in_db": total,
-            "hint": "0 leads → commits vont peut-être vers un autre backend (VITE_UWI_API_BASE_URL)" if total == 0 else "lead_id absent de cette base",
-        },
-    )
-    raise HTTPException(status_code=404, detail="Lead introuvable")
+    logger.warning("check_lead_404", extra={"lead_id": (lead_id or "")[:36]})
+    detail = "Lead introuvable"
+    if not is_production():
+        total = count_leads_total()
+        detail = (
+            f"Lead introuvable (total_leads_in_db={total}). "
+            "Vérifiez VITE_UWI_API_BASE_URL si total=0."
+        )
+    raise HTTPException(status_code=404, detail=detail)
 
 
 @router.post("/leads/{lead_id}/callback-booking")
-async def callback_booking(lead_id: str, body: CallbackBookingBody) -> Dict[str, Any]:
+async def callback_booking(
+    lead_id: str,
+    body: CallbackBookingBody,
+    request: Request,
+    x_lead_token: Optional[str] = Header(None, alias="X-Lead-Token"),
+    token: Optional[str] = Query(None),
+) -> Dict[str, Any]:
     """
     Enregistre le créneau de rappel choisi (écran finalisation UWI).
     Met à jour le lead puis envoie l'email recap lead au fondateur (un seul email, avec créneau).
     """
+    from backend.security import assert_lead_access
+
+    assert_lead_access(lead_id, _lead_token_from_request(request, x_lead_token, token))
     # Diagnostic express (logs Railway) : même instance + même DB que commit ?
     _db_url = os.environ.get("DATABASE_URL") or os.environ.get("PG_TENANTS_URL") or ""
     _db_hash = hashlib.sha256(_db_url.encode()).hexdigest()[:8] if _db_url else "none"
@@ -562,7 +598,13 @@ class CreateAccountBody(BaseModel):
 
 
 @router.post("/leads/{lead_id}/create-account")
-async def create_account_from_lead(lead_id: str, body: CreateAccountBody) -> Dict[str, Any]:
+async def create_account_from_lead(
+    lead_id: str,
+    body: CreateAccountBody,
+    request: Request,
+    x_lead_token: Optional[str] = Header(None, alias="X-Lead-Token"),
+    token: Optional[str] = Query(None),
+) -> Dict[str, Any]:
     """
     Crée un tenant + compte client depuis un lead (parcours self-serve).
     Le prospect peut créer son compte sans passer par l'admin.
@@ -581,6 +623,10 @@ async def create_account_from_lead(lead_id: str, body: CreateAccountBody) -> Dic
 
     if not config.USE_PG_TENANTS:
         raise HTTPException(503, "Création compte self-serve requiert Postgres (USE_PG_TENANTS)")
+
+    from backend.security import assert_lead_access
+
+    assert_lead_access(lead_id, _lead_token_from_request(request, x_lead_token, token))
 
     lead = get_lead(lead_id)
     if not lead:

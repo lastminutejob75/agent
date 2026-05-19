@@ -30,7 +30,14 @@ def require_tenant_web(
     Comme require_tenant_from_header mais pose current_tenant_id pour le reste du pipeline.
     Utilisé par POST /chat.
     """
+    from backend.security import require_strict_tenant_key
     from backend.tenant_routing import resolve_tenant_from_api_key, current_tenant_id
+
+    if require_strict_tenant_key() and not (x_tenant_key or "").strip():
+        raise HTTPException(
+            status_code=401,
+            detail="X-Tenant-Key requis pour ce canal web",
+        )
     tid = resolve_tenant_from_api_key(x_tenant_key or "")
     current_tenant_id.set(str(tid))
     return tid
