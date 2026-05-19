@@ -3,7 +3,7 @@
 API admin / onboarding pour uwi-landing (Vite SPA).
 - POST /public/onboarding (public)
 - POST /api/admin/auth/login, GET /api/admin/auth/me, POST /api/admin/auth/logout (cookie session)
-- GET/PATCH /admin/* (protégé cookie session OU Bearer ADMIN_API_TOKEN)
+- GET/PATCH /admin/* (cookie session OU Bearer ADMIN_API_TOKEN OU Bearer JWT session = même secret que cookie)
 """
 from __future__ import annotations
 
@@ -296,13 +296,17 @@ ADMIN_COOKIE_SAMESITE = (os.environ.get("ADMIN_COOKIE_SAMESITE") or "").strip().
 
 def _get_admin_email_from_cookie(request: Request) -> Optional[str]:
     """Lit et valide le JWT admin depuis le cookie. Retourne l'email si valide, sinon None."""
-    if not JWT_SECRET_ADMIN:
+    return _decode_admin_session_jwt(request.cookies.get(ADMIN_SESSION_COOKIE))
+
+
+def _decode_admin_session_jwt(raw: Optional[str]) -> Optional[str]:
+    """JWT cockpit scope=admin (même valeur que cookie ou session_token renvoyé au login)."""
+    if not raw or not str(raw).strip():
         return None
-    raw = request.cookies.get(ADMIN_SESSION_COOKIE)
-    if not raw:
+    if not JWT_SECRET_ADMIN or not ADMIN_EMAIL:
         return None
     try:
-        payload = jwt.decode(raw, JWT_SECRET_ADMIN, algorithms=["HS256"])
+        payload = jwt.decode(str(raw).strip(), JWT_SECRET_ADMIN, algorithms=["HS256"])
         if payload.get("scope") != "admin":
             return None
         email = (payload.get("sub") or payload.get("email") or "").strip().lower()
@@ -320,32 +324,39 @@ def require_admin(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security),
 ) -> None:
     """
-    Accès admin : 1) cookie uwi_admin_session (JWT scope=admin), 2) Bearer ADMIN_API_TOKEN (legacy).
-    - 503 : aucune méthode configurée (ADMIN_EMAIL+ADMIN_PASSWORD ou ADMIN_API_TOKEN)
-    - 401 : pas authentifié (cookie invalide/expiré ou Bearer manquant/invalide).
+    Accès admin : 1) cookie uwi_admin_session, 2) Bearer ADMIN_API_TOKEN, 3) Bearer JWT session (= cookie).
+    - 503 : aucune méthode configurée
+    - 401 : non authentifié
     """
-    # 1) Cookie session
     if JWT_SECRET_ADMIN and ADMIN_EMAIL:
-        email = _get_admin_email_from_cookie(request)
-        if email:
+        cookie_email = _get_admin_email_from_cookie(request)
+        if cookie_email:
             logger.info("admin_access path=%s client=%s auth=cookie", request.url.path, request.client.host if request.client else None)
             return
-    # 2) Bearer legacy
+
     if not _ADMIN_VALID_TOKENS and not (ADMIN_EMAIL and (ADMIN_PASSWORD or ADMIN_PASSWORD_HASH)):
         raise HTTPException(503, "Admin API not configured (ADMIN_EMAIL + ADMIN_PASSWORD_HASH or ADMIN_API_TOKEN)")
-    if not credentials or not (credentials.credentials or "").strip():
+
+    bearer = (credentials.credentials or "").strip() if credentials else ""
+    if not bearer:
         raise HTTPException(401, "Missing credentials (cookie or Bearer required)")
-    token = credentials.credentials.strip()
-    if token not in _ADMIN_VALID_TOKENS:
-        raise HTTPException(401, "Invalid or expired token")
-    token_fingerprint = hashlib.sha256(token.encode()).hexdigest()[:8]
-    logger.info(
-        "admin_access path=%s client=%s user_agent=%s token_fp=%s",
-        request.url.path,
-        request.client.host if request.client else None,
-        (request.headers.get("user-agent") or "")[:200],
-        token_fingerprint,
-    )
+
+    if bearer in _ADMIN_VALID_TOKENS:
+        token_fingerprint = hashlib.sha256(bearer.encode()).hexdigest()[:8]
+        logger.info(
+            "admin_access path=%s client=%s user_agent=%s token_fp=%s",
+            request.url.path,
+            request.client.host if request.client else None,
+            (request.headers.get("user-agent") or "")[:200],
+            token_fingerprint,
+        )
+        return
+
+    if JWT_SECRET_ADMIN and ADMIN_EMAIL and _decode_admin_session_jwt(bearer):
+        logger.info("admin_access path=%s client=%s auth=bearer_session", request.url.path, request.client.host if request.client else None)
+        return
+
+    raise HTTPException(401, "Invalid or expired token")
 
 
 # Alias pour compatibilité existante
@@ -1867,7 +1878,7 @@ def admin_auth_login(body: AdminLoginBody, request: Request):
     token = jwt.encode(payload, JWT_SECRET_ADMIN, algorithm="HS256")
     secure = (os.environ.get("ENV") or os.environ.get("RAILWAY_ENVIRONMENT") or "").lower() in ("production", "prod")
     samesite = ADMIN_COOKIE_SAMESITE if ADMIN_COOKIE_SAMESITE in ("none", "lax", "strict") else ("none" if secure else "lax")
-    response = JSONResponse(content={"ok": True, "email": email})
+    response = JSONResponse(content={"ok": True, "email": email, "session_token": token})
     # Ne pas set domain= : avec API sur Railway (domaine différent de uwiapp.com), le cookie doit rester host-only sur *.railway.app.
     response.set_cookie(
         key=ADMIN_SESSION_COOKIE,
@@ -1883,12 +1894,22 @@ def admin_auth_login(body: AdminLoginBody, request: Request):
 
 
 @router.get("/admin/auth/me")
-def admin_auth_me(request: Request):
-    """Retourne l'email de l'admin connecté (cookie). 401 si non connecté."""
+def admin_auth_me(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security),
+):
+    """Email de l'admin connecté : cookie session, Bearer JWT session, ou Bearer ADMIN_API_TOKEN."""
     email = _get_admin_email_from_cookie(request)
-    if not email:
-        raise HTTPException(401, "Not authenticated")
-    return {"email": email}
+    if email:
+        return {"email": email}
+    bearer = (credentials.credentials or "").strip() if credentials else ""
+    if bearer:
+        email = _decode_admin_session_jwt(bearer)
+        if email:
+            return {"email": email}
+        if _ADMIN_VALID_TOKENS and bearer in _ADMIN_VALID_TOKENS:
+            return {"email": ADMIN_EMAIL or "api_token"}
+    raise HTTPException(401, "Not authenticated")
 
 
 @router.post("/admin/auth/logout")

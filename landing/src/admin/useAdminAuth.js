@@ -29,11 +29,15 @@ export function useAdminAuth() {
 
   const login = async (email, password) => {
     setSessionPersistError(false);
+    let body;
     try {
-      await adminApi.login({ email, password });
+      body = await adminApi.login({ email, password });
     } catch (e) {
       throw e;
     }
+    /** Même JWT que le cookie HttpOnly : permet le cockpit si le navigateur bloque les cookies cross-site. */
+    const sessionTok = typeof body?.session_token === "string" ? body.session_token.trim() : "";
+    if (sessionTok) setAdminToken(sessionTok);
     try {
       const data = await adminApi.me();
       setMe(data);
@@ -42,6 +46,7 @@ export function useAdminAuth() {
     } catch (e) {
       setMe(null);
       setIsAuthed(false);
+      setAdminToken("");
       if (e?.status === 401) setSessionPersistError(true);
       return { sessionPersistError: true };
     }

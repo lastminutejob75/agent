@@ -23,6 +23,15 @@ python -c "import bcrypt; print(bcrypt.hashpw(b'votre_mot_de_passe', bcrypt.gens
 
 Routes : **POST /api/admin/auth/login**, **GET /api/admin/auth/me**, **POST /api/admin/auth/logout**. Cookie : `uwi_admin_session` (HttpOnly, Secure en prod, Path=/).
 
+### Fallback SPA (cookies tiers bloqués)
+
+Après un **login 200**, la réponse JSON inclut **`session_token`** (même JWT que le cookie). Le front l’enregistre comme **Bearer** (`localStorage`) pour que **`GET /api/admin/auth/me`** et les routes **`/api/admin/*`** fonctionnent **sans cookie cross-site**.
+
+- **`GET /me`** accepte : cookie, Bearer JWT session, ou Bearer **`ADMIN_API_TOKEN`**.
+- Les autres routes protégées acceptent également le Bearer JWT session (en plus du cookie et du token API statique).
+
+Continuer à configurer **`ADMIN_COOKIE_SAMESITE=none`** sur Railway tant que le front et l’API sont sur des domaines différents.
+
 ### Cookie cross-domain (architecture actuelle)
 
 **Setup actuel :** front = **https://uwiapp.com** (Vercel), API = **Railway** (ex. `https://agent-xxx.up.railway.app`). Donc **domaines différents** → cookie cross-site.
