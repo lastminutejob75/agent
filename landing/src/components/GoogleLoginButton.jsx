@@ -1,5 +1,6 @@
 import React from "react";
 import { API_URL, GOOGLE_REDIRECT_URI, OAUTH_CODE_VERIFIER_KEY } from "../lib/authConfig.js";
+import { clearTenantToken } from "../lib/api.js";
 
 export function GoogleLoginButton() {
   const [loading, setLoading] = React.useState(false);
@@ -8,6 +9,7 @@ export function GoogleLoginButton() {
   const startGoogle = () => {
     setLoading(true);
     setError(null);
+    clearTenantToken();
     // Laisser le navigateur peindre "Redirection..." avant de lancer le fetch (évite "Event handlers blocked UI")
     const run = async () => {
       try {

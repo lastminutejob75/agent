@@ -135,32 +135,123 @@ def pg_get_tenant_user_by_email_for_login(email: str) -> Optional[Dict[str, Any]
     return None
 
 
+def pg_get_tenant_user_by_google_sub(google_sub: str) -> Optional[Dict[str, Any]]:
+    """
+    Lookup tenant_user par google_sub (connexion Google déjà liée).
+    Returns {"tenant_id", "user_id", "role", "email", "google_sub"} ou None.
+    """
+    sub = (google_sub or "").strip()
+    if not sub:
+        return None
+    url = _pg_url()
+    if url:
+        try:
+            import psycopg
+            with psycopg.connect(url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT tenant_id, id, role, email, google_sub
+                        FROM tenant_users
+                        WHERE google_sub = %s
+                        LIMIT 1
+                        """,
+                        (sub,),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        return {
+                            "tenant_id": int(row[0]),
+                            "user_id": int(row[1]),
+                            "role": row[2] or "owner",
+                            "email": (row[3] or "").strip().lower(),
+                            "google_sub": row[4],
+                        }
+        except Exception as e:
+            logger.warning("pg_get_tenant_user_by_google_sub failed: %s", e)
+
+    try:
+        conn = _sqlite_fallback_conn()
+        row = conn.execute(
+            """
+            SELECT tenant_id, id, role, email, google_sub
+            FROM tenant_users
+            WHERE google_sub = ?
+            LIMIT 1
+            """,
+            (sub,),
+        ).fetchone()
+        conn.close()
+        if row:
+            return {
+                "tenant_id": int(row["tenant_id"]),
+                "user_id": int(row["id"]),
+                "role": row["role"] or "owner",
+                "email": (row["email"] or "").strip().lower(),
+                "google_sub": row["google_sub"],
+            }
+    except Exception as e:
+        logger.warning("sqlite fallback pg_get_tenant_user_by_google_sub failed: %s", e)
+    return None
+
+
 def pg_get_tenant_user_by_email_for_google(email: str) -> Optional[Dict[str, Any]]:
     """
     Lookup tenant_user par email avec google_sub (pour callback Google SSO).
-    Returns {"tenant_id", "user_id", "role", "google_sub"} ou None.
+    Returns {"tenant_id", "user_id", "role", "google_sub", "email"} ou None.
     """
-    url = _pg_url()
-    if not url:
+    email_norm = email.strip().lower()
+    if not email_norm:
         return None
+    url = _pg_url()
+    if url:
+        try:
+            import psycopg
+            with psycopg.connect(url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT tenant_id, id, role, google_sub, email
+                        FROM tenant_users
+                        WHERE email = %s
+                        LIMIT 1
+                        """,
+                        (email_norm,),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        return {
+                            "tenant_id": int(row[0]),
+                            "user_id": int(row[1]),
+                            "role": row[2] or "owner",
+                            "google_sub": row[3],
+                            "email": (row[4] or email_norm).strip().lower(),
+                        }
+        except Exception as e:
+            logger.warning("pg_get_tenant_user_by_email_for_google failed: %s", e)
+
     try:
-        import psycopg
-        with psycopg.connect(url) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT tenant_id, id, role, google_sub FROM tenant_users WHERE email = %s LIMIT 1",
-                    (email.strip().lower(),),
-                )
-                row = cur.fetchone()
-                if row:
-                    return {
-                        "tenant_id": int(row[0]),
-                        "user_id": int(row[1]),
-                        "role": row[2] or "owner",
-                        "google_sub": row[3],
-                    }
+        conn = _sqlite_fallback_conn()
+        row = conn.execute(
+            """
+            SELECT tenant_id, id, role, google_sub, email
+            FROM tenant_users
+            WHERE email = ?
+            LIMIT 1
+            """,
+            (email_norm,),
+        ).fetchone()
+        conn.close()
+        if row:
+            return {
+                "tenant_id": int(row["tenant_id"]),
+                "user_id": int(row["id"]),
+                "role": row["role"] or "owner",
+                "google_sub": row["google_sub"],
+                "email": (row["email"] or email_norm).strip().lower(),
+            }
     except Exception as e:
-        logger.warning("pg_get_tenant_user_by_email_for_google failed: %s", e)
+        logger.warning("sqlite fallback pg_get_tenant_user_by_email_for_google failed: %s", e)
     return None
 
 

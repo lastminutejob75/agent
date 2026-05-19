@@ -34,6 +34,7 @@ from backend.auth_pg import (
     pg_create_password_reset,
     pg_get_tenant_user_by_email_for_google,
     pg_get_tenant_user_by_email_for_login,
+    pg_get_tenant_user_by_google_sub,
     pg_get_tenant_user_by_id,
     pg_get_tenant_user_for_impersonation,
     pg_get_tenant_user_for_reset_check,
@@ -367,6 +368,11 @@ def auth_logout(response: Response):
 GOOGLE_CLIENT_ID = (os.environ.get("GOOGLE_CLIENT_ID") or "").strip()
 GOOGLE_CLIENT_SECRET = (os.environ.get("GOOGLE_CLIENT_SECRET") or "").strip()
 GOOGLE_REDIRECT_URI_DEFAULT = (os.environ.get("GOOGLE_REDIRECT_URI") or "").strip()
+
+
+def _allow_google_self_signup() -> bool:
+    """Si false, Google SSO refuse les emails sans compte pré-créé (évite un nouveau cabinet par Gmail)."""
+    return os.getenv("ALLOW_GOOGLE_SELF_SIGNUP", "false").lower() in ("true", "1", "yes")
 GOOGLE_OAUTH_SCOPES = os.environ.get("GOOGLE_OAUTH_SCOPES", "openid email profile").strip()
 GOOGLE_OAUTH_STATE_TTL_SECONDS = 600  # 10 min
 
@@ -600,36 +606,57 @@ def auth_google_callback(body: GoogleCallbackBody, response: Response):
     if not email_verified:
         raise HTTPException(403, "Email non vérifié par Google")
 
-    row = pg_get_tenant_user_by_email_for_google(email)
+    # 1) Compte déjà lié à ce Google (sub) → seul ce compte Google peut se connecter ici.
+    row = pg_get_tenant_user_by_google_sub(sub)
     if row:
-        link_result = pg_link_google_sub(row["user_id"], sub, email)
-        if link_result == "conflict":
-            raise HTTPException(409, "Compte déjà lié à un autre compte Google")
         tenant_id = row["tenant_id"]
         user_id = row["user_id"]
         role = row["role"]
+        stored_email = (row.get("email") or "").strip().lower()
+        if stored_email and stored_email != email:
+            logger.warning(
+                "Google SSO email mismatch sub=%s stored=%s token_email=%s",
+                sub[:12],
+                stored_email,
+                email,
+            )
     else:
-        # Signup via onboarding : créer tenant + owner (même flow que public/onboarding).
-        # En forte concurrence, idéalement transaction (create tenant + user + link) pour éviter tenants fantômes.
-        company_name = (idinfo.get("name") or email.split("@")[0] or "Nouveau").strip()[:200]
-        tid = pg_create_tenant(
-            name=company_name,
-            contact_email=email,
-            calendar_provider="none",
-            calendar_id="",
-            timezone="Europe/Paris",
-        )
-        if not tid:
-            raise HTTPException(500, "Création de compte échouée")
-        row2 = pg_get_tenant_user_by_email_for_google(email)
-        if not row2:
-            raise HTTPException(500, "Création de compte échouée")
-        link_result = pg_link_google_sub(row2["user_id"], sub, email)
-        if link_result == "conflict":
-            raise HTTPException(409, "Compte déjà lié à un autre compte Google")
-        tenant_id = row2["tenant_id"]
-        user_id = row2["user_id"]
-        role = row2["role"]
+        # 2) Auto-link par email uniquement si un compte existe déjà (invité / créé par admin).
+        row = pg_get_tenant_user_by_email_for_google(email)
+        if row:
+            link_result = pg_link_google_sub(row["user_id"], sub, email)
+            if link_result == "conflict":
+                raise HTTPException(409, "Compte déjà lié à un autre compte Google")
+            tenant_id = row["tenant_id"]
+            user_id = row["user_id"]
+            role = row["role"]
+        elif not _allow_google_self_signup():
+            raise HTTPException(
+                403,
+                "Aucun compte UWi n'est associé à cet email Google. "
+                "Utilisez l'email et le mot de passe reçus par email, ou contactez le support.",
+            )
+        else:
+            # 3) Signup optionnel (désactivé par défaut en prod).
+            company_name = (idinfo.get("name") or email.split("@")[0] or "Nouveau").strip()[:200]
+            tid = pg_create_tenant(
+                name=company_name,
+                contact_email=email,
+                calendar_provider="none",
+                calendar_id="",
+                timezone="Europe/Paris",
+            )
+            if not tid:
+                raise HTTPException(500, "Création de compte échouée")
+            row2 = pg_get_tenant_user_by_email_for_google(email)
+            if not row2:
+                raise HTTPException(500, "Création de compte échouée")
+            link_result = pg_link_google_sub(row2["user_id"], sub, email)
+            if link_result == "conflict":
+                raise HTTPException(409, "Compte déjà lié à un autre compte Google")
+            tenant_id = row2["tenant_id"]
+            user_id = row2["user_id"]
+            role = row2["role"]
 
     token = _issue_client_session(user_id=user_id, tenant_id=tenant_id, role=role)
     response.set_cookie(

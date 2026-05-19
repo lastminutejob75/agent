@@ -1,6 +1,6 @@
 import React from "react";
 import { API_URL, GOOGLE_REDIRECT_URI, OAUTH_CODE_VERIFIER_KEY } from "../lib/authConfig.js";
-import { setTenantToken } from "../lib/api.js";
+import { clearTenantToken, setTenantToken } from "../lib/api.js";
 
 export default function AuthGoogleCallback() {
   const [status, setStatus] = React.useState("loading");
@@ -9,6 +9,7 @@ export default function AuthGoogleCallback() {
   React.useEffect(() => {
     const run = async () => {
       try {
+        clearTenantToken();
         const params = new URLSearchParams(window.location.search);
         const code = params.get("code") || "";
         const state = params.get("state") || "";
@@ -47,7 +48,15 @@ export default function AuthGoogleCallback() {
           throw new Error(txt || "Ce compte est déjà lié à un autre Google.");
         }
         if (res.status === 403) {
-          throw new Error("Votre email Google n'est pas vérifié.");
+          const data403 = await res.json().catch(() => ({}));
+          const detail403 =
+            (typeof data403?.detail === "string" && data403.detail) ||
+            (Array.isArray(data403?.detail) && data403.detail[0]?.msg) ||
+            "";
+          throw new Error(
+            detail403 ||
+              "Votre email Google n'est pas vérifié ou aucun compte n'est associé à cet email.",
+          );
         }
         if (res.status === 503) {
           throw new Error("Google SSO désactivé côté serveur. Contactez l’administrateur.");
