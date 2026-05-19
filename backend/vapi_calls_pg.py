@@ -96,6 +96,9 @@ def upsert_vapi_call(
         return False
     try:
         with pg_connection() as conn:
+            from backend.pg_tenant_context import set_tenant_id_on_connection
+
+            set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -150,6 +153,9 @@ def insert_call_transcript(
         return False
     try:
         with pg_connection() as conn:
+            from backend.pg_tenant_context import set_tenant_id_on_connection
+
+            set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute(
                     """

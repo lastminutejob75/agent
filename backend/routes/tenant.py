@@ -205,6 +205,17 @@ def require_tenant_auth(request: Request) -> Dict[str, Any]:
     raise HTTPException(401, "Missing or invalid token")
 
 
+def require_tenant_owner(auth: Dict[str, Any] = Depends(require_tenant_auth)) -> Dict[str, Any]:
+    """Actions sensibles (facturation, paramètres système, intégrations) : titulaire uniquement."""
+    role = (auth.get("role") or "owner").strip().lower()
+    if role != "owner":
+        raise HTTPException(
+            403,
+            "Cette action est réservée au titulaire du cabinet. Contactez l'administrateur de votre compte.",
+        )
+    return auth
+
+
 def _tenant_timezone(detail: Optional[dict]) -> str:
     params = (detail or {}).get("params") or {}
     return (params.get("timezone") or (detail or {}).get("timezone") or "Europe/Paris").strip() or "Europe/Paris"
@@ -1775,7 +1786,7 @@ def tenant_calendar_status(auth: dict = Depends(require_tenant_auth)):
 
 
 @router.get("/billing/summary")
-def tenant_billing_summary(auth: dict = Depends(require_tenant_auth)):
+def tenant_billing_summary(auth: dict = Depends(require_tenant_owner)):
     tenant_id = auth["tenant_id"]
     billing = get_tenant_billing(tenant_id) or {}
     plan_key = (billing.get("plan_key") or "growth").strip().lower()
@@ -1811,7 +1822,7 @@ def tenant_billing_summary(auth: dict = Depends(require_tenant_auth)):
 
 @router.get("/billing/invoices")
 def tenant_billing_invoices(
-    auth: dict = Depends(require_tenant_auth),
+    auth: dict = Depends(require_tenant_owner),
     limit: int = Query(10, ge=1, le=50),
 ):
     tenant_id = auth["tenant_id"]
@@ -1847,7 +1858,7 @@ def tenant_billing_invoices(
 
 
 @router.post("/billing/portal-session")
-def tenant_billing_portal_session(auth: dict = Depends(require_tenant_auth)):
+def tenant_billing_portal_session(auth: dict = Depends(require_tenant_owner)):
     tenant_id = auth["tenant_id"]
     billing = get_tenant_billing(tenant_id) or {}
     customer_id = (billing.get("stripe_customer_id") or "").strip()
@@ -1877,7 +1888,7 @@ def tenant_billing_portal_session(auth: dict = Depends(require_tenant_auth)):
 
 
 @router.post("/billing/change-plan")
-def tenant_billing_change_plan(body: BillingChangePlanBody, auth: dict = Depends(require_tenant_auth)):
+def tenant_billing_change_plan(body: BillingChangePlanBody, auth: dict = Depends(require_tenant_owner)):
     tenant_id = auth["tenant_id"]
     plan_key = (body.plan_key or "").strip().lower()
     if plan_key not in {"starter", "growth", "pro"}:
@@ -1999,7 +2010,7 @@ def tenant_kpis(auth: dict = Depends(require_tenant_auth), days: int = Query(7, 
 
 
 @router.get("/rgpd")
-def tenant_rgpd(auth: dict = Depends(require_tenant_auth)):
+def tenant_rgpd(auth: dict = Depends(require_tenant_owner)):
     """RGPD côté client : consent_rate 7j + derniers consent_obtained."""
     from datetime import datetime, timedelta
     tenant_id = auth["tenant_id"]
@@ -3494,7 +3505,7 @@ def tenant_agenda_reschedule_appointment(
 @router.patch("/params")
 def tenant_patch_params(
     body: Dict[str, Any],
-    auth: dict = Depends(require_tenant_auth),
+    auth: dict = Depends(require_tenant_owner),
 ):
     """
     Met à jour params du tenant connecté.
@@ -3646,7 +3657,7 @@ async def tenant_put_faq(
 
 
 @router.post("/faq/reset")
-async def tenant_reset_faq(auth: dict = Depends(require_tenant_auth)):
+async def tenant_reset_faq(auth: dict = Depends(require_tenant_owner)):
     tenant_id = auth["tenant_id"]
     if not _reset_tenant_faq_payload(tenant_id):
         raise HTTPException(status_code=500, detail="Impossible de réinitialiser la FAQ.")
@@ -3702,7 +3713,7 @@ def tenant_agenda_config(auth: dict = Depends(require_tenant_auth)):
 @router.post("/agenda/verify-google")
 def tenant_agenda_verify_google(
     body: VerifyGoogleBody,
-    auth: dict = Depends(require_tenant_auth),
+    auth: dict = Depends(require_tenant_owner),
 ):
     """
     Vérifie l'accès au calendrier Google (get_free_slots test).
@@ -3774,7 +3785,7 @@ def tenant_agenda_contact_request(
 
 
 @router.post("/agenda/activate-none")
-def tenant_agenda_activate_none(auth: dict = Depends(require_tenant_auth)):
+def tenant_agenda_activate_none(auth: dict = Depends(require_tenant_owner)):
     """Active le mode sans agenda externe (l'assistant gère les RDV dans son propre système)."""
     tenant_id = auth["tenant_id"]
     pg_update_tenant_params(tenant_id, {"calendar_provider": "none", "calendar_id": ""})

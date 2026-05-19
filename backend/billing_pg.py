@@ -26,6 +26,9 @@ def get_tenant_billing(tenant_id: int) -> Optional[Dict[str, Any]]:
         import psycopg
         from psycopg.rows import dict_row
         with psycopg.connect(url, row_factory=dict_row) as conn:
+            from backend.pg_tenant_context import set_tenant_id_on_connection
+
+            set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 try:
                     cur.execute(
