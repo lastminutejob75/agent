@@ -338,6 +338,10 @@ export default function AppDashboard() {
         openHandoffsCount={openHandoffs.length}
         rdvCreatedToday={rdvCreatedToday}
         aiCount={aiCount}
+        assistantName={me?.assistant_name}
+        assistantLive={Boolean(me?.assistant_live)}
+        voiceNumber={me?.voice_number || me?.phone_number}
+        contactEmail={me?.contact_email}
         onOpenHandledRequests={() => navigate("/app/demandes?status=Trait%C3%A9es")}
         onOpenRdvToday={() => navigate(`/app/agenda?view=day&date=${encodeURIComponent(todayISO())}`)}
         onOpenReminders={() => navigate("/app/demandes?status=En%20cours")}

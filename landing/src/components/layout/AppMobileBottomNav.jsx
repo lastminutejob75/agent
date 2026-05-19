@@ -3,7 +3,7 @@ import { NavLink } from "react-router-dom";
 export default function AppMobileBottomNav({ navItems, demandBadge, colors }) {
   return (
     <nav className="uwi-mobile-nav">
-      {navItems.filter((item) => item.to !== "/app/patient-dashboard").map((item) => (
+      {navItems.filter((item) => item.to !== "/app/profile").map((item) => (
         <NavLink key={item.to} to={item.to} end={item.end} style={{ textDecoration: "none" }}>
           {({ isActive }) => (
             <div

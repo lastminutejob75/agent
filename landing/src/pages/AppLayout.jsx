@@ -29,7 +29,8 @@ export default function AppLayout() {
   const impersonation = getImpersonation();
   const path = location.pathname;
   const isPatientDetail = path.startsWith("/app/patients/") && path !== "/app/patients";
-  const hideTopbar = path.startsWith("/app/patient-dashboard");
+  const hideTopbar =
+    path.startsWith("/app/onboarding") || path.startsWith("/app/impersonate");
   const demandBadge = dashboard?.counters_7d?.transfers ?? 0;
   const hideToProcessStrip =
     hideTopbar ||
@@ -262,6 +263,7 @@ export default function AppLayout() {
             onOpenNotifications={openNotifications}
             onOpenProfile={() => navigateFromTopbar("/app/profile")}
             onOpenMenu={() => setSidebarOpen(true)}
+            onLogout={handleLogout}
             notificationsCount={demandBadge}
             styles={S}
           />

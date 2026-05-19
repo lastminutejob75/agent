@@ -213,7 +213,14 @@ export function createShellCss(colors) {
     pointer-events: none;
     transition: opacity .2s ease;
   }
+  .uwi-overlay.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
   .uwi-mobile-nav {
+    display: none;
+  }
+  .uwi-topbar-logout-btn {
     display: none;
   }
   .uwi-shell-item:hover {
@@ -221,13 +228,36 @@ export function createShellCss(colors) {
   }
   @media (max-width: 1024px) {
     .uwi-sidebar {
-      display: none !important;
+      display: flex !important;
+      width: min(280px, 86vw);
+      min-width: 0;
+      transform: translateX(-100%);
+      transition: transform .2s ease;
+      box-shadow: 0 12px 40px rgba(15, 23, 42, 0.18);
+    }
+    .uwi-sidebar.open {
+      transform: translateX(0);
     }
     .uwi-overlay {
-      display: none !important;
+      display: block !important;
     }
     .uwi-burger-btn {
-      display: none !important;
+      display: inline-grid !important;
+    }
+    .uwi-topbar-logout-btn {
+      display: inline-flex !important;
+      align-items: center;
+      justify-content: center;
+      border-radius: 12px;
+      border: 1px solid ${colors.border};
+      background: #fff;
+      color: #64748B;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 8px 10px;
+      cursor: pointer;
+      font-family: inherit;
+      white-space: nowrap;
     }
     .uwi-main {
       margin-left: 0 !important;

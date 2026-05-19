@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api.js";
+import { assistantDisplayFromMe } from "../lib/assistantDisplay.js";
 import ClaraRuleModulePanel from "../components/ClaraRuleModulePanel.jsx";
 import ClaraControlTiles from "../components/ClaraControlTiles.jsx";
 
@@ -164,7 +165,9 @@ export default function ClaraPilotagePage() {
   const [saving, setSaving] = useState(false);
   const [history, setHistory] = useState([]);
   const [rulesConfig, setRulesConfig] = useState({});
+  const [tenantProfile, setTenantProfile] = useState(null);
   const current = MODES.find((m) => m.id === mode) || MODES[0];
+  const assistantDisplay = assistantDisplayFromMe(tenantProfile || {});
 
   const notify = (msg) => {
     setToast(msg);
@@ -177,6 +180,7 @@ export default function ClaraPilotagePage() {
     api.tenantMe()
       .then((me) => {
         if (cancelled) return;
+        setTenantProfile(me);
         const modeFromApi = String(me?.clara_mode || "").trim();
         if (MODES.some((m) => m.id === modeFromApi)) setMode(modeFromApi);
         const instructionFromApi = String(me?.clara_temp_instruction || "").trim();
@@ -346,8 +350,15 @@ export default function ClaraPilotagePage() {
         <div style={S.heroLeft}>
           <ClaraPhoto />
           <div>
-            <div style={S.heroTitleRow}><h2 style={S.heroTitle}>{current.label}</h2><Pill tone="green">Actif</Pill></div>
-            <p style={S.meta}><Icon name="phone" size={14} />06 90 00 01 58 · <Icon name="message" size={14} />Aucun email</p>
+            <div style={S.heroTitleRow}>
+              <h2 style={S.heroTitle}>{assistantDisplay.assistantName}</h2>
+              <Pill tone={assistantDisplay.statusTone}>{assistantDisplay.statusLabel}</Pill>
+            </div>
+            <p style={S.meta}>
+              <Icon name="phone" size={14} />
+              {assistantDisplay.displayPhone} · <Icon name="message" size={14} />
+              {assistantDisplay.displayEmail}
+            </p>
           </div>
         </div>
         <div style={S.modeSummary}><b>{current.label}</b><span>{current.text}</span></div>

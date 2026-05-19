@@ -5,6 +5,7 @@ export default function AppTopbar({
   onOpenNotifications,
   onOpenProfile,
   onOpenMenu,
+  onLogout,
   notificationsCount = 0,
   styles,
 }) {
@@ -86,6 +87,17 @@ export default function AppTopbar({
         >
           DM
         </button>
+        {onLogout ? (
+          <button
+            type="button"
+            className="uwi-topbar-logout-btn"
+            onClick={onLogout}
+            title="Se déconnecter"
+            aria-label="Se déconnecter"
+          >
+            Déconnexion
+          </button>
+        ) : null}
         <button
           type="button"
           className="uwi-burger-btn uwi-topbar-btn"
