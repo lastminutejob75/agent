@@ -85,6 +85,21 @@ def test_cockpit_watchlist_200(client, admin_headers):
     assert isinstance(r.json().get("items"), list)
 
 
+def test_cockpit_bundle_requires_auth(client):
+    assert client.get("/api/admin/dashboard/bundle").status_code == 401
+
+
+def test_cockpit_bundle_200_structure(client, admin_headers):
+    r = client.get("/api/admin/dashboard/bundle?period=30d", headers=admin_headers)
+    assert r.status_code == 200
+    data = r.json()
+    assert data.get("period") == "30d"
+    assert "kpis" in data and isinstance(data["kpis"], dict)
+    assert "leads" in data and isinstance(data["leads"], dict)
+    assert "actions" in data and isinstance(data["actions"].get("items"), list)
+    assert "watchlist" in data and isinstance(data["watchlist"].get("items"), list)
+
+
 def test_dash_lead_activity_uses_last_submitted_not_only_created():
     """Re-commit wizard (UPDATE) bump last_submitted_at ; cockpit fenêtre doit suivre cette activité."""
     from backend.dashboard_cockpit import dash_lead_activity_utc, dash_leads_cutoff_utc

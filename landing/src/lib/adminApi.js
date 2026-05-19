@@ -419,6 +419,12 @@ export const getStripePortalLink = (tenantId) =>
 export const getTenantInvoices = (tenantId) =>
   adminFetch(`/api/admin/tenants/${tenantId}/billing/invoices`);
 
+export const getAdminDashboardBundle = ({ period = "30d", severity = "all" } = {}) => {
+  const params = new URLSearchParams();
+  params.set("period", period);
+  if (severity && severity !== "all") params.set("severity", severity);
+  return adminFetch(`/api/admin/dashboard/bundle?${params.toString()}`);
+};
 export const getAdminDashboardSummary = (period = "30d") =>
   adminFetch(`/api/admin/dashboard/summary?period=${encodeURIComponent(period)}`);
 export const getAdminDashboardActionItems = ({ period = "30d", severity = "all" } = {}) => {

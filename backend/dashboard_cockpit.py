@@ -427,7 +427,7 @@ def dash_leads_block(ctx: Any, period: str = "7d") -> dict:
     }
 
 
-def dash_watchlist_items(ctx: Any, period: str) -> List[dict]:
+def dash_watchlist_items(ctx: Any, period: str, ops_snap: Optional[Dict[str, Any]] = None) -> List[dict]:
     wd = dash_window_days(period)
     out: List[dict] = []
 
@@ -453,7 +453,7 @@ def dash_watchlist_items(ctx: Any, period: str) -> List[dict]:
         pass
 
     try:
-        ops = ctx["_get_operations_snapshot"](window_days=min(wd, 30))
+        ops = ops_snap if ops_snap is not None else ctx["_get_operations_snapshot"](window_days=min(wd, 30))
         for row in (ops.get("quota") or {}).get("over_100") or []:
             tid = row.get("tenant_id")
             if tid is None:
@@ -506,10 +506,17 @@ def dash_watchlist_items(ctx: Any, period: str) -> List[dict]:
     return uniq[:24]
 
 
-def dash_build_action_items(ctx: Any, period: str, severity_filter: Optional[str] = None) -> List[dict]:
+def dash_build_action_items(
+    ctx: Any,
+    period: str,
+    severity_filter: Optional[str] = None,
+    *,
+    billing_snap: Optional[Dict[str, Any]] = None,
+    ops_snap: Optional[Dict[str, Any]] = None,
+) -> List[dict]:
     wd = max(7, min(90, dash_window_days(period)))
-    billing = ctx["_get_billing_snapshot"]()
-    ops = ctx["_get_operations_snapshot"](window_days=min(wd, 30))
+    billing = billing_snap if billing_snap is not None else ctx["_get_billing_snapshot"]()
+    ops = ops_snap if ops_snap is not None else ctx["_get_operations_snapshot"](window_days=min(wd, 30))
     activation = ctx["_get_activation_queue"](40).get("items") or []
 
     items: List[dict] = []
@@ -636,10 +643,25 @@ def dash_build_action_items(ctx: Any, period: str, severity_filter: Optional[str
     return out_sorted[:40]
 
 
-def dash_build_summary(ctx: Any, period: str) -> dict:
+def dash_build_summary(
+    ctx: Any,
+    period: str,
+    *,
+    billing_snap: Optional[Dict[str, Any]] = None,
+    ops_snap: Optional[Dict[str, Any]] = None,
+    activation_slice: Optional[List[Any]] = None,
+) -> dict:
     tenants = ctx["_get_tenant_list"](include_inactive=True)
     active_count = sum(1 for t in tenants or [] if (t.get("status") or "active") == "active")
     wd_ops = max(7, min(90, dash_window_days(period)))
+    ops_window = min(wd_ops, 30)
+
+    if billing_snap is None:
+        billing_snap = ctx["_get_billing_snapshot"]()
+    if ops_snap is None:
+        ops_snap = ctx["_get_operations_snapshot"](window_days=ops_window)
+    if activation_slice is None:
+        activation_slice = ctx["_get_activation_queue"](42).get("items") or []
 
     cur_start, cur_end, prev_start, prev_end = dash_paired_intervals_utc(period)
     ivr_cur = dash_ivr_between(ctx, cur_start, cur_end)
@@ -670,9 +692,6 @@ def dash_build_summary(ctx: Any, period: str) -> dict:
     else:
         cost_eur_est = round(float(cost_usd_cur) * float(os.environ.get("USD_TO_EUR", "0.92")), 2)
 
-    billing_snap = ctx["_get_billing_snapshot"]()
-    ops_snap = ctx["_get_operations_snapshot"](window_days=wd_ops)
-    activation_slice = ctx["_get_activation_queue"](42).get("items") or []
     crit_cnt = dash_critical_count(ctx, billing_snap, ops_snap, activation_slice)
 
     calls_cur = float(ivr_cur.get("calls_handled_count") or 0)

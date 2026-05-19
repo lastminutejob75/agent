@@ -70,7 +70,13 @@ from backend.cabinet_profile_pg import (
     sync_normalized_from_params,
     sync_opening_hours_from_booking_rules,
 )
-from backend.dashboard_cockpit import dash_build_action_items, dash_build_summary, dash_leads_block, dash_watchlist_items
+from backend.dashboard_cockpit import (
+    dash_build_action_items,
+    dash_build_summary,
+    dash_leads_block,
+    dash_watchlist_items,
+    dash_window_days,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -7241,6 +7247,44 @@ def _admin_cockpit_ctx() -> Dict[str, Any]:
         "_get_stats_top_tenants": _get_stats_top_tenants,
         "_get_billing_snapshot": _get_billing_snapshot,
         "_get_activation_queue": _get_activation_queue,
+    }
+
+
+@router.get("/admin/dashboard/bundle")
+def admin_dashboard_bundle(
+    period: str = Query("30d", description="24h, 7d, 30d, month"),
+    severity: Optional[str] = Query(None, description="critical, warning ou omis (= tout)"),
+    _: None = Depends(_verify_admin),
+):
+    """
+    Cockpit en une requête : KPI + leads + actions + watchlist.
+    Réutilise billing / operations snapshots entre agrégats (évite 3× la même charge PG).
+    """
+    ctx = _admin_cockpit_ctx()
+    p = _normalize_dashboard_period(period)
+    wd_ops = max(7, min(90, dash_window_days(p)))
+    ops_window = min(wd_ops, 30)
+    billing_snap = ctx["_get_billing_snapshot"]()
+    ops_snap = ctx["_get_operations_snapshot"](window_days=ops_window)
+    activation_slice = ctx["_get_activation_queue"](42).get("items") or []
+
+    sf = (severity or "").strip().lower()
+    filt = sf if sf in ("critical", "warning") else None
+
+    summary = dash_build_summary(
+        ctx,
+        p,
+        billing_snap=billing_snap,
+        ops_snap=ops_snap,
+        activation_slice=activation_slice,
+    )
+    actions = dash_build_action_items(ctx, p, filt, billing_snap=billing_snap, ops_snap=ops_snap)
+    watch = dash_watchlist_items(ctx, p, ops_snap=ops_snap)
+
+    return {
+        **summary,
+        "actions": {"items": actions},
+        "watchlist": {"items": watch},
     }
 
 

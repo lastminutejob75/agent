@@ -21,10 +21,7 @@ import {
 } from "lucide-react";
 import {
   adminApi,
-  getAdminDashboardSummary,
-  getAdminDashboardActionItems,
-  getAdminDashboardTenantWatchlist,
-  getAdminDashboardLeads,
+  getAdminDashboardBundle,
 } from "../../lib/adminApi.js";
 import { T, radius, shadow, font, keyframes } from "../theme.js";
 
@@ -361,44 +358,25 @@ export default function AdminDashboard() {
     let errMsg = null;
 
     try {
-      const [sumRes, aiRes, wlRes, leadsRes] = await Promise.allSettled([
-        getAdminDashboardSummary(apiPeriod),
-        getAdminDashboardActionItems({ period: apiPeriod, severity: "all" }),
-        getAdminDashboardTenantWatchlist(apiPeriod),
-        getAdminDashboardLeads(apiPeriod),
-      ]);
+      const bundleRes = await getAdminDashboardBundle({ period: apiPeriod, severity: "all" });
 
-      if (sumRes.status === "fulfilled" && sumRes.value) {
-        nextSummary = sumRes.value;
+      if (bundleRes && bundleRes.kpis) {
+        nextSummary = {
+          period: bundleRes.period,
+          kpis: bundleRes.kpis,
+          tenant_totals_hint: bundleRes.tenant_totals_hint,
+          leads: bundleRes.leads,
+          hints: bundleRes.hints,
+        };
+        nextActions = normalizeActionItems(bundleRes.actions);
+        nextWatch = normalizeWatchlist(bundleRes.watchlist);
       } else if (isDev) {
         nextSummary = SAMPLE_SUMMARY;
-        usedSample = true;
-      } else {
-        errMsg =
-          sumRes.status === "rejected"
-            ? sumRes.reason?.message || "Impossible de charger le dashboard."
-            : "Réponse dashboard vide.";
-      }
-
-      if (aiRes.status === "fulfilled") {
-        nextActions = normalizeActionItems(aiRes.value);
-      } else if (isDev && nextSummary) {
         nextActions = SAMPLE_ACTIONS;
-        usedSample = true;
-      }
-
-      if (wlRes.status === "fulfilled") {
-        nextWatch = normalizeWatchlist(wlRes.value);
-      } else if (isDev && nextSummary) {
         nextWatch = SAMPLE_WATCH;
         usedSample = true;
-      }
-
-      if (nextSummary && leadsRes.status === "fulfilled" && leadsRes.value) {
-        const lb = pickLeadsBlock(nextSummary, leadsRes.value);
-        if (!nextSummary.leads && Object.keys(lb).length) {
-          nextSummary = { ...nextSummary, leads: lb };
-        }
+      } else {
+        errMsg = "Réponse cockpit vide.";
       }
 
       if (!nextSummary?.leads && isDev && nextSummary) {
