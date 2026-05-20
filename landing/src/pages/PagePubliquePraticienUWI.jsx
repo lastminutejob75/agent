@@ -494,8 +494,14 @@ export default function PagePubliquePraticienUWI() {
   }, [dataStatus, slug]);
 
   useEffect(() => {
-    if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight;
-  }, [messages, inlineSlot]);
+    const el = threadRef.current;
+    if (!el) return;
+    const scroll = () => {
+      el.scrollTop = el.scrollHeight;
+    };
+    scroll();
+    requestAnimationFrame(scroll);
+  }, [messages, inlineSlot, chatPending]);
 
   useEffect(() => {
     const timer = setInterval(() => setPlaceholderIdx((idx) => (idx + 1) % inputExamples.length), 4200);
@@ -910,67 +916,76 @@ export default function PagePubliquePraticienUWI() {
               <div className="chatHeaderBadge">Reponse 24/7</div>
             </div>
 
-            <div className="chatPanel" ref={threadRef}>
-              {messages.map((message) => (
-                <div key={message.id} className={message.from === "patient" ? "chatLine patientLine" : "chatLine assistantLine"}>
-                  {message.from !== "patient" && <ClaraPortrait size={34} compact />}
-                  <div className={message.from === "patient" ? "bubble patientBubble" : `bubble claraBubble${message.from === "clara_partial" ? " partialBubble" : ""}`}>{message.text}</div>
+            {!inlineSlot && slots.length > 0 ? (
+              <div className="slotsStrip" aria-label="Creneaux disponibles">
+                <p className="slotsStripLabel">
+                  <span className="slotDot" />
+                  Reserver en un clic
+                </p>
+                <div className="slotsStripScroll">
+                  {slotsLoading
+                    ? Array.from({ length: 4 }).map((_, idx) => (
+                        <div key={`sk-${idx}`} className="slotChip slotChipSkeleton" aria-hidden="true" />
+                      ))
+                    : visibleSlots.map((slot) => (
+                        <button key={slot.id} className="slotChip" onClick={() => chooseSlot(slot)} type="button">
+                          <span className="slotChipDay">{slot.day}</span>
+                          <span className="slotChipTime">{slot.time}</span>
+                        </button>
+                      ))}
                 </div>
-              ))}
-              {chatPending && !partialMessageIdRef.current && (
-                <div className="chatLine assistantLine">
-                  <ClaraPortrait size={34} compact />
-                  <div className="bubble claraBubble partialBubble">Je reflechis...</div>
-                </div>
-              )}
-              {inlineSlot && <BookingFields slot={inlineSlot} onConfirm={confirm} onCancel={() => { setInlineSlot(null); push([{ from: "clara", text: "Pas de probleme. Choisissez un autre creneau ou precisez votre preference." }]); }} />}
+                {!showAllSlots && slots.length > 6 ? (
+                  <button className="slotsStripMore" onClick={() => setShowAllSlots(true)} type="button" title="Voir plus de creneaux">
+                    +
+                  </button>
+                ) : null}
+                <button className="slotsStripAlt" onClick={() => ask("Je souhaite voir plus de creneaux.")} type="button" title="Autre horaire">
+                  🗓
+                </button>
+              </div>
+            ) : null}
+
+            <div className="chatScroll" ref={threadRef} aria-live="polite" aria-relevant="additions">
+              <div className="chatScrollInner">
+                {messages.map((message) => (
+                  <div key={message.id} className={message.from === "patient" ? "chatLine patientLine" : "chatLine assistantLine"}>
+                    {message.from !== "patient" && <ClaraPortrait size={34} compact />}
+                    <div className={message.from === "patient" ? "bubble patientBubble" : `bubble claraBubble${message.from === "clara_partial" ? " partialBubble" : ""}`}>{message.text}</div>
+                  </div>
+                ))}
+                {chatPending && !partialMessageIdRef.current ? (
+                  <div className="chatLine assistantLine">
+                    <ClaraPortrait size={34} compact />
+                    <div className="bubble claraBubble partialBubble">Je reflechis...</div>
+                  </div>
+                ) : null}
+                {inlineSlot ? (
+                  <BookingFields
+                    slot={inlineSlot}
+                    onConfirm={confirm}
+                    onCancel={() => {
+                      setInlineSlot(null);
+                      push([{ from: "clara", text: "Pas de probleme. Choisissez un autre creneau ou precisez votre preference." }]);
+                    }}
+                  />
+                ) : null}
+              </div>
             </div>
 
-            <div className="composerIntegrated">
-              {!inlineSlot && slots.length > 0 && (
-                <div className="composerTop">
-                  <div className="composerTitle">
-                    <span className="slotDot" />
-                    <span className="composerTitleMain">CRENEAUX DISPONIBLES</span>
-                    <span className="composerTitleSub">- cliquez pour reserver rapidement</span>
-                  </div>
-                  <div className="composerSlotsGrid">
-                    {slotsLoading
-                      ? Array.from({ length: 6 }).map((_, idx) => (
-                          <div key={`sk-${idx}`} className="composerSlotBtn composerSlotSkeleton" aria-hidden="true">
-                            <span className="composerSlotDay sk" />
-                            <span className="composerSlotTime sk sk-lg" />
-                          </div>
-                        ))
-                      : visibleSlots.map((slot) => (
-                          <button key={slot.id} className="composerSlotBtn" onClick={() => chooseSlot(slot)} type="button">
-                            <span className="composerSlotDay">{slot.day}</span>
-                            <span className="composerSlotTime">{slot.time}</span>
-                          </button>
-                        ))}
-                  </div>
-                  <div className="composerTopActions">
-                    {!showAllSlots && slots.length > 6 && <button className="composerMoreLink" onClick={() => setShowAllSlots(true)} type="button">Voir plus de creneaux</button>}
-                    <button className="composerAltCta" onClick={() => ask("Je souhaite voir plus de creneaux.")} type="button">
-                      🗓 Autre horaire ou autre jour ?
-                    </button>
-                  </div>
-                </div>
-              )}
-              <div className="mobileClaraHint" aria-label="Aide Clara">
-                <ClaraPortrait size={56} compact />
-                <div className="mobileClaraBubble">
-                  <span>Je peux vous aider pour la prise de RDV, l'annulation, la modification et vos questions pratiques.</span>
-                </div>
+            <div className="chatComposerBar">
+              <div className="composerInputWrap">
+                <span className="composerInputIcon">☺</span>
+                <input
+                  value={input}
+                  onChange={(event) => setInput(event.target.value)}
+                  onKeyDown={(event) => event.key === "Enter" && send()}
+                  placeholder={inputExamples[placeholderIdx]}
+                  aria-label="Message a Clara"
+                />
               </div>
-              <div className="composerDivider" />
-              <div className="composerBottom">
-                <div className="composerInputWrap">
-                  <span className="composerInputIcon">☺</span>
-                  <input value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => event.key === "Enter" && send()} placeholder={inputExamples[placeholderIdx]} aria-label="Message a Clara" />
-                </div>
-                <button className="composerSendBtn" onClick={send} type="button" disabled={chatPending}>Envoyer</button>
-              </div>
+              <button className="composerSendBtn" onClick={send} type="button" disabled={chatPending}>
+                Envoyer
+              </button>
             </div>
           </section>
 
@@ -1055,11 +1070,23 @@ header a.wa{color:#1b6d34;border-color:#cce9d2}
 .doctorMiniText{flex:1;min-width:0}.doctorMiniText h1{margin:0 0 6px;font-size:28px;letter-spacing:-.035em}.doctorMiniText p{margin:0 0 6px;color:#58627a;font-size:14px}.micro{font-size:12px!important;color:#7a8898!important}
 .dotSep{color:#c7ced8;margin:0 5px}.greenDot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#0dbb69;margin-right:5px}.star{color:#f6a800;margin-right:2px}
 .trustBadges{display:flex;flex-direction:column;gap:7px;padding-left:20px;border-left:1px solid #edf0f2;flex-shrink:0}.trustBadge{display:flex;align-items:center;gap:7px;font-size:12px;color:#3a6a70;font-weight:700;white-space:nowrap}
-.chatHero{border:1px solid #cbe7eb;background:linear-gradient(180deg,#eefafa 0%,#fbffff 100%);border-radius:22px;padding:16px;display:flex;flex-direction:column;gap:12px;margin-top:16px}
+.chatHero{border:1px solid #cbe7eb;background:linear-gradient(180deg,#eefafa 0%,#fbffff 100%);border-radius:22px;padding:0;display:flex;flex-direction:column;gap:0;margin-top:16px;overflow:hidden;max-height:min(72vh,560px)}
+.chatHero .chatHeader{padding:16px 16px 12px;margin:0}
 .chatHeader{display:flex;align-items:center;gap:14px;padding-bottom:12px;border-bottom:1px solid #d8eeee}.chatHeaderText{flex:1;min-width:0}.chatHeaderName{font-weight:900;font-size:17px;color:#162634}.chatHeaderName span{color:#13bd67;font-size:13px;font-weight:800}.chatHeaderText p{margin:3px 0 0;color:#60708c;font-size:13px}.chatHelperBubble{margin:0}.chatHeaderBadge{border:1px solid #cbe7eb;background:#fff;color:#007f89;border-radius:999px;padding:7px 12px;font-size:12px;font-weight:800}
 .voiceControls{display:flex;flex-direction:column;align-items:flex-end;gap:4px}.voiceBtn{border:1px solid #bfe3e7;background:#fff;color:#006f75;border-radius:999px;padding:8px 12px;font-size:12px;font-weight:800}.voiceBtn:disabled{opacity:.5;cursor:not-allowed}.voiceBtnStop{border-color:#f2c4c4;color:#9e1a1a;background:#fff5f5}.voiceError{max-width:220px;text-align:right;font-size:11px;color:#9e1a1a}
 .claraPhoto{position:relative;flex-shrink:0;border-radius:50%;overflow:hidden;background:linear-gradient(135deg,#eaf7f8,#fff);border:1px solid #d7e9ec;box-shadow:0 8px 20px rgba(13,72,82,.12)}.claraPhoto img{width:100%;height:100%;display:block;object-fit:cover;object-position:center 12%}.claraOnlineDot{position:absolute;right:1px;bottom:1px;width:10px;height:10px;border-radius:50%;background:#22b04d;border:2px solid #fff;z-index:2}.claraFallback{width:100%;height:100%;background:linear-gradient(135deg,#009CA4,#006f75);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:22px}
-.chatPanel{background:#fff;border:1px solid #e3ecef;border-radius:18px;padding:16px 20px;min-height:160px;max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:12px}
+.slotsStrip{flex-shrink:0;display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(255,255,255,.72);border-top:1px solid #d8eeee;border-bottom:1px solid #d8eeee}
+.slotsStripLabel{margin:0;display:flex;align-items:center;gap:6px;font-size:10px;font-weight:900;letter-spacing:.08em;color:#52727a;white-space:nowrap}
+.slotsStripScroll{display:flex;gap:7px;overflow-x:auto;flex:1;min-width:0;padding-bottom:2px;scrollbar-width:thin}
+.slotChip{flex-shrink:0;min-width:88px;border:1px solid rgba(0,156,164,.22);background:#fff;border-radius:12px;padding:8px 10px;display:flex;flex-direction:column;align-items:center;gap:2px}
+.slotChipDay{font-size:10px;font-weight:700;color:#7a9499}.slotChipTime{font-size:16px;font-weight:900;color:#006b73;line-height:1.1}
+.slotChipSkeleton{min-height:52px;background:linear-gradient(90deg,#e6eff0 0%,#f4fafa 50%,#e6eff0 100%);background-size:300px 100%;animation:uwiSkShimmer 1.2s infinite linear}
+.slotsStripMore,.slotsStripAlt{flex-shrink:0;width:36px;height:36px;border-radius:10px;border:1px solid rgba(0,156,164,.25);background:#fff;color:#006b73;font-size:16px;font-weight:900}
+.chatScroll{flex:1;min-height:140px;overflow-y:auto;background:#fff;border-top:1px solid #e3ecef;border-bottom:1px solid #e3ecef;scroll-behavior:smooth}
+.chatScrollInner{display:flex;flex-direction:column;justify-content:flex-end;gap:12px;min-height:100%;padding:14px 16px}
+.chatComposerBar{flex-shrink:0;display:grid;grid-template-columns:1fr 140px;gap:10px;align-items:center;padding:12px 14px;background:#fff;border-radius:0 0 22px 22px}
+.chatComposerBar .composerInputWrap{min-height:52px}
+.chatComposerBar .composerSendBtn{height:52px;font-size:15px}
 .chatLine{display:flex;align-items:flex-start;gap:10px}.assistantLine{justify-content:flex-start}.patientLine{justify-content:flex-end}.bubble{font-size:14px;line-height:1.55;border-radius:14px;padding:12px 16px;max-width:80%}.claraBubble{background:#009CA4;color:#fff;border-bottom-left-radius:3px}.patientBubble{background:#f4f6f6;border:1px solid #e3e7e8;color:#2f3c42;border-bottom-right-radius:3px}
 .partialBubble{opacity:.72;font-style:italic}
 @keyframes uwiSkShimmer{0%{background-position:-160px 0}100%{background-position:160px 0}}
@@ -1097,7 +1124,8 @@ header a{padding:7px 11px;font-size:12px;border-radius:10px}
 .doctorMiniText p{margin:0 0 2px;font-size:12.5px}
 .micro{display:none}
 .trustBadges{display:none}
-.chatHero{gap:6px;padding:10px;background:#fff;border:1px solid #dce7ea;border-radius:14px}
+.chatHero{gap:0;padding:0;max-height:min(78vh,620px);border-radius:14px;background:#fff}
+.chatHero .chatHeader{padding:10px 10px 8px}
 .chatHeader{display:grid;grid-template-columns:auto 1fr auto;grid-template-areas:"avatar text voice";column-gap:10px;row-gap:0;align-items:center;padding-bottom:8px}
 .chatHeader > .claraPhoto{grid-area:avatar;width:40px!important;height:40px!important}
 .chatHeaderText{grid-area:text;min-width:0}
@@ -1108,27 +1136,18 @@ header a{padding:7px 11px;font-size:12px;border-radius:10px}
 .voiceControls{grid-area:voice;flex-direction:row;align-items:center;justify-content:flex-end;width:auto;gap:6px}
 .voiceBtn{padding:5px 9px;font-size:11px}
 .voiceError{text-align:right;max-width:100%;font-size:10px}
-.chatPanel{padding:10px 12px;min-height:60px;max-height:160px;border-radius:12px;gap:8px}
+.slotsStrip{padding:6px 8px}
+.slotsStripLabel{font-size:9px}
+.slotChip{min-width:76px;padding:6px 8px}
+.slotChipTime{font-size:15px}
+.chatScroll{min-height:100px}
+.chatScrollInner{padding:10px 12px;gap:8px}
 .bubble{max-width:88%;font-size:13px;padding:9px 12px;line-height:1.5}
-.composerIntegrated{position:sticky;bottom:6px;z-index:5;margin-top:0;padding:10px 10px 12px;border-radius:14px;border:1.5px solid #009CA4;background:#e4f4f4;box-shadow:0 6px 18px rgba(0,156,164,.16)}
-.composerTop{gap:6px}
-.composerTitle{gap:8px}
-.composerTitleMain{font-size:11px}
-.composerTitleSub{display:none}
-.composerSlotsGrid{display:grid !important;grid-template-columns:repeat(3,minmax(0,1fr)) !important;gap:6px}
-.composerSlotBtn{min-height:58px;border-radius:10px;border-width:1.5px;padding:6px 4px;gap:1px}
-.composerSlotBtn:hover{transform:none;box-shadow:none}
-.composerSlotDay{font-size:11px;font-weight:700;line-height:1}
-.composerSlotTime{font-size:18px;line-height:1.05}
-.composerTopActions{justify-content:center;gap:6px;margin-top:2px}
-.composerMoreLink{font-size:11px}
-.composerAltCta{padding:6px 10px;font-size:12px}
-.composerDivider{display:none}
-.composerBottom{grid-template-columns:1fr;gap:10px;margin-top:12px}
-.composerInputWrap{min-height:56px;padding:0 16px;border-width:1.5px;border-radius:14px;gap:10px}
+.chatComposerBar{grid-template-columns:1fr;gap:8px;padding:10px;border-radius:0 0 14px 14px}
+.chatComposerBar .composerInputWrap{min-height:48px;padding:0 14px;border-width:1.5px;border-radius:12px}
 .composerInputIcon{font-size:20px}
-.composerInputWrap input{font-size:15px;font-weight:600}
-.composerSendBtn{width:100%;height:54px;border-radius:14px;font-size:15px;font-weight:800;letter-spacing:.02em;box-shadow:0 6px 16px rgba(0,156,164,.22);min-width:0;padding:0}
+.chatComposerBar .composerInputWrap input{font-size:15px;font-weight:600}
+.chatComposerBar .composerSendBtn{width:100%;height:48px;border-radius:12px;font-size:15px}
 .actionRows{margin-top:6px;border:1px solid #edf0f2;border-radius:14px}
 .actionRow{grid-template-columns:1fr;padding:8px 12px;gap:6px}
 .actionLabel{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#6a7890}
