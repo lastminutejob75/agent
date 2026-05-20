@@ -105,10 +105,11 @@ export const api = {
     request(`/api/pre-onboarding/leads/${encodeURIComponent(leadId)}/check`, { method: "GET" }),
   preOnboardingLeadEmail: (leadId) =>
     request(`/api/pre-onboarding/leads/${encodeURIComponent(leadId)}/email`, { method: "GET" }),
-  preOnboardingCallbackBooking: (leadId, payload) =>
+  preOnboardingCallbackBooking: (leadId, payload, leadToken = "") =>
     request(`/api/pre-onboarding/leads/${encodeURIComponent(leadId)}/callback-booking`, {
       method: "POST",
       body: payload,
+      leadToken: leadToken || "",
     }),
   preOnboardingCreateAccount: (leadId, payload) =>
     request(`/api/pre-onboarding/leads/${encodeURIComponent(leadId)}/create-account`, {

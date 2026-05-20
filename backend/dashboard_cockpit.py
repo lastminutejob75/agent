@@ -84,6 +84,45 @@ def dash_fmt_ts(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def dash_format_created_fr_paris(created_raw: Any) -> str:
+    """
+    Chaîne française lisible pour l'arrivée d'un lead (fuseau Paris), ex :
+    « mercredi 21 mai 2026 à 14:32 (heure de Paris) »
+    """
+    dt = dash_parse_dt_utc(created_raw)
+    if not dt:
+        return ""
+    tz_note = "UTC"
+    try:
+        from zoneinfo import ZoneInfo
+
+        local = dt.astimezone(ZoneInfo("Europe/Paris"))
+        tz_note = "heure de Paris"
+    except Exception:
+        local = dt.astimezone(timezone.utc)
+    weekdays = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+    months = [
+        "janvier",
+        "février",
+        "mars",
+        "avril",
+        "mai",
+        "juin",
+        "juillet",
+        "août",
+        "septembre",
+        "octobre",
+        "novembre",
+        "décembre",
+    ]
+    try:
+        w = weekdays[local.weekday()]
+        m = months[int(local.month) - 1]
+        return f"{w} {int(local.day)} {m} {int(local.year)} à {local.hour:02d}:{local.minute:02d} ({tz_note})"
+    except Exception:
+        return dash_fmt_ts(dt.astimezone(timezone.utc)) + " (UTC)"
+
+
 def dash_paired_intervals_utc(period: str) -> tuple[datetime, datetime, datetime, datetime]:
     now = datetime.now(timezone.utc)
     if period == "24h":
@@ -392,20 +431,27 @@ def dash_leads_block(ctx: Any, period: str = "7d") -> dict:
         act = dash_lead_activity_utc(row)
         if act and act >= window_cut:
             window_rows.append(row)
-    latest_sorted = sorted(
-        window_rows,
-        key=lambda r: dash_lead_activity_utc(r) or window_cut,
-        reverse=True,
-    )
+    _epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+    def _cockpit_latest_sort_key(r: dict) -> tuple:
+        """Ordre liste cockpit : derniers leads créés d'abord ; à created_at égale, dernière activité."""
+        ca = dash_parse_dt_utc(r.get("created_at")) or _epoch
+        au = dash_lead_activity_utc(r) or _epoch
+        return (ca, au)
+
+    latest_sorted = sorted(window_rows, key=_cockpit_latest_sort_key, reverse=True)
 
     def _lead_row_compact(r: dict) -> dict:
+        ca_raw = r.get("created_at")
         return {
             "id": r.get("id"),
             "name": (r.get("assistant_name") or r.get("email") or "").strip()[:120] or "Lead",
-            "source": (r.get("source") or "landing_cta"),
+            "source": str(r.get("source") or "landing_cta"),
+            "source_label": str(r.get("source_detail") or r.get("source") or "landing_cta"),
             "status": str(r.get("status") or "new"),
             "note": str(r.get("primary_pain_point") or r.get("notes") or "")[:280],
-            "created_at": str(r.get("created_at") or ""),
+            "created_at": str(ca_raw or ""),
+            "created_display_fr": dash_format_created_fr_paris(ca_raw),
         }
 
     # Liste cockpit : assez large pour permettre nettoyage depuis l’admin (bouton supprimer par ligne).
@@ -414,9 +460,7 @@ def dash_leads_block(ctx: Any, period: str = "7d") -> dict:
     if not latest and leads:
         latest = [
             _lead_row_compact(r)
-            for r in sorted(leads, key=lambda rr: dash_lead_activity_utc(rr) or window_cut, reverse=True)[
-                :cockpit_leads_cap
-            ]
+            for r in sorted(leads, key=_cockpit_latest_sort_key, reverse=True)[:cockpit_leads_cap]
         ]
 
     return {

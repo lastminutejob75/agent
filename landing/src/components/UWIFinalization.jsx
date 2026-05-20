@@ -146,32 +146,43 @@ export default function UWIFinalization({
     const phoneDigitsOnly = (phone || "").replace(/\D/g, "").slice(0, 10);
     if (!leadId) {
       setCallbackError(MSG_LEAD_NOT_FOUND);
-    } else if (dateIso && selectedSlot && phoneDigitsOnly.length >= 10) {
-      try {
-        await api.preOnboardingCallbackBooking(
-          leadId,
-          {
-            date: dateIso,
-            slot: selectedSlot,
-            phone: phoneDigitsOnly,
-          },
-          leadToken,
-        );
-      } catch (err) {
-        const msg = err?.message || "Erreur serveur";
-        const isNotFound = msg.includes("introuvable") || err?.status === 404;
-        if (isNotFound && import.meta.env.DEV) {
-          console.warn("[UWIFinalization] callback-booking 404", { leadId, status: err?.status });
-        } else if (!isNotFound) {
-          console.error("[UWIFinalization] callback-booking failed", { leadId, err });
-        }
+      setIsSubmitting(false);
+      return;
+    }
+    if (!dateIso || !selectedSlot || phoneDigitsOnly.length < 10) {
+      setIsSubmitting(false);
+      return;
+    }
+    try {
+      await api.preOnboardingCallbackBooking(
+        leadId,
+        {
+          date: dateIso,
+          slot: selectedSlot,
+          phone: phoneDigitsOnly,
+        },
+        leadToken,
+      );
+      setTimeout(() => {
+        setIsSubmitting(false);
+        setPhase("done");
+      }, 400);
+    } catch (err) {
+      const msg = err?.message || "Erreur serveur";
+      const isNotFound = msg.includes("introuvable") || err?.status === 404;
+      const isForbidden = err?.status === 403;
+      if (isNotFound && import.meta.env.DEV) {
+        console.warn("[UWIFinalization] callback-booking 404", { leadId, status: err?.status });
+      } else if (!isNotFound) {
+        console.error("[UWIFinalization] callback-booking failed", { leadId, err });
+      }
+      if (isForbidden) {
+        setCallbackError("Session expirée ou lien invalide. Rechargez la page ou refaites une demande depuis l'accueil.");
+      } else {
         setCallbackError(isNotFound ? MSG_LEAD_NOT_FOUND : msg);
       }
-    }
-    setTimeout(() => {
       setIsSubmitting(false);
-      setPhase("done");
-    }, 800);
+    }
   }, [canSubmit, leadId, leadToken, selectedDay, selectedSlot, phone]);
 
   // Lead manquant dès le départ → écran dédié (pas de flow inutile)

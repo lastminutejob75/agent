@@ -42,6 +42,31 @@ function formatEuro2(n, currency = "EUR") {
   return new Intl.NumberFormat("fr-FR", { style: "currency", currency: cur === "USD" ? "USD" : "EUR", maximumFractionDigits: 2 }).format(Number(n));
 }
 
+/** Libellé d'arrivée du lead : jour + heure (backend envoie created_display_fr en heure Paris). */
+function formatLeadProspectCreation(lead) {
+  if (!lead) return "";
+  if (lead.created_display_fr) return String(lead.created_display_fr);
+  const raw = lead.created_at;
+  if (!raw) return "";
+  try {
+    const d = new Date(String(raw));
+    if (Number.isNaN(d.getTime())) return "";
+    return (
+      new Intl.DateTimeFormat("fr-FR", {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone: "Europe/Paris",
+      }).format(d) + " (heure de Paris)"
+    );
+  } catch {
+    return "";
+  }
+}
+
 function deltaMonthText(v) {
   if (v === null || v === undefined || v === "") return "";
   const n = Number(v);
@@ -208,9 +233,34 @@ const SAMPLE_SUMMARY = {
     new_leads_count: 5,
     to_qualify_today_count: 2,
     latest: [
-      { id: "s1", name: "Dr Martin", source: "LinkedIn", status: "Nouveau", note: "Intéressé par essai gratuit" },
-      { id: "s2", name: "Cabinet Dentaire Lille", source: "Formulaire", status: "À rappeler", note: "Landing praticien" },
-      { id: "s3", name: "Dr Bernard", source: "Réseau", status: "Démo", note: "Attend créneau présentation" },
+      {
+        id: "s1",
+        name: "Dr Martin",
+        source: "landing_cta",
+        source_label: "Formulaire landing",
+        status: "Nouveau",
+        note: "Intéressé par essai gratuit",
+        created_at: new Date().toISOString(),
+        created_display_fr: "mardi 19 mai 2026 à 09:41 (heure de Paris)",
+      },
+      {
+        id: "s2",
+        name: "Cabinet Dentaire Lille",
+        source: "landing_create_assistant",
+        source_label: "Créer mon assistant",
+        status: "À rappeler",
+        note: "Landing praticien",
+        created_display_fr: "lundi 18 mai 2026 à 17:05 (heure de Paris)",
+      },
+      {
+        id: "s3",
+        name: "Dr Bernard",
+        source: "reseau",
+        source_label: "Réseau",
+        status: "Démo",
+        note: "Attend créneau présentation",
+        created_display_fr: "dimanche 17 mai 2026 à 11:22 (heure de Paris)",
+      },
     ],
   },
 };
@@ -550,9 +600,18 @@ export default function AdminDashboard() {
     if (selection.kind === "lead" && selection.lead) {
       const L = selection.lead;
       const id = L.id;
+      const arrivalText = formatLeadProspectCreation(L);
+      const srcLabel = L.source_label || L.source || "";
       return {
         title: L.name,
-        body: [L.note, L.source && `Source : ${L.source}`, L.status && `Statut : ${L.status}`].filter(Boolean).join(" · "),
+        body: [
+          arrivalText ? `Création (prospect) : ${arrivalText}` : "",
+          L.note ? `Note / situation : ${L.note}` : "",
+          srcLabel ? `Source : ${srcLabel}` : "",
+          L.status ? `Statut pipeline : ${L.status}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
         primaryLabel: "Ouvrir le lead",
         primaryTo: id ? `/admin/leads/${id}` : "/admin/leads",
         secondaryLabel: "Tous les leads",
@@ -973,6 +1032,7 @@ export default function AdminDashboard() {
                   <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: NAVY }}>Leads</h2>
                   <p style={{ margin: "6px 0 0", fontSize: 13, color: T.textMuted, maxWidth: 320 }}>
                     Deux indicateurs : volume sur la période (sélecteur en haut) et file à qualifier (règle opérationnelle, indépendante).
+                    Chaque ligne affiche le jour et l’heure de création du lead par le prospect (heure de Paris).
                   </p>
                 </div>
                 <button type="button" onClick={() => navigate("/admin/leads")} style={btnPrimarySmall()}>
@@ -1042,7 +1102,10 @@ export default function AdminDashboard() {
                       paddingRight: 4,
                     }}
                   >
-                    {latestLeads.map((lead) => (
+                    {latestLeads.map((lead) => {
+                      const arrivalText = formatLeadProspectCreation(lead);
+                      const srcLabel = lead.source_label || lead.source || "";
+                      return (
                       <div
                         key={lead.id || lead.name}
                         style={{
@@ -1072,16 +1135,30 @@ export default function AdminDashboard() {
                         >
                           <span style={{ minWidth: 0 }}>
                             <span style={{ display: "block", fontSize: 14, fontWeight: 800, color: NAVY }}>{lead.name}</span>
+                            {arrivalText ? (
+                              <span
+                                style={{
+                                  display: "block",
+                                  fontSize: 12,
+                                  fontWeight: 800,
+                                  color: T.tealDark,
+                                  marginTop: 5,
+                                  lineHeight: 1.35,
+                                }}
+                              >
+                                Nouveau · {arrivalText}
+                              </span>
+                            ) : null}
                             <span
                               style={{
                                 display: "block",
                                 fontSize: 11,
                                 fontWeight: 700,
                                 color: T.textMuted,
-                                marginTop: 2,
+                                marginTop: 4,
                               }}
                             >
-                              {lead.source} · {lead.status}
+                              {srcLabel} · {lead.status}
                             </span>
                           </span>
                           <ChevronRight size={18} color={T.teal} style={{ flexShrink: 0 }} />
@@ -1113,7 +1190,8 @@ export default function AdminDashboard() {
                           <Trash2 size={18} strokeWidth={2} />
                         </button>
                       </div>
-                    ))}
+                    );
+                    })}
                   </div>
                 </>
               )}
@@ -1140,7 +1218,9 @@ export default function AdminDashboard() {
               <div style={{ borderRadius: 22, border: "1px solid rgba(255,255,255,0.12)", padding: 16, background: "rgba(255,255,255,0.06)" }}>
                 <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: "0.16em", color: T.yellow, marginBottom: 6 }}>SÉLECTION</div>
                 <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 8, lineHeight: 1.2 }}>{detail.title}</div>
-                <p style={{ margin: 0, fontSize: 14, color: "rgba(255,255,255,0.76)", lineHeight: 1.55 }}>{detail.body}</p>
+                <p style={{ margin: 0, fontSize: 14, color: "rgba(255,255,255,0.76)", lineHeight: 1.55, whiteSpace: "pre-wrap" }}>
+                  {detail.body}
+                </p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 14 }}>
                   <button type="button" onClick={() => navigate(detail.primaryTo)} style={ctaYellow()}>
                     {detail.primaryLabel}

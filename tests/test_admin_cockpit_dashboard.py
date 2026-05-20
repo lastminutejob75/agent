@@ -125,3 +125,11 @@ def test_dash_leads_cutoff_shapes():
     c24 = dash_leads_cutoff_utc("24h")
     secs = (now - c24).total_seconds()
     assert 23 * 3600 <= secs <= 25 * 3600
+
+
+def test_dash_format_created_fr_paris_human_readable():
+    from backend.dashboard_cockpit import dash_format_created_fr_paris
+
+    out = dash_format_created_fr_paris("2026-01-15T14:30:00+00:00")
+    assert "janvier" in out.lower()
+    assert "2026" in out

@@ -351,6 +351,20 @@ def delete_lead(lead_id: str) -> bool:
         return False
 
 
+def delete_all_pre_onboarding_leads() -> int:
+    """Supprime toutes les lignes de pre_onboarding_leads (remise à zéro cockpit/liste leads)."""
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM pre_onboarding_leads")
+                n = cur.rowcount
+            conn.commit()
+        return int(n or 0)
+    except Exception as e:
+        logger.exception("delete_all_pre_onboarding_leads failed: %s", e)
+        raise
+
+
 def _json_dumps(obj: Any) -> str:
     import json
     return json.dumps(obj, ensure_ascii=False)

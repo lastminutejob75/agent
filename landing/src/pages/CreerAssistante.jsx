@@ -933,7 +933,7 @@ export default function CreerAssistante() {
         opening_hours: oh,
         voice_gender: state.voice_gender,
         assistant_name: (state.assistant_name || "").trim(),
-        source: "landing_cta",
+        source: "landing_create_assistant",
         wants_callback: !!phoneTrim,
         callback_phone: phoneTrim,
       };

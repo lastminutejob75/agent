@@ -1,5 +1,5 @@
-# backend/routes/pre_onboarding.py — POST /api/pre-onboarding/commit (wizard "Créer votre assistante")
-# E2E test: Landing → /creer-assistante → remplir wizard → commit (email + modal) → voir lead dans /admin/leads → email fondateur (FOUNDER_EMAIL/ADMIN_EMAIL). Voir landing/README.md § Test E2E Wizard Lead.
+# backend/routes/pre_onboarding.py — POST /api/pre-onboarding/commit (wizard « Créer mon assistant »)
+# E2E: commit → lead dans /admin/leads + 1 email interne max (FOUNDER/ADMIN…) ; token JWT pour callback-booking.
 from __future__ import annotations
 
 import hashlib
@@ -15,10 +15,7 @@ from pydantic import BaseModel, Field
 
 from backend.leads_pg import count_leads_total, get_lead, lead_exists, update_lead, update_lead_callback_booking, upsert_lead
 from backend.pre_onboarding_rate_limit import check_pre_onboarding_commit
-from backend.services.email_service import (
-    send_lead_founder_email,
-    send_pre_onboarding_admin_notification_email,
-)
+from backend.services.email_service import send_lead_founder_email
 
 logger = logging.getLogger(__name__)
 
@@ -300,31 +297,17 @@ async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody)
     except Exception as e:
         logger.exception("lead_founder_email on commit exception: %s", e)
 
-    # Notification interne dédiée pour l'équipe UWI : nouveau lead à traiter depuis le wizard.
+    token_out = ""
     try:
-        admin_base = (
-            os.environ.get("ADMIN_BASE_URL")
-            or os.environ.get("FRONT_BASE_URL")
-            or os.environ.get("APP_BASE_URL")
-            or ""
-        ).strip().rstrip("/")
-        opening_hours_pretty = json.dumps(body.opening_hours, ensure_ascii=False)
-        admin_lead_url = f"{admin_base}/admin/leads/{lead_id}" if admin_base else ""
-        ok, err = send_pre_onboarding_admin_notification_email(
-            assistant_name=body.assistant_name.strip(),
-            medical_specialty_label=(body.medical_specialty_label or "").strip() or body.medical_specialty.strip(),
-            email=email,
-            callback_phone=callback_phone,
-            opening_hours_pretty=opening_hours_pretty,
-            source=body.source or "landing_cta",
-            admin_lead_url=admin_lead_url,
-        )
-        if not ok:
-            logger.warning("pre_onboarding_admin_notification failed: %s", err)
-    except Exception as e:
-        logger.exception("pre_onboarding_admin_notification exception: %s", e)
+        from backend.security import issue_lead_access_token
 
-    out = {"ok": True, "lead_id": lead_id}
+        token_out = issue_lead_access_token(lead_id)
+    except Exception as e:
+        logger.warning("issue_lead_access_token failed (JWT_SECRET?): %s", e)
+
+    out: Dict[str, Any] = {"ok": True, "lead_id": lead_id}
+    if token_out:
+        out["token"] = token_out
     return out
 
 
@@ -493,7 +476,7 @@ async def callback_booking(
 ) -> Dict[str, Any]:
     """
     Enregistre le créneau de rappel choisi (écran finalisation UWI).
-    Met à jour le lead puis envoie l'email recap lead au fondateur (un seul email, avec créneau).
+    Pas d'email ici : un seul email interne est déjà parti au commit (lead visible dans /admin/leads).
     """
     from backend.security import assert_lead_access
 
@@ -539,57 +522,7 @@ async def callback_booking(
     except Exception as e:
         logger.warning("callback_booking notes_log update failed lead_id=%s: %s", lead_id, e)
 
-    # Envoi email avec le RDV (créneau de rappel) — un seul email par lead
-    dashboard_base = (
-        os.environ.get("ADMIN_BASE_URL")
-        or os.environ.get("FRONT_BASE_URL")
-        or os.environ.get("APP_BASE_URL")
-        or ""
-    ).strip()
-    lead_after = get_lead(lead_id) or lead
-    email_sent = False
-    email_error = None
-    try:
-        oh = lead_after.get("opening_hours")
-        if isinstance(oh, str):
-            import json
-            try:
-                oh = json.loads(oh) if oh else {}
-            except Exception:
-                oh = {}
-        if not isinstance(oh, dict):
-            oh = {}
-        logger.info("callback_booking: attempting lead_founder_email", extra={"lead_id": lead_id})
-        ok, err = send_lead_founder_email(
-            lead_id=lead_id,
-            email=(lead_after.get("email") or "").strip(),
-            daily_call_volume=lead_after.get("daily_call_volume") or "",
-            medical_specialty=lead_after.get("medical_specialty") or "",
-            medical_specialty_label=(lead_after.get("medical_specialty_label") or "").strip() or "",
-            specialty_other=(lead_after.get("specialty_other") or "").strip() or "",
-            primary_pain_point=(lead_after.get("primary_pain_point") or "").strip() or "",
-            assistant_name=(lead_after.get("assistant_name") or "").strip() or "",
-            voice_gender=lead_after.get("voice_gender") or "",
-            opening_hours=oh,
-            wants_callback=bool(lead_after.get("callback_phone") or phone),
-            callback_phone=(lead_after.get("callback_phone") or phone or "").strip() or "",
-            is_enterprise=lead_after.get("is_enterprise") is True,
-            dashboard_base_url=dashboard_base,
-            source=(lead_after.get("source") or "landing_cta").strip() or "landing_cta",
-            callback_booking_date=date_str,
-            callback_booking_slot=slot,
-        )
-        email_sent = ok
-        if not ok:
-            email_error = err or "unknown"
-            logger.warning("lead_founder_email after callback_booking failed: %s", err)
-        else:
-            logger.info("lead_founder_email after callback_booking sent ok", extra={"lead_id": lead_id})
-    except Exception as e:
-        email_error = str(e)
-        logger.exception("lead_founder_email after callback_booking exception: %s", e)
-
-    return {"ok": True, "email_sent": email_sent, "email_error": email_error}
+    return {"ok": True}
 
 
 class CreateAccountBody(BaseModel):
