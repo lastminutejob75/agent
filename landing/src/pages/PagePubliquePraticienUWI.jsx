@@ -600,6 +600,17 @@ export default function PagePubliquePraticienUWI() {
     }
   }, [clearPartialMessage, push, upsertPartialMessage]);
 
+  const ensureConversationId = useCallback(() => {
+    if (!conversationIdRef.current) {
+      const id =
+        typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `web-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      conversationIdRef.current = id;
+    }
+    return conversationIdRef.current;
+  }, []);
+
   const ensureStream = useCallback((conversationId) => {
     if (typeof window === "undefined" || !conversationId) return;
     if (streamConversationIdRef.current === conversationId && eventSourceRef.current) return;
@@ -607,7 +618,9 @@ export default function PagePubliquePraticienUWI() {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
-    const streamUrl = apiUrl(`/stream/${encodeURIComponent(conversationId)}`);
+    const streamUrl = apiUrl(
+      `/api/public/praticiens/${encodeURIComponent(slug)}/stream/${encodeURIComponent(conversationId)}`
+    );
     const stream = new EventSource(streamUrl);
     streamConversationIdRef.current = conversationId;
     stream.onmessage = (event) => {
@@ -622,11 +635,13 @@ export default function PagePubliquePraticienUWI() {
       // Keep UX stable even if SSE reconnects in background.
     };
     eventSourceRef.current = stream;
-  }, [handleStreamPayload]);
+  }, [handleStreamPayload, slug]);
 
   const sendChatMessage = useCallback(async (text) => {
     const clean = String(text || "").trim();
     if (!clean) return;
+    const convId = ensureConversationId();
+    ensureStream(convId);
     push([{ from: "patient", text: clean }]);
     setChatPending(true);
     trackPublicEvent({
@@ -636,29 +651,19 @@ export default function PagePubliquePraticienUWI() {
       metadata: { length: clean.length },
     });
     try {
-      const response = await fetchJson(`/chat/public/${encodeURIComponent(slug)}`, {
+      await fetchJson(`/api/public/praticiens/${encodeURIComponent(slug)}/chat`, {
         method: "POST",
         body: JSON.stringify({
           message: clean,
-          conversation_id: conversationIdRef.current,
+          conversation_id: convId,
         }),
       });
-      const conversationId = String(response?.conversation_id || "");
-      if (conversationId) {
-        conversationIdRef.current = conversationId;
-        ensureStream(conversationId);
-      }
-      if (response?.reply) {
-        setChatPending(false);
-        clearPartialMessage();
-        push([{ from: "clara", text: String(response.reply) }]);
-      }
     } catch {
       setChatPending(false);
       clearPartialMessage();
       push([{ from: "clara", text: "Impossible de contacter l'agent pour le moment. Merci de reessayer." }]);
     }
-  }, [clearPartialMessage, ensureStream, push, slug]);
+  }, [clearPartialMessage, ensureConversationId, ensureStream, push, slug]);
 
   const ask = useCallback((text) => {
     void sendChatMessage(text);

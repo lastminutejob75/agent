@@ -26,6 +26,10 @@ _TIME_HINTS = re.compile(
     r"matin|après[- ]?midi|\d{1,2}\s?h(\d{2})?)\b",
     re.IGNORECASE,
 )
+_GREETING_ONLY = re.compile(
+    r"^(bonjour|salut|bonsoir|hello|coucou|bonne\s+journ[ée]e|bonne\s+soir[ée]e)[\s!.,?]*$",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -49,6 +53,14 @@ def _heuristic_route(text: str) -> Optional[StartRoute]:
     t = (text or "").strip()
     if not t:
         return StartRoute(intent=Intent.UNCLEAR, confidence=0.0, source="heuristic")
+
+    if _GREETING_ONLY.match(t):
+        return StartRoute(
+            intent=Intent.UNCLEAR,
+            confidence=0.95,
+            entities={"greeting_only": True},
+            source="heuristic",
+        )
 
     score = 0
     if _BOOKING_HINTS.search(t):

@@ -145,7 +145,7 @@ async def public_praticien_chat(slug: str, body: PublicChatBody) -> Dict[str, An
         tenant_id,
         message=body.message.strip(),
         conversation_id=body.conversation_id,
-        channel="web_public",
+        channel="web",
     )
 
 

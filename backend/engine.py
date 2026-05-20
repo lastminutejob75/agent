@@ -1543,6 +1543,13 @@ class Engine:
             )
 
             # --- START: post-route special handling (ex-"Zone grise" via route_start) ---
+            if ent.get("greeting_only"):
+                session.start_unclear_count = 0
+                msg = prompts.get_message("salutation", channel=channel) or "Bonjour ! Comment puis-je vous aider ?"
+                session.add_message("agent", msg)
+                self._save_session(session)
+                return safe_reply([Event("final", msg, conv_state=session.state)], session)
+
             if intent == "OUT_OF_SCOPE":
                 session.start_unclear_count = 0
                 session.start_out_of_scope_count = getattr(session, "start_out_of_scope_count", 0) + 1

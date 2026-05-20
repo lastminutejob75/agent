@@ -1206,30 +1206,15 @@ async def chat(
 @app.post("/chat/public/{slug}")
 async def chat_public(slug: str, payload: dict) -> dict:
     """
-    Chat page publique /p/:slug — tenant résolu par slug (public_pages), sans X-Tenant-Key.
+    Alias legacy → même pipeline que POST /api/public/praticiens/{slug}/chat.
     """
-    tenant_id = config.DEFAULT_TENANT_ID
-    try:
-        practitioner = public_pages._try_fetch_practitioner((slug or "").strip())
-        if practitioner and practitioner.get("tenantId"):
-            tenant_id = int(practitioner["tenantId"])
-    except Exception as exc:
-        _logger.warning("chat_public tenant resolve failed slug=%s: %s", slug, exc)
-    try:
-        from backend.cabinet_profile_pg import get_tenant_id_by_public_slug
+    from backend.routes.public_praticien import public_praticien_chat, PublicChatBody
 
-        tid = get_tenant_id_by_public_slug((slug or "").strip())
-        if tid:
-            tenant_id = int(tid)
-    except Exception:
-        pass
-    result = await start_web_chat(
-        tenant_id,
+    body = PublicChatBody(
         message=(payload.get("message") or ""),
         conversation_id=payload.get("conversation_id"),
-        channel=payload.get("channel", "web_public"),
     )
-    return {**result, "tenant_id": tenant_id}
+    return await public_praticien_chat((slug or "").strip(), body)
 
 
 @app.get("/stream/{conv_id}")
