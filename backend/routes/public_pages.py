@@ -1,0 +1,1093 @@
+from __future__ import annotations
+
+import logging
+import os
+import uuid
+import json
+import smtplib
+from datetime import datetime, timedelta
+from types import SimpleNamespace
+from typing import Any, Dict, List, Optional
+from urllib.parse import quote
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import Response
+from pydantic import BaseModel, Field
+
+from backend.pg_pool import pg_connection
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/public", tags=["public_pages"])
+_public_events_schema_ready = False
+
+
+DEMO_PRACTITIONER: Dict[str, Any] = {
+    "slug": "cabinet-dupond-demo",
+    "tenantId": None,
+    "name": "Cabinet Dupond",
+    "initials": "CD",
+    "specialty": "Medecine generale",
+    "city": "Lille",
+    "verified": True,
+    "rating": 4.9,
+    "reviewCount": 142,
+    "reviewsVerified": True,
+    "photoUrl": "",
+    "address": {"street": "12 rue Gambetta", "postalCode": "59000", "city": "Lille", "country": "FR"},
+    "access": "Metro Republique Beaux-Arts",
+    "parking": "Parking Gambetta",
+    "phone": "03 20 12 34 56",
+    "phoneTel": "+33320123456",
+    "languages": ["Francais", "Anglais"],
+    "fee": "Secteur 1 - Tarifs conventionnes",
+    "carteVitale": True,
+    "pmr": True,
+    "voiceEnabled": False,
+    "vapiAssistantId": "",
+    "newPatients": "Selon disponibilite",
+    "documents": "Carte Vitale, piece d'identite, ordonnances et examens recents.",
+    "whatsappEnabled": True,
+    "whatsappUrl": "https://wa.me/33000000000?text=Bonjour%2C%20je%20souhaite%20prendre%20rendez-vous",
+    "canonicalUrl": "https://www.uwiapp.com/p/cabinet-dupond-demo",
+    "openingHours": [
+        {"day": "Lundi", "opens": "08:30", "closes": "18:30", "schemaDay": "Monday"},
+        {"day": "Mardi", "opens": "08:30", "closes": "18:30", "schemaDay": "Tuesday"},
+        {"day": "Mercredi", "opens": "08:30", "closes": "18:30", "schemaDay": "Wednesday"},
+        {"day": "Jeudi", "opens": "08:30", "closes": "18:30", "schemaDay": "Thursday"},
+        {"day": "Vendredi", "opens": "08:30", "closes": "17:30", "schemaDay": "Friday"},
+        {"day": "Samedi", "opens": None, "closes": None, "schemaDay": "Saturday"},
+        {"day": "Dimanche", "opens": None, "closes": None, "schemaDay": "Sunday"},
+    ],
+}
+
+DEMO_SLOTS: List[Dict[str, Any]] = [
+    {"id": "s1", "label": "aujourd'hui a 14:00", "day": "Auj.", "time": "14:00", "motifs": ["Consultation", "Suivi", "Premiere consultation", "Renouvellement"]},
+    {"id": "s2", "label": "aujourd'hui a 16:30", "day": "Auj.", "time": "16:30", "motifs": ["Consultation", "Suivi"]},
+    {"id": "s3", "label": "mercredi a 09:15", "day": "Mer.", "time": "09:15", "motifs": ["Consultation", "Suivi", "Premiere consultation"]},
+    {"id": "s4", "label": "mercredi a 11:00", "day": "Mer.", "time": "11:00", "motifs": ["Consultation", "Suivi"]},
+    {"id": "s5", "label": "jeudi a 10:00", "day": "Jeu.", "time": "10:00", "motifs": ["Consultation", "Suivi", "Renouvellement"]},
+    {"id": "s6", "label": "jeudi a 15:45", "day": "Jeu.", "time": "15:45", "motifs": ["Consultation", "Suivi"]},
+]
+
+DEMO_SEARCH = [
+    {"id": "cabinet-dupond-demo", "name": "Cabinet Dupond", "specialty": "Medecine generale", "city": "Lille", "availability": "Disponible aujourd'hui", "acceptsNewPatients": True, "url": "/p/cabinet-dupond-demo"},
+    {"id": "karim-benali", "name": "Dr Karim Benali", "specialty": "Medecin generaliste", "city": "Tourcoing", "availability": "Demain matin", "acceptsNewPatients": True, "url": "/p/dr-karim-benali"},
+    {"id": "sophie-martin", "name": "Dr Sophie Martin", "specialty": "Dermatologue", "city": "Lille", "availability": "Cette semaine", "acceptsNewPatients": False, "url": "/p/dr-sophie-martin"},
+    {"id": "amina-haddad", "name": "Dr Amina Haddad", "specialty": "Pediatre", "city": "Roubaix", "availability": "Sous 48h", "acceptsNewPatients": True, "url": "/p/dr-amina-haddad"},
+]
+
+
+class PublicBookingRequest(BaseModel):
+    slug: str = Field(..., min_length=2, max_length=160)
+    slotId: str = Field(..., min_length=1, max_length=80)
+    slotLabel: str = Field(..., min_length=2, max_length=140)
+    motif: str = Field(..., min_length=2, max_length=120)
+    patientName: str = Field(..., min_length=2, max_length=200)
+    patientPhone: str = Field(..., min_length=5, max_length=40)
+    source: str = Field("page_publique", max_length=40)
+    slotSource: Optional[str] = Field(None, max_length=20)
+    startIso: Optional[str] = Field(None, max_length=64)
+    endIso: Optional[str] = Field(None, max_length=64)
+
+
+class PublicAnalyticsEventRequest(BaseModel):
+    slug: str = Field(..., min_length=2, max_length=160)
+    event: str = Field(..., min_length=2, max_length=80)
+    source: str = Field("direct", max_length=40)
+    slotId: Optional[str] = Field(None, max_length=80)
+    slotLabel: Optional[str] = Field(None, max_length=140)
+    motif: Optional[str] = Field(None, max_length=120)
+    question: Optional[str] = Field(None, max_length=180)
+    query: Optional[str] = Field(None, max_length=180)
+    resultsCount: Optional[int] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+def _norm(value: str) -> str:
+    return (value or "").strip().lower()
+
+
+def _demo_practitioner(slug: str) -> Dict[str, Any]:
+    data = dict(DEMO_PRACTITIONER)
+    data["slug"] = slug
+    data["canonicalUrl"] = f"https://www.uwiapp.com/p/{slug}"
+    return data
+
+
+def _append_whatsapp_text(url: str, text: str) -> str:
+    if not url:
+        return ""
+    separator = "&" if "?" in url else "?"
+    if "text=" in url:
+        return url
+    return f"{url}{separator}text={quote(text)}"
+
+
+def _build_whatsapp_followup(practitioner: Dict[str, Any], payload: PublicBookingRequest) -> Dict[str, Any]:
+    if not practitioner.get("whatsappEnabled"):
+        return {"enabled": False, "whatsappUrl": None}
+    template = (
+        f"Bonjour, je viens de faire une demande de RDV ({payload.slotLabel}) "
+        f"pour {payload.motif}, au nom de {payload.patientName}."
+    )
+    whatsapp_url = str(practitioner.get("whatsappUrl") or "").strip()
+    if whatsapp_url:
+        return {"enabled": True, "whatsappUrl": _append_whatsapp_text(whatsapp_url, template)}
+    phone = str(practitioner.get("phoneTel") or practitioner.get("phone") or "").strip()
+    digits = "".join(ch for ch in phone if ch.isdigit())
+    if digits:
+        if digits.startswith("00"):
+            digits = digits[2:]
+        return {"enabled": True, "whatsappUrl": f"https://wa.me/{digits}?text={quote(template)}"}
+    return {"enabled": False, "whatsappUrl": None}
+
+
+def _send_cabinet_email(practitioner: Dict[str, Any], payload: PublicBookingRequest, confirmation_id: str) -> bool:
+    to_email = (
+        str(practitioner.get("email") or "").strip()
+        or (os.environ.get("PUBLIC_BOOKING_CABINET_EMAIL_TO") or "").strip()
+        or (os.environ.get("OWNER_EMAIL") or "").strip()
+        or (os.environ.get("ADMIN_NOTIFICATION_EMAIL") or "").strip()
+        or (os.environ.get("REPORT_EMAIL") or "").strip()
+    )
+    if not to_email:
+        return False
+
+    subject = f"UWI - Nouvelle demande RDV ({practitioner.get('name')})"
+    html = f"""
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Nouvelle demande RDV</title></head>
+<body style="font-family: Arial, sans-serif; max-width: 620px; margin: 0 auto; padding: 16px;">
+  <h2 style="margin:0 0 12px;">Nouvelle demande de rendez-vous</h2>
+  <p>Une demande a ete effectuee depuis la page publique UWI.</p>
+  <ul>
+    <li><strong>Confirmation ID:</strong> {confirmation_id}</li>
+    <li><strong>Praticien:</strong> {practitioner.get("name") or "Cabinet"}</li>
+    <li><strong>Slug:</strong> {payload.slug}</li>
+    <li><strong>Creneau:</strong> {payload.slotLabel}</li>
+    <li><strong>Motif:</strong> {payload.motif}</li>
+    <li><strong>Patient:</strong> {payload.patientName}</li>
+    <li><strong>Telephone:</strong> {payload.patientPhone}</li>
+    <li><strong>Source:</strong> {payload.source}</li>
+  </ul>
+  <p style="color:#666;font-size:12px;">Envoye automatiquement par UWI.</p>
+</body>
+</html>
+""".strip()
+
+    token = (os.environ.get("POSTMARK_SERVER_TOKEN") or "").strip()
+    from_addr = (
+        (os.environ.get("POSTMARK_FROM_EMAIL") or "").strip()
+        or (os.environ.get("EMAIL_FROM") or "").strip()
+        or (os.environ.get("SMTP_EMAIL") or "").strip()
+        or to_email
+    )
+
+    if token:
+        try:
+            import httpx
+
+            response = httpx.post(
+                "https://api.postmarkapp.com/email",
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                    "X-Postmark-Server-Token": token,
+                },
+                json={
+                    "From": from_addr,
+                    "To": to_email,
+                    "Subject": subject,
+                    "HtmlBody": html,
+                    "MessageStream": "outbound",
+                },
+                timeout=20.0,
+            )
+            if response.status_code == 200:
+                return True
+            logger.warning("public booking cabinet email postmark failed status=%s", response.status_code)
+        except Exception as exc:
+            logger.warning("public booking cabinet email postmark exception: %s", exc)
+
+    smtp_user = (os.environ.get("SMTP_EMAIL") or "").strip()
+    smtp_pass = (os.environ.get("SMTP_PASSWORD") or "").strip()
+    if smtp_user and smtp_pass:
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["From"] = smtp_user
+            msg["To"] = to_email
+            msg["Subject"] = subject
+            msg.attach(MIMEText(html, "html", "utf-8"))
+            host = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+            port = int(os.environ.get("SMTP_PORT", "587"))
+            with smtplib.SMTP(host, port) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, [to_email], msg.as_string())
+            return True
+        except Exception as exc:
+            logger.warning("public booking cabinet email smtp exception: %s", exc)
+    return False
+
+
+_DAY_SCHEMA = {
+    "monday": "Monday",
+    "tuesday": "Tuesday",
+    "wednesday": "Wednesday",
+    "thursday": "Thursday",
+    "friday": "Friday",
+    "saturday": "Saturday",
+    "sunday": "Sunday",
+}
+_DAY_FR = {
+    "monday": "Lundi",
+    "tuesday": "Mardi",
+    "wednesday": "Mercredi",
+    "thursday": "Jeudi",
+    "friday": "Vendredi",
+    "saturday": "Samedi",
+    "sunday": "Dimanche",
+}
+
+
+def _map_opening_hours(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        day_key = str(row.get("day") or "").lower()
+        label = _DAY_FR.get(day_key, day_key.capitalize())
+        schema = _DAY_SCHEMA.get(day_key, day_key.capitalize())
+        if not row.get("is_open"):
+            out.append({"day": label, "opens": None, "closes": None, "schemaDay": schema})
+            continue
+        opens = row.get("morning_start") or row.get("afternoon_start")
+        closes = row.get("afternoon_end") or row.get("morning_end")
+        if not opens and not closes:
+            out.append({"day": label, "opens": None, "closes": None, "schemaDay": schema})
+            continue
+        out.append({"day": label, "opens": opens, "closes": closes, "schemaDay": schema})
+    return out or list(DEMO_PRACTITIONER["openingHours"])
+
+
+def _try_fetch_practitioner_from_cabinet_profile(slug: str) -> Optional[Dict[str, Any]]:
+    """Résolution slug via cabinet_profile_pg (PG + SQLite local)."""
+    try:
+        from backend.cabinet_profile_pg import (
+            get_assistant_settings,
+            get_public_profile_bundle,
+            get_tenant_id_by_public_slug,
+            get_opening_hours,
+            list_appointment_reasons,
+        )
+
+        tid = get_tenant_id_by_public_slug(slug)
+        if not tid:
+            return None
+        bundle = get_public_profile_bundle(int(tid))
+        profile = bundle.get("profile") or {}
+        params = bundle.get("params") if isinstance(bundle.get("params"), dict) else {}
+        assistant = get_assistant_settings(int(tid)) or {}
+        cabinet_name = str(profile.get("cabinet_name") or params.get("business_name") or "").strip()
+        practitioner_name = str(profile.get("practitioner_name") or params.get("practitioner_name") or "").strip()
+        name = practitioner_name or cabinet_name
+        if not name:
+            return None
+        motives = [
+            str(r.get("label") or "").strip()
+            for r in (list_appointment_reasons(int(tid)) or [])
+            if isinstance(r, dict) and r.get("enabled", True) and str(r.get("label") or "").strip()
+        ]
+        if not motives:
+            motives = list(_DEFAULT_PUBLIC_MOTIFS)
+        vapi_assistant_id = str(
+            assistant.get("vapi_assistant_id")
+            or params.get("vapi_assistant_id")
+            or (params.get("public_page") or {}).get("vapiAssistantId")
+            or ""
+        ).strip()
+        phone = str(profile.get("phone") or params.get("phone_number") or params.get("callback_phone") or "").strip()
+        city = str(profile.get("city") or params.get("city") or DEMO_PRACTITIONER["city"]).strip()
+        return {
+            **_demo_practitioner(slug),
+            "tenantId": str(tid),
+            "name": name,
+            "initials": "".join(part[:1] for part in name.split()[:2]).upper() or "UW",
+            "specialty": str(profile.get("specialty") or params.get("specialty_label") or DEMO_PRACTITIONER["specialty"]),
+            "city": city,
+            "email": str(profile.get("email") or params.get("contact_email") or "").strip(),
+            "phone": phone or DEMO_PRACTITIONER["phone"],
+            "phoneTel": phone or DEMO_PRACTITIONER["phoneTel"],
+            "photoUrl": str(profile.get("practitioner_photo_url") or "").strip(),
+            "address": {
+                "street": str(profile.get("address_line") or params.get("address_line1") or "").strip(),
+                "postalCode": str(profile.get("postal_code") or params.get("postal_code") or "").strip(),
+                "city": city,
+                "country": "FR",
+            },
+            "access": str(assistant.get("access_instructions") or params.get("access_instructions") or "").strip(),
+            "parking": str(assistant.get("parking_info") or params.get("parking_info") or "").strip(),
+            "pmr": bool(assistant.get("pmr_access") or params.get("pmr_access")),
+            "fee": str(assistant.get("payment_methods") or params.get("payment_methods") or DEMO_PRACTITIONER["fee"]),
+            "voiceEnabled": bool(vapi_assistant_id),
+            "vapiAssistantId": vapi_assistant_id,
+            "openingHours": _map_opening_hours(get_opening_hours(int(tid)) or []),
+            "newPatients": "Oui" if profile.get("accepts_new_patients", True) else "Selon disponibilite",
+            "documents": str(assistant.get("documents_hint") or params.get("documents_hint") or DEMO_PRACTITIONER["documents"]),
+        }
+    except Exception as exc:
+        logger.info("public practitioner cabinet_profile fallback slug=%s: %s", slug, exc)
+        return None
+
+
+def _try_fetch_practitioner(slug: str) -> Optional[Dict[str, Any]]:
+    """
+    Résout un practitioner via son slug public.
+    `public_slug` est stocké dans tenant_config.params_json (pas de colonne dédiée).
+    Schéma `tenants` : tenant_id, name, timezone, status, created_at.
+    Le reste (contact_email, callback_phone, public_page) vit dans params_json.
+    """
+    cabinet = _try_fetch_practitioner_from_cabinet_profile(slug)
+    if cabinet:
+        return cabinet
+    try:
+        with pg_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT t.tenant_id, t.name, c.params_json
+                    FROM tenants t
+                    LEFT JOIN tenant_config c ON c.tenant_id = t.tenant_id
+                    WHERE c.params_json->>'public_slug' = %s
+                       OR c.params_json->>'slug' = %s
+                    LIMIT 1
+                    """,
+                    (slug, slug),
+                )
+                row = cur.fetchone()
+    except Exception as exc:
+        logger.info("public practitioner fallback slug=%s reason=%s", slug, exc)
+        return None
+    if not row:
+        return None
+    raw_params = row.get("params_json")
+    if isinstance(raw_params, dict):
+        params = raw_params
+    elif isinstance(raw_params, str) and raw_params.strip():
+        try:
+            params = json.loads(raw_params)
+        except Exception:
+            params = {}
+    else:
+        params = {}
+    public_page = params.get("public_page") if isinstance(params.get("public_page"), dict) else {}
+    vapi_assistant_id = str(public_page.get("vapiAssistantId") or params.get("vapi_assistant_id") or "").strip()
+    contact_email = (params.get("contact_email") or "").strip()
+    callback_phone = (params.get("callback_phone") or params.get("phone") or "").strip()
+    name = public_page.get("name") or row.get("name") or DEMO_PRACTITIONER["name"]
+    city = public_page.get("city") or params.get("city") or DEMO_PRACTITIONER["city"]
+    specialty = public_page.get("specialty") or params.get("specialty") or DEMO_PRACTITIONER["specialty"]
+    return {
+        **_demo_practitioner(slug),
+        "tenantId": str(row["tenant_id"]),
+        "name": name,
+        "initials": "".join(part[:1] for part in str(name).split()[:2]).upper() or "UW",
+        "specialty": specialty,
+        "city": city,
+        "email": contact_email,
+        "phone": public_page.get("phone") or callback_phone or DEMO_PRACTITIONER["phone"],
+        "phoneTel": public_page.get("phoneTel") or callback_phone or DEMO_PRACTITIONER["phoneTel"],
+        "address": public_page.get("address") or DEMO_PRACTITIONER["address"],
+        "fee": public_page.get("fee") or DEMO_PRACTITIONER["fee"],
+        "voiceEnabled": bool(vapi_assistant_id),
+        "vapiAssistantId": vapi_assistant_id,
+        "openingHours": public_page.get("openingHours") or DEMO_PRACTITIONER["openingHours"],
+    }
+
+
+def _send_sms(to_number: str, body: str) -> bool:
+    sid = (os.environ.get("TWILIO_ACCOUNT_SID") or "").strip()
+    token = (os.environ.get("TWILIO_AUTH_TOKEN") or "").strip()
+    from_number = (os.environ.get("TWILIO_PHONE_NUMBER") or "").strip()
+    if not (sid and token and from_number and to_number):
+        return False
+    try:
+        from twilio.rest import Client
+
+        Client(sid, token).messages.create(body=body[:1500], from_=from_number, to=to_number)
+        return True
+    except Exception as exc:
+        logger.warning("public booking sms failed: %s", exc)
+        return False
+
+
+def _insert_booking(payload: PublicBookingRequest, tenant_id: Optional[str]) -> str:
+    booking_id = str(uuid.uuid4())
+    try:
+        with pg_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO public_bookings (
+                      id, tenant_id, slot_id, slot_label, patient_name, patient_phone,
+                      motif, source, created_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                    """,
+                    (
+                        booking_id,
+                        tenant_id,
+                        payload.slotId,
+                        payload.slotLabel,
+                        payload.patientName,
+                        payload.patientPhone,
+                        payload.motif,
+                        payload.source,
+                    ),
+                )
+                conn.commit()
+    except Exception as exc:
+        logger.warning("public booking insert skipped: %s", exc)
+    return booking_id
+
+
+def _ensure_public_events_schema() -> None:
+    global _public_events_schema_ready
+    if _public_events_schema_ready:
+        return
+    try:
+        with pg_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS public_page_events (
+                      id UUID PRIMARY KEY,
+                      tenant_id UUID REFERENCES tenants(id),
+                      slug VARCHAR(160) NOT NULL,
+                      event_name VARCHAR(80) NOT NULL,
+                      source VARCHAR(40) DEFAULT 'direct',
+                      slot_id VARCHAR(80),
+                      slot_label VARCHAR(140),
+                      motif VARCHAR(120),
+                      question VARCHAR(180),
+                      query VARCHAR(180),
+                      results_count INT,
+                      metadata JSONB DEFAULT '{}'::jsonb,
+                      created_at TIMESTAMP DEFAULT NOW()
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_public_page_events_slug_created
+                    ON public_page_events (slug, created_at DESC)
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_public_page_events_tenant_created
+                    ON public_page_events (tenant_id, created_at DESC)
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_public_page_events_event_created
+                    ON public_page_events (event_name, created_at DESC)
+                    """
+                )
+                conn.commit()
+        _public_events_schema_ready = True
+    except Exception as exc:
+        logger.warning("public events schema init failed: %s", exc)
+
+
+def _resolve_tenant_id(slug: str) -> Optional[str]:
+    practitioner = _try_fetch_practitioner(slug)
+    if practitioner and practitioner.get("tenantId"):
+        return str(practitioner["tenantId"])
+    return None
+
+
+def _insert_public_event(payload: PublicAnalyticsEventRequest, tenant_id: Optional[str]) -> None:
+    _ensure_public_events_schema()
+    event_name = _norm(payload.event).replace(" ", "_")
+    if not event_name:
+        return
+    event_id = str(uuid.uuid4())
+    try:
+        with pg_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO public_page_events (
+                      id, tenant_id, slug, event_name, source, slot_id, slot_label,
+                      motif, question, query, results_count, metadata, created_at
+                    )
+                    VALUES (
+                      %s, %s, %s, %s, %s, %s, %s,
+                      %s, %s, %s, %s, %s::jsonb, NOW()
+                    )
+                    """,
+                    (
+                        event_id,
+                        tenant_id,
+                        payload.slug,
+                        event_name,
+                        payload.source,
+                        payload.slotId,
+                        payload.slotLabel,
+                        payload.motif,
+                        payload.question,
+                        payload.query,
+                        payload.resultsCount,
+                        json.dumps(payload.metadata or {}, ensure_ascii=False),
+                    ),
+                )
+                conn.commit()
+    except Exception as exc:
+        logger.debug("public analytics insert skipped: %s", exc)
+
+
+def _analytics_summary(slug: str, days: int) -> Dict[str, Any]:
+    _ensure_public_events_schema()
+    safe_days = max(1, min(int(days or 30), 365))
+    base = {
+        "slug": slug,
+        "days": safe_days,
+        "pageViews": 0,
+        "slotClicks": 0,
+        "bookingConfirmed": 0,
+        "voiceStarted": 0,
+        "voiceEnded": 0,
+        "modalOpened": 0,
+        "modalClosedWithoutConfirm": 0,
+        "chatMessages": 0,
+        "faqClicks": 0,
+        "whatsappClicks": 0,
+        "searchUsed": 0,
+    }
+    try:
+        with pg_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT event_name, COUNT(*)::int AS c
+                    FROM public_page_events
+                    WHERE slug = %s
+                      AND created_at >= (NOW() - (%s || ' days')::interval)
+                    GROUP BY event_name
+                    """,
+                    (slug, safe_days),
+                )
+                rows = cur.fetchall() or []
+    except Exception as exc:
+        logger.debug("public analytics summary fallback: %s", exc)
+        return base
+    mapping = {
+        "page_view": "pageViews",
+        "slot_clicked": "slotClicks",
+        "booking_confirmed": "bookingConfirmed",
+        "voice_started": "voiceStarted",
+        "voice_ended": "voiceEnded",
+        "modal_opened": "modalOpened",
+        "modal_closed_without_confirm": "modalClosedWithoutConfirm",
+        "chat_message_sent": "chatMessages",
+        "faq_clicked": "faqClicks",
+        "whatsapp_clicked": "whatsappClicks",
+        "search_used": "searchUsed",
+    }
+    for row in rows:
+        key = mapping.get(str(row.get("event_name") or ""))
+        if key:
+            base[key] = int(row.get("c") or 0)
+    return base
+
+
+def _load_public_slugs() -> List[str]:
+    """
+    Liste les slugs publics actifs (sitemap).
+    `public_slug` est stocké dans tenant_config.params_json.
+    """
+    slugs: List[str] = []
+    try:
+        with pg_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT DISTINCT params_json->>'public_slug' AS public_slug
+                    FROM tenant_config c
+                    JOIN tenants t ON t.tenant_id = c.tenant_id
+                    WHERE COALESCE(params_json->>'public_slug', '') <> ''
+                      AND COALESCE(t.status, 'active') = 'active'
+                    ORDER BY public_slug
+                    LIMIT 5000
+                    """
+                )
+                rows = cur.fetchall() or []
+                slugs = [str(row.get("public_slug", "")).strip() for row in rows if str(row.get("public_slug", "")).strip()]
+    except Exception as exc:
+        logger.info("public sitemap fallback reason=%s", exc)
+    if not slugs:
+        slugs = [DEMO_PRACTITIONER["slug"]]
+    return slugs
+
+
+@router.get("/practitioner/{slug}")
+async def get_public_practitioner(slug: str, requireExists: bool = Query(False)) -> Dict[str, Any]:
+    practitioner = _try_fetch_practitioner(slug)
+    if practitioner:
+        return {**practitioner, "source": "tenant"}
+    if slug == DEMO_PRACTITIONER["slug"]:
+        return {**_demo_practitioner(slug), "source": "demo"}
+    if requireExists:
+        raise HTTPException(status_code=404, detail="public_practitioner_not_found")
+    return {**_demo_practitioner(slug), "source": "demo"}
+
+
+_DEFAULT_PUBLIC_MOTIFS = ["Consultation", "Suivi", "Premiere consultation", "Renouvellement"]
+_FR_WEEKDAYS_SHORT = ["Lun.", "Mar.", "Mer.", "Jeu.", "Ven.", "Sam.", "Dim."]
+_FR_WEEKDAYS_LONG = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+
+
+def _public_session(tenant_id: int, payload: PublicBookingRequest) -> SimpleNamespace:
+    """Session minimale pour réutiliser tools_booking (même logique que vocal)."""
+    return SimpleNamespace(
+        tenant_id=int(tenant_id),
+        conv_id=f"public-web-{uuid.uuid4()}",
+        qualif_data=SimpleNamespace(
+            name=payload.patientName.strip(),
+            contact=payload.patientPhone.strip(),
+            contact_type="phone",
+            motif=payload.motif.strip(),
+            pref=None,
+        ),
+        pending_slots=[],
+        rejected_slot_starts=[],
+    )
+
+
+def _booking_duration_minutes(tenant_id: int) -> int:
+    try:
+        from backend.cabinet_profile_pg import get_booking_rules
+
+        rules = get_booking_rules(int(tenant_id)) or {}
+        return max(5, min(int(rules.get("duration_minutes") or 15), 180))
+    except Exception:
+        return 15
+
+
+def _end_iso_from_start(start_iso: str, tenant_id: int) -> str:
+    if not start_iso:
+        return ""
+    try:
+        dt = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+        if dt.tzinfo:
+            dt = dt.replace(tzinfo=None)
+        return (dt + timedelta(minutes=_booking_duration_minutes(tenant_id))).isoformat()
+    except Exception:
+        return ""
+
+
+def _book_real_slot(tenant_id: int, payload: PublicBookingRequest) -> tuple[bool, Optional[str]]:
+    """
+    Réserve un créneau via tools_booking (Google / PG / SQLite) — même chemin que l'agent vocal.
+    Returns (success, reason) avec reason in slot_taken, technical, permission, None.
+    """
+    from backend import tools_booking
+
+    session = _public_session(tenant_id, payload)
+    src = (payload.slotSource or "sqlite").strip().lower()
+
+    if src == "google" and payload.startIso:
+        end_iso = (payload.endIso or "").strip() or _end_iso_from_start(payload.startIso, tenant_id)
+        session.pending_slots = [
+            {
+                "id": payload.slotId,
+                "source": "google",
+                "start": payload.startIso,
+                "start_iso": payload.startIso,
+                "end": end_iso,
+                "end_iso": end_iso,
+                "label": payload.slotLabel,
+                "label_vocal": payload.slotLabel,
+            }
+        ]
+        return tools_booking.book_slot_from_session(session, 1)
+
+    try:
+        slot_id = int(str(payload.slotId).strip())
+    except (TypeError, ValueError):
+        return False, "technical"
+
+    book_src = src if src in ("pg", "sqlite") else "sqlite"
+    session.pending_slots = [
+        {
+            "id": slot_id,
+            "slot_id": slot_id,
+            "source": book_src,
+            "label": payload.slotLabel,
+            "label_vocal": payload.slotLabel,
+        }
+    ]
+    return tools_booking.book_slot_from_session(session, 1)
+
+
+def _format_public_slot(raw: Dict[str, Any], today: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
+    """Transforme un slot DB (id/date/time) au format attendu par la page publique."""
+    date_str = str(raw.get("date") or "")[:10]
+    time_str = str(raw.get("time") or "")[:5]
+    if not date_str or not time_str:
+        return None
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        return None
+    today = today or datetime.now()
+    today_d = today.date()
+    diff_days = (dt.date() - today_d).days
+    weekday_index = dt.weekday()  # 0..6 Monday=0
+    if diff_days == 0:
+        day_short = "Auj."
+        day_long = "aujourd'hui"
+    elif diff_days == 1:
+        day_short = "Dem."
+        day_long = "demain"
+    elif 0 < diff_days < 7:
+        day_short = _FR_WEEKDAYS_SHORT[weekday_index]
+        day_long = _FR_WEEKDAYS_LONG[weekday_index]
+    else:
+        day_short = dt.strftime("%d/%m")
+        day_long = dt.strftime("%d/%m")
+    label = f"{day_long} a {time_str}"
+    return {
+        "id": str(raw.get("id") or ""),
+        "label": label,
+        "day": day_short,
+        "time": time_str,
+        "date": date_str,
+        "motifs": list(_DEFAULT_PUBLIC_MOTIFS),
+        "source": str(raw.get("source") or "sqlite"),
+        "startIso": raw.get("startIso") or raw.get("start_iso") or "",
+        "endIso": raw.get("endIso") or raw.get("end_iso") or "",
+    }
+
+
+def _format_slot_from_display(
+    slot: Any, today: Optional[datetime] = None, tenant_id: int = 1
+) -> Optional[Dict[str, Any]]:
+    """Convertit SlotDisplay (moteur vocal) → format page publique."""
+    label = getattr(slot, "label", None) or (slot.get("label") if isinstance(slot, dict) else "")
+    if not label:
+        return None
+    src = (getattr(slot, "source", None) or (slot.get("source") if isinstance(slot, dict) else "") or "sqlite").lower()
+    start_iso = getattr(slot, "start", None) or (slot.get("start_iso") if isinstance(slot, dict) else "") or ""
+    slot_id = getattr(slot, "slot_id", None)
+    if slot_id is None and isinstance(slot, dict):
+        slot_id = slot.get("slot_id") or slot.get("id")
+
+    today = today or datetime.now()
+    date_str, time_str = "", ""
+    if start_iso:
+        try:
+            dt = datetime.fromisoformat(str(start_iso).replace("Z", "+00:00"))
+            if dt.tzinfo:
+                dt = dt.replace(tzinfo=None)
+            date_str = dt.strftime("%Y-%m-%d")
+            time_str = dt.strftime("%H:%M")
+        except Exception:
+            pass
+    if not date_str and src in ("sqlite", "pg") and slot_id is not None:
+        return _format_public_slot({"id": slot_id, "date": "", "time": "", "source": src}, today=today)
+
+    today_d = today.date()
+    day_short, day_long = "", label
+    if date_str:
+        try:
+            dt = datetime.strptime(date_str, "%Y-%m-%d")
+            diff_days = (dt.date() - today_d).days
+            weekday_index = dt.weekday()
+            if diff_days == 0:
+                day_short, day_long = "Auj.", "aujourd'hui"
+            elif diff_days == 1:
+                day_short, day_long = "Dem.", "demain"
+            elif 0 < diff_days < 7:
+                day_short = _FR_WEEKDAYS_SHORT[weekday_index]
+                day_long = _FR_WEEKDAYS_LONG[weekday_index]
+            else:
+                day_short = dt.strftime("%d/%m")
+                day_long = dt.strftime("%d/%m")
+            if time_str:
+                day_long = f"{day_long} a {time_str}"
+        except Exception:
+            pass
+
+    end_iso = _end_iso_from_start(str(start_iso), tenant_id) if start_iso else ""
+
+    public_id = str(slot_id) if src in ("sqlite", "pg") and slot_id is not None else str(getattr(slot, "idx", 1) or 1)
+    return {
+        "id": public_id,
+        "label": label,
+        "day": day_short or "—",
+        "time": time_str or "—",
+        "date": date_str,
+        "motifs": list(_DEFAULT_PUBLIC_MOTIFS),
+        "source": src,
+        "startIso": str(start_iso),
+        "endIso": end_iso,
+    }
+
+
+@router.get("/slots/{slug}")
+async def get_public_slots(slug: str, count: int = 6) -> Dict[str, Any]:
+    safe_count = max(1, min(int(count or 6), 24))
+    practitioner = _try_fetch_practitioner(slug)
+    tenant_id = None
+    if practitioner and practitioner.get("tenantId"):
+        try:
+            tenant_id = int(practitioner["tenantId"])
+        except (TypeError, ValueError):
+            tenant_id = None
+    if tenant_id:
+        try:
+            from backend import tools_booking
+
+            session = SimpleNamespace(tenant_id=tenant_id, rejected_slot_starts=[])
+            display_slots = tools_booking.get_slots_for_display(
+                limit=safe_count,
+                pref=None,
+                session=session,
+            ) or []
+            now = datetime.now()
+            formatted: List[Dict[str, Any]] = []
+            for slot in display_slots:
+                item = _format_slot_from_display(slot, today=now, tenant_id=tenant_id)
+                if item:
+                    if item.get("startIso") and not item.get("endIso"):
+                        item["endIso"] = _end_iso_from_start(item["startIso"], tenant_id)
+                    formatted.append(item)
+            if formatted:
+                calendar_src = "google" if any(s.get("source") == "google" for s in formatted) else "local"
+                return {
+                    "slug": slug,
+                    "slots": formatted[:safe_count],
+                    "source": "agenda",
+                    "calendar": calendar_src,
+                }
+            return {"slug": slug, "slots": [], "source": "agenda", "calendar": "none"}
+        except Exception as exc:
+            logger.warning("public slots agenda fetch failed slug=%s tenant=%s: %s", slug, tenant_id, exc)
+    return {"slug": slug, "slots": DEMO_SLOTS[:safe_count], "source": "demo"}
+
+
+@router.get("/search")
+async def public_search(q: str = "") -> Dict[str, Any]:
+    query = _norm(q)
+    if not query:
+        return {"results": DEMO_SEARCH}
+    terms = [part for part in query.split() if part]
+    results = []
+    for item in DEMO_SEARCH:
+        haystack = _norm(" ".join([item["name"], item["specialty"], item["city"]]))
+        if all(term in haystack for term in terms):
+            results.append(item)
+    return {"results": results}
+
+
+@router.post("/analytics/event")
+async def public_analytics_event(payload: PublicAnalyticsEventRequest) -> Dict[str, Any]:
+    tenant_id = _resolve_tenant_id(payload.slug)
+    _insert_public_event(payload, tenant_id)
+    return {"ok": True}
+
+
+def _is_admin_authenticated(request: Request) -> bool:
+    """Cookie session admin OU Bearer admin valide."""
+    try:
+        from backend.routes.admin import _ADMIN_VALID_TOKENS, _get_admin_email_from_cookie
+    except Exception:
+        return False
+    try:
+        if _get_admin_email_from_cookie(request):
+            return True
+    except Exception:
+        pass
+    try:
+        auth_header = request.headers.get("authorization") or ""
+        if auth_header.lower().startswith("bearer "):
+            tok = auth_header.split(" ", 1)[1].strip()
+            if tok in _ADMIN_VALID_TOKENS:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _tenant_owns_slug(request: Request, slug: str) -> bool:
+    """Verifie que le tenant authentifie via cookie/Bearer client est bien
+    proprietaire du slug demande.
+
+    Le slug est rattache a un tenant_id via la table public_pages. On verifie
+    que `tenant_id` du JWT correspond.
+    """
+    try:
+        from backend.routes.tenant import require_tenant_auth
+    except Exception:
+        return False
+    try:
+        auth = require_tenant_auth(request)
+    except Exception:
+        return False
+    if not auth:
+        return False
+    expected_tid = auth.get("tenant_id")
+    if expected_tid is None:
+        return False
+    try:
+        slug_tid = _resolve_tenant_id(slug)
+    except Exception:
+        return False
+    if slug_tid is None:
+        return False
+    try:
+        return int(slug_tid) == int(expected_tid)
+    except Exception:
+        return False
+
+
+@router.get("/analytics/{slug}/summary")
+async def public_analytics_summary(slug: str, request: Request, days: int = 30) -> Dict[str, Any]:
+    """Resume des stats analytics publiques d'une page praticien.
+
+    Audit securite 2026-05 : auth requise pour eviter l'enumeration concurrentielle.
+    Acces autorise si :
+      - le tenant authentifie possede ce slug, OU
+      - admin authentifie (cookie/Bearer).
+    """
+    if not (_is_admin_authenticated(request) or _tenant_owns_slug(request, slug)):
+        raise HTTPException(
+            status_code=401,
+            detail="Acces refuse : authentification tenant proprietaire ou admin requise.",
+        )
+    return _analytics_summary(slug, days)
+
+
+@router.get("/sitemap.xml")
+async def public_sitemap() -> Response:
+    slugs = _load_public_slugs()
+    now = datetime.utcnow().strftime("%Y-%m-%d")
+    body = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+    ]
+    for slug in slugs:
+        body.extend(
+            [
+                "  <url>",
+                f"    <loc>https://www.uwiapp.com/p/{slug}</loc>",
+                f"    <lastmod>{now}</lastmod>",
+                "    <changefreq>daily</changefreq>",
+                "    <priority>0.8</priority>",
+                "  </url>",
+            ]
+        )
+    body.append("</urlset>")
+    return Response("\n".join(body), media_type="application/xml")
+
+
+@router.post("/book")
+async def public_book(payload: PublicBookingRequest) -> Dict[str, Any]:
+    practitioner = _try_fetch_practitioner(payload.slug) or _demo_practitioner(payload.slug)
+    tenant_id_raw = practitioner.get("tenantId")
+    tenant_id: Optional[int] = None
+    if tenant_id_raw is not None:
+        try:
+            tenant_id = int(tenant_id_raw)
+        except (TypeError, ValueError):
+            tenant_id = None
+
+    booking_status = "pending"
+    booking_reason: Optional[str] = None
+    if tenant_id:
+        ok, booking_reason = _book_real_slot(tenant_id, payload)
+        if ok:
+            booking_status = "confirmed"
+        elif booking_reason == "slot_taken":
+            raise HTTPException(
+                status_code=409,
+                detail="Ce créneau n'est plus disponible. Choisissez un autre horaire.",
+            )
+        elif booking_reason in ("technical", "permission"):
+            logger.warning(
+                "public_book real booking failed slug=%s tenant=%s reason=%s",
+                payload.slug,
+                tenant_id,
+                booking_reason,
+            )
+        else:
+            booking_status = "pending"
+
+    confirmation_id = _insert_booking(payload, str(tenant_id) if tenant_id else tenant_id_raw)
+
+    if booking_status == "confirmed":
+        patient_sms = (
+            f"Bonjour {payload.patientName.split()[0]}, votre rendez-vous avec "
+            f"{practitioner.get('name')} le {payload.slotLabel} pour {payload.motif} est confirme. UWI"
+        )
+    else:
+        patient_sms = (
+            f"Bonjour {payload.patientName.split()[0]}, votre demande de RDV avec "
+            f"{practitioner.get('name')} le {payload.slotLabel} pour {payload.motif} a bien ete recue. "
+            "Le cabinet vous confirmera dans les meilleurs delais. UWI"
+        )
+    patient_sms_sent = _send_sms(payload.patientPhone, patient_sms)
+
+    cabinet_number = os.environ.get("PUBLIC_BOOKING_CABINET_SMS_TO") or os.environ.get("OWNER_PHONE_NUMBER") or ""
+    cabinet_sms_sent = False
+    if cabinet_number:
+        cabinet_sms_sent = _send_sms(
+            cabinet_number,
+            f"UWI - Nouvelle demande RDV: {payload.patientName}, {payload.slotLabel}, {payload.motif}. Tel: {payload.patientPhone}",
+        )
+    cabinet_email_sent = _send_cabinet_email(practitioner, payload, confirmation_id)
+
+    logger.info(
+        "public_booking_created",
+        extra={
+            "confirmation_id": confirmation_id,
+            "slug": payload.slug,
+            "slot_id": payload.slotId,
+            "source": payload.source,
+            "patient_sms_sent": patient_sms_sent,
+            "cabinet_sms_sent": cabinet_sms_sent,
+            "cabinet_email_sent": cabinet_email_sent,
+            "created_at": datetime.utcnow().isoformat(),
+        },
+    )
+    _insert_public_event(
+        PublicAnalyticsEventRequest(
+            slug=payload.slug,
+            event="booking_confirmed",
+            source=payload.source,
+            slotId=payload.slotId,
+            slotLabel=payload.slotLabel,
+            motif=payload.motif,
+            metadata={"confirmationId": confirmation_id},
+        ),
+        tenant_id,
+    )
+    followup = _build_whatsapp_followup(practitioner, payload)
+    return {
+        "confirmationId": confirmation_id,
+        "slotLabel": payload.slotLabel,
+        "status": booking_status,
+        "confirmed": booking_status == "confirmed",
+        "bookingReason": booking_reason,
+        "patientSmsSent": patient_sms_sent,
+        "cabinetSmsSent": cabinet_sms_sent,
+        "cabinetEmailSent": cabinet_email_sent,
+        "followup": followup,
+    }

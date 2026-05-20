@@ -25,12 +25,14 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.engine import ENGINE, Event
 from backend.routes.voice import _get_engine
+from backend import web_chat
+from backend.web_chat import STREAMS, close_stream, ensure_stream, start_web_chat, web_chat_stream
 import backend.config as config  # Import du MODULE (pas from import)
 from backend.db import init_db, list_free_slots, count_free_slots
 from backend.tenant_routing import current_tenant_id
 from backend.deps import require_tenant_web, TenantIdWeb
 # Nouvelle architecture multi-canal
-from backend.routes import voice, whatsapp, bland, reports, admin, auth, tenant, client, stripe_webhook, pre_onboarding, checkout_embedded, public_praticien
+from backend.routes import voice, whatsapp, bland, reports, admin, auth, tenant, client, stripe_webhook, pre_onboarding, checkout_embedded, public_praticien, public_pages
 
 app = FastAPI()
 _logger = logging.getLogger(__name__)
@@ -130,6 +132,7 @@ app.include_router(stripe_webhook.router)  # POST /api/stripe/webhook
 app.include_router(pre_onboarding.router)  # POST /api/pre-onboarding/commit
 app.include_router(pre_onboarding.public_router)  # POST /api/public/leads
 app.include_router(public_praticien.router)  # GET /api/public/praticiens/{slug}
+app.include_router(public_pages.router)  # /api/public/practitioner, /slots, /book, /search (page /p/:slug)
 app.include_router(checkout_embedded.router)  # POST /create-checkout-session (embedded, pour landing /checkout)
 
 # Static frontend (optionnel - peut ne pas exister)
@@ -159,32 +162,6 @@ if os.getenv("DISABLE_SCHEDULER", "").lower() not in ("1", "true", "yes"):
         logging.warning("Scheduler setup failed (reports/suspension): %s", e)
 else:
     print("⏸️  Scheduler disabled (DISABLE_SCHEDULER=true)")
-
-# SSE Streams
-STREAMS: Dict[str, asyncio.Queue[Optional[str]]] = {}
-
-
-def now_iso() -> str:
-    return datetime.utcnow().isoformat() + "Z"
-
-
-async def push_event(conv_id: str, payload: dict) -> None:
-    q = STREAMS.get(conv_id)
-    if not q:
-        return
-    await q.put(json.dumps(payload, ensure_ascii=False))
-
-
-async def close_stream(conv_id: str) -> None:
-    q = STREAMS.get(conv_id)
-    if q:
-        await q.put(None)
-
-
-def ensure_stream(conv_id: str) -> None:
-    if conv_id not in STREAMS:
-        STREAMS[conv_id] = asyncio.Queue()
-
 
 @app.on_event("startup")
 async def startup():
@@ -1217,127 +1194,44 @@ async def chat(
     request: Request,
     tenant_id: TenantIdWeb = Depends(require_tenant_web),
 ) -> dict:
-    """Résolution tenant via Depends(require_tenant_web) — X-Tenant-Key → tenant_id, current_tenant_id déjà posé."""
-    message = (payload.get("message") or "")
-    conv_id = payload.get("conversation_id") or str(uuid.uuid4())
-    channel = payload.get("channel", "web")
+    """Résolution tenant via Depends(require_tenant_web) — X-Tenant-Key → tenant_id."""
+    return await start_web_chat(
+        tenant_id,
+        message=(payload.get("message") or ""),
+        conversation_id=payload.get("conversation_id"),
+        channel=payload.get("channel", "web"),
+    )
 
-    session = ENGINE.session_store.get_or_create(conv_id)
-    session.tenant_id = tenant_id
 
-    ensure_stream(conv_id)
+@app.post("/chat/public/{slug}")
+async def chat_public(slug: str, payload: dict) -> dict:
+    """
+    Chat page publique /p/:slug — tenant résolu par slug (public_pages), sans X-Tenant-Key.
+    """
+    tenant_id = config.DEFAULT_TENANT_ID
+    try:
+        practitioner = public_pages._try_fetch_practitioner((slug or "").strip())
+        if practitioner and practitioner.get("tenantId"):
+            tenant_id = int(practitioner["tenantId"])
+    except Exception as exc:
+        _logger.warning("chat_public tenant resolve failed slug=%s: %s", slug, exc)
+    try:
+        from backend.cabinet_profile_pg import get_tenant_id_by_public_slug
 
-    asyncio.create_task(run_engine(conv_id, message, channel))
-    return {"conversation_id": conv_id}
+        tid = get_tenant_id_by_public_slug((slug or "").strip())
+        if tid:
+            tenant_id = int(tid)
+    except Exception:
+        pass
+    result = await start_web_chat(
+        tenant_id,
+        message=(payload.get("message") or ""),
+        conversation_id=payload.get("conversation_id"),
+        channel=payload.get("channel", "web_public"),
+    )
+    return {**result, "tenant_id": tenant_id}
 
 
 @app.get("/stream/{conv_id}")
 async def stream(conv_id: str):
-    from backend.security import is_production
-
-    session = ENGINE.session_store.get(conv_id) if is_production() else ENGINE.session_store.get_or_create(conv_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Conversation introuvable")
-    tid = getattr(session, "tenant_id", None)
-    if tid is not None:
-        current_tenant_id.set(str(tid))
-    elif not is_production():
-        current_tenant_id.set(str(config.DEFAULT_TENANT_ID))
-    else:
-        raise HTTPException(status_code=404, detail="Conversation introuvable")
-
-    ensure_stream(conv_id)
-
-    async def gen():
-        q = STREAMS[conv_id]
-        while True:
-            item = await q.get()
-            if item is None:
-                break
-            yield f"data: {item}\n\n"
-
-    return StreamingResponse(gen(), media_type="text/event-stream")
-
-
-async def run_engine(conv_id: str, message: str, channel: str = "web") -> None:
-    """
-    Exécute engine.handle_message et push SSE events.
-    Suspension multi-canal : si tenant suspendu → message fixe, pas d'appel engine (zéro LLM).
-    """
-    try:
-        session = ENGINE.session_store.get_or_create(conv_id)
-        session.channel = channel
-        tenant_id = getattr(session, "tenant_id", None)
-        if tenant_id is not None:
-            from backend.billing_pg import get_tenant_suspension
-            from backend import prompts
-            is_suspended, _, suspension_mode = get_tenant_suspension(int(tenant_id))
-            if is_suspended:
-                msg = (
-                    getattr(prompts, "MSG_VOCAL_SUSPENDED_SOFT", None)
-                    if (suspension_mode or "hard").strip().lower() == "soft"
-                    else getattr(prompts, "MSG_VOCAL_SUSPENDED", prompts.MSG_VOCAL_SUSPENDED)
-                ) or getattr(prompts, "MSG_VOCAL_SUSPENDED", "Votre service est temporairement suspendu.")
-                await push_event(conv_id, {"type": "final", "text": msg, "conv_state": "START", "timestamp": now_iso()})
-                return
-
-        await push_event(conv_id, {
-            "type": "partial",
-            "text": "…",
-            "timestamp": now_iso(),
-        })
-
-        engine = _get_engine(conv_id)
-        events = engine.handle_message(conv_id, message)
-
-        for ev in events:
-            await emit_event(conv_id, ev)
-
-        # Sécurité : si aucun event "final" avec texte (ex. liste vide), le client reste sur "…"
-        if not events or not any(getattr(ev, "type", None) == "final" and (getattr(ev, "text", None) or "").strip() for ev in events):
-            from backend.engine import Event as Evt
-            from backend import prompts
-            fallback = getattr(prompts, "MSG_UNCLEAR_1", "Je n'ai pas bien compris. Pouvez-vous répéter ?")
-            await emit_event(conv_id, Evt("final", fallback, conv_state="START"))
-
-    except Exception:
-        await push_event(conv_id, {
-            "type": "error",
-            "message": "Erreur serveur, veuillez réessayer",
-            "timestamp": now_iso(),
-        })
-
-
-async def emit_event(conv_id: str, ev: Event) -> None:
-    payload: Dict[str, Any] = {
-        "type": ev.type,
-        "timestamp": now_iso(),
-    }
-
-    if ev.type == "transfer":
-        payload["reason"] = ev.transfer_reason or "unknown"
-        payload["silent"] = bool(ev.silent)
-        payload["text"] = ev.text or ""
-        payload["conv_state"] = ev.conv_state
-        await push_event(conv_id, payload)
-        # Si c'est un état terminal, on ferme immédiatement le stream
-        if payload.get("conv_state") in ["CONFIRMED", "TRANSFERRED"]:
-            await close_stream(conv_id)
-        return
-
-    if ev.type in ("partial", "final"):
-        payload["text"] = ev.text
-        payload["conv_state"] = ev.conv_state
-        await push_event(conv_id, payload)
-        # Si c'est un état terminal, on ferme immédiatement le stream
-        if payload.get("conv_state") in ["CONFIRMED", "TRANSFERRED"]:
-            await close_stream(conv_id)
-        return
-
-    if ev.type == "error":
-        payload["message"] = ev.text
-        await push_event(conv_id, payload)
-        return
-
-    payload["text"] = ev.text
-    await push_event(conv_id, payload)
+    return await web_chat_stream(conv_id)

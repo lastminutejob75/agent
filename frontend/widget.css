@@ -41,6 +41,23 @@ html, body { height: 100%; margin: 0; font-family: ui-sans-serif, system-ui, -ap
 .msg { display: flex; }
 .msg.user { justify-content: flex-end; }
 .msg.agent { justify-content: flex-start; }
+.msg.agent.hasSlots { flex-direction: column; align-items: flex-start; max-width: 88%; }
+
+.slotRow { display: flex; flex-direction: column; gap: 6px; width: 100%; margin-top: 8px; }
+.slotBtn {
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(106,167,255,0.45);
+  background: rgba(106,167,255,0.10);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.slotBtn:hover { border-color: rgba(106,167,255,0.75); background: rgba(106,167,255,0.16); }
+.slotIdx { color: var(--accent); margin-right: 6px; }
 
 .bubble {
   max-width: 78%;

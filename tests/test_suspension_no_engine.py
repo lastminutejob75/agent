@@ -9,7 +9,7 @@ import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 
 from backend.routes.voice import _compute_voice_response_sync
-from backend.main import run_engine
+from backend.web_chat import run_engine
 from backend import prompts
 
 

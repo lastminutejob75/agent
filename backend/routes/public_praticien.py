@@ -1,6 +1,8 @@
 """
-Fiche publique du praticien (lecture seule, sans auth).
+Fiche publique du praticien.
 - GET /api/public/praticiens/{slug} → profil + horaires + motifs de RDV
+- POST /api/public/praticiens/{slug}/chat → même moteur que /frontend (widget)
+- GET /api/public/praticiens/{slug}/stream/{conv_id} → SSE réponses Clara
 """
 from __future__ import annotations
 
@@ -8,20 +10,24 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 from backend.cabinet_profile_pg import (
     get_assistant_settings as pg_get_assistant_settings,
     get_booking_rules as pg_get_booking_rules,
     get_opening_hours as pg_get_opening_hours,
-    get_profile as pg_get_profile,
+    get_public_profile_bundle,
     get_tenant_id_by_public_slug,
     list_appointment_reasons as pg_list_appointment_reasons,
 )
-from backend.tenants_pg import pg_get_tenant_params
-
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/public/praticiens", tags=["public_praticien"])
+
+
+class PublicChatBody(BaseModel):
+    message: str = Field(..., min_length=1, max_length=500)
+    conversation_id: Optional[str] = None
 
 
 def _slug_safe(slug: str) -> str:
@@ -70,9 +76,9 @@ def public_get_praticien(slug: str) -> Dict[str, Any]:
     if not tenant_id:
         raise HTTPException(404, "Praticien introuvable")
 
-    profile = pg_get_profile(tenant_id) or {}
-    params_tuple = pg_get_tenant_params(tenant_id) or ({}, "pg")
-    params = params_tuple[0] if isinstance(params_tuple, tuple) else (params_tuple or {})
+    bundle = get_public_profile_bundle(tenant_id)
+    profile = bundle.get("profile") or {}
+    params = bundle.get("params") or {}
     if not isinstance(params, dict):
         params = {}
 
@@ -112,4 +118,41 @@ def public_get_praticien(slug: str) -> Dict[str, Any]:
         "pmr_access": bool(assistant.get("pmr_access") or params.get("pmr_access") or False),
         "payment_methods": assistant.get("payment_methods") or params.get("payment_methods") or "",
         "welcome_message": assistant.get("welcome_message") or params.get("welcome_message") or "",
+        "assistant_name": assistant.get("assistant_name") or params.get("assistant_name") or "Clara",
     }
+
+
+def _tenant_id_for_slug(slug: str) -> int:
+    safe = _slug_safe(slug)
+    if not safe:
+        raise HTTPException(404, "Praticien introuvable")
+    tenant_id = get_tenant_id_by_public_slug(safe)
+    if not tenant_id:
+        raise HTTPException(404, "Praticien introuvable")
+    return int(tenant_id)
+
+
+@router.post("/{slug}/chat")
+async def public_praticien_chat(slug: str, body: PublicChatBody) -> Dict[str, Any]:
+    """
+    Chat public (fiche praticien) : même engine que le widget /frontend,
+    tenant résolu par le slug public (pas de X-Tenant-Key exposé au navigateur).
+    """
+    from backend.web_chat import start_web_chat
+
+    tenant_id = _tenant_id_for_slug(slug)
+    return await start_web_chat(
+        tenant_id,
+        message=body.message.strip(),
+        conversation_id=body.conversation_id,
+        channel="web_public",
+    )
+
+
+@router.get("/{slug}/stream/{conv_id}")
+async def public_praticien_chat_stream(slug: str, conv_id: str):
+    """SSE des réponses assistant pour une conversation démarrée via POST …/chat."""
+    from backend.web_chat import web_chat_stream
+
+    tenant_id = _tenant_id_for_slug(slug)
+    return await web_chat_stream(conv_id, expected_tenant_id=tenant_id)

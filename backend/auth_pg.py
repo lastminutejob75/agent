@@ -10,14 +10,39 @@ import json
 import logging
 import os
 import secrets
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Iterator, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 
 def _pg_url() -> Optional[str]:
     return os.environ.get("DATABASE_URL") or os.environ.get("PG_TENANTS_URL")
+
+
+@contextmanager
+def _pg_auth_lookup_conn() -> Iterator[Any]:
+    """
+    Connexion Postgres pour auth sans tenant_id connu (login Google, reset mdp, /me).
+    Avec le rôle uwi_app + RLS (migration 034), les SELECT sur tenant_users sans
+    SET LOCAL app.current_tenant_id renvoient 0 ligne — il faut bypass pour ces lookups.
+    """
+    url = _pg_url()
+    if not url:
+        yield None
+        return
+    try:
+        import psycopg
+
+        with psycopg.connect(url) as conn:
+            from backend.pg_tenant_context import set_bypass_tenant_rls_on_connection
+
+            set_bypass_tenant_rls_on_connection(conn, enabled=True)
+            yield conn
+    except Exception as e:
+        logger.warning("_pg_auth_lookup_conn failed: %s", e)
+        yield None
 
 
 def _sqlite_fallback_conn():
@@ -59,11 +84,9 @@ def pg_get_tenant_user_by_email(email: str) -> Optional[Tuple[int, int, str]]:
     Lookup tenant_user par email.
     Returns (tenant_id, user_id, role) ou None.
     """
-    url = _pg_url()
-    if url:
-        try:
-            import psycopg
-            with psycopg.connect(url) as conn:
+    try:
+        with _pg_auth_lookup_conn() as conn:
+            if conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         "SELECT tenant_id, id, role FROM tenant_users WHERE email = %s",
@@ -72,8 +95,8 @@ def pg_get_tenant_user_by_email(email: str) -> Optional[Tuple[int, int, str]]:
                     row = cur.fetchone()
                     if row:
                         return (int(row[0]), int(row[1]), row[2] or "owner")
-        except Exception as e:
-            logger.warning("pg_get_tenant_user_by_email failed: %s", e)
+    except Exception as e:
+        logger.warning("pg_get_tenant_user_by_email failed: %s", e)
 
     try:
         conn = _sqlite_fallback_conn()
@@ -95,11 +118,9 @@ def pg_get_tenant_user_by_email_for_login(email: str) -> Optional[Dict[str, Any]
     Returns {"tenant_id", "user_id", "role", "password_hash"} ou None.
     password_hash nullable : si NULL → login password doit répondre 401 neutre.
     """
-    url = _pg_url()
-    if url:
-        try:
-            import psycopg
-            with psycopg.connect(url) as conn:
+    try:
+        with _pg_auth_lookup_conn() as conn:
+            if conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         "SELECT tenant_id, id AS user_id, role, password_hash FROM tenant_users WHERE email = %s LIMIT 1",
@@ -113,8 +134,8 @@ def pg_get_tenant_user_by_email_for_login(email: str) -> Optional[Dict[str, Any]
                             "role": row[2] or "owner",
                             "password_hash": row[3],
                         }
-        except Exception as e:
-            logger.warning("pg_get_tenant_user_by_email_for_login failed: %s", e)
+    except Exception as e:
+        logger.warning("pg_get_tenant_user_by_email_for_login failed: %s", e)
 
     try:
         conn = _sqlite_fallback_conn()
@@ -143,11 +164,9 @@ def pg_get_tenant_user_by_google_sub(google_sub: str) -> Optional[Dict[str, Any]
     sub = (google_sub or "").strip()
     if not sub:
         return None
-    url = _pg_url()
-    if url:
-        try:
-            import psycopg
-            with psycopg.connect(url) as conn:
+    try:
+        with _pg_auth_lookup_conn() as conn:
+            if conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
@@ -167,8 +186,8 @@ def pg_get_tenant_user_by_google_sub(google_sub: str) -> Optional[Dict[str, Any]
                             "email": (row[3] or "").strip().lower(),
                             "google_sub": row[4],
                         }
-        except Exception as e:
-            logger.warning("pg_get_tenant_user_by_google_sub failed: %s", e)
+    except Exception as e:
+        logger.warning("pg_get_tenant_user_by_google_sub failed: %s", e)
 
     try:
         conn = _sqlite_fallback_conn()
@@ -203,11 +222,9 @@ def pg_get_tenant_user_by_email_for_google(email: str) -> Optional[Dict[str, Any
     email_norm = email.strip().lower()
     if not email_norm:
         return None
-    url = _pg_url()
-    if url:
-        try:
-            import psycopg
-            with psycopg.connect(url) as conn:
+    try:
+        with _pg_auth_lookup_conn() as conn:
+            if conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
@@ -227,8 +244,8 @@ def pg_get_tenant_user_by_email_for_google(email: str) -> Optional[Dict[str, Any
                             "google_sub": row[3],
                             "email": (row[4] or email_norm).strip().lower(),
                         }
-        except Exception as e:
-            logger.warning("pg_get_tenant_user_by_email_for_google failed: %s", e)
+    except Exception as e:
+        logger.warning("pg_get_tenant_user_by_email_for_google failed: %s", e)
 
     try:
         conn = _sqlite_fallback_conn()
@@ -260,12 +277,10 @@ def pg_link_google_sub(user_id: Any, google_sub: str, google_email: str) -> str:
     Lie un tenant_user à un compte Google (google_sub, google_email, auth_provider).
     Returns: "linked" (mis à jour), "already_linked" (déjà le même sub), "conflict" (déjà lié à un autre Google).
     """
-    url = _pg_url()
-    if not url:
-        return "conflict"
     try:
-        import psycopg
-        with psycopg.connect(url) as conn:
+        with _pg_auth_lookup_conn() as conn:
+            if not conn:
+                return "conflict"
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT google_sub FROM tenant_users WHERE id = %s",
@@ -299,11 +314,9 @@ def pg_get_tenant_user_by_id(user_id: Any) -> Optional[Dict[str, Any]]:
     Lookup tenant_user par id (pour validation session).
     Returns {"tenant_id", "email", "role"} ou None.
     """
-    if _pg_url():
-        try:
-            from backend.tenants_pg import pg_tenants_connection
-
-            with pg_tenants_connection() as conn:
+    try:
+        with _pg_auth_lookup_conn() as conn:
+            if conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         "SELECT tenant_id, email, role FROM tenant_users WHERE id = %s LIMIT 1",
@@ -312,12 +325,12 @@ def pg_get_tenant_user_by_id(user_id: Any) -> Optional[Dict[str, Any]]:
                     row = cur.fetchone()
                     if row:
                         return {
-                            "tenant_id": int(row.get("tenant_id") if isinstance(row, dict) else row[0]),
-                            "email": ((row.get("email") if isinstance(row, dict) else row[1]) or "").strip(),
-                            "role": (row.get("role") if isinstance(row, dict) else row[2]) or "owner",
+                            "tenant_id": int(row[0]),
+                            "email": (row[1] or "").strip(),
+                            "role": row[2] or "owner",
                         }
-        except Exception as e:
-            logger.warning("pg_get_tenant_user_by_id failed: %s", e)
+    except Exception as e:
+        logger.warning("pg_get_tenant_user_by_id failed: %s", e)
 
     try:
         conn = _sqlite_fallback_conn()
@@ -350,7 +363,10 @@ def pg_get_tenant_user_for_impersonation(tenant_id: int) -> Optional[Dict[str, A
         return None
     try:
         import psycopg
+        from backend.pg_tenant_context import set_tenant_id_on_connection
+
         with psycopg.connect(url) as conn:
+            set_tenant_id_on_connection(conn, int(tenant_id))
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -403,7 +419,10 @@ def pg_create_tenant_user(
             import bcrypt
             password_hash = bcrypt.hashpw(password_value.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
         import psycopg
+        from backend.pg_tenant_context import set_bypass_tenant_rls_on_connection
+
         with psycopg.connect(url) as conn:
+            set_bypass_tenant_rls_on_connection(conn, enabled=True)
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -437,8 +456,9 @@ def pg_add_tenant_user(tenant_id: int, email: str, role: str = "owner") -> dict:
     if not email_norm:
         raise ValueError("Email required")
     try:
-        import psycopg
-        with psycopg.connect(url) as conn:
+        with _pg_auth_lookup_conn() as conn:
+            if not conn:
+                raise ValueError("Postgres connection failed")
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT tenant_id, email, role FROM tenant_users WHERE email = %s",
@@ -498,8 +518,9 @@ def pg_create_password_reset(email: str, ttl_minutes: int = 60) -> Optional[str]
     token_hash = hashlib.sha256(token.encode()).hexdigest()
     expires_at = _now_utc() + timedelta(minutes=ttl_minutes)
     try:
-        import psycopg
-        with psycopg.connect(url) as conn:
+        with _pg_auth_lookup_conn() as conn:
+            if not conn:
+                return None
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -531,8 +552,9 @@ def pg_get_tenant_user_for_reset_check(email: str) -> Optional[Dict[str, Any]]:
     if not email:
         return None
     try:
-        import psycopg
-        with psycopg.connect(url) as conn:
+        with _pg_auth_lookup_conn() as conn:
+            if not conn:
+                return None
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -568,8 +590,9 @@ def pg_update_password_and_clear_reset(user_id: int, password_hash: str) -> None
     if not url:
         raise ValueError("DB not configured")
     try:
-        import psycopg
-        with psycopg.connect(url) as conn:
+        with _pg_auth_lookup_conn() as conn:
+            if not conn:
+                raise ValueError("DB connection failed")
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -597,8 +620,9 @@ def pg_update_password(user_id: int, password_hash: str) -> None:
     if not url:
         raise ValueError("DB not configured")
     try:
-        import psycopg
-        with psycopg.connect(url) as conn:
+        with _pg_auth_lookup_conn() as conn:
+            if not conn:
+                raise ValueError("DB connection failed")
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -617,11 +641,9 @@ def pg_update_password(user_id: int, password_hash: str) -> None:
 
 def pg_get_must_change_password(user_id: int) -> bool:
     """Retourne True si l'utilisateur doit changer son mot de passe au prochain login."""
-    url = _pg_url()
-    if url:
-        try:
-            import psycopg
-            with psycopg.connect(url) as conn:
+    try:
+        with _pg_auth_lookup_conn() as conn:
+            if conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         "SELECT must_change_password FROM tenant_users WHERE id = %s LIMIT 1",
@@ -629,10 +651,9 @@ def pg_get_must_change_password(user_id: int) -> bool:
                     )
                     row = cur.fetchone()
                     if row:
-                        val = row[0] if not hasattr(row, "get") else row.get("must_change_password")
-                        return bool(val)
-        except Exception as e:
-            logger.debug("pg_get_must_change_password failed: %s", e)
+                        return bool(row[0])
+    except Exception as e:
+        logger.debug("pg_get_must_change_password failed: %s", e)
     # Fallback SQLite local
     try:
         conn = _sqlite_fallback_conn()
@@ -658,8 +679,9 @@ def pg_reset_password_with_token(token: str, new_password_hash: str) -> bool:
         return False
     token_hash = hashlib.sha256(token.encode()).hexdigest()
     try:
-        import psycopg
-        with psycopg.connect(url) as conn:
+        with _pg_auth_lookup_conn() as conn:
+            if not conn:
+                return False
             with conn.cursor() as cur:
                 cur.execute(
                     """

@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
+import PublicPraticienChat from "../components/PublicPraticienChat.jsx";
+import { getApiUrl } from "../lib/authConfig.js";
 
 const C = {
   bg: "#F4F7FB",
@@ -25,7 +27,12 @@ const DAYS_FR = {
 };
 const DAY_ORDER = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 
-const API_BASE = (import.meta.env.VITE_UWI_API_BASE_URL || "").replace(/\/$/, "");
+const API_BASE =
+  getApiUrl() ||
+  (import.meta.env.DEV ? "http://localhost:8000" : (import.meta.env.VITE_UWI_API_BASE_URL || "")).replace(
+    /\/$/,
+    ""
+  );
 
 function fmtHours(row) {
   if (!row || !row.is_open) return "Fermé";
@@ -220,22 +227,13 @@ export default function PublicPraticienPage() {
           </div>
         </header>
 
-        {data.welcome_message ? (
-          <div
-            style={{
-              background: C.tealSoft,
-              border: `1px solid #BFE9EC`,
-              borderRadius: 18,
-              padding: 16,
-              marginBottom: 18,
-              color: "#0E5A5F",
-              fontSize: 14,
-              lineHeight: 1.6,
-            }}
-          >
-            {data.welcome_message}
-          </div>
-        ) : null}
+        <PublicPraticienChat
+          apiBase={API_BASE}
+          slug={slug}
+          assistantName={data.assistant_name || "Clara"}
+          welcomeMessage={data.welcome_message}
+          phone={data.phone}
+        />
 
         <div className="praticien-grid" style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 18 }}>
           <section

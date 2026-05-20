@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+import re
+import sqlite3
+import unicodedata
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set
 from uuid import uuid4
 
 from backend.pg_tenant_context import set_tenant_id_on_connection
-from backend.tenants_pg import _pg_url, pg_tenants_connection
+from backend.tenants_pg import _pg_url, pg_get_tenant_params, pg_tenants_connection
 
 logger = logging.getLogger(__name__)
 
@@ -21,38 +25,176 @@ def _jsonable(value: Any):
     return value
 
 
+def _slugify(value: str) -> str:
+    raw = (value or "").strip().lower()
+    if not raw:
+        return ""
+    raw = unicodedata.normalize("NFKD", raw)
+    raw = "".join(ch for ch in raw if not unicodedata.combining(ch))
+    raw = re.sub(r"[^\w\s-]", "", raw, flags=re.ASCII)
+    return re.sub(r"[-\s]+", "-", raw).strip("-")
+
+
+def _slug_candidates(params: Dict[str, Any], tenant_name: str = "") -> Set[str]:
+    out: Set[str] = set()
+    if not isinstance(params, dict):
+        params = {}
+    for key in ("public_slug", "business_name", "practitioner_name", "name"):
+        s = _slugify(str(params.get(key) or ""))
+        if s:
+            out.add(s)
+    s = _slugify(tenant_name or "")
+    if s:
+        out.add(s)
+    return out
+
+
+def _sqlite_agent_db_path() -> Optional[Path]:
+    root = Path(__file__).resolve().parent.parent
+    for candidate in (root / "agent.db", root / "data" / "agent.db"):
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _get_tenant_id_by_public_slug_sqlite(slug: str) -> Optional[int]:
+    db_path = _sqlite_agent_db_path()
+    if not db_path:
+        return None
+    slug = (slug or "").strip().lower()
+    try:
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT t.tenant_id, t.name, tc.params_json
+            FROM tenants t
+            LEFT JOIN tenant_config tc ON tc.tenant_id = t.tenant_id
+            """
+        )
+        for row in cur.fetchall():
+            tid = int(row["tenant_id"])
+            name = row["name"] or ""
+            params: Dict[str, Any] = {}
+            if row["params_json"]:
+                try:
+                    params = json.loads(row["params_json"])
+                except Exception:
+                    params = {}
+            if slug in _slug_candidates(params, name):
+                conn.close()
+                return tid
+        conn.close()
+    except Exception as e:
+        logger.debug("get_tenant_id_by_public_slug sqlite slug=%s err=%s", slug[:80], e)
+    return None
+
+
 def get_tenant_id_by_public_slug(slug: str) -> Optional[int]:
     """Retourne le tenant_id correspondant au public_slug (page publique du cabinet)."""
     slug = (slug or "").strip().lower()
-    if not slug or not _pg_url():
+    if not slug:
         return None
+
+    if _pg_url():
+        try:
+            from backend.pg_tenant_context import set_bypass_tenant_rls_on_connection
+
+            with pg_tenants_connection() as conn:
+                set_bypass_tenant_rls_on_connection(conn, enabled=True)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT tenant_id FROM tenant_profiles WHERE LOWER(public_slug) = %s LIMIT 1",
+                        (slug,),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        return int(row.get("tenant_id") if hasattr(row, "get") else row[0])
+                    cur.execute(
+                        """
+                        SELECT tenant_id
+                        FROM tenant_config
+                        WHERE LOWER(params_json->>'public_slug') = %s
+                        LIMIT 1
+                        """,
+                        (slug,),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        return int(row.get("tenant_id") if hasattr(row, "get") else row[0])
+                    cur.execute(
+                        """
+                        SELECT t.tenant_id, t.name, tc.params_json
+                        FROM tenants t
+                        LEFT JOIN tenant_config tc ON tc.tenant_id = t.tenant_id
+                        """
+                    )
+                    for row in cur.fetchall() or []:
+                        tid = int(row.get("tenant_id") if hasattr(row, "get") else row[0])
+                        tname = row.get("name") if hasattr(row, "get") else row[1]
+                        raw_params = row.get("params_json") if hasattr(row, "get") else row[2]
+                        params = raw_params if isinstance(raw_params, dict) else {}
+                        if isinstance(raw_params, str):
+                            try:
+                                params = json.loads(raw_params)
+                            except Exception:
+                                params = {}
+                        if slug in _slug_candidates(params if isinstance(params, dict) else {}, str(tname or "")):
+                            return tid
+        except Exception as e:
+            logger.debug("get_tenant_id_by_public_slug pg slug=%s err=%s", slug[:80], e)
+
+    return _get_tenant_id_by_public_slug_sqlite(slug)
+
+
+def get_public_profile_bundle(tenant_id: int) -> Dict[str, Any]:
+    """Profil + params pour la fiche publique (PG puis fallback SQLite local)."""
+    profile = get_profile(tenant_id) or {}
+    params: Dict[str, Any] = {}
+    params_tuple = pg_get_tenant_params(tenant_id)
+    if params_tuple:
+        params = params_tuple[0] if isinstance(params_tuple, tuple) else (params_tuple or {})
+    if not isinstance(params, dict):
+        params = {}
+
+    if profile or params.get("business_name") or params.get("practitioner_name"):
+        return {"profile": profile, "params": params}
+
+    db_path = _sqlite_agent_db_path()
+    if not db_path:
+        return {"profile": profile, "params": params}
     try:
-        # Pas de set_tenant_id_on_connection : lecture cross-tenant publique.
-        with pg_tenants_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT tenant_id FROM tenant_profiles WHERE LOWER(public_slug) = %s LIMIT 1",
-                    (slug,),
-                )
-                row = cur.fetchone()
-                if row:
-                    return int(row.get("tenant_id") if hasattr(row, "get") else row[0])
-                # Fallback : scan params_json pour les anciens tenants pas encore migrés.
-                cur.execute(
-                    """
-                    SELECT tenant_id
-                    FROM tenant_config
-                    WHERE LOWER(params_json->>'public_slug') = %s
-                    LIMIT 1
-                    """,
-                    (slug,),
-                )
-                row = cur.fetchone()
-                if row:
-                    return int(row.get("tenant_id") if hasattr(row, "get") else row[0])
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT params_json FROM tenant_config WHERE tenant_id = ?",
+            (int(tenant_id),),
+        ).fetchone()
+        conn.close()
+        if row and row["params_json"]:
+            loaded = json.loads(row["params_json"])
+            if isinstance(loaded, dict):
+                params = loaded
     except Exception as e:
-        logger.debug("get_tenant_id_by_public_slug failed slug=%s err=%s", slug[:80], e)
-    return None
+        logger.debug("get_public_profile_bundle sqlite tenant_id=%s err=%s", tenant_id, e)
+
+    if not profile and params:
+        profile = {
+            "practitioner_name": params.get("practitioner_name") or params.get("primary_practitioner_name") or "",
+            "cabinet_name": params.get("business_name") or "",
+            "specialty": params.get("specialty_label") or params.get("profession") or "",
+            "phone": params.get("phone_number") or "",
+            "email": params.get("contact_email") or "",
+            "address_line": params.get("address_line1") or params.get("address") or "",
+            "postal_code": params.get("postal_code") or "",
+            "city": params.get("city") or "",
+            "website_url": params.get("website_url") or "",
+            "languages": params.get("languages") or [],
+            "accepts_new_patients": params.get("accepts_new_patients", True),
+            "practitioner_photo_url": params.get("practitioner_photo_url") or "",
+        }
+    return {"profile": profile, "params": params}
 
 
 def get_profile(tenant_id: int) -> Optional[Dict[str, Any]]:

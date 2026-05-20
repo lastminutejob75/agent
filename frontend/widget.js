@@ -53,15 +53,32 @@
       .replaceAll("'", "&#039;");
   }
 
-  function addMessage(role, text) {
+  function addMessage(role, text, slots) {
     const wrapper = document.createElement("div");
-    wrapper.className = `msg ${role}`;
+    wrapper.className = `msg ${role} ${role === "agent" && slots?.length ? "hasSlots" : ""}`;
 
     const bubble = document.createElement("div");
     bubble.className = "bubble";
     bubble.innerHTML = escapeHtml(text).replaceAll("\n", "<br>");
 
     wrapper.appendChild(bubble);
+
+    if (role === "agent" && Array.isArray(slots) && slots.length && !input.disabled) {
+      const row = document.createElement("div");
+      row.className = "slotRow";
+      for (const slot of slots) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "slotBtn";
+        btn.innerHTML = `<span class="slotIdx">${slot.index}.</span> ${escapeHtml(slot.label)}`;
+        btn.addEventListener("click", () => {
+          sendMessage(String(slot.index));
+        });
+        row.appendChild(btn);
+      }
+      wrapper.appendChild(row);
+    }
+
     chat.appendChild(wrapper);
     chat.scrollTop = chat.scrollHeight;
   }
@@ -182,7 +199,7 @@
     if (type === "final") {
       showTyping(false);
       clearPartial();
-      addMessage("agent", payload.text || "");
+      addMessage("agent", payload.text || "", payload.slots);
       
       // Si état terminal => verrouiller l'UI
       if (payload.conv_state === "CONFIRMED" || payload.conv_state === "TRANSFERRED") {
@@ -203,7 +220,7 @@
         return;
       }
 
-      if (payload.text) addMessage("agent", payload.text);
+      if (payload.text) addMessage("agent", payload.text, payload.slots);
       else addMessage("agent", "Transfert…");
       
       // Si état terminal => verrouiller l'UI
