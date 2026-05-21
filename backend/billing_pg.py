@@ -275,11 +275,29 @@ def tenant_id_by_stripe_customer_id(stripe_customer_id: str) -> Optional[int]:
 
 # --- Suspension past_due (V1) ---
 
+_SUSPENSION_CACHE: dict = {}
+_SUSPENSION_CACHE_TTL = 60.0
+
+
 def get_tenant_suspension(tenant_id: int) -> tuple[bool, Optional[str], str]:
     """
     Retourne (is_suspended, suspension_reason, suspension_mode) pour le tenant.
     mode = "hard" | "soft". Si force_active_override et force_active_until > now(), on considère non suspendu.
     """
+    import time
+
+    tid = int(tenant_id)
+    now = time.time()
+    hit = _SUSPENSION_CACHE.get(tid)
+    if hit and (now - hit[0]) < _SUSPENSION_CACHE_TTL:
+        return hit[1]
+
+    result = _get_tenant_suspension_uncached(tid)
+    _SUSPENSION_CACHE[tid] = (now, result)
+    return result
+
+
+def _get_tenant_suspension_uncached(tenant_id: int) -> tuple[bool, Optional[str], str]:
     url = _pg_url()
     if not url:
         return (False, None, "hard")

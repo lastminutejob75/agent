@@ -176,17 +176,10 @@ def _is_greeting_only(message: str) -> bool:
     return bool(_GREETING_ONLY.match((message or "").strip()))
 
 
-async def _final_reply_from_engine(conv_id: str, message: str, channel: str) -> Optional[str]:
-    """Exécute le moteur de façon synchrone et renvoie le texte final (salutations, etc.)."""
-    await run_engine(conv_id, message, channel)
-    session = ENGINE.session_store.get(conv_id)
-    if session and getattr(session, "messages", None):
-        for msg in reversed(list(session.messages)):
-            role = getattr(msg, "role", None) or (msg.get("role") if isinstance(msg, dict) else None)
-            text = getattr(msg, "text", None) or (msg.get("text") if isinstance(msg, dict) else None)
-            if role == "agent" and (text or "").strip():
-                return str(text).strip()
-    return None
+def _greeting_reply(channel: str) -> str:
+    from backend import prompts
+
+    return prompts.get_message("salutation", channel=channel) or "Bonjour ! Comment puis-je vous aider ?"
 
 
 async def start_web_chat(
@@ -200,22 +193,20 @@ async def start_web_chat(
     conv_id = (conversation_id or "").strip() or str(uuid.uuid4())
     tid = int(tenant_id)
     current_tenant_id.set(str(tid))
-
-    session = ENGINE.session_store.get_or_create(conv_id)
-    session.tenant_id = tid
     _register_web_conv_tenant(tid, conv_id)
-
     ensure_stream(conv_id)
+
     msg = (message or "").strip()
     out: Dict[str, Any] = {"conversation_id": conv_id}
 
-    # Salutation : réponse immédiate dans le POST (comme le widget ressenti) + events SSE
+    # Salutation : réponse HTTP immédiate (sans PG/session), persistance + SSE en arrière-plan
     if msg and _is_greeting_only(msg):
-        reply = await _final_reply_from_engine(conv_id, msg, channel)
-        if reply:
-            out["reply"] = reply
+        out["reply"] = _greeting_reply(channel)
+        asyncio.create_task(run_engine(conv_id, msg, channel))
         return out
 
+    session = ENGINE.session_store.get_or_create(conv_id)
+    session.tenant_id = tid
     asyncio.create_task(run_engine(conv_id, msg, channel))
     return out
 

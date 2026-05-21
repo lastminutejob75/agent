@@ -28,6 +28,10 @@ router = APIRouter(prefix="/api/public/praticiens", tags=["public_praticien"])
 class PublicChatBody(BaseModel):
     message: str = Field(..., min_length=1, max_length=500)
     conversation_id: Optional[str] = None
+    tenant_id: Optional[int] = Field(None, description="Hint depuis la fiche (évite une résolution slug→tenant à chaque message)")
+
+
+_SLUG_TENANT_ID: Dict[str, int] = {}
 
 
 def _slug_safe(slug: str) -> str:
@@ -97,8 +101,11 @@ def public_get_praticien(slug: str) -> Dict[str, Any]:
     if accepts_new_patients is None:
         accepts_new_patients = rules.get("accepts_new_patients", True)
 
+    _SLUG_TENANT_ID[safe] = int(tenant_id)
+
     return {
         "slug": safe,
+        "tenant_id": int(tenant_id),
         "cabinet_name": cabinet_name,
         "practitioner_name": practitioner_name,
         "specialty": profile.get("specialty") or params.get("specialty_label") or "",
@@ -122,13 +129,23 @@ def public_get_praticien(slug: str) -> Dict[str, Any]:
     }
 
 
-def _tenant_id_for_slug(slug: str) -> int:
+def _tenant_id_for_slug(slug: str, hint: Optional[int] = None) -> int:
     safe = _slug_safe(slug)
     if not safe:
         raise HTTPException(404, "Praticien introuvable")
+    cached = _SLUG_TENANT_ID.get(safe)
+    if cached is not None:
+        if hint is None or int(hint) == int(cached):
+            return int(cached)
+    if hint is not None and int(hint) > 0:
+        resolved = get_tenant_id_by_public_slug(safe)
+        if resolved and int(resolved) == int(hint):
+            _SLUG_TENANT_ID[safe] = int(resolved)
+            return int(resolved)
     tenant_id = get_tenant_id_by_public_slug(safe)
     if not tenant_id:
         raise HTTPException(404, "Praticien introuvable")
+    _SLUG_TENANT_ID[safe] = int(tenant_id)
     return int(tenant_id)
 
 
@@ -140,7 +157,7 @@ async def public_praticien_chat(slug: str, body: PublicChatBody) -> Dict[str, An
     """
     from backend.web_chat import start_web_chat
 
-    tenant_id = _tenant_id_for_slug(slug)
+    tenant_id = _tenant_id_for_slug(slug, body.tenant_id)
     return await start_web_chat(
         tenant_id,
         message=body.message.strip(),

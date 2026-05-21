@@ -66,6 +66,9 @@ const inputExamples = [
   "Ex : Quels documents dois-je apporter ?",
 ];
 
+const GREETING_ONLY = /^(bonjour|salut|bonsoir|hello|coucou|bonne journ[ée]e|bonne soir[ée]e)[\s!.,?]*$/iu;
+const INSTANT_GREETING_REPLY = "Bonjour ! Comment puis-je vous aider ?";
+
 const safeArray = (value) => (Array.isArray(value) ? value : []);
 const norm = (value) => String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 const addr = (p) => [p?.address?.street, [p?.address?.postalCode, p?.address?.city].filter(Boolean).join(" ")].filter(Boolean).join(", ");
@@ -384,6 +387,7 @@ export default function PagePubliquePraticienUWI() {
   const sourceRef = useRef("direct");
   const vapiRef = useRef(null);
   const conversationIdRef = useRef(null);
+  const tenantIdRef = useRef(null);
   const eventSourceRef = useRef(null);
   const streamConversationIdRef = useRef(null);
   const partialMessageIdRef = useRef(null);
@@ -438,6 +442,8 @@ export default function PagePubliquePraticienUWI() {
           fetchJson("/api/public/search?q="),
         ]);
         if (cancelled) return;
+        const tid = practitionerData?.tenantId ?? practitionerData?.tenant_id;
+        if (tid != null && tid !== "") tenantIdRef.current = Number(tid) || null;
         setPractitioner({ ...defaultPractitioner, ...practitionerData, slug, canonicalUrl: practitionerData.canonicalUrl || `https://www.uwiapp.com/p/${slug}` });
         setSlots(safeArray(slotData.slots).length ? slotData.slots : defaultSlots);
         setSearchData(safeArray(searchDataResponse.results).length ? searchDataResponse.results : defaultSearchData);
@@ -642,21 +648,20 @@ export default function PagePubliquePraticienUWI() {
     if (!clean) return;
     const convId = ensureConversationId();
     push([{ from: "patient", text: clean }]);
-    setChatPending(true);
     trackPublicEvent({
       slug,
       event: "chat_message_sent",
       source: sourceRef.current,
       metadata: { length: clean.length },
     });
-    try {
-      const response = await fetchJson(`/api/public/praticiens/${encodeURIComponent(slug)}/chat`, {
-        method: "POST",
-        body: JSON.stringify({
-          message: clean,
-          conversation_id: convId,
-        }),
-      });
+
+    const chatPayload = {
+      message: clean,
+      conversation_id: convId,
+      ...(tenantIdRef.current ? { tenant_id: tenantIdRef.current } : {}),
+    };
+
+    const applyChatResponse = (response) => {
       const conversationId = String(response?.conversation_id || convId);
       if (conversationId) {
         conversationIdRef.current = conversationId;
@@ -667,6 +672,36 @@ export default function PagePubliquePraticienUWI() {
         clearPartialMessage();
         push([{ from: "clara", text: String(response.reply) }]);
       }
+    };
+
+    if (GREETING_ONLY.test(clean)) {
+      setChatPending(false);
+      clearPartialMessage();
+      push([{ from: "clara", text: INSTANT_GREETING_REPLY }]);
+      try {
+        const response = await fetchJson(`/api/public/praticiens/${encodeURIComponent(slug)}/chat`, {
+          method: "POST",
+          body: JSON.stringify(chatPayload),
+        });
+        const conversationId = String(response?.conversation_id || convId);
+        if (conversationId) {
+          conversationIdRef.current = conversationId;
+          ensureStream(conversationId);
+        }
+      } catch {
+        // Réponse déjà affichée côté client.
+      }
+      return;
+    }
+
+    setChatPending(true);
+    try {
+      applyChatResponse(
+        await fetchJson(`/api/public/praticiens/${encodeURIComponent(slug)}/chat`, {
+          method: "POST",
+          body: JSON.stringify(chatPayload),
+        })
+      );
     } catch {
       setChatPending(false);
       clearPartialMessage();
