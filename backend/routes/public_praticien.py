@@ -17,9 +17,9 @@ from backend.cabinet_profile_pg import (
     get_booking_rules as pg_get_booking_rules,
     get_opening_hours as pg_get_opening_hours,
     get_public_profile_bundle,
-    get_tenant_id_by_public_slug,
     list_appointment_reasons as pg_list_appointment_reasons,
 )
+from backend.public_slug_cache import remember_slug_tenant, tenant_id_for_slug
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/public/praticiens", tags=["public_praticien"])
@@ -29,9 +29,6 @@ class PublicChatBody(BaseModel):
     message: str = Field(..., min_length=1, max_length=500)
     conversation_id: Optional[str] = None
     tenant_id: Optional[int] = Field(None, description="Hint depuis la fiche (évite une résolution slug→tenant à chaque message)")
-
-
-_SLUG_TENANT_ID: Dict[str, int] = {}
 
 
 def _slug_safe(slug: str) -> str:
@@ -76,10 +73,11 @@ def public_get_praticien(slug: str) -> Dict[str, Any]:
     if not safe:
         raise HTTPException(404, "Praticien introuvable")
 
-    tenant_id = get_tenant_id_by_public_slug(safe)
+    tenant_id = tenant_id_for_slug(safe)
     if not tenant_id:
         raise HTTPException(404, "Praticien introuvable")
 
+    remember_slug_tenant(safe, int(tenant_id))
     bundle = get_public_profile_bundle(tenant_id)
     profile = bundle.get("profile") or {}
     params = bundle.get("params") or {}
@@ -100,8 +98,6 @@ def public_get_praticien(slug: str) -> Dict[str, Any]:
     accepts_new_patients = profile.get("accepts_new_patients")
     if accepts_new_patients is None:
         accepts_new_patients = rules.get("accepts_new_patients", True)
-
-    _SLUG_TENANT_ID[safe] = int(tenant_id)
 
     return {
         "slug": safe,
@@ -133,19 +129,9 @@ def _tenant_id_for_slug(slug: str, hint: Optional[int] = None) -> int:
     safe = _slug_safe(slug)
     if not safe:
         raise HTTPException(404, "Praticien introuvable")
-    cached = _SLUG_TENANT_ID.get(safe)
-    if cached is not None:
-        if hint is None or int(hint) == int(cached):
-            return int(cached)
-    if hint is not None and int(hint) > 0:
-        resolved = get_tenant_id_by_public_slug(safe)
-        if resolved and int(resolved) == int(hint):
-            _SLUG_TENANT_ID[safe] = int(resolved)
-            return int(resolved)
-    tenant_id = get_tenant_id_by_public_slug(safe)
+    tenant_id = tenant_id_for_slug(safe, hint)
     if not tenant_id:
         raise HTTPException(404, "Praticien introuvable")
-    _SLUG_TENANT_ID[safe] = int(tenant_id)
     return int(tenant_id)
 
 

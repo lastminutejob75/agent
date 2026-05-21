@@ -288,6 +288,9 @@ def _try_fetch_practitioner_from_cabinet_profile(slug: str) -> Optional[Dict[str
         tid = get_tenant_id_by_public_slug(slug)
         if not tid:
             return None
+        from backend.public_slug_cache import remember_slug_tenant
+
+        remember_slug_tenant(slug, int(tid))
         bundle = get_public_profile_bundle(int(tid))
         profile = bundle.get("profile") or {}
         params = bundle.get("params") if isinstance(bundle.get("params"), dict) else {}
@@ -636,16 +639,33 @@ def _load_public_slugs() -> List[str]:
     return slugs
 
 
+_PRACTITIONER_HTTP_CACHE: Dict[str, tuple] = {}
+_PRACTITIONER_CACHE_TTL = 300.0
+
+
 @router.get("/practitioner/{slug}")
 async def get_public_practitioner(slug: str, requireExists: bool = Query(False)) -> Dict[str, Any]:
+    import time
+
+    cache_key = f"{slug}:{bool(requireExists)}"
+    hit = _PRACTITIONER_HTTP_CACHE.get(cache_key)
+    if hit and (time.time() - hit[0]) < _PRACTITIONER_CACHE_TTL:
+        return hit[1]
+
     practitioner = _try_fetch_practitioner(slug)
     if practitioner:
-        return {**practitioner, "source": "tenant"}
+        out = {**practitioner, "source": "tenant"}
+        _PRACTITIONER_HTTP_CACHE[cache_key] = (time.time(), out)
+        return out
     if slug == DEMO_PRACTITIONER["slug"]:
-        return {**_demo_practitioner(slug), "source": "demo"}
+        out = {**_demo_practitioner(slug), "source": "demo"}
+        _PRACTITIONER_HTTP_CACHE[cache_key] = (time.time(), out)
+        return out
     if requireExists:
         raise HTTPException(status_code=404, detail="public_practitioner_not_found")
-    return {**_demo_practitioner(slug), "source": "demo"}
+    out = {**_demo_practitioner(slug), "source": "demo"}
+    _PRACTITIONER_HTTP_CACHE[cache_key] = (time.time(), out)
+    return out
 
 
 _DEFAULT_PUBLIC_MOTIFS = ["Consultation", "Suivi", "Premiere consultation", "Renouvellement"]
@@ -841,46 +861,77 @@ def _format_slot_from_display(
     }
 
 
+_SLOTS_HTTP_CACHE: Dict[str, tuple] = {}
+_SLOTS_CACHE_TTL = 120.0
+_SLOTS_FETCH_TIMEOUT = 8.0
+
+
+def _fetch_public_slots_payload(tenant_id: int, slug: str, safe_count: int) -> Dict[str, Any]:
+    """Récupère et formate les créneaux (Google/local) — exécuté dans un thread."""
+    from backend import tools_booking
+
+    session = SimpleNamespace(tenant_id=tenant_id, rejected_slot_starts=[])
+    display_slots = tools_booking.get_slots_for_display(
+        limit=safe_count,
+        pref=None,
+        session=session,
+    ) or []
+    now = datetime.now()
+    formatted: List[Dict[str, Any]] = []
+    for slot in display_slots:
+        item = _format_slot_from_display(slot, today=now, tenant_id=tenant_id)
+        if item:
+            if item.get("startIso") and not item.get("endIso"):
+                item["endIso"] = _end_iso_from_start(item["startIso"], tenant_id)
+            formatted.append(item)
+    if formatted:
+        calendar_src = "google" if any(s.get("source") == "google" for s in formatted) else "local"
+        return {
+            "slug": slug,
+            "slots": formatted[:safe_count],
+            "source": "agenda",
+            "calendar": calendar_src,
+        }
+    return {"slug": slug, "slots": [], "source": "agenda", "calendar": "none"}
+
+
 @router.get("/slots/{slug}")
 async def get_public_slots(slug: str, count: int = 6) -> Dict[str, Any]:
-    safe_count = max(1, min(int(count or 6), 24))
-    practitioner = _try_fetch_practitioner(slug)
-    tenant_id = None
-    if practitioner and practitioner.get("tenantId"):
-        try:
-            tenant_id = int(practitioner["tenantId"])
-        except (TypeError, ValueError):
-            tenant_id = None
-    if tenant_id:
-        try:
-            from backend import tools_booking
+    import asyncio
+    import time
 
-            session = SimpleNamespace(tenant_id=tenant_id, rejected_slot_starts=[])
-            display_slots = tools_booking.get_slots_for_display(
-                limit=safe_count,
-                pref=None,
-                session=session,
-            ) or []
-            now = datetime.now()
-            formatted: List[Dict[str, Any]] = []
-            for slot in display_slots:
-                item = _format_slot_from_display(slot, today=now, tenant_id=tenant_id)
-                if item:
-                    if item.get("startIso") and not item.get("endIso"):
-                        item["endIso"] = _end_iso_from_start(item["startIso"], tenant_id)
-                    formatted.append(item)
-            if formatted:
-                calendar_src = "google" if any(s.get("source") == "google" for s in formatted) else "local"
-                return {
-                    "slug": slug,
-                    "slots": formatted[:safe_count],
-                    "source": "agenda",
-                    "calendar": calendar_src,
-                }
-            return {"slug": slug, "slots": [], "source": "agenda", "calendar": "none"}
-        except Exception as exc:
-            logger.warning("public slots agenda fetch failed slug=%s tenant=%s: %s", slug, tenant_id, exc)
-    return {"slug": slug, "slots": DEMO_SLOTS[:safe_count], "source": "demo"}
+    from backend.public_slug_cache import tenant_id_for_slug
+
+    safe_count = max(1, min(int(count or 6), 24))
+    cache_key = f"{slug}:{safe_count}"
+    hit = _SLOTS_HTTP_CACHE.get(cache_key)
+    if hit and (time.time() - hit[0]) < _SLOTS_CACHE_TTL:
+        return hit[1]
+
+    tenant_id = tenant_id_for_slug(slug)
+    if not tenant_id:
+        out = {"slug": slug, "slots": DEMO_SLOTS[:safe_count], "source": "demo"}
+        _SLOTS_HTTP_CACHE[cache_key] = (time.time(), out)
+        return out
+
+    try:
+        out = await asyncio.wait_for(
+            asyncio.to_thread(_fetch_public_slots_payload, int(tenant_id), slug, safe_count),
+            timeout=_SLOTS_FETCH_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("public slots timeout slug=%s tenant=%s", slug, tenant_id)
+        stale = hit[1] if hit else None
+        if stale and stale.get("slots"):
+            stale = {**stale, "stale": True}
+            return stale
+        out = {"slug": slug, "slots": DEMO_SLOTS[:safe_count], "source": "demo", "pending": True}
+    except Exception as exc:
+        logger.warning("public slots failed slug=%s tenant=%s: %s", slug, tenant_id, exc)
+        out = {"slug": slug, "slots": DEMO_SLOTS[:safe_count], "source": "demo"}
+
+    _SLOTS_HTTP_CACHE[cache_key] = (time.time(), out)
+    return out
 
 
 @router.get("/search")

@@ -432,37 +432,63 @@ export default function PagePubliquePraticienUWI() {
 
   useEffect(() => {
     let cancelled = false;
-    async function loadPublicData() {
+    setSlots(defaultSlots);
+    setSlotsLoading(true);
+
+    async function loadPractitioner() {
       setDataStatus("loading");
-      setSlotsLoading(true);
       try {
-        const [practitionerData, slotData, searchDataResponse] = await Promise.all([
-          fetchJson(`/api/public/practitioner/${encodeURIComponent(slug)}?requireExists=1`),
-          fetchJson(`/api/public/slots/${encodeURIComponent(slug)}?count=12`),
-          fetchJson("/api/public/search?q="),
-        ]);
+        const practitionerData = await fetchJson(
+          `/api/public/practitioner/${encodeURIComponent(slug)}?requireExists=1`
+        );
         if (cancelled) return;
         const tid = practitionerData?.tenantId ?? practitionerData?.tenant_id;
         if (tid != null && tid !== "") tenantIdRef.current = Number(tid) || null;
-        setPractitioner({ ...defaultPractitioner, ...practitionerData, slug, canonicalUrl: practitionerData.canonicalUrl || `https://www.uwiapp.com/p/${slug}` });
-        setSlots(safeArray(slotData.slots).length ? slotData.slots : defaultSlots);
-        setSearchData(safeArray(searchDataResponse.results).length ? searchDataResponse.results : defaultSearchData);
+        setPractitioner({
+          ...defaultPractitioner,
+          ...practitionerData,
+          slug,
+          canonicalUrl: practitionerData.canonicalUrl || `https://www.uwiapp.com/p/${slug}`,
+        });
         setDataStatus("ready");
       } catch (error) {
         if (cancelled) return;
         if (String(error?.message || "").includes("404")) {
           setDataStatus("not_found");
+          setSlotsLoading(false);
           return;
         }
         setPractitioner({ ...defaultPractitioner, slug, canonicalUrl: `https://www.uwiapp.com/p/${slug}` });
-        setSlots(defaultSlots);
-        setSearchData(defaultSearchData);
         setDataStatus("fallback");
+      }
+    }
+
+    async function loadSlots() {
+      try {
+        const slotData = await fetchJson(`/api/public/slots/${encodeURIComponent(slug)}?count=12`);
+        if (cancelled) return;
+        if (safeArray(slotData.slots).length) setSlots(slotData.slots);
+      } catch {
+        // Garde les créneaux démo déjà affichés.
       } finally {
         if (!cancelled) setSlotsLoading(false);
       }
     }
-    loadPublicData();
+
+    async function loadSearch() {
+      try {
+        const searchDataResponse = await fetchJson("/api/public/search?q=");
+        if (cancelled) return;
+        if (safeArray(searchDataResponse.results).length) setSearchData(searchDataResponse.results);
+      } catch {
+        // non bloquant
+      }
+    }
+
+    void loadPractitioner();
+    void loadSlots();
+    void loadSearch();
+
     return () => {
       cancelled = true;
     };
