@@ -73,6 +73,9 @@ const INSTANT_BOOKING_REPLY = "Quel est votre nom et prénom ?";
 const NAME_ASK_HINT = /nom\s+et\s+pr[ée]nom/i;
 const LOOKS_LIKE_NAME = /^[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ' -]{1,58}$/u;
 const INSTANT_PREF_REPLY = "Quel créneau préférez-vous ? (ex : lundi matin, mardi après-midi)";
+const PREF_ASK_HINT = /cr[ée]neau\s+pr[ée]f[ée]r/i;
+const INSTANT_PREF_AFTERNOON = "D'accord, plutôt l'après-midi.";
+const INSTANT_PREF_MORNING = "D'accord, plutôt le matin.";
 
 const safeArray = (value) => (Array.isArray(value) ? value : []);
 const norm = (value) => String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -683,10 +686,25 @@ export default function PagePubliquePraticienUWI() {
     eventSourceRef.current = stream;
   }, [handleStreamPayload, slug]);
 
+  const inferPrefInstantReply = useCallback((value) => {
+    const t = norm(value);
+    if (!t) return null;
+    if (/\b(apres|apr[eè]s)[- ]?midi\b/.test(t) || (/\bmercredi\b/.test(t) && /\b(apres|apr[eè]s|midi)\b/.test(t))) {
+      return INSTANT_PREF_AFTERNOON;
+    }
+    if (/\bmatin\b/.test(t) && !/\b(apres|apr[eè]s)\b/.test(t)) return INSTANT_PREF_MORNING;
+    return null;
+  }, []);
+
   const sendChatMessage = useCallback(async (text) => {
     const clean = String(text || "").trim();
     if (!clean) return;
     const convId = ensureConversationId();
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+      streamConversationIdRef.current = null;
+    }
     push([{ from: "patient", text: clean }]);
     trackPublicEvent({
       slug,
@@ -720,13 +738,21 @@ export default function PagePubliquePraticienUWI() {
       push([{ from: "clara", text: replyText }]);
     };
 
+    const postChat = async () =>
+      fetchJson(`/api/public/praticiens/${encodeURIComponent(slug)}/chat`, {
+        method: "POST",
+        body: JSON.stringify(chatPayload),
+      });
+
     const syncChatInBackground = async (instantText) => {
       if (instantText) showInstantReply(instantText);
       try {
-        const response = await fetchJson(`/api/public/praticiens/${encodeURIComponent(slug)}/chat`, {
-          method: "POST",
-          body: JSON.stringify(chatPayload),
-        });
+        let response;
+        try {
+          response = await postChat();
+        } catch {
+          response = await postChat();
+        }
         const conversationId = String(response?.conversation_id || convId);
         if (conversationId) {
           conversationIdRef.current = conversationId;
@@ -768,20 +794,40 @@ export default function PagePubliquePraticienUWI() {
       return;
     }
 
+    const lastClaraAsksPref = () => {
+      for (let i = messages.length - 1; i >= 0; i -= 1) {
+        const m = messages[i];
+        if (m.from === "clara" || m.from === "clara_partial") {
+          return PREF_ASK_HINT.test(String(m.text || ""));
+        }
+        if (m.from === "patient") break;
+      }
+      return false;
+    };
+
+    if (lastClaraAsksPref()) {
+      const prefInstant = inferPrefInstantReply(clean);
+      if (prefInstant) {
+        void syncChatInBackground(prefInstant);
+        return;
+      }
+    }
+
     setChatPending(true);
     try {
-      applyChatResponse(
-        await fetchJson(`/api/public/praticiens/${encodeURIComponent(slug)}/chat`, {
-          method: "POST",
-          body: JSON.stringify(chatPayload),
-        })
-      );
+      let response;
+      try {
+        response = await postChat();
+      } catch {
+        response = await postChat();
+      }
+      applyChatResponse(response);
     } catch {
       setChatPending(false);
       clearPartialMessage();
       push([{ from: "clara", text: "Impossible de contacter l'agent pour le moment. Merci de reessayer." }]);
     }
-  }, [clearPartialMessage, ensureConversationId, ensureStream, messages, push, slug]);
+  }, [clearPartialMessage, ensureConversationId, ensureStream, inferPrefInstantReply, messages, push, slug]);
 
   const ask = useCallback((text) => {
     void sendChatMessage(text);

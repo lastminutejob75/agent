@@ -67,8 +67,9 @@ async def close_stream(conv_id: str) -> None:
         await q.put(None)
 
 
-def ensure_stream(conv_id: str) -> None:
-    if conv_id not in STREAMS:
+def ensure_stream(conv_id: str, *, reset: bool = False) -> None:
+    """Crée ou réinitialise la file SSE (évite de rejouer d'anciens messages au reconnect)."""
+    if reset or conv_id not in STREAMS:
         STREAMS[conv_id] = asyncio.Queue()
 
 
@@ -216,6 +217,14 @@ def _touch_web_session(conv_id: str, tenant_id: int, *, state: Optional[str] = N
         session.state = state
 
 
+def _store_extracted_name(conv_id: str, tenant_id: int, name: str) -> None:
+    """Enregistre le nom en QUALIF_NAME (le moteur enchaîne vers QUALIF_PREF)."""
+    _touch_web_session(conv_id, tenant_id, state="QUALIF_NAME")
+    session = _session_from_memory(conv_id)
+    if session is not None and name:
+        session.qualif_data.name = name.strip().title()
+
+
 def _instant_reply(message: str, channel: str, conv_id: Optional[str] = None) -> Optional[str]:
     """Réponses synchrones (sans PG) : salutation, début RDV, nom reçu en QUALIF_NAME."""
     msg = (message or "").strip()
@@ -223,6 +232,7 @@ def _instant_reply(message: str, channel: str, conv_id: Optional[str] = None) ->
         return None
     if _is_greeting_only(msg):
         return _greeting_reply(channel)
+    from backend.entity_extraction import infer_preference_from_context
     from backend.start_router import is_booking_start_message
     from backend import guards, prompts
 
@@ -238,6 +248,18 @@ def _instant_reply(message: str, channel: str, conv_id: Optional[str] = None) ->
                     prompts.get_qualif_question("pref", channel=channel)
                     or "Quel créneau préférez-vous ? (ex : lundi matin, mardi après-midi)"
                 )
+        if session and getattr(session, "state", None) == "QUALIF_PREF":
+            time_pref = guards.infer_time_preference(msg)
+            plausible = guards.infer_preference_plausible(msg)
+            afternoon = time_pref == "afternoon" or plausible == "afternoon"
+            morning = time_pref == "morning" or plausible == "morning"
+            if afternoon:
+                return prompts.VOCAL_PREF_CONFIRM_APRES_MIDI
+            if morning:
+                return prompts.VOCAL_PREF_CONFIRM_MATIN
+            inferred = infer_preference_from_context(msg) if msg else None
+            if inferred:
+                return prompts.format_inference_confirmation(inferred)
     return None
 
 
@@ -253,7 +275,7 @@ async def start_web_chat(
     tid = int(tenant_id)
     current_tenant_id.set(str(tid))
     _register_web_conv_tenant(tid, conv_id)
-    ensure_stream(conv_id)
+    ensure_stream(conv_id, reset=True)
 
     msg = (message or "").strip()
     out: Dict[str, Any] = {"conversation_id": conv_id}
@@ -271,7 +293,7 @@ async def start_web_chat(
             if mem and getattr(mem, "state", None) == "QUALIF_NAME":
                 extracted, reject = guards.extract_name_from_speech(msg)
                 if extracted is not None and not reject:
-                    _touch_web_session(conv_id, tid, state="QUALIF_PREF")
+                    _store_extracted_name(conv_id, tid, extracted)
 
     asyncio.create_task(run_engine(conv_id, msg, channel))
     return out
