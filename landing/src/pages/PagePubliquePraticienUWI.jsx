@@ -66,7 +66,23 @@ const inputExamples = [
   "Ex : Quels documents dois-je apporter ?",
 ];
 
-const GREETING_ONLY = /^(bonjour|salut|bonsoir|hello|coucou|bonne journ[ée]e|bonne soir[ée]e)[\s!.,?]*$/iu;
+const GREETING_TOKENS = new Set([
+  "bjr", "bjour", "slt", "bsr", "bonjour", "salut", "bonsoir",
+  "hello", "hi", "hey", "coucou", "cc", "yo",
+]);
+const GREETING_ONLY = /^(bjr|bjour|slt|bsr|bonjour|salut|bonsoir|hello|hi|hey|coucou|cc|yo|bonne journ[ée]e|bonne soir[ée]e)[\s!.,?]*$/iu;
+
+function isGreetingOnly(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return false;
+  if (GREETING_ONLY.test(raw)) return true;
+  const n = norm(raw).replace(/[^\w\s]/g, "").trim();
+  if (!n) return false;
+  if (GREETING_ONLY.test(n)) return true;
+  if (n === "bonne journee" || n === "bonne soiree") return true;
+  const parts = n.split(/\s+/);
+  return parts.length === 1 && GREETING_TOKENS.has(parts[0]);
+}
 const INSTANT_GREETING_REPLY = "Bonjour ! Comment puis-je vous aider ?";
 const BOOKING_START = /\b(je\s+voudrais?|je\s+veux|je\s+souhaite|prendre\s+un\s+rendez|prendre\s+un\s+rdv|un\s+rdv|rendez[- ]?vous)\b/iu;
 const INSTANT_BOOKING_REPLY = "Quel est votre nom et prénom ?";
@@ -383,7 +399,6 @@ export default function PagePubliquePraticienUWI() {
   const [bookingFollowup, setBookingFollowup] = useState(null);
   const [voiceStatus, setVoiceStatus] = useState("idle");
   const [voiceError, setVoiceError] = useState("");
-  const [chatPending, setChatPending] = useState(false);
   const [composerOutOfView, setComposerOutOfView] = useState(false);
   const [slotsLoading, setSlotsLoading] = useState(true);
   const threadRef = useRef(null);
@@ -397,8 +412,6 @@ export default function PagePubliquePraticienUWI() {
   const tenantIdRef = useRef(null);
   const eventSourceRef = useRef(null);
   const streamConversationIdRef = useRef(null);
-  const partialMessageIdRef = useRef(null);
-
   const openingHours = safeArray(practitioner.openingHours).length ? practitioner.openingHours : defaultOpeningHours;
   const faqs = useMemo(() => makeFaqs(practitioner, openingHours), [practitioner, openingHours]);
   const vapiPublicKey = useMemo(() => getVapiPublicKey(), []);
@@ -417,12 +430,10 @@ export default function PagePubliquePraticienUWI() {
     setBookingFollowup(null);
     setVoiceError("");
     setVoiceStatus("idle");
-    setChatPending(false);
     setInlineSlot(null);
     setModalSlot(null);
     conversationIdRef.current = null;
     streamConversationIdRef.current = null;
-    partialMessageIdRef.current = null;
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
@@ -540,7 +551,7 @@ export default function PagePubliquePraticienUWI() {
     };
     scroll();
     requestAnimationFrame(scroll);
-  }, [messages, inlineSlot, chatPending]);
+  }, [messages, inlineSlot]);
 
   useEffect(() => {
     const timer = setInterval(() => setPlaceholderIdx((idx) => (idx + 1) % inputExamples.length), 4200);
@@ -589,34 +600,10 @@ export default function PagePubliquePraticienUWI() {
     });
   }, [inlineSlot, push, slug]);
 
-  const clearPartialMessage = useCallback(() => {
-    const partialId = partialMessageIdRef.current;
-    if (!partialId) return;
-    setMessages((prev) => prev.filter((message) => message.id !== partialId));
-    partialMessageIdRef.current = null;
-  }, []);
-
-  const upsertPartialMessage = useCallback((text) => {
-    const partialId = partialMessageIdRef.current;
-    if (partialId) {
-      setMessages((prev) => prev.map((message) => (message.id === partialId ? { ...message, text } : message)));
-      return;
-    }
-    const id = msgId.current++;
-    partialMessageIdRef.current = id;
-    setMessages((prev) => prev.concat([{ id, from: "clara_partial", text }]));
-  }, []);
-
   const handleStreamPayload = useCallback((payload) => {
     const type = String(payload?.type || "");
-    if (type === "partial") {
-      setChatPending(true);
-      upsertPartialMessage(String(payload?.text || "Je reflechis..."));
-      return;
-    }
+    if (type === "partial") return;
     if (type === "final") {
-      setChatPending(false);
-      clearPartialMessage();
       const slotsPayload = Array.isArray(payload?.slots) ? payload.slots : [];
       const text = String(payload?.text || "").trim();
       if (text) {
@@ -633,8 +620,6 @@ export default function PagePubliquePraticienUWI() {
       return;
     }
     if (type === "transfer") {
-      setChatPending(false);
-      clearPartialMessage();
       const slotsPayload = Array.isArray(payload?.slots) ? payload.slots : [];
       if (payload?.text) {
         push([{ from: "clara", text: String(payload.text), slots: slotsPayload.length ? slotsPayload : undefined }]);
@@ -642,11 +627,9 @@ export default function PagePubliquePraticienUWI() {
       return;
     }
     if (type === "error") {
-      setChatPending(false);
-      clearPartialMessage();
       push([{ from: "clara", text: String(payload?.message || "Une erreur est survenue, veuillez reessayer.") }]);
     }
-  }, [clearPartialMessage, push, upsertPartialMessage]);
+  }, [push]);
 
   const ensureConversationId = useCallback(() => {
     if (!conversationIdRef.current) {
@@ -724,15 +707,11 @@ export default function PagePubliquePraticienUWI() {
         ensureStream(conversationId);
       }
       if (response?.reply) {
-        setChatPending(false);
-        clearPartialMessage();
         push([{ from: "clara", text: String(response.reply) }]);
       }
     };
 
     const showInstantReply = (replyText) => {
-      setChatPending(false);
-      clearPartialMessage();
       push([{ from: "clara", text: replyText }]);
     };
 
@@ -759,14 +738,12 @@ export default function PagePubliquePraticienUWI() {
         if (!instantText && response?.reply) applyChatResponse(response);
       } catch {
         if (!instantText) {
-          setChatPending(false);
-          clearPartialMessage();
           push([{ from: "clara", text: "Impossible de contacter l'agent pour le moment. Merci de reessayer." }]);
         }
       }
     };
 
-    if (GREETING_ONLY.test(clean)) {
+    if (isGreetingOnly(clean)) {
       void syncChatInBackground(INSTANT_GREETING_REPLY);
       return;
     }
@@ -779,7 +756,7 @@ export default function PagePubliquePraticienUWI() {
     const lastClaraAsksName = () => {
       for (let i = messages.length - 1; i >= 0; i -= 1) {
         const m = messages[i];
-        if (m.from === "clara" || m.from === "clara_partial") {
+        if (m.from === "clara") {
           return NAME_ASK_HINT.test(String(m.text || ""));
         }
         if (m.from === "patient") break;
@@ -795,7 +772,7 @@ export default function PagePubliquePraticienUWI() {
     const lastClaraAsksPref = () => {
       for (let i = messages.length - 1; i >= 0; i -= 1) {
         const m = messages[i];
-        if (m.from === "clara" || m.from === "clara_partial") {
+        if (m.from === "clara") {
           return PREF_ASK_HINT.test(String(m.text || ""));
         }
         if (m.from === "patient") break;
@@ -811,21 +788,8 @@ export default function PagePubliquePraticienUWI() {
       }
     }
 
-    setChatPending(true);
-    try {
-      let response;
-      try {
-        response = await postChat();
-      } catch {
-        response = await postChat();
-      }
-      applyChatResponse(response);
-    } catch {
-      setChatPending(false);
-      clearPartialMessage();
-      push([{ from: "clara", text: "Impossible de contacter l'agent pour le moment. Merci de reessayer." }]);
-    }
-  }, [clearPartialMessage, ensureConversationId, ensureStream, inferPrefInstantReply, messages, push, slug]);
+    void syncChatInBackground(null);
+  }, [ensureConversationId, ensureStream, inferPrefInstantReply, messages, push, slug]);
 
   const ask = useCallback((text) => {
     void sendChatMessage(text);
@@ -1117,15 +1081,9 @@ export default function PagePubliquePraticienUWI() {
                 {messages.map((message) => (
                   <div key={message.id} className={message.from === "patient" ? "chatLine patientLine" : "chatLine assistantLine"}>
                     {message.from !== "patient" && <ClaraPortrait size={34} compact />}
-                    <div className={message.from === "patient" ? "bubble patientBubble" : `bubble claraBubble${message.from === "clara_partial" ? " partialBubble" : ""}`}>{message.text}</div>
+                    <div className={message.from === "patient" ? "bubble patientBubble" : "bubble claraBubble"}>{message.text}</div>
                   </div>
                 ))}
-                {chatPending && !partialMessageIdRef.current ? (
-                  <div className="chatLine assistantLine">
-                    <ClaraPortrait size={34} compact />
-                    <div className="bubble claraBubble partialBubble">Je reflechis...</div>
-                  </div>
-                ) : null}
                 {inlineSlot ? (
                   <BookingFields
                     slot={inlineSlot}
@@ -1150,7 +1108,7 @@ export default function PagePubliquePraticienUWI() {
                   aria-label="Message a Clara"
                 />
               </div>
-              <button className="composerSendBtn" onClick={send} type="button" disabled={chatPending}>
+              <button className="composerSendBtn" onClick={send} type="button">
                 Envoyer
               </button>
             </div>

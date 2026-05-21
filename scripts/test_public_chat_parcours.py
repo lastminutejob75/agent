@@ -23,6 +23,7 @@ from backend.web_chat import (
 
 
 STEPS = [
+    ("bjr", "salutation"),
     ("bonjour", "salutation"),
     ("je voudrais un rdv", "QUALIF_NAME"),
     ("Martin Dupont", "QUALIF_PREF"),

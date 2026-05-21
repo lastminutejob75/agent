@@ -188,12 +188,6 @@ def _register_web_conv_tenant(tenant_id: int, conv_id: str) -> None:
         pass
 
 
-def _is_greeting_only(message: str) -> bool:
-    from backend.start_router import _GREETING_ONLY
-
-    return bool(_GREETING_ONLY.match((message or "").strip()))
-
-
 def _greeting_reply(channel: str) -> str:
     from backend import prompts
 
@@ -236,14 +230,15 @@ def _store_extracted_name(conv_id: str, tenant_id: int, name: str) -> None:
 
 def _instant_reply(message: str, channel: str, conv_id: Optional[str] = None) -> Optional[str]:
     """Réponses synchrones (sans PG) : salutation, début RDV, nom reçu en QUALIF_NAME."""
+    from backend.entity_extraction import infer_preference_from_context
+    from backend.start_router import is_booking_start_message, is_greeting_only_message
+    from backend import guards, prompts
+
     msg = (message or "").strip()
     if not msg:
         return None
-    if _is_greeting_only(msg):
+    if is_greeting_only_message(msg):
         return _greeting_reply(channel)
-    from backend.entity_extraction import infer_preference_from_context
-    from backend.start_router import is_booking_start_message
-    from backend import guards, prompts
 
     if is_booking_start_message(msg):
         return prompts.get_qualif_question("name", channel=channel) or "Quel est votre nom et prénom ?"

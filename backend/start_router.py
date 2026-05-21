@@ -27,9 +27,39 @@ _TIME_HINTS = re.compile(
     re.IGNORECASE,
 )
 _GREETING_ONLY = re.compile(
-    r"^(bonjour|salut|bonsoir|hello|coucou|bonne\s+journ[ée]e|bonne\s+soir[ée]e)[\s!.,?]*$",
+    r"^(bjr|bjour|slt|bsr|bonjour|salut|bonsoir|hello|hi|hey|coucou|cc|yo|"
+    r"bonne\s+journ[ée]e|bonne\s+soir[ée]e)[\s!.,?]*$",
     re.IGNORECASE,
 )
+
+
+def _normalize_greeting_text(text: str) -> str:
+    import unicodedata
+
+    t = (text or "").strip().lower()
+    t = unicodedata.normalize("NFD", t)
+    t = "".join(c for c in t if unicodedata.category(c) != "Mn")
+    return re.sub(r"[^\w\s]", "", t).strip()
+
+
+def is_greeting_only_message(text: str) -> bool:
+    """Salutation seule, y compris abréviations (bjr, slt, bsr…)."""
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    if _GREETING_ONLY.match(raw):
+        return True
+    norm = _normalize_greeting_text(raw)
+    if not norm:
+        return False
+    if _GREETING_ONLY.match(norm):
+        return True
+    if norm in ("bonne journee", "bonne soiree"):
+        return True
+    return len(norm.split()) == 1 and norm in {
+        "bjr", "bjour", "slt", "bsr", "bonjour", "salut", "bonsoir",
+        "hello", "hi", "hey", "coucou", "cc", "yo",
+    }
 # Début de prise de RDV (réponse HTTP immédiate côté web, sans attendre PG)
 _BOOKING_START_QUICK = re.compile(
     r"\b(je\s+voudrais?|je\s+veux|je\s+souhaite|prendre\s+un\s+rdv|prendre\s+un\s+rendez|"
@@ -41,7 +71,7 @@ _BOOKING_START_QUICK = re.compile(
 def is_booking_start_message(text: str) -> bool:
     """True si le message lance une prise de RDV (heuristique, pas de LLM)."""
     t = (text or "").strip()
-    if not t or _GREETING_ONLY.match(t):
+    if not t or is_greeting_only_message(t):
         return False
     if _BOOKING_START_QUICK.search(t):
         return True
@@ -71,7 +101,7 @@ def _heuristic_route(text: str) -> Optional[StartRoute]:
     if not t:
         return StartRoute(intent=Intent.UNCLEAR, confidence=0.0, source="heuristic")
 
-    if _GREETING_ONLY.match(t):
+    if is_greeting_only_message(t):
         return StartRoute(
             intent=Intent.UNCLEAR,
             confidence=0.95,
