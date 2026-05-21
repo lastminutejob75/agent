@@ -84,8 +84,11 @@ function isGreetingOnly(text) {
   return parts.length === 1 && GREETING_TOKENS.has(parts[0]);
 }
 const INSTANT_GREETING_REPLY = "Bonjour ! Comment puis-je vous aider ?";
-const CHAT_REPLY_TIMEOUT_MS = 45000;
+const INSTANT_BOOKING_REPLY = "Quel est votre nom et prénom ?";
+const BOOKING_START = /\b(je\s+voudrais?|je\s+veux|je\s+souhaite|je\s+v\s+(?:in|un)\s+rdv|jv\s+(?:un\s+)?rdv|prendre\s+(?:un\s+)?rdv|un\s+rdv|rendez[- ]?vous)\b/iu;
+const CHAT_REPLY_TIMEOUT_MS = 25000;
 const CHAT_UNCLEAR_FALLBACK = "Je n'ai pas bien compris. Reformulez, par exemple : « je voudrais un rendez-vous ».";
+const LOOKS_LIKE_NAME = /^(?:(?:M\.|Mme|Mlle)\s+)?[A-ZÀ-ÖØ-öø-ÿ][a-zà-öø-ÿ'-]+(?:\s+[A-ZÀ-ÖØ-öø-ÿ][a-zà-öø-ÿ'-]+){0,3}$/u;
 
 const safeArray = (value) => (Array.isArray(value) ? value : []);
 const norm = (value) => String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -311,15 +314,38 @@ function UwiSearchBar({ data = defaultSearchData, onSearchUsed }) {
   );
 }
 
-function BookingFields({ slot, onConfirm, onCancel, compact = false }) {
+function resolveChatSlotOffer(offer, apiSlots) {
+  const list = safeArray(apiSlots);
+  const idx = Number(offer?.index);
+  if (idx >= 1 && list[idx - 1]) return { ...list[idx - 1] };
+  const label = norm(offer?.label || "");
+  const found = list.find((s) => norm(s.label) === label || norm(s.label).includes(label) || label.includes(norm(s.label)));
+  if (found) return { ...found };
+  return {
+    id: String(offer?.id || `chat-${idx}`),
+    label: offer?.label || `Créneau ${idx}`,
+    day: "",
+    time: "",
+    motifs: safeArray(offer?.motifs).length ? offer.motifs : ["Consultation", "Suivi"],
+    source: offer?.source || "sqlite",
+    startIso: offer?.startIso || "",
+    endIso: offer?.endIso || "",
+  };
+}
+
+function BookingFields({ slot, onConfirm, onCancel, compact = false, defaultName = "" }) {
   const [motif, setMotif] = useState(() => defaultMotif(slot));
-  const [name, setName] = useState("");
+  const [name, setName] = useState(defaultName);
   const [phone, setPhone] = useState("");
   const ok = Boolean(motif && name.trim() && phone.trim());
 
   useEffect(() => {
     setMotif(defaultMotif(slot));
   }, [slot]);
+
+  useEffect(() => {
+    if (defaultName) setName(defaultName);
+  }, [defaultName]);
 
   return (
     <div className={compact ? "modalBody" : "inlineCard"}>
@@ -572,6 +598,24 @@ export default function PagePubliquePraticienUWI() {
     }
   }, [slots, slug]);
 
+  const inferredPatientName = useMemo(() => {
+    let sawNameAsk = false;
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const m = messages[i];
+      if (m.from === "clara" && /nom\s+et\s+pr[ée]nom|nom\s+complet/i.test(String(m.text || ""))) {
+        sawNameAsk = true;
+        continue;
+      }
+      if (sawNameAsk && m.from === "patient") {
+        const t = String(m.text || "").trim();
+        if (LOOKS_LIKE_NAME.test(t)) return t;
+        break;
+      }
+      if (m.from === "patient" && sawNameAsk) break;
+    }
+    return "";
+  }, [messages]);
+
   const chooseSlot = useCallback((slot) => {
     const replace = Boolean(inlineSlot);
     setInlineSlot(slot);
@@ -785,8 +829,22 @@ export default function PagePubliquePraticienUWI() {
       return;
     }
 
+    if (BOOKING_START.test(clean)) {
+      void syncChatInBackground(INSTANT_BOOKING_REPLY);
+      return;
+    }
+
     void syncChatInBackground(null);
   }, [ensureConversationId, ensureStream, push, slug, waitForAgentTurn]);
+
+  const pickChatSlot = useCallback(
+    (offer) => {
+      const full = resolveChatSlotOffer(offer, slots);
+      chooseSlot(full);
+      void sendChatMessage(`oui ${offer.index}`);
+    },
+    [chooseSlot, sendChatMessage, slots]
+  );
 
   const ask = useCallback((text) => {
     void sendChatMessage(text);
@@ -819,6 +877,8 @@ export default function PagePubliquePraticienUWI() {
         setBookingDone(false);
         return;
       }
+      push([{ from: "clara", text: "La reservation n'a pas abouti. Verifiez vos informations et reessayez, ou choisissez un autre creneau." }]);
+      return;
     }
     setInlineSlot(null);
     setBookingDone(true);
@@ -1078,12 +1138,30 @@ export default function PagePubliquePraticienUWI() {
                 {messages.map((message) => (
                   <div key={message.id} className={message.from === "patient" ? "chatLine patientLine" : "chatLine assistantLine"}>
                     {message.from !== "patient" && <ClaraPortrait size={34} compact />}
-                    <div className={message.from === "patient" ? "bubble patientBubble" : "bubble claraBubble"}>{message.text}</div>
+                    <div className={message.from === "patient" ? "bubble patientBubble" : "bubble claraBubble"}>
+                      {message.text}
+                      {safeArray(message.slots).length ? (
+                        <div className="chatSlotChoices">
+                          {message.slots.map((offer) => (
+                            <button
+                              key={`${message.id}-slot-${offer.index}`}
+                              className="chatSlotBtn"
+                              type="button"
+                              onClick={() => pickChatSlot(offer)}
+                            >
+                              <span className="chatSlotBtnNum">{offer.index}</span>
+                              <span className="chatSlotBtnLabel">{offer.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 ))}
                 {inlineSlot ? (
                   <BookingFields
                     slot={inlineSlot}
+                    defaultName={inferredPatientName}
                     onConfirm={confirm}
                     onCancel={() => {
                       setInlineSlot(null);
@@ -1210,6 +1288,11 @@ header a.wa{color:#1b6d34;border-color:#cce9d2}
 .chatComposerBar .composerInputWrap{min-height:52px}
 .chatComposerBar .composerSendBtn{height:52px;font-size:15px}
 .chatLine{display:flex;align-items:flex-start;gap:10px}.assistantLine{justify-content:flex-start}.patientLine{justify-content:flex-end}.bubble{font-size:14px;line-height:1.55;border-radius:14px;padding:12px 16px;max-width:80%}.claraBubble{background:#009CA4;color:#fff;border-bottom-left-radius:3px}.patientBubble{background:#f4f6f6;border:1px solid #e3e7e8;color:#2f3c42;border-bottom-right-radius:3px}
+.chatSlotChoices{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.chatSlotBtn{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.14);color:#fff;border-radius:10px;padding:10px 12px;cursor:pointer;font-size:13px}
+.chatSlotBtn:hover{background:rgba(255,255,255,.24)}
+.chatSlotBtnNum{flex-shrink:0;width:26px;height:26px;border-radius:8px;background:#fff;color:#006b73;font-weight:900;display:flex;align-items:center;justify-content:center;font-size:13px}
+.chatSlotBtnLabel{line-height:1.35}
 .partialBubble{opacity:.72;font-style:italic}
 @keyframes uwiSkShimmer{0%{background-position:-160px 0}100%{background-position:160px 0}}
 .composerSlotSkeleton{cursor:default;border-color:#e0eef0;background:rgba(255,255,255,.9);pointer-events:none}

@@ -7400,15 +7400,47 @@ def admin_dashboard_bundle(
     sf = (severity or "").strip().lower()
     filt = sf if sf in ("critical", "warning") else None
 
-    summary = dash_build_summary(
-        ctx,
-        p,
-        billing_snap=billing_snap,
-        ops_snap=ops_snap,
-        activation_slice=activation_slice,
-    )
-    actions = dash_build_action_items(ctx, p, filt, billing_snap=billing_snap, ops_snap=ops_snap)
-    watch = dash_watchlist_items(ctx, p, ops_snap=ops_snap)
+    tout_body = float(os.environ.get("COCKPIT_BUNDLE_BODY_TIMEOUT_SEC", "120") or "120")
+    try:
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            f_sum = ex.submit(
+                dash_build_summary,
+                ctx,
+                p,
+                billing_snap=billing_snap,
+                ops_snap=ops_snap,
+                activation_slice=activation_slice,
+            )
+            f_act = ex.submit(
+                dash_build_action_items,
+                ctx,
+                p,
+                filt,
+                billing_snap=billing_snap,
+                ops_snap=ops_snap,
+                activation_slice=activation_slice,
+            )
+            f_wat = ex.submit(dash_watchlist_items, ctx, p, ops_snap=ops_snap)
+            summary = f_sum.result(timeout=tout_body)
+            actions = f_act.result(timeout=tout_body)
+            watch = f_wat.result(timeout=tout_body)
+    except (FuturesTimeout, Exception):
+        summary = dash_build_summary(
+            ctx,
+            p,
+            billing_snap=billing_snap,
+            ops_snap=ops_snap,
+            activation_slice=activation_slice,
+        )
+        actions = dash_build_action_items(
+            ctx,
+            p,
+            filt,
+            billing_snap=billing_snap,
+            ops_snap=ops_snap,
+            activation_slice=activation_slice,
+        )
+        watch = dash_watchlist_items(ctx, p, ops_snap=ops_snap)
 
     return {
         **summary,

@@ -43,7 +43,21 @@ def _slots_ui_payload(session: Any) -> list:
             ).strip()
         if not label:
             continue
-        out.append({"index": i + 1, "label": label})
+        slot_id = slot.get("id") or slot.get("slot_id") if isinstance(slot, dict) else getattr(slot, "id", None) or getattr(slot, "slot_id", None)
+        src = (slot.get("source") if isinstance(slot, dict) else getattr(slot, "source", None)) or "sqlite"
+        start_iso = (slot.get("start_iso") or slot.get("start") if isinstance(slot, dict) else getattr(slot, "start_iso", None) or getattr(slot, "start", None)) or ""
+        end_iso = (slot.get("end_iso") or slot.get("end") if isinstance(slot, dict) else getattr(slot, "end_iso", None) or getattr(slot, "end", None)) or ""
+        out.append(
+            {
+                "index": i + 1,
+                "label": label,
+                "id": str(slot_id) if slot_id is not None else "",
+                "source": str(src).lower(),
+                "startIso": str(start_iso),
+                "endIso": str(end_iso),
+                "motifs": ["Consultation", "Suivi", "Premiere consultation", "Renouvellement"],
+            }
+        )
     return out
 
 
@@ -231,14 +245,17 @@ def _store_extracted_name(conv_id: str, tenant_id: int, name: str) -> None:
 
 
 def _instant_reply(message: str, channel: str, conv_id: Optional[str] = None) -> Optional[str]:
-    """Réponse synchrone immédiate : salutations uniquement (le moteur gère le reste via SSE)."""
-    from backend.start_router import is_greeting_only_message
+    """Réponse synchrone immédiate : salutation ou début de prise de RDV."""
+    from backend.start_router import is_booking_start_message, is_greeting_only_message
+    from backend import prompts
 
     msg = (message or "").strip()
     if not msg:
         return None
     if is_greeting_only_message(msg):
         return _greeting_reply(channel)
+    if is_booking_start_message(msg):
+        return prompts.get_qualif_question("name", channel=channel) or "Quel est votre nom et prénom ?"
     return None
 
 
@@ -265,6 +282,10 @@ async def start_web_chat(
     instant = _instant_reply(msg, channel, conv_id)
     if instant:
         out["reply"] = instant
+        from backend.start_router import is_booking_start_message
+
+        if is_booking_start_message(msg):
+            _touch_web_session(conv_id, tid, state="QUALIF_NAME")
 
     asyncio.create_task(run_engine(conv_id, msg, channel))
     return out

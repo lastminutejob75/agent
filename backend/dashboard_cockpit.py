@@ -542,26 +542,53 @@ def dash_watchlist_items(ctx: Any, period: str, ops_snap: Optional[Dict[str, Any
     wd = dash_window_days(period)
     out: List[dict] = []
 
+    top_web: List[dict] = []
+    anti_rows: List[dict] = []
+    tout_wl = float(os.environ.get("COCKPIT_WATCHLIST_PARALLEL_TIMEOUT_SEC", "90") or "90")
+
+    def _fetch_web_top() -> List[dict]:
+        try:
+            return list(ctx["_get_stats_top_tenants"]("web_handoffs", wd, 8).get("items") or [])
+        except Exception:
+            return []
+
+    def _fetch_quality_antiloop() -> List[dict]:
+        try:
+            quality = ctx["_get_quality_snapshot"](window_days=min(wd, 30))
+            return list((quality.get("top") or {}).get("anti_loop") or [])
+        except Exception:
+            return []
+
     try:
-        top_web = ctx["_get_stats_top_tenants"]("web_handoffs", wd, 8)["items"]
-        for r in top_web[:4]:
-            tid = r.get("tenant_id")
-            if tid is None:
-                continue
-            out.append(
-                {
-                    "tenant_id": tid,
-                    "tenant_name": r.get("name") or "",
-                    "signal_type": "web_requests",
-                    "label": "Demandes web",
-                    "value": str(int(r.get("value") or 0)),
-                    "trend": f"{wd}j",
-                    "severity": "info",
-                    "target_url": f"/admin/tenants/{tid}",
-                }
-            )
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            fw = pool.submit(_fetch_web_top)
+            fq = pool.submit(_fetch_quality_antiloop)
+            top_web = fw.result(timeout=tout_wl)
+            anti_rows = fq.result(timeout=tout_wl)
+    except FuturesTimeout:
+        logger.warning("cockpit watchlist parallel timeout")
+        top_web = _fetch_web_top()
+        anti_rows = _fetch_quality_antiloop()
     except Exception:
-        pass
+        top_web = _fetch_web_top()
+        anti_rows = _fetch_quality_antiloop()
+
+    for r in top_web[:4]:
+        tid = r.get("tenant_id")
+        if tid is None:
+            continue
+        out.append(
+            {
+                "tenant_id": tid,
+                "tenant_name": r.get("name") or "",
+                "signal_type": "web_requests",
+                "label": "Demandes web",
+                "value": str(int(r.get("value") or 0)),
+                "trend": f"{wd}j",
+                "severity": "info",
+                "target_url": f"/admin/tenants/{tid}",
+            }
+        )
 
     try:
         ops = ops_snap if ops_snap is not None else ctx["_get_operations_snapshot"](window_days=min(wd, 30))
@@ -585,26 +612,23 @@ def dash_watchlist_items(ctx: Any, period: str, ops_snap: Optional[Dict[str, Any
     except Exception:
         pass
 
-    try:
-        quality = ctx["_get_quality_snapshot"](window_days=min(wd, 30))
-        for row in (quality.get("top") or {}).get("anti_loop") or []:
-            tid = row.get("tenant_id")
-            if tid is None:
-                continue
-            out.append(
-                {
-                    "tenant_id": tid,
-                    "tenant_name": row.get("name") or "",
-                    "signal_type": "booking_errors",
-                    "label": "Anti-loop",
-                    "value": str(int(row.get("count") or 0)),
-                    "trend": f"{quality.get('window_days')}j",
-                    "severity": "warning",
-                    "target_url": f"/admin/tenants/{tid}",
-                }
-            )
-    except Exception:
-        pass
+    q_win = min(wd, 30)
+    for row in anti_rows:
+        tid = row.get("tenant_id")
+        if tid is None:
+            continue
+        out.append(
+            {
+                "tenant_id": tid,
+                "tenant_name": row.get("name") or "",
+                "signal_type": "booking_errors",
+                "label": "Anti-loop",
+                "value": str(int(row.get("count") or 0)),
+                "trend": f"{q_win}j",
+                "severity": "warning",
+                "target_url": f"/admin/tenants/{tid}",
+            }
+        )
 
     seen = set()
     uniq: List[dict] = []
@@ -624,6 +648,7 @@ def dash_build_action_items(
     *,
     billing_snap: Optional[Dict[str, Any]] = None,
     ops_snap: Optional[Dict[str, Any]] = None,
+    activation_slice: Optional[List[Any]] = None,
 ) -> List[dict]:
     wd = max(7, min(90, dash_window_days(period)))
     billing = billing_snap if billing_snap is not None else ctx["_get_billing_snapshot"]()
@@ -631,7 +656,10 @@ def dash_build_action_items(
         window_days=min(wd, 30),
         billing_snapshot=billing,
     )
-    activation = ctx["_get_activation_queue"](40).get("items") or []
+    if activation_slice is not None:
+        activation = list(activation_slice)
+    else:
+        activation = ctx["_get_activation_queue"](40).get("items") or []
 
     items: List[dict] = []
     for row in (billing.get("tenants_past_due") or [])[:14]:
