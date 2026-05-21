@@ -282,7 +282,7 @@ def dash_voice_and_cost_between(ctx: Any, start_dt: datetime, end_dt: datetime) 
 def dash_month_voice_and_included(
     ctx: Any,
 ) -> tuple[float, Optional[int], Optional[float]]:
-    from backend.billing_pg import get_plan_included_minutes, get_tenant_billing
+    from backend.billing_pg import get_plan_included_minutes, load_cockpit_plan_quota_inputs_batch
 
     now = datetime.now(timezone.utc)
     month_utc = now.strftime("%Y-%m")
@@ -330,14 +330,15 @@ def dash_month_voice_and_included(
     voice_used_month = round(sum(used_by_tenant.get(int(tid), 0.0) for tid in active_ids), 1)
     included_sum = 0
 
+    plan_batch = load_cockpit_plan_quota_inputs_batch(active_ids)
     for tid in active_ids:
         try:
-            d = ctx["_get_tenant_detail"](tid) or {}
-            params = d.get("params") or {}
+            row = plan_batch.get(int(tid)) or {}
+            params = row.get("params") or {}
+            tb_plan = (row.get("billing_plan_key") or "").strip()
             plan_key = (params.get("plan_key") or "").strip()
-            tb = get_tenant_billing(tid) if tid else {}
-            if not plan_key and tb:
-                plan_key = str((tb.get("plan_key") or "")).strip()
+            if not plan_key and tb_plan:
+                plan_key = tb_plan
             plan_key = (plan_key or "free").lower()
             if plan_key == "custom":
                 try:
@@ -422,7 +423,7 @@ def dash_leads_block(ctx: Any, period: str = "7d") -> dict:
     from backend.leads_pg import count_new_leads, list_leads
 
     p = dash_normalize_period(period)
-    leads_payload = list_leads(limit=400)
+    leads_payload = list_leads(limit=200)
     leads: List[dict] = list(leads_payload.get("items") or [])
     window_cut = dash_leads_cutoff_utc(p)
 

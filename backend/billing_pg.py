@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -674,6 +674,67 @@ def _get_tenant_params_for_quota(tenant_id: int) -> dict:
         if "does not exist" not in str(e).lower():
             logger.debug("_get_tenant_params_for_quota: %s", e)
     return {}
+
+
+def load_cockpit_plan_quota_inputs_batch(tenant_ids: List[int]) -> Dict[int, Dict[str, Any]]:
+    """
+    Pour le cockpit : charge params_json + plan_key (tenant_billing) pour N tenants en 2 requêtes,
+    sans N× get_tenant_detail / get_tenant_billing.
+    Retour : tenant_id -> {"params": dict, "billing_plan_key": str | None}
+    """
+    import json
+
+    import psycopg
+    from psycopg.rows import dict_row
+
+    ids = sorted({int(t) for t in tenant_ids if t is not None})
+    if not ids:
+        return {}
+    out: Dict[int, Dict[str, Any]] = {tid: {"params": {}, "billing_plan_key": None} for tid in ids}
+    url = _pg_url()
+    if not url:
+        return out
+    try:
+        with psycopg.connect(url, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT tenant_id, params_json FROM tenant_config WHERE tenant_id = ANY(%s)",
+                    (ids,),
+                )
+                for row in cur.fetchall() or []:
+                    tid = int(row.get("tenant_id") or 0)
+                    if tid not in out:
+                        continue
+                    raw = row.get("params_json")
+                    if raw is None:
+                        params = {}
+                    elif isinstance(raw, dict):
+                        params = raw
+                    else:
+                        try:
+                            params = json.loads(raw) if isinstance(raw, str) else {}
+                        except Exception:
+                            params = {}
+                    out[tid]["params"] = params
+            with conn.cursor() as cur:
+                try:
+                    cur.execute(
+                        "SELECT tenant_id, plan_key FROM tenant_billing WHERE tenant_id = ANY(%s)",
+                        (ids,),
+                    )
+                except Exception:
+                    return out
+                for row in cur.fetchall() or []:
+                    tid = int(row.get("tenant_id") or 0)
+                    if tid not in out:
+                        continue
+                    pk = row.get("plan_key")
+                    out[tid]["billing_plan_key"] = str(pk).strip() if pk else None
+    except Exception as e:
+        if "does not exist" not in str(e).lower():
+            logger.debug("load_cockpit_plan_quota_inputs_batch: %s", e)
+        return {tid: {"params": {}, "billing_plan_key": None} for tid in ids}
+    return out
 
 
 def _get_quota_used_minutes_pg(tenant_id: int, start: str, end: str) -> float:
