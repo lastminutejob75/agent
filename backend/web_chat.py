@@ -190,18 +190,54 @@ def _greeting_reply(channel: str) -> str:
     return prompts.get_message("salutation", channel=channel) or "Bonjour ! Comment puis-je vous aider ?"
 
 
-def _instant_reply(message: str, channel: str) -> Optional[str]:
-    """Réponses synchrones (sans PG) pour salutation et début de RDV."""
+def _session_from_memory(conv_id: str):
+    """Session en cache mémoire uniquement (évite un aller-retour PG sur le POST)."""
+    store = ENGINE.session_store
+    if hasattr(store, "_cache_get"):
+        return store._cache_get(conv_id)
+    return store.get(conv_id)
+
+
+def _touch_web_session(conv_id: str, tenant_id: int, *, state: Optional[str] = None) -> None:
+    """Met à jour la session web en mémoire (sans sauvegarde PG synchrone)."""
+    from backend.session import Session
+
+    store = ENGINE.session_store
+    session = _session_from_memory(conv_id)
+    if session is None:
+        session = Session(conv_id=conv_id)
+        if hasattr(store, "_cache_put"):
+            store._cache_put(session)
+        else:
+            session = store.get_or_create(conv_id)
+    session.tenant_id = int(tenant_id)
+    session.channel = "web"
+    if state:
+        session.state = state
+
+
+def _instant_reply(message: str, channel: str, conv_id: Optional[str] = None) -> Optional[str]:
+    """Réponses synchrones (sans PG) : salutation, début RDV, nom reçu en QUALIF_NAME."""
     msg = (message or "").strip()
     if not msg:
         return None
     if _is_greeting_only(msg):
         return _greeting_reply(channel)
     from backend.start_router import is_booking_start_message
-    from backend import prompts
+    from backend import guards, prompts
 
     if is_booking_start_message(msg):
         return prompts.get_qualif_question("name", channel=channel) or "Quel est votre nom et prénom ?"
+
+    if conv_id:
+        session = _session_from_memory(conv_id)
+        if session and getattr(session, "state", None) == "QUALIF_NAME":
+            extracted, reject = guards.extract_name_from_speech(msg)
+            if extracted is not None and not reject:
+                return (
+                    prompts.get_qualif_question("pref", channel=channel)
+                    or "Quel créneau préférez-vous ? (ex : lundi matin, mardi après-midi)"
+                )
     return None
 
 
@@ -222,10 +258,21 @@ async def start_web_chat(
     msg = (message or "").strip()
     out: Dict[str, Any] = {"conversation_id": conv_id}
 
-    # Réponse HTTP immédiate (salutation, début RDV) — PG/session uniquement en arrière-plan
-    instant = _instant_reply(msg, channel)
+    instant = _instant_reply(msg, channel, conv_id)
     if instant:
         out["reply"] = instant
+        from backend.start_router import is_booking_start_message
+        from backend import guards
+
+        if is_booking_start_message(msg):
+            _touch_web_session(conv_id, tid, state="QUALIF_NAME")
+        else:
+            mem = _session_from_memory(conv_id)
+            if mem and getattr(mem, "state", None) == "QUALIF_NAME":
+                extracted, reject = guards.extract_name_from_speech(msg)
+                if extracted is not None and not reject:
+                    _touch_web_session(conv_id, tid, state="QUALIF_PREF")
+
     asyncio.create_task(run_engine(conv_id, msg, channel))
     return out
 

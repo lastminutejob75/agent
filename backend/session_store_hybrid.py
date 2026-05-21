@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
+import threading
 from typing import Dict, Optional
 
 from backend import config
+
+logger = logging.getLogger(__name__)
 from backend.session import Session
 from backend.session_store_sqlite import SQLiteSessionStore
 from backend.tenant_routing import current_tenant_id
@@ -119,19 +123,27 @@ class HybridSessionStore:
         return s
 
     def save(self, session: Session) -> None:
-        """Sauvegarde la session (PG web si possible, sinon SQLite)."""
+        """Sauvegarde la session (cache mémoire immédiat ; PG web en arrière-plan)."""
         self._cache_put(session)
 
-        used_pg = False
-        if self._can_use_pg_web() and getattr(session, "channel", None) == "web":
-            tenant_id = getattr(session, "tenant_id", None)
-            if tenant_id:
-                try:
-                    used_pg = session_pg.pg_save_web_session(int(tenant_id), session.conv_id, session)
-                except Exception:
-                    used_pg = False
+        tenant_id = getattr(session, "tenant_id", None)
+        channel = getattr(session, "channel", None)
 
-        if not used_pg and hasattr(self._sqlite, "save"):
+        if self._can_use_pg_web() and channel == "web" and tenant_id:
+            conv_id = session.conv_id
+            tid = int(tenant_id)
+            snap = session
+
+            def _bg_pg_save() -> None:
+                try:
+                    session_pg.pg_save_web_session(tid, conv_id, snap)
+                except Exception as exc:
+                    logger.debug("bg pg_save_web_session conv=%s err=%s", conv_id[:24], exc)
+
+            threading.Thread(target=_bg_pg_save, daemon=True).start()
+            return
+
+        if hasattr(self._sqlite, "save"):
             self._sqlite.save(session)
 
     def set_for_resume(self, session: Session) -> None:

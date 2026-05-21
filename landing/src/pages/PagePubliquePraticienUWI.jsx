@@ -70,6 +70,9 @@ const GREETING_ONLY = /^(bonjour|salut|bonsoir|hello|coucou|bonne journ[ée]e|bo
 const INSTANT_GREETING_REPLY = "Bonjour ! Comment puis-je vous aider ?";
 const BOOKING_START = /\b(je\s+voudrais?|je\s+veux|je\s+souhaite|prendre\s+un\s+rendez|prendre\s+un\s+rdv|un\s+rdv|rendez[- ]?vous)\b/iu;
 const INSTANT_BOOKING_REPLY = "Quel est votre nom et prénom ?";
+const NAME_ASK_HINT = /nom\s+et\s+pr[ée]nom/i;
+const LOOKS_LIKE_NAME = /^[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ' -]{1,58}$/u;
+const INSTANT_PREF_REPLY = "Quel créneau préférez-vous ? (ex : lundi matin, mardi après-midi)";
 
 const safeArray = (value) => (Array.isArray(value) ? value : []);
 const norm = (value) => String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -749,6 +752,22 @@ export default function PagePubliquePraticienUWI() {
       return;
     }
 
+    const lastClaraAsksName = () => {
+      for (let i = messages.length - 1; i >= 0; i -= 1) {
+        const m = messages[i];
+        if (m.from === "clara" || m.from === "clara_partial") {
+          return NAME_ASK_HINT.test(String(m.text || ""));
+        }
+        if (m.from === "patient") break;
+      }
+      return false;
+    };
+
+    if (LOOKS_LIKE_NAME.test(clean) && lastClaraAsksName()) {
+      void syncChatInBackground(INSTANT_PREF_REPLY);
+      return;
+    }
+
     setChatPending(true);
     try {
       applyChatResponse(
@@ -762,7 +781,7 @@ export default function PagePubliquePraticienUWI() {
       clearPartialMessage();
       push([{ from: "clara", text: "Impossible de contacter l'agent pour le moment. Merci de reessayer." }]);
     }
-  }, [clearPartialMessage, ensureConversationId, ensureStream, push, slug]);
+  }, [clearPartialMessage, ensureConversationId, ensureStream, messages, push, slug]);
 
   const ask = useCallback((text) => {
     void sendChatMessage(text);
