@@ -101,7 +101,7 @@ Données utilisées :
 5. **Un seul “payload” dashboard**  
    `dashboard-payload` fait un seul appel et agrège tout côté backend. Pas de N+1 par tenant pour l’accueil. Les pages détaillées (fiche tenant, appels, operations, quality) font des appels ciblés (par tenant_id ou snapshot global).
 
-6. **Perf cockpit (bundle)** — `dash_month_voice_and_included` agrège les minutes incluses par plan avec **2 requêtes** `tenant_config` + `tenant_billing` en lot (plus de N× `_get_tenant_detail`). La liste leads cockpit limite la lecture à **200** lignes avant filtrage fenêtre.
+6. **Perf cockpit (bundle)** — `dash_month_voice_and_included` agrège les minutes incluses avec **batch** config/billing (`load_cockpit_plan_quota_inputs_batch`). Liste leads cockpit limitée (**200**). `_get_activation_queue`, `_get_operations_snapshot` (coûts, erreurs, quota sans N× `_get_tenant_detail`/`get_tenant_billing`), `_get_quality_snapshot` (tops) utilisent **`_batch_tenant_names_from_pg`** ou **`pg_get_tenant_full_batch`** là où il fallait seulement noms ou détails en masse.
 
 ---
 

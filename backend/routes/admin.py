@@ -29,6 +29,7 @@ from backend.billing_pg import (
     get_billing_plans,
     get_plan_included_minutes,
     get_tenant_billing,
+    load_cockpit_plan_quota_inputs_batch,
     set_force_active,
     set_stripe_customer_id,
     set_tenant_suspended,
@@ -1066,11 +1067,22 @@ def _get_activation_queue(limit: int = 8) -> dict:
         "fragile_active": 0,
         "billing_risk": 0,
     }
-    for tenant in _get_tenant_list(include_inactive=False):
+    tenants = _get_tenant_list(include_inactive=False)
+    detail_batch: Dict[int, dict] = {}
+    if getattr(config, "USE_PG_TENANTS", False) and tenants:
+        from backend.tenants_pg import pg_get_tenant_full_batch
+
+        tids_pg = [int(t["tenant_id"]) for t in tenants if t.get("tenant_id") is not None]
+        detail_batch = pg_get_tenant_full_batch(tids_pg)
+
+    for tenant in tenants:
         tenant_id = tenant.get("tenant_id")
         if not tenant_id:
             continue
-        detail = _get_tenant_detail(int(tenant_id))
+        tid_int = int(tenant_id)
+        detail = detail_batch.get(tid_int)
+        if detail is None:
+            detail = _get_tenant_detail(tid_int)
         if not detail:
             continue
         activation = _activation_summary_from_tenant_detail(detail)
@@ -7084,12 +7096,18 @@ def _get_operations_snapshot(window_days: int = 7, billing_snapshot: Optional[di
                             """,
                             (start_s, end_s),
                         )
-                        for r in cur.fetchall():
+                        top_rows = cur.fetchall()
+                        tnames_cost = _batch_tenant_names_from_pg(
+                            [int(r["tenant_id"]) for r in top_rows if r.get("tenant_id") is not None]
+                        )
+                        for r in top_rows:
                             tid = r.get("tenant_id")
-                            d = _get_tenant_detail(tid) if tid else {}
+                            if tid is None:
+                                continue
+                            tid_int = int(tid)
                             cost[label]["top"].append({
-                                "tenant_id": tid,
-                                "name": d.get("name") or f"Tenant #{tid}",
+                                "tenant_id": tid_int,
+                                "name": tnames_cost.get(tid_int, f"Tenant #{tid_int}"),
                                 "value": round(float(r.get("value") or 0), 2),
                             })
         except Exception as e:
@@ -7113,17 +7131,21 @@ def _get_operations_snapshot(window_days: int = 7, billing_snapshot: Optional[di
                         """,
                         (seven_d_str, end_str),
                     )
-                    for r in cur.fetchall():
+                    err_rows = cur.fetchall()
+                    tnames_err = _batch_tenant_names_from_pg(
+                        [int(r["tenant_id"]) for r in err_rows if r.get("tenant_id") is not None]
+                    )
+                    for r in err_rows:
                         tid = r.get("tenant_id")
                         if tid is None:
                             continue
-                        d = _get_tenant_detail(tid) or {}
+                        tid_int = int(tid)
                         last_at = r.get("last_error_at")
                         if last_at and hasattr(last_at, "isoformat"):
                             last_at = last_at.isoformat() + "Z"
                         errors["top_tenants"].append({
-                            "tenant_id": tid,
-                            "name": d.get("name") or f"Tenant #{tid}",
+                            "tenant_id": tid_int,
+                            "name": tnames_err.get(tid_int, f"Tenant #{tid_int}"),
                             "errors_total": int(r.get("errors_total") or 0),
                             "last_error_at": last_at,
                         })
@@ -7164,19 +7186,22 @@ def _get_operations_snapshot(window_days: int = 7, billing_snapshot: Optional[di
                         """,
                         (start_quota, end_quota),
                     )
-                    rows = cur.fetchall()
+                    rows = cur.fetchall() or []
+            tids_quota = [int(r["tenant_id"]) for r in rows if r.get("tenant_id") is not None]
+            names_quota = _batch_tenant_names_from_pg(tids_quota)
+            plan_quota = load_cockpit_plan_quota_inputs_batch(tids_quota)
             for r in rows:
                 tid = r.get("tenant_id")
                 if tid is None:
                     continue
+                tid_int = int(tid)
                 used_minutes = round(float(r.get("used_minutes") or 0), 2)
-                d = _get_tenant_detail(tid)
-                if not d:
-                    continue
-                params = d.get("params") or {}
+                row_plan = plan_quota.get(tid_int) or {}
+                params = row_plan.get("params") or {}
+                tb_plan = (row_plan.get("billing_plan_key") or "").strip()
                 plan_key = (params.get("plan_key") or "").strip()
-                if not plan_key and get_tenant_billing(tid):
-                    plan_key = (get_tenant_billing(tid) or {}).get("plan_key") or ""
+                if not plan_key and tb_plan:
+                    plan_key = tb_plan
                 plan_key = (plan_key or "").strip() or "free"
                 if plan_key == "custom":
                     try:
@@ -7189,9 +7214,9 @@ def _get_operations_snapshot(window_days: int = 7, billing_snapshot: Optional[di
                 if included <= 0:
                     continue
                 usage_pct = round((used_minutes / included) * 100, 1)
-                name = (d.get("name") or "").strip() or f"Tenant #{tid}"
+                name = names_quota.get(tid_int) or f"Tenant #{tid_int}"
                 item = {
-                    "tenant_id": int(tid),
+                    "tenant_id": tid_int,
                     "name": name,
                     "used_minutes": used_minutes,
                     "included_minutes": included,
@@ -7276,17 +7301,21 @@ def _get_quality_snapshot(window_days: int = 7) -> dict:
                             """,
                             (start, end),
                         )
-                        for r in cur.fetchall():
+                        q_rows = cur.fetchall()
+                        tnames_q = _batch_tenant_names_from_pg(
+                            [int(r["tenant_id"]) for r in q_rows if r.get("tenant_id") is not None]
+                        )
+                        for r in q_rows:
                             tid = r.get("tenant_id")
                             if tid is None:
                                 continue
-                            d = _get_tenant_detail(tid) or {}
+                            tid_int = int(tid)
                             last_at = r.get("last_at")
                             if last_at and hasattr(last_at, "isoformat"):
                                 last_at = last_at.isoformat() + "Z"
                             top[metric].append({
-                                "tenant_id": tid,
-                                "name": d.get("name") or f"Tenant #{tid}",
+                                "tenant_id": tid_int,
+                                "name": tnames_q.get(tid_int, f"Tenant #{tid_int}"),
                                 "count": int(r.get("count") or 0),
                                 "last_at": last_at,
                             })

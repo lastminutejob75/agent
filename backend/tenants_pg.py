@@ -9,7 +9,7 @@ import json
 import logging
 import os
 from contextlib import contextmanager
-from typing import Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from backend.pg_tenant_context import set_tenant_id_on_connection
 
@@ -697,6 +697,82 @@ def pg_get_tenant_full(tenant_id: int) -> Optional[dict]:
     except Exception as e:
         logger.warning("pg_get_tenant_full failed: %s", e)
         return None
+
+
+def pg_get_tenant_full_batch(tenant_ids: List[int]) -> Dict[int, Dict[str, Any]]:
+    """
+    Équivalent de plusieurs pg_get_tenant_full en 3 requêtes (tenants + config + routing).
+    Utilisé par la file d'activation cockpit pour éviter N× aller-retour PG.
+    """
+    ids = sorted({int(x) for x in tenant_ids if x is not None})
+    if not ids:
+        return {}
+    url = _pg_url()
+    if not url:
+        return {}
+    out: Dict[int, Dict[str, Any]] = {}
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+
+        with psycopg.connect(url, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT tenant_id, name, timezone, status, created_at
+                    FROM tenants WHERE tenant_id = ANY(%s)
+                    """,
+                    (ids,),
+                )
+                t_rows = cur.fetchall() or []
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT tenant_id, flags_json, params_json FROM tenant_config WHERE tenant_id = ANY(%s)",
+                    (ids,),
+                )
+                cfg_by_tid: Dict[int, Dict[str, Dict]] = {}
+                for c in cur.fetchall() or []:
+                    tid = int(c["tenant_id"])
+                    flags = c.get("flags_json") or {}
+                    params = c.get("params_json") or {}
+                    flags = flags if isinstance(flags, dict) else (json.loads(flags) if isinstance(flags, str) else {})
+                    params = params if isinstance(params, dict) else (json.loads(params) if isinstance(params, str) else {})
+                    cfg_by_tid[tid] = {"flags": flags, "params": params}
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT tenant_id, channel, key, is_active FROM tenant_routing
+                    WHERE tenant_id = ANY(%s) ORDER BY tenant_id, channel, key
+                    """,
+                    (ids,),
+                )
+                routes_by_tid: Dict[int, List[dict]] = {}
+                for rr in cur.fetchall() or []:
+                    tid = int(rr["tenant_id"])
+                    routes_by_tid.setdefault(tid, []).append(
+                        {
+                            "channel": rr["channel"],
+                            "key": rr["key"],
+                            "is_active": rr.get("is_active", True),
+                        }
+                    )
+            for tr in t_rows:
+                tid = int(tr["tenant_id"])
+                cfg = cfg_by_tid.get(tid, {"flags": {}, "params": {}})
+                out[tid] = {
+                    "tenant_id": tid,
+                    "name": tr["name"],
+                    "timezone": tr["timezone"],
+                    "status": tr["status"],
+                    "created_at": str(tr["created_at"]) if tr.get("created_at") else None,
+                    "flags": cfg["flags"],
+                    "params": cfg["params"],
+                    "routing": routes_by_tid.get(tid, []),
+                }
+    except Exception as e:
+        logger.warning("pg_get_tenant_full_batch failed: %s", e)
+        return {}
+    return out
 
 
 def pg_fetch_tenants(include_inactive: bool = False) -> Optional[Tuple[list, str]]:
