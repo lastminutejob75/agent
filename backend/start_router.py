@@ -30,6 +30,23 @@ _GREETING_ONLY = re.compile(
     r"^(bonjour|salut|bonsoir|hello|coucou|bonne\s+journ[ée]e|bonne\s+soir[ée]e)[\s!.,?]*$",
     re.IGNORECASE,
 )
+# Début de prise de RDV (réponse HTTP immédiate côté web, sans attendre PG)
+_BOOKING_START_QUICK = re.compile(
+    r"\b(je\s+voudrais?|je\s+veux|je\s+souhaite|prendre\s+un\s+rdv|prendre\s+un\s+rendez|"
+    r"un\s+rdv|rendez[- ]?vous)\b",
+    re.IGNORECASE,
+)
+
+
+def is_booking_start_message(text: str) -> bool:
+    """True si le message lance une prise de RDV (heuristique, pas de LLM)."""
+    t = (text or "").strip()
+    if not t or _GREETING_ONLY.match(t):
+        return False
+    if _BOOKING_START_QUICK.search(t):
+        return True
+    hr = _heuristic_route(t)
+    return hr is not None and hr.intent == Intent.BOOKING
 
 
 @dataclass

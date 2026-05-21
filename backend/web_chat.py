@@ -114,6 +114,12 @@ async def run_engine(conv_id: str, message: str, channel: str = "web") -> None:
     try:
         session = ENGINE.session_store.get_or_create(conv_id)
         session.channel = channel
+        try:
+            ctx_tid = current_tenant_id.get()
+            if ctx_tid and not getattr(session, "tenant_id", None):
+                session.tenant_id = int(ctx_tid)
+        except Exception:
+            pass
         tenant_id = getattr(session, "tenant_id", None)
         if tenant_id is not None:
             from backend.billing_pg import get_tenant_suspension
@@ -132,7 +138,9 @@ async def run_engine(conv_id: str, message: str, channel: str = "web") -> None:
                 )
                 return
 
-        await push_event(conv_id, {"type": "partial", "text": "…", "timestamp": now_iso()})
+        # Pas de partial « … » sur le web : évite « Je réfléchis » pendant les requêtes PG
+        if channel != "web":
+            await push_event(conv_id, {"type": "partial", "text": "…", "timestamp": now_iso()})
 
         engine = _get_engine(conv_id)
         events = engine.handle_message(conv_id, message)
@@ -182,6 +190,21 @@ def _greeting_reply(channel: str) -> str:
     return prompts.get_message("salutation", channel=channel) or "Bonjour ! Comment puis-je vous aider ?"
 
 
+def _instant_reply(message: str, channel: str) -> Optional[str]:
+    """Réponses synchrones (sans PG) pour salutation et début de RDV."""
+    msg = (message or "").strip()
+    if not msg:
+        return None
+    if _is_greeting_only(msg):
+        return _greeting_reply(channel)
+    from backend.start_router import is_booking_start_message
+    from backend import prompts
+
+    if is_booking_start_message(msg):
+        return prompts.get_qualif_question("name", channel=channel) or "Quel est votre nom et prénom ?"
+    return None
+
+
 async def start_web_chat(
     tenant_id: int,
     *,
@@ -199,14 +222,10 @@ async def start_web_chat(
     msg = (message or "").strip()
     out: Dict[str, Any] = {"conversation_id": conv_id}
 
-    # Salutation : réponse HTTP immédiate (sans PG/session), persistance + SSE en arrière-plan
-    if msg and _is_greeting_only(msg):
-        out["reply"] = _greeting_reply(channel)
-        asyncio.create_task(run_engine(conv_id, msg, channel))
-        return out
-
-    session = ENGINE.session_store.get_or_create(conv_id)
-    session.tenant_id = tid
+    # Réponse HTTP immédiate (salutation, début RDV) — PG/session uniquement en arrière-plan
+    instant = _instant_reply(msg, channel)
+    if instant:
+        out["reply"] = instant
     asyncio.create_task(run_engine(conv_id, msg, channel))
     return out
 

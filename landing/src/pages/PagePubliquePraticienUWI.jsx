@@ -68,6 +68,8 @@ const inputExamples = [
 
 const GREETING_ONLY = /^(bonjour|salut|bonsoir|hello|coucou|bonne journ[ée]e|bonne soir[ée]e)[\s!.,?]*$/iu;
 const INSTANT_GREETING_REPLY = "Bonjour ! Comment puis-je vous aider ?";
+const BOOKING_START = /\b(je\s+voudrais?|je\s+veux|je\s+souhaite|prendre\s+un\s+rendez|prendre\s+un\s+rdv|un\s+rdv|rendez[- ]?vous)\b/iu;
+const INSTANT_BOOKING_REPLY = "Quel est votre nom et prénom ?";
 
 const safeArray = (value) => (Array.isArray(value) ? value : []);
 const norm = (value) => String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -611,8 +613,17 @@ export default function PagePubliquePraticienUWI() {
       setChatPending(false);
       clearPartialMessage();
       const slotsPayload = Array.isArray(payload?.slots) ? payload.slots : [];
-      if (payload?.text) {
-        push([{ from: "clara", text: String(payload.text), slots: slotsPayload.length ? slotsPayload : undefined }]);
+      const text = String(payload?.text || "").trim();
+      if (text) {
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.from === "clara" && String(last?.text || "").trim() === text && !slotsPayload.length) {
+            return prev;
+          }
+          return prev.concat([
+            { id: msgId.current++, from: "clara", text, slots: slotsPayload.length ? slotsPayload : undefined },
+          ]);
+        });
       }
       return;
     }
@@ -700,10 +711,14 @@ export default function PagePubliquePraticienUWI() {
       }
     };
 
-    if (GREETING_ONLY.test(clean)) {
+    const showInstantReply = (replyText) => {
       setChatPending(false);
       clearPartialMessage();
-      push([{ from: "clara", text: INSTANT_GREETING_REPLY }]);
+      push([{ from: "clara", text: replyText }]);
+    };
+
+    const syncChatInBackground = async (instantText) => {
+      if (instantText) showInstantReply(instantText);
       try {
         const response = await fetchJson(`/api/public/praticiens/${encodeURIComponent(slug)}/chat`, {
           method: "POST",
@@ -714,9 +729,23 @@ export default function PagePubliquePraticienUWI() {
           conversationIdRef.current = conversationId;
           ensureStream(conversationId);
         }
+        if (!instantText && response?.reply) applyChatResponse(response);
       } catch {
-        // Réponse déjà affichée côté client.
+        if (!instantText) {
+          setChatPending(false);
+          clearPartialMessage();
+          push([{ from: "clara", text: "Impossible de contacter l'agent pour le moment. Merci de reessayer." }]);
+        }
       }
+    };
+
+    if (GREETING_ONLY.test(clean)) {
+      void syncChatInBackground(INSTANT_GREETING_REPLY);
+      return;
+    }
+
+    if (BOOKING_START.test(clean)) {
+      void syncChatInBackground(INSTANT_BOOKING_REPLY);
       return;
     }
 
