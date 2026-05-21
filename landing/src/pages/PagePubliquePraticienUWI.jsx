@@ -84,6 +84,8 @@ function isGreetingOnly(text) {
   return parts.length === 1 && GREETING_TOKENS.has(parts[0]);
 }
 const INSTANT_GREETING_REPLY = "Bonjour ! Comment puis-je vous aider ?";
+const CHAT_REPLY_TIMEOUT_MS = 45000;
+const CHAT_UNCLEAR_FALLBACK = "Je n'ai pas bien compris. Reformulez, par exemple : « je voudrais un rendez-vous ».";
 
 const safeArray = (value) => (Array.isArray(value) ? value : []);
 const norm = (value) => String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -405,6 +407,7 @@ export default function PagePubliquePraticienUWI() {
   const tenantIdRef = useRef(null);
   const eventSourceRef = useRef(null);
   const streamConversationIdRef = useRef(null);
+  const pendingTurnRef = useRef(null);
   const openingHours = safeArray(practitioner.openingHours).length ? practitioner.openingHours : defaultOpeningHours;
   const faqs = useMemo(() => makeFaqs(practitioner, openingHours), [practitioner, openingHours]);
   const vapiPublicKey = useMemo(() => getVapiPublicKey(), []);
@@ -427,6 +430,7 @@ export default function PagePubliquePraticienUWI() {
     setModalSlot(null);
     conversationIdRef.current = null;
     streamConversationIdRef.current = null;
+    pendingTurnRef.current = null;
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
@@ -599,6 +603,11 @@ export default function PagePubliquePraticienUWI() {
     if (type === "final") {
       const slotsPayload = Array.isArray(payload?.slots) ? payload.slots : [];
       const text = String(payload?.text || "").trim();
+      if (pendingTurnRef.current) {
+        const resolve = pendingTurnRef.current;
+        pendingTurnRef.current = null;
+        resolve(text || true);
+      }
       if (text) {
         setMessages((prev) => {
           const last = prev[prev.length - 1];
@@ -620,6 +629,11 @@ export default function PagePubliquePraticienUWI() {
       return;
     }
     if (type === "error") {
+      if (pendingTurnRef.current) {
+        const resolve = pendingTurnRef.current;
+        pendingTurnRef.current = null;
+        resolve(true);
+      }
       push([{ from: "clara", text: String(payload?.message || "Une erreur est survenue, veuillez reessayer.") }]);
     }
   }, [push]);
@@ -661,24 +675,32 @@ export default function PagePubliquePraticienUWI() {
     eventSourceRef.current = stream;
   }, [handleStreamPayload, slug]);
 
-  const inferPrefInstantReply = useCallback((value) => {
-    const t = norm(value);
-    if (!t) return null;
-    if (/\b(apres|apr[eè]s)[- ]?midi\b/.test(t) || /\bmatin\b/.test(t) || /\b(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\b/.test(t)) {
-      return INSTANT_SLOTS_LOOKUP;
-    }
-    return null;
-  }, []);
+  const waitForAgentTurn = useCallback(
+    () =>
+      new Promise((resolve) => {
+        if (pendingTurnRef.current) {
+          try {
+            pendingTurnRef.current(null);
+          } catch {
+            // no-op
+          }
+        }
+        pendingTurnRef.current = resolve;
+        window.setTimeout(() => {
+          if (pendingTurnRef.current === resolve) {
+            pendingTurnRef.current = null;
+            resolve(null);
+          }
+        }, CHAT_REPLY_TIMEOUT_MS);
+      }),
+    []
+  );
 
   const sendChatMessage = useCallback(async (text) => {
     const clean = String(text || "").trim();
     if (!clean) return;
     const convId = ensureConversationId();
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
-      streamConversationIdRef.current = null;
-    }
+    ensureStream(convId);
     push([{ from: "patient", text: clean }]);
     trackPublicEvent({
       slug,
@@ -717,6 +739,8 @@ export default function PagePubliquePraticienUWI() {
     const syncChatInBackground = async (instantText) => {
       if (instantText) showInstantReply(instantText);
       ensureStream(convId);
+      const turnWait = waitForAgentTurn();
+      let gotReply = Boolean(instantText);
       try {
         let response;
         try {
@@ -729,9 +753,28 @@ export default function PagePubliquePraticienUWI() {
           conversationIdRef.current = conversationId;
           ensureStream(conversationId);
         }
-        if (!instantText && response?.reply) applyChatResponse(response);
+        if (!instantText && response?.reply) {
+          applyChatResponse(response);
+          gotReply = true;
+          if (pendingTurnRef.current) {
+            const resolve = pendingTurnRef.current;
+            pendingTurnRef.current = null;
+            resolve(true);
+          }
+        } else if (!instantText) {
+          const sseOk = await turnWait;
+          gotReply = Boolean(sseOk);
+        } else {
+          await turnWait;
+        }
+        if (!gotReply) {
+          push([{ from: "clara", text: CHAT_UNCLEAR_FALLBACK }]);
+        }
       } catch {
-        if (!instantText) {
+        if (pendingTurnRef.current) {
+          pendingTurnRef.current = null;
+        }
+        if (!gotReply) {
           push([{ from: "clara", text: "Impossible de contacter l'agent pour le moment. Merci de reessayer." }]);
         }
       }
@@ -743,7 +786,7 @@ export default function PagePubliquePraticienUWI() {
     }
 
     void syncChatInBackground(null);
-  }, [ensureConversationId, ensureStream, push, slug]);
+  }, [ensureConversationId, ensureStream, push, slug, waitForAgentTurn]);
 
   const ask = useCallback((text) => {
     void sendChatMessage(text);

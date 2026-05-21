@@ -254,9 +254,12 @@ async def start_web_chat(
     tid = int(tenant_id)
     current_tenant_id.set(str(tid))
     _register_web_conv_tenant(tid, conv_id)
-    ensure_stream(conv_id, reset=True)
+    # Ne pas reset si une connexion SSE lit déjà la file (sinon réponse perdue = chat bloqué).
+    ensure_stream(conv_id, reset=conv_id not in STREAMS)
 
-    msg = (message or "").strip()
+    from backend.intent_parser import expand_chat_shorthand
+
+    msg = expand_chat_shorthand((message or "").strip())
     out: Dict[str, Any] = {"conversation_id": conv_id}
 
     instant = _instant_reply(msg, channel, conv_id)

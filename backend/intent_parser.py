@@ -169,6 +169,25 @@ _ACCENT_MAP = str.maketrans(
 )
 
 
+_CHAT_SHORTHAND_PATTERNS = [
+    (re.compile(r"\bje\s+v\s+(?:in|un)\s+rdv\b", re.IGNORECASE), "je veux un rdv"),
+    (re.compile(r"\bje\s+v\s+(?:in|un)\s+rendez\b", re.IGNORECASE), "je veux un rendez vous"),
+    (re.compile(r"\bjv\s+(?:un\s+)?rdv\b", re.IGNORECASE), "je veux un rdv"),
+    (re.compile(r"\bprendre\s+rdv\b", re.IGNORECASE), "prendre un rdv"),
+    (re.compile(r"\bun\s+rdv\s+svp\b", re.IGNORECASE), "je veux un rdv"),
+]
+
+
+def expand_chat_shorthand(raw: str) -> str:
+    """Abréviations chat web (je v in rdv, jv rdv…)."""
+    t = (raw or "").strip()
+    if not t:
+        return t
+    for pattern, replacement in _CHAT_SHORTHAND_PATTERNS:
+        t = pattern.sub(replacement, t)
+    return t
+
+
 def normalize_stt_text(raw: str) -> str:
     """
     Normalise le texte STT pour parsing déterministe.
@@ -177,7 +196,7 @@ def normalize_stt_text(raw: str) -> str:
     """
     if not raw or not isinstance(raw, str):
         return ""
-    t = raw.strip().lower()
+    t = expand_chat_shorthand(raw).strip().lower()
     if not t:
         return ""
     # Uniformiser apostrophes

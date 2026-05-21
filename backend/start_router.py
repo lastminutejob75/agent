@@ -62,8 +62,8 @@ def is_greeting_only_message(text: str) -> bool:
     }
 # Début de prise de RDV (réponse HTTP immédiate côté web, sans attendre PG)
 _BOOKING_START_QUICK = re.compile(
-    r"\b(je\s+voudrais?|je\s+veux|je\s+souhaite|prendre\s+un\s+rdv|prendre\s+un\s+rendez|"
-    r"un\s+rdv|rendez[- ]?vous)\b",
+    r"\b(je\s+voudrais?|je\s+veux|je\s+souhaite|je\s+v\s+(?:in|un)\s+rdv|jv\s+(?:un\s+)?rdv|"
+    r"prendre\s+un\s+rdv|prendre\s+un\s+rendez|prendre\s+rdv|un\s+rdv|rendez[- ]?vous)\b",
     re.IGNORECASE,
 )
 
