@@ -21,6 +21,9 @@ from backend.tenant_routing import current_tenant_id
 logger = logging.getLogger(__name__)
 
 STREAMS: Dict[str, asyncio.Queue[Optional[str]]] = {}
+_ENGINE_LOCKS: Dict[str, asyncio.Lock] = {}
+
+SLOTS_LOOKUP_MSG = "Je consulte les créneaux disponibles, un instant…"
 
 
 def _slots_ui_payload(session: Any) -> list:
@@ -111,7 +114,13 @@ async def emit_event(conv_id: str, ev: Event, session: Any = None) -> None:
 
 
 async def run_engine(conv_id: str, message: str, channel: str = "web") -> None:
-    """Exécute engine.handle_message et push SSE events."""
+    """Exécute engine.handle_message et push SSE events (sérialisé par conversation)."""
+    lock = _ENGINE_LOCKS.setdefault(conv_id, asyncio.Lock())
+    async with lock:
+        await _run_engine_locked(conv_id, message, channel)
+
+
+async def _run_engine_locked(conv_id: str, message: str, channel: str = "web") -> None:
     try:
         session = ENGINE.session_store.get_or_create(conv_id)
         session.channel = channel
@@ -254,12 +263,20 @@ def _instant_reply(message: str, channel: str, conv_id: Optional[str] = None) ->
             afternoon = time_pref == "afternoon" or plausible == "afternoon"
             morning = time_pref == "morning" or plausible == "morning"
             if afternoon:
-                return prompts.VOCAL_PREF_CONFIRM_APRES_MIDI
+                session.qualif_data.pref = "après-midi"
+                return SLOTS_LOOKUP_MSG
             if morning:
-                return prompts.VOCAL_PREF_CONFIRM_MATIN
+                session.qualif_data.pref = "matin"
+                return SLOTS_LOOKUP_MSG
             inferred = infer_preference_from_context(msg) if msg else None
             if inferred:
                 return prompts.format_inference_confirmation(inferred)
+        if session and getattr(session, "state", None) == "PREFERENCE_CONFIRM":
+            from backend.intent_parser import detect_intent, Intent
+
+            if detect_intent(msg, session.state) == Intent.YES and getattr(session, "pending_preference", None):
+                session.qualif_data.pref = session.pending_preference
+                return SLOTS_LOOKUP_MSG
     return None
 
 

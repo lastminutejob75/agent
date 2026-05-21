@@ -2376,6 +2376,9 @@ class Engine:
             # 2. Inférence temporelle robuste ("vers 14h", "après le déjeuner", "peu importe", etc.)
             time_pref = guards.infer_time_preference(user_text)
             if time_pref == "morning":
+                web_out = self._web_pref_apply_and_propose(session, "matin", user_text, log_label="morning")
+                if web_out is not None:
+                    return web_out
                 session.qualif_pref_intent_repeat_count = 0
                 log_preference_inferred(logger, session, user_text, inferred="morning")
                 session.pending_preference = "matin"
@@ -2387,6 +2390,9 @@ class Engine:
                 session.awaiting_confirmation = "CONFIRM_PREFERENCE"
                 return [Event("final", msg, conv_state=session.state)]
             if time_pref == "afternoon":
+                web_out = self._web_pref_apply_and_propose(session, "après-midi", user_text, log_label="afternoon")
+                if web_out is not None:
+                    return web_out
                 session.qualif_pref_intent_repeat_count = 0
                 log_preference_inferred(logger, session, user_text, inferred="afternoon")
                 session.pending_preference = "après-midi"
@@ -2412,6 +2418,9 @@ class Engine:
             # 3. Fallback : infer_preference_plausible (mots directs + heures)
             pref_plausible = guards.infer_preference_plausible(user_text)
             if pref_plausible == "morning":
+                web_out = self._web_pref_apply_and_propose(session, "matin", user_text, log_label="morning")
+                if web_out is not None:
+                    return web_out
                 session.qualif_pref_intent_repeat_count = 0
                 log_preference_inferred(logger, session, user_text, inferred="morning")
                 session.pending_preference = "matin"
@@ -2423,6 +2432,9 @@ class Engine:
                 session.awaiting_confirmation = "CONFIRM_PREFERENCE"
                 return [Event("final", msg, conv_state=session.state)]
             if pref_plausible == "afternoon":
+                web_out = self._web_pref_apply_and_propose(session, "après-midi", user_text, log_label="afternoon")
+                if web_out is not None:
+                    return web_out
                 session.qualif_pref_intent_repeat_count = 0
                 log_preference_inferred(logger, session, user_text, inferred="afternoon")
                 session.pending_preference = "après-midi"
@@ -2679,6 +2691,25 @@ class Engine:
         session.add_message("agent", msg)
         return [Event("final", msg, conv_state=session.state)]
     
+    def _web_pref_apply_and_propose(
+        self,
+        session: Session,
+        pref_value: str,
+        user_text: str,
+        *,
+        log_label: str,
+    ) -> Optional[List[Event]]:
+        """Web : pas d'étape « confirmez l'après-midi » — enchaîne directement sur les créneaux."""
+        if getattr(session, "channel", "web") != "web":
+            return None
+        session.qualif_pref_intent_repeat_count = 0
+        log_preference_inferred(logger, session, user_text, inferred=log_label)
+        session.qualif_data.pref = pref_value
+        session.pending_preference = None
+        session.last_preference_user_text = None
+        session.reset_questions()
+        return self._propose_slots(session)
+
     def _propose_slots(self, session: Session) -> List[Event]:
         """
         Propose 3 créneaux disponibles.

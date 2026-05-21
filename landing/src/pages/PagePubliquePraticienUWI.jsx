@@ -74,8 +74,7 @@ const NAME_ASK_HINT = /nom\s+et\s+pr[ée]nom/i;
 const LOOKS_LIKE_NAME = /^[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ' -]{1,58}$/u;
 const INSTANT_PREF_REPLY = "Quel créneau préférez-vous ? (ex : lundi matin, mardi après-midi)";
 const PREF_ASK_HINT = /cr[ée]neau\s+pr[ée]f[ée]r/i;
-const INSTANT_PREF_AFTERNOON = "D'accord, plutôt l'après-midi.";
-const INSTANT_PREF_MORNING = "D'accord, plutôt le matin.";
+const INSTANT_SLOTS_LOOKUP = "Je consulte les créneaux disponibles, un instant…";
 
 const safeArray = (value) => (Array.isArray(value) ? value : []);
 const norm = (value) => String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -689,10 +688,9 @@ export default function PagePubliquePraticienUWI() {
   const inferPrefInstantReply = useCallback((value) => {
     const t = norm(value);
     if (!t) return null;
-    if (/\b(apres|apr[eè]s)[- ]?midi\b/.test(t) || (/\bmercredi\b/.test(t) && /\b(apres|apr[eè]s|midi)\b/.test(t))) {
-      return INSTANT_PREF_AFTERNOON;
+    if (/\b(apres|apr[eè]s)[- ]?midi\b/.test(t) || /\bmatin\b/.test(t) || /\b(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\b/.test(t)) {
+      return INSTANT_SLOTS_LOOKUP;
     }
-    if (/\bmatin\b/.test(t) && !/\b(apres|apr[eè]s)\b/.test(t)) return INSTANT_PREF_MORNING;
     return null;
   }, []);
 
