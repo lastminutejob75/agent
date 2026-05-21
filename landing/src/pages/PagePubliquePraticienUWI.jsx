@@ -641,7 +641,6 @@ export default function PagePubliquePraticienUWI() {
     const clean = String(text || "").trim();
     if (!clean) return;
     const convId = ensureConversationId();
-    ensureStream(convId);
     push([{ from: "patient", text: clean }]);
     setChatPending(true);
     trackPublicEvent({
@@ -651,13 +650,23 @@ export default function PagePubliquePraticienUWI() {
       metadata: { length: clean.length },
     });
     try {
-      await fetchJson(`/api/public/praticiens/${encodeURIComponent(slug)}/chat`, {
+      const response = await fetchJson(`/api/public/praticiens/${encodeURIComponent(slug)}/chat`, {
         method: "POST",
         body: JSON.stringify({
           message: clean,
           conversation_id: convId,
         }),
       });
+      const conversationId = String(response?.conversation_id || convId);
+      if (conversationId) {
+        conversationIdRef.current = conversationId;
+        ensureStream(conversationId);
+      }
+      if (response?.reply) {
+        setChatPending(false);
+        clearPartialMessage();
+        push([{ from: "clara", text: String(response.reply) }]);
+      }
     } catch {
       setChatPending(false);
       clearPartialMessage();

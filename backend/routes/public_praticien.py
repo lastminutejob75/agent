@@ -151,8 +151,21 @@ async def public_praticien_chat(slug: str, body: PublicChatBody) -> Dict[str, An
 
 @router.get("/{slug}/stream/{conv_id}")
 async def public_praticien_chat_stream(slug: str, conv_id: str):
-    """SSE des réponses assistant pour une conversation démarrée via POST …/chat."""
-    from backend.web_chat import web_chat_stream
+    """
+    SSE des réponses assistant.
+    Pré-enregistre la session (conv_id peut arriver avant le premier POST, comme le widget /frontend).
+    """
+    from backend.engine import ENGINE
+    from backend.web_chat import _register_web_conv_tenant, ensure_stream, web_chat_stream
 
     tenant_id = _tenant_id_for_slug(slug)
-    return await web_chat_stream(conv_id, expected_tenant_id=tenant_id)
+    cid = (conv_id or "").strip()
+    if not cid:
+        raise HTTPException(status_code=400, detail="conversation_id invalide")
+
+    session = ENGINE.session_store.get_or_create(cid)
+    session.tenant_id = tenant_id
+    session.channel = "web"
+    _register_web_conv_tenant(tenant_id, cid)
+    ensure_stream(cid)
+    return await web_chat_stream(cid, expected_tenant_id=tenant_id)

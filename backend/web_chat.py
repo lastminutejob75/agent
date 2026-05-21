@@ -170,6 +170,25 @@ def _register_web_conv_tenant(tenant_id: int, conv_id: str) -> None:
         pass
 
 
+def _is_greeting_only(message: str) -> bool:
+    from backend.start_router import _GREETING_ONLY
+
+    return bool(_GREETING_ONLY.match((message or "").strip()))
+
+
+async def _final_reply_from_engine(conv_id: str, message: str, channel: str) -> Optional[str]:
+    """Exécute le moteur de façon synchrone et renvoie le texte final (salutations, etc.)."""
+    await run_engine(conv_id, message, channel)
+    session = ENGINE.session_store.get(conv_id)
+    if session and getattr(session, "messages", None):
+        for msg in reversed(list(session.messages)):
+            role = getattr(msg, "role", None) or (msg.get("role") if isinstance(msg, dict) else None)
+            text = getattr(msg, "text", None) or (msg.get("text") if isinstance(msg, dict) else None)
+            if role == "agent" and (text or "").strip():
+                return str(text).strip()
+    return None
+
+
 async def start_web_chat(
     tenant_id: int,
     *,
@@ -187,8 +206,18 @@ async def start_web_chat(
     _register_web_conv_tenant(tid, conv_id)
 
     ensure_stream(conv_id)
-    asyncio.create_task(run_engine(conv_id, message or "", channel))
-    return {"conversation_id": conv_id}
+    msg = (message or "").strip()
+    out: Dict[str, Any] = {"conversation_id": conv_id}
+
+    # Salutation : réponse immédiate dans le POST (comme le widget ressenti) + events SSE
+    if msg and _is_greeting_only(msg):
+        reply = await _final_reply_from_engine(conv_id, msg, channel)
+        if reply:
+            out["reply"] = reply
+        return out
+
+    asyncio.create_task(run_engine(conv_id, msg, channel))
+    return out
 
 
 def _resolve_session_tenant(conv_id: str, expected_tenant_id: Optional[int] = None):

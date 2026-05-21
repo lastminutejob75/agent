@@ -5,6 +5,7 @@ import logging
 import re
 import sqlite3
 import unicodedata
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 from uuid import uuid4
@@ -91,8 +92,8 @@ def _get_tenant_id_by_public_slug_sqlite(slug: str) -> Optional[int]:
     return None
 
 
-def get_tenant_id_by_public_slug(slug: str) -> Optional[int]:
-    """Retourne le tenant_id correspondant au public_slug (page publique du cabinet)."""
+def _get_tenant_id_by_public_slug_uncached(slug: str) -> Optional[int]:
+    """Résolution slug → tenant_id (PG indexé puis SQLite local). Pas de scan complet en prod."""
     slug = (slug or "").strip().lower()
     if not slug:
         return None
@@ -123,29 +124,20 @@ def get_tenant_id_by_public_slug(slug: str) -> Optional[int]:
                     row = cur.fetchone()
                     if row:
                         return int(row.get("tenant_id") if hasattr(row, "get") else row[0])
-                    cur.execute(
-                        """
-                        SELECT t.tenant_id, t.name, tc.params_json
-                        FROM tenants t
-                        LEFT JOIN tenant_config tc ON tc.tenant_id = t.tenant_id
-                        """
-                    )
-                    for row in cur.fetchall() or []:
-                        tid = int(row.get("tenant_id") if hasattr(row, "get") else row[0])
-                        tname = row.get("name") if hasattr(row, "get") else row[1]
-                        raw_params = row.get("params_json") if hasattr(row, "get") else row[2]
-                        params = raw_params if isinstance(raw_params, dict) else {}
-                        if isinstance(raw_params, str):
-                            try:
-                                params = json.loads(raw_params)
-                            except Exception:
-                                params = {}
-                        if slug in _slug_candidates(params if isinstance(params, dict) else {}, str(tname or "")):
-                            return tid
         except Exception as e:
             logger.debug("get_tenant_id_by_public_slug pg slug=%s err=%s", slug[:80], e)
 
     return _get_tenant_id_by_public_slug_sqlite(slug)
+
+
+@lru_cache(maxsize=512)
+def _get_tenant_id_by_public_slug_cached(slug: str) -> Optional[int]:
+    return _get_tenant_id_by_public_slug_uncached(slug)
+
+
+def get_tenant_id_by_public_slug(slug: str) -> Optional[int]:
+    """Retourne le tenant_id correspondant au public_slug (cache mémoire, invalidé rarement)."""
+    return _get_tenant_id_by_public_slug_cached((slug or "").strip().lower())
 
 
 def get_public_profile_bundle(tenant_id: int) -> Dict[str, Any]:
