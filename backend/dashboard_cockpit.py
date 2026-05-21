@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -267,6 +269,70 @@ def dash_web_requests_between(start_dt: datetime, end_dt: datetime) -> int:
         except Exception:
             pass
     return total
+
+
+def dash_web_requests_both_windows(
+    cur_start: datetime,
+    cur_end: datetime,
+    prev_start: datetime,
+    prev_end: datetime,
+) -> tuple[int, int]:
+    """
+    Même logique que 2 × dash_web_requests_between mais en limitant les connexions PG.
+    Cas fréquent (une seule DATABASE_URL) : 1 connexion, 4 requêtes au lieu de jusqu'à 4 connexions.
+    """
+    curl, curh = dash_fmt_ts(cur_start), dash_fmt_ts(cur_end)
+    prvl, prvh = dash_fmt_ts(prev_start), dash_fmt_ts(prev_end)
+
+    ut = (os.environ.get("DATABASE_URL") or os.environ.get("PG_TENANTS_URL") or "").strip()
+    ue = (os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL") or "").strip()
+
+    hq_sql = (
+        "SELECT COUNT(*) FROM human_handoffs "
+        "WHERE created_at >= %s::timestamptz AND created_at <= %s::timestamptz "
+        "AND LOWER(TRIM(COALESCE(channel, ''))) NOT IN ('', 'vocal', 'voice', 'phone')"
+    )
+    ivr_sql = (
+        "SELECT COUNT(*) FROM ivr_events WHERE created_at >= %s AND created_at <= %s "
+        "AND (event ILIKE '%%web%%' OR event ILIKE '%%composer%%' OR event ILIKE '%%formulaire%%') "
+        "AND event NOT IN ("
+        "'booking_confirmed','user_abandon','abandon','hangup','user_hangup',"
+        "'transferred_human','transferred','transfer_human','transfer','anti_loop_trigger')"
+        ")"
+    )
+
+    cur_w, prev_w = 0, 0
+
+    def _one_conn(url: str, run_hq: bool, run_ev: bool) -> None:
+        nonlocal cur_w, prev_w
+        try:
+            import psycopg
+
+            with psycopg.connect(url) as conn:
+                with conn.cursor() as cur:
+                    if run_hq:
+                        cur.execute(hq_sql, (curl, curh))
+                        cur_w += int((cur.fetchone() or [0])[0])
+                        cur.execute(hq_sql, (prvl, prvh))
+                        prev_w += int((cur.fetchone() or [0])[0])
+                    if run_ev:
+                        cur.execute(ivr_sql, (curl, curh))
+                        cur_w += int((cur.fetchone() or [0])[0])
+                        cur.execute(ivr_sql, (prvl, prvh))
+                        prev_w += int((cur.fetchone() or [0])[0])
+        except Exception as e:
+            if "does not exist" not in str(e).lower():
+                logger.debug("dashboard web_requests_both (url=%s): %s", (url or "")[:20], e)
+
+    # Une DATABASE_URL commune : une seule session pour handoffs + ivr sur les deux fenêtres.
+    if ut and ue and ut == ue:
+        _one_conn(ut, run_hq=True, run_ev=True)
+        return cur_w, prev_w
+    if ut:
+        _one_conn(ut, run_hq=True, run_ev=False)
+    if ue and ue != ut:
+        _one_conn(ue, run_hq=False, run_ev=True)
+    return cur_w, prev_w
 
 
 def dash_voice_and_cost_between(ctx: Any, start_dt: datetime, end_dt: datetime) -> tuple[float, float]:
@@ -699,8 +765,8 @@ def dash_build_summary(
     ops_snap: Optional[Dict[str, Any]] = None,
     activation_slice: Optional[List[Any]] = None,
 ) -> dict:
-    tenants = ctx["_get_tenant_list"](include_inactive=True)
-    active_count = sum(1 for t in tenants or [] if (t.get("status") or "active") == "active")
+    tenants: List[Any] = []
+    leads_payload: Dict[str, Any] = {}
     wd_ops = max(7, min(90, dash_window_days(period)))
     ops_window = min(wd_ops, 30)
 
@@ -715,21 +781,71 @@ def dash_build_summary(
         activation_slice = ctx["_get_activation_queue"](42).get("items") or []
 
     cur_start, cur_end, prev_start, prev_end = dash_paired_intervals_utc(period)
-    ivr_cur = dash_ivr_between(ctx, cur_start, cur_end)
-    ivr_prev = dash_ivr_between(ctx, prev_start, prev_end)
+    _ivr0: Dict[str, int] = {"calls_handled_count": 0, "appointments_created_count": 0}
+    tout = float(os.environ.get("COCKPIT_PARALLEL_TIMEOUT_SEC", "90") or "90")
 
-    ap_cur = dash_slots_appointment_between(ctx, cur_start, cur_end)
-    ap_prev = dash_slots_appointment_between(ctx, prev_start, prev_end)
+    ivr_cur = dict(_ivr0)
+    ivr_prev = dict(_ivr0)
+    ap_cur = ap_prev = 0
+    web_cur = web_prev = 0
+    mins_cur, cost_usd_cur = 0.0, 0.0
+    voice_month_used: float = 0.0
+    incl_sum: Optional[int] = None
+    usage_pct: Optional[float] = None
+    active_delta_month = 0
 
-    bookings_cur = max(int(ivr_cur["appointments_created_count"]), ap_cur)
-    bookings_prev = max(int(ivr_prev["appointments_created_count"]), ap_prev)
+    try:
 
-    web_cur = dash_web_requests_between(cur_start, cur_end)
-    web_prev = dash_web_requests_between(prev_start, prev_end)
+        def _grab(fut, label: str, default):
+            try:
+                return fut.result(timeout=tout)
+            except FuturesTimeout:
+                logger.warning("cockpit KPI parallel timeout (%s)", label)
+            except Exception as e:
+                logger.warning("cockpit KPI parallel error (%s): %s", label, e)
+            return default
 
-    mins_cur, cost_usd_cur = dash_voice_and_cost_between(ctx, cur_start, cur_end)
+        with ThreadPoolExecutor(max_workers=11) as pool:
+            def _tenant_list_submit() -> List[Any]:
+                return ctx["_get_tenant_list"](include_inactive=True)
 
-    voice_month_used, incl_sum, usage_pct = dash_month_voice_and_included(ctx)
+            f_ten = pool.submit(_tenant_list_submit)
+            f_ld = pool.submit(dash_leads_block, ctx, period)
+            f_iv_c = pool.submit(dash_ivr_between, ctx, cur_start, cur_end)
+            f_iv_p = pool.submit(dash_ivr_between, ctx, prev_start, prev_end)
+            f_ap_c = pool.submit(dash_slots_appointment_between, ctx, cur_start, cur_end)
+            f_ap_p = pool.submit(dash_slots_appointment_between, ctx, prev_start, prev_end)
+            f_web = pool.submit(dash_web_requests_both_windows, cur_start, cur_end, prev_start, prev_end)
+            f_vc = pool.submit(dash_voice_and_cost_between, ctx, cur_start, cur_end)
+            f_vm = pool.submit(dash_month_voice_and_included, ctx)
+            f_ad = pool.submit(dash_active_delta_month_pg)
+
+            tl = _grab(f_ten, "tenant_list", [])
+            tenants = tl if isinstance(tl, list) else []
+            ldb = _grab(f_ld, "leads_block", {})
+            leads_payload = ldb if isinstance(ldb, dict) else {}
+
+            ivr_cur = _grab(f_iv_c, "ivr_cur", ivr_cur) or ivr_cur
+            ivr_prev = _grab(f_iv_p, "ivr_prev", ivr_prev) or ivr_prev
+            ap_cur = int(_grab(f_ap_c, "ap_cur", ap_cur))
+            ap_prev = int(_grab(f_ap_p, "ap_prev", ap_prev))
+            w_pair = _grab(f_web, "web_windows", (0, 0)) or (0, 0)
+            web_cur, web_prev = int(w_pair[0]), int(w_pair[1])
+            vc = _grab(f_vc, "voice_window", (0.0, 0.0)) or (0.0, 0.0)
+            mins_cur, cost_usd_cur = float(vc[0]), float(vc[1])
+            vm = _grab(f_vm, "voice_month", (0.0, None, None)) or (0.0, None, None)
+            voice_month_used = float(vm[0])
+            incl_sum = vm[1]
+            usage_pct = vm[2]
+            active_delta_month = int(_grab(f_ad, "active_delta_month", 0))
+
+    except Exception as e:
+        logger.warning("cockpit KPI parallel pool failed: %s", e)
+
+    active_count = sum(1 for t in tenants if (t.get("status") or "active") == "active")
+
+    bookings_cur = max(int(ivr_cur.get("appointments_created_count") or 0), ap_cur)
+    bookings_prev = max(int(ivr_prev.get("appointments_created_count") or 0), ap_prev)
 
     rate_eur_pm = os.environ.get("VAPI_COST_PER_MINUTE") or os.environ.get("VAPI_COST_PER_MINUTE_EUR") or ""
     cost_eur_est: float
@@ -750,7 +866,7 @@ def dash_build_summary(
 
     kpis = {
         "active_tenants_count": active_count,
-        "active_tenants_delta_month": dash_active_delta_month_pg(),
+        "active_tenants_delta_month": int(active_delta_month),
         "calls_handled_count": int(calls_cur),
         "calls_delta_percent": dash_pct_change(calls_cur, calls_prev),
         "web_requests_count": int(web_cur),
@@ -771,7 +887,7 @@ def dash_build_summary(
         "period": period,
         "tenant_totals_hint": len(tenants or []),
         "kpis": kpis,
-        "leads": dash_leads_block(ctx, period),
+        "leads": leads_payload,
         "hints": {
             "voice_minutes_calendar_month_total": voice_month_used,
         },
