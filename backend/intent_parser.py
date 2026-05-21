@@ -89,6 +89,9 @@ _FAQ_STRONG_LEXICON = [
     "horaires", "horaire", "heures d ouverture", "ouvert", "ferme",
     "tarif", "tarifs", "prix", "combien coute",
     "parking", "acces", "telephone du cabinet",
+    "vacance", "vacances", "conge", "conges", "part en vacance",
+    "docteur absent", "medecin absent", "fermeture",
+    "quelle heure", "il est quelle",
 ]
 
 _YES_LEXICON = [
@@ -355,8 +358,29 @@ def _is_booking(text: str) -> bool:
 
 def _is_faq_keywords(text: str) -> bool:
     t = normalize_stt_text(text)
-    kw = ["horaire", "horaires", "adresse", "tarif", "prix", "parking", "accès", "ouvert", "fermé", "où", "ou "]
+    kw = [
+        "horaire", "horaires", "adresse", "tarif", "prix", "parking", "acces",
+        "ouvert", "ferme", "ou ", "vacance", "vacances", "conge", "conges",
+        "quelle heure", "il est quelle", "docteur", "medecin",
+    ]
     return any(k in t for k in kw)
+
+
+def looks_like_side_question(text: str) -> bool:
+    """Question hors étape de qualification (vacances, heure, etc.)."""
+    if not text or not text.strip():
+        return False
+    if "?" in text:
+        return True
+    t = normalize_stt_text(text)
+    markers = (
+        "quelle heure", "quel heure", "il est quelle", "quelle est", "quel est",
+        "est ce que", "est ce qu", "avez vous", "etes vous",
+        "vacance", "vacances", "conge", "conges", "part en", "absent",
+        "ferme", "ouvert", "le docteur", "la docteure", "docteur part",
+        "pourquoi", "comment ca", "comment se",
+    )
+    return any(m in t for m in markers)
 
 
 def detect_intent(text: str, state: str = "") -> Intent:

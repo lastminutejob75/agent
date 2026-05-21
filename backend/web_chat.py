@@ -94,10 +94,12 @@ async def emit_event(conv_id: str, ev: Event, session: Any = None) -> None:
             await close_stream(conv_id)
         return
 
-    if ev.type in ("partial", "final"):
+    if ev.type == "partial":
+        return
+    if ev.type == "final":
         payload["text"] = ev.text
         payload["conv_state"] = ev.conv_state
-        if session is not None and ev.type == "final":
+        if session is not None:
             _attach_slots(payload, session)
         await push_event(conv_id, payload)
         if payload.get("conv_state") in ["CONFIRMED", "TRANSFERRED"]:
@@ -229,49 +231,14 @@ def _store_extracted_name(conv_id: str, tenant_id: int, name: str) -> None:
 
 
 def _instant_reply(message: str, channel: str, conv_id: Optional[str] = None) -> Optional[str]:
-    """Réponses synchrones (sans PG) : salutation, début RDV, nom reçu en QUALIF_NAME."""
-    from backend.entity_extraction import infer_preference_from_context
-    from backend.start_router import is_booking_start_message, is_greeting_only_message
-    from backend import guards, prompts
+    """Réponse synchrone immédiate : salutations uniquement (le moteur gère le reste via SSE)."""
+    from backend.start_router import is_greeting_only_message
 
     msg = (message or "").strip()
     if not msg:
         return None
     if is_greeting_only_message(msg):
         return _greeting_reply(channel)
-
-    if is_booking_start_message(msg):
-        return prompts.get_qualif_question("name", channel=channel) or "Quel est votre nom et prénom ?"
-
-    if conv_id:
-        session = _session_from_memory(conv_id)
-        if session and getattr(session, "state", None) == "QUALIF_NAME":
-            extracted, reject = guards.extract_name_from_speech(msg)
-            if extracted is not None and not reject:
-                return (
-                    prompts.get_qualif_question("pref", channel=channel)
-                    or "Quel créneau préférez-vous ? (ex : lundi matin, mardi après-midi)"
-                )
-        if session and getattr(session, "state", None) == "QUALIF_PREF":
-            time_pref = guards.infer_time_preference(msg)
-            plausible = guards.infer_preference_plausible(msg)
-            afternoon = time_pref == "afternoon" or plausible == "afternoon"
-            morning = time_pref == "morning" or plausible == "morning"
-            if afternoon:
-                session.qualif_data.pref = "après-midi"
-                return SLOTS_LOOKUP_MSG
-            if morning:
-                session.qualif_data.pref = "matin"
-                return SLOTS_LOOKUP_MSG
-            inferred = infer_preference_from_context(msg) if msg else None
-            if inferred:
-                return prompts.format_inference_confirmation(inferred)
-        if session and getattr(session, "state", None) == "PREFERENCE_CONFIRM":
-            from backend.intent_parser import detect_intent, Intent
-
-            if detect_intent(msg, session.state) == Intent.YES and getattr(session, "pending_preference", None):
-                session.qualif_data.pref = session.pending_preference
-                return SLOTS_LOOKUP_MSG
     return None
 
 
@@ -295,17 +262,6 @@ async def start_web_chat(
     instant = _instant_reply(msg, channel, conv_id)
     if instant:
         out["reply"] = instant
-        from backend.start_router import is_booking_start_message
-        from backend import guards
-
-        if is_booking_start_message(msg):
-            _touch_web_session(conv_id, tid, state="QUALIF_NAME")
-        else:
-            mem = _session_from_memory(conv_id)
-            if mem and getattr(mem, "state", None) == "QUALIF_NAME":
-                extracted, reject = guards.extract_name_from_speech(msg)
-                if extracted is not None and not reject:
-                    _store_extracted_name(conv_id, tid, extracted)
 
     asyncio.create_task(run_engine(conv_id, msg, channel))
     return out

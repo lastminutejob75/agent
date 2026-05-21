@@ -2165,6 +2165,30 @@ class Engine:
         
         return [Event("final", question, conv_state=session.state)]
     
+    def _maybe_handle_side_question_in_qualif(self, session: Session, user_text: str) -> Optional[List[Event]]:
+        """Question hors parcours (vacances, heure…) pendant la prise de RDV."""
+        from backend.intent_parser import looks_like_side_question, detect_strong_intent, Intent
+
+        if not looks_like_side_question(user_text or ""):
+            return None
+        channel = getattr(session, "channel", "web")
+        if detect_strong_intent(user_text or "", session.state) == Intent.FAQ:
+            session.state = "START"
+            return self._handle_faq(session, user_text, include_low=True)
+        hints = {
+            "QUALIF_NAME": "indiquez votre nom et prénom.",
+            "QUALIF_PREF": "précisez un créneau (ex. mardi matin, mercredi après-midi).",
+            "QUALIF_MOTIF": "indiquez le motif de consultation.",
+            "QUALIF_CONTACT": "indiquez votre email ou numéro de téléphone.",
+        }
+        hint = hints.get(session.state, "reformulez votre demande.")
+        if channel == "web":
+            msg = prompts.MSG_QUALIF_SIDE_QUESTION_WEB.format(hint=hint)
+        else:
+            msg = getattr(prompts, "MSG_UNCLEAR_1", "Je n'ai pas bien compris. Pouvez-vous répéter ?")
+        session.add_message("agent", msg)
+        return [Event("final", msg, conv_state=session.state)]
+
     def _handle_qualification(self, session: Session, user_text: str) -> List[Event]:
         """
         Gère le flow de qualification (4 questions).
@@ -2177,6 +2201,10 @@ class Engine:
         # ========================
         if current_step == "QUALIF_NAME":
             channel = getattr(session, "channel", "web")
+
+            side = self._maybe_handle_side_question_in_qualif(session, user_text)
+            if side is not None:
+                return side
             
             # P0 : phrase d'intention RDV ("je veux un rdv") → message guidé ; P1.4 : 3x → INTENT_ROUTER
             if _detect_booking_intent(user_text):
@@ -2298,6 +2326,10 @@ class Engine:
         elif current_step == "QUALIF_PREF":
             channel = getattr(session, "channel", "web")
             logger.info("[QUALIF_PREF] conv_id=%s user=%s", session.conv_id, _mask_for_log(user_text or ""))
+
+            side = self._maybe_handle_side_question_in_qualif(session, user_text)
+            if side is not None:
+                return side
 
             # --- P0: répétition intention RDV ("je veux un rdv") → message guidé, pas preference_fails ---
             if _detect_booking_intent(user_text):

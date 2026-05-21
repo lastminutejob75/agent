@@ -84,13 +84,6 @@ function isGreetingOnly(text) {
   return parts.length === 1 && GREETING_TOKENS.has(parts[0]);
 }
 const INSTANT_GREETING_REPLY = "Bonjour ! Comment puis-je vous aider ?";
-const BOOKING_START = /\b(je\s+voudrais?|je\s+veux|je\s+souhaite|prendre\s+un\s+rendez|prendre\s+un\s+rdv|un\s+rdv|rendez[- ]?vous)\b/iu;
-const INSTANT_BOOKING_REPLY = "Quel est votre nom et prénom ?";
-const NAME_ASK_HINT = /nom\s+et\s+pr[ée]nom/i;
-const LOOKS_LIKE_NAME = /^[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ' -]{1,58}$/u;
-const INSTANT_PREF_REPLY = "Quel créneau préférez-vous ? (ex : lundi matin, mardi après-midi)";
-const PREF_ASK_HINT = /cr[ée]neau\s+pr[ée]f[ée]r/i;
-const INSTANT_SLOTS_LOOKUP = "Je consulte les créneaux disponibles, un instant…";
 
 const safeArray = (value) => (Array.isArray(value) ? value : []);
 const norm = (value) => String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -723,6 +716,7 @@ export default function PagePubliquePraticienUWI() {
 
     const syncChatInBackground = async (instantText) => {
       if (instantText) showInstantReply(instantText);
+      ensureStream(convId);
       try {
         let response;
         try {
@@ -748,48 +742,8 @@ export default function PagePubliquePraticienUWI() {
       return;
     }
 
-    if (BOOKING_START.test(clean)) {
-      void syncChatInBackground(INSTANT_BOOKING_REPLY);
-      return;
-    }
-
-    const lastClaraAsksName = () => {
-      for (let i = messages.length - 1; i >= 0; i -= 1) {
-        const m = messages[i];
-        if (m.from === "clara") {
-          return NAME_ASK_HINT.test(String(m.text || ""));
-        }
-        if (m.from === "patient") break;
-      }
-      return false;
-    };
-
-    if (LOOKS_LIKE_NAME.test(clean) && lastClaraAsksName()) {
-      void syncChatInBackground(INSTANT_PREF_REPLY);
-      return;
-    }
-
-    const lastClaraAsksPref = () => {
-      for (let i = messages.length - 1; i >= 0; i -= 1) {
-        const m = messages[i];
-        if (m.from === "clara") {
-          return PREF_ASK_HINT.test(String(m.text || ""));
-        }
-        if (m.from === "patient") break;
-      }
-      return false;
-    };
-
-    if (lastClaraAsksPref()) {
-      const prefInstant = inferPrefInstantReply(clean);
-      if (prefInstant) {
-        void syncChatInBackground(prefInstant);
-        return;
-      }
-    }
-
     void syncChatInBackground(null);
-  }, [ensureConversationId, ensureStream, inferPrefInstantReply, messages, push, slug]);
+  }, [ensureConversationId, ensureStream, push, slug]);
 
   const ask = useCallback((text) => {
     void sendChatMessage(text);

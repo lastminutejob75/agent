@@ -1100,6 +1100,10 @@ MSG_OUT_OF_SCOPE_WEB = (
     "Désolé, nous sommes un cabinet médical. Je peux vous aider pour un rendez-vous, "
     "ou pour une question (horaires, adresse). Que souhaitez-vous ?"
 )
+MSG_QUALIF_SIDE_QUESTION_WEB = (
+    "Je n'ai pas cette information ici — le secrétariat pourra vous renseigner. "
+    "Pour continuer votre rendez-vous : {hint}"
+)
 
 # 2e incompréhension : guidage clair (exemples concrets)
 VOCAL_START_GUIDANCE = (
