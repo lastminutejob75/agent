@@ -6328,13 +6328,18 @@ def _get_stats_top_tenants(metric: str, window_days: int, limit: int) -> dict:
                             tid = r.get("tenant_id")
                             if tid is None:
                                 continue
-                            d = _get_tenant_detail(tid) if tid else {}
                             items_wb.append({
                                 "tenant_id": tid,
-                                "name": d.get("name") or f"Tenant #{tid}",
+                                "name": "",
                                 "value": int(r.get("value") or 0),
                                 "last_activity_at": None,
                             })
+                        if items_wb:
+                            tids_wb = [int(x["tenant_id"]) for x in items_wb if x.get("tenant_id") is not None]
+                            names_wb = _batch_tenant_names_from_pg(tids_wb)
+                            for item in items_wb:
+                                tid_int = int(item["tenant_id"])
+                                item["name"] = names_wb.get(tid_int, f"Tenant #{tid_int}")
             except Exception as e:
                 if "human_handoffs" not in str(e).lower() and "does not exist" not in str(e).lower():
                     logger.warning("stats top_tenants web_handoffs pg: %s", e)
@@ -7416,24 +7421,6 @@ def admin_dashboard_bundle(
     """
     ctx = _admin_cockpit_ctx()
     p = _normalize_dashboard_period(period)
-    wd_ops = max(7, min(90, dash_window_days(p)))
-    ops_window = min(wd_ops, 30)
-    from concurrent.futures import ThreadPoolExecutor
-    from concurrent.futures import TimeoutError as FuturesTimeout
-
-    tout = float(os.environ.get("COCKPIT_BUNDLE_PHASE_TIMEOUT_SEC", "120") or "120")
-    try:
-        with ThreadPoolExecutor(max_workers=2) as ex:
-            f_b = ex.submit(ctx["_get_billing_snapshot"])
-            f_a = ex.submit(ctx["_get_activation_queue"], 42)
-            billing_snap = f_b.result(timeout=tout)
-            activation_slice = f_a.result(timeout=tout).get("items") or []
-    except (FuturesTimeout, Exception):
-        billing_snap = ctx["_get_billing_snapshot"]()
-        activation_slice = ctx["_get_activation_queue"](42).get("items") or []
-    # Réutilise le même billing_snap : sinon _get_operations_snapshot refait tout le snapshot (+ N+1 historique).
-    ops_snap = ctx["_get_operations_snapshot"](window_days=ops_window, billing_snapshot=billing_snap)
-
     sf = (severity or "").strip().lower()
     filt = sf if sf in ("critical", "warning") else None
     severity_key = filt or ""
@@ -7441,6 +7428,25 @@ def admin_dashboard_bundle(
     cached = _cockpit_bundle_cache_get(p, severity_key)
     if cached is not None:
         return cached
+
+    wd_ops = max(7, min(90, dash_window_days(p)))
+    ops_window = min(wd_ops, 30)
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FuturesTimeout
+
+    tout = float(os.environ.get("COCKPIT_BUNDLE_PHASE_TIMEOUT_SEC", "120") or "120")
+    act_limit = max(8, min(int(os.environ.get("COCKPIT_ACTIVATION_LIMIT", "12") or "12"), 42))
+    try:
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            f_b = ex.submit(ctx["_get_billing_snapshot"])
+            f_a = ex.submit(ctx["_get_activation_queue"], act_limit)
+            billing_snap = f_b.result(timeout=tout)
+            activation_slice = f_a.result(timeout=tout).get("items") or []
+    except (FuturesTimeout, Exception):
+        billing_snap = ctx["_get_billing_snapshot"]()
+        activation_slice = ctx["_get_activation_queue"](act_limit).get("items") or []
+    # Réutilise le même billing_snap : sinon _get_operations_snapshot refait tout le snapshot (+ N+1 historique).
+    ops_snap = ctx["_get_operations_snapshot"](window_days=ops_window, billing_snapshot=billing_snap)
 
     tout_body = float(os.environ.get("COCKPIT_BUNDLE_BODY_TIMEOUT_SEC", "120") or "120")
     try:

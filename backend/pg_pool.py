@@ -32,7 +32,7 @@ def get_pool():
         _pool = ConnectionPool(
             conninfo=url,
             min_size=1,
-            max_size=5,
+            max_size=max(5, min(int(os.environ.get("PG_POOL_MAX_SIZE", "12") or "12"), 32)),
             timeout=3.0,
             max_idle=300.0,
             kwargs={"row_factory": _dict_row_factory()},

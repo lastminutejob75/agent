@@ -190,6 +190,53 @@ def dash_ivr_between(ctx: Any, start_dt: datetime, end_dt: datetime) -> Dict[str
     return out
 
 
+def dash_ivr_both_windows(
+    ctx: Any,
+    cur_start: datetime,
+    cur_end: datetime,
+    prev_start: datetime,
+    prev_end: datetime,
+) -> tuple[Dict[str, int], Dict[str, int]]:
+    """Même logique que 2 × dash_ivr_between, une seule connexion PG."""
+    _z: Dict[str, int] = {"calls_handled_count": 0, "appointments_created_count": 0}
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    if not url:
+        return dict(_z), dict(_z)
+    curl, curh = dash_fmt_ts(cur_start), dash_fmt_ts(cur_end)
+    prvl, prvh = dash_fmt_ts(prev_start), dash_fmt_ts(prev_end)
+    ivr_cur, ivr_prev = dict(_z), dict(_z)
+    try:
+        with pg_connection_for(url) as conn:
+            with conn.cursor() as cur:
+                for start_s, end_s, target in (
+                    (curl, curh, ivr_cur),
+                    (prvl, prvh, ivr_prev),
+                ):
+                    cur.execute(
+                        """
+                        SELECT COUNT(DISTINCT call_id) AS c
+                        FROM ivr_events
+                        WHERE call_id IS NOT NULL AND TRIM(call_id) != ''
+                          AND created_at >= %s AND created_at <= %s
+                        """,
+                        (start_s, end_s),
+                    )
+                    target["calls_handled_count"] = int((cur.fetchone() or {}).get("c") or 0)
+                    cur.execute(
+                        """
+                        SELECT COUNT(*) AS c FROM ivr_events
+                        WHERE event = 'booking_confirmed'
+                          AND created_at >= %s AND created_at <= %s
+                        """,
+                        (start_s, end_s),
+                    )
+                    target["appointments_created_count"] = int((cur.fetchone() or {}).get("c") or 0)
+    except Exception as e:
+        if "does not exist" not in str(e).lower():
+            logger.warning("dashboard ivr_both_windows: %s", e)
+    return ivr_cur, ivr_prev
+
+
 def dash_slots_appointment_between(ctx: Any, start_dt: datetime, end_dt: datetime) -> int:
     from backend import config
 
@@ -485,29 +532,29 @@ def _watchlist_antiloop_from_ops(ops: Dict[str, Any]) -> List[dict]:
 
 
 def dash_leads_block(ctx: Any, period: str = "7d") -> dict:
-    from backend.leads_pg import count_new_leads, list_leads
+    from backend.leads_pg import count_new_leads, fetch_leads_cockpit_light
 
     p = dash_normalize_period(period)
     tout_ld = float(os.environ.get("COCKPIT_LEADS_TIMEOUT_SEC", "45") or "45")
     try:
 
         def _load_leads():
-            return list_leads(limit=280, effective_limit_only=True)
+            return fetch_leads_cockpit_light(120)
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             f_lp = pool.submit(_load_leads)
             f_cq = pool.submit(count_new_leads)
-            leads_payload = f_lp.result(timeout=tout_ld)
+            leads = f_lp.result(timeout=tout_ld)
             to_qualify_today = f_cq.result(timeout=tout_ld)
     except FuturesTimeout:
         logger.warning("cockpit leads parallel timeout")
-        leads_payload = list_leads(limit=280, effective_limit_only=True)
+        leads = fetch_leads_cockpit_light(120)
         to_qualify_today = count_new_leads()
     except Exception:
-        leads_payload = list_leads(limit=280, effective_limit_only=True)
+        leads = fetch_leads_cockpit_light(120)
         to_qualify_today = count_new_leads()
 
-    leads: List[dict] = list((leads_payload or {}).get("items") or [])
+    leads = list(leads or [])
     window_cut = dash_leads_cutoff_utc(p)
 
     window_rows: List[dict] = []
@@ -578,7 +625,9 @@ def dash_watchlist_items(ctx: Any, period: str, ops_snap: Optional[Dict[str, Any
 
     if ops_snap is not None:
         anti_rows = _watchlist_antiloop_from_ops(ops_snap)
-        top_web = _fetch_web_top()
+        # Pas de _get_stats_top_tenants(web_handoffs) : N+1 tenant_detail + connexion PG extra inutile
+        # (quota / anti-loop viennent déjà de ops_snap).
+        top_web = []
     else:
         try:
             with ThreadPoolExecutor(max_workers=2) as pool:
@@ -860,8 +909,7 @@ def dash_build_summary(
 
             f_ten = pool.submit(_tenant_list_submit)
             f_ld = pool.submit(dash_leads_block, ctx, period)
-            f_iv_c = pool.submit(dash_ivr_between, ctx, cur_start, cur_end)
-            f_iv_p = pool.submit(dash_ivr_between, ctx, prev_start, prev_end)
+            f_iv = pool.submit(dash_ivr_both_windows, ctx, cur_start, cur_end, prev_start, prev_end)
             f_ap_c = pool.submit(dash_slots_appointment_between, ctx, cur_start, cur_end)
             f_ap_p = pool.submit(dash_slots_appointment_between, ctx, prev_start, prev_end)
             f_web = pool.submit(dash_web_requests_both_windows, cur_start, cur_end, prev_start, prev_end)
@@ -874,8 +922,9 @@ def dash_build_summary(
             ldb = _grab(f_ld, "leads_block", {})
             leads_payload = ldb if isinstance(ldb, dict) else {}
 
-            ivr_cur = _grab(f_iv_c, "ivr_cur", ivr_cur) or ivr_cur
-            ivr_prev = _grab(f_iv_p, "ivr_prev", ivr_prev) or ivr_prev
+            ivr_pair = _grab(f_iv, "ivr_both", (dict(_ivr0), dict(_ivr0))) or (dict(_ivr0), dict(_ivr0))
+            ivr_cur = ivr_pair[0] if isinstance(ivr_pair, tuple) and len(ivr_pair) > 0 else dict(_ivr0)
+            ivr_prev = ivr_pair[1] if isinstance(ivr_pair, tuple) and len(ivr_pair) > 1 else dict(_ivr0)
             ap_cur = int(_grab(f_ap_c, "ap_cur", ap_cur))
             ap_prev = int(_grab(f_ap_p, "ap_prev", ap_prev))
             w_pair = _grab(f_web, "web_windows", (0, 0)) or (0, 0)

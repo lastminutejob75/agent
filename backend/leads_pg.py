@@ -180,6 +180,46 @@ def _get_conn():
         yield conn
 
 
+def fetch_leads_cockpit_light(limit: int = 120) -> List[Dict[str, Any]]:
+    """
+    Leads pour le bloc cockpit : colonnes minimales, sans enrichissement commercial (score/segment).
+    Beaucoup plus rapide que list_leads(limit=280) qui peut charger et enrichir des centaines de lignes.
+    """
+    cap = max(20, min(int(limit or 120), 200))
+    rows_out: List[Dict[str, Any]] = []
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, created_at, email, assistant_name, source, status, notes,
+                           primary_pain_point, last_submitted_at, updated_at
+                    FROM pre_onboarding_leads
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    (cap,),
+                )
+                for row in cur.fetchall() or []:
+                    d = dict(row) if not isinstance(row, dict) else row
+                    rows_out.append({
+                        "id": d.get("id"),
+                        "created_at": d.get("created_at"),
+                        "email": d.get("email"),
+                        "assistant_name": d.get("assistant_name"),
+                        "source": d.get("source") or "landing_cta",
+                        "source_detail": d.get("source") or "landing_cta",
+                        "status": d.get("status") or "new",
+                        "notes": d.get("notes"),
+                        "primary_pain_point": d.get("primary_pain_point"),
+                        "last_submitted_at": d.get("last_submitted_at"),
+                        "updated_at": d.get("updated_at"),
+                    })
+    except Exception as e:
+        logger.warning("fetch_leads_cockpit_light failed: %s", e)
+    return rows_out
+
+
 def get_lead_by_email_for_upsert(email: str) -> Optional[Dict[str, Any]]:
     """
     Retourne un lead existant avec status in ('new','contacted') pour déduplication, ou None.
