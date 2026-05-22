@@ -7,7 +7,7 @@ import json
 import smtplib
 from datetime import datetime, timedelta
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -712,6 +712,47 @@ def _end_iso_from_start(start_iso: str, tenant_id: int) -> str:
         return ""
 
 
+def _resolve_public_slot_id(tenant_id: int, payload: PublicBookingRequest) -> Tuple[Optional[int], str]:
+    """Résout l'id créneau (numérique) depuis slotId, startIso ou libellé."""
+    from backend import tools_booking
+
+    src = (payload.slotSource or "sqlite").strip().lower()
+    book_src = src if src in ("pg", "sqlite") else "sqlite"
+
+    try:
+        return int(str(payload.slotId).strip()), book_src
+    except (TypeError, ValueError):
+        pass
+
+    start_iso = (payload.startIso or "").strip()
+    if start_iso:
+        sid = tools_booking._resolve_slot_id_from_start_iso(start_iso, source=book_src, tenant_id=tenant_id)
+        if sid is not None:
+            return int(sid), book_src
+
+    label_norm = _norm(payload.slotLabel)
+    if label_norm:
+        try:
+            session = SimpleNamespace(tenant_id=tenant_id, rejected_slot_starts=[])
+            display = tools_booking.get_slots_for_display(limit=12, pref=None, session=session) or []
+            for slot in display:
+                item = _format_slot_from_display(slot, tenant_id=tenant_id)
+                if item and _norm(item.get("label") or "") == label_norm:
+                    try:
+                        return int(str(item.get("id") or "").strip()), str(item.get("source") or book_src)
+                    except (TypeError, ValueError):
+                        if item.get("startIso"):
+                            sid = tools_booking._resolve_slot_id_from_start_iso(
+                                item["startIso"], source=book_src, tenant_id=tenant_id
+                            )
+                            if sid is not None:
+                                return int(sid), book_src
+        except Exception as exc:
+            logger.warning("_resolve_public_slot_id label lookup failed: %s", exc)
+
+    return None, book_src
+
+
 def _book_real_slot(tenant_id: int, payload: PublicBookingRequest) -> tuple[bool, Optional[str]]:
     """
     Réserve un créneau via tools_booking (Google / PG / SQLite) — même chemin que l'agent vocal.
@@ -738,17 +779,23 @@ def _book_real_slot(tenant_id: int, payload: PublicBookingRequest) -> tuple[bool
         ]
         return tools_booking.book_slot_from_session(session, 1)
 
-    try:
-        slot_id = int(str(payload.slotId).strip())
-    except (TypeError, ValueError):
+    slot_id, book_src = _resolve_public_slot_id(tenant_id, payload)
+    if slot_id is None:
+        logger.warning(
+            "public_book unresolved slot slug=%s slotId=%r startIso=%r label=%r",
+            payload.slug,
+            payload.slotId,
+            payload.startIso,
+            payload.slotLabel[:60] if payload.slotLabel else "",
+        )
         return False, "technical"
 
-    book_src = src if src in ("pg", "sqlite") else "sqlite"
     session.pending_slots = [
         {
             "id": slot_id,
             "slot_id": slot_id,
             "source": book_src,
+            "start_iso": (payload.startIso or "").strip() or None,
             "label": payload.slotLabel,
             "label_vocal": payload.slotLabel,
         }

@@ -314,30 +314,53 @@ function UwiSearchBar({ data = defaultSearchData, onSearchUsed }) {
   );
 }
 
-function resolveChatSlotOffer(offer, apiSlots) {
-  const list = safeArray(apiSlots);
-  const idx = Number(offer?.index);
-  if (idx >= 1 && list[idx - 1]) return { ...list[idx - 1] };
-  const label = norm(offer?.label || "");
-  const found = list.find((s) => norm(s.label) === label || norm(s.label).includes(label) || label.includes(norm(s.label)));
-  if (found) return { ...found };
+function slotFromChatOffer(offer) {
+  const idx = Number(offer?.index) || 1;
   return {
-    id: String(offer?.id || `chat-${idx}`),
+    id: String(offer?.id || ""),
     label: offer?.label || `Créneau ${idx}`,
     day: "",
     time: "",
-    motifs: safeArray(offer?.motifs).length ? offer.motifs : ["Consultation", "Suivi"],
+    motifs: safeArray(offer?.motifs).length ? offer.motifs : ["Consultation", "Suivi", "Premiere consultation"],
     source: offer?.source || "sqlite",
     startIso: offer?.startIso || "",
     endIso: offer?.endIso || "",
   };
 }
 
-function BookingFields({ slot, onConfirm, onCancel, compact = false, defaultName = "" }) {
+function resolveChatSlotOffer(offer, apiSlots) {
+  const base = slotFromChatOffer(offer);
+  if (base.id && /^\d+$/.test(base.id) && base.startIso) return base;
+  const list = safeArray(apiSlots);
+  const idx = Number(offer?.index);
+  if (idx >= 1 && list[idx - 1]) {
+    const merged = { ...list[idx - 1] };
+    if (!merged.startIso && base.startIso) merged.startIso = base.startIso;
+    if (!merged.id && base.id) merged.id = base.id;
+    if (!merged.source && base.source) merged.source = base.source;
+    return merged;
+  }
+  const label = norm(offer?.label || "");
+  const found = list.find((s) => {
+    const sl = norm(s.label || "");
+    return sl === label || sl.includes(label) || label.includes(sl);
+  });
+  if (found) {
+    return {
+      ...found,
+      startIso: found.startIso || base.startIso,
+      id: found.id || base.id,
+      source: found.source || base.source,
+    };
+  }
+  return base;
+}
+
+function BookingFields({ slot, onConfirm, onCancel, compact = false, defaultName = "", submitting = false }) {
   const [motif, setMotif] = useState(() => defaultMotif(slot));
   const [name, setName] = useState(defaultName);
   const [phone, setPhone] = useState("");
-  const ok = Boolean(motif && name.trim() && phone.trim());
+  const ok = Boolean(motif && name.trim() && phone.trim()) && !submitting;
 
   useEffect(() => {
     setMotif(defaultMotif(slot));
@@ -363,7 +386,7 @@ function BookingFields({ slot, onConfirm, onCancel, compact = false, defaultName
         <input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Telephone" type="tel" />
       </div>
       <button className="primary" disabled={!ok} type="button" onClick={() => ok && onConfirm({ slot, motif, name: name.trim(), phone: phone.trim() })}>
-        Confirmer ma demande
+        {submitting ? "Confirmation en cours…" : "Confirmer ma demande"}
       </button>
     </div>
   );
@@ -413,6 +436,8 @@ export default function PagePubliquePraticienUWI() {
   const [messages, setMessages] = useState([{ id: 0, from: "clara", text: "Bonjour, comment puis-je vous aider ?" }]);
   const [input, setInput] = useState("");
   const [inlineSlot, setInlineSlot] = useState(null);
+  const [bookingSubmitting, setBookingSubmitting] = useState(false);
+  const [bookingSuccess, setBookingSuccess] = useState(null);
   const [modalSlot, setModalSlot] = useState(null);
   const [placeholderIdx, setPlaceholderIdx] = useState(0);
   const [showAllSlots, setShowAllSlots] = useState(false);
@@ -453,6 +478,8 @@ export default function PagePubliquePraticienUWI() {
     setVoiceError("");
     setVoiceStatus("idle");
     setInlineSlot(null);
+    setBookingSuccess(null);
+    setBookingSubmitting(false);
     setModalSlot(null);
     conversationIdRef.current = null;
     streamConversationIdRef.current = null;
@@ -647,6 +674,11 @@ export default function PagePubliquePraticienUWI() {
     if (type === "final") {
       const slotsPayload = Array.isArray(payload?.slots) ? payload.slots : [];
       const text = String(payload?.text || "").trim();
+      const convState = String(payload?.conv_state || "");
+      if (convState === "CONFIRMED" && text) {
+        setBookingSuccess({ label: "", message: text, confirmed: true });
+        setInlineSlot(null);
+      }
       if (pendingTurnRef.current) {
         const resolve = pendingTurnRef.current;
         pendingTurnRef.current = null;
@@ -840,10 +872,10 @@ export default function PagePubliquePraticienUWI() {
   const pickChatSlot = useCallback(
     (offer) => {
       const full = resolveChatSlotOffer(offer, slots);
+      setBookingSuccess(null);
       chooseSlot(full);
-      void sendChatMessage(`oui ${offer.index}`);
     },
-    [chooseSlot, sendChatMessage, slots]
+    [chooseSlot, slots]
   );
 
   const ask = useCallback((text) => {
@@ -853,7 +885,7 @@ export default function PagePubliquePraticienUWI() {
   const confirm = useCallback(async (booking) => {
     const payload = {
       slug,
-      slotId: booking.slot.id,
+      slotId: String(booking.slot.id || booking.slot.index || "1"),
       slotLabel: booking.slot.label,
       motif: booking.motif,
       patientName: booking.name,
@@ -865,10 +897,12 @@ export default function PagePubliquePraticienUWI() {
     };
     let responseData = null;
     let confirmed = false;
+    setBookingSubmitting(true);
     try {
       responseData = await fetchJson("/api/public/book", { method: "POST", body: JSON.stringify(payload) });
       confirmed = Boolean(responseData?.confirmed || responseData?.status === "confirmed");
     } catch (err) {
+      setBookingSubmitting(false);
       const msg = String(err?.message || "");
       if (msg.includes("409") || msg.toLowerCase().includes("plus disponible")) {
         push([{ from: "clara", text: "Ce creneau vient d'etre pris. Choisissez un autre horaire, je vous en propose d'autres." }]);
@@ -880,17 +914,20 @@ export default function PagePubliquePraticienUWI() {
       push([{ from: "clara", text: "La reservation n'a pas abouti. Verifiez vos informations et reessayez, ou choisissez un autre creneau." }]);
       return;
     }
+    setBookingSubmitting(false);
+    const successText = confirmed
+      ? `Parfait, votre rendez-vous pour ${booking.slot.label} est confirme. A bientot au cabinet.`
+      : `Merci. Votre demande pour ${booking.slot.label} est enregistree. Le cabinet confirmera dans les meilleurs delais.`;
     setInlineSlot(null);
     setBookingDone(true);
     setBookingFollowup(responseData?.followup || null);
-    push([
-      {
-        from: "clara",
-        text: confirmed
-          ? `Parfait, votre rendez-vous pour ${booking.slot.label} est confirme. A bientot au cabinet.`
-          : `Merci. Votre demande pour ${booking.slot.label} est enregistree. Le cabinet confirmera dans les meilleurs delais.`,
-      },
-    ]);
+    setBookingSuccess({
+      label: booking.slot.label,
+      message: successText,
+      confirmed,
+      confirmationId: responseData?.confirmationId,
+    });
+    push([{ from: "clara", text: successText }]);
     trackPublicEvent({
       slug,
       event: "booking_confirmed",
@@ -1142,6 +1179,7 @@ export default function PagePubliquePraticienUWI() {
                       {message.text}
                       {safeArray(message.slots).length ? (
                         <div className="chatSlotChoices">
+                          <span className="chatSlotHint">Choisissez un creneau, puis confirmez avec votre nom et telephone :</span>
                           {message.slots.map((offer) => (
                             <button
                               key={`${message.id}-slot-${offer.index}`}
@@ -1158,10 +1196,19 @@ export default function PagePubliquePraticienUWI() {
                     </div>
                   </div>
                 ))}
+                {bookingSuccess ? (
+                  <div className="inlineCard bookingSuccessCard">
+                    <div className="bookingSuccessIcon">✓</div>
+                    <b>{bookingSuccess.confirmed ? "Rendez-vous confirme" : "Demande enregistree"}</b>
+                    <p>{bookingSuccess.message}</p>
+                    {bookingSuccess.label ? <span className="bookingSuccessSlot">{bookingSuccess.label}</span> : null}
+                  </div>
+                ) : null}
                 {inlineSlot ? (
                   <BookingFields
                     slot={inlineSlot}
                     defaultName={inferredPatientName}
+                    submitting={bookingSubmitting}
                     onConfirm={confirm}
                     onCancel={() => {
                       setInlineSlot(null);
@@ -1289,10 +1336,14 @@ header a.wa{color:#1b6d34;border-color:#cce9d2}
 .chatComposerBar .composerSendBtn{height:52px;font-size:15px}
 .chatLine{display:flex;align-items:flex-start;gap:10px}.assistantLine{justify-content:flex-start}.patientLine{justify-content:flex-end}.bubble{font-size:14px;line-height:1.55;border-radius:14px;padding:12px 16px;max-width:80%}.claraBubble{background:#009CA4;color:#fff;border-bottom-left-radius:3px}.patientBubble{background:#f4f6f6;border:1px solid #e3e7e8;color:#2f3c42;border-bottom-right-radius:3px}
 .chatSlotChoices{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.chatSlotHint{font-size:12px;opacity:.92;margin-bottom:2px}
 .chatSlotBtn{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.14);color:#fff;border-radius:10px;padding:10px 12px;cursor:pointer;font-size:13px}
 .chatSlotBtn:hover{background:rgba(255,255,255,.24)}
 .chatSlotBtnNum{flex-shrink:0;width:26px;height:26px;border-radius:8px;background:#fff;color:#006b73;font-weight:900;display:flex;align-items:center;justify-content:center;font-size:13px}
 .chatSlotBtnLabel{line-height:1.35}
+.bookingSuccessCard{text-align:center;background:#e8f8f9;border:2px solid #009CA4;color:#0a4a50;margin-top:8px}
+.bookingSuccessIcon{font-size:28px;color:#009CA4;margin-bottom:6px}
+.bookingSuccessSlot{display:block;margin-top:8px;font-size:13px;opacity:.85}
 .partialBubble{opacity:.72;font-style:italic}
 @keyframes uwiSkShimmer{0%{background-position:-160px 0}100%{background-position:160px 0}}
 .composerSlotSkeleton{cursor:default;border-color:#e0eef0;background:rgba(255,255,255,.9);pointer-events:none}

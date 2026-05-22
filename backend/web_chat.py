@@ -43,18 +43,24 @@ def _slots_ui_payload(session: Any) -> list:
             ).strip()
         if not label:
             continue
-        slot_id = slot.get("id") or slot.get("slot_id") if isinstance(slot, dict) else getattr(slot, "id", None) or getattr(slot, "slot_id", None)
-        src = (slot.get("source") if isinstance(slot, dict) else getattr(slot, "source", None)) or "sqlite"
-        start_iso = (slot.get("start_iso") or slot.get("start") if isinstance(slot, dict) else getattr(slot, "start_iso", None) or getattr(slot, "start", None)) or ""
-        end_iso = (slot.get("end_iso") or slot.get("end") if isinstance(slot, dict) else getattr(slot, "end_iso", None) or getattr(slot, "end", None)) or ""
+        if isinstance(slot, dict):
+            slot_id = slot.get("slot_id") or slot.get("id")
+            src = slot.get("source") or "sqlite"
+            start_iso = slot.get("start_iso") or slot.get("start") or ""
+            end_iso = slot.get("end_iso") or slot.get("end") or ""
+        else:
+            slot_id = getattr(slot, "slot_id", None) or getattr(slot, "id", None)
+            src = getattr(slot, "source", None) or "sqlite"
+            start_iso = getattr(slot, "start_iso", None) or getattr(slot, "start", None) or ""
+            end_iso = getattr(slot, "end_iso", None) or getattr(slot, "end", None) or ""
         out.append(
             {
                 "index": i + 1,
                 "label": label,
                 "id": str(slot_id) if slot_id is not None else "",
                 "source": str(src).lower(),
-                "startIso": str(start_iso),
-                "endIso": str(end_iso),
+                "startIso": str(start_iso or ""),
+                "endIso": str(end_iso or ""),
                 "motifs": ["Consultation", "Suivi", "Premiere consultation", "Renouvellement"],
             }
         )
