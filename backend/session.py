@@ -85,6 +85,8 @@ class Session:
     rejected_slot_starts: List[str] = field(default_factory=list)
     # IDs des créneaux déjà proposés (exclusion stricte « voir d'autres créneaux »)
     rejected_slot_ids: List[str] = field(default_factory=list)
+    # True pendant un tour « voir d'autres créneaux » (web : pas de transfert brutal)
+    requesting_more_slots: bool = False
     # (day, period) refusés : anti-spam matin/après-midi (ex. "lundi|MORNING")
     rejected_day_periods: List[str] = field(default_factory=list)
     # Séquentiel : "non" consécutifs → à 2, demander préférence ouverte

@@ -325,6 +325,7 @@ REJECTED_SLOT_WINDOW_MINUTES = 90  # ±90 min
 # Nombre de créneaux à récupérer avant étalement (pool pour diversifier).
 # Réduit pour accélérer la réponse Vapi sur get_slots (moins d'appels Google).
 SLOTS_POOL_SIZE = 9
+SLOTS_POOL_SIZE_MORE = 24  # pool élargi pour « voir d'autres créneaux »
 
 # Périodes UX : 1 créneau par (jour, période) quand possible
 # MORNING 8-12, AFTERNOON 13-18, EVENING 18+
@@ -688,14 +689,15 @@ def get_slots_for_display(
     # Fast-path absolu : cache avant toute résolution adapter/tenant-config (évite overhead DB).
     rejected = getattr(session, "rejected_slot_starts", None) if session else None
     rejected_ids = getattr(session, "rejected_slot_ids", None) if session else None
-    has_rejected = bool(rejected) or bool(rejected_ids)
+    more_round = bool(getattr(session, "requesting_more_slots", False)) if session else False
+    has_rejected = bool(rejected) or bool(rejected_ids) or more_round
     if not has_rejected:
         cached = _get_cached_slots(limit, tenant_id, pref=pref)
         if cached:
             logger.info(f"⚡ get_slots_for_display: cache hit pref={pref} ({(time.time() - t_start) * 1000:.0f}ms)")
             return cached
 
-    pool_limit = max(limit, SLOTS_POOL_SIZE) if has_rejected else limit
+    pool_limit = max(limit, SLOTS_POOL_SIZE_MORE) if has_rejected else limit
 
     strict_google_mode = False
     try:
@@ -761,6 +763,19 @@ def get_slots_for_display(
             logger.warning("GOOGLE_CALENDAR_STRICT_NO_FALLBACK tenant_id=%s pref=%s", tenant_id, pref)
             return []
         pool = _get_slots_from_sqlite(pool_limit, pref=pref, tenant_id=tenant_id)
+
+    # « Autres créneaux » : si Google/strict renvoie vide, tenter le pool local élargi
+    if has_rejected and (not pool or len(pool) == 0):
+        try:
+            local_pool = _get_slots_from_sqlite(pool_limit, pref=pref, tenant_id=tenant_id)
+            if local_pool:
+                logger.info(
+                    "get_slots_for_display: fallback local après refus (%s créneaux)",
+                    len(local_pool),
+                )
+                pool = local_pool
+        except Exception as e:
+            logger.debug("get_slots_for_display: fallback local failed: %s", e)
 
     # Si préférence demandée mais aucun créneau trouvé, fallback sans filtre (ne pas bloquer)
     if pref and (not pool or len(pool) == 0):
@@ -879,8 +894,7 @@ def _get_slots_from_google_calendar(
     buffer_minutes = rules["buffer_minutes"]
 
     pool: List[prompts.SlotDisplay] = []
-    # Priorité fiabilité Vapi: fournir vite 3 créneaux, même si moins "diversifiés".
-    target_pool_size = max(SLOTS_POOL_SIZE, limit, 3)
+    target_pool_size = max(SLOTS_POOL_SIZE_MORE if limit >= SLOTS_POOL_SIZE else SLOTS_POOL_SIZE, limit, 3)
     # Plage horaire selon préférence (intersection avec règles tenant)
     if pref == "matin":
         start_hour, end_hour = max(base_start, 9), min(12, base_end)
@@ -892,7 +906,8 @@ def _get_slots_from_google_calendar(
         start_hour, end_hour = base_start, base_end
 
     candidate_dates = []
-    for day_offset in range(1, 8):
+    day_horizon = 14 if target_pool_size >= SLOTS_POOL_SIZE_MORE else 8
+    for day_offset in range(1, day_horizon):
         date = datetime.now() + timedelta(days=day_offset)
         if date.weekday() not in booking_days:
             continue

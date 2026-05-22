@@ -2783,6 +2783,16 @@ class Engine:
                 logger.info("[PROPOSE_SLOTS] conv_id=%s fetched len=%s pref=%s ms=%.0f", session.conv_id, len(slots) if slots else 0, pref, (time.time() - t_start) * 1000)
             except Exception as e:
                 logger.warning("[PROPOSE_SLOTS] conv_id=%s error=%s", session.conv_id, str(e)[:100], exc_info=True)
+                if channel == "web" and getattr(session, "requesting_more_slots", False):
+                    session.requesting_more_slots = False
+                    session.state = "WAIT_CONFIRM"
+                    msg = (
+                        "Je n'arrive pas à charger d'autres créneaux pour le moment. "
+                        "Réessayez dans un instant ou précisez un jour (ex. mercredi après-midi)."
+                    )
+                    session.add_message("agent", msg)
+                    self._save_session(session)
+                    return [Event("final", msg, conv_state=session.state)]
                 session.state = "TRANSFERRED"
                 msg = self._say(session, "transfer")
                 if not msg:
@@ -2796,12 +2806,14 @@ class Engine:
             has_rejected = bool(getattr(session, "rejected_slot_starts", None)) or bool(
                 getattr(session, "rejected_slot_ids", None)
             )
-            if channel == "web" and has_rejected:
+            more_round = bool(getattr(session, "requesting_more_slots", False))
+            session.requesting_more_slots = False
+            if channel == "web" and (has_rejected or more_round):
                 session.state = "WAIT_CONFIRM"
                 msg = (
                     "Je n'ai pas d'autres créneaux disponibles pour l'instant. "
-                    "Vous pouvez préciser un jour ou une préférence (matin, après-midi), "
-                    "ou nous contacter directement."
+                    "Précisez un jour ou un horaire (ex. mercredi après-midi), "
+                    "ou choisissez un créneau dans la liste ci-dessus si l'un vous convient."
                 )
                 session.pending_slots = []
                 session.add_message("agent", msg)
@@ -2812,6 +2824,7 @@ class Engine:
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
 
+        session.requesting_more_slots = False
         # Stocker slots (Fix 3: pending_slots = seule source de vérité)
         tools_booking.store_pending_slots(session, slots)
         old_state = session.state
@@ -2857,6 +2870,7 @@ class Engine:
 
     def _reject_pending_and_repropose_slots(self, session: Session) -> List[Event]:
         """Exclut les créneaux déjà proposés et en propose de nouveaux (web + vocal)."""
+        channel = getattr(session, "channel", "web")
         rejected = list(getattr(session, "rejected_slot_starts", None) or [])
         rejected_ids = list(getattr(session, "rejected_slot_ids", None) or [])
         rdp = list(getattr(session, "rejected_day_periods", None) or [])
@@ -2870,15 +2884,18 @@ class Engine:
                 sid_s = str(sid)
                 if sid_s not in rejected_ids:
                     rejected_ids.append(sid_s)
-            day = tools_booking._slot_get(slot_obj, "day") or ""
-            period = tools_booking.slot_period(slot_obj)
-            if day and period:
-                dp_key = f"{day}|{period}"
-                if dp_key not in rdp:
-                    rdp.append(dp_key)
+            # Web : ne pas bloquer tout un (jour, période) — seulement les créneaux affichés
+            if channel == "vocal":
+                day = tools_booking._slot_get(slot_obj, "day") or ""
+                period = tools_booking.slot_period(slot_obj)
+                if day and period:
+                    dp_key = f"{day}|{period}"
+                    if dp_key not in rdp:
+                        rdp.append(dp_key)
         session.rejected_slot_starts = rejected
         session.rejected_slot_ids = rejected_ids
         session.rejected_day_periods = rdp
+        session.requesting_more_slots = True
         session.pending_slot_choice = None
         session.awaiting_confirmation = None
         session.slot_proposal_sequential = False
@@ -2890,6 +2907,7 @@ class Engine:
         pref = getattr(session.qualif_data, "pref", None)
         tools_booking.clear_slots_cache(tenant_id, pref)
         tools_booking.clear_slots_cache(tenant_id, None)
+        self._save_session(session)
         logger.info(
             "[MORE_SLOTS] conv_id=%s rejected_starts=%s rejected_ids=%s reproposing",
             session.conv_id,
