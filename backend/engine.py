@@ -2793,6 +2793,20 @@ class Engine:
         
         if not slots:
             logger.info("[PROPOSE_SLOTS] conv_id=%s no_slots", session.conv_id)
+            has_rejected = bool(getattr(session, "rejected_slot_starts", None)) or bool(
+                getattr(session, "rejected_slot_ids", None)
+            )
+            if channel == "web" and has_rejected:
+                session.state = "WAIT_CONFIRM"
+                msg = (
+                    "Je n'ai pas d'autres créneaux disponibles pour l'instant. "
+                    "Vous pouvez préciser un jour ou une préférence (matin, après-midi), "
+                    "ou nous contacter directement."
+                )
+                session.pending_slots = []
+                session.add_message("agent", msg)
+                self._save_session(session)
+                return [Event("final", msg, conv_state=session.state)]
             session.state = "TRANSFERRED"
             msg = prompts.get_message("no_slots", channel=channel)
             session.add_message("agent", msg)
@@ -2844,18 +2858,26 @@ class Engine:
     def _reject_pending_and_repropose_slots(self, session: Session) -> List[Event]:
         """Exclut les créneaux déjà proposés et en propose de nouveaux (web + vocal)."""
         rejected = list(getattr(session, "rejected_slot_starts", None) or [])
+        rejected_ids = list(getattr(session, "rejected_slot_ids", None) or [])
         rdp = list(getattr(session, "rejected_day_periods", None) or [])
         for slot_obj in session.pending_slots or []:
             cur_start = tools_booking._slot_get(slot_obj, "start_iso") or tools_booking._slot_get(slot_obj, "start")
-            if cur_start and cur_start not in rejected:
-                rejected.append(cur_start)
+            key = tools_booking.normalize_slot_start_key(cur_start)
+            if key and key not in {tools_booking.normalize_slot_start_key(s) for s in rejected}:
+                rejected.append(key)
+            sid = tools_booking._slot_get(slot_obj, "slot_id") or tools_booking._slot_get(slot_obj, "id")
+            if sid is not None:
+                sid_s = str(sid)
+                if sid_s not in rejected_ids:
+                    rejected_ids.append(sid_s)
             day = tools_booking._slot_get(slot_obj, "day") or ""
             period = tools_booking.slot_period(slot_obj)
             if day and period:
-                key = f"{day}|{period}"
-                if key not in rdp:
-                    rdp.append(key)
+                dp_key = f"{day}|{period}"
+                if dp_key not in rdp:
+                    rdp.append(dp_key)
         session.rejected_slot_starts = rejected
+        session.rejected_slot_ids = rejected_ids
         session.rejected_day_periods = rdp
         session.pending_slot_choice = None
         session.awaiting_confirmation = None
@@ -2864,10 +2886,15 @@ class Engine:
         session.slots_list_sent = False
         session.slots_preface_sent = False
         reset_slots_reading(session)
+        tenant_id = int(getattr(session, "tenant_id", None) or 1)
+        pref = getattr(session.qualif_data, "pref", None)
+        tools_booking.clear_slots_cache(tenant_id, pref)
+        tools_booking.clear_slots_cache(tenant_id, None)
         logger.info(
-            "[MORE_SLOTS] conv_id=%s rejected_count=%s reproposing",
+            "[MORE_SLOTS] conv_id=%s rejected_starts=%s rejected_ids=%s reproposing",
             session.conv_id,
             len(rejected),
+            len(rejected_ids),
         )
         return self._propose_slots(session)
     

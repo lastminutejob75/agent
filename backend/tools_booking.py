@@ -484,6 +484,31 @@ def is_slot_far_from_rejected(
     return True
 
 
+def _filter_slots_exclude_exact(
+    slots: List[prompts.SlotDisplay],
+    rejected_starts: List[str],
+    rejected_ids: Optional[List[str]] = None,
+) -> List[prompts.SlotDisplay]:
+    """Exclut les créneaux déjà proposés (même horaire ou même slot_id)."""
+    if not rejected_starts and not rejected_ids:
+        return slots
+    rejected_keys = {normalize_slot_start_key(s) for s in (rejected_starts or []) if s}
+    rejected_keys.discard("")
+    id_set = {str(i) for i in (rejected_ids or []) if i is not None and str(i).strip()}
+    out = []
+    for s in slots:
+        start_key = normalize_slot_start_key(
+            _slot_get(s, "start") or _slot_get(s, "start_iso") or _slot_get(s, "start_time")
+        )
+        sid = str(_slot_get(s, "slot_id") or _slot_get(s, "id") or "").strip()
+        if start_key and start_key in rejected_keys:
+            continue
+        if sid and sid in id_set:
+            continue
+        out.append(s)
+    return out
+
+
 def _filter_slots_away_from_rejected(
     slots: List[prompts.SlotDisplay],
     rejected_starts: List[str],
@@ -614,6 +639,29 @@ def _normalize_iso(s: Optional[str]) -> str:
     return s
 
 
+def normalize_slot_start_key(start: Optional[str]) -> str:
+    """Clé stable pour comparer / exclure un créneau déjà proposé."""
+    if not start:
+        return ""
+    try:
+        dt = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+        if dt.tzinfo:
+            dt = dt.replace(tzinfo=None)
+        return dt.strftime("%Y-%m-%dT%H:%M:%S")
+    except Exception:
+        return str(start).strip().replace(" ", "T")[:19]
+
+
+def clear_slots_cache(tenant_id: int = 1, pref: Optional[str] = None) -> None:
+    """Invalide le cache créneaux (après « voir d'autres créneaux »)."""
+    if pref is None:
+        keys = [k for k in _slots_cache["by_key"] if k[0] == tenant_id]
+        for k in keys:
+            _slots_cache["by_key"].pop(k, None)
+    else:
+        _slots_cache["by_key"].pop(_cache_key(tenant_id, pref), None)
+
+
 def get_slots_for_display(
     limit: int = 3,
     pref: Optional[str] = None,
@@ -639,11 +687,15 @@ def get_slots_for_display(
 
     # Fast-path absolu : cache avant toute résolution adapter/tenant-config (évite overhead DB).
     rejected = getattr(session, "rejected_slot_starts", None) if session else None
-    if not rejected:
+    rejected_ids = getattr(session, "rejected_slot_ids", None) if session else None
+    has_rejected = bool(rejected) or bool(rejected_ids)
+    if not has_rejected:
         cached = _get_cached_slots(limit, tenant_id, pref=pref)
         if cached:
             logger.info(f"⚡ get_slots_for_display: cache hit pref={pref} ({(time.time() - t_start) * 1000:.0f}ms)")
             return cached
+
+    pool_limit = max(limit, SLOTS_POOL_SIZE) if has_rejected else limit
 
     strict_google_mode = False
     try:
@@ -671,7 +723,7 @@ def get_slots_for_display(
     # Récupérer le pool brut (pas encore étalé) pour pouvoir filtrer refus puis étaler
     if calendar_or_adapter:
         try:
-            pool = _get_slots_from_google_calendar(calendar_or_adapter, limit, pref=pref, tenant_id=tenant_id)
+            pool = _get_slots_from_google_calendar(calendar_or_adapter, pool_limit, pref=pref, tenant_id=tenant_id)
         except GoogleCalendarPermissionError as e:
             if strict_google_mode:
                 logger.warning(
@@ -687,7 +739,7 @@ def get_slots_for_display(
                 pref,
                 e,
             )
-            pool = _get_slots_from_sqlite(limit, pref=pref, tenant_id=tenant_id)
+            pool = _get_slots_from_sqlite(pool_limit, pref=pref, tenant_id=tenant_id)
         except (GoogleCalendarNotFoundError, GoogleCalendarError) as e:
             if strict_google_mode:
                 logger.warning(
@@ -703,12 +755,12 @@ def get_slots_for_display(
                 pref,
                 e,
             )
-            pool = _get_slots_from_sqlite(limit, pref=pref, tenant_id=tenant_id)
+            pool = _get_slots_from_sqlite(pool_limit, pref=pref, tenant_id=tenant_id)
     else:
         if strict_google_mode and not use_local_fallback:
             logger.warning("GOOGLE_CALENDAR_STRICT_NO_FALLBACK tenant_id=%s pref=%s", tenant_id, pref)
             return []
-        pool = _get_slots_from_sqlite(limit, pref=pref, tenant_id=tenant_id)
+        pool = _get_slots_from_sqlite(pool_limit, pref=pref, tenant_id=tenant_id)
 
     # Si préférence demandée mais aucun créneau trouvé, fallback sans filtre (ne pas bloquer)
     if pref and (not pool or len(pool) == 0):
@@ -754,10 +806,21 @@ def get_slots_for_display(
                 return []
             pool = _get_slots_from_sqlite(limit, pref=None, tenant_id=tenant_id)
 
-    # Exclure créneaux "voisins" des refus (±90 min) pour ne pas reproposer la même plage
-    if rejected:
-        pool = _filter_slots_away_from_rejected(pool, rejected, REJECTED_SLOT_WINDOW_MINUTES)
-        logger.info(f"🔄 get_slots_for_display: après exclusion refusés, {len(pool)} créneaux")
+    # Exclure créneaux déjà proposés (exact + id). Vocal : aussi voisins ±90 min.
+    if has_rejected:
+        before = len(pool)
+        pool = _filter_slots_exclude_exact(pool, rejected or [], rejected_ids)
+        channel = getattr(session, "channel", "web") if session else "web"
+        if channel == "vocal":
+            pool = _filter_slots_away_from_rejected(pool, rejected or [], REJECTED_SLOT_WINDOW_MINUTES)
+        logger.info(
+            "🔄 get_slots_for_display: exclusion refusés %s→%s (rejected=%s ids=%s channel=%s)",
+            before,
+            len(pool),
+            len(rejected or []),
+            len(rejected_ids or []),
+            channel,
+        )
     # RÈGLE 7: contrainte horaire AVANT spread (sinon on casse la variété après coup)
     filtered_by_time_constraint = None
     if session is not None:
@@ -787,7 +850,7 @@ def get_slots_for_display(
         if ex_start or ex_end:
             logger.info("get_slots_for_display: excluded slot %s..%s → %s slots", ex_start[:19], ex_end[:19], len(slots))
 
-    if not rejected:
+    if not has_rejected:
         _set_cached_slots(slots, tenant_id, pref=pref)
 
     log_extra = ""
@@ -817,7 +880,7 @@ def _get_slots_from_google_calendar(
 
     pool: List[prompts.SlotDisplay] = []
     # Priorité fiabilité Vapi: fournir vite 3 créneaux, même si moins "diversifiés".
-    target_pool_size = max(3, limit)
+    target_pool_size = max(SLOTS_POOL_SIZE, limit, 3)
     # Plage horaire selon préférence (intersection avec règles tenant)
     if pref == "matin":
         start_hour, end_hour = max(base_start, 9), min(12, base_end)
