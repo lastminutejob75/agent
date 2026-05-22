@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 if TYPE_CHECKING:
     pass
 
+from backend.pg_pool import pg_connection_for
+
 logger = logging.getLogger(__name__)
 
 
@@ -161,10 +163,7 @@ def dash_ivr_between(ctx: Any, start_dt: datetime, end_dt: datetime) -> Dict[str
     start_s = dash_fmt_ts(start_dt)
     end_s = dash_fmt_ts(end_dt)
     try:
-        import psycopg
-        from psycopg.rows import dict_row
-
-        with psycopg.connect(url, row_factory=dict_row) as conn:
+        with pg_connection_for(url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -202,16 +201,14 @@ def dash_slots_appointment_between(ctx: Any, start_dt: datetime, end_dt: datetim
     start_s = dash_fmt_ts(start_dt)
     end_s = dash_fmt_ts(end_dt)
     try:
-        import psycopg
-
-        with psycopg.connect(url_slots) as conn:
+        with pg_connection_for(url_slots) as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT COUNT(*) FROM appointments WHERE created_at >= %s AND created_at <= %s",
+                    "SELECT COUNT(*) AS c FROM appointments WHERE created_at >= %s AND created_at <= %s",
                     (start_s, end_s),
                 )
                 row = cur.fetchone()
-        return int(row[0]) if row and row[0] is not None else 0
+        return int((row or {}).get("c") or 0)
     except Exception as e:
         logger.debug("dashboard appointments_between: %s", e)
         return 0
@@ -225,19 +222,17 @@ def dash_web_requests_between(start_dt: datetime, end_dt: datetime) -> int:
     url_tenants = os.environ.get("DATABASE_URL") or os.environ.get("PG_TENANTS_URL")
     if url_tenants:
         try:
-            import psycopg
-
-            with psycopg.connect(url_tenants) as conn:
+            with pg_connection_for(url_tenants) as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        SELECT COUNT(*) FROM human_handoffs
+                        SELECT COUNT(*) AS c FROM human_handoffs
                         WHERE created_at >= %s::timestamptz AND created_at <= %s::timestamptz
                           AND LOWER(TRIM(COALESCE(channel, ''))) NOT IN ('', 'vocal', 'voice', 'phone')
                         """,
                         (start_s, end_s),
                     )
-                    total += int((cur.fetchone() or [0])[0])
+                    total += int((cur.fetchone() or {}).get("c") or 0)
         except Exception as e:
             if "does not exist" not in str(e).lower():
                 logger.debug("dashboard web_handoffs aggregate: %s", e)
@@ -245,13 +240,11 @@ def dash_web_requests_between(start_dt: datetime, end_dt: datetime) -> int:
     url_ev = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
     if url_ev:
         try:
-            import psycopg
-
-            with psycopg.connect(url_ev) as conn:
+            with pg_connection_for(url_ev) as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        SELECT COUNT(*) FROM ivr_events
+                        SELECT COUNT(*) AS c FROM ivr_events
                         WHERE created_at >= %s AND created_at <= %s
                           AND (
                                 event ILIKE '%%web%%'
@@ -265,7 +258,7 @@ def dash_web_requests_between(start_dt: datetime, end_dt: datetime) -> int:
                         """,
                         (start_s, end_s),
                     )
-                    total += int((cur.fetchone() or [0])[0])
+                    total += int((cur.fetchone() or {}).get("c") or 0)
         except Exception:
             pass
     return total
@@ -288,12 +281,12 @@ def dash_web_requests_both_windows(
     ue = (os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL") or "").strip()
 
     hq_sql = (
-        "SELECT COUNT(*) FROM human_handoffs "
+        "SELECT COUNT(*) AS c FROM human_handoffs "
         "WHERE created_at >= %s::timestamptz AND created_at <= %s::timestamptz "
         "AND LOWER(TRIM(COALESCE(channel, ''))) NOT IN ('', 'vocal', 'voice', 'phone')"
     )
     ivr_sql = (
-        "SELECT COUNT(*) FROM ivr_events WHERE created_at >= %s AND created_at <= %s "
+        "SELECT COUNT(*) AS c FROM ivr_events WHERE created_at >= %s AND created_at <= %s "
         "AND (event ILIKE '%%web%%' OR event ILIKE '%%composer%%' OR event ILIKE '%%formulaire%%') "
         "AND event NOT IN ("
         "'booking_confirmed','user_abandon','abandon','hangup','user_hangup',"
@@ -306,20 +299,18 @@ def dash_web_requests_both_windows(
     def _one_conn(url: str, run_hq: bool, run_ev: bool) -> None:
         nonlocal cur_w, prev_w
         try:
-            import psycopg
-
-            with psycopg.connect(url) as conn:
+            with pg_connection_for(url) as conn:
                 with conn.cursor() as cur:
                     if run_hq:
                         cur.execute(hq_sql, (curl, curh))
-                        cur_w += int((cur.fetchone() or [0])[0])
+                        cur_w += int((cur.fetchone() or {}).get("c") or 0)
                         cur.execute(hq_sql, (prvl, prvh))
-                        prev_w += int((cur.fetchone() or [0])[0])
+                        prev_w += int((cur.fetchone() or {}).get("c") or 0)
                     if run_ev:
                         cur.execute(ivr_sql, (curl, curh))
-                        cur_w += int((cur.fetchone() or [0])[0])
+                        cur_w += int((cur.fetchone() or {}).get("c") or 0)
                         cur.execute(ivr_sql, (prvl, prvh))
-                        prev_w += int((cur.fetchone() or [0])[0])
+                        prev_w += int((cur.fetchone() or {}).get("c") or 0)
         except Exception as e:
             if "does not exist" not in str(e).lower():
                 logger.debug("dashboard web_requests_both (url=%s): %s", (url or "")[:20], e)
@@ -363,10 +354,7 @@ def dash_month_voice_and_included(
     url_ev = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
     if url_ev:
         try:
-            import psycopg
-            from psycopg.rows import dict_row
-
-            with psycopg.connect(url_ev, row_factory=dict_row) as conn:
+            with pg_connection_for(url_ev) as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
@@ -444,10 +432,7 @@ def dash_active_delta_month_pg() -> int:
         return 0
     month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     try:
-        import psycopg
-        from psycopg.rows import dict_row
-
-        with psycopg.connect(url, row_factory=dict_row) as conn:
+        with pg_connection_for(url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """

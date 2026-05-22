@@ -50,14 +50,37 @@ def _dict_row_factory():
     return dict_row
 
 
+def _urls_equivalent(a: Optional[str], b: Optional[str]) -> bool:
+    return bool(a and b and str(a).strip() == str(b).strip())
+
+
 @contextmanager
 def pg_connection():
     """
     Context manager that yields a psycopg connection.
     Uses the pool if available, falls back to direct connect.
     """
+    url = _get_pg_url()
+    if not url:
+        raise RuntimeError("No PostgreSQL URL configured")
+    with pg_connection_for(url) as conn:
+        yield conn
+
+
+@contextmanager
+def pg_connection_for(url: Optional[str]):
+    """
+    Connexion PG pour une URL donnée.
+    Réutilise le pool singleton quand l'URL correspond à DATABASE_URL / PG_EVENTS_URL
+    (évite un handshake TCP+TLS par requête cockpit sur Railway).
+    """
+    target = (url or "").strip()
+    if not target:
+        raise RuntimeError("No PostgreSQL URL configured")
+
+    pool_url = _get_pg_url()
     pool = get_pool()
-    if pool is not None:
+    if pool is not None and _urls_equivalent(target, pool_url):
         try:
             with pool.connection() as conn:
                 yield conn
@@ -65,10 +88,8 @@ def pg_connection():
         except Exception as e:
             logger.debug("Pool connection failed, falling back to direct: %s", e)
 
-    url = _get_pg_url()
-    if not url:
-        raise RuntimeError("No PostgreSQL URL configured")
     import psycopg
     from psycopg.rows import dict_row
-    with psycopg.connect(url, row_factory=dict_row, connect_timeout=3) as conn:
+
+    with psycopg.connect(target, row_factory=dict_row, connect_timeout=3) as conn:
         yield conn

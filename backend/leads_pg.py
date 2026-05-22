@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -168,13 +169,15 @@ def _pipeline_counts(rows: List[Dict[str, Any]]) -> Dict[str, int]:
     return counts
 
 
+@contextmanager
 def _get_conn():
-    import psycopg
-    from psycopg.rows import dict_row
+    from backend.pg_pool import pg_connection_for
+
     url = os.environ.get("DATABASE_URL") or os.environ.get("PG_TENANTS_URL")
     if not url:
         raise RuntimeError("DATABASE_URL or PG_TENANTS_URL required for leads")
-    return psycopg.connect(url, row_factory=dict_row)
+    with pg_connection_for(url) as conn:
+        yield conn
 
 
 def get_lead_by_email_for_upsert(email: str) -> Optional[Dict[str, Any]]:

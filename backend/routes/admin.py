@@ -13,6 +13,8 @@ import json
 import logging
 import os
 import secrets
+import threading
+import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -102,8 +104,9 @@ def _get_vapi_usage_for_window(
     if not url:
         return (None, None)
     try:
-        import psycopg
-        with psycopg.connect(url) as conn:
+        from backend.pg_pool import pg_connection_for
+
+        with pg_connection_for(url) as conn:
             with conn.cursor() as cur:
                 if tenant_id is not None:
                     cur.execute(
@@ -124,8 +127,8 @@ def _get_vapi_usage_for_window(
                         (start, end),
                     )
                 row = cur.fetchone()
-                if row and (row[0] or row[1]):
-                    return (float(row[0] or 0), float(row[1] or 0))
+                if row and (row.get("mins") or row.get("cost")):
+                    return (float(row.get("mins") or 0), float(row.get("cost") or 0))
                 return (None, None)
     except Exception as e:
         if "does not exist" not in str(e).lower() and "vapi_call_usage" not in str(e).lower():
@@ -6807,10 +6810,9 @@ def _batch_tenant_names_from_pg(tenant_ids: List[int]) -> Dict[int, str]:
     if not url_billing:
         return out
     try:
-        import psycopg
-        from psycopg.rows import dict_row
+        from backend.pg_pool import pg_connection_for
 
-        with psycopg.connect(url_billing, row_factory=dict_row) as conn:
+        with pg_connection_for(url_billing) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT tenant_id, name FROM tenants WHERE tenant_id = ANY(%s)",
@@ -6851,9 +6853,9 @@ def _get_billing_snapshot() -> dict:
     }
     if url_events:
         try:
-            import psycopg
-            from psycopg.rows import dict_row
-            with psycopg.connect(url_events, row_factory=dict_row) as conn:
+            from backend.pg_pool import pg_connection_for
+
+            with pg_connection_for(url_events) as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
@@ -6865,7 +6867,7 @@ def _get_billing_snapshot() -> dict:
                     )
                     row = cur.fetchone()
                     if row:
-                        out["cost_usd_this_month"] = round(float(row["total"] or 0), 4)
+                        out["cost_usd_this_month"] = round(float(row.get("total") or 0), 4)
                     cur.execute(
                         """
                         SELECT tenant_id, COALESCE(SUM(cost_usd), 0) AS value
@@ -6899,9 +6901,9 @@ def _get_billing_snapshot() -> dict:
                 logger.warning("billing_snapshot vapi: %s", e)
     if url_billing:
         try:
-            import psycopg
-            from psycopg.rows import dict_row
-            with psycopg.connect(url_billing, row_factory=dict_row) as conn:
+            from backend.pg_pool import pg_connection_for
+
+            with pg_connection_for(url_billing) as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
@@ -7006,9 +7008,9 @@ def _get_operations_snapshot(window_days: int = 7, billing_snapshot: Optional[di
     suspensions = {"suspended_total": 0, "items": []}
     if url_billing:
         try:
-            import psycopg
-            from psycopg.rows import dict_row
-            with psycopg.connect(url_billing, row_factory=dict_row) as conn:
+            from backend.pg_pool import pg_connection_for
+
+            with pg_connection_for(url_billing) as conn:
                 with conn.cursor() as cur:
                     try:
                         cur.execute(
@@ -7060,10 +7062,9 @@ def _get_operations_snapshot(window_days: int = 7, billing_snapshot: Optional[di
     rows_quota: List[Any] = []
     if url_events:
         try:
-            import psycopg
-            from psycopg.rows import dict_row
+            from backend.pg_pool import pg_connection_for
 
-            with psycopg.connect(url_events, row_factory=dict_row) as conn:
+            with pg_connection_for(url_events) as conn:
                 with conn.cursor() as cur:
                     if billing.get("top_tenants_by_cost_this_month"):
                         try:
@@ -7347,6 +7348,42 @@ def _get_quality_snapshot(window_days: int = 7) -> dict:
 
 _ALLOWED_DASHBOARD_PERIODS = frozenset({"24h", "7d", "30d", "month"})
 
+_cockpit_bundle_cache_lock = threading.Lock()
+_cockpit_bundle_cache: Dict[tuple, tuple] = {}
+
+
+def _cockpit_bundle_cache_ttl_sec() -> float:
+    try:
+        return float(os.environ.get("COCKPIT_BUNDLE_CACHE_SEC", "45") or "45")
+    except ValueError:
+        return 45.0
+
+
+def _cockpit_bundle_cache_get(period: str, severity_key: str) -> Optional[dict]:
+    ttl = _cockpit_bundle_cache_ttl_sec()
+    if ttl <= 0:
+        return None
+    key = (period, severity_key)
+    now = time.monotonic()
+    with _cockpit_bundle_cache_lock:
+        entry = _cockpit_bundle_cache.get(key)
+        if entry and entry[0] > now:
+            return entry[1]
+    return None
+
+
+def _cockpit_bundle_cache_set(period: str, severity_key: str, payload: dict) -> None:
+    ttl = _cockpit_bundle_cache_ttl_sec()
+    if ttl <= 0:
+        return
+    key = (period, severity_key)
+    with _cockpit_bundle_cache_lock:
+        _cockpit_bundle_cache[key] = (time.monotonic() + ttl, payload)
+        if len(_cockpit_bundle_cache) > 16:
+            now = time.monotonic()
+            for stale in [k for k, (exp, _) in _cockpit_bundle_cache.items() if exp <= now]:
+                _cockpit_bundle_cache.pop(stale, None)
+
 
 def _normalize_dashboard_period(period: Optional[str]) -> str:
     p = (period or "30d").strip()
@@ -7399,6 +7436,11 @@ def admin_dashboard_bundle(
 
     sf = (severity or "").strip().lower()
     filt = sf if sf in ("critical", "warning") else None
+    severity_key = filt or ""
+
+    cached = _cockpit_bundle_cache_get(p, severity_key)
+    if cached is not None:
+        return cached
 
     tout_body = float(os.environ.get("COCKPIT_BUNDLE_BODY_TIMEOUT_SEC", "120") or "120")
     try:
@@ -7442,11 +7484,13 @@ def admin_dashboard_bundle(
         )
         watch = dash_watchlist_items(ctx, p, ops_snap=ops_snap)
 
-    return {
+    result = {
         **summary,
         "actions": {"items": actions},
         "watchlist": {"items": watch},
     }
+    _cockpit_bundle_cache_set(p, severity_key, result)
+    return result
 
 
 @router.get("/admin/dashboard/summary")
