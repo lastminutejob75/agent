@@ -88,7 +88,8 @@ const INSTANT_BOOKING_REPLY = "Quel est votre nom et prénom ?";
 const BOOKING_START = /\b(je\s+voudrais?|je\s+veux|je\s+souhaite|je\s+v\s+(?:in|un)\s+rdv|jv\s+(?:un\s+)?rdv|prendre\s+(?:un\s+)?rdv|un\s+rdv|rendez[- ]?vous)\b/iu;
 const CHAT_REPLY_TIMEOUT_MS = 25000;
 const CHAT_UNCLEAR_FALLBACK = "Je n'ai pas bien compris. Reformulez, par exemple : « je voudrais un rendez-vous ».";
-const LOOKS_LIKE_NAME = /^(?:(?:M\.|Mme|Mlle)\s+)?[A-ZÀ-ÖØ-öø-ÿ][a-zà-öø-ÿ'-]+(?:\s+[A-ZÀ-ÖØ-öø-ÿ][a-zà-öø-ÿ'-]+){0,3}$/u;
+const LOOKS_LIKE_NAME = /^(?:(?:M\.|Mme|Mlle)\s+)?[A-ZÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ' -]{1,58}$/u;
+const PLAUSIBLE_PATIENT_NAME = /^[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ' -]{2,58}$/u;
 
 const safeArray = (value) => (Array.isArray(value) ? value : []);
 const norm = (value) => String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -356,11 +357,12 @@ function resolveChatSlotOffer(offer, apiSlots) {
   return base;
 }
 
-function BookingFields({ slot, onConfirm, onCancel, compact = false, defaultName = "", submitting = false }) {
+function BookingFields({ slot, onConfirm, onCancel, compact = false, defaultName = "", phoneOnly = false, submitting = false }) {
   const [motif, setMotif] = useState(() => defaultMotif(slot));
   const [name, setName] = useState(defaultName);
   const [phone, setPhone] = useState("");
   const ok = Boolean(motif && name.trim() && phone.trim()) && !submitting;
+  const showNameField = !phoneOnly || !defaultName.trim();
 
   useEffect(() => {
     setMotif(defaultMotif(slot));
@@ -379,10 +381,20 @@ function BookingFields({ slot, onConfirm, onCancel, compact = false, defaultName
         </div>
       )}
       {compact && <div className="modalSlotRecap">Creneau demande : <strong>{slot.label}</strong></div>}
-      <span>Motif pre-selectionne. Vous pouvez le changer si besoin.</span>
+      <span>
+        {phoneOnly && defaultName
+          ? `Creneau ${slot.label} — indiquez votre numero pour finaliser.`
+          : "Motif pre-selectionne. Vous pouvez le changer si besoin."}
+      </span>
       <div className="motifs">{safeArray(slot.motifs).map((m) => <button key={m} className={motif === m ? "motif active" : "motif"} onClick={() => setMotif(m)} type="button">{m}</button>)}</div>
-      <div className="inlineTwoCol">
-        <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Nom complet" />
+      <div className={showNameField ? "inlineTwoCol" : "inlineOneCol"}>
+        {showNameField ? (
+          <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Nom complet" />
+        ) : (
+          <p className="inlineNameRecap">
+            <b>{defaultName}</b>
+          </p>
+        )}
         <input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Telephone" type="tel" />
       </div>
       <button className="primary" disabled={!ok} type="button" onClick={() => ok && onConfirm({ slot, motif, name: name.trim(), phone: phone.trim() })}>
@@ -438,6 +450,7 @@ export default function PagePubliquePraticienUWI() {
   const [inlineSlot, setInlineSlot] = useState(null);
   const [bookingSubmitting, setBookingSubmitting] = useState(false);
   const [bookingSuccess, setBookingSuccess] = useState(null);
+  const [bookingViaChat, setBookingViaChat] = useState(false);
   const [modalSlot, setModalSlot] = useState(null);
   const [placeholderIdx, setPlaceholderIdx] = useState(0);
   const [showAllSlots, setShowAllSlots] = useState(false);
@@ -479,6 +492,7 @@ export default function PagePubliquePraticienUWI() {
     setVoiceStatus("idle");
     setInlineSlot(null);
     setBookingSuccess(null);
+    setBookingViaChat(false);
     setBookingSubmitting(false);
     setModalSlot(null);
     conversationIdRef.current = null;
@@ -635,6 +649,13 @@ export default function PagePubliquePraticienUWI() {
       }
       if (sawNameAsk && m.from === "patient") {
         const t = String(m.text || "").trim();
+        if (!t || BOOKING_START.test(t) || isGreetingOnly(t)) break;
+        if (PLAUSIBLE_PATIENT_NAME.test(t) && t.split(/\s+/).length >= 2) {
+          return t
+            .split(/\s+/)
+            .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+            .join(" ");
+        }
         if (LOOKS_LIKE_NAME.test(t)) return t;
         break;
       }
@@ -644,6 +665,7 @@ export default function PagePubliquePraticienUWI() {
   }, [messages]);
 
   const chooseSlot = useCallback((slot) => {
+    setBookingViaChat(false);
     const replace = Boolean(inlineSlot);
     setInlineSlot(slot);
     push([
@@ -677,6 +699,10 @@ export default function PagePubliquePraticienUWI() {
       const convState = String(payload?.conv_state || "");
       if (convState === "CONFIRMED" && text) {
         setBookingSuccess({ label: "", message: text, confirmed: true });
+        setBookingViaChat(false);
+        setInlineSlot(null);
+      } else if (/t[ée]l[ée]phone|email|num[ée]ro/i.test(text) && /QUALIF_CONTACT|CONTACT_CONFIRM/i.test(convState)) {
+        setBookingViaChat(true);
         setInlineSlot(null);
       }
       if (pendingTurnRef.current) {
@@ -877,11 +903,12 @@ export default function PagePubliquePraticienUWI() {
 
   const pickChatSlot = useCallback(
     (offer) => {
-      const full = resolveChatSlotOffer(offer, slots);
       setBookingSuccess(null);
-      chooseSlot(full);
+      setBookingViaChat(true);
+      setInlineSlot(null);
+      void sendChatMessage(`oui ${offer.index}`);
     },
-    [chooseSlot, slots]
+    [sendChatMessage]
   );
 
   const ask = useCallback((text) => {
@@ -1210,10 +1237,11 @@ export default function PagePubliquePraticienUWI() {
                     {bookingSuccess.label ? <span className="bookingSuccessSlot">{bookingSuccess.label}</span> : null}
                   </div>
                 ) : null}
-                {inlineSlot ? (
+                {inlineSlot && !bookingViaChat ? (
                   <BookingFields
                     slot={inlineSlot}
                     defaultName={inferredPatientName}
+                    phoneOnly={Boolean(inferredPatientName)}
                     submitting={bookingSubmitting}
                     onConfirm={confirm}
                     onCancel={() => {
@@ -1350,6 +1378,8 @@ header a.wa{color:#1b6d34;border-color:#cce9d2}
 .bookingSuccessCard{text-align:center;background:#e8f8f9;border:2px solid #009CA4;color:#0a4a50;margin-top:8px}
 .bookingSuccessIcon{font-size:28px;color:#009CA4;margin-bottom:6px}
 .bookingSuccessSlot{display:block;margin-top:8px;font-size:13px;opacity:.85}
+.inlineOneCol{display:flex;flex-direction:column;gap:8px}
+.inlineNameRecap{margin:0;padding:10px 12px;background:rgba(0,156,164,.08);border-radius:8px;font-size:14px}
 .partialBubble{opacity:.72;font-style:italic}
 @keyframes uwiSkShimmer{0%{background-position:-160px 0}100%{background-position:160px 0}}
 .composerSlotSkeleton{cursor:default;border-color:#e0eef0;background:rgba(255,255,255,.9);pointer-events:none}
