@@ -84,7 +84,7 @@ function isGreetingOnly(text) {
   return parts.length === 1 && GREETING_TOKENS.has(parts[0]);
 }
 const INSTANT_GREETING_REPLY = "Bonjour ! Comment puis-je vous aider ?";
-const INSTANT_BOOKING_REPLY = "Quel est votre nom et prénom ?";
+const INSTANT_SLOTS_LOOKUP = "Je consulte les créneaux disponibles, un instant…";
 const BOOKING_START = /\b(je\s+voudrais?|je\s+veux|je\s+souhaite|je\s+v\s+(?:in|un)\s+rdv|jv\s+(?:un\s+)?rdv|prendre\s+(?:un\s+)?rdv|un\s+rdv|rendez[- ]?vous)\b/iu;
 const CHAT_REPLY_TIMEOUT_MS = 25000;
 const CHAT_UNCLEAR_FALLBACK = "Je n'ai pas bien compris. Reformulez, par exemple : « je voudrais un rendez-vous ».";
@@ -450,7 +450,6 @@ export default function PagePubliquePraticienUWI() {
   const [inlineSlot, setInlineSlot] = useState(null);
   const [bookingSubmitting, setBookingSubmitting] = useState(false);
   const [bookingSuccess, setBookingSuccess] = useState(null);
-  const [bookingViaChat, setBookingViaChat] = useState(false);
   const [modalSlot, setModalSlot] = useState(null);
   const [placeholderIdx, setPlaceholderIdx] = useState(0);
   const [showAllSlots, setShowAllSlots] = useState(false);
@@ -492,7 +491,6 @@ export default function PagePubliquePraticienUWI() {
     setVoiceStatus("idle");
     setInlineSlot(null);
     setBookingSuccess(null);
-    setBookingViaChat(false);
     setBookingSubmitting(false);
     setModalSlot(null);
     conversationIdRef.current = null;
@@ -664,13 +662,23 @@ export default function PagePubliquePraticienUWI() {
     return "";
   }, [messages]);
 
+  const lastSlotOffers = useCallback(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const offers = safeArray(messages[i]?.slots);
+      if (offers.length) return offers;
+    }
+    return [];
+  }, [messages]);
+
   const chooseSlot = useCallback((slot) => {
-    setBookingViaChat(false);
     const replace = Boolean(inlineSlot);
     setInlineSlot(slot);
     push([
       { from: "patient", text: `${replace ? "Je prefere le creneau " : "Je souhaite le creneau "}${slot.label}.` },
-      { from: "clara", text: replace ? `Tres bien, je remplace par ${slot.label}. Completez simplement cette carte.` : `Tres bien. Pour confirmer ${slot.label}, completez simplement cette carte.` },
+      {
+        from: "clara",
+        text: `Parfait pour ${slot.label}. Indiquez votre nom et votre telephone ci-dessous pour confirmer en une seule fois.`,
+      },
     ]);
     trackPublicEvent({
       slug,
@@ -699,10 +707,6 @@ export default function PagePubliquePraticienUWI() {
       const convState = String(payload?.conv_state || "");
       if (convState === "CONFIRMED" && text) {
         setBookingSuccess({ label: "", message: text, confirmed: true });
-        setBookingViaChat(false);
-        setInlineSlot(null);
-      } else if (/t[ée]l[ée]phone|email|num[ée]ro/i.test(text) && /QUALIF_CONTACT|CONTACT_CONFIRM/i.test(convState)) {
-        setBookingViaChat(true);
         setInlineSlot(null);
       }
       if (pendingTurnRef.current) {
@@ -894,21 +898,31 @@ export default function PagePubliquePraticienUWI() {
     }
 
     if (BOOKING_START.test(clean)) {
-      void syncChatInBackground(INSTANT_BOOKING_REPLY);
+      void syncChatInBackground(INSTANT_SLOTS_LOOKUP);
       return;
     }
 
+    const offers = lastSlotOffers();
+    const slotPick = clean.match(/^(?:oui\s*)?([123])$/iu);
+    if (offers.length && slotPick) {
+      const idx = Number(slotPick[1]);
+      const offer = offers.find((o) => Number(o.index) === idx) || offers[idx - 1];
+      if (offer) {
+        setBookingSuccess(null);
+        chooseSlot(resolveChatSlotOffer(offer, slots));
+        return;
+      }
+    }
+
     void syncChatInBackground(null);
-  }, [ensureConversationId, ensureStream, push, slug, waitForAgentTurn]);
+  }, [chooseSlot, ensureConversationId, ensureStream, lastSlotOffers, push, slug, slots, waitForAgentTurn]);
 
   const pickChatSlot = useCallback(
     (offer) => {
       setBookingSuccess(null);
-      setBookingViaChat(true);
-      setInlineSlot(null);
-      void sendChatMessage(`oui ${offer.index}`);
+      chooseSlot(resolveChatSlotOffer(offer, slots));
     },
-    [sendChatMessage]
+    [chooseSlot, slots]
   );
 
   const ask = useCallback((text) => {
@@ -1212,7 +1226,7 @@ export default function PagePubliquePraticienUWI() {
                       {message.text}
                       {safeArray(message.slots).length ? (
                         <div className="chatSlotChoices">
-                          <span className="chatSlotHint">Choisissez un creneau, puis confirmez avec votre nom et telephone :</span>
+                          <span className="chatSlotHint">Choisissez un creneau — vos coordonnees seront demandees une seule fois pour confirmer.</span>
                           {message.slots.map((offer) => (
                             <button
                               key={`${message.id}-slot-${offer.index}`}
@@ -1237,11 +1251,10 @@ export default function PagePubliquePraticienUWI() {
                     {bookingSuccess.label ? <span className="bookingSuccessSlot">{bookingSuccess.label}</span> : null}
                   </div>
                 ) : null}
-                {inlineSlot && !bookingViaChat ? (
+                {inlineSlot ? (
                   <BookingFields
                     slot={inlineSlot}
-                    defaultName={inferredPatientName}
-                    phoneOnly={Boolean(inferredPatientName)}
+                    defaultName=""
                     submitting={bookingSubmitting}
                     onConfirm={confirm}
                     onCancel={() => {

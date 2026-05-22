@@ -1992,6 +1992,19 @@ class Engine:
         puis pose seulement les questions manquantes.
         """
         channel = getattr(session, "channel", "web")
+
+        # Web public : créneaux d'abord, coordonnées une seule fois dans le formulaire après choix
+        if channel == "web":
+            entities = extract_entities(user_text)
+            if entities.motif:
+                session.qualif_data.motif = entities.motif
+            elif not getattr(session.qualif_data, "motif", None):
+                session.qualif_data.motif = "Consultation"
+            if entities.pref:
+                session.qualif_data.pref = entities.pref
+            if entities.name:
+                session.qualif_data.name = entities.name
+            return self._propose_slots(session)
         
         # Extraction conservatrice
         entities = extract_entities(user_text)

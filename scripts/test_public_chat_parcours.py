@@ -25,8 +25,7 @@ from backend.web_chat import (
 STEPS = [
     ("bjr", "salutation"),
     ("bonjour", "salutation"),
-    ("je voudrais un rdv", "QUALIF_NAME"),
-    ("Martin Dupont", "QUALIF_PREF"),
+    ("je voudrais un rdv", "WAIT_CONFIRM|slots"),
     ("mercredi apres midi", "WAIT_CONFIRM|slots"),
 ]
 

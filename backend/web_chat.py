@@ -261,7 +261,7 @@ def _instant_reply(message: str, channel: str, conv_id: Optional[str] = None) ->
     if is_greeting_only_message(msg):
         return _greeting_reply(channel)
     if is_booking_start_message(msg):
-        return prompts.get_qualif_question("name", channel=channel) or "Quel est votre nom et prénom ?"
+        return SLOTS_LOOKUP_MSG
     return None
 
 
