@@ -434,6 +434,7 @@ def list_leads(
     sort: str = "created_desc",
     page: int = 1,
     follow_up_today: bool = False,
+    effective_limit_only: bool = False,
 ) -> Dict[str, Any]:
     """Liste leads avec filtres + enrichissement commercial (score/priorité/segment)."""
     where_parts = []
@@ -447,7 +448,12 @@ def list_leads(
         where_parts.append("source = %s")
         params.append(source)
     where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
-    query_limit = max(200, min(max(1, int(limit or 200)) * 8, 5000))
+    raw_cap = max(1, int(limit or 200))
+    if effective_limit_only:
+        # Cockpit / appels lecteurs : ne pas appliquer min 200 ni ×8 (sinon 1600 lignes enrichies).
+        query_limit = max(80, min(raw_cap, 600))
+    else:
+        query_limit = max(200, min(raw_cap * 8, 5000))
     params.append(query_limit)
 
     def _normalize_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

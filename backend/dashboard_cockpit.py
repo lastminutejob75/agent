@@ -485,12 +485,44 @@ def dash_critical_count(ctx: Any, billing_snap: dict, ops_snap: dict, activation
     return len(tids)
 
 
+def _watchlist_antiloop_from_ops(ops: Dict[str, Any]) -> List[dict]:
+    """Réutilise le snapshot operations (déjà chargé pour le bundle) — évite tout un _get_quality_snapshot."""
+    rows: List[dict] = []
+    for row in (ops.get("errors") or {}).get("top_tenants") or []:
+        tid = row.get("tenant_id")
+        if tid is None:
+            continue
+        n = int(row.get("errors_total") or 0)
+        if n < 1:
+            continue
+        rows.append({"tenant_id": int(tid), "name": row.get("name") or "", "count": n})
+    return rows[:10]
+
+
 def dash_leads_block(ctx: Any, period: str = "7d") -> dict:
     from backend.leads_pg import count_new_leads, list_leads
 
     p = dash_normalize_period(period)
-    leads_payload = list_leads(limit=200)
-    leads: List[dict] = list(leads_payload.get("items") or [])
+    tout_ld = float(os.environ.get("COCKPIT_LEADS_TIMEOUT_SEC", "45") or "45")
+    try:
+
+        def _load_leads():
+            return list_leads(limit=280, effective_limit_only=True)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            f_lp = pool.submit(_load_leads)
+            f_cq = pool.submit(count_new_leads)
+            leads_payload = f_lp.result(timeout=tout_ld)
+            to_qualify_today = f_cq.result(timeout=tout_ld)
+    except FuturesTimeout:
+        logger.warning("cockpit leads parallel timeout")
+        leads_payload = list_leads(limit=280, effective_limit_only=True)
+        to_qualify_today = count_new_leads()
+    except Exception:
+        leads_payload = list_leads(limit=280, effective_limit_only=True)
+        to_qualify_today = count_new_leads()
+
+    leads: List[dict] = list((leads_payload or {}).get("items") or [])
     window_cut = dash_leads_cutoff_utc(p)
 
     window_rows: List[dict] = []
@@ -533,7 +565,7 @@ def dash_leads_block(ctx: Any, period: str = "7d") -> dict:
     return {
         "period": p,
         "new_leads_count": len(window_rows),
-        "to_qualify_today_count": count_new_leads(),
+        "to_qualify_today_count": int(to_qualify_today),
         "latest": latest,
     }
 
@@ -559,19 +591,23 @@ def dash_watchlist_items(ctx: Any, period: str, ops_snap: Optional[Dict[str, Any
         except Exception:
             return []
 
-    try:
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            fw = pool.submit(_fetch_web_top)
-            fq = pool.submit(_fetch_quality_antiloop)
-            top_web = fw.result(timeout=tout_wl)
-            anti_rows = fq.result(timeout=tout_wl)
-    except FuturesTimeout:
-        logger.warning("cockpit watchlist parallel timeout")
+    if ops_snap is not None:
+        anti_rows = _watchlist_antiloop_from_ops(ops_snap)
         top_web = _fetch_web_top()
-        anti_rows = _fetch_quality_antiloop()
-    except Exception:
-        top_web = _fetch_web_top()
-        anti_rows = _fetch_quality_antiloop()
+    else:
+        try:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                fw = pool.submit(_fetch_web_top)
+                fq = pool.submit(_fetch_quality_antiloop)
+                top_web = fw.result(timeout=tout_wl)
+                anti_rows = fq.result(timeout=tout_wl)
+        except FuturesTimeout:
+            logger.warning("cockpit watchlist parallel timeout")
+            top_web = _fetch_web_top()
+            anti_rows = _fetch_quality_antiloop()
+        except Exception:
+            top_web = _fetch_web_top()
+            anti_rows = _fetch_quality_antiloop()
 
     for r in top_web[:4]:
         tid = r.get("tenant_id")
