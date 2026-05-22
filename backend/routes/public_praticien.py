@@ -135,6 +135,43 @@ def _tenant_id_for_slug(slug: str, hint: Optional[int] = None) -> int:
     return int(tenant_id)
 
 
+@router.get("/{slug}/patient-hint")
+async def public_patient_hint(
+    slug: str,
+    phone: str = "",
+    email: str = "",
+) -> Dict[str, Any]:
+    """
+    Reconnaissance patient connue (téléphone ou email) pour préremplir le formulaire RDV.
+    Ne renvoie que le strict nécessaire (pas d'historique médical).
+    """
+    from backend.db import find_cabinet_client
+    from backend.guards import validate_email
+
+    tenant_id = _tenant_id_for_slug(slug, None)
+    phone_s = (phone or "").strip()
+    email_s = (email or "").strip()
+    if len(phone_s) < 8 and not (email_s and validate_email(email_s)):
+        return {"found": False}
+
+    profile = find_cabinet_client(tenant_id, phone=phone_s, email=email_s)
+    if not profile:
+        return {"found": False}
+
+    display = (
+        (profile.get("display_name") or "").strip()
+        or (profile.get("validated_name") or "").strip()
+        or (profile.get("raw_name") or "").strip()
+    )
+    return {
+        "found": True,
+        "displayName": display,
+        "name": display,
+        "email": (profile.get("email") or "").strip(),
+        "phone": (profile.get("phone") or "").strip(),
+    }
+
+
 @router.post("/{slug}/chat")
 async def public_praticien_chat(slug: str, body: PublicChatBody) -> Dict[str, Any]:
     """

@@ -359,20 +359,69 @@ function resolveChatSlotOffer(offer, apiSlots) {
   return base;
 }
 
-function BookingFields({ slot, onConfirm, onCancel, compact = false, defaultName = "", phoneOnly = false, submitting = false }) {
+const EMAIL_LOOSE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function BookingFields({
+  slot,
+  slug,
+  onConfirm,
+  onCancel,
+  compact = false,
+  defaultName = "",
+  phoneOnly = false,
+  submitting = false,
+}) {
   const [motif, setMotif] = useState(() => defaultMotif(slot));
   const [name, setName] = useState(defaultName);
   const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [knownHint, setKnownHint] = useState("");
+  const lookupTimerRef = useRef(null);
   const ok = Boolean(motif && name.trim() && phone.trim()) && !submitting;
   const showNameField = !phoneOnly || !defaultName.trim();
 
   useEffect(() => {
     setMotif(defaultMotif(slot));
+    setKnownHint("");
   }, [slot]);
 
   useEffect(() => {
     if (defaultName) setName(defaultName);
   }, [defaultName]);
+
+  useEffect(() => {
+    if (!slug) return undefined;
+    if (lookupTimerRef.current) window.clearTimeout(lookupTimerRef.current);
+    const ph = phone.trim();
+    const em = email.trim();
+    if (ph.replace(/\D/g, "").length < 8 && !EMAIL_LOOSE.test(em)) {
+      setKnownHint("");
+      return undefined;
+    }
+    lookupTimerRef.current = window.setTimeout(async () => {
+      try {
+        const qs = new URLSearchParams();
+        if (ph) qs.set("phone", ph);
+        if (em) qs.set("email", em);
+        const data = await fetchJson(
+          `/api/public/praticiens/${encodeURIComponent(slug)}/patient-hint?${qs.toString()}`
+        );
+        if (data?.found) {
+          const display = String(data.displayName || data.name || "").trim();
+          if (display && !name.trim()) setName(display);
+          if (data.email && !email.trim()) setEmail(String(data.email).trim());
+          setKnownHint(display ? `Patient reconnu : ${display}` : "Patient reconnu.");
+        } else {
+          setKnownHint("");
+        }
+      } catch {
+        setKnownHint("");
+      }
+    }, 450);
+    return () => {
+      if (lookupTimerRef.current) window.clearTimeout(lookupTimerRef.current);
+    };
+  }, [phone, email, slug, name]);
 
   return (
     <div className={compact ? "modalBody" : "inlineCard"}>
@@ -399,14 +448,37 @@ function BookingFields({ slot, onConfirm, onCancel, compact = false, defaultName
         )}
         <input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Telephone" type="tel" />
       </div>
-      <button className="primary" disabled={!ok} type="button" onClick={() => ok && onConfirm({ slot, motif, name: name.trim(), phone: phone.trim() })}>
+      <input
+        className="inlineEmailField"
+        value={email}
+        onChange={(event) => setEmail(event.target.value)}
+        placeholder="Email (facultatif)"
+        type="email"
+        autoComplete="email"
+      />
+      {knownHint ? <p className="inlineKnownHint">{knownHint}</p> : null}
+      <button
+        className="primary"
+        disabled={!ok}
+        type="button"
+        onClick={() =>
+          ok &&
+          onConfirm({
+            slot,
+            motif,
+            name: name.trim(),
+            phone: phone.trim(),
+            email: email.trim(),
+          })
+        }
+      >
         {submitting ? "Confirmation en cours…" : "Confirmer ma demande"}
       </button>
     </div>
   );
 }
 
-function SupervisedModal({ slot, onClose, onConfirm, done, followup, onFollowupClick }) {
+function SupervisedModal({ slot, slug, onClose, onConfirm, done, followup, onFollowupClick }) {
   useEffect(() => {
     const handle = (event) => {
       if (event.key === "Escape") onClose();
@@ -433,7 +505,7 @@ function SupervisedModal({ slot, onClose, onConfirm, done, followup, onFollowupC
             )}
           </div>
         ) : (
-          <BookingFields slot={slot} onConfirm={onConfirm} onCancel={onClose} compact />
+          <BookingFields slot={slot} slug={slug} onConfirm={onConfirm} onCancel={onClose} compact />
         )}
         <button className="modalClose" onClick={onClose} type="button">x</button>
       </div>
@@ -962,6 +1034,7 @@ export default function PagePubliquePraticienUWI() {
       motif: booking.motif,
       patientName: booking.name,
       patientPhone: booking.phone,
+      ...(booking.email ? { patientEmail: booking.email } : {}),
       source: modalSlot ? "google_slot" : "page_publique",
       slotSource: booking.slot.source || "sqlite",
       startIso: booking.slot.startIso || "",
@@ -1122,6 +1195,7 @@ export default function PagePubliquePraticienUWI() {
       {modalSlot && (
         <SupervisedModal
           slot={modalSlot}
+          slug={slug}
           onClose={closeModal}
           onConfirm={confirm}
           done={bookingDone}
@@ -1288,6 +1362,7 @@ export default function PagePubliquePraticienUWI() {
                 {inlineSlot ? (
                   <BookingFields
                     slot={inlineSlot}
+                    slug={slug}
                     defaultName=""
                     submitting={bookingSubmitting}
                     onConfirm={confirm}
@@ -1428,6 +1503,9 @@ header a.wa{color:#1b6d34;border-color:#cce9d2}
 .bookingSuccessIcon{font-size:28px;color:#009CA4;margin-bottom:6px}
 .bookingSuccessSlot{display:block;margin-top:8px;font-size:13px;opacity:.85}
 .inlineOneCol{display:flex;flex-direction:column;gap:8px}
+.inlineEmailField{border:1.5px solid #e0e5e6;background:#f8fafa;border-radius:10px;padding:10px 12px;outline:none;width:100%;font-size:14px}
+.inlineEmailField:focus{border-color:#009CA4;background:#fff}
+.inlineKnownHint{margin:0;font-size:12px;color:#006e74;font-weight:700;background:#e8f9f9;border-radius:8px;padding:8px 10px}
 .inlineNameRecap{margin:0;padding:10px 12px;background:rgba(0,156,164,.08);border-radius:8px;font-size:14px}
 .partialBubble{opacity:.72;font-style:italic}
 @keyframes uwiSkShimmer{0%{background-position:-160px 0}100%{background-position:160px 0}}
@@ -1442,7 +1520,7 @@ header a.wa{color:#1b6d34;border-color:#cce9d2}
 .composerTopActions{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:2px}.composerMoreLink{border:0;background:transparent;color:#007f89;font-size:12px;font-weight:800;text-decoration:underline;padding:0}.composerAltCta{border:1.5px solid rgba(0,156,164,.28);background:rgba(255,255,255,.45);color:#006e74;border-radius:999px;padding:8px 16px;font-size:13px;font-weight:700;white-space:nowrap}.composerAltCta:hover{background:rgba(255,255,255,.75);border-color:rgba(0,156,164,.5)}
 .mobileClaraHint{display:none}
 .composerDivider{height:1px;background:rgba(0,156,164,.18);margin:14px 0 14px;border-radius:1px}.composerBottom{display:grid;grid-template-columns:1fr 180px;gap:14px;align-items:center}.composerInputWrap{min-height:72px;display:flex;align-items:center;gap:14px;border-radius:18px;border:2px solid #c7dfe2;background:#fff;padding:0 20px;transition:border-color .15s ease,box-shadow .15s ease}.composerInputWrap:focus-within{border-color:#009CA4;box-shadow:0 0 0 4px rgba(0,156,164,.12)}.composerInputIcon{color:#009CA4;font-size:24px;flex-shrink:0}.composerInputWrap input{width:100%;border:0;outline:none;background:transparent;color:#406f73;font-size:16px;font-weight:600}.composerInputWrap input::placeholder{color:#9bb0b3;font-weight:500}.composerSendBtn{height:72px;border:0;border-radius:18px;background:#009CA4;color:#fff;font-size:17px;font-weight:800;letter-spacing:.01em;box-shadow:0 8px 22px rgba(0,156,164,.28);transition:transform .12s ease,box-shadow .12s ease}.composerSendBtn:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 10px 26px rgba(0,156,164,.34)}.composerSendBtn:disabled{opacity:.55;cursor:not-allowed;box-shadow:none}
-.inlineCard{background:#fff;border:1px solid #d5eeee;border-left:4px solid #009CA4;border-radius:14px;padding:14px 15px;display:flex;flex-direction:column;gap:9px}.inlineCardTop{display:flex;align-items:center;justify-content:space-between}.inlineCard b{font-size:13px}.inlineCard>span{font-size:11px;color:#888}.inlineClose{border:0;background:transparent;color:#007f89;font-size:11px;font-weight:700}.motifs{display:flex;flex-wrap:wrap;gap:7px}.motif{border:1px solid #dfe5e6;background:#f6f8f8;border-radius:999px;padding:7px 12px;font-size:12px;font-weight:600}.motif.active{background:#e8f9f9;border-color:#009CA4;color:#006e74}.inlineTwoCol{display:grid;grid-template-columns:1fr 1fr;gap:9px}.inlineTwoCol input,.modalBody input{border:1.5px solid #e0e5e6;background:#f8fafa;border-radius:10px;padding:10px 12px;outline:none;width:100%}.primary{border:0;background:#009CA4;color:#fff;border-radius:11px;padding:11px 16px;font-weight:700;box-shadow:0 5px 16px rgba(0,156,164,.22);width:100%}.primary:disabled{opacity:.4;cursor:not-allowed}
+.inlineCard{background:#fff;border:1px solid #d5eeee;border-left:4px solid #009CA4;border-radius:14px;padding:14px 15px;display:flex;flex-direction:column;gap:9px}.inlineCardTop{display:flex;align-items:center;justify-content:space-between}.inlineCard b{font-size:13px}.inlineCard>span{font-size:11px;color:#888}.inlineClose{border:0;background:transparent;color:#007f89;font-size:11px;font-weight:700}.motifs{display:flex;flex-wrap:wrap;gap:7px}.motif{border:1px solid #dfe5e6;background:#f6f8f8;border-radius:999px;padding:7px 12px;font-size:12px;font-weight:600}.motif.active{background:#e8f9f9;border-color:#009CA4;color:#006e74}.inlineTwoCol{display:grid;grid-template-columns:1fr 1fr;gap:9px}.inlineTwoCol input,.inlineOneCol input,.modalBody input{border:1.5px solid #e0e5e6;background:#f8fafa;border-radius:10px;padding:10px 12px;outline:none;width:100%}.primary{border:0;background:#009CA4;color:#fff;border-radius:11px;padding:11px 16px;font-weight:700;box-shadow:0 5px 16px rgba(0,156,164,.22);width:100%}.primary:disabled{opacity:.4;cursor:not-allowed}
 .actionRows{border:1px solid #edf0f2;border-top:0;border-radius:0 0 18px 18px;background:#fff}.actionRow{display:grid;grid-template-columns:150px 1fr;gap:14px;align-items:center;padding:12px 20px;border-top:1px solid #eef1f3}.actionLabel{font-weight:700;color:#354260;font-size:13px}.softChips,.faqLinks{display:flex;flex-wrap:wrap;gap:9px}.softChips button{border:1px solid #e2e8eb;background:#fff;border-radius:11px;padding:8px 14px;color:#357b88;font-size:13px;font-weight:700}.faqLinks button{border:0;background:transparent;color:#0094a0;font-size:13px;font-weight:700;text-decoration:underline;text-underline-offset:3px;padding:3px 0}.urgencyNote{text-align:center;color:#8a9ab0;font-size:12px;margin:12px 0 0;padding:10px 0 4px;border-top:1px solid #f0eeea}
 .infoSeo{display:grid;grid-template-columns:1.1fr .9fr;gap:14px;margin:16px 0 0}.infoCard{background:#fff;border:1px solid #e4eaec;border-radius:18px;padding:20px;box-shadow:0 8px 20px rgba(20,40,50,.05)}.infoCard h2{margin:0 0 14px;font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:#8a9ab0;font-weight:700}.infoGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.infoGrid p{margin:0;display:flex;flex-direction:column;gap:3px}.infoGrid b{font-size:10px;color:#33405b;text-transform:uppercase;letter-spacing:.05em}.infoGrid span{font-size:12px;color:#556070;font-weight:500}.hoursCard p{display:grid;grid-template-columns:80px 1fr;margin:0 0 8px;font-size:13px}.hoursCard span{color:#6a7890}.hoursCard b{color:#009CA4;font-weight:700}footer{text-align:center;color:#a8afba;font-size:12px;padding:18px}footer a{color:#009CA4}
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.44);z-index:50;display:flex;align-items:center;justify-content:center;padding:16px}.modal{width:100%;max-width:430px;background:#fff;border-radius:24px;overflow:hidden;box-shadow:0 28px 80px rgba(0,0,0,.22);position:relative}.modalClaraBar{background:#009CA4;color:#fff;padding:14px 18px;display:flex;align-items:flex-start;gap:10px;font-size:13px;line-height:1.55}.modalBody{padding:16px 18px 18px;display:flex;flex-direction:column;gap:11px}.modalSlotRecap{font-size:12px;color:#5f7375;background:#f4fbfb;border:1px solid #d6eeee;border-radius:11px;padding:9px 12px}.modalSuccess{padding:24px 18px;text-align:center;display:flex;flex-direction:column;gap:12px;align-items:center}.successIcon{width:48px;height:48px;border-radius:50%;background:#009CA4;color:#fff;font-size:20px;display:flex;align-items:center;justify-content:center;margin:0 auto 2px}.successTitle{font-size:16px;font-weight:700}.modalWaCta{text-decoration:none;color:#fff;background:#1f9d4f;border-radius:10px;padding:10px 14px;font-size:13px;font-weight:800;display:inline-block}.modalClose{position:absolute;right:11px;width:26px;height:26px;border:0;border-radius:7px;background:rgba(255,255,255,.18);color:#fff;font-size:15px}

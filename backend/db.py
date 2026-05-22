@@ -869,6 +869,82 @@ def delete_patient_note(tenant_id: int, note_id: int) -> bool:
     return cur.rowcount > 0
 
 
+def _normalize_patient_email(email: str) -> str:
+    return (email or "").strip().lower()[:254]
+
+
+def find_cabinet_client(
+    tenant_id: int,
+    *,
+    phone: Optional[str] = None,
+    email: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Recherche un patient connu par téléphone (prioritaire) puis par email."""
+    phone_norm = normalize_phone_number(phone or "")
+    if phone_norm:
+        profile = get_cabinet_client_by_phone(tenant_id, phone_norm)
+        if profile:
+            return profile
+    email_norm = _normalize_patient_email(email or "")
+    if email_norm:
+        return get_cabinet_client_by_email(tenant_id, email_norm)
+    return None
+
+
+def get_cabinet_client_by_email(tenant_id: int, email: str) -> Optional[Dict[str, Any]]:
+    email_norm = _normalize_patient_email(email)
+    if not email_norm or "@" not in email_norm:
+        return None
+
+    url = _pg_events_url()
+    if url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+
+            with psycopg.connect(url, row_factory=dict_row) as conn:
+                _ensure_cabinet_clients_table_pg(conn)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT phone, raw_name, validated_name, display_name, validation_status, email,
+                               source_call_id, last_call_id, last_booking_start, last_booking_end,
+                               last_booking_motif, created_at, updated_at
+                        FROM cabinet_clients
+                        WHERE tenant_id = %s AND lower(trim(email)) = %s
+                        ORDER BY updated_at DESC NULLS LAST
+                        LIMIT 1
+                        """,
+                        (tenant_id, email_norm),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        return _cabinet_client_row_to_dict(row)
+        except Exception:
+            pass
+
+    conn = get_conn()
+    try:
+        _ensure_cabinet_clients_table(conn)
+        row = conn.execute(
+            """
+            SELECT phone, raw_name, validated_name, display_name, validation_status, email,
+                   source_call_id, last_call_id, last_booking_start, last_booking_end,
+                   last_booking_motif, created_at, updated_at
+            FROM cabinet_clients
+            WHERE tenant_id = ? AND lower(trim(email)) = ?
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (tenant_id, email_norm),
+        ).fetchone()
+        if not row:
+            return None
+        return _cabinet_client_row_to_dict(dict(row))
+    finally:
+        conn.close()
+
+
 def get_cabinet_client_by_phone(tenant_id: int, phone: str) -> Optional[Dict[str, Any]]:
     phone_norm = normalize_phone_number(phone)
     if not phone_norm:
@@ -885,7 +961,7 @@ def get_cabinet_client_by_phone(tenant_id: int, phone: str) -> Optional[Dict[str
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        SELECT phone, raw_name, validated_name, display_name, validation_status,
+                        SELECT phone, raw_name, validated_name, display_name, validation_status, email,
                                source_call_id, last_call_id, last_booking_start, last_booking_end,
                                last_booking_motif, created_at, updated_at
                         FROM cabinet_clients
@@ -905,7 +981,7 @@ def get_cabinet_client_by_phone(tenant_id: int, phone: str) -> Optional[Dict[str
         _ensure_cabinet_clients_table(conn)
         row = conn.execute(
             """
-            SELECT phone, raw_name, validated_name, display_name, validation_status,
+            SELECT phone, raw_name, validated_name, display_name, validation_status, email,
                    source_call_id, last_call_id, last_booking_start, last_booking_end,
                    last_booking_motif, created_at, updated_at
             FROM cabinet_clients

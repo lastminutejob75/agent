@@ -87,6 +87,7 @@ class PublicBookingRequest(BaseModel):
     motif: str = Field(..., min_length=2, max_length=120)
     patientName: str = Field(..., min_length=2, max_length=200)
     patientPhone: str = Field(..., min_length=5, max_length=40)
+    patientEmail: Optional[str] = Field(None, max_length=254)
     source: str = Field("page_publique", max_length=40)
     slotSource: Optional[str] = Field(None, max_length=20)
     startIso: Optional[str] = Field(None, max_length=64)
@@ -172,6 +173,7 @@ def _send_cabinet_email(practitioner: Dict[str, Any], payload: PublicBookingRequ
     <li><strong>Motif:</strong> {payload.motif}</li>
     <li><strong>Patient:</strong> {payload.patientName}</li>
     <li><strong>Telephone:</strong> {payload.patientPhone}</li>
+    <li><strong>Email:</strong> {(payload.patientEmail or "").strip() or "—"}</li>
     <li><strong>Source:</strong> {payload.source}</li>
   </ul>
   <p style="color:#666;font-size:12px;">Envoye automatiquement par UWI.</p>
@@ -673,6 +675,27 @@ _FR_WEEKDAYS_SHORT = ["Lun.", "Mar.", "Mer.", "Jeu.", "Ven.", "Sam.", "Dim."]
 _FR_WEEKDAYS_LONG = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 
 
+def _upsert_public_patient(tenant_id: int, payload: PublicBookingRequest) -> None:
+    """Enregistre / met à jour la fiche patient (téléphone + email optionnel)."""
+    from backend.db import find_cabinet_client, normalize_phone_number, update_patient_fields, upsert_cabinet_client
+
+    phone_norm = normalize_phone_number(payload.patientPhone)
+    if not phone_norm:
+        return
+    email_clean = (payload.patientEmail or "").strip()[:254] or None
+    name = payload.patientName.strip()
+    upsert_cabinet_client(
+        tenant_id,
+        phone_norm,
+        raw_name=name,
+        validated_name=name,
+        last_booking_motif=payload.motif.strip(),
+        last_booking_start=(payload.startIso or "").strip() or None,
+    )
+    if email_clean:
+        update_patient_fields(tenant_id, phone_norm, email=email_clean)
+
+
 def _public_session(tenant_id: int, payload: PublicBookingRequest) -> SimpleNamespace:
     """Session minimale pour réutiliser tools_booking (même logique que vocal)."""
     return SimpleNamespace(
@@ -682,6 +705,7 @@ def _public_session(tenant_id: int, payload: PublicBookingRequest) -> SimpleName
             name=payload.patientName.strip(),
             contact=payload.patientPhone.strip(),
             contact_type="phone",
+            email=(payload.patientEmail or "").strip() or None,
             motif=payload.motif.strip(),
             pref=None,
         ),
@@ -1129,6 +1153,12 @@ async def public_book(payload: PublicBookingRequest) -> Dict[str, Any]:
             booking_status = "pending"
 
     confirmation_id = _insert_booking(payload, str(tenant_id) if tenant_id else tenant_id_raw)
+
+    if tenant_id:
+        try:
+            _upsert_public_patient(int(tenant_id), payload)
+        except Exception as exc:
+            logger.warning("public_book patient upsert skipped: %s", exc)
 
     if booking_status == "confirmed":
         patient_sms = (
