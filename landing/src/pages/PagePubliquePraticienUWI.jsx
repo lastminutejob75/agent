@@ -690,6 +690,12 @@ export default function PagePubliquePraticienUWI() {
           if (last?.from === "clara" && String(last?.text || "").trim() === text && !slotsPayload.length) {
             return prev;
           }
+          const lastText = last?.from === "clara" ? String(last?.text || "").trim() : "";
+          const asksNameAgain =
+            /nom\s+et\s+pr[ée]nom/i.test(text) &&
+            /nom\s+et\s+pr[ée]nom/i.test(lastText) &&
+            !slotsPayload.length;
+          if (asksNameAgain) return prev;
           return prev.concat([
             { id: msgId.current++, from: "clara", text, slots: slotsPayload.length ? slotsPayload : undefined },
           ]);

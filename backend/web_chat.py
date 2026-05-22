@@ -288,10 +288,8 @@ async def start_web_chat(
     instant = _instant_reply(msg, channel, conv_id)
     if instant:
         out["reply"] = instant
-        from backend.start_router import is_booking_start_message
-
-        if is_booking_start_message(msg):
-            _touch_web_session(conv_id, tid, state="QUALIF_NAME")
+        # Ne pas forcer QUALIF_NAME avant run_engine : « je veux un rdv » serait traité
+        # comme une répétition et renverrait « Parfait, j'ai besoin de votre nom… » en double.
 
     asyncio.create_task(run_engine(conv_id, msg, channel))
     return out
