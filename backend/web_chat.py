@@ -262,6 +262,10 @@ def _instant_reply(message: str, channel: str, conv_id: Optional[str] = None) ->
         return _greeting_reply(channel)
     if is_booking_start_message(msg):
         return SLOTS_LOOKUP_MSG
+    from backend.start_router import is_more_slots_request_message
+
+    if is_more_slots_request_message(msg):
+        return SLOTS_LOOKUP_MSG
     return None
 
 

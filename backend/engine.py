@@ -2840,6 +2840,36 @@ class Engine:
             session.last_say_key, session.last_say_kwargs = "slot_one_propose", {"label": label0}
         self._save_session(session)
         return [Event("final", msg, conv_state=session.state)]
+
+    def _reject_pending_and_repropose_slots(self, session: Session) -> List[Event]:
+        """Exclut les créneaux déjà proposés et en propose de nouveaux (web + vocal)."""
+        rejected = list(getattr(session, "rejected_slot_starts", None) or [])
+        rdp = list(getattr(session, "rejected_day_periods", None) or [])
+        for slot_obj in session.pending_slots or []:
+            cur_start = tools_booking._slot_get(slot_obj, "start_iso") or tools_booking._slot_get(slot_obj, "start")
+            if cur_start and cur_start not in rejected:
+                rejected.append(cur_start)
+            day = tools_booking._slot_get(slot_obj, "day") or ""
+            period = tools_booking.slot_period(slot_obj)
+            if day and period:
+                key = f"{day}|{period}"
+                if key not in rdp:
+                    rdp.append(key)
+        session.rejected_slot_starts = rejected
+        session.rejected_day_periods = rdp
+        session.pending_slot_choice = None
+        session.awaiting_confirmation = None
+        session.slot_proposal_sequential = False
+        session.slot_offer_index = 0
+        session.slots_list_sent = False
+        session.slots_preface_sent = False
+        reset_slots_reading(session)
+        logger.info(
+            "[MORE_SLOTS] conv_id=%s rejected_count=%s reproposing",
+            session.conv_id,
+            len(rejected),
+        )
+        return self._propose_slots(session)
     
     def _handle_booking_confirm(self, session: Session, user_text: str) -> List[Event]:
         """
@@ -2852,6 +2882,11 @@ class Engine:
         _assert_pending_slots_invariants(session, session.state)
 
         logger.info("[BOOKING_CONFIRM] conv_id=%s user=%s pending_len=%s state=%s", session.conv_id, _mask_for_log(user_text or ""), len(session.pending_slots or []), session.state)
+
+        from backend.start_router import is_more_slots_request_message
+
+        if is_more_slots_request_message(user_text):
+            return self._reject_pending_and_repropose_slots(session)
         
         # 🔄 Si pas de slots en mémoire (session perdue) → re-proposer
         if not session.pending_slots or len(session.pending_slots) == 0:

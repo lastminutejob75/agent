@@ -79,6 +79,29 @@ def is_booking_start_message(text: str) -> bool:
     return hr is not None and hr.intent == Intent.BOOKING
 
 
+_MORE_SLOTS_QUICK = re.compile(
+    r"\b(voir\s+d['\u2019]?autres?\s+cr[eé]neaux|voir\s+plus\s+de\s+cr[eé]neaux|"
+    r"autres?\s+cr[eé]neaux|plus\s+de\s+cr[eé]neaux|aucun\s+ne\s+convient|"
+    r"aucun\s+cr[eé]neau|autre\s+cr[eé]neau|autre\s+horaire)\b",
+    re.IGNORECASE,
+)
+
+
+def is_more_slots_request_message(text: str) -> bool:
+    """True si le patient demande d'autres créneaux (WAIT_CONFIRM web/vocal)."""
+    t = (text or "").strip()
+    if not t:
+        return False
+    if _MORE_SLOTS_QUICK.search(t):
+        return True
+    norm = _normalize_greeting_text(t)
+    return norm in {
+        "je souhaite voir d autres creneaux",
+        "je souhaite voir plus de creneaux",
+        "voir d autres creneaux",
+    }
+
+
 @dataclass
 class StartRoute:
     intent: Intent  # Intent enum (OUT_OF_SCOPE inclus)

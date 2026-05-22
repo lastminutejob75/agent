@@ -85,7 +85,9 @@ function isGreetingOnly(text) {
 }
 const INSTANT_GREETING_REPLY = "Bonjour ! Comment puis-je vous aider ?";
 const INSTANT_SLOTS_LOOKUP = "Je consulte les créneaux disponibles, un instant…";
+const MORE_SLOTS_MSG = "Je souhaite voir d'autres créneaux.";
 const BOOKING_START = /\b(je\s+voudrais?|je\s+veux|je\s+souhaite|je\s+v\s+(?:in|un)\s+rdv|jv\s+(?:un\s+)?rdv|prendre\s+(?:un\s+)?rdv|un\s+rdv|rendez[- ]?vous)\b/iu;
+const MORE_SLOTS_REQUEST = /\b(voir\s+d['\u2019]?autres?\s+cr[eé]neaux|voir\s+plus\s+de\s+cr[eé]neaux|autres?\s+cr[eé]neaux|plus\s+de\s+cr[eé]neaux|aucun\s+ne\s+convient|autre\s+horaire)\b/iu;
 const CHAT_REPLY_TIMEOUT_MS = 25000;
 const CHAT_UNCLEAR_FALLBACK = "Je n'ai pas bien compris. Reformulez, par exemple : « je voudrais un rendez-vous ».";
 const LOOKS_LIKE_NAME = /^(?:(?:M\.|Mme|Mlle)\s+)?[A-ZÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ' -]{1,58}$/u;
@@ -670,6 +672,15 @@ export default function PagePubliquePraticienUWI() {
     return [];
   }, [messages]);
 
+  const lastSlotsMessageId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i]?.from === "clara" && safeArray(messages[i]?.slots).length) {
+        return messages[i].id;
+      }
+    }
+    return null;
+  }, [messages]);
+
   const chooseSlot = useCallback((slot) => {
     const replace = Boolean(inlineSlot);
     setInlineSlot(slot);
@@ -902,6 +913,11 @@ export default function PagePubliquePraticienUWI() {
       return;
     }
 
+    if (MORE_SLOTS_REQUEST.test(clean) || clean === MORE_SLOTS_MSG) {
+      void syncChatInBackground(INSTANT_SLOTS_LOOKUP);
+      return;
+    }
+
     const offers = lastSlotOffers();
     const slotPick = clean.match(/^(?:oui\s*)?([123])$/iu);
     if (offers.length && slotPick) {
@@ -924,6 +940,10 @@ export default function PagePubliquePraticienUWI() {
     },
     [chooseSlot, slots]
   );
+
+  const loadMoreChatSlots = useCallback(() => {
+    void sendChatMessage(MORE_SLOTS_MSG);
+  }, [sendChatMessage]);
 
   const ask = useCallback((text) => {
     void sendChatMessage(text);
@@ -1238,6 +1258,15 @@ export default function PagePubliquePraticienUWI() {
                               <span className="chatSlotBtnLabel">{offer.label}</span>
                             </button>
                           ))}
+                          {message.id === lastSlotsMessageId ? (
+                            <button
+                              className="chatSlotMoreBtn"
+                              type="button"
+                              onClick={loadMoreChatSlots}
+                            >
+                              Voir d&apos;autres créneaux
+                            </button>
+                          ) : null}
                         </div>
                       ) : null}
                     </div>
@@ -1388,6 +1417,8 @@ header a.wa{color:#1b6d34;border-color:#cce9d2}
 .chatSlotBtn:hover{background:rgba(255,255,255,.24)}
 .chatSlotBtnNum{flex-shrink:0;width:26px;height:26px;border-radius:8px;background:#fff;color:#006b73;font-weight:900;display:flex;align-items:center;justify-content:center;font-size:13px}
 .chatSlotBtnLabel{line-height:1.35}
+.chatSlotMoreBtn{margin-top:4px;width:100%;text-align:center;border:1px dashed rgba(255,255,255,.55);background:transparent;color:#fff;border-radius:10px;padding:9px 12px;cursor:pointer;font-size:12px;font-weight:700;letter-spacing:.02em}
+.chatSlotMoreBtn:hover{background:rgba(255,255,255,.12);border-style:solid}
 .bookingSuccessCard{text-align:center;background:#e8f8f9;border:2px solid #009CA4;color:#0a4a50;margin-top:8px}
 .bookingSuccessIcon{font-size:28px;color:#009CA4;margin-bottom:6px}
 .bookingSuccessSlot{display:block;margin-top:8px;font-size:13px;opacity:.85}
