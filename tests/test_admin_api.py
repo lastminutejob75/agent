@@ -786,3 +786,40 @@ def test_quota_month_utc_window(mock_billing, mock_detail, client, admin_headers
     assert r_feb.json()["month_utc"] == "2026-02"
     assert r_mar.json()["used_minutes_month"] == 3.0
     assert r_mar.json()["month_utc"] == "2026-03"
+
+
+@patch("backend.routes.admin._get_tenant_detail")
+@patch("backend.routes.admin.pg_get_tenant_user_by_email", return_value=None)
+@patch("backend.routes.admin.pg_create_tenant_user", return_value=True)
+@patch("backend.services.email_service.send_welcome_email", return_value=(True, None))
+def test_admin_provision_tenant_access_sends_welcome(
+    mock_welcome,
+    _mock_create_user,
+    _mock_existing,
+    mock_detail,
+    client,
+    admin_headers,
+):
+    mock_detail.return_value = {
+        "tenant_id": 7,
+        "name": "Cabinet Demo",
+        "contact_email": "owner@cabinet.fr",
+        "params": {
+            "assistant_name": "emma",
+            "plan_key": "starter",
+            "phone_number": "0611223344",
+        },
+    }
+    r = client.post(
+        "/api/admin/tenants/7/provision-access",
+        headers=admin_headers,
+        json={"email": "owner@cabinet.fr", "name": "Cabinet Demo"},
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["ok"] is True
+    assert data["email"] == "owner@cabinet.fr"
+    assert data["email_sent"] is True
+    mock_welcome.assert_called_once()
+    assert mock_welcome.call_args.kwargs["email"] == "owner@cabinet.fr"
+    assert mock_welcome.call_args.kwargs["temp_password"]

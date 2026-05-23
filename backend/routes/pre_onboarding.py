@@ -1,5 +1,5 @@
 # backend/routes/pre_onboarding.py — POST /api/pre-onboarding/commit (wizard « Créer mon assistant »)
-# E2E: commit → lead dans /admin/leads + 1 email interne max (FOUNDER/ADMIN…) ; token JWT pour callback-booking.
+# E2E: commit → lead admin + email interne fondateur + confirmation prospect ; callback-booking → emails fondateur + prospect.
 from __future__ import annotations
 
 import hashlib
@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from backend.leads_pg import count_leads_total, get_lead, lead_exists, update_lead, update_lead_callback_booking, upsert_lead
 from backend.pre_onboarding_rate_limit import check_pre_onboarding_commit
-from backend.services.email_service import send_lead_founder_email
+from backend.services.email_service import send_lead_founder_email, send_lead_prospect_confirmation_email
 
 logger = logging.getLogger(__name__)
 
@@ -297,6 +297,17 @@ async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody)
     except Exception as e:
         logger.exception("lead_founder_email on commit exception: %s", e)
 
+    if email:
+        try:
+            ok_prospect, err_prospect = send_lead_prospect_confirmation_email(
+                to_email=email,
+                assistant_name=body.assistant_name.strip(),
+            )
+            if not ok_prospect:
+                logger.warning("lead_prospect_confirmation on commit failed: %s", err_prospect)
+        except Exception as e:
+            logger.exception("lead_prospect_confirmation on commit exception: %s", e)
+
     token_out = ""
     try:
         from backend.security import issue_lead_access_token
@@ -401,6 +412,18 @@ async def public_leads_create(request: Request, body: PublicLeadBody) -> Dict[st
     except Exception as e:
         logger.warning("public_leads_create notes_log failed lead_id=%s err=%s", lead_id, e)
 
+    if email:
+        try:
+            ok_prospect, err_prospect = send_lead_prospect_confirmation_email(
+                to_email=email,
+                assistant_name=assistant_name[:80] or "votre assistante",
+                contact_name=cabinet_name or contact_name,
+            )
+            if not ok_prospect:
+                logger.warning("lead_prospect_confirmation on public_leads failed: %s", err_prospect)
+        except Exception as e:
+            logger.warning("lead_prospect_confirmation on public_leads exception: %s", e)
+
     return {"ok": True, "lead_id": lead_id, "message": "Votre demande a bien été reçue."}
 
 
@@ -476,7 +499,7 @@ async def callback_booking(
 ) -> Dict[str, Any]:
     """
     Enregistre le créneau de rappel choisi (écran finalisation UWI).
-    Pas d'email ici : un seul email interne est déjà parti au commit (lead visible dans /admin/leads).
+    Envoie un email interne (fondateur) + confirmation prospect si email connu.
     """
     from backend.security import assert_lead_access
 
@@ -522,7 +545,48 @@ async def callback_booking(
     except Exception as e:
         logger.warning("callback_booking notes_log update failed lead_id=%s: %s", lead_id, e)
 
-    return {"ok": True}
+    assistant_name = (lead.get("assistant_name") or "Emma").strip()
+    dashboard_base = (
+        os.environ.get("ADMIN_BASE_URL")
+        or os.environ.get("FRONT_BASE_URL")
+        or os.environ.get("APP_BASE_URL")
+        or ""
+    ).strip()
+    try:
+        from backend.services.email_service import send_lead_callback_booking_email
+
+        ok_founder, err_founder = send_lead_callback_booking_email(
+            lead_id=lead_id,
+            assistant_name=assistant_name,
+            callback_date_iso=date_str,
+            callback_slot=slot,
+            callback_phone=phone,
+            dashboard_base_url=dashboard_base,
+        )
+        if not ok_founder:
+            logger.warning("lead_callback_booking_email failed lead_id=%s: %s", lead_id, err_founder)
+    except Exception as e:
+        logger.warning("lead_callback_booking_email exception lead_id=%s: %s", lead_id, e)
+
+    lead_email = (lead.get("email") or "").strip().lower()
+    if lead_email:
+        try:
+            ok_prospect, err_prospect = send_lead_prospect_confirmation_email(
+                to_email=lead_email,
+                assistant_name=assistant_name,
+                callback_date_iso=date_str,
+                callback_slot=slot,
+                callback_phone=phone,
+            )
+            if not ok_prospect:
+                logger.warning("lead_prospect_callback_confirmation failed lead_id=%s: %s", lead_id, err_prospect)
+        except Exception as e:
+            logger.warning("lead_prospect_callback_confirmation exception lead_id=%s: %s", lead_id, e)
+
+    out: Dict[str, Any] = {"ok": True}
+    if lead_email:
+        out["prospect_email_sent"] = True
+    return out
 
 
 class CreateAccountBody(BaseModel):

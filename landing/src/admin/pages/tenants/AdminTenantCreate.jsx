@@ -224,6 +224,13 @@ export default function AdminTenantCreate() {
       }
 
       await adminApi.patchTenantParams(tenantId, params);
+      if (!form.sendInviteLater) {
+        const loginEmail = (form.ownerEmail || form.contactEmail).trim().toLowerCase();
+        await adminApi.provisionTenantAccess(tenantId, {
+          email: loginEmail,
+          name,
+        });
+      }
       if (fromLead) {
         try {
           await adminApi.leadConvert(fromLead, {
@@ -384,8 +391,14 @@ export default function AdminTenantCreate() {
           </Field>
           <label style={{ display: "flex", alignItems: "center", gap: 10, fontWeight: 600, color: C.text }}>
             <input type="checkbox" checked={form.sendInviteLater} onChange={(e) => set("sendInviteLater", e.target.checked)} />
-            Programmer invitation utilisateur après validation (recommandé)
+            Envoyer l&apos;email de première connexion plus tard (depuis la fiche client)
           </label>
+          {!form.sendInviteLater ? (
+            <p style={{ margin: 0, fontSize: 12, color: C.muted, lineHeight: 1.5 }}>
+              Un compte login et un mot de passe temporaire seront envoyés immédiatement à{" "}
+              {(form.ownerEmail || form.contactEmail).trim() || "l'email cabinet"}.
+            </p>
+          ) : null}
         </div>
       );
     }

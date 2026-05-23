@@ -419,6 +419,12 @@ class AdminTenantUserCreate(BaseModel):
     role: str = Field(default="owner", pattern="^(owner|member)$")
 
 
+class ProvisionAccessBody(BaseModel):
+    """Crée ou met à jour le compte login client et envoie l'email de première connexion."""
+    email: Optional[str] = Field(default=None, max_length=255)
+    name: Optional[str] = Field(default=None, max_length=120)
+
+
 class TenantCreateIn(BaseModel):
     name: str = Field(..., min_length=2, max_length=120)
     contact_email: str = Field(..., max_length=255)
@@ -5446,6 +5452,72 @@ def admin_add_tenant_user(
         if "autre tenant" in msg or "déjà associé" in msg:
             raise HTTPException(409, str(e))
         raise HTTPException(400, str(e))
+
+
+@router.post("/admin/tenants/{tenant_id}/provision-access")
+def admin_provision_tenant_access(
+    tenant_id: int = Depends(validate_tenant_id),
+    body: Optional[ProvisionAccessBody] = Body(default=None),
+    _: None = Depends(_verify_admin),
+):
+    """
+    Crée un tenant_user (mot de passe temporaire) et envoie l'email de première connexion (/login).
+    Distinct du lien wizard public (/creer-assistante) envoyé via send-onboarding-link.
+    """
+    import secrets
+
+    from backend.services.email_service import send_welcome_email
+
+    d = _get_tenant_detail(tenant_id)
+    if not d:
+        raise HTTPException(404, "Tenant not found")
+    params = d.get("params") or {}
+    contact_email = (
+        (body.email if body else None)
+        or (params.get("owner_login_email") or "")
+        or (d.get("contact_email") or "")
+        or (params.get("contact_email") or "")
+    ).strip().lower()
+    if not contact_email:
+        raise HTTPException(400, "email required")
+
+    existing = pg_get_tenant_user_by_email(contact_email)
+    if existing:
+        existing_tid, _, _ = existing
+        if int(existing_tid) != int(tenant_id):
+            raise HTTPException(409, "Cet email est déjà rattaché à un autre client.")
+
+    temp_password = secrets.token_urlsafe(10)
+    if not pg_create_tenant_user(
+        tenant_id,
+        contact_email,
+        role="owner",
+        password=temp_password,
+        must_change_password=True,
+    ):
+        raise HTTPException(500, "Impossible de créer ou mettre à jour l'utilisateur")
+
+    client_name = (
+        (body.name if body else None)
+        or d.get("name")
+        or params.get("business_name")
+        or "Votre cabinet"
+    ).strip()
+    assistant_id = (params.get("assistant_name") or "sophie").strip()
+    plan_key = (params.get("plan_key") or d.get("plan_key") or "starter").strip() or "starter"
+    phone = (params.get("phone_number") or "").strip()
+
+    ok, err = send_welcome_email(
+        email=contact_email,
+        client_name=client_name,
+        assistant_id=assistant_id,
+        plan_key=plan_key,
+        phone_number=phone,
+        temp_password=temp_password,
+    )
+    if not ok:
+        raise HTTPException(502, err or "Envoi email échoué")
+    return {"ok": True, "email": contact_email, "email_sent": True}
 
 
 @router.patch("/admin/tenants/{tenant_id}/flags")

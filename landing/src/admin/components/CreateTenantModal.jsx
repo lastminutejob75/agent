@@ -454,7 +454,7 @@ export default function CreateTenantModal({ onClose, onCreated, prefill = {}, in
                 ["Assistant", ASSISTANTS.find((a) => a.id === form.assistant_id)?.prenom],
                 ["Horaires", `${deriveHorairesText(bookingRules)} · RDV ${bookingRules.booking_duration_minutes} min`],
                 ["Numéro", form.twilio_number || "À assigner plus tard"],
-                ["Email accès", form.send_welcome ? "✓ Oui" : "Non"],
+                ["Première connexion (/login)", form.send_welcome ? "✓ Email + mdp temporaire" : "Non"],
               ].map(([l, v]) => (
                 <div
                   key={l}
@@ -481,7 +481,7 @@ export default function CreateTenantModal({ onClose, onCreated, prefill = {}, in
                   borderRadius: 8,
                 }}
               >
-                <span style={{ fontSize: 12, color: C.muted }}>Envoyer email de bienvenue</span>
+                <span style={{ fontSize: 12, color: C.muted }}>Email première connexion (dashboard)</span>
                 <div
                   onClick={() => set("send_welcome", !form.send_welcome)}
                   style={{

@@ -795,6 +795,154 @@ def send_lead_callback_booking_email(
     return False, "Email non configuré (Postmark ou SMTP)"
 
 
+def _format_callback_slot_display(callback_date_iso: str, callback_slot: str) -> str:
+    try:
+        from datetime import datetime as dt
+
+        d = dt.strptime((callback_date_iso or "")[:10], "%Y-%m-%d")
+        days_fr = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
+        months_fr = [
+            "janvier",
+            "février",
+            "mars",
+            "avril",
+            "mai",
+            "juin",
+            "juillet",
+            "août",
+            "septembre",
+            "octobre",
+            "novembre",
+            "décembre",
+        ]
+        return f"{days_fr[d.weekday()]} {d.day} {months_fr[d.month - 1]} à {callback_slot}"
+    except Exception:
+        return f"{(callback_date_iso or '')[:10]} à {callback_slot}"
+
+
+def _send_client_html_email(to_addr: str, subject: str, html: str) -> Tuple[bool, Optional[str]]:
+    """Envoi HTML vers un client (Postmark ou SMTP)."""
+    to = (to_addr or "").strip().lower()
+    if not to:
+        return False, "Destinataire vide"
+    from_addr = (
+        os.getenv("POSTMARK_FROM_EMAIL") or os.getenv("EMAIL_FROM") or os.getenv("SMTP_EMAIL") or ""
+    ).strip()
+    token = (os.getenv("POSTMARK_SERVER_TOKEN") or "").strip()
+    if token and from_addr:
+        try:
+            return _send_via_postmark(from_addr, to, subject, html, token)
+        except Exception as e:
+            logger.exception("_send_client_html_email postmark failed")
+            return False, str(e)
+    smtp_user = (os.getenv("SMTP_EMAIL") or "").strip()
+    smtp_pass = (os.getenv("SMTP_PASSWORD") or "").strip()
+    if smtp_user and smtp_pass:
+        host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        port = int(os.getenv("SMTP_PORT", "587"))
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["From"] = smtp_user
+            msg["To"] = to
+            msg["Subject"] = subject
+            msg.attach(MIMEText(html, "html", "utf-8"))
+            with smtplib.SMTP(host, port) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, [to], msg.as_string())
+            return True, None
+        except Exception as e:
+            logger.exception("_send_client_html_email smtp failed")
+            return False, str(e)
+    return False, "Email non configuré (Postmark ou SMTP)"
+
+
+def send_lead_prospect_confirmation_email(
+    to_email: str,
+    assistant_name: str = "",
+    contact_name: str = "",
+    callback_date_iso: Optional[str] = None,
+    callback_slot: Optional[str] = None,
+    callback_phone: str = "",
+) -> Tuple[bool, Optional[str]]:
+    """
+    Email de confirmation au prospect (wizard /creer-assistante).
+    - Sans créneau : accusé de réception de la demande.
+    - Avec créneau : confirmation du rappel réservé.
+    """
+    to = (to_email or "").strip().lower()
+    if not to:
+        logger.warning("send_lead_prospect_confirmation_email: email vide, skip")
+        return False, "Email vide"
+
+    assistant_display = (assistant_name or "votre assistante").strip().capitalize()
+    hello_name = (contact_name or "").strip()
+    hello_suffix = f" {hello_name}" if hello_name else ""
+    has_callback = bool((callback_date_iso or "").strip() and (callback_slot or "").strip())
+    slot_display = (
+        _format_callback_slot_display(callback_date_iso or "", callback_slot or "")
+        if has_callback
+        else ""
+    )
+    phone_display = (callback_phone or "").strip()
+
+    if has_callback:
+        subject = f"UWi — Votre créneau de rappel est confirmé ({slot_display})"
+        intro = (
+            f"Nous avons bien enregistré votre créneau pour finaliser la configuration de "
+            f"<strong>{assistant_display}</strong> avec un expert UWi."
+        )
+        detail_block = f"""
+  <div style="margin: 1.25rem 0; padding: 1rem; border: 1px solid #0a8f9a; border-radius: 12px; background: #ecfdf5;">
+    <p style="margin: 0 0 0.5rem 0; font-weight: 700; color: #0f766e;">Créneau confirmé</p>
+    <p style="margin: 0; color: #134e4a; font-size: 1.05rem;"><strong>{slot_display}</strong></p>
+    {f'<p style="margin: 0.75rem 0 0 0; color: #134e4a;">Rappel au : <strong>{phone_display}</strong></p>' if phone_display else ''}
+  </div>"""
+        next_steps = (
+            "Un expert UWi vous appellera à l'heure choisie pour activer votre assistant. "
+            "Conservez cet email comme rappel."
+        )
+    else:
+        subject = "UWi — Nous avons bien reçu votre demande"
+        intro = (
+            f"Merci pour votre demande de configuration de <strong>{assistant_display}</strong>. "
+            "Notre équipe a bien reçu vos informations."
+        )
+        detail_block = ""
+        next_steps = (
+            "Un expert UWi vous contactera sous 24 h ouvrées pour finaliser la mise en place. "
+            "Vous pourrez ensuite choisir un créneau de rappel si ce n'est pas déjà fait."
+        )
+
+    from datetime import datetime
+
+    date_local = datetime.now().strftime("%d/%m/%Y %H:%M")
+    html = f"""
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>{subject}</title></head>
+<body style="font-family: sans-serif; max-width: 560px; margin: 0 auto; padding: 1rem; color: #0f172a;">
+  <h1 style="font-size: 1.25rem;">Bonjour{hello_suffix} 👋</h1>
+  <p style="font-size: 1rem; line-height: 1.6;">{intro}</p>
+{detail_block}
+  <p style="font-size: 0.95rem; line-height: 1.6; color: #334155;">{next_steps}</p>
+  <p style="color: #64748b; font-size: 0.85rem; margin-top: 1.5rem;">
+    —<br/>
+    Équipe UWi<br/>
+    {date_local}
+  </p>
+</body>
+</html>
+"""
+    ok, err = _send_client_html_email(to, subject, html)
+    if ok:
+        logger.info(
+            "lead_prospect_confirmation_email_sent",
+            extra={"to": to[:50], "has_callback": has_callback},
+        )
+    return ok, err
+
+
 def send_welcome_email(
     email: str,
     client_name: str,
@@ -990,7 +1138,8 @@ def send_onboarding_link_email(
     onboarding_url: str,
 ) -> Tuple[bool, Optional[str]]:
     """
-    Envoie un lien wizard au client pour qu'il configure son assistant.
+    Envoie le lien du wizard public (/creer-assistante) — configuration assistant, pas accès dashboard.
+    Pour la première connexion client, utiliser send_welcome_email.
     """
     to_addr = (to_email or "").strip().lower()
     if not to_addr:
@@ -999,7 +1148,7 @@ def send_onboarding_link_email(
         return False, "onboarding_url vide"
     display_name = (name or "").strip()
     hello_suffix = f" {display_name}" if display_name else ""
-    subject = "Finalisez la configuration de votre assistant UWI"
+    subject = "UWi — Configurez votre assistant (wizard public)"
     html = f"""
 <!DOCTYPE html>
 <html>

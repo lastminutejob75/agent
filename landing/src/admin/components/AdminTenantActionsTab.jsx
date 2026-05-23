@@ -244,7 +244,7 @@ export default function AdminTenantActionsTab({ tenantId, tenant, onSaved, onDel
 
   const handleSendOnboardingLink = async () => {
     if (!tenantId || !onboardingEmail.trim()) {
-      setMsg({ type: "error", text: "Email requis pour envoyer le lien onboarding" });
+      setMsg({ type: "error", text: "Email requis pour envoyer le lien configurateur" });
       return;
     }
     setOnboardingLoading(true);
@@ -258,7 +258,7 @@ export default function AdminTenantActionsTab({ tenantId, tenant, onSaved, onDel
       setShowOnboardingModal(false);
       onSaved?.();
     } catch (e) {
-      setMsg({ type: "error", text: e?.message || "Erreur lors de l'envoi du lien onboarding" });
+      setMsg({ type: "error", text: e?.message || "Erreur lors de l'envoi du lien configurateur" });
     } finally {
       setOnboardingLoading(false);
     }
@@ -835,7 +835,7 @@ export default function AdminTenantActionsTab({ tenantId, tenant, onSaved, onDel
                   marginBottom: 16,
                 }}
               >
-                📧 Envoyer lien onboarding
+                📧 Envoyer lien configurateur (wizard)
               </button>
             </>
           ) : null}
@@ -1029,7 +1029,7 @@ export default function AdminTenantActionsTab({ tenantId, tenant, onSaved, onDel
           }}
         >
           <div style={{ width: "100%", maxWidth: 460, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 18, padding: 22 }}>
-            <div style={{ fontSize: 16, fontWeight: 800, color: C.text, marginBottom: 8 }}>Envoyer lien onboarding</div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: C.text, marginBottom: 8 }}>Envoyer lien configurateur (wizard public)</div>
             <div style={{ fontSize: 12, color: C.muted, marginBottom: 16 }}>
               Le client recevra un lien vers `/creer-assistante` pour finaliser lui-meme la configuration.
             </div>

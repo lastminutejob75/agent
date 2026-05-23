@@ -114,6 +114,12 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  /** Compte login + email première connexion (mdp temporaire) — distinct du wizard public. */
+  provisionTenantAccess: (tenantId, body = {}) =>
+    adminFetch(`/api/admin/tenants/${encodeURIComponent(tenantId)}/provision-access`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   getTwilioNumbers: () => adminFetch("/api/admin/twilio/numbers", { method: "GET" }),
   patchTenantParams: (id, params) =>
     adminFetch(`/api/admin/tenants/${id}/params`, {

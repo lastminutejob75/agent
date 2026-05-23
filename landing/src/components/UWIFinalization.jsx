@@ -502,7 +502,7 @@ export default function UWIFinalization({
               Il finalise avec vous la création de <strong style={{ color: COLORS.text }}>{assistantName}</strong> : personnalisation de la voix, connexion agenda, et test en conditions réelles.
             </p>
             <div style={{ height: 1, background: COLORS.border, margin: "12px 0" }} />
-            <p style={{ fontSize: 12, color: COLORS.muted }}>● SMS de confirmation envoyé sur votre mobile</p>
+            <p style={{ fontSize: 12, color: COLORS.muted }}>Prochaine étape : choisissez votre créneau de rappel</p>
           </div>
           <button
             type="button"
@@ -721,7 +721,7 @@ export default function UWIFinalization({
             <p style={{ fontWeight: 600 }}>Activer {assistantName}</p>
           </div>
           <div style={{ background: "rgba(10,143,154,0.05)", border: "1px solid rgba(10,143,154,0.2)", borderRadius: 12, padding: 12, marginBottom: 24, fontSize: 12, color: COLORS.muted, textAlign: "left" }}>
-            📩 SMS de rappel envoyé sur votre mobile
+            Un email de confirmation vous a été envoyé si une adresse email a été indiquée lors de votre demande.
           </div>
           <button
             type="button"
