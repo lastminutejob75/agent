@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/public", tags=["public_pages"])
 _public_events_schema_ready = False
+_public_bookings_schema_ready = False
 
 
 DEMO_PRACTITIONER: Dict[str, Any] = {
@@ -483,34 +484,31 @@ def _send_sms(to_number: str, body: str) -> bool:
         return False
 
 
-def _insert_booking(payload: PublicBookingRequest, tenant_id: Optional[str]) -> str:
+def _insert_booking(
+    payload: PublicBookingRequest,
+    tenant_id: Optional[str],
+    *,
+    status: str = "pending",
+) -> str:
+    from backend.public_bookings_pg import insert_public_booking
+
+    tid: Optional[int] = None
+    if tenant_id is not None and str(tenant_id).strip().isdigit():
+        tid = int(tenant_id)
     booking_id = str(uuid.uuid4())
-    try:
-        with pg_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO public_bookings (
-                      id, tenant_id, slot_id, slot_label, patient_name, patient_phone,
-                      motif, source, created_at
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
-                    """,
-                    (
-                        booking_id,
-                        tenant_id,
-                        payload.slotId,
-                        payload.slotLabel,
-                        payload.patientName,
-                        payload.patientPhone,
-                        payload.motif,
-                        payload.source,
-                    ),
-                )
-                conn.commit()
-    except Exception as exc:
-        logger.warning("public booking insert skipped: %s", exc)
-    return booking_id
+    return insert_public_booking(
+        booking_id=booking_id,
+        tenant_id=tid,
+        slot_id=payload.slotId,
+        slot_label=payload.slotLabel,
+        patient_name=payload.patientName,
+        patient_phone=payload.patientPhone,
+        patient_email=payload.patientEmail,
+        motif=payload.motif,
+        source=payload.source,
+        status=status,
+        start_iso=(payload.startIso or "").strip() or None,
+    )
 
 
 def _ensure_public_events_schema() -> None:
@@ -524,7 +522,7 @@ def _ensure_public_events_schema() -> None:
                     """
                     CREATE TABLE IF NOT EXISTS public_page_events (
                       id UUID PRIMARY KEY,
-                      tenant_id UUID REFERENCES tenants(id),
+                      tenant_id BIGINT REFERENCES tenants(tenant_id) ON DELETE SET NULL,
                       slug VARCHAR(160) NOT NULL,
                       event_name VARCHAR(80) NOT NULL,
                       source VARCHAR(40) DEFAULT 'direct',
@@ -592,7 +590,7 @@ def _insert_public_event(payload: PublicAnalyticsEventRequest, tenant_id: Option
                     """,
                     (
                         event_id,
-                        tenant_id,
+                        _coerce_tenant_id_for_db(str(tenant_id) if tenant_id is not None else None),
                         payload.slug,
                         event_name,
                         payload.source,
@@ -728,6 +726,59 @@ _FR_WEEKDAYS_SHORT = ["Lun.", "Mar.", "Mer.", "Jeu.", "Ven.", "Sam.", "Dim."]
 _FR_WEEKDAYS_LONG = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 
 
+def _upsert_public_patient_safe(tenant_id: int, payload: PublicBookingRequest) -> None:
+    try:
+        _upsert_public_patient(tenant_id, payload)
+    except Exception as exc:
+        logger.warning("public_book patient upsert skipped: %s", exc)
+
+
+def _track_booking_confirmed_event(
+    payload: PublicBookingRequest,
+    tenant_id: Optional[int],
+    confirmation_id: str,
+    booking_status: str = "pending",
+) -> None:
+    try:
+        _insert_public_event(
+            PublicAnalyticsEventRequest(
+                slug=payload.slug,
+                event="booking_confirmed",
+                source=payload.source,
+                slotId=payload.slotId,
+                slotLabel=payload.slotLabel,
+                motif=payload.motif,
+                metadata={"confirmationId": confirmation_id, "status": booking_status},
+            ),
+            str(tenant_id) if tenant_id is not None else None,
+        )
+    except Exception as exc:
+        logger.debug("public booking analytics skipped: %s", exc)
+
+    if not tenant_id:
+        return
+    try:
+        from backend.db import create_ivr_event
+
+        event_name = "booking_confirmed" if booking_status == "confirmed" else "booking_requested"
+        create_ivr_event(
+            int(tenant_id),
+            f"public-{confirmation_id}",
+            event_name,
+            context=json.dumps(
+                {
+                    "source": payload.source,
+                    "slot_label": payload.slotLabel,
+                    "patient_name": payload.patientName,
+                    "motif": payload.motif,
+                },
+                ensure_ascii=False,
+            )[:500],
+        )
+    except Exception as exc:
+        logger.debug("public booking ivr_event skipped: %s", exc)
+
+
 def _upsert_public_patient(tenant_id: int, payload: PublicBookingRequest) -> None:
     """Enregistre / met à jour la fiche patient (téléphone + email optionnel)."""
     from backend.db import find_cabinet_client, normalize_phone_number, update_patient_fields, upsert_cabinet_client
@@ -807,26 +858,7 @@ def _resolve_public_slot_id(tenant_id: int, payload: PublicBookingRequest) -> Tu
         if sid is not None:
             return int(sid), book_src
 
-    label_norm = _norm(payload.slotLabel)
-    if label_norm:
-        try:
-            session = SimpleNamespace(tenant_id=tenant_id, rejected_slot_starts=[])
-            display = tools_booking.get_slots_for_display(limit=12, pref=None, session=session) or []
-            for slot in display:
-                item = _format_slot_from_display(slot, tenant_id=tenant_id)
-                if item and _norm(item.get("label") or "") == label_norm:
-                    try:
-                        return int(str(item.get("id") or "").strip()), str(item.get("source") or book_src)
-                    except (TypeError, ValueError):
-                        if item.get("startIso"):
-                            sid = tools_booking._resolve_slot_id_from_start_iso(
-                                item["startIso"], source=book_src, tenant_id=tenant_id
-                            )
-                            if sid is not None:
-                                return int(sid), book_src
-        except Exception as exc:
-            logger.warning("_resolve_public_slot_id label lookup failed: %s", exc)
-
+    # Pas de re-fetch agenda ici : trop lent (~2-8s) et le front envoie startIso / slotId numérique.
     return None, book_src
 
 
@@ -1209,13 +1241,14 @@ async def public_book(
         else:
             booking_status = "pending"
 
-    confirmation_id = _insert_booking(payload, str(tenant_id) if tenant_id else tenant_id_raw)
+    confirmation_id = _insert_booking(
+        payload,
+        str(tenant_id) if tenant_id else tenant_id_raw,
+        status=booking_status,
+    )
 
     if tenant_id:
-        try:
-            _upsert_public_patient(int(tenant_id), payload)
-        except Exception as exc:
-            logger.warning("public_book patient upsert skipped: %s", exc)
+        background_tasks.add_task(_upsert_public_patient_safe, int(tenant_id), payload)
 
     background_tasks.add_task(
         _dispatch_booking_notifications,
@@ -1232,21 +1265,17 @@ async def public_book(
             "slug": payload.slug,
             "slot_id": payload.slotId,
             "source": payload.source,
+            "status": booking_status,
             "notifications": "background",
             "created_at": datetime.utcnow().isoformat(),
         },
     )
-    _insert_public_event(
-        PublicAnalyticsEventRequest(
-            slug=payload.slug,
-            event="booking_confirmed",
-            source=payload.source,
-            slotId=payload.slotId,
-            slotLabel=payload.slotLabel,
-            motif=payload.motif,
-            metadata={"confirmationId": confirmation_id},
-        ),
+    background_tasks.add_task(
+        _track_booking_confirmed_event,
+        payload,
         tenant_id,
+        confirmation_id,
+        booking_status,
     )
     followup = _build_whatsapp_followup(practitioner, payload)
     return {

@@ -218,6 +218,9 @@ def _fetch_vapi_call_items_pg(
     items: list[dict] = []
     next_cursor: Optional[str] = None
     with pg_connection() as conn:
+        from backend.pg_tenant_context import set_tenant_id_on_connection
+
+        set_tenant_id_on_connection(conn, tenant_id)
         with conn.cursor() as cur:
             params: list = [tenant_id, start, end]
             cursor_filter = ""
@@ -1207,7 +1210,11 @@ def _get_dashboard_snapshot(tenant_id: int, tenant_name: str) -> dict:
     if url_events:
         try:
             from backend.pg_pool import pg_connection
+            from backend.pg_tenant_context import set_tenant_id_on_connection
+            from backend.public_bookings_pg import count_public_bookings, latest_public_booking
+
             with pg_connection() as conn:
+                set_tenant_id_on_connection(conn, tenant_id)
                 with conn.cursor() as cur:
                     # Dernière activité: source canonique vapi_calls
                     cur.execute(
@@ -1255,6 +1262,8 @@ def _get_dashboard_snapshot(tenant_id: int, tenant_name: str) -> dict:
                         "transfers": by_event.get("transferred_human", 0) + by_event.get("transferred", 0),
                         "abandons": by_event.get("user_abandon", 0),
                     }
+                    public_count = count_public_bookings(tenant_id, start_7d, end_7d)
+                    counters_7d["bookings_confirmed"] += public_count
 
                     # last_call: source canonique vapi_calls, enrichissement last_event si disponible
                     cur.execute(
@@ -1349,9 +1358,11 @@ def _get_dashboard_snapshot(tenant_id: int, tenant_name: str) -> dict:
     # last_booking: appointments PG préféré (PG a tenant_id)
     if url_slots and config.USE_PG_SLOTS:
         try:
-            import psycopg
-            from psycopg.rows import dict_row
-            with psycopg.connect(url_slots, row_factory=dict_row) as conn:
+            from backend.pg_pool import pg_connection
+            from backend.pg_tenant_context import set_tenant_id_on_connection
+
+            with pg_connection() as conn:
+                set_tenant_id_on_connection(conn, tenant_id)
                 with conn.cursor() as cur:
                     cur.execute(
                         """
@@ -1384,6 +1395,21 @@ def _get_dashboard_snapshot(tenant_id: int, tenant_name: str) -> dict:
             "slot_label": last_call.get("slot_label"),
             "source": "ivr_events",
         }
+
+    if not last_booking:
+        try:
+            from backend.public_bookings_pg import latest_public_booking
+
+            pb = latest_public_booking(tenant_id)
+            if pb:
+                last_booking = {
+                    "created_at": str(pb.get("created_at") or ""),
+                    "name": pb.get("patient_name"),
+                    "slot_label": pb.get("slot_label"),
+                    "source": "public_bookings",
+                }
+        except Exception as exc:
+            logger.debug("dashboard public_bookings last_booking skipped: %s", exc)
 
     transfer_reasons = _get_transfer_reasons(tenant_id, days=7)
 
@@ -1576,7 +1602,11 @@ def _get_kpis_daily(tenant_id: int, days: int = 7) -> dict:
     if url:
         try:
             from backend.pg_pool import pg_connection
+            from backend.pg_tenant_context import set_tenant_id_on_connection
+            from backend.public_bookings_pg import count_public_bookings
+
             with pg_connection() as conn:
+                set_tenant_id_on_connection(conn, tenant_id)
                 with conn.cursor() as cur:
                     # Calls: source canonique vapi_calls
                     calls_by_day: Dict[str, int] = {}
@@ -1635,6 +1665,10 @@ def _get_kpis_daily(tenant_id: int, days: int = 7) -> dict:
                             previous["calls"] += c
                             previous["bookings"] += b
                             previous["transfers"] += t
+                    public_bookings_curr = count_public_bookings(tenant_id, start_curr, end_curr)
+                    public_bookings_prev = count_public_bookings(tenant_id, start_prev, start_curr)
+                    current["bookings"] += public_bookings_curr
+                    previous["bookings"] += public_bookings_prev
         except Exception as e:
             logger.warning("pg kpis_daily failed: %s", e)
     else:
@@ -3561,6 +3595,19 @@ def _get_calls_list(
     now = datetime.utcnow()
     start = (now - timedelta(days=days)).strftime("%Y-%m-%d 00:00:00")
     end = now.strftime("%Y-%m-%d %H:%M:%S")
+    cursor_ts: Optional[str] = None
+    cursor_id: Optional[str] = None
+    if cursor:
+        try:
+            padded = cursor + ("=" * (4 - len(cursor) % 4)) if len(cursor) % 4 else cursor
+            raw = base64.urlsafe_b64decode(padded.encode()).decode()
+            obj = json.loads(raw)
+            cursor_ts = obj.get("t")
+            cursor_id = obj.get("c")
+        except Exception:
+            parts = cursor.split("|", 1)
+            if len(parts) == 2:
+                cursor_ts, cursor_id = parts[0], parts[1]
     url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
     items: List[dict] = []
     next_cursor: Optional[str] = None
@@ -3587,7 +3634,11 @@ def _get_calls_list(
                     return {"items": canonical_items, "next_cursor": next_cursor, "days": days}
 
             from backend.pg_pool import pg_connection
+            from backend.pg_tenant_context import set_tenant_id_on_connection
+
             with pg_connection() as conn:
+                if tenant_id is not None:
+                    set_tenant_id_on_connection(conn, tenant_id)
                 with conn.cursor() as cur:
                     seen_call_ids: set[str] = set()
 

@@ -2907,9 +2907,11 @@ def tenant_agenda(
         url = os.environ.get("DATABASE_URL") or os.environ.get("PG_SLOTS_URL")
         if url:
             try:
-                import psycopg
-                from psycopg.rows import dict_row
-                with psycopg.connect(url, row_factory=dict_row) as conn:
+                from backend.pg_pool import pg_connection
+                from backend.pg_tenant_context import set_tenant_id_on_connection
+
+                with pg_connection() as conn:
+                    set_tenant_id_on_connection(conn, tenant_id)
                     with conn.cursor() as cur:
                         cur.execute(
                             """
@@ -2991,6 +2993,26 @@ def tenant_agenda(
                     })
             finally:
                 conn.close()
+
+    try:
+        from backend.public_bookings_pg import fetch_public_bookings_for_agenda
+
+        public_slots = fetch_public_bookings_for_agenda(
+            tenant_id,
+            day_start,
+            day_end,
+            tz_name,
+            now_local,
+            include_past_on_date=bool(date),
+        )
+        existing_ids = {str(item.get("event_id") or "") for item in slots}
+        for item in public_slots:
+            event_id = str(item.get("event_id") or "")
+            if event_id and event_id in existing_ids:
+                continue
+            slots.append(item)
+    except Exception as exc:
+        logger.debug("tenant agenda public_bookings merge skipped tenant=%s: %s", tenant_id, exc)
 
     slots.sort(key=lambda item: item.get("hour") or "")
     done_count = sum(1 for item in slots if item.get("done"))
