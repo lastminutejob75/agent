@@ -23,7 +23,17 @@ if [ ! -d "$LANDING_SRC/src" ]; then
 fi
 
 # Clone ou update uwi-landing
-if [ -d "$SYNC_DIR" ]; then
+_need_clone=0
+if [ -d "$SYNC_DIR/.git" ]; then
+  cd "$SYNC_DIR"
+  if ! git remote get-url origin &>/dev/null; then
+    echo "⚠️  $SYNC_DIR sans remote origin — re-clone..."
+    cd /
+    rm -rf "$SYNC_DIR"
+    _need_clone=1
+  fi
+fi
+if [ -d "$SYNC_DIR/.git" ] && [ "$_need_clone" -eq 0 ]; then
   echo "📂 Mise à jour $SYNC_DIR..."
   cd "$SYNC_DIR"
   git fetch origin
