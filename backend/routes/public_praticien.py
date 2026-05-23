@@ -146,12 +146,14 @@ async def public_patient_hint(
     Ne renvoie que le strict nécessaire (pas d'historique médical).
     """
     from backend.db import find_cabinet_client
-    from backend.guards import validate_email
+    from backend.guards import validate_email, validate_phone
 
     tenant_id = _tenant_id_for_slug(slug, None)
     phone_s = (phone or "").strip()
     email_s = (email or "").strip()
-    if len(phone_s) < 8 and not (email_s and validate_email(email_s)):
+    phone_ok = bool(phone_s and validate_phone(phone_s))
+    email_ok = bool(email_s and validate_email(email_s))
+    if not phone_ok and not email_ok:
         return {"found": False}
 
     profile = find_cabinet_client(tenant_id, phone=phone_s, email=email_s)

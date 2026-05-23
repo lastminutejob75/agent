@@ -12,7 +12,7 @@ from urllib.parse import quote
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
@@ -92,6 +92,28 @@ class PublicBookingRequest(BaseModel):
     slotSource: Optional[str] = Field(None, max_length=20)
     startIso: Optional[str] = Field(None, max_length=64)
     endIso: Optional[str] = Field(None, max_length=64)
+
+
+def _sanitize_public_booking_payload(payload: PublicBookingRequest) -> PublicBookingRequest:
+    """Valide téléphone / email et normalise le numéro pour stockage et SMS."""
+    from backend.db import normalize_phone_number
+    from backend.guards import validate_email, validate_phone
+
+    phone_raw = (payload.patientPhone or "").strip()
+    if not validate_phone(phone_raw):
+        raise HTTPException(status_code=422, detail="Numéro de téléphone invalide.")
+    normalized_phone = normalize_phone_number(phone_raw) or phone_raw
+
+    email_raw = (payload.patientEmail or "").strip()
+    if email_raw and not validate_email(email_raw):
+        raise HTTPException(status_code=422, detail="Adresse email invalide.")
+
+    return payload.model_copy(
+        update={
+            "patientPhone": normalized_phone,
+            "patientEmail": email_raw.lower() if email_raw else None,
+        }
+    )
 
 
 class PublicAnalyticsEventRequest(BaseModel):
@@ -412,6 +434,37 @@ def _try_fetch_practitioner(slug: str) -> Optional[Dict[str, Any]]:
         "vapiAssistantId": vapi_assistant_id,
         "openingHours": public_page.get("openingHours") or DEMO_PRACTITIONER["openingHours"],
     }
+
+
+def _dispatch_booking_notifications(
+    practitioner: Dict[str, Any],
+    payload: PublicBookingRequest,
+    booking_status: str,
+    confirmation_id: str,
+) -> Tuple[bool, bool, bool]:
+    """SMS patient + cabinet et email cabinet (hors requête HTTP pour réponse plus rapide)."""
+    if booking_status == "confirmed":
+        patient_sms = (
+            f"Bonjour {payload.patientName.split()[0]}, votre rendez-vous avec "
+            f"{practitioner.get('name')} le {payload.slotLabel} pour {payload.motif} est confirme. UWI"
+        )
+    else:
+        patient_sms = (
+            f"Bonjour {payload.patientName.split()[0]}, votre demande de RDV avec "
+            f"{practitioner.get('name')} le {payload.slotLabel} pour {payload.motif} a bien ete recue. "
+            "Le cabinet vous confirmera dans les meilleurs delais. UWI"
+        )
+    patient_sms_sent = _send_sms(payload.patientPhone, patient_sms)
+
+    cabinet_number = os.environ.get("PUBLIC_BOOKING_CABINET_SMS_TO") or os.environ.get("OWNER_PHONE_NUMBER") or ""
+    cabinet_sms_sent = False
+    if cabinet_number:
+        cabinet_sms_sent = _send_sms(
+            cabinet_number,
+            f"UWI - Nouvelle demande RDV: {payload.patientName}, {payload.slotLabel}, {payload.motif}. Tel: {payload.patientPhone}",
+        )
+    cabinet_email_sent = _send_cabinet_email(practitioner, payload, confirmation_id)
+    return patient_sms_sent, cabinet_sms_sent, cabinet_email_sent
 
 
 def _send_sms(to_number: str, body: str) -> bool:
@@ -1121,7 +1174,11 @@ async def public_sitemap() -> Response:
 
 
 @router.post("/book")
-async def public_book(payload: PublicBookingRequest) -> Dict[str, Any]:
+async def public_book(
+    payload: PublicBookingRequest,
+    background_tasks: BackgroundTasks,
+) -> Dict[str, Any]:
+    payload = _sanitize_public_booking_payload(payload)
     practitioner = _try_fetch_practitioner(payload.slug) or _demo_practitioner(payload.slug)
     tenant_id_raw = practitioner.get("tenantId")
     tenant_id: Optional[int] = None
@@ -1160,27 +1217,13 @@ async def public_book(payload: PublicBookingRequest) -> Dict[str, Any]:
         except Exception as exc:
             logger.warning("public_book patient upsert skipped: %s", exc)
 
-    if booking_status == "confirmed":
-        patient_sms = (
-            f"Bonjour {payload.patientName.split()[0]}, votre rendez-vous avec "
-            f"{practitioner.get('name')} le {payload.slotLabel} pour {payload.motif} est confirme. UWI"
-        )
-    else:
-        patient_sms = (
-            f"Bonjour {payload.patientName.split()[0]}, votre demande de RDV avec "
-            f"{practitioner.get('name')} le {payload.slotLabel} pour {payload.motif} a bien ete recue. "
-            "Le cabinet vous confirmera dans les meilleurs delais. UWI"
-        )
-    patient_sms_sent = _send_sms(payload.patientPhone, patient_sms)
-
-    cabinet_number = os.environ.get("PUBLIC_BOOKING_CABINET_SMS_TO") or os.environ.get("OWNER_PHONE_NUMBER") or ""
-    cabinet_sms_sent = False
-    if cabinet_number:
-        cabinet_sms_sent = _send_sms(
-            cabinet_number,
-            f"UWI - Nouvelle demande RDV: {payload.patientName}, {payload.slotLabel}, {payload.motif}. Tel: {payload.patientPhone}",
-        )
-    cabinet_email_sent = _send_cabinet_email(practitioner, payload, confirmation_id)
+    background_tasks.add_task(
+        _dispatch_booking_notifications,
+        practitioner,
+        payload,
+        booking_status,
+        confirmation_id,
+    )
 
     logger.info(
         "public_booking_created",
@@ -1189,9 +1232,7 @@ async def public_book(payload: PublicBookingRequest) -> Dict[str, Any]:
             "slug": payload.slug,
             "slot_id": payload.slotId,
             "source": payload.source,
-            "patient_sms_sent": patient_sms_sent,
-            "cabinet_sms_sent": cabinet_sms_sent,
-            "cabinet_email_sent": cabinet_email_sent,
+            "notifications": "background",
             "created_at": datetime.utcnow().isoformat(),
         },
     )
@@ -1214,8 +1255,9 @@ async def public_book(payload: PublicBookingRequest) -> Dict[str, Any]:
         "status": booking_status,
         "confirmed": booking_status == "confirmed",
         "bookingReason": booking_reason,
-        "patientSmsSent": patient_sms_sent,
-        "cabinetSmsSent": cabinet_sms_sent,
-        "cabinetEmailSent": cabinet_email_sent,
+        "patientSmsSent": None,
+        "cabinetSmsSent": None,
+        "cabinetEmailSent": None,
+        "notificationsPending": True,
         "followup": followup,
     }

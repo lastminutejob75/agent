@@ -359,7 +359,32 @@ function resolveChatSlotOffer(offer, apiSlots) {
   return base;
 }
 
-const EMAIL_LOOSE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_STRICT = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+
+function normalizeFrenchPhone(raw) {
+  let cleaned = String(raw || "").trim().replace(/[\s\-.()]/g, "");
+  if (cleaned.startsWith("+33")) cleaned = `0${cleaned.slice(3)}`;
+  else if (cleaned.startsWith("33") && cleaned.length === 11) cleaned = `0${cleaned.slice(2)}`;
+  return cleaned;
+}
+
+function isValidFrenchPhone(raw) {
+  return /^0[1-9]\d{8}$/.test(normalizeFrenchPhone(raw));
+}
+
+function phoneValidationError(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "Indiquez votre numero de telephone.";
+  if (!isValidFrenchPhone(s)) return "Numero invalide (ex. 06 12 34 56 78).";
+  return "";
+}
+
+function emailValidationError(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  if (!EMAIL_STRICT.test(s)) return "Adresse email invalide.";
+  return "";
+}
 
 function BookingFields({
   slot,
@@ -376,13 +401,23 @@ function BookingFields({
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [knownHint, setKnownHint] = useState("");
+  const [touched, setTouched] = useState({ phone: false, email: false, name: false });
   const lookupTimerRef = useRef(null);
-  const ok = Boolean(motif && name.trim() && phone.trim()) && !submitting;
   const showNameField = !phoneOnly || !defaultName.trim();
+  const phoneErr = phoneValidationError(phone);
+  const emailErr = emailValidationError(email);
+  const nameErr =
+    showNameField && touched.name && name.trim().length < 2
+      ? "Indiquez votre nom complet."
+      : "";
+  const ok =
+    Boolean(motif && name.trim().length >= 2 && !phoneErr && !emailErr) &&
+    !submitting;
 
   useEffect(() => {
     setMotif(defaultMotif(slot));
     setKnownHint("");
+    setTouched({ phone: false, email: false, name: false });
   }, [slot]);
 
   useEffect(() => {
@@ -394,7 +429,7 @@ function BookingFields({
     if (lookupTimerRef.current) window.clearTimeout(lookupTimerRef.current);
     const ph = phone.trim();
     const em = email.trim();
-    if (ph.replace(/\D/g, "").length < 8 && !EMAIL_LOOSE.test(em)) {
+    if (!isValidFrenchPhone(ph) && emailValidationError(em)) {
       setKnownHint("");
       return undefined;
     }
@@ -440,37 +475,65 @@ function BookingFields({
       <div className="motifs">{safeArray(slot.motifs).map((m) => <button key={m} className={motif === m ? "motif active" : "motif"} onClick={() => setMotif(m)} type="button">{m}</button>)}</div>
       <div className={showNameField ? "inlineTwoCol" : "inlineOneCol"}>
         {showNameField ? (
-          <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Nom complet" />
+          <div className="fieldWrap">
+            <input
+              className={touched.name && nameErr ? "inputInvalid" : ""}
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              onBlur={() => setTouched((t) => ({ ...t, name: true }))}
+              placeholder="Nom complet"
+              autoComplete="name"
+            />
+            {touched.name && nameErr ? <p className="fieldError">{nameErr}</p> : null}
+          </div>
         ) : (
           <p className="inlineNameRecap">
             <b>{defaultName}</b>
           </p>
         )}
-        <input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Telephone" type="tel" />
+        <div className="fieldWrap">
+          <input
+            className={touched.phone && phoneErr ? "inputInvalid" : ""}
+            value={phone}
+            onChange={(event) => setPhone(event.target.value)}
+            onBlur={() => setTouched((t) => ({ ...t, phone: true }))}
+            placeholder="Telephone (ex. 06 12 34 56 78)"
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+          />
+          {touched.phone && phoneErr ? <p className="fieldError">{phoneErr}</p> : null}
+        </div>
       </div>
-      <input
-        className="inlineEmailField"
-        value={email}
-        onChange={(event) => setEmail(event.target.value)}
-        placeholder="Email (facultatif)"
-        type="email"
-        autoComplete="email"
-      />
+      <div className="fieldWrap">
+        <input
+          className={`inlineEmailField${touched.email && emailErr ? " inputInvalid" : ""}`}
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+          onBlur={() => setTouched((t) => ({ ...t, email: true }))}
+          placeholder="Email (facultatif)"
+          type="email"
+          inputMode="email"
+          autoComplete="email"
+        />
+        {touched.email && emailErr ? <p className="fieldError">{emailErr}</p> : null}
+      </div>
       {knownHint ? <p className="inlineKnownHint">{knownHint}</p> : null}
       <button
         className="primary"
         disabled={!ok}
         type="button"
-        onClick={() =>
-          ok &&
+        onClick={() => {
+          setTouched({ phone: true, email: true, name: true });
+          if (!ok) return;
           onConfirm({
             slot,
             motif,
             name: name.trim(),
-            phone: phone.trim(),
+            phone: normalizeFrenchPhone(phone),
             email: email.trim(),
-          })
-        }
+          });
+        }}
       >
         {submitting ? "Confirmation en cours…" : "Confirmer ma demande"}
       </button>
@@ -1056,6 +1119,10 @@ export default function PagePubliquePraticienUWI() {
         setBookingDone(false);
         return;
       }
+      if (msg.includes("422") || msg.toLowerCase().includes("invalide")) {
+        push([{ from: "clara", text: "Telephone ou email invalide. Corrigez le formulaire puis reessayez." }]);
+        return;
+      }
       push([{ from: "clara", text: "La reservation n'a pas abouti. Verifiez vos informations et reessayez, ou choisissez un autre creneau." }]);
       return;
     }
@@ -1247,23 +1314,23 @@ export default function PagePubliquePraticienUWI() {
         </header>
         {dataStatus === "fallback" && <div className="demoNotice">Mode demo : les donnees publiques API ne sont pas encore disponibles.</div>}
 
-        <section className="mainCard">
-          <div className="doctorMini">
-            <div className={practitioner.photoUrl ? "avatar avatarPhoto" : "avatar"}>
-              {practitioner.photoUrl ? <img src={practitioner.photoUrl} alt={practitioner.name} onError={(event) => { event.currentTarget.style.display = "none"; }} /> : practitioner.initials}
-            </div>
-            <div className="doctorMiniText">
-              <h1>{practitioner.name}</h1>
-              <p>{practitioner.specialty} a {practitioner.city}<span className="dotSep">-</span><span className="greenDot" />Page verifiee<span className="dotSep">-</span><span className="star">★</span> {practitioner.rating}</p>
-              <p className="micro">📍 {addr(practitioner)} - Carte Vitale acceptee - Nouveaux patients : {String(practitioner.newPatients).toLowerCase()}</p>
-            </div>
-            <div className="trustBadges">
-              <div className="trustBadge"><span>✓</span><span>Praticien verifie</span></div>
-              <div className="trustBadge"><span>🗓</span><span>Prise de RDV rapide</span></div>
-              <div className="trustBadge"><span>🔒</span><span>Donnees securisees</span></div>
-            </div>
+        <div className="doctorMini">
+          <div className={practitioner.photoUrl ? "avatar avatarPhoto" : "avatar"}>
+            {practitioner.photoUrl ? <img src={practitioner.photoUrl} alt={practitioner.name} onError={(event) => { event.currentTarget.style.display = "none"; }} /> : practitioner.initials}
           </div>
+          <div className="doctorMiniText">
+            <h1>{practitioner.name}</h1>
+            <p>{practitioner.specialty} a {practitioner.city}<span className="dotSep">-</span><span className="greenDot" />Page verifiee<span className="dotSep">-</span><span className="star">★</span> {practitioner.rating}</p>
+            <p className="micro">📍 {addr(practitioner)} - Carte Vitale acceptee - Nouveaux patients : {String(practitioner.newPatients).toLowerCase()}</p>
+          </div>
+          <div className="trustBadges">
+            <div className="trustBadge"><span>✓</span><span>Praticien verifie</span></div>
+            <div className="trustBadge"><span>🗓</span><span>Prise de RDV rapide</span></div>
+            <div className="trustBadge"><span>🔒</span><span>Donnees securisees</span></div>
+          </div>
+        </div>
 
+        <section className="mainCard">
           <section className="chatHero" ref={chatHeroRef}>
             <div className="chatHeader">
               <ClaraPortrait size={54} />
@@ -1448,7 +1515,8 @@ button,a,input{font:inherit}button{cursor:pointer}
 .notFoundCard h1{margin:0 0 10px;font-size:30px;letter-spacing:-.03em;color:#16343b}
 .notFoundCard p{margin:0 0 18px;color:#4c6470}
 .notFoundCta{display:inline-block;text-decoration:none;color:#fff;background:#009CA4;border:0;border-radius:12px;padding:10px 16px;font-size:14px;font-weight:800}
-.pageShell{max-width:1180px;margin:18px auto 34px;background:#fff;border:1px solid #e5eded;border-radius:28px;box-shadow:0 18px 55px rgba(12,45,51,.10);padding:26px}
+.pageShell{max-width:1180px;margin:18px auto 34px;background:#fff;border:1px solid #e5eded;border-radius:28px;box-shadow:0 18px 55px rgba(12,45,51,.10);padding:26px;display:flex;flex-direction:column;gap:0}
+.pageShell > .doctorMini{margin-bottom:0}
 header{min-height:54px;display:grid;grid-template-columns:auto minmax(260px,1fr) auto;align-items:center;gap:20px;margin-bottom:8px}
 header strong{font-size:34px;letter-spacing:-.06em;color:#008996;font-weight:950}
 header nav{display:flex;gap:14px;justify-content:flex-end}
@@ -1466,8 +1534,8 @@ header a.wa{color:#1b6d34;border-color:#cce9d2}
 .uwiResultInfo{display:flex;flex-direction:column;gap:1px;min-width:0}.uwiResultInfo strong{font-size:13px;color:#172b33}.uwiResultInfo span,.uwiResultInfo em{font-size:11px;color:#526777;font-style:normal}
 .uwiResultTag{border:1px solid #e5eaec;border-radius:999px;padding:4px 8px;color:#798990;font-size:11px;font-weight:700;white-space:nowrap}.uwiResultTag.ok{border-color:#ccebd8;background:#f1fbf5;color:#207547}
 .uwiDropEmpty{padding:14px;display:flex;flex-direction:column;gap:3px;color:#61727a;font-size:13px}
-.mainCard{border:1px solid #dce7ea;border-radius:22px;padding:24px 34px 18px;background:#fff}
-.doctorMini{display:flex;align-items:center;gap:24px;padding-bottom:20px;border-bottom:1px solid #edf0f2}
+.mainCard{border:1px solid #dce7ea;border-radius:0 0 22px 22px;border-top:0;padding:0 34px 18px;background:#fff;margin-top:0}
+.doctorMini{display:flex;align-items:center;gap:24px;padding:24px 34px 20px;border:1px solid #dce7ea;border-bottom:0;border-radius:22px 22px 0 0;background:#fff}
 .avatar{width:100px;height:100px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(135deg,#009CA4,#008692);color:#fff;font-size:34px;font-weight:950;overflow:hidden;flex-shrink:0}
 .avatarPhoto{background:#eef7f8;border:1px solid #d7e9ec}.avatarPhoto img{width:100%;height:100%;object-fit:cover;display:block}
 .doctorMiniText{flex:1;min-width:0}.doctorMiniText h1{margin:0 0 6px;font-size:28px;letter-spacing:-.035em}.doctorMiniText p{margin:0 0 6px;color:#58627a;font-size:14px}.micro{font-size:12px!important;color:#7a8898!important}
@@ -1505,6 +1573,9 @@ header a.wa{color:#1b6d34;border-color:#cce9d2}
 .inlineOneCol{display:flex;flex-direction:column;gap:8px}
 .inlineEmailField{border:1.5px solid #e0e5e6;background:#f8fafa;border-radius:10px;padding:10px 12px;outline:none;width:100%;font-size:14px}
 .inlineEmailField:focus{border-color:#009CA4;background:#fff}
+.fieldWrap{display:flex;flex-direction:column;gap:4px;min-width:0}
+.fieldError{margin:0;font-size:11px;color:#c0392b;font-weight:600}
+.inputInvalid{border-color:#e74c3c !important;background:#fff8f8 !important}
 .inlineKnownHint{margin:0;font-size:12px;color:#006e74;font-weight:700;background:#e8f9f9;border-radius:8px;padding:8px 10px}
 .inlineNameRecap{margin:0;padding:10px 12px;background:rgba(0,156,164,.08);border-radius:8px;font-size:14px}
 .partialBubble{opacity:.72;font-style:italic}
@@ -1525,24 +1596,23 @@ header a.wa{color:#1b6d34;border-color:#cce9d2}
 .infoSeo{display:grid;grid-template-columns:1.1fr .9fr;gap:14px;margin:16px 0 0}.infoCard{background:#fff;border:1px solid #e4eaec;border-radius:18px;padding:20px;box-shadow:0 8px 20px rgba(20,40,50,.05)}.infoCard h2{margin:0 0 14px;font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:#8a9ab0;font-weight:700}.infoGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.infoGrid p{margin:0;display:flex;flex-direction:column;gap:3px}.infoGrid b{font-size:10px;color:#33405b;text-transform:uppercase;letter-spacing:.05em}.infoGrid span{font-size:12px;color:#556070;font-weight:500}.hoursCard p{display:grid;grid-template-columns:80px 1fr;margin:0 0 8px;font-size:13px}.hoursCard span{color:#6a7890}.hoursCard b{color:#009CA4;font-weight:700}footer{text-align:center;color:#a8afba;font-size:12px;padding:18px}footer a{color:#009CA4}
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.44);z-index:50;display:flex;align-items:center;justify-content:center;padding:16px}.modal{width:100%;max-width:430px;background:#fff;border-radius:24px;overflow:hidden;box-shadow:0 28px 80px rgba(0,0,0,.22);position:relative}.modalClaraBar{background:#009CA4;color:#fff;padding:14px 18px;display:flex;align-items:flex-start;gap:10px;font-size:13px;line-height:1.55}.modalBody{padding:16px 18px 18px;display:flex;flex-direction:column;gap:11px}.modalSlotRecap{font-size:12px;color:#5f7375;background:#f4fbfb;border:1px solid #d6eeee;border-radius:11px;padding:9px 12px}.modalSuccess{padding:24px 18px;text-align:center;display:flex;flex-direction:column;gap:12px;align-items:center}.successIcon{width:48px;height:48px;border-radius:50%;background:#009CA4;color:#fff;font-size:20px;display:flex;align-items:center;justify-content:center;margin:0 auto 2px}.successTitle{font-size:16px;font-weight:700}.modalWaCta{text-decoration:none;color:#fff;background:#1f9d4f;border-radius:10px;padding:10px 14px;font-size:13px;font-weight:800;display:inline-block}.modalClose{position:absolute;right:11px;width:26px;height:26px;border:0;border-radius:7px;background:rgba(255,255,255,.18);color:#fff;font-size:15px}
 @media(max-width:860px){
-.pageShell{margin:0;border:0;border-radius:0;box-shadow:none;padding:8px}
-.demoNotice{margin:4px 0 6px;padding:6px 10px;font-size:11px;font-weight:600;border-radius:8px}
-header{grid-template-columns:auto 1fr;grid-template-areas:"logo nav" "search search";gap:8px;margin-bottom:6px}
+.pageShell{margin:0;border:0;border-radius:0;box-shadow:none;padding:8px 8px 12px;gap:6px}
+.demoNotice{margin:0 0 4px;padding:6px 10px;font-size:11px;font-weight:600;border-radius:8px}
+header{grid-template-columns:auto 1fr;grid-template-areas:"logo nav" "search search";gap:8px;margin-bottom:0;padding-bottom:0}
 header strong{grid-area:logo;font-size:26px}
 header > .uwiSearch{grid-area:search}
 header nav{grid-area:nav;justify-content:flex-end;gap:6px}
 header a{padding:7px 11px;font-size:12px;border-radius:10px}
-.mainCard{padding:0;border:0;background:transparent;border-radius:0;display:flex;flex-direction:column}
-.mainCard > .chatHero{order:1;margin-top:0}
-.mainCard > .doctorMini{order:2;margin-top:8px}
-.mainCard > .actionRows{order:3;margin-top:8px}
-.mainCard > .urgencyNote{order:4}
-.doctorMini{flex-wrap:wrap;gap:10px;padding:12px;background:#fff;border:1px solid #dce7ea;border-radius:14px}
-.avatar{width:54px;height:54px;font-size:20px}
-.doctorMiniText h1{font-size:18px;margin:0 0 2px}
-.doctorMiniText p{margin:0 0 2px;font-size:12.5px}
-.micro{display:none}
-.trustBadges{display:none}
+.pageShell > .doctorMini{order:0;flex-wrap:nowrap;align-items:center;gap:10px;padding:10px 4px 10px;margin:0;border:0;border-radius:0;background:transparent;box-shadow:none}
+.pageShell > .doctorMini .avatar{width:48px;height:48px;font-size:18px;flex-shrink:0}
+.pageShell > .doctorMini .doctorMiniText{flex:1;min-width:0}
+.pageShell > .doctorMini .doctorMiniText h1{font-size:17px;margin:0 0 2px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pageShell > .doctorMini .doctorMiniText p{font-size:12px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pageShell > .doctorMini .micro,.pageShell > .doctorMini .trustBadges{display:none}
+.mainCard{padding:0;border:0;background:transparent;border-radius:0;display:flex;flex-direction:column;gap:6px}
+.mainCard > .chatHero{order:0;margin-top:0}
+.mainCard > .actionRows{order:1;margin-top:0}
+.mainCard > .urgencyNote{order:2}
 .chatHero{gap:0;padding:0;max-height:min(78vh,620px);border-radius:14px;background:#fff}
 .chatHero .chatHeader{padding:10px 10px 8px}
 .chatHeader{display:grid;grid-template-columns:auto 1fr auto;grid-template-areas:"avatar text voice";column-gap:10px;row-gap:0;align-items:center;padding-bottom:8px}
