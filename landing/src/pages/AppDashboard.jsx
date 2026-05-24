@@ -45,17 +45,6 @@ const border = {
   teal: "#A7F3F0",
 };
 
-const AGENDA_FALLBACK = [
-  ["09:00", "Mme Claire Dubois", "Consultation de suivi", "Confirmé"],
-  ["10:30", "M. Paul Bernard", "Douleurs thoraciques", "Confirmé"],
-  ["11:30", "Mme Sophie Leroy", "Renouvellement ordonnance", "Prévu"],
-];
-
-const TASKS_FALLBACK = [
-  ["Confirmer rappel automatique", "Échéance : 17/05/2026", "red", "À faire"],
-  ["Document demandé", "Échéance : 18/05/2026", "orange", "En attente"],
-];
-
 function Icon({ name, size = 18, color = "currentColor" }) {
   const common = {
     width: size,
@@ -169,7 +158,7 @@ function parseSlotStart(slot) {
 }
 
 function formatHour(d) {
-  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "10:30";
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "—";
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
@@ -178,7 +167,7 @@ function sameDay(a, b) {
 }
 
 function firstDateLabel(d) {
-  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return { day: "21", monthYear: "mai 2026", dow: "JEU." };
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return { day: "—", monthYear: "Aucun RDV", dow: "" };
   return {
     day: String(d.getDate()),
     monthYear: d.toLocaleDateString("fr-FR", { month: "long", year: "numeric" }),
@@ -202,6 +191,7 @@ export default function AppDashboard() {
   const [agenda, setAgenda] = useState([]);
   const [handoffs, setHandoffs] = useState([]);
   const [calls, setCalls] = useState([]);
+  const [connections, setConnections] = useState({ vapi: null, calendar: null });
 
   const notify = (msg) => {
     setToast(msg);
@@ -213,11 +203,13 @@ export default function AppDashboard() {
     let cancelled = false;
     async function load() {
       setLoading(true);
-      const [kpiRes, agendaRes, handoffRes, callRes] = await Promise.allSettled([
+      const [kpiRes, agendaRes, handoffRes, callRes, vapiRes, calendarRes] = await Promise.allSettled([
         api.tenantKpis(1),
         api.tenantGetAgenda("?upcoming_days=14&compact=1"),
         api.tenantGetHandoffs("?limit=30&days=30"),
         api.tenantGetCalls("?limit=30&days=7"),
+        api.tenantVapiStatus(),
+        api.tenantGetCalendarStatus(),
       ]);
 
       if (cancelled) return;
@@ -225,6 +217,10 @@ export default function AppDashboard() {
       if (agendaRes.status === "fulfilled") setAgenda(Array.isArray(agendaRes.value?.slots) ? agendaRes.value.slots : []);
       if (handoffRes.status === "fulfilled") setHandoffs(Array.isArray(handoffRes.value?.items) ? handoffRes.value.items : []);
       if (callRes.status === "fulfilled") setCalls(Array.isArray(callRes.value?.calls) ? callRes.value.calls : []);
+      setConnections({
+        vapi: vapiRes.status === "fulfilled" ? vapiRes.value : null,
+        calendar: calendarRes.status === "fulfilled" ? calendarRes.value : null,
+      });
       setLoading(false);
     }
     load();
@@ -250,59 +246,57 @@ export default function AppDashboard() {
   const nextSlot = useMemo(() => sortedBookedSlots.find((x) => x.start.getTime() >= Date.now()) || sortedBookedSlots[0] || null, [sortedBookedSlots]);
 
   const nextDate = nextSlot?.start || null;
+  const hasNextAppointment = Boolean(nextSlot);
   const nextLabels = firstDateLabel(nextDate);
-  const nextHour = nextDate ? formatHour(nextDate) : "10:30";
-  const nextReason = String(nextSlot?.slot?.motif || nextSlot?.slot?.reason || nextSlot?.slot?.summary || "Douleurs thoraciques");
+  const nextHour = nextDate ? formatHour(nextDate) : "—";
+  const nextReason = String(nextSlot?.slot?.motif || nextSlot?.slot?.reason || nextSlot?.slot?.summary || "").trim();
   const nextSource = String(nextSlot?.slot?.source || "").toUpperCase() === "UWI" ? "Pris par Clara" : "Agenda cabinet";
-  const nextPatient = String(nextSlot?.slot?.patient || nextSlot?.slot?.patient_name || "Dr Martin");
+  const nextPatient = String(nextSlot?.slot?.patient || nextSlot?.slot?.patient_name || "").trim();
 
-  const agendaForDay = useMemo(() => {
-    const rows = todaySlots.slice(0, 3).map((x) => {
-      const status = String(x.slot?.status || "").toLowerCase() === "confirmed" ? "Confirmé" : "Prévu";
-      return [
-        formatHour(x.start),
-        String(x.slot?.patient || x.slot?.patient_name || "Patient"),
-        String(x.slot?.motif || x.slot?.reason || "Consultation"),
-        status,
-      ];
-    });
-    return rows.length ? rows : AGENDA_FALLBACK;
-  }, [todaySlots]);
+  const agendaForDay = useMemo(() => todaySlots.slice(0, 3).map((x) => {
+    const status = String(x.slot?.status || "").toLowerCase() === "confirmed" ? "Confirmé" : "Prévu";
+    return [
+      formatHour(x.start),
+      String(x.slot?.patient || x.slot?.patient_name || "Patient"),
+      String(x.slot?.motif || x.slot?.reason || "Consultation"),
+      status,
+    ];
+  }), [todaySlots]);
 
   const openHandoffs = useMemo(() => handoffs.filter((h) => {
     const s = String(h?.status || "").toLowerCase();
     return s !== "processed" && s !== "cancelled";
   }), [handoffs]);
 
-  const taskRows = useMemo(() => {
-    const rows = openHandoffs.slice(0, 2).map((h, idx) => {
-      const title = String(h?.summary || h?.reason || h?.label || `Demande ${idx + 1}`).slice(0, 64);
-      const dt = new Date(String(h?.created_at || h?.createdAt || ""));
-      const due = Number.isNaN(dt.getTime())
-        ? "Échéance : à définir"
-        : `Échéance : ${dt.toLocaleDateString("fr-FR")}`;
-      const tone = String(h?.priority || "").toLowerCase().includes("urgent") ? "red" : "orange";
-      const badge = tone === "red" ? "À faire" : "En attente";
-      return [title || "Demande patient", due, tone, badge];
-    });
-    return rows.length ? rows : TASKS_FALLBACK;
-  }, [openHandoffs]);
+  const taskRows = useMemo(() => openHandoffs.slice(0, 2).map((h, idx) => {
+    const title = String(h?.summary || h?.reason || h?.label || `Demande ${idx + 1}`).slice(0, 64);
+    const dt = new Date(String(h?.created_at || h?.createdAt || ""));
+    const due = Number.isNaN(dt.getTime())
+      ? "Échéance : à définir"
+      : `Échéance : ${dt.toLocaleDateString("fr-FR")}`;
+    const tone = String(h?.priority || "").toLowerCase().includes("urgent") ? "red" : "orange";
+    const badge = tone === "red" ? "À faire" : "En attente";
+    return [title || "Demande patient", due, tone, badge];
+  }), [openHandoffs]);
 
   const kpiCurrent = kpis?.current || {};
-  const rdvCreatedToday = Number.isFinite(Number(kpiCurrent.bookings)) ? Number(kpiCurrent.bookings) : 12;
-  const rdvPlannedToday = todaySlots.length || (Number.isFinite(Number(kpiCurrent.bookings)) ? Number(kpiCurrent.bookings) : 18);
+  const rdvCreatedToday = Number.isFinite(Number(kpiCurrent.bookings)) ? Number(kpiCurrent.bookings) : 0;
+  const rdvPlannedToday = todaySlots.length;
   const callCount = Number.isFinite(Number(kpiCurrent.calls)) ? Number(kpiCurrent.calls) : calls.length;
-  const aiCount = Number.isFinite(Number(kpiCurrent.calls_ia)) ? Number(kpiCurrent.calls_ia) : Math.max(0, calls.length - 1);
-  const fillRate = callCount > 0 ? Math.min(99, Math.max(10, Math.round((aiCount / callCount) * 100))) : 87;
-  const cancelledCount = agenda.filter((s) => String(s?.status || "").toLowerCase().includes("cancel")).length || 3;
-  const recoveredCount = Math.max(1, Math.min(cancelledCount, Math.round(cancelledCount * 0.6))) || 2;
+  const aiCount = Number.isFinite(Number(kpiCurrent.calls_ia)) ? Number(kpiCurrent.calls_ia) : 0;
+  const fillRate = callCount > 0 ? Math.min(100, Math.round((aiCount / callCount) * 100)) : 0;
+  const cancelledCount = agenda.filter((s) => String(s?.status || "").toLowerCase().includes("cancel")).length;
+  const recoveredCount = cancelledCount > 0 ? Math.min(cancelledCount, Math.round(cancelledCount * 0.6)) : 0;
+
+  const vapiConnected = connections.vapi?.connected ?? Boolean(me?.assistant_live);
+  const calendarConnected = connections.calendar?.connected === true;
 
   const stats = [
-    [String(rdvCreatedToday), "RDV pris aujourd'hui", `+${Math.max(1, Math.round(rdvCreatedToday / 3))} depuis 9h`, "teal", "plus"],
-    [String(rdvPlannedToday), "RDV au planning", "journée en cours", "blue", "calendar"],
-    [`${fillRate}%`, "Taux de remplissage", fillRate >= 75 ? "bon niveau" : "à optimiser", "green", "chart"],
-    [String(cancelledCount), "Annulations", `dont ${recoveredCount} récupérée${recoveredCount > 1 ? "s" : ""}`, "orange", "warn"],
-    [String(recoveredCount), "Créneaux récupérés", "remis disponibles", "purple", "check"],
+    [String(rdvCreatedToday), "RDV pris aujourd'hui", rdvCreatedToday > 0 ? `+${Math.max(1, Math.round(rdvCreatedToday / 3))} depuis 9h` : "aucun pour l'instant", "teal", "plus"],
+    [String(rdvPlannedToday), "RDV au planning", rdvPlannedToday > 0 ? "journée en cours" : "agenda vide", "blue", "calendar"],
+    [`${fillRate}%`, "Taux de remplissage", callCount > 0 ? (fillRate >= 75 ? "bon niveau" : "à optimiser") : "en attente d'appels", "green", "chart"],
+    [String(cancelledCount), "Annulations", cancelledCount > 0 ? `dont ${recoveredCount} récupérée${recoveredCount > 1 ? "s" : ""}` : "aucune aujourd'hui", "orange", "warn"],
+    [String(recoveredCount), "Créneaux récupérés", recoveredCount > 0 ? "remis disponibles" : "—", "purple", "check"],
   ];
 
   const priorityItems = [
@@ -318,7 +312,7 @@ export default function AppDashboard() {
       key: "next",
       title: "Prochain RDV",
       value: nextHour,
-      hint: `${nextPatient} · ${nextReason}`,
+      hint: hasNextAppointment ? `${nextPatient || "Patient"} · ${nextReason || "Consultation"}` : "Aucun rendez-vous planifié",
       tone: "teal",
       action: () => navigate("/app/agenda"),
     },
@@ -334,6 +328,21 @@ export default function AppDashboard() {
 
   return (
     <div style={S.page}>
+      {!loading && (connections.vapi || connections.calendar) ? (
+        <div style={S.connectionStrip}>
+          <span style={{ ...S.connectionPill, ...(vapiConnected ? S.connectionOk : S.connectionWarn) }}>
+            Clara {vapiConnected ? "connectée" : "non configurée"}
+            {connections.vapi?.voice_number ? ` · ${connections.vapi.voice_number}` : ""}
+          </span>
+          <span style={{ ...S.connectionPill, ...(calendarConnected ? S.connectionOk : S.connectionMuted) }}>
+            Agenda {calendarConnected ? "connecté" : "non lié au cabinet"}
+          </span>
+          <span style={{ ...S.connectionPill, ...S.connectionMuted }}>
+            Données en direct · {calls.length} appel{calls.length > 1 ? "s" : ""} (7 j)
+          </span>
+        </div>
+      ) : null}
+
       <HomeHeroSection
         openHandoffsCount={openHandoffs.length}
         rdvCreatedToday={rdvCreatedToday}
@@ -421,6 +430,7 @@ export default function AppDashboard() {
               />
 
               <NextAppointmentCard
+                hasAppointment={hasNextAppointment}
                 nextLabels={nextLabels}
                 nextHour={nextHour}
                 nextPatient={nextPatient}
@@ -460,6 +470,7 @@ export default function AppDashboard() {
           <>
             <div style={S.colLeft}>
               <NextAppointmentCard
+                hasAppointment={hasNextAppointment}
                 nextLabels={nextLabels}
                 nextHour={nextHour}
                 nextPatient={nextPatient}
@@ -521,13 +532,17 @@ export default function AppDashboard() {
 
       {toast ? <div style={S.toast}>✓ {toast}</div> : null}
       <style>{CSS}</style>
-      <div aria-hidden style={{ display: "none" }}>{me?.tenant_name || "Cabinet Dr Martin"}</div>
     </div>
   );
 }
 
 const S = {
   page: { maxWidth: 1280, margin: "0 auto", padding: "18px 24px 30px", color: C.navy },
+  connectionStrip: { display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 },
+  connectionPill: { display: "inline-flex", alignItems: "center", borderRadius: 999, padding: "6px 12px", fontSize: 12, fontWeight: 700, border: "1px solid" },
+  connectionOk: { color: C.green, background: soft.green, borderColor: border.green },
+  connectionWarn: { color: C.orange, background: soft.orange, borderColor: border.orange },
+  connectionMuted: { color: C.muted, background: "#fff", borderColor: C.border },
   hero: { background: "#fff", border: `1px solid ${C.border}`, borderRadius: 24, padding: 24, display: "flex", justifyContent: "space-between", gap: 18, boxShadow: "0 18px 44px rgba(7,26,51,.07)", marginBottom: 14 },
   heroLeft: { display: "flex", alignItems: "center", gap: 20 },
   claraPhoto: { borderRadius: 999, border: `3px solid ${C.teal}`, overflow: "hidden", boxShadow: "0 14px 30px rgba(0,156,164,.18)" },

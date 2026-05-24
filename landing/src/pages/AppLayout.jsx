@@ -45,6 +45,9 @@ export default function AppLayout() {
     .slice(0, 2);
   const showWelcomeSecurityBanner = new URLSearchParams(location.search).get("welcome") === "1";
   const routeMeta = ROUTES[path] || null;
+  const routeMetaResolved = path === "/app" && me?.tenant_name
+    ? { ...routeMeta, title: `Bonjour, ${me.tenant_name}` }
+    : routeMeta;
   const isClaraPage = path.startsWith("/app/clara");
 
   useEffect(() => {
@@ -257,7 +260,7 @@ export default function AppLayout() {
       <div className="uwi-main" style={{ paddingTop: layoutTopOffset }}>
         {!hideTopbar ? (
           <AppTopbar
-            routeMeta={routeMeta}
+            routeMeta={routeMetaResolved}
             isClaraPage={isClaraPage}
             claraRulesSummary={claraRulesSummary}
             onOpenNotifications={openNotifications}

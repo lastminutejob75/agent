@@ -9,7 +9,7 @@ export const COLORS = {
 };
 
 export const ROUTES = {
-  "/app": { title: "Bonjour, Cabinet Dr Martin", sub: "Clara veille sur votre cabinet aujourd'hui." },
+  "/app": { title: "Tableau de bord", sub: "Vue d'ensemble de votre cabinet aujourd'hui." },
   "/app/clara": { title: "Clara - Centre de pilotage", sub: "Pilotez Clara : urgences, horaires, absences et consignes." },
   "/app/agenda": { title: "Agenda du cabinet", sub: "Visualisez votre journée, semaine et mois" },
   "/app/demandes": { title: "Demandes patients", sub: "Toutes les demandes en attente de revue" },

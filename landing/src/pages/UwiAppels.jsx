@@ -25,7 +25,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useOutletContext } from "react-router-dom";
 import { api } from "../lib/api.js";
 import { useCalls } from "../lib/useCalls.js";
 import { canCreatePatientFromCall, getCallCounts } from "../lib/callJournal.utils.js";
@@ -863,6 +863,8 @@ function DetailPanel({ call, onClose, onCreatePatient, onOpenPatient, onMarkHand
 
 export default function UwiAppels() {
   const navigate = useNavigate();
+  const { me } = useOutletContext() || {};
+  const tenantLabel = String(me?.tenant_name || "Mon cabinet").trim() || "Mon cabinet";
   const { calls, loading, error, selectCall, markAsHandled, createPatientFromCall, addCallNote } = useCalls({ days: 30 });
   const [activeTab, setActiveTab] = useState("tous");
   const [selectedCall, setSelectedCall] = useState(null);
@@ -1164,7 +1166,7 @@ export default function UwiAppels() {
                     whiteSpace: "nowrap",
                   }}
                 >
-                  Cabinet Dr Martin
+                  {tenantLabel}
                 </div>
                 <div style={{ fontSize: 11, color: C.muted }}>Médecine générale</div>
               </div>

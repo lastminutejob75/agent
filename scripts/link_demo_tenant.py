@@ -113,6 +113,13 @@ def _merge_params(existing: dict) -> dict:
             "payment_methods": params.get("payment_methods") or public_page["fee"],
         }
     )
+    calendar_id = (
+        (params.get("calendar_id") or "").strip()
+        or os.getenv("GOOGLE_CALENDAR_ID", "").strip()
+    )
+    if calendar_id:
+        params["calendar_provider"] = "google"
+        params["calendar_id"] = calendar_id
     return params
 
 

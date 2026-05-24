@@ -1,4 +1,5 @@
 export default function NextAppointmentCard({
+  hasAppointment = true,
   nextLabels,
   nextHour,
   nextPatient,
@@ -18,6 +19,11 @@ export default function NextAppointmentCard({
   const Btn = BtnComponent;
   return (
     <Card title="Prochain rendez-vous" icon="calendar">
+      {!hasAppointment ? (
+        <p style={{ margin: 0, color: "#66758B", fontWeight: 600, lineHeight: 1.5 }}>
+          Aucun rendez-vous à venir. Les prochains RDV pris par Clara ou via votre agenda apparaîtront ici.
+        </p>
+      ) : (
       <div style={S.rdv}>
         <div style={S.dateBlock}>
           <b>{nextLabels.day}</b>
@@ -26,10 +32,10 @@ export default function NextAppointmentCard({
         </div>
         <div style={{ flex: 1 }}>
           <div style={S.rdvTop}>
-            <b>{nextHour}</b><span>(20 min)</span><strong>{nextPatient || "Dr Martin"}</strong><Pill tone="green">Confirme</Pill>
+            <b>{nextHour}</b><span>(20 min)</span><strong>{nextPatient || "Patient"}</strong><Pill tone="green">Confirme</Pill>
           </div>
           <div style={S.rdvDetails}>
-            {[["Motif", nextReason], ["Source", nextSource], ["Preference", "Matin"], ["Canal", "Telephone"]].map(([k, v]) => (
+            {[["Motif", nextReason || "—"], ["Source", nextSource || "—"], ["Preference", "—"], ["Canal", "Telephone"]].map(([k, v]) => (
               <p key={k}><span>{k}</span><b>{v}</b></p>
             ))}
           </div>
@@ -40,6 +46,7 @@ export default function NextAppointmentCard({
           </div>
         </div>
       </div>
+      )}
     </Card>
   );
 }
