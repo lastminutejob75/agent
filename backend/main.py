@@ -294,6 +294,16 @@ def _init_heavy_sync():
             print("⏸️  Reconcile job not started (already running or disabled)")
     except Exception as e:
         _logger.warning("reconcile job startup failed: %s", e)
+    # Pré-chauffage créneaux page publique (1er appel Google avant visite patient)
+    if os.getenv("DISABLE_WARMUP", "").lower() not in ("1", "true", "yes"):
+        try:
+            from backend.public_slots_prewarm import prewarm_public_slots_cache
+
+            summary = prewarm_public_slots_cache()
+            if summary.get("ok"):
+                print(f"✅ Public slots prewarm: {summary.get('ok')} slug(s) in {summary.get('duration_ms')}ms")
+        except Exception as e:
+            _logger.warning("public slots prewarm at startup failed: %s", e)
     print("✅ Heavy init done")
 
 

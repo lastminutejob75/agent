@@ -94,6 +94,40 @@ const LOOKS_LIKE_NAME = /^(?:(?:M\.|Mme|Mlle)\s+)?[A-ZÀ-ÖØ-öø-ÿ][A-Za-zÀ-
 const PLAUSIBLE_PATIENT_NAME = /^[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ' -]{2,58}$/u;
 
 const safeArray = (value) => (Array.isArray(value) ? value : []);
+
+const SLOTS_SESSION_PREFIX = "uwi-public-slots:";
+const SLOTS_SESSION_TTL_MS = 10 * 60 * 1000;
+
+function readSessionSlots(slug) {
+  if (typeof window === "undefined" || !slug) return null;
+  try {
+    const raw = sessionStorage.getItem(`${SLOTS_SESSION_PREFIX}${slug}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.ts || Date.now() - parsed.ts > SLOTS_SESSION_TTL_MS) return null;
+    if (!safeArray(parsed.slots).length) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeSessionSlots(slug, slotData) {
+  if (typeof window === "undefined" || !slug) return;
+  try {
+    sessionStorage.setItem(
+      `${SLOTS_SESSION_PREFIX}${slug}`,
+      JSON.stringify({
+        ts: Date.now(),
+        slots: safeArray(slotData?.slots),
+        source: slotData?.source || null,
+        cached: Boolean(slotData?.cached),
+      }),
+    );
+  } catch {
+    /* quota / private mode */
+  }
+}
 const norm = (value) => String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 const addr = (p) => [p?.address?.street, [p?.address?.postalCode, p?.address?.city].filter(Boolean).join(" ")].filter(Boolean).join(", ");
 const telHref = (p) => "tel:" + String(p?.phoneTel || p?.phone || "").replace(/[^+0-9]/g, "");
@@ -108,7 +142,16 @@ async function fetchJson(path, options = {}) {
     ...options,
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
   });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try {
+      const data = await response.json();
+      if (data?.detail) detail = String(data.detail);
+    } catch {
+      /* body non-JSON */
+    }
+    throw new Error(detail);
+  }
   return response.json();
 }
 
@@ -596,6 +639,7 @@ export default function PagePubliquePraticienUWI() {
   const [voiceError, setVoiceError] = useState("");
   const [composerOutOfView, setComposerOutOfView] = useState(false);
   const [slotsLoading, setSlotsLoading] = useState(true);
+  const [slotsRefreshing, setSlotsRefreshing] = useState(false);
   const threadRef = useRef(null);
   const chatHeroRef = useRef(null);
   const slotInitDone = useRef(false);
@@ -649,8 +693,12 @@ export default function PagePubliquePraticienUWI() {
 
   useEffect(() => {
     let cancelled = false;
-    setSlots(defaultSlots);
-    setSlotsLoading(true);
+    const sessionCached = readSessionSlots(slug);
+    const hasSessionCache = Boolean(sessionCached?.slots?.length);
+
+    setSlots(hasSessionCache ? sessionCached.slots : defaultSlots);
+    setSlotsLoading(!hasSessionCache);
+    setSlotsRefreshing(hasSessionCache);
 
     async function loadPractitioner() {
       setDataStatus("loading");
@@ -684,11 +732,17 @@ export default function PagePubliquePraticienUWI() {
       try {
         const slotData = await fetchJson(`/api/public/slots/${encodeURIComponent(slug)}?count=12`);
         if (cancelled) return;
-        if (safeArray(slotData.slots).length) setSlots(slotData.slots);
+        if (safeArray(slotData.slots).length) {
+          setSlots(slotData.slots);
+          writeSessionSlots(slug, slotData);
+        }
       } catch {
-        // Garde les créneaux démo déjà affichés.
+        // Conserve les créneaux affichés (cache session ou démo).
       } finally {
-        if (!cancelled) setSlotsLoading(false);
+        if (!cancelled) {
+          setSlotsLoading(false);
+          setSlotsRefreshing(false);
+        }
       }
     }
 
@@ -1111,6 +1165,7 @@ export default function PagePubliquePraticienUWI() {
       confirmed = Boolean(responseData?.confirmed || responseData?.status === "confirmed");
     } catch (err) {
       setBookingSubmitting(false);
+      setBookingSuccess(null);
       const msg = String(err?.message || "");
       if (msg.includes("409") || msg.toLowerCase().includes("plus disponible")) {
         push([{ from: "clara", text: "Ce creneau vient d'etre pris. Choisissez un autre horaire, je vous en propose d'autres." }]);
@@ -1123,7 +1178,16 @@ export default function PagePubliquePraticienUWI() {
         push([{ from: "clara", text: "Telephone ou email invalide. Corrigez le formulaire puis reessayez." }]);
         return;
       }
+      if (msg.includes("503") || msg.toLowerCase().includes("enregistrement")) {
+        push([{ from: "clara", text: msg.includes("503") ? "Le serveur n'a pas pu enregistrer votre demande. Reessayez dans un instant." : msg }]);
+        return;
+      }
       push([{ from: "clara", text: "La reservation n'a pas abouti. Verifiez vos informations et reessayez, ou choisissez un autre creneau." }]);
+      return;
+    }
+    if (!responseData?.confirmationId) {
+      setBookingSubmitting(false);
+      push([{ from: "clara", text: "La reservation n'a pas pu etre enregistree. Reessayez dans un instant." }]);
       return;
     }
     setBookingSubmitting(false);
@@ -1359,6 +1423,11 @@ export default function PagePubliquePraticienUWI() {
                 <p className="slotsStripLabel">
                   <span className="slotDot" />
                   Reserver en un clic
+                  {slotsRefreshing ? (
+                    <span className="slotsStripRefresh" title="Mise a jour des creneaux" aria-hidden="true">
+                      ↻
+                    </span>
+                  ) : null}
                 </p>
                 <div className="slotsStripScroll">
                   {slotsLoading
@@ -1548,6 +1617,8 @@ header a.wa{color:#1b6d34;border-color:#cce9d2}
 .claraPhoto{position:relative;flex-shrink:0;border-radius:50%;overflow:hidden;background:linear-gradient(135deg,#eaf7f8,#fff);border:1px solid #d7e9ec;box-shadow:0 8px 20px rgba(13,72,82,.12)}.claraPhoto img{width:100%;height:100%;display:block;object-fit:cover;object-position:center 12%}.claraOnlineDot{position:absolute;right:1px;bottom:1px;width:10px;height:10px;border-radius:50%;background:#22b04d;border:2px solid #fff;z-index:2}.claraFallback{width:100%;height:100%;background:linear-gradient(135deg,#009CA4,#006f75);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:22px}
 .slotsStrip{flex-shrink:0;display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(255,255,255,.72);border-top:1px solid #d8eeee;border-bottom:1px solid #d8eeee}
 .slotsStripLabel{margin:0;display:flex;align-items:center;gap:6px;font-size:10px;font-weight:900;letter-spacing:.08em;color:#52727a;white-space:nowrap}
+.slotsStripRefresh{display:inline-flex;font-size:12px;color:#009CA4;animation:uwiSpin 1s linear infinite;opacity:.85}
+@keyframes uwiSpin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 .slotsStripScroll{display:flex;gap:7px;overflow-x:auto;flex:1;min-width:0;padding-bottom:2px;scrollbar-width:thin}
 .slotChip{flex-shrink:0;min-width:88px;border:1px solid rgba(0,156,164,.22);background:#fff;border-radius:12px;padding:8px 10px;display:flex;flex-direction:column;align-items:center;gap:2px}
 .slotChipDay{font-size:10px;font-weight:700;color:#7a9499}.slotChipTime{font-size:16px;font-weight:900;color:#006b73;line-height:1.1}

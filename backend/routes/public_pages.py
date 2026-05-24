@@ -663,6 +663,11 @@ def _analytics_summary(slug: str, days: int) -> Dict[str, Any]:
     return base
 
 
+def load_public_slugs() -> List[str]:
+    """Liste les slugs publics actifs (alias public pour sitemap + prewarm)."""
+    return _load_public_slugs()
+
+
 def _load_public_slugs() -> List[str]:
     """
     Liste les slugs publics actifs (sitemap).
@@ -1022,6 +1027,66 @@ _SLOTS_CACHE_TTL = 120.0
 _SLOTS_FETCH_TIMEOUT = 8.0
 
 
+def _slots_cache_key(slug: str, safe_count: int) -> str:
+    return f"{slug}:{safe_count}"
+
+
+def _get_cached_slots_response(slug: str, safe_count: int) -> Optional[Dict[str, Any]]:
+    import time
+
+    hit = _SLOTS_HTTP_CACHE.get(_slots_cache_key(slug, safe_count))
+    if hit and (time.time() - hit[0]) < _SLOTS_CACHE_TTL:
+        out = dict(hit[1])
+        out["cached"] = True
+        out["fetchedAt"] = int(hit[0])
+        return out
+    return None
+
+
+def _store_slots_response(slug: str, safe_count: int, out: Dict[str, Any]) -> Dict[str, Any]:
+    import time
+
+    payload = {**out, "cached": False, "fetchedAt": int(time.time())}
+    _SLOTS_HTTP_CACHE[_slots_cache_key(slug, safe_count)] = (payload["fetchedAt"], payload)
+    return payload
+
+
+def prewarm_slots_for_slug(slug: str, count: int = 12) -> Dict[str, Any]:
+    """
+    Force le remplissage du cache créneaux pour un slug (cron / startup).
+    Retourne { ok, skipped, slug, slots, source }.
+    """
+    from backend.public_slug_cache import tenant_id_for_slug
+
+    safe_count = max(1, min(int(count or 12), 24))
+    slug = (slug or "").strip()
+    if not slug:
+        return {"ok": False, "skipped": True, "slug": slug}
+
+    tenant_id = tenant_id_for_slug(slug)
+    if not tenant_id:
+        out = {"slug": slug, "slots": DEMO_SLOTS[:safe_count], "source": "demo"}
+        _store_slots_response(slug, safe_count, out)
+        return {"ok": True, "skipped": False, "slug": slug, "slots": len(out["slots"]), "source": "demo"}
+
+    try:
+        out = _fetch_public_slots_payload(int(tenant_id), slug, safe_count)
+        if not out.get("slots"):
+            out = {"slug": slug, "slots": DEMO_SLOTS[:safe_count], "source": "demo", "pending": True}
+        _store_slots_response(slug, safe_count, out)
+        return {
+            "ok": True,
+            "skipped": False,
+            "slug": slug,
+            "slots": len(out.get("slots") or []),
+            "source": out.get("source"),
+            "calendar": out.get("calendar"),
+        }
+    except Exception as exc:
+        logger.warning("prewarm_slots_for_slug slug=%s failed: %s", slug, exc)
+        return {"ok": False, "skipped": False, "slug": slug, "error": str(exc)}
+
+
 def _fetch_public_slots_payload(tenant_id: int, slug: str, safe_count: int) -> Dict[str, Any]:
     """Récupère et formate les créneaux (Google/local) — exécuté dans un thread."""
     from backend import tools_booking
@@ -1059,16 +1124,17 @@ async def get_public_slots(slug: str, count: int = 6) -> Dict[str, Any]:
     from backend.public_slug_cache import tenant_id_for_slug
 
     safe_count = max(1, min(int(count or 6), 24))
-    cache_key = f"{slug}:{safe_count}"
-    hit = _SLOTS_HTTP_CACHE.get(cache_key)
-    if hit and (time.time() - hit[0]) < _SLOTS_CACHE_TTL:
-        return hit[1]
+    cached = _get_cached_slots_response(slug, safe_count)
+    if cached is not None:
+        return cached
 
     tenant_id = tenant_id_for_slug(slug)
     if not tenant_id:
         out = {"slug": slug, "slots": DEMO_SLOTS[:safe_count], "source": "demo"}
-        _SLOTS_HTTP_CACHE[cache_key] = (time.time(), out)
-        return out
+        return _store_slots_response(slug, safe_count, out)
+
+    cache_key = _slots_cache_key(slug, safe_count)
+    stale_hit = _SLOTS_HTTP_CACHE.get(cache_key)
 
     try:
         out = await asyncio.wait_for(
@@ -1077,17 +1143,15 @@ async def get_public_slots(slug: str, count: int = 6) -> Dict[str, Any]:
         )
     except asyncio.TimeoutError:
         logger.warning("public slots timeout slug=%s tenant=%s", slug, tenant_id)
-        stale = hit[1] if hit else None
-        if stale and stale.get("slots"):
-            stale = {**stale, "stale": True}
+        if stale_hit and stale_hit[1].get("slots"):
+            stale = {**stale_hit[1], "stale": True, "cached": True, "fetchedAt": int(stale_hit[0])}
             return stale
         out = {"slug": slug, "slots": DEMO_SLOTS[:safe_count], "source": "demo", "pending": True}
     except Exception as exc:
         logger.warning("public slots failed slug=%s tenant=%s: %s", slug, tenant_id, exc)
         out = {"slug": slug, "slots": DEMO_SLOTS[:safe_count], "source": "demo"}
 
-    _SLOTS_HTTP_CACHE[cache_key] = (time.time(), out)
-    return out
+    return _store_slots_response(slug, safe_count, out)
 
 
 @router.get("/search")

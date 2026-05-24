@@ -907,6 +907,22 @@ def setup_scheduler():
         except Exception as e:
             logger.warning("suspension_past_due_job failed: %s", e)
 
+    # Pré-chauffage créneaux page publique (Google Calendar) — défaut toutes les 2 min
+    try:
+        from apscheduler.triggers.interval import IntervalTrigger
+        from backend.public_slots_prewarm import run_public_slots_prewarm_job
+
+        prewarm_minutes = max(1, min(int(os.getenv("PUBLIC_SLOTS_PREWARM_INTERVAL_MINUTES", "2")), 30))
+        if os.getenv("PUBLIC_SLOTS_PREWARM_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on"):
+
+            @scheduler.scheduled_job(IntervalTrigger(minutes=prewarm_minutes), id="public_slots_prewarm")
+            def public_slots_prewarm_job():
+                run_public_slots_prewarm_job()
+
+            logger.info("Public slots prewarm scheduled every %s min", prewarm_minutes)
+    except Exception as e:
+        logger.warning("public_slots_prewarm scheduler setup failed: %s", e)
+
     scheduler.start()
     channel_type = os.getenv("REPORT_CHANNEL", "telegram")
     logger.info(f"Report scheduler started (daily at 18h, weekly on Sunday 20h) via {channel_type}")
