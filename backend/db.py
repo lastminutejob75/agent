@@ -467,6 +467,10 @@ def normalize_phone_number(value: Optional[str]) -> str:
         return cleaned
     if cleaned.startswith("0") and len(cleaned) == 10:
         return f"+33{cleaned[1:]}"
+    # +33xxxxxxxxxx erronément lu comme espace (« application/x-www-form-urlencoded » dans ?phone=)
+    # → « 336… » sans + ; doit matcher les fiches stockées en +33…
+    if re.fullmatch(r"33\d{9}", cleaned):
+        return f"+{cleaned}"
     return cleaned
 
 

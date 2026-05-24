@@ -15,5 +15,9 @@ export function normalizePhoneBusinessKey(value: unknown): string {
   if (cleaned.startsWith("0") && cleaned.length === 10) {
     return `+33${cleaned.slice(1)}`;
   }
+  /* Même correction que backend : « + » manglé en « ?phone= » (URLSearchParams) → « 336… » brut. */
+  if (/^33\d{9}$/.test(cleaned)) {
+    return `+${cleaned}`;
+  }
   return cleaned;
 }

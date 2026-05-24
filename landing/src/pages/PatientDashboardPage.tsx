@@ -419,6 +419,16 @@ export default function PatientDashboardPage() {
   const isDirectPhoneView = Boolean(phoneFromDashboardUrl);
   const tenantPatientPhone = useMemo(() => normalizePhone(phoneFromDashboardUrl), [phoneFromDashboardUrl]);
 
+  /** Corrige ?phone= après décodage URL (notamment « + » → espace) ou variants 06 / espaces. */
+  useEffect(() => {
+    const raw = (searchParams.get("phone") || "").trim();
+    const canonical = normalizePhone(raw);
+    if (!canonical || canonical === raw) return;
+    const np = new URLSearchParams(searchParams);
+    np.set("phone", canonical);
+    setSearchParams(np, { replace: true });
+  }, [searchParams, setSearchParams]);
+
   const loadTenantSidebarPatients = useCallback(async () => {
     try {
       const res = await api.tenantGetPatients("?limit=500");
