@@ -159,6 +159,7 @@ function normalize(call) {
   const patient = call?.patient || {};
   const stKey = resolveStatusKey(call);
   const intKey = resolveIntentKey(call);
+  const hasPatientValidatedFile = String(patient?.validated_name || "").trim().length >= 2;
   return {
     id: call?.call_id || call?.id || "",
     name: patient?.display_name || call?.patient_name || "Patient",
@@ -177,6 +178,7 @@ function normalize(call) {
     aiScore: deriveAiScore(call),
     transcript: [],
     patient,
+    hasPatientValidatedFile,
     booking: call?.booking || null,
     sortValue: parseTs(call?.last_event_at || call?.started_at),
     raw: call,
@@ -188,6 +190,7 @@ function normalizeDetail(detail, fallback) {
   const patient = base?.patient || fallback?.patient || {};
   const stKey = resolveStatusKey(base);
   const intKey = resolveIntentKey(base);
+  const hasPatientValidatedFile = String(patient?.validated_name || "").trim().length >= 2;
   return {
     id: base?.call_id || fallback?.id || "",
     name: patient?.display_name || fallback?.name || base?.patient_name || "Patient",
@@ -206,6 +209,7 @@ function normalizeDetail(detail, fallback) {
     aiScore: deriveAiScore(base),
     transcript: buildTranscriptLines(base?.transcript),
     patient,
+    hasPatientValidatedFile,
     booking: base?.booking || fallback?.booking || null,
     sortValue: parseTs(base?.last_event_at || base?.started_at || fallback?.raw?.last_event_at || fallback?.raw?.started_at),
     raw: base,
@@ -240,6 +244,9 @@ function CallRow({ call, onOpen, onRecall }) {
       <div style={S.mainCol}>
         <div style={S.nameRow}>
           <span style={S.name}>{call.name}</span>
+          <span style={call.hasPatientValidatedFile ? S.patientFileOk : S.patientFileTodo}>
+            {call.hasPatientValidatedFile ? "Fiche OK" : "Sans fiche"}
+          </span>
           {call.aiHandled && <span style={S.iaBadge}>IA</span>}
           {call.intent === "urgent" && <span style={S.urgentBadge}>URGENT</span>}
           {call.rdv && <span style={S.rdvBadge}>RDV pris</span>}
@@ -846,6 +853,24 @@ const S = {
     color: C.tealDark,
     background: C.tealLight,
     border: `1px solid ${C.tealBorder}`,
+    borderRadius: 4,
+    padding: "1px 5px",
+  },
+  patientFileOk: {
+    fontSize: 9,
+    fontWeight: 800,
+    color: C.tealDark,
+    background: C.tealLight,
+    border: `1px solid ${C.tealBorder}`,
+    borderRadius: 4,
+    padding: "1px 5px",
+  },
+  patientFileTodo: {
+    fontSize: 9,
+    fontWeight: 800,
+    color: C.orange,
+    background: C.orangeLight,
+    border: `1px solid ${C.orangeBorder}`,
     borderRadius: 4,
     padding: "1px 5px",
   },

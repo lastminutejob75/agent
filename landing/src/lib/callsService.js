@@ -65,16 +65,10 @@ function inferStatus(call) {
   return "traité";
 }
 
-function isLikelyUnknownName(name) {
-  const v = String(name || "").trim().toLowerCase();
-  return (
-    !v ||
-    v === "patient" ||
-    v === "unknown" ||
-    v.includes("inconnu") ||
-    v.includes("non identifi") ||
-    v.includes("anonymous")
-  );
+/** Journal d’appels : patient « avec fiche » = identité validée sur la fiche patient du dashboard (`validated_name` ≥ 2 car., comme `patient_has_file` à l’agenda). */
+export function patientDashboardFileHasValidatedIdentity(patient) {
+  const p = patient || {};
+  return String(p.validated_name || "").trim().length >= 2;
 }
 
 function shortCallRef(call) {
@@ -114,7 +108,7 @@ function normalizePatient(call) {
   const phoneRaw = formatPhone(patient?.phone || call?.customer_number || "");
   const phone = normalizePhone(phoneRaw);
   const masked = /masqu|non identifi|anonymous|unknown/i.test(String(phoneRaw || ""));
-  const known = !isLikelyUnknownName(displayName);
+  const known = patientDashboardFileHasValidatedIdentity(patient);
   const initials = known
     ? displayName
         .split(/\s+/)
@@ -197,8 +191,8 @@ export async function addCallNote(callId, note) {
   const text = String(note || "").trim();
   if (!text) throw new Error("La note est vide.");
   const phone = normalizePhone(detail?.patient?.phone || detail?.customer_number || "");
-  const patientName = String(detail?.patient?.display_name || detail?.patient_name || "").toLowerCase();
-  const knownPatient = Boolean(patientName && !patientName.includes("inconnu"));
+  const validated = String(detail?.patient?.validated_name || "").trim();
+  const knownPatient = validated.length >= 2;
   if (knownPatient && phone) {
     return api.tenantCreatePatientNote(phone, { text, author: "Cabinet" });
   }

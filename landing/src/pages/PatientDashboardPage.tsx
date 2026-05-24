@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api.js";
 
 type Patient = {
@@ -213,6 +213,7 @@ function Modal({
 
 export default function PatientDashboardPage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [selectedPatientId, setSelectedPatientId] = useState("p1");
   const [filter, setFilter] = useState("Tous");
@@ -237,6 +238,7 @@ export default function PatientDashboardPage() {
   const [emailSaving, setEmailSaving] = useState(false);
   const [requestStatus, setRequestStatus] = useState("");
   const [requestActionLoading, setRequestActionLoading] = useState<"" | "processed" | "cancelled">("");
+  const [tenantPatientNotFound, setTenantPatientNotFound] = useState(false);
   const toastTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -260,8 +262,13 @@ export default function PatientDashboardPage() {
     };
   }, [searchParams]);
 
+  const phoneFromDashboardUrl = useMemo(() => (searchParams.get("phone") || "").trim(), [searchParams]);
   const selectedPatient = patients.find((patient) => patient.id === selectedPatientId) || patients[0];
-  const activePatientPhone = (requestContext?.phone || selectedPatient?.phone || "").trim();
+  const activePatientPhone = (phoneFromDashboardUrl || requestContext?.phone || selectedPatient?.phone || "").trim();
+
+  useEffect(() => {
+    if (!activePatientPhone) setTenantPatientNotFound(false);
+  }, [activePatientPhone]);
 
   const filteredPatients = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -302,6 +309,7 @@ export default function PatientDashboardPage() {
     api.tenantGetPatient(activePatientPhone)
       .then((res) => {
         if (cancelled) return;
+        setTenantPatientNotFound(false);
         const list = Array.isArray(res?.documents) ? res.documents : [];
         setPatientEmail(String(res?.patient?.email || ""));
         setDocuments(
@@ -314,9 +322,12 @@ export default function PatientDashboardPage() {
           })),
         );
       })
-      .catch(() => {
+      .catch((e: unknown) => {
+        const status =
+          typeof e === "object" && e !== null && "status" in e ? (e as { status?: number }).status : undefined;
         if (!cancelled) setDocuments([]);
         if (!cancelled) setPatientEmail("");
+        if (!cancelled) setTenantPatientNotFound(status === 404);
       })
       .finally(() => {
         if (!cancelled) setDocumentsLoading(false);
@@ -644,6 +655,29 @@ export default function PatientDashboardPage() {
         </aside>
 
         <main className="overflow-y-auto px-8 py-6">
+          {tenantPatientNotFound ? (
+            <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-950 shadow-sm">
+              <span className="font-black">Aucune fiche patient trouvée pour ce numéro sur le dashboard.</span> Retournez à la liste
+              {" "}
+              <button
+                type="button"
+                onClick={() => navigate("/app/patients")}
+                className="font-black text-amber-800 underline underline-offset-2 hover:text-amber-900"
+              >
+                Patients
+              </button>
+              {" "}
+              ou créez-la depuis l&apos;
+              <button
+                type="button"
+                onClick={() => navigate("/app/agenda")}
+                className="font-black text-amber-800 underline underline-offset-2 hover:text-amber-900"
+              >
+                agenda
+              </button>
+              .
+            </div>
+          ) : null}
           <section className="rounded-[28px] border border-[#E2EAF4] bg-white p-7 shadow-[0_18px_45px_rgba(10,22,40,0.06)]">
             <div className="flex items-start justify-between gap-8">
               <div className="flex min-w-0 gap-6">

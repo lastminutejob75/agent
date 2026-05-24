@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import CreatePatientFromCallModal from "../components/calls/CreatePatientFromCallModal.jsx";
 import { api } from "../lib/api.js";
 
 const NAVY = "#111827";
@@ -145,6 +146,18 @@ function formatPhone(raw) {
   return c;
 }
 
+function splitAgendaPatientName(value) {
+  const full = String(value || "").trim();
+  if (!full) return { firstName: "", lastName: "" };
+  const parts = full.split(/\s+/);
+  if (parts.length === 1) return { firstName: "", lastName: parts[0] };
+  return { firstName: parts.slice(0, -1).join(" "), lastName: parts.slice(-1)[0] };
+}
+
+function composeAgendaPatientName({ firstName, lastName }) {
+  return [String(firstName || "").trim(), String(lastName || "").trim()].filter(Boolean).join(" ").trim();
+}
+
 function RescheduleCalendar({ onClose, onReschedule, actionLoading }) {
   const [calMonth, setCalMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [availDates, setAvailDates] = useState({});
@@ -262,9 +275,21 @@ function RescheduleCalendar({ onClose, onReschedule, actionLoading }) {
   );
 }
 
-function InlineDetail({ a, navigate, confirmCancel, setConfirmCancel, handleCancel, actionLoading, rescheduleMode, onStartReschedule, onReschedule }) {
+function InlineDetail({
+  a,
+  navigate,
+  confirmCancel,
+  setConfirmCancel,
+  handleCancel,
+  actionLoading,
+  rescheduleMode,
+  onStartReschedule,
+  onReschedule,
+  onCreatePatientFromAgenda,
+}) {
   const aPhone = normalizePhone(a.patient_phone || a.phone || "");
   const aPhoneFmt = formatPhone(aPhone);
+  const hasPatientFile = Boolean(a.patient_has_file);
   return (
     <div style={S.inlineDetail}>
       <div style={S.inlineGrid}>
@@ -275,13 +300,33 @@ function InlineDetail({ a, navigate, confirmCancel, setConfirmCancel, handleCanc
       </div>
       <div style={S.inlineActions}>
         {aPhone ? <a href={`tel:${aPhone}`} style={S.inlineCallBtn}>📞 Appeler</a> : null}
-        <button
-          type="button"
-          onClick={() => navigate(aPhone ? `/app/patient-dashboard?phone=${encodeURIComponent(aPhone)}` : "/app/patient-dashboard")}
-          style={S.inlineSecBtn}
-        >
-          👤 {aPhone ? "Fiche patient" : "Patients"}
-        </button>
+        {aPhone && hasPatientFile ? (
+          <button
+            type="button"
+            onClick={() => navigate(`/app/patient-dashboard?phone=${encodeURIComponent(aPhone)}`)}
+            style={S.inlineSecBtn}
+          >
+            👤 Fiche patient
+          </button>
+        ) : null}
+        {aPhone && !hasPatientFile ? (
+          <button
+            type="button"
+            onClick={() => onCreatePatientFromAgenda?.(a)}
+            style={S.inlineSecBtn}
+          >
+            👤 Créer fiche patient
+          </button>
+        ) : null}
+        {!aPhone ? (
+          <button
+            type="button"
+            onClick={() => navigate("/app/patient-dashboard")}
+            style={S.inlineSecBtn}
+          >
+            👤 Patients
+          </button>
+        ) : null}
         {a.canCancel && !confirmCancel && !rescheduleMode && (
           <button type="button" onClick={onStartReschedule} style={S.inlineRescheduleBtn}>🔄 Déplacer</button>
         )}
@@ -313,6 +358,7 @@ export default function AppAgenda() {
   const urlDate = searchParams.get("date");
   const urlView = searchParams.get("view");
   const urlPhone = searchParams.get("phone");
+  const urlFocus = searchParams.get("focus");
   const [selectedDate, setSelectedDate] = useState(urlDate || todayISO());
   const [pendingFocusPhone, setPendingFocusPhone] = useState(urlPhone || null);
   const [viewMode, setViewMode] = useState("day");
@@ -327,6 +373,14 @@ export default function AppAgenda() {
     }
     if (urlPhone) setPendingFocusPhone(urlPhone);
   }, [urlDate, urlView, urlPhone, selectedDate]);
+
+  /* Liens depuis le dashboard : focus=annulations | creneaux-recuperes → jour + date explicite */
+  useEffect(() => {
+    if (urlFocus !== "annulations" && urlFocus !== "creneaux-recuperes") return;
+    setViewMode("day");
+    const d = urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate) ? urlDate : todayISO();
+    setSelectedDate(d);
+  }, [urlFocus, urlDate]);
   const [agendaByDate, setAgendaByDate] = useState({});
   const [horaires, setHoraires] = useState(null);
   const [me, setMe] = useState(null);
@@ -337,6 +391,18 @@ export default function AppAgenda() {
   const [actionLoading, setActionLoading] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [rescheduleMode, setRescheduleMode] = useState(false);
+  const [patientCreateOpen, setPatientCreateOpen] = useState(false);
+  const [patientCreateLoading, setPatientCreateLoading] = useState(false);
+  const [patientCreateSummary, setPatientCreateSummary] = useState("");
+  const [patientCreateForm, setPatientCreateForm] = useState({
+    firstName: "",
+    lastName: "",
+    phone: "",
+    initialNote: "",
+    agendaMotif: "",
+    rawCalendarName: "",
+    callId: "",
+  });
 
   const weekDates = useMemo(() => buildWeekDates(selectedDate), [selectedDate]);
   const monthGrid = useMemo(() => buildMonthGrid(selectedDate), [selectedDate]);
@@ -432,6 +498,29 @@ export default function AppAgenda() {
     [agendaByDate, visibleDates, duration],
   );
 
+  /** RDV au statut annulé dans la période affichée (aligné logique dashboard). */
+  const cancelledInVisible = useMemo(
+    () => appointments.filter((a) => String(a?.status || "").toLowerCase().includes("cancel")).length,
+    [appointments],
+  );
+
+  /** Deep link depuis le dashboard : scroll vers la pastille Annulations / Créneau récupéré */
+  useEffect(() => {
+    if (loading) return undefined;
+    if (urlFocus !== "annulations" && urlFocus !== "creneaux-recuperes") return undefined;
+    const id = urlFocus === "annulations" ? "agenda-focus-annulations" : "agenda-focus-creneaux-recuperes";
+    const run = () => {
+      document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    };
+    run();
+    const raf = window.requestAnimationFrame(run);
+    const t = window.setTimeout(run, 160);
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.clearTimeout(t);
+    };
+  }, [loading, urlFocus, viewMode, selectedDate, appointments.length]);
+
   const apptCountByDate = useMemo(() => {
     const map = {};
     appointments.forEach((a) => { map[a.date] = (map[a.date] || 0) + 1; });
@@ -515,6 +604,64 @@ export default function AppAgenda() {
       setActionMsg({ text: e?.message || "Impossible de déplacer le RDV.", type: "error" });
     } finally {
       setActionLoading(false);
+    }
+  }
+
+  function openPatientCreateFromAppointment(appt) {
+    const fromName = splitAgendaPatientName(appt?.patient);
+    const motif = String(appt?.type || "").trim();
+    const initialNote = [
+      `Rendez-vous : ${formatLongDate(appt?.date)} · ${appt?.displayTime || ""}`,
+      motif ? `Motif : ${motif}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    setPatientCreateForm({
+      firstName: fromName.firstName,
+      lastName: fromName.lastName,
+      phone: normalizePhone(appt?.patient_phone || ""),
+      initialNote,
+      agendaMotif: motif,
+      rawCalendarName: String(appt?.patient || "").trim(),
+      callId: "",
+    });
+    setPatientCreateSummary(
+      `${formatLongDate(appt?.date)} · ${appt?.displayTime || "—"}${motif ? ` · ${motif}` : ""}`,
+    );
+    setPatientCreateOpen(true);
+  }
+
+  async function handlePatientCreateFromAgendaSubmit() {
+    const phone = normalizePhone(patientCreateForm.phone);
+    const name = composeAgendaPatientName(patientCreateForm);
+    if (!phone) {
+      setActionMsg({ type: "error", text: "Le téléphone est requis pour créer une fiche patient." });
+      return;
+    }
+    if ((name || "").trim().length < 2) {
+      setActionMsg({
+        type: "error",
+        text: "Indiquez au moins le nom ou le prénom (au moins 2 caractères au total).",
+      });
+      return;
+    }
+    setPatientCreateLoading(true);
+    try {
+      await api.tenantRegisterPatient({
+        patient_phone: phone,
+        validated_name: name,
+        raw_name: (patientCreateForm.rawCalendarName || "").trim() || name,
+        agenda_motif: (patientCreateForm.agendaMotif || "").trim() || undefined,
+        initial_note: (patientCreateForm.initialNote || "").trim() || undefined,
+      });
+      setPatientCreateOpen(false);
+      setActionMsg({ type: "success", text: "Fiche patient enregistrée." });
+      await loadAgenda();
+      navigate(`/app/patient-dashboard?phone=${encodeURIComponent(phone)}`);
+    } catch (e) {
+      setActionMsg({ type: "error", text: e?.message || "Impossible de créer la fiche patient." });
+    } finally {
+      setPatientCreateLoading(false);
     }
   }
 
@@ -684,13 +831,35 @@ export default function AppAgenda() {
       <div style={S.legendRow}>
         {semanticLegend.map((item) => {
           const tone = APPT_TONE[item.tone] || APPT_TONE.teal;
+          const anchorId =
+            item.tone === "purple"
+              ? "agenda-focus-creneaux-recuperes"
+              : undefined;
           return (
-            <div key={item.label} style={{ ...S.legendItem, background: tone.bg, borderColor: `${tone.border}55` }}>
+            <div
+              key={item.label}
+              id={anchorId}
+              style={{ ...S.legendItem, background: tone.bg, borderColor: `${tone.border}55` }}
+            >
               <span style={{ ...S.legendDot, background: tone.border }} />
               <span style={{ ...S.legendText, color: tone.text }}>{item.label}</span>
             </div>
           );
         })}
+        <div
+          id="agenda-focus-annulations"
+          style={{
+            ...S.legendItem,
+            background: APPT_TONE.orange.bg,
+            borderColor: `${APPT_TONE.orange.border}55`,
+          }}
+          title="Rendez-vous au statut annulé dans la période affichée"
+        >
+          <span style={{ ...S.legendDot, background: APPT_TONE.orange.border }} />
+          <span style={{ ...S.legendText, color: APPT_TONE.orange.text }}>
+            Annulations ({cancelledInVisible})
+          </span>
+        </div>
       </div>
       <div className="agenda-kpi-row" style={S.kpiRow}>
         {kpiCards.map((card) => {
@@ -737,6 +906,7 @@ export default function AppAgenda() {
                   rescheduleMode={rescheduleMode}
                   onStartReschedule={handleStartReschedule}
                   onReschedule={handleReschedule}
+                  onCreatePatientFromAgenda={openPatientCreateFromAppointment}
                 />
               </div>
             )}
@@ -870,6 +1040,7 @@ export default function AppAgenda() {
                     rescheduleMode={rescheduleMode}
                     onStartReschedule={handleStartReschedule}
                     onReschedule={handleReschedule}
+                    onCreatePatientFromAgenda={openPatientCreateFromAppointment}
                   />
                 </div>
               )}
@@ -997,6 +1168,7 @@ export default function AppAgenda() {
                                     rescheduleMode={rescheduleMode}
                                     onStartReschedule={handleStartReschedule}
                                     onReschedule={handleReschedule}
+                                    onCreatePatientFromAgenda={openPatientCreateFromAppointment}
                                   />
                                 )}
                               </div>
@@ -1039,6 +1211,26 @@ export default function AppAgenda() {
           </div>
         )}
       </div>
+
+      <CreatePatientFromCallModal
+        open={patientCreateOpen}
+        loading={patientCreateLoading}
+        form={patientCreateForm}
+        onChange={(field, value) => setPatientCreateForm((prev) => ({ ...prev, [field]: value }))}
+        onClose={() => setPatientCreateOpen(false)}
+        onSubmit={handlePatientCreateFromAgendaSubmit}
+        subtitleLine={
+          <>
+            Source : <strong>rendez-vous agenda</strong>
+            {patientCreateSummary ? (
+              <>
+                {" "}
+                · <span>{patientCreateSummary}</span>
+              </>
+            ) : null}
+          </>
+        }
+      />
     </div>
   );
 }

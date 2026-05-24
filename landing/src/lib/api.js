@@ -196,6 +196,8 @@ export const api = {
     }),
   tenantGetPatients: (params = "") =>
     request(`/api/tenant/patients${params}`, { tenant: true }),
+  tenantRegisterPatient: (body) =>
+    request("/api/tenant/patients", { method: "POST", body, tenant: true }),
   tenantGetPatient: (phone) =>
     request(`/api/tenant/patients/${encodeURIComponent(phone)}`, { tenant: true }),
   tenantUpdatePatient: (phone, body) =>

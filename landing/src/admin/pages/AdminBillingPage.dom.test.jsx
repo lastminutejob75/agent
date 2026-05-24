@@ -121,12 +121,19 @@ describe("AdminBillingPage DOM", () => {
   });
 
   it("ouvre la vue cabinet au clic sur Ouvrir", async () => {
-    renderWithRoutes("/admin/billing", <div>Destination cabinet</div>);
-    await screen.findByRole("button", { name: "Ouvrir" });
+    renderWithRoutes(
+      "/admin/billing",
+      <div data-testid="billing-tenant-placeholder">Destination cabinet</div>,
+    );
+    await screen.findByText("Billing plateforme");
 
-    fireEvent.click(screen.getByRole("button", { name: "Ouvrir" }));
+    const openBtn = (await screen.findAllByRole("button")).find(
+      (b) => String(b.textContent || "").trim() === "Ouvrir",
+    );
+    expect(openBtn).toBeTruthy();
+    fireEvent.click(openBtn);
 
-    expect(await screen.findByText("Destination cabinet")).toBeTruthy();
+    expect(await screen.findByTestId("billing-tenant-placeholder")).toBeTruthy();
   });
 
   it("affiche les données stripe dans l’onglet Stripe cabinet", async () => {

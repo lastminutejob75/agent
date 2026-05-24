@@ -291,12 +291,50 @@ export default function AppDashboard() {
   const vapiConnected = connections.vapi?.connected ?? Boolean(me?.assistant_live);
   const calendarConnected = connections.calendar?.connected === true;
 
+  const agendaTodayHref = `/app/agenda?view=day&date=${encodeURIComponent(todayISO())}`;
+  const agendaAnnulationsHref = `${agendaTodayHref}&focus=annulations`;
+  const agendaCreneauxRecuperesHref = `${agendaTodayHref}&focus=creneaux-recuperes`;
   const stats = [
-    [String(rdvCreatedToday), "RDV pris aujourd'hui", rdvCreatedToday > 0 ? `+${Math.max(1, Math.round(rdvCreatedToday / 3))} depuis 9h` : "aucun pour l'instant", "teal", "plus"],
-    [String(rdvPlannedToday), "RDV au planning", rdvPlannedToday > 0 ? "journée en cours" : "agenda vide", "blue", "calendar"],
-    [`${fillRate}%`, "Taux de remplissage", callCount > 0 ? (fillRate >= 75 ? "bon niveau" : "à optimiser") : "en attente d'appels", "green", "chart"],
-    [String(cancelledCount), "Annulations", cancelledCount > 0 ? `dont ${recoveredCount} récupérée${recoveredCount > 1 ? "s" : ""}` : "aucune aujourd'hui", "orange", "warn"],
-    [String(recoveredCount), "Créneaux récupérés", recoveredCount > 0 ? "remis disponibles" : "—", "purple", "check"],
+    [
+      String(rdvCreatedToday),
+      "RDV pris aujourd'hui",
+      rdvCreatedToday > 0 ? `+${Math.max(1, Math.round(rdvCreatedToday / 3))} depuis 9h` : "aucun pour l'instant",
+      "teal",
+      "plus",
+      agendaTodayHref,
+    ],
+    [
+      String(rdvPlannedToday),
+      "RDV au planning",
+      rdvPlannedToday > 0 ? "journée en cours" : "agenda vide",
+      "blue",
+      "calendar",
+      "/app/agenda",
+    ],
+    [
+      `${fillRate}%`,
+      "Taux de remplissage",
+      callCount > 0 ? (fillRate >= 75 ? "bon niveau" : "à optimiser") : "en attente d'appels",
+      "green",
+      "chart",
+      "/app/appels",
+    ],
+    [
+      String(cancelledCount),
+      "Annulations",
+      cancelledCount > 0 ? `dont ${recoveredCount} récupérée${recoveredCount > 1 ? "s" : ""}` : "aucune aujourd'hui",
+      "orange",
+      "warn",
+      agendaAnnulationsHref,
+    ],
+    [
+      String(recoveredCount),
+      "Créneaux récupérés",
+      recoveredCount > 0 ? "remis disponibles" : "—",
+      "purple",
+      "check",
+      agendaCreneauxRecuperesHref,
+    ],
   ];
 
   const priorityItems = [
@@ -397,7 +435,6 @@ export default function AppDashboard() {
 
       <HomeStatsStrip
         stats={stats}
-        onStatClick={notify}
         styles={S}
         soft={soft}
         colors={C}

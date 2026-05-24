@@ -7,6 +7,7 @@ export default function CreatePatientFromCallModal({
   onChange,
   onClose,
   onSubmit,
+  subtitleLine,
 }) {
   if (!open) return null;
 
@@ -63,7 +64,11 @@ export default function CreatePatientFromCallModal({
         </label>
 
         <div className="mt-2 text-xs text-[#64748B]">
-          Source: <strong>appel téléphonique</strong> · Call ID: <strong>{form.callId || "—"}</strong>
+          {subtitleLine || (
+            <>
+              Source : <strong>appel téléphonique</strong> · Call ID : <strong>{form.callId || "—"}</strong>
+            </>
+          )}
         </div>
 
         <div className="mt-5 flex items-center justify-end gap-2">

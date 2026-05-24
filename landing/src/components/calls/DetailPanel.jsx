@@ -51,7 +51,7 @@ export default function DetailPanel({
         {!call?.patient?.known ? (
           <div className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-[#FFF4EA] px-3 py-1.5 text-xs font-black text-[#C76A18]">
             <AlertCircle size={14} />
-            Aucun dossier patient lié
+            Identité pas encore validée sur la fiche patient
           </div>
         ) : null}
         {canCreatePatient ? (
@@ -108,7 +108,7 @@ export default function DetailPanel({
             <User size={16} />
             <span>Patient</span>
             <span className="ml-auto text-[22px] font-black text-[#0F172A]">
-              {call?.patient?.known ? "Fiche existante" : "Non rattaché"}
+              {call?.patient?.known ? "Identité validée sur la fiche patient" : "Identité à valider"}
             </span>
           </div>
           {!recordingAvailable ? (

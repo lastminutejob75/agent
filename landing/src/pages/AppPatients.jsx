@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api.js";
+import { patientDashboardFileHasValidatedIdentity } from "../lib/callsService.js";
 
 const NAVY = "#111827";
 const TEAL = "#0DC991";
@@ -38,7 +39,7 @@ function deriveStatus(patient) {
   const daysSinceUpdate = (now - updatedAt) / 86400000;
   const daysSinceCreation = (now - createdAt) / 86400000;
 
-  if (daysSinceCreation < 14 && patient.validation_status !== "validated") return "new";
+  if (daysSinceCreation < 14 && !patientDashboardFileHasValidatedIdentity(patient)) return "new";
   if (daysSinceUpdate > 60) return "inactive";
   return "active";
 }
@@ -93,7 +94,7 @@ export default function AppPatients() {
     active: enriched.filter((p) => p._status === "active").length,
     new: enriched.filter((p) => p._status === "new").length,
     inactive: enriched.filter((p) => p._status === "inactive").length,
-    unconfirmed: enriched.filter((p) => p.validation_status !== "validated").length,
+    unconfirmed: enriched.filter((p) => !patientDashboardFileHasValidatedIdentity(p)).length,
   }), [enriched]);
 
   const filtered = useMemo(() => {
@@ -104,24 +105,38 @@ export default function AppPatients() {
       if (filter === "active") matchFilter = p._status === "active";
       else if (filter === "new") matchFilter = p._status === "new";
       else if (filter === "inactive") matchFilter = p._status === "inactive";
-      else if (filter === "unconfirmed") matchFilter = p.validation_status !== "validated";
+      else if (filter === "unconfirmed") matchFilter = !patientIdentityValidated(p);
       return matchSearch && matchFilter;
     });
   }, [enriched, search, filter]);
 
   async function confirmName(patient) {
     const name = editDraft.trim();
-    if (name.length < 2) { setToast("Le nom doit contenir au moins 2 caractères."); return; }
+    if (name.length < 2) {
+      setToast("Le nom doit contenir au moins 2 caractères.");
+      return;
+    }
     const callId = patient.source_call_id || patient.last_call_id;
-    if (!callId) { setToast("Aucun appel lié."); return; }
     setSaving(true);
     try {
-      await api.tenantUpdateCallPatient(callId, { validated_name: name, raw_name: patient.raw_name || "" });
-      setPatients((prev) => prev.map((p) =>
-        p.phone === patient.phone ? { ...p, validated_name: name, display_name: name, validation_status: "validated" } : p,
-      ));
+      if (callId) {
+        await api.tenantUpdateCallPatient(callId, { validated_name: name, raw_name: patient.raw_name || "" });
+      } else {
+        await api.tenantRegisterPatient({
+          patient_phone: patient.phone,
+          validated_name: name,
+          raw_name: (patient.raw_name || patient.display_name || "").trim() || name,
+        });
+      }
+      setPatients((prev) =>
+        prev.map((p) =>
+          p.phone === patient.phone
+            ? { ...p, validated_name: name, display_name: name, validation_status: "validated" }
+            : p,
+        ),
+      );
       setEditingPhone("");
-      setToast(`Nom confirmé : ${name}`);
+      setToast(`Nom validé sur la fiche : ${name}`);
     } catch (e) {
       setToast(e?.message || "Erreur");
     } finally {
@@ -133,7 +148,7 @@ export default function AppPatients() {
     ["all", `Tous`, stats.total],
     ["active", `Actifs`, stats.active],
     ["new", `Nouveaux`, stats.new],
-    ["unconfirmed", `À confirmer`, stats.unconfirmed],
+    ["unconfirmed", `À valider`, stats.unconfirmed],
     ["inactive", `Inactifs`, stats.inactive],
   ];
 
@@ -198,7 +213,7 @@ export default function AppPatients() {
         ) : (
           filtered.map((patient) => {
             const isEditing = editingPhone === patient.phone;
-            const isValidated = patient.validation_status === "validated";
+            const isValidated = patientDashboardFileHasValidatedIdentity(patient);
             const st = STATUS_CONFIG[patient._status];
 
             return (
@@ -242,7 +257,7 @@ export default function AppPatients() {
                 <div style={S.colStatus}>
                   <span style={{ ...S.statusBadge, color: st.color, background: st.bg }}>{st.label}</span>
                   {!isValidated && (
-                    <span style={S.unconfirmedBadge}>Non confirmé</span>
+                    <span style={S.unconfirmedBadge}>Identité à valider</span>
                   )}
                 </div>
 

@@ -141,13 +141,13 @@ export default function AppCallDetailModal({
 
               {/* Patient name validation */}
               <div style={S.section}>
-                <div style={S.sectionTitle}>Fiche patient</div>
+                <div style={S.sectionTitle}>Fiche patient (dashboard)</div>
                 <div style={S.patientStatus}>
-                  <span style={S.patientLabel}>Nom IA :</span>
+                  <span style={S.patientLabel}>Nom depuis l&apos;appel :</span>
                   <span style={S.patientRaw}>{call?.patient?.raw_name || "Non capté"}</span>
                   <span style={S.dot}>·</span>
                   <span style={{ color: call?.patient?.is_validated ? TEAL_DARK : ORANGE, fontWeight: 700, fontSize: 12 }}>
-                    {call?.patient?.is_validated ? "✓ Confirmé" : "À confirmer"}
+                    {call?.patient?.is_validated ? "✓ Identité validée sur la fiche" : "À valider sur la fiche"}
                   </span>
                 </div>
                 <div style={S.nameRow}>

@@ -219,10 +219,17 @@ export default function AppPatientDetail() {
     const name = nameDraft.trim();
     if (name.length < 2) { setToast("Minimum 2 caractères."); return; }
     const callId = patient.source_call_id || patient.last_call_id || calls[0]?.call_id;
-    if (!callId) { setToast("Aucun appel lié."); return; }
     setSaving(true);
     try {
-      await api.tenantUpdateCallPatient(callId, { validated_name: name, raw_name: patient.raw_name || "" });
+      if (callId) {
+        await api.tenantUpdateCallPatient(callId, { validated_name: name, raw_name: patient.raw_name || "" });
+      } else {
+        await api.tenantRegisterPatient({
+          patient_phone: phone,
+          validated_name: name,
+          raw_name: (patient.raw_name || patient.display_name || "").trim() || name,
+        });
+      }
       const updates = { validated_name: name, display_name: name, validation_status: "validated" };
       setData((prev) => prev ? { ...prev, patient: { ...prev.patient, ...updates } } : prev);
       if (updatePatientInList) updatePatientInList(phone, updates);

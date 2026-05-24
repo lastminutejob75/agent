@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Outlet, useMatch, useNavigate, useOutletContext } from "react-router-dom";
 import { api } from "../lib/api.js";
+import { patientDashboardFileHasValidatedIdentity } from "../lib/callsService.js";
 
 const NAVY = "#111827";
 const TEAL = "#0DC991";
@@ -36,7 +37,7 @@ function deriveStatus(patient) {
   const createdAt = new Date(patient.created_at || 0).getTime();
   const daysSinceUpdate = (now - updatedAt) / 86400000;
   const daysSinceCreation = (now - createdAt) / 86400000;
-  if (daysSinceCreation < 14 && patient.validation_status !== "validated") return "new";
+  if (daysSinceCreation < 14 && !patientDashboardFileHasValidatedIdentity(patient)) return "new";
   if (daysSinceUpdate > 60) return "inactive";
   return "active";
 }
@@ -76,7 +77,7 @@ export default function AppPatientsLayout() {
     total: enriched.length,
     active: enriched.filter((p) => p._status === "active").length,
     new: enriched.filter((p) => p._status === "new").length,
-    unconfirmed: enriched.filter((p) => p.validation_status !== "validated").length,
+    unconfirmed: enriched.filter((p) => !patientDashboardFileHasValidatedIdentity(p)).length,
     inactive: enriched.filter((p) => p._status === "inactive").length,
   }), [enriched]);
 
@@ -88,7 +89,7 @@ export default function AppPatientsLayout() {
       if (filter === "active") matchFilter = p._status === "active";
       else if (filter === "new") matchFilter = p._status === "new";
       else if (filter === "inactive") matchFilter = p._status === "inactive";
-      else if (filter === "unconfirmed") matchFilter = p.validation_status !== "validated";
+      else if (filter === "unconfirmed") matchFilter = !patientDashboardFileHasValidatedIdentity(p);
       return matchSearch && matchFilter;
     });
   }, [enriched, search, filter]);
@@ -113,7 +114,7 @@ export default function AppPatientsLayout() {
     ["all", "Tous", stats.total],
     ["active", "Actifs", stats.active],
     ["new", "Nouveaux", stats.new],
-    ["unconfirmed", "À confirmer", stats.unconfirmed],
+    ["unconfirmed", "À valider", stats.unconfirmed],
   ];
 
   const outletContext = {
@@ -198,7 +199,7 @@ export default function AppPatientsLayout() {
                   tabIndex={0}
                   onKeyDown={(e) => { if (e.key === "Enter") goToPatient(patient.phone); }}
                 >
-                  <div style={{ ...S.miniAvatar, background: patient.validation_status === "validated" ? `linear-gradient(135deg, ${TEAL}, ${TEAL_DARK})` : "linear-gradient(135deg, #fbbf24, #f59e0b)" }}>
+                  <div style={{ ...S.miniAvatar, background: patientDashboardFileHasValidatedIdentity(patient) ? `linear-gradient(135deg, ${TEAL}, ${TEAL_DARK})` : "linear-gradient(135deg, #fbbf24, #f59e0b)" }}>
                     {(patient.display_name || "?")[0]?.toUpperCase()}
                   </div>
                   <div style={S.patientInfo}>
@@ -245,7 +246,7 @@ export default function AppPatientsLayout() {
                 </div>
                 <div style={S.welcomeStat}>
                   <div style={{ ...S.welcomeStatNum, color: "#94a3b8" }}>{stats.unconfirmed}</div>
-                  <div style={S.welcomeStatLabel}>À confirmer</div>
+                  <div style={S.welcomeStatLabel}>À valider</div>
                 </div>
               </div>
             </div>

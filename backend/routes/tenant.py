@@ -726,6 +726,9 @@ def _build_patient_payload(
     detail: Optional[dict],
     profile_cache: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
+    """Bloc `patient` des réponses appels : dossier pour le téléphone dans la base fiches patient (`cabinet_clients`).
+    `is_validated` reflète une identité enregistrée par le praticien sur le dashboard client (validated_name ≥ 2 car.).
+    """
     phone = normalize_phone_number(_call_display_phone(item, detail))
     profile = None
     if phone:
@@ -734,16 +737,17 @@ def _build_patient_payload(
         else:
             profile = get_cabinet_client_by_phone(tenant_id, phone)
     raw_name = _derive_raw_patient_name(detail) or (profile or {}).get("raw_name") or ""
-    validated_name = (profile or {}).get("validated_name") or ""
+    validated_name = str((profile or {}).get("validated_name") or "").strip()
     display_name = validated_name or raw_name or "Patient"
     return {
         "phone": phone or "",
         "raw_name": raw_name,
         "validated_name": validated_name,
         "display_name": display_name,
-        "validation_status": (profile or {}).get("validation_status") or ("validated" if validated_name else "pending"),
+        "validation_status": (profile or {}).get("validation_status")
+        or ("validated" if len(validated_name) >= 2 else "pending"),
         "profile_exists": bool(profile),
-        "is_validated": bool(validated_name),
+        "is_validated": len(validated_name) >= 2,
         "source_call_id": (profile or {}).get("source_call_id") or "",
         "updated_at": (profile or {}).get("updated_at") or "",
     }
@@ -801,6 +805,47 @@ def _resolve_agenda_patient_name_cached(
             return display_name
     fallback = str(fallback_name or "").strip()
     return fallback or "Patient"
+
+
+def _dashboard_patient_file_has_validated_identity(profile: Optional[Dict[str, Any]]) -> bool:
+    """Une fiche patient « complète » sur le dashboard client : identité validée par le praticien (≥ 2 car.).
+
+    Technique : ligne patient en base (`cabinet_clients`) avec champ `validated_name` renseigné.
+    Ce n’est pas le nom du cabinet médical."""
+    if not profile:
+        return False
+    vn = str(profile.get("validated_name") or "").strip()
+    return len(vn) >= 2
+
+
+def _agenda_lookup_dashboard_patient_profile(
+    tenant_id: int,
+    phone_norm: str,
+    profile_cache: Dict[str, Optional[Dict[str, Any]]],
+) -> Optional[Dict[str, Any]]:
+    """Fiche patient (dashboard) pour ce numéro, avec cache mutualisé sur la journée agenda."""
+    if not phone_norm:
+        return None
+    if phone_norm in profile_cache:
+        return profile_cache.get(phone_norm)
+    profile = get_cabinet_client_by_phone(tenant_id, phone_norm) or None
+    profile_cache[phone_norm] = profile
+    return profile
+
+
+def _decorate_agenda_slots_patient_has_file(
+    tenant_id: int,
+    slots: List[Dict[str, Any]],
+    profile_cache: Dict[str, Optional[Dict[str, Any]]],
+) -> None:
+    """Ajoute ``patient_has_file`` : True si une fiche patient existe avec identité validée sur le dashboard client."""
+    for item in slots:
+        phone_norm = normalize_phone_number(item.get("patient_phone") or "")
+        if not phone_norm:
+            item["patient_has_file"] = False
+            continue
+        profile = _agenda_lookup_dashboard_patient_profile(tenant_id, phone_norm, profile_cache)
+        item["patient_has_file"] = _dashboard_patient_file_has_validated_identity(profile)
 
 
 def _extract_google_description_line(description: str, prefix: str) -> Optional[str]:
@@ -2128,7 +2173,15 @@ def tenant_calls(
                 "summary": _call_summary_from_detail(status, detail_for_display),
                 "status": status,
                 "call_id": call_id,
-                "patient": {"raw_name": "", "validated_name": "", "display_name": "Patient", "validation_status": "pending", "is_validated": False, "phone": item.get("customer_number") or ""},
+                "patient": {
+                    "raw_name": "",
+                    "validated_name": "",
+                    "display_name": "Patient",
+                    "validation_status": "pending",
+                    "profile_exists": False,
+                    "is_validated": False,
+                    "phone": item.get("customer_number") or "",
+                },
                 "booking": booking,
                 "followup_state": "new",
                 "followup_notes": "",
@@ -2391,7 +2444,7 @@ def tenant_call_patient_update(
     body: TenantCallPatientBody,
     auth: dict = Depends(require_tenant_auth),
 ):
-    """Valide/corrige le nom d'un patient et l'inscrit dans la fiche client cabinet liée au téléphone."""
+    """Valide/corrige l'identité patient et l'enregistre sur sa fiche (dashboard client), liée au numéro de téléphone."""
     tenant_id = auth["tenant_id"]
     raw = _get_call_detail(tenant_id, call_id)
     if not raw:
@@ -2424,14 +2477,15 @@ def tenant_call_patient_update(
 
     profile_payload = _build_patient_payload(tenant_id, None, raw)
     if not profile_payload.get("phone"):
+        vn_final = str(profile.get("validated_name") or validated_name or "").strip()
         profile_payload = {
             "phone": phone,
             "raw_name": profile.get("raw_name") or "",
-            "validated_name": profile.get("validated_name") or validated_name,
-            "display_name": profile.get("display_name") or validated_name,
+            "validated_name": vn_final,
+            "display_name": str(profile.get("display_name") or validated_name).strip(),
             "validation_status": profile.get("validation_status") or "validated",
             "profile_exists": True,
-            "is_validated": bool(profile.get("validated_name") or validated_name),
+            "is_validated": len(vn_final) >= 2,
             "source_call_id": profile.get("source_call_id") or call_id,
             "updated_at": str(profile.get("updated_at") or ""),
         }
@@ -2446,7 +2500,7 @@ def tenant_list_patients(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    """Liste les patients/clients du cabinet."""
+    """Liste les fiches patient du tenant (dashboard client)."""
     tenant_id = auth["tenant_id"]
     items = list_cabinet_clients(tenant_id, limit=limit, offset=offset)
     return {"items": items, "total": len(items)}
@@ -2521,6 +2575,55 @@ def tenant_get_patient(
             for d in docs
         ],
     }
+
+
+class TenantPatientPracticeCreateBody(BaseModel):
+    """Création ou complément d'une fiche patient sur le dashboard client (sans passer par un appel vocal)."""
+
+    patient_phone: str = Field(..., max_length=40)
+    validated_name: str = Field(..., min_length=2, max_length=160)
+    raw_name: Optional[str] = Field(default=None, max_length=160)
+    initial_note: Optional[str] = Field(default=None, max_length=4000)
+    agenda_motif: Optional[str] = Field(default=None, max_length=240)
+
+
+@router.post("/patients")
+def tenant_register_patient_practice(
+    body: TenantPatientPracticeCreateBody,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Enregistre une fiche patient sur le dashboard client (nom validé), ex. depuis l'agenda."""
+    tenant_id = auth["tenant_id"]
+    phone = normalize_phone_number(body.patient_phone)
+    if not phone:
+        raise HTTPException(400, "Numéro de téléphone invalide")
+    vn = body.validated_name.strip()
+    if len(vn) < 2:
+        raise HTTPException(400, "Nom valide trop court")
+    motif = (body.agenda_motif or "").strip()[:240] or None
+    rn = (body.raw_name or "").strip()[:160] or None
+
+    profile = upsert_cabinet_client(
+        tenant_id,
+        phone,
+        raw_name=rn,
+        validated_name=vn,
+        last_booking_motif=motif,
+    )
+    if not profile:
+        raise HTTPException(500, "Impossible d'enregistrer la fiche client")
+
+    note = (body.initial_note or "").strip()
+    if note:
+        inserted = insert_patient_note(tenant_id, phone, note_text=note, author="Praticien")
+        if not inserted:
+            logger.warning(
+                "tenant_register_patient note insert failed tenant_id=%s phone=%s",
+                tenant_id,
+                phone,
+            )
+
+    return {"ok": True, "patient": profile}
 
 
 class PatientUpdateBody(BaseModel):
@@ -3014,6 +3117,7 @@ def tenant_agenda(
     except Exception as exc:
         logger.debug("tenant agenda public_bookings merge skipped tenant=%s: %s", tenant_id, exc)
 
+    _decorate_agenda_slots_patient_has_file(tenant_id, slots, profile_cache)
     slots.sort(key=lambda item: item.get("hour") or "")
     done_count = sum(1 for item in slots if item.get("done"))
     return {
@@ -3236,6 +3340,9 @@ def tenant_agenda_bulk(
                     )
             finally:
                 conn.close()
+
+    for payload in payloads.values():
+        _decorate_agenda_slots_patient_has_file(tenant_id, list(payload.get("slots") or []), profile_cache)
 
     return {"dates": {date_str: _finalize_agenda_day_payload(payload) for date_str, payload in payloads.items()}}
 
