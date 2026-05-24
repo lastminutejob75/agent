@@ -20,6 +20,13 @@ function normalizeAgendaPatientName(value: string) {
     .replace(/\s+/g, " ");
 }
 
+function formatCabinetMetaDate(value: unknown) {
+  const raw = String(value || "").trim();
+  if (!raw) return "—";
+  const d = new Date(raw.includes("T") ? raw.replace(" ", "T") : raw);
+  return Number.isNaN(d.getTime()) ? raw.slice(0, 10) || "—" : d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
 type SidebarPatientRow = {
   /** Téléphone normalisé comme clé (aligné tenant API). */
   phone: string;
@@ -393,6 +400,14 @@ export default function PatientDashboardPage() {
   /** Recherche serveur GET /patients?q= ; null si la recherche API n’est pas utilisée (< 2 caractères). */
   const [patientSearchRows, setPatientSearchRows] = useState<SidebarPatientRow[] | null>(null);
   const [patientSearchLoading, setPatientSearchLoading] = useState(false);
+  /** Recharge GET /patients/{phone} (ex. après POST création ou mise à jour nom). */
+  const [patientFetchNonce, setPatientFetchNonce] = useState(0);
+  /** Ligne brute API `cabinet_clients` pour le modal profil / métadonnées. */
+  const [patientCabinetRow, setPatientCabinetRow] = useState<Record<string, unknown> | null>(null);
+  const [createFicheName, setCreateFicheName] = useState("");
+  const [createFicheSaving, setCreateFicheSaving] = useState(false);
+  const [profileNameDraft, setProfileNameDraft] = useState("");
+  const [profileSaveSaving, setProfileSaveSaving] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -414,6 +429,12 @@ export default function PatientDashboardPage() {
       createdAtLabel: (searchParams.get("createdAtLabel") || "Maintenant").trim(),
     };
   }, [searchParams]);
+
+  useEffect(() => {
+    if (!tenantPatientNotFound) return;
+    const hint = String(requestContext?.patientName || "").trim();
+    if (hint) setCreateFicheName((prev) => (prev.trim() ? prev : hint));
+  }, [tenantPatientNotFound, requestContext?.patientName]);
 
   const phoneFromDashboardUrl = useMemo(() => (searchParams.get("phone") || "").trim(), [searchParams]);
   const isDirectPhoneView = Boolean(phoneFromDashboardUrl);
@@ -643,6 +664,7 @@ export default function PatientDashboardPage() {
         if (cancelled) return;
         setTenantPatientNotFound(false);
         const p = res?.patient as Record<string, unknown> | undefined;
+        setPatientCabinetRow(p ?? null);
         if (p) {
           const name =
             String(p.display_name || p.validated_name || p.raw_name || "Patient").trim() || "Patient";
@@ -669,6 +691,7 @@ export default function PatientDashboardPage() {
         if (!cancelled) setDocuments([]);
         if (!cancelled) setPatientEmail("");
         if (!cancelled) setUrlPatientHero(null);
+        if (!cancelled) setPatientCabinetRow(null);
         if (!cancelled) setTenantPatientNotFound(status === 404);
       })
       .finally(() => {
@@ -677,7 +700,7 @@ export default function PatientDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [tenantPatientPhone]);
+  }, [tenantPatientPhone, patientFetchNonce]);
 
   useEffect(() => {
     if (!editingEmail) setEmailDraft(patientEmail || "");
@@ -714,7 +737,7 @@ export default function PatientDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [tenantPatientPhone]);
+  }, [tenantPatientPhone, patientFetchNonce]);
 
   useEffect(() => {
     let cancelled = false;
@@ -774,6 +797,69 @@ export default function PatientDashboardPage() {
     const now = Date.now();
     return patientAgendaParsed.filter((x) => x.start.getTime() >= now);
   }, [patientAgendaParsed]);
+
+  useEffect(() => {
+    if (modal === "profile" && urlPatientHero?.name) setProfileNameDraft(urlPatientHero.name);
+  }, [modal, urlPatientHero?.name]);
+
+  const createPatientFichePractice = useCallback(
+    async (validatedName: string) => {
+      const name = validatedName.trim();
+      if (!tenantPatientPhone) {
+        notify("Aucun numéro patient");
+        return false;
+      }
+      if (name.length < 2) {
+        notify("Le nom doit contenir au moins 2 caractères.");
+        return false;
+      }
+      try {
+        const res = await api.tenantRegisterPatient({
+          patient_phone: tenantPatientPhone,
+          validated_name: name,
+          raw_name: name,
+        });
+        const profile = res?.patient as Record<string, unknown> | undefined;
+        if (profile) {
+          const disp =
+            String(profile.display_name || profile.validated_name || profile.raw_name || name).trim() || name;
+          const tel = String(profile.phone || tenantPatientPhone).trim();
+          setUrlPatientHero({ name: disp, phone: tel, initials: initialsFromFullName(disp) });
+          setPatientCabinetRow(profile);
+          setPatientEmail(String(profile.email || ""));
+        }
+        setTenantPatientNotFound(false);
+        notify(res?.register_mode === "updated" ? "Fiche mise à jour" : "Fiche patient enregistrée");
+        setPatientFetchNonce((n) => n + 1);
+        await loadTenantSidebarPatients();
+        return true;
+      } catch (e) {
+        notify((e as Error)?.message || "Impossible d’enregistrer la fiche");
+        return false;
+      }
+    },
+    [tenantPatientPhone, loadTenantSidebarPatients],
+  );
+
+  const saveNewPatientBanner = async () => {
+    setCreateFicheSaving(true);
+    try {
+      const ok = await createPatientFichePractice(createFicheName);
+      if (ok) setCreateFicheName("");
+    } finally {
+      setCreateFicheSaving(false);
+    }
+  };
+
+  const saveProfileFromModal = async () => {
+    setProfileSaveSaving(true);
+    try {
+      const ok = await createPatientFichePractice(profileNameDraft);
+      if (ok) setModal(null);
+    } finally {
+      setProfileSaveSaving(false);
+    }
+  };
 
   const notify = (message: string) => {
     setToast(message);
@@ -1080,25 +1166,47 @@ export default function PatientDashboardPage() {
         <main className="overflow-y-auto px-8 py-6">
           {tenantPatientNotFound ? (
             <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-950 shadow-sm">
-              <span className="font-black">Aucune fiche patient trouvée pour ce numéro sur le dashboard.</span> Retournez à la liste
-              {" "}
-              <button
-                type="button"
-                onClick={() => navigate("/app/patients")}
-                className="font-black text-amber-800 underline underline-offset-2 hover:text-amber-900"
-              >
-                Patients
-              </button>
-              {" "}
-              ou créez-la depuis l&apos;
-              <button
-                type="button"
-                onClick={() => navigate("/app/agenda")}
-                className="font-black text-amber-800 underline underline-offset-2 hover:text-amber-900"
-              >
-                agenda
-              </button>
-              .
+              <p className="m-0">
+                <span className="font-black">Aucune fiche patient trouvée pour ce numéro sur le dashboard.</span> Retournez à la liste{" "}
+                <button
+                  type="button"
+                  onClick={() => navigate("/app/patients")}
+                  className="font-black text-amber-800 underline underline-offset-2 hover:text-amber-900"
+                >
+                  Patients
+                </button>{" "}
+                ou depuis l&apos;{" "}
+                <button
+                  type="button"
+                  onClick={() => navigate("/app/agenda")}
+                  className="font-black text-amber-800 underline underline-offset-2 hover:text-amber-900"
+                >
+                  agenda
+                </button>
+                . Vous pouvez aussi créer la fiche ici :
+              </p>
+              {tenantPatientPhone ? (
+                <div className="mt-4 flex max-w-xl flex-col gap-2 sm:flex-row sm:items-end">
+                  <label className="min-w-0 flex-1 text-sm font-semibold">
+                    <span className="mb-1 block text-xs uppercase tracking-wide text-amber-900/75">Nom sur la fiche</span>
+                    <input
+                      type="text"
+                      value={createFicheName}
+                      onChange={(e) => setCreateFicheName(e.target.value)}
+                      placeholder="Prénom et nom"
+                      className="box-border w-full rounded-xl border border-amber-200 bg-white px-3 py-2.5 font-semibold text-amber-950 outline-none placeholder:text-amber-800/45 focus:border-amber-500 focus:ring-2 focus:ring-amber-300/40"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    disabled={createFicheSaving}
+                    onClick={() => void saveNewPatientBanner()}
+                    className="shrink-0 rounded-xl bg-amber-900 px-5 py-2.5 font-black text-white shadow-sm hover:bg-amber-950 disabled:opacity-60"
+                  >
+                    {createFicheSaving ? "Enregistrement…" : "Créer la fiche"}
+                  </button>
+                </div>
+              ) : null}
             </div>
           ) : null}
           <section className="rounded-[28px] border border-[#E2EAF4] bg-white p-7 shadow-[0_18px_45px_rgba(10,22,40,0.06)]">
@@ -1116,7 +1224,12 @@ export default function PatientDashboardPage() {
 
                   <div className="mb-5 flex flex-wrap gap-x-8 gap-y-2 text-sm font-semibold text-[#52637C]">
                     <span>☎ {displayHero.phone}</span>
-                    {editingEmail ? (
+                    {tenantPatientNotFound ? (
+                      <span className="inline-flex items-center gap-2 opacity-75">
+                        <span>✉</span>
+                        Créez d&apos;abord la fiche ci-dessus pour ajouter un email.
+                      </span>
+                    ) : editingEmail ? (
                       <span className="inline-flex items-center gap-2">
                         <span>✉</span>
                         <input
@@ -1543,26 +1656,56 @@ export default function PatientDashboardPage() {
       </div>
 
       {modal === "profile" && (
-        <Modal title="Profil détaillé" onClose={() => setModal(null)} width="max-w-2xl">
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            {[
-              ["Patient depuis", "12/02/2026"],
-              ["ID patient", "ID_PP_000512"],
-              ["Date de naissance", "14/06/1982 (43 ans)"],
-              ["Préférence contact", "Téléphone"],
-              ["Langue", "Français"],
-              ["Médecin associé", "Dr Martin"],
-            ].map(([label, value]) => (
-              <div key={label} className="rounded-2xl bg-[#F8FBFD] p-4">
-                <div className="mb-1 text-xs font-bold text-[#7D8CA5]">{label}</div>
-                <div className="font-black">{value}</div>
+        <Modal title="Profil patient" onClose={() => setModal(null)} width="max-w-2xl">
+          {tenantPatientNotFound ? (
+            <p className="m-0 text-sm leading-7 text-[#475569]">
+              Créez d&apos;abord la fiche avec le formulaire en haut de page (nom puis « Créer la fiche »), puis vous pourrez modifier les détails ici.
+            </p>
+          ) : urlPatientHero ? (
+            <>
+              <div className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
+                <label className="sm:col-span-2 rounded-2xl bg-[#F8FBFD] p-4">
+                  <div className="mb-1 text-xs font-bold text-[#7D8CA5]">Nom affiché</div>
+                  <input
+                    value={profileNameDraft}
+                    onChange={(e) => setProfileNameDraft(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-black text-[#0A1628] outline-none focus:border-[#009CA4]"
+                  />
+                </label>
+                <div className="rounded-2xl bg-[#F8FBFD] p-4">
+                  <div className="mb-1 text-xs font-bold text-[#7D8CA5]">Téléphone</div>
+                  <div className="font-black">{formatDisplayFrenchPhone(normalizePhone(urlPatientHero.phone))}</div>
+                </div>
+                <div className="rounded-2xl bg-[#F8FBFD] p-4">
+                  <div className="mb-1 text-xs font-bold text-[#7D8CA5]">Fiche créée</div>
+                  <div className="font-black">{formatCabinetMetaDate(patientCabinetRow?.created_at)}</div>
+                </div>
+                <div className="rounded-2xl bg-[#F8FBFD] p-4">
+                  <div className="mb-1 text-xs font-bold text-[#7D8CA5]">Dernière mise à jour</div>
+                  <div className="font-black">{formatCabinetMetaDate(patientCabinetRow?.updated_at)}</div>
+                </div>
               </div>
-            ))}
-          </div>
-          <div className="mt-6 flex gap-3">
-            <button onClick={() => notify("Modification du profil ouverte")} className="flex-1 rounded-xl bg-[#009CA4] px-4 py-3 font-black text-white">Modifier le profil</button>
-            <button onClick={() => notify("Suppression du profil demandée")} className="flex-1 rounded-xl border border-red-300 px-4 py-3 font-black text-red-600">Supprimer</button>
-          </div>
+              <div className="mt-6 flex gap-3">
+                <button
+                  type="button"
+                  disabled={profileSaveSaving}
+                  onClick={() => void saveProfileFromModal()}
+                  className="flex-1 rounded-xl bg-[#009CA4] px-4 py-3 font-black text-white hover:bg-[#00838A] disabled:opacity-60"
+                >
+                  {profileSaveSaving ? "Enregistrement…" : "Enregistrer le nom"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => notify("Suppression de fiche à venir — contactez le support si besoin.")}
+                  className="flex-1 rounded-xl border border-red-300 px-4 py-3 font-black text-red-600"
+                >
+                  Supprimer
+                </button>
+              </div>
+            </>
+          ) : (
+            <p className="m-0 text-sm font-semibold text-[#61708B]">Chargement du profil…</p>
+          )}
         </Modal>
       )}
 
