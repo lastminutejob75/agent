@@ -807,6 +807,8 @@ def _upsert_public_patient(tenant_id: int, payload: PublicBookingRequest) -> Non
 
 def _public_session(tenant_id: int, payload: PublicBookingRequest) -> SimpleNamespace:
     """Session minimale pour réutiliser tools_booking (même logique que vocal)."""
+    from backend.booking_origin import PUBLIC_PAGE
+
     return SimpleNamespace(
         tenant_id=int(tenant_id),
         conv_id=f"public-web-{uuid.uuid4()}",
@@ -820,6 +822,7 @@ def _public_session(tenant_id: int, payload: PublicBookingRequest) -> SimpleName
         ),
         pending_slots=[],
         rejected_slot_starts=[],
+        booking_origin=PUBLIC_PAGE,
     )
 
 

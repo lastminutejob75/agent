@@ -11,11 +11,12 @@ from __future__ import annotations
 import threading
 import time
 from datetime import datetime, timedelta
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 import logging
 
 from backend import prompts
 from backend import config
+from backend.booking_origin import UNKNOWN, normalize_for_agenda
 from backend.google_calendar import (
     GoogleCalendarError,
     GoogleCalendarNotFoundError,
@@ -96,6 +97,24 @@ def _ensure_local_slot_id_from_start_iso(start_iso: str, tenant_id: int = 1) -> 
     except Exception as e:
         logger.debug("_ensure_local_slot_id_from_start_iso failed: %s", e)
         return None
+
+
+def _persisted_booking_origin(session: Any) -> Optional[str]:
+    """
+    Origine à persister sur appointments / évènement Google.
+    None = inconnu ou externe sans balise → pas de tag forcé dans Google.
+    """
+    raw = getattr(session, "booking_origin", None)
+    if isinstance(raw, str) and raw.strip():
+        n = normalize_for_agenda(raw.strip())
+        return None if n == UNKNOWN else n
+    # Session agent vocal sans champ explicite
+    if getattr(session, "channel", None) == "vocal":
+        return normalize_for_agenda("voice")
+    conv = str(getattr(session, "conv_id", "") or "")
+    if conv.startswith("public-web-"):
+        return normalize_for_agenda("public_page")
+    return None
 
 
 def _mirror_google_bookings_enabled(session: Any) -> bool:
@@ -1336,12 +1355,14 @@ def _book_google_by_iso(session, start_iso: str, end_iso: str) -> tuple[bool, st
 
     def _try_once() -> tuple[bool, str | None]:
         try:
+            bo = _persisted_booking_origin(session)
             event_id = calendar.book_appointment(
                 start_time=start_iso,
                 end_time=end_iso,
                 patient_name=session.qualif_data.name or "Client",
                 patient_contact=session.qualif_data.contact or "",
                 motif=session.qualif_data.motif or "Consultation",
+                booking_origin=bo,
             )
             if event_id:
                 session.google_event_id = event_id
@@ -1386,9 +1407,11 @@ def _book_google_by_iso(session, start_iso: str, end_iso: str) -> tuple[bool, st
 def _book_local_by_slot_id(session, slot_id: int, source: str = "sqlite") -> bool:
     """Book local (PG ou SQLite) à partir du slot_id du slot affiché."""
     tenant_id = getattr(session, "tenant_id", None) or 1
+    bo = _persisted_booking_origin(session)
     if source == "pg":
         try:
             from backend.slots_pg import pg_book_slot_atomic
+
             result = pg_book_slot_atomic(
                 tenant_id=tenant_id,
                 slot_id=slot_id,
@@ -1396,6 +1419,7 @@ def _book_local_by_slot_id(session, slot_id: int, source: str = "sqlite") -> boo
                 contact=session.qualif_data.contact or "",
                 contact_type=getattr(session.qualif_data, "contact_type", None) or "",
                 motif=session.qualif_data.motif or "",
+                booking_origin=bo,
             )
             return result is True
         except Exception as e:
@@ -1403,6 +1427,7 @@ def _book_local_by_slot_id(session, slot_id: int, source: str = "sqlite") -> boo
             return False
     try:
         from backend.db import book_slot_atomic
+
         return book_slot_atomic(
             slot_id=slot_id,
             name=session.qualif_data.name or "",
@@ -1410,6 +1435,7 @@ def _book_local_by_slot_id(session, slot_id: int, source: str = "sqlite") -> boo
             contact_type=getattr(session.qualif_data, "contact_type", None) or "",
             motif=session.qualif_data.motif or "",
             tenant_id=tenant_id,
+            booking_origin=bo,
         )
     except Exception as e:
         logger.error(f"Erreur book_sqlite_by_slot_id: {e}")
@@ -1434,13 +1460,15 @@ def _book_via_google_calendar(session, idx: int, calendar=None) -> bool:
     
     slot = session.pending_google_slots[idx]
     
+    bo = _persisted_booking_origin(session)
     # Créer le RDV
     event_id = calendar.book_appointment(
-        start_time=slot['start'],
-        end_time=slot['end'],
+        start_time=slot["start"],
+        end_time=slot["end"],
         patient_name=session.qualif_data.name or "Client",
         patient_contact=session.qualif_data.contact or "",
-        motif=session.qualif_data.motif or "Consultation"
+        motif=session.qualif_data.motif or "Consultation",
+        booking_origin=bo,
     )
     
     if event_id:

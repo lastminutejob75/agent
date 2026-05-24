@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 from backend.pg_pool import pg_connection
 from backend.pg_tenant_context import set_tenant_id_on_connection
+from backend.booking_origin import canonical as booking_origin_canonical
 
 logger = logging.getLogger(__name__)
 
@@ -189,7 +190,7 @@ def fetch_public_bookings_for_agenda(
                 cur.execute(
                     """
                     SELECT id, patient_name, patient_phone, motif, slot_label, status,
-                           start_iso, created_at
+                           start_iso, created_at, source
                     FROM public_bookings
                     WHERE tenant_id = %s
                       AND status IN ('confirmed', 'pending')
@@ -216,6 +217,8 @@ def fetch_public_bookings_for_agenda(
             continue
         end_local = start_local + timedelta(minutes=30)
         status = (row.get("status") or "pending").strip()
+        raw_src = (row.get("source") or "").strip()
+        booking_origin_disp = booking_origin_canonical(raw_src or "page_publique")
         slots.append(
             {
                 "hour": start_local.strftime("%Hh"),
@@ -223,6 +226,7 @@ def fetch_public_bookings_for_agenda(
                 "patient_phone": (row.get("patient_phone") or "").strip(),
                 "type": (row.get("motif") or "Consultation").strip(),
                 "source": "PAGE_PUBLIQUE",
+                "booking_origin": booking_origin_disp,
                 "done": end_local <= now_local,
                 "current": start_local <= now_local < end_local,
                 "event_id": str(row.get("id") or ""),

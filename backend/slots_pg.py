@@ -224,6 +224,7 @@ def pg_book_slot_atomic(
     contact: str,
     contact_type: str,
     motif: str,
+    booking_origin: Optional[str] = None,
 ) -> Optional[bool]:
     """
     Booking atomique : UPDATE slots SET is_booked=TRUE WHERE id=? AND is_booked=FALSE RETURNING id.
@@ -249,12 +250,13 @@ def pg_book_slot_atomic(
                 if not row:
                     conn.rollback()
                     return False
+                bo = (booking_origin or "").strip()[:40] or None
                 cur.execute(
                     """
-                    INSERT INTO appointments (tenant_id, slot_id, name, contact, contact_type, motif)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    INSERT INTO appointments (tenant_id, slot_id, name, contact, contact_type, motif, booking_origin)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (tenant_id, slot_id, name, contact, contact_type, motif),
+                    (tenant_id, slot_id, name, contact, contact_type, motif, bo),
                 )
                 conn.commit()
                 return True
@@ -392,7 +394,7 @@ def pg_reschedule_booking_atomic(tenant_id: int, appt_id: int, new_slot_id: int)
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT slot_id, name, contact, contact_type, motif
+                    SELECT slot_id, name, contact, contact_type, motif, booking_origin
                     FROM appointments
                     WHERE tenant_id = %s AND id = %s
                     FOR UPDATE
@@ -403,7 +405,7 @@ def pg_reschedule_booking_atomic(tenant_id: int, appt_id: int, new_slot_id: int)
                 if not row:
                     conn.rollback()
                     return False
-                old_slot_id, name, contact, contact_type, motif = row
+                old_slot_id, name, contact, contact_type, motif, booking_origin = row
                 if int(old_slot_id) == int(new_slot_id):
                     conn.rollback()
                     return False
@@ -421,12 +423,13 @@ def pg_reschedule_booking_atomic(tenant_id: int, appt_id: int, new_slot_id: int)
                     conn.rollback()
                     return False
 
+                bo = ((booking_origin or "").strip()[:40] if booking_origin else None)
                 cur.execute(
                     """
-                    INSERT INTO appointments (tenant_id, slot_id, name, contact, contact_type, motif)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    INSERT INTO appointments (tenant_id, slot_id, name, contact, contact_type, motif, booking_origin)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (tenant_id, new_slot_id, name, contact, contact_type, motif),
+                    (tenant_id, new_slot_id, name, contact, contact_type, motif, bo),
                 )
                 cur.execute(
                     "DELETE FROM appointments WHERE tenant_id = %s AND id = %s",

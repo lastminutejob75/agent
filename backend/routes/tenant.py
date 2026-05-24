@@ -13,6 +13,7 @@ import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 from uuid import uuid4
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional
@@ -29,8 +30,10 @@ from backend import config
 from backend.config import get_service_account_email
 from backend.db import (
     cancel_booking_sqlite,
+    book_slot_atomic,
     delete_patient_note,
     delete_patient_document,
+    ensure_slot_id_by_datetime,
     ensure_tenant_config,
     get_cabinet_clients_by_phones,
     find_slot_id_by_datetime,
@@ -46,6 +49,7 @@ from backend.db import (
     list_patient_documents,
     normalize_phone_number,
     reschedule_booking_atomic,
+    _migrate_sqlite_add_booking_origin,
     update_patient_fields,
     upsert_cabinet_client,
     upsert_call_followup,
@@ -210,6 +214,11 @@ def _get_tenant_detail_for_agenda_cached(tenant_id: int) -> Optional[dict]:
                 _TENANT_AGENDA_DETAIL_CACHE.pop(tid, None)
 
     return copy.deepcopy(detail)
+
+
+def _invalidate_tenant_agenda_detail_cache(tenant_id: int) -> None:
+    with _TENANT_AGENDA_DETAIL_LOCK:
+        _TENANT_AGENDA_DETAIL_CACHE.pop(int(tenant_id), None)
 
 
 router = APIRouter(prefix="/api/tenant", tags=["tenant"])
@@ -1129,7 +1138,8 @@ def _load_local_appointments_for_window(
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif, s.start_ts
+                        SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif, s.start_ts,
+                               a.booking_origin
                         FROM appointments a
                         JOIN slots s ON s.id = a.slot_id
                         WHERE a.tenant_id = %s
@@ -1152,6 +1162,7 @@ def _load_local_appointments_for_window(
                                 "contact": row.get("contact") or "",
                                 "contact_type": row.get("contact_type") or "",
                                 "motif": row.get("motif") or "",
+                                "booking_origin": row.get("booking_origin") or "",
                             }
                         )
                     return index
@@ -1161,9 +1172,11 @@ def _load_local_appointments_for_window(
     ensure_tenant_config()
     conn = get_conn()
     try:
+        _migrate_sqlite_add_booking_origin(conn)
         rows = conn.execute(
             """
-            SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif, s.date, s.time
+            SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif,
+                   a.booking_origin, s.date, s.time
             FROM appointments a
             JOIN slots s ON s.id = a.slot_id AND s.tenant_id = a.tenant_id
             WHERE a.tenant_id = ?
@@ -1186,11 +1199,40 @@ def _load_local_appointments_for_window(
                     "contact": row["contact"] or "",
                     "contact_type": row["contact_type"] or "",
                     "motif": row["motif"] or "",
+                    "booking_origin": row["booking_origin"] or "",
                 }
             )
         return index
     finally:
         conn.close()
+
+
+def _agenda_resolve_booking_origin_google(
+    description: str,
+    mirror_booking: Optional[Dict[str, Any]],
+) -> str:
+    from backend.booking_origin import UNKNOWN, canonical, parse_google_description
+
+    parsed = parse_google_description(description)
+    if parsed:
+        return canonical(parsed)
+    if mirror_booking and str(mirror_booking.get("booking_origin") or "").strip():
+        return canonical(mirror_booking.get("booking_origin"))
+    return UNKNOWN
+
+
+def _agenda_booking_origin_from_local_row(row: Any) -> str:
+    from backend.booking_origin import UNKNOWN, canonical
+
+    if row is None:
+        return UNKNOWN
+    try:
+        raw = row.get("booking_origin") if hasattr(row, "get") else row["booking_origin"]
+    except (KeyError, TypeError, AttributeError):
+        raw = None
+    if not raw:
+        return UNKNOWN
+    return canonical(str(raw))
 
 
 def _find_local_appointment_for_google_event(
@@ -1356,6 +1398,16 @@ class TenantAgendaCancelBody(BaseModel):
 class TenantAgendaRescheduleBody(BaseModel):
     new_slot_id: int
     external_event_id: str = ""
+
+
+class TenantAgendaCreateBookingBody(BaseModel):
+    """Création d'un RDV par le praticien depuis l'espace client."""
+
+    patient_name: str = Field(..., min_length=1, max_length=200)
+    patient_phone: str = Field("", max_length=40)
+    motif: str = Field("Consultation", max_length=500)
+    start_iso: str = Field(..., min_length=10, description="ISO 8601 début")
+    end_iso: str = Field("", max_length=64, description="Fin ISO (optionnel)")
 
 
 class TenantCallFollowupBody(BaseModel):
@@ -3169,12 +3221,14 @@ def tenant_agenda(
                         fallback_name=patient,
                         appointments_index=mirror_lookup,
                     )
+                bo_origin = _agenda_resolve_booking_origin_google(description, mirror_booking)
                 slots.append({
                     "hour": start_local.strftime("%Hh"),
                     "patient": patient,
                     "patient_phone": normalize_phone_number(patient_contact),
                     "type": motif,
                     "source": source,
+                    "booking_origin": bo_origin,
                     "done": end_local <= now_local,
                     "current": start_local <= now_local < end_local,
                     "event_id": event.get("id") or "",
@@ -3197,7 +3251,7 @@ def tenant_agenda(
                     with conn.cursor() as cur:
                         cur.execute(
                             """
-                            SELECT a.id, a.slot_id, a.name, a.contact, a.motif, s.start_ts
+                            SELECT a.id, a.slot_id, a.name, a.contact, a.motif, s.start_ts, a.booking_origin
                             FROM appointments a
                             JOIN slots s ON s.id = a.slot_id
                             WHERE a.tenant_id = %s
@@ -3233,6 +3287,7 @@ def tenant_agenda(
                                 "patient_phone": normalize_phone_number(row.get("contact")),
                                 "type": row.get("motif") or "Consultation",
                                 "source": "UWI",
+                                "booking_origin": _agenda_booking_origin_from_local_row(row),
                                 "done": end_local <= now_local,
                                 "current": start_local <= now_local < end_local,
                                 "event_id": str(row.get("id") or ""),
@@ -3247,9 +3302,10 @@ def tenant_agenda(
             ensure_tenant_config()
             conn = get_conn()
             try:
+                _migrate_sqlite_add_booking_origin(conn)
                 sqlite_agenda_day_rows = conn.execute(
                     """
-                    SELECT a.id, a.slot_id, a.name, a.contact, a.motif, s.date, s.time
+                    SELECT a.id, a.slot_id, a.name, a.contact, a.motif, a.booking_origin, s.date, s.time
                     FROM appointments a
                     JOIN slots s ON s.id = a.slot_id
                     WHERE a.tenant_id = ? AND s.date = ?
@@ -3259,28 +3315,29 @@ def tenant_agenda(
                 ).fetchall()
                 _warm_agenda_profiles_from_contact_strings(
                     tenant_id,
-                    (row[3] for row in sqlite_agenda_day_rows),
+                    (row["contact"] for row in sqlite_agenda_day_rows),
                     profile_cache,
                 )
                 for row in sqlite_agenda_day_rows:
-                    start_local = _parse_dt(f"{row[5]}T{row[6]}:00", tz_name)
+                    start_local = _parse_dt(f"{row['date']}T{row['time']}:00", tz_name)
                     if not start_local:
                         continue
                     if not date and start_local < now_local:
                         continue
                     end_local = start_local + timedelta(minutes=30)
-                    patient_name = _resolve_agenda_patient_name_cached(tenant_id, row[3], row[2], profile_cache)
+                    patient_name = _resolve_agenda_patient_name_cached(tenant_id, row["contact"], row["name"], profile_cache)
                     slots.append({
                         "hour": start_local.strftime("%Hh"),
                         "patient": patient_name,
-                        "patient_phone": normalize_phone_number(row[3]),
-                        "type": row[4] or "Consultation",
+                        "patient_phone": normalize_phone_number(row["contact"]),
+                        "type": row["motif"] or "Consultation",
                         "source": "UWI",
+                        "booking_origin": _agenda_booking_origin_from_local_row(row),
                         "done": end_local <= now_local,
                         "current": start_local <= now_local < end_local,
-                        "event_id": str(row[0] or ""),
-                        "appointment_id": int(row[0] or 0),
-                        "slot_id": int(row[1] or 0),
+                        "event_id": str(row["id"] or ""),
+                        "appointment_id": int(row["id"] or 0),
+                        "slot_id": int(row["slot_id"] or 0),
                         "can_cancel": True,
                         "can_reschedule": True,
                     })
@@ -3447,6 +3504,7 @@ def tenant_agenda_bulk(
                         fallback_name=patient,
                         appointments_index=mirror_lookup,
                     )
+                bo_origin = _agenda_resolve_booking_origin_google(description, mirror_booking)
                 payloads[date_key]["slots"].append(
                     {
                         "hour": start_local.strftime("%Hh"),
@@ -3454,6 +3512,7 @@ def tenant_agenda_bulk(
                         "patient_phone": normalize_phone_number(patient_contact),
                         "type": motif,
                         "source": source,
+                        "booking_origin": bo_origin,
                         "done": end_local <= now_local,
                         "current": start_local <= now_local < end_local,
                         "event_id": event.get("id") or "",
@@ -3476,7 +3535,7 @@ def tenant_agenda_bulk(
                     with conn.cursor() as cur:
                         cur.execute(
                             """
-                            SELECT a.id, a.slot_id, a.name, a.contact, a.motif, s.start_ts
+                            SELECT a.id, a.slot_id, a.name, a.contact, a.motif, s.start_ts, a.booking_origin
                             FROM appointments a
                             JOIN slots s ON s.id = a.slot_id
                             WHERE a.tenant_id = %s
@@ -3514,6 +3573,7 @@ def tenant_agenda_bulk(
                                     "patient_phone": normalize_phone_number(row.get("contact")),
                                     "type": row.get("motif") or "Consultation",
                                     "source": "UWI",
+                                    "booking_origin": _agenda_booking_origin_from_local_row(row),
                                     "done": end_local <= now_local,
                                     "current": start_local <= now_local < end_local,
                                     "event_id": str(row.get("id") or ""),
@@ -3529,9 +3589,10 @@ def tenant_agenda_bulk(
             ensure_tenant_config()
             conn = get_conn()
             try:
+                _migrate_sqlite_add_booking_origin(conn)
                 sqlite_agenda_bulk_rows = conn.execute(
                     """
-                    SELECT a.id, a.slot_id, a.name, a.contact, a.motif, s.date, s.time
+                    SELECT a.id, a.slot_id, a.name, a.contact, a.motif, a.booking_origin, s.date, s.time
                     FROM appointments a
                     JOIN slots s ON s.id = a.slot_id AND s.tenant_id = a.tenant_id
                     WHERE a.tenant_id = ?
@@ -3562,6 +3623,7 @@ def tenant_agenda_bulk(
                             "patient_phone": normalize_phone_number(row["contact"]),
                             "type": row["motif"] or "Consultation",
                             "source": "UWI",
+                            "booking_origin": _agenda_booking_origin_from_local_row(row),
                             "done": end_local <= now_local,
                             "current": start_local <= now_local < end_local,
                             "event_id": str(row["id"] or ""),
@@ -3661,6 +3723,133 @@ def tenant_agenda_available_dates(
         return {"dates": dates, "month": month[:7]}
     finally:
         conn.close()
+
+
+def _tenant_cabinet_booking_duration_minutes(tenant_id: int) -> int:
+    try:
+        from backend.cabinet_profile_pg import get_booking_rules
+
+        rules = get_booking_rules(int(tenant_id)) or {}
+        dm = int(rules.get("duration_minutes") or rules.get("default_appointment_duration_minutes") or 30)
+        return max(5, min(dm, 180))
+    except Exception:
+        return 30
+
+
+def _tenant_agenda_compute_end_iso(start_iso: str, tenant_id: int, end_iso_in: str) -> str:
+    end = (end_iso_in or "").strip()
+    if end:
+        return end
+    try:
+        dt = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    return (dt + timedelta(minutes=_tenant_cabinet_booking_duration_minutes(tenant_id))).isoformat()
+
+
+@router.post("/agenda/bookings")
+def tenant_agenda_create_booking(
+    body: TenantAgendaCreateBookingBody,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Crée un rendez-vous depuis le dashboard cabinet (Google Calendar ou créneaux UWI locaux)."""
+    from backend.booking_origin import PRATICIEN as BO_PRAT
+
+    tenant_id = auth["tenant_id"]
+    detail = _get_tenant_detail(tenant_id)
+    if not detail:
+        raise HTTPException(404, "Tenant not found")
+
+    pname = body.patient_name.strip()
+    motif = body.motif.strip() or "Consultation"
+    start_iso = body.start_iso.strip()
+    params = detail.get("params") or {}
+    contact_line = normalize_phone_number(body.patient_phone) or "—"
+    end_iso = _tenant_agenda_compute_end_iso(start_iso, tenant_id, body.end_iso)
+
+    google_calendar = (
+        (params.get("calendar_provider") or "").strip() == "google"
+        and (params.get("calendar_id") or "").strip()
+    )
+
+    if google_calendar:
+        cal_id = (params.get("calendar_id") or "").strip()
+        if _looks_like_service_account_email(cal_id):
+            raise HTTPException(
+                400,
+                "Utilisez l'identifiant du calendrier Google du cabinet (pas l'email du compte de service).",
+            )
+        if not end_iso:
+            raise HTTPException(400, "Date ou heure de début invalide.")
+
+        svc = GoogleCalendarService(cal_id)
+        try:
+            ev = svc.book_appointment(
+                start_iso,
+                end_iso,
+                pname,
+                contact_line,
+                motif,
+                booking_origin=BO_PRAT,
+            )
+        except GoogleCalendarPermissionError as e:
+            logger.warning("tenant agenda create google permission tenant_id=%s err=%s", tenant_id, e)
+            raise HTTPException(502, "Droits Google Calendar insuffisants pour créer le RDV.") from e
+        if not ev:
+            raise HTTPException(502, "Impossible de créer le RDV dans Google Calendar.")
+
+        try:
+            if _google_mirror_enabled(detail):
+                from backend import tools_booking
+
+                qs = SimpleNamespace(
+                    tenant_id=tenant_id,
+                    conv_id="cabinet-dashboard",
+                    booking_origin=BO_PRAT,
+                    qualif_data=SimpleNamespace(
+                        name=pname,
+                        contact=contact_line,
+                        contact_type="phone",
+                        motif=motif,
+                        pref=None,
+                    ),
+                )
+                threading.Thread(
+                    target=tools_booking._mirror_google_booking_to_internal,
+                    args=(qs, start_iso, ev),
+                    daemon=True,
+                ).start()
+        except Exception as exc:
+            logger.warning("mirror after tenant booking failed tenant_id=%s: %s", tenant_id, exc)
+
+        _invalidate_tenant_agenda_detail_cache(tenant_id)
+        return {"ok": True, "provider": "google", "event_id": ev}
+
+    try:
+        dt_parse = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+        date_str = dt_parse.strftime("%Y-%m-%d")
+        time_str = dt_parse.strftime("%H:%M")
+    except ValueError:
+        raise HTTPException(400, "Date ou heure de début invalide.") from None
+
+    sid = ensure_slot_id_by_datetime(date_str, time_str, tenant_id=tenant_id)
+    if sid is None:
+        raise HTTPException(404, "Aucun créneau local disponible pour ce moment.")
+
+    ok_atomic = book_slot_atomic(
+        int(sid),
+        pname,
+        contact_line if contact_line != "—" else "",
+        "phone",
+        motif,
+        tenant_id=tenant_id,
+        booking_origin=BO_PRAT,
+    )
+    if not ok_atomic:
+        raise HTTPException(409, "Ce créneau est déjà pris.")
+
+    _invalidate_tenant_agenda_detail_cache(tenant_id)
+    return {"ok": True, "provider": "local", "slot_id": int(sid)}
 
 
 @router.post("/agenda/appointments/{appointment_id}/cancel")

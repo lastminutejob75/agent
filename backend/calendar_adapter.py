@@ -58,6 +58,7 @@ class CalendarAdapter(Protocol):
         patient_name: str,
         patient_contact: str,
         motif: str,
+        booking_origin: Optional[str] = None,
     ) -> Optional[str]:
         """Crée un RDV. Retourne event_id ou None."""
         ...
@@ -150,6 +151,7 @@ class _GoogleCalendarAdapter:
         patient_name: str,
         patient_contact: str,
         motif: str,
+        booking_origin: Optional[str] = None,
     ) -> Optional[str]:
         svc = self._get_service()
         if not svc:
@@ -160,6 +162,7 @@ class _GoogleCalendarAdapter:
             patient_name=patient_name,
             patient_contact=patient_contact,
             motif=motif,
+            booking_origin=booking_origin,
         )
 
     def can_propose_slots(self) -> bool:
@@ -234,6 +237,7 @@ class _NoneCalendarAdapter:
         patient_name: str,
         patient_contact: str,
         motif: str,
+        booking_origin: Optional[str] = None,
     ) -> Optional[str]:
         return None
 

@@ -225,6 +225,10 @@ def handle_book(
     session.pending_slot_choice = choice
     start_iso, end_iso = _chosen_slot_iso(session, choice)
 
+    from backend.booking_origin import VOICE as BO_VOICE
+
+    setattr(session, "booking_origin", BO_VOICE)
+
     success, reason = tools_booking.book_slot_from_session(session, choice)
 
     if success:

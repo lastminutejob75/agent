@@ -3987,6 +3987,10 @@ class Engine:
                     slot_idx,
                     pending_len,
                 )
+                from backend.booking_origin import VOICE as BO_VOICE
+
+                if getattr(session, "channel", None) == "vocal":
+                    setattr(session, "booking_origin", BO_VOICE)
                 # Booker le créneau
                 success, reason = tools_booking.book_slot_from_session(session, slot_idx)
                 logger.info(

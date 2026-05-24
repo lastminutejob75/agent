@@ -1301,6 +1301,16 @@ def _migrate_sqlite_add_tenant_id(conn: sqlite3.Connection) -> None:
             pass
 
 
+def _migrate_sqlite_add_booking_origin(conn: sqlite3.Connection) -> None:
+    try:
+        cur = conn.execute("PRAGMA table_info(appointments)")
+        cols = {r[1] for r in cur.fetchall()}
+        if "booking_origin" not in cols:
+            conn.execute("ALTER TABLE appointments ADD COLUMN booking_origin TEXT")
+    except Exception:
+        pass
+
+
 def init_db(days: int = 30) -> None:
     conn = get_conn()
     try:
@@ -1328,6 +1338,7 @@ def init_db(days: int = 30) -> None:
             )
         """)
         _migrate_sqlite_add_tenant_id(conn)
+        _migrate_sqlite_add_booking_origin(conn)
         _ensure_ivr_tables(conn)
         _ensure_tenants_tables(conn)
 
@@ -1525,6 +1536,7 @@ def book_slot_atomic(
     contact_type: str,
     motif: str,
     tenant_id: int = 1,
+    booking_origin: Optional[str] = None,
 ) -> bool:
     """
     Book atomique. PG-first puis SQLite.
@@ -1534,7 +1546,7 @@ def book_slot_atomic(
     if config.USE_PG_SLOTS:
         try:
             from backend.slots_pg import pg_book_slot_atomic
-            result = pg_book_slot_atomic(tenant_id, slot_id, name, contact, contact_type, motif)
+            result = pg_book_slot_atomic(tenant_id, slot_id, name, contact, contact_type, motif, booking_origin=booking_origin)
             if result is not None:
                 return result
         except Exception:
@@ -1542,6 +1554,7 @@ def book_slot_atomic(
     config._sqlite_guard("db.book_slot_atomic")
     conn = get_conn()
     try:
+        _migrate_sqlite_add_booking_origin(conn)
         conn.execute("BEGIN")
         conn.execute(
             "UPDATE slots SET is_booked=1 WHERE id=? AND tenant_id=? AND is_booked=0",
@@ -1553,10 +1566,10 @@ def book_slot_atomic(
 
         conn.execute(
             """
-            INSERT INTO appointments (tenant_id, slot_id, name, contact, contact_type, motif, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO appointments (tenant_id, slot_id, name, contact, contact_type, motif, created_at, booking_origin)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (tenant_id, slot_id, name, contact, contact_type, motif, datetime.utcnow().isoformat()),
+            (tenant_id, slot_id, name, contact, contact_type, motif, datetime.utcnow().isoformat(), booking_origin),
         )
         conn.commit()
         return True
@@ -1678,10 +1691,11 @@ def reschedule_booking_atomic(appt_id: int, new_slot_id: int, tenant_id: int = 1
     config._sqlite_guard("db.reschedule_booking_atomic")
     conn = get_conn()
     try:
+        _migrate_sqlite_add_booking_origin(conn)
         conn.execute("BEGIN")
         cur = conn.execute(
             """
-            SELECT slot_id, name, contact, contact_type, motif
+            SELECT slot_id, name, contact, contact_type, motif, booking_origin
             FROM appointments
             WHERE tenant_id = ? AND id = ?
             """,
@@ -1707,8 +1721,8 @@ def reschedule_booking_atomic(appt_id: int, new_slot_id: int, tenant_id: int = 1
 
         conn.execute(
             """
-            INSERT INTO appointments (tenant_id, slot_id, name, contact, contact_type, motif, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO appointments (tenant_id, slot_id, name, contact, contact_type, motif, created_at, booking_origin)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 tenant_id,
@@ -1718,6 +1732,7 @@ def reschedule_booking_atomic(appt_id: int, new_slot_id: int, tenant_id: int = 1
                 row["contact_type"],
                 row["motif"],
                 datetime.utcnow().isoformat(),
+                row["booking_origin"],
             ),
         )
         conn.execute("DELETE FROM appointments WHERE tenant_id = ? AND id = ?", (tenant_id, appt_id))

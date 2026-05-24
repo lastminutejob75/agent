@@ -340,7 +340,8 @@ class GoogleCalendarService:
         end_time: str,
         patient_name: str,
         patient_contact: str,
-        motif: str
+        motif: str,
+        booking_origin: Optional[str] = None,
     ) -> Optional[str]:
         """
         Crée un RDV dans Google Calendar.
@@ -359,12 +360,16 @@ class GoogleCalendarService:
         cal_mask = (self.calendar_id[:20] + "…") if self.calendar_id and len(self.calendar_id) > 20 else (self.calendar_id or "None")
         logger.info(f"Booking: calendar_id={cal_mask} start={start_time} end={end_time} name={patient_name!r}")
         try:
+            from backend.booking_origin import format_google_origin_tag
+
+            origin_tag = format_google_origin_tag(booking_origin)
             event = {
                 'summary': f'RDV - {patient_name}',
                 'description': (
                     f'Patient: {patient_name}\n'
                     f'Contact: {patient_contact}\n'
                     f'Motif: {motif}'
+                    f'{origin_tag}'
                 ),
                 'start': {
                     'dateTime': start_time,

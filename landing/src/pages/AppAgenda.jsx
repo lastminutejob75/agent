@@ -86,6 +86,20 @@ function addMinutes(timeLabel, mins) {
   return `${String(Math.floor(norm / 60)).padStart(2, "0")}:${String(norm % 60).padStart(2, "0")}`;
 }
 
+function toDatetimeLocalValue(d) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function bookingOriginLabel(code) {
+  const c = String(code || "unknown").toLowerCase();
+  if (c === "voice") return "Agent vocal";
+  if (c === "public_page") return "Page publique";
+  if (c === "praticien") return "Espace cabinet (créé par vous)";
+  if (!code || c === "unknown") return "Non précisée";
+  return String(code);
+}
+
 function typeIcon(type) {
   const v = String(type || "").toLowerCase();
   if (v.includes("ordonnance")) return "💊";
@@ -347,6 +361,7 @@ function InlineDetail({
       <div style={S.inlineGrid}>
         <div style={S.inlineItem}><span style={S.inlineIcon}>🕐</span><span>{a.displayTime} – {a.endTime}</span></div>
         <div style={S.inlineItem}><span style={S.inlineIcon}>📅</span><span>{formatLongDate(a.date)}</span></div>
+        <div style={S.inlineItem}><span style={S.inlineIcon}>📍</span><span>Origine du RDV : {bookingOriginLabel(a.booking_origin)}</span></div>
         <div style={S.inlineItem}><span style={S.inlineIcon}>{a.isUWI ? "🤖" : "📆"}</span><span>{a.isUWI ? "Via assistant IA" : "Agenda externe"}</span></div>
         {aPhoneFmt && <div style={S.inlineItem}><span style={S.inlineIcon}>📞</span><span>{aPhoneFmt}</span></div>}
       </div>
@@ -454,6 +469,15 @@ export default function AppAgenda() {
     agendaMotif: "",
     rawCalendarName: "",
     callId: "",
+  });
+
+  const [createBookingOpen, setCreateBookingOpen] = useState(false);
+  const [createBookingLoading, setCreateBookingLoading] = useState(false);
+  const [createBookingForm, setCreateBookingForm] = useState({
+    patient_name: "",
+    patient_phone: "",
+    motif: "Consultation",
+    start_local: "",
   });
 
   const weekDates = useMemo(() => buildWeekDates(selectedDate), [selectedDate]);
@@ -680,6 +704,48 @@ export default function AppAgenda() {
     }
   }
 
+  function openCreateCabinetBooking() {
+    const base = new Date(`${selectedDate}T12:00:00`);
+    base.setHours(9, 0, 0, 0);
+    setCreateBookingForm((prev) => ({
+      patient_name: prev.patient_name || "",
+      patient_phone: prev.patient_phone || "",
+      motif: prev.motif || "Consultation",
+      start_local: toDatetimeLocalValue(base),
+    }));
+    setCreateBookingOpen(true);
+  }
+
+  async function handleCreateCabinetBookingSubmit() {
+    const name = (createBookingForm.patient_name || "").trim();
+    if (!name || name.length < 2) {
+      setActionMsg({ type: "error", text: "Indiquez le nom du patient (au moins 2 caractères)." });
+      return;
+    }
+    const dt = createBookingForm.start_local ? new Date(createBookingForm.start_local) : null;
+    if (!dt || Number.isNaN(dt.getTime())) {
+      setActionMsg({ type: "error", text: "Choisissez une date et une heure valides pour le RDV." });
+      return;
+    }
+    setCreateBookingLoading(true);
+    try {
+      await api.tenantCreateAgendaBooking({
+        patient_name: name,
+        patient_phone: normalizePhone(createBookingForm.patient_phone || ""),
+        motif: (createBookingForm.motif || "Consultation").trim(),
+        start_iso: dt.toISOString(),
+      });
+      setCreateBookingOpen(false);
+      setActionMsg({ type: "success", text: "Rendez-vous créé." });
+      invalidateAgendaBulkCache();
+      await loadAgenda();
+    } catch (e) {
+      setActionMsg({ type: "error", text: e?.message || "Impossible de créer ce rendez-vous." });
+    } finally {
+      setCreateBookingLoading(false);
+    }
+  }
+
   function openPatientCreateFromAppointment(appt) {
     const fromName = splitAgendaPatientName(appt?.patient);
     const motif = String(appt?.type || "").trim();
@@ -886,6 +952,7 @@ export default function AppAgenda() {
           <span style={S.navDate}>{navLabel}</span>
           <button type="button" onClick={navNext} style={S.navBtn}>›</button>
           {selectedDate !== today && <button type="button" onClick={goToday} style={S.todayBtn}>Aujourd&apos;hui</button>}
+          <button type="button" onClick={openCreateCabinetBooking} style={S.createRdvBtn} title="Créer un rendez-vous">+ RDV</button>
         </div>
         <div style={S.toolbarRight}>
           <span style={S.stats}>
@@ -1286,6 +1353,42 @@ export default function AppAgenda() {
         )}
       </div>
 
+      {createBookingOpen ? (
+        <div style={S.modalOverlay} role="dialog" aria-modal="true">
+          <div style={S.modalCard}>
+            <div style={S.modalTitleRow}>
+              <span style={{ fontWeight: 800 }}>Créer un rendez-vous</span>
+              <button type="button" style={S.modalClose} onClick={() => setCreateBookingOpen(false)} aria-label="Fermer">✕</button>
+            </div>
+            <p style={{ margin: "0 0 14px", fontSize: 13, color: MUTED, lineHeight: 1.45 }}>
+              Ce RDV est enregistré comme créé depuis l&apos;espace cabinet. Avec Google Calendar, la durée suit les réglages du cabinet.
+            </p>
+            <label style={S.modalLabel}>
+              Nom du patient *
+              <input style={S.modalInput} value={createBookingForm.patient_name} onChange={(e) => setCreateBookingForm((p) => ({ ...p, patient_name: e.target.value }))} autoComplete="name" />
+            </label>
+            <label style={S.modalLabel}>
+              Téléphone
+              <input style={S.modalInput} value={createBookingForm.patient_phone} onChange={(e) => setCreateBookingForm((p) => ({ ...p, patient_phone: e.target.value }))} autoComplete="tel" />
+            </label>
+            <label style={S.modalLabel}>
+              Motif
+              <input style={S.modalInput} value={createBookingForm.motif} onChange={(e) => setCreateBookingForm((p) => ({ ...p, motif: e.target.value }))} />
+            </label>
+            <label style={S.modalLabel}>
+              Date et heure *
+              <input type="datetime-local" style={S.modalInput} value={createBookingForm.start_local} onChange={(e) => setCreateBookingForm((p) => ({ ...p, start_local: e.target.value }))} />
+            </label>
+            <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+              <button type="button" style={{ ...S.createRdvBtn, flex: 1 }} disabled={createBookingLoading} onClick={handleCreateCabinetBookingSubmit}>
+                {createBookingLoading ? "…" : "Enregistrer"}
+              </button>
+              <button type="button" style={S.todayBtn} onClick={() => setCreateBookingOpen(false)}>Annuler</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <CreatePatientFromCallModal
         open={patientCreateOpen}
         loading={patientCreateLoading}
@@ -1317,6 +1420,13 @@ const S = {
   toast: { marginBottom: 14, borderRadius: 10, border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#047857", padding: "12px 16px", fontSize: 14, fontWeight: 700, animation: "toastIn .3s ease" },
   toastError: { marginBottom: 14, borderRadius: 10, border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", padding: "12px 16px", fontSize: 14, fontWeight: 700, animation: "toastIn .3s ease" },
 
+  modalOverlay: { position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", display: "grid", placeItems: "center", zIndex: 60, padding: 16 },
+  modalCard: { width: "min(420px, 100%)", background: "#fff", borderRadius: 16, padding: "20px 22px", boxShadow: "0 24px 60px rgba(15,23,42,.18)", border: `1px solid ${BORDER}` },
+  modalTitleRow: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
+  modalClose: { border: "none", background: "transparent", cursor: "pointer", fontSize: 18, lineHeight: 1, padding: 4, color: MUTED },
+  modalLabel: { display: "block", fontSize: 12, fontWeight: 700, color: NAVY, marginBottom: 10 },
+  modalInput: { display: "block", width: "100%", marginTop: 6, padding: "10px 11px", borderRadius: 10, border: `1px solid ${BORDER}`, fontSize: 14, boxSizing: "border-box", fontFamily: "inherit" },
+
   header: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 16, flexWrap: "wrap" },
   title: { margin: 0, fontSize: 20, fontWeight: 800, color: NAVY },
   subtitle: { margin: "4px 0 0", fontSize: 13, color: MUTED },
@@ -1343,6 +1453,7 @@ const S = {
   navCenter: { display: "flex", alignItems: "center", gap: 10, flex: 1 },
   navDate: { fontSize: 18, fontWeight: 900, color: NAVY, letterSpacing: "-.02em" },
   todayBtn: { padding: "6px 12px", borderRadius: 10, border: `1px solid ${BORDER}`, background: "#fff", color: "#009CA4", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" },
+  createRdvBtn: { padding: "6px 12px", borderRadius: 10, border: "none", background: BLUE, color: "#fff", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" },
 
   calendarCol: { flex: 1, minWidth: 0 },
   card: { background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 22, overflow: "hidden", boxShadow: "0 16px 40px rgba(15,23,42,.06)" },

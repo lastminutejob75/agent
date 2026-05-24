@@ -79,6 +79,8 @@ class Session:
     pending_slot_labels: List[str] = field(default_factory=list)
     pending_slots: List = field(default_factory=list)  # SlotDisplay objects
     pending_slot_choice: Optional[int] = None  # Slot choisi (avant confirmation contact)
+    # Origine métier du prochain RDV (voice | public_page | praticien — None = déduire depuis channel / conv_id)
+    booking_origin: Optional[str] = None
     # P0: Slots EXACTEMENT affichés (source de vérité pour booking = pas de re-fetch)
     pending_slots_display: List[Dict[str, Any]] = field(default_factory=list)
     # Créneaux refusés (start ISO) : exclure ±90 min en re-proposition pour ne pas reproposer un voisin
@@ -223,6 +225,7 @@ class Session:
         self.pending_slot_labels = []
         self.pending_slots = []
         self.pending_slot_choice = None
+        self.booking_origin = None
         self.pending_slots_display = []
         self.pending_cancel_slot = None
         self.last_intent = None
