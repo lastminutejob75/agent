@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { flushSync } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import CreatePatientFromCallModal from "../components/calls/CreatePatientFromCallModal.jsx";
 import { api } from "../lib/api.js";
@@ -948,7 +949,9 @@ export default function AppAgenda() {
     setPatientCreateSummary(
       `${formatLongDate(appt?.date)} · ${appt?.displayTime || "—"}${motif ? ` · ${motif}` : ""}`,
     );
-    closeAppointmentDetail();
+    flushSync(() => {
+      closeAppointmentDetail();
+    });
     setPatientCreateOpen(true);
   }
 
@@ -1494,7 +1497,8 @@ export default function AppAgenda() {
         )}
       </div>
 
-      {selectedAppt ? (
+      {/* Tant que la création de fiche est ouverte, ne pas monter le détail RDV (z-index / double modale). */}
+      {selectedAppt && !patientCreateOpen ? (
         <div
           style={S.apptDetailOverlay}
           role="presentation"

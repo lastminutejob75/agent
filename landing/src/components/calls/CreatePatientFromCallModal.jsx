@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
 export default function CreatePatientFromCallModal({
@@ -10,12 +11,20 @@ export default function CreatePatientFromCallModal({
   subtitleLine,
 }) {
   if (!open) return null;
+  if (typeof document === "undefined") return null;
 
-  return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#0A1628]/50 p-4">
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[110] flex items-center justify-center bg-[#0A1628]/50 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="create-patient-from-call-heading"
+    >
       <div className="w-full max-w-[560px] rounded-2xl border border-[#E2E8F0] bg-white p-5 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-lg font-black text-[#0A1628]">Créer une fiche patient</h3>
+          <h3 id="create-patient-from-call-heading" className="text-lg font-black text-[#0A1628]">
+            Créer une fiche patient
+          </h3>
           <button
             type="button"
             onClick={onClose}
@@ -89,6 +98,7 @@ export default function CreatePatientFromCallModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
