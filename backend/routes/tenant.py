@@ -995,7 +995,7 @@ def _warm_profile_cache_google_event_descriptions(
     contacts: List[str] = []
     for event in google_items or []:
         description = str((event.get("description") or "")).strip()
-        contacts.append(_extract_google_description_line(description, "Contact") or "")
+        contacts.append(_extract_calendar_event_patient_contact(description) or "")
     _warm_agenda_profiles_from_contact_strings(tenant_id, contacts, profile_cache)
 
 
@@ -1014,6 +1014,14 @@ def _extract_google_description_line(description: str, prefix: str) -> Optional[
             return line.split(":", 1)[1].strip() if ":" in line else line.strip()
     return None
 
+
+def _extract_calendar_event_patient_contact(description: str) -> str:
+    """Ligne téléphone patient dans la description agenda (libellés usuels FR)."""
+    for key in ("Contact", "Téléphone", "Telephone", "Tel", "Portable", "Mobile"):
+        v = _extract_google_description_line(description, key)
+        if v:
+            return v
+    return ""
 
 def _get_local_appointment_by_id(tenant_id: int, appointment_id: int) -> Optional[Dict[str, Any]]:
     url = os.environ.get("DATABASE_URL") or os.environ.get("PG_SLOTS_URL")
@@ -3142,7 +3150,7 @@ def _finalize_agenda_day_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 def tenant_agenda(
     auth: dict = Depends(require_tenant_auth),
     date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
-    upcoming_days: int = Query(1, ge=1, le=30),
+    upcoming_days: int = Query(1, ge=1, le=366),
     compact: bool = Query(False),
 ):
     """Retourne les rendez-vous du jour ou à venir depuis Google Calendar ou le stockage local."""
@@ -3228,7 +3236,7 @@ def tenant_agenda(
                 summary = (event.get("summary") or "").strip()
                 description = (event.get("description") or "").strip()
                 patient = summary.replace("RDV - ", "", 1).strip() if summary.startswith("RDV - ") else (summary or "Patient")
-                patient_contact = _extract_google_description_line(description, "Contact")
+                patient_contact = _extract_calendar_event_patient_contact(description)
                 patient = _resolve_agenda_patient_name_cached(tenant_id, patient_contact, patient, profile_cache)
                 motif = _extract_google_description_line(description, "Motif") or (summary if summary and not summary.startswith("RDV - ") else "Consultation")
                 source = "UWI" if summary.startswith("RDV - ") or "Patient:" in description else "EXTERNAL"
@@ -3520,7 +3528,7 @@ def tenant_agenda_bulk(
                 summary = (event.get("summary") or "").strip()
                 description = (event.get("description") or "").strip()
                 patient = summary.replace("RDV - ", "", 1).strip() if summary.startswith("RDV - ") else (summary or "Patient")
-                patient_contact = _extract_google_description_line(description, "Contact")
+                patient_contact = _extract_calendar_event_patient_contact(description)
                 patient = _resolve_agenda_patient_name_cached(tenant_id, patient_contact, patient, profile_cache)
                 motif = _extract_google_description_line(description, "Motif") or (summary if summary and not summary.startswith("RDV - ") else "Consultation")
                 source = "UWI" if summary.startswith("RDV - ") or "Patient:" in description else "EXTERNAL"

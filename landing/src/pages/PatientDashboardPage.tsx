@@ -816,14 +816,29 @@ export default function PatientDashboardPage() {
     if (!tenantPatientPhone) return [];
     const needle = normalizePhone(tenantPatientPhone);
     const heroKey = normalizeAgendaPatientName(String(urlPatientHero?.name || ""));
+    const genericPatientName = normalizeAgendaPatientName("Patient");
+    const heroIsPlaceholder =
+      !heroKey ||
+      heroKey === genericPatientName ||
+      heroKey.includes("nom a completer") ||
+      heroKey.includes("nom à compléter") ||
+      (heroKey.startsWith("patient ") && heroKey.includes("complet"));
+
     return tenantAgendaRawSlots.filter((raw) => {
       const row = raw as Record<string, unknown>;
       const pn = normalizePhone(String(row.patient_phone || ""));
       if (needle && pn && pn === needle) return true;
-      if (!pn && heroKey) {
-        const slotNameKey = normalizeAgendaPatientName(String(row.patient || ""));
-        return Boolean(slotNameKey && slotNameKey === heroKey);
-      }
+
+      const slotNameKey = normalizeAgendaPatientName(String(row.patient || ""));
+      if (
+        slotNameKey.length >= 2 &&
+        !heroIsPlaceholder &&
+        heroKey.length >= 2 &&
+        heroKey === slotNameKey
+      )
+        return true;
+
+      if (!pn && heroKey && slotNameKey.length >= 2 && heroKey === slotNameKey) return true;
       return false;
     });
   }, [tenantAgendaRawSlots, tenantPatientPhone, urlPatientHero?.name]);
