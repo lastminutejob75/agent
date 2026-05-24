@@ -1,4 +1,4 @@
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useEffect, useRef } from "react";
 import { Routes, Route, Navigate, Outlet, useLocation, useParams } from "react-router-dom";
 import SeoHead from "./components/SeoHead";
 import AuthLayout from "./components/AuthLayout";
@@ -153,10 +153,50 @@ function AdminTenantBillingRedirect() {
   return <Navigate to={`/admin/billing/${encodeURIComponent(id || "")}`} replace />;
 }
 
+function isAppShellRoute(path) {
+  return path === "/app" || path.startsWith("/app/");
+}
+
+function isAdminShellRoute(path) {
+  return path === "/admin" || path.startsWith("/admin/");
+}
+
+/** Évite que le scroll de la page précédente (ex. home très scrollée) se répercute sur la nouvelle route. Ne touche pas au scroll lors des transitions internes /app ou /admin. */
+function RestoreScrollAfterNavigation() {
+  const { pathname, hash } = useLocation();
+  const prevPathRef = useRef(pathname);
+
+  useEffect(() => {
+    const prev = prevPathRef.current;
+    prevPathRef.current = pathname;
+
+    const intraAppNav = isAppShellRoute(prev) && isAppShellRoute(pathname);
+    const intraAdminNav = isAdminShellRoute(prev) && isAdminShellRoute(pathname);
+    if (intraAppNav || intraAdminNav) {
+      return;
+    }
+
+    if (!hash) {
+      window.scrollTo({ top: 0, left: 0 });
+      return;
+    }
+    const id = decodeURIComponent(hash.slice(1));
+    requestAnimationFrame(() => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.scrollIntoView({ block: "start", behavior: "auto" });
+      }
+    });
+  }, [pathname, hash]);
+
+  return null;
+}
+
 export default function App() {
   return (
     <>
       <SeoHead />
+      <RestoreScrollAfterNavigation />
       <Routes>
       <Route path="/" element={<LazyElement Component={UwiLandingPage} />} />
       <Route path="/onboarding" element={<Navigate to="/creer-assistante?new=1" replace />} />

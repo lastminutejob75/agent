@@ -7024,9 +7024,12 @@
     grid-template-columns: 1fr;
     gap: 18px;
   }
+  /* Moins zoom + ancrage plus haut : éviter de couper le haut du casque sur mobile */
   .uwi-landing-new .uwi-feat-tel-photo {
-    min-height: 220px;
+    min-height: 248px;
     order: -1;
+    background-size: 268% auto;
+    background-position: 76% 4%;
   }
   .uwi-landing-new .uwi-feat-tel-row {
     grid-template-columns: 1fr;
@@ -7040,6 +7043,11 @@
   }
 }
 @media (max-width: 560px) {
+  .uwi-landing-new .uwi-feat-tel-photo {
+    min-height: 232px;
+    background-size: 245% auto;
+    background-position: 72% 0%;
+  }
   .uwi-landing-new .uwi-feat-tel-actions {
     grid-template-columns: 1fr;
   }
