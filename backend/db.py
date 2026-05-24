@@ -953,10 +953,9 @@ def get_cabinet_client_by_phone(tenant_id: int, phone: str) -> Optional[Dict[str
     url = _pg_events_url()
     if url:
         try:
-            import psycopg
-            from psycopg.rows import dict_row
+            from backend.pg_pool import pg_connection_for
 
-            with psycopg.connect(url, row_factory=dict_row) as conn:
+            with pg_connection_for(url) as conn:
                 _ensure_cabinet_clients_table_pg(conn)
                 with conn.cursor() as cur:
                     cur.execute(
@@ -1008,10 +1007,9 @@ def get_cabinet_clients_by_phones(tenant_id: int, phones: List[str]) -> Dict[str
     url = _pg_events_url()
     if url:
         try:
-            import psycopg
-            from psycopg.rows import dict_row
+            from backend.pg_pool import pg_connection_for
 
-            with psycopg.connect(url, row_factory=dict_row) as conn:
+            with pg_connection_for(url) as conn:
                 _ensure_cabinet_clients_table_pg(conn)
                 with conn.cursor() as cur:
                     cur.execute(

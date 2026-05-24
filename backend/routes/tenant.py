@@ -11,7 +11,7 @@ import os
 import re
 from uuid import uuid4
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 import bcrypt
 import jwt
@@ -846,6 +846,48 @@ def _decorate_agenda_slots_patient_has_file(
             continue
         profile = _agenda_lookup_dashboard_patient_profile(tenant_id, phone_norm, profile_cache)
         item["patient_has_file"] = _dashboard_patient_file_has_validated_identity(profile)
+
+
+def _warm_agenda_profiles_from_contact_strings(
+    tenant_id: int,
+    contact_values: Iterable[Optional[str]],
+    profile_cache: Dict[str, Optional[Dict[str, Any]]],
+) -> None:
+    """Remplit ``profile_cache`` par lots pour éviter N connexions / N requêtes sur l'agenda."""
+    pending: List[str] = []
+    seen = set()
+    for raw in contact_values:
+        pn = normalize_phone_number(raw or "")
+        if not pn or pn in profile_cache or pn in seen:
+            continue
+        seen.add(pn)
+        pending.append(pn)
+    if not pending:
+        return
+    loaded = get_cabinet_clients_by_phones(tenant_id, pending)
+    for pn, profile in loaded.items():
+        profile_cache[pn] = profile
+
+
+def _warm_profile_cache_google_event_descriptions(
+    tenant_id: int,
+    google_items: List[Dict[str, Any]],
+    profile_cache: Dict[str, Optional[Dict[str, Any]]],
+) -> None:
+    contacts: List[str] = []
+    for event in google_items or []:
+        description = str((event.get("description") or "")).strip()
+        contacts.append(_extract_google_description_line(description, "Contact") or "")
+    _warm_agenda_profiles_from_contact_strings(tenant_id, contacts, profile_cache)
+
+
+def _warm_agenda_profiles_from_slots_patient_phone(
+    tenant_id: int,
+    slots: List[Dict[str, Any]],
+    profile_cache: Dict[str, Optional[Dict[str, Any]]],
+) -> None:
+    vals = [(item.get("patient_phone") or "") for item in (slots or [])]
+    _warm_agenda_profiles_from_contact_strings(tenant_id, vals, profile_cache)
 
 
 def _extract_google_description_line(description: str, prefix: str) -> Optional[str]:
@@ -2963,7 +3005,9 @@ def tenant_agenda(
                 orderBy="startTime",
                 fields="items(id,summary,description,start,end)",
             ).execute()
-            for event in result.get("items", []):
+            google_events = result.get("items") or []
+            _warm_profile_cache_google_event_descriptions(tenant_id, google_events, profile_cache)
+            for event in google_events:
                 raw_start = (event.get("start") or {}).get("dateTime") or (event.get("start") or {}).get("date")
                 raw_end = (event.get("end") or {}).get("dateTime") or (event.get("end") or {}).get("date")
                 start_dt = _parse_dt(raw_start, tz_name)
@@ -3028,7 +3072,13 @@ def tenant_agenda(
                             """,
                             (tenant_id, day_start.astimezone(timezone.utc), day_end.astimezone(timezone.utc)),
                         )
-                        for row in cur.fetchall():
+                        agenda_rows_pg_day = cur.fetchall()
+                        _warm_agenda_profiles_from_contact_strings(
+                            tenant_id,
+                            (r.get("contact") for r in agenda_rows_pg_day),
+                            profile_cache,
+                        )
+                        for row in agenda_rows_pg_day:
                             start_local = _parse_dt(row.get("start_ts"), tz_name)
                             if not start_local:
                                 continue
@@ -3062,7 +3112,7 @@ def tenant_agenda(
             ensure_tenant_config()
             conn = get_conn()
             try:
-                rows = conn.execute(
+                sqlite_agenda_day_rows = conn.execute(
                     """
                     SELECT a.id, a.slot_id, a.name, a.contact, a.motif, s.date, s.time
                     FROM appointments a
@@ -3072,7 +3122,12 @@ def tenant_agenda(
                     """,
                     (tenant_id, day_start.strftime("%Y-%m-%d")),
                 ).fetchall()
-                for row in rows:
+                _warm_agenda_profiles_from_contact_strings(
+                    tenant_id,
+                    (row[3] for row in sqlite_agenda_day_rows),
+                    profile_cache,
+                )
+                for row in sqlite_agenda_day_rows:
                     start_local = _parse_dt(f"{row[5]}T{row[6]}:00", tz_name)
                     if not start_local:
                         continue
@@ -3116,6 +3171,8 @@ def tenant_agenda(
             slots.append(item)
     except Exception as exc:
         logger.debug("tenant agenda public_bookings merge skipped tenant=%s: %s", tenant_id, exc)
+
+    _warm_agenda_profiles_from_slots_patient_phone(tenant_id, slots, profile_cache)
 
     _decorate_agenda_slots_patient_has_file(tenant_id, slots, profile_cache)
     slots.sort(key=lambda item: item.get("hour") or "")
@@ -3197,7 +3254,9 @@ def tenant_agenda_bulk(
                 orderBy="startTime",
                 fields="items(id,summary,description,start,end)",
             ).execute()
-            for event in result.get("items", []):
+            google_events = result.get("items") or []
+            _warm_profile_cache_google_event_descriptions(tenant_id, google_events, profile_cache)
+            for event in google_events:
                 raw_start = (event.get("start") or {}).get("dateTime") or (event.get("start") or {}).get("date")
                 raw_end = (event.get("end") or {}).get("dateTime") or (event.get("end") or {}).get("date")
                 start_dt = _parse_dt(raw_start, tz_name)
@@ -3264,7 +3323,13 @@ def tenant_agenda_bulk(
                             """,
                             (tenant_id, day_start.astimezone(timezone.utc), day_end.astimezone(timezone.utc)),
                         )
-                        for row in cur.fetchall():
+                        agenda_rows_bulk_pg = cur.fetchall()
+                        _warm_agenda_profiles_from_contact_strings(
+                            tenant_id,
+                            (row.get("contact") for row in agenda_rows_bulk_pg),
+                            profile_cache,
+                        )
+                        for row in agenda_rows_bulk_pg:
                             start_local = _parse_dt(row.get("start_ts"), tz_name)
                             if not start_local:
                                 continue
@@ -3301,7 +3366,7 @@ def tenant_agenda_bulk(
             ensure_tenant_config()
             conn = get_conn()
             try:
-                rows = conn.execute(
+                sqlite_agenda_bulk_rows = conn.execute(
                     """
                     SELECT a.id, a.slot_id, a.name, a.contact, a.motif, s.date, s.time
                     FROM appointments a
@@ -3313,7 +3378,12 @@ def tenant_agenda_bulk(
                     """,
                     (tenant_id, requested_dates[0], requested_dates[-1]),
                 ).fetchall()
-                for row in rows:
+                _warm_agenda_profiles_from_contact_strings(
+                    tenant_id,
+                    (row["contact"] for row in sqlite_agenda_bulk_rows),
+                    profile_cache,
+                )
+                for row in sqlite_agenda_bulk_rows:
                     start_local = _parse_dt(f"{row['date']}T{row['time']}:00", tz_name)
                     if not start_local:
                         continue
@@ -3340,6 +3410,9 @@ def tenant_agenda_bulk(
                     )
             finally:
                 conn.close()
+
+    flat_slots_bulk = [slot for payload in payloads.values() for slot in (payload.get("slots") or [])]
+    _warm_agenda_profiles_from_slots_patient_phone(tenant_id, flat_slots_bulk, profile_cache)
 
     for payload in payloads.values():
         _decorate_agenda_slots_patient_has_file(tenant_id, list(payload.get("slots") or []), profile_cache)

@@ -384,7 +384,7 @@ export default function AppAgenda() {
   const [agendaByDate, setAgendaByDate] = useState({});
   const [horaires, setHoraires] = useState(null);
   const [me, setMe] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [calendarLoading, setCalendarLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedAppt, setSelectedAppt] = useState(null);
   const [actionMsg, setActionMsg] = useState("");
@@ -416,16 +416,10 @@ export default function AppAgenda() {
   }, [viewMode, weekDates, monthGrid, selectedDate]);
 
   const loadAgenda = useCallback(async () => {
-    setLoading(true);
+    setCalendarLoading(true);
     setError("");
     try {
-      const [nextMe, nextHoraires, bulkRes] = await Promise.all([
-        api.tenantMe(),
-        api.tenantGetHoraires(),
-        api.tenantGetAgendaBulk(visibleDates).catch(() => null),
-      ]);
-      setMe(nextMe);
-      setHoraires(nextHoraires);
+      const bulkRes = await api.tenantGetAgendaBulk(visibleDates).catch(() => null);
       const byDate = {};
       if (bulkRes?.dates) {
         visibleDates.forEach((d) => { byDate[d] = bulkRes.dates[d] || { slots: [], date: d }; });
@@ -434,10 +428,17 @@ export default function AppAgenda() {
         visibleDates.forEach((d, i) => { byDate[d] = results[i]; });
       }
       setAgendaByDate(byDate);
+      Promise.all([
+        api.tenantMe().catch(() => null),
+        api.tenantGetHoraires().catch(() => null),
+      ]).then(([nextMe, nextHoraires]) => {
+        if (nextMe) setMe(nextMe);
+        if (nextHoraires) setHoraires(nextHoraires);
+      });
     } catch (e) {
       setError(e?.message || "Impossible de charger l'agenda.");
     } finally {
-      setLoading(false);
+      setCalendarLoading(false);
     }
   }, [visibleDates]);
 
@@ -506,7 +507,7 @@ export default function AppAgenda() {
 
   /** Deep link depuis le dashboard : scroll vers la pastille Annulations / Créneau récupéré */
   useEffect(() => {
-    if (loading) return undefined;
+    if (calendarLoading) return undefined;
     if (urlFocus !== "annulations" && urlFocus !== "creneaux-recuperes") return undefined;
     const id = urlFocus === "annulations" ? "agenda-focus-annulations" : "agenda-focus-creneaux-recuperes";
     const run = () => {
@@ -519,7 +520,7 @@ export default function AppAgenda() {
       window.cancelAnimationFrame(raf);
       window.clearTimeout(t);
     };
-  }, [loading, urlFocus, viewMode, selectedDate, appointments.length]);
+  }, [calendarLoading, urlFocus, viewMode, selectedDate, appointments.length]);
 
   const apptCountByDate = useMemo(() => {
     const map = {};
@@ -784,7 +785,7 @@ export default function AppAgenda() {
     { tone: "gray", label: "Indisponible / libre" },
   ];
 
-  if (loading) {
+  if (calendarLoading) {
     return <div style={S.page}><style>{CSS}</style><div style={S.loadingBox}>Chargement de l&apos;agenda…</div></div>;
   }
 
