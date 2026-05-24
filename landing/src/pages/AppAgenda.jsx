@@ -900,14 +900,14 @@ export default function AppAgenda() {
   }
 
   function openCreateCabinetBooking() {
-    setCreateBookingForm((prev) => ({
-      patient_name: prev.patient_name || "",
-      patient_phone: prev.patient_phone || "",
-      patient_email: prev.patient_email || "",
-      motif: prev.motif || "Consultation",
+    setCreateBookingForm({
+      patient_name: "",
+      patient_phone: "",
+      patient_email: "",
+      motif: "Consultation",
       booking_date: selectedDate >= today ? selectedDate : today,
       booking_time: pickDefaultCabinetTime(cabinetBookingTimeChoices),
-    }));
+    });
     setCreateBookingSuggestions([]);
     setCreateBookingOpen(true);
   }
