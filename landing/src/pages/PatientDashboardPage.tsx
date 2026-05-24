@@ -391,7 +391,6 @@ export default function PatientDashboardPage() {
   /** Profil réel (API) pour l’en-tête quand on ouvre /patient-dashboard?phone=… ou un numéro reconnu en base. */
   const [urlPatientHero, setUrlPatientHero] = useState<{ name: string; phone: string; initials: string } | null>(null);
   const [tenantSidebarRows, setTenantSidebarRows] = useState<SidebarPatientRow[]>([]);
-  const [tenantSidebarTotal, setTenantSidebarTotal] = useState(0);
   const [tenantListLoading, setTenantListLoading] = useState(true);
   const toastTimerRef = useRef<number | null>(null);
   const sidebarBootstrapDoneRef = useRef(false);
@@ -458,10 +457,8 @@ export default function PatientDashboardPage() {
         .map((item: Record<string, unknown>) => cabinetRowToSidebar(item))
         .filter((item): item is SidebarPatientRow => Boolean(item));
       setTenantSidebarRows(mapped);
-      setTenantSidebarTotal(typeof res?.total === "number" ? res.total : mapped.length);
     } catch {
       setTenantSidebarRows([]);
-      setTenantSidebarTotal(0);
     }
   }, []);
 
@@ -533,10 +530,30 @@ export default function PatientDashboardPage() {
     setSearchParams(np, { replace: true });
   }, [tenantListLoading, tenantSidebarRows, searchParams, setSearchParams]);
 
-  const effectiveSidebarRows = useMemo(
-    () => injectSelectedPatientRow([...tenantSidebarRows], tenantPatientPhone, urlPatientHero),
-    [tenantSidebarRows, tenantPatientPhone, urlPatientHero],
-  );
+  const effectiveSidebarRows = useMemo(() => {
+    let rows = injectSelectedPatientRow([...tenantSidebarRows], tenantPatientPhone, urlPatientHero);
+    /** GET /patients/{phone} en 404 mais numéro connu dans l’URL : garder une ligne liste + en-tête cohérents. */
+    if (
+      tenantPatientNotFound &&
+      tenantPatientPhone &&
+      !rows.some((r) => r.phone === tenantPatientPhone)
+    ) {
+      rows = [
+        {
+          phone: tenantPatientPhone,
+          displayPhone: formatDisplayFrenchPhone(tenantPatientPhone),
+          name: "Patient — nom à compléter",
+          initials: "?",
+          dateLabel: "—",
+          gradient: sidebarGradient(tenantPatientPhone),
+          hasValidated: false,
+          statusBucket: "new",
+        },
+        ...rows,
+      ];
+    }
+    return rows;
+  }, [tenantSidebarRows, tenantPatientPhone, urlPatientHero, tenantPatientNotFound]);
 
   const effectiveSearchSidebarRows = useMemo((): SidebarPatientRow[] | null => {
     if (patientSearchRows === null) return null;
@@ -550,20 +567,33 @@ export default function PatientDashboardPage() {
 
   const sidebarCounts = useMemo(
     () => ({
-      total: tenantSidebarTotal,
-      aTraiter: tenantSidebarRows.filter((r) => !r.hasValidated).length,
-      nouveaux: tenantSidebarRows.filter((r) => r.statusBucket === "new").length,
+      total: effectiveSidebarRows.length,
+      aTraiter: effectiveSidebarRows.filter((r) => !r.hasValidated).length,
+      nouveaux: effectiveSidebarRows.filter((r) => r.statusBucket === "new").length,
     }),
-    [tenantSidebarRows, tenantSidebarTotal],
+    [effectiveSidebarRows],
   );
 
   const filteredSidebarRows = useMemo(() => {
     const qTrim = query.trim();
     const qLower = qTrim.toLowerCase();
 
+    const rowMatchesQuery = (row: SidebarPatientRow) => {
+      const hay = `${row.name} ${row.displayPhone} ${row.phone}`.toLowerCase();
+      if (hay.includes(qLower)) return true;
+      const needle = normalizePhone(qTrim);
+      return Boolean(needle && row.phone === needle);
+    };
+
     let out: SidebarPatientRow[];
     if (qTrim.length >= 2) {
-      out = effectiveSearchSidebarRows ?? [];
+      const locally = effectiveSidebarRows.filter(rowMatchesQuery);
+      if (patientSearchLoading || patientSearchRows === null) {
+        out = locally;
+      } else {
+        const fromApi = effectiveSearchSidebarRows ?? [];
+        out = fromApi.length > 0 ? fromApi : locally;
+      }
     } else {
       out = effectiveSidebarRows;
       if (qTrim.length === 1) {
@@ -576,7 +606,14 @@ export default function PatientDashboardPage() {
     if (filter === "À traiter") out = out.filter((row) => !row.hasValidated);
     if (filter === "Nouveaux") out = out.filter((row) => row.statusBucket === "new");
     return out;
-  }, [effectiveSidebarRows, effectiveSearchSidebarRows, query, filter]);
+  }, [
+    effectiveSidebarRows,
+    effectiveSearchSidebarRows,
+    patientSearchLoading,
+    patientSearchRows,
+    query,
+    filter,
+  ]);
 
   const sidebarSearchPending = Boolean(query.trim().length >= 2 && patientSearchLoading);
 
@@ -589,6 +626,14 @@ export default function PatientDashboardPage() {
     const slate = "from-slate-400 to-slate-600";
     const loadingGrad = "from-slate-300 to-slate-500";
     if (tenantPatientNotFound) {
+      if (sidebarHeroFallback && sidebarHeroFallback.phone === tenantPatientPhone) {
+        return {
+          name: sidebarHeroFallback.name,
+          phone: formatDisplayFrenchPhone(tenantPatientPhone || phoneFromDashboardUrl),
+          initials: sidebarHeroFallback.initials,
+          gradient: sidebarHeroFallback.gradient,
+        };
+      }
       if (isDirectPhoneView) {
         return {
           name: "Aucune fiche pour ce numéro",

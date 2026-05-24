@@ -474,6 +474,45 @@ def normalize_phone_number(value: Optional[str]) -> str:
     return cleaned
 
 
+def _phone_digit_search_patterns(digits_fragment: str) -> List[str]:
+    """
+    Fragments pour LIKE sur regexp_replace(phone, '\\D', '', 'g').
+    Une recherche au format national 06xxxxxxxx doit aussi matcher une fiche en +336xxxxxxxx.
+    """
+    d = re.sub(r"\D", "", digits_fragment or "")
+    if not d:
+        return []
+    patterns: List[str] = []
+    seen: set[str] = set()
+
+    def add(pat: str) -> None:
+        if pat and pat not in seen:
+            seen.add(pat)
+            patterns.append(pat)
+
+    add(d)
+
+    probes: List[str] = [d]
+    if len(d) == 10 and d.startswith("0"):
+        probes.append(f"+33{d[1:]}")
+    elif re.fullmatch(r"33\d{9}", d):
+        probes.append(f"+{d}")
+    elif len(d) >= 11 and not d.startswith("0"):
+        probes.append(d)
+
+    for pv in probes:
+        norm = normalize_phone_number(pv)
+        if norm.startswith("+"):
+            flat = re.sub(r"\D", "", norm)
+            add(flat)
+            add(flat[2:] if flat.startswith("33") and len(flat) >= 11 else flat)
+    # Redondance sûre : 0601020304 -> 33601020304
+    if len(d) == 10 and d.startswith("0"):
+        add("33" + d[1:])
+
+    return patterns
+
+
 def _ensure_cabinet_clients_table(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
@@ -1191,7 +1230,7 @@ def _search_cabinet_clients_fallback_wide(tenant_id: int, q: str, *, limit: int)
         for typ, tok in tokens:
             if typ == "digits":
                 dg = re.sub(r"\D", "", str(tok))
-                if dg and dg in phones_digits:
+                if dg and phones_digits and any(p in phones_digits for p in _phone_digit_search_patterns(dg)):
                     matched += 1
             else:
                 t = _accent_fold(tok).lower()
@@ -1275,17 +1314,29 @@ def search_cabinet_clients(tenant_id: int, q: str, *, limit: int = 15) -> List[D
             params_pg: List[Any] = []
             for typ, tok in tokens:
                 if typ == "text":
-                    pat = f"%{tok}%"
-                    clause_parts.append(
-                        "(display_name ILIKE %s OR validated_name ILIKE %s OR raw_name ILIKE %s "
-                        "OR COALESCE(email,'') ILIKE %s OR phone ILIKE %s)"
-                    )
-                    params_pg.extend([pat, pat, pat, pat, pat])
+                    inner_or: List[str] = []
+                    for t_sub in dict.fromkeys((tok, _accent_fold(tok).lower())):
+                        if len(t_sub) < 2:
+                            continue
+                        pat = f"%{t_sub}%"
+                        inner_or.append(
+                            "(display_name ILIKE %s OR validated_name ILIKE %s OR raw_name ILIKE %s "
+                            "OR COALESCE(email,'') ILIKE %s OR phone ILIKE %s)"
+                        )
+                        params_pg.extend([pat, pat, pat, pat, pat])
+                    if inner_or:
+                        clause_parts.append("(" + " OR ".join(inner_or) + ")")
                 elif typ == "digits":
-                    clause_parts.append(
-                        "(regexp_replace(COALESCE(phone, ''), '\\D', '', 'g') LIKE %s)"
-                    )
-                    params_pg.append(f"%{tok}%")
+                    d_patterns = _phone_digit_search_patterns(tok)
+                    if not d_patterns:
+                        clause_parts.append("FALSE")
+                    else:
+                        parts_sql = " OR ".join(
+                            "(regexp_replace(COALESCE(phone, ''), '\\D', '', 'g') LIKE %s)" for _ in d_patterns
+                        )
+                        clause_parts.append(f"({parts_sql})")
+                        for dp in d_patterns:
+                            params_pg.append(f"%{dp}%")
 
             where_sql = " AND ".join(clause_parts)
             sql = (
@@ -1310,28 +1361,38 @@ def search_cabinet_clients(tenant_id: int, q: str, *, limit: int = 15) -> List[D
     params_sq: List[Any] = []
     for typ, tok in tokens:
         if typ == "text":
-            pat = f"%{tok}%"
-            clause_parts_sq.append(
-                "("
-                "LOWER(COALESCE(display_name,'')) LIKE ? ESCAPE '\\' OR "
-                "LOWER(COALESCE(validated_name,'')) LIKE ? ESCAPE '\\' OR "
-                "LOWER(COALESCE(raw_name,'')) LIKE ? ESCAPE '\\' OR "
-                "LOWER(COALESCE(email,'')) LIKE ? ESCAPE '\\' OR "
-                "LOWER(COALESCE(phone,'')) LIKE ? ESCAPE '\\'"
-                ")"
-            )
-            escaped = tok.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            like_pat = f"%{escaped}%"
-            params_sq.extend([like_pat, like_pat, like_pat, like_pat, like_pat])
+            inner_bits: List[str] = []
+            for t_sub in dict.fromkeys((tok, _accent_fold(tok).lower())):
+                if len(t_sub) < 2:
+                    continue
+                inner_bits.append(
+                    "("
+                    "LOWER(COALESCE(display_name,'')) LIKE ? ESCAPE '\\' OR "
+                    "LOWER(COALESCE(validated_name,'')) LIKE ? ESCAPE '\\' OR "
+                    "LOWER(COALESCE(raw_name,'')) LIKE ? ESCAPE '\\' OR "
+                    "LOWER(COALESCE(email,'')) LIKE ? ESCAPE '\\' OR "
+                    "LOWER(COALESCE(phone,'')) LIKE ? ESCAPE '\\'"
+                    ")"
+                )
+                escaped = t_sub.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                like_pat = f"%{escaped}%"
+                params_sq.extend([like_pat, like_pat, like_pat, like_pat, like_pat])
+            if inner_bits:
+                clause_parts_sq.append("(" + " OR ".join(inner_bits) + ")")
         elif typ == "digits":
-            clause_parts_sq.append(
-                "("
-                "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(phone,''),'+',''),' ','')"
-                ",'-',''),'.',''),'(',''),')','') LIKE ? ESCAPE '\\'"
-                ")"
-            )
-            esc_d = tok.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            params_sq.append(f"%{esc_d}%")
+            d_patterns = _phone_digit_search_patterns(tok)
+            if not d_patterns:
+                clause_parts_sq.append("(0 = 1)")
+            else:
+                phone_flat = (
+                    "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(phone,''),'+',''),' ','')"
+                    ",'-',''),'.',''),'(',''),')','')"
+                )
+                bits = [f"({phone_flat} LIKE ? ESCAPE '\\')" for _ in d_patterns]
+                clause_parts_sq.append("(" + " OR ".join(bits) + ")")
+                for dp in d_patterns:
+                    esc_d = dp.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                    params_sq.append(f"%{esc_d}%")
 
     where_sq = " AND ".join(clause_parts_sq)
     sql_sq = (
