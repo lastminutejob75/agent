@@ -43,13 +43,30 @@ class GoogleCalendarNotFoundError(GoogleCalendarError):
 class GoogleCalendarService:
     """Service Google Calendar pour gérer les RDV."""
 
+    # Évite recrécredentials + client Discovery HTTP à chaque requête (agenda très lent sinon).
+    _instances_by_calendar: Dict[str, "GoogleCalendarService"] = {}
+
+    def __new__(cls, calendar_id: str):  # type: ignore[misc]
+        key = (calendar_id or "").strip()
+        if key:
+            existing = cls._instances_by_calendar.get(key)
+            if existing is not None:
+                return existing
+        instance = super().__new__(cls)
+        if key:
+            cls._instances_by_calendar[key] = instance
+        return instance
+
     def __init__(self, calendar_id: str):
         """
         Args:
             calendar_id: ID du Google Calendar (ex: xxx@group.calendar.google.com)
         """
-        self.calendar_id = calendar_id
+        if getattr(self, "_google_calendar_init_done", False):
+            return
+        self.calendar_id = (calendar_id or "").strip()
         self.service = self._build_service()
+        self._google_calendar_init_done = True
 
     def _build_service(self):
         """Crée le service Google Calendar."""

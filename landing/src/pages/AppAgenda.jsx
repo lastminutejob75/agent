@@ -418,6 +418,10 @@ export default function AppAgenda() {
   const loadAgenda = useCallback(async () => {
     setCalendarLoading(true);
     setError("");
+    const prefsPromise = Promise.all([
+      api.tenantMe().catch(() => null),
+      api.tenantGetHoraires().catch(() => null),
+    ]);
     try {
       const bulkRes = await api.tenantGetAgendaBulk(visibleDates).catch(() => null);
       const byDate = {};
@@ -428,10 +432,7 @@ export default function AppAgenda() {
         visibleDates.forEach((d, i) => { byDate[d] = results[i]; });
       }
       setAgendaByDate(byDate);
-      Promise.all([
-        api.tenantMe().catch(() => null),
-        api.tenantGetHoraires().catch(() => null),
-      ]).then(([nextMe, nextHoraires]) => {
+      prefsPromise.then(([nextMe, nextHoraires]) => {
         if (nextMe) setMe(nextMe);
         if (nextHoraires) setHoraires(nextHoraires);
       });
