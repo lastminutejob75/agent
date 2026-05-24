@@ -5,7 +5,7 @@ import logging
 import os
 import uuid
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -133,6 +133,34 @@ def _enrich_lead(lead: Dict[str, Any]) -> Dict[str, Any]:
     return row
 
 
+def _parse_lead_dt(value: Any) -> datetime:
+    """Parse lead timestamp pour tri fiable (ISO ou datetime PG)."""
+    if value is None:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    if isinstance(value, datetime):
+        dt = value
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    raw = str(value).strip().replace("Z", "+00:00")
+    if not raw:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    try:
+        return datetime.fromisoformat(raw).astimezone(timezone.utc)
+    except Exception:
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _lead_arrival_dt(row: Dict[str, Any]) -> datetime:
+    """Dernière « arrivée » : re-commit wizard ou création."""
+    best = datetime.min.replace(tzinfo=timezone.utc)
+    for key in ("last_submitted_at", "updated_at", "created_at"):
+        dt = _parse_lead_dt(row.get(key))
+        if dt > best:
+            best = dt
+    return best
+
+
 def _sort_rows(rows: List[Dict[str, Any]], sort: str) -> List[Dict[str, Any]]:
     mode = _safe_lower(sort or "created_desc")
     if mode == "score_desc":
@@ -144,7 +172,8 @@ def _sort_rows(rows: List[Dict[str, Any]], sort: str) -> List[Dict[str, Any]]:
         return sorted(rows, key=lambda r: str(r.get("follow_up_at") or "9999-12-31T00:00:00Z"))
     if mode == "name_asc":
         return sorted(rows, key=lambda r: _safe_lower(r.get("cabinet_name")))
-    return sorted(rows, key=lambda r: str(r.get("created_at") or ""), reverse=True)
+    # created_desc (défaut) : les plus récents en premier (par dernière activité / création)
+    return sorted(rows, key=_lead_arrival_dt, reverse=True)
 
 
 def _pipeline_counts(rows: List[Dict[str, Any]]) -> Dict[str, int]:
@@ -195,7 +224,7 @@ def fetch_leads_cockpit_light(limit: int = 120) -> List[Dict[str, Any]]:
                     SELECT id, created_at, email, assistant_name, source, status, notes,
                            primary_pain_point, last_submitted_at, updated_at
                     FROM pre_onboarding_leads
-                    ORDER BY created_at DESC
+                    ORDER BY COALESCE(last_submitted_at, updated_at, created_at) DESC NULLS LAST
                     LIMIT %s
                     """,
                     (cap,),
@@ -520,7 +549,7 @@ def list_leads(
                            contacted_at, converted_at, updated_at, last_submitted_at, max_daily_amplitude
                     FROM pre_onboarding_leads
                     {where_sql}
-                    ORDER BY created_at DESC
+                    ORDER BY COALESCE(last_submitted_at, updated_at, created_at) DESC NULLS LAST
                     LIMIT %s
                     """,
                     tuple(params),
@@ -539,7 +568,7 @@ def list_leads(
                                contacted_at, converted_at, updated_at, last_submitted_at, max_daily_amplitude
                         FROM pre_onboarding_leads
                         {where_sql}
-                        ORDER BY created_at DESC
+                        ORDER BY COALESCE(last_submitted_at, updated_at, created_at) DESC NULLS LAST
                         LIMIT %s
                         """,
                         tuple(params),

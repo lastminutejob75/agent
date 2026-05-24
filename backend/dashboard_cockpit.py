@@ -564,15 +564,23 @@ def dash_leads_block(ctx: Any, period: str = "7d") -> dict:
             window_rows.append(row)
     _epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
-    def _cockpit_latest_sort_key(r: dict) -> tuple:
-        """Ordre liste cockpit : derniers leads créés d'abord ; à created_at égale, dernière activité."""
-        ca = dash_parse_dt_utc(r.get("created_at")) or _epoch
-        au = dash_lead_activity_utc(r) or _epoch
-        return (ca, au)
+    def _cockpit_latest_sort_key(r: dict) -> datetime:
+        """Liste cockpit : dernière arrivée (re-commit ou création) en premier."""
+        act = dash_lead_activity_utc(r)
+        if act:
+            return act
+        return dash_parse_dt_utc(r.get("created_at")) or _epoch
 
     latest_sorted = sorted(window_rows, key=_cockpit_latest_sort_key, reverse=True)
 
+    def _lead_arrival_raw(r: dict) -> Any:
+        for key in ("last_submitted_at", "updated_at", "created_at"):
+            if r.get(key):
+                return r.get(key)
+        return None
+
     def _lead_row_compact(r: dict) -> dict:
+        arrival_raw = _lead_arrival_raw(r)
         ca_raw = r.get("created_at")
         return {
             "id": r.get("id"),
@@ -581,8 +589,8 @@ def dash_leads_block(ctx: Any, period: str = "7d") -> dict:
             "source_label": str(r.get("source_detail") or r.get("source") or "landing_cta"),
             "status": str(r.get("status") or "new"),
             "note": str(r.get("primary_pain_point") or r.get("notes") or "")[:280],
-            "created_at": str(ca_raw or ""),
-            "created_display_fr": dash_format_created_fr_paris(ca_raw),
+            "created_at": str(arrival_raw or ca_raw or ""),
+            "created_display_fr": dash_format_created_fr_paris(arrival_raw or ca_raw),
         }
 
     # Liste cockpit : assez large pour permettre nettoyage depuis l’admin (bouton supprimer par ligne).

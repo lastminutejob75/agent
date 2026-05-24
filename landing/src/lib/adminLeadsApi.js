@@ -36,7 +36,7 @@ export async function listAdminLeads({
   source,
   priority,
   segment,
-  sort = "score_desc",
+  sort = "created_desc",
   page = 1,
   limit = 25,
   followUpToday = false,

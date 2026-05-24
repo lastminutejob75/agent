@@ -183,7 +183,7 @@ export default function AdminLeadsList() {
   const [leads, setLeads] = useState([]);
   const [selectedLeadId, setSelectedLeadId] = useState("");
   const [segment, setSegment] = useState(searchParams.get("segment") || "Tous");
-  const [sort, setSort] = useState(searchParams.get("sort") || "score_desc");
+  const [sort, setSort] = useState(searchParams.get("sort") || "created_desc");
   const [convertMode, setConvertMode] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [creatingLead, setCreatingLead] = useState(false);
@@ -663,8 +663,8 @@ export default function AdminLeadsList() {
             variant="green"
             onClick={() => {
               setSegment("Tous");
-              setSort("score_desc");
-              setQuery({ ...kpiQueryUpdates("reset"), segment: null, sort: "score_desc" });
+              setSort("created_desc");
+              setQuery({ ...kpiQueryUpdates("reset"), segment: null, sort: "created_desc" });
             }}
             title="Réinitialiser les filtres"
             active={stage === "all" && segment === "Tous" && !query && !followUpToday}

@@ -42,6 +42,19 @@ function formatEuro2(n, currency = "EUR") {
   return new Intl.NumberFormat("fr-FR", { style: "currency", currency: cur === "USD" ? "USD" : "EUR", maximumFractionDigits: 2 }).format(Number(n));
 }
 
+/** Tri leads cockpit : plus récents en haut (dernière activité / création). */
+function sortLeadsNewestFirst(leads) {
+  if (!Array.isArray(leads) || leads.length < 2) return leads || [];
+  return [...leads].sort((a, b) => {
+    const ta = new Date(a?.created_at || 0).getTime();
+    const tb = new Date(b?.created_at || 0).getTime();
+    if (Number.isNaN(ta) && Number.isNaN(tb)) return 0;
+    if (Number.isNaN(ta)) return 1;
+    if (Number.isNaN(tb)) return -1;
+    return tb - ta;
+  });
+}
+
 /** Libellé d'arrivée du lead : jour + heure (backend envoie created_display_fr en heure Paris). */
 function formatLeadProspectCreation(lead) {
   if (!lead) return "";
@@ -575,7 +588,10 @@ export default function AdminDashboard() {
     leadsBlock.new_leads_count ?? leadsBlock.new_leads ?? leadsBlock.count ?? (leadsBlock.latest?.length || 0);
   const qualifyToday =
     leadsBlock.to_qualify_today_count ?? leadsBlock.leads_to_qualify_today_count ?? 0;
-  const latestLeads = leadsBlock.latest ?? leadsBlock.latest_leads ?? [];
+  const latestLeads = useMemo(() => {
+    const raw = leadsBlock.latest ?? leadsBlock.latest_leads ?? [];
+    return sortLeadsNewestFirst(raw);
+  }, [leadsBlock.latest, leadsBlock.latest_leads]);
 
   const filteredActions = useMemo(() => {
     if (severityFilter === "all") return actions;
