@@ -565,7 +565,7 @@ export default function UwiLanding() {
           <a href="#metiers">Spécialités</a>
           <a href="#fonctionnalites">Fonctionnalités</a>
           <a href="#comment">Comment ça marche</a>
-          <a href="#pricing">Tarifs</a>
+          <Link to="/pricing">Tarifs</Link>
           <Link to="/securite">Sécurité</Link>
           <a href="#faq">FAQ</a>
         </div>
@@ -599,13 +599,13 @@ export default function UwiLanding() {
               <div className="dd-sub">Accéder à mon espace</div>
             </div>
           </Link>
-          <a href="#pricing" className="dd-item" onClick={() => setMenuOpen(false)}>
+          <Link to="/pricing" className="dd-item" onClick={() => setMenuOpen(false)}>
             <span className="dd-icon">💳</span>
             <div>
               <div className="dd-label">Tarifs</div>
-              <div className="dd-sub">À partir de 99€/mois</div>
+              <div className="dd-sub">Page détaillée & simulateur</div>
             </div>
-          </a>
+          </Link>
           <a href="#fonctionnalites" className="dd-item" onClick={() => setMenuOpen(false)}>
             <span className="dd-icon">⚡</span>
             <div>
@@ -2186,6 +2186,7 @@ export default function UwiLanding() {
       <footer className="landing-footer">
           <Link to="/creer-assistante?new=1">Créer mon assistant</Link>
           <Link to="/contact">Contact</Link>
+          <Link to="/pricing">Tarifs</Link>
           <a href="tel:0939240575">09 39 24 05 75</a>
           <Link to="/securite">Sécurité</Link>
           <Link to="/cgv">CGV</Link>

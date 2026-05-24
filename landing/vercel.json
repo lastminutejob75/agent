@@ -23,6 +23,8 @@
     { "source": "/cgv", "destination": "/cgv/index.html" },
     { "source": "/cgu", "destination": "/cgu/index.html" },
     { "source": "/mentions-legales", "destination": "/mentions-legales/index.html" },
+    { "source": "/pricing", "destination": "/pricing/index.html" },
+    { "source": "/securite", "destination": "/securite/index.html" },
     { "source": "/secretaire-medicale-augmentee", "destination": "/secretaire-medicale-augmentee/index.html" },
     { "source": "/secretaire-medicale-augmentee-medecin", "destination": "/secretaire-medicale-augmentee-medecin/index.html" },
     { "source": "/assistant-telephone-ia-dentiste", "destination": "/assistant-telephone-ia-dentiste/index.html" },
