@@ -86,9 +86,45 @@ function addMinutes(timeLabel, mins) {
   return `${String(Math.floor(norm / 60)).padStart(2, "0")}:${String(norm % 60).padStart(2, "0")}`;
 }
 
-function toDatetimeLocalValue(d) {
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+/** Affichage local type « 9h30 » dans le sélecteur d’heure. */
+function formatTimeChoiceFR(value) {
+  const raw = String(value || "").trim();
+  const [hRaw, mRaw] = raw.split(":").concat("0");
+  const hh = Number.parseInt(String(hRaw), 10);
+  const mm = Number.parseInt(String(mRaw), 10);
+  if (Number.isNaN(hh) || Number.isNaN(mm)) return raw;
+  return `${hh}h${String(mm).padStart(2, "0")}`;
+}
+
+/** Créneaux entre deux heures d’ouverture (cabinet), pas configurables en minute arbitraire. */
+function buildCabinetTimeChoices(loH, hiH, stepMinutes = 15) {
+  let step = Math.round(Number(stepMinutes));
+  if (!Number.isFinite(step) || step < 5 || step > 60) step = 15;
+  let lo = Math.floor(Number(loH));
+  if (!Number.isFinite(lo)) lo = 8;
+  lo = Math.max(6, Math.min(22, lo));
+  let hi = Math.floor(Number(hiH));
+  if (!Number.isFinite(hi)) hi = 19;
+  hi = Math.max(lo, Math.min(22, hi));
+
+  const out = [];
+  const lastMinute = hi * 60 + 45;
+  for (let total = lo * 60; total <= lastMinute; total += step) {
+    const h = Math.floor(total / 60);
+    const m = total % 60;
+    if (h > hi) break;
+    if (h === hi && m > 45) continue;
+    out.push(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
+  }
+  return out.length ? out : ["09:00", "10:00", "11:00", "14:00", "15:00"];
+}
+
+function pickDefaultCabinetTime(slots, preferredHour = 9) {
+  if (!slots?.length) return "09:00";
+  const want = `${String(preferredHour).padStart(2, "0")}:00`;
+  if (slots.includes(want)) return want;
+  const after = slots.find((s) => s >= want);
+  return after || slots[0];
 }
 
 function bookingOriginLabel(code) {
@@ -352,12 +388,14 @@ function InlineDetail({
   onStartReschedule,
   onReschedule,
   onCreatePatientFromAgenda,
+  variant = "inline",
 }) {
   const aPhone = normalizePhone(a.patient_phone || a.phone || "");
   const aPhoneFmt = formatPhone(aPhone);
   const hasPatientFile = Boolean(a.patient_has_file);
+  const shellStyle = variant === "modal" ? S.inlineDetailModal : S.inlineDetail;
   return (
-    <div style={S.inlineDetail}>
+    <div style={shellStyle}>
       <div style={S.inlineGrid}>
         <div style={S.inlineItem}><span style={S.inlineIcon}>🕐</span><span>{a.displayTime} – {a.endTime}</span></div>
         <div style={S.inlineItem}><span style={S.inlineIcon}>📅</span><span>{formatLongDate(a.date)}</span></div>
@@ -473,6 +511,8 @@ export default function AppAgenda() {
 
   const [createBookingOpen, setCreateBookingOpen] = useState(false);
   const [createBookingLoading, setCreateBookingLoading] = useState(false);
+  /** Après création réussie : détail pour la modale de confirmation verte */
+  const [createBookingConfirm, setCreateBookingConfirm] = useState(null);
   const [createBookingSuggestions, setCreateBookingSuggestions] = useState([]);
   const [createBookingSuggestLoading, setCreateBookingSuggestLoading] = useState(false);
   const [createBookingForm, setCreateBookingForm] = useState({
@@ -480,7 +520,8 @@ export default function AppAgenda() {
     patient_phone: "",
     patient_email: "",
     motif: "Consultation",
-    start_local: "",
+    booking_date: "",
+    booking_time: "",
   });
 
   const weekDates = useMemo(() => buildWeekDates(selectedDate), [selectedDate]);
@@ -608,6 +649,22 @@ export default function AppAgenda() {
   const cfgEnd = Number.isFinite(Number(horaires?.booking_end_hour)) ? Number(horaires.booking_end_hour) : MIN_GRID_END;
   const startHour = Math.min(MIN_GRID_START, cfgStart);
   const endHour = Math.max(MIN_GRID_END, cfgEnd);
+
+  const cabinetBookingTimeChoices = useMemo(() => {
+    const step =
+      duration >= 15 && duration <= 60 && duration % 5 === 0 ? duration : 15;
+    return buildCabinetTimeChoices(cfgStart, cfgEnd, step);
+  }, [cfgStart, cfgEnd, duration]);
+
+  useEffect(() => {
+    if (!createBookingOpen || !cabinetBookingTimeChoices.length) return;
+    setCreateBookingForm((p) =>
+      cabinetBookingTimeChoices.includes(p.booking_time)
+        ? p
+        : { ...p, booking_time: pickDefaultCabinetTime(cabinetBookingTimeChoices) },
+    );
+  }, [createBookingOpen, cabinetBookingTimeChoices]);
+
   const apptHourBounds = useMemo(() => {
     let min = null, max = null;
     visibleDates.forEach((date) => {
@@ -704,8 +761,7 @@ export default function AppAgenda() {
         external_event_id: selectedAppt.event_id || "",
       });
       setActionMsg({ text: "Rendez-vous annulé. Le patient a été notifié par SMS.", type: "success" });
-      setSelectedAppt(null);
-      setConfirmCancel(false);
+      closeAppointmentDetail();
       invalidateAgendaBulkCache();
       await loadAgenda();
     } catch (e) {
@@ -720,17 +776,30 @@ export default function AppAgenda() {
     setRescheduleMode(false);
   }
 
+  function closeAppointmentDetail() {
+    setSelectedAppt(null);
+    setConfirmCancel(false);
+    resetReschedule();
+  }
+
   function toggleAppt(a) {
     if (selectedAppt?.id === a.id) {
-      setSelectedAppt(null);
-      setConfirmCancel(false);
-      resetReschedule();
+      closeAppointmentDetail();
     } else {
       setSelectedAppt(a);
       setConfirmCancel(false);
       resetReschedule();
     }
   }
+
+  useEffect(() => {
+    if (!selectedAppt) return undefined;
+    const onKey = (e) => {
+      if (e.key === "Escape") closeAppointmentDetail();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedAppt]);
 
   function handleStartReschedule(action) {
     if (action === "close") { resetReschedule(); return; }
@@ -748,8 +817,7 @@ export default function AppAgenda() {
       );
       const fmtDate = new Date(`${slot.date}T12:00:00`).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
       setActionMsg({ text: `RDV déplacé au ${fmtDate} à ${slot.time}`, type: "success" });
-      setSelectedAppt(null);
-      resetReschedule();
+      closeAppointmentDetail();
       invalidateAgendaBulkCache();
       await loadAgenda();
     } catch (e) {
@@ -760,14 +828,13 @@ export default function AppAgenda() {
   }
 
   function openCreateCabinetBooking() {
-    const base = new Date(`${selectedDate}T12:00:00`);
-    base.setHours(9, 0, 0, 0);
     setCreateBookingForm((prev) => ({
       patient_name: prev.patient_name || "",
       patient_phone: prev.patient_phone || "",
       patient_email: prev.patient_email || "",
       motif: prev.motif || "Consultation",
-      start_local: toDatetimeLocalValue(base),
+      booking_date: selectedDate >= today ? selectedDate : today,
+      booking_time: pickDefaultCabinetTime(cabinetBookingTimeChoices),
     }));
     setCreateBookingSuggestions([]);
     setCreateBookingOpen(true);
@@ -791,7 +858,16 @@ export default function AppAgenda() {
       setActionMsg({ type: "error", text: "Indiquez le nom du patient (au moins 2 caractères)." });
       return;
     }
-    const dt = createBookingForm.start_local ? new Date(createBookingForm.start_local) : null;
+    const { booking_date, booking_time } = createBookingForm;
+    if (!booking_date || !/^\d{4}-\d{2}-\d{2}$/.test(booking_date.trim())) {
+      setActionMsg({ type: "error", text: "Choisissez une date pour le RDV." });
+      return;
+    }
+    if (!booking_time || !/^\d{2}:\d{2}$/.test(booking_time.trim())) {
+      setActionMsg({ type: "error", text: "Choisissez une heure pour le RDV." });
+      return;
+    }
+    const dt = new Date(`${booking_date.trim()}T${booking_time.trim()}:00`);
     if (!dt || Number.isNaN(dt.getTime())) {
       setActionMsg({ type: "error", text: "Choisissez une date et une heure valides pour le RDV." });
       return;
@@ -805,8 +881,14 @@ export default function AppAgenda() {
         motif: (createBookingForm.motif || "Consultation").trim(),
         start_iso: dt.toISOString(),
       });
+      const dIso = dt.toISOString().slice(0, 10);
+      const timeStr = dt.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+      setCreateBookingConfirm({
+        patientName: name,
+        whenLine: `${formatLongDate(dIso)}, ${timeStr}`,
+        motif: (createBookingForm.motif || "Consultation").trim(),
+      });
       setCreateBookingOpen(false);
-      setActionMsg({ type: "success", text: "Rendez-vous créé." });
       invalidateAgendaBulkCache();
       await loadAgenda();
     } catch (e) {
@@ -1101,33 +1183,6 @@ export default function AppAgenda() {
         {viewMode === "month" && (
           <div className="agenda-month-layout" style={S.monthLayout}>
             <div style={S.card}>
-            {/* Détail du RDV sélectionné (au-dessus de la grille mois) */}
-            {selectedAppt && (
-              <div style={S.topDetailWrap}>
-                <div style={S.topDetailHeader}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1 }}>
-                    <span style={{ fontSize: 18 }}>{selectedAppt.typeIcon}</span>
-                    <div>
-                      <div style={{ fontSize: 15, fontWeight: 800, color: NAVY }}>{selectedAppt.patient || "Patient"}</div>
-                      <div style={{ fontSize: 12, color: MUTED }}>{selectedAppt.type || "Consultation"}</div>
-                    </div>
-                  </div>
-                  <button type="button" onClick={() => { setSelectedAppt(null); setConfirmCancel(false); }} style={S.weekDetailClose}>✕</button>
-                </div>
-                <InlineDetail
-                  a={selectedAppt}
-                  navigate={navigate}
-                  confirmCancel={confirmCancel}
-                  setConfirmCancel={setConfirmCancel}
-                  handleCancel={handleCancel}
-                  actionLoading={actionLoading}
-                  rescheduleMode={rescheduleMode}
-                  onStartReschedule={handleStartReschedule}
-                  onReschedule={handleReschedule}
-                  onCreatePatientFromAgenda={openPatientCreateFromAppointment}
-                />
-              </div>
-            )}
               <div style={S.monthGridWrap}>
               {WEEKDAY_LABELS.map((wd) => (
                 <div key={wd} style={S.monthWdHeader}>{wd}</div>
@@ -1235,33 +1290,6 @@ export default function AppAgenda() {
                   <span style={S.weekHeadBadgePurple}>Récupéré {semanticCounts.purple}</span>
                 </div>
               </div>
-              {/* Détail du RDV sélectionné (au-dessus de la grille semaine) */}
-              {selectedAppt && (
-                <div style={S.topDetailWrap}>
-                  <div style={S.topDetailHeader}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1 }}>
-                      <span style={{ fontSize: 18 }}>{selectedAppt.typeIcon}</span>
-                      <div>
-                        <div style={{ fontSize: 15, fontWeight: 800, color: NAVY }}>{selectedAppt.patient || "Patient"}</div>
-                        <div style={{ fontSize: 12, color: MUTED }}>{selectedAppt.type || "Consultation"}</div>
-                      </div>
-                    </div>
-                    <button type="button" onClick={() => { setSelectedAppt(null); setConfirmCancel(false); }} style={S.weekDetailClose}>✕</button>
-                  </div>
-                  <InlineDetail
-                    a={selectedAppt}
-                    navigate={navigate}
-                    confirmCancel={confirmCancel}
-                    setConfirmCancel={setConfirmCancel}
-                    handleCancel={handleCancel}
-                    actionLoading={actionLoading}
-                    rescheduleMode={rescheduleMode}
-                    onStartReschedule={handleStartReschedule}
-                    onReschedule={handleReschedule}
-                    onCreatePatientFromAgenda={openPatientCreateFromAppointment}
-                  />
-                </div>
-              )}
               <div className="agenda-week-scroll" style={S.weekScroll}>
                 <div className="agenda-week-grid" style={{ ...S.weekGrid, gridTemplateColumns: `54px repeat(${weekDates.length}, minmax(116px, 1fr))` }}>
                   <div style={S.weekCorner} />
@@ -1364,7 +1392,17 @@ export default function AppAgenda() {
                             const isOpen = selectedAppt?.id === a.id;
                             return (
                               <div key={a.id}>
-                                <button type="button" className="agenda-appt-card" onClick={() => toggleAppt(a)} style={{ ...S.dayCard, background: tone.bg, borderLeftColor: tone.border, ...(isOpen ? { borderBottomLeftRadius: 0, borderBottomRightRadius: 0 } : {}) }}>
+                                <button
+                                  type="button"
+                                  className="agenda-appt-card"
+                                  onClick={() => toggleAppt(a)}
+                                  style={{
+                                    ...S.dayCard,
+                                    background: tone.bg,
+                                    borderLeftColor: tone.border,
+                                    ...(isOpen ? { boxShadow: `0 0 0 2px ${tone.border}55`, zIndex: 1 } : {}),
+                                  }}
+                                >
                                   <div style={S.dayCardTop}>
                                     <div style={{ ...S.dayCardTime, color: tone.time }}>{a.displayTime} – {a.endTime}</div>
                                     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -1375,20 +1413,6 @@ export default function AppAgenda() {
                                   <div style={{ ...S.dayCardName, color: tone.text }}>{a.patient || "Patient"}</div>
                                   <div style={S.dayCardType}>{a.typeIcon} {a.type || "Consultation"}</div>
                                 </button>
-                                {isOpen && (
-                                  <InlineDetail
-                                    a={a}
-                                    navigate={navigate}
-                                    confirmCancel={confirmCancel}
-                                    setConfirmCancel={setConfirmCancel}
-                                    handleCancel={handleCancel}
-                                    actionLoading={actionLoading}
-                                    rescheduleMode={rescheduleMode}
-                                    onStartReschedule={handleStartReschedule}
-                                    onReschedule={handleReschedule}
-                                    onCreatePatientFromAgenda={openPatientCreateFromAppointment}
-                                  />
-                                )}
                               </div>
                             );
                           })
@@ -1429,6 +1453,57 @@ export default function AppAgenda() {
           </div>
         )}
       </div>
+
+      {selectedAppt ? (
+        <div
+          style={S.apptDetailOverlay}
+          role="presentation"
+          onClick={closeAppointmentDetail}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="appt-detail-heading"
+            style={S.apptDetailCard}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={S.apptDetailHeader}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flex: 1 }}>
+                <span style={{ fontSize: 22, lineHeight: 1 }}>{selectedAppt.typeIcon}</span>
+                <div>
+                  <div id="appt-detail-heading" style={{ fontSize: 17, fontWeight: 800, color: NAVY }}>
+                    {selectedAppt.patient || "Patient"}
+                  </div>
+                  <div style={{ fontSize: 13, color: MUTED, marginTop: 2 }}>
+                    {selectedAppt.type || "Consultation"}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeAppointmentDetail}
+                style={S.weekDetailClose}
+                aria-label="Fermer la fiche rendez-vous"
+              >
+                ✕
+              </button>
+            </div>
+            <InlineDetail
+              variant="modal"
+              a={selectedAppt}
+              navigate={navigate}
+              confirmCancel={confirmCancel}
+              setConfirmCancel={setConfirmCancel}
+              handleCancel={handleCancel}
+              actionLoading={actionLoading}
+              rescheduleMode={rescheduleMode}
+              onStartReschedule={handleStartReschedule}
+              onReschedule={handleReschedule}
+              onCreatePatientFromAgenda={openPatientCreateFromAppointment}
+            />
+          </div>
+        </div>
+      ) : null}
 
       {createBookingOpen ? (
         <div style={S.modalOverlay} role="dialog" aria-modal="true">
@@ -1522,15 +1597,43 @@ export default function AppAgenda() {
                 onChange={(e) => setCreateBookingForm((p) => ({ ...p, motif: e.target.value }))}
               />
             </label>
-            <label style={S.modalLabel}>
-              Date et heure *
-              <input
-                type="datetime-local"
-                style={S.modalInput}
-                value={createBookingForm.start_local}
-                onChange={(e) => setCreateBookingForm((p) => ({ ...p, start_local: e.target.value }))}
-              />
-            </label>
+            <div style={{ marginBottom: 10 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: NAVY, display: "block", marginBottom: 8 }}>
+                Date et horaire *
+              </span>
+              <p style={{ margin: "0 0 10px", fontSize: 12, color: MUTED, lineHeight: 1.4 }}>
+                D&apos;abord la date avec le sélecteur de jour du navigateur, puis l&apos;heure dans une liste courte
+                (pas sous la forme 24/05/2026 09:00). Les créneaux suivent vos horaires cabinet et la durée des RDV.
+              </p>
+              <div style={S.modalDatetimeRow}>
+                <label style={S.modalDatetimeCol}>
+                  <span style={{ display: "block", fontSize: 11, fontWeight: 800, color: MUTED, marginBottom: 6 }}>Jour</span>
+                  <input
+                    type="date"
+                    style={S.modalInput}
+                    min={todayISO()}
+                    value={createBookingForm.booking_date}
+                    onChange={(e) => setCreateBookingForm((p) => ({ ...p, booking_date: e.target.value }))}
+                  />
+                </label>
+                <label style={S.modalDatetimeCol}>
+                  <span style={{ display: "block", fontSize: 11, fontWeight: 800, color: MUTED, marginBottom: 6 }}>Heure</span>
+                  <select
+                    style={{ ...S.modalInput, ...S.modalSelect }}
+                    value={
+                      cabinetBookingTimeChoices.includes(createBookingForm.booking_time)
+                        ? createBookingForm.booking_time
+                        : (cabinetBookingTimeChoices[0] || "")
+                    }
+                    onChange={(e) => setCreateBookingForm((p) => ({ ...p, booking_time: e.target.value }))}
+                  >
+                    {cabinetBookingTimeChoices.map((t) => (
+                      <option key={t} value={t}>{formatTimeChoiceFR(t)}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </div>
             <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
               <button
                 type="button"
@@ -1544,6 +1647,43 @@ export default function AppAgenda() {
                 Annuler
               </button>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {createBookingConfirm ? (
+        <div
+          style={S.bookingConfirmOverlay}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="booking-confirm-title"
+        >
+          <div style={S.bookingConfirmCard}>
+            <div style={S.bookingConfirmIcon} aria-hidden>✓</div>
+            <div id="booking-confirm-title" style={S.bookingConfirmTitle}>
+              Rendez-vous enregistré
+            </div>
+            <p style={S.bookingConfirmLead}>
+              Le rendez-vous de <strong>{createBookingConfirm.patientName}</strong> a bien été créé depuis
+              l&apos;espace cabinet.
+            </p>
+            <ul style={S.bookingConfirmMeta}>
+              <li style={S.bookingConfirmMetaRow}>
+                <span style={S.bookingConfirmMetaLbl}>Date et heure</span>
+                <span style={S.bookingConfirmMetaVal}>{createBookingConfirm.whenLine}</span>
+              </li>
+              <li style={S.bookingConfirmMetaRow}>
+                <span style={S.bookingConfirmMetaLbl}>Motif</span>
+                <span style={S.bookingConfirmMetaVal}>{createBookingConfirm.motif}</span>
+              </li>
+            </ul>
+            <button
+              type="button"
+              style={S.bookingConfirmBtn}
+              onClick={() => setCreateBookingConfirm(null)}
+            >
+              Compris
+            </button>
           </div>
         </div>
       ) : null}
@@ -1579,13 +1719,112 @@ const S = {
   toast: { marginBottom: 14, borderRadius: 10, border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#047857", padding: "12px 16px", fontSize: 14, fontWeight: 700, animation: "toastIn .3s ease" },
   toastError: { marginBottom: 14, borderRadius: 10, border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", padding: "12px 16px", fontSize: 14, fontWeight: 700, animation: "toastIn .3s ease" },
 
+  bookingConfirmOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(15,23,42,.5)",
+    display: "grid",
+    placeItems: "center",
+    zIndex: 65,
+    padding: 16,
+  },
+  bookingConfirmCard: {
+    width: "min(400px, 100%)",
+    borderRadius: 18,
+    padding: "24px 22px 20px",
+    background: "linear-gradient(165deg, #ecfdf5 0%, #d1fae5 45%, #fff 100%)",
+    border: "2px solid #10b981",
+    boxShadow: "0 24px 48px rgba(16,185,129,.22), 0 8px 24px rgba(15,23,42,.12)",
+    textAlign: "center",
+  },
+  bookingConfirmIcon: {
+    width: 52,
+    height: 52,
+    margin: "0 auto 12px",
+    borderRadius: "50%",
+    background: "#10b981",
+    color: "#fff",
+    fontSize: 28,
+    fontWeight: 900,
+    display: "grid",
+    placeItems: "center",
+    lineHeight: 1,
+    boxShadow: "0 8px 20px rgba(16,185,129,.45)",
+  },
+  bookingConfirmTitle: { fontSize: 20, fontWeight: 900, color: "#065f46", letterSpacing: "-.02em", marginBottom: 8 },
+  bookingConfirmLead: { margin: "0 0 16px", fontSize: 14, color: "#047857", lineHeight: 1.5, textAlign: "left" },
+  bookingConfirmMeta: {
+    listStyle: "none",
+    margin: "0 0 20px",
+    padding: 12,
+    borderRadius: 12,
+    background: "rgba(255,255,255,.75)",
+    border: "1px solid #a7f3d0",
+    textAlign: "left",
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+  },
+  bookingConfirmMetaRow: { display: "flex", flexDirection: "column", gap: 4 },
+  bookingConfirmMetaLbl: { fontSize: 11, fontWeight: 800, color: MUTED, textTransform: "uppercase", letterSpacing: "0.05em" },
+  bookingConfirmMetaVal: { fontSize: 15, fontWeight: 700, color: NAVY },
+  bookingConfirmBtn: {
+    width: "100%",
+    padding: "12px 16px",
+    borderRadius: 12,
+    border: "none",
+    background: "#059669",
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: 800,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    boxShadow: "0 6px 18px rgba(5,150,105,.35)",
+  },
+
   modalOverlay: { position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", display: "grid", placeItems: "center", zIndex: 60, padding: 16 },
+  apptDetailOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(15,23,42,.45)",
+    display: "grid",
+    placeItems: "center",
+    zIndex: 62,
+    padding: 16,
+    boxSizing: "border-box",
+  },
+  apptDetailCard: {
+    width: "min(460px, 100%)",
+    maxHeight: "min(88vh, 760px)",
+    overflowY: "auto",
+    overflowX: "hidden",
+    WebkitOverflowScrolling: "touch",
+    background: "#fff",
+    borderRadius: 18,
+    boxShadow: "0 28px 72px rgba(15,23,42,.3)",
+    border: `1px solid ${BORDER}`,
+  },
+  apptDetailHeader: {
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+    padding: "16px 16px 12px",
+    position: "sticky",
+    top: 0,
+    zIndex: 2,
+    background: "#fff",
+    borderBottom: `1px solid ${BORDER}`,
+  },
   modalCard: { width: "min(420px, 100%)", background: "#fff", borderRadius: 16, padding: "20px 22px", boxShadow: "0 24px 60px rgba(15,23,42,.18)", border: `1px solid ${BORDER}` },
   modalCardWide: { width: "min(480px, 100%)", background: "#fff", borderRadius: 16, padding: "20px 22px", boxShadow: "0 24px 60px rgba(15,23,42,.18)", border: `1px solid ${BORDER}` },
   modalTitleRow: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
   modalClose: { border: "none", background: "transparent", cursor: "pointer", fontSize: 18, lineHeight: 1, padding: 4, color: MUTED },
   modalLabel: { display: "block", fontSize: 12, fontWeight: 700, color: NAVY, marginBottom: 10 },
   modalInput: { display: "block", width: "100%", marginTop: 6, padding: "10px 11px", borderRadius: 10, border: `1px solid ${BORDER}`, fontSize: 14, boxSizing: "border-box", fontFamily: "inherit" },
+  modalSelect: { cursor: "pointer", backgroundColor: "#fff", WebkitAppearance: "none", appearance: "none", backgroundImage: "linear-gradient(45deg, transparent 50%, #64748b 50%), linear-gradient(135deg, #64748b 50%, transparent 50%)", backgroundPosition: "calc(100% - 18px) 50%, calc(100% - 13px) 50%", backgroundSize: "6px 6px, 6px 6px", backgroundRepeat: "no-repeat", paddingRight: 36 },
+  modalDatetimeRow: { display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" },
+  modalDatetimeCol: { flex: "1 1 160px", minWidth: 140 },
   modalSuggestBox: { marginBottom: 14 },
   modalSuggestHint: { fontSize: 12, color: TEAL_DARK, fontWeight: 600, marginBottom: 8 },
   modalSuggestList: { borderRadius: 12, border: `1px solid ${BORDER}`, overflow: "hidden", background: "#f8fafc" },
@@ -1851,6 +2090,14 @@ const S = {
     padding: "14px 16px 16px",
     marginBottom: 6,
     boxShadow: "0 4px 16px rgba(15,23,42,.07)",
+  },
+  inlineDetailModal: {
+    background: "#fff",
+    border: "none",
+    borderRadius: 0,
+    padding: "4px 14px 18px",
+    marginBottom: 0,
+    boxShadow: "none",
   },
   inlineGrid: {
     display: "flex",
