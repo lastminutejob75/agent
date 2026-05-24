@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+import unicodedata
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -1115,6 +1116,138 @@ def _patient_search_tokens(q: str) -> List[tuple]:
             continue
         tokens.append(("text", t.lower()))
     return tokens
+
+
+def _accent_fold(s: str) -> str:
+    """Retire accents/diacritiques pour élargir la recherche sans extension DB."""
+    if not s:
+        return ""
+    try:
+        nk = unicodedata.normalize("NFKD", str(s))
+        return "".join(c for c in nk if unicodedata.category(c) != "Mn")
+    except Exception:
+        return str(s)
+
+
+def _search_cabinet_clients_fallback_wide(tenant_id: int, q: str, *, limit: int) -> List[Dict[str, Any]]:
+    """
+    Quand la requête SQL stricte (AND sur les mots) ne renvoie rien :
+    scorer les fiches en « au moins un » token texte OU chiffre (OR),
+    fuzzy léger pour prénom/nom quasi identiques mal orthographiés.
+    Balaye au plus `_SCAN` lignes récentes (updated_at DESC).
+    """
+    import difflib
+
+    q_clean = (q or "").strip()
+    tokens = _patient_search_tokens(q_clean)
+    if not tokens:
+        return []
+
+    _SCAN = 4000
+    try:
+        pool = list_cabinet_clients(tenant_id, limit=_SCAN, offset=0)
+    except Exception:
+        pool = []
+
+    q_compact = re.sub(r"\s+", "", _accent_fold(q_clean).lower())
+
+    ranked: List[tuple[int, int, Dict[str, Any]]] = []
+
+    def row_ts(rec: Dict[str, Any]) -> int:
+        raw = str(rec.get("updated_at") or rec.get("created_at") or "")
+        if not raw:
+            return 0
+        try:
+            return int(datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp())
+        except Exception:
+            try:
+                return int(datetime.strptime(raw[:19], "%Y-%m-%d %H:%M:%S").timestamp())
+            except Exception:
+                return 0
+
+    for row in pool:
+        phones_digits = re.sub(r"\D", "", str(row.get("phone") or ""))
+        nm_raw = " ".join(
+            [
+                str(row.get("display_name") or ""),
+                str(row.get("validated_name") or ""),
+                str(row.get("raw_name") or ""),
+                str(row.get("email") or ""),
+                phones_digits,
+            ]
+        ).strip()
+
+        nm = _accent_fold(nm_raw).lower()
+        nm_compact = re.sub(r"\s+", "", nm)
+        tokens_words = sorted({w for w in re.findall(r"[a-z0-9]{2,}", nm) if len(w) >= 2})
+
+        matched = 0
+        fuzzy_hits = 0
+
+        for typ, tok in tokens:
+            if typ == "digits":
+                dg = re.sub(r"\D", "", str(tok))
+                if dg and dg in phones_digits:
+                    matched += 1
+            else:
+                t = _accent_fold(tok).lower()
+                if len(t) < 2:
+                    continue
+                if t in nm or (phones_digits and t in phones_digits):
+                    matched += 1
+                    continue
+
+                fuzzy_ok = False
+                if len(t) >= 3 and tokens_words:
+                    close = difflib.get_close_matches(t, tokens_words, n=1, cutoff=0.78)
+                    if close:
+                        fuzzy_ok = True
+                    elif len(t) >= 4:
+                        for w in tokens_words:
+                            if abs(len(w) - len(t)) > 5:
+                                continue
+                            try:
+                                if len(t) <= 12 and len(w) <= 12 and difflib.SequenceMatcher(a=t, b=w).ratio() >= 0.78:
+                                    fuzzy_ok = True
+                                    break
+                            except Exception:
+                                continue
+
+                if fuzzy_ok:
+                    matched += 1
+                    fuzzy_hits += 1
+
+        full_bonus = 0
+        if len(q_compact) >= 6 and q_compact in nm_compact:
+            full_bonus += 4
+
+        if matched == 0 and full_bonus == 0:
+            continue
+
+        score = matched * 8 + fuzzy_hits * 4 + full_bonus
+        ranked.append((score, row_ts(row), row))
+
+    ranked.sort(key=lambda tup: (-tup[0], -tup[1]))
+
+    out: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for _sc, _ts, row in ranked:
+        k = normalize_phone_number(str(row.get("phone") or ""))
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        out.append(row)
+        if len(out) >= limit:
+            break
+
+    return out[:limit]
+
+
+def search_cabinet_clients_with_fallback(tenant_id: int, q: str, *, limit: int = 50) -> List[Dict[str, Any]]:
+    strict = search_cabinet_clients(tenant_id, q, limit=min(max(limit * 6, limit), 200))
+    if strict:
+        return strict[:limit]
+    return _search_cabinet_clients_fallback_wide(tenant_id, q, limit=limit)
 
 
 def search_cabinet_clients(tenant_id: int, q: str, *, limit: int = 15) -> List[Dict[str, Any]]:

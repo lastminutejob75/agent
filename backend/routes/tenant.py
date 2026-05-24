@@ -44,6 +44,7 @@ from backend.db import (
     insert_patient_document,
     list_cabinet_clients,
     search_cabinet_clients,
+    search_cabinet_clients_with_fallback,
     list_free_slots,
     list_call_followups,
     list_patient_notes,
@@ -2707,8 +2708,8 @@ def tenant_list_patients(
     tenant_id = auth["tenant_id"]
     qs = (q or "").strip()
     if qs:
-        cap = min(limit, 50)
-        items = search_cabinet_clients(tenant_id, qs, limit=cap)
+        cap = min(limit, 100)
+        items = search_cabinet_clients_with_fallback(tenant_id, qs, limit=cap)
         return {"items": items, "total": len(items), "mode": "search"}
     items = list_cabinet_clients(tenant_id, limit=limit, offset=offset)
     return {"items": items, "total": len(items), "mode": "list"}

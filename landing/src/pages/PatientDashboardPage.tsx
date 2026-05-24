@@ -2,7 +2,23 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useOutletContext, useSearchParams } from "react-router-dom";
 import { agendaSlotMotif, formatAgendaSlotHour, parseAgendaSlotStart } from "../lib/agendaSlotParse.js";
 import { api } from "../lib/api.js";
+import { normalizePhoneBusinessKey } from "../lib/phoneNormalize";
 import { patientDashboardFileHasValidatedIdentity } from "../lib/callsService.js";
+
+/** Clé téléphone métier (= backend `normalize_phone_number`). */
+function normalizePhone(value: string) {
+  return normalizePhoneBusinessKey(value);
+}
+
+/** Pour rapprocher le libellé « patient » d’un créneau Google avec la fiche. */
+function normalizeAgendaPatientName(value: string) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
+}
 
 type SidebarPatientRow = {
   /** Téléphone normalisé comme clé (aligné tenant API). */
@@ -134,10 +150,6 @@ const REQUEST_STATUS_OVERRIDES_KEY = "uwi_request_status_overrides";
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
-}
-
-function normalizePhone(value: string) {
-  return String(value || "").replace(/[^\d+]/g, "");
 }
 
 /** Si le patient ouvert (?phone=) n’est pas dans les résultats API, on injecte une ligne pour le garder cliquable. */
@@ -376,7 +388,7 @@ export default function PatientDashboardPage() {
   const [tenantListLoading, setTenantListLoading] = useState(true);
   const toastTimerRef = useRef<number | null>(null);
   const sidebarBootstrapDoneRef = useRef(false);
-  const [patientAgendaSlots, setPatientAgendaSlots] = useState<Array<Record<string, unknown>>>([]);
+  const [tenantAgendaRawSlots, setTenantAgendaRawSlots] = useState<Array<Record<string, unknown>>>([]);
   const [patientAgendaLoading, setPatientAgendaLoading] = useState(false);
   /** Recherche serveur GET /patients?q= ; null si la recherche API n’est pas utilisée (< 2 caractères). */
   const [patientSearchRows, setPatientSearchRows] = useState<SidebarPatientRow[] | null>(null);
@@ -445,7 +457,7 @@ export default function PatientDashboardPage() {
     let cancelled = false;
     const timer = window.setTimeout(() => {
       api
-        .tenantGetPatients(`?q=${encodeURIComponent(q)}&limit=50`)
+        .tenantGetPatients(`?q=${encodeURIComponent(q)}&limit=100`)
         .then((res) => {
           if (cancelled) return;
           const items = Array.isArray(res?.items) ? res.items : [];
@@ -697,7 +709,7 @@ export default function PatientDashboardPage() {
   useEffect(() => {
     let cancelled = false;
     if (!tenantPatientPhone) {
-      setPatientAgendaSlots([]);
+      setTenantAgendaRawSlots([]);
       setPatientAgendaLoading(false);
       return () => {
         cancelled = true;
@@ -709,16 +721,10 @@ export default function PatientDashboardPage() {
       .then((res) => {
         if (cancelled) return;
         const slots = Array.isArray(res?.slots) ? res.slots : [];
-        const needle = normalizePhone(tenantPatientPhone);
-        const forPatient = slots.filter((raw) => {
-          const row = raw as Record<string, unknown>;
-          const pn = normalizePhone(String(row.patient_phone || ""));
-          return Boolean(needle && pn && pn === needle);
-        });
-        setPatientAgendaSlots(forPatient as Array<Record<string, unknown>>);
+        setTenantAgendaRawSlots(slots as Array<Record<string, unknown>>);
       })
       .catch(() => {
-        if (!cancelled) setPatientAgendaSlots([]);
+        if (!cancelled) setTenantAgendaRawSlots([]);
       })
       .finally(() => {
         if (!cancelled) setPatientAgendaLoading(false);
@@ -727,6 +733,22 @@ export default function PatientDashboardPage() {
       cancelled = true;
     };
   }, [tenantPatientPhone]);
+
+  const patientAgendaSlots = useMemo(() => {
+    if (!tenantPatientPhone) return [];
+    const needle = normalizePhone(tenantPatientPhone);
+    const heroKey = normalizeAgendaPatientName(String(urlPatientHero?.name || ""));
+    return tenantAgendaRawSlots.filter((raw) => {
+      const row = raw as Record<string, unknown>;
+      const pn = normalizePhone(String(row.patient_phone || ""));
+      if (needle && pn && pn === needle) return true;
+      if (!pn && heroKey) {
+        const slotNameKey = normalizeAgendaPatientName(String(row.patient || ""));
+        return Boolean(slotNameKey && slotNameKey === heroKey);
+      }
+      return false;
+    });
+  }, [tenantAgendaRawSlots, tenantPatientPhone, urlPatientHero?.name]);
 
   const patientAgendaParsed = useMemo(() => {
     const rows: Array<{ slot: Record<string, unknown>; start: Date }> = [];
