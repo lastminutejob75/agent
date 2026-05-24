@@ -1,14 +1,18 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api.js";
+import { patientDashboardFileHasValidatedIdentity } from "../lib/callsService.js";
 
-type Patient = {
-  id: string;
-  initials: string;
-  name: string;
+type SidebarPatientRow = {
+  /** Téléphone normalisé comme clé (aligné tenant API). */
   phone: string;
-  date: string;
-  color: string;
+  displayPhone: string;
+  name: string;
+  initials: string;
+  dateLabel: string;
+  gradient: string;
+  hasValidated: boolean;
+  statusBucket: "new" | "active" | "inactive";
 };
 
 type ModalType = "profile" | "addNote" | "addDocument" | "history" | null;
@@ -39,15 +43,85 @@ type PatientDocument = {
   created_at: string;
 };
 
-const patients: Patient[] = [
-  { id: "p1", initials: "JD", name: "Jean Durand", phone: "06 90 00 01 58", date: "Aujourd'hui", color: "from-[#008EA1] to-[#004866]" },
-  { id: "p2", initials: "SL", name: "Sophie Leroy", phone: "06 12 34 56 78", date: "Hier", color: "from-[#00A686] to-[#007C73]" },
-  { id: "p3", initials: "PB", name: "Paul Bernard", phone: "06 23 45 67 89", date: "19/05/2026", color: "from-[#7256F4] to-[#5338C9]" },
-  { id: "p4", initials: "CM", name: "Claire Martin", phone: "06 34 56 78 90", date: "18/05/2026", color: "from-[#0BA37F] to-[#007B64]" },
-  { id: "p5", initials: "LH", name: "Leila Hamel", phone: "06 45 67 89 01", date: "17/05/2026", color: "from-[#FF9A2E] to-[#F36F21]" },
-  { id: "p6", initials: "FH", name: "Farid Haddad", phone: "06 56 78 90 12", date: "16/05/2026", color: "from-[#009CA4] to-[#006E78]" },
-  { id: "p7", initials: "YM", name: "Yanis Morel", phone: "06 67 89 01 23", date: "15/05/2026", color: "from-[#8068E8] to-[#5942C9]" },
+const SIDEBAR_GRADIENTS = [
+  "from-[#008EA1] to-[#004866]",
+  "from-[#00A686] to-[#007C73]",
+  "from-[#7256F4] to-[#5338C9]",
+  "from-[#0BA37F] to-[#007B64]",
+  "from-[#FF9A2E] to-[#F36F21]",
+  "from-[#009CA4] to-[#006E78]",
+  "from-[#8068E8] to-[#5942C9]",
 ];
+
+function sidebarGradient(seed: string) {
+  if (!seed) return SIDEBAR_GRADIENTS[0];
+  let h = 0;
+  for (let i = 0; i < seed.length; i += 1) h = (h + seed.charCodeAt(i)) | 0;
+  return SIDEBAR_GRADIENTS[Math.abs(h) % SIDEBAR_GRADIENTS.length];
+}
+
+function cabinetRowTimeLabel(value: string) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return "";
+  const diff = Date.now() - date.getTime();
+  const days = Math.floor(diff / 86400000);
+  if (days === 0) return "Aujourd'hui";
+  if (days === 1) return "Hier";
+  if (days < 7) return `Il y a ${days} j`;
+  return date.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+function deriveCabinetRowBucket(row: Record<string, unknown>): "new" | "active" | "inactive" {
+  const now = Date.now();
+  const updatedAt = new Date(String(row.updated_at || 0)).getTime();
+  const createdAt = new Date(String(row.created_at || 0)).getTime();
+  const daysSinceUpdate = Number.isFinite(updatedAt) ? (now - updatedAt) / 86400000 : 0;
+  const daysSinceCreation = Number.isFinite(createdAt) ? (now - createdAt) / 86400000 : 999;
+  if (daysSinceCreation < 14 && !patientDashboardFileHasValidatedIdentity(row)) return "new";
+  if (daysSinceUpdate > 60 && Number.isFinite(updatedAt)) return "inactive";
+  return "active";
+}
+
+function formatDisplayFrenchPhone(raw: string): string {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) return "—";
+  if (trimmed.startsWith("+33") && trimmed.length === 12) {
+    return `0${trimmed.slice(3, 4)} ${trimmed.slice(4, 6)} ${trimmed.slice(6, 8)} ${trimmed.slice(8, 10)} ${trimmed.slice(10)}`;
+  }
+  return trimmed;
+}
+
+function cabinetRowToSidebar(row: Record<string, unknown>): SidebarPatientRow | null {
+  const phone = normalizePhone(String(row.phone || ""));
+  if (!phone) return null;
+  const displayName =
+    String(row.display_name || row.validated_name || row.raw_name || "").trim() || "Patient";
+  const updatedIso = String(row.updated_at || row.created_at || "");
+  return {
+    phone,
+    displayPhone: formatDisplayFrenchPhone(phone.startsWith("+") ? phone : phone),
+    name: displayName,
+    initials: initialsFromFullName(displayName),
+    dateLabel: cabinetRowTimeLabel(updatedIso),
+    gradient: sidebarGradient(phone),
+    hasValidated: patientDashboardFileHasValidatedIdentity(row),
+    statusBucket: deriveCabinetRowBucket(row),
+  };
+}
+
+function initialsFromFullName(name: string) {
+  const parts = String(name || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!parts.length) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  const a = parts[0][0];
+  const b = parts[parts.length - 1][0];
+  return `${a}${b}`.toUpperCase();
+}
 
 const viewTabs: Array<{ id: ViewType; label: string; icon: string }> = [
   { id: "overview", label: "Vue d'ensemble", icon: "▤" },
@@ -63,18 +137,6 @@ function cx(...classes: Array<string | false | null | undefined>) {
 
 function normalizePhone(value: string) {
   return String(value || "").replace(/[^\d+]/g, "");
-}
-
-function initialsFromFullName(name: string) {
-  const parts = String(name || "")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  if (!parts.length) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  const a = parts[0][0];
-  const b = parts[parts.length - 1][0];
-  return `${a}${b}`.toUpperCase();
 }
 
 function formatBytes(value: number) {
@@ -227,7 +289,6 @@ export default function PatientDashboardPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
-  const [selectedPatientId, setSelectedPatientId] = useState("p1");
   const [filter, setFilter] = useState("Tous");
   const [activeView, setActiveView] = useState<ViewType>("overview");
   const [toast, setToast] = useState("");
@@ -253,7 +314,11 @@ export default function PatientDashboardPage() {
   const [tenantPatientNotFound, setTenantPatientNotFound] = useState(false);
   /** Profil réel (API) pour l’en-tête quand on ouvre /patient-dashboard?phone=… ou un numéro reconnu en base. */
   const [urlPatientHero, setUrlPatientHero] = useState<{ name: string; phone: string; initials: string } | null>(null);
+  const [tenantSidebarRows, setTenantSidebarRows] = useState<SidebarPatientRow[]>([]);
+  const [tenantSidebarTotal, setTenantSidebarTotal] = useState(0);
+  const [tenantListLoading, setTenantListLoading] = useState(true);
   const toastTimerRef = useRef<number | null>(null);
+  const sidebarBootstrapDoneRef = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -278,8 +343,104 @@ export default function PatientDashboardPage() {
 
   const phoneFromDashboardUrl = useMemo(() => (searchParams.get("phone") || "").trim(), [searchParams]);
   const isDirectPhoneView = Boolean(phoneFromDashboardUrl);
-  const selectedPatient = patients.find((patient) => patient.id === selectedPatientId) || patients[0];
-  const activePatientPhone = (phoneFromDashboardUrl || requestContext?.phone || selectedPatient?.phone || "").trim();
+  const tenantPatientPhone = useMemo(() => normalizePhone(phoneFromDashboardUrl), [phoneFromDashboardUrl]);
+
+  const loadTenantSidebarPatients = useCallback(async () => {
+    try {
+      const res = await api.tenantGetPatients("?limit=100");
+      const items = Array.isArray(res?.items) ? res.items : [];
+      const mapped = items
+        .map((item: Record<string, unknown>) => cabinetRowToSidebar(item))
+        .filter((item): item is SidebarPatientRow => Boolean(item));
+      setTenantSidebarRows(mapped);
+      setTenantSidebarTotal(typeof res?.total === "number" ? res.total : mapped.length);
+    } catch {
+      setTenantSidebarRows([]);
+      setTenantSidebarTotal(0);
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setTenantListLoading(true);
+    loadTenantSidebarPatients().finally(() => {
+      if (!cancelled) setTenantListLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadTenantSidebarPatients]);
+
+  useEffect(() => {
+    const pnorm = normalizePhone(phoneFromDashboardUrl);
+    if (!pnorm) return undefined;
+    const t = window.setTimeout(() => {
+      loadTenantSidebarPatients();
+    }, 450);
+    return () => window.clearTimeout(t);
+  }, [phoneFromDashboardUrl, loadTenantSidebarPatients]);
+
+  useEffect(() => {
+    if (tenantListLoading) return;
+    if (normalizePhone(searchParams.get("phone") || "")) return;
+    if ((searchParams.get("requestId") || "").trim()) return;
+    if (!tenantSidebarRows.length) return;
+    if (sidebarBootstrapDoneRef.current) return;
+    sidebarBootstrapDoneRef.current = true;
+    const first = normalizePhone(tenantSidebarRows[0]?.phone || "");
+    if (!first) return;
+    const np = new URLSearchParams(searchParams);
+    np.set("phone", first);
+    setSearchParams(np, { replace: true });
+  }, [tenantListLoading, tenantSidebarRows, searchParams, setSearchParams]);
+
+  const effectiveSidebarRows = useMemo((): SidebarPatientRow[] => {
+    const rows = [...tenantSidebarRows];
+    const key = tenantPatientPhone;
+    if (!key || !urlPatientHero) return rows;
+    if (rows.some((r) => r.phone === key)) return rows;
+    const canonical = normalizePhone(urlPatientHero.phone) || key;
+    return [
+      {
+        phone: canonical,
+        displayPhone: formatDisplayFrenchPhone(canonical),
+        name: urlPatientHero.name,
+        initials: urlPatientHero.initials,
+        dateLabel: "—",
+        gradient: sidebarGradient(canonical),
+        hasValidated: true,
+        statusBucket: "active",
+      },
+      ...rows,
+    ];
+  }, [tenantSidebarRows, tenantPatientPhone, urlPatientHero]);
+
+  const sidebarHeroFallback = useMemo(
+    () => effectiveSidebarRows.find((r) => r.phone === tenantPatientPhone) || null,
+    [effectiveSidebarRows, tenantPatientPhone],
+  );
+
+  const sidebarCounts = useMemo(
+    () => ({
+      total: tenantSidebarTotal,
+      aTraiter: tenantSidebarRows.filter((r) => !r.hasValidated).length,
+      nouveaux: tenantSidebarRows.filter((r) => r.statusBucket === "new").length,
+    }),
+    [tenantSidebarRows, tenantSidebarTotal],
+  );
+
+  const filteredSidebarRows = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    let out = effectiveSidebarRows;
+    if (q) {
+      out = out.filter((row) =>
+        `${row.name} ${row.displayPhone} ${row.phone}`.toLowerCase().includes(q),
+      );
+    }
+    if (filter === "À traiter") out = out.filter((row) => !row.hasValidated);
+    if (filter === "Nouveaux") out = out.filter((row) => row.statusBucket === "new");
+    return out;
+  }, [effectiveSidebarRows, query, filter]);
 
   useEffect(() => {
     if (!phoneFromDashboardUrl) setUrlPatientHero(null);
@@ -293,66 +454,56 @@ export default function PatientDashboardPage() {
       if (isDirectPhoneView) {
         return {
           name: "Aucune fiche pour ce numéro",
-          phone: phoneFromDashboardUrl || activePatientPhone,
+          phone: formatDisplayFrenchPhone(tenantPatientPhone || phoneFromDashboardUrl),
           initials: "?",
           gradient: slate,
         };
       }
       return {
-        name: selectedPatient.name,
-        phone: selectedPatient.phone,
-        initials: selectedPatient.initials,
-        gradient: selectedPatient.color,
+        name: "Patient",
+        phone: "—",
+        initials: "?",
+        gradient: slate,
       };
     }
     if (urlPatientHero) {
-      return { ...urlPatientHero, gradient: teal };
+      return {
+        ...urlPatientHero,
+        phone: formatDisplayFrenchPhone(normalizePhone(urlPatientHero.phone) || urlPatientHero.phone),
+        gradient: teal,
+      };
     }
-    if (documentsLoading && activePatientPhone) {
+    if (documentsLoading && tenantPatientPhone) {
       return {
         name: "Chargement…",
-        phone: activePatientPhone,
+        phone: formatDisplayFrenchPhone(tenantPatientPhone),
         initials: "…",
         gradient: loadingGrad,
       };
     }
+    if (sidebarHeroFallback) {
+      return {
+        name: sidebarHeroFallback.name,
+        phone: sidebarHeroFallback.displayPhone,
+        initials: sidebarHeroFallback.initials,
+        gradient: sidebarHeroFallback.gradient,
+      };
+    }
     return {
-      name: selectedPatient.name,
-      phone: selectedPatient.phone,
-      initials: selectedPatient.initials,
-      gradient: selectedPatient.color,
+      name: "Patient",
+      phone: "—",
+      initials: "?",
+      gradient: slate,
     };
   }, [
     tenantPatientNotFound,
     isDirectPhoneView,
     phoneFromDashboardUrl,
-    activePatientPhone,
+    tenantPatientPhone,
     urlPatientHero,
     documentsLoading,
-    selectedPatient,
+    sidebarHeroFallback,
   ]);
-
-  const filteredPatients = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) return patients;
-    return patients.filter((patient) => `${patient.name} ${patient.phone}`.toLowerCase().includes(normalized));
-  }, [query]);
-
-  useEffect(() => {
-    if (!requestContext) return;
-    const requestPhone = normalizePhone(requestContext.phone);
-    const requestName = requestContext.patientName.toLowerCase();
-    const fromPhone = requestPhone
-      ? patients.find((patient) => normalizePhone(patient.phone) === requestPhone)
-      : null;
-    const fromName = !fromPhone && requestName
-      ? patients.find((patient) => patient.name.toLowerCase().includes(requestName))
-      : null;
-    const found = fromPhone || fromName;
-    if (found && found.id !== selectedPatientId) {
-      setSelectedPatientId(found.id);
-    }
-  }, [requestContext, selectedPatientId]);
 
   useEffect(() => {
     setRequestStatus(requestContext?.status || "");
@@ -361,7 +512,7 @@ export default function PatientDashboardPage() {
 
   useEffect(() => {
     let cancelled = false;
-    if (!activePatientPhone) {
+    if (!tenantPatientPhone) {
       setDocuments([]);
       setUrlPatientHero(null);
       setTenantPatientNotFound(false);
@@ -370,7 +521,7 @@ export default function PatientDashboardPage() {
       };
     }
     setDocumentsLoading(true);
-    api.tenantGetPatient(activePatientPhone)
+    api.tenantGetPatient(tenantPatientPhone)
       .then((res) => {
         if (cancelled) return;
         setTenantPatientNotFound(false);
@@ -378,7 +529,7 @@ export default function PatientDashboardPage() {
         if (p) {
           const name =
             String(p.display_name || p.validated_name || p.raw_name || "Patient").trim() || "Patient";
-          const tel = String(p.phone || activePatientPhone).trim();
+          const tel = String(p.phone || tenantPatientPhone).trim();
           setUrlPatientHero({ name, phone: tel, initials: initialsFromFullName(name) });
         } else {
           setUrlPatientHero(null);
@@ -409,7 +560,7 @@ export default function PatientDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [activePatientPhone]);
+  }, [tenantPatientPhone]);
 
   useEffect(() => {
     if (!editingEmail) setEmailDraft(patientEmail || "");
@@ -417,14 +568,14 @@ export default function PatientDashboardPage() {
 
   useEffect(() => {
     let cancelled = false;
-    if (!activePatientPhone) {
+    if (!tenantPatientPhone) {
       setPatientNotes([]);
       return () => {
         cancelled = true;
       };
     }
     setNotesLoading(true);
-    api.tenantGetPatientNotes(activePatientPhone, "?limit=100")
+    api.tenantGetPatientNotes(tenantPatientPhone, "?limit=100")
       .then((res) => {
         if (cancelled) return;
         const items = Array.isArray(res?.items) ? res.items : [];
@@ -446,7 +597,7 @@ export default function PatientDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [activePatientPhone]);
+  }, [tenantPatientPhone]);
 
   const notify = (message: string) => {
     setToast(message);
@@ -459,13 +610,13 @@ export default function PatientDashboardPage() {
       notify("Ajoute une note avant d'enregistrer");
       return false;
     }
-    if (!activePatientPhone) {
+    if (!tenantPatientPhone) {
       notify("Aucun patient sélectionné");
       return false;
     }
     setNotesSaving(true);
     try {
-      const res = await api.tenantCreatePatientNote(activePatientPhone, { text: note.trim(), author: "Praticien" });
+      const res = await api.tenantCreatePatientNote(tenantPatientPhone, { text: note.trim(), author: "Praticien" });
       const created = res?.item;
       if (created) {
         setPatientNotes((prev) => [
@@ -490,10 +641,10 @@ export default function PatientDashboardPage() {
   };
 
   const removeNote = async (noteId: number) => {
-    if (!activePatientPhone || !noteId) return;
+    if (!tenantPatientPhone || !noteId) return;
     setNoteDeletingId(noteId);
     try {
-      await api.tenantDeletePatientNote(activePatientPhone, noteId);
+      await api.tenantDeletePatientNote(tenantPatientPhone, noteId);
       setPatientNotes((prev) => prev.filter((item) => item.id !== noteId));
       notify("Note supprimée");
     } catch (e) {
@@ -505,13 +656,13 @@ export default function PatientDashboardPage() {
 
   const uploadDocument = async (file?: File | null) => {
     if (!file) return;
-    if (!activePatientPhone) {
+    if (!tenantPatientPhone) {
       notify("Aucun patient sélectionné");
       return;
     }
     setDocumentsUploading(true);
     try {
-      const res = await api.tenantUploadPatientDocument(activePatientPhone, file);
+      const res = await api.tenantUploadPatientDocument(tenantPatientPhone, file);
       const created = res?.document;
       if (created) {
         setDocuments((prev) => [
@@ -534,9 +685,9 @@ export default function PatientDashboardPage() {
   };
 
   const downloadDocument = async (doc: PatientDocument) => {
-    if (!activePatientPhone) return;
+    if (!tenantPatientPhone) return;
     try {
-      const url = api.tenantDownloadPatientDocument(activePatientPhone, doc.id);
+      const url = api.tenantDownloadPatientDocument(tenantPatientPhone, doc.id);
       const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("Téléchargement échoué");
       const blob = await res.blob();
@@ -554,14 +705,14 @@ export default function PatientDashboardPage() {
   };
 
   const openPreview = async (doc: PatientDocument) => {
-    if (!activePatientPhone) return;
+    if (!tenantPatientPhone) return;
     const canPreview = doc.mime_type.includes("pdf") || doc.mime_type.startsWith("image/");
     if (!canPreview) {
       await downloadDocument(doc);
       return;
     }
     try {
-      const url = api.tenantDownloadPatientDocument(activePatientPhone, doc.id);
+      const url = api.tenantDownloadPatientDocument(tenantPatientPhone, doc.id);
       const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("Impossible de charger le document");
       const blob = await res.blob();
@@ -580,10 +731,10 @@ export default function PatientDashboardPage() {
   };
 
   const deleteDocument = async (docId: number) => {
-    if (!activePatientPhone || !docId) return;
+    if (!tenantPatientPhone || !docId) return;
     setDocumentDeletingId(docId);
     try {
-      await api.tenantDeletePatientDocument(activePatientPhone, docId);
+      await api.tenantDeletePatientDocument(tenantPatientPhone, docId);
       setDocuments((prev) => prev.filter((doc) => doc.id !== docId));
       notify("Document supprimé");
     } catch (e) {
@@ -594,14 +745,14 @@ export default function PatientDashboardPage() {
   };
 
   const sendDocument = async (docId: number) => {
-    if (!activePatientPhone || !docId) return;
+    if (!tenantPatientPhone || !docId) return;
     if (!patientEmail) {
       notify("Ajoute d'abord l'email du patient");
       return;
     }
     setDocumentSendingId(docId);
     try {
-      await api.tenantSendPatientDocument(activePatientPhone, docId);
+      await api.tenantSendPatientDocument(tenantPatientPhone, docId);
       notify(`Document envoyé à ${patientEmail}`);
     } catch (e) {
       notify((e as Error)?.message || "Erreur envoi email");
@@ -611,13 +762,13 @@ export default function PatientDashboardPage() {
   };
 
   const saveEmail = async () => {
-    if (!activePatientPhone) {
+    if (!tenantPatientPhone) {
       notify("Aucun patient sélectionné");
       return;
     }
     setEmailSaving(true);
     try {
-      await api.tenantUpdatePatient(activePatientPhone, { email: emailDraft.trim() });
+      await api.tenantUpdatePatient(tenantPatientPhone, { email: emailDraft.trim() });
       setPatientEmail(emailDraft.trim());
       setEditingEmail(false);
       notify(emailDraft.trim() ? "Email enregistré" : "Email supprimé");
@@ -666,7 +817,7 @@ export default function PatientDashboardPage() {
         <aside className="border-r border-[#E5EDF5] bg-white px-6 py-8">
           <div className="mb-5 flex items-center justify-between">
             <h2 className="text-2xl font-black">Patients</h2>
-            <span className="rounded-xl bg-[#EEF6FA] px-3 py-1.5 text-sm font-black text-[#1C4B6B]">208</span>
+            <span className="rounded-xl bg-[#EEF6FA] px-3 py-1.5 text-sm font-black text-[#1C4B6B]">{sidebarCounts.total}</span>
           </div>
 
           <div className="relative mb-5">
@@ -680,7 +831,7 @@ export default function PatientDashboardPage() {
           </div>
 
           <div className="mb-6 flex flex-wrap gap-2">
-            {[["Tous", "208"], ["À traiter", "12"], ["Nouveaux", "15"]].map(([label, count]) => (
+            {[["Tous", String(sidebarCounts.total)], ["À traiter", String(sidebarCounts.aTraiter)], ["Nouveaux", String(sidebarCounts.nouveaux)]].map(([label, count]) => (
               <button
                 key={label}
                 onClick={() => setFilter(label)}
@@ -699,30 +850,45 @@ export default function PatientDashboardPage() {
           </div>
 
           <div className="overflow-hidden rounded-3xl border border-[#E5EDF5] bg-white shadow-sm">
-            {filteredPatients.map((patient) => {
-              const selected = patient.id === selectedPatientId;
-              return (
-                <button
-                  key={patient.id}
-                  onClick={() => setSelectedPatientId(patient.id)}
-                  className={cx(
-                    "flex w-full items-center gap-4 border-b border-[#EEF3F8] p-4 text-left transition last:border-b-0",
-                    selected ? "bg-[#EAF8FC] ring-1 ring-inset ring-[#BFEAF0]" : "hover:bg-[#F8FBFD]",
-                  )}
-                >
-                  <div className={cx("grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-gradient-to-br text-lg font-black text-white shadow-sm", patient.color)}>
-                    {patient.initials}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-black">{patient.name}</div>
-                    <div className="mt-1 text-sm text-[#53647F]">{patient.phone}</div>
-                  </div>
-                  <div className="text-xs font-semibold text-[#53647F]">{patient.date}</div>
-                </button>
-              );
-            })}
+            {tenantListLoading ? (
+              <div className="p-10 text-center text-sm font-semibold text-[#64748B]">Chargement de la liste…</div>
+            ) : filteredSidebarRows.length === 0 ? (
+              <div className="p-10 text-center text-sm font-semibold text-[#64748B]">Aucun patient ne correspond aux filtres.</div>
+            ) : (
+              filteredSidebarRows.map((patient) => {
+                const selected = patient.phone === tenantPatientPhone;
+                return (
+                  <button
+                    key={patient.phone}
+                    type="button"
+                    onClick={() => {
+                      const np = new URLSearchParams(searchParams);
+                      np.set("phone", patient.phone);
+                      setSearchParams(np, { replace: true });
+                    }}
+                    className={cx(
+                      "flex w-full items-center gap-4 border-b border-[#EEF3F8] p-4 text-left transition last:border-b-0",
+                      selected ? "bg-[#EAF8FC] ring-1 ring-inset ring-[#BFEAF0]" : "hover:bg-[#F8FBFD]",
+                    )}
+                  >
+                    <div className={cx("grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-gradient-to-br text-lg font-black text-white shadow-sm", patient.gradient)}>
+                      {patient.initials}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-black">{patient.name}</div>
+                      <div className="mt-1 text-sm text-[#53647F]">{patient.displayPhone}</div>
+                    </div>
+                    <div className="text-xs font-semibold text-[#53647F]">{patient.dateLabel || "—"}</div>
+                  </button>
+                );
+              })
+            )}
 
-            <button onClick={() => notify("Liste complète des patients ouverte")} className="flex h-16 w-full items-center justify-center gap-3 text-sm font-black text-[#007E8C] hover:bg-[#F8FBFD]">
+            <button
+              type="button"
+              onClick={() => navigate("/app/patients")}
+              className="flex h-16 w-full items-center justify-center gap-3 text-sm font-black text-[#007E8C] hover:bg-[#F8FBFD]"
+            >
               Voir tous les patients <span className="text-xl">›</span>
             </button>
           </div>
