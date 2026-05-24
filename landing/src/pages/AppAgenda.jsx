@@ -240,6 +240,34 @@ function normalizePhone(raw) {
   return c.startsWith("00") ? `+${c.slice(2)}` : c;
 }
 
+/** Téléphone facultatif (création RDV cabinet) ; si renseigné → 10 à 15 chiffres (E.164). */
+function validateCabinetBookingPhone(raw) {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) return { ok: true };
+  const norm = normalizePhone(trimmed);
+  if (!norm) {
+    return { ok: false, message: "Le numéro de téléphone est trop court ou incomplet." };
+  }
+  const digitsOnly = norm.replace(/\D/g, "");
+  if (digitsOnly.length < 10 || digitsOnly.length > 15) {
+    return { ok: false, message: "Indiquez un numéro valide (entre 10 et 15 chiffres, ex. 06 12 34 56 78)." };
+  }
+  return { ok: true };
+}
+
+/** E-mail facultatif ; si renseigné → forme générale adresse@domaine.extension */
+function isCabinetBookingEmailValid(raw) {
+  const t = String(raw || "").trim();
+  if (!t) return true;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(t);
+}
+
+/** Aligné backend / agenda (`patient_has_file`) : identité validée ↔ `validated_name` ≥ 2 caractères. */
+function dashboardPatientHasValidatedIdentity(profile) {
+  if (!profile || typeof profile !== "object") return false;
+  return String(profile.validated_name || "").trim().length >= 2;
+}
+
 function formatPhone(raw) {
   const c = normalizePhone(raw);
   if (!c) return "";
@@ -695,6 +723,20 @@ export default function AppAgenda() {
     );
   }, [createBookingOpen, cabinetBookingTimeChoices]);
 
+  /** Bloque « Enregistrer » tant que téléphone ou e-mail (si remplis) ne sont pas valides. */
+  const cabinetBookingFormValid = useMemo(() => {
+    const name = (createBookingForm.patient_name || "").trim();
+    if (!name || name.length < 2) return false;
+    if (!validateCabinetBookingPhone(createBookingForm.patient_phone).ok) return false;
+    const emailTrim = (createBookingForm.patient_email || "").trim();
+    if (emailTrim && !isCabinetBookingEmailValid(emailTrim)) return false;
+    const { booking_date, booking_time } = createBookingForm;
+    if (!booking_date || !/^\d{4}-\d{2}-\d{2}$/.test(booking_date.trim())) return false;
+    if (!booking_time || !/^\d{2}:\d{2}$/.test(booking_time.trim())) return false;
+    const dt = new Date(`${booking_date.trim()}T${booking_time.trim()}:00`);
+    return !Number.isNaN(dt.getTime());
+  }, [createBookingForm]);
+
   const apptHourBounds = useMemo(() => {
     let min = null, max = null;
     visibleDates.forEach((date) => {
@@ -902,6 +944,16 @@ export default function AppAgenda() {
       setActionMsg({ type: "error", text: "Choisissez une date et une heure valides pour le RDV." });
       return;
     }
+    const phoneCheck = validateCabinetBookingPhone(createBookingForm.patient_phone);
+    if (!phoneCheck.ok) {
+      setActionMsg({ type: "error", text: phoneCheck.message });
+      return;
+    }
+    const emailTrim = (createBookingForm.patient_email || "").trim();
+    if (emailTrim && !isCabinetBookingEmailValid(emailTrim)) {
+      setActionMsg({ type: "error", text: "L’adresse e-mail n’est pas valide (exemple : prenom@gmail.com)." });
+      return;
+    }
     setCreateBookingLoading(true);
     try {
       await api.tenantCreateAgendaBooking({
@@ -912,11 +964,27 @@ export default function AppAgenda() {
         start_iso: dt.toISOString(),
       });
       const dIso = dt.toISOString().slice(0, 10);
+      const timeHm = createBookingForm.booking_time.trim();
       const timeStr = dt.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+      const phoneNorm = normalizePhone(createBookingForm.patient_phone || "");
+      let needsPatientFile = false;
+      if (phoneNorm) {
+        try {
+          const prof = await api.tenantGetPatient(phoneNorm);
+          needsPatientFile = !dashboardPatientHasValidatedIdentity(prof?.patient);
+        } catch (e) {
+          needsPatientFile = e?.status === 404;
+        }
+      }
+
       setCreateBookingConfirm({
         patientName: name,
         whenLine: `${formatLongDate(dIso)}, ${timeStr}`,
         motif: (createBookingForm.motif || "Consultation").trim(),
+        dateIso: dIso,
+        timeHHMM: timeHm,
+        patientPhone: phoneNorm,
+        needsPatientFile: Boolean(phoneNorm && needsPatientFile),
       });
       setCreateBookingOpen(false);
       invalidateAgendaBulkCache();
@@ -926,6 +994,34 @@ export default function AppAgenda() {
     } finally {
       setCreateBookingLoading(false);
     }
+  }
+
+  function handleViewBookingInAgenda(confirmPayload) {
+    if (!confirmPayload?.dateIso) return;
+    setCreateBookingConfirm(null);
+    const qs = new URLSearchParams({ date: confirmPayload.dateIso, view: "day" });
+    if (confirmPayload.patientPhone) qs.set("phone", confirmPayload.patientPhone);
+    navigate(`/app/agenda?${qs.toString()}`);
+  }
+
+  function handleCreatePatientFromBookingConfirm(confirmPayload) {
+    if (!confirmPayload?.dateIso || !confirmPayload?.patientPhone) return;
+    const fakeAppt = {
+      id: `cabinet-after-booking-${confirmPayload.dateIso}-${confirmPayload.timeHHMM || ""}`,
+      date: confirmPayload.dateIso,
+      displayTime: confirmPayload.timeHHMM || "",
+      endTime: confirmPayload.timeHHMM || "",
+      patient: confirmPayload.patientName,
+      patient_phone: confirmPayload.patientPhone,
+      patient_has_file: false,
+      type: confirmPayload.motif || "Consultation",
+      typeIcon: "📋",
+      isUWI: false,
+      canCancel: false,
+      source: "UWI",
+    };
+    setCreateBookingConfirm(null);
+    openPatientCreateFromAppointment(fakeAppt);
   }
 
   function openPatientCreateFromAppointment(appt) {
@@ -1620,6 +1716,8 @@ export default function AppAgenda() {
                 value={createBookingForm.patient_phone}
                 onChange={(e) => setCreateBookingForm((p) => ({ ...p, patient_phone: e.target.value }))}
                 autoComplete="tel"
+                inputMode="tel"
+                placeholder="facultatif, ex. 06 12 34 56 78"
               />
             </label>
             <label style={S.modalLabel}>
@@ -1681,8 +1779,8 @@ export default function AppAgenda() {
             <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
               <button
                 type="button"
-                style={{ ...S.createRdvBtn, flex: 1, fontSize: 13 }}
-                disabled={createBookingLoading}
+                style={{ ...S.createRdvBtn, flex: 1, fontSize: 13, ...(cabinetBookingFormValid ? {} : { opacity: 0.55, cursor: "not-allowed" }) }}
+                disabled={createBookingLoading || !cabinetBookingFormValid}
                 onClick={handleCreateCabinetBookingSubmit}
               >
                 {createBookingLoading ? "…" : "Enregistrer le rendez-vous"}
@@ -1721,13 +1819,37 @@ export default function AppAgenda() {
                 <span style={S.bookingConfirmMetaVal}>{createBookingConfirm.motif}</span>
               </li>
             </ul>
-            <button
-              type="button"
-              style={S.bookingConfirmBtn}
-              onClick={() => setCreateBookingConfirm(null)}
-            >
-              Compris
-            </button>
+            {createBookingConfirm.needsPatientFile ? (
+              <div style={S.bookingConfirmNoFileBox}>
+                <p style={S.bookingConfirmNoFileLead}>
+                  Patient sans fiche : aucune identité patient n&apos;est encore validée sur le dashboard pour ce numéro.
+                  Vous pouvez compléter la fiche tout de suite.
+                </p>
+                <button
+                  type="button"
+                  style={S.bookingConfirmCtaPatient}
+                  onClick={() => handleCreatePatientFromBookingConfirm(createBookingConfirm)}
+                >
+                  Créer sa fiche patient
+                </button>
+              </div>
+            ) : null}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <button
+                type="button"
+                style={S.bookingConfirmSecondaryBtn}
+                onClick={() => handleViewBookingInAgenda(createBookingConfirm)}
+              >
+                Voir ce rendez-vous dans l&apos;agenda
+              </button>
+              <button
+                type="button"
+                style={S.bookingConfirmBtn}
+                onClick={() => setCreateBookingConfirm(null)}
+              >
+                Compris
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
@@ -1840,6 +1962,47 @@ const S = {
     cursor: "pointer",
     fontFamily: "inherit",
     boxShadow: "0 6px 18px rgba(5,150,105,.35)",
+  },
+  bookingConfirmSecondaryBtn: {
+    width: "100%",
+    padding: "11px 16px",
+    borderRadius: 12,
+    border: "2px solid #059669",
+    background: "#fff",
+    color: "#047857",
+    fontSize: 14,
+    fontWeight: 800,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    boxSizing: "border-box",
+  },
+  bookingConfirmNoFileBox: {
+    marginBottom: 14,
+    padding: "12px 14px",
+    borderRadius: 12,
+    background: "rgba(254,243,199,0.95)",
+    border: "1px solid #fcd34d",
+    textAlign: "left",
+  },
+  bookingConfirmNoFileLead: {
+    margin: "0 0 10px",
+    fontSize: 13,
+    fontWeight: 700,
+    color: "#92400e",
+    lineHeight: 1.45,
+  },
+  bookingConfirmCtaPatient: {
+    width: "100%",
+    padding: "10px 14px",
+    borderRadius: 10,
+    border: "2px solid #b45309",
+    background: "#fff",
+    color: "#92400e",
+    fontSize: 13,
+    fontWeight: 800,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    boxSizing: "border-box",
   },
 
   modalOverlay: { position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", display: "grid", placeItems: "center", zIndex: 60, padding: 16 },
