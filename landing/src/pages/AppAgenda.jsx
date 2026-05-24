@@ -948,6 +948,7 @@ export default function AppAgenda() {
     setPatientCreateSummary(
       `${formatLongDate(appt?.date)} · ${appt?.displayTime || "—"}${motif ? ` · ${motif}` : ""}`,
     );
+    closeAppointmentDetail();
     setPatientCreateOpen(true);
   }
 
