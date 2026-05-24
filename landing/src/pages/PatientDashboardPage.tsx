@@ -140,6 +140,31 @@ function normalizePhone(value: string) {
   return String(value || "").replace(/[^\d+]/g, "");
 }
 
+/** Si le patient ouvert (?phone=) n’est pas dans les résultats API, on injecte une ligne pour le garder cliquable. */
+function injectSelectedPatientRow(
+  rows: SidebarPatientRow[],
+  phoneKey: string,
+  hero: { name: string; phone: string; initials: string } | null,
+): SidebarPatientRow[] {
+  const key = phoneKey ? normalizePhone(phoneKey) : "";
+  if (!key || !hero) return rows;
+  if (rows.some((r) => r.phone === key)) return rows;
+  const canonical = normalizePhone(hero.phone) || key;
+  return [
+    {
+      phone: canonical,
+      displayPhone: formatDisplayFrenchPhone(canonical),
+      name: hero.name,
+      initials: hero.initials,
+      dateLabel: "—",
+      gradient: sidebarGradient(canonical),
+      hasValidated: true,
+      statusBucket: "active",
+    },
+    ...rows,
+  ];
+}
+
 function frenchAppointmentDateParts(d: Date): { day: string; monthYear: string; dow: string } {
   return {
     day: String(d.getDate()),
@@ -353,6 +378,9 @@ export default function PatientDashboardPage() {
   const sidebarBootstrapDoneRef = useRef(false);
   const [patientAgendaSlots, setPatientAgendaSlots] = useState<Array<Record<string, unknown>>>([]);
   const [patientAgendaLoading, setPatientAgendaLoading] = useState(false);
+  /** Recherche serveur GET /patients?q= ; null si la recherche API n’est pas utilisée (< 2 caractères). */
+  const [patientSearchRows, setPatientSearchRows] = useState<SidebarPatientRow[] | null>(null);
+  const [patientSearchLoading, setPatientSearchLoading] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -381,7 +409,7 @@ export default function PatientDashboardPage() {
 
   const loadTenantSidebarPatients = useCallback(async () => {
     try {
-      const res = await api.tenantGetPatients("?limit=100");
+      const res = await api.tenantGetPatients("?limit=500");
       const items = Array.isArray(res?.items) ? res.items : [];
       const mapped = items
         .map((item: Record<string, unknown>) => cabinetRowToSidebar(item))
@@ -406,6 +434,40 @@ export default function PatientDashboardPage() {
   }, [loadTenantSidebarPatients]);
 
   useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) {
+      setPatientSearchRows(null);
+      setPatientSearchLoading(false);
+      return undefined;
+    }
+    setPatientSearchLoading(true);
+    setPatientSearchRows(null);
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      api
+        .tenantGetPatients(`?q=${encodeURIComponent(q)}&limit=50`)
+        .then((res) => {
+          if (cancelled) return;
+          const items = Array.isArray(res?.items) ? res.items : [];
+          const mapped = items
+            .map((item: Record<string, unknown>) => cabinetRowToSidebar(item))
+            .filter((row): row is SidebarPatientRow => Boolean(row));
+          setPatientSearchRows(mapped);
+        })
+        .catch(() => {
+          if (!cancelled) setPatientSearchRows([]);
+        })
+        .finally(() => {
+          if (!cancelled) setPatientSearchLoading(false);
+        });
+    }, 320);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [query]);
+
+  useEffect(() => {
     const pnorm = normalizePhone(phoneFromDashboardUrl);
     if (!pnorm) return undefined;
     const t = window.setTimeout(() => {
@@ -428,26 +490,15 @@ export default function PatientDashboardPage() {
     setSearchParams(np, { replace: true });
   }, [tenantListLoading, tenantSidebarRows, searchParams, setSearchParams]);
 
-  const effectiveSidebarRows = useMemo((): SidebarPatientRow[] => {
-    const rows = [...tenantSidebarRows];
-    const key = tenantPatientPhone;
-    if (!key || !urlPatientHero) return rows;
-    if (rows.some((r) => r.phone === key)) return rows;
-    const canonical = normalizePhone(urlPatientHero.phone) || key;
-    return [
-      {
-        phone: canonical,
-        displayPhone: formatDisplayFrenchPhone(canonical),
-        name: urlPatientHero.name,
-        initials: urlPatientHero.initials,
-        dateLabel: "—",
-        gradient: sidebarGradient(canonical),
-        hasValidated: true,
-        statusBucket: "active",
-      },
-      ...rows,
-    ];
-  }, [tenantSidebarRows, tenantPatientPhone, urlPatientHero]);
+  const effectiveSidebarRows = useMemo(
+    () => injectSelectedPatientRow([...tenantSidebarRows], tenantPatientPhone, urlPatientHero),
+    [tenantSidebarRows, tenantPatientPhone, urlPatientHero],
+  );
+
+  const effectiveSearchSidebarRows = useMemo((): SidebarPatientRow[] | null => {
+    if (patientSearchRows === null) return null;
+    return injectSelectedPatientRow([...patientSearchRows], tenantPatientPhone, urlPatientHero);
+  }, [patientSearchRows, tenantPatientPhone, urlPatientHero]);
 
   const sidebarHeroFallback = useMemo(
     () => effectiveSidebarRows.find((r) => r.phone === tenantPatientPhone) || null,
@@ -464,17 +515,27 @@ export default function PatientDashboardPage() {
   );
 
   const filteredSidebarRows = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    let out = effectiveSidebarRows;
-    if (q) {
-      out = out.filter((row) =>
-        `${row.name} ${row.displayPhone} ${row.phone}`.toLowerCase().includes(q),
-      );
+    const qTrim = query.trim();
+    const qLower = qTrim.toLowerCase();
+
+    let out: SidebarPatientRow[];
+    if (qTrim.length >= 2) {
+      out = effectiveSearchSidebarRows ?? [];
+    } else {
+      out = effectiveSidebarRows;
+      if (qTrim.length === 1) {
+        out = out.filter((row) =>
+          `${row.name} ${row.displayPhone} ${row.phone}`.toLowerCase().includes(qLower),
+        );
+      }
     }
+
     if (filter === "À traiter") out = out.filter((row) => !row.hasValidated);
     if (filter === "Nouveaux") out = out.filter((row) => row.statusBucket === "new");
     return out;
-  }, [effectiveSidebarRows, query, filter]);
+  }, [effectiveSidebarRows, effectiveSearchSidebarRows, query, filter]);
+
+  const sidebarSearchPending = Boolean(query.trim().length >= 2 && patientSearchLoading);
 
   useEffect(() => {
     if (!phoneFromDashboardUrl) setUrlPatientHero(null);
@@ -908,9 +969,14 @@ export default function PatientDashboardPage() {
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Rechercher un patient..."
+              placeholder="Rechercher (nom ou téléphone, 2+ caractères)…"
               className="h-12 w-full rounded-xl border border-[#DDE7F1] bg-white pl-11 pr-4 text-sm outline-none transition placeholder:text-[#9AA8BB] focus:border-[#009CA4] focus:ring-4 focus:ring-[#009CA4]/10"
             />
+            {!tenantListLoading && tenantSidebarRows.length >= 500 ? (
+              <p className="mt-2 text-xs font-semibold leading-relaxed text-[#8D9AAF]">
+                Affichage des 500 fiches les plus récentes. Pour retrouver un patient hors de cette liste, tapez au moins 2 caractères (nom ou numéro).
+              </p>
+            ) : null}
           </div>
 
           <div className="mb-6 flex flex-wrap gap-2">
@@ -935,6 +1001,8 @@ export default function PatientDashboardPage() {
           <div className="overflow-hidden rounded-3xl border border-[#E5EDF5] bg-white shadow-sm">
             {tenantListLoading ? (
               <div className="p-10 text-center text-sm font-semibold text-[#64748B]">Chargement de la liste…</div>
+            ) : sidebarSearchPending ? (
+              <div className="p-10 text-center text-sm font-semibold text-[#64748B]">Recherche dans toutes les fiches…</div>
             ) : filteredSidebarRows.length === 0 ? (
               <div className="p-10 text-center text-sm font-semibold text-[#64748B]">Aucun patient ne correspond aux filtres.</div>
             ) : (
