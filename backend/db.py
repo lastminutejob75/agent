@@ -1385,8 +1385,8 @@ def search_cabinet_clients(tenant_id: int, q: str, *, limit: int = 15) -> List[D
                 clause_parts_sq.append("(0 = 1)")
             else:
                 phone_flat = (
-                    "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(phone,''),'+',''),' ','')"
-                    ",'-',''),'.',''),'(',''),')','')"
+                    "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE("
+                    "COALESCE(phone,''),'+',''),' ',''),'-',''),'.',''),'(',''),')','')"
                 )
                 bits = [f"({phone_flat} LIKE ? ESCAPE '\\')" for _ in d_patterns]
                 clause_parts_sq.append("(" + " OR ".join(bits) + ")")

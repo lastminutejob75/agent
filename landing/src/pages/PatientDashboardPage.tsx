@@ -865,12 +865,16 @@ export default function PatientDashboardPage() {
   const createPatientFichePractice = useCallback(
     async (validatedName: string) => {
       const name = validatedName.trim();
+      const debugCtx = { phone: tenantPatientPhone, nameLen: name.length };
+      console.info("[fiche.create] start", debugCtx);
       if (!tenantPatientPhone) {
-        notify("Aucun numéro patient");
+        console.warn("[fiche.create] abort: no phone", debugCtx);
+        notify("Aucun numéro patient — rouvrez la fiche depuis la liste Patients.", { sticky: true });
         return false;
       }
       if (name.length < 2) {
-        notify("Le nom doit contenir au moins 2 caractères.");
+        console.warn("[fiche.create] abort: name too short", debugCtx);
+        notify("Saisissez le prénom et le nom (au moins 2 caractères) puis recliquez sur « Créer la fiche ».", { sticky: true });
         return false;
       }
       try {
@@ -879,6 +883,7 @@ export default function PatientDashboardPage() {
           validated_name: name,
           raw_name: name,
         });
+        console.info("[fiche.create] success", { ...debugCtx, register_mode: res?.register_mode });
         const profile = res?.patient as Record<string, unknown> | undefined;
         if (profile) {
           const disp =
@@ -894,7 +899,8 @@ export default function PatientDashboardPage() {
         await loadTenantSidebarPatients();
         return true;
       } catch (e) {
-        notify((e as Error)?.message || "Impossible d’enregistrer la fiche");
+        console.error("[fiche.create] failure", debugCtx, e);
+        notify((e as Error)?.message || "Impossible d’enregistrer la fiche", { sticky: true });
         return false;
       }
     },
@@ -921,10 +927,12 @@ export default function PatientDashboardPage() {
     }
   };
 
-  const notify = (message: string) => {
+  const notify = (message: string, opts?: { sticky?: boolean }) => {
     setToast(message);
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = window.setTimeout(() => setToast(""), 1800);
+    /* Toast "sticky" (erreur/validation) = 6 s pour laisser le temps de lire avant qu'il disparaisse. */
+    const ms = opts?.sticky ? 6000 : 1800;
+    toastTimerRef.current = window.setTimeout(() => setToast(""), ms);
   };
 
   const saveNote = async () => {
@@ -1253,6 +1261,12 @@ export default function PatientDashboardPage() {
                       type="text"
                       value={createFicheName}
                       onChange={(e) => setCreateFicheName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !createFicheSaving) {
+                          e.preventDefault();
+                          void saveNewPatientBanner();
+                        }
+                      }}
                       placeholder="Prénom et nom"
                       className="box-border w-full rounded-xl border border-amber-200 bg-white px-3 py-2.5 font-semibold text-amber-950 outline-none placeholder:text-amber-800/45 focus:border-amber-500 focus:ring-2 focus:ring-amber-300/40"
                     />
