@@ -7024,12 +7024,9 @@
     grid-template-columns: 1fr;
     gap: 18px;
   }
-  /* Image mockup complète (texte intégré au PNG) : pas de zoom arbitraire qui masque le copy */
   .uwi-landing-new .uwi-feat-tel-photo {
-    min-height: 260px;
+    min-height: 220px;
     order: -1;
-    background-size: contain;
-    background-position: center top;
   }
   .uwi-landing-new .uwi-feat-tel-row {
     grid-template-columns: 1fr;
@@ -7043,9 +7040,6 @@
   }
 }
 @media (max-width: 560px) {
-  .uwi-landing-new .uwi-feat-tel-photo {
-    min-height: 240px;
-  }
   .uwi-landing-new .uwi-feat-tel-actions {
     grid-template-columns: 1fr;
   }
