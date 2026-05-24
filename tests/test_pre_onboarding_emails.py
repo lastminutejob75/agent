@@ -54,7 +54,7 @@ def test_commit_sends_prospect_confirmation_when_email_present(
 @patch("backend.routes.pre_onboarding.get_lead")
 @patch("backend.routes.pre_onboarding.update_lead_callback_booking", return_value=True)
 @patch("backend.routes.pre_onboarding.update_lead")
-@patch("backend.routes.pre_onboarding.send_lead_prospect_confirmation_email", return_value=(True, None))
+@patch("backend.services.email_service.send_lead_prospect_confirmation_email", return_value=(True, None))
 @patch("backend.services.email_service.send_lead_callback_booking_email", return_value=(True, None))
 def test_callback_booking_sends_founder_and_prospect_emails(
     mock_founder_cb,
@@ -81,9 +81,8 @@ def test_callback_booking_sends_founder_and_prospect_emails(
     ]
     with patch.dict(os.environ, {"ADMIN_BASE_URL": "https://www.uwiapp.com"}, clear=False):
         r = client.post(
-            "/api/pre-onboarding/leads/lead_cb_1/callback-booking",
+            "/api/pre-onboarding/leads/lead_cb_1/callback-booking?token=tok_test",
             json={"date": "2026-05-23", "slot": "10h00", "phone": "0612345678"},
-            headers={"X-Lead-Token": "tok"},
         )
     assert r.status_code == 200, r.text
     data = r.json()

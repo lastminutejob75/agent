@@ -10,7 +10,7 @@ import re
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Header, Query, Request
+from fastapi import APIRouter, HTTPException, Header, Query, Request, BackgroundTasks
 from pydantic import BaseModel, Field
 
 from backend.leads_pg import count_leads_total, get_lead, lead_exists, update_lead, update_lead_callback_booking, upsert_lead
@@ -489,11 +489,57 @@ async def check_lead_exists(
     raise HTTPException(status_code=404, detail=detail)
 
 
+def _send_callback_booking_emails_task(
+    lead_id: str,
+    assistant_name: str,
+    date_str: str,
+    slot: str,
+    phone: str,
+    lead_email: str,
+    dashboard_base: str,
+) -> None:
+    """Emails callback-booking en arrière-plan (ne bloque pas la réponse HTTP)."""
+    try:
+        from backend.services.email_service import (
+            send_lead_callback_booking_email,
+            send_lead_prospect_confirmation_email,
+        )
+
+        ok_founder, err_founder = send_lead_callback_booking_email(
+            lead_id=lead_id,
+            assistant_name=assistant_name,
+            callback_date_iso=date_str,
+            callback_slot=slot,
+            callback_phone=phone,
+            dashboard_base_url=dashboard_base,
+        )
+        if not ok_founder:
+            logger.warning("lead_callback_booking_email failed lead_id=%s: %s", lead_id, err_founder)
+    except Exception as e:
+        logger.warning("lead_callback_booking_email exception lead_id=%s: %s", lead_id, e)
+
+    if not (lead_email or "").strip():
+        return
+    try:
+        ok_prospect, err_prospect = send_lead_prospect_confirmation_email(
+            to_email=lead_email,
+            assistant_name=assistant_name,
+            callback_date_iso=date_str,
+            callback_slot=slot,
+            callback_phone=phone,
+        )
+        if not ok_prospect:
+            logger.warning("lead_prospect_callback_confirmation failed lead_id=%s: %s", lead_id, err_prospect)
+    except Exception as e:
+        logger.warning("lead_prospect_callback_confirmation exception lead_id=%s: %s", lead_id, e)
+
+
 @router.post("/leads/{lead_id}/callback-booking")
 async def callback_booking(
     lead_id: str,
     body: CallbackBookingBody,
     request: Request,
+    background_tasks: BackgroundTasks,
     x_lead_token: Optional[str] = Header(None, alias="X-Lead-Token"),
     token: Optional[str] = Query(None),
 ) -> Dict[str, Any]:
@@ -546,42 +592,23 @@ async def callback_booking(
         logger.warning("callback_booking notes_log update failed lead_id=%s: %s", lead_id, e)
 
     assistant_name = (lead.get("assistant_name") or "Emma").strip()
+    lead_email = (lead.get("email") or "").strip().lower()
     dashboard_base = (
         os.environ.get("ADMIN_BASE_URL")
         or os.environ.get("FRONT_BASE_URL")
         or os.environ.get("APP_BASE_URL")
         or ""
     ).strip()
-    try:
-        from backend.services.email_service import send_lead_callback_booking_email
-
-        ok_founder, err_founder = send_lead_callback_booking_email(
-            lead_id=lead_id,
-            assistant_name=assistant_name,
-            callback_date_iso=date_str,
-            callback_slot=slot,
-            callback_phone=phone,
-            dashboard_base_url=dashboard_base,
-        )
-        if not ok_founder:
-            logger.warning("lead_callback_booking_email failed lead_id=%s: %s", lead_id, err_founder)
-    except Exception as e:
-        logger.warning("lead_callback_booking_email exception lead_id=%s: %s", lead_id, e)
-
-    lead_email = (lead.get("email") or "").strip().lower()
-    if lead_email:
-        try:
-            ok_prospect, err_prospect = send_lead_prospect_confirmation_email(
-                to_email=lead_email,
-                assistant_name=assistant_name,
-                callback_date_iso=date_str,
-                callback_slot=slot,
-                callback_phone=phone,
-            )
-            if not ok_prospect:
-                logger.warning("lead_prospect_callback_confirmation failed lead_id=%s: %s", lead_id, err_prospect)
-        except Exception as e:
-            logger.warning("lead_prospect_callback_confirmation exception lead_id=%s: %s", lead_id, e)
+    background_tasks.add_task(
+        _send_callback_booking_emails_task,
+        lead_id,
+        assistant_name,
+        date_str,
+        slot,
+        phone,
+        lead_email,
+        dashboard_base,
+    )
 
     out: Dict[str, Any] = {"ok": True}
     if lead_email:

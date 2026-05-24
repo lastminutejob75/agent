@@ -105,12 +105,16 @@ export const api = {
     request(`/api/pre-onboarding/leads/${encodeURIComponent(leadId)}/check`, { method: "GET" }),
   preOnboardingLeadEmail: (leadId) =>
     request(`/api/pre-onboarding/leads/${encodeURIComponent(leadId)}/email`, { method: "GET" }),
-  preOnboardingCallbackBooking: (leadId, payload, leadToken = "") =>
-    request(`/api/pre-onboarding/leads/${encodeURIComponent(leadId)}/callback-booking`, {
+  preOnboardingCallbackBooking: (leadId, payload, leadToken = "") => {
+    const token = (leadToken || "").trim();
+    const qs = token ? `?token=${encodeURIComponent(token)}` : "";
+    return request(`/api/pre-onboarding/leads/${encodeURIComponent(leadId)}/callback-booking${qs}`, {
       method: "POST",
       body: payload,
-      leadToken: leadToken || "",
-    }),
+      // Header + query : query évite un échec preflight si CORS pas encore à jour en prod.
+      leadToken: token,
+    });
+  },
   preOnboardingCreateAccount: (leadId, payload) =>
     request(`/api/pre-onboarding/leads/${encodeURIComponent(leadId)}/create-account`, {
       method: "POST",

@@ -869,7 +869,7 @@ export default function CreerAssistante() {
       }
       setCommitDone(true);
       setSubmittedEmail(data.contact != null ? String(data.contact) : "");
-      setState((s) => ({ ...s, lead_id: lid }));
+      setState((s) => ({ ...s, lead_id: lid, lead_token: data.token ? String(data.token) : s.lead_token }));
     } catch (_) {}
   }, []);
 
@@ -962,6 +962,7 @@ export default function CreerAssistante() {
         (prev) => {
           const p = new URLSearchParams(prev);
           p.set("lead_id", leadId);
+          if (leadToken) p.set("token", leadToken);
           return p;
         },
         { replace: true },
@@ -1034,6 +1035,7 @@ export default function CreerAssistante() {
 
   // Si lead déjà créé : afficher l'écran de finalisation (UWIFinalization)
   const leadIdFromUrl = (searchParams.get("lead_id") || "").trim();
+  const leadTokenFromUrl = (searchParams.get("token") || "").trim();
   const showFinalization = commitDone || Boolean(leadIdFromUrl);
 
   /** Sync lead_id dans l'URL (hors rendu) pour éviter une course où UWIFinalization monte sans id. */
@@ -1078,7 +1080,7 @@ export default function CreerAssistante() {
       } catch (_) {}
     }
     if (!leadId) leadId = state.lead_id || "";
-    if (!leadToken) leadToken = state.lead_token || "";
+    if (!leadToken) leadToken = leadTokenFromUrl || state.lead_token || "";
     const assistantName = state.assistant_name || "Emma";
     return (
       <div className="min-h-screen w-full bg-white">

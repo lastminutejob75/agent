@@ -269,7 +269,7 @@ def send_test_email(to: str) -> Tuple[bool, Optional[str]]:
             msg["To"] = to.strip()
             msg["Subject"] = subject
             msg.attach(MIMEText(html, "html", "utf-8"))
-            with smtplib.SMTP(host, port) as server:
+            with smtplib.SMTP(host, port, timeout=15) as server:
                 server.starttls()
                 server.login(smtp_user, smtp_pass)
                 server.sendmail(smtp_user, [to.strip()], msg.as_string())
@@ -334,7 +334,7 @@ def send_password_reset_email(to: str, reset_url: str, ttl_minutes: int = 60) ->
             msg["To"] = to.strip()
             msg["Subject"] = subject
             msg.attach(MIMEText(html, "html", "utf-8"))
-            with smtplib.SMTP(host, port) as server:
+            with smtplib.SMTP(host, port, timeout=15) as server:
                 server.starttls()
                 server.login(smtp_user, smtp_pass)
                 server.sendmail(smtp_user, [to.strip()], msg.as_string())
@@ -682,7 +682,7 @@ def send_lead_founder_email(
             msg["To"] = to
             msg["Subject"] = subject
             msg.attach(MIMEText(html, "html", "utf-8"))
-            with smtplib.SMTP(host, port) as server:
+            with smtplib.SMTP(host, port, timeout=15) as server:
                 server.starttls()
                 server.login(smtp_user, smtp_pass)
                 server.sendmail(smtp_user, [to], msg.as_string())
@@ -783,7 +783,7 @@ def send_lead_callback_booking_email(
             msg["To"] = to
             msg["Subject"] = subject
             msg.attach(MIMEText(html, "html", "utf-8"))
-            with smtplib.SMTP(host, port) as server:
+            with smtplib.SMTP(host, port, timeout=15) as server:
                 server.starttls()
                 server.login(smtp_user, smtp_pass)
                 server.sendmail(smtp_user, [to], msg.as_string())
@@ -846,7 +846,7 @@ def _send_client_html_email(to_addr: str, subject: str, html: str) -> Tuple[bool
             msg["To"] = to
             msg["Subject"] = subject
             msg.attach(MIMEText(html, "html", "utf-8"))
-            with smtplib.SMTP(host, port) as server:
+            with smtplib.SMTP(host, port, timeout=15) as server:
                 server.starttls()
                 server.login(smtp_user, smtp_pass)
                 server.sendmail(smtp_user, [to], msg.as_string())
@@ -1043,7 +1043,7 @@ def send_welcome_email(
             msg["To"] = to
             msg["Subject"] = subject
             msg.attach(MIMEText(html, "html", "utf-8"))
-            with smtplib.SMTP(host, port) as server:
+            with smtplib.SMTP(host, port, timeout=15) as server:
                 server.starttls()
                 server.login(smtp_user, smtp_pass)
                 server.sendmail(smtp_user, [to], msg.as_string())
@@ -1120,7 +1120,7 @@ def send_payment_link_email(
             msg["To"] = to_addr
             msg["Subject"] = subject
             msg.attach(MIMEText(html, "html", "utf-8"))
-            with smtplib.SMTP(host, port) as server:
+            with smtplib.SMTP(host, port, timeout=15) as server:
                 server.starttls()
                 server.login(smtp_user, smtp_pass)
                 server.sendmail(smtp_user, [to_addr], msg.as_string())
@@ -1205,7 +1205,7 @@ def send_onboarding_link_email(
             msg["To"] = to_addr
             msg["Subject"] = subject
             msg.attach(MIMEText(html, "html", "utf-8"))
-            with smtplib.SMTP(host, port) as server:
+            with smtplib.SMTP(host, port, timeout=15) as server:
                 server.starttls()
                 server.login(smtp_user, smtp_pass)
                 server.sendmail(smtp_user, [to_addr], msg.as_string())

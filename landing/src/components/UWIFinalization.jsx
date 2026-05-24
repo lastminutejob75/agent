@@ -153,6 +153,13 @@ export default function UWIFinalization({
       setIsSubmitting(false);
       return;
     }
+    if (!leadToken && import.meta.env.PROD) {
+      setCallbackError(
+        "Session expirée ou lien incomplet. Refaites votre demande depuis l'accueil (sans recharger cette page).",
+      );
+      setIsSubmitting(false);
+      return;
+    }
     try {
       await api.preOnboardingCallbackBooking(
         leadId,
@@ -633,6 +640,22 @@ export default function UWIFinalization({
               <span style={{ width: 6, height: 6, borderRadius: "50%", background: phoneValid ? COLORS.accent : "transparent", border: `1.5px solid ${phoneValid ? COLORS.accent : COLORS.border}` }} /> Téléphone
             </span>
           </div>
+          {callbackError ? (
+            <div
+              style={{
+                background: "rgba(220, 80, 60, 0.12)",
+                border: "1px solid rgba(220, 80, 60, 0.45)",
+                borderRadius: 12,
+                padding: 14,
+                marginBottom: 16,
+                fontSize: 13,
+                color: "#b45309",
+                lineHeight: 1.5,
+              }}
+            >
+              {callbackError}
+            </div>
+          ) : null}
           <button
             type="button"
             onClick={handleHandoffSubmit}
