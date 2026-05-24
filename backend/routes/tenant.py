@@ -3242,8 +3242,11 @@ def tenant_agenda(
                     )
                 bo_origin = _agenda_resolve_booking_origin_google(description, mirror_booking)
                 slots.append({
+                    "date": start_local.strftime("%Y-%m-%d"),
                     "hour": start_local.strftime("%Hh"),
+                    "start_iso": start_local.isoformat(),
                     "patient": patient,
+                    "motif": motif,
                     "patient_phone": normalize_phone_number(patient_contact),
                     "type": motif,
                     "source": source,
@@ -3301,9 +3304,12 @@ def tenant_agenda(
                                 profile_cache,
                             )
                             slots.append({
+                                "date": start_local.strftime("%Y-%m-%d"),
                                 "hour": start_local.strftime("%Hh"),
+                                "start_iso": start_local.isoformat(),
                                 "patient": patient_name,
                                 "patient_phone": normalize_phone_number(row.get("contact")),
+                                "motif": row.get("motif") or "Consultation",
                                 "type": row.get("motif") or "Consultation",
                                 "source": "UWI",
                                 "booking_origin": _agenda_booking_origin_from_local_row(row),
@@ -3346,9 +3352,12 @@ def tenant_agenda(
                     end_local = start_local + timedelta(minutes=30)
                     patient_name = _resolve_agenda_patient_name_cached(tenant_id, row["contact"], row["name"], profile_cache)
                     slots.append({
+                        "date": start_local.strftime("%Y-%m-%d"),
                         "hour": start_local.strftime("%Hh"),
+                        "start_iso": start_local.isoformat(),
                         "patient": patient_name,
                         "patient_phone": normalize_phone_number(row["contact"]),
+                        "motif": row["motif"] or "Consultation",
                         "type": row["motif"] or "Consultation",
                         "source": "UWI",
                         "booking_origin": _agenda_booking_origin_from_local_row(row),
@@ -3526,8 +3535,11 @@ def tenant_agenda_bulk(
                 bo_origin = _agenda_resolve_booking_origin_google(description, mirror_booking)
                 payloads[date_key]["slots"].append(
                     {
+                        "date": start_local.strftime("%Y-%m-%d"),
                         "hour": start_local.strftime("%Hh"),
+                        "start_iso": start_local.isoformat(),
                         "patient": patient,
+                        "motif": motif,
                         "patient_phone": normalize_phone_number(patient_contact),
                         "type": motif,
                         "source": source,
@@ -3587,9 +3599,12 @@ def tenant_agenda_bulk(
                             )
                             payloads[date_key]["slots"].append(
                                 {
+                                    "date": start_local.strftime("%Y-%m-%d"),
                                     "hour": start_local.strftime("%Hh"),
+                                    "start_iso": start_local.isoformat(),
                                     "patient": patient_name,
                                     "patient_phone": normalize_phone_number(row.get("contact")),
+                                    "motif": row.get("motif") or "Consultation",
                                     "type": row.get("motif") or "Consultation",
                                     "source": "UWI",
                                     "booking_origin": _agenda_booking_origin_from_local_row(row),
@@ -3637,9 +3652,12 @@ def tenant_agenda_bulk(
                     patient_name = _resolve_agenda_patient_name_cached(tenant_id, row["contact"], row["name"], profile_cache)
                     payloads[date_key]["slots"].append(
                         {
+                            "date": start_local.strftime("%Y-%m-%d"),
                             "hour": start_local.strftime("%Hh"),
+                            "start_iso": start_local.isoformat(),
                             "patient": patient_name,
                             "patient_phone": normalize_phone_number(row["contact"]),
+                            "motif": row["motif"] or "Consultation",
                             "type": row["motif"] or "Consultation",
                             "source": "UWI",
                             "booking_origin": _agenda_booking_origin_from_local_row(row),

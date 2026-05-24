@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
+import { agendaSlotMotif, formatAgendaSlotHour, parseAgendaSlotStart } from "../lib/agendaSlotParse.js";
 import { api } from "../lib/api.js";
 import HomeHeroSection from "../components/home/HomeHeroSection.jsx";
 import HomeTabsActionsPanel from "../components/home/HomeTabsActionsPanel.jsx";
@@ -141,27 +142,6 @@ function Card({ title, icon, action, children }) {
   );
 }
 
-function parseSlotStart(slot) {
-  const date = String(slot?.date || "").trim();
-  const hour = String(slot?.hour || "").trim();
-  const startIso = String(slot?.start_iso || "").trim();
-  if (startIso) {
-    const d = new Date(startIso);
-    if (!Number.isNaN(d.getTime())) return d;
-  }
-  if (date && hour) {
-    const hhmm = /^\d{2}:\d{2}$/.test(hour) ? hour : `${hour.replace("h", "").padStart(2, "0")}:00`;
-    const d = new Date(`${date}T${hhmm}:00`);
-    if (!Number.isNaN(d.getTime())) return d;
-  }
-  return null;
-}
-
-function formatHour(d) {
-  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "—";
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-}
-
 function sameDay(a, b) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
@@ -236,27 +216,31 @@ export default function AppDashboard() {
   }, []);
 
   const today = new Date();
-  const bookedSlots = useMemo(() => agenda.filter((s) => (s?.patient || s?.patient_name) && (s?.can_cancel || s?.appointment_id || s?.source === "UWI")), [agenda]);
+  const bookedSlots = useMemo(() => agenda.filter((s) => Boolean(s?.patient || s?.patient_name)), [agenda]);
   const sortedBookedSlots = useMemo(() => bookedSlots
-    .map((slot) => ({ slot, start: parseSlotStart(slot) }))
+    .map((slot) => ({ slot, start: parseAgendaSlotStart(slot) }))
     .filter((x) => x.start)
     .sort((a, b) => a.start.getTime() - b.start.getTime()), [bookedSlots]);
 
   const todaySlots = useMemo(() => sortedBookedSlots.filter((x) => sameDay(x.start, today)), [sortedBookedSlots, today]);
-  const nextSlot = useMemo(() => sortedBookedSlots.find((x) => x.start.getTime() >= Date.now()) || sortedBookedSlots[0] || null, [sortedBookedSlots]);
+  /** Pas de repli sur le 1er créneau chronologique : après filtrage passé par l’API, un échec ici éviterait d’afficher un RDV déjà terminé */
+  const nextSlot = useMemo(
+    () => sortedBookedSlots.find((x) => x.start.getTime() >= Date.now()) ?? null,
+    [sortedBookedSlots],
+  );
 
   const nextDate = nextSlot?.start || null;
   const hasNextAppointment = Boolean(nextSlot);
   const nextLabels = firstDateLabel(nextDate);
-  const nextHour = nextDate ? formatHour(nextDate) : "—";
-  const nextReason = String(nextSlot?.slot?.motif || nextSlot?.slot?.reason || nextSlot?.slot?.summary || "").trim();
+  const nextHour = nextDate ? formatAgendaSlotHour(nextDate) : "—";
+  const nextReason = agendaSlotMotif(nextSlot?.slot || null);
   const nextSource = String(nextSlot?.slot?.source || "").toUpperCase() === "UWI" ? "Pris par Clara" : "Agenda cabinet";
   const nextPatient = String(nextSlot?.slot?.patient || nextSlot?.slot?.patient_name || "").trim();
 
   const agendaForDay = useMemo(() => todaySlots.slice(0, 3).map((x) => {
     const status = String(x.slot?.status || "").toLowerCase() === "confirmed" ? "Confirmé" : "Prévu";
     return [
-      formatHour(x.start),
+      formatAgendaSlotHour(x.start),
       String(x.slot?.patient || x.slot?.patient_name || "Patient"),
       String(x.slot?.motif || x.slot?.reason || "Consultation"),
       status,

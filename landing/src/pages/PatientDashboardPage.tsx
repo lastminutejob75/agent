@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useOutletContext, useSearchParams } from "react-router-dom";
+import { agendaSlotMotif, formatAgendaSlotHour, parseAgendaSlotStart } from "../lib/agendaSlotParse.js";
 import { api } from "../lib/api.js";
 import { patientDashboardFileHasValidatedIdentity } from "../lib/callsService.js";
 
@@ -137,6 +138,34 @@ function cx(...classes: Array<string | false | null | undefined>) {
 
 function normalizePhone(value: string) {
   return String(value || "").replace(/[^\d+]/g, "");
+}
+
+function frenchAppointmentDateParts(d: Date): { day: string; monthYear: string; dow: string } {
+  return {
+    day: String(d.getDate()),
+    monthYear: d.toLocaleDateString("fr-FR", { month: "long", year: "numeric" }),
+    dow: `${d.toLocaleDateString("fr-FR", { weekday: "short" }).replace(".", "").toUpperCase()}.`,
+  };
+}
+
+function agendaPatientSourceLabel(slot: Record<string, unknown>): string {
+  const src = String(slot.source || "").toUpperCase();
+  if (src === "UWI") return "Pris par Clara (UWi)";
+  if (src === "PAGE_PUBLIQUE") return "Page publique";
+  if (src === "EXTERNAL") return "Agenda cabinet";
+  return src ? src : "—";
+}
+
+/** Libellé de statut pour liste / vignette RDV patient */
+function patientAgendaRowStatus(slot: Record<string, unknown>, start: Date): string {
+  const joined = `${slot.booking_status || ""} ${slot.status || ""}`.toLowerCase();
+  if (joined.includes("cancel") || joined.includes("annul")) return "Annulé";
+  if (start.getTime() >= Date.now()) {
+    if (joined.includes("pending")) return "À confirmer";
+    if (joined.includes("confirm")) return "Confirmé";
+    return "Prévu";
+  }
+  return "Passé";
 }
 
 function formatBytes(value: number) {
@@ -286,6 +315,9 @@ function Modal({
 }
 
 export default function PatientDashboardPage() {
+  const outlet = useOutletContext() as { me?: { tenant_name?: string } } | undefined;
+  const meTenantName = outlet?.me?.tenant_name?.trim();
+
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
@@ -319,6 +351,8 @@ export default function PatientDashboardPage() {
   const [tenantListLoading, setTenantListLoading] = useState(true);
   const toastTimerRef = useRef<number | null>(null);
   const sidebarBootstrapDoneRef = useRef(false);
+  const [patientAgendaSlots, setPatientAgendaSlots] = useState<Array<Record<string, unknown>>>([]);
+  const [patientAgendaLoading, setPatientAgendaLoading] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -598,6 +632,55 @@ export default function PatientDashboardPage() {
       cancelled = true;
     };
   }, [tenantPatientPhone]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!tenantPatientPhone) {
+      setPatientAgendaSlots([]);
+      setPatientAgendaLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+    setPatientAgendaLoading(true);
+    api
+      .tenantGetAgenda("?upcoming_days=60&compact=1")
+      .then((res) => {
+        if (cancelled) return;
+        const slots = Array.isArray(res?.slots) ? res.slots : [];
+        const needle = normalizePhone(tenantPatientPhone);
+        const forPatient = slots.filter((raw) => {
+          const row = raw as Record<string, unknown>;
+          const pn = normalizePhone(String(row.patient_phone || ""));
+          return Boolean(needle && pn && pn === needle);
+        });
+        setPatientAgendaSlots(forPatient as Array<Record<string, unknown>>);
+      })
+      .catch(() => {
+        if (!cancelled) setPatientAgendaSlots([]);
+      })
+      .finally(() => {
+        if (!cancelled) setPatientAgendaLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantPatientPhone]);
+
+  const patientAgendaParsed = useMemo(() => {
+    const rows: Array<{ slot: Record<string, unknown>; start: Date }> = [];
+    for (const slot of patientAgendaSlots) {
+      const start = parseAgendaSlotStart(slot);
+      if (start) rows.push({ slot, start });
+    }
+    rows.sort((a, b) => a.start.getTime() - b.start.getTime());
+    return rows;
+  }, [patientAgendaSlots]);
+
+  const upcomingPatientAppointments = useMemo(() => {
+    const now = Date.now();
+    return patientAgendaParsed.filter((x) => x.start.getTime() >= now);
+  }, [patientAgendaParsed]);
 
   const notify = (message: string) => {
     setToast(message);
@@ -1098,43 +1181,117 @@ export default function PatientDashboardPage() {
               <div className="space-y-6">
                 <section className="rounded-[28px] border border-[#E2EAF4] bg-white p-6 shadow-sm">
                   <div className="mb-5 flex items-center justify-between gap-4">
-                    <h2 className="flex items-center gap-3 text-xl font-black">▣ Prochain rendez-vous</h2>
+                    <h2 className="flex flex-wrap items-center gap-3 text-xl font-black">
+                      ▣ Rendez-vous à venir
+                      {!patientAgendaLoading && upcomingPatientAppointments.length > 0 ? (
+                        <span className="rounded-full bg-[#E8F7F7] px-2.5 py-1 text-xs font-black text-[#008EA1]">
+                          {upcomingPatientAppointments.length}
+                        </span>
+                      ) : null}
+                    </h2>
                     <button onClick={() => setModal("history")} className="rounded-xl border border-[#91D9E3] px-4 py-2 text-sm font-black text-[#008EA1] hover:bg-[#E9FAFC]">
                       ◴ Voir l'historique complet
                     </button>
                   </div>
 
+                  {patientAgendaLoading ? (
+                    <p className="m-0 text-sm font-semibold text-[#61708B]">Chargement de l’agenda…</p>
+                  ) : !tenantPatientPhone ? (
+                    <p className="m-0 text-sm font-semibold text-[#61708B]">Sélectionnez un patient pour voir ses prochains rendez-vous.</p>
+                  ) : upcomingPatientAppointments.length === 0 ? (
+                    <p className="m-0 text-sm font-semibold text-[#61708B]">
+                      Aucun rendez-vous à venir pour ce numéro (prochains 60 jours). Les créneaux réservés avec ce téléphone sur l’agenda apparaîtront ici.
+                    </p>
+                  ) : (
+                    <>
+                    {(() => {
+                      const { slot, start } = upcomingPatientAppointments[0];
+                      const parts = frenchAppointmentDateParts(start);
+                      const statusLb = patientAgendaRowStatus(slot, start);
+                      const tone =
+                        statusLb === "Annulé"
+                          ? "rounded-lg bg-[#FFF1F1] px-3 py-2 text-sm font-black text-[#B91C1C]"
+                          : statusLb === "À confirmer"
+                            ? "rounded-lg bg-[#FFF7ED] px-3 py-2 text-sm font-black text-[#C2410C]"
+                            : "rounded-lg bg-[#E6FAED] px-3 py-2 text-sm font-black text-[#0BA64B]";
+                      return (
                   <div className="flex items-center gap-7">
                     <div className="grid h-28 w-24 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-[#009CA4] to-[#004C69] text-center text-white shadow-[8px_8px_0_rgba(0,156,164,0.12)]">
                       <div>
-                        <div className="text-4xl font-black">21</div>
-                        <div className="mt-1 text-base">mai 2026</div>
-                        <div className="mt-1 text-base font-black">JEU.</div>
+                        <div className="text-4xl font-black">{parts.day}</div>
+                        <div className="mt-1 text-base">{parts.monthYear}</div>
+                        <div className="mt-1 text-base font-black">{parts.dow}</div>
                       </div>
                     </div>
 
                     <div className="min-w-0 flex-1">
                       <div className="mb-4 flex flex-wrap items-center gap-6">
-                        <div className="text-4xl font-black">10:30 <span className="text-base font-semibold text-[#64748B]">(20 min)</span></div>
+                        <div className="text-4xl font-black">{formatAgendaSlotHour(start)} <span className="text-base font-semibold text-[#64748B]">(20 min)</span></div>
                         <div className="h-8 w-px bg-[#D9E3EF]" />
-                        <div className="text-xl font-black">Dr Martin</div>
-                        <span className="rounded-lg bg-[#E6FAED] px-3 py-2 text-sm font-black text-[#0BA64B]">Confirmé</span>
+                        <div className="text-xl font-black">{meTenantName || "Cabinet"}</div>
+                        <span className={`rounded-lg px-3 py-2 text-sm font-black ${tone}`}>{statusLb}</span>
                       </div>
 
-                      <div className="grid grid-cols-4 gap-3 text-sm">
-                        <div><div className="mb-1 text-xs font-bold text-[#7D8CA5]">Motif</div><div className="font-black">Douleurs thoraciques</div></div>
-                        <div><div className="mb-1 text-xs font-bold text-[#7D8CA5]">Source</div><div className="font-black">Pris par Clara (UWi)</div></div>
-                        <div><div className="mb-1 text-xs font-bold text-[#7D8CA5]">Préférence</div><div className="font-black">Matin</div></div>
+                      <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                        <div><div className="mb-1 text-xs font-bold text-[#7D8CA5]">Motif</div><div className="font-black">{agendaSlotMotif(slot) || "—"}</div></div>
+                        <div><div className="mb-1 text-xs font-bold text-[#7D8CA5]">Source</div><div className="font-black">{agendaPatientSourceLabel(slot)}</div></div>
+                        <div><div className="mb-1 text-xs font-bold text-[#7D8CA5]">Préférence</div><div className="font-black">—</div></div>
                         <div><div className="mb-1 text-xs font-bold text-[#7D8CA5]">Canal</div><div className="font-black">Téléphone</div></div>
                       </div>
 
                       <div className="mt-5 flex flex-wrap gap-3">
-                        <button onClick={() => notify("Déplacement du RDV ouvert")} className="rounded-xl border border-[#72CDE0] px-4 py-2 text-sm font-black text-[#008EA1] hover:bg-[#E9FAFC]">▣ Déplacer le RDV</button>
-                        <button onClick={() => notify("Annulation du RDV demandée")} className="rounded-xl border border-[#FF9B9B] px-4 py-2 text-sm font-black text-[#FF3030] hover:bg-[#FFF1F1]">♲ Annuler le RDV</button>
-                        <button onClick={() => notify("Agenda ouvert")} className="rounded-xl border border-[#B6C3D7] px-4 py-2 text-sm font-black text-[#53647F] hover:bg-[#F8FAFC]">▣ Voir l'agenda</button>
+                        <button type="button" onClick={() => notify("Déplacement du RDV : ouvrir l’agenda")} className="rounded-xl border border-[#72CDE0] px-4 py-2 text-sm font-black text-[#008EA1] hover:bg-[#E9FAFC]">▣ Déplacer le RDV</button>
+                        <button type="button" onClick={() => notify("Annulation du RDV : ouvrir l’agenda")} className="rounded-xl border border-[#FF9B9B] px-4 py-2 text-sm font-black text-[#FF3030] hover:bg-[#FFF1F1]">♲ Annuler le RDV</button>
+                        <button type="button" onClick={() => navigate("/app/agenda")} className="rounded-xl border border-[#B6C3D7] px-4 py-2 text-sm font-black text-[#53647F] hover:bg-[#F8FAFC]">▣ Voir l&apos;agenda</button>
                       </div>
                     </div>
                   </div>
+                      );
+                    })()}
+                  {upcomingPatientAppointments.length > 1 ? (
+                    <div className="mt-6 border-t border-[#E2EAF4] pt-5">
+                      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                        <h3 className="text-sm font-black uppercase tracking-wide text-[#475569]">
+                          Autres rendez-vous à venir ({upcomingPatientAppointments.length - 1})
+                        </h3>
+                        <button
+                          type="button"
+                          onClick={() => setActiveView("appointments")}
+                          className="rounded-xl border border-[#91D9E3] px-3 py-1.5 text-xs font-black text-[#008EA1] hover:bg-[#E9FAFC]"
+                        >
+                          Tous en détail
+                        </button>
+                      </div>
+                      <ul className="m-0 list-none space-y-3 p-0">
+                        {upcomingPatientAppointments.slice(1).map(({ slot: sRow, start: dt }) => {
+                          const rk = `${String(sRow.event_id || sRow.appointment_id || "")}-${dt.toISOString()}`;
+                          const dLabel = dt.toLocaleDateString("fr-FR", {
+                            weekday: "short",
+                            day: "numeric",
+                            month: "short",
+                            year: "numeric",
+                          });
+                          const st = patientAgendaRowStatus(sRow, dt);
+                          return (
+                            <li
+                              key={rk}
+                              className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#EEF3F8] bg-[#F8FBFD] px-4 py-3 text-sm"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="font-black text-[#0A1628]">
+                                  {formatAgendaSlotHour(dt)} · {dLabel.replace(/\.$/, ".")}
+                                </div>
+                                <div className="mt-1 font-semibold text-[#475569]">{agendaSlotMotif(sRow) || "Consultation"}</div>
+                              </div>
+                              <span className="rounded-lg bg-white px-3 py-1.5 text-xs font-black text-[#007E8C]">{st}</span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  ) : null}
+                  </>
+                  )}
                 </section>
 
                 <section className="rounded-[28px] bg-gradient-to-br from-[#062E53] via-[#023E63] to-[#007B88] p-6 text-white shadow-[0_20px_45px_rgba(0,66,90,0.22)]">
@@ -1223,18 +1380,56 @@ export default function PatientDashboardPage() {
 
           {activeView === "appointments" && (
             <section className="mt-6 rounded-[28px] border border-[#E2EAF4] bg-white p-8 shadow-sm">
-              <h2 className="mb-5 text-2xl font-black">Rendez-vous du patient</h2>
-              <div className="space-y-4">
-                {[
-                  ["21/05/2026", "10:30", "Confirmé", "Douleurs thoraciques"],
-                  ["12/04/2026", "09:30", "Consulte", "Suivi"],
-                  ["28/03/2026", "10:00", "Annulé par patient", "Contrôle"],
-                ].map(([date, hour, status, reason]) => (
-                  <div key={`${date}-${hour}`} className="grid grid-cols-[120px_90px_1fr_160px] items-center rounded-2xl border border-[#EEF3F8] p-4 text-sm">
-                    <b>{date}</b><b>{hour}</b><span>{reason}</span><span className="rounded-lg bg-[#F2F8FA] px-3 py-2 text-center font-black text-[#007E8C]">{status}</span>
-                  </div>
-                ))}
+              <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-2xl font-black">Rendez-vous du patient</h2>
+                  {tenantPatientPhone && !patientAgendaLoading ? (
+                    <p className="mt-2 text-sm font-bold text-[#008EA1]">
+                      {upcomingPatientAppointments.length} rendez-vous à venir (fenêtre 60 jours)
+                    </p>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveView("overview")}
+                  className="rounded-xl border border-[#B6C3D7] px-4 py-2 text-sm font-black text-[#53647F] hover:bg-[#F8FAFC]"
+                >
+                  ◂ Retour vue d’ensemble
+                </button>
               </div>
+              <p className="mb-4 text-sm font-semibold text-[#61708B]">
+                Liste de tous les créneaux à venir rattachés au numéro de ce patient dans l&apos;agenda du cabinet.
+              </p>
+              {!tenantPatientPhone ? (
+                <p className="text-sm font-semibold text-[#61708B]">Sélectionnez un patient.</p>
+              ) : patientAgendaLoading ? (
+                <p className="text-sm font-semibold text-[#61708B]">Chargement…</p>
+              ) : upcomingPatientAppointments.length === 0 ? (
+                <p className="text-sm font-semibold text-[#61708B]">
+                  Aucun rendez-vous à venir avec ce téléphone. Vérifiez que chaque RDV comporte bien le numéro en contact dans l&apos;agenda ou Google&nbsp;Calendar.
+                </p>
+              ) : (
+              <div className="space-y-4 overflow-x-auto">
+                <div className="min-w-[520px] space-y-4">
+                {upcomingPatientAppointments.map(({ slot, start }) => {
+                  const rowKey = `${String(slot.event_id || slot.appointment_id || "")}-${start.toISOString()}`;
+                  const dateStr = start.toLocaleDateString("fr-FR", {
+                    day: "2-digit",
+                    month: "2-digit",
+                    year: "numeric",
+                  });
+                  return (
+                  <div key={rowKey} className="grid grid-cols-[120px_90px_1fr_160px] items-center rounded-2xl border border-[#EEF3F8] p-4 text-sm">
+                    <b>{dateStr}</b>
+                    <b>{formatAgendaSlotHour(start)}</b>
+                    <span>{agendaSlotMotif(slot) || "Consultation"}</span>
+                    <span className="rounded-lg bg-[#F2F8FA] px-3 py-2 text-center font-black text-[#007E8C]">{patientAgendaRowStatus(slot, start)}</span>
+                  </div>
+                  );
+                })}
+                </div>
+              </div>
+              )}
             </section>
           )}
 

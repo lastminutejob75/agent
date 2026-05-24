@@ -54,7 +54,7 @@ const ROUTE_META = {
     description: "Mentions légales et informations légales UWi.",
   },
   "/app": {
-    title: "Espace Client — UWi",
+    title: "Tableau de bord — Espace Client UWi",
     description: "Pilotez votre standard UWi, vos appels, votre agenda et la configuration de votre cabinet.",
   },
   "/app/appels": {
@@ -74,8 +74,29 @@ const ROUTE_META = {
     description: "Suivez les demandes patients : renouvellements, rappels et urgences.",
   },
   "/app/settings": {
-    title: "Paramètres — Espace Client UWi",
-    description: "Gérez les paramètres de votre espace client UWi.",
+    title: "Statistiques & réglages — Espace Client UWi",
+    description: "Performance de votre assistant, sécurité et configuration du cabinet.",
+  },
+  "/app/clara": {
+    title: "Clara — Centre de pilotage — UWi",
+    description:
+      "Pilotez Clara : urgences, horaires, absences et consignes depuis votre espace cabinet.",
+  },
+  "/app/patient-dashboard": {
+    title: "Patients — Espace Client UWi",
+    description: "Consultez et organisez les fiches patients de votre cabinet.",
+  },
+  "/app/profile": {
+    title: "Mon cabinet — Espace Client UWi",
+    description: "Centre de configuration : identité du cabinet et préférences.",
+  },
+  "/app/onboarding": {
+    title: "Configuration — Espace Client UWi",
+    description: "Complétez la mise en route de votre standard UWi pour votre cabinet.",
+  },
+  "/app/impersonate": {
+    title: "Accès support — Espace Client UWi",
+    description: "Session ouverte par l’équipe UWi pour vous accompagner.",
   },
   "/admin": {
     title: "Dashboard Admin — UWi",
@@ -123,6 +144,15 @@ function getMetaForPath(pathname) {
   const normalized = (pathname || "").replace(/\?.*$/, "").replace(/\/+$/, "") || "/";
   const exact = ROUTE_META[normalized];
   if (exact) return { ...exact, noIndex: false };
+  /** Sous-routes SPA /app absentes du dictionnaire : éviter titre 404 tant que la section existe sous AppShell */
+  const appMeta = ROUTE_META["/app"];
+  if (appMeta && normalized.startsWith("/app/")) {
+    return {
+      title: "Espace Client — UWi",
+      description: appMeta.description,
+      noIndex: false,
+    };
+  }
   const noIndex =
     NOINDEX_PATTERNS.some((re) => re.test(normalized)) ||
     (normalized !== "/" && !ROUTE_META[normalized]);

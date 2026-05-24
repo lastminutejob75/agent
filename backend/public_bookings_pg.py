@@ -221,9 +221,12 @@ def fetch_public_bookings_for_agenda(
         booking_origin_disp = booking_origin_canonical(raw_src or "page_publique")
         slots.append(
             {
+                "date": start_local.strftime("%Y-%m-%d"),
                 "hour": start_local.strftime("%Hh"),
+                "start_iso": start_local.isoformat(),
                 "patient": (row.get("patient_name") or "Patient").strip(),
                 "patient_phone": (row.get("patient_phone") or "").strip(),
+                "motif": (row.get("motif") or "Consultation").strip(),
                 "type": (row.get("motif") or "Consultation").strip(),
                 "source": "PAGE_PUBLIQUE",
                 "booking_origin": booking_origin_disp,
