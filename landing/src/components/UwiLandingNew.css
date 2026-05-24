@@ -7024,12 +7024,12 @@
     grid-template-columns: 1fr;
     gap: 18px;
   }
-  /* Moins zoom + ancrage plus haut : éviter de couper le haut du casque sur mobile */
+  /* Image mockup complète (texte intégré au PNG) : pas de zoom arbitraire qui masque le copy */
   .uwi-landing-new .uwi-feat-tel-photo {
-    min-height: 248px;
+    min-height: 260px;
     order: -1;
-    background-size: 268% auto;
-    background-position: 76% 4%;
+    background-size: contain;
+    background-position: center top;
   }
   .uwi-landing-new .uwi-feat-tel-row {
     grid-template-columns: 1fr;
@@ -7044,9 +7044,7 @@
 }
 @media (max-width: 560px) {
   .uwi-landing-new .uwi-feat-tel-photo {
-    min-height: 232px;
-    background-size: 245% auto;
-    background-position: 72% 0%;
+    min-height: 240px;
   }
   .uwi-landing-new .uwi-feat-tel-actions {
     grid-template-columns: 1fr;
