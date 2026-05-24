@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 
 const PLANS = [
@@ -1170,6 +1170,10 @@ function TopNav() {
 }
 
 export default function UwiPricingPage() {
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0 });
+  }, []);
+
   return (
     <main
       style={{

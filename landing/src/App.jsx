@@ -176,17 +176,30 @@ function RestoreScrollAfterNavigation() {
       return;
     }
 
-    if (!hash) {
-      window.scrollTo({ top: 0, left: 0 });
-      return;
-    }
-    const id = decodeURIComponent(hash.slice(1));
-    requestAnimationFrame(() => {
-      const el = document.getElementById(id);
+    const align = () => {
+      if (!hash) {
+        window.scrollTo({ top: 0, left: 0 });
+        return;
+      }
+      const anchorId = decodeURIComponent(hash.slice(1));
+      const el = document.getElementById(anchorId);
       if (el) {
         el.scrollIntoView({ block: "start", behavior: "auto" });
       }
+    };
+
+    // Immédiat + frames suivantes / mini délai : les routes lazy (ex. /pricing) peignent après le 1er effet.
+    align();
+    const raf1 = window.requestAnimationFrame(() => {
+      align();
+      window.requestAnimationFrame(align);
     });
+    const t = window.setTimeout(align, 120);
+
+    return () => {
+      window.cancelAnimationFrame(raf1);
+      window.clearTimeout(t);
+    };
   }, [pathname, hash]);
 
   return null;
