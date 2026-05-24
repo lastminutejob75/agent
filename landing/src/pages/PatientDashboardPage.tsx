@@ -65,6 +65,18 @@ function normalizePhone(value: string) {
   return String(value || "").replace(/[^\d+]/g, "");
 }
 
+function initialsFromFullName(name: string) {
+  const parts = String(name || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!parts.length) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  const a = parts[0][0];
+  const b = parts[parts.length - 1][0];
+  return `${a}${b}`.toUpperCase();
+}
+
 function formatBytes(value: number) {
   const size = Number(value || 0);
   if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} Mo`;
@@ -239,6 +251,8 @@ export default function PatientDashboardPage() {
   const [requestStatus, setRequestStatus] = useState("");
   const [requestActionLoading, setRequestActionLoading] = useState<"" | "processed" | "cancelled">("");
   const [tenantPatientNotFound, setTenantPatientNotFound] = useState(false);
+  /** Profil réel (API) pour l’en-tête quand on ouvre /patient-dashboard?phone=… ou un numéro reconnu en base. */
+  const [urlPatientHero, setUrlPatientHero] = useState<{ name: string; phone: string; initials: string } | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -263,12 +277,60 @@ export default function PatientDashboardPage() {
   }, [searchParams]);
 
   const phoneFromDashboardUrl = useMemo(() => (searchParams.get("phone") || "").trim(), [searchParams]);
+  const isDirectPhoneView = Boolean(phoneFromDashboardUrl);
   const selectedPatient = patients.find((patient) => patient.id === selectedPatientId) || patients[0];
   const activePatientPhone = (phoneFromDashboardUrl || requestContext?.phone || selectedPatient?.phone || "").trim();
 
   useEffect(() => {
-    if (!activePatientPhone) setTenantPatientNotFound(false);
-  }, [activePatientPhone]);
+    if (!phoneFromDashboardUrl) setUrlPatientHero(null);
+  }, [phoneFromDashboardUrl]);
+
+  const displayHero = useMemo(() => {
+    const teal = "from-[#009CA4] to-[#004C69]";
+    const slate = "from-slate-400 to-slate-600";
+    const loadingGrad = "from-slate-300 to-slate-500";
+    if (tenantPatientNotFound) {
+      if (isDirectPhoneView) {
+        return {
+          name: "Aucune fiche pour ce numéro",
+          phone: phoneFromDashboardUrl || activePatientPhone,
+          initials: "?",
+          gradient: slate,
+        };
+      }
+      return {
+        name: selectedPatient.name,
+        phone: selectedPatient.phone,
+        initials: selectedPatient.initials,
+        gradient: selectedPatient.color,
+      };
+    }
+    if (urlPatientHero) {
+      return { ...urlPatientHero, gradient: teal };
+    }
+    if (documentsLoading && activePatientPhone) {
+      return {
+        name: "Chargement…",
+        phone: activePatientPhone,
+        initials: "…",
+        gradient: loadingGrad,
+      };
+    }
+    return {
+      name: selectedPatient.name,
+      phone: selectedPatient.phone,
+      initials: selectedPatient.initials,
+      gradient: selectedPatient.color,
+    };
+  }, [
+    tenantPatientNotFound,
+    isDirectPhoneView,
+    phoneFromDashboardUrl,
+    activePatientPhone,
+    urlPatientHero,
+    documentsLoading,
+    selectedPatient,
+  ]);
 
   const filteredPatients = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -301,6 +363,8 @@ export default function PatientDashboardPage() {
     let cancelled = false;
     if (!activePatientPhone) {
       setDocuments([]);
+      setUrlPatientHero(null);
+      setTenantPatientNotFound(false);
       return () => {
         cancelled = true;
       };
@@ -310,8 +374,17 @@ export default function PatientDashboardPage() {
       .then((res) => {
         if (cancelled) return;
         setTenantPatientNotFound(false);
+        const p = res?.patient as Record<string, unknown> | undefined;
+        if (p) {
+          const name =
+            String(p.display_name || p.validated_name || p.raw_name || "Patient").trim() || "Patient";
+          const tel = String(p.phone || activePatientPhone).trim();
+          setUrlPatientHero({ name, phone: tel, initials: initialsFromFullName(name) });
+        } else {
+          setUrlPatientHero(null);
+        }
         const list = Array.isArray(res?.documents) ? res.documents : [];
-        setPatientEmail(String(res?.patient?.email || ""));
+        setPatientEmail(String(p?.email || ""));
         setDocuments(
           list.map((item: any) => ({
             id: Number(item.id),
@@ -327,6 +400,7 @@ export default function PatientDashboardPage() {
           typeof e === "object" && e !== null && "status" in e ? (e as { status?: number }).status : undefined;
         if (!cancelled) setDocuments([]);
         if (!cancelled) setPatientEmail("");
+        if (!cancelled) setUrlPatientHero(null);
         if (!cancelled) setTenantPatientNotFound(status === 404);
       })
       .finally(() => {
@@ -681,18 +755,18 @@ export default function PatientDashboardPage() {
           <section className="rounded-[28px] border border-[#E2EAF4] bg-white p-7 shadow-[0_18px_45px_rgba(10,22,40,0.06)]">
             <div className="flex items-start justify-between gap-8">
               <div className="flex min-w-0 gap-6">
-                <div className={cx("grid h-32 w-32 shrink-0 place-items-center rounded-3xl bg-gradient-to-br text-5xl font-black text-white shadow-[8px_10px_0_rgba(0,156,164,0.12)]", selectedPatient.color)}>
-                  {selectedPatient.initials}
+                <div className={cx("grid h-32 w-32 shrink-0 place-items-center rounded-3xl bg-gradient-to-br text-5xl font-black text-white shadow-[8px_10px_0_rgba(0,156,164,0.12)]", displayHero.gradient)}>
+                  {displayHero.initials}
                 </div>
 
                 <div className="min-w-0">
                   <div className="mb-3 flex flex-wrap items-center gap-4">
-                    <h1 className="text-4xl font-black tracking-tight">{selectedPatient.name}</h1>
+                    <h1 className="text-4xl font-black tracking-tight">{displayHero.name}</h1>
                     <span className="rounded-lg bg-[#E6FAED] px-3 py-2 text-sm font-black text-[#0BA64B]">● Actif</span>
                   </div>
 
                   <div className="mb-5 flex flex-wrap gap-x-8 gap-y-2 text-sm font-semibold text-[#52637C]">
-                    <span>☎ {selectedPatient.phone}</span>
+                    <span>☎ {displayHero.phone}</span>
                     {editingEmail ? (
                       <span className="inline-flex items-center gap-2">
                         <span>✉</span>
@@ -729,7 +803,15 @@ export default function PatientDashboardPage() {
               </div>
 
               <div className="flex shrink-0 flex-wrap justify-end gap-3">
-                <HeaderAction onClick={() => notify("Appel lancé")}>☎ Appeler</HeaderAction>
+                <HeaderAction
+                  onClick={() => {
+                    const t = normalizePhone(displayHero.phone);
+                    if (t) window.location.href = `tel:${t}`;
+                    else notify("Numéro absent pour passer un appel.");
+                  }}
+                >
+                  ☎ Appeler
+                </HeaderAction>
                 <HeaderAction variant="green" onClick={() => notify("WhatsApp ouvert")}>☘ WhatsApp</HeaderAction>
                 <HeaderAction variant="purple" onClick={() => notify("SMS ouvert")}>▣ SMS</HeaderAction>
                 <HeaderAction variant="gray" onClick={() => notify("Menu patient ouvert")}>•••</HeaderAction>
@@ -899,7 +981,8 @@ export default function PatientDashboardPage() {
                       </div>
 
                       <p className="text-[17px] leading-8 text-white/95">
-                        {selectedPatient.name} contacte principalement le cabinet par téléphone. Son dernier échange concernait une prise de rendez-vous pour des douleurs thoraciques non urgentes. RDV confirmé pour le 21 mai 2026 à 10h30 avec le Dr Martin.
+                        {displayHero.name} contacte principalement le cabinet par téléphone. Les notes et documents ci-dessous sont
+                        synchronisés avec votre espace cabinet lorsque le numéro ou la fiche correspondent en base.
                       </p>
 
                       <p className="mt-5 text-sm italic text-white/65">Mis à jour · Aujourd'hui à 14:32</p>

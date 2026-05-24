@@ -508,6 +508,8 @@ export default function AppAgenda() {
     rawCalendarName: "",
     callId: "",
   });
+  /** Profil API si une fiche existe déjà pour le numéro saisi (évite la surprise « mauvais patient »). */
+  const [patientCreateExisting, setPatientCreateExisting] = useState(null);
 
   const [createBookingOpen, setCreateBookingOpen] = useState(false);
   const [createBookingLoading, setCreateBookingLoading] = useState(false);
@@ -581,6 +583,33 @@ export default function AppAgenda() {
   }, [visibleDates]);
 
   useEffect(() => { loadAgenda(); }, [loadAgenda]);
+
+  useEffect(() => {
+    if (!patientCreateOpen) {
+      setPatientCreateExisting(null);
+      return;
+    }
+    const phone = normalizePhone(patientCreateForm.phone);
+    if (!phone) {
+      setPatientCreateExisting(null);
+      return;
+    }
+    let cancelled = false;
+    api.tenantGetPatient(phone)
+      .then((payload) => {
+        if (cancelled) return;
+        const p = payload?.patient;
+        if (p && typeof p === "object") {
+          setPatientCreateExisting(p);
+        } else {
+          setPatientCreateExisting(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setPatientCreateExisting(null);
+      });
+    return () => { cancelled = true; };
+  }, [patientCreateOpen, patientCreateForm.phone]);
 
   /** Suggestions patient (nom / téléphone / email) pour la création de RDV cabinet */
   useEffect(() => {
@@ -938,15 +967,25 @@ export default function AppAgenda() {
     }
     setPatientCreateLoading(true);
     try {
-      await api.tenantRegisterPatient({
+      const res = await api.tenantRegisterPatient({
         patient_phone: phone,
         validated_name: name,
         raw_name: (patientCreateForm.rawCalendarName || "").trim() || name,
         agenda_motif: (patientCreateForm.agendaMotif || "").trim() || undefined,
         initial_note: (patientCreateForm.initialNote || "").trim() || undefined,
       });
+      const mode = res?.register_mode;
+      const okText =
+        mode === "created"
+          ? "Fiche patient créée."
+          : mode === "completed"
+            ? "Fiche patient complétée (numéro déjà connu, nom renseigné)."
+            : mode === "updated"
+              ? "Fiche patient mise à jour pour ce numéro (éléments ajoutés sur une fiche existante)."
+              : "Fiche patient enregistrée.";
       setPatientCreateOpen(false);
-      setActionMsg({ type: "success", text: "Fiche patient enregistrée." });
+      setPatientCreateExisting(null);
+      setActionMsg({ type: "success", text: okText });
       invalidateAgendaBulkCache();
       await loadAgenda();
       navigate(`/app/patient-dashboard?phone=${encodeURIComponent(phone)}`);
@@ -1697,13 +1736,29 @@ export default function AppAgenda() {
         onSubmit={handlePatientCreateFromAgendaSubmit}
         subtitleLine={
           <>
-            Source : <strong>rendez-vous agenda</strong>
-            {patientCreateSummary ? (
-              <>
+            {patientCreateExisting ? (
+              <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-semibold leading-snug text-amber-950">
+                <span className="font-black">Une fiche existe déjà pour ce numéro.</span>
                 {" "}
-                · <span>{patientCreateSummary}</span>
-              </>
+                Données enregistrées :{" "}
+                <strong>
+                  {(patientCreateExisting.display_name
+                    || patientCreateExisting.validated_name
+                    || patientCreateExisting.raw_name
+                    || "Patient sans nom affiché").trim()}
+                </strong>
+                . En validant, vous enrichissez cette fiche ; le tableau de bord affichera le profil correspondant au numéro.
+              </div>
             ) : null}
+            <span className="text-[#64748B]">
+              Source : <strong>rendez-vous agenda</strong>
+              {patientCreateSummary ? (
+                <>
+                  {" "}
+                  · <span>{patientCreateSummary}</span>
+                </>
+              ) : null}
+            </span>
           </>
         }
       />

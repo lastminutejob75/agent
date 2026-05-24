@@ -2811,6 +2811,10 @@ def tenant_register_patient_practice(
     motif = (body.agenda_motif or "").strip()[:240] or None
     rn = (body.raw_name or "").strip()[:160] or None
 
+    prior = get_cabinet_client_by_phone(tenant_id, phone)
+    had_row = prior is not None
+    had_validated = had_row and bool(str(prior.get("validated_name") or "").strip())
+
     profile = upsert_cabinet_client(
         tenant_id,
         phone,
@@ -2820,6 +2824,13 @@ def tenant_register_patient_practice(
     )
     if not profile:
         raise HTTPException(500, "Impossible d'enregistrer la fiche client")
+
+    if had_validated:
+        register_mode = "updated"
+    elif had_row:
+        register_mode = "completed"
+    else:
+        register_mode = "created"
 
     note = (body.initial_note or "").strip()
     if note:
@@ -2831,7 +2842,7 @@ def tenant_register_patient_practice(
                 phone,
             )
 
-    return {"ok": True, "patient": profile}
+    return {"ok": True, "patient": profile, "register_mode": register_mode}
 
 
 class PatientUpdateBody(BaseModel):
