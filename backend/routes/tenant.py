@@ -43,6 +43,7 @@ from backend.db import (
     insert_patient_note,
     insert_patient_document,
     list_cabinet_clients,
+    search_cabinet_clients,
     list_free_slots,
     list_call_followups,
     list_patient_notes,
@@ -1405,6 +1406,7 @@ class TenantAgendaCreateBookingBody(BaseModel):
 
     patient_name: str = Field(..., min_length=1, max_length=200)
     patient_phone: str = Field("", max_length=40)
+    patient_email: str = Field("", max_length=200)
     motif: str = Field("Consultation", max_length=500)
     start_iso: str = Field(..., min_length=10, description="ISO 8601 début")
     end_iso: str = Field("", max_length=64, description="Fin ISO (optionnel)")
@@ -2699,11 +2701,17 @@ def tenant_list_patients(
     auth: dict = Depends(require_tenant_auth),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    q: Optional[str] = Query(None, max_length=160, description="Filtre recherche nom / téléphone / email"),
 ):
     """Liste les fiches patient du tenant (dashboard client)."""
     tenant_id = auth["tenant_id"]
+    qs = (q or "").strip()
+    if qs:
+        cap = min(limit, 50)
+        items = search_cabinet_clients(tenant_id, qs, limit=cap)
+        return {"items": items, "total": len(items), "mode": "search"}
     items = list_cabinet_clients(tenant_id, limit=limit, offset=offset)
-    return {"items": items, "total": len(items)}
+    return {"items": items, "total": len(items), "mode": "list"}
 
 
 @router.get("/patients/{phone}")
@@ -3764,7 +3772,16 @@ def tenant_agenda_create_booking(
     motif = body.motif.strip() or "Consultation"
     start_iso = body.start_iso.strip()
     params = detail.get("params") or {}
-    contact_line = normalize_phone_number(body.patient_phone) or "—"
+    phone_norm = normalize_phone_number(body.patient_phone) or ""
+    email_part = (body.patient_email or "").strip()
+    contact_bits = []
+    if phone_norm:
+        contact_bits.append(f"Tél. {phone_norm}")
+    if email_part:
+        contact_bits.append(f"Email {email_part}")
+    contact_line = " · ".join(contact_bits) if contact_bits else "—"
+    contact_for_qualif = phone_norm or email_part or contact_line
+    qualif_contact_type = "phone" if phone_norm else ("email" if email_part else "phone")
     end_iso = _tenant_agenda_compute_end_iso(start_iso, tenant_id, body.end_iso)
 
     google_calendar = (
@@ -3808,8 +3825,8 @@ def tenant_agenda_create_booking(
                     booking_origin=BO_PRAT,
                     qualif_data=SimpleNamespace(
                         name=pname,
-                        contact=contact_line,
-                        contact_type="phone",
+                        contact=contact_for_qualif,
+                        contact_type=qualif_contact_type,
                         motif=motif,
                         pref=None,
                     ),
@@ -3840,7 +3857,7 @@ def tenant_agenda_create_booking(
         int(sid),
         pname,
         contact_line if contact_line != "—" else "",
-        "phone",
+        qualif_contact_type,
         motif,
         tenant_id=tenant_id,
         booking_origin=BO_PRAT,

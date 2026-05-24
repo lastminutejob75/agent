@@ -47,7 +47,7 @@ export function isTenantUnauthorized(err) {
 const MSG_BACKEND_UNREACHABLE =
   "Impossible de joindre le serveur. Vérifiez VITE_UWI_API_BASE_URL, CORS et que le backend est démarré.";
 
-async function request(path, { method = "GET", body, admin = false, tenant = false, leadToken = "" } = {}) {
+async function request(path, { method = "GET", body, admin = false, tenant = false, leadToken = "", signal } = {}) {
   const url = `${BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
 
   const headers = { "Content-Type": "application/json" };
@@ -70,6 +70,7 @@ async function request(path, { method = "GET", body, admin = false, tenant = fal
       headers,
       body: body ? JSON.stringify(body) : undefined,
       credentials: "include", // cookie uwi_session (login email+mdp ou Google)
+      signal,
     });
   } catch (e) {
     if (e?.message === "Failed to fetch" || (e?.name === "TypeError" && /fetch|network/i.test(e?.message || ""))) {
@@ -194,8 +195,8 @@ export const api = {
       body,
       tenant: true,
     }),
-  tenantGetPatients: (params = "") =>
-    request(`/api/tenant/patients${params}`, { tenant: true }),
+  tenantGetPatients: (params = "", opts = {}) =>
+    request(`/api/tenant/patients${params}`, { tenant: true, ...opts }),
   tenantRegisterPatient: (body) =>
     request("/api/tenant/patients", { method: "POST", body, tenant: true }),
   tenantGetPatient: (phone) =>

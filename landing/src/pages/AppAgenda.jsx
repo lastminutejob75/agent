@@ -473,9 +473,12 @@ export default function AppAgenda() {
 
   const [createBookingOpen, setCreateBookingOpen] = useState(false);
   const [createBookingLoading, setCreateBookingLoading] = useState(false);
+  const [createBookingSuggestions, setCreateBookingSuggestions] = useState([]);
+  const [createBookingSuggestLoading, setCreateBookingSuggestLoading] = useState(false);
   const [createBookingForm, setCreateBookingForm] = useState({
     patient_name: "",
     patient_phone: "",
+    patient_email: "",
     motif: "Consultation",
     start_local: "",
   });
@@ -537,6 +540,58 @@ export default function AppAgenda() {
   }, [visibleDates]);
 
   useEffect(() => { loadAgenda(); }, [loadAgenda]);
+
+  /** Suggestions patient (nom / téléphone / email) pour la création de RDV cabinet */
+  useEffect(() => {
+    if (!createBookingOpen) {
+      setCreateBookingSuggestions([]);
+      setCreateBookingSuggestLoading(false);
+      return;
+    }
+    const composed = [
+      createBookingForm.patient_name,
+      createBookingForm.patient_phone,
+      createBookingForm.patient_email,
+    ]
+      .map((s) => (s || "").trim())
+      .filter(Boolean)
+      .join(" ")
+      .trim();
+    if (composed.length < 2) {
+      setCreateBookingSuggestions([]);
+      setCreateBookingSuggestLoading(false);
+      return;
+    }
+    const ctrl = new AbortController();
+    const tid = window.setTimeout(async () => {
+      setCreateBookingSuggestLoading(true);
+      try {
+        const res = await api.tenantGetPatients(`?q=${encodeURIComponent(composed)}&limit=15`, {
+          signal: ctrl.signal,
+        });
+        if (!ctrl.signal.aborted) {
+          setCreateBookingSuggestions(Array.isArray(res?.items) ? res.items : []);
+        }
+      } catch (e) {
+        if (!ctrl.signal.aborted && String(e?.name || "") !== "AbortError") {
+          setCreateBookingSuggestions([]);
+        }
+      } finally {
+        if (!ctrl.signal.aborted) {
+          setCreateBookingSuggestLoading(false);
+        }
+      }
+    }, 320);
+    return () => {
+      window.clearTimeout(tid);
+      ctrl.abort();
+    };
+  }, [
+    createBookingOpen,
+    createBookingForm.patient_name,
+    createBookingForm.patient_phone,
+    createBookingForm.patient_email,
+  ]);
 
   useEffect(() => {
     if (!actionMsg) return undefined;
@@ -710,10 +765,24 @@ export default function AppAgenda() {
     setCreateBookingForm((prev) => ({
       patient_name: prev.patient_name || "",
       patient_phone: prev.patient_phone || "",
+      patient_email: prev.patient_email || "",
       motif: prev.motif || "Consultation",
       start_local: toDatetimeLocalValue(base),
     }));
+    setCreateBookingSuggestions([]);
     setCreateBookingOpen(true);
+  }
+
+  function applyCreateBookingPatient(p) {
+    if (!p) return;
+    const display = (p.display_name || p.validated_name || p.raw_name || "").trim();
+    setCreateBookingForm((prev) => ({
+      ...prev,
+      patient_name: display || prev.patient_name,
+      patient_phone: (p.phone || "").trim(),
+      patient_email: ((p.email || "").trim()) || prev.patient_email,
+    }));
+    setCreateBookingSuggestions([]);
   }
 
   async function handleCreateCabinetBookingSubmit() {
@@ -732,6 +801,7 @@ export default function AppAgenda() {
       await api.tenantCreateAgendaBooking({
         patient_name: name,
         patient_phone: normalizePhone(createBookingForm.patient_phone || ""),
+        patient_email: (createBookingForm.patient_email || "").trim(),
         motif: (createBookingForm.motif || "Consultation").trim(),
         start_iso: dt.toISOString(),
       });
@@ -952,7 +1022,14 @@ export default function AppAgenda() {
           <span style={S.navDate}>{navLabel}</span>
           <button type="button" onClick={navNext} style={S.navBtn}>›</button>
           {selectedDate !== today && <button type="button" onClick={goToday} style={S.todayBtn}>Aujourd&apos;hui</button>}
-          <button type="button" onClick={openCreateCabinetBooking} style={S.createRdvBtn} title="Créer un rendez-vous">+ RDV</button>
+          <button
+            type="button"
+            onClick={openCreateCabinetBooking}
+            style={S.createRdvBtn}
+            title="Créer un rendez-vous depuis l'espace cabinet"
+          >
+            + Créer un rendez-vous
+          </button>
         </div>
         <div style={S.toolbarRight}>
           <span style={S.stats}>
@@ -1355,35 +1432,117 @@ export default function AppAgenda() {
 
       {createBookingOpen ? (
         <div style={S.modalOverlay} role="dialog" aria-modal="true">
-          <div style={S.modalCard}>
+          <div style={S.modalCardWide}>
             <div style={S.modalTitleRow}>
               <span style={{ fontWeight: 800 }}>Créer un rendez-vous</span>
-              <button type="button" style={S.modalClose} onClick={() => setCreateBookingOpen(false)} aria-label="Fermer">✕</button>
+              <button
+                type="button"
+                style={S.modalClose}
+                onClick={() => setCreateBookingOpen(false)}
+                aria-label="Fermer"
+              >
+                ✕
+              </button>
             </div>
             <p style={{ margin: "0 0 14px", fontSize: 13, color: MUTED, lineHeight: 1.45 }}>
-              Ce RDV est enregistré comme créé depuis l&apos;espace cabinet. Avec Google Calendar, la durée suit les réglages du cabinet.
+              Ce RDV est enregistré comme créé depuis l&apos;espace cabinet. En saisissant le nom, le numéro ou
+              l&apos;email d&apos;un patient déjà en base, une suggestion permet de préremplir la fiche. Avec
+              Google&nbsp;Calendar, la durée suit les réglages du cabinet.
             </p>
+
+            {(createBookingSuggestLoading || (createBookingSuggestions && createBookingSuggestions.length > 0)) ? (
+              <div style={S.modalSuggestBox}>
+                {createBookingSuggestLoading ? (
+                  <div style={S.modalSuggestHint}>Recherche des patients correspondants…</div>
+                ) : null}
+                {!createBookingSuggestLoading && createBookingSuggestions?.length ? (
+                  <div style={S.modalSuggestList}>
+                    <div style={S.modalSuggestListLabel}>Patients correspondants</div>
+                    {createBookingSuggestions.map((p, idx) => {
+                      const label = (p.display_name || p.validated_name || p.raw_name || "Patient").trim();
+                      const sub = [(p.phone || "").trim(), (p.email || "").trim()].filter(Boolean).join(" · ");
+                      const key = (p.phone || label) + (sub || "") + String(idx);
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          style={{
+                            ...S.modalSuggestBtn,
+                            borderTop: idx === 0 ? "none" : S.modalSuggestBtn.borderTop,
+                          }}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            applyCreateBookingPatient(p);
+                          }}
+                        >
+                          <span style={S.modalSuggestMain}>{label}</span>
+                          {sub ? <span style={S.modalSuggestMeta}>{sub}</span> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             <label style={S.modalLabel}>
               Nom du patient *
-              <input style={S.modalInput} value={createBookingForm.patient_name} onChange={(e) => setCreateBookingForm((p) => ({ ...p, patient_name: e.target.value }))} autoComplete="name" />
+              <input
+                style={S.modalInput}
+                value={createBookingForm.patient_name}
+                onChange={(e) => setCreateBookingForm((p) => ({ ...p, patient_name: e.target.value }))}
+                autoComplete="name"
+              />
             </label>
             <label style={S.modalLabel}>
               Téléphone
-              <input style={S.modalInput} value={createBookingForm.patient_phone} onChange={(e) => setCreateBookingForm((p) => ({ ...p, patient_phone: e.target.value }))} autoComplete="tel" />
+              <input
+                style={S.modalInput}
+                value={createBookingForm.patient_phone}
+                onChange={(e) => setCreateBookingForm((p) => ({ ...p, patient_phone: e.target.value }))}
+                autoComplete="tel"
+              />
+            </label>
+            <label style={S.modalLabel}>
+              E-mail (optionnel)
+              <input
+                type="email"
+                style={S.modalInput}
+                value={createBookingForm.patient_email}
+                onChange={(e) => setCreateBookingForm((p) => ({ ...p, patient_email: e.target.value }))}
+                autoComplete="email"
+                placeholder="ex. patient@gmail.com"
+              />
             </label>
             <label style={S.modalLabel}>
               Motif
-              <input style={S.modalInput} value={createBookingForm.motif} onChange={(e) => setCreateBookingForm((p) => ({ ...p, motif: e.target.value }))} />
+              <input
+                style={S.modalInput}
+                value={createBookingForm.motif}
+                onChange={(e) => setCreateBookingForm((p) => ({ ...p, motif: e.target.value }))}
+              />
             </label>
             <label style={S.modalLabel}>
               Date et heure *
-              <input type="datetime-local" style={S.modalInput} value={createBookingForm.start_local} onChange={(e) => setCreateBookingForm((p) => ({ ...p, start_local: e.target.value }))} />
+              <input
+                type="datetime-local"
+                style={S.modalInput}
+                value={createBookingForm.start_local}
+                onChange={(e) => setCreateBookingForm((p) => ({ ...p, start_local: e.target.value }))}
+              />
             </label>
             <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
-              <button type="button" style={{ ...S.createRdvBtn, flex: 1 }} disabled={createBookingLoading} onClick={handleCreateCabinetBookingSubmit}>
-                {createBookingLoading ? "…" : "Enregistrer"}
+              <button
+                type="button"
+                style={{ ...S.createRdvBtn, flex: 1, fontSize: 13 }}
+                disabled={createBookingLoading}
+                onClick={handleCreateCabinetBookingSubmit}
+              >
+                {createBookingLoading ? "…" : "Enregistrer le rendez-vous"}
               </button>
-              <button type="button" style={S.todayBtn} onClick={() => setCreateBookingOpen(false)}>Annuler</button>
+              <button type="button" style={S.todayBtn} onClick={() => setCreateBookingOpen(false)}>
+                Annuler
+              </button>
             </div>
           </div>
         </div>
@@ -1422,17 +1581,46 @@ const S = {
 
   modalOverlay: { position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", display: "grid", placeItems: "center", zIndex: 60, padding: 16 },
   modalCard: { width: "min(420px, 100%)", background: "#fff", borderRadius: 16, padding: "20px 22px", boxShadow: "0 24px 60px rgba(15,23,42,.18)", border: `1px solid ${BORDER}` },
+  modalCardWide: { width: "min(480px, 100%)", background: "#fff", borderRadius: 16, padding: "20px 22px", boxShadow: "0 24px 60px rgba(15,23,42,.18)", border: `1px solid ${BORDER}` },
   modalTitleRow: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
   modalClose: { border: "none", background: "transparent", cursor: "pointer", fontSize: 18, lineHeight: 1, padding: 4, color: MUTED },
   modalLabel: { display: "block", fontSize: 12, fontWeight: 700, color: NAVY, marginBottom: 10 },
   modalInput: { display: "block", width: "100%", marginTop: 6, padding: "10px 11px", borderRadius: 10, border: `1px solid ${BORDER}`, fontSize: 14, boxSizing: "border-box", fontFamily: "inherit" },
+  modalSuggestBox: { marginBottom: 14 },
+  modalSuggestHint: { fontSize: 12, color: TEAL_DARK, fontWeight: 600, marginBottom: 8 },
+  modalSuggestList: { borderRadius: 12, border: `1px solid ${BORDER}`, overflow: "hidden", background: "#f8fafc" },
+  modalSuggestListLabel: {
+    padding: "8px 10px",
+    fontSize: 11,
+    fontWeight: 800,
+    color: MUTED,
+    textTransform: "uppercase",
+    letterSpacing: "0.04em",
+    background: "#f1f5f9",
+  },
+  modalSuggestBtn: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "stretch",
+    gap: 2,
+    width: "100%",
+    textAlign: "left",
+    padding: "10px 12px",
+    border: "none",
+    borderTop: `1px solid ${BORDER}`,
+    background: "#fff",
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  modalSuggestMain: { fontSize: 14, fontWeight: 700, color: NAVY },
+  modalSuggestMeta: { fontSize: 12, fontWeight: 600, color: MUTED },
 
   header: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 16, flexWrap: "wrap" },
   title: { margin: 0, fontSize: 20, fontWeight: 800, color: NAVY },
   subtitle: { margin: "4px 0 0", fontSize: 13, color: MUTED },
   headerRight: { display: "flex", gap: 8 },
   toolbar: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 16, flexWrap: "wrap", padding: "12px 16px", background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 18, boxShadow: "0 8px 26px rgba(15,23,42,.05)" },
-  toolbarLeft: { display: "flex", alignItems: "center", gap: 10 },
+  toolbarLeft: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" },
   toolbarRight: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" },
   stats: { fontSize: 12, color: MUTED, fontWeight: 600 },
   viewSwitch: { display: "flex", borderRadius: 12, border: `1px solid ${BORDER}`, overflow: "hidden", background: "#f8fafc" },
@@ -1453,7 +1641,23 @@ const S = {
   navCenter: { display: "flex", alignItems: "center", gap: 10, flex: 1 },
   navDate: { fontSize: 18, fontWeight: 900, color: NAVY, letterSpacing: "-.02em" },
   todayBtn: { padding: "6px 12px", borderRadius: 10, border: `1px solid ${BORDER}`, background: "#fff", color: "#009CA4", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" },
-  createRdvBtn: { padding: "6px 12px", borderRadius: 10, border: "none", background: BLUE, color: "#fff", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" },
+  createRdvBtn: {
+    padding: "8px 14px",
+    borderRadius: 10,
+    border: "none",
+    background: BLUE,
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: 800,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    whiteSpace: "normal",
+    textAlign: "center",
+    boxShadow: "0 6px 16px rgba(37,99,235,.38)",
+    lineHeight: 1.2,
+    minHeight: 36,
+    maxWidth: 220,
+  },
 
   calendarCol: { flex: 1, minWidth: 0 },
   card: { background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 22, overflow: "hidden", boxShadow: "0 16px 40px rgba(15,23,42,.06)" },

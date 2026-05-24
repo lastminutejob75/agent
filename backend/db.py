@@ -1057,7 +1057,7 @@ def get_cabinet_clients_by_phones(tenant_id: int, phones: List[str]) -> Dict[str
 def list_cabinet_clients(tenant_id: int, *, limit: int = 200, offset: int = 0) -> List[Dict[str, Any]]:
     """Liste tous les patients/clients d'un tenant, triés par dernière mise à jour."""
     _select = """
-        SELECT phone, raw_name, validated_name, display_name, validation_status,
+        SELECT phone, raw_name, validated_name, display_name, validation_status, email,
                source_call_id, last_call_id, last_booking_start, last_booking_end,
                last_booking_motif, created_at, updated_at
         FROM cabinet_clients
@@ -1089,6 +1089,129 @@ def list_cabinet_clients(tenant_id: int, *, limit: int = 200, offset: int = 0) -
             _select.format(ph="?", lph="?", oph="?"),
             (tenant_id, limit, offset),
         ).fetchall()
+        return [_cabinet_client_row_to_dict(dict(r)) for r in rows]
+    finally:
+        conn.close()
+
+
+def _patient_search_tokens(q: str) -> List[tuple]:
+    """
+    Découpe la requête en tokens (texte ou chiffres) pour une recherche ET logique.
+    Ex. « Jean Dupont » → deux tokens texte ; « +33612 » → token chiffres.
+    """
+    tokens: List[tuple] = []
+    for raw in (q or "").split():
+        t = raw.strip()
+        if len(t) < 2:
+            continue
+        if "@" in t:
+            tokens.append(("text", t.lower()))
+            continue
+        d = re.sub(r"\D", "", t)
+        phoneish = re.sub(r"[\s\+\-\.\(\)]", "", t)
+        if phoneish == d and d:
+            if len(d) >= 3:
+                tokens.append(("digits", d))
+            continue
+        tokens.append(("text", t.lower()))
+    return tokens
+
+
+def search_cabinet_clients(tenant_id: int, q: str, *, limit: int = 15) -> List[Dict[str, Any]]:
+    """Recherche patients par nom affiché, email ou téléphone (tous tokens doivent matcher)."""
+    q_clean = (q or "").strip()
+    tokens = _patient_search_tokens(q_clean)
+    if not tokens:
+        return []
+
+    _cols = """phone, raw_name, validated_name, display_name, validation_status, email,
+               source_call_id, last_call_id, last_booking_start, last_booking_end,
+               last_booking_motif, created_at, updated_at"""
+
+    url = _pg_events_url()
+    if url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+
+            clause_parts: List[str] = []
+            params_pg: List[Any] = []
+            for typ, tok in tokens:
+                if typ == "text":
+                    pat = f"%{tok}%"
+                    clause_parts.append(
+                        "(display_name ILIKE %s OR validated_name ILIKE %s OR raw_name ILIKE %s "
+                        "OR COALESCE(email,'') ILIKE %s OR phone ILIKE %s)"
+                    )
+                    params_pg.extend([pat, pat, pat, pat, pat])
+                elif typ == "digits":
+                    clause_parts.append(
+                        "(regexp_replace(COALESCE(phone, ''), '\\D', '', 'g') LIKE %s)"
+                    )
+                    params_pg.append(f"%{tok}%")
+
+            where_sql = " AND ".join(clause_parts)
+            sql = (
+                "SELECT "
+                + _cols
+                + """
+                FROM cabinet_clients
+                WHERE tenant_id = %s AND """
+                + where_sql
+                + " ORDER BY updated_at DESC LIMIT %s"
+            )
+            params_pg_final = [tenant_id] + params_pg + [limit]
+            with psycopg.connect(url, row_factory=dict_row) as conn:
+                _ensure_cabinet_clients_table_pg(conn)
+                with conn.cursor() as cur:
+                    cur.execute(sql, params_pg_final)
+                    return [_cabinet_client_row_to_dict(dict(r)) for r in cur.fetchall()]
+        except Exception:
+            pass
+
+    clause_parts_sq: List[str] = []
+    params_sq: List[Any] = []
+    for typ, tok in tokens:
+        if typ == "text":
+            pat = f"%{tok}%"
+            clause_parts_sq.append(
+                "("
+                "LOWER(COALESCE(display_name,'')) LIKE ? ESCAPE '\\' OR "
+                "LOWER(COALESCE(validated_name,'')) LIKE ? ESCAPE '\\' OR "
+                "LOWER(COALESCE(raw_name,'')) LIKE ? ESCAPE '\\' OR "
+                "LOWER(COALESCE(email,'')) LIKE ? ESCAPE '\\' OR "
+                "LOWER(COALESCE(phone,'')) LIKE ? ESCAPE '\\'"
+                ")"
+            )
+            escaped = tok.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            like_pat = f"%{escaped}%"
+            params_sq.extend([like_pat, like_pat, like_pat, like_pat, like_pat])
+        elif typ == "digits":
+            clause_parts_sq.append(
+                "("
+                "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(phone,''),'+',''),' ','')"
+                ",'-',''),'.',''),'(',''),')','') LIKE ? ESCAPE '\\'"
+                ")"
+            )
+            esc_d = tok.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            params_sq.append(f"%{esc_d}%")
+
+    where_sq = " AND ".join(clause_parts_sq)
+    sql_sq = (
+        "SELECT "
+        + _cols
+        + """
+        FROM cabinet_clients
+        WHERE tenant_id = ?
+        AND """
+        + where_sq
+        + " ORDER BY updated_at DESC LIMIT ?"
+    )
+
+    conn = get_conn()
+    try:
+        _ensure_cabinet_clients_table(conn)
+        rows = conn.execute(sql_sq, (tenant_id, *params_sq, limit)).fetchall()
         return [_cabinet_client_row_to_dict(dict(r)) for r in rows]
     finally:
         conn.close()
