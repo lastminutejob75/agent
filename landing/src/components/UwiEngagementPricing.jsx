@@ -1170,7 +1170,7 @@ export default function UwiEngagementPricing() {
           })}
         </div>
 
-        {/* Tagline + CTA final */}
+        {/* Tagline + lien vers la page tarifs (CTA création déjà présent ailleurs sur la landing) */}
         <div
           style={{
             textAlign: 'center',
@@ -1178,7 +1178,7 @@ export default function UwiEngagementPricing() {
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
-            gap: '24px',
+            gap: '16px',
           }}
         >
           <p
@@ -1220,67 +1220,23 @@ export default function UwiEngagementPricing() {
           </p>
 
           <Link
-            to="/creer-assistante?new=1"
+            to="/pricing"
+            onClick={() => trackClick('pricing_block_link_page_tarifs')}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
-              gap: '10px',
-              padding: '17px 34px',
-              background: '#0A1F24',
-              color: '#FFFFFF',
+              gap: '6px',
+              fontSize: '14px',
+              fontWeight: 600,
+              color: '#009CA4',
               textDecoration: 'none',
-              borderRadius: '12px',
-              fontFamily: "'Syne', sans-serif",
-              fontWeight: 800,
-              fontSize: '15px',
-              letterSpacing: '-0.01em',
-              transition: 'all 0.25s ease',
-              boxShadow: '0 12px 28px -6px rgba(10,31,36,0.35)',
+              borderBottom: '1px solid rgba(0, 156, 164, 0.4)',
+              paddingBottom: '2px',
+              lineHeight: 1.4,
             }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = 'translateY(-2px)';
-              e.currentTarget.style.boxShadow = '0 18px 38px -6px rgba(0,156,164,0.45)';
-              e.currentTarget.style.background = '#009CA4';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = 'translateY(0)';
-              e.currentTarget.style.boxShadow = '0 12px 28px -6px rgba(10,31,36,0.35)';
-              e.currentTarget.style.background = '#0A1F24';
-            }}
-            onClick={() => trackClick('pricing_engagement_create_assistant_click')}
           >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <rect x="4" y="2" width="16" height="20" rx="2" />
-              <line x1="8" y1="6" x2="16" y2="6" />
-              <line x1="8" y1="10" x2="16" y2="10" />
-              <line x1="8" y1="14" x2="10" y2="14" />
-              <line x1="8" y1="18" x2="10" y2="18" />
-              <line x1="14" y1="14" x2="16" y2="14" />
-              <line x1="14" y1="18" x2="16" y2="18" />
-            </svg>
-            Créer mon assistant
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <line x1="5" y1="12" x2="19" y2="12" />
-              <polyline points="12 5 19 12 12 19" />
-            </svg>
+            Voir la page tarifs complète
+            <ArrowUpRight size={15} strokeWidth={2.25} aria-hidden />
           </Link>
         </div>
       </div>

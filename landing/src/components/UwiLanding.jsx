@@ -200,7 +200,6 @@ export default function UwiLanding() {
   const [typedChar, setTypedChar] = useState(0);
   const [deleting, setDeleting] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [stickyVisible, setStickyVisible] = useState(false);
 
   useEffect(() => {
     const close = (e) => {
@@ -210,29 +209,6 @@ export default function UwiLanding() {
     };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
-  }, []);
-
-  // Sticky CTA mobile : visible après ~hero scrollé, masqué près du footer / CTA final
-  useEffect(() => {
-    const SHOW_AFTER = 600;
-    let ticking = false;
-    const update = () => {
-      const y = window.scrollY;
-      const docH = document.documentElement.scrollHeight;
-      const winH = window.innerHeight;
-      const nearBottom = y + winH > docH - 600;
-      setStickyVisible(y > SHOW_AFTER && !nearBottom);
-      ticking = false;
-    };
-    const onScroll = () => {
-      if (!ticking) {
-        window.requestAnimationFrame(update);
-        ticking = true;
-      }
-    };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    update();
-    return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
   // BG Aurora canvas
@@ -2215,28 +2191,6 @@ export default function UwiLanding() {
           <span>© UWi Medical</span>
         </footer>
 
-      {/* Sticky CTA mobile — barre flottante visible après scroll, masquée près du footer */}
-      <div
-        className="uwi-sticky-cta-mobile"
-        data-visible={stickyVisible ? "true" : "false"}
-        aria-hidden={!stickyVisible}
-      >
-        <div className="uwi-sticky-cta-info">
-          <span className="uwi-sticky-cta-label">À partir de</span>
-          <span className="uwi-sticky-cta-price">
-            99€<span>/mois</span>
-          </span>
-        </div>
-        <Link
-          to="/creer-assistante?new=1"
-          className="uwi-sticky-cta-btn"
-          onClick={() => trackLandingClick("sticky_cta_mobile_click")}
-          tabIndex={stickyVisible ? 0 : -1}
-        >
-          Créer mon assistant
-          <ArrowRight size={16} strokeWidth={2.5} />
-        </Link>
-      </div>
     </div>
   );
 }
