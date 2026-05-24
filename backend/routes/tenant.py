@@ -12,6 +12,7 @@ import os
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional
@@ -171,6 +172,44 @@ def _tenant_google_calendar_list_events_cached(
                 _AGENDA_GCAL_EVENTS_CACHE.pop(stale_k, None)
 
     return executed
+
+
+_TENANT_AGENDA_DETAIL_LOCK = threading.Lock()
+_TENANT_AGENDA_DETAIL_CACHE: Dict[int, tuple[float, dict]] = {}
+
+
+def _get_tenant_detail_for_agenda_cached(tenant_id: int) -> Optional[dict]:
+    """Réduit les appels PG `pg_get_tenant_full` lors des lectures agenda (liste souvent rejouée)."""
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return _get_tenant_detail(tenant_id)
+    raw_ttl = (os.environ.get("AGENDA_TENANT_DETAIL_CACHE_SECONDS") or "45").strip()
+    try:
+        ttl = float(raw_ttl or "45")
+    except ValueError:
+        ttl = 45.0
+    if ttl <= 0:
+        return _get_tenant_detail(tenant_id)
+
+    now = time.monotonic()
+    with _TENANT_AGENDA_DETAIL_LOCK:
+        hit = _TENANT_AGENDA_DETAIL_CACHE.get(int(tenant_id))
+        if hit and hit[0] > now:
+            return copy.deepcopy(hit[1])
+
+    detail = _get_tenant_detail(tenant_id)
+    if detail is None:
+        return None
+
+    with _TENANT_AGENDA_DETAIL_LOCK:
+        _TENANT_AGENDA_DETAIL_CACHE[int(tenant_id)] = (now + ttl, copy.deepcopy(detail))
+        if len(_TENANT_AGENDA_DETAIL_CACHE) > 300:
+            stale_keys = [
+                tid for tid, (exp, _) in _TENANT_AGENDA_DETAIL_CACHE.items() if exp <= now
+            ]
+            for tid in stale_keys[:120]:
+                _TENANT_AGENDA_DETAIL_CACHE.pop(tid, None)
+
+    return copy.deepcopy(detail)
 
 
 router = APIRouter(prefix="/api/tenant", tags=["tenant"])
@@ -1084,10 +1123,9 @@ def _load_local_appointments_for_window(
     url = os.environ.get("DATABASE_URL") or os.environ.get("PG_SLOTS_URL")
     if url:
         try:
-            import psycopg
-            from psycopg.rows import dict_row
+            from backend.pg_pool import pg_connection_for
 
-            with psycopg.connect(url, row_factory=dict_row) as conn:
+            with pg_connection_for(url) as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
@@ -3037,7 +3075,7 @@ def tenant_agenda(
 ):
     """Retourne les rendez-vous du jour ou à venir depuis Google Calendar ou le stockage local."""
     tenant_id = auth["tenant_id"]
-    detail = _get_tenant_detail(tenant_id)
+    detail = _get_tenant_detail_for_agenda_cached(tenant_id)
     if not detail:
         raise HTTPException(404, "Tenant not found")
     params = detail.get("params") or {}
@@ -3060,18 +3098,48 @@ def tenant_agenda(
 
     mirror_enabled = _google_mirror_enabled(detail)
     mirror_lookup: Optional[Dict[str, List[Dict[str, Any]]]] = None
-    if mirror_enabled and not compact_mode:
-        mirror_lookup = _load_local_appointments_for_window(tenant_id, day_start, day_end, tz_name)
-    if (params.get("calendar_provider") or "").strip() == "google" and (params.get("calendar_id") or "").strip():
+
+    google_cal = (
+        (params.get("calendar_provider") or "").strip() == "google"
+        and bool((params.get("calendar_id") or "").strip())
+    )
+    if google_cal:
         try:
             cal_id = (params.get("calendar_id") or "").strip()
-            service = GoogleCalendarService(cal_id)
-            result = _tenant_google_calendar_list_events_cached(
-                service,
-                calendar_id=cal_id,
-                time_min_iso=day_start.isoformat(),
-                time_max_iso=day_end.isoformat(),
-            )
+            executor: Optional[ThreadPoolExecutor] = None
+            mirror_fut = None
+            try:
+                if mirror_enabled and not compact_mode:
+                    executor = ThreadPoolExecutor(max_workers=1)
+                    mirror_fut = executor.submit(
+                        _load_local_appointments_for_window,
+                        tenant_id,
+                        day_start,
+                        day_end,
+                        tz_name,
+                    )
+                service = GoogleCalendarService(cal_id)
+                result = _tenant_google_calendar_list_events_cached(
+                    service,
+                    calendar_id=cal_id,
+                    time_min_iso=day_start.isoformat(),
+                    time_max_iso=day_end.isoformat(),
+                )
+                if mirror_fut is not None:
+                    try:
+                        mirror_lookup = mirror_fut.result(timeout=120)
+                    except Exception as mirror_exc:
+                        logger.warning(
+                            "tenant agenda mirror overlap failed tenant_id=%s: %s",
+                            tenant_id,
+                            mirror_exc,
+                        )
+                        mirror_lookup = _load_local_appointments_for_window(
+                            tenant_id, day_start, day_end, tz_name
+                        )
+            finally:
+                if executor is not None:
+                    executor.shutdown(wait=True)
             google_events = result.get("items") or []
             _warm_profile_cache_google_event_descriptions(tenant_id, google_events, profile_cache)
             for event in google_events:
@@ -3266,7 +3334,7 @@ def tenant_agenda_bulk(
 ):
     """Retourne plusieurs jours d'agenda en une seule réponse pour limiter le fan-out frontend."""
     tenant_id = auth["tenant_id"]
-    detail = _get_tenant_detail(tenant_id)
+    detail = _get_tenant_detail_for_agenda_cached(tenant_id)
     if not detail:
         raise HTTPException(404, "Tenant not found")
 
@@ -3307,19 +3375,48 @@ def tenant_agenda_bulk(
 
     mirror_enabled = _google_mirror_enabled(detail)
     mirror_lookup: Optional[Dict[str, List[Dict[str, Any]]]] = None
-    if mirror_enabled:
-        mirror_lookup = _load_local_appointments_for_window(tenant_id, day_start, day_end, tz_name)
 
-    if (params.get("calendar_provider") or "").strip() == "google" and (params.get("calendar_id") or "").strip():
+    google_cal_bulk = (
+        (params.get("calendar_provider") or "").strip() == "google"
+        and bool((params.get("calendar_id") or "").strip())
+    )
+    if google_cal_bulk:
         try:
             cal_id = (params.get("calendar_id") or "").strip()
-            service = GoogleCalendarService(cal_id)
-            result = _tenant_google_calendar_list_events_cached(
-                service,
-                calendar_id=cal_id,
-                time_min_iso=day_start.isoformat(),
-                time_max_iso=day_end.isoformat(),
-            )
+            executor: Optional[ThreadPoolExecutor] = None
+            mirror_fut = None
+            try:
+                if mirror_enabled:
+                    executor = ThreadPoolExecutor(max_workers=1)
+                    mirror_fut = executor.submit(
+                        _load_local_appointments_for_window,
+                        tenant_id,
+                        day_start,
+                        day_end,
+                        tz_name,
+                    )
+                service = GoogleCalendarService(cal_id)
+                result = _tenant_google_calendar_list_events_cached(
+                    service,
+                    calendar_id=cal_id,
+                    time_min_iso=day_start.isoformat(),
+                    time_max_iso=day_end.isoformat(),
+                )
+                if mirror_fut is not None:
+                    try:
+                        mirror_lookup = mirror_fut.result(timeout=120)
+                    except Exception as mirror_exc:
+                        logger.warning(
+                            "tenant agenda bulk mirror overlap failed tenant_id=%s: %s",
+                            tenant_id,
+                            mirror_exc,
+                        )
+                        mirror_lookup = _load_local_appointments_for_window(
+                            tenant_id, day_start, day_end, tz_name
+                        )
+            finally:
+                if executor is not None:
+                    executor.shutdown(wait=True)
             google_events = result.get("items") or []
             _warm_profile_cache_google_event_descriptions(tenant_id, google_events, profile_cache)
             for event in google_events:
