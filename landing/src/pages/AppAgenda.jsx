@@ -131,6 +131,58 @@ const APPT_TONE = {
   teal: { bg: "#E8F7F7", border: "#14B8A6", time: "#0F766E", text: "#0F766E" },
 };
 
+/** Stale-while-revalidate : affichage immédiat au retour sur l’agenda (session). */
+const AGENDA_BULK_CACHE_PREFIX = "uwi_agenda_bulk_v2:";
+const AGENDA_BULK_CACHE_MS = 35000;
+
+function agendaBulkStorageKey(dates) {
+  return AGENDA_BULK_CACHE_PREFIX + (dates || []).join(",");
+}
+
+function readAgendaBulkStale(dates) {
+  if (typeof sessionStorage === "undefined" || !dates?.length) return null;
+  try {
+    const raw = sessionStorage.getItem(agendaBulkStorageKey(dates));
+    if (!raw) return null;
+    const rec = JSON.parse(raw);
+    if (!rec || typeof rec.ts !== "number" || !rec.payload?.dates) return null;
+    if (Date.now() - rec.ts > AGENDA_BULK_CACHE_MS) {
+      sessionStorage.removeItem(agendaBulkStorageKey(dates));
+      return null;
+    }
+    return rec.payload;
+  } catch {
+    return null;
+  }
+}
+
+function writeAgendaBulkStale(dates, bulkRes) {
+  if (typeof sessionStorage === "undefined" || !dates?.length || !bulkRes?.dates) return;
+  try {
+    sessionStorage.setItem(
+      agendaBulkStorageKey(dates),
+      JSON.stringify({ ts: Date.now(), payload: bulkRes }),
+    );
+  } catch {
+    // quota / mode privé
+  }
+}
+
+/** Après mutation (annulation, déplacement…), éviter d’afficher un mois figé ~35 s. */
+function invalidateAgendaBulkCache() {
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    const toRemove = [];
+    for (let i = 0; i < sessionStorage.length; i += 1) {
+      const k = sessionStorage.key(i);
+      if (k && k.startsWith(AGENDA_BULK_CACHE_PREFIX)) toRemove.push(k);
+    }
+    toRemove.forEach((k) => sessionStorage.removeItem(k));
+  } catch {
+    /* ignore */
+  }
+}
+
 function normalizePhone(raw) {
   const c = String(raw || "").replace(/[^\d+]/g, "");
   if (!c || c.length < 6) return "";
@@ -416,14 +468,29 @@ export default function AppAgenda() {
   }, [viewMode, weekDates, monthGrid, selectedDate]);
 
   const loadAgenda = useCallback(async () => {
-    setCalendarLoading(true);
     setError("");
     const prefsPromise = Promise.all([
       api.tenantMe().catch(() => null),
       api.tenantGetHoraires().catch(() => null),
     ]);
+
+    const staleBulk = readAgendaBulkStale(visibleDates);
+    let showedStale = false;
+    if (staleBulk?.dates) {
+      const byStale = {};
+      visibleDates.forEach((d) => { byStale[d] = staleBulk.dates[d] || { slots: [], date: d }; });
+      setAgendaByDate(byStale);
+      showedStale = true;
+      setCalendarLoading(false);
+    } else {
+      setCalendarLoading(true);
+    }
+
     try {
       const bulkRes = await api.tenantGetAgendaBulk(visibleDates).catch(() => null);
+      if (bulkRes?.dates) {
+        writeAgendaBulkStale(visibleDates, bulkRes);
+      }
       const byDate = {};
       if (bulkRes?.dates) {
         visibleDates.forEach((d) => { byDate[d] = bulkRes.dates[d] || { slots: [], date: d }; });
@@ -437,7 +504,9 @@ export default function AppAgenda() {
         if (nextHoraires) setHoraires(nextHoraires);
       });
     } catch (e) {
-      setError(e?.message || "Impossible de charger l'agenda.");
+      if (!showedStale) {
+        setError(e?.message || "Impossible de charger l'agenda.");
+      }
     } finally {
       setCalendarLoading(false);
     }
@@ -558,6 +627,7 @@ export default function AppAgenda() {
       setActionMsg({ text: "Rendez-vous annulé. Le patient a été notifié par SMS.", type: "success" });
       setSelectedAppt(null);
       setConfirmCancel(false);
+      invalidateAgendaBulkCache();
       await loadAgenda();
     } catch (e) {
       setActionMsg({ text: e?.message || "Impossible d'annuler.", type: "error" });
@@ -601,6 +671,7 @@ export default function AppAgenda() {
       setActionMsg({ text: `RDV déplacé au ${fmtDate} à ${slot.time}`, type: "success" });
       setSelectedAppt(null);
       resetReschedule();
+      invalidateAgendaBulkCache();
       await loadAgenda();
     } catch (e) {
       setActionMsg({ text: e?.message || "Impossible de déplacer le RDV.", type: "error" });
@@ -658,6 +729,7 @@ export default function AppAgenda() {
       });
       setPatientCreateOpen(false);
       setActionMsg({ type: "success", text: "Fiche patient enregistrée." });
+      invalidateAgendaBulkCache();
       await loadAgenda();
       navigate(`/app/patient-dashboard?phone=${encodeURIComponent(phone)}`);
     } catch (e) {

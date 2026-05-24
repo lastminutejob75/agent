@@ -5,10 +5,13 @@ Protégé par cookie uwi_session uniquement (require_tenant_auth).
 """
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
 import re
+import threading
+import time
 from uuid import uuid4
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional
@@ -104,6 +107,71 @@ except ImportError:
     ZoneInfo = None  # type: ignore
 
 logger = logging.getLogger(__name__)
+
+# Réponses Google Calendar `events.list` pour l'agenda : cache court (souvent >200 ms / requête hors cache).
+_AGENDA_GCAL_EVENTS_LOCK = threading.Lock()
+_AGENDA_GCAL_EVENTS_CACHE: Dict[tuple, tuple[float, dict]] = {}
+
+
+def _tenant_google_calendar_list_events_cached(
+    calendar_svc: GoogleCalendarService,
+    *,
+    calendar_id: str,
+    time_min_iso: str,
+    time_max_iso: str,
+) -> dict:
+    """Même fenêtre temporelle dans les ~AGENDA_GOOGLE_CACHE_SECONDS s = pas d'appel Google répété."""
+    cid = (calendar_id or "").strip()
+    try:
+        ttl = float((os.environ.get("AGENDA_GOOGLE_CACHE_SECONDS") or "30").strip() or "30")
+    except ValueError:
+        ttl = 30.0
+    # Pytest définit cette variable pendant l'exécution d'un test : ne pas mutualiser les réponses google entre tests.
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        ttl = -1.0
+    if ttl <= 0:
+        return (
+            calendar_svc.service.events()
+            .list(
+                calendarId=cid,
+                timeMin=time_min_iso,
+                timeMax=time_max_iso,
+                singleEvents=True,
+                orderBy="startTime",
+                fields="items(id,summary,description,start,end)",
+            )
+            .execute()
+        )
+
+    key = (cid, time_min_iso, time_max_iso)
+    now_mono = time.monotonic()
+    with _AGENDA_GCAL_EVENTS_LOCK:
+        hit = _AGENDA_GCAL_EVENTS_CACHE.get(key)
+        if hit and hit[0] > now_mono:
+            return copy.deepcopy(hit[1])
+
+    executed = (
+        calendar_svc.service.events()
+        .list(
+            calendarId=cid,
+            timeMin=time_min_iso,
+            timeMax=time_max_iso,
+            singleEvents=True,
+            orderBy="startTime",
+            fields="items(id,summary,description,start,end)",
+        )
+        .execute()
+    )
+
+    with _AGENDA_GCAL_EVENTS_LOCK:
+        _AGENDA_GCAL_EVENTS_CACHE[key] = (now_mono + ttl, copy.deepcopy(executed))
+        if len(_AGENDA_GCAL_EVENTS_CACHE) > 200:
+            stale_keys = [k for k, (exp, _) in _AGENDA_GCAL_EVENTS_CACHE.items() if exp <= now_mono]
+            for stale_k in stale_keys[:120]:
+                _AGENDA_GCAL_EVENTS_CACHE.pop(stale_k, None)
+
+    return executed
+
 
 router = APIRouter(prefix="/api/tenant", tags=["tenant"])
 
@@ -2996,15 +3064,14 @@ def tenant_agenda(
         mirror_lookup = _load_local_appointments_for_window(tenant_id, day_start, day_end, tz_name)
     if (params.get("calendar_provider") or "").strip() == "google" and (params.get("calendar_id") or "").strip():
         try:
-            service = GoogleCalendarService((params.get("calendar_id") or "").strip())
-            result = service.service.events().list(
-                calendarId=(params.get("calendar_id") or "").strip(),
-                timeMin=day_start.isoformat(),
-                timeMax=day_end.isoformat(),
-                singleEvents=True,
-                orderBy="startTime",
-                fields="items(id,summary,description,start,end)",
-            ).execute()
+            cal_id = (params.get("calendar_id") or "").strip()
+            service = GoogleCalendarService(cal_id)
+            result = _tenant_google_calendar_list_events_cached(
+                service,
+                calendar_id=cal_id,
+                time_min_iso=day_start.isoformat(),
+                time_max_iso=day_end.isoformat(),
+            )
             google_events = result.get("items") or []
             _warm_profile_cache_google_event_descriptions(tenant_id, google_events, profile_cache)
             for event in google_events:
@@ -3245,15 +3312,14 @@ def tenant_agenda_bulk(
 
     if (params.get("calendar_provider") or "").strip() == "google" and (params.get("calendar_id") or "").strip():
         try:
-            service = GoogleCalendarService((params.get("calendar_id") or "").strip())
-            result = service.service.events().list(
-                calendarId=(params.get("calendar_id") or "").strip(),
-                timeMin=day_start.isoformat(),
-                timeMax=day_end.isoformat(),
-                singleEvents=True,
-                orderBy="startTime",
-                fields="items(id,summary,description,start,end)",
-            ).execute()
+            cal_id = (params.get("calendar_id") or "").strip()
+            service = GoogleCalendarService(cal_id)
+            result = _tenant_google_calendar_list_events_cached(
+                service,
+                calendar_id=cal_id,
+                time_min_iso=day_start.isoformat(),
+                time_max_iso=day_end.isoformat(),
+            )
             google_events = result.get("items") or []
             _warm_profile_cache_google_event_descriptions(tenant_id, google_events, profile_cache)
             for event in google_events:
