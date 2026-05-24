@@ -1717,7 +1717,7 @@ export default function AppAgenda() {
                 onChange={(e) => setCreateBookingForm((p) => ({ ...p, patient_phone: e.target.value }))}
                 autoComplete="tel"
                 inputMode="tel"
-                placeholder="facultatif, ex. 06 12 34 56 78"
+                placeholder="ex. 06 12 34 56 78"
               />
             </label>
             <label style={S.modalLabel}>
@@ -1822,8 +1822,7 @@ export default function AppAgenda() {
             {createBookingConfirm.needsPatientFile ? (
               <div style={S.bookingConfirmNoFileBox}>
                 <p style={S.bookingConfirmNoFileLead}>
-                  Patient sans fiche : aucune identité patient n&apos;est encore validée sur le dashboard pour ce numéro.
-                  Vous pouvez compléter la fiche tout de suite.
+                  Pas encore de fiche patient pour ce numéro.
                 </p>
                 <button
                   type="button"
@@ -1847,7 +1846,7 @@ export default function AppAgenda() {
                 style={S.bookingConfirmBtn}
                 onClick={() => setCreateBookingConfirm(null)}
               >
-                Compris
+                {createBookingConfirm.needsPatientFile ? "Valider sans créer de fiche" : "OK"}
               </button>
             </div>
           </div>
