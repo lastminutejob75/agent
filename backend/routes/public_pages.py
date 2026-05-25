@@ -1172,16 +1172,31 @@ async def public_search(q: str = "") -> Dict[str, Any]:
 
 
 @router.post("/analytics/event")
-async def public_analytics_event(payload: PublicAnalyticsEventRequest) -> Dict[str, Any]:
+async def public_analytics_event(
+    payload: PublicAnalyticsEventRequest,
+    request: Request,
+) -> Dict[str, Any]:
+    """Endpoint anonyme : rate-limit IP pour empêcher la pollution de `public_page_events`."""
+    from backend.rate_limit import check_sliding_window, client_ip
+
+    ip = client_ip(request)
+    try:
+        check_sliding_window(f"public_analytics_ip:{ip}", limit=60, window_sec=60)
+    except RuntimeError as e:
+        raise HTTPException(status_code=429, detail=str(e))
+
     tenant_id = _resolve_tenant_id(payload.slug)
+    if not tenant_id:
+        # Slug inconnu : on ne crée pas d'entrée orpheline pour éviter le spam.
+        return {"ok": True, "ignored": True}
     _insert_public_event(payload, tenant_id)
     return {"ok": True}
 
 
 def _is_admin_authenticated(request: Request) -> bool:
-    """Cookie session admin OU Bearer admin valide."""
+    """Auth admin = cookie session admin OU Bearer JWT session admin (même secret)."""
     try:
-        from backend.routes.admin import _ADMIN_VALID_TOKENS, _get_admin_email_from_cookie
+        from backend.routes.admin import _decode_admin_session_jwt, _get_admin_email_from_cookie
     except Exception:
         return False
     try:
@@ -1193,7 +1208,7 @@ def _is_admin_authenticated(request: Request) -> bool:
         auth_header = request.headers.get("authorization") or ""
         if auth_header.lower().startswith("bearer "):
             tok = auth_header.split(" ", 1)[1].strip()
-            if tok in _ADMIN_VALID_TOKENS:
+            if tok and _decode_admin_session_jwt(tok):
                 return True
     except Exception:
         pass
@@ -1276,7 +1291,20 @@ async def public_sitemap() -> Response:
 async def public_book(
     payload: PublicBookingRequest,
     background_tasks: BackgroundTasks,
+    request: Request,
 ) -> Dict[str, Any]:
+    """Réservation patient publique. Rate-limit IP + slug pour limiter le spam de RDV."""
+    from backend.rate_limit import check_sliding_window, client_ip
+
+    ip = client_ip(request)
+    slug = (payload.slug or "").strip().lower() or "unknown"
+    try:
+        check_sliding_window(f"public_book_ip:{ip}", limit=5, window_sec=60)
+        check_sliding_window(f"public_book_ip:{ip}", limit=30, window_sec=3600)
+        check_sliding_window(f"public_book_slug:{slug}", limit=20, window_sec=60)
+    except RuntimeError as e:
+        raise HTTPException(status_code=429, detail=str(e))
+
     payload = _sanitize_public_booking_payload(payload)
     practitioner = _try_fetch_practitioner(payload.slug) or _demo_practitioner(payload.slug)
     tenant_id_raw = practitioner.get("tenantId")

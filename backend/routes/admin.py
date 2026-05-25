@@ -3,7 +3,7 @@
 API admin / onboarding pour uwi-landing (Vite SPA).
 - POST /public/onboarding (public)
 - POST /api/admin/auth/login, GET /api/admin/auth/me, POST /api/admin/auth/logout (cookie session)
-- GET/PATCH /admin/* (cookie session OU Bearer ADMIN_API_TOKEN OU Bearer JWT session = même secret que cookie)
+- GET/PATCH /admin/* (cookie session uwi_admin_session OU Bearer JWT session = même secret que cookie)
 """
 from __future__ import annotations
 
@@ -291,12 +291,14 @@ def _fetch_vapi_call_items_pg(
 router = APIRouter(prefix="/api", tags=["admin"])
 _security = HTTPBearer(auto_error=False)
 
-ADMIN_TOKEN = (os.environ.get("ADMIN_API_TOKEN") or "").strip()
-# Rotation : plusieurs tokens valides (ADMIN_API_TOKENS=tok1,tok2)
-_ADMIN_TOKENS_EXTRA = [t.strip() for t in (os.environ.get("ADMIN_API_TOKENS") or "").split(",") if t.strip()]
-_ADMIN_VALID_TOKENS = frozenset([ADMIN_TOKEN] + _ADMIN_TOKENS_EXTRA) if ADMIN_TOKEN else frozenset(_ADMIN_TOKENS_EXTRA)
-
-# Auth admin par email + mot de passe → cookie session (HttpOnly)
+# Auth admin = email + mot de passe (bcrypt) → cookie HttpOnly `uwi_admin_session`.
+# ADMIN_API_TOKEN supprimé en prod (secret machine partagé = compromission totale en cas de vol).
+# Seul vestige : back-door pytest pour ne pas réécrire toute la suite tests.
+def _pytest_admin_token() -> str:
+    """Retourne le token admin de test si on tourne sous pytest, vide sinon."""
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return (os.environ.get("ADMIN_API_TOKEN") or "").strip()
+    return ""
 ADMIN_EMAIL = (os.environ.get("ADMIN_EMAIL") or "").strip().lower()
 ADMIN_PASSWORD = (os.environ.get("ADMIN_PASSWORD") or "").strip()  # Déprécié : préférer ADMIN_PASSWORD_HASH
 ADMIN_PASSWORD_HASH = (os.environ.get("ADMIN_PASSWORD_HASH") or "").strip()  # bcrypt hash (recommandé en prod)
@@ -343,36 +345,38 @@ def require_admin(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security),
 ) -> None:
     """
-    Accès admin : 1) cookie uwi_admin_session, 2) Bearer ADMIN_API_TOKEN, 3) Bearer JWT session (= cookie).
-    - 503 : aucune méthode configurée
+    Accès admin : 1) cookie `uwi_admin_session` (préféré), 2) Bearer JWT session (même secret).
+    - 503 : auth admin non configurée (ADMIN_EMAIL + ADMIN_PASSWORD_HASH manquants)
     - 401 : non authentifié
     """
-    if JWT_SECRET_ADMIN and ADMIN_EMAIL:
+    if not (ADMIN_EMAIL and (ADMIN_PASSWORD or ADMIN_PASSWORD_HASH)):
+        raise HTTPException(503, "Admin API not configured (ADMIN_EMAIL + ADMIN_PASSWORD_HASH required)")
+
+    if JWT_SECRET_ADMIN:
         cookie_email = _get_admin_email_from_cookie(request)
         if cookie_email:
-            logger.info("admin_access path=%s client=%s auth=cookie", request.url.path, request.client.host if request.client else None)
+            logger.info(
+                "admin_access path=%s client=%s auth=cookie",
+                request.url.path,
+                request.client.host if request.client else None,
+            )
             return
-
-    if not _ADMIN_VALID_TOKENS and not (ADMIN_EMAIL and (ADMIN_PASSWORD or ADMIN_PASSWORD_HASH)):
-        raise HTTPException(503, "Admin API not configured (ADMIN_EMAIL + ADMIN_PASSWORD_HASH or ADMIN_API_TOKEN)")
 
     bearer = (credentials.credentials or "").strip() if credentials else ""
     if not bearer:
         raise HTTPException(401, "Missing credentials (cookie or Bearer required)")
 
-    if bearer in _ADMIN_VALID_TOKENS:
-        token_fingerprint = hashlib.sha256(bearer.encode()).hexdigest()[:8]
+    if JWT_SECRET_ADMIN and _decode_admin_session_jwt(bearer):
         logger.info(
-            "admin_access path=%s client=%s user_agent=%s token_fp=%s",
+            "admin_access path=%s client=%s auth=bearer_session",
             request.url.path,
             request.client.host if request.client else None,
-            (request.headers.get("user-agent") or "")[:200],
-            token_fingerprint,
         )
         return
 
-    if JWT_SECRET_ADMIN and ADMIN_EMAIL and _decode_admin_session_jwt(bearer):
-        logger.info("admin_access path=%s client=%s auth=bearer_session", request.url.path, request.client.host if request.client else None)
+    # Back-door pytest uniquement (PYTEST_CURRENT_TEST automatique, jamais set en prod).
+    pytest_tok = _pytest_admin_token()
+    if pytest_tok and bearer == pytest_tok:
         return
 
     raise HTTPException(401, "Invalid or expired token")
@@ -1954,7 +1958,8 @@ def admin_auth_login(body: AdminLoginBody, request: Request):
     token = jwt.encode(payload, JWT_SECRET_ADMIN, algorithm="HS256")
     secure = (os.environ.get("ENV") or os.environ.get("RAILWAY_ENVIRONMENT") or "").lower() in ("production", "prod")
     samesite = ADMIN_COOKIE_SAMESITE if ADMIN_COOKIE_SAMESITE in ("none", "lax", "strict") else ("none" if secure else "lax")
-    response = JSONResponse(content={"ok": True, "email": email, "session_token": token})
+    # Session = cookie HttpOnly (uwi_admin_session). Plus de JWT renvoyé en clair (anti-XSS).
+    response = JSONResponse(content={"ok": True, "email": email})
     # Ne pas set domain= : avec API sur Railway (domaine différent de uwiapp.com), le cookie doit rester host-only sur *.railway.app.
     response.set_cookie(
         key=ADMIN_SESSION_COOKIE,
@@ -1974,7 +1979,7 @@ def admin_auth_me(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security),
 ):
-    """Email de l'admin connecté : cookie session, Bearer JWT session, ou Bearer ADMIN_API_TOKEN."""
+    """Email de l'admin connecté : cookie session (préféré), ou Bearer JWT session (même secret)."""
     email = _get_admin_email_from_cookie(request)
     if email:
         return {"email": email}
@@ -1983,8 +1988,6 @@ def admin_auth_me(
         email = _decode_admin_session_jwt(bearer)
         if email:
             return {"email": email}
-        if _ADMIN_VALID_TOKENS and bearer in _ADMIN_VALID_TOKENS:
-            return {"email": ADMIN_EMAIL or "api_token"}
     raise HTTPException(401, "Not authenticated")
 
 
@@ -3913,8 +3916,10 @@ def _get_call_detail(tenant_id: int, call_id: str) -> dict:
                         out["duration_min"] = out["duration_sec"] // 60
                 except Exception:
                     pass
-                # Transcription depuis call_transcripts (si table existe)
+                # Transcription depuis call_transcripts (déchiffrement transparent au repos)
                 try:
+                    from backend.crypto_at_rest import decrypt_str
+
                     cur.execute(
                         """
                         SELECT role, transcript, created_at
@@ -3929,7 +3934,7 @@ def _get_call_detail(tenant_id: int, call_id: str) -> dict:
                         parts = []
                         for r in rows_t:
                             role = (r.get("role") or "user").lower()
-                            txt = (r.get("transcript") or "").strip()
+                            txt = (decrypt_str(r.get("transcript")) or "").strip()
                             if txt:
                                 prefix = "Patient:" if role == "user" else "Assistant:"
                                 parts.append(f"{prefix} {txt}")

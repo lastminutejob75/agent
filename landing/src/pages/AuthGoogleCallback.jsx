@@ -1,6 +1,6 @@
 import React from "react";
 import { API_URL, GOOGLE_REDIRECT_URI, OAUTH_CODE_VERIFIER_KEY } from "../lib/authConfig.js";
-import { clearTenantToken, setTenantToken } from "../lib/api.js";
+import { clearTenantToken } from "../lib/api.js";
 
 export default function AuthGoogleCallback() {
   const [status, setStatus] = React.useState("loading");
@@ -66,12 +66,8 @@ export default function AuthGoogleCallback() {
           throw new Error(`Connexion Google échouée (${res.status}). ${txt}`);
         }
 
-        const data = await res.json().catch(() => ({}));
-        // Sur mobile les cookies tiers sont souvent bloqués : on stocke le token et on l'envoie en Bearer
-        if (data.token) {
-          setTenantToken(data.token);
-        }
-
+        await res.json().catch(() => ({}));
+        /* Session = cookie HttpOnly `uwi_session` posé par le backend. Plus de token en localStorage. */
         setMessage("Connecté. Redirection…");
         window.location.replace("/app");
       } catch (e) {

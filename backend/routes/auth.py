@@ -249,7 +249,8 @@ def auth_login(request: Request, body: LoginBody, response: Response):
         max_age=SESSION_TTL_SECONDS,
     )
     log_auth_event(row["tenant_id"], email, "auth_login_password", None)
-    return {"ok": True, "token": token, "tenant_id": int(row["tenant_id"])}
+    # Session = cookie HttpOnly (uwi_session). Plus de JWT renvoyé dans le JSON (anti-XSS).
+    return {"ok": True, "tenant_id": int(row["tenant_id"])}
 
 
 # --- Mot de passe oublié ---
@@ -707,5 +708,5 @@ def auth_google_callback(body: GoogleCallbackBody, response: Response):
         max_age=SESSION_TTL_SECONDS,
     )
     log_auth_event(tenant_id, email, "auth_google_sso", None)
-    # Token en plus du cookie : le front le stocke (localStorage) et l'envoie en Bearer pour contourner le blocage des cookies tiers sur mobile.
-    return {"ok": True, "token": token}
+    # Session = cookie HttpOnly uniquement (uwi_session). Le JWT brut n'est plus renvoyé (anti-XSS).
+    return {"ok": True}

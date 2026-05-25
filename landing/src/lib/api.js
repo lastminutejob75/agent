@@ -10,24 +10,41 @@ export function getApiBaseUrl() {
   return BASE_URL;
 }
 
+/*
+ * Sécurité : la session est portée UNIQUEMENT par un cookie HttpOnly
+ * (`uwi_session` / `uwi_admin_session`), inaccessible à JavaScript.
+ * Les anciens tokens stockés en localStorage sont une surface XSS et
+ * ont été supprimés. On garde les helpers (no-op) pour rétrocompat.
+ */
+function _purgeLegacyAuthLocalStorage() {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    window.localStorage.removeItem("uwi_admin_token");
+    window.localStorage.removeItem("uwi_tenant_token");
+  } catch {
+    /* localStorage indisponible (mode privé, quota) → ignore */
+  }
+}
+_purgeLegacyAuthLocalStorage();
+
 export function getAdminToken() {
-  return localStorage.getItem("uwi_admin_token") || "";
+  return "";
 }
 
-export function setAdminToken(token) {
-  localStorage.setItem("uwi_admin_token", (token || "").trim());
+export function setAdminToken(_token) {
+  _purgeLegacyAuthLocalStorage();
 }
 
 export function getTenantToken() {
-  return localStorage.getItem("uwi_tenant_token") || "";
+  return "";
 }
 
-export function setTenantToken(token) {
-  localStorage.setItem("uwi_tenant_token", (token || "").trim());
+export function setTenantToken(_token) {
+  _purgeLegacyAuthLocalStorage();
 }
 
 export function clearTenantToken() {
-  localStorage.removeItem("uwi_tenant_token");
+  _purgeLegacyAuthLocalStorage();
 }
 
 export function isTenantUnauthorized(err) {
@@ -47,18 +64,11 @@ export function isTenantUnauthorized(err) {
 const MSG_BACKEND_UNREACHABLE =
   "Impossible de joindre le serveur. Vérifiez VITE_UWI_API_BASE_URL, CORS et que le backend est démarré.";
 
-async function request(path, { method = "GET", body, admin = false, tenant = false, leadToken = "", signal } = {}) {
+async function request(path, { method = "GET", body, admin: _admin = false, tenant: _tenant = false, leadToken = "", signal } = {}) {
   const url = `${BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
 
+  /* Session : cookie HttpOnly via `credentials: include`. Plus de Bearer JWT en JS. */
   const headers = { "Content-Type": "application/json" };
-  if (admin) {
-    const tok = getAdminToken();
-    if (tok) headers["Authorization"] = `Bearer ${tok}`;
-  }
-  if (tenant) {
-    const tok = getTenantToken();
-    if (tok) headers["Authorization"] = `Bearer ${tok}`;
-  }
   if (leadToken) {
     headers["X-Lead-Token"] = String(leadToken);
   }

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api, clearTenantToken, setTenantToken } from "../lib/api.js";
+import { api, clearTenantToken } from "../lib/api.js";
 import { Link } from "react-router-dom";
 import { Eye, EyeOff } from "lucide-react";
 import { GoogleLoginButton } from "../components/GoogleLoginButton.jsx";
@@ -60,10 +60,8 @@ export default function Login() {
     setLoading(true);
     try {
       clearTenantToken();
-      const result = await api.authLogin(email.trim(), password);
-      if (result?.token) {
-        setTenantToken(result.token);
-      }
+      await api.authLogin(email.trim(), password);
+      /* Session = cookie HttpOnly `uwi_session` posé par le backend. */
       window.location.replace(isWelcome ? "/app?welcome=1" : nextPath);
     } catch (e) {
       setErr(e.message || "Erreur de connexion");

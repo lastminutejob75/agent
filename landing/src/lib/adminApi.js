@@ -1,9 +1,7 @@
 /**
- * API admin : credentials: "include" (cookie session) ou Authorization: Bearer (token API).
+ * API admin : session = cookie HttpOnly `uwi_admin_session` via `credentials: "include"`.
  * Base URL = VITE_UWI_API_BASE_URL (même que api.js).
  */
-import { getAdminToken } from "./api.js";
-
 async function adminFetch(path, options = {}) {
   const base = (import.meta.env.VITE_UWI_API_BASE_URL || "").replace(/\/$/, "");
   if (!base) {
@@ -11,12 +9,10 @@ async function adminFetch(path, options = {}) {
     err.status = 0;
     throw err;
   }
-  const token = (getAdminToken() || "").trim();
   const headers = {
     "Content-Type": "application/json",
     ...(options.headers || {}),
   };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
 
   const res = await fetch(base + path, {
     ...options,

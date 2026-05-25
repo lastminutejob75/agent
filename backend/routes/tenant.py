@@ -314,11 +314,16 @@ def _auth_from_bearer(request: Request) -> Optional[Dict[str, Any]]:
 def require_tenant_auth(request: Request) -> Dict[str, Any]:
     """
     Authentification par cookie uwi_session ou Bearer (même JWT). Bearer permet mobile quand les cookies tiers sont bloqués.
+    Le payload est aussi posé dans `request.state.auth` pour le middleware d'audit patient (pt 8).
     """
     if not JWT_SECRET:
         raise HTTPException(503, "JWT_SECRET not configured")
     auth = _auth_from_cookie(request) or _auth_from_bearer(request)
     if auth:
+        try:
+            request.state.auth = auth
+        except Exception:
+            pass
         return auth
     raise HTTPException(401, "Missing or invalid token")
 
@@ -2940,11 +2945,12 @@ def tenant_delete_patient_note(
     note_id: int,
     auth: dict = Depends(require_tenant_auth),
 ):
+    """Anti-IDOR : la suppression cible la note ET le patient indiqué dans l'URL."""
     tenant_id = auth["tenant_id"]
     profile = get_cabinet_client_by_phone(tenant_id, phone)
     if not profile:
         raise HTTPException(404, "Patient not found")
-    if not delete_patient_note(tenant_id, note_id):
+    if not delete_patient_note(tenant_id, note_id, patient_phone=phone):
         raise HTTPException(404, "Note not found")
     return {"ok": True}
 
@@ -3033,7 +3039,8 @@ def tenant_delete_patient_document(
     if os.path.isfile(filepath):
         os.remove(filepath)
 
-    delete_patient_document(tenant_id, doc_id)
+    # Anti-IDOR : la suppression DB cible aussi le patient_phone (pas seulement doc_id+tenant).
+    delete_patient_document(tenant_id, doc_id, patient_phone=phone)
     return {"ok": True}
 
 

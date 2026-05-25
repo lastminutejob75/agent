@@ -143,7 +143,10 @@ def insert_call_transcript(
     transcript: str,
     is_final: bool = False,
 ) -> bool:
-    """Insert une ligne call_transcripts (message type=transcript)."""
+    """
+    Insert une ligne call_transcripts (message type=transcript).
+    `transcript` est chiffré au repos si DATA_ENCRYPTION_KEY est défini (PHI).
+    """
     if not call_id or not transcript:
         return False
     url = _pg_url()
@@ -151,6 +154,9 @@ def insert_call_transcript(
         return False
     if not ensure_tables():
         return False
+    from backend.crypto_at_rest import encrypt_str
+
+    payload = encrypt_str(transcript[:65535])
     try:
         with pg_connection() as conn:
             from backend.pg_tenant_context import set_tenant_id_on_connection
@@ -162,7 +168,7 @@ def insert_call_transcript(
                     INSERT INTO call_transcripts (tenant_id, call_id, role, transcript, is_final)
                     VALUES (%s, %s, %s, %s, %s)
                     """,
-                    (tenant_id, call_id, (role or "user").lower()[:32], transcript[:65535], bool(is_final)),
+                    (tenant_id, call_id, (role or "user").lower()[:32], payload, bool(is_final)),
                 )
             conn.commit()
         return True

@@ -68,6 +68,16 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    # HSTS : force HTTPS pendant 1 an. Railway met déjà du TLS au load balancer, on confirme côté app.
+    response.headers.setdefault(
+        "Strict-Transport-Security",
+        "max-age=31536000; includeSubDomains",
+    )
+    # CSP minimale pour une API JSON (aucun HTML attendu, blocage iframing).
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+    )
     return response
 
 
@@ -96,6 +106,109 @@ async def admin_cors_guard(request: Request, call_next):
         return await call_next(request)
     _logger.warning("admin_cors_reject path=%s origin=%s", request.url.path, origin[:80])
     return JSONResponse(status_code=403, content={"detail": "Origin not allowed for admin API"})
+
+
+_PATIENT_PATH_PREFIX = "/api/tenant/patients"
+
+
+def _classify_patient_action(method: str, path: str) -> str:
+    """Mappe une route patient → action métier loggée dans patient_access_audit."""
+    m = (method or "GET").upper()
+    p = path or ""
+    if "/notes" in p:
+        if m == "DELETE":
+            return "delete_note"
+        if m == "POST":
+            return "write_note"
+        return "view_notes"
+    if "/documents" in p:
+        if "/download" in p:
+            return "download_doc"
+        if "/send" in p:
+            return "send_doc"
+        if m == "DELETE":
+            return "delete_doc"
+        if m == "POST":
+            return "upload_doc"
+        return "view_docs"
+    if m == "POST" and p.endswith("/patients"):
+        return "create_patient"
+    if m == "PATCH":
+        return "update_patient"
+    if m == "DELETE":
+        return "delete_patient"
+    return "view_profile"
+
+
+def _extract_patient_phone(path: str) -> str:
+    """Extrait le phone du segment d'URL /api/tenant/patients/{phone}/..."""
+    if not path.startswith(_PATIENT_PATH_PREFIX):
+        return ""
+    rest = path[len(_PATIENT_PATH_PREFIX):].lstrip("/")
+    if not rest:
+        return ""
+    first = rest.split("/", 1)[0]
+    try:
+        from urllib.parse import unquote
+
+        return unquote(first)
+    except Exception:
+        return first
+
+
+@app.middleware("http")
+async def audit_patient_access_middleware(request: Request, call_next):
+    """
+    Pt 8 — Audit log automatique des accès aux dossiers patients.
+    Trace toute requête /api/tenant/patients/* + le détail d'appel (qui peut
+    contenir le numéro patient). Best-effort, ne casse jamais la requête.
+    """
+    response = await call_next(request)
+    try:
+        path = request.url.path or ""
+        if not path.startswith(_PATIENT_PATH_PREFIX):
+            return response
+        if request.method == "OPTIONS":
+            return response
+        # On ne log que les codes 2xx/3xx (succès) — éviter le bruit des 401/404 brute-force.
+        # Pour les écritures, on log même les erreurs 4xx pour traçabilité forensique.
+        action = _classify_patient_action(request.method, path)
+        is_write = action not in ("view_profile", "view_notes", "view_docs")
+        if not is_write and not (200 <= response.status_code < 400):
+            return response
+
+        from backend.patient_access_audit import log_patient_access
+        from backend.rate_limit import client_ip
+
+        actor_user_id = None
+        actor_email = None
+        actor_role = None
+        tenant_id = 0
+        auth = getattr(request.state, "auth", None) or {}
+        if isinstance(auth, dict):
+            tenant_id = int(auth.get("tenant_id") or 0)
+            actor_user_id = str(auth.get("user_id") or "") or None
+            actor_email = (auth.get("email") or "") or None
+            actor_role = (auth.get("role") or "") or None
+
+        log_patient_access(
+            tenant_id=tenant_id,
+            actor_user_id=actor_user_id,
+            actor_email=actor_email,
+            actor_role=actor_role,
+            action=action,
+            patient_phone=_extract_patient_phone(path),
+            resource="patient",
+            method=request.method,
+            path=path[:255],
+            ip_address=client_ip(request),
+            user_agent=(request.headers.get("user-agent") or "")[:255],
+            status_code=response.status_code,
+        )
+    except Exception:  # noqa: BLE001
+        # Best-effort : le logging d'audit ne doit jamais casser la requête utilisateur.
+        _logger.exception("audit_patient_access_middleware error")
+    return response
 
 
 @app.middleware("http")

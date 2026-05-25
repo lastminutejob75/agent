@@ -175,18 +175,15 @@ function DiagnosticPanel() {
 // ── Page ────────────────────────────────────────────────────────────────────
 
 export default function AdminLogin() {
-  const { login, loginWithToken, isAuthed, sessionPersistError } = useAdminAuth();
+  const { login, isAuthed, sessionPersistError } = useAdminAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const from = location.state?.from?.pathname || "/admin";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [token, setToken] = useState("");
   const [loading, setLoading] = useState(false);
-  const [tokenLoading, setTokenLoading] = useState(false);
   const [err, setErr] = useState(null);
-  const [tokenErr, setTokenErr] = useState(null);
 
   useEffect(() => {
     if (isAuthed) navigate(from, { replace: true });
@@ -244,20 +241,6 @@ export default function AdminLogin() {
       setErr("Identifiants invalides.");
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function onTokenSubmit(e) {
-    e.preventDefault();
-    setTokenErr(null);
-    setTokenLoading(true);
-    try {
-      await loginWithToken(token);
-      navigate(from, { replace: true });
-    } catch {
-      setTokenErr("Token invalide ou expiré.");
-    } finally {
-      setTokenLoading(false);
     }
   }
 
@@ -355,97 +338,6 @@ export default function AdminLogin() {
             </PrimaryButton>
           </form>
 
-          {/* Mode token API */}
-          <div
-            style={{
-              marginTop: 24,
-              paddingTop: 24,
-              borderTop: `1px solid ${T.border}`,
-            }}
-          >
-            <p
-              style={{
-                margin: "0 0 4px",
-                fontSize: 13,
-                fontWeight: 500,
-                color: T.textSecondary,
-              }}
-            >
-              Ou avec le token API
-            </p>
-            <p style={{ margin: "0 0 12px", fontSize: 11, color: T.textMuted }}>
-              Colle la valeur de{" "}
-              <code
-                style={{
-                  background: T.bgSubtle,
-                  padding: "1px 6px",
-                  borderRadius: 4,
-                  fontSize: 11,
-                  border: `1px solid ${T.border}`,
-                }}
-              >
-                ADMIN_API_TOKEN
-              </code>
-              .
-            </p>
-            <form onSubmit={onTokenSubmit} style={{ display: "flex", gap: 8 }}>
-              <input
-                type="password"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                placeholder="Token API admin"
-                style={{
-                  flex: 1,
-                  padding: "9px 12px",
-                  fontSize: 13,
-                  fontFamily: font.body,
-                  color: T.text,
-                  background: T.bgCard,
-                  border: `1px solid ${T.borderDark}`,
-                  borderRadius: radius.lg,
-                  outline: "none",
-                  transition: "border-color 0.15s, box-shadow 0.15s",
-                }}
-                onFocus={(e) => {
-                  e.currentTarget.style.borderColor = T.teal;
-                  e.currentTarget.style.boxShadow = `0 0 0 3px ${T.tealLight}`;
-                }}
-                onBlur={(e) => {
-                  e.currentTarget.style.borderColor = T.borderDark;
-                  e.currentTarget.style.boxShadow = "none";
-                }}
-              />
-              <button
-                type="submit"
-                disabled={tokenLoading || !token.trim()}
-                style={{
-                  padding: "9px 16px",
-                  fontSize: 13,
-                  fontWeight: 600,
-                  color: T.text,
-                  background: T.bgCard,
-                  border: `1px solid ${T.borderDark}`,
-                  borderRadius: radius.lg,
-                  cursor: tokenLoading || !token.trim() ? "not-allowed" : "pointer",
-                  opacity: tokenLoading || !token.trim() ? 0.5 : 1,
-                  fontFamily: font.body,
-                  transition: "background 0.15s",
-                }}
-                onMouseEnter={(e) => {
-                  if (!tokenLoading && token.trim())
-                    e.currentTarget.style.background = T.bgCardHover;
-                }}
-                onMouseLeave={(e) => (e.currentTarget.style.background = T.bgCard)}
-              >
-                {tokenLoading ? "…" : "OK"}
-              </button>
-            </form>
-            {tokenErr && (
-              <p style={{ margin: "8px 0 0", fontSize: 13, color: T.red }}>
-                {tokenErr}
-              </p>
-            )}
-          </div>
         </div>
 
         <p

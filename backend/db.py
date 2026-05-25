@@ -781,14 +781,30 @@ def insert_patient_document(
             "size_bytes": size_bytes, "created_at": ""}
 
 
-def delete_patient_document(tenant_id: int, doc_id: int) -> bool:
+def delete_patient_document(
+    tenant_id: int,
+    doc_id: int,
+    *,
+    patient_phone: Optional[str] = None,
+) -> bool:
+    """
+    Supprime un document patient. Si `patient_phone` est fourni (recommandé),
+    la suppression est limitée aux documents de ce patient — anti-IDOR.
+    """
+    phone_norm = normalize_phone_number(patient_phone) if patient_phone else ""
     url = _pg_events_url()
     if url:
         try:
             import psycopg
             with psycopg.connect(url) as conn:
                 with conn.cursor() as cur:
-                    cur.execute("DELETE FROM patient_documents WHERE id = %s AND tenant_id = %s", (doc_id, tenant_id))
+                    if phone_norm:
+                        cur.execute(
+                            "DELETE FROM patient_documents WHERE id = %s AND tenant_id = %s AND patient_phone = %s",
+                            (doc_id, tenant_id, phone_norm),
+                        )
+                    else:
+                        cur.execute("DELETE FROM patient_documents WHERE id = %s AND tenant_id = %s", (doc_id, tenant_id))
                     deleted = cur.rowcount > 0
                 conn.commit()
                 return deleted
@@ -796,15 +812,25 @@ def delete_patient_document(tenant_id: int, doc_id: int) -> bool:
             pass
     conn = get_conn()
     _ensure_patient_documents_table(conn)
-    cur = conn.execute("DELETE FROM patient_documents WHERE id = ? AND tenant_id = ?", (doc_id, tenant_id))
+    if phone_norm:
+        cur = conn.execute(
+            "DELETE FROM patient_documents WHERE id = ? AND tenant_id = ? AND patient_phone = ?",
+            (doc_id, tenant_id, phone_norm),
+        )
+    else:
+        cur = conn.execute("DELETE FROM patient_documents WHERE id = ? AND tenant_id = ?", (doc_id, tenant_id))
     conn.commit()
     return cur.rowcount > 0
 
 
 def list_patient_notes(tenant_id: int, phone: str, *, limit: int = 100) -> List[Dict[str, Any]]:
+    """Lit les notes patient et déchiffre `note_text` à la volée (rétrocompat clair)."""
+    from backend.crypto_at_rest import decrypt_str
+
     phone_norm = normalize_phone_number(phone) or phone.strip()
     limit = max(1, min(int(limit or 100), 300))
     url = _pg_events_url()
+    rows: List[Dict[str, Any]] = []
     if url:
         try:
             import psycopg
@@ -821,23 +847,29 @@ def list_patient_notes(tenant_id: int, phone: str, *, limit: int = 100) -> List[
                         """,
                         (tenant_id, phone_norm, limit),
                     )
-                    return [dict(r) for r in cur.fetchall()]
+                    rows = [dict(r) for r in cur.fetchall()]
         except Exception:
-            pass
-    conn = get_conn()
-    _ensure_patient_notes_table(conn)
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute(
-        """
-        SELECT id, tenant_id, patient_phone, note_text, author, created_at
-        FROM patient_notes
-        WHERE tenant_id = ? AND patient_phone = ?
-        ORDER BY created_at DESC
-        LIMIT ?
-        """,
-        (tenant_id, phone_norm, limit),
-    ).fetchall()
-    return [dict(r) for r in rows]
+            rows = []
+    if not rows:
+        conn = get_conn()
+        _ensure_patient_notes_table(conn)
+        conn.row_factory = sqlite3.Row
+        rows = [
+            dict(r)
+            for r in conn.execute(
+                """
+                SELECT id, tenant_id, patient_phone, note_text, author, created_at
+                FROM patient_notes
+                WHERE tenant_id = ? AND patient_phone = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (tenant_id, phone_norm, limit),
+            ).fetchall()
+        ]
+    for r in rows:
+        r["note_text"] = decrypt_str(r.get("note_text"))
+    return rows
 
 
 def insert_patient_note(
@@ -847,11 +879,15 @@ def insert_patient_note(
     note_text: str,
     author: str = "",
 ) -> Dict[str, Any]:
+    """Insère une note patient. `note_text` est chiffré au repos si DATA_ENCRYPTION_KEY est défini."""
+    from backend.crypto_at_rest import encrypt_str
+
     phone_norm = normalize_phone_number(phone) or phone.strip()
     text = (note_text or "").strip()[:4000]
     if not text:
         return {}
     author_clean = (author or "").strip()[:120]
+    stored = encrypt_str(text)
     url = _pg_events_url()
     if url:
         try:
@@ -863,13 +899,17 @@ def insert_patient_note(
                         """
                         INSERT INTO patient_notes (tenant_id, patient_phone, note_text, author)
                         VALUES (%s, %s, %s, %s)
-                        RETURNING id, tenant_id, patient_phone, note_text, author, created_at
+                        RETURNING id, tenant_id, patient_phone, author, created_at
                         """,
-                        (tenant_id, phone_norm, text, author_clean or None),
+                        (tenant_id, phone_norm, stored, author_clean or None),
                     )
                     row = cur.fetchone()
                 conn.commit()
-                return dict(row) if row else {}
+                if row:
+                    out = dict(row)
+                    out["note_text"] = text
+                    return out
+                return {}
         except Exception:
             pass
     conn = get_conn()
@@ -879,7 +919,7 @@ def insert_patient_note(
         INSERT INTO patient_notes (tenant_id, patient_phone, note_text, author)
         VALUES (?, ?, ?, ?)
         """,
-        (tenant_id, phone_norm, text, author_clean or None),
+        (tenant_id, phone_norm, stored, author_clean or None),
     )
     conn.commit()
     return {
@@ -892,7 +932,17 @@ def insert_patient_note(
     }
 
 
-def delete_patient_note(tenant_id: int, note_id: int) -> bool:
+def delete_patient_note(
+    tenant_id: int,
+    note_id: int,
+    *,
+    patient_phone: Optional[str] = None,
+) -> bool:
+    """
+    Supprime une note patient. Si `patient_phone` est fourni (recommandé),
+    la suppression est limitée aux notes de ce patient — anti-IDOR.
+    """
+    phone_norm = normalize_phone_number(patient_phone) if patient_phone else ""
     url = _pg_events_url()
     if url:
         try:
@@ -900,7 +950,13 @@ def delete_patient_note(tenant_id: int, note_id: int) -> bool:
             with psycopg.connect(url) as conn:
                 _ensure_patient_notes_table_pg(conn)
                 with conn.cursor() as cur:
-                    cur.execute("DELETE FROM patient_notes WHERE id = %s AND tenant_id = %s", (note_id, tenant_id))
+                    if phone_norm:
+                        cur.execute(
+                            "DELETE FROM patient_notes WHERE id = %s AND tenant_id = %s AND patient_phone = %s",
+                            (note_id, tenant_id, phone_norm),
+                        )
+                    else:
+                        cur.execute("DELETE FROM patient_notes WHERE id = %s AND tenant_id = %s", (note_id, tenant_id))
                     deleted = cur.rowcount > 0
                 conn.commit()
                 return deleted
@@ -908,7 +964,13 @@ def delete_patient_note(tenant_id: int, note_id: int) -> bool:
             pass
     conn = get_conn()
     _ensure_patient_notes_table(conn)
-    cur = conn.execute("DELETE FROM patient_notes WHERE id = ? AND tenant_id = ?", (note_id, tenant_id))
+    if phone_norm:
+        cur = conn.execute(
+            "DELETE FROM patient_notes WHERE id = ? AND tenant_id = ? AND patient_phone = ?",
+            (note_id, tenant_id, phone_norm),
+        )
+    else:
+        cur = conn.execute("DELETE FROM patient_notes WHERE id = ? AND tenant_id = ?", (note_id, tenant_id))
     conn.commit()
     return cur.rowcount > 0
 
