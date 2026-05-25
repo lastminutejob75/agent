@@ -34,6 +34,20 @@ node_modules/
 
 # Credentials / env (ne pas committer les secrets)
 .env
+.env.*
+!.env.example
+!.env.test-email.example
 credentials/
 *.json
 !package.json
+
+# Backups locaux (jamais commiter — peuvent contenir des variantes secrets/historiques)
+*.local-bak
+*.bak
+
+# Caches locaux npm / tmp
+.npm-cache/
+.npm-cache-*/
+.tmp-py/
+.tmp-*
+
