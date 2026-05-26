@@ -3483,11 +3483,7 @@ def tenant_agenda(
     slots: List[Dict[str, Any]] = []
     profile_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 
-    # Par défaut on désactive le mirror sur bulk (semaine/mois) pour privilégier
-    # la vitesse d'affichage. Réactivable explicitement via env si besoin.
-    mirror_enabled = _google_mirror_enabled(detail) and _is_truthy(
-        os.environ.get("AGENDA_BULK_MIRROR_ENABLED") or "false"
-    )
+    mirror_enabled = _google_mirror_enabled(detail)
     mirror_lookup: Optional[Dict[str, List[Dict[str, Any]]]] = None
 
     google_cal = (
@@ -3810,7 +3806,11 @@ def tenant_agenda_bulk(
         + timedelta(days=1)
     )
 
-    mirror_enabled = _google_mirror_enabled(detail)
+    # Par défaut on désactive le mirror sur bulk (semaine/mois) pour privilégier
+    # la vitesse d'affichage. Réactivable explicitement via env si besoin.
+    mirror_enabled = _google_mirror_enabled(detail) and _is_truthy(
+        os.environ.get("AGENDA_BULK_MIRROR_ENABLED") or "false"
+    )
     mirror_lookup: Optional[Dict[str, List[Dict[str, Any]]]] = None
 
     google_cal_bulk = (
