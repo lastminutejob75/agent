@@ -245,8 +245,27 @@ export const api = {
       tenant: true,
     }),
   tenantGetAgenda: (params = "") => request(`/api/tenant/agenda${params}`, { tenant: true }),
-  tenantGetAgendaBulk: (dates) =>
-    request(`/api/tenant/agenda/bulk?dates=${encodeURIComponent((dates || []).join(","))}`, { tenant: true }),
+  tenantGetAgendaBulk: async (dates) => {
+    /* Le backend plafonne /agenda/bulk à 14 jours pour éviter d'attendre 30+ s sur la vue
+       mensuelle (42 jours). On splitte ici en chunks de 14 et on lance en parallèle. */
+    const all = Array.from(new Set((dates || []).filter(Boolean))).sort();
+    if (all.length === 0) return { dates: {} };
+    const CHUNK = 14;
+    const chunks = [];
+    for (let i = 0; i < all.length; i += CHUNK) chunks.push(all.slice(i, i + CHUNK));
+    const results = await Promise.all(
+      chunks.map((chunk) =>
+        request(`/api/tenant/agenda/bulk?dates=${encodeURIComponent(chunk.join(","))}`, { tenant: true }).catch(
+          () => ({ dates: {} }),
+        ),
+      ),
+    );
+    const merged = { dates: {} };
+    for (const res of results) {
+      if (res && res.dates) Object.assign(merged.dates, res.dates);
+    }
+    return merged;
+  },
   tenantGetAgendaAvailableSlots: (params = "") =>
     request(`/api/tenant/agenda/available-slots${params}`, { tenant: true }),
   tenantGetAgendaAvailableDates: (month) =>

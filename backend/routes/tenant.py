@@ -3537,12 +3537,21 @@ def tenant_agenda(
     }
 
 
+_AGENDA_BULK_MAX_DAYS = 14
+
+
 @router.get("/agenda/bulk")
 def tenant_agenda_bulk(
     auth: dict = Depends(require_tenant_auth),
-    dates: str = Query(..., description="Liste CSV de dates YYYY-MM-DD"),
+    dates: str = Query(..., description="Liste CSV de dates YYYY-MM-DD (max 14)"),
 ):
-    """Retourne plusieurs jours d'agenda en une seule réponse pour limiter le fan-out frontend."""
+    """Retourne plusieurs jours d'agenda en une seule réponse pour limiter le fan-out frontend.
+
+    La fenêtre est plafonnée à ``_AGENDA_BULK_MAX_DAYS`` jours pour éviter qu'une vue
+    mensuelle (6 semaines = 42 jours) ne fasse exploser la durée serveur
+    (résolution patient + lookup mirror sur tous les events de la fenêtre).
+    Le frontend doit splitter en plusieurs appels parallèles si besoin.
+    """
     tenant_id = auth["tenant_id"]
     detail = _get_tenant_detail_for_agenda_cached(tenant_id)
     if not detail:
@@ -3560,6 +3569,19 @@ def tenant_agenda_bulk(
         requested_dates.append(value)
     if not requested_dates:
         return {"dates": {}}
+
+    truncated = False
+    if len(requested_dates) > _AGENDA_BULK_MAX_DAYS:
+        truncated = True
+        requested_dates.sort()
+        keep = requested_dates[:_AGENDA_BULK_MAX_DAYS]
+        logger.info(
+            "agenda/bulk: %d dates demandées, limitées à %d (tenant=%s)",
+            len(requested_dates),
+            _AGENDA_BULK_MAX_DAYS,
+            tenant_id,
+        )
+        requested_dates = keep
 
     requested_dates.sort()
     params = detail.get("params") or {}
@@ -3802,7 +3824,11 @@ def tenant_agenda_bulk(
     for payload in payloads.values():
         _decorate_agenda_slots_patient_has_file(tenant_id, list(payload.get("slots") or []), profile_cache)
 
-    return {"dates": {date_str: _finalize_agenda_day_payload(payload) for date_str, payload in payloads.items()}}
+    return {
+        "dates": {date_str: _finalize_agenda_day_payload(payload) for date_str, payload in payloads.items()},
+        "truncated": truncated,
+        "max_days": _AGENDA_BULK_MAX_DAYS,
+    }
 
 
 @router.get("/agenda/available-slots")

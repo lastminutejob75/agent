@@ -27,22 +27,54 @@ def _pg_auth_lookup_conn() -> Iterator[Any]:
     Connexion Postgres pour auth sans tenant_id connu (login Google, reset mdp, /me).
     Avec le rôle uwi_app + RLS (migration 034), les SELECT sur tenant_users sans
     SET LOCAL app.current_tenant_id renvoient 0 ligne — il faut bypass pour ces lookups.
+
+    Passe par le pool partagé (`pg_connection_for`) pour éviter un handshake TCP+TLS
+    par appel : sans pool, chaque /me coûtait ~200 ms de handshake en plus de la
+    requête elle-même.
     """
     url = _pg_url()
     if not url:
         yield None
         return
     try:
-        import psycopg
+        from backend.pg_pool import pg_connection_for
+        from backend.pg_tenant_context import set_bypass_tenant_rls_on_connection
 
-        with psycopg.connect(url) as conn:
-            from backend.pg_tenant_context import set_bypass_tenant_rls_on_connection
-
+        with pg_connection_for(url) as conn:
             set_bypass_tenant_rls_on_connection(conn, enabled=True)
             yield conn
     except Exception as e:
         logger.warning("_pg_auth_lookup_conn failed: %s", e)
         yield None
+
+
+_MUST_CHANGE_PASSWORD_COLUMN_MISSING = False
+_MUST_CHANGE_PASSWORD_CACHE: Dict[int, Tuple[float, bool]] = {}
+_MUST_CHANGE_PASSWORD_TTL = 300.0  # 5 min : le flag ne change qu'au login/reset, on peut largement cacher.
+
+
+def _ensure_must_change_password_column_pg() -> bool:
+    """Ajoute la colonne `must_change_password` à `tenant_users` si elle manque.
+
+    Retourne True si la colonne existe (ou vient d'être créée), False si on n'a
+    pas pu (ex : pas de privilège ALTER). Idempotent grâce à ``ADD COLUMN IF NOT EXISTS``.
+    """
+    url = _pg_url()
+    if not url:
+        return False
+    try:
+        from backend.pg_pool import pg_connection_for
+
+        with pg_connection_for(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "ALTER TABLE tenant_users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT FALSE"
+                )
+            conn.commit()
+        return True
+    except Exception as e:
+        logger.warning("_ensure_must_change_password_column_pg failed: %s", e)
+        return False
 
 
 def _sqlite_fallback_conn():
@@ -640,7 +672,29 @@ def pg_update_password(user_id: int, password_hash: str) -> None:
 
 
 def pg_get_must_change_password(user_id: int) -> bool:
-    """Retourne True si l'utilisateur doit changer son mot de passe au prochain login."""
+    """Retourne True si l'utilisateur doit changer son mot de passe au prochain login.
+
+    Optimisations :
+    - Si la colonne `must_change_password` n'existe pas (cas en prod tant que la
+      migration n'est pas passée), on désactive l'appel PG après la 1ère erreur
+      pour le reste du process (évite 3 s perdues à chaque /me sur exception PG).
+    - Cache mémoire 5 min : le flag ne change qu'au login/reset, inutile de
+      refaire une requête PG à chaque GET /me / /horaires / etc.
+    """
+    global _MUST_CHANGE_PASSWORD_COLUMN_MISSING
+
+    import time as _t
+
+    now = _t.monotonic()
+    cached = _MUST_CHANGE_PASSWORD_CACHE.get(int(user_id))
+    if cached and cached[0] > now:
+        return cached[1]
+
+    if _MUST_CHANGE_PASSWORD_COLUMN_MISSING:
+        _MUST_CHANGE_PASSWORD_CACHE[int(user_id)] = (now + _MUST_CHANGE_PASSWORD_TTL, False)
+        return False
+
+    result = False
     try:
         with _pg_auth_lookup_conn() as conn:
             if conn:
@@ -651,10 +705,27 @@ def pg_get_must_change_password(user_id: int) -> bool:
                     )
                     row = cur.fetchone()
                     if row:
-                        return bool(row[0])
+                        val = row.get("must_change_password") if isinstance(row, dict) else row[0]
+                        result = bool(val)
+                _MUST_CHANGE_PASSWORD_CACHE[int(user_id)] = (now + _MUST_CHANGE_PASSWORD_TTL, result)
+                return result
     except Exception as e:
+        msg = str(e).lower()
+        if "does not exist" in msg or "undefined column" in msg:
+            if _ensure_must_change_password_column_pg():
+                logger.info(
+                    "pg_get_must_change_password: column added via auto-migration, retry next call"
+                )
+            else:
+                logger.warning(
+                    "pg_get_must_change_password: column missing and auto-migration failed, "
+                    "disabling feature for this process"
+                )
+                _MUST_CHANGE_PASSWORD_COLUMN_MISSING = True
+            _MUST_CHANGE_PASSWORD_CACHE[int(user_id)] = (now + _MUST_CHANGE_PASSWORD_TTL, False)
+            return False
         logger.debug("pg_get_must_change_password failed: %s", e)
-    # Fallback SQLite local
+
     try:
         conn = _sqlite_fallback_conn()
         row = conn.execute(
@@ -663,10 +734,11 @@ def pg_get_must_change_password(user_id: int) -> bool:
         ).fetchone()
         conn.close()
         if row:
-            return bool(row["must_change_password"])
+            result = bool(row["must_change_password"])
     except Exception:
         pass
-    return False
+    _MUST_CHANGE_PASSWORD_CACHE[int(user_id)] = (now + _MUST_CHANGE_PASSWORD_TTL, result)
+    return result
 
 
 def pg_reset_password_with_token(token: str, new_password_hash: str) -> bool:
