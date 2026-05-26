@@ -44,9 +44,10 @@ def _iter_unencrypted(cur, table: str, key_col: str, val_col: str, batch_size: i
     On re-requête à chaque itération (curseur stable), avec WHERE val NOT LIKE 'enc:%'.
     """
     while True:
+        # NB : psycopg utilise %s pour les params → on doit échapper le % de 'enc:%' en '%%'.
         cur.execute(
             f"SELECT {key_col}, {val_col} FROM {table} "
-            f"WHERE {val_col} IS NOT NULL AND {val_col} <> '' AND {val_col} NOT LIKE 'enc:%' "
+            f"WHERE {val_col} IS NOT NULL AND {val_col} <> '' AND {val_col} NOT LIKE 'enc:%%' "
             f"ORDER BY {key_col} ASC LIMIT %s",
             (batch_size,),
         )
