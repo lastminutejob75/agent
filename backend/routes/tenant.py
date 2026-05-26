@@ -3818,6 +3818,38 @@ def tenant_agenda_bulk(
             finally:
                 conn.close()
 
+    """Merge des réservations publiques (page publique + chat public) — sans ça,
+    les RDV pris hors Google Calendar / hors local mirror disparaissent dès qu'on
+    quitte la vue jour (qui est la seule à appeler fetch_public_bookings_for_agenda).
+    """
+    try:
+        from backend.public_bookings_pg import fetch_public_bookings_for_agenda
+
+        public_slots = fetch_public_bookings_for_agenda(
+            tenant_id,
+            day_start,
+            day_end,
+            tz_name,
+            now_local,
+            include_past_on_date=True,
+        )
+        existing_ids_by_date: Dict[str, set] = {
+            date_str: {str(slot.get("event_id") or "") for slot in (payload.get("slots") or [])}
+            for date_str, payload in payloads.items()
+        }
+        for slot in public_slots:
+            date_key = str(slot.get("date") or "")
+            if date_key not in payloads:
+                continue
+            event_id = str(slot.get("event_id") or "")
+            if event_id and event_id in existing_ids_by_date.get(date_key, set()):
+                continue
+            payloads[date_key]["slots"].append(slot)
+            if event_id:
+                existing_ids_by_date.setdefault(date_key, set()).add(event_id)
+    except Exception as exc:
+        logger.debug("tenant agenda/bulk public_bookings merge skipped tenant=%s: %s", tenant_id, exc)
+
     flat_slots_bulk = [slot for payload in payloads.values() for slot in (payload.get("slots") or [])]
     _warm_agenda_profiles_from_slots_patient_phone(tenant_id, flat_slots_bulk, profile_cache)
 

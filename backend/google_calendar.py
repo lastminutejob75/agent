@@ -89,9 +89,9 @@ class GoogleCalendarService:
             )
             import os
             try:
-                api_timeout = float(os.environ.get("GOOGLE_API_HTTP_TIMEOUT_SECONDS", "10").strip() or "10")
+                api_timeout = float(os.environ.get("GOOGLE_API_HTTP_TIMEOUT_SECONDS", "15").strip() or "15")
             except ValueError:
-                api_timeout = 10.0
+                api_timeout = 15.0
             try:
                 import google_auth_httplib2
                 import httplib2
