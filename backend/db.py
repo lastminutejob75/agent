@@ -314,10 +314,9 @@ def get_call_followup(tenant_id: int, call_id: str) -> Optional[Dict[str, Any]]:
     url = _pg_events_url()
     if url:
         try:
-            import psycopg
-            from psycopg.rows import dict_row
 
-            with psycopg.connect(url, row_factory=dict_row) as conn:
+            from backend.pg_pool import pg_connection_for
+            with pg_connection_for(url) as conn:
                 _ensure_call_followups_table_pg(conn)
                 with conn.cursor() as cur:
                     cur.execute(
@@ -372,10 +371,9 @@ def list_call_followups(tenant_id: int, call_ids: List[str]) -> Dict[str, Dict[s
     url = _pg_events_url()
     if url:
         try:
-            import psycopg
-            from psycopg.rows import dict_row
 
-            with psycopg.connect(url, row_factory=dict_row) as conn:
+            from backend.pg_pool import pg_connection_for
+            with pg_connection_for(url) as conn:
                 _ensure_call_followups_table_pg(conn)
                 with conn.cursor() as cur:
                     cur.execute(
@@ -437,9 +435,9 @@ def upsert_call_followup(tenant_id: int, call_id: str, followup_state: str, note
     url = _pg_events_url()
     if url:
         try:
-            import psycopg
 
-            with psycopg.connect(url) as conn:
+            from backend.pg_pool import pg_connection_for
+            with pg_connection_for(url) as conn:
                 _ensure_call_followups_table_pg(conn)
                 with conn.cursor() as cur:
                     cur.execute(
@@ -728,9 +726,9 @@ def update_patient_fields(tenant_id: int, phone: str, *, email: Optional[str] = 
     url = _pg_events_url()
     if url:
         try:
-            import psycopg
             pg_sets = [s.replace("?", "%s").replace("datetime('now')", "now()") for s in sets]
-            with psycopg.connect(url) as conn:
+            from backend.pg_pool import pg_connection_for
+            with pg_connection_for(url) as conn:
                 _ensure_cabinet_clients_table_pg(conn)
                 with conn.cursor() as cur:
                     cur.execute(
@@ -769,8 +767,8 @@ def list_patient_documents(tenant_id: int, phone: str) -> List[Dict[str, Any]]:
     url = _pg_events_url()
     if url:
         try:
-            import psycopg
-            with psycopg.connect(url, row_factory=psycopg.rows.dict_row) as conn:
+            from backend.pg_pool import pg_connection_for
+            with pg_connection_for(url) as conn:
                 _ensure_patient_documents_table_pg(conn)
                 with conn.cursor() as cur:
                     cur.execute(
@@ -797,8 +795,8 @@ def insert_patient_document(
     url = _pg_events_url()
     if url:
         try:
-            import psycopg
-            with psycopg.connect(url, row_factory=psycopg.rows.dict_row) as conn:
+            from backend.pg_pool import pg_connection_for
+            with pg_connection_for(url) as conn:
                 _ensure_patient_documents_table_pg(conn)
                 with conn.cursor() as cur:
                     cur.execute(
@@ -838,8 +836,8 @@ def delete_patient_document(
     url = _pg_events_url()
     if url:
         try:
-            import psycopg
-            with psycopg.connect(url) as conn:
+            from backend.pg_pool import pg_connection_for
+            with pg_connection_for(url) as conn:
                 with conn.cursor() as cur:
                     if phone_norm:
                         cur.execute(
@@ -876,8 +874,8 @@ def list_patient_notes(tenant_id: int, phone: str, *, limit: int = 100) -> List[
     rows: List[Dict[str, Any]] = []
     if url:
         try:
-            import psycopg
-            with psycopg.connect(url, row_factory=psycopg.rows.dict_row) as conn:
+            from backend.pg_pool import pg_connection_for
+            with pg_connection_for(url) as conn:
                 _ensure_patient_notes_table_pg(conn)
                 with conn.cursor() as cur:
                     cur.execute(
@@ -934,8 +932,8 @@ def insert_patient_note(
     url = _pg_events_url()
     if url:
         try:
-            import psycopg
-            with psycopg.connect(url, row_factory=psycopg.rows.dict_row) as conn:
+            from backend.pg_pool import pg_connection_for
+            with pg_connection_for(url) as conn:
                 _ensure_patient_notes_table_pg(conn)
                 with conn.cursor() as cur:
                     cur.execute(
@@ -989,8 +987,8 @@ def delete_patient_note(
     url = _pg_events_url()
     if url:
         try:
-            import psycopg
-            with psycopg.connect(url) as conn:
+            from backend.pg_pool import pg_connection_for
+            with pg_connection_for(url) as conn:
                 _ensure_patient_notes_table_pg(conn)
                 with conn.cursor() as cur:
                     if phone_norm:
@@ -1048,10 +1046,9 @@ def get_cabinet_client_by_email(tenant_id: int, email: str) -> Optional[Dict[str
     url = _pg_events_url()
     if url:
         try:
-            import psycopg
-            from psycopg.rows import dict_row
 
-            with psycopg.connect(url, row_factory=dict_row) as conn:
+            from backend.pg_pool import pg_connection_for
+            with pg_connection_for(url) as conn:
                 _ensure_cabinet_clients_table_pg(conn)
                 with conn.cursor() as cur:
                     cur.execute(
@@ -1217,10 +1214,9 @@ def list_cabinet_clients(tenant_id: int, *, limit: int = 200, offset: int = 0) -
     url = _pg_events_url()
     if url:
         try:
-            import psycopg
-            from psycopg.rows import dict_row
 
-            with psycopg.connect(url, row_factory=dict_row) as conn:
+            from backend.pg_pool import pg_connection_for
+            with pg_connection_for(url) as conn:
                 _ensure_cabinet_clients_table_pg(conn)
                 with conn.cursor() as cur:
                     cur.execute(
@@ -1412,9 +1408,6 @@ def search_cabinet_clients(tenant_id: int, q: str, *, limit: int = 15) -> List[D
     url = _pg_events_url()
     if url:
         try:
-            import psycopg
-            from psycopg.rows import dict_row
-
             clause_parts: List[str] = []
             params_pg: List[Any] = []
             for typ, tok in tokens:
@@ -1454,7 +1447,8 @@ def search_cabinet_clients(tenant_id: int, q: str, *, limit: int = 15) -> List[D
                 + " ORDER BY updated_at DESC LIMIT %s"
             )
             params_pg_final = [tenant_id] + params_pg + [limit]
-            with psycopg.connect(url, row_factory=dict_row) as conn:
+            from backend.pg_pool import pg_connection_for
+            with pg_connection_for(url) as conn:
                 _ensure_cabinet_clients_table_pg(conn)
                 with conn.cursor() as cur:
                     cur.execute(sql, params_pg_final)
@@ -1549,9 +1543,9 @@ def upsert_cabinet_client(
     url = _pg_events_url()
     if url:
         try:
-            import psycopg
 
-            with psycopg.connect(url) as conn:
+            from backend.pg_pool import pg_connection_for
+            with pg_connection_for(url) as conn:
                 _ensure_cabinet_clients_table_pg(conn)
                 with conn.cursor() as cur:
                     cur.execute(

@@ -58,7 +58,38 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Tenant-Key", "X-Lead-Token"],
+    expose_headers=["Server-Timing", "X-Response-Time-Ms"],
 )
+
+
+@app.middleware("http")
+async def server_timing_middleware(request: Request, call_next):
+    """
+    Mesure le temps de traitement serveur et l'expose au frontend via deux headers :
+    - ``Server-Timing: app;dur=<ms>`` (standard W3C, visible dans l'onglet Network DevTools)
+    - ``X-Response-Time-Ms`` (entier, pratique pour logger côté client)
+
+    Loggue aussi côté serveur toute route >1500 ms pour identifier les goulots.
+    """
+    import time as _t
+
+    started = _t.monotonic()
+    response = await call_next(request)
+    elapsed_ms = int((_t.monotonic() - started) * 1000)
+    response.headers["X-Response-Time-Ms"] = str(elapsed_ms)
+    response.headers["Server-Timing"] = f"app;dur={elapsed_ms}"
+    if elapsed_ms >= 1500:
+        try:
+            _logger.warning(
+                "slow_request method=%s path=%s status=%s elapsed_ms=%s",
+                request.method,
+                request.url.path,
+                getattr(response, "status_code", "?"),
+                elapsed_ms,
+            )
+        except Exception:
+            pass
+    return response
 
 
 @app.middleware("http")

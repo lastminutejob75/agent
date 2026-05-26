@@ -3244,16 +3244,14 @@ def tenant_agenda(
                 )
                 if mirror_fut is not None:
                     try:
-                        mirror_lookup = mirror_fut.result(timeout=120)
+                        mirror_lookup = mirror_fut.result(timeout=5)
                     except Exception as mirror_exc:
                         logger.warning(
                             "tenant agenda mirror overlap failed tenant_id=%s: %s",
                             tenant_id,
                             mirror_exc,
                         )
-                        mirror_lookup = _load_local_appointments_for_window(
-                            tenant_id, day_start, day_end, tz_name
-                        )
+                        mirror_lookup = {}
             finally:
                 if executor is not None:
                     executor.shutdown(wait=True)
@@ -3535,16 +3533,14 @@ def tenant_agenda_bulk(
                 )
                 if mirror_fut is not None:
                     try:
-                        mirror_lookup = mirror_fut.result(timeout=120)
+                        mirror_lookup = mirror_fut.result(timeout=5)
                     except Exception as mirror_exc:
                         logger.warning(
                             "tenant agenda bulk mirror overlap failed tenant_id=%s: %s",
                             tenant_id,
                             mirror_exc,
                         )
-                        mirror_lookup = _load_local_appointments_for_window(
-                            tenant_id, day_start, day_end, tz_name
-                        )
+                        mirror_lookup = {}
             finally:
                 if executor is not None:
                     executor.shutdown(wait=True)
