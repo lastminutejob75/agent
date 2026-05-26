@@ -62,11 +62,16 @@ def main() -> int:
         print("Importing backend.main ...", flush=True)
         import backend.main as _m  # noqa: F401
         print(f"App loaded. Binding 0.0.0.0:{port_int} ...", flush=True)
+        try:
+            workers = max(1, int(os.environ.get("WEB_CONCURRENCY", "2") or "2"))
+        except ValueError:
+            workers = 2
+        print(f"uvicorn workers={workers}", flush=True)
         uvicorn.run(
             "backend.main:app",
             host="0.0.0.0",
             port=port_int,
-            workers=1,
+            workers=workers,
         )
     except Exception as e:
         print(f"FATAL uvicorn: {e}", flush=True)

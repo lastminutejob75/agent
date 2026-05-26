@@ -813,17 +813,23 @@ def _health_checks_sync() -> dict:
 @app.get("/health")
 async def health() -> dict:
     """
-    Health check pour Railway : répond toujours 200 (HTTP 200 requis par Railway).
-    Détails optionnels ; toute exception est capturée pour ne jamais faire échouer le healthcheck.
+    Health check ultra-léger : aucun I/O, retour immédiat. Indispensable pour
+    Railway et pour éviter qu'un /health en boucle ne sature le worker
+    (cas vécu en mai 2026 : 2 s constants à cause d'un ping PG + count_free_slots).
+
+    Pour un check approfondi (PG, Vapi, Stripe…), utiliser ``GET /health/full``.
     """
+    return {"status": "ok"}
+
+
+@app.get("/health/full")
+async def health_full() -> dict:
+    """Health check détaillé (PG ping + slots + config). Plus lent : usage monitoring."""
     out: dict = {"status": "ok"}
     try:
         out["streams"] = len(STREAMS)
-        # Infos instantanées (pas d'I/O)
         service_account_file = getattr(config, "SERVICE_ACCOUNT_FILE", None)
-        file_exists = False
-        if isinstance(service_account_file, str):
-            file_exists = os.path.exists(service_account_file)
+        file_exists = isinstance(service_account_file, str) and os.path.exists(service_account_file)
         has_base64_env = bool(os.getenv("GOOGLE_SERVICE_ACCOUNT_BASE64"))
         credentials_loaded = getattr(config, "GOOGLE_CALENDAR_ENABLED", False) or file_exists
         out["service_account_file"] = service_account_file
@@ -834,12 +840,9 @@ async def health() -> dict:
         out["google_calendar_enabled"] = getattr(config, "GOOGLE_CALENDAR_ENABLED", False)
         out["google_calendar_disable_reason"] = getattr(config, "GOOGLE_CALENDAR_DISABLE_REASON", None)
         out["runtime_env_count"] = len(os.environ)
-        # Wizard lead : lien dashboard dans l'email fondateur (éviter lien relatif en prod)
         out["admin_base_url_configured"] = bool(
             (os.environ.get("ADMIN_BASE_URL") or os.environ.get("FRONT_BASE_URL") or os.environ.get("APP_BASE_URL") or "").strip()
         )
-
-        # Checks I/O (slots, Postgres) avec timeout 2s
         try:
             detail = await asyncio.wait_for(
                 asyncio.to_thread(_health_checks_sync),
@@ -852,12 +855,12 @@ async def health() -> dict:
             out["postgres_ok"] = False
             out["postgres_error"] = "health check timeout (2s)"
         except Exception as e:
-            _logger.warning("health check partial failure: %s", e)
+            _logger.warning("health/full partial failure: %s", e)
             out["health_detail_error"] = str(e)[:200]
             out.setdefault("free_slots", -1)
             out.setdefault("postgres_ok", False)
     except Exception as e:
-        _logger.warning("health check error: %s", e, exc_info=True)
+        _logger.warning("health/full error: %s", e, exc_info=True)
         out["health_detail_error"] = str(e)[:200]
     return out
 

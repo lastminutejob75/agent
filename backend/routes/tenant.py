@@ -105,7 +105,42 @@ from backend.tenant_config import (
     reset_faq_params,
     set_params,
 )
-from backend.tenants_pg import pg_delete_tenant_param_keys, pg_update_tenant_name, pg_update_tenant_params
+from backend.tenants_pg import (
+    pg_delete_tenant_param_keys as _raw_pg_delete_tenant_param_keys,
+    pg_update_tenant_name as _raw_pg_update_tenant_name,
+    pg_update_tenant_params as _raw_pg_update_tenant_params,
+)
+
+
+def pg_update_tenant_params(tenant_id, params):
+    """Wrapper : invalide les caches mémoire après toute écriture des params tenant."""
+    res = _raw_pg_update_tenant_params(tenant_id, params)
+    try:
+        _invalidate_tenant_me_detail_cache(int(tenant_id))
+        _invalidate_tenant_agenda_detail_cache(int(tenant_id))
+    except Exception:
+        pass
+    return res
+
+
+def pg_update_tenant_name(tenant_id, name):
+    res = _raw_pg_update_tenant_name(tenant_id, name)
+    try:
+        _invalidate_tenant_me_detail_cache(int(tenant_id))
+        _invalidate_tenant_agenda_detail_cache(int(tenant_id))
+    except Exception:
+        pass
+    return res
+
+
+def pg_delete_tenant_param_keys(tenant_id, keys):
+    res = _raw_pg_delete_tenant_param_keys(tenant_id, keys)
+    try:
+        _invalidate_tenant_me_detail_cache(int(tenant_id))
+        _invalidate_tenant_agenda_detail_cache(int(tenant_id))
+    except Exception:
+        pass
+    return res
 from backend.vapi_utils import update_vapi_assistant_faq
 
 try:
@@ -574,8 +609,54 @@ def _faq_from_tenant_params(params: Dict[str, Any]) -> List[Dict[str, Any]]:
     return DEFAULT_FAQ.get(specialty, DEFAULT_FAQ["default"])
 
 
+_TENANT_ME_DETAIL_LOCK = threading.Lock()
+_TENANT_ME_DETAIL_CACHE: Dict[int, tuple[float, dict]] = {}
+
+
+def _invalidate_tenant_me_detail_cache(tenant_id: Optional[int] = None) -> None:
+    """À appeler après tout PATCH/PUT modifiant tenant_config ou tenant_routing.
+    ``tenant_id=None`` vide tout le cache."""
+    with _TENANT_ME_DETAIL_LOCK:
+        if tenant_id is None:
+            _TENANT_ME_DETAIL_CACHE.clear()
+        else:
+            _TENANT_ME_DETAIL_CACHE.pop(int(tenant_id), None)
+
+
 def _get_tenant_me_detail(tenant_id: int) -> Optional[dict]:
-    """Charge seulement les données nécessaires à /api/tenant/me."""
+    """Charge seulement les données nécessaires à /api/tenant/me.
+
+    Cache mémoire 30s (configurable via TENANT_ME_DETAIL_CACHE_SECONDS) car cette
+    fonction est appelée par ~14 endpoints du dashboard à chaque chargement
+    (kpis, horaires, faq, profil, status, etc.). Sans cache, c'était 14
+    requêtes PG sur tenants + tenant_config + tenant_routing par chargement.
+    """
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        try:
+            ttl = float((os.environ.get("TENANT_ME_DETAIL_CACHE_SECONDS") or "30").strip() or "30")
+        except ValueError:
+            ttl = 30.0
+        if ttl > 0:
+            now = time.monotonic()
+            with _TENANT_ME_DETAIL_LOCK:
+                hit = _TENANT_ME_DETAIL_CACHE.get(int(tenant_id))
+                if hit and hit[0] > now:
+                    return copy.deepcopy(hit[1])
+            detail = _load_tenant_me_detail(tenant_id)
+            if detail is not None:
+                with _TENANT_ME_DETAIL_LOCK:
+                    _TENANT_ME_DETAIL_CACHE[int(tenant_id)] = (now + ttl, copy.deepcopy(detail))
+                    if len(_TENANT_ME_DETAIL_CACHE) > 500:
+                        stale = [tid for tid, (exp, _) in _TENANT_ME_DETAIL_CACHE.items() if exp <= now]
+                        for tid in stale[:200]:
+                            _TENANT_ME_DETAIL_CACHE.pop(tid, None)
+                return copy.deepcopy(detail)
+            return None
+    return _load_tenant_me_detail(tenant_id)
+
+
+def _load_tenant_me_detail(tenant_id: int) -> Optional[dict]:
+    """Implémentation non-cachée (chargement brut depuis PG/SQLite)."""
     if config.USE_PG_TENANTS:
         try:
             from backend.tenants_pg import _pg_url, pg_tenants_connection, set_tenant_id_on_connection
