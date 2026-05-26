@@ -1485,15 +1485,22 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
                         call_id[:24] if call_id else "",
                         str(persist_err)[:80],
                     )
+                known_profile = None
                 try:
                     import backend.db as _db
-                    _db.upsert_cabinet_client(
-                        resolved_tenant_id,
-                        customer_phone,
-                        raw_name=customer_name or None,
-                        source_call_id=call_id,
-                        last_call_id=call_id,
-                    )
+                    # Choix produit : un appel entrant ne crée plus de fiche
+                    # patient automatiquement. On met simplement à jour
+                    # last_call_id si la fiche existe déjà (patient connu)
+                    # ET on récupère le profil pour que l'assistant puisse
+                    # saluer "Bonjour Marie" plutôt que demander le nom.
+                    known_profile = _db.get_cabinet_client_by_phone(resolved_tenant_id, customer_phone)
+                    if known_profile:
+                        _db.upsert_cabinet_client(
+                            resolved_tenant_id,
+                            customer_phone,
+                            source_call_id=call_id,
+                            last_call_id=call_id,
+                        )
                 except Exception as profile_err:
                     logger.warning(
                         "AUTO_PATIENT_PROFILE_UPSERT_FAILED call_id=%s err=%s",
@@ -1507,6 +1514,20 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
                     session.customer_phone = customer_phone
                     session.channel = "vocal"
                     session.tenant_id = resolved_tenant_id
+                    """Si patient connu (fiche validée), on préremplit le nom dans la
+                    session pour que l'assistant n'ait pas à le redemander et
+                    puisse utiliser un salut nominal dès le premier tour."""
+                    if known_profile and not session.qualif_data.name:
+                        known_name = str(
+                            known_profile.get("display_name")
+                            or known_profile.get("validated_name")
+                            or known_profile.get("raw_name")
+                            or ""
+                        ).strip()
+                        if known_name:
+                            session.qualif_data.name = known_name
+                            session.qualif_data.contact = customer_phone
+                            session.qualif_data.contact_type = "phone"
                     if hasattr(ENGINE.session_store, "save"):
                         ENGINE.session_store.save(session)
                     # Masquer numéro en log (RGPD) : garder 2 derniers chiffres

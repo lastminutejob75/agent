@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from backend.cabinet_profile_pg import (
@@ -137,6 +137,7 @@ def _tenant_id_for_slug(slug: str, hint: Optional[int] = None) -> int:
 
 @router.get("/{slug}/patient-hint")
 async def public_patient_hint(
+    request: Request,
     slug: str,
     phone: str = "",
     email: str = "",
@@ -144,9 +145,21 @@ async def public_patient_hint(
     """
     Reconnaissance patient connue (téléphone ou email) pour préremplir le formulaire RDV.
     Ne renvoie que le strict nécessaire (pas d'historique médical).
+
+    Rate-limit IP strict (anti-énumération RGPD) : sans ça, un attaquant
+    pourrait scanner tous les numéros français pour découvrir qui est patient
+    de ce cabinet.
     """
     from backend.db import find_cabinet_client
     from backend.guards import validate_email, validate_phone
+    from backend.rate_limit import check_sliding_window, client_ip
+
+    ip = client_ip(request)
+    try:
+        check_sliding_window(f"patient_hint_ip:{ip}", limit=20, window_sec=60)
+        check_sliding_window(f"patient_hint_ip:{ip}", limit=200, window_sec=3600)
+    except RuntimeError as e:
+        raise HTTPException(status_code=429, detail=str(e))
 
     tenant_id = _tenant_id_for_slug(slug, None)
     phone_s = (phone or "").strip()
