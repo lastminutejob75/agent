@@ -516,6 +516,7 @@ export default function AppAgenda() {
     setSelectedDate(d);
   }, [urlFocus, urlDate]);
   const [agendaByDate, setAgendaByDate] = useState({});
+  const agendaByDateRef = useRef({});
   const [horaires, setHoraires] = useState(null);
   const [me, setMe] = useState(null);
   const [calendarLoading, setCalendarLoading] = useState(true);
@@ -566,8 +567,18 @@ export default function AppAgenda() {
     return [selectedDate];
   }, [viewMode, weekDates, monthGrid, selectedDate]);
 
+  useEffect(() => {
+    agendaByDateRef.current = agendaByDate || {};
+  }, [agendaByDate]);
+
   const loadAgenda = useCallback(async () => {
     setError("");
+    const inMemory = agendaByDateRef.current || {};
+    const missingDates = visibleDates.filter((d) => !inMemory[d]);
+    if (missingDates.length === 0) {
+      setCalendarLoading(false);
+      return;
+    }
     const prefsPromise = Promise.all([
       api.tenantMe().catch(() => null),
       api.tenantGetHoraires().catch(() => null),
@@ -578,7 +589,7 @@ export default function AppAgenda() {
     if (staleBulk?.dates) {
       const byStale = {};
       visibleDates.forEach((d) => { byStale[d] = staleBulk.dates[d] || { slots: [], date: d }; });
-      setAgendaByDate(byStale);
+      setAgendaByDate((prev) => ({ ...(prev || {}), ...byStale }));
       showedStale = true;
       setCalendarLoading(false);
     } else {
@@ -586,18 +597,18 @@ export default function AppAgenda() {
     }
 
     try {
-      const bulkRes = await api.tenantGetAgendaBulk(visibleDates).catch(() => null);
+      const bulkRes = await api.tenantGetAgendaBulk(missingDates).catch(() => null);
       if (bulkRes?.dates) {
-        writeAgendaBulkStale(visibleDates, bulkRes);
+        writeAgendaBulkStale(missingDates, bulkRes);
       }
       const byDate = {};
       if (bulkRes?.dates) {
-        visibleDates.forEach((d) => { byDate[d] = bulkRes.dates[d] || { slots: [], date: d }; });
+        missingDates.forEach((d) => { byDate[d] = bulkRes.dates[d] || { slots: [], date: d }; });
       } else {
-        const results = await Promise.all(visibleDates.map((d) => api.tenantGetAgenda(`?date=${d}`).catch(() => ({ slots: [], date: d }))));
-        visibleDates.forEach((d, i) => { byDate[d] = results[i]; });
+        const results = await Promise.all(missingDates.map((d) => api.tenantGetAgenda(`?date=${d}`).catch(() => ({ slots: [], date: d }))));
+        missingDates.forEach((d, i) => { byDate[d] = results[i]; });
       }
-      setAgendaByDate(byDate);
+      setAgendaByDate((prev) => ({ ...(prev || {}), ...byDate }));
       prefsPromise.then(([nextMe, nextHoraires]) => {
         if (nextMe) setMe(nextMe);
         if (nextHoraires) setHoraires(nextHoraires);

@@ -169,7 +169,7 @@ def _tenant_google_calendar_list_events_cached(
     """Même fenêtre temporelle dans les ~AGENDA_GOOGLE_CACHE_SECONDS s = pas d'appel Google répété."""
     cid = (calendar_id or "").strip()
     try:
-        ttl = float((os.environ.get("AGENDA_GOOGLE_CACHE_SECONDS") or "30").strip() or "30")
+        ttl = float((os.environ.get("AGENDA_GOOGLE_CACHE_SECONDS") or "90").strip() or "90")
     except ValueError:
         ttl = 30.0
     # Pytest définit cette variable pendant l'exécution d'un test : ne pas mutualiser les réponses google entre tests.
@@ -3483,7 +3483,11 @@ def tenant_agenda(
     slots: List[Dict[str, Any]] = []
     profile_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 
-    mirror_enabled = _google_mirror_enabled(detail)
+    # Par défaut on désactive le mirror sur bulk (semaine/mois) pour privilégier
+    # la vitesse d'affichage. Réactivable explicitement via env si besoin.
+    mirror_enabled = _google_mirror_enabled(detail) and _is_truthy(
+        os.environ.get("AGENDA_BULK_MIRROR_ENABLED") or "false"
+    )
     mirror_lookup: Optional[Dict[str, List[Dict[str, Any]]]] = None
 
     google_cal = (
