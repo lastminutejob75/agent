@@ -28,19 +28,24 @@ def _pg_auth_lookup_conn() -> Iterator[Any]:
     Avec le rôle uwi_app + RLS (migration 034), les SELECT sur tenant_users sans
     SET LOCAL app.current_tenant_id renvoient 0 ligne — il faut bypass pour ces lookups.
 
-    Passe par le pool partagé (`pg_connection_for`) pour éviter un handshake TCP+TLS
-    par appel : sans pool, chaque /me coûtait ~200 ms de handshake en plus de la
-    requête elle-même.
+    Important : utilise une connexion **directe** (pas le pool partagé). Le pool
+    `psycopg_pool` rend les connexions en autocommit=True par défaut, ce qui
+    commit (et donc invalide) immédiatement le `SET LOCAL app.bypass_tenant_rls`
+    avant même le SELECT, faisant échouer tous les lookups auth (cas vécu en
+    mai 2026 : "Aucun compte UWi associé à cet email Google"). Le handshake
+    par appel est acceptable parce que les fonctions d'auth lookup sont peu
+    fréquentes (login, callback Google, reset mdp) et que les hot paths comme
+    `pg_get_must_change_password` ont leur propre cache mémoire 5 min.
     """
     url = _pg_url()
     if not url:
         yield None
         return
     try:
-        from backend.pg_pool import pg_connection_for
+        import psycopg
         from backend.pg_tenant_context import set_bypass_tenant_rls_on_connection
 
-        with pg_connection_for(url) as conn:
+        with psycopg.connect(url) as conn:
             set_bypass_tenant_rls_on_connection(conn, enabled=True)
             yield conn
     except Exception as e:
