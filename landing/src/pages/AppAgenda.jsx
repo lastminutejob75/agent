@@ -586,18 +586,44 @@ export default function AppAgenda() {
     }
 
     try {
-      const bulkRes = await api.tenantGetAgendaBulk(visibleDates).catch(() => null);
+      const monthDates = viewMode === "month"
+        ? visibleDates.filter((d) => getMonthFromDate(d) === currentMonth)
+        : visibleDates;
+      const sideDates = viewMode === "month"
+        ? visibleDates.filter((d) => getMonthFromDate(d) !== currentMonth)
+        : [];
+
+      const bulkRes = await api.tenantGetAgendaBulk(monthDates, { lightweight: viewMode !== "day" }).catch(() => null);
       if (bulkRes?.dates) {
-        writeAgendaBulkStale(visibleDates, bulkRes);
+        writeAgendaBulkStale(monthDates, bulkRes);
       }
       const byDate = {};
       if (bulkRes?.dates) {
-        visibleDates.forEach((d) => { byDate[d] = bulkRes.dates[d] || { slots: [], date: d }; });
+        monthDates.forEach((d) => { byDate[d] = bulkRes.dates[d] || { slots: [], date: d }; });
+        sideDates.forEach((d) => { byDate[d] = { slots: [], date: d }; });
       } else {
-        const results = await Promise.all(visibleDates.map((d) => api.tenantGetAgenda(`?date=${d}`).catch(() => ({ slots: [], date: d }))));
-        visibleDates.forEach((d, i) => { byDate[d] = results[i]; });
+        const results = await Promise.all(monthDates.map((d) => api.tenantGetAgenda(`?date=${d}`).catch(() => ({ slots: [], date: d }))));
+        monthDates.forEach((d, i) => { byDate[d] = results[i]; });
+        sideDates.forEach((d) => { byDate[d] = { slots: [], date: d }; });
       }
       setAgendaByDate(byDate);
+      // En vue mois, charger les jours hors mois courant en arrière-plan (sans bloquer l'UI).
+      if (viewMode === "month" && sideDates.length > 0) {
+        api
+          .tenantGetAgendaBulk(sideDates, { lightweight: true })
+          .then((sideRes) => {
+            if (!sideRes?.dates) return;
+            setAgendaByDate((prev) => {
+              const next = { ...(prev || {}) };
+              sideDates.forEach((d) => {
+                next[d] = sideRes.dates[d] || { slots: [], date: d };
+              });
+              return next;
+            });
+            writeAgendaBulkStale(sideDates, sideRes);
+          })
+          .catch(() => {});
+      }
       prefsPromise.then(([nextMe, nextHoraires]) => {
         if (nextMe) setMe(nextMe);
         if (nextHoraires) setHoraires(nextHoraires);
@@ -609,7 +635,7 @@ export default function AppAgenda() {
     } finally {
       setCalendarLoading(false);
     }
-  }, [visibleDates]);
+  }, [visibleDates, viewMode, currentMonth]);
 
   useEffect(() => { loadAgenda(); }, [loadAgenda]);
 

@@ -3733,6 +3733,7 @@ _AGENDA_BULK_MAX_DAYS = 42
 def tenant_agenda_bulk(
     auth: dict = Depends(require_tenant_auth),
     dates: str = Query(..., description="Liste CSV de dates YYYY-MM-DD (max 42)"),
+    lightweight: bool = Query(False, description="Mode allégé (moins d'enrichissements, plus rapide)"),
 ):
     """Retourne plusieurs jours d'agenda en une seule réponse pour limiter le fan-out frontend.
 
@@ -3853,7 +3854,8 @@ def tenant_agenda_bulk(
                 if executor is not None:
                     executor.shutdown(wait=True)
             google_events = result.get("items") or []
-            _warm_profile_cache_google_event_descriptions(tenant_id, google_events, profile_cache)
+            if not lightweight:
+                _warm_profile_cache_google_event_descriptions(tenant_id, google_events, profile_cache)
             for event in google_events:
                 raw_start = (event.get("start") or {}).get("dateTime") or (event.get("start") or {}).get("date")
                 raw_end = (event.get("end") or {}).get("dateTime") or (event.get("end") or {}).get("date")
@@ -3870,7 +3872,8 @@ def tenant_agenda_bulk(
                 description = (event.get("description") or "").strip()
                 patient = summary.replace("RDV - ", "", 1).strip() if summary.startswith("RDV - ") else (summary or "Patient")
                 patient_contact = _extract_calendar_event_patient_contact(description)
-                patient = _resolve_agenda_patient_name_cached(tenant_id, patient_contact, patient, profile_cache)
+                if not lightweight:
+                    patient = _resolve_agenda_patient_name_cached(tenant_id, patient_contact, patient, profile_cache)
                 motif = _extract_google_description_line(description, "Motif") or (summary if summary and not summary.startswith("RDV - ") else "Consultation")
                 source = "UWI" if summary.startswith("RDV - ") or "Patient:" in description else "EXTERNAL"
                 mirror_booking = None
@@ -3941,12 +3944,15 @@ def tenant_agenda_bulk(
                             if date_key not in payloads:
                                 continue
                             end_local = start_local + timedelta(minutes=30)
-                            patient_name = _resolve_agenda_patient_name_cached(
-                                tenant_id,
-                                row.get("contact"),
-                                row.get("name"),
-                                profile_cache,
-                            )
+                            if lightweight:
+                                patient_name = str(row.get("name") or "").strip() or "Patient"
+                            else:
+                                patient_name = _resolve_agenda_patient_name_cached(
+                                    tenant_id,
+                                    row.get("contact"),
+                                    row.get("name"),
+                                    profile_cache,
+                                )
                             payloads[date_key]["slots"].append(
                                 {
                                     "date": start_local.strftime("%Y-%m-%d"),
@@ -3999,7 +4005,10 @@ def tenant_agenda_bulk(
                     if date_key not in payloads:
                         continue
                     end_local = start_local + timedelta(minutes=30)
-                    patient_name = _resolve_agenda_patient_name_cached(tenant_id, row["contact"], row["name"], profile_cache)
+                    if lightweight:
+                        patient_name = str(row["name"] or "").strip() or "Patient"
+                    else:
+                        patient_name = _resolve_agenda_patient_name_cached(tenant_id, row["contact"], row["name"], profile_cache)
                     payloads[date_key]["slots"].append(
                         {
                             "date": start_local.strftime("%Y-%m-%d"),
@@ -4056,10 +4065,13 @@ def tenant_agenda_bulk(
         logger.debug("tenant agenda/bulk public_bookings merge skipped tenant=%s: %s", tenant_id, exc)
 
     flat_slots_bulk = [slot for payload in payloads.values() for slot in (payload.get("slots") or [])]
-    _warm_agenda_profiles_from_slots_patient_phone(tenant_id, flat_slots_bulk, profile_cache)
-
-    for payload in payloads.values():
-        _decorate_agenda_slots_patient_has_file(tenant_id, list(payload.get("slots") or []), profile_cache)
+    if not lightweight:
+        _warm_agenda_profiles_from_slots_patient_phone(tenant_id, flat_slots_bulk, profile_cache)
+        for payload in payloads.values():
+            _decorate_agenda_slots_patient_has_file(tenant_id, list(payload.get("slots") or []), profile_cache)
+    else:
+        for slot in flat_slots_bulk:
+            slot["patient_has_file"] = False
 
     response = {
         "dates": {date_str: _finalize_agenda_day_payload(payload) for date_str, payload in payloads.items()},

@@ -253,12 +253,15 @@ export const api = {
       tenant: true,
     }),
   tenantGetAgenda: (params = "") => request(`/api/tenant/agenda${params}`, { tenant: true }),
-  tenantGetAgendaBulk: async (dates) => {
+  tenantGetAgendaBulk: async (dates, opts = {}) => {
     /* Un seul appel bulk (jusqu'à 42j). Plus rapide en pratique qu'un split en 3
        chunks concurrents qui surcharge Google Calendar et dégrade la latence. */
     const all = Array.from(new Set((dates || []).filter(Boolean))).sort();
     if (all.length === 0) return { dates: {} };
-    return request(`/api/tenant/agenda/bulk?dates=${encodeURIComponent(all.join(","))}`, { tenant: true });
+    const params = new URLSearchParams();
+    params.set("dates", all.join(","));
+    if (opts?.lightweight) params.set("lightweight", "1");
+    return request(`/api/tenant/agenda/bulk?${params.toString()}`, { tenant: true });
   },
   tenantGetAgendaAvailableSlots: (params = "") =>
     request(`/api/tenant/agenda/available-slots${params}`, { tenant: true }),
