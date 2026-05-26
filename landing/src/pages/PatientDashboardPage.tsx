@@ -970,6 +970,14 @@ export default function PatientDashboardPage() {
 
   const confirmDeletePatient = async () => {
     if (!tenantPatientPhone || !deletePreview) return;
+    if (deleteConfirmText.trim().toUpperCase() !== "SUPPRIMER") {
+      notify("Tapez exactement SUPPRIMER pour continuer.", { sticky: true });
+      return;
+    }
+    const doubleCheck = window.confirm(
+      `Confirmer la suppression définitive de la fiche "${deletePreview.summary.display_name}" (${formatDisplayFrenchPhone(deletePreview.summary.phone)}) ?\n\nCette action est irréversible.`,
+    );
+    if (!doubleCheck) return;
     setDeleteSaving(true);
     try {
       const res = await api.tenantConfirmPatientDelete(tenantPatientPhone, {
