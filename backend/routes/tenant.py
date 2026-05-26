@@ -22,7 +22,7 @@ import bcrypt
 import jwt
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, UploadFile, File
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 from backend.auth_pg import pg_get_tenant_user_by_id, pg_update_password
 from backend.calendar_adapter import _GoogleCalendarAdapter
@@ -2860,7 +2860,19 @@ def tenant_register_patient_practice(
 
 
 class PatientUpdateBody(BaseModel):
-    email: Optional[str] = None
+    email: Optional[str] = Field(default=None, max_length=254)
+
+    @validator("email")
+    def _validate_email(cls, v):
+        if v is None:
+            return None
+        v = v.strip()
+        if v == "":
+            return ""
+        # Validation simple (rejet espaces et absence de @, sans dépendre de la couverture RFC complète).
+        if " " in v or "@" not in v or "." not in v.split("@", 1)[1]:
+            raise ValueError("Email invalide (format attendu: prenom@domaine.fr)")
+        return v
 
 
 class PatientNoteCreateBody(BaseModel):
@@ -2876,13 +2888,31 @@ def tenant_update_patient(
 ):
     """Met à jour les champs modifiables d'un patient (email, etc.)."""
     tenant_id = auth["tenant_id"]
+    phone_norm = normalize_phone_number(phone) or phone.strip()
     profile = get_cabinet_client_by_phone(tenant_id, phone)
     if not profile:
-        raise HTTPException(404, "Patient not found")
+        logger.warning(
+            "tenant_update_patient: fiche introuvable tenant=%s phone=%s",
+            tenant_id,
+            phone_norm,
+        )
+        raise HTTPException(404, "Fiche patient introuvable pour ce cabinet. Créez d'abord la fiche.")
 
     updated = update_patient_fields(tenant_id, phone, email=body.email)
     if not updated:
-        raise HTTPException(500, "Impossible de mettre à jour")
+        logger.error(
+            "tenant_update_patient: update_patient_fields a renvoyé None tenant=%s phone=%s email_len=%s",
+            tenant_id,
+            phone_norm,
+            len(body.email or ""),
+        )
+        raise HTTPException(500, "Impossible de mettre à jour la fiche (erreur base de données).")
+    logger.info(
+        "tenant_update_patient ok tenant=%s phone=%s email_set=%s",
+        tenant_id,
+        phone_norm,
+        bool((updated.get("email") or "").strip()),
+    )
     return {"ok": True, "patient": updated}
 
 

@@ -1093,17 +1093,30 @@ export default function PatientDashboardPage() {
 
   const saveEmail = async () => {
     if (!tenantPatientPhone) {
-      notify("Aucun patient sélectionné");
+      notify("Aucun patient sélectionné", { sticky: true });
+      return;
+    }
+    const next = emailDraft.trim();
+    /* Validation côté front : alignée sur la validation backend pour éviter les 422 silencieux. */
+    if (next && (!next.includes("@") || next.includes(" ") || !next.split("@")[1]?.includes("."))) {
+      notify("Email invalide (format attendu : prenom@domaine.fr)", { sticky: true });
       return;
     }
     setEmailSaving(true);
+    console.info("[patient.email] PATCH start", { phone: tenantPatientPhone, hasEmail: !!next });
     try {
-      await api.tenantUpdatePatient(tenantPatientPhone, { email: emailDraft.trim() });
-      setPatientEmail(emailDraft.trim());
+      const res = await api.tenantUpdatePatient(tenantPatientPhone, { email: next });
+      console.info("[patient.email] PATCH ok", res);
+      /* On reflète la valeur renvoyée par le backend pour éviter d'afficher localement une valeur non persistée. */
+      const persisted = String(res?.patient?.email ?? next);
+      setPatientEmail(persisted);
+      setEmailDraft(persisted);
       setEditingEmail(false);
-      notify(emailDraft.trim() ? "Email enregistré" : "Email supprimé");
+      notify(persisted ? `Email enregistré : ${persisted}` : "Email supprimé");
     } catch (e) {
-      notify((e as Error)?.message || "Erreur mise à jour email");
+      console.error("[patient.email] PATCH failure", e);
+      const msg = (e as Error)?.message || "Erreur mise à jour email";
+      notify(msg, { sticky: true });
     } finally {
       setEmailSaving(false);
     }

@@ -207,7 +207,30 @@ def _should_use_pg_events_dual_write() -> bool:
         return bool(_pg_events_url())
 
 
+def _pg_table_exists(conn: Any, table_name: str) -> bool:
+    """
+    Vrai si la table existe déjà dans le schéma `public` du Postgres connecté.
+    Utilise to_regclass() qui ne nécessite PAS le privilège CREATE.
+
+    Important : permet aux helpers `_ensure_*_table_pg` de court-circuiter le
+    CREATE TABLE IF NOT EXISTS quand le rôle DB n'a pas `CREATE ON SCHEMA public`
+    (cas du rôle `uwi_app` en prod). Sinon PG renvoie 'permission denied' même
+    si la table existe, et toutes les requêtes patient échouent silencieusement.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT to_regclass(%s) IS NOT NULL", (f"public.{table_name}",))
+            row = cur.fetchone()
+            if isinstance(row, dict):
+                return bool(next(iter(row.values())))
+            return bool(row and row[0])
+    except Exception:
+        return False
+
+
 def _ensure_call_followups_table_pg(conn: Any) -> None:
+    if _pg_table_exists(conn, "call_followups"):
+        return
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -230,6 +253,8 @@ def _ensure_call_followups_table_pg(conn: Any) -> None:
 
 
 def _ensure_human_handoffs_table_pg(conn: Any) -> None:
+    if _pg_table_exists(conn, "human_handoffs"):
+        return
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -549,6 +574,8 @@ def _ensure_cabinet_clients_table(conn: sqlite3.Connection) -> None:
 
 
 def _ensure_cabinet_clients_table_pg(conn: Any) -> None:
+    if _pg_table_exists(conn, "cabinet_clients"):
+        return
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -628,6 +655,8 @@ def _ensure_patient_documents_table(conn: sqlite3.Connection) -> None:
 
 
 def _ensure_patient_documents_table_pg(conn: Any) -> None:
+    if _pg_table_exists(conn, "patient_documents"):
+        return
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -661,6 +690,8 @@ def _ensure_patient_notes_table(conn: sqlite3.Connection) -> None:
 
 
 def _ensure_patient_notes_table_pg(conn: Any) -> None:
+    if _pg_table_exists(conn, "patient_notes"):
+        return
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -706,10 +737,22 @@ def update_patient_fields(tenant_id: int, phone: str, *, email: Optional[str] = 
                         f"UPDATE cabinet_clients SET {', '.join(pg_sets)} WHERE tenant_id = %s AND phone = %s",
                         params,
                     )
+                    rowcount = cur.rowcount
                 conn.commit()
+            if rowcount == 0:
+                logging.getLogger(__name__).warning(
+                    "update_patient_fields: 0 ligne MAJ (tenant_id=%s phone=%s) — fiche absente ?",
+                    tenant_id,
+                    phone_norm,
+                )
             return get_cabinet_client_by_phone(tenant_id, phone)
         except Exception as exc:
-            logging.getLogger(__name__).warning("pg update_patient_fields failed: %s", exc)
+            logging.getLogger(__name__).error(
+                "update_patient_fields PG failed tenant_id=%s phone=%s: %s",
+                tenant_id,
+                phone_norm,
+                exc,
+            )
 
     conn = get_conn()
     _ensure_cabinet_clients_table(conn)
