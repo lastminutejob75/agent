@@ -6,6 +6,9 @@ Protégé par cookie uwi_session uniquement (require_tenant_auth).
 from __future__ import annotations
 
 import copy
+import base64
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -33,6 +36,7 @@ from backend.db import (
     book_slot_atomic,
     delete_patient_note,
     delete_patient_document,
+    delete_cabinet_client_by_phone,
     ensure_slot_id_by_datetime,
     ensure_tenant_config,
     get_cabinet_clients_by_phones,
@@ -256,6 +260,60 @@ def _get_tenant_detail_for_agenda_cached(tenant_id: int) -> Optional[dict]:
 def _invalidate_tenant_agenda_detail_cache(tenant_id: int) -> None:
     with _TENANT_AGENDA_DETAIL_LOCK:
         _TENANT_AGENDA_DETAIL_CACHE.pop(int(tenant_id), None)
+
+
+def _patient_delete_token_secret() -> bytes:
+    raw = (
+        os.environ.get("PATIENT_DELETE_TOKEN_SECRET")
+        or os.environ.get("ADMIN_SESSION_SECRET")
+        or os.environ.get("JWT_SECRET")
+        or "uwi-dev-delete-secret"
+    )
+    return str(raw).encode("utf-8")
+
+
+def _patient_delete_token_issue(tenant_id: int, phone_norm: str, *, ttl_sec: int = 900) -> tuple[str, int]:
+    exp = int(time.time()) + max(60, int(ttl_sec))
+    payload = {
+        "tenant_id": int(tenant_id),
+        "phone": phone_norm,
+        "exp": exp,
+        "nonce": uuid4().hex,
+    }
+    payload_raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    payload_b64 = base64.urlsafe_b64encode(payload_raw).decode("ascii").rstrip("=")
+    sig = hmac.new(
+        _patient_delete_token_secret(),
+        payload_b64.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"{payload_b64}.{sig}", exp
+
+
+def _patient_delete_token_verify(token: str, tenant_id: int, phone_norm: str) -> bool:
+    raw = str(token or "").strip()
+    if "." not in raw:
+        return False
+    payload_b64, sig = raw.rsplit(".", 1)
+    expected_sig = hmac.new(
+        _patient_delete_token_secret(),
+        payload_b64.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(sig, expected_sig):
+        return False
+    try:
+        padded = payload_b64 + "=" * (-len(payload_b64) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
+    except Exception:
+        return False
+    if int(payload.get("tenant_id") or 0) != int(tenant_id):
+        return False
+    if normalize_phone_number(payload.get("phone") or "") != phone_norm:
+        return False
+    if int(payload.get("exp") or 0) < int(time.time()):
+        return False
+    return True
 
 
 router = APIRouter(prefix="/api/tenant", tags=["tenant"])
@@ -2961,6 +3019,11 @@ class PatientNoteCreateBody(BaseModel):
     author: Optional[str] = Field(default="Praticien", max_length=120)
 
 
+class PatientDeleteConfirmBody(BaseModel):
+    confirmation_token: str = Field(..., min_length=20, max_length=4096)
+    confirmation_phrase: str = Field(..., min_length=1, max_length=40)
+
+
 @router.patch("/patients/{phone}")
 def tenant_update_patient(
     phone: str,
@@ -3197,6 +3260,125 @@ def tenant_send_patient_document(
         raise HTTPException(500, err or "Impossible d'envoyer l'email")
 
     return {"ok": True, "sent_to": patient_email}
+
+
+@router.post("/patients/{phone}/delete-request")
+def tenant_request_delete_patient(
+    phone: str,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """
+    Étape 1: prépare une suppression de fiche patient.
+    Retourne un récapitulatif + un token de confirmation court (15 min).
+    """
+    tenant_id = auth["tenant_id"]
+    phone_norm = normalize_phone_number(phone) or phone.strip()
+    profile = get_cabinet_client_by_phone(tenant_id, phone_norm)
+    if not profile:
+        raise HTTPException(404, "Patient not found")
+
+    notes = list_patient_notes(tenant_id, phone_norm, limit=300)
+    docs = list_patient_documents(tenant_id, phone_norm)
+    token, exp = _patient_delete_token_issue(tenant_id, phone_norm, ttl_sec=900)
+    display_name = (
+        str(
+            profile.get("display_name")
+            or profile.get("validated_name")
+            or profile.get("raw_name")
+            or "Patient"
+        ).strip()
+        or "Patient"
+    )
+    return {
+        "ok": True,
+        "confirmation_token": token,
+        "expires_at": datetime.fromtimestamp(exp, timezone.utc).isoformat(),
+        "summary": {
+            "phone": phone_norm,
+            "display_name": display_name,
+            "notes_count": len(notes),
+            "documents_count": len(docs),
+            "documents": [
+                {
+                    "id": d.get("id"),
+                    "original_name": d.get("original_name"),
+                }
+                for d in docs[:5]
+            ],
+        },
+    }
+
+
+@router.post("/patients/{phone}/delete-confirm")
+def tenant_confirm_delete_patient(
+    phone: str,
+    body: PatientDeleteConfirmBody,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """
+    Étape 2: suppression définitive d'une fiche patient après confirmation explicite.
+    Requiert:
+    - confirmation_phrase == "SUPPRIMER"
+    - confirmation_token valide (tenant + phone + expiration)
+    """
+    tenant_id = auth["tenant_id"]
+    phone_norm = normalize_phone_number(phone) or phone.strip()
+    profile = get_cabinet_client_by_phone(tenant_id, phone_norm)
+    if not profile:
+        raise HTTPException(404, "Patient not found")
+
+    if str(body.confirmation_phrase or "").strip().upper() != "SUPPRIMER":
+        raise HTTPException(
+            400,
+            "Confirmation invalide. Saisissez exactement SUPPRIMER pour confirmer.",
+        )
+    if not _patient_delete_token_verify(body.confirmation_token, tenant_id, phone_norm):
+        raise HTTPException(400, "Token de confirmation invalide ou expiré.")
+
+    notes = list_patient_notes(tenant_id, phone_norm, limit=300)
+    docs = list_patient_documents(tenant_id, phone_norm)
+
+    deleted_notes = 0
+    for n in notes:
+        nid = int(n.get("id") or 0)
+        if nid and delete_patient_note(tenant_id, nid, patient_phone=phone_norm):
+            deleted_notes += 1
+
+    deleted_documents = 0
+    for d in docs:
+        did = int(d.get("id") or 0)
+        if not did:
+            continue
+        filename = str(d.get("filename") or "").strip()
+        if filename:
+            path = os.path.join(UPLOAD_DIR, str(tenant_id), phone_norm, filename)
+            if os.path.isfile(path):
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+        if delete_patient_document(tenant_id, did, patient_phone=phone_norm):
+            deleted_documents += 1
+
+    deleted_profile = delete_cabinet_client_by_phone(tenant_id, phone_norm)
+    if not deleted_profile:
+        raise HTTPException(500, "Suppression impossible (fiche non supprimée).")
+
+    logger.info(
+        "tenant_delete_patient_confirmed tenant=%s phone=%s notes=%s docs=%s",
+        tenant_id,
+        phone_norm,
+        deleted_notes,
+        deleted_documents,
+    )
+    return {
+        "ok": True,
+        "deleted": {
+            "profile": True,
+            "notes": deleted_notes,
+            "documents": deleted_documents,
+        },
+    }
 
 
 @router.get("/handoffs")

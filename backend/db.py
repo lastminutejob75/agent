@@ -1142,6 +1142,43 @@ def get_cabinet_client_by_phone(tenant_id: int, phone: str) -> Optional[Dict[str
         conn.close()
 
 
+def delete_cabinet_client_by_phone(tenant_id: int, phone: str) -> bool:
+    """Supprime une fiche patient (table `cabinet_clients`) par téléphone normalisé."""
+    phone_norm = normalize_phone_number(phone)
+    if not phone_norm:
+        return False
+
+    url = _pg_events_url()
+    if url:
+        try:
+            from backend.pg_pool import pg_connection_for
+
+            with pg_connection_for(url) as conn:
+                _ensure_cabinet_clients_table_pg(conn)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "DELETE FROM cabinet_clients WHERE tenant_id = %s AND phone = %s",
+                        (tenant_id, phone_norm),
+                    )
+                    deleted = cur.rowcount > 0
+                conn.commit()
+                return deleted
+        except Exception:
+            pass
+
+    conn = get_conn()
+    try:
+        _ensure_cabinet_clients_table(conn)
+        cur = conn.execute(
+            "DELETE FROM cabinet_clients WHERE tenant_id = ? AND phone = ?",
+            (tenant_id, phone_norm),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
 def get_cabinet_clients_by_phones(tenant_id: int, phones: List[str]) -> Dict[str, Dict[str, Any]]:
     """Retourne les fiches cabinet en lot, indexées par téléphone normalisé."""
     phone_norms = [normalize_phone_number(phone) for phone in phones]

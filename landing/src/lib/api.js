@@ -232,6 +232,14 @@ export const api = {
     `${(typeof import.meta !== "undefined" && import.meta.env?.VITE_UWI_API_BASE_URL) || ""}/api/tenant/patients/${encodeURIComponent(phone)}/documents/${docId}/download`,
   tenantDeletePatientDocument: (phone, docId) =>
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/documents/${docId}`, { method: "DELETE", tenant: true }),
+  tenantPreparePatientDelete: (phone) =>
+    request(`/api/tenant/patients/${encodeURIComponent(phone)}/delete-request`, { method: "POST", tenant: true }),
+  tenantConfirmPatientDelete: (phone, body) =>
+    request(`/api/tenant/patients/${encodeURIComponent(phone)}/delete-confirm`, {
+      method: "POST",
+      body,
+      tenant: true,
+    }),
   tenantSendPatientDocument: (phone, docId) =>
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/documents/${docId}/send`, { method: "POST", tenant: true }),
   tenantGetHandoffs: (params = "") =>

@@ -39,7 +39,7 @@ type SidebarPatientRow = {
   statusBucket: "new" | "active" | "inactive";
 };
 
-type ModalType = "profile" | "addNote" | "addDocument" | "history" | null;
+type ModalType = "profile" | "addNote" | "addDocument" | "history" | "deletePatient" | null;
 type ViewType = "overview" | "appointments" | "history";
 type RequestContext = {
   id: string;
@@ -407,6 +407,20 @@ export default function PatientDashboardPage() {
   const [createFicheSaving, setCreateFicheSaving] = useState(false);
   const [profileNameDraft, setProfileNameDraft] = useState("");
   const [profileSaveSaving, setProfileSaveSaving] = useState(false);
+  const [deletePreviewLoading, setDeletePreviewLoading] = useState(false);
+  const [deletePreview, setDeletePreview] = useState<null | {
+    confirmation_token: string;
+    expires_at: string;
+    summary: {
+      phone: string;
+      display_name: string;
+      notes_count: number;
+      documents_count: number;
+      documents?: Array<{ id: number; original_name: string }>;
+    };
+  }>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [deleteSaving, setDeleteSaving] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -924,6 +938,57 @@ export default function PatientDashboardPage() {
       if (ok) setModal(null);
     } finally {
       setProfileSaveSaving(false);
+    }
+  };
+
+  const openDeletePatientModal = async () => {
+    if (!tenantPatientPhone) return;
+    setDeletePreviewLoading(true);
+    setDeletePreview(null);
+    setDeleteConfirmText("");
+    setModal("deletePatient");
+    try {
+      const res = await api.tenantPreparePatientDelete(tenantPatientPhone);
+      setDeletePreview({
+        confirmation_token: String(res?.confirmation_token || ""),
+        expires_at: String(res?.expires_at || ""),
+        summary: {
+          phone: String(res?.summary?.phone || tenantPatientPhone),
+          display_name: String(res?.summary?.display_name || displayHero.name || "Patient"),
+          notes_count: Number(res?.summary?.notes_count || 0),
+          documents_count: Number(res?.summary?.documents_count || 0),
+          documents: Array.isArray(res?.summary?.documents) ? res.summary.documents : [],
+        },
+      });
+    } catch (e) {
+      notify((e as Error)?.message || "Impossible de préparer la suppression", { sticky: true });
+      setModal(null);
+    } finally {
+      setDeletePreviewLoading(false);
+    }
+  };
+
+  const confirmDeletePatient = async () => {
+    if (!tenantPatientPhone || !deletePreview) return;
+    setDeleteSaving(true);
+    try {
+      const res = await api.tenantConfirmPatientDelete(tenantPatientPhone, {
+        confirmation_token: deletePreview.confirmation_token,
+        confirmation_phrase: deleteConfirmText.trim(),
+      });
+      if (!res?.ok) throw new Error("Suppression non confirmée");
+      notify("Fiche patient supprimée définitivement");
+      setModal(null);
+      setDeletePreview(null);
+      setDeleteConfirmText("");
+      await loadTenantSidebarPatients();
+      const np = new URLSearchParams(searchParams);
+      np.delete("phone");
+      setSearchParams(np, { replace: true });
+    } catch (e) {
+      notify((e as Error)?.message || "Erreur suppression fiche", { sticky: true });
+    } finally {
+      setDeleteSaving(false);
     }
   };
 
@@ -1783,7 +1848,7 @@ export default function PatientDashboardPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => notify("Suppression de fiche à venir — contactez le support si besoin.")}
+                  onClick={() => void openDeletePatientModal()}
                   className="flex-1 rounded-xl border border-red-300 px-4 py-3 font-black text-red-600"
                 >
                   Supprimer
@@ -1891,6 +1956,69 @@ export default function PatientDashboardPage() {
       {modal === "history" && (
         <Modal title="Historique complet" onClose={() => setModal(null)} width="max-w-4xl">
           <HistoryList extended />
+        </Modal>
+      )}
+
+      {modal === "deletePatient" && (
+        <Modal title="Supprimer la fiche patient" onClose={() => setModal(null)} width="max-w-2xl">
+          {deletePreviewLoading ? (
+            <p className="text-sm font-semibold text-[#61708B]">Préparation de la suppression…</p>
+          ) : !deletePreview ? (
+            <p className="text-sm font-semibold text-[#61708B]">Impossible de charger le récapitulatif de suppression.</p>
+          ) : (
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-900">
+                <p className="m-0 font-black">Action irréversible.</p>
+                <p className="mt-2 mb-0">
+                  Cette opération supprime définitivement la fiche patient, ses notes et ses documents associés.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl bg-[#F8FBFD] p-4">
+                  <div className="text-xs font-bold text-[#7D8CA5]">Patient</div>
+                  <div className="mt-1 font-black">{deletePreview.summary.display_name}</div>
+                </div>
+                <div className="rounded-2xl bg-[#F8FBFD] p-4">
+                  <div className="text-xs font-bold text-[#7D8CA5]">Téléphone</div>
+                  <div className="mt-1 font-black">{formatDisplayFrenchPhone(deletePreview.summary.phone)}</div>
+                </div>
+                <div className="rounded-2xl bg-[#F8FBFD] p-4">
+                  <div className="text-xs font-bold text-[#7D8CA5]">Notes supprimées</div>
+                  <div className="mt-1 font-black">{deletePreview.summary.notes_count}</div>
+                </div>
+                <div className="rounded-2xl bg-[#F8FBFD] p-4">
+                  <div className="text-xs font-bold text-[#7D8CA5]">Documents supprimés</div>
+                  <div className="mt-1 font-black">{deletePreview.summary.documents_count}</div>
+                </div>
+              </div>
+              <label className="block text-sm font-semibold text-[#334155]">
+                Tapez <span className="font-black">SUPPRIMER</span> pour confirmer :
+                <input
+                  value={deleteConfirmText}
+                  onChange={(e) => setDeleteConfirmText(e.target.value)}
+                  className="mt-2 w-full rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-black text-[#0A1628] outline-none focus:border-[#EF4444]"
+                  placeholder="SUPPRIMER"
+                />
+              </label>
+              <div className="mt-2 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setModal(null)}
+                  className="flex-1 rounded-xl border border-[#DDE7F1] px-4 py-3 font-black text-[#334155]"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="button"
+                  disabled={deleteSaving || deleteConfirmText.trim().toUpperCase() !== "SUPPRIMER"}
+                  onClick={() => void confirmDeletePatient()}
+                  className="flex-1 rounded-xl bg-red-600 px-4 py-3 font-black text-white disabled:opacity-60"
+                >
+                  {deleteSaving ? "Suppression…" : "Confirmer la suppression définitive"}
+                </button>
+              </div>
+            </div>
+          )}
         </Modal>
       )}
 
