@@ -1347,8 +1347,9 @@ async def public_book(
         status=booking_status,
     )
 
-    if tenant_id:
-        background_tasks.add_task(_upsert_public_patient_safe, int(tenant_id), payload)
+    # Décision produit stricte: aucune création / mise à jour automatique de fiche
+    # patient depuis la prise de RDV publique. La reconnaissance "patient connu"
+    # reste en lecture seule via /api/public/praticiens/{slug}/patient-hint.
 
     background_tasks.add_task(
         _dispatch_booking_notifications,

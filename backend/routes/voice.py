@@ -1488,19 +1488,10 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
                 known_profile = None
                 try:
                     import backend.db as _db
-                    # Choix produit : un appel entrant ne crée plus de fiche
-                    # patient automatiquement. On met simplement à jour
-                    # last_call_id si la fiche existe déjà (patient connu)
-                    # ET on récupère le profil pour que l'assistant puisse
-                    # saluer "Bonjour Marie" plutôt que demander le nom.
+                    # Choix produit : canal vocal en lecture seule sur les fiches.
+                    # On ne crée ni ne met à jour aucune fiche automatiquement.
+                    # On lit seulement le profil s'il existe pour saluer le patient.
                     known_profile = _db.get_cabinet_client_by_phone(resolved_tenant_id, customer_phone)
-                    if known_profile:
-                        _db.upsert_cabinet_client(
-                            resolved_tenant_id,
-                            customer_phone,
-                            source_call_id=call_id,
-                            last_call_id=call_id,
-                        )
                 except Exception as profile_err:
                     logger.warning(
                         "AUTO_PATIENT_PROFILE_UPSERT_FAILED call_id=%s err=%s",
