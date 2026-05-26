@@ -249,8 +249,9 @@ def auth_login(request: Request, body: LoginBody, response: Response):
         max_age=SESSION_TTL_SECONDS,
     )
     log_auth_event(row["tenant_id"], email, "auth_login_password", None)
-    # Session = cookie HttpOnly (uwi_session). Plus de JWT renvoyé dans le JSON (anti-XSS).
-    return {"ok": True, "tenant_id": int(row["tenant_id"])}
+    # Fallback mobile: certains navigateurs bloquent les cookies tiers (API sur domaine différent).
+    # On renvoie donc aussi le même JWT de session pour Authorization: Bearer côté front.
+    return {"ok": True, "tenant_id": int(row["tenant_id"]), "token": token}
 
 
 # --- Mot de passe oublié ---
@@ -708,5 +709,5 @@ def auth_google_callback(body: GoogleCallbackBody, response: Response):
         max_age=SESSION_TTL_SECONDS,
     )
     log_auth_event(tenant_id, email, "auth_google_sso", None)
-    # Session = cookie HttpOnly uniquement (uwi_session). Le JWT brut n'est plus renvoyé (anti-XSS).
-    return {"ok": True}
+    # Fallback mobile: fournir aussi le JWT de session pour Authorization: Bearer.
+    return {"ok": True, "token": token}

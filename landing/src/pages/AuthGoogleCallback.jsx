@@ -1,6 +1,6 @@
 import React from "react";
 import { API_URL, GOOGLE_REDIRECT_URI, OAUTH_CODE_VERIFIER_KEY } from "../lib/authConfig.js";
-import { clearTenantToken } from "../lib/api.js";
+import { clearTenantToken, setTenantToken } from "../lib/api.js";
 
 export default function AuthGoogleCallback() {
   const [status, setStatus] = React.useState("loading");
@@ -66,7 +66,10 @@ export default function AuthGoogleCallback() {
           throw new Error(`Connexion Google échouée (${res.status}). ${txt}`);
         }
 
-        await res.json().catch(() => ({}));
+        const data = await res.json().catch(() => ({}));
+        if (data?.token) {
+          setTenantToken(data.token);
+        }
         /* Session = cookie HttpOnly `uwi_session` posé par le backend. Plus de token en localStorage. */
         setMessage("Connecté. Redirection…");
         window.location.replace("/app");

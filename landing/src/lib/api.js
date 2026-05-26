@@ -5,6 +5,7 @@
  */
 
 const BASE_URL = (import.meta.env.VITE_UWI_API_BASE_URL || "").replace(/\/$/, "");
+const TENANT_TOKEN_KEY = "uwi_tenant_token";
 
 export function getApiBaseUrl() {
   return BASE_URL;
@@ -27,6 +28,29 @@ function _purgeLegacyAuthLocalStorage() {
 }
 _purgeLegacyAuthLocalStorage();
 
+function _readTenantTokenFromSessionStorage() {
+  if (typeof window === "undefined" || !window.sessionStorage) return "";
+  try {
+    return String(window.sessionStorage.getItem(TENANT_TOKEN_KEY) || "");
+  } catch {
+    return "";
+  }
+}
+
+function _writeTenantTokenToSessionStorage(token) {
+  if (typeof window === "undefined" || !window.sessionStorage) return;
+  try {
+    const value = String(token || "").trim();
+    if (!value) {
+      window.sessionStorage.removeItem(TENANT_TOKEN_KEY);
+      return;
+    }
+    window.sessionStorage.setItem(TENANT_TOKEN_KEY, value);
+  } catch {
+    /* sessionStorage indisponible (mode privé, quota) → ignore */
+  }
+}
+
 export function getAdminToken() {
   return "";
 }
@@ -36,15 +60,17 @@ export function setAdminToken(_token) {
 }
 
 export function getTenantToken() {
-  return "";
+  return _readTenantTokenFromSessionStorage();
 }
 
-export function setTenantToken(_token) {
+export function setTenantToken(token) {
   _purgeLegacyAuthLocalStorage();
+  _writeTenantTokenToSessionStorage(token);
 }
 
 export function clearTenantToken() {
   _purgeLegacyAuthLocalStorage();
+  _writeTenantTokenToSessionStorage("");
 }
 
 export function isTenantUnauthorized(err) {
@@ -71,6 +97,10 @@ async function request(path, { method = "GET", body, admin: _admin = false, tena
   const headers = { "Content-Type": "application/json" };
   if (leadToken) {
     headers["X-Lead-Token"] = String(leadToken);
+  }
+  const tenantToken = getTenantToken();
+  if (_tenant && tenantToken && !headers.Authorization) {
+    headers.Authorization = `Bearer ${tenantToken}`;
   }
 
   let res;
@@ -166,8 +196,11 @@ export const api = {
     request("/api/admin/create-tenant", { method: "POST", body: payload, admin: true }),
 
   // auth
-  authLogin: (email, password) =>
-    request("/api/auth/login", { method: "POST", body: { email, password } }),
+  authLogin: async (email, password) => {
+    const data = await request("/api/auth/login", { method: "POST", body: { email, password } });
+    if (data?.token) setTenantToken(data.token);
+    return data;
+  },
   authForgotPassword: (email) =>
     request("/api/auth/forgot-password", { method: "POST", body: { email } }),
   authResetPassword: (email, token, newPassword) =>

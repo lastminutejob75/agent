@@ -1459,10 +1459,17 @@ export default function PatientDashboardPage() {
               ))}
             </div>
 
-            <div className="grid grid-cols-3 gap-4 p-5">
+            <div className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-2 lg:grid-cols-4">
               <PrimaryCTA onClick={() => setModal("profile")}>✎ Voir le profil détaillé</PrimaryCTA>
               <PrimaryCTA variant="note" onClick={() => setModal("addNote")}>✎ Ajouter une note</PrimaryCTA>
               <PrimaryCTA variant="document" onClick={() => setModal("addDocument")}>▤ Ajouter un document</PrimaryCTA>
+              <button
+                type="button"
+                onClick={() => void openDeletePatientModal()}
+                className="rounded-2xl border border-red-200 bg-red-50 px-4 py-4 text-left text-sm font-black text-red-700 transition hover:bg-red-100"
+              >
+                🗑 Supprimer la fiche patient
+              </button>
             </div>
           </section>
 
