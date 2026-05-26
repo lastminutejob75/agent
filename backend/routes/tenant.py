@@ -221,6 +221,8 @@ def _tenant_google_calendar_list_events_cached(
 
 _TENANT_AGENDA_DETAIL_LOCK = threading.Lock()
 _TENANT_AGENDA_DETAIL_CACHE: Dict[int, tuple[float, dict]] = {}
+_TENANT_AGENDA_BULK_LOCK = threading.Lock()
+_TENANT_AGENDA_BULK_CACHE: Dict[tuple, tuple[float, dict]] = {}
 
 
 def _get_tenant_detail_for_agenda_cached(tenant_id: int) -> Optional[dict]:
@@ -260,6 +262,11 @@ def _get_tenant_detail_for_agenda_cached(tenant_id: int) -> Optional[dict]:
 def _invalidate_tenant_agenda_detail_cache(tenant_id: int) -> None:
     with _TENANT_AGENDA_DETAIL_LOCK:
         _TENANT_AGENDA_DETAIL_CACHE.pop(int(tenant_id), None)
+    # Invalidation couplée: si la config agenda change, on invalide aussi les snapshots bulk.
+    with _TENANT_AGENDA_BULK_LOCK:
+        keys = [k for k in _TENANT_AGENDA_BULK_CACHE.keys() if int(k[0]) == int(tenant_id)]
+        for k in keys:
+            _TENANT_AGENDA_BULK_CACHE.pop(k, None)
 
 
 def _patient_delete_token_secret() -> bytes:
@@ -3719,20 +3726,20 @@ def tenant_agenda(
     }
 
 
-_AGENDA_BULK_MAX_DAYS = 14
+_AGENDA_BULK_MAX_DAYS = 42
 
 
 @router.get("/agenda/bulk")
 def tenant_agenda_bulk(
     auth: dict = Depends(require_tenant_auth),
-    dates: str = Query(..., description="Liste CSV de dates YYYY-MM-DD (max 14)"),
+    dates: str = Query(..., description="Liste CSV de dates YYYY-MM-DD (max 42)"),
 ):
     """Retourne plusieurs jours d'agenda en une seule réponse pour limiter le fan-out frontend.
 
-    La fenêtre est plafonnée à ``_AGENDA_BULK_MAX_DAYS`` jours pour éviter qu'une vue
-    mensuelle (6 semaines = 42 jours) ne fasse exploser la durée serveur
-    (résolution patient + lookup mirror sur tous les events de la fenêtre).
-    Le frontend doit splitter en plusieurs appels parallèles si besoin.
+    Performance:
+    - accepte jusqu'à 42 jours (grille mensuelle complète) pour éviter 3 appels concurrents
+      côté frontend qui surchargeaient Google Calendar (8-20s/chunk observés).
+    - met en cache la réponse finale quelques secondes pour absorber les refreshs rapprochés.
     """
     tenant_id = auth["tenant_id"]
     detail = _get_tenant_detail_for_agenda_cached(tenant_id)
@@ -3766,6 +3773,18 @@ def tenant_agenda_bulk(
         requested_dates = keep
 
     requested_dates.sort()
+    cache_key = (int(tenant_id), tuple(requested_dates))
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        try:
+            bulk_ttl = float((os.environ.get("AGENDA_BULK_CACHE_SECONDS") or "18").strip() or "18")
+        except ValueError:
+            bulk_ttl = 18.0
+        if bulk_ttl > 0:
+            now = time.monotonic()
+            with _TENANT_AGENDA_BULK_LOCK:
+                hit = _TENANT_AGENDA_BULK_CACHE.get(cache_key)
+                if hit and hit[0] > now:
+                    return copy.deepcopy(hit[1])
     params = detail.get("params") or {}
     tz_name = _tenant_timezone(detail)
     tz = _get_zoneinfo(tz_name)
@@ -4038,11 +4057,25 @@ def tenant_agenda_bulk(
     for payload in payloads.values():
         _decorate_agenda_slots_patient_has_file(tenant_id, list(payload.get("slots") or []), profile_cache)
 
-    return {
+    response = {
         "dates": {date_str: _finalize_agenda_day_payload(payload) for date_str, payload in payloads.items()},
         "truncated": truncated,
         "max_days": _AGENDA_BULK_MAX_DAYS,
     }
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        try:
+            bulk_ttl = float((os.environ.get("AGENDA_BULK_CACHE_SECONDS") or "18").strip() or "18")
+        except ValueError:
+            bulk_ttl = 18.0
+        if bulk_ttl > 0:
+            now = time.monotonic()
+            with _TENANT_AGENDA_BULK_LOCK:
+                _TENANT_AGENDA_BULK_CACHE[cache_key] = (now + bulk_ttl, copy.deepcopy(response))
+                if len(_TENANT_AGENDA_BULK_CACHE) > 300:
+                    stale = [k for k, (exp, _) in _TENANT_AGENDA_BULK_CACHE.items() if exp <= now]
+                    for k in stale[:120]:
+                        _TENANT_AGENDA_BULK_CACHE.pop(k, None)
+    return response
 
 
 @router.get("/agenda/available-slots")

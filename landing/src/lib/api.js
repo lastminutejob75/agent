@@ -254,34 +254,11 @@ export const api = {
     }),
   tenantGetAgenda: (params = "") => request(`/api/tenant/agenda${params}`, { tenant: true }),
   tenantGetAgendaBulk: async (dates) => {
-    /* Le backend plafonne /agenda/bulk à 14 jours pour éviter d'attendre 30+ s sur la vue
-       mensuelle (42 jours). On splitte ici en chunks de 14 et on lance en parallèle.
-       Utilise allSettled pour qu'un chunk en erreur (timeout Google p.ex.) n'efface
-       PAS les chunks qui ont réussi — sinon en vue mois on perdait toute la semaine
-       courante quand le chunk qui la contenait tombait en timeout. */
+    /* Un seul appel bulk (jusqu'à 42j). Plus rapide en pratique qu'un split en 3
+       chunks concurrents qui surcharge Google Calendar et dégrade la latence. */
     const all = Array.from(new Set((dates || []).filter(Boolean))).sort();
     if (all.length === 0) return { dates: {} };
-    const CHUNK = 14;
-    const chunks = [];
-    for (let i = 0; i < all.length; i += CHUNK) chunks.push(all.slice(i, i + CHUNK));
-    const settled = await Promise.allSettled(
-      chunks.map((chunk) =>
-        request(`/api/tenant/agenda/bulk?dates=${encodeURIComponent(chunk.join(","))}`, { tenant: true }),
-      ),
-    );
-    const merged = { dates: {}, failed_chunks: 0 };
-    settled.forEach((res, idx) => {
-      if (res.status === "fulfilled" && res.value?.dates) {
-        Object.assign(merged.dates, res.value.dates);
-      } else {
-        merged.failed_chunks += 1;
-        console.warn(
-          `[agenda/bulk] chunk ${idx} (${chunks[idx][0]}…${chunks[idx][chunks[idx].length - 1]}) failed:`,
-          res.reason || res.value,
-        );
-      }
-    });
-    return merged;
+    return request(`/api/tenant/agenda/bulk?dates=${encodeURIComponent(all.join(","))}`, { tenant: true });
   },
   tenantGetAgendaAvailableSlots: (params = "") =>
     request(`/api/tenant/agenda/available-slots${params}`, { tenant: true }),
