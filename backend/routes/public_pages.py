@@ -785,23 +785,44 @@ def _track_booking_confirmed_event(
 
 
 def _upsert_public_patient(tenant_id: int, payload: PublicBookingRequest) -> None:
-    """Enregistre / met à jour la fiche patient (téléphone + email optionnel)."""
-    from backend.db import find_cabinet_client, normalize_phone_number, update_patient_fields, upsert_cabinet_client
+    """Enregistre les coordonnées du visiteur ayant pris RDV via la page publique.
+
+    Conserve le nom saisi côté formulaire dans ``raw_name`` pour que le RDV ait
+    bien un libellé patient dans l'agenda, MAIS sans le marquer comme
+    ``validated_name`` : c'est juste une chaîne saisie par un visiteur web,
+    pas un patient vérifié par le praticien. La fiche existe en statut
+    ``pending`` ; le praticien la valide explicitement dans le dashboard si la
+    personne devient effectivement patiente.
+
+    Si une fiche existante avec ``validated_name`` est déjà présente (patient
+    connu), elle n'est pas écrasée : l'upsert garde la validation existante via
+    le COALESCE côté SQL.
+    """
+    from backend.db import (
+        find_cabinet_client,
+        get_cabinet_client_by_phone,
+        normalize_phone_number,
+        update_patient_fields,
+        upsert_cabinet_client,
+    )
 
     phone_norm = normalize_phone_number(payload.patientPhone)
     if not phone_norm:
         return
     email_clean = (payload.patientEmail or "").strip()[:254] or None
     name = payload.patientName.strip()
+
+    existing = get_cabinet_client_by_phone(int(tenant_id), phone_norm) or {}
+    existing_validated = str(existing.get("validated_name") or "").strip()
     upsert_cabinet_client(
         tenant_id,
         phone_norm,
         raw_name=name,
-        validated_name=name,
+        validated_name=existing_validated or None,
         last_booking_motif=payload.motif.strip(),
         last_booking_start=(payload.startIso or "").strip() or None,
     )
-    if email_clean:
+    if email_clean and not (existing.get("email") or "").strip():
         update_patient_fields(tenant_id, phone_norm, email=email_clean)
 
 
