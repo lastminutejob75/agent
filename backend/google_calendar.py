@@ -69,7 +69,17 @@ class GoogleCalendarService:
         self._google_calendar_init_done = True
 
     def _build_service(self):
-        """Crée le service Google Calendar."""
+        """Crée le service Google Calendar avec un timeout HTTP borné.
+
+        Sans timeout explicite, googleapiclient hérite du timeout socket par défaut
+        (≥ 60 s sur Linux). En cas d'instabilité réseau ou côté Google, un
+        ``events.list()`` peut bloquer 60+ secondes (cas vécu en mai 2026 :
+        ``The read operation timed out`` après 60 s sur l'agenda du dashboard).
+
+        Le timeout est configurable via ``GOOGLE_API_HTTP_TIMEOUT_SECONDS``
+        (défaut 10 s) — suffisant pour un ``events.list()`` normal et assez
+        court pour ne pas bloquer le dashboard.
+        """
         try:
             if not cfg.SERVICE_ACCOUNT_FILE:
                 raise Exception("❌ SERVICE_ACCOUNT_FILE not initialized - startup not run?")
@@ -77,8 +87,25 @@ class GoogleCalendarService:
                 cfg.SERVICE_ACCOUNT_FILE,
                 scopes=SCOPES
             )
-            service = build('calendar', 'v3', credentials=credentials)
-            logger.info("Google Calendar service initialized")
+            import os
+            try:
+                api_timeout = float(os.environ.get("GOOGLE_API_HTTP_TIMEOUT_SECONDS", "10").strip() or "10")
+            except ValueError:
+                api_timeout = 10.0
+            try:
+                import google_auth_httplib2
+                import httplib2
+
+                authed_http = google_auth_httplib2.AuthorizedHttp(
+                    credentials, http=httplib2.Http(timeout=api_timeout)
+                )
+                service = build('calendar', 'v3', http=authed_http, cache_discovery=False)
+            except ImportError:
+                logger.warning(
+                    "google_auth_httplib2 not available — falling back to default Http (no timeout)"
+                )
+                service = build('calendar', 'v3', credentials=credentials, cache_discovery=False)
+            logger.info("Google Calendar service initialized (http_timeout=%ss)", api_timeout)
             return service
         except Exception as e:
             logger.error(f"Failed to initialize Google Calendar: {e}")
