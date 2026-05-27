@@ -455,7 +455,7 @@ function InlineDetail({
             👤 Patients
           </button>
         ) : null}
-        {a.canCancel && !confirmCancel && !rescheduleMode && (
+        {a.canReschedule && !confirmCancel && !rescheduleMode && (
           <button type="button" onClick={onStartReschedule} style={S.inlineRescheduleBtn}>🔄 Déplacer</button>
         )}
         {a.canCancel && !confirmCancel && !rescheduleMode && (
@@ -729,8 +729,16 @@ export default function AppAgenda() {
   const urlView = searchParams.get("view");
   const urlPhone = searchParams.get("phone");
   const urlFocus = searchParams.get("focus");
+  const urlAction = searchParams.get("action");
+  const isSpecialDashboardFocus = urlFocus === "annulations" || urlFocus === "creneaux-recuperes";
   const [selectedDate, setSelectedDate] = useState(urlDate || todayISO());
   const [pendingFocusPhone, setPendingFocusPhone] = useState(urlPhone || null);
+  const [pendingFocusApptId, setPendingFocusApptId] = useState(
+    urlFocus && !isSpecialDashboardFocus ? urlFocus : null,
+  );
+  const [pendingAgendaAction, setPendingAgendaAction] = useState(
+    urlAction === "cancel" || urlAction === "reschedule" ? urlAction : null,
+  );
   const [viewMode, setViewMode] = useState("day");
   const [isMobileAgenda, setIsMobileAgenda] = useState(
     typeof window !== "undefined" ? window.innerWidth <= 760 : false,
@@ -751,7 +759,13 @@ export default function AppAgenda() {
       setViewMode(urlView);
     }
     if (urlPhone) setPendingFocusPhone(urlPhone);
-  }, [urlDate, urlView, urlPhone, selectedDate]);
+    if (urlFocus && urlFocus !== "annulations" && urlFocus !== "creneaux-recuperes") {
+      setPendingFocusApptId(urlFocus);
+    }
+    if (urlAction === "cancel" || urlAction === "reschedule") {
+      setPendingAgendaAction(urlAction);
+    }
+  }, [urlDate, urlView, urlPhone, urlFocus, urlAction, selectedDate]);
 
   /* Liens depuis le dashboard : focus=annulations | creneaux-recuperes → jour + date explicite */
   useEffect(() => {
@@ -1032,6 +1046,7 @@ export default function AppAgenda() {
           typeIcon: typeIcon(s.type),
           isUWI: s.source === "UWI",
           canCancel: !!s.can_cancel,
+          canReschedule: !!s.can_reschedule,
           actionId: s.appointment_id || s.event_id || "",
         };
         return { ...appt, tone: toneForAppointment(appt) };
@@ -1090,6 +1105,33 @@ export default function AppAgenda() {
     appointments.forEach((a) => { map[a.date] = (map[a.date] || 0) + 1; });
     return map;
   }, [appointments]);
+
+  useEffect(() => {
+    if (!pendingFocusApptId) return;
+    if (!appointments.length) return;
+    const focus = String(pendingFocusApptId);
+    const match = appointments.find((a) => {
+      const apptId = String(a.appointment_id || "");
+      const evtId = String(a.event_id || "");
+      const actionId = String(a.actionId || "");
+      return apptId === focus || evtId === focus || actionId === focus || String(a.id) === focus;
+    });
+    if (match) {
+      setSelectedAppt(match);
+      if (pendingAgendaAction === "cancel") {
+        setConfirmCancel(true);
+        setRescheduleMode(false);
+      } else if (pendingAgendaAction === "reschedule") {
+        setRescheduleMode(true);
+        setConfirmCancel(false);
+      } else {
+        setConfirmCancel(false);
+        setRescheduleMode(false);
+      }
+      setPendingFocusApptId(null);
+      setPendingAgendaAction(null);
+    }
+  }, [appointments, pendingFocusApptId, pendingAgendaAction]);
 
   useEffect(() => {
     if (!pendingFocusPhone) return;
@@ -1169,7 +1211,7 @@ export default function AppAgenda() {
     setActionLoading(true);
     try {
       await api.tenantRescheduleAgendaAppointment(
-        selectedAppt.actionId || selectedAppt.appointment_id || selectedAppt.id,
+        selectedAppt.actionId || selectedAppt.appointment_id || selectedAppt.event_id || selectedAppt.id,
         { new_slot_id: slot.slot_id, external_event_id: selectedAppt.event_id || "" },
       );
       const fmtDate = new Date(`${slot.date}T12:00:00`).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });

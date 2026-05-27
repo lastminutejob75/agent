@@ -238,6 +238,19 @@ export default function AppDashboard() {
   const nextSource = String(nextSlot?.slot?.source || "").toUpperCase() === "UWI" ? "Pris par Clara" : "Agenda cabinet";
   const nextPatient = String(nextSlot?.slot?.patient || nextSlot?.slot?.patient_name || "").trim();
 
+  const openNextAgendaAction = (action) => {
+    if (!nextSlot?.slot || !nextSlot?.start) {
+      notify("Aucun rendez-vous à venir");
+      return;
+    }
+    const params = new URLSearchParams();
+    params.set("date", nextSlot.start.toISOString().slice(0, 10));
+    const focus = nextSlot.slot.appointment_id || nextSlot.slot.event_id;
+    if (focus) params.set("focus", String(focus));
+    if (action === "cancel" || action === "reschedule") params.set("action", action);
+    navigate(`/app/agenda?${params.toString()}`);
+  };
+
   const agendaForDay = useMemo(() => todaySlots.slice(0, 3).map((x) => {
     const status = String(x.slot?.status || "").toLowerCase() === "confirmed" ? "Confirmé" : "Prévu";
     return [
@@ -463,8 +476,8 @@ export default function AppDashboard() {
                 nextPatient={nextPatient}
                 nextReason={nextReason}
                 nextSource={nextSource}
-                onMove={() => notify("Déplacer RDV")}
-                onCancel={() => notify("Annuler RDV")}
+                onMove={() => openNextAgendaAction("reschedule")}
+                onCancel={() => openNextAgendaAction("cancel")}
                 onOpenAgenda={() => navigate("/app/agenda")}
                 CardComponent={Card}
                 PillComponent={Pill}
@@ -504,8 +517,8 @@ export default function AppDashboard() {
                 nextPatient={nextPatient}
                 nextReason={nextReason}
                 nextSource={nextSource}
-                onMove={() => notify("Déplacer RDV")}
-                onCancel={() => notify("Annuler RDV")}
+                onMove={() => openNextAgendaAction("reschedule")}
+                onCancel={() => openNextAgendaAction("cancel")}
                 onOpenAgenda={() => navigate("/app/agenda")}
                 CardComponent={Card}
                 PillComponent={Pill}

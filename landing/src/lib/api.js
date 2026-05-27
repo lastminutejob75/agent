@@ -315,6 +315,12 @@ export const api = {
       body,
       tenant: true,
     }),
+  tenantRescheduleAgendaAppointment: (appointmentId, body) =>
+    request(`/api/tenant/agenda/appointments/${encodeURIComponent(appointmentId)}/reschedule`, {
+      method: "POST",
+      body,
+      tenant: true,
+    }),
   tenantCreateAgendaBooking: (body) =>
     request("/api/tenant/agenda/bookings", { method: "POST", body, tenant: true }),
   tenantGetFaq: () => request("/api/tenant/faq", { tenant: true }),

@@ -3591,7 +3591,7 @@ def tenant_agenda(
             executor: Optional[ThreadPoolExecutor] = None
             mirror_fut = None
             try:
-                if mirror_enabled and not compact_mode:
+                if mirror_enabled:
                     executor = ThreadPoolExecutor(max_workers=1)
                     mirror_fut = executor.submit(
                         _load_local_appointments_for_window,
@@ -3621,7 +3621,8 @@ def tenant_agenda(
                 if executor is not None:
                     executor.shutdown(wait=True)
             google_events = result.get("items") or []
-            _warm_profile_cache_google_event_descriptions(tenant_id, google_events, profile_cache)
+            if not compact_mode:
+                _warm_profile_cache_google_event_descriptions(tenant_id, google_events, profile_cache)
             for event in google_events:
                 raw_start = (event.get("start") or {}).get("dateTime") or (event.get("start") or {}).get("date")
                 raw_end = (event.get("end") or {}).get("dateTime") or (event.get("end") or {}).get("date")
@@ -3637,11 +3638,12 @@ def tenant_agenda(
                 description = (event.get("description") or "").strip()
                 patient = summary.replace("RDV - ", "", 1).strip() if summary.startswith("RDV - ") else (summary or "Patient")
                 patient_contact = _extract_calendar_event_patient_contact(description)
-                patient = _resolve_agenda_patient_name_cached(tenant_id, patient_contact, patient, profile_cache)
+                if not compact_mode:
+                    patient = _resolve_agenda_patient_name_cached(tenant_id, patient_contact, patient, profile_cache)
                 motif = _extract_google_description_line(description, "Motif") or (summary if summary and not summary.startswith("RDV - ") else "Consultation")
                 source = "UWI" if summary.startswith("RDV - ") or "Patient:" in description else "EXTERNAL"
                 mirror_booking = None
-                if mirror_enabled and not compact_mode and source == "UWI":
+                if mirror_enabled and source == "UWI":
                     mirror_booking = _find_local_appointment_for_google_event(
                         tenant_id=tenant_id,
                         start_local=start_local,
@@ -3672,8 +3674,8 @@ def tenant_agenda(
                     "event_id": event.get("id") or "",
                     "appointment_id": int(mirror_booking.get("id") or 0) if mirror_booking else None,
                     "slot_id": int(mirror_booking.get("slot_id") or 0) if mirror_booking else None,
-                    "can_cancel": bool(source == "UWI" and not compact_mode),
-                    "can_reschedule": bool(mirror_booking) if not compact_mode else False,
+                    "can_cancel": bool(source == "UWI"),
+                    "can_reschedule": bool(mirror_booking),
                     **meta,
                 })
         except Exception as e:
@@ -3701,11 +3703,12 @@ def tenant_agenda(
                             (tenant_id, day_start.astimezone(timezone.utc), day_end.astimezone(timezone.utc)),
                         )
                         agenda_rows_pg_day = cur.fetchall()
-                        _warm_agenda_profiles_from_contact_strings(
-                            tenant_id,
-                            (r.get("contact") for r in agenda_rows_pg_day),
-                            profile_cache,
-                        )
+                        if not compact_mode:
+                            _warm_agenda_profiles_from_contact_strings(
+                                tenant_id,
+                                (r.get("contact") for r in agenda_rows_pg_day),
+                                profile_cache,
+                            )
                         for row in agenda_rows_pg_day:
                             start_local = _parse_dt(row.get("start_ts"), tz_name)
                             if not start_local:

@@ -1131,14 +1131,54 @@ export default function PatientDashboardPage() {
   const openAgendaForPatientSlot = useCallback((
     slot: Record<string, unknown>,
     start: Date,
+    action?: "cancel" | "reschedule",
   ) => {
     const params = new URLSearchParams();
     params.set("date", start.toISOString().slice(0, 10));
     if (tenantPatientPhone) params.set("phone", tenantPatientPhone);
     const focus = slot.appointment_id || slot.event_id;
     if (focus) params.set("focus", String(focus));
+    if (action === "cancel" || action === "reschedule") params.set("action", action);
     navigate(`/app/agenda?${params.toString()}`);
   }, [navigate, tenantPatientPhone]);
+
+  const renderPatientApptActions = useCallback((
+    slot: Record<string, unknown>,
+    start: Date,
+    { compact = false }: { compact?: boolean } = {},
+  ) => {
+    const canCancel = Boolean(slot.can_cancel);
+    const canReschedule = Boolean(slot.can_reschedule);
+    return (
+      <div className={`flex flex-wrap gap-2${compact ? "" : " mt-5"}`}>
+        <button
+          type="button"
+          disabled={!canReschedule}
+          onClick={() => openAgendaForPatientSlot(slot, start, "reschedule")}
+          className="rounded-xl border border-[#72CDE0] px-4 py-2 text-sm font-black text-[#008EA1] hover:bg-[#E9FAFC] disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          ▣ Déplacer le RDV
+        </button>
+        <button
+          type="button"
+          disabled={!canCancel}
+          onClick={() => openAgendaForPatientSlot(slot, start, "cancel")}
+          className="rounded-xl border border-[#FF9B9B] px-4 py-2 text-sm font-black text-[#FF3030] hover:bg-[#FFF1F1] disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          ♲ Annuler le RDV
+        </button>
+        {!compact ? (
+          <button
+            type="button"
+            onClick={() => navigate("/app/agenda")}
+            className="rounded-xl border border-[#B6C3D7] px-4 py-2 text-sm font-black text-[#53647F] hover:bg-[#F8FAFC]"
+          >
+            ▣ Voir l&apos;agenda
+          </button>
+        ) : null}
+      </div>
+    );
+  }, [navigate, openAgendaForPatientSlot]);
 
   const patientAgendaSlots = useMemo(() => {
     if (!tenantPatientPhone) return [];
@@ -2098,25 +2138,7 @@ export default function PatientDashboardPage() {
                         <div><div className="mb-1 text-xs font-bold text-[#7D8CA5]">Canal</div><div className="font-black">{contactTypeLabel(slot.contact_type)}</div></div>
                       </div>
 
-                      <div className="mt-5 flex flex-wrap gap-3">
-                        <button
-                          type="button"
-                          disabled={!slot.can_reschedule}
-                          onClick={() => openAgendaForPatientSlot(slot, start)}
-                          className="rounded-xl border border-[#72CDE0] px-4 py-2 text-sm font-black text-[#008EA1] hover:bg-[#E9FAFC] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          ▣ Déplacer le RDV
-                        </button>
-                        <button
-                          type="button"
-                          disabled={!slot.can_cancel}
-                          onClick={() => openAgendaForPatientSlot(slot, start)}
-                          className="rounded-xl border border-[#FF9B9B] px-4 py-2 text-sm font-black text-[#FF3030] hover:bg-[#FFF1F1] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          ♲ Annuler le RDV
-                        </button>
-                        <button type="button" onClick={() => navigate("/app/agenda")} className="rounded-xl border border-[#B6C3D7] px-4 py-2 text-sm font-black text-[#53647F] hover:bg-[#F8FAFC]">▣ Voir l&apos;agenda</button>
-                      </div>
+                      {renderPatientApptActions(slot, start)}
                     </div>
                   </div>
                       );
@@ -2148,7 +2170,7 @@ export default function PatientDashboardPage() {
                           return (
                             <li
                               key={rk}
-                              className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#EEF3F8] bg-[#F8FBFD] px-4 py-3 text-sm"
+                              className="flex flex-col gap-3 rounded-2xl border border-[#EEF3F8] bg-[#F8FBFD] px-4 py-3 text-sm sm:flex-row sm:flex-wrap sm:items-center sm:justify-between"
                             >
                               <div className="min-w-0 flex-1">
                                 <div className="font-black text-[#0A1628]">
@@ -2156,7 +2178,10 @@ export default function PatientDashboardPage() {
                                 </div>
                                 <div className="mt-1 font-semibold text-[#475569]">{agendaSlotMotif(sRow) || "Consultation"}</div>
                               </div>
-                              <span className="rounded-lg bg-white px-3 py-1.5 text-xs font-black text-[#007E8C]">{st}</span>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="rounded-lg bg-white px-3 py-1.5 text-xs font-black text-[#007E8C]">{st}</span>
+                                {renderPatientApptActions(sRow, dt, { compact: true })}
+                              </div>
                             </li>
                           );
                         })}
@@ -2270,13 +2295,14 @@ export default function PatientDashboardPage() {
                     year: "numeric",
                   });
                   return (
-                  <div key={rowKey} className="grid grid-cols-1 gap-2 rounded-2xl border border-[#EEF3F8] p-4 text-sm sm:grid-cols-[120px_90px_1fr_160px] sm:items-center sm:gap-3">
+                  <div key={rowKey} className="grid grid-cols-1 gap-3 rounded-2xl border border-[#EEF3F8] p-4 text-sm sm:grid-cols-[120px_90px_1fr_160px_auto] sm:items-center sm:gap-3">
                     <div className="flex items-center justify-between gap-3 sm:contents">
                       <b>{dateStr}</b>
                       <b>{formatAgendaSlotHour(start)}</b>
                     </div>
                     <span>{agendaSlotMotif(slot) || "Consultation"}</span>
                     <span className="rounded-lg bg-[#F2F8FA] px-3 py-2 text-center font-black text-[#007E8C]">{patientAgendaRowStatus(slot, start)}</span>
+                    {renderPatientApptActions(slot, start, { compact: true })}
                   </div>
                   );
                 })}
