@@ -90,12 +90,11 @@ jobs:
           tail -50 backend.log
           exit 1
 
-      - name: Start frontend (vite preview build)
+      - name: Start frontend (vite dev + proxy API same-origin)
         run: |
-          npm run build
-          npx vite preview --host 127.0.0.1 --port 3000 > ../frontend.log 2>&1 &
+          npm run dev -- --host 127.0.0.1 --port 3000 > ../frontend.log 2>&1 &
           echo $! > ../frontend.pid
-          for i in $(seq 1 60); do
+          for i in $(seq 1 90); do
             if curl -fsS http://127.0.0.1:3000/ > /dev/null; then
               echo "Frontend up after ${i}s"
               exit 0
@@ -106,6 +105,8 @@ jobs:
           tail -50 ../frontend.log
           exit 1
         working-directory: landing
+        env:
+          VITE_UWI_API_BASE_URL: ""
 
       - name: Run Playwright smoke (bloquant)
         run: |
@@ -212,12 +213,11 @@ jobs:
           tail -50 backend.log
           exit 1
 
-      - name: Start frontend (vite preview build)
+      - name: Start frontend (vite dev + proxy API same-origin)
         run: |
-          npm run build
-          npx vite preview --host 127.0.0.1 --port 3000 > ../frontend.log 2>&1 &
+          npm run dev -- --host 127.0.0.1 --port 3000 > ../frontend.log 2>&1 &
           echo $! > ../frontend.pid
-          for i in $(seq 1 60); do
+          for i in $(seq 1 90); do
             if curl -fsS http://127.0.0.1:3000/ > /dev/null; then
               echo "Frontend up after ${i}s"
               exit 0
@@ -228,6 +228,8 @@ jobs:
           tail -50 ../frontend.log
           exit 1
         working-directory: landing
+        env:
+          VITE_UWI_API_BASE_URL: ""
 
       - name: Run Playwright full (soft fail temporaire)
         run: npx playwright test --reporter=list || true

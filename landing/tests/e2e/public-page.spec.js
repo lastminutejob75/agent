@@ -23,7 +23,7 @@ test.describe("Page publique praticien", () => {
 
   test("le titre du document est forme correctement", async ({ page }) => {
     await page.goto("/p/cabinet-dupond-demo");
-    await page.waitForLoadState("networkidle", { timeout: 10_000 });
+    await expect(page.locator("h1").first()).toBeVisible({ timeout: 10_000 });
     const title = await page.title();
     expect(title.toLowerCase()).toMatch(/rendez-vous|praticien|cabinet/i);
   });

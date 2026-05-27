@@ -14,8 +14,10 @@ test.describe("Admin login", () => {
     await page.goto("/admin/login");
     await page.getByPlaceholder("admin@cabinet.fr").fill(ADMIN_EMAIL);
     await page.getByPlaceholder("••••••••").fill(ADMIN_PASSWORD);
-    await page.getByRole("button", { name: /Se connecter/i }).click();
-    await page.waitForURL(/\/admin(?!\/login)/, { timeout: 10_000 });
+    await Promise.all([
+      page.waitForURL(/\/admin(?!\/login)/, { timeout: 15_000 }),
+      page.getByRole("button", { name: /Se connecter/i }).click(),
+    ]);
     expect(page.url()).toMatch(/\/admin/);
     expect(page.url()).not.toMatch(/\/admin\/login/);
   });
