@@ -8,7 +8,6 @@ API admin / onboarding pour uwi-landing (Vite SPA).
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import logging
 import os
@@ -36,7 +35,6 @@ from backend.billing_pg import (
     set_stripe_customer_id,
     set_tenant_suspended,
     set_tenant_unsuspended,
-    tenant_id_by_stripe_customer_id,
     upsert_billing_from_subscription,
 )
 from backend.tenants_pg import (
@@ -47,9 +45,7 @@ from backend.tenants_pg import (
     pg_deactivate_tenant,
     pg_fetch_tenants,
     pg_get_tenant_full,
-    pg_get_tenant_flags,
     pg_get_tenant_params,
-    pg_get_routing_for_tenant,
     pg_update_tenant_flags,
     pg_update_tenant_params,
 )
@@ -2776,7 +2772,7 @@ def admin_lead_convert(
             log = list(existing)
     except Exception:
         log = []
-    txt = f"Lead converti en cabinet client"
+    txt = "Lead converti en cabinet client"
     if body.tenant_id:
         txt += f" (tenant_id={body.tenant_id})"
     if body.note:
@@ -3950,7 +3946,6 @@ def _get_call_detail(tenant_id: int, call_id: str) -> dict:
                 last_event = rows[-1].get("event") if rows else None
                 out["result"] = _call_result_from_event(last_event) if last_event else "other"
                 if len(rows) >= 2:
-                    from datetime import datetime
                     try:
                         first_ts = rows[0]["created_at"]
                         last_ts = rows[-1]["created_at"]
@@ -4803,20 +4798,10 @@ def admin_send_tenant_onboarding_link(
     return _send_onboarding_link(email=email, name=name)
 
 
-@router.get("/admin/tenants/{tenant_id}/usage")
-def admin_get_tenant_usage(
-    tenant_id: int = Depends(validate_tenant_id),
-    month: str = Query(..., description="YYYY-MM"),
-    _: None = Depends(_verify_admin),
-):
-    """Usage Vapi du mois (vapi_call_usage) : minutes_total, cost_usd, calls_count. Convention : mois calendaire en UTC (ended_at >= 1er 00:00:00 UTC, < 1er mois suivant)."""
-    if not _get_tenant_detail(tenant_id):
-        raise HTTPException(404, "Tenant not found")
-    if len(month) != 7 or month[4] != "-":
-        raise HTTPException(400, "month must be YYYY-MM")
+def _get_tenant_usage(tenant_id: int, month: str) -> dict:
+    """Usage Vapi du mois (vapi_call_usage) pour billing interne."""
     start = f"{month}-01 00:00:00"
     try:
-        from datetime import datetime
         y, m = int(month[:4]), int(month[5:7])
         if m == 12:
             end = f"{y + 1}-01-01 00:00:00"
@@ -4850,6 +4835,20 @@ def admin_get_tenant_usage(
             if "does not exist" not in str(e).lower():
                 logger.warning("tenant usage query failed: %s", e)
     return out
+
+
+@router.get("/admin/tenants/{tenant_id}/usage")
+def admin_get_tenant_usage(
+    tenant_id: int = Depends(validate_tenant_id),
+    month: str = Query(..., description="YYYY-MM"),
+    _: None = Depends(_verify_admin),
+):
+    """Usage Vapi du mois (vapi_call_usage) : minutes_total, cost_usd, calls_count. Convention : mois calendaire en UTC (ended_at >= 1er 00:00:00 UTC, < 1er mois suivant)."""
+    if not _get_tenant_detail(tenant_id):
+        raise HTTPException(404, "Tenant not found")
+    if len(month) != 7 or month[4] != "-":
+        raise HTTPException(400, "month must be YYYY-MM")
+    return _get_tenant_usage(tenant_id, month)
 
 
 def _get_quota_used_minutes(tenant_id: int, start: str, end: str) -> float:

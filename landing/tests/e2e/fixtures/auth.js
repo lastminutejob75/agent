@@ -29,7 +29,7 @@ async function ensureDemoMode(request) {
  */
 async function loginAsAdmin(page) {
   await page.goto("/admin/login");
-  await page.getByPlaceholder("admin@exemple.fr").fill(ADMIN_EMAIL);
+  await page.getByPlaceholder("admin@cabinet.fr").fill(ADMIN_EMAIL);
   await page.getByPlaceholder("••••••••").fill(ADMIN_PASSWORD);
   await page.getByRole("button", { name: /Se connecter/i }).click();
   await page.waitForURL(/\/admin(?!\/login)/, { timeout: 10_000 });

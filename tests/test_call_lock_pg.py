@@ -5,8 +5,6 @@ T1: LockTimeout → 204
 T2: lock utilisé quand PG enabled
 T3: lock jamais appelé quand PG disabled
 """
-import os
-import pytest
 from unittest.mock import patch, MagicMock
 
 

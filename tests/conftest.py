@@ -10,11 +10,16 @@ import pytest
 
 
 def pytest_configure(config):
-    """Au démarrage de pytest : définir JWT_SECRET et ADMIN_API_TOKEN si absents."""
+    """Au démarrage de pytest : secrets minimaux avant import de backend.main."""
     if not (os.environ.get("JWT_SECRET") or "").strip():
         os.environ["JWT_SECRET"] = "test-secret-pytest-min-32-bytes-long-for-hmac"
     if not (os.environ.get("ADMIN_API_TOKEN") or "").strip():
         os.environ["ADMIN_API_TOKEN"] = "test-admin-token-pytest"
+    if not (os.environ.get("GOOGLE_CLIENT_ID") or "").strip():
+        os.environ["GOOGLE_CLIENT_ID"] = "test-google-client-id"
+    if not (os.environ.get("GOOGLE_CLIENT_SECRET") or "").strip():
+        os.environ["GOOGLE_CLIENT_SECRET"] = "test-google-client-secret"
+    os.environ.setdefault("ALLOW_GOOGLE_SELF_SIGNUP", "false")
 
 
 @pytest.fixture(autouse=True)

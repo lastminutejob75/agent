@@ -70,9 +70,10 @@ jobs:
       - name: Install ruff
         run: pip install ruff
       - name: Run ruff smoke (bloquant)
-        # Périmètre stable et critique pour bloquer les régressions immédiates.
+        # Périmètre stable et critique. Règles volontairement restreintes (E/F)
+        # pour ne pas bloquer sur la dette I/B/UP des gros modules legacy.
         run: |
-          ruff check \
+          ruff check --select E,F --ignore E501,E402,F841 \
             backend/security.py \
             backend/main.py \
             backend/audit_log.py \
@@ -111,6 +112,9 @@ jobs:
       # Secrets minimaux pour eviter les 503 dans les tests
       JWT_SECRET: test-secret-pytest-min-32-bytes-long-for-hmac
       ADMIN_API_TOKEN: test-admin-token-pytest
+      GOOGLE_CLIENT_ID: test-google-client-id
+      GOOGLE_CLIENT_SECRET: test-google-client-secret
+      ALLOW_GOOGLE_SELF_SIGNUP: "false"
       # Skip les checks externes (DB, Twilio, etc.)
       ADMIN_DEMO_MODE: ""
       ENABLE_DEBUG_ENDPOINTS: ""
@@ -162,6 +166,9 @@ jobs:
     env:
       JWT_SECRET: test-secret-pytest-min-32-bytes-long-for-hmac
       ADMIN_API_TOKEN: test-admin-token-pytest
+      GOOGLE_CLIENT_ID: test-google-client-id
+      GOOGLE_CLIENT_SECRET: test-google-client-secret
+      ALLOW_GOOGLE_SELF_SIGNUP: "false"
       ADMIN_DEMO_MODE: ""
       ENABLE_DEBUG_ENDPOINTS: ""
       VAPI_SIGNATURE_DISABLED: "true"

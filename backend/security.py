@@ -7,7 +7,7 @@ import hmac
 import logging
 import os
 import time
-from typing import Any, Dict, Optional, Set
+from typing import Dict, Optional, Set
 from urllib.parse import urlparse
 
 import jwt

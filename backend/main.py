@@ -11,25 +11,20 @@ if _env_path.exists():
     load_dotenv(_env_path)
 
 import asyncio
-import json
 import logging
-import uuid
 from datetime import datetime, timedelta
-from typing import Dict, Optional, Any
+from typing import Optional
 import sqlite3
 
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.engine import ENGINE, Event
-from backend.routes.voice import _get_engine
-from backend import web_chat
-from backend.web_chat import STREAMS, close_stream, ensure_stream, start_web_chat, web_chat_stream
+from backend.engine import ENGINE
+from backend.web_chat import STREAMS, close_stream, start_web_chat, web_chat_stream
 import backend.config as config  # Import du MODULE (pas from import)
 from backend.db import init_db, list_free_slots, count_free_slots
-from backend.tenant_routing import current_tenant_id
 from backend.deps import require_tenant_web, TenantIdWeb
 # Nouvelle architecture multi-canal
 from backend.routes import voice, whatsapp, bland, reports, admin, auth, tenant, client, stripe_webhook, pre_onboarding, checkout_embedded, public_praticien, public_pages

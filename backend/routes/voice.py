@@ -13,13 +13,12 @@ import re
 import time
 import uuid
 import threading
-from typing import Optional, TYPE_CHECKING
+from typing import Optional
 
 from backend.engine import ENGINE
 from backend import prompts, config
 from backend.tenant_config import get_tenant_display_config
 from backend.client_memory import get_client_memory
-from backend.session_codec import session_to_dict
 from backend.conversational_engine import ConversationalEngine, _is_canary
 from backend.reports import get_report_generator
 from backend.validation import validate_response as validate_response_tts
@@ -104,6 +103,7 @@ def _record_terminal_side_effects(session, call_id: str, customer_phone: Optiona
         client_phone=customer_phone,
     )
     if reporting["record_booking"] and getattr(session.qualif_data, "name", None):
+        from backend import tools_booking
         client = client_memory.get_or_create(
             phone=customer_phone,
             name=session.qualif_data.name,
@@ -667,7 +667,6 @@ def _compute_voice_response_sync(
     Si le tenant est suspendu : retourne la phrase fixe immédiatement.
     Garantie : AUCUN appel LLM, AUCUN tool, AUCUN journal/DB coûteux — coût zéro.
     """
-    from backend import tools_booking
     from backend.billing_pg import get_tenant_suspension, get_quota_snapshot_month, set_tenant_suspended
     from backend import prompts
     # Check suspension en tout premier : avant session, intent, engine, tools.
