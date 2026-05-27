@@ -31,6 +31,8 @@ from backend.auth_pg import pg_get_tenant_user_by_id, pg_update_password
 from backend.calendar_adapter import _GoogleCalendarAdapter
 from backend import config
 from backend.config import get_service_account_email
+from backend.patient_insights import compute_patient_insights
+from backend.patient_history import build_patient_history
 from backend.db import (
     cancel_booking_sqlite,
     book_slot_atomic,
@@ -1173,6 +1175,25 @@ def _extract_calendar_event_patient_contact(description: str) -> str:
         if v:
             return v
     return ""
+
+
+def _agenda_slot_meta(
+    *,
+    start_local: datetime,
+    end_local: datetime,
+    contact_type: str = "",
+    description: str = "",
+) -> Dict[str, Any]:
+    pref = _extract_google_description_line(description, "Préférence") or ""
+    duration = 30
+    if start_local and end_local:
+        duration = max(5, int((end_local - start_local).total_seconds() // 60))
+    return {
+        "contact_type": str(contact_type or ""),
+        "duration_minutes": duration,
+        "time_preference": pref,
+        "end_iso": end_local.isoformat() if end_local else "",
+    }
 
 def _get_local_appointment_by_id(tenant_id: int, appointment_id: int) -> Optional[Dict[str, Any]]:
     url = os.environ.get("DATABASE_URL") or os.environ.get("PG_SLOTS_URL")
@@ -2888,6 +2909,8 @@ def tenant_get_patient(
 
     if lightweight:
         docs = list_patient_documents(tenant_id, phone)
+        notes = list_patient_notes(tenant_id, phone, limit=200)
+        insights = compute_patient_insights(tenant_id, phone, notes=notes)
         return {
             "patient": profile,
             "calls": [],
@@ -2898,6 +2921,7 @@ def tenant_get_patient(
                  "size_bytes": d.get("size_bytes"), "created_at": str(d.get("created_at", ""))}
                 for d in docs
             ],
+            "insights": insights,
         }
 
     phone_norm = normalize_phone_number(phone)
@@ -2939,6 +2963,7 @@ def tenant_get_patient(
 
     docs = list_patient_documents(tenant_id, phone)
     notes = list_patient_notes(tenant_id, phone, limit=200)
+    insights = compute_patient_insights(tenant_id, phone, notes=notes)
     return {
         "patient": profile,
         "calls": related_calls,
@@ -2957,6 +2982,7 @@ def tenant_get_patient(
              "size_bytes": d.get("size_bytes"), "created_at": str(d.get("created_at", ""))}
             for d in docs
         ],
+        "insights": insights,
     }
 
 
@@ -3080,6 +3106,60 @@ def tenant_update_patient(
         bool((updated.get("email") or "").strip()),
     )
     return {"ok": True, "patient": updated}
+
+
+@router.get("/patients/{phone}/history")
+def tenant_patient_history(
+    phone: str,
+    auth: dict = Depends(require_tenant_auth),
+    limit: int = Query(50, ge=1, le=100),
+):
+    """Timeline des interactions patient (appels, notes, documents, RDV passés, transferts)."""
+    tenant_id = auth["tenant_id"]
+    profile = get_cabinet_client_by_phone(tenant_id, phone)
+    if not profile:
+        raise HTTPException(404, "Patient not found")
+
+    phone_norm = normalize_phone_number(phone)
+    related_calls: List[Dict[str, Any]] = []
+    detail = _get_tenant_detail(tenant_id)
+    if detail:
+        tz_name = _tenant_timezone(detail)
+        raw = _get_calls_list(tenant_id=tenant_id, days=180, limit=80, tenant_detail=detail)
+        for item in raw.get("items") or []:
+            item_phone = normalize_phone_number(item.get("customer_number") or "")
+            if item_phone != phone_norm:
+                continue
+            related_calls.append(
+                {
+                    "call_id": (item.get("call_id") or "").strip(),
+                    "status": _resolve_call_status(item, None),
+                    "summary": item.get("summary") or "",
+                    "followup_state": item.get("followup_state") or "new",
+                    "started_at": item.get("started_at") or item.get("last_event_at") or "",
+                }
+            )
+
+    related_handoffs: List[Dict[str, Any]] = []
+    try:
+        for h in list_handoffs(tenant_id, status=None, target=None, limit=80):
+            h_phone = normalize_phone_number(h.get("patient_phone") or "")
+            if h_phone == phone_norm:
+                related_handoffs.append(h)
+    except Exception:
+        pass
+
+    notes = list_patient_notes(tenant_id, phone, limit=200)
+    docs = list_patient_documents(tenant_id, phone)
+    return build_patient_history(
+        tenant_id,
+        phone,
+        calls=related_calls,
+        handoffs=related_handoffs,
+        notes=notes,
+        documents=docs,
+        limit=limit,
+    )
 
 
 @router.get("/patients/{phone}/notes")
@@ -3570,6 +3650,13 @@ def tenant_agenda(
                         appointments_index=mirror_lookup,
                     )
                 bo_origin = _agenda_resolve_booking_origin_google(description, mirror_booking)
+                contact_type = str((mirror_booking or {}).get("contact_type") or "")
+                meta = _agenda_slot_meta(
+                    start_local=start_local,
+                    end_local=end_local,
+                    contact_type=contact_type,
+                    description=description,
+                )
                 slots.append({
                     "date": start_local.strftime("%Y-%m-%d"),
                     "hour": start_local.strftime("%Hh"),
@@ -3587,6 +3674,7 @@ def tenant_agenda(
                     "slot_id": int(mirror_booking.get("slot_id") or 0) if mirror_booking else None,
                     "can_cancel": bool(source == "UWI" and not compact_mode),
                     "can_reschedule": bool(mirror_booking) if not compact_mode else False,
+                    **meta,
                 })
         except Exception as e:
             logger.warning("tenant agenda google failed tenant_id=%s: %s", tenant_id, e)
@@ -3602,7 +3690,7 @@ def tenant_agenda(
                     with conn.cursor() as cur:
                         cur.execute(
                             """
-                            SELECT a.id, a.slot_id, a.name, a.contact, a.motif, s.start_ts, a.booking_origin
+                            SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif, s.start_ts, a.booking_origin
                             FROM appointments a
                             JOIN slots s ON s.id = a.slot_id
                             WHERE a.tenant_id = %s
@@ -3632,6 +3720,11 @@ def tenant_agenda(
                                 row.get("name"),
                                 profile_cache,
                             )
+                            meta = _agenda_slot_meta(
+                                start_local=start_local,
+                                end_local=end_local,
+                                contact_type=str(row.get("contact_type") or ""),
+                            )
                             slots.append({
                                 "date": start_local.strftime("%Y-%m-%d"),
                                 "hour": start_local.strftime("%Hh"),
@@ -3649,6 +3742,7 @@ def tenant_agenda(
                                 "slot_id": int(row.get("slot_id") or 0),
                                 "can_cancel": True,
                                 "can_reschedule": True,
+                                **meta,
                             })
             except Exception as e:
                 logger.warning("tenant agenda pg failed tenant_id=%s: %s", tenant_id, e)
@@ -3659,7 +3753,7 @@ def tenant_agenda(
                 _migrate_sqlite_add_booking_origin(conn)
                 sqlite_agenda_day_rows = conn.execute(
                     """
-                    SELECT a.id, a.slot_id, a.name, a.contact, a.motif, a.booking_origin, s.date, s.time
+                    SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif, a.booking_origin, s.date, s.time
                     FROM appointments a
                     JOIN slots s ON s.id = a.slot_id
                     WHERE a.tenant_id = ? AND s.date = ?
@@ -3680,6 +3774,11 @@ def tenant_agenda(
                         continue
                     end_local = start_local + timedelta(minutes=30)
                     patient_name = _resolve_agenda_patient_name_cached(tenant_id, row["contact"], row["name"], profile_cache)
+                    meta = _agenda_slot_meta(
+                        start_local=start_local,
+                        end_local=end_local,
+                        contact_type=str(row["contact_type"] or ""),
+                    )
                     slots.append({
                         "date": start_local.strftime("%Y-%m-%d"),
                         "hour": start_local.strftime("%Hh"),
@@ -3697,6 +3796,7 @@ def tenant_agenda(
                         "slot_id": int(row["slot_id"] or 0),
                         "can_cancel": True,
                         "can_reschedule": True,
+                        **meta,
                     })
             finally:
                 conn.close()

@@ -7,6 +7,109 @@ export function toUiStatus(rawStatus) {
   return "À traiter";
 }
 
+export function formatRequestDate(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "—";
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw;
+  const now = new Date();
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (date.toDateString() === now.toDateString()) {
+    return `Aujourd'hui ${date.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`;
+  }
+  if (date.toDateString() === yesterday.toDateString()) {
+    return `Hier ${date.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`;
+  }
+  return `${date.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" })} ${date.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+export function classifyRequestType(callOrHandoff) {
+  const source = callOrHandoff._source;
+  const reason = String(callOrHandoff.reason || callOrHandoff.reason_category || "").toLowerCase();
+  const summary = String(callOrHandoff.summary || "").toLowerCase();
+  if (reason.includes("renew") || summary.includes("renouvel") || summary.includes("ordonnance")) {
+    return { type: "Renouvellement", typeKey: "renewal" };
+  }
+  if (reason.includes("document") || summary.includes("certificat") || summary.includes("arrêt") || summary.includes("arret")) {
+    return { type: "Document", typeKey: "document" };
+  }
+  if (reason.includes("question")) return { type: "Question", typeKey: "question" };
+  if (source === "handoff") return { type: "Transfert humain", typeKey: "transfer" };
+  return { type: "Rappel", typeKey: "callback" };
+}
+
+function requestPriority(callOrHandoff) {
+  const p = String(callOrHandoff.priority || "").toLowerCase();
+  const summary = String(callOrHandoff.summary || "").toLowerCase();
+  if (p.includes("urgent") || summary.includes("urgence")) return "Urgence";
+  if (p.includes("low") || p.includes("faible")) return "Faible";
+  return "Standard";
+}
+
+/** Construit les lignes demandes (appels + handoffs) comme la page Demandes. */
+export function buildTenantRequestRows(calls = [], handoffs = [], overrides = {}) {
+  const fromCalls = calls
+    .filter((c) => c.followup_state === "callback" || c.status === "TRANSFERRED" || c.reason_category === "urgency")
+    .map((c) => {
+      const t = classifyRequestType({ ...c, _source: "call" });
+      const statusRaw = c.followup_state === "processed" ? "processed" : "callback_created";
+      return {
+        id: `call-${c.call_id || c.id}`,
+        patientName: c.patient_name || "Patient",
+        type: t.type,
+        typeKey: t.typeKey,
+        priority: requestPriority(c),
+        status_raw: statusRaw,
+        summary: c.summary || c.reason_label || "Demande transférée nécessitant une action humaine.",
+        phone: c.customer_number || "",
+        createdAtLabel: formatRequestDate(c.started_at || c.last_event_at),
+        createdAt: c.started_at || c.last_event_at,
+        source: "Via appel",
+      };
+    });
+
+  const fromHandoffs = handoffs.map((h) => {
+    const t = classifyRequestType({ ...h, _source: "handoff" });
+    const rawStatus = String(h.status || "").toLowerCase();
+    return {
+      id: `req-${String(h.id || "").padStart(3, "0")}`,
+      patientName: h.display_name || "Patient",
+      type: t.type,
+      typeKey: t.typeKey,
+      priority: requestPriority(h),
+      status_raw: rawStatus,
+      summary: h.summary || h.reason || "Demande transférée nécessitant une action humaine.",
+      phone: h.patient_phone || "",
+      createdAtLabel: formatRequestDate(h.created_at),
+      createdAt: h.created_at,
+      source: "Via transfert",
+    };
+  });
+
+  return [...fromHandoffs, ...fromCalls]
+    .map((item) => {
+      const override = overrides[item.id];
+      const statusRaw = override?.status_raw ? String(override.status_raw).toLowerCase() : item.status_raw;
+      return {
+        ...item,
+        status_raw: statusRaw,
+        status: toUiStatus(statusRaw),
+      };
+    })
+    .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+}
+
+/** Demandes ouvertes pour un numéro patient normalisé. */
+export function filterOpenPatientRequests(rows, phoneNorm, normalizePhoneFn) {
+  if (!phoneNorm) return [];
+  return rows.filter((row) => {
+    const rowPhone = normalizePhoneFn(String(row.phone || ""));
+    if (!rowPhone || rowPhone !== phoneNorm) return false;
+    return row.status === "À traiter" || row.status === "En cours";
+  });
+}
+
 function minutesSince(value) {
   const raw = String(value || "").trim();
   if (!raw) return null;
@@ -21,13 +124,6 @@ function isSameDay(a, b) {
     && a.getMonth() === b.getMonth()
     && a.getDate() === b.getDate()
   );
-}
-
-function requestPriority(callOrHandoff) {
-  const p = String(callOrHandoff.priority || "").toLowerCase();
-  if (p.includes("urgent") || p === "high") return "Urgence";
-  if (p.includes("low") || p === "faible") return "Faible";
-  return "Standard";
 }
 
 /** Construit les demandes visibles (appels + handoffs) pour compter les KPI dashboard. */

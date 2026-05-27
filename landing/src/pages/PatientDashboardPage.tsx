@@ -2,6 +2,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useOutletContext, useSearchParams } from "react-router-dom";
 import { agendaSlotMotif, formatAgendaSlotHour, parseAgendaSlotStart } from "../lib/agendaSlotParse.js";
 import { api } from "../lib/api.js";
+import { buildTenantRequestRows, filterOpenPatientRequests } from "../lib/requestUiStatus.js";
+import { buildAbsenceNoteText, normalizePatientInsightTags } from "../lib/patientInsightTags.js";
+import {
+  agendaOriginLabel,
+  agendaSlotDurationMinutes,
+  contactTypeLabel,
+  timePreferenceLabel,
+} from "../lib/agendaPatientMeta.js";
 import { normalizePhoneBusinessKey } from "../lib/phoneNormalize";
 import { patientDashboardFileHasValidatedIdentity } from "../lib/callsService.js";
 
@@ -18,6 +26,19 @@ function normalizeAgendaPatientName(value: string) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/\s+/g, " ");
+}
+
+function mapPatientPastAppointments(raw: unknown): Array<{ start: Date; key: string }> {
+  if (!Array.isArray(raw)) return [];
+  const out: Array<{ start: Date; key: string }> = [];
+  for (const row of raw) {
+    const iso = String((row as { start_iso?: string })?.start_iso || "").trim();
+    if (!iso) continue;
+    const start = new Date(iso);
+    if (Number.isNaN(start.getTime())) continue;
+    out.push({ start, key: iso });
+  }
+  return out;
 }
 
 function formatCabinetMetaDate(value: unknown) {
@@ -66,6 +87,38 @@ type PatientDocument = {
   size_bytes: number;
   created_at: string;
 };
+
+type PatientInsightTag = { key: string; label: string; tone: "blue" | "red" };
+
+type PatientHistoryItem = {
+  id: string;
+  date_label: string;
+  time_label: string;
+  type_label: string;
+  summary: string;
+  status_label: string;
+  tone: "green" | "orange" | "red";
+};
+
+function mapPatientHistoryItems(raw: unknown): PatientHistoryItem[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((row) => {
+      const toneRaw = String((row as { tone?: string })?.tone || "green");
+      const tone: PatientHistoryItem["tone"] =
+        toneRaw === "orange" ? "orange" : toneRaw === "red" ? "red" : "green";
+      return {
+        id: String((row as { id?: string })?.id || ""),
+        date_label: String((row as { date_label?: string })?.date_label || "—"),
+        time_label: String((row as { time_label?: string })?.time_label || "—"),
+        type_label: String((row as { type_label?: string })?.type_label || "Événement"),
+        summary: String((row as { summary?: string })?.summary || ""),
+        status_label: String((row as { status_label?: string })?.status_label || "—"),
+        tone,
+      };
+    })
+    .filter((item) => item.id);
+}
 
 const SIDEBAR_GRADIENTS = [
   "from-[#008EA1] to-[#004866]",
@@ -183,6 +236,31 @@ const viewTabs: Array<{ id: ViewType; label: string; icon: string }> = [
 
 const REQUEST_STATUS_OVERRIDES_KEY = "uwi_request_status_overrides";
 
+function readRequestStatusOverrides() {
+  if (typeof window === "undefined") return {};
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(REQUEST_STATUS_OVERRIDES_KEY) || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function requestTypeIcon(typeKey: string) {
+  if (typeKey === "document") return "🔒";
+  if (typeKey === "renewal") return "💊";
+  if (typeKey === "transfer") return "✉";
+  if (typeKey === "question") return "❓";
+  return "🗓";
+}
+
+function requestStatusBadge(status: string) {
+  if (status === "En cours") {
+    return { label: "En attente", bg: "#FFF2E3", color: "#EF6C00" };
+  }
+  return { label: "À faire", bg: "#FFF1EA", color: "#FF4B3E" };
+}
+
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
@@ -218,14 +296,6 @@ function frenchAppointmentDateParts(d: Date): { day: string; monthYear: string; 
     monthYear: d.toLocaleDateString("fr-FR", { month: "long", year: "numeric" }),
     dow: `${d.toLocaleDateString("fr-FR", { weekday: "short" }).replace(".", "").toUpperCase()}.`,
   };
-}
-
-function agendaPatientSourceLabel(slot: Record<string, unknown>): string {
-  const src = String(slot.source || "").toUpperCase();
-  if (src === "UWI") return "Pris par Clara (UWi)";
-  if (src === "PAGE_PUBLIQUE") return "Page publique";
-  if (src === "EXTERNAL") return "Agenda cabinet";
-  return src ? src : "—";
 }
 
 /** Libellé de statut pour liste / vignette RDV patient */
@@ -401,6 +471,7 @@ export default function PatientDashboardPage() {
   const [patientNotes, setPatientNotes] = useState<PatientNote[]>([]);
   const [notesLoading, setNotesLoading] = useState(false);
   const [notesSaving, setNotesSaving] = useState(false);
+  const [absenceNoteSavingKey, setAbsenceNoteSavingKey] = useState("");
   const [noteDeletingId, setNoteDeletingId] = useState<number | null>(null);
   const [documents, setDocuments] = useState<PatientDocument[]>([]);
   const [documentsLoading, setDocumentsLoading] = useState(false);
@@ -431,6 +502,8 @@ export default function PatientDashboardPage() {
     patientEmail: string;
     documents: PatientDocument[];
     patientNotes: PatientNote[];
+    patientInsightTags: PatientInsightTag[];
+    patientPastAppointments: Array<{ start: Date; key: string }>;
     tenantPatientNotFound: boolean;
   }>());
   const [tenantAgendaRawSlots, setTenantAgendaRawSlots] = useState<Array<Record<string, unknown>>>([]);
@@ -445,6 +518,10 @@ export default function PatientDashboardPage() {
   const [patientFetchNonce, setPatientFetchNonce] = useState(0);
   /** Ligne brute API `cabinet_clients` pour le modal profil / métadonnées. */
   const [patientCabinetRow, setPatientCabinetRow] = useState<Record<string, unknown> | null>(null);
+  const [patientInsightTags, setPatientInsightTags] = useState<PatientInsightTag[]>([]);
+  const [patientPastAppointments, setPatientPastAppointments] = useState<Array<{ start: Date; key: string }>>([]);
+  const [patientHistory, setPatientHistory] = useState<PatientHistoryItem[]>([]);
+  const [patientHistoryLoading, setPatientHistoryLoading] = useState(false);
   const [createFicheName, setCreateFicheName] = useState("");
   const [createFicheSaving, setCreateFicheSaving] = useState(false);
   const [profileNameDraft, setProfileNameDraft] = useState("");
@@ -463,6 +540,12 @@ export default function PatientDashboardPage() {
   }>(null);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [deleteSaving, setDeleteSaving] = useState(false);
+  const [tenantHandoffs, setTenantHandoffs] = useState<Array<Record<string, unknown>>>([]);
+  const [tenantCalls, setTenantCalls] = useState<Array<Record<string, unknown>>>([]);
+  const [requestsLoading, setRequestsLoading] = useState(false);
+  const [requestStatusOverrides, setRequestStatusOverrides] = useState<Record<string, { status_raw?: string }>>(
+    () => readRequestStatusOverrides(),
+  );
 
   useEffect(() => {
     return () => {
@@ -470,7 +553,7 @@ export default function PatientDashboardPage() {
     };
   }, []);
 
-  const requestContext = useMemo<RequestContext | null>(() => {
+  const requestContextFromUrl = useMemo<RequestContext | null>(() => {
     const requestId = (searchParams.get("requestId") || "").trim();
     if (!requestId) return null;
     return {
@@ -485,15 +568,123 @@ export default function PatientDashboardPage() {
     };
   }, [searchParams]);
 
+  const requestIdFromUrl = (searchParams.get("requestId") || "").trim();
+  const phoneFromDashboardUrl = useMemo(() => (searchParams.get("phone") || "").trim(), [searchParams]);
+  const isDirectPhoneView = Boolean(phoneFromDashboardUrl);
+  const tenantPatientPhone = useMemo(() => normalizePhone(phoneFromDashboardUrl), [phoneFromDashboardUrl]);
+
+  useEffect(() => {
+    const refresh = () => setRequestStatusOverrides(readRequestStatusOverrides());
+    const onStorage = (event: StorageEvent) => {
+      if (!event.key || event.key === REQUEST_STATUS_OVERRIDES_KEY) refresh();
+    };
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("uwi:request-status-updated", refresh);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("uwi:request-status-updated", refresh);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRequestsLoading(true);
+    Promise.all([
+      api.tenantGetHandoffs("?limit=50").catch(() => ({ items: [] })),
+      api.tenantGetCalls("?limit=50&days=30&compact=1").catch(() => ({ calls: [] })),
+    ])
+      .then(([handoffsRes, callsRes]) => {
+        if (cancelled) return;
+        setTenantHandoffs(Array.isArray(handoffsRes?.items) ? handoffsRes.items : []);
+        setTenantCalls(Array.isArray(callsRes?.calls) ? callsRes.calls : []);
+      })
+      .finally(() => {
+        if (!cancelled) setRequestsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const tenantRequestRows = useMemo(
+    () => buildTenantRequestRows(tenantCalls, tenantHandoffs, requestStatusOverrides),
+    [tenantCalls, tenantHandoffs, requestStatusOverrides],
+  );
+
+  const patientOpenRequests = useMemo(
+    () => filterOpenPatientRequests(tenantRequestRows, tenantPatientPhone, normalizePhone),
+    [tenantRequestRows, tenantPatientPhone],
+  );
+
+  const activeRequestDetail = useMemo(() => {
+    if (!requestIdFromUrl) return null;
+    const fromApi = tenantRequestRows.find((row) => row.id === requestIdFromUrl);
+    if (fromApi) return fromApi;
+    if (!requestContextFromUrl) return null;
+    return {
+      id: requestContextFromUrl.id,
+      patientName: requestContextFromUrl.patientName || "Patient",
+      type: requestContextFromUrl.type,
+      typeKey: "transfer",
+      priority: "Standard",
+      status: requestContextFromUrl.status,
+      status_raw: requestContextFromUrl.status.toLowerCase().includes("cours") ? "callback_scheduled" : "callback_created",
+      summary: requestContextFromUrl.summary,
+      phone: requestContextFromUrl.phone,
+      createdAtLabel: requestContextFromUrl.createdAtLabel,
+      createdAt: "",
+      source: requestContextFromUrl.source,
+    };
+  }, [requestIdFromUrl, tenantRequestRows, requestContextFromUrl]);
+
+  const otherOpenRequests = useMemo(
+    () => patientOpenRequests.filter((row) => row.id !== activeRequestDetail?.id),
+    [patientOpenRequests, activeRequestDetail?.id],
+  );
+
+  const openPatientRequest = useCallback((req: {
+    id: string;
+    phone?: string;
+    patientName?: string;
+    summary?: string;
+    type?: string;
+    status?: string;
+    source?: string;
+    createdAtLabel?: string;
+  }) => {
+    const np = new URLSearchParams(searchParams);
+    np.set("requestId", req.id);
+    if (req.phone || tenantPatientPhone) np.set("phone", req.phone || tenantPatientPhone);
+    if (req.patientName) np.set("patientName", req.patientName);
+    if (req.summary) np.set("summary", req.summary);
+    if (req.type) np.set("type", req.type);
+    np.set("status", req.status === "En cours" ? "En cours" : "À traiter");
+    if (req.source) np.set("source", req.source);
+    if (req.createdAtLabel) np.set("createdAtLabel", req.createdAtLabel);
+    setSearchParams(np, { replace: true });
+  }, [searchParams, setSearchParams, tenantPatientPhone]);
+
+  const clearActiveRequest = useCallback(() => {
+    const next = new URLSearchParams(searchParams);
+    [
+      "requestId",
+      "patientName",
+      "summary",
+      "type",
+      "status",
+      "source",
+      "createdAtLabel",
+    ].forEach((key) => next.delete(key));
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  const requestContext = requestContextFromUrl;
+
   useEffect(() => {
     if (!tenantPatientNotFound) return;
     const hint = String(requestContext?.patientName || "").trim();
     if (hint) setCreateFicheName((prev) => (prev.trim() ? prev : hint));
   }, [tenantPatientNotFound, requestContext?.patientName]);
-
-  const phoneFromDashboardUrl = useMemo(() => (searchParams.get("phone") || "").trim(), [searchParams]);
-  const isDirectPhoneView = Boolean(phoneFromDashboardUrl);
-  const tenantPatientPhone = useMemo(() => normalizePhone(phoneFromDashboardUrl), [phoneFromDashboardUrl]);
 
   useEffect(() => {
     if (!tenantPatientPhone) setPatientListOpen(true);
@@ -750,6 +941,8 @@ export default function PatientDashboardPage() {
     patientEmail: string;
     documents: PatientDocument[];
     patientNotes: PatientNote[];
+    patientInsightTags: PatientInsightTag[];
+    patientPastAppointments: Array<{ start: Date; key: string }>;
     tenantPatientNotFound: boolean;
   }) => {
     setTenantPatientNotFound(bundle.tenantPatientNotFound);
@@ -758,6 +951,8 @@ export default function PatientDashboardPage() {
     setPatientEmail(bundle.patientEmail);
     setDocuments(bundle.documents);
     setPatientNotes(bundle.patientNotes);
+    setPatientInsightTags(bundle.patientInsightTags);
+    setPatientPastAppointments(bundle.patientPastAppointments);
   }, []);
 
   useEffect(() => {
@@ -769,6 +964,8 @@ export default function PatientDashboardPage() {
       setTenantPatientNotFound(false);
       setPatientCabinetRow(null);
       setPatientEmail("");
+      setPatientInsightTags([]);
+      setPatientPastAppointments([]);
       setDocumentsLoading(false);
       setNotesLoading(false);
       return () => {
@@ -814,6 +1011,8 @@ export default function PatientDashboardPage() {
           patientNotes: activeView === "overview"
             ? mapPatientNotes(Array.isArray(notesRes?.items) ? notesRes.items : [])
             : (cached?.patientNotes || []),
+          patientInsightTags: normalizePatientInsightTags(res?.insights?.tags),
+          patientPastAppointments: mapPatientPastAppointments(res?.insights?.recent_past_appointments),
         };
         applyPatientDetailBundle(bundle);
         patientDetailCacheRef.current.set(tenantPatientPhone, {
@@ -838,6 +1037,8 @@ export default function PatientDashboardPage() {
           patientNotes: activeView === "overview"
             ? mapPatientNotes(Array.isArray(notesRes?.items) ? notesRes.items : [])
             : [],
+          patientInsightTags: [] as PatientInsightTag[],
+          patientPastAppointments: [] as Array<{ start: Date; key: string }>,
         };
         applyPatientDetailBundle(bundle);
         if (status !== 404) return;
@@ -901,6 +1102,44 @@ export default function PatientDashboardPage() {
     };
   }, [activeView, agendaDaysLoaded]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const shouldLoad = !!tenantPatientPhone && (activeView === "history" || modal === "history");
+    if (!shouldLoad) {
+      return () => {
+        cancelled = true;
+      };
+    }
+    setPatientHistoryLoading(true);
+    api
+      .tenantGetPatientHistory(tenantPatientPhone, "?limit=50")
+      .then((res) => {
+        if (cancelled) return;
+        setPatientHistory(mapPatientHistoryItems(res?.items));
+      })
+      .catch(() => {
+        if (!cancelled) setPatientHistory([]);
+      })
+      .finally(() => {
+        if (!cancelled) setPatientHistoryLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantPatientPhone, activeView, modal, patientFetchNonce]);
+
+  const openAgendaForPatientSlot = useCallback((
+    slot: Record<string, unknown>,
+    start: Date,
+  ) => {
+    const params = new URLSearchParams();
+    params.set("date", start.toISOString().slice(0, 10));
+    if (tenantPatientPhone) params.set("phone", tenantPatientPhone);
+    const focus = slot.appointment_id || slot.event_id;
+    if (focus) params.set("focus", String(focus));
+    navigate(`/app/agenda?${params.toString()}`);
+  }, [navigate, tenantPatientPhone]);
+
   const patientAgendaSlots = useMemo(() => {
     if (!tenantPatientPhone) return [];
     const needle = normalizePhone(tenantPatientPhone);
@@ -946,6 +1185,8 @@ export default function PatientDashboardPage() {
     const now = Date.now();
     return patientAgendaParsed.filter((x) => x.start.getTime() >= now);
   }, [patientAgendaParsed]);
+
+  const pastPatientAppointments = patientPastAppointments;
 
   useEffect(() => {
     if (modal === "profile" && urlPatientHero?.name) setProfileNameDraft(urlPatientHero.name);
@@ -1093,8 +1334,9 @@ export default function PatientDashboardPage() {
       return false;
     }
     setNotesSaving(true);
+    const noteText = note.trim();
     try {
-      const res = await api.tenantCreatePatientNote(tenantPatientPhone, { text: note.trim(), author: "Praticien" });
+      const res = await api.tenantCreatePatientNote(tenantPatientPhone, { text: noteText, author: "Praticien" });
       const created = res?.item;
       if (created) {
         setPatientNotes((prev) => [
@@ -1109,12 +1351,46 @@ export default function PatientDashboardPage() {
       }
       setNote("");
       notify("Note ajoutée au contexte patient");
+      if (String(created?.text || noteText).includes("[ABSENCE-RDV]")) {
+        setPatientFetchNonce((n) => n + 1);
+      }
       return true;
     } catch (e) {
       notify((e as Error)?.message || "Erreur ajout note");
       return false;
     } finally {
       setNotesSaving(false);
+    }
+  };
+
+  const reportAppointmentAbsence = async (start: Date) => {
+    if (!tenantPatientPhone) {
+      notify("Aucun patient sélectionné");
+      return;
+    }
+    const rowKey = start.toISOString();
+    setAbsenceNoteSavingKey(rowKey);
+    try {
+      const text = buildAbsenceNoteText(start);
+      const res = await api.tenantCreatePatientNote(tenantPatientPhone, { text, author: "Praticien" });
+      const created = res?.item;
+      if (created) {
+        setPatientNotes((prev) => [
+          {
+            id: Number(created.id),
+            text: String(created.text || text),
+            author: String(created.author || "Praticien"),
+            created_at: String(created.created_at || ""),
+          },
+          ...prev,
+        ]);
+      }
+      setPatientFetchNonce((n) => n + 1);
+      notify("Absence enregistrée dans les notes patient");
+    } catch (e) {
+      notify((e as Error)?.message || "Erreur lors du signalement d'absence");
+    } finally {
+      setAbsenceNoteSavingKey("");
     }
   };
 
@@ -1271,8 +1547,8 @@ export default function PatientDashboardPage() {
   };
 
   const updateRequestStatus = async (nextStatus: "processed" | "cancelled") => {
-    if (!requestContext?.id) return;
-    const info = normalizeRequestKind(requestContext.id);
+    if (!activeRequestDetail?.id) return;
+    const info = normalizeRequestKind(activeRequestDetail.id);
     if (info.kind === "call" && nextStatus === "cancelled") {
       notify("Annulation indisponible pour ce type de demande");
       return;
@@ -1288,10 +1564,11 @@ export default function PatientDashboardPage() {
       }
       const nextLabel = toStatusLabel(nextStatus);
       setRequestStatus(nextLabel);
-      persistRequestStatusOverride(requestContext.id, nextStatus);
-      const next = new URLSearchParams(searchParams);
-      next.set("status", nextLabel);
-      setSearchParams(next, { replace: true });
+      persistRequestStatusOverride(activeRequestDetail.id, nextStatus);
+      window.dispatchEvent(new CustomEvent("uwi:request-status-updated"));
+      const handoffsRes = await api.tenantGetHandoffs("?limit=50").catch(() => ({ items: [] }));
+      setTenantHandoffs(Array.isArray(handoffsRes?.items) ? handoffsRes.items : []);
+      clearActiveRequest();
       notify(nextStatus === "cancelled" ? "Demande annulée" : "Demande marquée traitée");
     } catch (e) {
       notify((e as Error)?.message || "Erreur de mise à jour");
@@ -1299,6 +1576,37 @@ export default function PatientDashboardPage() {
       setRequestActionLoading("");
     }
   };
+
+  const renderOpenRequestRows = (rows: typeof patientOpenRequests) => (
+    <div className="space-y-4">
+      {rows.map((req) => {
+        const badge = requestStatusBadge(req.status);
+        return (
+          <button
+            key={req.id}
+            type="button"
+            onClick={() => openPatientRequest(req)}
+            className="flex w-full items-center gap-4 rounded-2xl border border-[#EEF3F8] p-4 text-left hover:bg-[#F8FBFD]"
+          >
+            <div className="grid h-12 w-12 place-items-center rounded-xl bg-[#F8FAFC] text-xl">
+              {requestTypeIcon(req.typeKey)}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="font-black">{req.type}</div>
+              <div className="mt-1 truncate text-sm text-[#61708B]">{req.summary}</div>
+              <div className="mt-1 text-sm text-[#61708B]">Reçu : {req.createdAtLabel}</div>
+            </div>
+            <span
+              className="rounded-lg px-3 py-2 text-xs font-black"
+              style={{ background: badge.bg, color: badge.color }}
+            >
+              {badge.label}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-[#F7FAFC] text-[#0A1628]">
@@ -1549,10 +1857,17 @@ export default function PatientDashboardPage() {
                   </div>
 
                   <div className="flex flex-wrap gap-3">
-                    <OutlineTag>Patient régulier</OutlineTag>
-                    <OutlineTag>Préférence matin</OutlineTag>
-                    <OutlineTag>SMS préféré</OutlineTag>
-                    <OutlineTag tone="red">Risque no-show</OutlineTag>
+                    {patientInsightTags.length > 0 ? (
+                      patientInsightTags.map((tag) => (
+                        <OutlineTag key={tag.key} tone={tag.tone}>
+                          {tag.label}
+                        </OutlineTag>
+                      ))
+                    ) : (
+                      <span className="text-sm font-semibold text-[#94A3B8]">
+                        Aucun repère automatique pour l&apos;instant (historique de RDV ou notes du cabinet).
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1606,30 +1921,45 @@ export default function PatientDashboardPage() {
             </div>
           </section>
 
-          {requestContext && (
+          {tenantPatientPhone && !activeRequestDetail && (patientOpenRequests.length > 0 || requestsLoading) ? (
+            <section className="mt-6 rounded-[28px] border border-[#E2EAF4] bg-white p-7 shadow-sm">
+              <div className="mb-5 flex items-center justify-between">
+                <h2 className="text-2xl font-black">
+                  <span className="text-[#FF8A00]">ϟ</span> À traiter{" "}
+                  <span className="ml-2 rounded-full bg-[#FFF1E8] px-2 py-1 text-sm text-[#FF6B00]">
+                    {patientOpenRequests.length}
+                  </span>
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => navigate(`/app/demandes?status=${encodeURIComponent("À traiter")}`)}
+                  className="text-sm font-black text-[#008EA1]"
+                >
+                  Voir tout ›
+                </button>
+              </div>
+              {requestsLoading ? (
+                <p className="text-sm font-semibold text-[#61708B]">Chargement des demandes…</p>
+              ) : patientOpenRequests.length === 0 ? (
+                <p className="text-sm font-semibold text-[#61708B]">Aucune demande en attente pour ce patient.</p>
+              ) : (
+                renderOpenRequestRows(patientOpenRequests)
+              )}
+            </section>
+          ) : null}
+
+          {activeRequestDetail ? (
             <section className="mt-6 rounded-[28px] border border-[#FFD9B8] bg-[#FFF7F0] p-6 shadow-sm">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-2xl font-black text-[#0A1628]">Demande à traiter</h2>
                   <p className="mt-1 text-sm font-semibold text-[#6B5A4A]">
-                    Demande transférée car elle nécessite une action humaine
+                    {activeRequestDetail.type} · {activeRequestDetail.priority}
                   </p>
                 </div>
                 <button
-                  onClick={() => {
-                    const next = new URLSearchParams(searchParams);
-                    [
-                      "requestId",
-                      "phone",
-                      "patientName",
-                      "summary",
-                      "type",
-                      "status",
-                      "source",
-                      "createdAtLabel",
-                    ].forEach((key) => next.delete(key));
-                    setSearchParams(next, { replace: true });
-                  }}
+                  type="button"
+                  onClick={clearActiveRequest}
                   className="rounded-xl border border-[#F2C59F] bg-white px-4 py-2 text-xs font-black text-[#9A5A1C] hover:bg-[#FFF4EA]"
                 >
                   Masquer
@@ -1639,58 +1969,69 @@ export default function PatientDashboardPage() {
               <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
                 <div className="rounded-xl border border-[#F4E1CF] bg-white p-3">
                   <div className="text-xs font-bold text-[#8B735D]">Type de demande</div>
-                  <div className="mt-1 font-black text-[#0A1628]">{requestContext.type}</div>
+                  <div className="mt-1 font-black text-[#0A1628]">{activeRequestDetail.type}</div>
                 </div>
                 <div className="rounded-xl border border-[#F4E1CF] bg-white p-3">
                   <div className="text-xs font-bold text-[#8B735D]">Statut</div>
-                  <div className="mt-1 font-black text-[#0A1628]">{requestStatus || requestContext.status}</div>
+                  <div className="mt-1 font-black text-[#0A1628]">{requestStatus || activeRequestDetail.status}</div>
                 </div>
                 <div className="rounded-xl border border-[#F4E1CF] bg-white p-3">
                   <div className="text-xs font-bold text-[#8B735D]">Date/heure de transfert</div>
-                  <div className="mt-1 font-black text-[#0A1628]">{requestContext.createdAtLabel}</div>
+                  <div className="mt-1 font-black text-[#0A1628]">{activeRequestDetail.createdAtLabel}</div>
                 </div>
                 <div className="rounded-xl border border-[#F4E1CF] bg-white p-3">
                   <div className="text-xs font-bold text-[#8B735D]">Source</div>
-                  <div className="mt-1 font-black text-[#0A1628]">{requestContext.source}</div>
+                  <div className="mt-1 font-black text-[#0A1628]">{activeRequestDetail.source}</div>
                 </div>
               </div>
 
               <div className="mt-3 rounded-xl border border-[#F4E1CF] bg-white p-4">
                 <div className="text-xs font-bold uppercase tracking-wide text-[#8B735D]">Résumé généré par Clara</div>
-                <p className="mt-2 text-sm leading-7 text-[#334155]">{requestContext.summary}</p>
+                <p className="mt-2 text-sm leading-7 text-[#334155]">{activeRequestDetail.summary}</p>
               </div>
 
               <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                <button onClick={() => notify("Action: Rappeler le patient")} className="rounded-xl bg-[#009CA4] px-4 py-3 text-sm font-black text-white hover:bg-[#00838A]">Rappeler le patient</button>
-                <button onClick={() => notify("Action: Assigner au médecin")} className="rounded-xl border border-[#DDE7F1] bg-white px-4 py-3 text-sm font-black text-[#0A1628] hover:bg-[#F8FAFC]">Assigner au médecin</button>
-                <button onClick={() => notify("Action: Planifier un créneau")} className="rounded-xl border border-[#DDE7F1] bg-white px-4 py-3 text-sm font-black text-[#0A1628] hover:bg-[#F8FAFC]">Planifier un créneau</button>
-                <button onClick={() => setModal("addNote")} className="rounded-xl border border-[#DDE7F1] bg-white px-4 py-3 text-sm font-black text-[#0A1628] hover:bg-[#F8FAFC]">Ajouter une note</button>
+                <button type="button" onClick={() => notify("Action: Rappeler le patient")} className="rounded-xl bg-[#009CA4] px-4 py-3 text-sm font-black text-white hover:bg-[#00838A]">Rappeler le patient</button>
+                <button type="button" onClick={() => notify("Action: Assigner au médecin")} className="rounded-xl border border-[#DDE7F1] bg-white px-4 py-3 text-sm font-black text-[#0A1628] hover:bg-[#F8FAFC]">Assigner au médecin</button>
+                <button type="button" onClick={() => notify("Action: Planifier un créneau")} className="rounded-xl border border-[#DDE7F1] bg-white px-4 py-3 text-sm font-black text-[#0A1628] hover:bg-[#F8FAFC]">Planifier un créneau</button>
+                <button type="button" onClick={() => setModal("addNote")} className="rounded-xl border border-[#DDE7F1] bg-white px-4 py-3 text-sm font-black text-[#0A1628] hover:bg-[#F8FAFC]">Ajouter une note</button>
                 <button
+                  type="button"
                   onClick={() => updateRequestStatus("processed")}
-                  disabled={!!requestActionLoading || isTerminalLabel(requestStatus || requestContext.status)}
+                  disabled={!!requestActionLoading || isTerminalLabel(requestStatus || activeRequestDetail.status)}
                   className={cx(
                     "rounded-xl border border-[#A7F3D0] bg-[#ECFDF5] px-4 py-3 text-sm font-black text-[#047857] lg:col-span-2",
-                    !!requestActionLoading || isTerminalLabel(requestStatus || requestContext.status) ? "cursor-not-allowed opacity-60" : "hover:bg-[#DDFBEF]",
+                    !!requestActionLoading || isTerminalLabel(requestStatus || activeRequestDetail.status) ? "cursor-not-allowed opacity-60" : "hover:bg-[#DDFBEF]",
                   )}
                 >
                   {requestActionLoading === "processed" ? "Traitement..." : "Marquer comme traitée"}
                 </button>
                 <button
+                  type="button"
                   onClick={() => updateRequestStatus("cancelled")}
-                  disabled={!!requestActionLoading || isTerminalLabel(requestStatus || requestContext.status)}
+                  disabled={!!requestActionLoading || isTerminalLabel(requestStatus || activeRequestDetail.status)}
                   className={cx(
                     "rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] px-4 py-3 text-sm font-black text-[#475569] lg:col-span-3",
-                    !!requestActionLoading || isTerminalLabel(requestStatus || requestContext.status) ? "cursor-not-allowed opacity-60" : "hover:bg-[#F1F5F9]",
+                    !!requestActionLoading || isTerminalLabel(requestStatus || activeRequestDetail.status) ? "cursor-not-allowed opacity-60" : "hover:bg-[#F1F5F9]",
                   )}
                 >
                   {requestActionLoading === "cancelled" ? "Annulation..." : "Annuler la demande"}
                 </button>
               </div>
+
+              {otherOpenRequests.length > 0 ? (
+                <div className="mt-6 border-t border-[#F4E1CF] pt-5">
+                  <h3 className="mb-4 text-sm font-black uppercase tracking-wide text-[#475569]">
+                    Autres demandes ({otherOpenRequests.length})
+                  </h3>
+                  {renderOpenRequestRows(otherOpenRequests)}
+                </div>
+              ) : null}
             </section>
-          )}
+          ) : null}
 
           {activeView === "overview" && (
-            <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-[1.25fr_0.85fr]">
+            <div className="mt-6 space-y-6">
               <div className="space-y-6">
                 <section className="rounded-[28px] border border-[#E2EAF4] bg-white p-6 shadow-sm">
                   <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
@@ -1739,7 +2080,12 @@ export default function PatientDashboardPage() {
 
                     <div className="min-w-0 flex-1">
                       <div className="mb-4 flex flex-wrap items-center gap-3 sm:gap-6">
-                        <div className="text-3xl font-black sm:text-4xl">{formatAgendaSlotHour(start)} <span className="text-sm font-semibold text-[#64748B] sm:text-base">(20 min)</span></div>
+                        <div className="text-3xl font-black sm:text-4xl">
+                          {formatAgendaSlotHour(start)}{" "}
+                          <span className="text-sm font-semibold text-[#64748B] sm:text-base">
+                            ({agendaSlotDurationMinutes(slot)} min)
+                          </span>
+                        </div>
                         <div className="h-8 w-px bg-[#D9E3EF]" />
                         <div className="text-xl font-black">{meTenantName || "Cabinet"}</div>
                         <span className={`rounded-lg px-3 py-2 text-sm font-black ${tone}`}>{statusLb}</span>
@@ -1747,14 +2093,28 @@ export default function PatientDashboardPage() {
 
                       <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
                         <div><div className="mb-1 text-xs font-bold text-[#7D8CA5]">Motif</div><div className="font-black">{agendaSlotMotif(slot) || "—"}</div></div>
-                        <div><div className="mb-1 text-xs font-bold text-[#7D8CA5]">Source</div><div className="font-black">{agendaPatientSourceLabel(slot)}</div></div>
-                        <div><div className="mb-1 text-xs font-bold text-[#7D8CA5]">Préférence</div><div className="font-black">—</div></div>
-                        <div><div className="mb-1 text-xs font-bold text-[#7D8CA5]">Canal</div><div className="font-black">Téléphone</div></div>
+                        <div><div className="mb-1 text-xs font-bold text-[#7D8CA5]">Origine</div><div className="font-black">{agendaOriginLabel(slot)}</div></div>
+                        <div><div className="mb-1 text-xs font-bold text-[#7D8CA5]">Préférence</div><div className="font-black">{timePreferenceLabel(slot.time_preference)}</div></div>
+                        <div><div className="mb-1 text-xs font-bold text-[#7D8CA5]">Canal</div><div className="font-black">{contactTypeLabel(slot.contact_type)}</div></div>
                       </div>
 
                       <div className="mt-5 flex flex-wrap gap-3">
-                        <button type="button" onClick={() => notify("Déplacement du RDV : ouvrir l’agenda")} className="rounded-xl border border-[#72CDE0] px-4 py-2 text-sm font-black text-[#008EA1] hover:bg-[#E9FAFC]">▣ Déplacer le RDV</button>
-                        <button type="button" onClick={() => notify("Annulation du RDV : ouvrir l’agenda")} className="rounded-xl border border-[#FF9B9B] px-4 py-2 text-sm font-black text-[#FF3030] hover:bg-[#FFF1F1]">♲ Annuler le RDV</button>
+                        <button
+                          type="button"
+                          disabled={!slot.can_reschedule}
+                          onClick={() => openAgendaForPatientSlot(slot, start)}
+                          className="rounded-xl border border-[#72CDE0] px-4 py-2 text-sm font-black text-[#008EA1] hover:bg-[#E9FAFC] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          ▣ Déplacer le RDV
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!slot.can_cancel}
+                          onClick={() => openAgendaForPatientSlot(slot, start)}
+                          className="rounded-xl border border-[#FF9B9B] px-4 py-2 text-sm font-black text-[#FF3030] hover:bg-[#FFF1F1] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          ♲ Annuler le RDV
+                        </button>
                         <button type="button" onClick={() => navigate("/app/agenda")} className="rounded-xl border border-[#B6C3D7] px-4 py-2 text-sm font-black text-[#53647F] hover:bg-[#F8FAFC]">▣ Voir l&apos;agenda</button>
                       </div>
                     </div>
@@ -1865,29 +2225,6 @@ export default function PatientDashboardPage() {
                   </div>
                 </section>
               </div>
-
-              <aside className="space-y-6">
-                <section className="rounded-[28px] border border-[#E2EAF4] bg-white p-7 shadow-sm">
-                  <div className="mb-5 flex items-center justify-between">
-                    <h2 className="text-2xl font-black"><span className="text-[#FF8A00]">ϟ</span> À traiter <span className="ml-2 rounded-full bg-[#FFF1E8] px-2 py-1 text-sm text-[#FF6B00]">2</span></h2>
-                    <button onClick={() => notify("Actions à traiter ouvertes")} className="text-sm font-black text-[#008EA1]">Voir tout ›</button>
-                  </div>
-
-                  <div className="space-y-4">
-                    <button onClick={() => notify("Rappel automatique à confirmer")} className="flex w-full items-center gap-4 rounded-2xl border border-[#EEF3F8] p-4 text-left hover:bg-[#F8FBFD]">
-                      <div className="grid h-12 w-12 place-items-center rounded-xl bg-[#FFF5F5] text-xl">🗓</div>
-                      <div className="flex-1"><div className="font-black">Confirmer rappel automatique</div><div className="mt-1 text-sm text-[#61708B]">Échéance : 17/05/2026</div></div>
-                      <span className="rounded-lg bg-[#FFF1EA] px-3 py-2 text-xs font-black text-[#FF4B3E]">À faire</span>
-                    </button>
-
-                    <button onClick={() => notify("Document demandé ouvert")} className="flex w-full items-center gap-4 rounded-2xl border border-[#EEF3F8] p-4 text-left hover:bg-[#F8FBFD]">
-                      <div className="grid h-12 w-12 place-items-center rounded-xl bg-[#F1F5FF] text-xl">🔒</div>
-                      <div className="flex-1"><div className="font-black">Document demandé</div><div className="mt-1 text-sm text-[#61708B]">Échéance : 18/05/2026</div></div>
-                      <span className="rounded-lg bg-[#FFF2E3] px-3 py-2 text-xs font-black text-[#EF6C00]">En attente</span>
-                    </button>
-                  </div>
-                </section>
-              </aside>
             </div>
           )}
 
@@ -1911,17 +2248,19 @@ export default function PatientDashboardPage() {
                 </button>
               </div>
               <p className="mb-4 text-sm font-semibold text-[#61708B]">
-                Liste de tous les créneaux à venir rattachés au numéro de ce patient dans l&apos;agenda du cabinet.
+                Rendez-vous rattachés au numéro de ce patient dans l&apos;agenda du cabinet (60 prochains jours).
               </p>
               {!tenantPatientPhone ? (
                 <p className="text-sm font-semibold text-[#61708B]">Sélectionnez un patient.</p>
               ) : patientAgendaLoading ? (
                 <p className="text-sm font-semibold text-[#61708B]">Chargement…</p>
-              ) : upcomingPatientAppointments.length === 0 ? (
+              ) : upcomingPatientAppointments.length === 0 && pastPatientAppointments.length === 0 ? (
                 <p className="text-sm font-semibold text-[#61708B]">
-                  Aucun rendez-vous à venir avec ce téléphone. Vérifiez que chaque RDV comporte bien le numéro en contact dans l&apos;agenda ou Google&nbsp;Calendar.
+                  Aucun rendez-vous trouvé avec ce téléphone. Vérifiez que chaque RDV comporte bien le numéro en contact dans l&apos;agenda ou Google&nbsp;Calendar.
                 </p>
               ) : (
+              <>
+              {upcomingPatientAppointments.length > 0 ? (
               <div className="space-y-3 sm:space-y-4">
                 {upcomingPatientAppointments.map(({ slot, start }) => {
                   const rowKey = `${String(slot.event_id || slot.appointment_id || "")}-${start.toISOString()}`;
@@ -1942,6 +2281,45 @@ export default function PatientDashboardPage() {
                   );
                 })}
               </div>
+              ) : null}
+
+              {pastPatientAppointments.length > 0 ? (
+                <div className={upcomingPatientAppointments.length > 0 ? "mt-8 border-t border-[#EEF3F8] pt-6" : ""}>
+                  <h3 className="mb-4 text-lg font-black text-[#0A1628]">Rendez-vous passés</h3>
+                  <p className="mb-4 text-sm font-semibold text-[#61708B]">
+                    Signalez une absence pour alimenter le tag « Risque no-show » (à partir de 2 absences notées).
+                  </p>
+                  <div className="space-y-3 sm:space-y-4">
+                    {pastPatientAppointments.map(({ start, key }) => {
+                      const rowKey = key;
+                      const dateStr = start.toLocaleDateString("fr-FR", {
+                        day: "2-digit",
+                        month: "2-digit",
+                        year: "numeric",
+                      });
+                      const saving = absenceNoteSavingKey === key;
+                      return (
+                        <div key={rowKey} className="grid grid-cols-1 gap-3 rounded-2xl border border-[#EEF3F8] p-4 text-sm sm:grid-cols-[120px_90px_1fr_auto] sm:items-center sm:gap-3">
+                          <div className="flex items-center justify-between gap-3 sm:contents">
+                            <b>{dateStr}</b>
+                            <b>{formatAgendaSlotHour(start)}</b>
+                          </div>
+                          <span>Consultation</span>
+                          <button
+                            type="button"
+                            disabled={saving}
+                            onClick={() => void reportAppointmentAbsence(start)}
+                            className="rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-3 py-2 text-xs font-black text-[#B91C1C] hover:bg-[#FEE2E2] disabled:opacity-60"
+                          >
+                            {saving ? "Enregistrement…" : "Signaler absence"}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+              </>
               )}
             </section>
           )}
@@ -1949,7 +2327,7 @@ export default function PatientDashboardPage() {
           {activeView === "history" && (
             <section className="mt-6 rounded-[28px] border border-[#E2EAF4] bg-white p-4 shadow-sm sm:p-6 lg:p-8">
               <h2 className="mb-5 text-2xl font-black">Historique des interactions</h2>
-              <HistoryList />
+              <HistoryList items={patientHistory} loading={patientHistoryLoading} />
             </section>
           )}
         </main>
@@ -2103,7 +2481,7 @@ export default function PatientDashboardPage() {
 
       {modal === "history" && (
         <Modal title="Historique complet" onClose={() => setModal(null)} width="max-w-4xl">
-          <HistoryList extended />
+          <HistoryList items={patientHistory} loading={patientHistoryLoading} extended />
         </Modal>
       )}
 
@@ -2197,26 +2575,56 @@ export default function PatientDashboardPage() {
   );
 }
 
-function HistoryList({ extended = false }: { extended?: boolean }) {
-  const rows: Array<[string, string, string, string, string, "green" | "orange"]> = [
-    ["17/05/2026", "09:36", "Appel sortant", "Rappel de rendez-vous pour le 21 mai 2026 à 10:30.", "Traité automatiquement", "green"],
-    ["15/05/2026", "14:22", "SMS sortant", "Rappel automatique de rendez-vous.", "Traité automatiquement", "green"],
-    ["12/05/2026", "08:47", "Appel entrant", "Demande de report au 26/05 à 09:30.", "Action humaine requise", "orange"],
-    ["10/05/2026", "11:05", "Document reçu", "Justificatif d'assurance ajouté au dossier.", "Traité automatiquement", "green"],
-  ];
+function HistoryList({
+  items,
+  loading = false,
+  extended = false,
+}: {
+  items: PatientHistoryItem[];
+  loading?: boolean;
+  extended?: boolean;
+}) {
+  if (loading) {
+    return <p className="text-sm font-semibold text-[#61708B]">Chargement de l&apos;historique…</p>;
+  }
+  if (!items.length) {
+    return (
+      <p className="text-sm font-semibold text-[#61708B]">
+        Aucune interaction enregistrée pour ce patient (appels Clara, notes, documents, rendez-vous passés).
+      </p>
+    );
+  }
+
+  const rows = extended ? items : items.slice(0, 8);
 
   return (
     <div className="space-y-0 overflow-hidden rounded-2xl border border-[#EEF3F8] bg-white">
-      {rows.slice(0, extended ? rows.length : 3).map(([date, hour, type, result, status, tone]) => (
+      {rows.map((row) => (
         <div
-          key={`${date}-${hour}`}
+          key={row.id}
           className="grid grid-cols-1 gap-3 border-b border-[#EEF3F8] p-4 last:border-b-0 sm:grid-cols-[16px_110px_150px_1fr_180px] sm:items-center sm:gap-4"
         >
-          <span className={cx("hidden h-3 w-3 rounded-full sm:inline-block", tone === "green" ? "bg-[#18C765]" : "bg-[#FF9E18]")} />
-          <div className="text-sm text-[#61708B]"><b>{date}</b><br />{hour}</div>
-          <div className="font-black">{type}</div>
-          <div className="text-sm text-[#53647F]">{result}</div>
-          <span className={cx("rounded-lg px-3 py-2 text-center text-xs font-black sm:justify-self-end", tone === "green" ? "bg-[#E8FAF0] text-[#0B9445]" : "bg-[#FFF1DE] text-[#D96B00]")}>{status}</span>
+          <span
+            className={cx(
+              "hidden h-3 w-3 rounded-full sm:inline-block",
+              row.tone === "green" ? "bg-[#18C765]" : row.tone === "red" ? "bg-[#EF4444]" : "bg-[#FF9E18]",
+            )}
+          />
+          <div className="text-sm text-[#61708B]"><b>{row.date_label}</b><br />{row.time_label}</div>
+          <div className="font-black">{row.type_label}</div>
+          <div className="text-sm text-[#53647F]">{row.summary}</div>
+          <span
+            className={cx(
+              "rounded-lg px-3 py-2 text-center text-xs font-black sm:justify-self-end",
+              row.tone === "green"
+                ? "bg-[#E8FAF0] text-[#0B9445]"
+                : row.tone === "red"
+                  ? "bg-[#FEE2E2] text-[#B91C1C]"
+                  : "bg-[#FFF1DE] text-[#D96B00]",
+            )}
+          >
+            {row.status_label}
+          </span>
         </div>
       ))}
     </div>

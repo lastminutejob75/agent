@@ -255,6 +255,8 @@ export const api = {
     request(`/api/tenant/patients/${encodeURIComponent(phone)}`, { method: "PATCH", body, tenant: true }),
   tenantGetPatientNotes: (phone, params = "") =>
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/notes${params}`, { tenant: true }),
+  tenantGetPatientHistory: (phone, params = "") =>
+    request(`/api/tenant/patients/${encodeURIComponent(phone)}/history${params}`, { tenant: true }),
   tenantCreatePatientNote: (phone, body) =>
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/notes`, { method: "POST", body, tenant: true }),
   tenantDeletePatientNote: (phone, noteId) =>
