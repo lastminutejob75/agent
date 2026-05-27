@@ -390,6 +390,7 @@ export default function AppLayout() {
         {!hideToProcessStrip ? (
           <button
             type="button"
+            className="uwi-to-process-strip"
             onClick={() => navigateFromTopbar("/app/demandes?status=%C3%80%20traiter&priority=Urgence")}
             style={{
               display: "flex",

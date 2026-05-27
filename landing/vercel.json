@@ -3,7 +3,7 @@
   "framework": "vite",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "installCommand": "npm install",
+  "installCommand": "npm ci --no-audit --no-fund",
   "redirects": [
     { "source": "/agent-accueil-ia-medical", "destination": "/secretaire-medicale-augmentee", "permanent": true },
     { "source": "/assistant-telephone-ia-medecin", "destination": "/secretaire-medicale-augmentee-medecin", "permanent": true }

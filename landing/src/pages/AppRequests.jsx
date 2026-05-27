@@ -475,11 +475,11 @@ export default function AppRequests() {
                 }}
                 className={`request-inbox-row${syncedRecently ? " request-inbox-row--synced" : ""}`}
               >
-                <div style={{ display: "grid", gridTemplateColumns: "56px 1fr 28px", alignItems: "center", gap: 12 }}>
-                  <div style={{ width: 46, height: 46, borderRadius: "50%", display: "grid", placeItems: "center", fontWeight: 900, fontSize: 16, color: "#0A1628", background: "#ECFDF5", border: "1px solid #BBF7D0" }}>
+                <div className="request-row-grid" style={{ display: "grid", gridTemplateColumns: "56px 1fr 28px", alignItems: "center", gap: 12 }}>
+                  <div className="request-row-avatar" style={{ width: 46, height: 46, borderRadius: "50%", display: "grid", placeItems: "center", fontWeight: 900, fontSize: 16, color: "#0A1628", background: "#ECFDF5", border: "1px solid #BBF7D0" }}>
                     {request.initials}
                   </div>
-                  <div style={{ minWidth: 0 }}>
+                  <div className="request-row-main" style={{ minWidth: 0 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                       <span style={{ fontSize: 19, fontWeight: 900, color: "#0A1628" }}>{request.patientName}</span>
                       <span style={{ borderRadius: 8, padding: "2px 8px", fontSize: 11, fontWeight: 800, background: typeTone.badgeBg, color: typeTone.badgeText }}>{request.type}</span>
@@ -491,10 +491,10 @@ export default function AppRequests() {
                         </span>
                       ) : null}
                     </div>
-                    <div style={{ marginTop: 4, fontSize: 14, color: "#334155", fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    <div className="request-row-summary" style={{ marginTop: 4, fontSize: 14, color: "#334155", fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                       {request.summary}
                     </div>
-                    <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 8, fontSize: 13, color: "#64748B", fontWeight: 700 }}>
+                    <div className="request-row-meta" style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 8, fontSize: 13, color: "#64748B", fontWeight: 700 }}>
                       <span style={{ color: "#0F766E" }}>{request.phone}</span>
                       <span>•</span>
                       <span>{request.createdAtLabel}</span>
@@ -504,7 +504,7 @@ export default function AppRequests() {
                       <span style={{ color: priorityTone.wait, fontWeight: 900 }}>{request.waitingTime}</span>
                     </div>
                   </div>
-                  <div style={{ fontSize: 30, color: "#94A3B8", fontWeight: 300 }}>›</div>
+                  <div className="request-row-arrow" style={{ fontSize: 30, color: "#94A3B8", fontWeight: 300 }}>›</div>
                 </div>
               </Link>
             );
@@ -532,6 +532,33 @@ export default function AppRequests() {
           100% {
             box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
             transform: translateY(0);
+          }
+        }
+        @media (max-width: 760px) {
+          .request-row-grid {
+            grid-template-columns: 46px 1fr !important;
+            gap: 10px !important;
+          }
+          .request-row-main {
+            min-width: 0;
+          }
+          .request-row-summary {
+            white-space: normal !important;
+            overflow: visible !important;
+            text-overflow: initial !important;
+            display: block !important;
+          }
+          .request-row-meta {
+            display: grid !important;
+            grid-template-columns: 1fr 1fr !important;
+            column-gap: 8px !important;
+            row-gap: 2px !important;
+          }
+          .request-row-meta > span:nth-child(even) {
+            display: none !important;
+          }
+          .request-row-arrow {
+            display: none !important;
           }
         }
         .request-inbox-row:hover > div > div:last-child {

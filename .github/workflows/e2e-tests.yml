@@ -1,0 +1,139 @@
+# E2E Playwright : login admin + onboarding + dashboard public + exports CSV.
+# Lance le backend en mode demo + le frontend Vite, puis Playwright.
+#
+# Optionnel (en attendant que la suite soit stable) : on peut mettre
+# `continue-on-error: true` sur le job — ici on garde bloquant pour pousser
+# l'equipe a fixer rapidement.
+name: E2E (Playwright)
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Playwright (chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      # Backend demo : pas de DB requise, dataset mocke en RAM
+      ADMIN_DEMO_MODE: "true"
+      ENABLE_DEBUG_ENDPOINTS: "true"
+      JWT_SECRET: "e2e-secret-pytest-min-32-bytes-long-for-hmac-tests"
+      ADMIN_EMAIL: "admin@uwiapp.com"
+      ADMIN_PASSWORD: "adminuwi123"
+      ADMIN_API_TOKEN: "e2e-admin-token"
+      DISABLE_SCHEDULER: "true"
+      VAPI_SIGNATURE_DISABLED: "true"
+      # Backend
+      PORT: "8000"
+      # Frontend
+      VITE_UWI_API_BASE_URL: "http://localhost:8000"
+      # Playwright
+      E2E_BASE_URL: "http://localhost:3000"
+      E2E_API_BASE_URL: "http://localhost:8000"
+      E2E_ADMIN_EMAIL: "admin@uwiapp.com"
+      E2E_ADMIN_PASSWORD: "adminuwi123"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: landing/package-lock.json
+
+      - name: Install Node deps
+        run: npm ci
+        working-directory: landing
+
+      - name: Install Playwright browsers (chromium only)
+        run: npx playwright install --with-deps chromium
+        working-directory: landing
+
+      - name: Start backend (mode demo)
+        # & = background; on capture le PID pour pouvoir tuer apres
+        run: |
+          uvicorn backend.main:app --host 127.0.0.1 --port 8000 > backend.log 2>&1 &
+          echo $! > backend.pid
+          # Attente du healthcheck (max 60s)
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8000/health > /dev/null; then
+              echo "Backend up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Backend never came up"
+          tail -50 backend.log
+          exit 1
+
+      - name: Start frontend (vite preview build)
+        run: |
+          npm run build
+          npx vite preview --host 127.0.0.1 --port 3000 > ../frontend.log 2>&1 &
+          echo $! > ../frontend.pid
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3000/ > /dev/null; then
+              echo "Frontend up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Frontend never came up"
+          tail -50 ../frontend.log
+          exit 1
+        working-directory: landing
+
+      - name: Run Playwright tests
+        run: npx playwright test --reporter=list
+        working-directory: landing
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: landing/playwright-report/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Upload backend logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-logs
+          path: |
+            backend.log
+            frontend.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Stop services
+        if: always()
+        run: |
+          if [ -f backend.pid ]; then kill -9 "$(cat backend.pid)" || true; fi
+          if [ -f frontend.pid ]; then kill -9 "$(cat frontend.pid)" || true; fi

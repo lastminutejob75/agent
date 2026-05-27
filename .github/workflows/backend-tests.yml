@@ -1,0 +1,146 @@
+# CI : tests backend (pytest) + build frontend.
+# Declenche sur push & pull_request sur main, et manuellement.
+name: Backend tests + frontend build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+# Annule les runs precedents si un nouveau push arrive sur la meme branche/PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit-deps-python:
+    name: pip-audit (CVE deps Python)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Non bloquant : on signale mais on ne casse pas la CI sur des CVE upstream
+    # qui peuvent prendre du temps a fixer. Devient bloquant quand on aura
+    # nettoye les CVE existantes (cf. docs/SECURITY_DEPENDENCIES.md).
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install pip-audit
+        run: pip install pip-audit
+      - name: Run pip-audit
+        # --strict pour exit 1 sur les vulnerabilites
+        # --ignore-vuln pour ignorer une CVE specifique (ex: connue/non exploitable)
+        run: pip-audit -r requirements.txt --desc
+
+  audit-deps-node:
+    name: npm audit (CVE deps Node)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: landing
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Run npm audit
+        # `--audit-level=high` : on ignore low/moderate (souvent dev deps)
+        run: npm audit --audit-level=high --omit=dev
+
+  lint:
+    name: ruff (lint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ruff
+        run: pip install ruff
+      - name: Run ruff
+        # Config dans pyproject.toml. Selection volontairement restreinte (E/F/W).
+        run: ruff check backend tests
+
+  backend-tests:
+    name: pytest (backend)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      # Secrets minimaux pour eviter les 503 dans les tests
+      JWT_SECRET: test-secret-pytest-min-32-bytes-long-for-hmac
+      ADMIN_API_TOKEN: test-admin-token-pytest
+      # Skip les checks externes (DB, Twilio, etc.)
+      ADMIN_DEMO_MODE: ""
+      ENABLE_DEBUG_ENDPOINTS: ""
+      VAPI_SIGNATURE_DISABLED: "true"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: Run pytest (avec coverage et seuil min)
+        # cov-fail-under = baseline tres conservatrice. A augmenter
+        # progressivement (cf. docs/TESTS_BACKEND.md "Couverture").
+        run: |
+          python -m pytest -q --tb=line --maxfail=10 \
+            --cov=backend --cov-report=term-missing:skip-covered \
+            --cov-report=xml --cov-fail-under=50
+
+      - name: Upload coverage XML
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: coverage.xml
+          if-no-files-found: ignore
+
+  frontend-build:
+    name: vite build (frontend)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: landing
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: landing/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build

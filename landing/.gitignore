@@ -48,3 +48,4 @@ credentials/
 
 # Vercel
 .vercel/
+.vercel

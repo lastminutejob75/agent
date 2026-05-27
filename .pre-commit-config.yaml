@@ -1,0 +1,45 @@
+# Pre-commit hooks pour automatiser le lint/format avant chaque commit.
+# Installation :
+#   pip install pre-commit
+#   pre-commit install
+#
+# Pour exécuter manuellement sur tous les fichiers :
+#   pre-commit run --all-files
+#
+# Pour bypass (urgence uniquement) :
+#   git commit --no-verify
+#
+# Voir docs/PRE_COMMIT.md pour les détails.
+
+repos:
+  # Hooks de base (whitespace, fin de fichier, syntaxe yaml/json...)
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^(.*\.md|.*\.snap)$
+      - id: end-of-file-fixer
+        exclude: ^(.*\.snap)$
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-json
+        # Exclut les .vscode/* et autres JSON avec commentaires
+        exclude: ^(\.vscode/|\.cursor/)
+      - id: check-added-large-files
+        args: [--maxkb=500]
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  # Ruff (lint Python) — même config que la CI (cf. pyproject.toml)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+        files: ^(backend|tests)/
+
+  # Détection de secrets dans le diff
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks

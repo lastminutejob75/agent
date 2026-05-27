@@ -51,3 +51,4 @@ credentials/
 .tmp-py/
 .tmp-*
 
+.vercel

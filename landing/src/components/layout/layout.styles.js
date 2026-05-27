@@ -262,7 +262,7 @@ export function createShellCss(colors) {
     .uwi-main {
       margin-left: 0 !important;
       width: 100% !important;
-      padding-bottom: 64px;
+      padding-bottom: calc(70px + env(safe-area-inset-bottom, 0px));
     }
     .uwi-mobile-nav {
       position: fixed;
@@ -275,7 +275,7 @@ export function createShellCss(colors) {
       gap: 2px;
       border-top: 1px solid ${colors.border};
       background: rgba(255,255,255,.96);
-      padding: 6px;
+      padding: 6px 6px max(6px, env(safe-area-inset-bottom, 0px));
       backdrop-filter: blur(8px);
     }
   }
@@ -304,6 +304,15 @@ export function createShellCss(colors) {
       border-radius: 10px !important;
       padding: 8px 9px !important;
       font-size: 11px !important;
+    }
+    .uwi-topbar-logout-btn {
+      display: none !important;
+    }
+    .uwi-to-process-strip {
+      width: calc(100% - 20px) !important;
+      margin: 8px 10px 0 !important;
+      padding: 10px 12px !important;
+      font-size: 13px !important;
     }
   }
 `;

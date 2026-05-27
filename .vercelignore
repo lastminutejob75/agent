@@ -60,11 +60,11 @@ config.py
 *.sh
 scripts/
 
-# Frontend non-landing
-frontend/
-app/
-lib/
-src/
+# Frontend non-landing (ancrés à la racine du repo)
+/frontend/
+/app/
+/lib/
+/src/
 
 # Fichiers temporaires
 *.log
