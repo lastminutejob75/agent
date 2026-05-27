@@ -1229,8 +1229,8 @@ export default function PatientDashboardPage() {
     <div className="min-h-screen bg-[#F7FAFC] text-[#0A1628]">
       <Toast message={toast} />
 
-      <div className="grid min-h-screen grid-cols-[330px_minmax(900px,1fr)]">
-        <aside className="border-r border-[#E5EDF5] bg-white px-6 py-8">
+      <div className="grid min-h-screen grid-cols-1 xl:grid-cols-[330px_minmax(0,1fr)]">
+        <aside className="border-b border-[#E5EDF5] bg-white px-4 py-5 sm:px-6 sm:py-7 xl:border-b-0 xl:border-r xl:px-6 xl:py-8">
           <div className="mb-5 flex items-center justify-between">
             <h2 className="text-2xl font-black">Patients</h2>
             <span className="rounded-xl bg-[#EEF6FA] px-3 py-1.5 text-sm font-black text-[#1C4B6B]">{sidebarCounts.total}</span>
@@ -1317,7 +1317,7 @@ export default function PatientDashboardPage() {
           </div>
         </aside>
 
-        <main className="overflow-y-auto px-8 py-6">
+        <main className="overflow-y-auto px-3 py-4 sm:px-5 sm:py-5 lg:px-8 lg:py-6">
           {tenantPatientNotFound ? (
             <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-950 shadow-sm">
               <p className="m-0">
@@ -1369,16 +1369,16 @@ export default function PatientDashboardPage() {
               ) : null}
             </div>
           ) : null}
-          <section className="rounded-[28px] border border-[#E2EAF4] bg-white p-7 shadow-[0_18px_45px_rgba(10,22,40,0.06)]">
-            <div className="flex items-start justify-between gap-8">
-              <div className="flex min-w-0 gap-6">
-                <div className={cx("grid h-32 w-32 shrink-0 place-items-center rounded-3xl bg-gradient-to-br text-5xl font-black text-white shadow-[8px_10px_0_rgba(0,156,164,0.12)]", displayHero.gradient)}>
+          <section className="rounded-[28px] border border-[#E2EAF4] bg-white p-4 shadow-[0_18px_45px_rgba(10,22,40,0.06)] sm:p-6 lg:p-7">
+            <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between xl:gap-8">
+              <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:gap-5 lg:gap-6">
+                <div className={cx("grid h-20 w-20 shrink-0 place-items-center rounded-3xl bg-gradient-to-br text-3xl font-black text-white shadow-[8px_10px_0_rgba(0,156,164,0.12)] sm:h-28 sm:w-28 sm:text-4xl xl:h-32 xl:w-32 xl:text-5xl", displayHero.gradient)}>
                   {displayHero.initials}
                 </div>
 
                 <div className="min-w-0">
-                  <div className="mb-3 flex flex-wrap items-center gap-4">
-                    <h1 className="text-4xl font-black tracking-tight">{displayHero.name}</h1>
+                  <div className="mb-3 flex flex-wrap items-center gap-3">
+                    <h1 className="text-2xl font-black tracking-tight sm:text-3xl xl:text-4xl">{displayHero.name}</h1>
                     <span className="rounded-lg bg-[#E6FAED] px-3 py-2 text-sm font-black text-[#0BA64B]">● Actif</span>
                   </div>
 
@@ -1424,7 +1424,7 @@ export default function PatientDashboardPage() {
                 </div>
               </div>
 
-              <div className="flex shrink-0 flex-wrap justify-end gap-3">
+              <div className="flex w-full shrink-0 flex-wrap gap-2 sm:gap-3 xl:w-auto xl:justify-end">
                 <HeaderAction
                   onClick={() => {
                     const t = normalizePhone(displayHero.phone);
@@ -1442,13 +1442,13 @@ export default function PatientDashboardPage() {
           </section>
 
           <section className="mt-5 rounded-[26px] border border-[#E2EAF4] bg-white shadow-sm">
-            <div className="flex border-b border-[#EEF3F8]">
+            <div className="flex overflow-x-auto border-b border-[#EEF3F8]">
               {viewTabs.map((tab) => (
                 <button
                   key={tab.id}
                   onClick={() => setActiveView(tab.id)}
                   className={cx(
-                    "relative flex h-16 items-center gap-3 px-8 text-sm font-black transition",
+                    "relative flex h-14 shrink-0 items-center gap-2 whitespace-nowrap px-4 text-sm font-black transition sm:h-16 sm:gap-3 sm:px-6 lg:px-8",
                     activeView === tab.id ? "text-[#008EA1]" : "text-[#42536E] hover:bg-[#F8FBFD]",
                   )}
                 >
@@ -1503,7 +1503,7 @@ export default function PatientDashboardPage() {
                 </button>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
                 <div className="rounded-xl border border-[#F4E1CF] bg-white p-3">
                   <div className="text-xs font-bold text-[#8B735D]">Type de demande</div>
                   <div className="mt-1 font-black text-[#0A1628]">{requestContext.type}</div>
@@ -1527,7 +1527,7 @@ export default function PatientDashboardPage() {
                 <p className="mt-2 text-sm leading-7 text-[#334155]">{requestContext.summary}</p>
               </div>
 
-              <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <button onClick={() => notify("Action: Rappeler le patient")} className="rounded-xl bg-[#009CA4] px-4 py-3 text-sm font-black text-white hover:bg-[#00838A]">Rappeler le patient</button>
                 <button onClick={() => notify("Action: Assigner au médecin")} className="rounded-xl border border-[#DDE7F1] bg-white px-4 py-3 text-sm font-black text-[#0A1628] hover:bg-[#F8FAFC]">Assigner au médecin</button>
                 <button onClick={() => notify("Action: Planifier un créneau")} className="rounded-xl border border-[#DDE7F1] bg-white px-4 py-3 text-sm font-black text-[#0A1628] hover:bg-[#F8FAFC]">Planifier un créneau</button>
@@ -1536,7 +1536,7 @@ export default function PatientDashboardPage() {
                   onClick={() => updateRequestStatus("processed")}
                   disabled={!!requestActionLoading || isTerminalLabel(requestStatus || requestContext.status)}
                   className={cx(
-                    "rounded-xl border border-[#A7F3D0] bg-[#ECFDF5] px-4 py-3 text-sm font-black text-[#047857] sm:col-span-2",
+                    "rounded-xl border border-[#A7F3D0] bg-[#ECFDF5] px-4 py-3 text-sm font-black text-[#047857] lg:col-span-2",
                     !!requestActionLoading || isTerminalLabel(requestStatus || requestContext.status) ? "cursor-not-allowed opacity-60" : "hover:bg-[#DDFBEF]",
                   )}
                 >
@@ -1546,7 +1546,7 @@ export default function PatientDashboardPage() {
                   onClick={() => updateRequestStatus("cancelled")}
                   disabled={!!requestActionLoading || isTerminalLabel(requestStatus || requestContext.status)}
                   className={cx(
-                    "rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] px-4 py-3 text-sm font-black text-[#475569] sm:col-span-3",
+                    "rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] px-4 py-3 text-sm font-black text-[#475569] lg:col-span-3",
                     !!requestActionLoading || isTerminalLabel(requestStatus || requestContext.status) ? "cursor-not-allowed opacity-60" : "hover:bg-[#F1F5F9]",
                   )}
                 >
@@ -1557,10 +1557,10 @@ export default function PatientDashboardPage() {
           )}
 
           {activeView === "overview" && (
-            <div className="mt-6 grid grid-cols-[1.25fr_0.85fr] gap-6">
+            <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-[1.25fr_0.85fr]">
               <div className="space-y-6">
                 <section className="rounded-[28px] border border-[#E2EAF4] bg-white p-6 shadow-sm">
-                  <div className="mb-5 flex items-center justify-between gap-4">
+                  <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
                     <h2 className="flex flex-wrap items-center gap-3 text-xl font-black">
                       ▣ Rendez-vous à venir
                       {!patientAgendaLoading && upcomingPatientAppointments.length > 0 ? (
@@ -1595,24 +1595,24 @@ export default function PatientDashboardPage() {
                             ? "rounded-lg bg-[#FFF7ED] px-3 py-2 text-sm font-black text-[#C2410C]"
                             : "rounded-lg bg-[#E6FAED] px-3 py-2 text-sm font-black text-[#0BA64B]";
                       return (
-                  <div className="flex items-center gap-7">
-                    <div className="grid h-28 w-24 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-[#009CA4] to-[#004C69] text-center text-white shadow-[8px_8px_0_rgba(0,156,164,0.12)]">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-7">
+                    <div className="grid h-24 w-20 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-[#009CA4] to-[#004C69] text-center text-white shadow-[8px_8px_0_rgba(0,156,164,0.12)] sm:h-28 sm:w-24">
                       <div>
-                        <div className="text-4xl font-black">{parts.day}</div>
-                        <div className="mt-1 text-base">{parts.monthYear}</div>
-                        <div className="mt-1 text-base font-black">{parts.dow}</div>
+                        <div className="text-3xl font-black sm:text-4xl">{parts.day}</div>
+                        <div className="mt-1 text-sm sm:text-base">{parts.monthYear}</div>
+                        <div className="mt-1 text-sm font-black sm:text-base">{parts.dow}</div>
                       </div>
                     </div>
 
                     <div className="min-w-0 flex-1">
-                      <div className="mb-4 flex flex-wrap items-center gap-6">
-                        <div className="text-4xl font-black">{formatAgendaSlotHour(start)} <span className="text-base font-semibold text-[#64748B]">(20 min)</span></div>
+                      <div className="mb-4 flex flex-wrap items-center gap-3 sm:gap-6">
+                        <div className="text-3xl font-black sm:text-4xl">{formatAgendaSlotHour(start)} <span className="text-sm font-semibold text-[#64748B] sm:text-base">(20 min)</span></div>
                         <div className="h-8 w-px bg-[#D9E3EF]" />
                         <div className="text-xl font-black">{meTenantName || "Cabinet"}</div>
                         <span className={`rounded-lg px-3 py-2 text-sm font-black ${tone}`}>{statusLb}</span>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                      <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
                         <div><div className="mb-1 text-xs font-bold text-[#7D8CA5]">Motif</div><div className="font-black">{agendaSlotMotif(slot) || "—"}</div></div>
                         <div><div className="mb-1 text-xs font-bold text-[#7D8CA5]">Source</div><div className="font-black">{agendaPatientSourceLabel(slot)}</div></div>
                         <div><div className="mb-1 text-xs font-bold text-[#7D8CA5]">Préférence</div><div className="font-black">—</div></div>
@@ -1759,7 +1759,7 @@ export default function PatientDashboardPage() {
           )}
 
           {activeView === "appointments" && (
-            <section className="mt-6 rounded-[28px] border border-[#E2EAF4] bg-white p-8 shadow-sm">
+            <section className="mt-6 rounded-[28px] border border-[#E2EAF4] bg-white p-4 shadow-sm sm:p-6 lg:p-8">
               <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <h2 className="text-2xl font-black">Rendez-vous du patient</h2>
@@ -1789,8 +1789,7 @@ export default function PatientDashboardPage() {
                   Aucun rendez-vous à venir avec ce téléphone. Vérifiez que chaque RDV comporte bien le numéro en contact dans l&apos;agenda ou Google&nbsp;Calendar.
                 </p>
               ) : (
-              <div className="space-y-4 overflow-x-auto">
-                <div className="min-w-[520px] space-y-4">
+              <div className="space-y-3 sm:space-y-4">
                 {upcomingPatientAppointments.map(({ slot, start }) => {
                   const rowKey = `${String(slot.event_id || slot.appointment_id || "")}-${start.toISOString()}`;
                   const dateStr = start.toLocaleDateString("fr-FR", {
@@ -1799,22 +1798,21 @@ export default function PatientDashboardPage() {
                     year: "numeric",
                   });
                   return (
-                  <div key={rowKey} className="grid grid-cols-[120px_90px_1fr_160px] items-center rounded-2xl border border-[#EEF3F8] p-4 text-sm">
-                    <b>{dateStr}</b>
-                    <b>{formatAgendaSlotHour(start)}</b>
-                    <span>{agendaSlotMotif(slot) || "Consultation"}</span>
-                    <span className="rounded-lg bg-[#F2F8FA] px-3 py-2 text-center font-black text-[#007E8C]">{patientAgendaRowStatus(slot, start)}</span>
+                  <div key={rowKey} className="grid grid-cols-2 gap-2 rounded-2xl border border-[#EEF3F8] p-4 text-sm sm:grid-cols-[120px_90px_1fr_160px] sm:items-center sm:gap-3">
+                    <b className="col-span-1">{dateStr}</b>
+                    <b className="col-span-1">{formatAgendaSlotHour(start)}</b>
+                    <span className="col-span-2 sm:col-span-1">{agendaSlotMotif(slot) || "Consultation"}</span>
+                    <span className="col-span-2 rounded-lg bg-[#F2F8FA] px-3 py-2 text-center font-black text-[#007E8C] sm:col-span-1">{patientAgendaRowStatus(slot, start)}</span>
                   </div>
                   );
                 })}
-                </div>
               </div>
               )}
             </section>
           )}
 
           {activeView === "history" && (
-            <section className="mt-6 rounded-[28px] border border-[#E2EAF4] bg-white p-8 shadow-sm">
+            <section className="mt-6 rounded-[28px] border border-[#E2EAF4] bg-white p-4 shadow-sm sm:p-6 lg:p-8">
               <h2 className="mb-5 text-2xl font-black">Historique des interactions</h2>
               <HistoryList />
             </section>
@@ -2075,12 +2073,15 @@ function HistoryList({ extended = false }: { extended?: boolean }) {
   return (
     <div className="space-y-0 overflow-hidden rounded-2xl border border-[#EEF3F8] bg-white">
       {rows.slice(0, extended ? rows.length : 3).map(([date, hour, type, result, status, tone]) => (
-        <div key={`${date}-${hour}`} className="grid grid-cols-[16px_110px_150px_1fr_180px] items-center gap-4 border-b border-[#EEF3F8] p-4 last:border-b-0">
+        <div
+          key={`${date}-${hour}`}
+          className="grid grid-cols-[16px_1fr] gap-2 border-b border-[#EEF3F8] p-4 last:border-b-0 sm:grid-cols-[16px_110px_150px_1fr_180px] sm:items-center sm:gap-4"
+        >
           <span className={cx("h-3 w-3 rounded-full", tone === "green" ? "bg-[#18C765]" : "bg-[#FF9E18]")} />
-          <div className="text-sm text-[#61708B]"><b>{date}</b><br />{hour}</div>
-          <div className="font-black">{type}</div>
-          <div className="text-sm text-[#53647F]">{result}</div>
-          <span className={cx("rounded-lg px-3 py-2 text-center text-xs font-black", tone === "green" ? "bg-[#E8FAF0] text-[#0B9445]" : "bg-[#FFF1DE] text-[#D96B00]")}>{status}</span>
+          <div className="text-sm text-[#61708B] sm:col-span-1"><b>{date}</b><br />{hour}</div>
+          <div className="col-span-2 -mt-1 font-black sm:col-span-1 sm:mt-0">{type}</div>
+          <div className="col-span-2 text-sm text-[#53647F] sm:col-span-1">{result}</div>
+          <span className={cx("col-span-2 rounded-lg px-3 py-2 text-center text-xs font-black sm:col-span-1", tone === "green" ? "bg-[#E8FAF0] text-[#0B9445]" : "bg-[#FFF1DE] text-[#D96B00]")}>{status}</span>
         </div>
       ))}
     </div>

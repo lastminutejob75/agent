@@ -1263,28 +1263,29 @@ export default function AppAgenda() {
       </div> : null}
 
       {/* ─── BARRE UNIQUE : navigation + vues + stats ─── */}
-      <div style={S.toolbar}>
-        <div style={S.toolbarLeft}>
+      <div className="agenda-toolbar" style={S.toolbar}>
+        <div className="agenda-toolbar-left" style={S.toolbarLeft}>
           <button type="button" onClick={navPrev} style={S.navBtn}>‹</button>
-          <span style={S.navDate}>{navLabel}</span>
+          <span className="agenda-nav-label" style={S.navDate}>{navLabel}</span>
           <button type="button" onClick={navNext} style={S.navBtn}>›</button>
           {selectedDate !== today && <button type="button" onClick={goToday} style={S.todayBtn}>Aujourd&apos;hui</button>}
           <button
             type="button"
             onClick={openCreateCabinetBooking}
+            className="agenda-create-btn"
             style={S.createRdvBtn}
             title="Créer un rendez-vous depuis l'espace cabinet"
           >
             + Créer un rendez-vous
           </button>
         </div>
-        <div style={S.toolbarRight}>
+        <div className="agenda-toolbar-right" style={S.toolbarRight}>
           <span style={S.stats}>
             {subtitleMap[viewMode]}
             {uwiCount > 0 ? ` · ${uwiCount} via IA` : ""}
             {isConnected ? " · 🟢" : ""}
           </span>
-          <div style={S.viewSwitch}>
+          <div className="agenda-view-switch" style={S.viewSwitch}>
             {["day", "week", "month"].map((m) => (
               <button key={m} type="button" onClick={() => setViewMode(m)} style={viewMode === m ? S.viewBtnActive : S.viewBtn}>
                 {m === "day" ? "Jour" : m === "week" ? "Semaine" : "Mois"}
@@ -1293,7 +1294,7 @@ export default function AppAgenda() {
           </div>
         </div>
       </div>
-      <div style={S.legendRow}>
+      <div className="agenda-legend-row" style={S.legendRow}>
         {semanticLegend.map((item) => {
           const tone = APPT_TONE[item.tone] || APPT_TONE.teal;
           const anchorId =
@@ -1347,8 +1348,8 @@ export default function AppAgenda() {
         {/* ═══ MONTH VIEW ═══ */}
         {viewMode === "month" && (
           <div className="agenda-month-layout" style={S.monthLayout}>
-            <div style={S.card}>
-              <div style={S.monthGridWrap}>
+            <div className="agenda-month-card" style={S.card}>
+              <div className="agenda-month-grid-wrap" style={S.monthGridWrap}>
               {WEEKDAY_LABELS.map((wd) => (
                 <div key={wd} style={S.monthWdHeader}>{wd}</div>
               ))}
@@ -1411,7 +1412,7 @@ export default function AppAgenda() {
             <div style={S.monthSide}>
               <div style={S.sideCardPrimary}>
                 <div style={S.sideHeadLabel}>Mois en cours</div>
-                <div style={S.sideHeadTitle}>Synthèse du mois</div>
+                <div className="agenda-side-head-title" style={S.sideHeadTitle}>Synthèse du mois</div>
                 <div style={S.sideHeadSub}>Vue globale des performances et priorités du mois en cours.</div>
                 <div style={S.sideList}>
                   <div style={S.sideRow}><span style={{ ...S.sideDot, background: APPT_TONE.green.border }} /><div><div style={S.sideRowTitle}>{monthCounts.confirmed} confirmés</div><div style={S.sideRowSub}>Patients confirmés sur le mois</div></div></div>
@@ -1421,7 +1422,7 @@ export default function AppAgenda() {
                 </div>
               </div>
               <div style={S.sideCard}>
-                <div style={S.sideCardTitle}>Actions du mois</div>
+                <div className="agenda-side-card-title" style={S.sideCardTitle}>Actions du mois</div>
                 <div style={S.loadList}>
                   <div style={S.loadRowHead}><span>Total RDV</span><span>{monthCounts.total}</span></div>
                   <div style={S.loadRowHead}><span>Documents demandés</span><span>{monthCounts.docs}</span></div>
@@ -1446,7 +1447,7 @@ export default function AppAgenda() {
             <div style={S.card}>
               <div style={S.weekHead}>
                 <div>
-                  <div style={S.weekHeadTitle}>Vue semaine — vraie grille de rendez-vous</div>
+                  <div className="agenda-week-head-title" style={S.weekHeadTitle}>Vue semaine — vraie grille de rendez-vous</div>
                   <div style={S.weekHeadSub}>Clique colonne : affiche les créneaux, patients, alertes et actions Clara.</div>
                 </div>
                 <div style={S.weekHeadBadges}>
@@ -1500,7 +1501,7 @@ export default function AppAgenda() {
             <div style={S.weekSide}>
               <div style={S.sideCardPrimary}>
                 <div style={S.sideHeadLabel}>Semaine en cours</div>
-                <div style={S.sideHeadTitle}>6 actions qui comptent</div>
+                <div className="agenda-side-head-title" style={S.sideHeadTitle}>6 actions qui comptent</div>
                 <div style={S.sideHeadSub}>Vue métier claire pour prioriser rapidement.</div>
                 <div style={S.sideList}>
                   {weekActionItems.map((item) => {
@@ -1518,7 +1519,7 @@ export default function AppAgenda() {
                 </div>
               </div>
               <div style={S.sideCard}>
-                <div style={S.sideCardTitle}>Charge réelle</div>
+                <div className="agenda-side-card-title" style={S.sideCardTitle}>Charge réelle</div>
                 <div style={S.loadList}>
                   {weekLoadRows.map((row) => (
                     <div key={row.key}>
@@ -1598,7 +1599,7 @@ export default function AppAgenda() {
             <div style={S.daySide}>
               <div style={S.sideCardPrimary}>
                 <div style={S.sideHeadLabel}>Journée en cours</div>
-                <div style={S.sideHeadTitle}>Résumé de la journée</div>
+                <div className="agenda-side-head-title" style={S.sideHeadTitle}>Résumé de la journée</div>
                 <div style={S.sideHeadSub}>Synthèse rapide des rendez-vous du jour et priorités à traiter.</div>
                 <div style={S.sideList}>
                   <div style={S.sideRow}><span style={{ ...S.sideDot, background: APPT_TONE.green.border }} /><div><div style={S.sideRowTitle}>{dayCounts.confirmed} confirmés</div><div style={S.sideRowSub}>Patients confirmés aujourd'hui</div></div></div>
@@ -1607,7 +1608,7 @@ export default function AppAgenda() {
                 </div>
               </div>
               <div style={S.sideCard}>
-                <div style={S.sideCardTitle}>Détail du jour</div>
+                <div className="agenda-side-card-title" style={S.sideCardTitle}>Détail du jour</div>
                 <div style={S.loadList}>
                   <div style={S.loadRowHead}><span>Amplitude</span><span>{dayRange}</span></div>
                   <div style={S.loadRowHead}><span>Total RDV</span><span>{dayCounts.total}</span></div>
@@ -2634,11 +2635,76 @@ const CSS = `
   .slot-time-btn:hover { background: #eff6ff !important; border-color: #93c5fd !important; }
   .cal-day-avail:hover { background: #dcfce7 !important; border-color: #86efac !important; }
   @media (max-width: 768px) {
-    .agenda-week-grid { min-width: 600px !important; }
+    .agenda-toolbar {
+      flex-direction: column !important;
+      align-items: stretch !important;
+      gap: 10px !important;
+    }
+    .agenda-toolbar-left,
+    .agenda-toolbar-right {
+      width: 100% !important;
+      display: flex !important;
+      flex-wrap: wrap !important;
+      gap: 8px !important;
+      align-items: center !important;
+    }
+    .agenda-toolbar-right {
+      justify-content: space-between !important;
+    }
+    .agenda-nav-label {
+      flex: 1 1 100% !important;
+      text-align: center !important;
+      font-size: 14px !important;
+      line-height: 1.35 !important;
+    }
+    .agenda-create-btn {
+      flex: 1 1 100% !important;
+      justify-content: center !important;
+    }
+    .agenda-toolbar-left > button,
+    .agenda-toolbar-right > button {
+      min-height: 38px;
+    }
+    .agenda-view-switch {
+      width: 100% !important;
+      display: grid !important;
+      grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    }
+    .agenda-legend-row {
+      flex-wrap: nowrap !important;
+      overflow-x: auto !important;
+      gap: 8px !important;
+      padding-bottom: 2px !important;
+    }
+    .agenda-legend-row > div {
+      flex: 0 0 auto !important;
+    }
+    .agenda-kpi-row { grid-template-columns: 1fr !important; }
+    .agenda-week-grid { min-width: 520px !important; }
+    .agenda-month-card {
+      overflow-x: auto !important;
+    }
+    .agenda-month-grid-wrap {
+      min-width: 700px !important;
+    }
+    .agenda-week-head-title {
+      font-size: 22px !important;
+      line-height: 1.05 !important;
+      letter-spacing: -0.02em !important;
+    }
+    .agenda-side-head-title {
+      font-size: 28px !important;
+      line-height: 1.02 !important;
+      letter-spacing: -0.02em !important;
+    }
+    .agenda-side-card-title {
+      font-size: 24px !important;
+      line-height: 1.06 !important;
+      letter-spacing: -0.02em !important;
+    }
     .agenda-week-layout { grid-template-columns: 1fr !important; }
     .agenda-month-layout { grid-template-columns: 1fr !important; }
     .agenda-day-layout { grid-template-columns: 1fr !important; }
-    .agenda-kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
   }
   @media (max-width: 1100px) {
     .agenda-week-layout { grid-template-columns: 1fr !important; }
