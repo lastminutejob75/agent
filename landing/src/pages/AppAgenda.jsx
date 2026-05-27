@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import CreatePatientFromCallModal from "../components/calls/CreatePatientFromCallModal.jsx";
 import { api } from "../lib/api.js";
+import { bookingOriginLabel } from "../lib/agendaPatientMeta.js";
 
 const NAVY = "#111827";
 const TEAL = "#0DC991";
@@ -126,15 +127,6 @@ function pickDefaultCabinetTime(slots, preferredHour = 9) {
   if (slots.includes(want)) return want;
   const after = slots.find((s) => s >= want);
   return after || slots[0];
-}
-
-function bookingOriginLabel(code) {
-  const c = String(code || "unknown").toLowerCase();
-  if (c === "voice") return "Agent vocal";
-  if (c === "public_page") return "Page publique";
-  if (c === "praticien") return "Espace cabinet (créé par vous)";
-  if (!code || c === "unknown") return "Non précisée";
-  return String(code);
 }
 
 function typeIcon(type) {

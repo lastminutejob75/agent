@@ -55,7 +55,19 @@ def canonical(raw: Optional[str]) -> str:
     return UNKNOWN
 
 
+ORIGIN_DISPLAY_LABELS = {
+    VOICE: "Agent vocal",
+    PUBLIC_PAGE: "Page publique",
+    PRATICIEN: "Agenda UWi · praticien",
+    UNKNOWN: "Non précisée",
+}
+
+
+def display_origin_label(raw: Optional[str]) -> str:
+    """Libellé UI français pour l'origine d'un RDV."""
+    return ORIGIN_DISPLAY_LABELS.get(canonical(raw), ORIGIN_DISPLAY_LABELS[UNKNOWN])
+
+
 def normalize_for_agenda(value: Optional[str]) -> str:
-    c = canonical(value)
-    return c
+    return canonical(value)
 

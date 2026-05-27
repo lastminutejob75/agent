@@ -7,7 +7,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from backend.booking_origin import canonical as booking_origin_canonical
+from backend.booking_origin import display_origin_label
 from backend.db import list_patient_documents, list_patient_notes, normalize_phone_number
 
 ABSENCE_NOTE_PREFIX = "[ABSENCE-RDV]"
@@ -35,16 +35,7 @@ def _fmt_time(dt: datetime) -> str:
 
 
 def _booking_origin_label(code: str) -> str:
-    c = booking_origin_canonical(code)
-    if c == "voice":
-        return "Agent vocal"
-    if c == "public_page":
-        return "Page publique"
-    if c == "praticien":
-        return "Espace cabinet"
-    if c == "unknown":
-        return "Origine inconnue"
-    return c
+    return display_origin_label(code)
 
 
 def _list_patient_past_appointments_detailed(tenant_id: int, phone_norm: str, *, limit: int = 40) -> List[Dict[str, Any]]:

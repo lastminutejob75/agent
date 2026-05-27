@@ -1,11 +1,10 @@
-/** Libellés métier agenda patient (alignés AppAgenda / booking_origin). */
+/** Libellés métier agenda patient — 3 origines : praticien, agent vocal, page publique. */
 
 export function bookingOriginLabel(code) {
   const c = String(code || "unknown").toLowerCase();
-  if (c === "voice") return "Agent vocal (Clara)";
+  if (c === "voice") return "Agent vocal";
   if (c === "public_page") return "Page publique";
-  if (c === "praticien") return "Espace cabinet";
-  if (c === "external") return "Agenda externe";
+  if (c === "praticien") return "Agenda UWi · praticien";
   if (!code || c === "unknown") return "Non précisée";
   return String(code);
 }
@@ -43,16 +42,12 @@ export function agendaSlotDurationMinutes(slot) {
   return 30;
 }
 
+/** Origine affichée sur la fiche patient (booking_origin prioritaire). */
 export function agendaOriginLabel(slot) {
-  const origin = bookingOriginLabel(slot?.booking_origin);
-  if (origin !== "Non précisée") return origin;
-  return agendaLegacySourceLabel(slot);
-}
+  const fromOrigin = bookingOriginLabel(slot?.booking_origin);
+  if (fromOrigin !== "Non précisée") return fromOrigin;
 
-export function agendaLegacySourceLabel(slot) {
   const src = String(slot?.source || "").toUpperCase();
-  if (src === "UWI") return "Pris par Clara (UWi)";
   if (src === "PAGE_PUBLIQUE") return "Page publique";
-  if (src === "EXTERNAL") return "Agenda cabinet";
-  return src || "—";
+  return "Non précisée";
 }
