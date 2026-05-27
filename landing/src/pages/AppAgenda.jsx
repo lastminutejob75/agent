@@ -4,6 +4,12 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import CreatePatientFromCallModal from "../components/calls/CreatePatientFromCallModal.jsx";
 import { api } from "../lib/api.js";
 import { bookingOriginLabel } from "../lib/agendaPatientMeta.js";
+import {
+  agendaCancelPayload,
+  agendaReschedulePayload,
+  canCancelAgendaSlot,
+  canRescheduleAgendaSlot,
+} from "../lib/agendaAppointmentActions.js";
 
 const NAVY = "#111827";
 const TEAL = "#0DC991";
@@ -412,6 +418,7 @@ function InlineDetail({
   onReschedule,
   onCreatePatientFromAgenda,
   variant = "inline",
+  actionOnly = false,
 }) {
   const aPhone = normalizePhone(a.patient_phone || a.phone || "");
   const aPhoneFmt = formatPhone(aPhone);
@@ -427,8 +434,8 @@ function InlineDetail({
         {aPhoneFmt && <div style={S.inlineItem}><span style={S.inlineIcon}>📞</span><span>{aPhoneFmt}</span></div>}
       </div>
       <div style={S.inlineActions}>
-        {aPhone ? <a href={`tel:${aPhone}`} style={S.inlineCallBtn}>📞 Appeler</a> : null}
-        {aPhone && hasPatientFile ? (
+        {!actionOnly && aPhone ? <a href={`tel:${aPhone}`} style={S.inlineCallBtn}>📞 Appeler</a> : null}
+        {!actionOnly && aPhone && hasPatientFile ? (
           <button
             type="button"
             onClick={() => navigate(`/app/patient-dashboard?phone=${encodeURIComponent(aPhone)}`)}
@@ -437,7 +444,7 @@ function InlineDetail({
             👤 Fiche patient
           </button>
         ) : null}
-        {aPhone && !hasPatientFile ? (
+        {!actionOnly && aPhone && !hasPatientFile ? (
           <button
             type="button"
             onClick={() => onCreatePatientFromAgenda?.(a)}
@@ -446,7 +453,7 @@ function InlineDetail({
             👤 Créer fiche patient
           </button>
         ) : null}
-        {!aPhone ? (
+        {!actionOnly && !aPhone ? (
           <button
             type="button"
             onClick={() => navigate("/app/patient-dashboard")}
@@ -739,6 +746,9 @@ export default function AppAgenda() {
   const [pendingAgendaAction, setPendingAgendaAction] = useState(
     urlAction === "cancel" || urlAction === "reschedule" ? urlAction : null,
   );
+  const [actionOnlyMode, setActionOnlyMode] = useState(
+    urlAction === "cancel" || urlAction === "reschedule",
+  );
   const [viewMode, setViewMode] = useState("day");
   const [isMobileAgenda, setIsMobileAgenda] = useState(
     typeof window !== "undefined" ? window.innerWidth <= 760 : false,
@@ -764,6 +774,7 @@ export default function AppAgenda() {
     }
     if (urlAction === "cancel" || urlAction === "reschedule") {
       setPendingAgendaAction(urlAction);
+      setActionOnlyMode(true);
     }
   }, [urlDate, urlView, urlPhone, urlFocus, urlAction, selectedDate]);
 
@@ -1045,8 +1056,8 @@ export default function AppAgenda() {
           endTime: addMinutes(formatTimeLabel(s.hour), duration),
           typeIcon: typeIcon(s.type),
           isUWI: s.source === "UWI",
-          canCancel: !!s.can_cancel,
-          canReschedule: !!s.can_reschedule,
+          canCancel: canCancelAgendaSlot(s),
+          canReschedule: canRescheduleAgendaSlot(s),
           actionId: s.appointment_id || s.event_id || "",
         };
         return { ...appt, tone: toneForAppointment(appt) };
@@ -1121,9 +1132,11 @@ export default function AppAgenda() {
       if (pendingAgendaAction === "cancel") {
         setConfirmCancel(true);
         setRescheduleMode(false);
+        setActionOnlyMode(true);
       } else if (pendingAgendaAction === "reschedule") {
         setRescheduleMode(true);
         setConfirmCancel(false);
+        setActionOnlyMode(true);
       } else {
         setConfirmCancel(false);
         setRescheduleMode(false);
@@ -1155,10 +1168,7 @@ export default function AppAgenda() {
     if (!selectedAppt?.canCancel) return;
     setActionLoading(true);
     try {
-      await api.tenantCancelAgendaAppointment(selectedAppt.actionId || selectedAppt.appointment_id || selectedAppt.event_id || selectedAppt.id, {
-        source: selectedAppt.source,
-        external_event_id: selectedAppt.event_id || "",
-      });
+      await api.tenantCancelAgendaAppointment(selectedAppt.actionId || selectedAppt.appointment_id || selectedAppt.event_id || selectedAppt.id, agendaCancelPayload(selectedAppt));
       setActionMsg({ text: "Rendez-vous annulé. Le patient a été notifié par SMS.", type: "success" });
       closeAppointmentDetail();
       invalidateAgendaBulkCache();
@@ -1178,6 +1188,7 @@ export default function AppAgenda() {
   function closeAppointmentDetail() {
     setSelectedAppt(null);
     setConfirmCancel(false);
+    setActionOnlyMode(false);
     resetReschedule();
   }
 
@@ -1212,7 +1223,7 @@ export default function AppAgenda() {
     try {
       await api.tenantRescheduleAgendaAppointment(
         selectedAppt.actionId || selectedAppt.appointment_id || selectedAppt.event_id || selectedAppt.id,
-        { new_slot_id: slot.slot_id, external_event_id: selectedAppt.event_id || "" },
+        agendaReschedulePayload(selectedAppt, slot.slot_id),
       );
       const fmtDate = new Date(`${slot.date}T12:00:00`).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
       setActionMsg({ text: `RDV déplacé au ${fmtDate} à ${slot.time}`, type: "success" });
@@ -2054,6 +2065,7 @@ export default function AppAgenda() {
               onStartReschedule={handleStartReschedule}
               onReschedule={handleReschedule}
               onCreatePatientFromAgenda={openPatientCreateFromAppointment}
+              actionOnly={actionOnlyMode}
             />
           </div>
         </div>

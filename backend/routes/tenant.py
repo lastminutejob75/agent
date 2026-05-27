@@ -1304,6 +1304,108 @@ def _appointment_matches_lookup(appointment: Dict[str, Any], patient_contact: Op
     return False
 
 
+def _looks_like_google_event_id(raw: Optional[str]) -> bool:
+    """Distinction id Google Calendar vs id numérique local (appointments.id)."""
+    s = str(raw or "").strip()
+    if not s:
+        return False
+    return not s.isdigit()
+
+
+def _local_booking_start_local(
+    local_booking: Dict[str, Any],
+    tz_name: str,
+) -> Optional[datetime]:
+    start_ts = local_booking.get("start_ts")
+    if start_ts is not None:
+        parsed = _parse_dt(start_ts, tz_name)
+        if parsed:
+            return parsed.astimezone(_get_zoneinfo(tz_name))
+    date_str = str(local_booking.get("date") or "").strip()
+    time_str = str(local_booking.get("time") or "").strip()
+    if date_str and time_str:
+        parsed = _parse_dt(f"{date_str}T{time_str}:00", tz_name)
+        if parsed:
+            return parsed.astimezone(_get_zoneinfo(tz_name))
+    return None
+
+
+def _resolve_google_event_id_for_booking(
+    tenant_id: int,
+    detail: dict,
+    *,
+    explicit_event_id: Optional[str] = None,
+    local_booking: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """
+    Retrouve l'id événement Google pour un RDV UWI (annulation / déplacement).
+    Utilise external_event_id si fourni, sinon recherche par créneau + contact/nom.
+    """
+    explicit = str(explicit_event_id or "").strip()
+    if _looks_like_google_event_id(explicit):
+        return explicit
+
+    if not local_booking:
+        return explicit or None
+
+    params = (detail or {}).get("params") or {}
+    cal_id = (params.get("calendar_id") or "").strip()
+    if not cal_id:
+        return None
+
+    tz_name = _tenant_timezone(detail)
+    start_local = _local_booking_start_local(local_booking, tz_name)
+    if not start_local:
+        return None
+
+    win_start = start_local - timedelta(minutes=2)
+    win_end = start_local + timedelta(minutes=45)
+    try:
+        service = GoogleCalendarService(cal_id)
+        result = service.service.events().list(
+            calendarId=cal_id,
+            timeMin=win_start.isoformat(),
+            timeMax=win_end.isoformat(),
+            singleEvents=True,
+            orderBy="startTime",
+        ).execute()
+        events = result.get("items") or []
+    except Exception as e:
+        logger.warning(
+            "resolve google event id list failed tenant_id=%s appointment_id=%s err=%s",
+            tenant_id,
+            local_booking.get("id"),
+            e,
+        )
+        return None
+
+    lookup_key = _appointment_lookup_key(start_local)
+    patient_contact = local_booking.get("contact") or ""
+    patient_name = local_booking.get("name") or ""
+
+    for event in events:
+        raw_start = (event.get("start") or {}).get("dateTime") or (event.get("start") or {}).get("date")
+        ev_start = _parse_dt(raw_start, tz_name)
+        if not ev_start:
+            continue
+        ev_start_local = ev_start.astimezone(_get_zoneinfo(tz_name))
+        if _appointment_lookup_key(ev_start_local) != lookup_key:
+            continue
+        summary = (event.get("summary") or "").strip()
+        description = (event.get("description") or "").strip()
+        if not (summary.startswith("RDV - ") or "Patient:" in description):
+            continue
+        ev_contact = _extract_calendar_event_patient_contact(description)
+        ev_name = summary.replace("RDV - ", "", 1).strip() if summary.startswith("RDV - ") else summary
+        google_row = {"contact": ev_contact, "name": ev_name}
+        if _appointment_matches_lookup(local_booking, ev_contact, ev_name):
+            return str(event.get("id") or "").strip() or None
+        if _appointment_matches_lookup(google_row, patient_contact, patient_name):
+            return str(event.get("id") or "").strip() or None
+
+    return None
+
+
 def _load_local_appointments_for_window(
     tenant_id: int,
     day_start: datetime,
@@ -3675,7 +3777,11 @@ def tenant_agenda(
                     "appointment_id": int(mirror_booking.get("id") or 0) if mirror_booking else None,
                     "slot_id": int(mirror_booking.get("slot_id") or 0) if mirror_booking else None,
                     "can_cancel": bool(source == "UWI"),
-                    "can_reschedule": bool(mirror_booking),
+                    "can_reschedule": bool(
+                        mirror_booking
+                        and int(mirror_booking.get("id") or 0) > 0
+                        and int(mirror_booking.get("slot_id") or 0) > 0
+                    ),
                     **meta,
                 })
         except Exception as e:
@@ -4459,6 +4565,13 @@ def tenant_agenda_cancel_appointment(
         if not google_event_id and raw_appointment_id and not raw_appointment_id.isdigit():
             google_event_id = raw_appointment_id
 
+        google_event_id = _resolve_google_event_id_for_booking(
+            tenant_id,
+            detail,
+            explicit_event_id=google_event_id,
+            local_booking=local_booking,
+        ) or ""
+
         if not google_event_id and local_appt_id is None:
             raise HTTPException(400, "appointment_id ou event_id requis")
 
@@ -4500,6 +4613,7 @@ def tenant_agenda_cancel_appointment(
             google_event_id,
             local_cancelled,
         )
+        _invalidate_tenant_agenda_detail_cache(tenant_id)
         provider = "google+local" if google_cancelled and local_appt_id is not None else ("google" if google_cancelled else "local")
         return {
             "ok": True,
@@ -4520,6 +4634,7 @@ def tenant_agenda_cancel_appointment(
     if not ok:
         raise HTTPException(400, "Annulation impossible")
     logger.info("tenant agenda cancel local ok tenant_id=%s appointment_id=%s", tenant_id, appt_id)
+    _invalidate_tenant_agenda_detail_cache(tenant_id)
     return {"ok": True, "cancelled": True, "provider": "local"}
 
 
@@ -4557,9 +4672,14 @@ def tenant_agenda_reschedule_appointment(
     if (params.get("calendar_provider") or "").strip() == "google":
         if not _google_mirror_enabled(detail):
             raise HTTPException(400, "Déplacement automatique indisponible avec Google Calendar")
-        event_id = (body.external_event_id or "").strip()
+        event_id = _resolve_google_event_id_for_booking(
+            tenant_id,
+            detail,
+            explicit_event_id=(body.external_event_id or "").strip(),
+            local_booking=booking,
+        )
         if not event_id:
-            raise HTTPException(400, "external_event_id requis pour déplacer ce rendez-vous")
+            raise HTTPException(400, "Impossible de retrouver l'événement Google pour ce rendez-vous")
         rules = get_booking_rules(tenant_id)
         duration_minutes = int(rules.get("duration_minutes") or 15)
         tz_name = _tenant_timezone(detail)
@@ -4618,6 +4738,7 @@ def tenant_agenda_reschedule_appointment(
             body.new_slot_id,
         )
         _mark_pending_handoffs_processed(tenant_id, booking)
+        _invalidate_tenant_agenda_detail_cache(tenant_id)
         return {"ok": True, "rescheduled": True, "provider": "google+local"}
     ok = reschedule_booking_atomic(appointment_id, int(body.new_slot_id), tenant_id=tenant_id)
     if ok is False:
@@ -4629,6 +4750,7 @@ def tenant_agenda_reschedule_appointment(
         body.new_slot_id,
     )
     _mark_pending_handoffs_processed(tenant_id, booking)
+    _invalidate_tenant_agenda_detail_cache(tenant_id)
     return {"ok": True, "rescheduled": True, "provider": "local"}
 
 

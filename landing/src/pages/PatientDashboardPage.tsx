@@ -10,6 +10,15 @@ import {
   contactTypeLabel,
   timePreferenceLabel,
 } from "../lib/agendaPatientMeta.js";
+import {
+  appointmentActionId,
+  agendaCancelPayload,
+  agendaReschedulePayload,
+  buildAgendaViewUrl,
+  canCancelAgendaSlot,
+  canRescheduleAgendaSlot,
+} from "../lib/agendaAppointmentActions.js";
+import AgendaReschedulePanel from "../components/agenda/AgendaReschedulePanel.jsx";
 import { normalizePhoneBusinessKey } from "../lib/phoneNormalize";
 import { patientDashboardFileHasValidatedIdentity } from "../lib/callsService.js";
 
@@ -60,7 +69,8 @@ type SidebarPatientRow = {
   statusBucket: "new" | "active" | "inactive";
 };
 
-type ModalType = "profile" | "addNote" | "addDocument" | "history" | "deletePatient" | null;
+type ModalType = "profile" | "addNote" | "addDocument" | "history" | "deletePatient" | "cancelAppt" | "rescheduleAppt" | null;
+type ApptActionTarget = { slot: Record<string, unknown>; start: Date };
 type ViewType = "overview" | "appointments" | "history";
 type RequestContext = {
   id: string;
@@ -510,6 +520,8 @@ export default function PatientDashboardPage() {
   const [patientAgendaLoading, setPatientAgendaLoading] = useState(false);
   /** Fenêtre agenda déjà chargée (14j overview, 60j onglet rendez-vous). */
   const [agendaDaysLoaded, setAgendaDaysLoaded] = useState(0);
+  const [apptActionTarget, setApptActionTarget] = useState<ApptActionTarget | null>(null);
+  const [apptActionLoading, setApptActionLoading] = useState(false);
   /** Recherche serveur GET /patients?q= ; null si la recherche API n’est pas utilisée (< 2 caractères). */
   const [patientSearchRows, setPatientSearchRows] = useState<SidebarPatientRow[] | null>(null);
   const [patientSearchLoading, setPatientSearchLoading] = useState(false);
@@ -1128,33 +1140,50 @@ export default function PatientDashboardPage() {
     };
   }, [tenantPatientPhone, activeView, modal, patientFetchNonce]);
 
-  const openAgendaForPatientSlot = useCallback((
+  const refreshPatientAgenda = useCallback(() => {
+    setAgendaDaysLoaded(0);
+  }, []);
+
+  const viewApptInAgenda = useCallback((
     slot: Record<string, unknown>,
     start: Date,
-    action?: "cancel" | "reschedule",
   ) => {
-    const params = new URLSearchParams();
-    params.set("date", start.toISOString().slice(0, 10));
-    if (tenantPatientPhone) params.set("phone", tenantPatientPhone);
-    const focus = slot.appointment_id || slot.event_id;
-    if (focus) params.set("focus", String(focus));
-    if (action === "cancel" || action === "reschedule") params.set("action", action);
-    navigate(`/app/agenda?${params.toString()}`);
+    navigate(buildAgendaViewUrl({
+      date: start.toISOString().slice(0, 10),
+      phone: tenantPatientPhone,
+      slot,
+    }));
   }, [navigate, tenantPatientPhone]);
+
+  const openCancelApptModal = useCallback((slot: Record<string, unknown>, start: Date) => {
+    setApptActionTarget({ slot, start });
+    setModal("cancelAppt");
+  }, []);
+
+  const openRescheduleApptModal = useCallback((slot: Record<string, unknown>, start: Date) => {
+    setApptActionTarget({ slot, start });
+    setModal("rescheduleAppt");
+  }, []);
+
+  const closeApptActionModal = useCallback(() => {
+    if (apptActionLoading) return;
+    setModal(null);
+    setApptActionTarget(null);
+  }, [apptActionLoading]);
 
   const renderPatientApptActions = useCallback((
     slot: Record<string, unknown>,
     start: Date,
     { compact = false }: { compact?: boolean } = {},
   ) => {
-    const canCancel = Boolean(slot.can_cancel);
-    const canReschedule = Boolean(slot.can_reschedule);
+    const canCancel = canCancelAgendaSlot(slot);
+    const canReschedule = canRescheduleAgendaSlot(slot);
     return (
       <div className={`flex flex-wrap gap-2${compact ? "" : " mt-5"}`}>
         <button
           type="button"
           disabled={!canReschedule}
-          onClick={() => openAgendaForPatientSlot(slot, start, "reschedule")}
+          onClick={() => openRescheduleApptModal(slot, start)}
           className="rounded-xl border border-[#72CDE0] px-4 py-2 text-sm font-black text-[#008EA1] hover:bg-[#E9FAFC] disabled:cursor-not-allowed disabled:opacity-50"
         >
           ▣ Déplacer le RDV
@@ -1162,7 +1191,7 @@ export default function PatientDashboardPage() {
         <button
           type="button"
           disabled={!canCancel}
-          onClick={() => openAgendaForPatientSlot(slot, start, "cancel")}
+          onClick={() => openCancelApptModal(slot, start)}
           className="rounded-xl border border-[#FF9B9B] px-4 py-2 text-sm font-black text-[#FF3030] hover:bg-[#FFF1F1] disabled:cursor-not-allowed disabled:opacity-50"
         >
           ♲ Annuler le RDV
@@ -1170,15 +1199,23 @@ export default function PatientDashboardPage() {
         {!compact ? (
           <button
             type="button"
-            onClick={() => navigate("/app/agenda")}
+            onClick={() => viewApptInAgenda(slot, start)}
             className="rounded-xl border border-[#B6C3D7] px-4 py-2 text-sm font-black text-[#53647F] hover:bg-[#F8FAFC]"
           >
-            ▣ Voir l&apos;agenda
+            ▣ Voir le RDV dans l&apos;agenda
           </button>
-        ) : null}
+        ) : (
+          <button
+            type="button"
+            onClick={() => viewApptInAgenda(slot, start)}
+            className="rounded-xl border border-[#B6C3D7] px-3 py-2 text-xs font-black text-[#53647F] hover:bg-[#F8FAFC]"
+          >
+            Voir dans l&apos;agenda
+          </button>
+        )}
       </div>
     );
-  }, [navigate, openAgendaForPatientSlot]);
+  }, [openCancelApptModal, openRescheduleApptModal, viewApptInAgenda]);
 
   const patientAgendaSlots = useMemo(() => {
     if (!tenantPatientPhone) return [];
@@ -1363,6 +1400,52 @@ export default function PatientDashboardPage() {
     const ms = opts?.sticky ? 6000 : 1800;
     toastTimerRef.current = window.setTimeout(() => setToast(""), ms);
   };
+
+  const confirmCancelPatientAppointment = useCallback(async () => {
+    if (!apptActionTarget) return;
+    const { slot } = apptActionTarget;
+    const actionId = appointmentActionId(slot);
+    if (!actionId) {
+      notify("Impossible d’annuler ce rendez-vous (identifiant manquant).", { sticky: true });
+      return;
+    }
+    setApptActionLoading(true);
+    try {
+      await api.tenantCancelAgendaAppointment(actionId, agendaCancelPayload(slot));
+      notify("Rendez-vous annulé. Le patient a été notifié par SMS.");
+      setModal(null);
+      setApptActionTarget(null);
+      refreshPatientAgenda();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Impossible d’annuler ce rendez-vous.";
+      notify(msg, { sticky: true });
+    } finally {
+      setApptActionLoading(false);
+    }
+  }, [apptActionTarget, refreshPatientAgenda]);
+
+  const confirmReschedulePatientAppointment = useCallback(async (newSlot: { slot_id: number; date: string; time: string }) => {
+    if (!apptActionTarget) return;
+    const { slot } = apptActionTarget;
+    const actionId = appointmentActionId(slot);
+    if (!actionId || !Number(slot.appointment_id)) {
+      notify("Déplacement impossible pour ce rendez-vous.", { sticky: true });
+      return;
+    }
+    setApptActionLoading(true);
+    try {
+      await api.tenantRescheduleAgendaAppointment(actionId, agendaReschedulePayload(slot, newSlot.slot_id));
+      notify(`Rendez-vous déplacé au ${newSlot.date} à ${newSlot.time}.`);
+      setModal(null);
+      setApptActionTarget(null);
+      refreshPatientAgenda();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Impossible de déplacer ce rendez-vous.";
+      notify(msg, { sticky: true });
+    } finally {
+      setApptActionLoading(false);
+    }
+  }, [apptActionTarget, refreshPatientAgenda]);
 
   const saveNote = async () => {
     if (!note.trim()) {
@@ -2573,6 +2656,65 @@ export default function PatientDashboardPage() {
           )}
         </Modal>
       )}
+
+      {modal === "cancelAppt" && apptActionTarget ? (
+        <Modal title="Annuler le rendez-vous" onClose={closeApptActionModal} width="max-w-lg">
+          <div className="space-y-4 text-sm leading-7 text-[#475569]">
+            <p className="m-0">
+              Confirmer l&apos;annulation du rendez-vous du{" "}
+              <strong>
+                {apptActionTarget.start.toLocaleDateString("fr-FR", {
+                  weekday: "long",
+                  day: "numeric",
+                  month: "long",
+                  year: "numeric",
+                })}
+              </strong>{" "}
+              à <strong>{formatAgendaSlotHour(apptActionTarget.start)}</strong> ?
+            </p>
+            <p className="m-0 font-semibold text-[#64748B]">
+              Le patient sera notifié par SMS. Aucune action sur la fiche patient n&apos;est nécessaire.
+            </p>
+            <div className="flex flex-wrap gap-3 pt-2">
+              <button
+                type="button"
+                disabled={apptActionLoading}
+                onClick={() => void confirmCancelPatientAppointment()}
+                className="rounded-xl bg-[#FF3030] px-4 py-3 text-sm font-black text-white hover:bg-[#E11D48] disabled:opacity-60"
+              >
+                {apptActionLoading ? "Annulation…" : "Confirmer l’annulation"}
+              </button>
+              <button
+                type="button"
+                disabled={apptActionLoading}
+                onClick={closeApptActionModal}
+                className="rounded-xl border border-[#DDE7F1] px-4 py-3 text-sm font-black text-[#334155]"
+              >
+                Retour
+              </button>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
+
+      {modal === "rescheduleAppt" && apptActionTarget ? (
+        <Modal title="Déplacer le rendez-vous" onClose={closeApptActionModal} width="max-w-xl">
+          <p className="mb-4 text-sm font-semibold text-[#61708B]">
+            RDV actuel :{" "}
+            {apptActionTarget.start.toLocaleDateString("fr-FR", {
+              weekday: "long",
+              day: "numeric",
+              month: "long",
+            })}{" "}
+            à {formatAgendaSlotHour(apptActionTarget.start)}
+          </p>
+          <AgendaReschedulePanel
+            loading={apptActionLoading}
+            onClose={closeApptActionModal}
+            onReschedule={(slot) => void confirmReschedulePatientAppointment(slot)}
+          />
+        </Modal>
+      ) : null}
 
       {previewDoc && previewUrl && (
         <Modal title={previewDoc.original_name} onClose={closePreview} width="max-w-4xl">
