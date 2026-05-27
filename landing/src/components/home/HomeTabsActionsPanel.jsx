@@ -12,12 +12,12 @@ export default function HomeTabsActionsPanel({
   const Btn = BtnComponent;
   return (
     <section style={S.panel}>
-      <div style={S.tabs}>
+      <div className="uwi-dashboard-tabs" style={S.tabs}>
         {[["overview", "Vue d'ensemble"], ["rdv", "Rendez-vous"], ["history", "Historique"]].map(([id, label]) => (
           <button key={id} type="button" onClick={() => setTab(id)} style={{ ...S.tab, ...(tab === id ? S.tabActive : {}) }}>{label}</button>
         ))}
       </div>
-      <div style={S.quickActions}>
+      <div className="uwi-dashboard-quick-actions" style={S.quickActions}>
         <Btn variant="dark" icon="warn" onClick={onPriority}>Traiter les demandes prioritaires</Btn>
         <Btn icon="calendar" onClick={onDayAgenda}>Voir les rendez-vous du jour</Btn>
         <Btn variant="green" icon="message" onClick={onMessages}>Consulter les messages patients</Btn>

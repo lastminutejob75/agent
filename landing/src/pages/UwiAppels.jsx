@@ -871,10 +871,10 @@ export default function UwiAppels() {
   const [query, setQuery] = useState("");
   const [searchFocused, setSearchFocused] = useState(false);
   const [compactFilters, setCompactFilters] = useState(
-    typeof window !== "undefined" ? window.innerWidth < 1180 : false,
+    typeof window !== "undefined" ? window.innerWidth < 1024 : false,
   );
   const [compactHeader, setCompactHeader] = useState(
-    typeof window !== "undefined" ? window.innerWidth < 980 : false,
+    typeof window !== "undefined" ? window.innerWidth < 1024 : false,
   );
   const [filterOpen, setFilterOpen] = useState(false);
   const [subFilters, setSubFilters] = useState({
@@ -948,8 +948,8 @@ export default function UwiAppels() {
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
     const onResize = () => {
-      setCompactFilters(window.innerWidth < 1180);
-      setCompactHeader(window.innerWidth < 980);
+      setCompactFilters(window.innerWidth < 1024);
+      setCompactHeader(window.innerWidth < 1024);
     };
     onResize();
     window.addEventListener("resize", onResize);
@@ -1076,7 +1076,7 @@ export default function UwiAppels() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, color: C.navy }}>
+    <div className="uwi-appels-page" style={{ minHeight: "100%", background: C.bg, color: C.navy }}>
       <style>
         {`
           .uwi-tabs-scroll {
@@ -1089,17 +1089,25 @@ export default function UwiAppels() {
             height: 0;
           }
           @media (max-width: 1024px) {
-            .uwi-appels-shell { display: block !important; }
+            .uwi-appels-shell { display: block !important; min-height: auto !important; }
             .uwi-appels-inner-sidebar { display: none !important; }
             .uwi-appels-main { padding: 14px 12px 24px !important; }
           }
           @media (max-width: 760px) {
-            .uwi-appels-main header h1 { font-size: 22px !important; }
-            .uwi-appels-main header p { font-size: 13px !important; }
+            .uwi-appels-page-header { display: none !important; }
+            .uwi-appels-main { padding: 10px 10px 20px !important; }
+            .uwi-appels-list-wrap { margin: 0 0 16px !important; }
+            .uwi-appels-toolbar-row {
+              flex-direction: column !important;
+              align-items: stretch !important;
+              gap: 10px !important;
+              padding: 12px 14px !important;
+            }
+            .uwi-appels-toolbar-row > span { text-align: center; }
           }
         `}
       </style>
-      <div className="uwi-appels-shell" style={{ display: "flex", minHeight: "100vh" }}>
+      <div className="uwi-appels-shell" style={{ display: "flex", minHeight: "100%" }}>
         <aside
           className="uwi-appels-inner-sidebar"
           style={{
@@ -1177,6 +1185,7 @@ export default function UwiAppels() {
 
         <main className="uwi-appels-main" style={{ flex: 1, minWidth: 0, padding: "28px 32px" }}>
           <header
+            className="uwi-appels-page-header"
             style={{
               display: "flex",
               flexDirection: compactHeader ? "column" : "row",
@@ -1627,6 +1636,7 @@ export default function UwiAppels() {
             ) : null}
 
             <div
+              className="uwi-appels-toolbar-row"
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -1675,6 +1685,7 @@ export default function UwiAppels() {
             </div>
 
             <div
+              className="uwi-appels-list-wrap"
               style={{
                 margin: "0 20px 20px",
                 borderRadius: 12,

@@ -337,20 +337,141 @@ export default function AppRequests() {
   return (
     <div className="uwi-requests-page" style={{ minHeight: "100%", background: "#F7FAFC", padding: 24 }}>
       <style>{`
+        .uwi-requests-page,
+        .uwi-requests-page * {
+          box-sizing: border-box;
+        }
+        .uwi-requests-page {
+          overflow-x: clip;
+          max-width: 100%;
+        }
+        .uwi-requests-inner {
+          max-width: 1220px;
+          margin: 0 auto;
+          width: 100%;
+          min-width: 0;
+        }
         .uwi-requests-page .uwi-requests-header { margin: 0; }
         .uwi-requests-page .uwi-requests-h1 { margin: 0; font-size: 38px; font-weight: 900; letter-spacing: -.03em; color: #0A1628; }
         .uwi-requests-page .uwi-requests-sub { margin: 8px 0 0; font-size: 15px; color: #475569; }
         .uwi-requests-page .uwi-requests-metrics { margin-top: 18px; display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; }
-        .uwi-requests-page .uwi-requests-filters-row { display: grid; grid-template-columns: 1fr auto auto auto auto auto; gap: 10px; align-items: center; }
+        .uwi-requests-page .uwi-requests-metrics > * { min-width: 0; }
+        .uwi-requests-page .uwi-requests-filters-row { display: grid; grid-template-columns: 1fr auto auto auto auto auto; gap: 10px; align-items: center; min-width: 0; }
+        .uwi-requests-page .uwi-requests-filters-row > * { min-width: 0; max-width: 100%; }
+        .uwi-requests-page .uwi-requests-search {
+          width: 100%;
+          min-width: 0;
+          height: 42px;
+          border-radius: 10px;
+          border: 1px solid #DDE7F1;
+          padding: 0 12px;
+          font-size: 14px;
+          font-weight: 600;
+          color: #0A1628;
+          outline: none;
+        }
+        .uwi-requests-page .uwi-requests-select {
+          width: 100%;
+          min-width: 0;
+          max-width: 100%;
+          height: 42px;
+          border-radius: 10px;
+          border: 1px solid #DDE7F1;
+          background: #fff;
+          color: #0A1628;
+          font-weight: 700;
+          padding: 0 10px;
+        }
+        .uwi-requests-page .uwi-requests-action-btn {
+          width: 100%;
+          min-width: 0;
+          height: 42px;
+          border-radius: 10px;
+          font-weight: 700;
+          padding: 0 12px;
+          cursor: pointer;
+          white-space: nowrap;
+        }
+        .uwi-requests-page .uwi-delay-metric-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; min-width: 0; }
+        .uwi-requests-page .uwi-delay-metric-grid > button { min-width: 0; }
+        .uwi-requests-page .uwi-requests-segment {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          border: 1px solid #E2EAF4;
+          border-radius: 10px;
+          background: #fff;
+          padding: 4px;
+          min-width: 0;
+          max-width: 100%;
+          overflow-x: auto;
+          -webkit-overflow-scrolling: touch;
+        }
+        .uwi-requests-page .uwi-requests-segment button {
+          flex: 0 0 auto;
+          white-space: nowrap;
+        }
+        .uwi-requests-page .uwi-metric-btn {
+          width: 100%;
+          min-width: 0;
+        }
+        @media (max-width: 1024px) {
+          .uwi-requests-page .uwi-requests-filters-row {
+            grid-template-columns: 1fr 1fr !important;
+          }
+          .uwi-requests-page .uwi-requests-filters-row > :first-child,
+          .uwi-requests-page .uwi-requests-filters-row > .uwi-requests-segment {
+            grid-column: 1 / -1 !important;
+          }
+        }
         @media (max-width: 760px) {
-          .uwi-requests-page { padding: 12px !important; }
+          .uwi-requests-page { padding: 10px !important; }
           .uwi-requests-page .uwi-requests-header { display: none; }
-          .uwi-requests-page .uwi-requests-metrics { grid-template-columns: repeat(2, minmax(0,1fr)) !important; gap: 8px !important; margin-top: 0 !important; }
-          .uwi-requests-page .uwi-requests-filters-row { grid-template-columns: 1fr !important; }
-          .uwi-requests-page .uwi-requests-filters-row > * { width: 100% !important; }
+          .uwi-requests-page .uwi-requests-metrics {
+            grid-template-columns: repeat(2, minmax(0,1fr)) !important;
+            gap: 8px !important;
+            margin-top: 0 !important;
+          }
+          .uwi-requests-page .uwi-delay-metric { grid-column: 1 / -1 !important; }
+          .uwi-requests-page .uwi-delay-metric-grid {
+            grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+            gap: 6px !important;
+          }
+          .uwi-requests-page .uwi-delay-metric-grid > button { padding: 8px 6px !important; }
+          .uwi-requests-page .uwi-delay-metric-grid > button > div:last-child {
+            font-size: 18px !important;
+          }
+          .uwi-requests-page .uwi-requests-filters-row {
+            grid-template-columns: 1fr !important;
+            gap: 8px !important;
+          }
+          .uwi-requests-page .uwi-requests-filters-row > * {
+            width: 100% !important;
+            max-width: 100% !important;
+          }
+          .uwi-requests-page .uwi-requests-segment {
+            display: grid !important;
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 6px !important;
+            overflow: visible !important;
+            padding: 6px !important;
+          }
+          .uwi-requests-page .uwi-requests-segment button {
+            width: 100% !important;
+            flex: initial !important;
+            padding: 10px 8px !important;
+            font-size: 11px !important;
+            white-space: normal !important;
+            line-height: 1.2 !important;
+            text-align: center !important;
+          }
+          .uwi-requests-page .uwi-requests-filters-card { padding: 10px !important; }
+          .uwi-requests-page .uwi-metric-value { font-size: 26px !important; }
+          .uwi-requests-page .uwi-metric-btn { padding: 12px !important; }
+          .uwi-requests-page .uwi-delay-metric { padding: 12px !important; }
         }
       `}</style>
-      <div style={{ maxWidth: 1220, margin: "0 auto" }}>
+      <div className="uwi-requests-inner">
         <div className="uwi-requests-header">
           <h1 className="uwi-requests-h1">Demandes patients</h1>
           <p className="uwi-requests-sub">Demandes transférées par Clara nécessitant une action du cabinet.</p>
@@ -373,45 +494,38 @@ export default function AppRequests() {
           />
         </div>
 
-        <div style={{ marginTop: 14, background: "#fff", border: "1px solid #E2EAF4", borderRadius: 16, padding: 14 }}>
+        <div className="uwi-requests-filters-card" style={{ marginTop: 14, background: "#fff", border: "1px solid #E2EAF4", borderRadius: 16, padding: 14 }}>
           <div className="uwi-requests-filters-row">
             <input
+              className="uwi-requests-search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Rechercher un patient, un motif, un téléphone..."
-              style={{ height: 42, borderRadius: 10, border: "1px solid #DDE7F1", padding: "0 12px", fontSize: 14, fontWeight: 600, color: "#0A1628", outline: "none" }}
             />
             <Segment value={status} onChange={setStatus} options={["À traiter", "En cours", "Traitées", "Toutes"]} />
             <SelectLike value={typeFilter} onChange={setTypeFilter} options={["Tous types", "Transfert humain", "Rappel", "Renouvellement", "Document", "Question"]} />
             <SelectLike value={priorityFilter} onChange={setPriorityFilter} options={["Toutes priorités", "Urgence", "Standard", "Faible"]} />
             <button
               type="button"
+              className="uwi-requests-action-btn"
               onClick={() => setSortOrder((prev) => (prev === "desc" ? "asc" : "desc"))}
               style={{
-                height: 42,
-                borderRadius: 10,
                 border: "1px solid #DDE7F1",
                 background: "#fff",
                 color: "#475569",
-                fontWeight: 700,
-                padding: "0 12px",
-                cursor: "pointer",
               }}
             >
               {sortOrder === "desc" ? "Plus récentes" : "Plus anciennes"}
             </button>
             <button
               type="button"
+              className="uwi-requests-action-btn"
               onClick={resetFilters}
               style={{
-                height: 42,
-                borderRadius: 10,
                 border: "1px solid #CBD5E1",
                 background: "#F8FAFC",
                 color: "#334155",
                 fontWeight: 800,
-                padding: "0 12px",
-                cursor: "pointer",
               }}
             >
               Réinitialiser
@@ -480,28 +594,27 @@ export default function AppRequests() {
                     {request.initials}
                   </div>
                   <div className="request-row-main" style={{ minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                      <span style={{ fontSize: 19, fontWeight: 900, color: "#0A1628" }}>{request.patientName}</span>
+                    <div className="request-row-name" style={{ fontSize: 19, fontWeight: 900, color: "#0A1628", lineHeight: 1.25, wordBreak: "break-word" }}>
+                      {request.patientName}
+                    </div>
+                    <div className="request-row-badges" style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
                       <span style={{ borderRadius: 8, padding: "2px 8px", fontSize: 11, fontWeight: 800, background: typeTone.badgeBg, color: typeTone.badgeText }}>{request.type}</span>
                       <span style={{ borderRadius: 8, padding: "2px 8px", fontSize: 11, fontWeight: 800, background: priorityTone.badgeBg, color: priorityTone.badgeText }}>{request.priority}</span>
                       <span style={{ borderRadius: 8, padding: "2px 8px", fontSize: 11, fontWeight: 800, background: statusBadge.bg, color: statusBadge.color }}>{statusBadge.label}</span>
                       {syncedRecently ? (
                         <span style={{ borderRadius: 8, padding: "2px 8px", fontSize: 11, fontWeight: 900, background: "#FEF3C7", color: "#92400E" }}>
-                          mis à jour à l'instant
+                          mis à jour
                         </span>
                       ) : null}
                     </div>
                     <div className="request-row-summary" style={{ marginTop: 4, fontSize: 14, color: "#334155", fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                       {request.summary}
                     </div>
-                    <div className="request-row-meta" style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 8, fontSize: 13, color: "#64748B", fontWeight: 700 }}>
-                      <span style={{ color: "#0F766E" }}>{request.phone}</span>
-                      <span>•</span>
+                    <div className="request-row-meta" style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4, fontSize: 13, color: "#64748B", fontWeight: 700 }}>
+                      <span style={{ color: "#0F766E", wordBreak: "break-all" }}>{request.phone}</span>
                       <span>{request.createdAtLabel}</span>
-                      <span>•</span>
                       <span>{request.source}</span>
-                      <span>•</span>
-                      <span style={{ color: priorityTone.wait, fontWeight: 900 }}>{request.waitingTime}</span>
+                      <span style={{ color: priorityTone.wait, fontWeight: 900 }}>Attente : {request.waitingTime}</span>
                     </div>
                   </div>
                   <div className="request-row-arrow" style={{ fontSize: 30, color: "#94A3B8", fontWeight: 300 }}>›</div>
@@ -535,27 +648,45 @@ export default function AppRequests() {
           }
         }
         @media (max-width: 760px) {
+          .request-inbox-row {
+            padding: 12px !important;
+          }
           .request-row-grid {
-            grid-template-columns: 46px 1fr !important;
+            grid-template-columns: 40px minmax(0, 1fr) !important;
             gap: 10px !important;
+            align-items: flex-start !important;
+          }
+          .request-row-avatar {
+            width: 40px !important;
+            height: 40px !important;
+            font-size: 13px !important;
           }
           .request-row-main {
             min-width: 0;
+            overflow: hidden;
+          }
+          .request-row-name {
+            font-size: 16px !important;
+          }
+          .request-row-badges {
+            gap: 4px !important;
+            margin-top: 4px !important;
+          }
+          .request-row-badges > span {
+            font-size: 10px !important;
+            padding: 2px 6px !important;
           }
           .request-row-summary {
             white-space: normal !important;
             overflow: visible !important;
             text-overflow: initial !important;
             display: block !important;
+            font-size: 13px !important;
+            line-height: 1.4 !important;
           }
           .request-row-meta {
-            display: grid !important;
-            grid-template-columns: 1fr 1fr !important;
-            column-gap: 8px !important;
-            row-gap: 2px !important;
-          }
-          .request-row-meta > span:nth-child(even) {
-            display: none !important;
+            margin-top: 6px !important;
+            font-size: 12px !important;
           }
           .request-row-arrow {
             display: none !important;
@@ -564,6 +695,14 @@ export default function AppRequests() {
         .request-inbox-row:hover > div > div:last-child {
           transform: translateX(3px);
           color: #059669;
+        }
+        @media (min-width: 761px) {
+          .request-row-meta {
+            flex-direction: row !important;
+            flex-wrap: wrap !important;
+            align-items: center !important;
+            gap: 8px !important;
+          }
         }
       `}</style>
     </div>
@@ -575,6 +714,7 @@ function Metric({ title, subtitle, danger = false, info = false, onClick, active
   return (
     <button
       type="button"
+      className="uwi-metric-btn"
       onClick={onClick}
       style={{
         border: active ? "1px solid #93C5FD" : "1px solid #E2EAF4",
@@ -586,7 +726,7 @@ function Metric({ title, subtitle, danger = false, info = false, onClick, active
         transition: "all .15s ease",
       }}
     >
-      <div style={{ fontSize: 36, lineHeight: 1, fontWeight: 900, letterSpacing: "-.04em", color }}>{title}</div>
+      <div className="uwi-metric-value" style={{ fontSize: 36, lineHeight: 1, fontWeight: 900, letterSpacing: "-.04em", color }}>{title}</div>
       <div style={{ marginTop: 4, fontSize: 13, fontWeight: 800, color: "#334155" }}>{subtitle}</div>
     </button>
   );
@@ -604,9 +744,9 @@ function DelayMetric({
   lowActive = false,
 }) {
   return (
-    <div style={{ border: "1px solid #E2EAF4", borderRadius: 14, background: "#fff", padding: 16 }}>
+    <div className="uwi-delay-metric" style={{ border: "1px solid #E2EAF4", borderRadius: 14, background: "#fff", padding: 16 }}>
       <div style={{ fontSize: 13, fontWeight: 800, color: "#334155" }}>Délais de traitement</div>
-      <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+      <div className="uwi-delay-metric-grid" style={{ marginTop: 8 }}>
         <button
           type="button"
           onClick={onUrgentClick}
@@ -662,7 +802,7 @@ function DelayMetric({
 
 function Segment({ value, onChange, options }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, border: "1px solid #E2EAF4", borderRadius: 10, background: "#fff", padding: 4 }}>
+    <div className="uwi-requests-segment" style={{ display: "flex", alignItems: "center", gap: 6, border: "1px solid #E2EAF4", borderRadius: 10, background: "#fff", padding: 4 }}>
       {options.map((option) => (
         <button
           key={option}
@@ -689,9 +829,9 @@ function Segment({ value, onChange, options }) {
 function SelectLike({ value, onChange, options }) {
   return (
     <select
+      className="uwi-requests-select"
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      style={{ height: 42, borderRadius: 10, border: "1px solid #DDE7F1", background: "#fff", color: "#0A1628", fontWeight: 700, padding: "0 10px" }}
     >
       {options.map((opt) => (
         <option key={opt} value={opt}>

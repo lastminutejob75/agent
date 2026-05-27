@@ -25,7 +25,7 @@ export default function ClaraRuleModulePanel({
         </div>
         <Pill tone={activeModule.tone}>{getRuleCompleteness(activeModule.key).label}</Pill>
       </div>
-      <div style={S.moduleChecks}>
+      <div className="uwi-clara-module-checks" style={S.moduleChecks}>
         <label style={S.check}>
           <input
             type="checkbox"

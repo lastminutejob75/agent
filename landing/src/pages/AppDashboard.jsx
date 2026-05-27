@@ -349,7 +349,7 @@ export default function AppDashboard() {
   ];
 
   return (
-    <div style={S.page}>
+    <div className="uwi-dashboard-page" style={S.page}>
       {!loading && (connections.vapi || connections.calendar) ? (
         <div style={S.connectionStrip}>
           <span style={{ ...S.connectionPill, ...(vapiConnected ? S.connectionOk : S.connectionWarn) }}>
@@ -425,7 +425,7 @@ export default function AppDashboard() {
         IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
       />
 
-      <div style={S.grid}>
+      <div className="uwi-dashboard-grid" style={S.grid}>
         {isMobile ? (
           <>
             <div style={S.colLeft}>
@@ -627,17 +627,24 @@ const CSS = `
   .uwi-main em { width: 32px; height: 32px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; }
   .uwi-main p { margin: 0; }
   @media (max-width: 1180px) {
-    .uwi-main main [style*="grid-template-columns: 1.15fr .85fr"] { grid-template-columns: 1fr !important; }
-    .uwi-main main [style*="grid-template-columns: repeat(5"] { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
-    .uwi-main main [style*="grid-template-columns: repeat(4"] { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+    .uwi-dashboard-grid { grid-template-columns: 1fr !important; }
+    .uwi-dashboard-stats-grid { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+    .uwi-dashboard-rdv-details { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
   }
   @media (max-width: 1000px) {
-    .uwi-main main [style*="grid-template-columns: repeat(3"] { grid-template-columns: 1fr !important; }
-    .uwi-main main [style*="grid-template-columns: 190px 1fr"] { grid-template-columns: 1fr !important; }
+    .uwi-dashboard-quick-actions { grid-template-columns: 1fr !important; }
+    .uwi-dashboard-stats-strip { grid-template-columns: 1fr !important; }
+    .uwi-dashboard-stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
   }
   @media (max-width: 760px) {
-    .uwi-main main [style*="padding: 18px 24px 30px"] { padding: 14px 12px 20px !important; }
-    .uwi-main main [style*="display: flex"][style*="justify-content: space-between"][style*="border-radius: 24px"] { flex-direction: column !important; align-items: flex-start !important; }
-    .uwi-main main [style*="display: flex"][style*="gap: 22px"] { flex-direction: column !important; }
+    .uwi-dashboard-page { padding: 14px 12px 20px !important; }
+    .uwi-dashboard-hero { flex-direction: column !important; align-items: flex-start !important; padding: 16px !important; }
+    .uwi-dashboard-hero-left { flex-direction: column !important; align-items: flex-start !important; gap: 14px !important; }
+    .uwi-dashboard-hero-buttons { align-items: stretch !important; width: 100% !important; }
+    .uwi-dashboard-stats-grid { grid-template-columns: 1fr !important; }
+    .uwi-dashboard-rdv { flex-direction: column !important; gap: 14px !important; }
+    .uwi-dashboard-rdv-details { grid-template-columns: 1fr !important; }
+    .uwi-dashboard-tabs { overflow-x: auto !important; }
+    .uwi-dashboard-tabs button { flex: 0 0 auto !important; padding: 0 18px !important; }
   }
 `;

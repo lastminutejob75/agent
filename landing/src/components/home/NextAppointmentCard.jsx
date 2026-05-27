@@ -24,7 +24,7 @@ export default function NextAppointmentCard({
           Aucun rendez-vous à venir. Les prochains RDV pris par Clara ou via votre agenda apparaîtront ici.
         </p>
       ) : (
-      <div style={S.rdv}>
+      <div className="uwi-dashboard-rdv" style={S.rdv}>
         <div style={S.dateBlock}>
           <b>{nextLabels.day}</b>
           <span>{nextLabels.monthYear}</span>
@@ -34,7 +34,7 @@ export default function NextAppointmentCard({
           <div style={S.rdvTop}>
             <b>{nextHour}</b><span>(20 min)</span><strong>{nextPatient || "Patient"}</strong><Pill tone="green">Confirme</Pill>
           </div>
-          <div style={S.rdvDetails}>
+          <div className="uwi-dashboard-rdv-details" style={S.rdvDetails}>
             {[["Motif", nextReason || "—"], ["Source", nextSource || "—"], ["Preference", "—"], ["Canal", "Telephone"]].map(([k, v]) => (
               <p key={k}><span>{k}</span><b>{v}</b></p>
             ))}

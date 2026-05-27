@@ -182,6 +182,8 @@ const APPT_TONE = {
   teal: { bg: "#E8F7F7", border: "#14B8A6", time: "#0F766E", text: "#0F766E" },
 };
 
+const WEEKDAY_LABELS = ["LUN", "MAR", "MER", "JEU", "VEN", "SAM", "DIM"];
+
 /** Stale-while-revalidate : affichage immédiat au retour sur l’agenda (session). */
 const AGENDA_BULK_CACHE_PREFIX = "uwi_agenda_bulk_v2:";
 const AGENDA_BULK_CACHE_MS = 35000;
@@ -486,6 +488,251 @@ function InlineDetail({
   );
 }
 
+function sortApptsByTime(appts) {
+  return [...appts].sort((a, b) => String(a.displayTime || "").localeCompare(String(b.displayTime || "")));
+}
+
+function AgendaWeekMobileList({
+  weekDates,
+  appointments,
+  today,
+  selectedDate,
+  onSelectDay,
+  onOpenDayView,
+  onToggleAppt,
+  selectedAppt,
+  semanticCounts,
+  styles: S,
+}) {
+  const dayApptsByDate = useMemo(() => {
+    const map = {};
+    weekDates.forEach((d) => {
+      map[d] = sortApptsByTime(appointments.filter((a) => a.date === d));
+    });
+    return map;
+  }, [weekDates, appointments]);
+
+  return (
+    <div className="agenda-week-mobile">
+      <div className="agenda-week-mobile-strip" style={S.weekMobileStrip}>
+        {weekDates.map((d) => {
+          const { wd, num } = formatShortDay(d);
+          const isToday = d === today;
+          const isSelected = d === selectedDate;
+          const count = dayApptsByDate[d]?.length || 0;
+          return (
+            <button
+              key={d}
+              type="button"
+              onClick={() => onSelectDay(d)}
+              style={{
+                ...S.weekMobileDayChip,
+                ...(isToday ? S.weekMobileDayChipToday : {}),
+                ...(isSelected ? S.weekMobileDayChipSelected : {}),
+              }}
+            >
+              <span style={S.weekMobileDayChipWd}>{wd}</span>
+              <span style={S.weekMobileDayChipNum}>{num}</span>
+              {count > 0 ? <span style={S.weekMobileDayChipCount}>{count}</span> : null}
+            </button>
+          );
+        })}
+      </div>
+
+      <div style={S.weekMobileBadges}>
+        <span style={S.weekHeadBadgeRed}>Prioritaire {semanticCounts.red}</span>
+        <span style={S.weekHeadBadgeOrange}>À confirmer {semanticCounts.orange}</span>
+        <span style={S.weekHeadBadgePurple}>Récupéré {semanticCounts.purple}</span>
+      </div>
+
+      {weekDates.map((d) => {
+        const dayAppts = dayApptsByDate[d] || [];
+        const { wd, num } = formatShortDay(d);
+        const isToday = d === today;
+        const isSelected = d === selectedDate;
+        return (
+          <section
+            key={d}
+            id={`agenda-week-day-${d}`}
+            style={{
+              ...S.weekMobileDaySection,
+              ...(isSelected ? S.weekMobileDaySectionSelected : {}),
+            }}
+          >
+            <div style={S.weekMobileDayHeader}>
+              <button type="button" onClick={() => onSelectDay(d)} style={S.weekMobileDayHeaderMain}>
+                <div style={S.weekMobileDayTitle}>
+                  {wd} {num}
+                  {isToday ? <span style={S.weekMobileTodayBadge}>Aujourd&apos;hui</span> : null}
+                </div>
+                <div style={S.weekMobileDaySub}>{formatLongDate(d)}</div>
+              </button>
+              <div style={S.weekMobileDayMeta}>
+                <span>{dayAppts.length} RDV</span>
+                <button type="button" onClick={() => onOpenDayView(d)} style={S.weekMobileOpenDayBtn}>
+                  Jour ›
+                </button>
+              </div>
+            </div>
+            {dayAppts.length === 0 ? (
+              <div style={S.weekMobileEmpty}>Aucun rendez-vous</div>
+            ) : (
+              <div style={S.weekMobileApptList}>
+                {dayAppts.map((a) => {
+                  const tone = APPT_TONE[toneForAppointment(a)] || APPT_TONE.teal;
+                  const isOpen = selectedAppt?.id === a.id;
+                  return (
+                    <button
+                      key={a.id}
+                      type="button"
+                      className="agenda-appt-chip"
+                      onClick={() => onToggleAppt(a)}
+                      style={{
+                        ...S.weekMobileApptCard,
+                        background: tone.bg,
+                        borderLeftColor: tone.border,
+                        ...(isOpen ? { boxShadow: `0 0 0 2px ${tone.border}40` } : {}),
+                      }}
+                    >
+                      <div style={S.weekMobileApptTop}>
+                        <span style={{ ...S.weekMobileApptTime, color: tone.time }}>{a.displayTime}</span>
+                        <span style={{ ...S.weekMobileApptTag, color: tone.time }}>{semanticLabelForAppointment(a)}</span>
+                      </div>
+                      <div style={{ ...S.weekMobileApptName, color: tone.text }}>{a.patient || "Patient"}</div>
+                      <div style={S.weekMobileApptType}>{a.typeIcon} {a.type || "Consultation"}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function AgendaMonthMobileView({
+  monthGrid,
+  currentMonth,
+  appointments,
+  selectedDate,
+  today,
+  onSelectDate,
+  onOpenDayView,
+  onToggleAppt,
+  selectedAppt,
+  monthCounts,
+  styles: S,
+}) {
+  const selectedDayAppts = useMemo(
+    () => sortApptsByTime(appointments.filter((a) => a.date === selectedDate)),
+    [appointments, selectedDate],
+  );
+
+  return (
+    <div className="agenda-month-mobile">
+      <div style={S.monthMobileSummary}>
+        <div style={S.monthMobileSummaryItem}>
+          <strong>{monthCounts.total}</strong>
+          <span>RDV</span>
+        </div>
+        <div style={S.monthMobileSummaryItem}>
+          <strong>{monthCounts.pending}</strong>
+          <span>à confirmer</span>
+        </div>
+        <div style={S.monthMobileSummaryItem}>
+          <strong>{monthCounts.recovered}</strong>
+          <span>récupérés</span>
+        </div>
+      </div>
+
+      <div style={S.monthMobileGrid}>
+        {WEEKDAY_LABELS.map((wd) => (
+          <div key={wd} style={S.monthMobileWd}>{wd.charAt(0)}</div>
+        ))}
+        {monthGrid.map((d) => {
+          const isCurrentMonth = getMonthFromDate(d) === currentMonth;
+          const isToday = d === today;
+          const isSelected = d === selectedDate;
+          const dayNum = new Date(`${d}T12:00:00`).getDate();
+          const dayAppts = sortApptsByTime(appointments.filter((a) => a.date === d));
+          const toneDots = dayAppts.slice(0, 3).map((a) => toneForAppointment(a));
+          return (
+            <button
+              key={d}
+              type="button"
+              onClick={() => onSelectDate(d)}
+              style={{
+                ...S.monthMobileCell,
+                opacity: isCurrentMonth ? 1 : 0.35,
+                ...(isToday ? S.monthMobileCellToday : {}),
+                ...(isSelected ? S.monthMobileCellSelected : {}),
+              }}
+            >
+              <span style={{ ...S.monthMobileCellNum, ...(isToday && isSelected ? S.monthDayNumToday : {}) }}>
+                {dayNum}
+              </span>
+              {dayAppts.length > 0 ? (
+                <div style={S.monthMobileDots}>
+                  {toneDots.map((toneKey, idx) => {
+                    const tone = APPT_TONE[toneKey] || APPT_TONE.teal;
+                    return <span key={`${d}-dot-${idx}`} style={{ ...S.monthMobileDot, background: tone.border }} />;
+                  })}
+                  {dayAppts.length > 3 ? <span style={S.monthMobileDotMore}>+</span> : null}
+                </div>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+
+      <div style={S.monthMobileDayPanel}>
+        <div style={S.monthMobileDayPanelHead}>
+          <div>
+            <div style={S.monthMobileDayPanelTitle}>{formatLongDate(selectedDate)}</div>
+            <div style={S.monthMobileDayPanelSub}>{selectedDayAppts.length} rendez-vous</div>
+          </div>
+          <button type="button" onClick={() => onOpenDayView(selectedDate)} style={S.weekMobileOpenDayBtn}>
+            Vue jour ›
+          </button>
+        </div>
+        {selectedDayAppts.length === 0 ? (
+          <div style={S.weekMobileEmpty}>Aucun rendez-vous ce jour.</div>
+        ) : (
+          <div style={S.weekMobileApptList}>
+            {selectedDayAppts.map((a) => {
+              const tone = APPT_TONE[toneForAppointment(a)] || APPT_TONE.teal;
+              const isOpen = selectedAppt?.id === a.id;
+              return (
+                <button
+                  key={a.id}
+                  type="button"
+                  className="agenda-appt-chip"
+                  onClick={() => onToggleAppt(a)}
+                  style={{
+                    ...S.weekMobileApptCard,
+                    background: tone.bg,
+                    borderLeftColor: tone.border,
+                    ...(isOpen ? { boxShadow: `0 0 0 2px ${tone.border}40` } : {}),
+                  }}
+                >
+                  <div style={S.weekMobileApptTop}>
+                    <span style={{ ...S.weekMobileApptTime, color: tone.time }}>{a.displayTime}</span>
+                    <span style={{ ...S.weekMobileApptTag, color: tone.time }}>{semanticLabelForAppointment(a)}</span>
+                  </div>
+                  <div style={{ ...S.weekMobileApptName, color: tone.text }}>{a.patient || "Patient"}</div>
+                  <div style={S.weekMobileApptType}>{a.typeIcon} {a.type || "Consultation"}</div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function AppAgenda() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -496,6 +743,15 @@ export default function AppAgenda() {
   const [selectedDate, setSelectedDate] = useState(urlDate || todayISO());
   const [pendingFocusPhone, setPendingFocusPhone] = useState(urlPhone || null);
   const [viewMode, setViewMode] = useState("day");
+  const [isMobileAgenda, setIsMobileAgenda] = useState(
+    typeof window !== "undefined" ? window.innerWidth <= 760 : false,
+  );
+
+  useEffect(() => {
+    const onResize = () => setIsMobileAgenda(window.innerWidth <= 760);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   useEffect(() => {
     if (urlDate && urlDate !== selectedDate) {
@@ -1130,6 +1386,20 @@ export default function AppAgenda() {
   }
   function goToday() { setSelectedDate(todayISO()); }
 
+  function selectAgendaDay(dateStr) {
+    setSelectedDate(dateStr);
+    if (isMobileAgenda && viewMode === "week") {
+      window.requestAnimationFrame(() => {
+        document.getElementById(`agenda-week-day-${dateStr}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
+  }
+
+  function openDayView(dateStr) {
+    setSelectedDate(dateStr);
+    setViewMode("day");
+  }
+
   const subtitleMap = {
     day: `${todayCount} RDV aujourd'hui`,
     week: `${appointments.length} RDV cette semaine`,
@@ -1251,10 +1521,8 @@ export default function AppAgenda() {
       ? `Semaine du ${formatLongDate(weekDates[0])}`
       : formatLongDate(selectedDate);
 
-  const WEEKDAY_LABELS = ["LUN", "MAR", "MER", "JEU", "VEN", "SAM", "DIM"];
-
   return (
-    <div style={S.page}>
+    <div className="agenda-page" style={S.page}>
       <style>{CSS}</style>
 
       {error ? <div style={S.errorBox}>{error}</div> : null}
@@ -1349,6 +1617,21 @@ export default function AppAgenda() {
         {viewMode === "month" && (
           <div className="agenda-month-layout" style={S.monthLayout}>
             <div className="agenda-month-card" style={S.card}>
+              {isMobileAgenda ? (
+                <AgendaMonthMobileView
+                  monthGrid={monthGrid}
+                  currentMonth={currentMonth}
+                  appointments={appointments}
+                  selectedDate={selectedDate}
+                  today={today}
+                  onSelectDate={selectAgendaDay}
+                  onOpenDayView={openDayView}
+                  onToggleAppt={toggleAppt}
+                  selectedAppt={selectedAppt}
+                  monthCounts={monthCounts}
+                  styles={S}
+                />
+              ) : (
               <div className="agenda-month-grid-wrap" style={S.monthGridWrap}>
               {WEEKDAY_LABELS.map((wd) => (
                 <div key={wd} style={S.monthWdHeader}>{wd}</div>
@@ -1408,7 +1691,9 @@ export default function AppAgenda() {
                 );
               })}
               </div>
+              )}
             </div>
+            {!isMobileAgenda ? (
             <div style={S.monthSide}>
               <div style={S.sideCardPrimary}>
                 <div style={S.sideHeadLabel}>Mois en cours</div>
@@ -1438,6 +1723,23 @@ export default function AppAgenda() {
                 </div>
               </div>
             </div>
+            ) : (
+              <div style={S.mobileSideCompact}>
+                <div style={S.sideCard}>
+                  <div style={S.mobileSideTitle}>Jours les plus chargés</div>
+                  <div style={S.loadList}>
+                    {monthTopDays.slice(0, 4).map((row) => (
+                      <div key={row.date}>
+                        <div style={S.loadRowHead}><span>{row.label}</span><span>{row.count} RDV</span></div>
+                        <div style={S.loadTrack}>
+                          <div style={{ ...S.loadFill, width: `${Math.min(100, row.count * 14)}%` }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1445,6 +1747,21 @@ export default function AppAgenda() {
         {viewMode === "week" && (
           <div className="agenda-week-layout" style={S.weekLayout}>
             <div style={S.card}>
+              {isMobileAgenda ? (
+                <AgendaWeekMobileList
+                  weekDates={weekDates}
+                  appointments={appointments}
+                  today={today}
+                  selectedDate={selectedDate}
+                  onSelectDay={selectAgendaDay}
+                  onOpenDayView={openDayView}
+                  onToggleAppt={toggleAppt}
+                  selectedAppt={selectedAppt}
+                  semanticCounts={semanticCounts}
+                  styles={S}
+                />
+              ) : (
+              <>
               <div style={S.weekHead}>
                 <div>
                   <div className="agenda-week-head-title" style={S.weekHeadTitle}>Vue semaine — vraie grille de rendez-vous</div>
@@ -1457,8 +1774,9 @@ export default function AppAgenda() {
                 </div>
               </div>
               <div className="agenda-week-scroll" style={S.weekScroll}>
+                <div className="agenda-week-scroll-hint">Glissez pour parcourir la semaine →</div>
                 <div className="agenda-week-grid" style={{ ...S.weekGrid, gridTemplateColumns: `54px repeat(${weekDates.length}, minmax(116px, 1fr))` }}>
-                  <div style={S.weekCorner} />
+                  <div className="agenda-week-time-sticky" style={S.weekCorner} />
                   {weekDates.map((d) => {
                     const { wd, num } = formatShortDay(d);
                     const isToday = d === today;
@@ -1473,7 +1791,7 @@ export default function AppAgenda() {
                   })}
                   {hours.map((hour) => (
                     <Fragment key={hour}>
-                      <div style={S.weekTimeCell}><span style={S.weekTimeLabel}>{hour}</span></div>
+                      <div className="agenda-week-time-sticky" style={S.weekTimeCell}><span style={S.weekTimeLabel}>{hour}</span></div>
                       {weekDates.map((d, dayIdx) => {
                         const cellAppts = appointments.filter((a) => a.date === d && a.displayTime === hour);
                         return (
@@ -1497,7 +1815,10 @@ export default function AppAgenda() {
                   ))}
                 </div>
               </div>
+              </>
+              )}
             </div>
+            {!isMobileAgenda ? (
             <div style={S.weekSide}>
               <div style={S.sideCardPrimary}>
                 <div style={S.sideHeadLabel}>Semaine en cours</div>
@@ -1535,6 +1856,26 @@ export default function AppAgenda() {
                 </div>
               </div>
             </div>
+            ) : (
+              <div style={S.mobileSideCompact}>
+                <div style={S.sideCard}>
+                  <div style={S.mobileSideTitle}>Charge de la semaine</div>
+                  <div style={S.loadList}>
+                    {weekLoadRows.slice(0, 5).map((row) => (
+                      <div key={row.key}>
+                        <div style={S.loadRowHead}>
+                          <span>{row.label}</span>
+                          <span>{row.count} RDV</span>
+                        </div>
+                        <div style={S.loadTrack}>
+                          <div style={{ ...S.loadFill, width: `${Math.min(100, row.count * 12)}%` }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -2330,6 +2671,171 @@ const S = {
     textAlign: "left",
   },
 
+  mobileSideCompact: { display: "flex", flexDirection: "column", gap: 12 },
+  mobileSideTitle: { fontSize: 16, fontWeight: 900, color: NAVY, marginBottom: 10, letterSpacing: "-.02em" },
+
+  weekMobileStrip: {
+    display: "flex",
+    gap: 8,
+    overflowX: "auto",
+    padding: "12px 12px 4px",
+    WebkitOverflowScrolling: "touch",
+    scrollbarWidth: "none",
+  },
+  weekMobileDayChip: {
+    flex: "0 0 auto",
+    minWidth: 58,
+    border: `1px solid ${BORDER}`,
+    borderRadius: 14,
+    background: "#fff",
+    padding: "8px 10px",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 2,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  weekMobileDayChipToday: { borderColor: "#93c5fd", background: "#eff6ff" },
+  weekMobileDayChipSelected: { borderColor: "#14b8a6", background: "#ecfdf5", boxShadow: "0 0 0 2px rgba(20,184,166,.18)" },
+  weekMobileDayChipWd: { fontSize: 10, fontWeight: 800, color: MUTED, letterSpacing: "0.06em" },
+  weekMobileDayChipNum: { fontSize: 18, fontWeight: 900, color: NAVY, lineHeight: 1 },
+  weekMobileDayChipCount: {
+    marginTop: 2,
+    fontSize: 10,
+    fontWeight: 800,
+    color: "#0f766e",
+    background: "#ecfdf5",
+    borderRadius: 999,
+    padding: "1px 6px",
+  },
+  weekMobileBadges: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 6,
+    padding: "8px 12px 12px",
+    borderBottom: `1px solid ${BORDER}`,
+  },
+  weekMobileDaySection: {
+    borderBottom: `1px solid ${BORDER}`,
+    background: "#fff",
+  },
+  weekMobileDaySectionSelected: { background: "#f8fffe" },
+  weekMobileDayHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    padding: "12px 12px 8px",
+  },
+  weekMobileDayHeaderMain: {
+    border: "none",
+    background: "transparent",
+    padding: 0,
+    textAlign: "left",
+    cursor: "pointer",
+    fontFamily: "inherit",
+    flex: 1,
+    minWidth: 0,
+  },
+  weekMobileDayTitle: { display: "flex", alignItems: "center", gap: 8, fontSize: 16, fontWeight: 900, color: NAVY },
+  weekMobileTodayBadge: {
+    fontSize: 10,
+    fontWeight: 800,
+    color: BLUE,
+    background: "#eff6ff",
+    borderRadius: 999,
+    padding: "2px 8px",
+  },
+  weekMobileDaySub: { marginTop: 2, fontSize: 12, color: MUTED, fontWeight: 600 },
+  weekMobileDayMeta: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, flexShrink: 0 },
+  weekMobileOpenDayBtn: {
+    border: `1px solid ${BORDER}`,
+    borderRadius: 10,
+    background: "#fff",
+    color: BLUE,
+    fontSize: 11,
+    fontWeight: 800,
+    padding: "6px 10px",
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  weekMobileEmpty: { padding: "8px 12px 14px", fontSize: 13, color: MUTED, fontWeight: 600 },
+  weekMobileApptList: { display: "flex", flexDirection: "column", gap: 8, padding: "0 12px 14px" },
+  weekMobileApptCard: {
+    width: "100%",
+    textAlign: "left",
+    border: "none",
+    borderLeft: "3px solid",
+    borderRadius: 12,
+    padding: "10px 12px",
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  weekMobileApptTop: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4 },
+  weekMobileApptTime: { fontSize: 12, fontWeight: 800 },
+  weekMobileApptTag: { fontSize: 9, fontWeight: 900, letterSpacing: "0.05em", textTransform: "uppercase" },
+  weekMobileApptName: { fontSize: 14, fontWeight: 800, lineHeight: 1.25 },
+  weekMobileApptType: { marginTop: 4, fontSize: 12, color: "#475569", fontWeight: 600 },
+
+  monthMobileSummary: {
+    display: "grid",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gap: 8,
+    padding: 12,
+    borderBottom: `1px solid ${BORDER}`,
+    background: "#f8fafc",
+  },
+  monthMobileSummaryItem: {
+    borderRadius: 12,
+    border: `1px solid ${BORDER}`,
+    background: "#fff",
+    padding: "10px 8px",
+    textAlign: "center",
+    display: "flex",
+    flexDirection: "column",
+    gap: 2,
+  },
+  monthMobileGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+    gap: 0,
+    borderBottom: `1px solid ${BORDER}`,
+  },
+  monthMobileWd: {
+    padding: "8px 0",
+    textAlign: "center",
+    fontSize: 10,
+    fontWeight: 800,
+    color: MUTED,
+    background: "#f8fafc",
+    borderBottom: `1px solid ${BORDER}`,
+  },
+  monthMobileCell: {
+    minHeight: 52,
+    border: "none",
+    borderRight: `1px solid #f3f4f6`,
+    borderBottom: `1px solid #f3f4f6`,
+    background: "#fff",
+    padding: "4px 2px 6px",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 4,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  monthMobileCellToday: { background: "#eff6ff" },
+  monthMobileCellSelected: { background: "#ecfdf5", boxShadow: "inset 0 0 0 2px rgba(20,184,166,.35)" },
+  monthMobileCellNum: { fontSize: 12, fontWeight: 800, color: NAVY, lineHeight: 1 },
+  monthMobileDots: { display: "flex", alignItems: "center", justifyContent: "center", gap: 3, minHeight: 8 },
+  monthMobileDot: { width: 5, height: 5, borderRadius: "50%", flexShrink: 0 },
+  monthMobileDotMore: { fontSize: 8, fontWeight: 900, color: MUTED, lineHeight: 1 },
+  monthMobileDayPanel: { padding: "14px 12px 16px" },
+  monthMobileDayPanelHead: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, marginBottom: 12 },
+  monthMobileDayPanelTitle: { fontSize: 16, fontWeight: 900, color: NAVY, letterSpacing: "-.02em" },
+  monthMobileDayPanelSub: { marginTop: 2, fontSize: 12, color: MUTED, fontWeight: 600 },
+
   // ── Inline detail panel ──
   inlineDetail: {
     background: "#fff",
@@ -2634,7 +3140,37 @@ const CSS = `
   .month-appt-pill:hover { box-shadow: 0 0 0 1px rgba(148,163,184,.45) inset !important; }
   .slot-time-btn:hover { background: #eff6ff !important; border-color: #93c5fd !important; }
   .cal-day-avail:hover { background: #dcfce7 !important; border-color: #86efac !important; }
-  @media (max-width: 768px) {
+  @media (max-width: 1024px) {
+    .agenda-kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+    .agenda-week-layout { grid-template-columns: 1fr !important; }
+    .agenda-month-layout { grid-template-columns: 1fr !important; }
+    .agenda-day-layout { grid-template-columns: 1fr !important; }
+    .agenda-week-scroll {
+      -webkit-overflow-scrolling: touch;
+      scroll-snap-type: x proximity;
+    }
+    .agenda-week-grid { min-width: 760px !important; }
+    .agenda-week-scroll-hint {
+      display: block;
+      padding: 8px 16px 0;
+      font-size: 11px;
+      font-weight: 700;
+      color: #64748b;
+      text-align: center;
+    }
+    .agenda-week-time-sticky {
+      position: sticky;
+      left: 0;
+      z-index: 2;
+      background: #f8fafc !important;
+      box-shadow: 8px 0 12px rgba(15, 23, 42, 0.06);
+    }
+  }
+  @media (min-width: 1025px) {
+    .agenda-week-scroll-hint { display: none; }
+  }
+  @media (max-width: 760px) {
+    .agenda-page { padding: 12px 10px 24px !important; }
     .agenda-toolbar {
       flex-direction: column !important;
       align-items: stretch !important;
@@ -2680,13 +3216,6 @@ const CSS = `
       flex: 0 0 auto !important;
     }
     .agenda-kpi-row { grid-template-columns: 1fr !important; }
-    .agenda-week-grid { min-width: 520px !important; }
-    .agenda-month-card {
-      overflow-x: auto !important;
-    }
-    .agenda-month-grid-wrap {
-      min-width: 700px !important;
-    }
     .agenda-week-head-title {
       font-size: 22px !important;
       line-height: 1.05 !important;
@@ -2705,6 +3234,7 @@ const CSS = `
     .agenda-week-layout { grid-template-columns: 1fr !important; }
     .agenda-month-layout { grid-template-columns: 1fr !important; }
     .agenda-day-layout { grid-template-columns: 1fr !important; }
+    .agenda-week-mobile-strip::-webkit-scrollbar { display: none; }
   }
   @media (max-width: 1100px) {
     .agenda-week-layout { grid-template-columns: 1fr !important; }

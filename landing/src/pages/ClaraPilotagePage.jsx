@@ -342,12 +342,12 @@ export default function ClaraPilotagePage() {
   }
 
   return (
-    <div style={S.page}>
+    <div className="uwi-clara-page" style={S.page}>
       <button type="button" onClick={() => navigate("/app")} style={S.backBtn}>← Retour à l'accueil</button>
       {loading || saving ? <div style={S.syncLine}>{saving ? "Synchronisation..." : "Chargement..."}</div> : null}
 
-      <section style={S.hero}>
-        <div style={S.heroLeft}>
+      <section className="uwi-clara-hero" style={S.hero}>
+        <div className="uwi-clara-hero-left" style={S.heroLeft}>
           <ClaraPhoto />
           <div>
             <div style={S.heroTitleRow}>
@@ -365,7 +365,7 @@ export default function ClaraPilotagePage() {
       </section>
 
       <section style={S.panel}>
-        <div style={S.tabs}>
+        <div className="uwi-clara-tabs" style={S.tabs}>
           {[["overview", "Vue d'ensemble"], ["rules", "Règles"], ["history", "Historique"]].map(([id, label]) => (
             <button key={id} type="button" onClick={() => setTab(id)} style={{ ...S.tab, ...(tab === id ? S.tabActive : {}) }}>{label}</button>
           ))}
@@ -378,7 +378,7 @@ export default function ClaraPilotagePage() {
             Completez chaque tuile pour un pilotage Clara optimal.
           </span>
         </div>
-        <div style={S.quickActions}>
+        <div className="uwi-clara-quick-actions" style={S.quickActions}>
           <Btn variant="dark" icon="star" onClick={() => { appendHistory("Consultation des consignes actives", "blue"); notify("Consignes actives"); }}>Voir les consignes actives</Btn>
           <Btn variant="orange" icon="edit" onClick={() => { appendHistory("Préparation d'une nouvelle règle", "orange"); notify("Nouvelle règle"); }}>Ajouter une règle</Btn>
           <Btn variant="green" icon="plus" onClick={() => { appendHistory("Partage d'une information cabinet", "green"); notify("Information cabinet"); }}>Partager une information cabinet</Btn>
@@ -396,7 +396,7 @@ export default function ClaraPilotagePage() {
               ? "recent"
               : dt.toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
             return (
-              <div key={`${label}-${idx}`} style={S.historyRow}>
+              <div key={`${label}-${idx}`} className="uwi-clara-history-row" style={S.historyRow}>
                 <span>{at}</span>
                 <b>{label}</b>
                 <Pill tone={h.tone || "blue"}>{h.status || "Effectué"}</Pill>
@@ -406,11 +406,11 @@ export default function ClaraPilotagePage() {
         </section>
       ) : null}
 
-      <div style={S.topGrid}>
+      <div className="uwi-clara-top-grid" style={S.topGrid}>
         <section style={S.modeCard}>
           <h3 style={S.h3}>Mode de fonctionnement</h3>
           <p style={{ margin: "0 0 10px", color: C.muted }}>{current.text}</p>
-          <div style={S.segmented}>
+          <div className="uwi-clara-segmented" style={S.segmented}>
             {MODES.map((m) => (
               <button key={m.id} type="button" onClick={() => handleModeChange(m.id)} style={mode === m.id ? S.segActive : S.seg}>{m.label}</button>
             ))}
@@ -463,7 +463,7 @@ export default function ClaraPilotagePage() {
         BtnComponent={Btn}
       />
 
-      <div style={S.bottomGrid}>
+      <div className="uwi-clara-bottom-grid" style={S.bottomGrid}>
         <section style={S.darkCard}>
           <h3 style={S.darkTitle}><Icon name="star" />Consignes actives</h3>
           <p style={S.darkText}>Clara répond selon les consignes en vigueur. Deux urgences actives avec rappel automatique. Horaires modifiés : 8h30 à 17h00.</p>
@@ -542,12 +542,20 @@ const S = {
 
 const CSS = `
   @media (max-width: 1180px) {
-    .uwi-main main [style*="grid-template-columns: 1fr .9fr"] { grid-template-columns: 1fr !important; }
-    .uwi-main main [style*="grid-template-columns: repeat(2"] { grid-template-columns: 1fr !important; }
-    .uwi-main main [style*="grid-template-columns: repeat(3"] { grid-template-columns: 1fr !important; }
+    .uwi-clara-top-grid,
+    .uwi-clara-bottom-grid,
+    .uwi-clara-tile-grid { grid-template-columns: 1fr !important; }
+    .uwi-clara-module-checks { grid-template-columns: 1fr !important; }
   }
   @media (max-width: 760px) {
-    .uwi-main main [style*="padding: 18px 24px 30px"] { padding: 14px 12px 20px !important; }
-    .uwi-main main [style*="display: flex"][style*="justify-content: space-between"][style*="border-radius: 24px"] { flex-direction: column !important; align-items: flex-start !important; }
+    .uwi-clara-page { padding: 14px 12px 20px !important; }
+    .uwi-clara-hero { flex-direction: column !important; align-items: flex-start !important; padding: 16px !important; }
+    .uwi-clara-hero-left { flex-direction: column !important; align-items: flex-start !important; gap: 14px !important; }
+    .uwi-clara-quick-actions,
+    .uwi-clara-segmented { grid-template-columns: 1fr !important; }
+    .uwi-clara-tabs { overflow-x: auto !important; }
+    .uwi-clara-tabs button { flex: 0 0 auto !important; padding: 0 18px !important; }
+    .uwi-clara-history-row { grid-template-columns: 1fr !important; gap: 6px !important; }
+    .uwi-clara-history-row > span { font-size: 12px !important; }
   }
 `;

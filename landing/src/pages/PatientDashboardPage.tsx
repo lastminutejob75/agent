@@ -399,6 +399,7 @@ export default function PatientDashboardPage() {
   /** Recherche serveur GET /patients?q= ; null si la recherche API n’est pas utilisée (< 2 caractères). */
   const [patientSearchRows, setPatientSearchRows] = useState<SidebarPatientRow[] | null>(null);
   const [patientSearchLoading, setPatientSearchLoading] = useState(false);
+  const [patientListOpen, setPatientListOpen] = useState(false);
   /** Recharge GET /patients/{phone} (ex. après POST création ou mise à jour nom). */
   const [patientFetchNonce, setPatientFetchNonce] = useState(0);
   /** Ligne brute API `cabinet_clients` pour le modal profil / métadonnées. */
@@ -452,6 +453,10 @@ export default function PatientDashboardPage() {
   const phoneFromDashboardUrl = useMemo(() => (searchParams.get("phone") || "").trim(), [searchParams]);
   const isDirectPhoneView = Boolean(phoneFromDashboardUrl);
   const tenantPatientPhone = useMemo(() => normalizePhone(phoneFromDashboardUrl), [phoneFromDashboardUrl]);
+
+  useEffect(() => {
+    if (!tenantPatientPhone) setPatientListOpen(true);
+  }, [tenantPatientPhone]);
 
   /** Corrige ?phone= après décodage URL (notamment « + » → espace) ou variants 06 / espaces. */
   useEffect(() => {
@@ -1229,11 +1234,39 @@ export default function PatientDashboardPage() {
     <div className="min-h-screen bg-[#F7FAFC] text-[#0A1628]">
       <Toast message={toast} />
 
+      {patientListOpen && tenantPatientPhone ? (
+        <button
+          type="button"
+          className="fixed inset-0 z-40 bg-[#0A1628]/35 xl:hidden"
+          onClick={() => setPatientListOpen(false)}
+          aria-label="Fermer la liste patients"
+        />
+      ) : null}
+
       <div className="grid min-h-screen grid-cols-1 xl:grid-cols-[330px_minmax(0,1fr)]">
-        <aside className="border-b border-[#E5EDF5] bg-white px-4 py-5 sm:px-6 sm:py-7 xl:border-b-0 xl:border-r xl:px-6 xl:py-8">
+        <aside
+          className={cx(
+            "border-b border-[#E5EDF5] bg-white px-4 py-5 sm:px-6 sm:py-7 xl:border-b-0 xl:border-r xl:px-6 xl:py-8",
+            tenantPatientPhone && !patientListOpen ? "hidden xl:block" : "block",
+            tenantPatientPhone && patientListOpen
+              ? "fixed inset-0 z-50 overflow-y-auto pb-24 xl:static xl:inset-auto xl:z-auto xl:overflow-visible xl:pb-0"
+              : "relative",
+          )}
+        >
           <div className="mb-5 flex items-center justify-between">
             <h2 className="text-2xl font-black">Patients</h2>
-            <span className="rounded-xl bg-[#EEF6FA] px-3 py-1.5 text-sm font-black text-[#1C4B6B]">{sidebarCounts.total}</span>
+            <div className="flex items-center gap-2">
+              {tenantPatientPhone && patientListOpen ? (
+                <button
+                  type="button"
+                  onClick={() => setPatientListOpen(false)}
+                  className="rounded-lg border border-[#E2EAF4] px-3 py-1.5 text-xs font-black text-[#475569] xl:hidden"
+                >
+                  Fermer
+                </button>
+              ) : null}
+              <span className="rounded-xl bg-[#EEF6FA] px-3 py-1.5 text-sm font-black text-[#1C4B6B]">{sidebarCounts.total}</span>
+            </div>
           </div>
 
           <div className="relative mb-5">
@@ -1288,6 +1321,7 @@ export default function PatientDashboardPage() {
                       const np = new URLSearchParams(searchParams);
                       np.set("phone", patient.phone);
                       setSearchParams(np, { replace: true });
+                      setPatientListOpen(false);
                     }}
                     className={cx(
                       "flex w-full items-center gap-4 border-b border-[#EEF3F8] p-4 text-left transition last:border-b-0",
@@ -1318,6 +1352,18 @@ export default function PatientDashboardPage() {
         </aside>
 
         <main className="overflow-y-auto px-3 py-4 sm:px-5 sm:py-5 lg:px-8 lg:py-6">
+          {tenantPatientPhone ? (
+            <div className="mb-4 flex items-center gap-3 rounded-2xl border border-[#E2EAF4] bg-white px-4 py-3 shadow-sm xl:hidden">
+              <button
+                type="button"
+                onClick={() => setPatientListOpen(true)}
+                className="shrink-0 rounded-xl border border-[#DDE7F1] px-3 py-2 text-xs font-black text-[#007E8C]"
+              >
+                ← Patients
+              </button>
+              <span className="min-w-0 truncate text-sm font-black">{displayHero.name}</span>
+            </div>
+          ) : null}
           {tenantPatientNotFound ? (
             <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-950 shadow-sm">
               <p className="m-0">
@@ -1798,11 +1844,13 @@ export default function PatientDashboardPage() {
                     year: "numeric",
                   });
                   return (
-                  <div key={rowKey} className="grid grid-cols-2 gap-2 rounded-2xl border border-[#EEF3F8] p-4 text-sm sm:grid-cols-[120px_90px_1fr_160px] sm:items-center sm:gap-3">
-                    <b className="col-span-1">{dateStr}</b>
-                    <b className="col-span-1">{formatAgendaSlotHour(start)}</b>
-                    <span className="col-span-2 sm:col-span-1">{agendaSlotMotif(slot) || "Consultation"}</span>
-                    <span className="col-span-2 rounded-lg bg-[#F2F8FA] px-3 py-2 text-center font-black text-[#007E8C] sm:col-span-1">{patientAgendaRowStatus(slot, start)}</span>
+                  <div key={rowKey} className="grid grid-cols-1 gap-2 rounded-2xl border border-[#EEF3F8] p-4 text-sm sm:grid-cols-[120px_90px_1fr_160px] sm:items-center sm:gap-3">
+                    <div className="flex items-center justify-between gap-3 sm:contents">
+                      <b>{dateStr}</b>
+                      <b>{formatAgendaSlotHour(start)}</b>
+                    </div>
+                    <span>{agendaSlotMotif(slot) || "Consultation"}</span>
+                    <span className="rounded-lg bg-[#F2F8FA] px-3 py-2 text-center font-black text-[#007E8C]">{patientAgendaRowStatus(slot, start)}</span>
                   </div>
                   );
                 })}
@@ -2075,13 +2123,13 @@ function HistoryList({ extended = false }: { extended?: boolean }) {
       {rows.slice(0, extended ? rows.length : 3).map(([date, hour, type, result, status, tone]) => (
         <div
           key={`${date}-${hour}`}
-          className="grid grid-cols-[16px_1fr] gap-2 border-b border-[#EEF3F8] p-4 last:border-b-0 sm:grid-cols-[16px_110px_150px_1fr_180px] sm:items-center sm:gap-4"
+          className="grid grid-cols-1 gap-3 border-b border-[#EEF3F8] p-4 last:border-b-0 sm:grid-cols-[16px_110px_150px_1fr_180px] sm:items-center sm:gap-4"
         >
-          <span className={cx("h-3 w-3 rounded-full", tone === "green" ? "bg-[#18C765]" : "bg-[#FF9E18]")} />
-          <div className="text-sm text-[#61708B] sm:col-span-1"><b>{date}</b><br />{hour}</div>
-          <div className="col-span-2 -mt-1 font-black sm:col-span-1 sm:mt-0">{type}</div>
-          <div className="col-span-2 text-sm text-[#53647F] sm:col-span-1">{result}</div>
-          <span className={cx("col-span-2 rounded-lg px-3 py-2 text-center text-xs font-black sm:col-span-1", tone === "green" ? "bg-[#E8FAF0] text-[#0B9445]" : "bg-[#FFF1DE] text-[#D96B00]")}>{status}</span>
+          <span className={cx("hidden h-3 w-3 rounded-full sm:inline-block", tone === "green" ? "bg-[#18C765]" : "bg-[#FF9E18]")} />
+          <div className="text-sm text-[#61708B]"><b>{date}</b><br />{hour}</div>
+          <div className="font-black">{type}</div>
+          <div className="text-sm text-[#53647F]">{result}</div>
+          <span className={cx("rounded-lg px-3 py-2 text-center text-xs font-black sm:justify-self-end", tone === "green" ? "bg-[#E8FAF0] text-[#0B9445]" : "bg-[#FFF1DE] text-[#D96B00]")}>{status}</span>
         </div>
       ))}
     </div>

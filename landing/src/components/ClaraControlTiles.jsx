@@ -17,7 +17,7 @@ export default function ClaraControlTiles({
   const Btn = BtnComponent;
 
   return (
-    <div style={S.tileGrid}>
+    <div className="uwi-clara-tile-grid" style={S.tileGrid}>
       {tiles.map(([title, icon, tone, desc, cta]) => (
         <section key={title} style={{ ...S.tile, borderTopColor: C[tone] }}>
           <i style={{ background: soft[tone], color: C[tone] }}>{renderIcon(icon)}</i>

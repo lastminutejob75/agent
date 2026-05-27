@@ -11,12 +11,12 @@ export default function HomeStatsStrip({
   const navigate = useNavigate();
   const S = styles;
   return (
-    <section style={S.statsStrip}>
+    <section className="uwi-dashboard-stats-strip" style={S.statsStrip}>
       <div style={S.statsIntro}>
         <span>Activite du jour</span>
         <b>Supervision rapide</b>
       </div>
-      <div style={S.statsGrid}>
+      <div className="uwi-dashboard-stats-grid" style={S.statsGrid}>
         {stats.map(([value, label, note, tone, icon, to]) => (
           <button
             key={label}

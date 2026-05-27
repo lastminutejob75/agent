@@ -33,8 +33,8 @@ export default function HomeHeroSection({
   });
 
   return (
-    <div style={S.hero}>
-      <div style={S.heroLeft}>
+    <div className="uwi-dashboard-hero" style={S.hero}>
+      <div className="uwi-dashboard-hero-left" style={S.heroLeft}>
         <ClaraPhotoComponent />
         <div>
           <div style={S.heroTitleRow}>
