@@ -2878,12 +2878,27 @@ def tenant_list_patients(
 def tenant_get_patient(
     phone: str,
     auth: dict = Depends(require_tenant_auth),
+    lightweight: bool = Query(False, description="Profil + documents uniquement (plus rapide)"),
 ):
     """Fiche patient complète : profil, appels liés, handoffs liés."""
     tenant_id = auth["tenant_id"]
     profile = get_cabinet_client_by_phone(tenant_id, phone)
     if not profile:
         raise HTTPException(404, "Patient not found")
+
+    if lightweight:
+        docs = list_patient_documents(tenant_id, phone)
+        return {
+            "patient": profile,
+            "calls": [],
+            "handoffs": [],
+            "notes": [],
+            "documents": [
+                {"id": d.get("id"), "original_name": d.get("original_name"), "mime_type": d.get("mime_type"),
+                 "size_bytes": d.get("size_bytes"), "created_at": str(d.get("created_at", ""))}
+                for d in docs
+            ],
+        }
 
     phone_norm = normalize_phone_number(phone)
 

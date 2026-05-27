@@ -396,6 +396,8 @@ export default function PatientDashboardPage() {
   const sidebarBootstrapDoneRef = useRef(false);
   const [tenantAgendaRawSlots, setTenantAgendaRawSlots] = useState<Array<Record<string, unknown>>>([]);
   const [patientAgendaLoading, setPatientAgendaLoading] = useState(false);
+  /** Fenêtre agenda déjà chargée (14j overview, 60j onglet rendez-vous). */
+  const [agendaDaysLoaded, setAgendaDaysLoaded] = useState(0);
   /** Recherche serveur GET /patients?q= ; null si la recherche API n’est pas utilisée (< 2 caractères). */
   const [patientSearchRows, setPatientSearchRows] = useState<SidebarPatientRow[] | null>(null);
   const [patientSearchLoading, setPatientSearchLoading] = useState(false);
@@ -470,7 +472,7 @@ export default function PatientDashboardPage() {
 
   const loadTenantSidebarPatients = useCallback(async () => {
     try {
-      const res = await api.tenantGetPatients("?limit=500");
+      const res = await api.tenantGetPatients("?limit=100");
       const items = Array.isArray(res?.items) ? res.items : [];
       const mapped = items
         .map((item: Record<string, unknown>) => cabinetRowToSidebar(item))
@@ -525,15 +527,6 @@ export default function PatientDashboardPage() {
       window.clearTimeout(timer);
     };
   }, [query]);
-
-  useEffect(() => {
-    const pnorm = normalizePhone(phoneFromDashboardUrl);
-    if (!pnorm) return undefined;
-    const t = window.setTimeout(() => {
-      loadTenantSidebarPatients();
-    }, 450);
-    return () => window.clearTimeout(t);
-  }, [phoneFromDashboardUrl, loadTenantSidebarPatients]);
 
   useEffect(() => {
     if (tenantListLoading) return;
@@ -675,20 +668,20 @@ export default function PatientDashboardPage() {
         gradient: teal,
       };
     }
-    if (documentsLoading && tenantPatientPhone) {
-      return {
-        name: "Chargement…",
-        phone: formatDisplayFrenchPhone(tenantPatientPhone),
-        initials: "…",
-        gradient: loadingGrad,
-      };
-    }
     if (sidebarHeroFallback) {
       return {
         name: sidebarHeroFallback.name,
         phone: sidebarHeroFallback.displayPhone,
         initials: sidebarHeroFallback.initials,
         gradient: sidebarHeroFallback.gradient,
+      };
+    }
+    if (documentsLoading && tenantPatientPhone) {
+      return {
+        name: "Chargement…",
+        phone: formatDisplayFrenchPhone(tenantPatientPhone),
+        initials: "…",
+        gradient: loadingGrad,
       };
     }
     return {
@@ -723,7 +716,7 @@ export default function PatientDashboardPage() {
       };
     }
     setDocumentsLoading(true);
-    api.tenantGetPatient(tenantPatientPhone)
+    api.tenantGetPatient(tenantPatientPhone, { lightweight: true })
       .then((res) => {
         if (cancelled) return;
         setTenantPatientNotFound(false);
@@ -772,8 +765,8 @@ export default function PatientDashboardPage() {
 
   useEffect(() => {
     let cancelled = false;
-    if (!tenantPatientPhone) {
-      setPatientNotes([]);
+    if (!tenantPatientPhone || activeView !== "overview") {
+      if (!tenantPatientPhone) setPatientNotes([]);
       return () => {
         cancelled = true;
       };
@@ -801,27 +794,43 @@ export default function PatientDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [tenantPatientPhone, patientFetchNonce]);
+  }, [tenantPatientPhone, patientFetchNonce, activeView]);
+
+  useEffect(() => {
+    setAgendaDaysLoaded(0);
+    setTenantAgendaRawSlots([]);
+    setPatientAgendaLoading(false);
+  }, [tenantPatientPhone]);
 
   useEffect(() => {
     let cancelled = false;
-    if (!tenantPatientPhone) {
-      setTenantAgendaRawSlots([]);
-      setPatientAgendaLoading(false);
+    if (!tenantPatientPhone || activeView === "history") {
       return () => {
         cancelled = true;
       };
     }
+
+    const daysNeeded = activeView === "appointments" ? 60 : 14;
+    if (agendaDaysLoaded >= daysNeeded) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
     setPatientAgendaLoading(true);
     api
-      .tenantGetAgenda("?upcoming_days=60&compact=1")
+      .tenantGetAgenda(`?upcoming_days=${daysNeeded}&compact=1`)
       .then((res) => {
         if (cancelled) return;
         const slots = Array.isArray(res?.slots) ? res.slots : [];
         setTenantAgendaRawSlots(slots as Array<Record<string, unknown>>);
+        setAgendaDaysLoaded(daysNeeded);
       })
       .catch(() => {
-        if (!cancelled) setTenantAgendaRawSlots([]);
+        if (!cancelled) {
+          setTenantAgendaRawSlots([]);
+          setAgendaDaysLoaded(0);
+        }
       })
       .finally(() => {
         if (!cancelled) setPatientAgendaLoading(false);
@@ -829,7 +838,7 @@ export default function PatientDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [tenantPatientPhone]);
+  }, [tenantPatientPhone, activeView, agendaDaysLoaded]);
 
   const patientAgendaSlots = useMemo(() => {
     if (!tenantPatientPhone) return [];
@@ -1626,7 +1635,7 @@ export default function PatientDashboardPage() {
                     <p className="m-0 text-sm font-semibold text-[#61708B]">Sélectionnez un patient pour voir ses prochains rendez-vous.</p>
                   ) : upcomingPatientAppointments.length === 0 ? (
                     <p className="m-0 text-sm font-semibold text-[#61708B]">
-                      Aucun rendez-vous à venir pour ce numéro (prochains 60 jours). Les créneaux réservés avec ce téléphone sur l’agenda apparaîtront ici.
+                      Aucun rendez-vous à venir pour ce numéro (prochains 14 jours). Les créneaux réservés avec ce téléphone sur l’agenda apparaîtront ici.
                     </p>
                   ) : (
                     <>

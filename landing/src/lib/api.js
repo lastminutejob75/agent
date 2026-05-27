@@ -242,8 +242,15 @@ export const api = {
     request(`/api/tenant/patients${params}`, { tenant: true, ...opts }),
   tenantRegisterPatient: (body) =>
     request("/api/tenant/patients", { method: "POST", body, tenant: true }),
-  tenantGetPatient: (phone) =>
-    request(`/api/tenant/patients/${encodeURIComponent(phone)}`, { tenant: true }),
+  tenantGetPatient: (phone, opts = {}) => {
+    const params = new URLSearchParams();
+    if (opts?.lightweight) params.set("lightweight", "1");
+    const qs = params.toString();
+    return request(
+      `/api/tenant/patients/${encodeURIComponent(phone)}${qs ? `?${qs}` : ""}`,
+      { tenant: true },
+    );
+  },
   tenantUpdatePatient: (phone, body) =>
     request(`/api/tenant/patients/${encodeURIComponent(phone)}`, { method: "PATCH", body, tenant: true }),
   tenantGetPatientNotes: (phone, params = "") =>
