@@ -57,7 +57,7 @@ jobs:
         run: npm audit --audit-level=high --omit=dev || true
 
   lint:
-    name: ruff (lint)
+    name: ruff (smoke, bloquant)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -69,8 +69,37 @@ jobs:
           python-version: "3.11"
       - name: Install ruff
         run: pip install ruff
-      - name: Run ruff (soft fail temporaire)
-        # Config dans pyproject.toml. Selection volontairement restreinte (E/F/W).
+      - name: Run ruff smoke (bloquant)
+        # Périmètre stable et critique pour bloquer les régressions immédiates.
+        run: |
+          ruff check \
+            backend/security.py \
+            backend/main.py \
+            backend/audit_log.py \
+            backend/routes/admin.py \
+            backend/routes/voice.py \
+            tests/test_admin_security_audit.py \
+            tests/test_audit_log.py \
+            tests/test_debug_endpoints_guard.py \
+            tests/test_call_lock_pg.py \
+            tests/test_auth_google_sso.py
+
+  lint-full:
+    name: ruff full (info only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ruff
+        run: pip install ruff
+      - name: Run ruff full (soft fail temporaire)
+        # Visibilité sur la dette restante sans bloquer le pipeline.
         run: ruff check backend tests || true
 
   backend-tests:
