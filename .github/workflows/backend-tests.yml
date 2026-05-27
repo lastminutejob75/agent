@@ -74,7 +74,7 @@ jobs:
         run: ruff check backend tests || true
 
   backend-tests:
-    name: pytest (backend)
+    name: pytest (backend smoke)
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -104,13 +104,17 @@ jobs:
           pip install -r requirements.txt
           pip install pytest pytest-cov
 
-      - name: Run pytest (soft fail temporaire)
-        # cov-fail-under = baseline tres conservatrice. A augmenter
-        # progressivement (cf. docs/TESTS_BACKEND.md "Couverture").
+      - name: Run pytest smoke (bloquant)
+        # Suite stable et critique pour bloquer les regressions securite/API
+        # sans etre penalisee par les tests legacy encore instables.
         run: |
-          python -m pytest -q --tb=line --maxfail=10 \
-            --cov=backend --cov-report=term-missing:skip-covered \
-            --cov-report=xml --cov-fail-under=50 || true
+          python -m pytest -q --tb=line --maxfail=5 \
+            tests/test_admin_security_audit.py \
+            tests/test_audit_log.py \
+            tests/test_debug_endpoints_guard.py \
+            tests/test_call_lock_pg.py \
+            tests/test_auth_google_sso.py \
+            tests/test_admin_api.py::test_get_calls_list_merges_ivr_events_when_vapi_calls_exist
 
       - name: Upload coverage XML
         if: always() && github.event_name == 'pull_request'
@@ -119,6 +123,42 @@ jobs:
           name: backend-coverage
           path: coverage.xml
           if-no-files-found: ignore
+
+  backend-tests-full:
+    name: pytest full (info only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    continue-on-error: true
+
+    env:
+      JWT_SECRET: test-secret-pytest-min-32-bytes-long-for-hmac
+      ADMIN_API_TOKEN: test-admin-token-pytest
+      ADMIN_DEMO_MODE: ""
+      ENABLE_DEBUG_ENDPOINTS: ""
+      VAPI_SIGNATURE_DISABLED: "true"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: Run pytest full (soft fail temporaire)
+        run: |
+          python -m pytest -q --tb=line --maxfail=10 \
+            --cov=backend --cov-report=term-missing:skip-covered \
+            --cov-report=xml --cov-fail-under=50 || true
 
   frontend-build:
     name: vite build (frontend)
