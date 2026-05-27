@@ -615,7 +615,7 @@ function AgendaWeekMobileList({
 function AgendaMonthMobileView({
   monthGrid,
   currentMonth,
-  appointments,
+  appointmentsByDate,
   selectedDate,
   today,
   onSelectDate,
@@ -625,10 +625,7 @@ function AgendaMonthMobileView({
   monthCounts,
   styles: S,
 }) {
-  const selectedDayAppts = useMemo(
-    () => sortApptsByTime(appointments.filter((a) => a.date === selectedDate)),
-    [appointments, selectedDate],
-  );
+  const selectedDayAppts = appointmentsByDate[selectedDate] || [];
 
   return (
     <div className="agenda-month-mobile">
@@ -656,8 +653,8 @@ function AgendaMonthMobileView({
           const isToday = d === today;
           const isSelected = d === selectedDate;
           const dayNum = new Date(`${d}T12:00:00`).getDate();
-          const dayAppts = sortApptsByTime(appointments.filter((a) => a.date === d));
-          const toneDots = dayAppts.slice(0, 3).map((a) => toneForAppointment(a));
+          const dayAppts = appointmentsByDate[d] || [];
+          const toneDots = dayAppts.slice(0, 3).map((a) => a.tone || toneForAppointment(a));
           return (
             <button
               key={d}
@@ -822,19 +819,27 @@ export default function AppAgenda() {
     return [selectedDate];
   }, [viewMode, weekDates, monthGrid, selectedDate]);
 
+  /** Plage réellement chargée : semaine entière en vue jour (évite un refetch à chaque clic). */
+  const fetchDates = useMemo(() => {
+    if (viewMode === "month") return [...new Set(monthGrid)];
+    return weekDates;
+  }, [viewMode, monthGrid, weekDates]);
+
   const loadAgenda = useCallback(async () => {
     setError("");
-    const prefsPromise = Promise.all([
-      api.tenantMe().catch(() => null),
-      api.tenantGetHoraires().catch(() => null),
-    ]);
+    api.tenantMe().catch(() => null).then((nextMe) => {
+      if (nextMe) setMe(nextMe);
+    });
+    const horairesPromise = api.tenantGetHoraires().catch(() => null);
 
-    const staleBulk = readAgendaBulkStale(visibleDates);
+    const staleBulk = readAgendaBulkStale(fetchDates);
     let showedStale = false;
     if (staleBulk?.dates) {
-      const byStale = {};
-      visibleDates.forEach((d) => { byStale[d] = staleBulk.dates[d] || { slots: [], date: d }; });
-      setAgendaByDate(byStale);
+      setAgendaByDate((prev) => {
+        const next = { ...(prev || {}) };
+        fetchDates.forEach((d) => { next[d] = staleBulk.dates[d] || { slots: [], date: d }; });
+        return next;
+      });
       showedStale = true;
       setCalendarLoading(false);
     } else {
@@ -842,46 +847,27 @@ export default function AppAgenda() {
     }
 
     try {
-      const monthDates = viewMode === "month"
-        ? visibleDates.filter((d) => getMonthFromDate(d) === currentMonth)
-        : visibleDates;
-      const sideDates = viewMode === "month"
-        ? visibleDates.filter((d) => getMonthFromDate(d) !== currentMonth)
-        : [];
-
-      const bulkRes = await api.tenantGetAgendaBulk(monthDates, { lightweight: viewMode !== "day" }).catch(() => null);
+      const bulkRes = await api.tenantGetAgendaBulk(fetchDates, { lightweight: true }).catch(() => null);
       if (bulkRes?.dates) {
-        writeAgendaBulkStale(monthDates, bulkRes);
+        writeAgendaBulkStale(fetchDates, bulkRes);
       }
-      const byDate = {};
       if (bulkRes?.dates) {
-        monthDates.forEach((d) => { byDate[d] = bulkRes.dates[d] || { slots: [], date: d }; });
-        sideDates.forEach((d) => { byDate[d] = { slots: [], date: d }; });
-      } else {
-        const results = await Promise.all(monthDates.map((d) => api.tenantGetAgenda(`?date=${d}`).catch(() => ({ slots: [], date: d }))));
-        monthDates.forEach((d, i) => { byDate[d] = results[i]; });
-        sideDates.forEach((d) => { byDate[d] = { slots: [], date: d }; });
+        setAgendaByDate((prev) => {
+          const next = { ...(prev || {}) };
+          fetchDates.forEach((d) => { next[d] = bulkRes.dates[d] || { slots: [], date: d }; });
+          return next;
+        });
+      } else if (!showedStale) {
+        const results = await Promise.all(
+          fetchDates.map((d) => api.tenantGetAgenda(`?date=${d}`).catch(() => ({ slots: [], date: d }))),
+        );
+        setAgendaByDate((prev) => {
+          const next = { ...(prev || {}) };
+          fetchDates.forEach((d, i) => { next[d] = results[i]; });
+          return next;
+        });
       }
-      setAgendaByDate(byDate);
-      // En vue mois, charger les jours hors mois courant en arrière-plan (sans bloquer l'UI).
-      if (viewMode === "month" && sideDates.length > 0) {
-        api
-          .tenantGetAgendaBulk(sideDates, { lightweight: true })
-          .then((sideRes) => {
-            if (!sideRes?.dates) return;
-            setAgendaByDate((prev) => {
-              const next = { ...(prev || {}) };
-              sideDates.forEach((d) => {
-                next[d] = sideRes.dates[d] || { slots: [], date: d };
-              });
-              return next;
-            });
-            writeAgendaBulkStale(sideDates, sideRes);
-          })
-          .catch(() => {});
-      }
-      prefsPromise.then(([nextMe, nextHoraires]) => {
-        if (nextMe) setMe(nextMe);
+      horairesPromise.then((nextHoraires) => {
         if (nextHoraires) setHoraires(nextHoraires);
       });
     } catch (e) {
@@ -891,7 +877,7 @@ export default function AppAgenda() {
     } finally {
       setCalendarLoading(false);
     }
-  }, [visibleDates, viewMode, currentMonth]);
+  }, [fetchDates]);
 
   useEffect(() => { loadAgenda(); }, [loadAgenda]);
 
@@ -1044,20 +1030,45 @@ export default function AppAgenda() {
 
   const appointments = useMemo(() =>
     visibleDates.flatMap((date) =>
-      (agendaByDate[date]?.slots || []).map((s, i) => ({
-        ...s,
-        id: `${date}-${s.event_id || s.appointment_id || i}`,
-        date,
-        displayTime: formatTimeLabel(s.hour),
-        endTime: addMinutes(formatTimeLabel(s.hour), duration),
-        typeIcon: typeIcon(s.type),
-        isUWI: s.source === "UWI",
-        canCancel: !!s.can_cancel,
-        actionId: s.appointment_id || s.event_id || "",
-      })),
+      (agendaByDate[date]?.slots || []).map((s, i) => {
+        const appt = {
+          ...s,
+          id: `${date}-${s.event_id || s.appointment_id || i}`,
+          date,
+          displayTime: formatTimeLabel(s.hour),
+          endTime: addMinutes(formatTimeLabel(s.hour), duration),
+          typeIcon: typeIcon(s.type),
+          isUWI: s.source === "UWI",
+          canCancel: !!s.can_cancel,
+          actionId: s.appointment_id || s.event_id || "",
+        };
+        return { ...appt, tone: toneForAppointment(appt) };
+      }),
     ),
     [agendaByDate, visibleDates, duration],
   );
+
+  const appointmentsByDate = useMemo(() => {
+    const map = {};
+    appointments.forEach((a) => {
+      if (!map[a.date]) map[a.date] = [];
+      map[a.date].push(a);
+    });
+    Object.keys(map).forEach((d) => {
+      map[d] = sortApptsByTime(map[d]);
+    });
+    return map;
+  }, [appointments]);
+
+  const appointmentsByDateHour = useMemo(() => {
+    const map = {};
+    appointments.forEach((a) => {
+      const key = `${a.date}|${a.displayTime}`;
+      if (!map[key]) map[key] = [];
+      map[key].push(a);
+    });
+    return map;
+  }, [appointments]);
 
   /** RDV au statut annulé dans la période affichée (aligné logique dashboard). */
   const cancelledInVisible = useMemo(
@@ -1511,10 +1522,6 @@ export default function AppAgenda() {
     { tone: "gray", label: "Indisponible / libre" },
   ];
 
-  if (calendarLoading) {
-    return <div style={S.page}><style>{CSS}</style><div style={S.loadingBox}>Chargement de l&apos;agenda…</div></div>;
-  }
-
   const navLabel = viewMode === "month"
     ? formatMonthLabel(selectedDate)
     : viewMode === "week"
@@ -1611,7 +1618,12 @@ export default function AppAgenda() {
       </div>
 
       {/* ─── CALENDAR ─── */}
-      <div style={S.calendarCol}>
+      <div style={{ ...S.calendarCol, position: "relative" }}>
+        {calendarLoading ? (
+          <div style={S.calendarLoadingOverlay} aria-busy="true">
+            <div style={S.loadingBox}>Chargement de l&apos;agenda…</div>
+          </div>
+        ) : null}
 
         {/* ═══ MONTH VIEW ═══ */}
         {viewMode === "month" && (
@@ -1621,7 +1633,7 @@ export default function AppAgenda() {
                 <AgendaMonthMobileView
                   monthGrid={monthGrid}
                   currentMonth={currentMonth}
-                  appointments={appointments}
+                  appointmentsByDate={appointmentsByDate}
                   selectedDate={selectedDate}
                   today={today}
                   onSelectDate={selectAgendaDay}
@@ -1639,7 +1651,7 @@ export default function AppAgenda() {
               {monthGrid.map((d, idx) => {
                 const isCurrentMonth = getMonthFromDate(d) === currentMonth;
                 const isToday = d === today;
-                const dayAppts = appointments.filter((a) => a.date === d);
+                const dayAppts = appointmentsByDate[d] || [];
                 const dayNum = new Date(`${d}T12:00:00`).getDate();
                 const maxVisible = 3;
                 const overflow = dayAppts.length - maxVisible;
@@ -1793,7 +1805,7 @@ export default function AppAgenda() {
                     <Fragment key={hour}>
                       <div className="agenda-week-time-sticky" style={S.weekTimeCell}><span style={S.weekTimeLabel}>{hour}</span></div>
                       {weekDates.map((d, dayIdx) => {
-                        const cellAppts = appointments.filter((a) => a.date === d && a.displayTime === hour);
+                        const cellAppts = appointmentsByDateHour[`${d}|${hour}`] || [];
                         return (
                           <div key={`${d}-${hour}`} style={{ ...S.weekCell, ...(dayIdx % 2 === 0 ? S.weekCellAlt : {}) }}>
                             {cellAppts.map((a) => {
@@ -1885,7 +1897,7 @@ export default function AppAgenda() {
             <div style={S.card}>
               <div style={S.dayTimeline}>
                 {hours.map((hour) => {
-                  const hourAppts = appointments.filter((a) => a.date === selectedDate && a.displayTime === hour);
+                  const hourAppts = appointmentsByDateHour[`${selectedDate}|${hour}`] || [];
                   const isNow = selectedDate === today && hour === `${String(new Date().getHours()).padStart(2, "0")}:00`;
                   return (
                     <div key={hour} style={{ ...S.dayRow, ...(isNow ? S.dayRowNow : {}) }}>
@@ -2264,6 +2276,17 @@ const S = {
   page: { minHeight: "100%", background: "#F6F8FB", fontFamily: "'Inter', 'DM Sans', sans-serif", color: NAVY, padding: "18px 24px 36px", maxWidth: 1280, margin: "0 auto" },
 
   loadingBox: { padding: 40, textAlign: "center", fontSize: 14, color: MUTED },
+  calendarLoadingOverlay: {
+    position: "absolute",
+    inset: 0,
+    zIndex: 2,
+    display: "grid",
+    placeItems: "center",
+    background: "rgba(246,248,251,.82)",
+    backdropFilter: "blur(2px)",
+    borderRadius: 16,
+    minHeight: 220,
+  },
   errorBox: { marginBottom: 14, borderRadius: 12, border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", padding: "12px 14px", fontSize: 14, fontWeight: 600 },
   toast: { marginBottom: 14, borderRadius: 10, border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#047857", padding: "12px 16px", fontSize: 14, fontWeight: 700, animation: "toastIn .3s ease" },
   toastError: { marginBottom: 14, borderRadius: 10, border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", padding: "12px 16px", fontSize: 14, fontWeight: 700, animation: "toastIn .3s ease" },
