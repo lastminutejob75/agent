@@ -108,6 +108,37 @@ async def security_headers_middleware(request: Request, call_next):
 
 
 @app.middleware("http")
+async def admin_demo_write_block(request: Request, call_next):
+    """Bloque les requetes write sur /api/admin/* en mode demo (lecture seule)."""
+    try:
+        from backend.admin_demo import is_demo_mode
+
+        if not is_demo_mode():
+            return await call_next(request)
+    except Exception:
+        return await call_next(request)
+
+    path = request.url.path or ""
+    if not path.startswith("/api/admin/"):
+        return await call_next(request)
+
+    method = (request.method or "GET").upper()
+    if method in ("GET", "HEAD", "OPTIONS"):
+        return await call_next(request)
+
+    if path.startswith("/api/admin/auth/"):
+        return await call_next(request)
+
+    return JSONResponse(
+        status_code=403,
+        content={
+            "detail": "Action desactivee en mode demo. Mettre ADMIN_DEMO_MODE=false pour reactiver.",
+            "demo_mode": True,
+        },
+    )
+
+
+@app.middleware("http")
 async def block_debug_routes_middleware(request: Request, call_next):
     """Bloque les endpoints debug/sensibles sauf bypass explicite."""
     path = request.url.path or ""
@@ -296,6 +327,10 @@ app.include_router(voice.router)      # /api/vapi/*
 app.include_router(whatsapp.router)   # /api/whatsapp/*
 app.include_router(bland.router)      # /api/bland/*
 app.include_router(reports.router)    # /api/reports/*
+if (os.environ.get("ADMIN_DEMO_MODE") or "").strip().lower() in ("true", "1", "yes", "on"):
+    from backend.admin_demo.router import router as _admin_demo_router
+
+    app.include_router(_admin_demo_router)  # dataset factice, monte avant admin.router
 app.include_router(admin.router)      # /api/public/onboarding, /api/admin/*
 app.include_router(auth.router)       # /api/auth/*
 app.include_router(tenant.router)     # /api/tenant/*
