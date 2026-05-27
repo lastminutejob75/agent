@@ -1,18 +1,20 @@
-# Déploiement Vercel (landing UWi)
+# Déploiement Vercel (UWi)
 
-Configuration simple et unique : **Root Directory = `landing`**, et c’est **`landing/vercel.json`** qui fait foi.  
-Il n’y a plus de `vercel.json` à la racine du repo.
+**Source unique : repo GitHub `lastminutejob75/agent`.**  
+Il n’y a plus de sync vers le repo `uwi-landing` : chaque push sur `main` déclenche le déploiement Vercel depuis **agent**.
+
+Configuration : **Root Directory = `landing`**, et c’est **`landing/vercel.json`** qui fait foi.  
+Il n’y a pas de `vercel.json` à la racine du monorepo.
 
 ## Étapes côté Vercel
 
-1. **Vercel Dashboard** → ton projet → **Settings** → **General**.
-2. Dans **Root Directory**, saisir **`landing`** puis **Save**.
-3. Dans **Build & Output Settings** (Framework = Vite, overrides activés) vérifier :
+1. **Vercel Dashboard** → projet uwiapp.com (ou `agent`) → **Settings** → **General**.
+2. **Repository** : **`lastminutejob75/agent`** (pas `uwi-landing`).
+3. **Root Directory** : **`landing`** puis **Save**.
+4. Dans **Build & Output Settings** (Framework = Vite) :
    - **Build Command** : `npm run build`
    - **Output Directory** : `dist`
    - **Install Command** : `npm install`
-
-Vercel exécutera donc le build dans `landing/` avec les commandes standard Vite, en utilisant `landing/vercel.json` pour les rewrites (sitemap, robots, routes pré-rendues…).
 
 ## Vérifications après déploiement
 

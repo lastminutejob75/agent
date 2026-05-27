@@ -1,7 +1,7 @@
 #!/bin/bash
-# Sync landing/ vers uwi-landing (pour uwiapp.com)
+# DÉPRÉCIÉ — uwiapp.com doit déployer depuis lastminutejob75/agent (Root Directory = landing).
+# Ce script n'est conservé qu'en secours si un ancien projet Vercel pointe encore sur uwi-landing.
 # Usage: ./scripts/sync-landing-to-uwi-landing.sh
-# À lancer après push sur agent si uwiapp.com déploie encore depuis uwi-landing.
 set -e
 
 REPO_AGENT="$(cd "$(dirname "$0")/.." && pwd)"
