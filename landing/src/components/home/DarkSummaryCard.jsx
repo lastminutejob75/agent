@@ -1,6 +1,7 @@
 export default function DarkSummaryCard({
-  openHandoffsCount,
-  callsCount,
+  handledTodayCount,
+  urgentCount,
+  avgResponseMinutes,
   cancelledCount,
   recoveredCount,
   loading,
@@ -8,12 +9,16 @@ export default function DarkSummaryCard({
   styles,
 }) {
   const S = styles;
+  const delayLabel = Number.isFinite(avgResponseMinutes)
+    ? `${avgResponseMinutes} min`
+    : "—";
   return (
     <section style={S.darkCard}>
       <h3 style={S.darkTitle}>{IconRenderer("star")}Contexte cabinet</h3>
       <p style={S.darkText}>
-        Clara a gere {openHandoffsCount || 18} demandes aujourd'hui, dont {Math.max(1, Math.round((openHandoffsCount || 4) / 3))} classees urgentes.
-        Le delai moyen de reponse est de {Math.max(12, Math.round((callsCount || 14) * 1.6))} min.
+        Clara a traité {handledTodayCount} demande{handledTodayCount > 1 ? "s" : ""} aujourd&apos;hui
+        {urgentCount > 0 ? `, dont ${urgentCount} classée${urgentCount > 1 ? "s" : ""} urgente${urgentCount > 1 ? "s" : ""}` : ""}.
+        {" "}Le délai moyen de réponse est de {delayLabel}.
         {` ${cancelledCount > 0 ? `${recoveredCount} creneau${recoveredCount > 1 ? "x" : ""} d'urgence recuperes.` : " Aucun creneau d'urgence utilise."}`}
       </p>
       <small style={S.darkFooter}>Mis a jour · {loading ? "Synchronisation..." : `Aujourd'hui a ${new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`}</small>

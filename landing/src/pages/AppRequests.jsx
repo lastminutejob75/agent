@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../lib/api.js";
+import { toUiStatus } from "../lib/requestUiStatus.js";
 
 const REQUEST_STATUS_OVERRIDES_KEY = "uwi_request_status_overrides";
 const SYNC_BADGE_WINDOW_MS = 2 * 60 * 1000;
@@ -20,12 +21,6 @@ const PRIORITY_TONE = {
   Faible: { border: "#94A3B8", badgeBg: "#F8FAFC", badgeText: "#64748B", wait: "#64748B" },
 };
 
-function toUiStatus(rawStatus) {
-  const raw = String(rawStatus || "").toLowerCase();
-  if (raw === "processed" || raw === "cancelled") return "Traitées";
-  if (raw.includes("live") || raw === "callback_scheduled") return "En cours";
-  return "À traiter";
-}
 
 function readRequestStatusOverrides() {
   if (typeof window === "undefined") return {};

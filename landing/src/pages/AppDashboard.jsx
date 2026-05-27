@@ -3,6 +3,7 @@ import { useNavigate, useOutletContext } from "react-router-dom";
 import { agendaSlotMotif, formatAgendaSlotHour, parseAgendaSlotStart } from "../lib/agendaSlotParse.js";
 import { api } from "../lib/api.js";
 import HomeHeroSection from "../components/home/HomeHeroSection.jsx";
+import { buildRequestItemsFromCallsAndHandoffs, summarizeRequestItems } from "../lib/requestUiStatus.js";
 import HomeTabsActionsPanel from "../components/home/HomeTabsActionsPanel.jsx";
 import HomeStatsStrip from "../components/home/HomeStatsStrip.jsx";
 import NextAppointmentCard from "../components/home/NextAppointmentCard.jsx";
@@ -252,6 +253,11 @@ export default function AppDashboard() {
     return s !== "processed" && s !== "cancelled";
   }), [handoffs]);
 
+  const requestSummary = useMemo(() => {
+    const items = buildRequestItemsFromCallsAndHandoffs(calls, handoffs);
+    return summarizeRequestItems(items);
+  }, [calls, handoffs]);
+
   const taskRows = useMemo(() => openHandoffs.slice(0, 2).map((h, idx) => {
     const title = String(h?.summary || h?.reason || h?.label || `Demande ${idx + 1}`).slice(0, 64);
     const dt = new Date(String(h?.created_at || h?.createdAt || ""));
@@ -366,9 +372,9 @@ export default function AppDashboard() {
       ) : null}
 
       <HomeHeroSection
-        openHandoffsCount={openHandoffs.length}
+        handledRequestsCount={requestSummary.handled}
         rdvCreatedToday={rdvCreatedToday}
-        aiCount={aiCount}
+        inProgressRequestsCount={requestSummary.inProgress}
         assistantName={me?.assistant_name}
         assistantLive={Boolean(me?.assistant_live)}
         voiceNumber={me?.voice_number || me?.phone_number}
@@ -469,8 +475,9 @@ export default function AppDashboard() {
 
             <div style={S.colRight}>
               <DarkSummaryCard
-                openHandoffsCount={openHandoffs.length}
-                callsCount={calls.length}
+                handledTodayCount={requestSummary.handledToday}
+                urgentCount={requestSummary.urgentOpen}
+                avgResponseMinutes={requestSummary.avgResponseMinutes}
                 cancelledCount={cancelledCount}
                 recoveredCount={recoveredCount}
                 loading={loading}
@@ -507,8 +514,9 @@ export default function AppDashboard() {
               />
 
               <DarkSummaryCard
-                openHandoffsCount={openHandoffs.length}
-                callsCount={calls.length}
+                handledTodayCount={requestSummary.handledToday}
+                urgentCount={requestSummary.urgentOpen}
+                avgResponseMinutes={requestSummary.avgResponseMinutes}
                 cancelledCount={cancelledCount}
                 recoveredCount={recoveredCount}
                 loading={loading}

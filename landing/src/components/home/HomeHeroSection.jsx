@@ -1,9 +1,9 @@
 import { assistantDisplayFromMe } from "../../lib/assistantDisplay.js";
 
 export default function HomeHeroSection({
-  openHandoffsCount,
+  handledRequestsCount,
   rdvCreatedToday,
-  aiCount,
+  inProgressRequestsCount,
   assistantName,
   assistantLive,
   voiceNumber,
@@ -46,13 +46,13 @@ export default function HomeHeroSection({
           </p>
           <div style={S.pills}>
             <Pill icon="check" onClick={onOpenHandledRequests}>
-              {openHandoffsCount || 18} demandes traitees
+              {handledRequestsCount} demande{handledRequestsCount > 1 ? "s" : ""} traitée{handledRequestsCount > 1 ? "s" : ""}
             </Pill>
             <Pill tone="blue" icon="plus" onClick={onOpenRdvToday}>
-              {rdvCreatedToday} RDV pris aujourd'hui
+              {rdvCreatedToday} RDV pris aujourd&apos;hui
             </Pill>
             <Pill tone="green" icon="message" onClick={onOpenReminders}>
-              {Math.max(1, Math.round(aiCount / 4))} rappels prepares
+              {inProgressRequestsCount} en cours
             </Pill>
           </div>
         </div>
