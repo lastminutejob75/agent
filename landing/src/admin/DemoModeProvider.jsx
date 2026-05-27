@@ -18,8 +18,8 @@ export function DemoModeProvider({ children }) {
 
   useEffect(() => {
     const base = (import.meta.env.VITE_UWI_API_BASE_URL || "").replace(/\/$/, "");
-    if (!base) return;
-    fetch(`${base}/api/admin/_meta`)
+    const url = base ? `${base}/api/admin/_meta` : "/api/admin/_meta";
+    fetch(url)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (d) {

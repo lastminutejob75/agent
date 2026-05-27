@@ -35,8 +35,7 @@ jobs:
       VAPI_SIGNATURE_DISABLED: "true"
       # Backend
       PORT: "8000"
-      # Frontend
-      VITE_UWI_API_BASE_URL: "http://localhost:8000"
+      # Frontend : URLs relatives + proxy Vite (same-origin cookies admin)
       # Playwright
       E2E_BASE_URL: "http://localhost:3000"
       E2E_API_BASE_URL: "http://localhost:8000"
@@ -160,8 +159,7 @@ jobs:
       VAPI_SIGNATURE_DISABLED: "true"
       # Backend
       PORT: "8000"
-      # Frontend
-      VITE_UWI_API_BASE_URL: "http://localhost:8000"
+      # Frontend : URLs relatives + proxy Vite (same-origin cookies admin)
       # Playwright
       E2E_BASE_URL: "http://localhost:3000"
       E2E_API_BASE_URL: "http://localhost:8000"

@@ -4,11 +4,6 @@
  */
 async function adminFetch(path, options = {}) {
   const base = (import.meta.env.VITE_UWI_API_BASE_URL || "").replace(/\/$/, "");
-  if (!base) {
-    const err = new Error("VITE_UWI_API_BASE_URL non configuré. Définissez l’URL du backend (ex. Railway).");
-    err.status = 0;
-    throw err;
-  }
   const headers = {
     "Content-Type": "application/json",
     ...(options.headers || {}),

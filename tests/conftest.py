@@ -20,6 +20,12 @@ def pytest_configure(config):
     if not (os.environ.get("GOOGLE_CLIENT_SECRET") or "").strip():
         os.environ["GOOGLE_CLIENT_SECRET"] = "test-google-client-secret"
     os.environ.setdefault("ALLOW_GOOGLE_SELF_SIGNUP", "false")
+    if not (os.environ.get("ADMIN_EMAIL") or "").strip():
+        os.environ["ADMIN_EMAIL"] = "admin@uwiapp.com"
+    if not (os.environ.get("ADMIN_PASSWORD") or "").strip() and not (
+        os.environ.get("ADMIN_PASSWORD_HASH") or ""
+    ).strip():
+        os.environ["ADMIN_PASSWORD"] = "adminuwi123"
 
 
 @pytest.fixture(autouse=True)

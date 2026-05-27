@@ -112,6 +112,8 @@ jobs:
       # Secrets minimaux pour eviter les 503 dans les tests
       JWT_SECRET: test-secret-pytest-min-32-bytes-long-for-hmac
       ADMIN_API_TOKEN: test-admin-token-pytest
+      ADMIN_EMAIL: admin@uwiapp.com
+      ADMIN_PASSWORD: adminuwi123
       GOOGLE_CLIENT_ID: test-google-client-id
       GOOGLE_CLIENT_SECRET: test-google-client-secret
       ALLOW_GOOGLE_SELF_SIGNUP: "false"
@@ -166,6 +168,8 @@ jobs:
     env:
       JWT_SECRET: test-secret-pytest-min-32-bytes-long-for-hmac
       ADMIN_API_TOKEN: test-admin-token-pytest
+      ADMIN_EMAIL: admin@uwiapp.com
+      ADMIN_PASSWORD: adminuwi123
       GOOGLE_CLIENT_ID: test-google-client-id
       GOOGLE_CLIENT_SECRET: test-google-client-secret
       ALLOW_GOOGLE_SELF_SIGNUP: "false"
