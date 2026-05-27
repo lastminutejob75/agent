@@ -1919,19 +1919,43 @@ def _verify_admin_password(password: str) -> bool:
 
 
 @router.get("/admin/auth/status")
-def admin_auth_status():
+def admin_auth_status(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security),
+):
     """
     Diagnostic (sans auth) : indique si le login email/mot de passe est configuré.
     Ne divulgue pas la présence de secrets machine (ADMIN_API_TOKEN).
     """
     from backend.security import is_production
 
+    login_configured = bool(ADMIN_EMAIL and (ADMIN_PASSWORD or ADMIN_PASSWORD_HASH) and JWT_SECRET_ADMIN)
     if is_production():
-        return {"login_configured": bool(ADMIN_EMAIL and (ADMIN_PASSWORD_HASH) and JWT_SECRET_ADMIN)}
+        login_configured = bool(ADMIN_EMAIL and ADMIN_PASSWORD_HASH and JWT_SECRET_ADMIN)
+
+    # Sans auth admin valide: payload minimal uniquement (pas de leak config).
+    is_admin = False
+    if _get_admin_email_from_cookie(request):
+        is_admin = True
+    else:
+        bearer = (credentials.credentials or "").strip() if credentials else ""
+        if bearer and JWT_SECRET_ADMIN and _decode_admin_session_jwt(bearer):
+            is_admin = True
+        elif bearer:
+            pytest_tok = _pytest_admin_token()
+            if pytest_tok and bearer == pytest_tok:
+                is_admin = True
+
+    if not is_admin:
+        return {"login_configured": login_configured}
+
     return {
-        "login_configured": bool(ADMIN_EMAIL and (ADMIN_PASSWORD or ADMIN_PASSWORD_HASH) and JWT_SECRET_ADMIN),
+        "login_configured": login_configured,
         "email_set": bool(ADMIN_EMAIL),
+        "password_plain_set": bool(ADMIN_PASSWORD),
         "password_hash_set": bool(ADMIN_PASSWORD_HASH),
+        "jwt_secret_set": bool(JWT_SECRET_ADMIN),
+        "admin_token_set": bool(_pytest_admin_token() or os.environ.get("ADMIN_API_TOKEN")),
     }
 
 
@@ -1999,6 +2023,29 @@ def admin_auth_logout():
     samesite = ADMIN_COOKIE_SAMESITE if ADMIN_COOKIE_SAMESITE in ("none", "lax", "strict") else ("none" if secure else "lax")
     response.delete_cookie(ADMIN_SESSION_COOKIE, path="/", samesite=samesite)
     return response
+
+
+@router.get("/admin/audit-log")
+def admin_audit_log(
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=5000),
+    actor_email: Optional[str] = Query(None),
+    tenant_id: Optional[int] = Query(None),
+    method: Optional[str] = Query(None),
+    path_prefix: Optional[str] = Query(None),
+    _: None = Depends(require_admin),
+):
+    from backend.audit_log import fetch_recent_audit_entries
+
+    items = fetch_recent_audit_entries(
+        limit=limit,
+        offset=offset,
+        actor_email=actor_email,
+        tenant_id=tenant_id,
+        method=method,
+        path_prefix=path_prefix,
+    )
+    return {"ok": True, "items": items, "count": len(items)}
 
 
 class AdminEmailTestBody(BaseModel):
@@ -3634,16 +3681,73 @@ def _get_calls_list(
                     result_filter=result_filter,
                 )
                 if canonical_items:
-                    return {"items": canonical_items, "next_cursor": next_cursor, "days": days}
+                    items.extend(canonical_items)
 
-            from backend.pg_pool import pg_connection
-            from backend.pg_tenant_context import set_tenant_id_on_connection
+            import psycopg
+            from psycopg.rows import dict_row
 
-            with pg_connection() as conn:
-                if tenant_id is not None:
-                    set_tenant_id_on_connection(conn, tenant_id)
+            with psycopg.connect(url, row_factory=dict_row) as conn:
                 with conn.cursor() as cur:
-                    seen_call_ids: set[str] = set()
+                    # 1) Source canonique vapi_calls (fallback local ici pour conserver
+                    # la fusion vapi+ivr même si le helper poolé échoue).
+                    if tenant_id is not None:
+                        vapi_params: List[Any] = [tenant_id, start, end, limit + 1]
+                        vapi_cursor_filter = ""
+                        if cursor_ts and cursor_id:
+                            vapi_cursor_filter = (
+                                " AND (COALESCE(v.ended_at, v.updated_at, v.started_at, v.created_at) < %s "
+                                "OR (COALESCE(v.ended_at, v.updated_at, v.started_at, v.created_at) = %s AND v.call_id < %s))"
+                            )
+                            vapi_params = [tenant_id, start, end, cursor_ts, cursor_ts, cursor_id, limit + 1]
+                        cur.execute(
+                            """
+                            SELECT
+                                v.tenant_id,
+                                v.call_id,
+                                v.started_at,
+                                v.ended_at,
+                                v.updated_at,
+                                v.status,
+                                v.ended_reason,
+                                ie.last_event
+                            FROM vapi_calls v
+                            LEFT JOIN LATERAL (
+                                SELECT event AS last_event
+                                FROM ivr_events
+                                WHERE client_id = v.tenant_id AND call_id = v.call_id
+                                ORDER BY created_at DESC
+                                LIMIT 1
+                            ) ie ON TRUE
+                            WHERE v.tenant_id = %s
+                              AND COALESCE(v.ended_at, v.updated_at, v.started_at, v.created_at) >= %s
+                              AND COALESCE(v.ended_at, v.updated_at, v.started_at, v.created_at) <= %s
+                            """
+                            + vapi_cursor_filter
+                            + """
+                            ORDER BY COALESCE(v.ended_at, v.updated_at, v.started_at, v.created_at) DESC, v.call_id DESC
+                            LIMIT %s
+                            """,
+                            tuple(vapi_params),
+                        )
+                        for vr in cur.fetchall()[:limit]:
+                            ts = vr.get("ended_at") or vr.get("updated_at") or vr.get("started_at")
+                            event = vr.get("last_event")
+                            items.append(
+                                {
+                                    "call_id": vr.get("call_id") or "",
+                                    "tenant_id": tenant_id,
+                                    "tenant_name": fixed_tenant_name or f"Client #{tenant_id}",
+                                    "customer_number": "",
+                                    "started_at": _iso_utc(vr.get("started_at")),
+                                    "last_event_at": _iso_utc(ts),
+                                    "last_event": event or "",
+                                    "result": _snapshot_outcome_from_sources(event, vr.get("status"), vr.get("ended_reason")),
+                                    "duration_min": None,
+                                    "duration_sec": None,
+                                }
+                            )
+
+                    seen_call_ids: set[str] = {str(it.get("call_id") or "") for it in items if it.get("call_id")}
 
                     # 2) Fallback ivr_events (comportement historique)
                     params = [start, end]

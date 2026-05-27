@@ -371,14 +371,8 @@ def install_audit_middleware(app) -> None:
         if not _is_admin_write_path(method, path):
             return await call_next(request)
 
-        # Capture body avant que le handler ne le consomme.
-        # (FastAPI / Starlette : on doit re-injecter le body apres.)
+        # Capture body avant call_next (Request le met en cache).
         body = await request.body()
-
-        # Re-inject pour que les routes downstream puissent lire le body.
-        async def receive():
-            return {"type": "http.request", "body": body, "more_body": False}
-        request._receive = receive  # type: ignore[attr-defined]
 
         # Execute la requete
         response = await call_next(request)

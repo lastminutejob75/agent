@@ -27,12 +27,17 @@ def is_production() -> bool:
 
 
 def debug_routes_enabled() -> bool:
-    flag = (os.environ.get("ENABLE_DEBUG_ROUTES") or "").strip().lower()
-    if flag in ("true", "1", "yes"):
+    # Flag principal attendu par les tests/ops.
+    flag = (os.environ.get("ENABLE_DEBUG_ENDPOINTS") or "").strip().lower()
+    if not flag:
+        # Compat legacy.
+        flag = (os.environ.get("ENABLE_DEBUG_ROUTES") or "").strip().lower()
+    if flag in ("true", "1", "yes", "on"):
         return True
-    if flag in ("false", "0", "no"):
+    if flag in ("false", "0", "no", "off"):
         return False
-    return not is_production()
+    # Secure by default: fermé tant que non explicitement activé.
+    return False
 
 
 def require_strict_tenant_key() -> bool:

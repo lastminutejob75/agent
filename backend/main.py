@@ -114,12 +114,45 @@ async def security_headers_middleware(request: Request, call_next):
 
 @app.middleware("http")
 async def block_debug_routes_middleware(request: Request, call_next):
-    """Bloque /debug/* en production (données sensibles, PHI, secrets)."""
-    if request.url.path.startswith("/debug"):
+    """Bloque les endpoints debug/sensibles sauf bypass explicite."""
+    path = request.url.path or ""
+    guarded_paths = {
+        "/api/stats/bookings",
+        "/api/vapi/test-calendar",
+        "/api/vapi/test",
+    }
+    is_guarded = path.startswith("/debug") or path in guarded_paths
+    if is_guarded:
         from backend.security import debug_routes_enabled
+        from backend.routes.admin import (
+            _decode_admin_session_jwt,
+            _get_admin_email_from_cookie,
+            _pytest_admin_token,
+        )
 
-        if not debug_routes_enabled():
-            return JSONResponse(status_code=404, content={"detail": "Not found"})
+        if debug_routes_enabled():
+            return await call_next(request)
+
+        demo_mode = (os.environ.get("ADMIN_DEMO_MODE") or "").strip().lower() in ("true", "1", "yes", "on")
+        if demo_mode:
+            return await call_next(request)
+
+        if _get_admin_email_from_cookie(request):
+            return await call_next(request)
+
+        auth = (request.headers.get("authorization") or "").strip()
+        if auth.lower().startswith("bearer "):
+            bearer = auth[7:].strip()
+            if _decode_admin_session_jwt(bearer):
+                return await call_next(request)
+            pytest_tok = _pytest_admin_token()
+            if pytest_tok and bearer == pytest_tok:
+                return await call_next(request)
+
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Accès debug refusé (auth admin ou ENABLE_DEBUG_ENDPOINTS=true requis)"},
+        )
     return await call_next(request)
 
 
@@ -277,6 +310,11 @@ app.include_router(pre_onboarding.router)  # POST /api/pre-onboarding/commit
 app.include_router(pre_onboarding.public_router)  # POST /api/public/leads
 app.include_router(public_praticien.router)  # GET /api/public/praticiens/{slug}
 app.include_router(public_pages.router)  # /api/public/practitioner, /slots, /book, /search (page /p/:slug)
+
+# Audit admin writes + endpoint admin/audit-log.
+from backend.audit_log import install_audit_middleware
+
+install_audit_middleware(app)
 app.include_router(checkout_embedded.router)  # POST /create-checkout-session (embedded, pour landing /checkout)
 
 # Static frontend (optionnel - peut ne pas exister)

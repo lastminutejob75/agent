@@ -1686,6 +1686,30 @@ async def vapi_tool(request: Request):
 
         # ── FAQ FAST-PATH : toute l'opération (résolution tenant + FAQ) en <4s ──
         if action == "faq" and user_message:
+            from backend.tenant_routing import (
+                current_tenant_id as _current_tenant_id,
+                resolve_tenant_id_from_vapi_payload as _resolve_tenant_id_from_vapi_payload,
+            )
+            resolved_tid_for_lock, _ = _resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
+            request.state.tenant_id = resolved_tid_for_lock
+            _current_tenant_id.set(str(resolved_tid_for_lock))
+
+            if _pg_lock_ok():
+                try:
+                    from backend.session_pg import LockTimeout, pg_lock_call_session
+
+                    with pg_lock_call_session(resolved_tid_for_lock, call_id, timeout_seconds=2):
+                        pass
+                except LockTimeout:
+                    fallback = "Un instant, s'il vous plaît."
+                    from backend import vapi_tool_handlers as th
+
+                    if tool_call_id:
+                        return JSONResponse(th.build_vapi_tool_response(tool_call_id, fallback, None), status_code=200)
+                    return JSONResponse({"result": fallback}, status_code=200)
+                except Exception as e:
+                    logger.warning("[CALL_LOCK_WARN] faq err=%s", e, exc_info=True)
+
             def _faq_fast_work():
                 """Résolution tenant + FAQ search dans un thread avec timeout global."""
                 from backend.tools_faq import tenant_faq_store
