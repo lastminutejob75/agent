@@ -173,12 +173,28 @@ function deriveCabinetRowBucket(row: Record<string, unknown>): "new" | "active" 
 }
 
 function formatDisplayFrenchPhone(raw: string): string {
-  const trimmed = String(raw || "").trim();
-  if (!trimmed) return "—";
-  if (trimmed.startsWith("+33") && trimmed.length === 12) {
-    return `0${trimmed.slice(3, 4)} ${trimmed.slice(4, 6)} ${trimmed.slice(6, 8)} ${trimmed.slice(8, 10)} ${trimmed.slice(10)}`;
+  const normalized = normalizePhone(String(raw || "").trim());
+  if (!normalized) return "—";
+  if (normalized.startsWith("+33") && normalized.length === 12) {
+    const local = `0${normalized.slice(3)}`;
+    return `${local.slice(0, 2)} ${local.slice(2, 4)} ${local.slice(4, 6)} ${local.slice(6, 8)} ${local.slice(8, 10)}`;
   }
-  return trimmed;
+  const digits = normalized.replace(/\D/g, "");
+  if (digits.length >= 10) {
+    const local = digits.slice(-10);
+    return `${local.slice(0, 2)} ${local.slice(2, 4)} ${local.slice(4, 6)} ${local.slice(6, 8)} ${local.slice(8, 10)}`;
+  }
+  return String(raw || "").trim() || "—";
+}
+
+function patientStatusMeta(bucket: "new" | "active" | "inactive") {
+  if (bucket === "new") {
+    return { label: "Nouveau", dot: "#2563EB", bg: "#EFF6FF", text: "#1D4ED8" };
+  }
+  if (bucket === "inactive") {
+    return { label: "Inactif", dot: "#94A3B8", bg: "#F1F5F9", text: "#64748B" };
+  }
+  return { label: "Actif", dot: "#0BA64B", bg: "#E6FAED", text: "#0BA64B" };
 }
 
 function cabinetRowToSidebar(row: Record<string, unknown>): SidebarPatientRow | null {
@@ -285,10 +301,10 @@ function buildPatientHeroFromProfile(p: Record<string, unknown> | undefined, fal
   return { name, phone: tel, initials: initialsFromFullName(name) };
 }
 
-const viewTabs: Array<{ id: ViewType; label: string; icon: string }> = [
-  { id: "overview", label: "Vue d'ensemble", icon: "▤" },
-  { id: "appointments", label: "Rendez-vous", icon: "▣" },
-  { id: "history", label: "Historique", icon: "◷" },
+const viewTabs: Array<{ id: ViewType; label: string; shortLabel: string }> = [
+  { id: "overview", label: "Vue d'ensemble", shortLabel: "Aperçu" },
+  { id: "appointments", label: "Rendez-vous", shortLabel: "RDV" },
+  { id: "history", label: "Historique", shortLabel: "Historique" },
 ];
 
 const REQUEST_STATUS_OVERRIDES_KEY = "uwi_request_status_overrides";
@@ -422,31 +438,142 @@ function Toast({ message }: { message: string }) {
   );
 }
 
+function HeroSvgIcon({ name }: { name: "phone" | "mail" | "whatsapp" | "sms" | "more" | "overview" | "calendar" | "history" }) {
+  const common = "h-[18px] w-[18px] shrink-0";
+  if (name === "phone") {
+    return (
+      <svg className={common} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M6.6 3.5h2.4l1.2 4.8-1.8 1.1a12.5 12.5 0 0 0 5.2 5.2l1.1-1.8 4.8 1.2v2.4c0 .9-.7 1.6-1.6 1.7C10.8 18.3 5.7 13.2 3.9 5.2 3.8 4.3 4.5 3.5 5.4 3.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (name === "mail") {
+    return (
+      <svg className={common} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="3.5" y="6" width="17" height="12" rx="2.2" stroke="currentColor" strokeWidth="1.8" />
+        <path d="M4.5 7.5 12 13l7.5-5.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  if (name === "whatsapp") {
+    return (
+      <svg className={common} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 3a8.5 8.5 0 0 0-7.3 12.8L3.5 21l5.4-1.1A8.5 8.5 0 1 0 12 3Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+        <path d="M9.2 9.4c.2-.5.5-.5.8-.5h.7c.2 0 .4.1.5.4l.5 1.2c.1.2.1.4 0 .6l-.4.5c-.1.2-.1.4 0 .6.4.8 1.2 1.6 2 2 .2.1.4.1.6 0l.5-.4c.2-.1.4-.1.6 0l1.2.5c.3.1.4.3.4.5v.7c0 .3-.1.6-.5.8-.4.3-1 .6-1.7.6-.9 0-2-.4-3.1-1.3-1.3-1.1-2.4-2.8-2.5-3.6-.1-.5.1-1 .4-1.3Z" fill="currentColor" />
+      </svg>
+    );
+  }
+  if (name === "sms") {
+    return (
+      <svg className={common} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M5 5.5h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H9l-4 3v-3H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (name === "more") {
+    return (
+      <svg className={common} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <circle cx="6" cy="12" r="1.6" fill="currentColor" />
+        <circle cx="12" cy="12" r="1.6" fill="currentColor" />
+        <circle cx="18" cy="12" r="1.6" fill="currentColor" />
+      </svg>
+    );
+  }
+  if (name === "overview") {
+    return (
+      <svg className={common} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="4" y="4" width="7" height="7" rx="1.8" stroke="currentColor" strokeWidth="1.8" />
+        <rect x="13" y="4" width="7" height="7" rx="1.8" stroke="currentColor" strokeWidth="1.8" />
+        <rect x="4" y="13" width="7" height="7" rx="1.8" stroke="currentColor" strokeWidth="1.8" />
+        <rect x="13" y="13" width="7" height="7" rx="1.8" stroke="currentColor" strokeWidth="1.8" />
+      </svg>
+    );
+  }
+  if (name === "calendar") {
+    return (
+      <svg className={common} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="4" y="5.5" width="16" height="14" rx="2.2" stroke="currentColor" strokeWidth="1.8" />
+        <path d="M8 4v3M16 4v3M4 10h16" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  return (
+    <svg className={common} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="8.5" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M12 7.5v5l3 2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function PatientStatusPill({ bucket }: { bucket: "new" | "active" | "inactive" }) {
+  const meta = patientStatusMeta(bucket);
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-black sm:text-sm"
+      style={{ backgroundColor: meta.bg, color: meta.text }}
+    >
+      <span className="h-2 w-2 rounded-full" style={{ backgroundColor: meta.dot }} />
+      {meta.label}
+    </span>
+  );
+}
+
+function ContactMetaCard({
+  icon,
+  label,
+  value,
+  action,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: React.ReactNode;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="flex min-w-0 items-start gap-3 rounded-2xl border border-[#E8EEF5] bg-[#F8FBFD] px-3.5 py-3 sm:px-4">
+      <div className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white text-[#007E8C] shadow-sm ring-1 ring-[#E2EAF4]">
+        {icon}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#94A3B8]">{label}</div>
+        <div className="mt-0.5 break-words text-sm font-bold text-[#0A1628] sm:text-[15px]">{value}</div>
+      </div>
+      {action ? <div className="shrink-0 self-center">{action}</div> : null}
+    </div>
+  );
+}
+
 function HeaderAction({
   children,
-  variant = "blue",
+  icon,
+  variant = "primary",
+  compact = false,
   onClick,
 }: {
   children: React.ReactNode;
-  variant?: "blue" | "green" | "purple" | "gray";
+  icon?: React.ReactNode;
+  variant?: "primary" | "secondary" | "ghost";
+  compact?: boolean;
   onClick: () => void;
 }) {
   const variants = {
-    blue: "border-[#8DD8E3] text-[#007E8C] hover:bg-[#E8F8FA]",
-    green: "border-[#8DE4AB] text-[#13A146] hover:bg-[#EEFFF4]",
-    purple: "border-[#C7A4FF] text-[#7B3DFF] hover:bg-[#F7F0FF]",
-    gray: "border-[#DDE7F1] text-[#475569] hover:bg-[#F8FAFC]",
+    primary: "border-[#009CA4] bg-[#009CA4] text-white shadow-[0_8px_20px_rgba(0,156,164,0.22)] hover:bg-[#008891]",
+    secondary: "border-[#DDE7F1] bg-white text-[#0A1628] hover:bg-[#F8FBFD]",
+    ghost: "border-[#E2EAF4] bg-[#F8FBFD] text-[#52637C] hover:bg-white",
   };
 
   return (
     <button
+      type="button"
       onClick={onClick}
       className={cx(
-        "inline-flex h-12 items-center justify-center gap-2 rounded-xl border bg-white px-5 text-sm font-extrabold transition active:scale-[0.98]",
+        "inline-flex items-center justify-center gap-2 rounded-xl border text-sm font-extrabold transition active:scale-[0.98]",
+        compact ? "h-11 px-3 sm:px-4" : "h-11 px-4 sm:h-12 sm:px-5",
         variants[variant],
       )}
     >
-      {children}
+      {icon}
+      <span className={compact ? "text-xs sm:text-sm" : ""}>{children}</span>
     </button>
   );
 }
@@ -478,7 +605,7 @@ function PrimaryCTA({
     <button
       onClick={onClick}
       className={cx(
-        "flex h-16 items-center justify-center gap-3 rounded-2xl px-6 text-base font-black transition active:scale-[0.98]",
+        "flex h-14 items-center justify-center gap-2.5 rounded-2xl px-4 text-sm font-black transition active:scale-[0.98] sm:h-16 sm:gap-3 sm:px-6 sm:text-base",
         variants[variant],
       )}
     >
@@ -926,6 +1053,14 @@ export default function PatientDashboardPage() {
     const teal = "from-[#009CA4] to-[#004C69]";
     const slate = "from-slate-400 to-slate-600";
     const loadingGrad = "from-slate-300 to-slate-500";
+    const resolveStatus = (): "new" | "active" | "inactive" => {
+      if (sidebarHeroFallback && sidebarHeroFallback.phone === tenantPatientPhone) {
+        return sidebarHeroFallback.statusBucket;
+      }
+      if (patientCabinetRow) return deriveCabinetRowBucket(patientCabinetRow);
+      return "active";
+    };
+    const statusBucket = resolveStatus();
     if (tenantPatientNotFound) {
       if (sidebarHeroFallback && sidebarHeroFallback.phone === tenantPatientPhone) {
         return {
@@ -933,6 +1068,7 @@ export default function PatientDashboardPage() {
           phone: formatDisplayFrenchPhone(tenantPatientPhone || phoneFromDashboardUrl),
           initials: sidebarHeroFallback.initials,
           gradient: sidebarHeroFallback.gradient,
+          statusBucket,
         };
       }
       if (isDirectPhoneView) {
@@ -941,6 +1077,7 @@ export default function PatientDashboardPage() {
           phone: formatDisplayFrenchPhone(tenantPatientPhone || phoneFromDashboardUrl),
           initials: "?",
           gradient: slate,
+          statusBucket: "new" as const,
         };
       }
       return {
@@ -948,6 +1085,7 @@ export default function PatientDashboardPage() {
         phone: "—",
         initials: "?",
         gradient: slate,
+        statusBucket: "active" as const,
       };
     }
     if (urlPatientHero) {
@@ -955,6 +1093,7 @@ export default function PatientDashboardPage() {
         ...urlPatientHero,
         phone: formatDisplayFrenchPhone(normalizePhone(urlPatientHero.phone) || urlPatientHero.phone),
         gradient: teal,
+        statusBucket,
       };
     }
     if (sidebarHeroFallback) {
@@ -963,6 +1102,7 @@ export default function PatientDashboardPage() {
         phone: sidebarHeroFallback.displayPhone,
         initials: sidebarHeroFallback.initials,
         gradient: sidebarHeroFallback.gradient,
+        statusBucket,
       };
     }
     if (documentsLoading && tenantPatientPhone) {
@@ -971,6 +1111,7 @@ export default function PatientDashboardPage() {
         phone: formatDisplayFrenchPhone(tenantPatientPhone),
         initials: "…",
         gradient: loadingGrad,
+        statusBucket: "active" as const,
       };
     }
     return {
@@ -978,6 +1119,7 @@ export default function PatientDashboardPage() {
       phone: "—",
       initials: "?",
       gradient: slate,
+      statusBucket: "active" as const,
     };
   }, [
     tenantPatientNotFound,
@@ -987,6 +1129,7 @@ export default function PatientDashboardPage() {
     urlPatientHero,
     documentsLoading,
     sidebarHeroFallback,
+    patientCabinetRow,
   ]);
 
   useEffect(() => {
@@ -1931,7 +2074,7 @@ export default function PatientDashboardPage() {
 
         <main className="overflow-y-auto px-3 py-4 sm:px-5 sm:py-5 lg:px-8 lg:py-6">
           {tenantPatientPhone ? (
-            <div className="mb-4 flex items-center gap-3 rounded-2xl border border-[#E2EAF4] bg-white px-4 py-3 shadow-sm xl:hidden">
+            <div className="mb-4 flex items-center gap-3 rounded-2xl border border-[#E2EAF4] bg-white px-3 py-2.5 shadow-sm xl:hidden">
               <button
                 type="button"
                 onClick={() => setPatientListOpen(true)}
@@ -1939,7 +2082,13 @@ export default function PatientDashboardPage() {
               >
                 ← Patients
               </button>
-              <span className="min-w-0 truncate text-sm font-black">{displayHero.name}</span>
+              <div className={cx("grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br text-xs font-black text-white", displayHero.gradient)}>
+                {displayHero.initials}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-black text-[#0A1628]">{displayHero.name}</div>
+                <div className="truncate text-xs font-semibold text-[#64748B]">{displayHero.phone}</div>
+              </div>
             </div>
           ) : null}
           {tenantPatientNotFound ? (
@@ -1993,104 +2142,210 @@ export default function PatientDashboardPage() {
               ) : null}
             </div>
           ) : null}
-          <section className="rounded-[28px] border border-[#E2EAF4] bg-white p-4 shadow-[0_18px_45px_rgba(10,22,40,0.06)] sm:p-6 lg:p-7">
-            <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between xl:gap-8">
-              <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:gap-5 lg:gap-6">
-                <div className={cx("grid h-20 w-20 shrink-0 place-items-center rounded-3xl bg-gradient-to-br text-3xl font-black text-white shadow-[8px_10px_0_rgba(0,156,164,0.12)] sm:h-28 sm:w-28 sm:text-4xl xl:h-32 xl:w-32 xl:text-5xl", displayHero.gradient)}>
-                  {displayHero.initials}
+          <section className="overflow-hidden rounded-[28px] border border-[#E2EAF4] bg-white shadow-[0_18px_45px_rgba(10,22,40,0.06)]">
+            <div className="h-1 bg-gradient-to-r from-[#009CA4] via-[#00B3A4] to-[#004C69]" />
+            <div className="p-4 sm:p-6 lg:p-7">
+              <div className="flex flex-col gap-5 lg:gap-6">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between lg:gap-8">
+                  <div className="flex min-w-0 items-start gap-4 sm:gap-5">
+                    <div
+                      className={cx(
+                        "grid h-[72px] w-[72px] shrink-0 place-items-center rounded-[22px] bg-gradient-to-br text-2xl font-black text-white shadow-[0_14px_30px_rgba(0,156,164,0.18)] sm:h-24 sm:w-24 sm:rounded-[26px] sm:text-3xl lg:h-28 lg:w-28 lg:text-4xl",
+                        displayHero.gradient,
+                      )}
+                    >
+                      {displayHero.initials}
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                        <h1 className="text-xl font-black tracking-tight text-[#0A1628] sm:text-2xl lg:text-[2rem] lg:leading-tight">
+                          {displayHero.name}
+                        </h1>
+                        <PatientStatusPill bucket={displayHero.statusBucket} />
+                      </div>
+
+                      <div className="mt-4 grid gap-2.5 sm:grid-cols-2">
+                        <ContactMetaCard
+                          icon={<HeroSvgIcon name="phone" />}
+                          label="Téléphone"
+                          value={
+                            <button
+                              type="button"
+                              className="text-left hover:text-[#007E8C]"
+                              onClick={() => {
+                                const tel = normalizePhone(displayHero.phone);
+                                if (tel) window.location.href = `tel:${tel}`;
+                                else notify("Numéro absent pour passer un appel.");
+                              }}
+                            >
+                              {displayHero.phone}
+                            </button>
+                          }
+                          action={
+                            normalizePhone(displayHero.phone) ? (
+                              <button
+                                type="button"
+                                className="rounded-lg border border-[#DDE7F1] bg-white px-2.5 py-1.5 text-[11px] font-black text-[#475569] hover:bg-[#F8FAFC]"
+                                onClick={() => {
+                                  const tel = normalizePhone(displayHero.phone);
+                                  if (tel && navigator.clipboard?.writeText) {
+                                    void navigator.clipboard.writeText(formatDisplayFrenchPhone(tel));
+                                    notify("Numéro copié.");
+                                  }
+                                }}
+                              >
+                                Copier
+                              </button>
+                            ) : null
+                          }
+                        />
+
+                        <ContactMetaCard
+                          icon={<HeroSvgIcon name="mail" />}
+                          label="Email"
+                          value={
+                            tenantPatientNotFound ? (
+                              <span className="text-[#94A3B8]">Créez la fiche pour ajouter un email</span>
+                            ) : editingEmail ? (
+                              <span className="flex flex-wrap items-center gap-2">
+                                <input
+                                  value={emailDraft}
+                                  onChange={(event) => setEmailDraft(event.target.value)}
+                                  placeholder="email@cabinet.fr"
+                                  className="h-9 min-w-0 flex-1 rounded-lg border border-[#DDE7F1] px-2.5 text-sm font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={saveEmail}
+                                  disabled={emailSaving}
+                                  className="rounded-lg bg-[#009CA4] px-2.5 py-1.5 text-xs font-black text-white disabled:opacity-60"
+                                >
+                                  {emailSaving ? "…" : "OK"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingEmail(false)}
+                                  className="rounded-lg border border-[#DDE7F1] px-2.5 py-1.5 text-xs font-black text-[#475569]"
+                                >
+                                  Annuler
+                                </button>
+                              </span>
+                            ) : patientEmail ? (
+                              patientEmail
+                            ) : (
+                              <span className="text-[#94A3B8]">Aucun email renseigné</span>
+                            )
+                          }
+                          action={
+                            !tenantPatientNotFound && !editingEmail ? (
+                              <button
+                                type="button"
+                                onClick={() => setEditingEmail(true)}
+                                className="rounded-lg border border-[#DDE7F1] bg-white px-2.5 py-1.5 text-[11px] font-black text-[#475569] hover:bg-[#F8FAFC]"
+                              >
+                                {patientEmail ? "Modifier" : "Ajouter"}
+                              </button>
+                            ) : null
+                          }
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-2 xl:grid-cols-4 xl:gap-2.5">
+                    <HeaderAction
+                      variant="primary"
+                      compact
+                      icon={<HeroSvgIcon name="phone" />}
+                      onClick={() => {
+                        const t = normalizePhone(displayHero.phone);
+                        if (t) window.location.href = `tel:${t}`;
+                        else notify("Numéro absent pour passer un appel.");
+                      }}
+                    >
+                      Appeler
+                    </HeaderAction>
+                    <HeaderAction
+                      variant="secondary"
+                      compact
+                      icon={<HeroSvgIcon name="whatsapp" />}
+                      onClick={() => {
+                        const t = normalizePhone(displayHero.phone);
+                        if (!t) {
+                          notify("Numéro absent pour WhatsApp.");
+                          return;
+                        }
+                        window.open(`https://wa.me/${t.replace(/^\+/, "")}`, "_blank", "noopener,noreferrer");
+                      }}
+                    >
+                      WhatsApp
+                    </HeaderAction>
+                    <HeaderAction
+                      variant="secondary"
+                      compact
+                      icon={<HeroSvgIcon name="sms" />}
+                      onClick={() => {
+                        const t = normalizePhone(displayHero.phone);
+                        if (t) window.location.href = `sms:${t}`;
+                        else notify("Numéro absent pour envoyer un SMS.");
+                      }}
+                    >
+                      SMS
+                    </HeaderAction>
+                    <HeaderAction
+                      variant="ghost"
+                      compact
+                      icon={<HeroSvgIcon name="more" />}
+                      onClick={() => setModal("profile")}
+                    >
+                      Profil
+                    </HeaderAction>
+                  </div>
                 </div>
 
-                <div className="min-w-0">
-                  <div className="mb-3 flex flex-wrap items-center gap-3">
-                    <h1 className="text-2xl font-black tracking-tight sm:text-3xl xl:text-4xl">{displayHero.name}</h1>
-                    <span className="rounded-lg bg-[#E6FAED] px-3 py-2 text-sm font-black text-[#0BA64B]">● Actif</span>
-                  </div>
-
-                  <div className="mb-5 flex flex-wrap gap-x-8 gap-y-2 text-sm font-semibold text-[#52637C]">
-                    <span>☎ {displayHero.phone}</span>
-                    {tenantPatientNotFound ? (
-                      <span className="inline-flex items-center gap-2 opacity-75">
-                        <span>✉</span>
-                        Créez d&apos;abord la fiche ci-dessus pour ajouter un email.
-                      </span>
-                    ) : editingEmail ? (
-                      <span className="inline-flex items-center gap-2">
-                        <span>✉</span>
-                        <input
-                          value={emailDraft}
-                          onChange={(event) => setEmailDraft(event.target.value)}
-                          placeholder="email@cabinet.fr"
-                          className="h-8 rounded-lg border border-[#DDE7F1] px-2 text-sm font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
-                        />
-                        <button type="button" onClick={saveEmail} disabled={emailSaving} className="rounded-lg bg-[#009CA4] px-2 py-1 text-xs font-black text-white disabled:opacity-60">
-                          {emailSaving ? "..." : "OK"}
-                        </button>
-                        <button type="button" onClick={() => setEditingEmail(false)} className="rounded-lg border border-[#DDE7F1] px-2 py-1 text-xs font-black text-[#475569]">
-                          Annuler
-                        </button>
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-2">
-                        <span>✉ {patientEmail || "Aucun email"}</span>
-                        <button type="button" onClick={() => setEditingEmail(true)} className="rounded-lg border border-[#DDE7F1] px-2 py-1 text-xs font-black text-[#475569] hover:bg-[#F8FAFC]">
-                          {patientEmail ? "Modifier" : "Ajouter"}
-                        </button>
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="flex flex-wrap gap-3">
-                    {patientInsightTags.length > 0 ? (
-                      patientInsightTags.map((tag) => (
+                <div className="rounded-2xl border border-dashed border-[#DDE7F1] bg-[#FCFDFE] px-4 py-3.5">
+                  {patientInsightTags.length > 0 ? (
+                    <div className="flex flex-wrap gap-2.5">
+                      {patientInsightTags.map((tag) => (
                         <OutlineTag key={tag.key} tone={tag.tone}>
                           {tag.label}
                         </OutlineTag>
-                      ))
-                    ) : (
-                      <span className="text-sm font-semibold text-[#94A3B8]">
-                        Aucun repère automatique pour l&apos;instant (historique de RDV ou notes du cabinet).
-                      </span>
-                    )}
-                  </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="m-0 text-sm font-semibold leading-relaxed text-[#94A3B8]">
+                      Aucun repère automatique pour l&apos;instant. Les tags apparaîtront ici après des rendez-vous ou des notes du cabinet.
+                    </p>
+                  )}
                 </div>
-              </div>
-
-              <div className="flex w-full shrink-0 flex-wrap gap-2 sm:gap-3 xl:w-auto xl:justify-end">
-                <HeaderAction
-                  onClick={() => {
-                    const t = normalizePhone(displayHero.phone);
-                    if (t) window.location.href = `tel:${t}`;
-                    else notify("Numéro absent pour passer un appel.");
-                  }}
-                >
-                  ☎ Appeler
-                </HeaderAction>
-                <HeaderAction variant="green" onClick={() => notify("WhatsApp ouvert")}>☘ WhatsApp</HeaderAction>
-                <HeaderAction variant="purple" onClick={() => notify("SMS ouvert")}>▣ SMS</HeaderAction>
-                <HeaderAction variant="gray" onClick={() => notify("Menu patient ouvert")}>•••</HeaderAction>
               </div>
             </div>
           </section>
 
-          <section className="mt-5 rounded-[26px] border border-[#E2EAF4] bg-white shadow-sm">
-            <div className="flex overflow-x-auto border-b border-[#EEF3F8]">
+          <section className="mt-5 overflow-hidden rounded-[26px] border border-[#E2EAF4] bg-white shadow-sm">
+            <div className="flex snap-x snap-mandatory overflow-x-auto border-b border-[#EEF3F8] [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {viewTabs.map((tab) => (
                 <button
                   key={tab.id}
+                  type="button"
                   onClick={() => setActiveView(tab.id)}
                   className={cx(
-                    "relative flex h-14 shrink-0 items-center gap-2 whitespace-nowrap px-4 text-sm font-black transition sm:h-16 sm:gap-3 sm:px-6 lg:px-8",
+                    "relative flex h-14 min-w-[33%] shrink-0 snap-start items-center justify-center gap-2 px-3 text-sm font-black transition sm:min-w-0 sm:flex-1 sm:gap-2.5 sm:px-6",
                     activeView === tab.id ? "text-[#008EA1]" : "text-[#42536E] hover:bg-[#F8FBFD]",
                   )}
                 >
-                  <span className="text-xl">{tab.icon}</span>
-                  {tab.label}
-                  {activeView === tab.id && <span className="absolute bottom-0 left-0 right-0 h-1 bg-[#009CA4]" />}
+                  <HeroSvgIcon name={tab.id === "overview" ? "overview" : tab.id === "appointments" ? "calendar" : "history"} />
+                  <span className="hidden sm:inline">{tab.label}</span>
+                  <span className="sm:hidden">{tab.shortLabel}</span>
+                  {activeView === tab.id ? (
+                    <span className="absolute bottom-0 left-3 right-3 h-1 rounded-t-full bg-[#009CA4] sm:left-6 sm:right-6" />
+                  ) : null}
                 </button>
               ))}
             </div>
 
-            <div className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 sm:gap-4 sm:p-5 lg:grid-cols-4">
               <PrimaryCTA onClick={() => setModal("profile")}>✎ Voir le profil détaillé</PrimaryCTA>
               <PrimaryCTA variant="note" onClick={() => setModal("addNote")}>✎ Ajouter une note</PrimaryCTA>
               <PrimaryCTA variant="document" onClick={() => setModal("addDocument")}>▤ Ajouter un document</PrimaryCTA>
