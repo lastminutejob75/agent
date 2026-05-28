@@ -134,6 +134,97 @@ def pg_find_slot_id_by_datetime(
         return None
 
 
+def pg_list_free_slots_for_date(
+    tenant_id: int,
+    date_str: str,
+) -> Optional[List[Dict[str, Any]]]:
+    """Créneaux libres pour une date (déplacement RDV)."""
+    url = _pg_url()
+    if not url:
+        return None
+
+    def _query() -> Optional[List[Dict[str, Any]]]:
+        import psycopg
+        from psycopg.rows import dict_row
+
+        with psycopg.connect(url, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, start_ts
+                    FROM slots
+                    WHERE tenant_id = %s
+                      AND is_booked = FALSE
+                      AND start_ts::date = %s::date
+                    ORDER BY start_ts ASC
+                    """,
+                    (tenant_id, date_str[:10]),
+                )
+                rows = cur.fetchall()
+                out: List[Dict[str, Any]] = []
+                for row in rows:
+                    date_s, time_s = _start_ts_to_date_time(row.get("start_ts"))
+                    out.append({
+                        "id": int(row.get("id") or 0),
+                        "date": date_s,
+                        "time": time_s,
+                    })
+                return out
+
+    try:
+        return _query()
+    except Exception as e:
+        if _is_transient(e):
+            try:
+                return _query()
+            except Exception:
+                pass
+        logger.debug("pg_list_free_slots_for_date failed: %s", e)
+        return None
+
+
+def pg_count_free_slots_by_month(tenant_id: int, month: str) -> Optional[Dict[str, int]]:
+    """Nombre de créneaux libres par jour pour un mois (calendrier déplacement)."""
+    url = _pg_url()
+    if not url:
+        return None
+    month_key = str(month or "")[:7]
+    if len(month_key) != 7:
+        return None
+
+    def _query() -> Optional[Dict[str, int]]:
+        import psycopg
+
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT to_char(start_ts AT TIME ZONE 'Europe/Paris', 'YYYY-MM-DD') AS d,
+                           COUNT(*)::int AS cnt
+                    FROM slots
+                    WHERE tenant_id = %s
+                      AND is_booked = FALSE
+                      AND to_char(start_ts AT TIME ZONE 'Europe/Paris', 'YYYY-MM') = %s
+                      AND start_ts::date >= CURRENT_DATE
+                    GROUP BY 1
+                    ORDER BY 1
+                    """,
+                    (tenant_id, month_key),
+                )
+                return {str(row[0]): int(row[1]) for row in cur.fetchall() if row[0]}
+
+    try:
+        return _query()
+    except Exception as e:
+        if _is_transient(e):
+            try:
+                return _query()
+            except Exception:
+                pass
+        logger.debug("pg_count_free_slots_by_month failed: %s", e)
+        return None
+
+
 def pg_ensure_slot_id_by_datetime(
     date_str: str,
     time_str: str,

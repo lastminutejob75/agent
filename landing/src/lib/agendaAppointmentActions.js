@@ -1,13 +1,18 @@
 /** Identifiant API pour annuler / déplacer un RDV agenda. */
 
 export function appointmentActionId(slot) {
-  const apptId = slot?.appointment_id;
-  if (apptId != null && String(apptId) !== "" && String(apptId) !== "0") {
-    return String(apptId);
-  }
+  const localId = appointmentLocalId(slot);
+  if (localId) return String(localId);
   const evtId = slot?.event_id;
   if (evtId != null && String(evtId).trim()) return String(evtId).trim();
   return "";
+}
+
+/** Id numérique local (appointments.id) requis pour déplacer un RDV. */
+export function appointmentLocalId(slot) {
+  const apptId = Number(slot?.appointment_id);
+  if (Number.isFinite(apptId) && apptId > 0) return apptId;
+  return null;
 }
 
 /** Id Google Calendar si connu (ignore les ids numériques locaux). */
@@ -41,8 +46,9 @@ export function canCancelAgendaSlot(slot) {
 
 export function canRescheduleAgendaSlot(slot) {
   if (slot?.can_reschedule === true) return true;
-  const apptId = Number(slot?.appointment_id);
-  return Number.isFinite(apptId) && apptId > 0;
+  const apptId = appointmentLocalId(slot);
+  const slotId = Number(slot?.slot_id);
+  return apptId != null && Number.isFinite(slotId) && slotId > 0;
 }
 
 export function buildAgendaViewUrl({ date, phone, slot }) {

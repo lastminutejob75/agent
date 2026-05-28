@@ -12,6 +12,7 @@ import {
 } from "../lib/agendaPatientMeta.js";
 import {
   appointmentActionId,
+  appointmentLocalId,
   agendaCancelPayload,
   agendaReschedulePayload,
   buildAgendaViewUrl,
@@ -1469,14 +1470,14 @@ export default function PatientDashboardPage() {
   const confirmReschedulePatientAppointment = useCallback(async (newSlot: { slot_id: number; date: string; time: string }) => {
     if (!apptActionTarget) return;
     const { slot } = apptActionTarget;
-    const actionId = appointmentActionId(slot);
-    if (!actionId || !Number(slot.appointment_id)) {
-      notify("Déplacement impossible pour ce rendez-vous.", { sticky: true });
+    const apptId = appointmentLocalId(slot);
+    if (!apptId) {
+      notify("Déplacement impossible : rendez-vous introuvable en base UWi.", { sticky: true });
       return;
     }
     setApptActionLoading(true);
     try {
-      await api.tenantRescheduleAgendaAppointment(actionId, agendaReschedulePayload(slot, newSlot.slot_id));
+      await api.tenantRescheduleAgendaAppointment(String(apptId), agendaReschedulePayload(slot, newSlot.slot_id));
       notify(`Rendez-vous déplacé au ${newSlot.date} à ${newSlot.time}.`);
       setModal(null);
       setApptActionTarget(null);

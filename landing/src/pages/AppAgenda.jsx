@@ -7,6 +7,7 @@ import { bookingOriginLabel } from "../lib/agendaPatientMeta.js";
 import {
   agendaCancelPayload,
   agendaReschedulePayload,
+  appointmentLocalId,
   canCancelAgendaSlot,
   canRescheduleAgendaSlot,
 } from "../lib/agendaAppointmentActions.js";
@@ -1219,10 +1220,15 @@ export default function AppAgenda() {
 
   async function handleReschedule(slot) {
     if (!selectedAppt) return;
+    const apptId = appointmentLocalId(selectedAppt);
+    if (!apptId) {
+      setActionMsg({ text: "Déplacement impossible : rendez-vous introuvable en base UWi.", type: "error" });
+      return;
+    }
     setActionLoading(true);
     try {
       await api.tenantRescheduleAgendaAppointment(
-        selectedAppt.actionId || selectedAppt.appointment_id || selectedAppt.event_id || selectedAppt.id,
+        String(apptId),
         agendaReschedulePayload(selectedAppt, slot.slot_id),
       );
       const fmtDate = new Date(`${slot.date}T12:00:00`).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });

@@ -4353,6 +4353,29 @@ def tenant_agenda_available_slots(
             "exact": True,
         }
     if date and not time:
+        from backend import config
+
+        if config.USE_PG_SLOTS:
+            try:
+                from backend.slots_pg import pg_cleanup_and_ensure_slots, pg_list_free_slots_for_date
+
+                pg_cleanup_and_ensure_slots(tenant_id)
+                raw = pg_list_free_slots_for_date(tenant_id, date[:10])
+                if raw is not None:
+                    items = [
+                        {
+                            "slot_id": int(row.get("id") or 0),
+                            "date": row.get("date") or date[:10],
+                            "time": row.get("time") or "",
+                            "label": f"{row.get('date') or date[:10]} à {row.get('time') or ''}",
+                        }
+                        for row in raw
+                        if int(row.get("id") or 0) > 0
+                    ]
+                    return {"slots": items, "total": len(items)}
+            except Exception as e:
+                logger.warning("tenant agenda available-slots pg failed tenant_id=%s date=%s err=%s", tenant_id, date, e)
+
         from backend.db import get_conn as _get_conn
         conn = _get_conn()
         try:
@@ -4385,6 +4408,19 @@ def tenant_agenda_available_dates(
 ):
     """Retourne les dates du mois ayant au moins 1 créneau libre."""
     tenant_id = auth["tenant_id"]
+    from backend import config
+
+    if config.USE_PG_SLOTS:
+        try:
+            from backend.slots_pg import pg_cleanup_and_ensure_slots, pg_count_free_slots_by_month
+
+            pg_cleanup_and_ensure_slots(tenant_id)
+            dates = pg_count_free_slots_by_month(tenant_id, month)
+            if dates is not None:
+                return {"dates": dates, "month": month[:7]}
+        except Exception as e:
+            logger.warning("tenant agenda available-dates pg failed tenant_id=%s month=%s err=%s", tenant_id, month, e)
+
     from backend.db import get_conn as _get_conn
     conn = _get_conn()
     try:
