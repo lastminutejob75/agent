@@ -530,16 +530,62 @@ function ContactMetaCard({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="flex min-w-0 items-start gap-3 rounded-2xl border border-[#E8EEF5] bg-[#F8FBFD] px-3.5 py-3 sm:px-4">
-      <div className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white text-[#007E8C] shadow-sm ring-1 ring-[#E2EAF4]">
+    <div className="flex min-w-0 items-center gap-2.5 rounded-2xl border border-[#E8EEF5] bg-[#F8FBFD] px-3 py-2.5 sm:items-start sm:gap-3 sm:px-4 sm:py-3">
+      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-white text-[#007E8C] shadow-sm ring-1 ring-[#E2EAF4] sm:mt-0.5 sm:h-9 sm:w-9">
         {icon}
       </div>
       <div className="min-w-0 flex-1">
-        <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#94A3B8]">{label}</div>
-        <div className="mt-0.5 break-words text-sm font-bold text-[#0A1628] sm:text-[15px]">{value}</div>
+        <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#94A3B8] sm:text-[11px]">{label}</div>
+        <div className="mt-0.5 break-words text-[13px] font-bold leading-snug text-[#0A1628] sm:text-[15px]">{value}</div>
       </div>
       {action ? <div className="shrink-0 self-center">{action}</div> : null}
     </div>
+  );
+}
+
+function PatientQuickActions({
+  displayHero,
+  notify,
+  onOpenProfile,
+}: {
+  displayHero: { phone: string };
+  notify: (message: string, opts?: { sticky?: boolean }) => void;
+  onOpenProfile: () => void;
+}) {
+  const dial = () => {
+    const t = normalizePhone(displayHero.phone);
+    if (t) window.location.href = `tel:${t}`;
+    else notify("Numéro absent pour passer un appel.");
+  };
+  const whatsapp = () => {
+    const t = normalizePhone(displayHero.phone);
+    if (!t) {
+      notify("Numéro absent pour WhatsApp.");
+      return;
+    }
+    window.open(`https://wa.me/${t.replace(/^\+/, "")}`, "_blank", "noopener,noreferrer");
+  };
+  const sms = () => {
+    const t = normalizePhone(displayHero.phone);
+    if (t) window.location.href = `sms:${t}`;
+    else notify("Numéro absent pour envoyer un SMS.");
+  };
+
+  return (
+    <>
+      <HeaderAction variant="primary" compact icon={<HeroSvgIcon name="phone" />} onClick={dial}>
+        Appeler
+      </HeaderAction>
+      <HeaderAction variant="secondary" compact icon={<HeroSvgIcon name="whatsapp" />} onClick={whatsapp}>
+        WhatsApp
+      </HeaderAction>
+      <HeaderAction variant="secondary" compact icon={<HeroSvgIcon name="sms" />} onClick={sms}>
+        SMS
+      </HeaderAction>
+      <HeaderAction variant="ghost" compact icon={<HeroSvgIcon name="more" />} onClick={onOpenProfile}>
+        Profil
+      </HeaderAction>
+    </>
   );
 }
 
@@ -2072,25 +2118,7 @@ export default function PatientDashboardPage() {
           </div>
         </aside>
 
-        <main className="overflow-y-auto px-3 py-4 sm:px-5 sm:py-5 lg:px-8 lg:py-6">
-          {tenantPatientPhone ? (
-            <div className="mb-4 flex items-center gap-3 rounded-2xl border border-[#E2EAF4] bg-white px-3 py-2.5 shadow-sm xl:hidden">
-              <button
-                type="button"
-                onClick={() => setPatientListOpen(true)}
-                className="shrink-0 rounded-xl border border-[#DDE7F1] px-3 py-2 text-xs font-black text-[#007E8C]"
-              >
-                ← Patients
-              </button>
-              <div className={cx("grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br text-xs font-black text-white", displayHero.gradient)}>
-                {displayHero.initials}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-black text-[#0A1628]">{displayHero.name}</div>
-                <div className="truncate text-xs font-semibold text-[#64748B]">{displayHero.phone}</div>
-              </div>
-            </div>
-          ) : null}
+        <main className="overflow-y-auto px-3 py-3 sm:px-5 sm:py-5 lg:px-8 lg:py-6">
           {tenantPatientNotFound ? (
             <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-950 shadow-sm">
               <p className="m-0">
@@ -2142,30 +2170,53 @@ export default function PatientDashboardPage() {
               ) : null}
             </div>
           ) : null}
-          <section className="overflow-hidden rounded-[28px] border border-[#E2EAF4] bg-white shadow-[0_18px_45px_rgba(10,22,40,0.06)]">
+          <section className="overflow-hidden rounded-[24px] border border-[#E2EAF4] bg-white shadow-[0_12px_32px_rgba(10,22,40,0.05)] sm:rounded-[28px] sm:shadow-[0_18px_45px_rgba(10,22,40,0.06)]">
             <div className="h-1 bg-gradient-to-r from-[#009CA4] via-[#00B3A4] to-[#004C69]" />
-            <div className="p-4 sm:p-6 lg:p-7">
-              <div className="flex flex-col gap-5 lg:gap-6">
+            {tenantPatientPhone ? (
+              <div className="flex items-center border-b border-[#EEF3F8] px-3 py-2.5 sm:px-4 xl:hidden">
+                <button
+                  type="button"
+                  onClick={() => setPatientListOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg px-1 py-1 text-sm font-black text-[#007E8C] hover:bg-[#F0FAFB]"
+                >
+                  <span aria-hidden="true">←</span>
+                  Liste patients
+                </button>
+              </div>
+            ) : null}
+            <div className="p-3.5 sm:p-6 lg:p-7">
+              <div className="flex flex-col gap-4 sm:gap-5 lg:gap-6">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between lg:gap-8">
-                  <div className="flex min-w-0 items-start gap-4 sm:gap-5">
-                    <div
-                      className={cx(
-                        "grid h-[72px] w-[72px] shrink-0 place-items-center rounded-[22px] bg-gradient-to-br text-2xl font-black text-white shadow-[0_14px_30px_rgba(0,156,164,0.18)] sm:h-24 sm:w-24 sm:rounded-[26px] sm:text-3xl lg:h-28 lg:w-28 lg:text-4xl",
-                        displayHero.gradient,
-                      )}
-                    >
-                      {displayHero.initials}
-                    </div>
-
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                        <h1 className="text-xl font-black tracking-tight text-[#0A1628] sm:text-2xl lg:text-[2rem] lg:leading-tight">
-                          {displayHero.name}
-                        </h1>
-                        <PatientStatusPill bucket={displayHero.statusBucket} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-3 sm:items-start sm:gap-5">
+                      <div
+                        className={cx(
+                          "grid h-14 w-14 shrink-0 place-items-center rounded-[18px] bg-gradient-to-br text-lg font-black text-white shadow-[0_10px_24px_rgba(0,156,164,0.16)] sm:h-24 sm:w-24 sm:rounded-[26px] sm:text-3xl lg:h-28 lg:w-28 lg:text-4xl",
+                          displayHero.gradient,
+                        )}
+                      >
+                        {displayHero.initials}
                       </div>
 
-                      <div className="mt-4 grid gap-2.5 sm:grid-cols-2">
+                      <div className="min-w-0 flex-1">
+                        <h1 className="text-lg font-black leading-tight tracking-tight text-[#0A1628] sm:text-2xl lg:text-[2rem]">
+                          {displayHero.name}
+                        </h1>
+                        <div className="mt-1.5">
+                          <PatientStatusPill bucket={displayHero.statusBucket} />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-3.5 grid grid-cols-2 gap-2 sm:mt-4 lg:hidden">
+                      <PatientQuickActions
+                        displayHero={displayHero}
+                        notify={notify}
+                        onOpenProfile={() => setModal("profile")}
+                      />
+                    </div>
+
+                    <div className="mt-3.5 grid gap-2 sm:mt-4 sm:grid-cols-2 sm:gap-2.5">
                         <ContactMetaCard
                           icon={<HeroSvgIcon name="phone" />}
                           label="Téléphone"
@@ -2251,60 +2302,17 @@ export default function PatientDashboardPage() {
                         />
                       </div>
                     </div>
-                  </div>
 
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-2 xl:grid-cols-4 xl:gap-2.5">
-                    <HeaderAction
-                      variant="primary"
-                      compact
-                      icon={<HeroSvgIcon name="phone" />}
-                      onClick={() => {
-                        const t = normalizePhone(displayHero.phone);
-                        if (t) window.location.href = `tel:${t}`;
-                        else notify("Numéro absent pour passer un appel.");
-                      }}
-                    >
-                      Appeler
-                    </HeaderAction>
-                    <HeaderAction
-                      variant="secondary"
-                      compact
-                      icon={<HeroSvgIcon name="whatsapp" />}
-                      onClick={() => {
-                        const t = normalizePhone(displayHero.phone);
-                        if (!t) {
-                          notify("Numéro absent pour WhatsApp.");
-                          return;
-                        }
-                        window.open(`https://wa.me/${t.replace(/^\+/, "")}`, "_blank", "noopener,noreferrer");
-                      }}
-                    >
-                      WhatsApp
-                    </HeaderAction>
-                    <HeaderAction
-                      variant="secondary"
-                      compact
-                      icon={<HeroSvgIcon name="sms" />}
-                      onClick={() => {
-                        const t = normalizePhone(displayHero.phone);
-                        if (t) window.location.href = `sms:${t}`;
-                        else notify("Numéro absent pour envoyer un SMS.");
-                      }}
-                    >
-                      SMS
-                    </HeaderAction>
-                    <HeaderAction
-                      variant="ghost"
-                      compact
-                      icon={<HeroSvgIcon name="more" />}
-                      onClick={() => setModal("profile")}
-                    >
-                      Profil
-                    </HeaderAction>
+                  <div className="hidden shrink-0 grid-cols-2 gap-2.5 lg:grid xl:grid-cols-4">
+                    <PatientQuickActions
+                      displayHero={displayHero}
+                      notify={notify}
+                      onOpenProfile={() => setModal("profile")}
+                    />
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-dashed border-[#DDE7F1] bg-[#FCFDFE] px-4 py-3.5">
+                <div className="rounded-2xl border border-dashed border-[#DDE7F1] bg-[#FCFDFE] px-3.5 py-3 sm:px-4 sm:py-3.5">
                   {patientInsightTags.length > 0 ? (
                     <div className="flex flex-wrap gap-2.5">
                       {patientInsightTags.map((tag) => (
@@ -2314,8 +2322,11 @@ export default function PatientDashboardPage() {
                       ))}
                     </div>
                   ) : (
-                    <p className="m-0 text-sm font-semibold leading-relaxed text-[#94A3B8]">
-                      Aucun repère automatique pour l&apos;instant. Les tags apparaîtront ici après des rendez-vous ou des notes du cabinet.
+                    <p className="m-0 text-[13px] font-semibold leading-relaxed text-[#94A3B8] sm:text-sm">
+                      <span className="sm:hidden">Aucun repère patient pour l&apos;instant.</span>
+                      <span className="hidden sm:inline">
+                        Aucun repère automatique pour l&apos;instant. Les tags apparaîtront ici après des rendez-vous ou des notes du cabinet.
+                      </span>
                     </p>
                   )}
                 </div>
@@ -2323,7 +2334,7 @@ export default function PatientDashboardPage() {
             </div>
           </section>
 
-          <section className="mt-5 overflow-hidden rounded-[26px] border border-[#E2EAF4] bg-white shadow-sm">
+          <section className="mt-3.5 overflow-hidden rounded-[24px] border border-[#E2EAF4] bg-white shadow-sm sm:mt-5 sm:rounded-[26px]">
             <div className="flex snap-x snap-mandatory overflow-x-auto border-b border-[#EEF3F8] [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {viewTabs.map((tab) => (
                 <button
