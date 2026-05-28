@@ -154,7 +154,7 @@ def _mirror_google_booking_to_internal(session: Any, start_iso: str, event_id: s
         )
         return False
     source = "pg" if config.USE_PG_SLOTS else "sqlite"
-    ok = _book_local_by_slot_id(session, int(slot_id), source=source)
+    ok = _book_local_by_slot_id(session, int(slot_id), source=source, google_event_id=event_id)
     if ok:
         logger.info(
             "BOOKING_MIRROR_INTERNAL_OK tenant_id=%s conv_id=%s slot_id=%s event_id=%s",
@@ -1404,7 +1404,12 @@ def _book_google_by_iso(session, start_iso: str, end_iso: str) -> tuple[bool, st
         return False, "technical"
 
 
-def _book_local_by_slot_id(session, slot_id: int, source: str = "sqlite") -> bool:
+def _book_local_by_slot_id(
+    session,
+    slot_id: int,
+    source: str = "sqlite",
+    google_event_id: Optional[str] = None,
+) -> bool:
     """Book local (PG ou SQLite) à partir du slot_id du slot affiché."""
     tenant_id = getattr(session, "tenant_id", None) or 1
     bo = _persisted_booking_origin(session)
@@ -1420,6 +1425,7 @@ def _book_local_by_slot_id(session, slot_id: int, source: str = "sqlite") -> boo
                 contact_type=getattr(session.qualif_data, "contact_type", None) or "",
                 motif=session.qualif_data.motif or "",
                 booking_origin=bo,
+                google_event_id=google_event_id,
             )
             return result is True
         except Exception as e:
@@ -1436,6 +1442,7 @@ def _book_local_by_slot_id(session, slot_id: int, source: str = "sqlite") -> boo
             motif=session.qualif_data.motif or "",
             tenant_id=tenant_id,
             booking_origin=bo,
+            google_event_id=google_event_id,
         )
     except Exception as e:
         logger.error(f"Erreur book_sqlite_by_slot_id: {e}")

@@ -308,6 +308,62 @@ def pg_count_free_slots(tenant_id: int) -> Optional[int]:
         return None
 
 
+def pg_attach_google_event_id(
+    tenant_id: int,
+    google_event_id: str,
+    *,
+    appointment_id: Optional[int] = None,
+    slot_id: Optional[int] = None,
+) -> Optional[bool]:
+    """Associe un événement Google à un RDV miroir local."""
+    event_id = str(google_event_id or "").strip()
+    if not event_id or (not appointment_id and not slot_id):
+        return False
+    url = _pg_url()
+    if not url:
+        return None
+
+    def _do() -> Optional[bool]:
+        import psycopg
+
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                if appointment_id:
+                    cur.execute(
+                        """
+                        UPDATE appointments
+                        SET google_event_id = %s
+                        WHERE tenant_id = %s AND id = %s
+                        """,
+                        (event_id[:256], tenant_id, appointment_id),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE appointments
+                        SET google_event_id = %s
+                        WHERE tenant_id = %s AND slot_id = %s
+                        """,
+                        (event_id[:256], tenant_id, slot_id),
+                    )
+                if cur.rowcount == 0:
+                    conn.rollback()
+                    return False
+                conn.commit()
+                return True
+
+    try:
+        return _do()
+    except Exception as e:
+        if _is_transient(e):
+            try:
+                return _do()
+            except Exception:
+                pass
+        logger.debug("pg_attach_google_event_id failed tenant_id=%s err=%s", tenant_id, e)
+        return None
+
+
 def pg_book_slot_atomic(
     tenant_id: int,
     slot_id: int,
@@ -316,6 +372,7 @@ def pg_book_slot_atomic(
     contact_type: str,
     motif: str,
     booking_origin: Optional[str] = None,
+    google_event_id: Optional[str] = None,
 ) -> Optional[bool]:
     """
     Booking atomique : UPDATE slots SET is_booked=TRUE WHERE id=? AND is_booked=FALSE RETURNING id.
@@ -342,12 +399,15 @@ def pg_book_slot_atomic(
                     conn.rollback()
                     return False
                 bo = (booking_origin or "").strip()[:40] or None
+                ge = (google_event_id or "").strip()[:256] or None
                 cur.execute(
                     """
-                    INSERT INTO appointments (tenant_id, slot_id, name, contact, contact_type, motif, booking_origin)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO appointments (
+                        tenant_id, slot_id, name, contact, contact_type, motif, booking_origin, google_event_id
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (tenant_id, slot_id, name, contact, contact_type, motif, bo),
+                    (tenant_id, slot_id, name, contact, contact_type, motif, bo, ge),
                 )
                 conn.commit()
                 return True
@@ -485,7 +545,7 @@ def pg_reschedule_booking_atomic(tenant_id: int, appt_id: int, new_slot_id: int)
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT slot_id, name, contact, contact_type, motif, booking_origin
+                    SELECT slot_id, name, contact, contact_type, motif, booking_origin, google_event_id
                     FROM appointments
                     WHERE tenant_id = %s AND id = %s
                     FOR UPDATE
@@ -496,7 +556,7 @@ def pg_reschedule_booking_atomic(tenant_id: int, appt_id: int, new_slot_id: int)
                 if not row:
                     conn.rollback()
                     return False
-                old_slot_id, name, contact, contact_type, motif, booking_origin = row
+                old_slot_id, name, contact, contact_type, motif, booking_origin, google_event_id = row
                 if int(old_slot_id) == int(new_slot_id):
                     conn.rollback()
                     return False
@@ -515,12 +575,15 @@ def pg_reschedule_booking_atomic(tenant_id: int, appt_id: int, new_slot_id: int)
                     return False
 
                 bo = ((booking_origin or "").strip()[:40] if booking_origin else None)
+                ge = ((google_event_id or "").strip()[:256] if google_event_id else None)
                 cur.execute(
                     """
-                    INSERT INTO appointments (tenant_id, slot_id, name, contact, contact_type, motif, booking_origin)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO appointments (
+                        tenant_id, slot_id, name, contact, contact_type, motif, booking_origin, google_event_id
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (tenant_id, new_slot_id, name, contact, contact_type, motif, bo),
+                    (tenant_id, new_slot_id, name, contact, contact_type, motif, bo, ge),
                 )
                 cur.execute(
                     "DELETE FROM appointments WHERE tenant_id = %s AND id = %s",

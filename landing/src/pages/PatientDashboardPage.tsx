@@ -1477,8 +1477,13 @@ export default function PatientDashboardPage() {
     }
     setApptActionLoading(true);
     try {
-      await api.tenantRescheduleAgendaAppointment(String(apptId), agendaReschedulePayload(slot, newSlot.slot_id));
-      notify(`Rendez-vous déplacé au ${newSlot.date} à ${newSlot.time}.`);
+      const res = await api.tenantRescheduleAgendaAppointment(String(apptId), agendaReschedulePayload(slot, newSlot.slot_id));
+      const syncedGoogle = res?.provider === "google+local" || res?.google_synced === true;
+      notify(
+        syncedGoogle
+          ? `Rendez-vous déplacé sur UWi et Google Calendar au ${newSlot.date} à ${newSlot.time}.`
+          : `Rendez-vous déplacé au ${newSlot.date} à ${newSlot.time}.`,
+      );
       setModal(null);
       setApptActionTarget(null);
       refreshPatientAgenda();

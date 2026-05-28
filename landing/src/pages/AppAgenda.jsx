@@ -1227,12 +1227,18 @@ export default function AppAgenda() {
     }
     setActionLoading(true);
     try {
-      await api.tenantRescheduleAgendaAppointment(
+      const res = await api.tenantRescheduleAgendaAppointment(
         String(apptId),
         agendaReschedulePayload(selectedAppt, slot.slot_id),
       );
       const fmtDate = new Date(`${slot.date}T12:00:00`).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
-      setActionMsg({ text: `RDV déplacé au ${fmtDate} à ${slot.time}`, type: "success" });
+      const syncedGoogle = res?.provider === "google+local" || res?.google_synced === true;
+      setActionMsg({
+        text: syncedGoogle
+          ? `RDV déplacé sur UWi et Google Calendar au ${fmtDate} à ${slot.time}`
+          : `RDV déplacé au ${fmtDate} à ${slot.time}`,
+        type: "success",
+      });
       closeAppointmentDetail();
       invalidateAgendaBulkCache();
       await loadAgenda();

@@ -251,6 +251,7 @@ def test_tenant_agenda_reschedule_google_mirror_moves_both(client):
         "evt_123",
         new_start.isoformat(),
         new_end.isoformat(),
+        timezone="Europe/Paris",
     )
     reschedule_local.assert_called_once_with(321, 777, tenant_id=12)
 
