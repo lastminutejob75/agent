@@ -212,6 +212,52 @@ function initialsFromFullName(name: string) {
 
 const PATIENT_DETAIL_CACHE_MS = 90000;
 
+type PatientDetailBundle = {
+  patientCabinetRow: Record<string, unknown> | null;
+  urlPatientHero: { name: string; phone: string; initials: string } | null;
+  patientEmail: string;
+  documents: PatientDocument[];
+  patientNotes: PatientNote[];
+  patientInsightTags: PatientInsightTag[];
+  patientPastAppointments: Array<{ start: Date; key: string }>;
+  tenantPatientNotFound: boolean;
+};
+
+function emptyPatientDetailBundle(
+  overrides: Partial<PatientDetailBundle> = {},
+): PatientDetailBundle {
+  return {
+    tenantPatientNotFound: false,
+    patientCabinetRow: null,
+    urlPatientHero: null,
+    patientEmail: "",
+    documents: [],
+    patientNotes: [],
+    patientInsightTags: [],
+    patientPastAppointments: [],
+    ...overrides,
+  };
+}
+
+function isPatientDetailCacheValid(
+  cached:
+    | {
+        nonce: number;
+        ts: number;
+        hasNotes: boolean;
+      }
+    | undefined,
+  patientFetchNonce: number,
+  activeView: ViewType,
+) {
+  return Boolean(
+    cached
+      && cached.nonce === patientFetchNonce
+      && Date.now() - cached.ts < PATIENT_DETAIL_CACHE_MS
+      && (activeView !== "overview" || cached.hasNotes),
+  );
+}
+
 function mapPatientDocuments(list: unknown[]) {
   return list.map((item: any) => ({
     id: Number(item.id),
@@ -947,16 +993,7 @@ export default function PatientDashboardPage() {
     setRequestActionLoading("");
   }, [requestContext?.id, requestContext?.status]);
 
-  const applyPatientDetailBundle = useCallback((bundle: {
-    patientCabinetRow: Record<string, unknown> | null;
-    urlPatientHero: { name: string; phone: string; initials: string } | null;
-    patientEmail: string;
-    documents: PatientDocument[];
-    patientNotes: PatientNote[];
-    patientInsightTags: PatientInsightTag[];
-    patientPastAppointments: Array<{ start: Date; key: string }>;
-    tenantPatientNotFound: boolean;
-  }) => {
+  const applyPatientDetailBundle = useCallback((bundle: PatientDetailBundle) => {
     setTenantPatientNotFound(bundle.tenantPatientNotFound);
     setPatientCabinetRow(bundle.patientCabinetRow);
     setUrlPatientHero(bundle.urlPatientHero);
@@ -967,17 +1004,17 @@ export default function PatientDashboardPage() {
     setPatientPastAppointments(bundle.patientPastAppointments);
   }, []);
 
+  const syncPatientEmailDraft = useCallback((email: string) => {
+    setEditingEmail(false);
+    setEmailDraft(email);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     if (!tenantPatientPhone) {
-      setDocuments([]);
-      setPatientNotes([]);
-      setUrlPatientHero(null);
-      setTenantPatientNotFound(false);
-      setPatientCabinetRow(null);
-      setPatientEmail("");
-      setPatientInsightTags([]);
-      setPatientPastAppointments([]);
+      applyPatientDetailBundle(emptyPatientDetailBundle());
+      syncPatientEmailDraft("");
+      setPatientHistory([]);
       setDocumentsLoading(false);
       setNotesLoading(false);
       return () => {
@@ -986,13 +1023,11 @@ export default function PatientDashboardPage() {
     }
 
     const cached = patientDetailCacheRef.current.get(tenantPatientPhone);
-    const cacheValid = cached
-      && cached.nonce === patientFetchNonce
-      && Date.now() - cached.ts < PATIENT_DETAIL_CACHE_MS
-      && (activeView !== "overview" || cached.hasNotes);
+    const cacheValid = isPatientDetailCacheValid(cached, patientFetchNonce, activeView);
 
-    if (cacheValid) {
+    if (cacheValid && cached) {
       applyPatientDetailBundle(cached);
+      syncPatientEmailDraft(cached.patientEmail || "");
       setDocumentsLoading(false);
       setNotesLoading(false);
       return () => {
@@ -1000,9 +1035,12 @@ export default function PatientDashboardPage() {
       };
     }
 
+    /* Changement de fiche : purge immédiate pour ne pas afficher l'email / notes de la fiche précédente. */
+    applyPatientDetailBundle(emptyPatientDetailBundle());
+    syncPatientEmailDraft("");
+    setPatientHistory([]);
     setDocumentsLoading(true);
     setNotesLoading(activeView === "overview");
-    setPatientNotes([]);
 
     const notesPromise = activeView === "overview"
       ? api.tenantGetPatientNotes(tenantPatientPhone, "?limit=100").catch(() => ({ items: [] }))
@@ -1014,7 +1052,7 @@ export default function PatientDashboardPage() {
         const p = res?.patient as Record<string, unknown> | undefined;
         const notesRes = await notesPromise;
         if (cancelled) return;
-        const bundle = {
+        const bundle: PatientDetailBundle = {
           tenantPatientNotFound: false,
           patientCabinetRow: p ?? null,
           urlPatientHero: buildPatientHeroFromProfile(p, tenantPatientPhone),
@@ -1027,6 +1065,7 @@ export default function PatientDashboardPage() {
           patientPastAppointments: mapPatientPastAppointments(res?.insights?.recent_past_appointments),
         };
         applyPatientDetailBundle(bundle);
+        syncPatientEmailDraft(bundle.patientEmail);
         patientDetailCacheRef.current.set(tenantPatientPhone, {
           ...bundle,
           nonce: patientFetchNonce,
@@ -1040,19 +1079,14 @@ export default function PatientDashboardPage() {
           typeof e === "object" && e !== null && "status" in e ? (e as { status?: number }).status : undefined;
         const notesRes = await notesPromise.catch(() => ({ items: [] as unknown[] }));
         if (cancelled) return;
-        const bundle = {
+        const bundle = emptyPatientDetailBundle({
           tenantPatientNotFound: status === 404,
-          patientCabinetRow: null,
-          urlPatientHero: null,
-          patientEmail: "",
-          documents: [] as PatientDocument[],
           patientNotes: activeView === "overview"
             ? mapPatientNotes(Array.isArray(notesRes?.items) ? notesRes.items : [])
             : [],
-          patientInsightTags: [] as PatientInsightTag[],
-          patientPastAppointments: [] as Array<{ start: Date; key: string }>,
-        };
+        });
         applyPatientDetailBundle(bundle);
+        syncPatientEmailDraft("");
         if (status !== 404) return;
         patientDetailCacheRef.current.set(tenantPatientPhone, {
           ...bundle,
@@ -1070,11 +1104,19 @@ export default function PatientDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [tenantPatientPhone, patientFetchNonce, activeView, applyPatientDetailBundle]);
+  }, [tenantPatientPhone, patientFetchNonce, activeView, applyPatientDetailBundle, syncPatientEmailDraft]);
+
+  useEffect(() => {
+    if (!tenantPatientPhone) return;
+    setApptActionTarget(null);
+    setModal((current) => (current === "cancelAppt" || current === "rescheduleAppt" ? null : current));
+    setPreviewDoc(null);
+    setPreviewUrl("");
+  }, [tenantPatientPhone]);
 
   useEffect(() => {
     if (!editingEmail) setEmailDraft(patientEmail || "");
-  }, [patientEmail, editingEmail]);
+  }, [patientEmail, editingEmail, tenantPatientPhone]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1659,6 +1701,16 @@ export default function PatientDashboardPage() {
       setPatientEmail(persisted);
       setEmailDraft(persisted);
       setEditingEmail(false);
+      const cached = patientDetailCacheRef.current.get(tenantPatientPhone);
+      if (cached) {
+        patientDetailCacheRef.current.set(tenantPatientPhone, {
+          ...cached,
+          patientEmail: persisted,
+          patientCabinetRow: res?.patient
+            ? (res.patient as Record<string, unknown>)
+            : cached.patientCabinetRow,
+        });
+      }
       notify(persisted ? `Email enregistré : ${persisted}` : "Email supprimé");
     } catch (e) {
       console.error("[patient.email] PATCH failure", e);
@@ -1820,21 +1872,23 @@ export default function PatientDashboardPage() {
                     type="button"
                     onClick={() => {
                       const cached = patientDetailCacheRef.current.get(patient.phone);
-                      if (
-                        cached
-                        && cached.nonce === patientFetchNonce
-                        && Date.now() - cached.ts < PATIENT_DETAIL_CACHE_MS
-                        && (activeView !== "overview" || cached.hasNotes)
-                      ) {
+                      const cacheValid = isPatientDetailCacheValid(cached, patientFetchNonce, activeView);
+                      if (cacheValid && cached) {
                         applyPatientDetailBundle(cached);
+                        syncPatientEmailDraft(cached.patientEmail || "");
                         setDocumentsLoading(false);
                         setNotesLoading(false);
                       } else {
-                        setUrlPatientHero({
-                          name: patient.name,
-                          phone: patient.phone,
-                          initials: patient.initials,
-                        });
+                        applyPatientDetailBundle(emptyPatientDetailBundle({
+                          urlPatientHero: {
+                            name: patient.name,
+                            phone: patient.phone,
+                            initials: patient.initials,
+                          },
+                        }));
+                        syncPatientEmailDraft("");
+                        setDocumentsLoading(true);
+                        setNotesLoading(activeView === "overview");
                       }
                       const np = new URLSearchParams(searchParams);
                       np.set("phone", patient.phone);
