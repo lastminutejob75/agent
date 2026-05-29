@@ -226,6 +226,10 @@ export function createShellCss(colors) {
   .uwi-shell-item:hover {
     background: #F8FAFC !important;
   }
+  .uwi-main.uwi-patient-dashboard > .uwi-topbar,
+  .uwi-main.uwi-patient-dashboard > .uwi-to-process-strip {
+    display: none !important;
+  }
   @media (max-width: 1279px) {
     .uwi-main.uwi-patient-dashboard {
       padding-top: 0 !important;

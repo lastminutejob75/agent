@@ -89,6 +89,17 @@ export default function AppLayout() {
   }, []);
 
   useEffect(() => {
+    if (isPatientDashboard) {
+      document.documentElement.dataset.uwiPatientDashboard = "1";
+    } else {
+      delete document.documentElement.dataset.uwiPatientDashboard;
+    }
+    return () => {
+      delete document.documentElement.dataset.uwiPatientDashboard;
+    };
+  }, [isPatientDashboard]);
+
+  useEffect(() => {
     let cancelled = false;
 
     api

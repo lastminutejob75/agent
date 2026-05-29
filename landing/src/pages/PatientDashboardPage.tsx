@@ -985,7 +985,7 @@ export default function PatientDashboardPage() {
   }, [tenantPatientNotFound, requestContext?.patientName]);
 
   useEffect(() => {
-    if (!tenantPatientPhone) setPatientListOpen(true);
+    setPatientListOpen(!tenantPatientPhone);
   }, [tenantPatientPhone]);
 
   /** Corrige ?phone= après décodage URL (notamment « + » → espace) ou variants 06 / espaces. */
@@ -2264,7 +2264,7 @@ export default function PatientDashboardPage() {
           </div>
         </aside>
 
-        <main className="overflow-y-auto px-3 pb-2 pt-0 sm:px-5 sm:py-5 sm:pt-5 lg:px-8 lg:py-6">
+        <main className="overflow-y-auto px-3 pb-2 pt-0 max-xl:px-3 max-xl:pb-2 max-xl:pt-0 sm:px-5 xl:px-8 xl:py-6">
           {tenantPatientNotFound ? (
             <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-950 shadow-sm">
               <p className="m-0">
