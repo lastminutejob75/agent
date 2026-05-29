@@ -757,6 +757,7 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
           <PatientQuestionnaireCard
             phone={tenantPatientPhone}
             patientEmail={patientEmail}
+            profile={patientCabinetRow}
             notify={notify}
             onApplied={onQuestionnaireApplied}
             disabled={tenantPatientNotFound}

@@ -10,6 +10,24 @@ const STATUS_LABEL = {
   completed: "Complété",
 };
 
+// Champs du questionnaire alimentés par le profil de la fiche (miroir backend `maps_to: profile.*`).
+const PROFILE_PREFILL_KEYS = ["birth_date", "treating_physician_name", "treating_physician_city"];
+
+/** Pré-remplit les champs profil encore vides avec ce que la fiche connaît déjà (repli client). */
+function prefillFromProfile(answers, profile) {
+  const merged = { ...(answers || {}) };
+  if (!profile || typeof profile !== "object") return merged;
+  for (const key of PROFILE_PREFILL_KEYS) {
+    if (String(merged[key] ?? "").trim()) continue;
+    const raw = profile[key];
+    if (raw == null) continue;
+    let value = String(raw).trim();
+    if (key === "birth_date") value = value.slice(0, 10);
+    if (value) merged[key] = value;
+  }
+  return merged;
+}
+
 function statusLine(state) {
   if (!state) return STATUS_LABEL.draft;
   if (state.status === "completed") {
@@ -24,7 +42,7 @@ function statusLine(state) {
   return STATUS_LABEL.draft;
 }
 
-export default function PatientQuestionnaireCard({ phone, patientEmail, notify, onApplied, disabled = false }) {
+export default function PatientQuestionnaireCard({ phone, patientEmail, profile, notify, onApplied, disabled = false }) {
   const [schema, setSchema] = useState([]);
   const [state, setState] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -62,7 +80,7 @@ export default function PatientQuestionnaireCard({ phone, patientEmail, notify, 
   }, [load]);
 
   const openModal = () => {
-    setDraft({ ...(state?.answers || {}) });
+    setDraft(prefillFromProfile(state?.answers, profile));
     setModalOpen(true);
   };
 

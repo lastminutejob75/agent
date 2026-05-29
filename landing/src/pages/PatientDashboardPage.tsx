@@ -2891,6 +2891,7 @@ export default function PatientDashboardPage() {
                 <PatientQuestionnaireCard
                   phone={tenantPatientPhone}
                   patientEmail={patientEmail}
+                  profile={patientCabinetRow}
                   notify={notify}
                   onApplied={() => setPatientFetchNonce((n) => n + 1)}
                   disabled={tenantPatientNotFound}
