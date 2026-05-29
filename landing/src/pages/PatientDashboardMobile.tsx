@@ -91,6 +91,7 @@ export type PatientDashboardMobileProps = {
   tenantPatientNotFound: boolean;
   activeView: MobileViewType;
   setActiveView: (view: MobileViewType) => void;
+  onBackToList: () => void;
   onOpenProfile: () => void;
   onCall: () => void;
   onWhatsApp: () => void;
@@ -121,12 +122,14 @@ function MobilePatientHeader({
   patientCabinetRow,
   tenantPatientNotFound,
   onOpenProfile,
+  onBackToList,
 }: {
   displayHero: DisplayHero;
   patientEmail: string;
   patientCabinetRow: Record<string, unknown> | null;
   tenantPatientNotFound: boolean;
   onOpenProfile: () => void;
+  onBackToList: () => void;
 }) {
   const status = statusMeta(displayHero.statusBucket);
   const physician = formatPhysicianWithCity(
@@ -139,7 +142,16 @@ function MobilePatientHeader({
   );
 
   return (
-    <section className="mb-3 rounded-[24px] border border-[#E3EAF2] bg-white p-3.5 shadow-[0_10px_26px_rgba(15,23,42,0.08)]">
+    <>
+      <button
+        type="button"
+        onClick={onBackToList}
+        aria-label="Retour à la liste patients"
+        className="mb-2 inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#E3EAF2] bg-white/90 text-lg leading-none text-[#64748B] shadow-[0_2px_8px_rgba(15,23,42,0.06)] transition hover:border-[#BFE9EC] hover:bg-[#F8FBFD] hover:text-[#007F88]"
+      >
+        ←
+      </button>
+      <section className="mb-3 rounded-[24px] border border-[#E3EAF2] bg-white p-3.5 shadow-[0_10px_26px_rgba(15,23,42,0.08)]">
       <div className="flex items-center gap-3.5">
         <div
           className={cx(
@@ -207,6 +219,7 @@ function MobilePatientHeader({
         <span className="shrink-0 text-2xl font-extrabold leading-none text-[#007F88]">›</span>
       </button>
     </section>
+    </>
   );
 }
 
@@ -706,6 +719,7 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
     tenantPatientNotFound,
     activeView,
     setActiveView,
+    onBackToList,
     onOpenProfile,
     onCall,
     onWhatsApp,
@@ -738,6 +752,7 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
         patientCabinetRow={patientCabinetRow}
         tenantPatientNotFound={tenantPatientNotFound}
         onOpenProfile={onOpenProfile}
+        onBackToList={onBackToList}
       />
       <MobileQuickActions onCall={onCall} onWhatsApp={onWhatsApp} onSms={onSms} onMore={onOpenProfile} />
       <MobileContentActions onAddNote={onAddNote} onAddDocument={onAddDocument} />

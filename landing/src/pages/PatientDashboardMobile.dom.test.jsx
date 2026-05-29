@@ -21,6 +21,7 @@ const baseProps = {
   tenantPatientNotFound: false,
   activeView: "overview",
   setActiveView: vi.fn(),
+  onBackToList: vi.fn(),
   onOpenProfile: vi.fn(),
   onCall: vi.fn(),
   onWhatsApp: vi.fn(),
@@ -48,6 +49,7 @@ const baseProps = {
 describe("PatientDashboardMobile", () => {
   it("renders patient header and tabs", () => {
     render(<PatientDashboardMobile {...baseProps} />);
+    expect(screen.getByLabelText("Retour à la liste patients")).toBeTruthy();
     expect(screen.getByText("Jean Dupont")).toBeTruthy();
     expect(screen.getByText("Prochain rendez-vous")).toBeTruthy();
     expect(screen.getByText("Documents")).toBeTruthy();

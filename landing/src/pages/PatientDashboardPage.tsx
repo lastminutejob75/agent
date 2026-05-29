@@ -1459,6 +1459,12 @@ export default function PatientDashboardPage() {
     }));
   }, [navigate, tenantPatientPhone]);
 
+  const goBackToPatientList = useCallback(() => {
+    const np = new URLSearchParams(searchParams);
+    np.delete("phone");
+    setSearchParams(np, { replace: true });
+  }, [searchParams, setSearchParams]);
+
   const openCancelApptModal = useCallback((slot: Record<string, unknown>, start: Date) => {
     setApptActionTarget({ slot, start });
     setModal("cancelAppt");
@@ -2316,6 +2322,7 @@ export default function PatientDashboardPage() {
               tenantPatientNotFound={tenantPatientNotFound}
               activeView={activeView}
               setActiveView={setActiveView}
+              onBackToList={goBackToPatientList}
               onOpenProfile={() => setModal("profile")}
               onCall={() => {
                 const t = normalizePhone(displayHero.phone);
