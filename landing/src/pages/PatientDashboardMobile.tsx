@@ -166,9 +166,19 @@ function MobilePatientHeader({
             <span className="h-2 w-2 rounded-full" style={{ backgroundColor: status.dot }} />
             {status.label}
           </span>
-          <div className="mt-2 flex items-center gap-2 text-lg font-bold text-[#0B1628]">
-            <HeroSvgIcon name="phone" className="h-4 w-4 text-[#009CA4]" />
-            {displayHero.phone}
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <div className="flex min-w-0 items-center gap-2 text-[15px] font-bold text-[#0B1628] sm:text-lg">
+              <HeroSvgIcon name="phone" className="h-4 w-4 shrink-0 text-[#009CA4]" />
+              <span className="truncate">{displayHero.phone}</span>
+            </div>
+            <div className="flex min-w-0 items-center gap-2 text-[14px] font-bold text-[#0B1628] sm:text-[15px]">
+              <HeroSvgIcon name="mail" className="h-4 w-4 shrink-0 text-[#009CA4]" />
+              <span className="truncate">
+                {tenantPatientNotFound
+                  ? "Email — créez la fiche"
+                  : patientEmail || "Aucun email"}
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -176,9 +186,6 @@ function MobilePatientHeader({
       <div className="my-4 h-px bg-[#E3EAF2]" />
 
       <div className="grid grid-cols-1 gap-2">
-        <HeaderInfoRow icon={<HeroSvgIcon name="mail" className="h-5 w-5" />} label="Email">
-          {tenantPatientNotFound ? "Créez la fiche pour ajouter un email" : patientEmail || "Aucun email renseigné"}
-        </HeaderInfoRow>
         <HeaderInfoRow icon={<HeroSvgIcon name="calendar" className="h-5 w-5" />} label="Naissance">
           {formatBirthDateDisplay(patientCabinetRow?.birth_date)}
         </HeaderInfoRow>
@@ -254,6 +261,33 @@ function MobileQuickActions({
       >
         <HeroSvgIcon name="more" className="h-4 w-4" />
         Plus
+      </button>
+    </section>
+  );
+}
+
+function MobileContentActions({
+  onAddNote,
+  onAddDocument,
+}: {
+  onAddNote: () => void;
+  onAddDocument: () => void;
+}) {
+  return (
+    <section className="mb-3 grid grid-cols-2 gap-2.5">
+      <button
+        type="button"
+        onClick={onAddNote}
+        className="min-h-[50px] rounded-[15px] border border-[#FDBA74] bg-white text-sm font-black text-[#F97316] shadow-[0_8px_18px_rgba(15,23,42,0.05)]"
+      >
+        ✎ Ajouter une note
+      </button>
+      <button
+        type="button"
+        onClick={onAddDocument}
+        className="min-h-[50px] rounded-[15px] border border-[#86EFAC] bg-white text-sm font-black text-[#16A34A] shadow-[0_8px_18px_rgba(15,23,42,0.05)]"
+      >
+        ▤ Ajouter un document
       </button>
     </section>
   );
@@ -409,13 +443,9 @@ function MobileContextPatient({
 
 function MobileOverviewExtras({
   onOpenProfile,
-  onAddNote,
-  onAddDocument,
   onOpenHistoryModal,
 }: {
   onOpenProfile: () => void;
-  onAddNote: () => void;
-  onAddDocument: () => void;
   onOpenHistoryModal: () => void;
 }) {
   return (
@@ -438,23 +468,6 @@ function MobileOverviewExtras({
         </div>
         <span className="shrink-0 text-[30px] font-extrabold leading-none text-[#007F88]">›</span>
       </button>
-
-      <div className="mb-3 grid grid-cols-2 gap-2.5">
-        <button
-          type="button"
-          onClick={onAddNote}
-          className="min-h-[50px] rounded-[15px] border border-[#FDBA74] bg-white text-sm font-black text-[#F97316]"
-        >
-          ✎ Ajouter une note
-        </button>
-        <button
-          type="button"
-          onClick={onAddDocument}
-          className="min-h-[50px] rounded-[15px] border border-[#86EFAC] bg-white text-sm font-black text-[#16A34A]"
-        >
-          ▤ Ajouter un document
-        </button>
-      </div>
 
       <section className="mb-3 flex items-center gap-3 rounded-[22px] border border-[#E3EAF2] bg-white p-3.5 shadow-[0_8px_20px_rgba(15,23,42,0.06)]">
         <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border-2 border-[#0B1628] text-[22px]">
@@ -738,6 +751,7 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
         tenantPatientNotFound={tenantPatientNotFound}
       />
       <MobileQuickActions onCall={onCall} onWhatsApp={onWhatsApp} onSms={onSms} onMore={onOpenProfile} />
+      <MobileContentActions onAddNote={onAddNote} onAddDocument={onAddDocument} />
       <MobileTabs active={activeView} onChange={setActiveView} />
 
       {activeView === "overview" ? (
@@ -757,8 +771,6 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
           />
           <MobileOverviewExtras
             onOpenProfile={onOpenProfile}
-            onAddNote={onAddNote}
-            onAddDocument={onAddDocument}
             onOpenHistoryModal={onOpenHistoryModal}
           />
         </>
