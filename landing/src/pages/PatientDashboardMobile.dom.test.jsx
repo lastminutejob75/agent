@@ -21,7 +21,6 @@ const baseProps = {
   tenantPatientNotFound: false,
   activeView: "overview",
   setActiveView: vi.fn(),
-  onBackToList: vi.fn(),
   onOpenProfile: vi.fn(),
   onCall: vi.fn(),
   onWhatsApp: vi.fn(),

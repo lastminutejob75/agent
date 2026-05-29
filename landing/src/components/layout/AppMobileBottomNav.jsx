@@ -1,10 +1,28 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 
 export default function AppMobileBottomNav({ navItems, demandBadge, colors }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+
   return (
     <nav className="uwi-mobile-nav">
       {navItems.filter((item) => item.to !== "/app/profile").map((item) => (
-        <NavLink key={item.to} to={item.to} end={item.end} style={{ textDecoration: "none" }}>
+        <NavLink
+          key={item.to}
+          to={item.to}
+          end={item.end}
+          style={{ textDecoration: "none" }}
+          onClick={(event) => {
+            if (
+              item.to === "/app/patient-dashboard" &&
+              location.pathname.startsWith("/app/patient-dashboard") &&
+              location.search.includes("phone=")
+            ) {
+              event.preventDefault();
+              navigate("/app/patient-dashboard", { replace: true });
+            }
+          }}
+        >
           {({ isActive }) => (
             <div
               style={{

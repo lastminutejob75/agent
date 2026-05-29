@@ -1403,7 +1403,7 @@ export default function PatientDashboardPage() {
       .catch(() => {
         if (!cancelled) {
           setTenantAgendaRawSlots([]);
-          setAgendaDaysLoaded(0);
+          setAgendaDaysLoaded(daysNeeded);
         }
       })
       .finally(() => {
@@ -2325,7 +2325,6 @@ export default function PatientDashboardPage() {
               tenantPatientNotFound={tenantPatientNotFound}
               activeView={activeView}
               setActiveView={setActiveView}
-              onBackToList={() => setPatientListOpen(true)}
               onOpenProfile={() => setModal("profile")}
               onCall={() => {
                 const t = normalizePhone(displayHero.phone);
