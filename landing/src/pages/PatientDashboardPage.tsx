@@ -20,6 +20,7 @@ import {
   canRescheduleAgendaSlot,
 } from "../lib/agendaAppointmentActions.js";
 import AgendaReschedulePanel from "../components/agenda/AgendaReschedulePanel.jsx";
+import PatientDashboardMobile from "./PatientDashboardMobile";
 import { normalizePhoneBusinessKey } from "../lib/phoneNormalize";
 import { patientDashboardFileHasValidatedIdentity } from "../lib/callsService.js";
 
@@ -80,7 +81,7 @@ type SidebarPatientRow = {
 
 type ModalType = "profile" | "addNote" | "addDocument" | "history" | "deletePatient" | "cancelAppt" | "rescheduleAppt" | null;
 type ApptActionTarget = { slot: Record<string, unknown>; start: Date };
-type ViewType = "overview" | "appointments" | "history";
+type ViewType = "overview" | "appointments" | "history" | "documents";
 type RequestContext = {
   id: string;
   phone: string;
@@ -2301,6 +2302,57 @@ export default function PatientDashboardPage() {
               ) : null}
             </div>
           ) : null}
+
+          {tenantPatientPhone && displayHero ? (
+            <PatientDashboardMobile
+              displayHero={displayHero}
+              patientCabinetRow={patientCabinetRow}
+              patientEmail={patientEmail}
+              tenantPatientNotFound={tenantPatientNotFound}
+              activeView={activeView}
+              setActiveView={setActiveView}
+              onBackToList={() => setPatientListOpen(true)}
+              onOpenProfile={() => setModal("profile")}
+              onCall={() => {
+                const t = normalizePhone(displayHero.phone);
+                if (t) window.location.href = `tel:${t}`;
+                else notify("Numéro absent pour passer un appel.");
+              }}
+              onWhatsApp={() => {
+                const t = normalizePhone(displayHero.phone);
+                if (!t) {
+                  notify("Numéro absent pour WhatsApp.");
+                  return;
+                }
+                window.open(`https://wa.me/${t.replace(/^\+/, "")}`, "_blank", "noopener,noreferrer");
+              }}
+              onSms={() => {
+                const t = normalizePhone(displayHero.phone);
+                if (t) window.location.href = `sms:${t}`;
+                else notify("Numéro absent pour envoyer un SMS.");
+              }}
+              onAddNote={() => setModal("addNote")}
+              onAddDocument={() => setModal("addDocument")}
+              onOpenHistoryModal={() => setModal("history")}
+              upcomingAppointments={upcomingPatientAppointments}
+              pastAppointments={pastPatientAppointments}
+              patientAgendaLoading={patientAgendaLoading}
+              apptStatusLabel={patientAgendaRowStatus}
+              renderApptActions={(slot, start) => renderPatientApptActions(slot, start)}
+              patientNotes={patientNotes}
+              notesLoading={notesLoading}
+              noteDeletingId={noteDeletingId}
+              onRemoveNote={removeNote}
+              patientHistory={patientHistory}
+              patientHistoryLoading={patientHistoryLoading}
+              documents={documents}
+              documentsLoading={documentsLoading}
+              onPreviewDocument={(doc) => void openPreview(doc)}
+              formatDocDate={(value) => formatCabinetMetaDate(value)}
+            />
+          ) : null}
+
+          <div className="hidden xl:block">
           <section className="overflow-hidden rounded-[24px] border border-[#E2EAF4] bg-white shadow-[0_12px_32px_rgba(10,22,40,0.05)] sm:rounded-[28px] sm:shadow-[0_18px_45px_rgba(10,22,40,0.06)]">
             <div className="h-1 bg-gradient-to-r from-[#009CA4] via-[#00B3A4] to-[#004C69]" />
             {tenantPatientPhone ? (
@@ -2475,6 +2527,7 @@ export default function PatientDashboardPage() {
               <PrimaryCTA variant="document" onClick={() => setModal("addDocument")}>▤ Ajouter un document</PrimaryCTA>
             </div>
           </section>
+          </div>
 
           {tenantPatientPhone && !activeRequestDetail && (patientOpenRequests.length > 0 || requestsLoading) ? (
             <section className="mt-6 rounded-[28px] border border-[#E2EAF4] bg-white p-7 shadow-sm">
@@ -2586,7 +2639,7 @@ export default function PatientDashboardPage() {
           ) : null}
 
           {activeView === "overview" && (
-            <div className="mt-6 space-y-6">
+            <div className="mt-6 hidden space-y-6 xl:block">
               <div className="space-y-6">
                 <section className="rounded-[28px] border border-[#E2EAF4] bg-white p-6 shadow-sm">
                   <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
@@ -2767,7 +2820,7 @@ export default function PatientDashboardPage() {
           )}
 
           {activeView === "appointments" && (
-            <section className="mt-6 rounded-[28px] border border-[#E2EAF4] bg-white p-4 shadow-sm sm:p-6 lg:p-8">
+            <section className="mt-6 hidden rounded-[28px] border border-[#E2EAF4] bg-white p-4 shadow-sm sm:p-6 lg:p-8 xl:block">
               <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <h2 className="text-2xl font-black">Rendez-vous du patient</h2>
@@ -2864,7 +2917,7 @@ export default function PatientDashboardPage() {
           )}
 
           {activeView === "history" && (
-            <section className="mt-6 rounded-[28px] border border-[#E2EAF4] bg-white p-4 shadow-sm sm:p-6 lg:p-8">
+            <section className="mt-6 hidden rounded-[28px] border border-[#E2EAF4] bg-white p-4 shadow-sm sm:p-6 lg:p-8 xl:block">
               <h2 className="mb-5 text-2xl font-black">Historique des interactions</h2>
               <HistoryList items={patientHistory} loading={patientHistoryLoading} />
             </section>
