@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useOutletContext, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { agendaSlotMotif, formatAgendaSlotHour, parseAgendaSlotStart } from "../lib/agendaSlotParse.js";
 import { api } from "../lib/api.js";
 import { buildTenantRequestRows, filterOpenPatientRequests } from "../lib/requestUiStatus.js";
@@ -386,7 +386,7 @@ function patientAgendaRowStatus(slot: Record<string, unknown>, start: Date): str
   if (start.getTime() >= Date.now()) {
     if (joined.includes("pending")) return "À confirmer";
     if (joined.includes("confirm")) return "Confirmé";
-    return "Prévu";
+    return "Confirmé";
   }
   return "Passé";
 }
@@ -736,9 +736,6 @@ function Modal({
 }
 
 export default function PatientDashboardPage() {
-  const outlet = useOutletContext() as { me?: { tenant_name?: string } } | undefined;
-  const meTenantName = outlet?.me?.tenant_name?.trim();
-
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
@@ -2448,16 +2445,9 @@ export default function PatientDashboardPage() {
               ))}
             </div>
 
-            <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 sm:gap-4 sm:p-5 lg:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 sm:gap-4 sm:p-5">
               <PrimaryCTA variant="note" onClick={() => setModal("addNote")}>✎ Ajouter une note</PrimaryCTA>
               <PrimaryCTA variant="document" onClick={() => setModal("addDocument")}>▤ Ajouter un document</PrimaryCTA>
-              <button
-                type="button"
-                onClick={() => void openDeletePatientModal()}
-                className="rounded-2xl border border-red-200 bg-red-50 px-4 py-4 text-left text-sm font-black text-red-700 transition hover:bg-red-100"
-              >
-                🗑 Supprimer la fiche patient
-              </button>
             </div>
           </section>
 
@@ -2619,16 +2609,14 @@ export default function PatientDashboardPage() {
                     </div>
 
                     <div className="min-w-0 flex-1">
-                      <div className="mb-4 flex flex-wrap items-center gap-3 sm:gap-6">
+                      <div className="mb-4 flex flex-wrap items-center gap-3 sm:gap-4">
                         <div className="text-3xl font-black sm:text-4xl">
                           {formatAgendaSlotHour(start)}{" "}
                           <span className="text-sm font-semibold text-[#64748B] sm:text-base">
                             ({agendaSlotDurationMinutes(slot)} min)
                           </span>
                         </div>
-                        <div className="h-8 w-px bg-[#D9E3EF]" />
-                        <div className="text-xl font-black">{meTenantName || "Cabinet"}</div>
-                        <span className={`rounded-lg px-3 py-2 text-sm font-black ${tone}`}>{statusLb}</span>
+                        <span className={`rounded-lg px-3 py-2 text-sm font-black sm:text-base ${tone}`}>{statusLb}</span>
                       </div>
 
                       <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
@@ -2907,21 +2895,23 @@ export default function PatientDashboardPage() {
                   <div className="font-black">{formatCabinetMetaDate(patientCabinetRow?.updated_at)}</div>
                 </div>
               </div>
-              <div className="mt-6 flex gap-3">
+              <div className="mt-6">
                 <button
                   type="button"
                   disabled={profileSaveSaving}
                   onClick={() => void saveProfileFromModal()}
-                  className="flex-1 rounded-xl bg-[#009CA4] px-4 py-3 font-black text-white hover:bg-[#00838A] disabled:opacity-60"
+                  className="w-full rounded-xl bg-[#009CA4] px-4 py-3 font-black text-white hover:bg-[#00838A] disabled:opacity-60"
                 >
                   {profileSaveSaving ? "Enregistrement…" : "Enregistrer le profil"}
                 </button>
+              </div>
+              <div className="mt-5 border-t border-[#EEF3F8] pt-4 text-center">
                 <button
                   type="button"
                   onClick={() => void openDeletePatientModal()}
-                  className="flex-1 rounded-xl border border-red-300 px-4 py-3 font-black text-red-600"
+                  className="text-sm font-semibold text-[#94A3B8] underline-offset-2 transition hover:text-red-600 hover:underline"
                 >
-                  Supprimer
+                  Supprimer la fiche patient…
                 </button>
               </div>
             </>
