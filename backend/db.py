@@ -622,11 +622,12 @@ _CABINET_CLIENT_COLS_EXTENDED = (
 _cabinet_client_cols_cache: Optional[str] = None
 
 
-def _cabinet_client_select_columns_pg(conn: Any) -> str:
-    """Colonnes SELECT cabinet_clients (avec champs profil si migration appliquée)."""
+def _reset_cabinet_client_cols_cache() -> None:
     global _cabinet_client_cols_cache
-    if _cabinet_client_cols_cache:
-        return _cabinet_client_cols_cache
+    _cabinet_client_cols_cache = None
+
+
+def _cabinet_clients_profile_columns_ready_pg(conn: Any) -> bool:
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -640,7 +641,43 @@ def _cabinet_client_select_columns_pg(conn: Any) -> str:
             )
             row = cur.fetchone()
             count = int((row.get("n") if isinstance(row, dict) else row[0]) or 0)
-        _cabinet_client_cols_cache = _CABINET_CLIENT_COLS_EXTENDED if count >= 2 else _CABINET_CLIENT_COLS_BASE
+        return count >= 2
+    except Exception:
+        return False
+
+
+def _ensure_cabinet_clients_profile_columns_pg(conn: Any) -> bool:
+    """Tente d'ajouter birth_date / treating_physician_name (migration 040) avant écriture."""
+    try:
+        _migrate_cabinet_clients_columns_pg(conn)
+        _reset_cabinet_client_cols_cache()
+        return _cabinet_clients_profile_columns_ready_pg(conn)
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "cabinet_clients profile columns ensure failed: %s",
+            exc,
+        )
+        return False
+
+
+def _pg_error_is_missing_profile_column(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return (
+        "birth_date" in msg
+        or "treating_physician_name" in msg
+        or "undefined column" in msg
+        or "does not exist" in msg
+    )
+
+
+def _cabinet_client_select_columns_pg(conn: Any) -> str:
+    """Colonnes SELECT cabinet_clients (avec champs profil si migration appliquée)."""
+    global _cabinet_client_cols_cache
+    if _cabinet_client_cols_cache:
+        return _cabinet_client_cols_cache
+    try:
+        ready = _cabinet_clients_profile_columns_ready_pg(conn)
+        _cabinet_client_cols_cache = _CABINET_CLIENT_COLS_EXTENDED if ready else _CABINET_CLIENT_COLS_BASE
     except Exception:
         _cabinet_client_cols_cache = _CABINET_CLIENT_COLS_BASE
     return _cabinet_client_cols_cache
@@ -809,6 +846,7 @@ def update_patient_fields(
     sets.append("updated_at = datetime('now')")
     params.extend([tenant_id, phone_norm])
 
+    has_profile_fields = birth_date is not None or treating_physician_name is not None
     url = _pg_events_url()
     if url:
         try:
@@ -816,13 +854,42 @@ def update_patient_fields(
             from backend.pg_pool import pg_connection_for
             with pg_connection_for(url) as conn:
                 _ensure_cabinet_clients_table_pg(conn)
-                with conn.cursor() as cur:
-                    cur.execute(
-                        f"UPDATE cabinet_clients SET {', '.join(pg_sets)} WHERE tenant_id = %s AND phone = %s",
-                        params,
-                    )
-                    rowcount = cur.rowcount
-                conn.commit()
+                if has_profile_fields and not _cabinet_clients_profile_columns_ready_pg(conn):
+                    _ensure_cabinet_clients_profile_columns_pg(conn)
+                    if not _cabinet_clients_profile_columns_ready_pg(conn):
+                        logging.getLogger(__name__).error(
+                            "update_patient_fields: colonnes profil absentes tenant_id=%s phone=%s",
+                            tenant_id,
+                            phone_norm,
+                        )
+                        return None
+
+                rowcount = 0
+                for attempt in range(2):
+                    try:
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                f"UPDATE cabinet_clients SET {', '.join(pg_sets)} WHERE tenant_id = %s AND phone = %s",
+                                params,
+                            )
+                            rowcount = cur.rowcount
+                        conn.commit()
+                        _reset_cabinet_client_cols_cache()
+                        break
+                    except Exception as exc:
+                        if (
+                            attempt == 0
+                            and has_profile_fields
+                            and _pg_error_is_missing_profile_column(exc)
+                        ):
+                            _ensure_cabinet_clients_profile_columns_pg(conn)
+                            try:
+                                conn.commit()
+                            except Exception:
+                                pass
+                            continue
+                        raise
+
             if rowcount == 0:
                 logging.getLogger(__name__).warning(
                     "update_patient_fields: 0 ligne MAJ (tenant_id=%s phone=%s) — fiche absente ?",
@@ -837,6 +904,7 @@ def update_patient_fields(
                 phone_norm,
                 exc,
             )
+            return None
 
     conn = get_conn()
     _ensure_cabinet_clients_table(conn)

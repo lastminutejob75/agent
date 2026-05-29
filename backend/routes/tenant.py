@@ -3254,21 +3254,26 @@ def tenant_update_patient(
         )
         raise HTTPException(404, "Fiche patient introuvable pour ce cabinet. Créez d'abord la fiche.")
 
+    payload = body.model_dump(exclude_unset=True)
     updated = update_patient_fields(
         tenant_id,
         phone,
-        email=body.email,
-        birth_date=body.birth_date,
-        treating_physician_name=body.treating_physician_name,
+        email=payload.get("email"),
+        birth_date=payload.get("birth_date"),
+        treating_physician_name=payload.get("treating_physician_name"),
     )
     if not updated:
         logger.error(
-            "tenant_update_patient: update_patient_fields a renvoyé None tenant=%s phone=%s email_len=%s",
+            "tenant_update_patient: update_patient_fields a renvoyé None tenant=%s phone=%s fields=%s",
             tenant_id,
             phone_norm,
-            len(body.email or ""),
+            sorted(payload.keys()),
         )
-        raise HTTPException(500, "Impossible de mettre à jour la fiche (erreur base de données).")
+        raise HTTPException(
+            500,
+            "Impossible de mettre à jour la fiche patient. "
+            "Si le problème persiste, contactez le support (migration profil 040).",
+        )
     logger.info(
         "tenant_update_patient ok tenant=%s phone=%s email_set=%s",
         tenant_id,

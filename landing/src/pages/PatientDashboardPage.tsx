@@ -1557,7 +1557,7 @@ export default function PatientDashboardPage() {
   }, [modal, urlPatientHero?.name, patientCabinetRow]);
 
   const createPatientFichePractice = useCallback(
-    async (validatedName: string) => {
+    async (validatedName: string, opts?: { silent?: boolean }) => {
       const name = validatedName.trim();
       const debugCtx = { phone: tenantPatientPhone, nameLen: name.length };
       console.info("[fiche.create] start", debugCtx);
@@ -1584,11 +1584,13 @@ export default function PatientDashboardPage() {
             String(profile.display_name || profile.validated_name || profile.raw_name || name).trim() || name;
           const tel = String(profile.phone || tenantPatientPhone).trim();
           setUrlPatientHero({ name: disp, phone: tel, initials: initialsFromFullName(disp) });
-          setPatientCabinetRow(profile);
+          setPatientCabinetRow((prev) => ({ ...(prev || {}), ...profile }));
           setPatientEmail(String(profile.email || ""));
         }
         setTenantPatientNotFound(false);
-        notify(res?.register_mode === "updated" ? "Fiche mise à jour" : "Fiche patient enregistrée");
+        if (!opts?.silent) {
+          notify(res?.register_mode === "updated" ? "Fiche mise à jour" : "Fiche patient enregistrée");
+        }
         setPatientFetchNonce((n) => n + 1);
         await loadTenantSidebarPatients();
         return true;
@@ -1613,23 +1615,40 @@ export default function PatientDashboardPage() {
 
   const saveProfileFromModal = async () => {
     if (!tenantPatientPhone) return;
+    const name = profileNameDraft.trim();
+    if (name.length < 2) {
+      notify("Saisissez un nom valide (au moins 2 caractères).", { sticky: true });
+      return;
+    }
     setProfileSaveSaving(true);
     try {
-      const okName = await createPatientFichePractice(profileNameDraft);
-      if (!okName) return;
+      const currentName = String(urlPatientHero?.name || "").trim();
+      const needsNameSave = tenantPatientNotFound || name !== currentName;
+      if (needsNameSave) {
+        const okName = await createPatientFichePractice(name, { silent: true });
+        if (!okName) return;
+      }
+      const birthDate = profileBirthDateDraft.trim();
+      const physician = profilePhysicianDraft.trim();
       const res = await api.tenantUpdatePatient(tenantPatientPhone, {
-        birth_date: profileBirthDateDraft.trim(),
-        treating_physician_name: profilePhysicianDraft.trim(),
+        birth_date: birthDate,
+        treating_physician_name: physician,
       });
-      if (res?.patient) {
-        setPatientCabinetRow(res.patient as Record<string, unknown>);
-        const cached = patientDetailCacheRef.current.get(tenantPatientPhone);
-        if (cached) {
-          patientDetailCacheRef.current.set(tenantPatientPhone, {
-            ...cached,
-            patientCabinetRow: res.patient as Record<string, unknown>,
-          });
-        }
+      const savedPatient = {
+        ...(patientCabinetRow || {}),
+        ...(res?.patient as Record<string, unknown> | undefined),
+        birth_date: String((res?.patient as Record<string, unknown> | undefined)?.birth_date || birthDate),
+        treating_physician_name: String(
+          (res?.patient as Record<string, unknown> | undefined)?.treating_physician_name || physician,
+        ),
+      };
+      setPatientCabinetRow(savedPatient);
+      const cached = patientDetailCacheRef.current.get(tenantPatientPhone);
+      if (cached) {
+        patientDetailCacheRef.current.set(tenantPatientPhone, {
+          ...cached,
+          patientCabinetRow: savedPatient,
+        });
       }
       notify("Profil enregistré");
       setModal(null);
