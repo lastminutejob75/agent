@@ -1,6 +1,10 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { agendaOriginLabel, agendaSlotDurationMinutes } from "../lib/agendaPatientMeta.js";
 import { agendaSlotMotif, formatAgendaSlotHour } from "../lib/agendaSlotParse.js";
+import {
+  formatBirthDateWithAge,
+  formatPhysicianWithCity,
+} from "../lib/patientProfileMeta.js";
 function formatBirthDateDisplay(value: unknown) {
   const raw = String(value || "").trim().slice(0, 10);
   if (!raw) return "Non renseignée";
@@ -144,7 +148,14 @@ function MobilePatientHeader({
   onOpenProfile: () => void;
 }) {
   const status = statusMeta(displayHero.statusBucket);
-  const physician = String(patientCabinetRow?.treating_physician_name || "").trim() || "Non renseigné";
+  const physician = formatPhysicianWithCity(
+    patientCabinetRow?.treating_physician_name,
+    patientCabinetRow?.treating_physician_city,
+  );
+  const birthDateLabel = useMemo(
+    () => formatBirthDateWithAge(patientCabinetRow?.birth_date, formatBirthDateDisplay),
+    [patientCabinetRow?.birth_date],
+  );
 
   return (
     <section className="mb-3 rounded-[24px] border border-[#E3EAF2] bg-white p-3.5 shadow-[0_10px_26px_rgba(15,23,42,0.08)]">
@@ -189,7 +200,7 @@ function MobilePatientHeader({
 
       <div className="grid grid-cols-1 gap-2">
         <HeaderInfoRow icon={<HeroSvgIcon name="calendar" className="h-5 w-5" />} label="Naissance">
-          {formatBirthDateDisplay(patientCabinetRow?.birth_date)}
+          {birthDateLabel}
         </HeaderInfoRow>
         <HeaderInfoRow icon={<HeroSvgIcon name="user" className="h-5 w-5" />} label="Médecin traitant">
           {physician}

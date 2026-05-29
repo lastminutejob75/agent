@@ -12,7 +12,11 @@ const baseProps = {
     gradient: "from-[#009CA4] to-[#004C69]",
     statusBucket: "active",
   },
-  patientCabinetRow: { birth_date: "1990-05-12", treating_physician_name: "Dr Martin" },
+  patientCabinetRow: {
+    birth_date: "1990-05-12",
+    treating_physician_name: "Dr Martin",
+    treating_physician_city: "Lyon",
+  },
   patientEmail: "jean@example.com",
   tenantPatientNotFound: false,
   activeView: "overview",

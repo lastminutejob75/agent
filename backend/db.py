@@ -574,6 +574,10 @@ def _ensure_cabinet_clients_table(conn: sqlite3.Connection) -> None:
         conn.execute("SELECT treating_physician_name FROM cabinet_clients LIMIT 0")
     except Exception:
         conn.execute("ALTER TABLE cabinet_clients ADD COLUMN treating_physician_name TEXT")
+    try:
+        conn.execute("SELECT treating_physician_city FROM cabinet_clients LIMIT 0")
+    except Exception:
+        conn.execute("ALTER TABLE cabinet_clients ADD COLUMN treating_physician_city TEXT")
 
     _ensure_patient_documents_table(conn)
     _ensure_patient_notes_table(conn)
@@ -607,6 +611,14 @@ def _migrate_cabinet_clients_columns_pg(conn: Any) -> None:
                 END $$;
                 """
             )
+            cur.execute(
+                """
+                DO $$ BEGIN
+                    ALTER TABLE cabinet_clients ADD COLUMN treating_physician_city TEXT;
+                EXCEPTION WHEN duplicate_column THEN NULL;
+                END $$;
+                """
+            )
     except Exception as exc:
         logging.getLogger(__name__).debug("cabinet_clients pg column migrate skipped: %s", exc)
 
@@ -617,7 +629,7 @@ _CABINET_CLIENT_COLS_BASE = (
     "last_booking_motif, created_at, updated_at"
 )
 _CABINET_CLIENT_COLS_EXTENDED = (
-    f"{_CABINET_CLIENT_COLS_BASE}, birth_date, treating_physician_name"
+    f"{_CABINET_CLIENT_COLS_BASE}, birth_date, treating_physician_name, treating_physician_city"
 )
 _cabinet_client_cols_cache: Optional[str] = None
 
@@ -627,23 +639,45 @@ def _reset_cabinet_client_cols_cache() -> None:
     _cabinet_client_cols_cache = None
 
 
-def _cabinet_clients_profile_columns_ready_pg(conn: Any) -> bool:
+def _cabinet_clients_profile_column_names_pg(conn: Any) -> set[str]:
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT COUNT(*) AS n
+                SELECT column_name
                 FROM information_schema.columns
                 WHERE table_schema = 'public'
                   AND table_name = 'cabinet_clients'
-                  AND column_name IN ('birth_date', 'treating_physician_name')
+                  AND column_name IN (
+                    'birth_date', 'treating_physician_name', 'treating_physician_city'
+                  )
                 """
             )
-            row = cur.fetchone()
-            count = int((row.get("n") if isinstance(row, dict) else row[0]) or 0)
-        return count >= 2
+            rows = cur.fetchall() or []
+        out: set[str] = set()
+        for row in rows:
+            if isinstance(row, dict):
+                out.add(str(row.get("column_name") or ""))
+            elif row:
+                out.add(str(row[0]))
+        return {c for c in out if c}
     except Exception:
-        return False
+        return set()
+
+
+def _cabinet_clients_profile_columns_ready_pg(conn: Any) -> bool:
+    cols = _cabinet_clients_profile_column_names_pg(conn)
+    return "birth_date" in cols and "treating_physician_name" in cols
+
+
+def _cabinet_client_select_columns_for_pg(conn: Any) -> str:
+    profile_cols = _cabinet_clients_profile_column_names_pg(conn)
+    if "birth_date" in profile_cols and "treating_physician_name" in profile_cols:
+        suffix = "birth_date, treating_physician_name"
+        if "treating_physician_city" in profile_cols:
+            suffix += ", treating_physician_city"
+        return f"{_CABINET_CLIENT_COLS_BASE}, {suffix}"
+    return _CABINET_CLIENT_COLS_BASE
 
 
 def _ensure_cabinet_clients_profile_columns_pg(conn: Any) -> bool:
@@ -665,6 +699,7 @@ def _pg_error_is_missing_profile_column(exc: BaseException) -> bool:
     return (
         "birth_date" in msg
         or "treating_physician_name" in msg
+        or "treating_physician_city" in msg
         or "undefined column" in msg
         or "does not exist" in msg
     )
@@ -676,8 +711,7 @@ def _cabinet_client_select_columns_pg(conn: Any) -> str:
     if _cabinet_client_cols_cache:
         return _cabinet_client_cols_cache
     try:
-        ready = _cabinet_clients_profile_columns_ready_pg(conn)
-        _cabinet_client_cols_cache = _CABINET_CLIENT_COLS_EXTENDED if ready else _CABINET_CLIENT_COLS_BASE
+        _cabinet_client_cols_cache = _cabinet_client_select_columns_for_pg(conn)
     except Exception:
         _cabinet_client_cols_cache = _CABINET_CLIENT_COLS_BASE
     return _cabinet_client_cols_cache
@@ -699,6 +733,7 @@ def _ensure_cabinet_clients_table_pg(conn: Any) -> None:
                 email TEXT,
                 birth_date DATE,
                 treating_physician_name TEXT,
+                treating_physician_city TEXT,
                 source_call_id TEXT,
                 last_call_id TEXT,
                 last_booking_start TIMESTAMPTZ,
@@ -731,6 +766,7 @@ def _cabinet_client_row_to_dict(row: Dict[str, Any]) -> Dict[str, Any]:
         "email": row.get("email") or "",
         "birth_date": str(row.get("birth_date") or "")[:10] if row.get("birth_date") else "",
         "treating_physician_name": row.get("treating_physician_name") or "",
+        "treating_physician_city": row.get("treating_physician_city") or "",
         "source_call_id": row.get("source_call_id") or "",
         "last_call_id": row.get("last_call_id") or "",
         "last_booking_start": str(row.get("last_booking_start") or ""),
@@ -820,6 +856,7 @@ def update_patient_fields(
     email: Optional[str] = None,
     birth_date: Optional[str] = None,
     treating_physician_name: Optional[str] = None,
+    treating_physician_city: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Update specific fields on an existing cabinet_client row."""
     phone_norm = normalize_phone_number(phone)
@@ -840,13 +877,21 @@ def update_patient_fields(
         clean_physician = treating_physician_name.strip()[:200]
         sets.append("treating_physician_name = ?")
         params.append(clean_physician or None)
+    if treating_physician_city is not None:
+        clean_city = treating_physician_city.strip()[:120]
+        sets.append("treating_physician_city = ?")
+        params.append(clean_city or None)
     if not sets:
         return get_cabinet_client_by_phone(tenant_id, phone)
 
     sets.append("updated_at = datetime('now')")
     params.extend([tenant_id, phone_norm])
 
-    has_profile_fields = birth_date is not None or treating_physician_name is not None
+    has_profile_fields = (
+        birth_date is not None
+        or treating_physician_name is not None
+        or treating_physician_city is not None
+    )
     url = _pg_events_url()
     if url:
         try:

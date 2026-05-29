@@ -3273,6 +3273,7 @@ class PatientUpdateBody(BaseModel):
     email: Optional[str] = Field(default=None, max_length=254)
     birth_date: Optional[str] = Field(default=None, max_length=10)
     treating_physician_name: Optional[str] = Field(default=None, max_length=200)
+    treating_physician_city: Optional[str] = Field(default=None, max_length=120)
 
     @validator("email")
     def _validate_email(cls, v):
@@ -3302,6 +3303,12 @@ class PatientUpdateBody(BaseModel):
         if v is None:
             return None
         return v.strip()[:200]
+
+    @validator("treating_physician_city")
+    def _validate_treating_physician_city(cls, v):
+        if v is None:
+            return None
+        return v.strip()[:120]
 
 
 class PatientNoteCreateBody(BaseModel):
@@ -3339,6 +3346,7 @@ def tenant_update_patient(
         email=payload.get("email"),
         birth_date=payload.get("birth_date"),
         treating_physician_name=payload.get("treating_physician_name"),
+        treating_physician_city=payload.get("treating_physician_city"),
     )
     if not updated:
         logger.error(

@@ -23,6 +23,10 @@ import AgendaReschedulePanel from "../components/agenda/AgendaReschedulePanel.js
 import PatientDashboardMobile from "./PatientDashboardMobile";
 import { normalizePhoneBusinessKey } from "../lib/phoneNormalize";
 import { patientDashboardFileHasValidatedIdentity } from "../lib/callsService.js";
+import {
+  formatBirthDateWithAge,
+  formatPhysicianWithCity,
+} from "../lib/patientProfileMeta.js";
 
 /** Clé téléphone métier (= backend `normalize_phone_number`). */
 function normalizePhone(value: string) {
@@ -603,13 +607,16 @@ function PatientQuickActions({
 function PatientProfileHeaderMeta({
   birthDate,
   treatingPhysician,
+  treatingPhysicianCity,
   onOpenProfile,
 }: {
   birthDate: unknown;
   treatingPhysician: unknown;
+  treatingPhysicianCity: unknown;
   onOpenProfile: () => void;
 }) {
-  const physician = String(treatingPhysician || "").trim();
+  const physician = formatPhysicianWithCity(treatingPhysician, treatingPhysicianCity);
+  const birthLabel = formatBirthDateWithAge(birthDate, formatBirthDateDisplay);
   return (
     <div className="flex flex-col gap-3 rounded-2xl border border-[#E8EEF5] bg-[#F8FBFD] p-3.5 sm:flex-row sm:items-center sm:justify-between sm:gap-5 sm:p-4">
       <div className="grid min-w-0 flex-1 grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
@@ -617,7 +624,7 @@ function PatientProfileHeaderMeta({
           <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#94A3B8] sm:text-[11px]">
             Date de naissance
           </div>
-          <div className="mt-0.5 text-sm font-black text-[#0A1628] sm:text-[15px]">{formatBirthDateDisplay(birthDate)}</div>
+          <div className="mt-0.5 text-sm font-black text-[#0A1628] sm:text-[15px]">{birthLabel}</div>
         </div>
         <div className="min-w-0">
           <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#94A3B8] sm:text-[11px]">
@@ -807,6 +814,7 @@ export default function PatientDashboardPage() {
   const [profileNameDraft, setProfileNameDraft] = useState("");
   const [profileBirthDateDraft, setProfileBirthDateDraft] = useState("");
   const [profilePhysicianDraft, setProfilePhysicianDraft] = useState("");
+  const [profilePhysicianCityDraft, setProfilePhysicianCityDraft] = useState("");
   const [profileSaveSaving, setProfileSaveSaving] = useState(false);
   const [deletePreviewLoading, setDeletePreviewLoading] = useState(false);
   const [deletePreview, setDeletePreview] = useState<null | {
@@ -1587,6 +1595,7 @@ export default function PatientDashboardPage() {
     if (urlPatientHero?.name) setProfileNameDraft(urlPatientHero.name);
     setProfileBirthDateDraft(String(patientCabinetRow?.birth_date || "").trim().slice(0, 10));
     setProfilePhysicianDraft(String(patientCabinetRow?.treating_physician_name || "").trim());
+    setProfilePhysicianCityDraft(String(patientCabinetRow?.treating_physician_city || "").trim());
   }, [modal, urlPatientHero?.name, patientCabinetRow]);
 
   const createPatientFichePractice = useCallback(
@@ -1663,9 +1672,11 @@ export default function PatientDashboardPage() {
       }
       const birthDate = profileBirthDateDraft.trim();
       const physician = profilePhysicianDraft.trim();
+      const physicianCity = profilePhysicianCityDraft.trim();
       const res = await api.tenantUpdatePatient(tenantPatientPhone, {
         birth_date: birthDate,
         treating_physician_name: physician,
+        treating_physician_city: physicianCity,
       });
       const savedPatient = {
         ...(patientCabinetRow || {}),
@@ -1673,6 +1684,9 @@ export default function PatientDashboardPage() {
         birth_date: String((res?.patient as Record<string, unknown> | undefined)?.birth_date || birthDate),
         treating_physician_name: String(
           (res?.patient as Record<string, unknown> | undefined)?.treating_physician_name || physician,
+        ),
+        treating_physician_city: String(
+          (res?.patient as Record<string, unknown> | undefined)?.treating_physician_city || physicianCity,
         ),
       };
       setPatientCabinetRow(savedPatient);
@@ -2484,6 +2498,7 @@ export default function PatientDashboardPage() {
                 <PatientProfileHeaderMeta
                   birthDate={patientCabinetRow?.birth_date}
                   treatingPhysician={patientCabinetRow?.treating_physician_name}
+                  treatingPhysicianCity={patientCabinetRow?.treating_physician_city}
                   onOpenProfile={() => setModal("profile")}
                 />
 
@@ -2951,12 +2966,21 @@ export default function PatientDashboardPage() {
                     className="mt-1 w-full rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-black text-[#0A1628] outline-none focus:border-[#009CA4]"
                   />
                 </div>
-                <div className="rounded-2xl bg-[#F8FBFD] p-4 sm:col-span-2">
+                <div className="rounded-2xl bg-[#F8FBFD] p-4">
                   <div className="mb-1 text-xs font-bold text-[#7D8CA5]">Médecin traitant</div>
                   <input
                     value={profilePhysicianDraft}
                     onChange={(e) => setProfilePhysicianDraft(e.target.value)}
                     placeholder="Dr Martin Dupont"
+                    className="mt-1 w-full rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-black text-[#0A1628] outline-none focus:border-[#009CA4]"
+                  />
+                </div>
+                <div className="rounded-2xl bg-[#F8FBFD] p-4">
+                  <div className="mb-1 text-xs font-bold text-[#7D8CA5]">Ville d&apos;exercice</div>
+                  <input
+                    value={profilePhysicianCityDraft}
+                    onChange={(e) => setProfilePhysicianCityDraft(e.target.value)}
+                    placeholder="Lyon, Paris…"
                     className="mt-1 w-full rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-black text-[#0A1628] outline-none focus:border-[#009CA4]"
                   />
                 </div>
