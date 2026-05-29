@@ -51,11 +51,12 @@ export function canRescheduleAgendaSlot(slot) {
   return apptId != null && Number.isFinite(slotId) && slotId > 0;
 }
 
-export function buildAgendaViewUrl({ date, phone, slot }) {
+export function buildAgendaViewUrl({ date, phone, slot, action }) {
   const params = new URLSearchParams();
   if (date) params.set("date", date);
   if (phone) params.set("phone", phone);
   const focus = appointmentActionId(slot);
   if (focus) params.set("focus", focus);
+  if (action) params.set("action", action);
   return `/app/agenda?${params.toString()}`;
 }

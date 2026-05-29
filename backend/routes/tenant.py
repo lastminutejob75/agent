@@ -1465,7 +1465,7 @@ def _load_local_appointments_for_window(
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif, s.start_ts,
+                        SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif, a.google_event_id, s.start_ts,
                                a.booking_origin
                         FROM appointments a
                         JOIN slots s ON s.id = a.slot_id
@@ -1490,6 +1490,7 @@ def _load_local_appointments_for_window(
                                 "contact_type": row.get("contact_type") or "",
                                 "motif": row.get("motif") or "",
                                 "booking_origin": row.get("booking_origin") or "",
+                                "google_event_id": row.get("google_event_id") or "",
                             }
                         )
                     return index
@@ -1503,7 +1504,7 @@ def _load_local_appointments_for_window(
         rows = conn.execute(
             """
             SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif,
-                   a.booking_origin, s.date, s.time
+                   a.booking_origin, a.google_event_id, s.date, s.time
             FROM appointments a
             JOIN slots s ON s.id = a.slot_id AND s.tenant_id = a.tenant_id
             WHERE a.tenant_id = ?
@@ -1527,6 +1528,7 @@ def _load_local_appointments_for_window(
                     "contact_type": row["contact_type"] or "",
                     "motif": row["motif"] or "",
                     "booking_origin": row["booking_origin"] or "",
+                    "google_event_id": row["google_event_id"] or "",
                 }
             )
         return index
@@ -1562,17 +1564,107 @@ def _agenda_booking_origin_from_local_row(row: Any) -> str:
     return canonical(str(raw))
 
 
+def _appointment_lookup_keys_near(start_local: Optional[datetime], *, radius_minutes: int = 3) -> List[str]:
+    if not start_local:
+        return [""]
+    keys: List[str] = []
+    for delta in range(-radius_minutes, radius_minutes + 1):
+        key = _appointment_lookup_key(start_local + timedelta(minutes=delta))
+        if key and key not in keys:
+            keys.append(key)
+    return keys or [_appointment_lookup_key(start_local)]
+
+
+def _local_appointment_from_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": int(row.get("id") or 0),
+        "slot_id": int(row.get("slot_id") or 0),
+        "name": row.get("name") or "",
+        "contact": row.get("contact") or "",
+        "contact_type": row.get("contact_type") or "",
+        "motif": row.get("motif") or "",
+        "google_event_id": row.get("google_event_id") or "",
+    }
+
+
+def _find_local_appointment_by_google_event_id(
+    tenant_id: int,
+    google_event_id: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    event_id = str(google_event_id or "").strip()
+    if not event_id or not _looks_like_google_event_id(event_id):
+        return None
+
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_SLOTS_URL")
+    if url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+
+            with psycopg.connect(url, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif, a.google_event_id
+                        FROM appointments a
+                        WHERE a.tenant_id = %s AND a.google_event_id = %s
+                        LIMIT 1
+                        """,
+                        (tenant_id, event_id),
+                    )
+                    row = cur.fetchone()
+                    if row and int(row.get("id") or 0) > 0:
+                        return _local_appointment_from_row(row)
+        except Exception as e:
+            logger.debug(
+                "local appointment google_event_id lookup pg failed tenant_id=%s err=%s",
+                tenant_id,
+                e,
+            )
+
+    ensure_tenant_config()
+    conn = get_conn()
+    try:
+        _migrate_sqlite_add_google_event_id(conn)
+        row = conn.execute(
+            """
+            SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif, a.google_event_id
+            FROM appointments a
+            WHERE a.tenant_id = ? AND a.google_event_id = ?
+            LIMIT 1
+            """,
+            (tenant_id, event_id),
+        ).fetchone()
+        if not row:
+            return None
+        return _local_appointment_from_row(dict(row))
+    finally:
+        conn.close()
+
+
 def _find_local_appointment_for_google_event(
     tenant_id: int,
     start_local: datetime,
     patient_contact: Optional[str],
     fallback_name: Optional[str],
     appointments_index: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    google_event_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
+    event_id = str(google_event_id or "").strip()
+    by_event = _find_local_appointment_by_google_event_id(tenant_id, event_id)
+    if by_event:
+        return by_event
+
     if appointments_index is not None:
-        for appointment in appointments_index.get(_appointment_lookup_key(start_local), []):
-            if _appointment_matches_lookup(appointment, patient_contact, fallback_name):
-                return appointment
+        if event_id:
+            for appointments in appointments_index.values():
+                for appointment in appointments:
+                    if str(appointment.get("google_event_id") or "").strip() == event_id:
+                        return appointment
+        for key in _appointment_lookup_keys_near(start_local):
+            for appointment in appointments_index.get(key, []):
+                if _appointment_matches_lookup(appointment, patient_contact, fallback_name):
+                    return appointment
 
     contact = str(patient_contact or "").strip()
     name = str(fallback_name or "").strip()
@@ -1586,13 +1678,13 @@ def _find_local_appointment_for_google_event(
             from psycopg.rows import dict_row
 
             start_utc = start_local.astimezone(timezone.utc)
-            window_start = start_utc - timedelta(minutes=1)
-            window_end = start_utc + timedelta(minutes=1)
+            window_start = start_utc - timedelta(minutes=5)
+            window_end = start_utc + timedelta(minutes=5)
             with psycopg.connect(url, row_factory=dict_row) as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif, s.start_ts
+                        SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif, a.google_event_id, s.start_ts
                         FROM appointments a
                         JOIN slots s ON s.id = a.slot_id
                         WHERE a.tenant_id = %s
@@ -1609,14 +1701,7 @@ def _find_local_appointment_for_google_event(
                     )
                     row = cur.fetchone()
                     if row:
-                        return {
-                            "id": int(row.get("id") or 0),
-                            "slot_id": int(row.get("slot_id") or 0),
-                            "name": row.get("name") or "",
-                            "contact": row.get("contact") or "",
-                            "contact_type": row.get("contact_type") or "",
-                            "motif": row.get("motif") or "",
-                        }
+                        return _local_appointment_from_row(row)
         except Exception as e:
             logger.debug("local appointment mirror lookup pg failed tenant_id=%s err=%s", tenant_id, e)
 
@@ -1625,7 +1710,7 @@ def _find_local_appointment_for_google_event(
     try:
         row = conn.execute(
             """
-            SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif
+            SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif, a.google_event_id
             FROM appointments a
             JOIN slots s ON s.id = a.slot_id AND s.tenant_id = a.tenant_id
             WHERE a.tenant_id = ?
@@ -1651,14 +1736,7 @@ def _find_local_appointment_for_google_event(
         ).fetchone()
         if not row:
             return None
-        return {
-            "id": int(row["id"] or 0),
-            "slot_id": int(row["slot_id"] or 0),
-            "name": row["name"] or "",
-            "contact": row["contact"] or "",
-            "contact_type": row["contact_type"] or "",
-            "motif": row["motif"] or "",
-        }
+        return _local_appointment_from_row(dict(row))
     finally:
         conn.close()
 
@@ -3825,6 +3903,7 @@ def tenant_agenda(
                         patient_contact=patient_contact,
                         fallback_name=patient,
                         appointments_index=mirror_lookup,
+                        google_event_id=str(event.get("id") or ""),
                     )
                 bo_origin = _agenda_resolve_booking_origin_google(description, mirror_booking)
                 contact_type = str((mirror_booking or {}).get("contact_type") or "")
@@ -4181,6 +4260,7 @@ def tenant_agenda_bulk(
                         patient_contact=patient_contact,
                         fallback_name=patient,
                         appointments_index=mirror_lookup,
+                        google_event_id=str(event.get("id") or ""),
                     )
                 bo_origin = _agenda_resolve_booking_origin_google(description, mirror_booking)
                 payloads[date_key]["slots"].append(

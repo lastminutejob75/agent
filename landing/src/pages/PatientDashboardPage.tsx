@@ -1461,12 +1461,37 @@ export default function PatientDashboardPage() {
   ) => {
     const canCancel = canCancelAgendaSlot(slot);
     const canReschedule = canRescheduleAgendaSlot(slot);
+    const isPast = start.getTime() < Date.now();
+    const sourceUwi = String(slot?.source || "").toUpperCase() === "UWI";
+    const handleReschedule = () => {
+      if (isPast) {
+        notify("Impossible de déplacer un rendez-vous passé.");
+        return;
+      }
+      if (canReschedule) {
+        openRescheduleApptModal(slot, start);
+        return;
+      }
+      if (sourceUwi && canCancel) {
+        notify("Ouverture de l'agenda pour déplacer ce rendez-vous.", { sticky: true });
+        navigate(
+          buildAgendaViewUrl({
+            date: start.toISOString().slice(0, 10),
+            phone: tenantPatientPhone,
+            slot,
+            action: "reschedule",
+          }),
+        );
+        return;
+      }
+      notify("Déplacement indisponible pour ce rendez-vous.", { sticky: true });
+    };
     return (
       <div className={`flex flex-wrap gap-2${compact ? "" : " mt-5"}`}>
         <button
           type="button"
-          disabled={!canReschedule}
-          onClick={() => openRescheduleApptModal(slot, start)}
+          disabled={isPast || !sourceUwi}
+          onClick={handleReschedule}
           className="rounded-xl border border-[#72CDE0] px-4 py-2 text-sm font-black text-[#008EA1] hover:bg-[#E9FAFC] disabled:cursor-not-allowed disabled:opacity-50"
         >
           ▣ Déplacer le RDV
@@ -1498,7 +1523,7 @@ export default function PatientDashboardPage() {
         )}
       </div>
     );
-  }, [openCancelApptModal, openRescheduleApptModal, viewApptInAgenda]);
+  }, [navigate, notify, openCancelApptModal, openRescheduleApptModal, tenantPatientPhone, viewApptInAgenda]);
 
   const patientAgendaSlots = useMemo(() => {
     if (!tenantPatientPhone) return [];
