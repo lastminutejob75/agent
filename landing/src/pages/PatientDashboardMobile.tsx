@@ -135,11 +135,13 @@ function MobilePatientHeader({
   patientEmail,
   patientCabinetRow,
   tenantPatientNotFound,
+  onOpenProfile,
 }: {
   displayHero: DisplayHero;
   patientEmail: string;
   patientCabinetRow: Record<string, unknown> | null;
   tenantPatientNotFound: boolean;
+  onOpenProfile: () => void;
 }) {
   const status = statusMeta(displayHero.statusBucket);
   const physician = String(patientCabinetRow?.treating_physician_name || "").trim() || "Non renseigné";
@@ -193,6 +195,25 @@ function MobilePatientHeader({
           {physician}
         </HeaderInfoRow>
       </div>
+
+      <button
+        type="button"
+        onClick={onOpenProfile}
+        className="mt-2.5 flex w-full items-center justify-between gap-3 rounded-2xl border border-[#E3EAF2] bg-[#F8FBFD] p-3.5 text-left transition hover:bg-[#EEF6FA]"
+      >
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#EAF8FA] text-lg font-black text-[#007F88]">
+            ♙
+          </div>
+          <div className="min-w-0">
+            <div className="text-[15px] font-black text-[#0B1628]">Voir la fiche patient détaillée</div>
+            <div className="mt-0.5 text-[12px] leading-snug text-[#8492A6]">
+              Informations médicales et administratives
+            </div>
+          </div>
+        </div>
+        <span className="shrink-0 text-2xl font-extrabold leading-none text-[#007F88]">›</span>
+      </button>
     </section>
   );
 }
@@ -442,50 +463,27 @@ function MobileContextPatient({
 }
 
 function MobileOverviewExtras({
-  onOpenProfile,
   onOpenHistoryModal,
 }: {
-  onOpenProfile: () => void;
   onOpenHistoryModal: () => void;
 }) {
   return (
-    <>
+    <section className="mb-3 flex items-center gap-3 rounded-[22px] border border-[#E3EAF2] bg-white p-3.5 shadow-[0_8px_20px_rgba(15,23,42,0.06)]">
+      <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border-2 border-[#0B1628] text-[22px]">
+        ◷
+      </div>
+      <div className="min-w-0 flex-1">
+        <strong className="block text-base font-black">Historique des rendez-vous</strong>
+        <p className="m-0 mt-1 text-[13px] text-[#667085]">Consultez l&apos;ensemble des rendez-vous passés.</p>
+      </div>
       <button
         type="button"
-        onClick={onOpenProfile}
-        className="mb-3 flex w-full items-center justify-between gap-3 rounded-[22px] border border-[#E3EAF2] bg-white p-4 text-left shadow-[0_8px_20px_rgba(15,23,42,0.06)]"
+        onClick={onOpenHistoryModal}
+        className="max-w-[136px] shrink-0 rounded-[14px] border border-[#BFE9EC] bg-white px-3 py-2.5 text-xs font-black text-[#007F88]"
       >
-        <div className="flex min-w-0 items-center gap-3.5">
-          <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[#EAF8FA] text-xl font-black text-[#007F88]">
-            ♙
-          </div>
-          <div className="min-w-0">
-            <div className="text-[17px] font-black text-[#0B1628]">Voir la fiche patient détaillée</div>
-            <div className="mt-1 text-[13px] leading-snug text-[#8492A6]">
-              Informations médicales, documents et données administratives
-            </div>
-          </div>
-        </div>
-        <span className="shrink-0 text-[30px] font-extrabold leading-none text-[#007F88]">›</span>
+        Voir l&apos;historique complet ›
       </button>
-
-      <section className="mb-3 flex items-center gap-3 rounded-[22px] border border-[#E3EAF2] bg-white p-3.5 shadow-[0_8px_20px_rgba(15,23,42,0.06)]">
-        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border-2 border-[#0B1628] text-[22px]">
-          ◷
-        </div>
-        <div className="min-w-0 flex-1">
-          <strong className="block text-base font-black">Historique des rendez-vous</strong>
-          <p className="m-0 mt-1 text-[13px] text-[#667085]">Consultez l&apos;ensemble des rendez-vous passés.</p>
-        </div>
-        <button
-          type="button"
-          onClick={onOpenHistoryModal}
-          className="max-w-[136px] shrink-0 rounded-[14px] border border-[#BFE9EC] bg-white px-3 py-2.5 text-xs font-black text-[#007F88]"
-        >
-          Voir l&apos;historique complet ›
-        </button>
-      </section>
-    </>
+    </section>
   );
 }
 
@@ -749,6 +747,7 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
         patientEmail={patientEmail}
         patientCabinetRow={patientCabinetRow}
         tenantPatientNotFound={tenantPatientNotFound}
+        onOpenProfile={onOpenProfile}
       />
       <MobileQuickActions onCall={onCall} onWhatsApp={onWhatsApp} onSms={onSms} onMore={onOpenProfile} />
       <MobileContentActions onAddNote={onAddNote} onAddDocument={onAddDocument} />
@@ -769,10 +768,7 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
             noteDeletingId={noteDeletingId}
             onRemoveNote={onRemoveNote}
           />
-          <MobileOverviewExtras
-            onOpenProfile={onOpenProfile}
-            onOpenHistoryModal={onOpenHistoryModal}
-          />
+          <MobileOverviewExtras onOpenHistoryModal={onOpenHistoryModal} />
         </>
       ) : null}
 
