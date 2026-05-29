@@ -29,6 +29,12 @@ import {
   formatBirthDateWithAge,
   formatPhysicianWithCity,
 } from "../lib/patientProfileMeta.js";
+import PatientDuplicateBanner from "../components/patients/PatientDuplicateBanner.jsx";
+import {
+  checkPatientDuplicates,
+  hasBlockingPatientDuplicate,
+  parsePatientDuplicateError,
+} from "../lib/patientDuplicateCheck.js";
 
 /** Clé téléphone métier (= backend `normalize_phone_number`). */
 function normalizePhone(value: string) {
@@ -770,6 +776,7 @@ export default function PatientDashboardPage() {
   const [editingEmail, setEditingEmail] = useState(false);
   const [emailDraft, setEmailDraft] = useState("");
   const [emailSaving, setEmailSaving] = useState(false);
+  const [emailDuplicateConflicts, setEmailDuplicateConflicts] = useState<Array<Record<string, unknown>>>([]);
   const [requestStatus, setRequestStatus] = useState("");
   const [requestActionLoading, setRequestActionLoading] = useState<"" | "processed" | "cancelled">("");
   const [tenantPatientNotFound, setTenantPatientNotFound] = useState(false);
@@ -1380,6 +1387,40 @@ export default function PatientDashboardPage() {
   }, [patientEmail, editingEmail, tenantPatientPhone]);
 
   useEffect(() => {
+    if (!editingEmail || !tenantPatientPhone) {
+      setEmailDuplicateConflicts([]);
+      return;
+    }
+    const email = emailDraft.trim();
+    if (!email || !email.includes("@")) {
+      setEmailDuplicateConflicts([]);
+      return;
+    }
+    let cancelled = false;
+    const ctrl = new AbortController();
+    const tid = window.setTimeout(() => {
+      checkPatientDuplicates({
+        email,
+        excludePhone: tenantPatientPhone,
+        signal: ctrl.signal,
+      })
+        .then((res) => {
+          if (!cancelled) {
+            setEmailDuplicateConflicts(Array.isArray(res?.conflicts) ? res.conflicts : []);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setEmailDuplicateConflicts([]);
+        });
+    }, 320);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(tid);
+      ctrl.abort();
+    };
+  }, [editingEmail, emailDraft, tenantPatientPhone]);
+
+  useEffect(() => {
     let cancelled = false;
     if (activeView === "history") {
       return () => {
@@ -1635,7 +1676,8 @@ export default function PatientDashboardPage() {
         return true;
       } catch (e) {
         console.error("[fiche.create] failure", debugCtx, e);
-        notify((e as Error)?.message || "Impossible d’enregistrer la fiche", { sticky: true });
+        const dup = parsePatientDuplicateError(e as Error & { data?: { detail?: unknown } });
+        notify(dup.message || (e as Error)?.message || "Impossible d’enregistrer la fiche", { sticky: true });
         return false;
       }
     },
@@ -2015,6 +2057,10 @@ export default function PatientDashboardPage() {
       notify("Email invalide (format attendu : prenom@domaine.fr)", { sticky: true });
       return;
     }
+    if (hasBlockingPatientDuplicate(emailDuplicateConflicts)) {
+      notify("Cet email est déjà utilisé par une autre fiche patient.", { sticky: true });
+      return;
+    }
     setEmailSaving(true);
     console.info("[patient.email] PATCH start", { phone: tenantPatientPhone, hasEmail: !!next });
     try {
@@ -2036,9 +2082,11 @@ export default function PatientDashboardPage() {
         });
       }
       notify(persisted ? `Email enregistré : ${persisted}` : "Email supprimé");
+      setEmailDuplicateConflicts([]);
     } catch (e) {
       console.error("[patient.email] PATCH failure", e);
-      const msg = (e as Error)?.message || "Erreur mise à jour email";
+      const dup = parsePatientDuplicateError(e as Error & { data?: { detail?: unknown } });
+      const msg = dup.message || (e as Error)?.message || "Erreur mise à jour email";
       notify(msg, { sticky: true });
     } finally {
       setEmailSaving(false);
@@ -2449,28 +2497,36 @@ export default function PatientDashboardPage() {
                       tenantPatientNotFound ? (
                         <span className="text-[#94A3B8]">Créez la fiche pour ajouter un email</span>
                       ) : editingEmail ? (
-                        <span className="flex flex-wrap items-center gap-2">
-                          <input
-                            value={emailDraft}
-                            onChange={(event) => setEmailDraft(event.target.value)}
-                            placeholder="email@cabinet.fr"
-                            className="h-9 min-w-0 flex-1 rounded-lg border border-[#DDE7F1] px-2.5 text-sm font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
-                          />
-                          <button
-                            type="button"
-                            onClick={saveEmail}
-                            disabled={emailSaving}
-                            className="rounded-lg bg-[#009CA4] px-2.5 py-1.5 text-xs font-black text-white disabled:opacity-60"
-                          >
-                            {emailSaving ? "…" : "OK"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setEditingEmail(false)}
-                            className="rounded-lg border border-[#DDE7F1] px-2.5 py-1.5 text-xs font-black text-[#475569]"
-                          >
-                            Annuler
-                          </button>
+                        <span className="flex w-full flex-col gap-2">
+                          <span className="flex flex-wrap items-center gap-2">
+                            <input
+                              value={emailDraft}
+                              onChange={(event) => setEmailDraft(event.target.value)}
+                              placeholder="email@cabinet.fr"
+                              className="h-9 min-w-0 flex-1 rounded-lg border border-[#DDE7F1] px-2.5 text-sm font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
+                            />
+                            <button
+                              type="button"
+                              onClick={saveEmail}
+                              disabled={emailSaving || hasBlockingPatientDuplicate(emailDuplicateConflicts)}
+                              className="rounded-lg bg-[#009CA4] px-2.5 py-1.5 text-xs font-black text-white disabled:opacity-60"
+                            >
+                              {emailSaving ? "…" : "OK"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingEmail(false);
+                                setEmailDuplicateConflicts([]);
+                              }}
+                              className="rounded-lg border border-[#DDE7F1] px-2.5 py-1.5 text-xs font-black text-[#475569]"
+                            >
+                              Annuler
+                            </button>
+                          </span>
+                          {emailDuplicateConflicts.length ? (
+                            <PatientDuplicateBanner conflicts={emailDuplicateConflicts} />
+                          ) : null}
                         </span>
                       ) : patientEmail ? (
                         patientEmail

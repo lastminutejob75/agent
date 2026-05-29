@@ -2,7 +2,13 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { flushSync } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import CreatePatientFromCallModal from "../components/calls/CreatePatientFromCallModal.jsx";
+import PatientDuplicateBanner from "../components/patients/PatientDuplicateBanner.jsx";
 import { api } from "../lib/api.js";
+import {
+  checkPatientDuplicates,
+  hasBlockingPatientDuplicate,
+  parsePatientDuplicateError,
+} from "../lib/patientDuplicateCheck.js";
 import { bookingOriginLabel } from "../lib/agendaPatientMeta.js";
 import {
   agendaCancelPayload,
@@ -808,8 +814,9 @@ export default function AppAgenda() {
     rawCalendarName: "",
     callId: "",
   });
-  /** Profil API si une fiche existe déjà pour le numéro saisi (évite la surprise « mauvais patient »). */
-  const [patientCreateExisting, setPatientCreateExisting] = useState(null);
+  /** Conflits détectés si une fiche existe déjà pour le numéro / email saisi. */
+  const [patientCreateConflicts, setPatientCreateConflicts] = useState([]);
+  const [createBookingConflicts, setCreateBookingConflicts] = useState([]);
 
   const [createBookingOpen, setCreateBookingOpen] = useState(false);
   const [createBookingLoading, setCreateBookingLoading] = useState(false);
@@ -901,30 +908,64 @@ export default function AppAgenda() {
 
   useEffect(() => {
     if (!patientCreateOpen) {
-      setPatientCreateExisting(null);
+      setPatientCreateConflicts([]);
       return;
     }
     const phone = normalizePhone(patientCreateForm.phone);
     if (!phone) {
-      setPatientCreateExisting(null);
+      setPatientCreateConflicts([]);
       return;
     }
     let cancelled = false;
-    api.tenantGetPatient(phone)
-      .then((payload) => {
-        if (cancelled) return;
-        const p = payload?.patient;
-        if (p && typeof p === "object") {
-          setPatientCreateExisting(p);
-        } else {
-          setPatientCreateExisting(null);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setPatientCreateExisting(null);
-      });
-    return () => { cancelled = true; };
+    const ctrl = new AbortController();
+    const tid = window.setTimeout(() => {
+      checkPatientDuplicates({ phone, signal: ctrl.signal })
+        .then((res) => {
+          if (!cancelled) {
+            setPatientCreateConflicts(Array.isArray(res?.conflicts) ? res.conflicts : []);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setPatientCreateConflicts([]);
+        });
+    }, 320);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(tid);
+      ctrl.abort();
+    };
   }, [patientCreateOpen, patientCreateForm.phone]);
+
+  useEffect(() => {
+    if (!createBookingOpen) {
+      setCreateBookingConflicts([]);
+      return;
+    }
+    const phone = normalizePhone(createBookingForm.patient_phone);
+    const email = (createBookingForm.patient_email || "").trim();
+    if (!phone && !email) {
+      setCreateBookingConflicts([]);
+      return;
+    }
+    let cancelled = false;
+    const ctrl = new AbortController();
+    const tid = window.setTimeout(() => {
+      checkPatientDuplicates({ phone, email, signal: ctrl.signal })
+        .then((res) => {
+          if (!cancelled) {
+            setCreateBookingConflicts(Array.isArray(res?.conflicts) ? res.conflicts : []);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setCreateBookingConflicts([]);
+        });
+    }, 320);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(tid);
+      ctrl.abort();
+    };
+  }, [createBookingOpen, createBookingForm.patient_phone, createBookingForm.patient_email]);
 
   /** Suggestions patient (nom / téléphone / email) pour la création de RDV cabinet */
   useEffect(() => {
@@ -1304,6 +1345,13 @@ export default function AppAgenda() {
       setActionMsg({ type: "error", text: "L’adresse e-mail n’est pas valide (exemple : prenom@gmail.com)." });
       return;
     }
+    if (hasBlockingPatientDuplicate(createBookingConflicts)) {
+      setActionMsg({
+        type: "error",
+        text: "Cet email est déjà utilisé par une autre fiche patient. Corrigez-le avant de créer le RDV.",
+      });
+      return;
+    }
     setCreateBookingLoading(true);
     try {
       await api.tenantCreateAgendaBooking({
@@ -1415,6 +1463,13 @@ export default function AppAgenda() {
       });
       return;
     }
+    if (hasBlockingPatientDuplicate(patientCreateConflicts)) {
+      setActionMsg({
+        type: "error",
+        text: "Cet email est déjà utilisé par une autre fiche patient.",
+      });
+      return;
+    }
     setPatientCreateLoading(true);
     try {
       const res = await api.tenantRegisterPatient({
@@ -1434,13 +1489,17 @@ export default function AppAgenda() {
               ? "Fiche patient mise à jour pour ce numéro (éléments ajoutés sur une fiche existante)."
               : "Fiche patient enregistrée.";
       setPatientCreateOpen(false);
-      setPatientCreateExisting(null);
+      setPatientCreateConflicts([]);
       setActionMsg({ type: "success", text: okText });
       invalidateAgendaBulkCache();
       await loadAgenda();
       navigate(`/app/patient-dashboard?phone=${encodeURIComponent(phone)}`);
     } catch (e) {
-      setActionMsg({ type: "error", text: e?.message || "Impossible de créer la fiche patient." });
+      const dup = parsePatientDuplicateError(e);
+      setActionMsg({
+        type: "error",
+        text: dup.message || e?.message || "Impossible de créer la fiche patient.",
+      });
     } finally {
       setPatientCreateLoading(false);
     }
@@ -2169,6 +2228,9 @@ export default function AppAgenda() {
                 placeholder="ex. patient@gmail.com"
               />
             </label>
+            {createBookingConflicts.length ? (
+              <PatientDuplicateBanner conflicts={createBookingConflicts} className="mb-3" />
+            ) : null}
             <label style={S.modalLabel}>
               Motif
               <input
@@ -2300,19 +2362,8 @@ export default function AppAgenda() {
         onSubmit={handlePatientCreateFromAgendaSubmit}
         subtitleLine={
           <>
-            {patientCreateExisting ? (
-              <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-semibold leading-snug text-amber-950">
-                <span className="font-black">Une fiche existe déjà pour ce numéro.</span>
-                {" "}
-                Données enregistrées :{" "}
-                <strong>
-                  {(patientCreateExisting.display_name
-                    || patientCreateExisting.validated_name
-                    || patientCreateExisting.raw_name
-                    || "Patient sans nom affiché").trim()}
-                </strong>
-                . En validant, vous enrichissez cette fiche ; le tableau de bord affichera le profil correspondant au numéro.
-              </div>
+            {patientCreateConflicts.length ? (
+              <PatientDuplicateBanner conflicts={patientCreateConflicts} className="mb-3" />
             ) : null}
             <span className="text-[#64748B]">
               Source : <strong>rendez-vous agenda</strong>

@@ -39,6 +39,7 @@ from backend.db import (
     delete_patient_note,
     delete_patient_document,
     delete_cabinet_client_by_phone,
+    detect_patient_duplicate_conflicts,
     ensure_slot_id_by_datetime,
     ensure_tenant_config,
     get_cabinet_clients_by_phones,
@@ -3118,6 +3119,57 @@ def tenant_list_patients(
     return {"items": items, "total": len(items), "mode": "list"}
 
 
+def _patient_duplicate_http_detail(conflicts: list) -> dict:
+    email_conflict = next((c for c in conflicts if c.get("field") == "email"), None)
+    if email_conflict:
+        name = (email_conflict.get("display_name") or "un autre patient").strip()
+        message = f"Cet email est déjà utilisé par la fiche de {name}."
+    else:
+        message = "Ce numéro ou cet email est déjà associé à une fiche patient existante."
+    return {
+        "error": "patient_duplicate",
+        "message": message,
+        "has_conflict": True,
+        "conflicts": conflicts,
+    }
+
+
+def _raise_on_blocking_patient_duplicate(
+    tenant_id: int,
+    *,
+    phone: Optional[str] = None,
+    email: Optional[str] = None,
+    exclude_phone: Optional[str] = None,
+) -> None:
+    """Bloque si l'email appartient déjà à une autre fiche (téléphone différent)."""
+    dup = detect_patient_duplicate_conflicts(
+        tenant_id,
+        phone=phone,
+        email=email,
+        exclude_phone=exclude_phone,
+    )
+    email_conflicts = [c for c in dup.get("conflicts") or [] if c.get("field") == "email"]
+    if email_conflicts:
+        raise HTTPException(409, detail=_patient_duplicate_http_detail(email_conflicts))
+
+
+@router.get("/patients/duplicate-check")
+def tenant_check_patient_duplicate(
+    auth: dict = Depends(require_tenant_auth),
+    phone: Optional[str] = Query(None, max_length=40),
+    email: Optional[str] = Query(None, max_length=254),
+    exclude_phone: Optional[str] = Query(None, max_length=40, description="Ignorer ce numéro (fiche en cours d'édition)"),
+):
+    """Vérifie si un téléphone ou un email est déjà rattaché à une fiche patient."""
+    tenant_id = auth["tenant_id"]
+    return detect_patient_duplicate_conflicts(
+        tenant_id,
+        phone=phone,
+        email=email,
+        exclude_phone=exclude_phone,
+    )
+
+
 @router.get("/patients/{phone}")
 def tenant_get_patient(
     phone: str,
@@ -3217,6 +3269,7 @@ class TenantPatientPracticeCreateBody(BaseModel):
     raw_name: Optional[str] = Field(default=None, max_length=160)
     initial_note: Optional[str] = Field(default=None, max_length=4000)
     agenda_motif: Optional[str] = Field(default=None, max_length=240)
+    patient_email: Optional[str] = Field(default=None, max_length=254)
 
 
 @router.post("/patients")
@@ -3234,6 +3287,9 @@ def tenant_register_patient_practice(
         raise HTTPException(400, "Nom valide trop court")
     motif = (body.agenda_motif or "").strip()[:240] or None
     rn = (body.raw_name or "").strip()[:160] or None
+    patient_email = (body.patient_email or "").strip()[:254] or None
+
+    _raise_on_blocking_patient_duplicate(tenant_id, phone=phone, email=patient_email)
 
     prior = get_cabinet_client_by_phone(tenant_id, phone)
     had_row = prior is not None
@@ -3248,6 +3304,9 @@ def tenant_register_patient_practice(
     )
     if not profile:
         raise HTTPException(500, "Impossible d'enregistrer la fiche client")
+
+    if patient_email:
+        profile = update_patient_fields(tenant_id, phone, email=patient_email) or profile
 
     if had_validated:
         register_mode = "updated"
@@ -3340,6 +3399,16 @@ def tenant_update_patient(
         raise HTTPException(404, "Fiche patient introuvable pour ce cabinet. Créez d'abord la fiche.")
 
     payload = body.model_dump(exclude_unset=True)
+    if "email" in payload:
+        next_email = payload.get("email")
+        if next_email is not None and str(next_email).strip():
+            _raise_on_blocking_patient_duplicate(
+                tenant_id,
+                phone=phone_norm,
+                email=str(next_email).strip(),
+                exclude_phone=phone_norm,
+            )
+
     updated = update_patient_fields(
         tenant_id,
         phone,

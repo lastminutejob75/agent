@@ -1237,6 +1237,59 @@ def find_cabinet_client(
     return None
 
 
+def _patient_display_name(profile: Optional[Dict[str, Any]]) -> str:
+    if not profile:
+        return "Patient sans nom"
+    for key in ("display_name", "validated_name", "raw_name"):
+        value = str(profile.get(key) or "").strip()
+        if value:
+            return value
+    return "Patient sans nom"
+
+
+def detect_patient_duplicate_conflicts(
+    tenant_id: int,
+    *,
+    phone: Optional[str] = None,
+    email: Optional[str] = None,
+    exclude_phone: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Détecte si un téléphone ou un email appartient déjà à une autre fiche patient."""
+    conflicts: list[Dict[str, Any]] = []
+    phone_norm = normalize_phone_number(phone or "")
+    exclude_norm = normalize_phone_number(exclude_phone or "") if exclude_phone else ""
+    email_norm = _normalize_patient_email(email or "")
+
+    if phone_norm and phone_norm != exclude_norm:
+        existing_phone = get_cabinet_client_by_phone(tenant_id, phone_norm)
+        if existing_phone:
+            conflicts.append(
+                {
+                    "field": "phone",
+                    "phone": existing_phone.get("phone") or phone_norm,
+                    "display_name": _patient_display_name(existing_phone),
+                    "email": existing_phone.get("email") or "",
+                    "has_validated_name": bool(str(existing_phone.get("validated_name") or "").strip()),
+                }
+            )
+
+    if email_norm and "@" in email_norm:
+        existing_email = get_cabinet_client_by_email(tenant_id, email_norm)
+        if existing_email:
+            existing_phone_norm = normalize_phone_number(existing_email.get("phone") or "")
+            if existing_phone_norm and existing_phone_norm != phone_norm and existing_phone_norm != exclude_norm:
+                conflicts.append(
+                    {
+                        "field": "email",
+                        "phone": existing_email.get("phone") or existing_phone_norm,
+                        "display_name": _patient_display_name(existing_email),
+                        "email": existing_email.get("email") or email_norm,
+                    }
+                )
+
+    return {"has_conflict": bool(conflicts), "conflicts": conflicts}
+
+
 def get_cabinet_client_by_email(tenant_id: int, email: str) -> Optional[Dict[str, Any]]:
     email_norm = _normalize_patient_email(email)
     if not email_norm or "@" not in email_norm:

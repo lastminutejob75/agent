@@ -128,7 +128,10 @@ async function request(path, { method = "GET", body, admin: _admin = false, tena
   }
 
   if (!res.ok) {
-    const msg = (data && (data.detail || data.error || data.message)) || `HTTP ${res.status}`;
+    let msg = (data && (data.detail || data.error || data.message)) || `HTTP ${res.status}`;
+    if (typeof msg === "object" && msg !== null) {
+      msg = msg.message || JSON.stringify(msg);
+    }
     const err = new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
     err.status = res.status;
     err.data = data;
@@ -240,6 +243,8 @@ export const api = {
     }),
   tenantGetPatients: (params = "", opts = {}) =>
     request(`/api/tenant/patients${params}`, { tenant: true, ...opts }),
+  tenantCheckPatientDuplicate: (params = "", opts = {}) =>
+    request(`/api/tenant/patients/duplicate-check${params}`, { tenant: true, ...opts }),
   tenantRegisterPatient: (body) =>
     request("/api/tenant/patients", { method: "POST", body, tenant: true }),
   tenantGetPatient: (phone, opts = {}) => {
