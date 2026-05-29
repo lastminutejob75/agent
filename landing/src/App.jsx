@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect, useRef } from "react";
 import { Routes, Route, Navigate, Outlet, useLocation, useParams } from "react-router-dom";
 import SeoHead from "./components/SeoHead";
 import AuthLayout from "./components/AuthLayout";
+import { scrollWindowToTop } from "./lib/scrollToTop.js";
 
 const publicPageModules = import.meta.glob([
   "./pages/CreerAssistante.jsx",
@@ -153,54 +154,43 @@ function AdminTenantBillingRedirect() {
   return <Navigate to={`/admin/billing/${encodeURIComponent(id || "")}`} replace />;
 }
 
-function isAppShellRoute(path) {
-  return path === "/app" || path.startsWith("/app/");
-}
-
-function isAdminShellRoute(path) {
-  return path === "/admin" || path.startsWith("/admin/");
-}
-
-/** Évite que le scroll de la page précédente (ex. home très scrollée) se répercute sur la nouvelle route. Ne touche pas au scroll lors des transitions internes /app ou /admin. */
+/** Remet le scroll en haut à chaque changement de route (y compris navigation interne /app). */
 function RestoreScrollAfterNavigation() {
-  const { pathname, hash } = useLocation();
-  const prevPathRef = useRef(pathname);
+  const { pathname, hash, search } = useLocation();
+  const prevRef = useRef({ pathname, search, hash });
 
   useEffect(() => {
-    const prev = prevPathRef.current;
-    prevPathRef.current = pathname;
+    const prev = prevRef.current;
+    const pathnameChanged = prev.pathname !== pathname;
+    const searchChanged = prev.search !== search;
+    const hashChanged = prev.hash !== hash;
+    prevRef.current = { pathname, search, hash };
 
-    const intraAppNav = isAppShellRoute(prev) && isAppShellRoute(pathname);
-    const intraAdminNav = isAdminShellRoute(prev) && isAdminShellRoute(pathname);
-    if (intraAppNav || intraAdminNav) {
-      return;
-    }
+    if (!pathnameChanged && !searchChanged && !hashChanged) return;
 
     const align = () => {
-      if (!hash) {
-        window.scrollTo({ top: 0, left: 0 });
-        return;
+      if (hash) {
+        const anchorId = decodeURIComponent(hash.slice(1));
+        const el = document.getElementById(anchorId);
+        if (el) {
+          el.scrollIntoView({ block: "start", behavior: "auto" });
+          return;
+        }
       }
-      const anchorId = decodeURIComponent(hash.slice(1));
-      const el = document.getElementById(anchorId);
-      if (el) {
-        el.scrollIntoView({ block: "start", behavior: "auto" });
-      }
+      scrollWindowToTop();
     };
 
-    // Immédiat + frames suivantes / mini délai : les routes lazy (ex. /pricing) peignent après le 1er effet.
     align();
     const raf1 = window.requestAnimationFrame(() => {
       align();
       window.requestAnimationFrame(align);
     });
-    const t = window.setTimeout(align, 120);
-
+    const timer = window.setTimeout(align, 120);
     return () => {
       window.cancelAnimationFrame(raf1);
-      window.clearTimeout(t);
+      window.clearTimeout(timer);
     };
-  }, [pathname, hash]);
+  }, [pathname, search, hash]);
 
   return null;
 }

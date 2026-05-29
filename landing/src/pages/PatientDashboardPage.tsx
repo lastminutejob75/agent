@@ -2108,7 +2108,7 @@ export default function PatientDashboardPage() {
   );
 
   return (
-    <div className="min-h-screen bg-[#F7FAFC] text-[#0A1628] xl:min-h-screen">
+    <div className="min-h-0 bg-[#F7FAFC] text-[#0A1628] xl:min-h-screen">
       <Toast message={toast} />
 
       {patientListOpen && tenantPatientPhone ? (
@@ -2120,7 +2120,7 @@ export default function PatientDashboardPage() {
         />
       ) : null}
 
-      <div className="grid min-h-screen grid-cols-1 xl:grid-cols-[330px_minmax(0,1fr)]">
+      <div className="grid min-h-0 grid-cols-1 xl:min-h-screen xl:grid-cols-[330px_minmax(0,1fr)]">
         <aside
           className={cx(
             "border-b border-[#E5EDF5] bg-white px-4 py-5 sm:px-6 sm:py-7 xl:border-b-0 xl:border-r xl:px-6 xl:py-8",
@@ -2261,7 +2261,7 @@ export default function PatientDashboardPage() {
           </div>
         </aside>
 
-        <main className="overflow-y-auto px-3 pb-2 pt-0 max-xl:px-3 max-xl:pb-2 max-xl:pt-0 sm:px-5 xl:px-8 xl:py-6">
+        <main className="overflow-x-hidden px-3 pb-2 pt-0 max-xl:px-3 max-xl:pb-2 max-xl:pt-0 sm:px-5 xl:px-8 xl:py-6">
           {tenantPatientNotFound ? (
             <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-950 shadow-sm">
               <p className="m-0">

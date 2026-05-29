@@ -1,8 +1,29 @@
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { scrollWindowToTop } from "../../lib/scrollToTop.js";
 
 export default function AppMobileBottomNav({ navItems, demandBadge, colors }) {
   const location = useLocation();
   const navigate = useNavigate();
+
+  function handleNavClick(event, item) {
+    const onPatientList =
+      item.to === "/app/patient-dashboard" &&
+      location.pathname.startsWith("/app/patient-dashboard") &&
+      location.search.includes("phone=");
+
+    if (onPatientList) {
+      event.preventDefault();
+      scrollWindowToTop();
+      navigate("/app/patient-dashboard", { replace: true });
+      return;
+    }
+
+    const targetPath = item.to.split("?")[0];
+    const isSamePath = location.pathname === targetPath || (item.end && location.pathname === item.to);
+    if (!isSamePath) {
+      scrollWindowToTop();
+    }
+  }
 
   return (
     <nav className="uwi-mobile-nav">
@@ -12,16 +33,7 @@ export default function AppMobileBottomNav({ navItems, demandBadge, colors }) {
           to={item.to}
           end={item.end}
           style={{ textDecoration: "none" }}
-          onClick={(event) => {
-            if (
-              item.to === "/app/patient-dashboard" &&
-              location.pathname.startsWith("/app/patient-dashboard") &&
-              location.search.includes("phone=")
-            ) {
-              event.preventDefault();
-              navigate("/app/patient-dashboard", { replace: true });
-            }
-          }}
+          onClick={(event) => handleNavClick(event, item)}
         >
           {({ isActive }) => (
             <div
