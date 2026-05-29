@@ -48,6 +48,7 @@ from backend.db import (
     get_call_followup,
     get_conn,
     insert_patient_note,
+    is_valid_patient_phone,
     insert_patient_document,
     list_cabinet_clients,
     search_cabinet_clients,
@@ -3280,8 +3281,11 @@ def tenant_register_patient_practice(
     """Enregistre une fiche patient sur le dashboard client (nom validé), ex. depuis l'agenda."""
     tenant_id = auth["tenant_id"]
     phone = normalize_phone_number(body.patient_phone)
-    if not phone:
-        raise HTTPException(400, "Numéro de téléphone invalide")
+    if not phone or not is_valid_patient_phone(body.patient_phone):
+        raise HTTPException(
+            400,
+            "Numéro de téléphone invalide (format attendu : 06 12 34 56 78 ou +33 6 12 34 56 78).",
+        )
     vn = body.validated_name.strip()
     if len(vn) < 2:
         raise HTTPException(400, "Nom valide trop court")
@@ -4830,6 +4834,11 @@ def tenant_agenda_create_booking(
     motif = body.motif.strip() or "Consultation"
     start_iso = body.start_iso.strip()
     params = detail.get("params") or {}
+    if (body.patient_phone or "").strip() and not is_valid_patient_phone(body.patient_phone):
+        raise HTTPException(
+            400,
+            "Numéro de téléphone invalide (format attendu : 06 12 34 56 78 ou +33 6 12 34 56 78).",
+        )
     phone_norm = normalize_phone_number(body.patient_phone) or ""
     email_part = (body.patient_email or "").strip()
     contact_bits = []

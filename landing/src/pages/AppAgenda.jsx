@@ -1456,6 +1456,11 @@ export default function AppAgenda() {
       setActionMsg({ type: "error", text: "Le téléphone est requis pour créer une fiche patient." });
       return;
     }
+    const phoneCheck = validateCabinetBookingPhone(patientCreateForm.phone);
+    if (!phoneCheck.ok) {
+      setActionMsg({ type: "error", text: phoneCheck.message });
+      return;
+    }
     if ((name || "").trim().length < 2) {
       setActionMsg({
         type: "error",

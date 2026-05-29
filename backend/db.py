@@ -497,6 +497,18 @@ def normalize_phone_number(value: Optional[str]) -> str:
     return cleaned
 
 
+def is_valid_patient_phone(value: Optional[str]) -> bool:
+    """Vrai si le numéro, une fois normalisé, est un téléphone plausible (E.164).
+
+    `normalize_phone_number` laisse passer tel quel ce qu'elle ne sait pas
+    reconnaître (ex. « 06968547855555555 » à 17 chiffres). Cette validation
+    impose un format strict : « + » suivi de 8 à 15 chiffres. Les numéros FR
+    nationaux valides (10 chiffres) sont convertis en +33… donc acceptés.
+    """
+    norm = normalize_phone_number(value or "")
+    return bool(re.fullmatch(r"\+\d{8,15}", norm))
+
+
 def _phone_digit_search_patterns(digits_fragment: str) -> List[str]:
     """
     Fragments pour LIKE sur regexp_replace(phone, '\\D', '', 'g').
