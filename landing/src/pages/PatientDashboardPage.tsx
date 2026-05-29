@@ -538,15 +538,17 @@ function ContactMetaCard({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="flex min-w-0 items-center gap-2.5 rounded-2xl border border-[#E8EEF5] bg-[#F8FBFD] px-3 py-2.5 sm:items-start sm:gap-3 sm:px-4 sm:py-3">
-      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-white text-[#007E8C] shadow-sm ring-1 ring-[#E2EAF4] sm:mt-0.5 sm:h-9 sm:w-9">
-        {icon}
+    <div className="flex min-w-0 flex-col gap-2.5 rounded-2xl border border-[#E8EEF5] bg-[#F8FBFD] px-3 py-2.5 sm:flex-row sm:items-start sm:gap-3 sm:px-4 sm:py-3">
+      <div className="flex min-w-0 items-start gap-2.5 sm:gap-3">
+        <div className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-white text-[#007E8C] shadow-sm ring-1 ring-[#E2EAF4] sm:mt-0.5 sm:h-9 sm:w-9">
+          {icon}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#94A3B8] sm:text-[11px]">{label}</div>
+          <div className="mt-0.5 break-words text-[13px] font-bold leading-snug text-[#0A1628] sm:text-[15px]">{value}</div>
+        </div>
       </div>
-      <div className="min-w-0 flex-1">
-        <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#94A3B8] sm:text-[11px]">{label}</div>
-        <div className="mt-0.5 break-words text-[13px] font-bold leading-snug text-[#0A1628] sm:text-[15px]">{value}</div>
-      </div>
-      {action ? <div className="shrink-0 self-center">{action}</div> : null}
+      {action ? <div className="shrink-0 sm:ml-auto sm:self-center">{action}</div> : null}
     </div>
   );
 }
@@ -580,7 +582,7 @@ function PatientQuickActions({
   };
 
   return (
-    <>
+    <div className="flex flex-wrap gap-2">
       <HeaderAction variant="primary" compact icon={<HeroSvgIcon name="phone" />} onClick={dial}>
         Appeler
       </HeaderAction>
@@ -593,7 +595,7 @@ function PatientQuickActions({
       <HeaderAction variant="ghost" compact icon={<HeroSvgIcon name="more" />} onClick={onOpenProfile}>
         Profil
       </HeaderAction>
-    </>
+    </div>
   );
 }
 
@@ -2292,131 +2294,117 @@ export default function PatientDashboardPage() {
               </div>
             ) : null}
             <div className="p-3.5 sm:p-6 lg:p-7">
-              <div className="flex flex-col gap-4 sm:gap-5 lg:gap-6">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between lg:gap-8">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-3 sm:items-start sm:gap-5">
-                      <div
-                        className={cx(
-                          "grid h-14 w-14 shrink-0 place-items-center rounded-[18px] bg-gradient-to-br text-lg font-black text-white shadow-[0_10px_24px_rgba(0,156,164,0.16)] sm:h-24 sm:w-24 sm:rounded-[26px] sm:text-3xl lg:h-28 lg:w-28 lg:text-4xl",
-                          displayHero.gradient,
-                        )}
-                      >
-                        {displayHero.initials}
-                      </div>
-
-                      <div className="min-w-0 flex-1">
-                        <h1 className="text-lg font-black leading-tight tracking-tight text-[#0A1628] sm:text-2xl lg:text-[2rem]">
-                          {displayHero.name}
-                        </h1>
-                        <div className="mt-1.5">
-                          <PatientStatusPill bucket={displayHero.statusBucket} />
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="mt-3.5 grid grid-cols-2 gap-2 sm:mt-4 lg:hidden">
-                      <PatientQuickActions
-                        displayHero={displayHero}
-                        notify={notify}
-                        onOpenProfile={() => setModal("profile")}
-                      />
-                    </div>
-
-                    <div className="mt-3.5 grid gap-2 sm:mt-4 sm:grid-cols-2 sm:gap-2.5">
-                        <ContactMetaCard
-                          icon={<HeroSvgIcon name="phone" />}
-                          label="Téléphone"
-                          value={
-                            <button
-                              type="button"
-                              className="text-left hover:text-[#007E8C]"
-                              onClick={() => {
-                                const tel = normalizePhone(displayHero.phone);
-                                if (tel) window.location.href = `tel:${tel}`;
-                                else notify("Numéro absent pour passer un appel.");
-                              }}
-                            >
-                              {displayHero.phone}
-                            </button>
-                          }
-                          action={
-                            normalizePhone(displayHero.phone) ? (
-                              <button
-                                type="button"
-                                className="rounded-lg border border-[#DDE7F1] bg-white px-2.5 py-1.5 text-[11px] font-black text-[#475569] hover:bg-[#F8FAFC]"
-                                onClick={() => {
-                                  const tel = normalizePhone(displayHero.phone);
-                                  if (tel && navigator.clipboard?.writeText) {
-                                    void navigator.clipboard.writeText(formatDisplayFrenchPhone(tel));
-                                    notify("Numéro copié.");
-                                  }
-                                }}
-                              >
-                                Copier
-                              </button>
-                            ) : null
-                          }
-                        />
-
-                        <ContactMetaCard
-                          icon={<HeroSvgIcon name="mail" />}
-                          label="Email"
-                          value={
-                            tenantPatientNotFound ? (
-                              <span className="text-[#94A3B8]">Créez la fiche pour ajouter un email</span>
-                            ) : editingEmail ? (
-                              <span className="flex flex-wrap items-center gap-2">
-                                <input
-                                  value={emailDraft}
-                                  onChange={(event) => setEmailDraft(event.target.value)}
-                                  placeholder="email@cabinet.fr"
-                                  className="h-9 min-w-0 flex-1 rounded-lg border border-[#DDE7F1] px-2.5 text-sm font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={saveEmail}
-                                  disabled={emailSaving}
-                                  className="rounded-lg bg-[#009CA4] px-2.5 py-1.5 text-xs font-black text-white disabled:opacity-60"
-                                >
-                                  {emailSaving ? "…" : "OK"}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setEditingEmail(false)}
-                                  className="rounded-lg border border-[#DDE7F1] px-2.5 py-1.5 text-xs font-black text-[#475569]"
-                                >
-                                  Annuler
-                                </button>
-                              </span>
-                            ) : patientEmail ? (
-                              patientEmail
-                            ) : (
-                              <span className="text-[#94A3B8]">Aucun email renseigné</span>
-                            )
-                          }
-                          action={
-                            !tenantPatientNotFound && !editingEmail ? (
-                              <button
-                                type="button"
-                                onClick={() => setEditingEmail(true)}
-                                className="rounded-lg border border-[#DDE7F1] bg-white px-2.5 py-1.5 text-[11px] font-black text-[#475569] hover:bg-[#F8FAFC]"
-                              >
-                                {patientEmail ? "Modifier" : "Ajouter"}
-                              </button>
-                            ) : null
-                          }
-                        />
-                      </div>
-                    </div>
-
-                  <div className="hidden shrink-0 grid-cols-2 gap-2.5 lg:grid xl:grid-cols-4">
-                    <PatientQuickActions
-                      displayHero={displayHero}
-                      notify={notify}
-                      onOpenProfile={() => setModal("profile")}
-                    />
+              <div className="flex flex-col gap-4 sm:gap-5">
+                <div className="flex min-w-0 items-start gap-3 sm:gap-5">
+                  <div
+                    className={cx(
+                      "grid h-14 w-14 shrink-0 place-items-center rounded-[18px] bg-gradient-to-br text-lg font-black text-white shadow-[0_10px_24px_rgba(0,156,164,0.16)] sm:h-20 sm:w-20 sm:rounded-[22px] sm:text-2xl lg:h-24 lg:w-24 lg:rounded-[26px] lg:text-3xl",
+                      displayHero.gradient,
+                    )}
+                  >
+                    {displayHero.initials}
                   </div>
+
+                  <div className="min-w-0 flex-1">
+                    <h1 className="break-words text-lg font-black leading-tight tracking-tight text-[#0A1628] sm:text-2xl lg:text-[2rem]">
+                      {displayHero.name}
+                    </h1>
+                    <div className="mt-1.5">
+                      <PatientStatusPill bucket={displayHero.statusBucket} />
+                    </div>
+                  </div>
+                </div>
+
+                <PatientQuickActions
+                  displayHero={displayHero}
+                  notify={notify}
+                  onOpenProfile={() => setModal("profile")}
+                />
+
+                <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2">
+                  <ContactMetaCard
+                    icon={<HeroSvgIcon name="phone" />}
+                    label="Téléphone"
+                    value={
+                      <button
+                        type="button"
+                        className="text-left hover:text-[#007E8C]"
+                        onClick={() => {
+                          const tel = normalizePhone(displayHero.phone);
+                          if (tel) window.location.href = `tel:${tel}`;
+                          else notify("Numéro absent pour passer un appel.");
+                        }}
+                      >
+                        {displayHero.phone}
+                      </button>
+                    }
+                    action={
+                      normalizePhone(displayHero.phone) ? (
+                        <button
+                          type="button"
+                          className="rounded-lg border border-[#DDE7F1] bg-white px-2.5 py-1.5 text-[11px] font-black text-[#475569] hover:bg-[#F8FAFC]"
+                          onClick={() => {
+                            const tel = normalizePhone(displayHero.phone);
+                            if (tel && navigator.clipboard?.writeText) {
+                              void navigator.clipboard.writeText(formatDisplayFrenchPhone(tel));
+                              notify("Numéro copié.");
+                            }
+                          }}
+                        >
+                          Copier
+                        </button>
+                      ) : null
+                    }
+                  />
+
+                  <ContactMetaCard
+                    icon={<HeroSvgIcon name="mail" />}
+                    label="Email"
+                    value={
+                      tenantPatientNotFound ? (
+                        <span className="text-[#94A3B8]">Créez la fiche pour ajouter un email</span>
+                      ) : editingEmail ? (
+                        <span className="flex flex-wrap items-center gap-2">
+                          <input
+                            value={emailDraft}
+                            onChange={(event) => setEmailDraft(event.target.value)}
+                            placeholder="email@cabinet.fr"
+                            className="h-9 min-w-0 flex-1 rounded-lg border border-[#DDE7F1] px-2.5 text-sm font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
+                          />
+                          <button
+                            type="button"
+                            onClick={saveEmail}
+                            disabled={emailSaving}
+                            className="rounded-lg bg-[#009CA4] px-2.5 py-1.5 text-xs font-black text-white disabled:opacity-60"
+                          >
+                            {emailSaving ? "…" : "OK"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditingEmail(false)}
+                            className="rounded-lg border border-[#DDE7F1] px-2.5 py-1.5 text-xs font-black text-[#475569]"
+                          >
+                            Annuler
+                          </button>
+                        </span>
+                      ) : patientEmail ? (
+                        patientEmail
+                      ) : (
+                        <span className="text-[#94A3B8]">Aucun email renseigné</span>
+                      )
+                    }
+                    action={
+                      !tenantPatientNotFound && !editingEmail ? (
+                        <button
+                          type="button"
+                          onClick={() => setEditingEmail(true)}
+                          className="rounded-lg border border-[#DDE7F1] bg-white px-2.5 py-1.5 text-[11px] font-black text-[#475569] hover:bg-[#F8FAFC]"
+                        >
+                          {patientEmail ? "Modifier" : "Ajouter"}
+                        </button>
+                      ) : null
+                    }
+                  />
                 </div>
 
                 <PatientProfileHeaderMeta
