@@ -144,6 +144,9 @@ jobs:
 
   e2e-full:
     name: Playwright full (info only)
+    # Suite complète : manuel uniquement pour éviter le faux échec « canceled »
+    # en parallèle du job smoke sur chaque push (continue-on-error affichait quand même un X rouge).
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     continue-on-error: true
