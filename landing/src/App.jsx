@@ -24,6 +24,7 @@ const publicPageModules = import.meta.glob([
   "./pages/Checkout.jsx",
   "./pages/CheckoutReturn.jsx",
   "./pages/BillingPage.jsx",
+  "./pages/PatientQuestionnairePage.jsx",
   "./pages/NotFound.jsx",
 ]);
 const publicPageModulesEager = import.meta.glob([
@@ -46,6 +47,7 @@ const publicPageModulesEager = import.meta.glob([
   "./pages/Checkout.jsx",
   "./pages/CheckoutReturn.jsx",
   "./pages/BillingPage.jsx",
+  "./pages/PatientQuestionnairePage.jsx",
   "./pages/NotFound.jsx",
 ], {
   eager: true,
@@ -78,6 +80,7 @@ const DecouverteClient = resolvePublicPage("./pages/DecouverteClient.jsx");
 const Checkout = resolvePublicPage("./pages/Checkout.jsx");
 const CheckoutReturn = resolvePublicPage("./pages/CheckoutReturn.jsx");
 const BillingPage = resolvePublicPage("./pages/BillingPage.jsx");
+const PatientQuestionnairePage = resolvePublicPage("./pages/PatientQuestionnairePage.jsx");
 const NotFound = resolvePublicPage("./pages/NotFound.jsx");
 
 /** Layout neutre pour /app : rend uniquement les routes enfants (impersonate ou AppLayout). */
@@ -225,6 +228,7 @@ export default function App() {
       <Route path="/checkout/return" element={<LazyElement Component={CheckoutReturn} />} />
       <Route path="/billing" element={<LazyElement Component={BillingPage} />} />
       <Route path="/p/:slug" element={<LazyElement Component={PagePubliquePraticienUWI} />} />
+      <Route path="/questionnaire/:token" element={<LazyElement Component={PatientQuestionnairePage} />} />
       <Route path="/praticiens/:slug" element={<LazyElement Component={PublicPraticienPage} />} />
       <Route element={<AuthLayout />}>
         <Route path="login" element={<LazyElement Component={Login} />} />

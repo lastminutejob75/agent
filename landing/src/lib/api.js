@@ -262,6 +262,16 @@ export const api = {
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/notes${params}`, { tenant: true }),
   tenantGetPatientHistory: (phone, params = "") =>
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/history${params}`, { tenant: true }),
+  tenantGetPatientQuestionnaire: (phone) =>
+    request(`/api/tenant/patients/${encodeURIComponent(phone)}/questionnaire`, { tenant: true }),
+  tenantSavePatientQuestionnaire: (phone, body) =>
+    request(`/api/tenant/patients/${encodeURIComponent(phone)}/questionnaire`, { method: "PUT", body, tenant: true }),
+  tenantSendPatientQuestionnaire: (phone) =>
+    request(`/api/tenant/patients/${encodeURIComponent(phone)}/questionnaire/send`, { method: "POST", tenant: true }),
+  publicGetPatientQuestionnaire: (token) =>
+    request(`/api/public/patient-questionnaire/${encodeURIComponent(token)}`),
+  publicSubmitPatientQuestionnaire: (token, body) =>
+    request(`/api/public/patient-questionnaire/${encodeURIComponent(token)}`, { method: "POST", body }),
   tenantCreatePatientNote: (phone, body) =>
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/notes`, { method: "POST", body, tenant: true }),
   tenantDeletePatientNote: (phone, noteId) =>

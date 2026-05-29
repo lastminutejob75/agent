@@ -27,7 +27,7 @@ import backend.config as config  # Import du MODULE (pas from import)
 from backend.db import init_db, list_free_slots, count_free_slots
 from backend.deps import require_tenant_web, TenantIdWeb
 # Nouvelle architecture multi-canal
-from backend.routes import voice, whatsapp, bland, reports, admin, auth, tenant, client, stripe_webhook, pre_onboarding, checkout_embedded, public_praticien, public_pages
+from backend.routes import voice, whatsapp, bland, reports, admin, auth, tenant, client, stripe_webhook, pre_onboarding, checkout_embedded, public_praticien, public_pages, public_questionnaire
 
 app = FastAPI()
 _logger = logging.getLogger(__name__)
@@ -340,6 +340,7 @@ app.include_router(pre_onboarding.router)  # POST /api/pre-onboarding/commit
 app.include_router(pre_onboarding.public_router)  # POST /api/public/leads
 app.include_router(public_praticien.router)  # GET /api/public/praticiens/{slug}
 app.include_router(public_pages.router)  # /api/public/practitioner, /slots, /book, /search (page /p/:slug)
+app.include_router(public_questionnaire.router)  # /api/public/patient-questionnaire/{token}
 
 # Audit admin writes + endpoint admin/audit-log.
 from backend.audit_log import install_audit_middleware

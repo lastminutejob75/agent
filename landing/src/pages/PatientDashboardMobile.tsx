@@ -5,6 +5,7 @@ import {
   formatBirthDateWithAge,
   formatPhysicianWithCity,
 } from "../lib/patientProfileMeta.js";
+import PatientQuestionnaireCard from "../components/patients/PatientQuestionnaireCard.jsx";
 function formatBirthDateDisplay(value: unknown) {
   const raw = String(value || "").trim().slice(0, 10);
   if (!raw) return "Non renseignée";
@@ -99,6 +100,9 @@ export type PatientDashboardMobileProps = {
   onAddNote: () => void;
   onAddDocument: () => void;
   onOpenHistoryModal: () => void;
+  tenantPatientPhone: string;
+  notify: (message: string, opts?: { sticky?: boolean }) => void;
+  onQuestionnaireApplied: () => void;
   upcomingAppointments: Array<{ slot: Record<string, unknown>; start: Date }>;
   pastAppointments: Array<{ start: Date; key: string }>;
   patientAgendaLoading: boolean;
@@ -467,31 +471,6 @@ function MobileContextPatient({
   );
 }
 
-function MobileOverviewExtras({
-  onOpenHistoryModal,
-}: {
-  onOpenHistoryModal: () => void;
-}) {
-  return (
-    <section className="mb-3 flex items-center gap-3 rounded-[22px] border border-[#E3EAF2] bg-white p-3.5 shadow-[0_8px_20px_rgba(15,23,42,0.06)]">
-      <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border-2 border-[#0B1628] text-[22px]">
-        ◷
-      </div>
-      <div className="min-w-0 flex-1">
-        <strong className="block text-base font-black">Historique des rendez-vous</strong>
-        <p className="m-0 mt-1 text-[13px] text-[#667085]">Consultez l&apos;ensemble des rendez-vous passés.</p>
-      </div>
-      <button
-        type="button"
-        onClick={onOpenHistoryModal}
-        className="max-w-[136px] shrink-0 rounded-[14px] border border-[#BFE9EC] bg-white px-3 py-2.5 text-xs font-black text-[#007F88]"
-      >
-        Voir l&apos;historique complet ›
-      </button>
-    </section>
-  );
-}
-
 function MobileAppointmentsTab({
   upcoming,
   past,
@@ -726,7 +705,9 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
     onSms,
     onAddNote,
     onAddDocument,
-    onOpenHistoryModal,
+    tenantPatientPhone,
+    notify,
+    onQuestionnaireApplied,
     upcomingAppointments,
     pastAppointments,
     patientAgendaLoading,
@@ -773,7 +754,13 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
             noteDeletingId={noteDeletingId}
             onRemoveNote={onRemoveNote}
           />
-          <MobileOverviewExtras onOpenHistoryModal={onOpenHistoryModal} />
+          <PatientQuestionnaireCard
+            phone={tenantPatientPhone}
+            patientEmail={patientEmail}
+            notify={notify}
+            onApplied={onQuestionnaireApplied}
+            disabled={tenantPatientNotFound}
+          />
         </>
       ) : null}
 

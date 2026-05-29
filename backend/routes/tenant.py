@@ -3438,6 +3438,127 @@ def tenant_update_patient(
     return {"ok": True, "patient": updated}
 
 
+def _build_patient_questionnaire_link(token: str) -> str:
+    import os as _os
+
+    base = (
+        _os.getenv("PUBLIC_BASE_URL")
+        or _os.getenv("CLIENT_APP_ORIGIN")
+        or _os.getenv("FRONT_BASE_URL")
+        or "https://www.uwiapp.com"
+    ).strip().rstrip("/")
+    return f"{base}/questionnaire/{token}"
+
+
+class QuestionnaireSaveBody(BaseModel):
+    answers: Dict[str, Any] = Field(default_factory=dict)
+
+
+@router.get("/patients/{phone}/questionnaire")
+def tenant_get_patient_questionnaire(
+    phone: str,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """État du questionnaire médical d'onboarding du patient (+ schéma)."""
+    from backend.patient_questionnaire import get_questionnaire, questionnaire_schema
+
+    tenant_id = auth["tenant_id"]
+    profile = get_cabinet_client_by_phone(tenant_id, phone)
+    if not profile:
+        raise HTTPException(404, "Fiche patient introuvable pour ce cabinet. Créez d'abord la fiche.")
+    state = get_questionnaire(tenant_id, phone)
+    return {"ok": True, "schema": questionnaire_schema(), "questionnaire": state}
+
+
+@router.put("/patients/{phone}/questionnaire")
+def tenant_save_patient_questionnaire(
+    phone: str,
+    body: QuestionnaireSaveBody,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Le praticien remplit/enregistre lui-même le questionnaire depuis la fiche."""
+    from backend.patient_questionnaire import (
+        FILLED_BY_PRACTITIONER,
+        STATUS_COMPLETED,
+        apply_answers_to_patient,
+        questionnaire_schema,
+        sanitize_answers,
+        save_questionnaire,
+    )
+
+    tenant_id = auth["tenant_id"]
+    phone_norm = normalize_phone_number(phone) or phone.strip()
+    profile = get_cabinet_client_by_phone(tenant_id, phone)
+    if not profile:
+        raise HTTPException(404, "Fiche patient introuvable pour ce cabinet. Créez d'abord la fiche.")
+
+    answers = sanitize_answers(body.answers)
+    state = save_questionnaire(
+        tenant_id,
+        phone_norm,
+        answers=answers,
+        status=STATUS_COMPLETED,
+        filled_by=FILLED_BY_PRACTITIONER,
+        mark_completed=True,
+    )
+    apply_answers_to_patient(
+        tenant_id,
+        phone_norm,
+        answers,
+        source_label="rempli par le praticien",
+        add_context_note=False,
+    )
+    return {"ok": True, "schema": questionnaire_schema(), "questionnaire": state}
+
+
+@router.post("/patients/{phone}/questionnaire/send")
+def tenant_send_patient_questionnaire(
+    phone: str,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Génère un lien sécurisé et l'envoie au patient par email pour qu'il remplisse le questionnaire."""
+    from backend.patient_questionnaire import (
+        STATUS_SENT,
+        get_questionnaire,
+        make_questionnaire_token,
+        save_questionnaire,
+    )
+    from backend.services.email_service import send_patient_questionnaire_email
+
+    tenant_id = auth["tenant_id"]
+    phone_norm = normalize_phone_number(phone) or phone.strip()
+    profile = get_cabinet_client_by_phone(tenant_id, phone)
+    if not profile:
+        raise HTTPException(404, "Fiche patient introuvable pour ce cabinet. Créez d'abord la fiche.")
+
+    to_email = (profile.get("email") or "").strip()
+    if not to_email:
+        raise HTTPException(400, "Ajoutez d'abord l'email du patient pour lui envoyer le questionnaire.")
+
+    detail = _get_tenant_detail(tenant_id)
+    cabinet_name = (detail or {}).get("name") or "votre cabinet"
+    patient_name = (
+        profile.get("display_name") or profile.get("validated_name") or profile.get("raw_name") or ""
+    ).strip()
+
+    token = make_questionnaire_token(tenant_id, phone_norm)
+    link = _build_patient_questionnaire_link(token)
+    ok, err = send_patient_questionnaire_email(to_email, patient_name, cabinet_name, link)
+    if not ok:
+        raise HTTPException(502, err or "Envoi de l'email échoué.")
+
+    current = get_questionnaire(tenant_id, phone_norm)
+    state = save_questionnaire(
+        tenant_id,
+        phone_norm,
+        answers=current.get("answers") or {},
+        status=STATUS_SENT,
+        filled_by=current.get("filled_by") or "",
+        sent_to_email=to_email,
+    )
+    return {"ok": True, "sent_to": to_email, "questionnaire": state}
+
+
 @router.get("/patients/{phone}/history")
 def tenant_patient_history(
     phone: str,

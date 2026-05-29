@@ -30,6 +30,7 @@ import {
   formatPhysicianWithCity,
 } from "../lib/patientProfileMeta.js";
 import PatientDuplicateBanner from "../components/patients/PatientDuplicateBanner.jsx";
+import PatientQuestionnaireCard from "../components/patients/PatientQuestionnaireCard.jsx";
 import {
   checkPatientDuplicates,
   hasBlockingPatientDuplicate,
@@ -2393,6 +2394,9 @@ export default function PatientDashboardPage() {
               onAddNote={() => setModal("addNote")}
               onAddDocument={() => setModal("addDocument")}
               onOpenHistoryModal={() => setModal("history")}
+              tenantPatientPhone={tenantPatientPhone}
+              notify={notify}
+              onQuestionnaireApplied={() => setPatientFetchNonce((n) => n + 1)}
               upcomingAppointments={upcomingPatientAppointments}
               pastAppointments={pastPatientAppointments}
               patientAgendaLoading={patientAgendaLoading}
@@ -2883,6 +2887,14 @@ export default function PatientDashboardPage() {
                     </div>
                   </div>
                 </section>
+
+                <PatientQuestionnaireCard
+                  phone={tenantPatientPhone}
+                  patientEmail={patientEmail}
+                  notify={notify}
+                  onApplied={() => setPatientFetchNonce((n) => n + 1)}
+                  disabled={tenantPatientNotFound}
+                />
               </div>
             </div>
           )}
