@@ -116,36 +116,20 @@ export type PatientDashboardMobileProps = {
   formatDocDate: (value: string) => string;
 };
 
-function MobileTopBar({ onBack }: { onBack: () => void }) {
-  return (
-    <header className="-mt-0.5 mb-2 flex h-11 items-center justify-between">
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          onClick={onBack}
-          className="border-none bg-transparent text-[28px] leading-none text-[#007F88]"
-          aria-label="Retour à la liste patients"
-        >
-          ←
-        </button>
-        <strong className="text-[22px] font-black text-[#0B1628]">Patients</strong>
-      </div>
-    </header>
-  );
-}
-
 function MobilePatientHeader({
   displayHero,
   patientEmail,
   patientCabinetRow,
   tenantPatientNotFound,
   onOpenProfile,
+  onBack,
 }: {
   displayHero: DisplayHero;
   patientEmail: string;
   patientCabinetRow: Record<string, unknown> | null;
   tenantPatientNotFound: boolean;
   onOpenProfile: () => void;
+  onBack: () => void;
 }) {
   const status = statusMeta(displayHero.statusBucket);
   const physician = formatPhysicianWithCity(
@@ -159,6 +143,15 @@ function MobilePatientHeader({
 
   return (
     <section className="mb-3 rounded-[24px] border border-[#E3EAF2] bg-white p-3.5 shadow-[0_10px_26px_rgba(15,23,42,0.08)]">
+      <button
+        type="button"
+        onClick={onBack}
+        className="mb-3 flex items-center gap-2 border-none bg-transparent p-0 text-left"
+        aria-label="Retour à la liste patients"
+      >
+        <span className="text-[26px] leading-none text-[#007F88]">←</span>
+        <span className="text-[17px] font-black text-[#0B1628]">Patients</span>
+      </button>
       <div className="flex items-center gap-3.5">
         <div
           className={cx(
@@ -751,14 +744,14 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
   } = props;
 
   return (
-    <div className="xl:hidden">
-      <MobileTopBar onBack={onBackToList} />
+    <div className="xl:hidden -mx-1 px-1 pt-0">
       <MobilePatientHeader
         displayHero={displayHero}
         patientEmail={patientEmail}
         patientCabinetRow={patientCabinetRow}
         tenantPatientNotFound={tenantPatientNotFound}
         onOpenProfile={onOpenProfile}
+        onBack={onBackToList}
       />
       <MobileQuickActions onCall={onCall} onWhatsApp={onWhatsApp} onSms={onSms} onMore={onOpenProfile} />
       <MobileContentActions onAddNote={onAddNote} onAddDocument={onAddDocument} />

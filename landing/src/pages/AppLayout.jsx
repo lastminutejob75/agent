@@ -261,7 +261,10 @@ export default function AppLayout() {
         aria-hidden="true"
       />
 
-      <div className="uwi-main" style={{ paddingTop: layoutTopOffset }}>
+      <div
+        className={isPatientDashboard ? "uwi-main uwi-patient-dashboard" : "uwi-main"}
+        style={{ paddingTop: layoutTopOffset }}
+      >
         {!hideTopbar ? (
           <AppTopbar
             routeMeta={routeMetaResolved}
@@ -429,9 +432,12 @@ export default function AppLayout() {
         ) : null}
 
         <main
+          className={isPatientDashboard ? "uwi-patient-dashboard-content" : undefined}
           style={{
             ...S.content,
-            ...(isPatientDashboard ? { paddingTop: 0 } : {}),
+            ...(isPatientDashboard
+              ? { padding: 0, minHeight: "auto" }
+              : {}),
           }}
         >
           {showWelcomeSecurityBanner ? (
