@@ -835,6 +835,14 @@ export default function PatientDashboardPage() {
     };
   }, []);
 
+  const notify = useCallback((message: string, opts?: { sticky?: boolean }) => {
+    setToast(message);
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    /* Toast "sticky" (erreur/validation) = 6 s pour laisser le temps de lire avant qu'il disparaisse. */
+    const ms = opts?.sticky ? 6000 : 1800;
+    toastTimerRef.current = window.setTimeout(() => setToast(""), ms);
+  }, []);
+
   const requestContextFromUrl = useMemo<RequestContext | null>(() => {
     const requestId = (searchParams.get("requestId") || "").trim();
     if (!requestId) return null;
@@ -1741,14 +1749,6 @@ export default function PatientDashboardPage() {
     } finally {
       setDeleteSaving(false);
     }
-  };
-
-  const notify = (message: string, opts?: { sticky?: boolean }) => {
-    setToast(message);
-    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
-    /* Toast "sticky" (erreur/validation) = 6 s pour laisser le temps de lire avant qu'il disparaisse. */
-    const ms = opts?.sticky ? 6000 : 1800;
-    toastTimerRef.current = window.setTimeout(() => setToast(""), ms);
   };
 
   const confirmCancelPatientAppointment = useCallback(async () => {
