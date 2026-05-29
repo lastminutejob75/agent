@@ -77,6 +77,31 @@ def test_context_note_only_context_fields():
     assert "1990-05-12" not in note
 
 
+def test_merge_profile_into_answers_fills_empty_profile_fields():
+    profile = {
+        "birth_date": "1975-09-08",
+        "treating_physician_name": "Dr Cox",
+        "treating_physician_city": "Marseille",
+    }
+    merged = pq.merge_profile_into_answers(profile, {"allergies": "aucune"})
+    assert merged["birth_date"] == "1975-09-08"
+    assert merged["treating_physician_name"] == "Dr Cox"
+    assert merged["treating_physician_city"] == "Marseille"
+    assert merged["allergies"] == "aucune"
+
+
+def test_merge_profile_does_not_override_existing_answers():
+    profile = {"treating_physician_name": "Dr Profil"}
+    merged = pq.merge_profile_into_answers(profile, {"treating_physician_name": "Dr Saisi"})
+    assert merged["treating_physician_name"] == "Dr Saisi"
+
+
+def test_merge_profile_truncates_birth_date_datetime():
+    profile = {"birth_date": "1975-09-08 00:00:00"}
+    merged = pq.merge_profile_into_answers(profile, {})
+    assert merged["birth_date"] == "1975-09-08"
+
+
 def test_apply_answers_updates_profile_and_adds_note(sqlite_db):
     db.upsert_cabinet_client(1, "+33622222222", raw_name="Test", validated_name="Test Patient")
 

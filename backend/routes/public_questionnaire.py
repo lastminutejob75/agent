@@ -21,6 +21,7 @@ from backend.patient_questionnaire import (
     STATUS_COMPLETED,
     apply_answers_to_patient,
     get_questionnaire,
+    merge_profile_into_answers,
     parse_questionnaire_token,
     questionnaire_schema,
     sanitize_answers,
@@ -67,12 +68,14 @@ def public_get_questionnaire(token: str):
     patient_name = (
         profile.get("display_name") or profile.get("validated_name") or profile.get("raw_name") or ""
     ).strip()
+    # Pré-remplissage côté patient avec ce que la fiche connaît déjà.
+    answers = merge_profile_into_answers(profile, state.get("answers"))
     return {
         "ok": True,
         "cabinet_name": _cabinet_label(tenant_id),
         "patient_name": patient_name,
         "schema": questionnaire_schema(),
-        "answers": state.get("answers") or {},
+        "answers": answers,
         "already_completed": state.get("status") == STATUS_COMPLETED,
     }
 

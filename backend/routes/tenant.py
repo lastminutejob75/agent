@@ -3460,13 +3460,19 @@ def tenant_get_patient_questionnaire(
     auth: dict = Depends(require_tenant_auth),
 ):
     """État du questionnaire médical d'onboarding du patient (+ schéma)."""
-    from backend.patient_questionnaire import get_questionnaire, questionnaire_schema
+    from backend.patient_questionnaire import (
+        get_questionnaire,
+        merge_profile_into_answers,
+        questionnaire_schema,
+    )
 
     tenant_id = auth["tenant_id"]
     profile = get_cabinet_client_by_phone(tenant_id, phone)
     if not profile:
         raise HTTPException(404, "Fiche patient introuvable pour ce cabinet. Créez d'abord la fiche.")
     state = get_questionnaire(tenant_id, phone)
+    # Pré-remplissage : on complète les champs profil vides avec ce que la fiche sait déjà.
+    state["answers"] = merge_profile_into_answers(profile, state.get("answers"))
     return {"ok": True, "schema": questionnaire_schema(), "questionnaire": state}
 
 

@@ -288,6 +288,38 @@ def save_questionnaire(
     return get_questionnaire(tenant_id, phone_norm)
 
 
+def merge_profile_into_answers(
+    profile: Optional[Dict[str, Any]],
+    answers: Optional[Dict[str, Any]],
+) -> Dict[str, str]:
+    """Pré-remplit les champs profil du questionnaire avec ce que la fiche connaît déjà.
+
+    Les réponses déjà saisies (questionnaire) restent prioritaires : on ne
+    complète que les champs profil encore vides (date de naissance, médecin
+    traitant, ville). Permet de gagner du temps sur une fiche existante.
+    """
+    merged = sanitize_answers(answers)
+    if not profile:
+        return merged
+    for field in QUESTIONNAIRE_FIELDS:
+        maps_to = field["maps_to"]
+        if not maps_to.startswith("profile."):
+            continue
+        field_id = field["id"]
+        if (merged.get(field_id) or "").strip():
+            continue
+        column = maps_to.split(".", 1)[1]
+        raw = profile.get(column)
+        if raw is None:
+            continue
+        value = str(raw).strip()
+        if field["type"] == "date":
+            value = value[:10]
+        if value:
+            merged[field_id] = value[:2000]
+    return merged
+
+
 def _context_note_from_answers(answers: Dict[str, str], *, source_label: str) -> str:
     """Construit une note de synthèse pour le contexte patient."""
     lines: List[str] = []

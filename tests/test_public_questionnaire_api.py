@@ -47,6 +47,23 @@ def test_public_questionnaire_flow(client):
     assert state["filled_by"] == pq.FILLED_BY_PATIENT
 
 
+def test_public_questionnaire_prefills_from_existing_fiche(client):
+    db.upsert_cabinet_client(1, "+33677777777", raw_name="Marie", validated_name="Marie Curie")
+    db.update_patient_fields(
+        1,
+        "+33677777777",
+        birth_date="1867-11-07",
+        treating_physician_name="Dr Becquerel",
+    )
+    token = pq.make_questionnaire_token(1, "+33677777777")
+
+    r = client.get(f"/api/public/patient-questionnaire/{token}")
+    assert r.status_code == 200
+    answers = r.json()["answers"]
+    assert answers.get("birth_date") == "1867-11-07"
+    assert answers.get("treating_physician_name") == "Dr Becquerel"
+
+
 def test_public_questionnaire_invalid_token(client):
     r = client.get("/api/public/patient-questionnaire/bad.token.value")
     assert r.status_code == 404
