@@ -2264,7 +2264,7 @@ export default function PatientDashboardPage() {
           </div>
         </aside>
 
-        <main className="overflow-y-auto px-3 py-3 sm:px-5 sm:py-5 lg:px-8 lg:py-6">
+        <main className="overflow-y-auto px-3 py-2 sm:px-5 sm:py-5 lg:px-8 lg:py-6 xl:py-6">
           {tenantPatientNotFound ? (
             <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-950 shadow-sm">
               <p className="m-0">

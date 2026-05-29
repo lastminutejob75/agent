@@ -118,7 +118,7 @@ export type PatientDashboardMobileProps = {
 
 function MobileTopBar({ onBack }: { onBack: () => void }) {
   return (
-    <header className="mb-2.5 flex h-12 items-center justify-between">
+    <header className="-mt-0.5 mb-2 flex h-11 items-center justify-between">
       <div className="flex items-center gap-3">
         <button
           type="button"

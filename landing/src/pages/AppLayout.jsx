@@ -29,8 +29,11 @@ export default function AppLayout() {
   const impersonation = getImpersonation();
   const path = location.pathname;
   const isPatientDetail = path.startsWith("/app/patients/") && path !== "/app/patients";
+  const isPatientDashboard = path.startsWith("/app/patient-dashboard");
   const hideTopbar =
-    path.startsWith("/app/onboarding") || path.startsWith("/app/impersonate");
+    path.startsWith("/app/onboarding") ||
+    path.startsWith("/app/impersonate") ||
+    isPatientDashboard;
   const demandBadge = dashboard?.counters_7d?.transfers ?? 0;
   const hideToProcessStrip =
     hideTopbar ||
@@ -425,7 +428,12 @@ export default function AppLayout() {
           </button>
         ) : null}
 
-        <main style={S.content}>
+        <main
+          style={{
+            ...S.content,
+            ...(isPatientDashboard ? { paddingTop: 0 } : {}),
+          }}
+        >
           {showWelcomeSecurityBanner ? (
             <div style={S.securityBanner}>
               <span>Votre compte utilise un mot de passe temporaire.</span>
