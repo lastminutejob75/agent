@@ -580,68 +580,108 @@ def _ensure_cabinet_clients_table(conn: sqlite3.Connection) -> None:
 
 
 def _migrate_cabinet_clients_columns_pg(conn: Any) -> None:
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            DO $$ BEGIN
-                ALTER TABLE cabinet_clients ADD COLUMN email TEXT;
-            EXCEPTION WHEN duplicate_column THEN NULL;
-            END $$;
-            """
-        )
-        cur.execute(
-            """
-            DO $$ BEGIN
-                ALTER TABLE cabinet_clients ADD COLUMN birth_date DATE;
-            EXCEPTION WHEN duplicate_column THEN NULL;
-            END $$;
-            """
-        )
-        cur.execute(
-            """
-            DO $$ BEGIN
-                ALTER TABLE cabinet_clients ADD COLUMN treating_physician_name TEXT;
-            EXCEPTION WHEN duplicate_column THEN NULL;
-            END $$;
-            """
-        )
-
-
-def _ensure_cabinet_clients_table_pg(conn: Any) -> None:
-    if not _pg_table_exists(conn, "cabinet_clients"):
+    """Best-effort DDL réservé à la création initiale (pas sur le chemin lecture prod)."""
+    try:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                CREATE TABLE IF NOT EXISTS cabinet_clients (
-                    tenant_id INTEGER NOT NULL,
-                    phone TEXT NOT NULL,
-                    raw_name TEXT,
-                    validated_name TEXT,
-                    display_name TEXT,
-                    validation_status TEXT NOT NULL DEFAULT 'pending',
-                    email TEXT,
-                    birth_date DATE,
-                    treating_physician_name TEXT,
-                    source_call_id TEXT,
-                    last_call_id TEXT,
-                    last_booking_start TIMESTAMPTZ,
-                    last_booking_end TIMESTAMPTZ,
-                    last_booking_motif TEXT,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    PRIMARY KEY (tenant_id, phone)
-                )
+                DO $$ BEGIN
+                    ALTER TABLE cabinet_clients ADD COLUMN email TEXT;
+                EXCEPTION WHEN duplicate_column THEN NULL;
+                END $$;
                 """
             )
             cur.execute(
                 """
-                CREATE INDEX IF NOT EXISTS idx_cabinet_clients_search
-                ON cabinet_clients (tenant_id, display_name, raw_name, updated_at)
+                DO $$ BEGIN
+                    ALTER TABLE cabinet_clients ADD COLUMN birth_date DATE;
+                EXCEPTION WHEN duplicate_column THEN NULL;
+                END $$;
                 """
             )
-        _ensure_patient_documents_table_pg(conn)
-        _ensure_patient_notes_table_pg(conn)
+            cur.execute(
+                """
+                DO $$ BEGIN
+                    ALTER TABLE cabinet_clients ADD COLUMN treating_physician_name TEXT;
+                EXCEPTION WHEN duplicate_column THEN NULL;
+                END $$;
+                """
+            )
+    except Exception as exc:
+        logging.getLogger(__name__).debug("cabinet_clients pg column migrate skipped: %s", exc)
+
+
+_CABINET_CLIENT_COLS_BASE = (
+    "phone, raw_name, validated_name, display_name, validation_status, email, "
+    "source_call_id, last_call_id, last_booking_start, last_booking_end, "
+    "last_booking_motif, created_at, updated_at"
+)
+_CABINET_CLIENT_COLS_EXTENDED = (
+    f"{_CABINET_CLIENT_COLS_BASE}, birth_date, treating_physician_name"
+)
+_cabinet_client_cols_cache: Optional[str] = None
+
+
+def _cabinet_client_select_columns_pg(conn: Any) -> str:
+    """Colonnes SELECT cabinet_clients (avec champs profil si migration appliquée)."""
+    global _cabinet_client_cols_cache
+    if _cabinet_client_cols_cache:
+        return _cabinet_client_cols_cache
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) AS n
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'cabinet_clients'
+                  AND column_name IN ('birth_date', 'treating_physician_name')
+                """
+            )
+            row = cur.fetchone()
+            count = int((row.get("n") if isinstance(row, dict) else row[0]) or 0)
+        _cabinet_client_cols_cache = _CABINET_CLIENT_COLS_EXTENDED if count >= 2 else _CABINET_CLIENT_COLS_BASE
+    except Exception:
+        _cabinet_client_cols_cache = _CABINET_CLIENT_COLS_BASE
+    return _cabinet_client_cols_cache
+
+
+def _ensure_cabinet_clients_table_pg(conn: Any) -> None:
+    if _pg_table_exists(conn, "cabinet_clients"):
+        return
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cabinet_clients (
+                tenant_id INTEGER NOT NULL,
+                phone TEXT NOT NULL,
+                raw_name TEXT,
+                validated_name TEXT,
+                display_name TEXT,
+                validation_status TEXT NOT NULL DEFAULT 'pending',
+                email TEXT,
+                birth_date DATE,
+                treating_physician_name TEXT,
+                source_call_id TEXT,
+                last_call_id TEXT,
+                last_booking_start TIMESTAMPTZ,
+                last_booking_end TIMESTAMPTZ,
+                last_booking_motif TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (tenant_id, phone)
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_cabinet_clients_search
+            ON cabinet_clients (tenant_id, display_name, raw_name, updated_at)
+            """
+        )
     _migrate_cabinet_clients_columns_pg(conn)
+    _ensure_patient_documents_table_pg(conn)
+    _ensure_patient_notes_table_pg(conn)
 
 
 def _cabinet_client_row_to_dict(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -1096,12 +1136,11 @@ def get_cabinet_client_by_email(tenant_id: int, email: str) -> Optional[Dict[str
             from backend.pg_pool import pg_connection_for
             with pg_connection_for(url) as conn:
                 _ensure_cabinet_clients_table_pg(conn)
+                cols = _cabinet_client_select_columns_pg(conn)
                 with conn.cursor() as cur:
                     cur.execute(
-                        """
-                        SELECT phone, raw_name, validated_name, display_name, validation_status, email,
-                               source_call_id, last_call_id, last_booking_start, last_booking_end,
-                               last_booking_motif, created_at, updated_at
+                        f"""
+                        SELECT {cols}
                         FROM cabinet_clients
                         WHERE tenant_id = %s AND lower(trim(email)) = %s
                         ORDER BY updated_at DESC NULLS LAST
@@ -1112,17 +1151,19 @@ def get_cabinet_client_by_email(tenant_id: int, email: str) -> Optional[Dict[str
                     row = cur.fetchone()
                     if row:
                         return _cabinet_client_row_to_dict(row)
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "get_cabinet_client_by_email pg failed tenant_id=%s: %s",
+                tenant_id,
+                exc,
+            )
 
     conn = get_conn()
     try:
         _ensure_cabinet_clients_table(conn)
         row = conn.execute(
-            """
-            SELECT phone, raw_name, validated_name, display_name, validation_status, email,
-                   source_call_id, last_call_id, last_booking_start, last_booking_end,
-                   last_booking_motif, created_at, updated_at
+            f"""
+            SELECT {_CABINET_CLIENT_COLS_EXTENDED}
             FROM cabinet_clients
             WHERE tenant_id = ? AND lower(trim(email)) = ?
             ORDER BY updated_at DESC
@@ -1149,12 +1190,11 @@ def get_cabinet_client_by_phone(tenant_id: int, phone: str) -> Optional[Dict[str
 
             with pg_connection_for(url) as conn:
                 _ensure_cabinet_clients_table_pg(conn)
+                cols = _cabinet_client_select_columns_pg(conn)
                 with conn.cursor() as cur:
                     cur.execute(
-                        """
-                        SELECT phone, raw_name, validated_name, display_name, validation_status, email,
-                               source_call_id, last_call_id, last_booking_start, last_booking_end,
-                               last_booking_motif, created_at, updated_at
+                        f"""
+                        SELECT {cols}
                         FROM cabinet_clients
                         WHERE tenant_id = %s AND phone = %s
                         LIMIT 1
@@ -1164,17 +1204,20 @@ def get_cabinet_client_by_phone(tenant_id: int, phone: str) -> Optional[Dict[str
                     row = cur.fetchone()
                     if row:
                         return _cabinet_client_row_to_dict(row)
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "get_cabinet_client_by_phone pg failed tenant_id=%s phone=%s: %s",
+                tenant_id,
+                phone_norm,
+                exc,
+            )
 
     conn = get_conn()
     try:
         _ensure_cabinet_clients_table(conn)
         row = conn.execute(
-            """
-            SELECT phone, raw_name, validated_name, display_name, validation_status, email,
-                   source_call_id, last_call_id, last_booking_start, last_booking_end,
-                   last_booking_motif, created_at, updated_at
+            f"""
+            SELECT {_CABINET_CLIENT_COLS_EXTENDED}
             FROM cabinet_clients
             WHERE tenant_id = ? AND phone = ?
             LIMIT 1
@@ -1240,12 +1283,11 @@ def get_cabinet_clients_by_phones(tenant_id: int, phones: List[str]) -> Dict[str
 
             with pg_connection_for(url) as conn:
                 _ensure_cabinet_clients_table_pg(conn)
+                cols = _cabinet_client_select_columns_pg(conn)
                 with conn.cursor() as cur:
                     cur.execute(
-                        """
-                        SELECT phone, raw_name, validated_name, display_name, validation_status,
-                               source_call_id, last_call_id, last_booking_start, last_booking_end,
-                               last_booking_motif, created_at, updated_at
+                        f"""
+                        SELECT {cols}
                         FROM cabinet_clients
                         WHERE tenant_id = %s AND phone = ANY(%s)
                         """,
@@ -1257,8 +1299,12 @@ def get_cabinet_clients_by_phones(tenant_id: int, phones: List[str]) -> Dict[str
                         for row in rows
                         if str(row.get("phone") or "").strip()
                     }
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "get_cabinet_clients_by_phones pg failed tenant_id=%s: %s",
+                tenant_id,
+                exc,
+            )
 
     conn = get_conn()
     try:
@@ -1266,9 +1312,7 @@ def get_cabinet_clients_by_phones(tenant_id: int, phones: List[str]) -> Dict[str
         placeholders = ",".join("?" for _ in phone_norms)
         rows = conn.execute(
             f"""
-            SELECT phone, raw_name, validated_name, display_name, validation_status,
-                   source_call_id, last_call_id, last_booking_start, last_booking_end,
-                   last_booking_motif, created_at, updated_at
+            SELECT {_CABINET_CLIENT_COLS_EXTENDED}
             FROM cabinet_clients
             WHERE tenant_id = ? AND phone IN ({placeholders})
             """,
@@ -1286,9 +1330,7 @@ def get_cabinet_clients_by_phones(tenant_id: int, phones: List[str]) -> Dict[str
 def list_cabinet_clients(tenant_id: int, *, limit: int = 200, offset: int = 0) -> List[Dict[str, Any]]:
     """Liste tous les patients/clients d'un tenant, triés par dernière mise à jour."""
     _select = """
-        SELECT phone, raw_name, validated_name, display_name, validation_status, email,
-               source_call_id, last_call_id, last_booking_start, last_booking_end,
-               last_booking_motif, created_at, updated_at
+        SELECT {cols}
         FROM cabinet_clients
         WHERE tenant_id = {ph}
         ORDER BY updated_at DESC
@@ -1297,24 +1339,28 @@ def list_cabinet_clients(tenant_id: int, *, limit: int = 200, offset: int = 0) -
     url = _pg_events_url()
     if url:
         try:
-
             from backend.pg_pool import pg_connection_for
             with pg_connection_for(url) as conn:
                 _ensure_cabinet_clients_table_pg(conn)
+                cols = _cabinet_client_select_columns_pg(conn)
                 with conn.cursor() as cur:
                     cur.execute(
-                        _select.format(ph="%s", lph="%s", oph="%s"),
+                        _select.format(cols=cols, ph="%s", lph="%s", oph="%s"),
                         (tenant_id, limit, offset),
                     )
-                    return [_cabinet_client_row_to_dict(dict(r)) for r in cur.fetchall()]
-        except Exception:
-            pass
+                    return [_cabinet_client_row_to_dict(r) for r in cur.fetchall()]
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "list_cabinet_clients pg failed tenant_id=%s: %s",
+                tenant_id,
+                exc,
+            )
 
     conn = get_conn()
     try:
         _ensure_cabinet_clients_table(conn)
         rows = conn.execute(
-            _select.format(ph="?", lph="?", oph="?"),
+            _select.format(cols=_CABINET_CLIENT_COLS_EXTENDED, ph="?", lph="?", oph="?"),
             (tenant_id, limit, offset),
         ).fetchall()
         return [_cabinet_client_row_to_dict(dict(r)) for r in rows]
@@ -1484,10 +1530,6 @@ def search_cabinet_clients(tenant_id: int, q: str, *, limit: int = 15) -> List[D
     if not tokens:
         return []
 
-    _cols = """phone, raw_name, validated_name, display_name, validation_status, email,
-               source_call_id, last_call_id, last_booking_start, last_booking_end,
-               last_booking_motif, created_at, updated_at"""
-
     url = _pg_events_url()
     if url:
         try:
@@ -1520,24 +1562,26 @@ def search_cabinet_clients(tenant_id: int, q: str, *, limit: int = 15) -> List[D
                             params_pg.append(f"%{dp}%")
 
             where_sql = " AND ".join(clause_parts)
-            sql = (
-                "SELECT "
-                + _cols
-                + """
-                FROM cabinet_clients
-                WHERE tenant_id = %s AND """
-                + where_sql
-                + " ORDER BY updated_at DESC LIMIT %s"
-            )
             params_pg_final = [tenant_id] + params_pg + [limit]
             from backend.pg_pool import pg_connection_for
             with pg_connection_for(url) as conn:
                 _ensure_cabinet_clients_table_pg(conn)
+                cols = _cabinet_client_select_columns_pg(conn)
+                sql = (
+                    f"SELECT {cols} FROM cabinet_clients WHERE tenant_id = %s AND "
+                    + where_sql
+                    + " ORDER BY updated_at DESC LIMIT %s"
+                )
                 with conn.cursor() as cur:
                     cur.execute(sql, params_pg_final)
-                    return [_cabinet_client_row_to_dict(dict(r)) for r in cur.fetchall()]
-        except Exception:
-            pass
+                    return [_cabinet_client_row_to_dict(r) for r in cur.fetchall()]
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "search_cabinet_clients pg failed tenant_id=%s q=%r: %s",
+                tenant_id,
+                q_clean[:40],
+                exc,
+            )
 
     clause_parts_sq: List[str] = []
     params_sq: List[Any] = []

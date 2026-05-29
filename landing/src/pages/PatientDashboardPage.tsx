@@ -768,6 +768,7 @@ export default function PatientDashboardPage() {
   const [urlPatientHero, setUrlPatientHero] = useState<{ name: string; phone: string; initials: string } | null>(null);
   const [tenantSidebarRows, setTenantSidebarRows] = useState<SidebarPatientRow[]>([]);
   const [tenantListLoading, setTenantListLoading] = useState(true);
+  const [tenantListError, setTenantListError] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const sidebarBootstrapDoneRef = useRef(false);
   const patientDetailCacheRef = useRef(new Map<string, {
@@ -983,14 +984,16 @@ export default function PatientDashboardPage() {
 
   const loadTenantSidebarPatients = useCallback(async () => {
     try {
+      setTenantListError(null);
       const res = await api.tenantGetPatients("?limit=100");
       const items = Array.isArray(res?.items) ? res.items : [];
       const mapped = items
         .map((item: Record<string, unknown>) => cabinetRowToSidebar(item))
         .filter((item): item is SidebarPatientRow => Boolean(item));
       setTenantSidebarRows(mapped);
-    } catch {
+    } catch (e) {
       setTenantSidebarRows([]);
+      setTenantListError((e as Error)?.message || "Impossible de charger la liste des fiches patients.");
     }
   }, []);
 
@@ -2125,6 +2128,20 @@ export default function PatientDashboardPage() {
           <div className="overflow-hidden rounded-3xl border border-[#E5EDF5] bg-white shadow-sm">
             {tenantListLoading ? (
               <div className="p-10 text-center text-sm font-semibold text-[#64748B]">Chargement de la liste…</div>
+            ) : tenantListError ? (
+              <div className="space-y-3 p-8 text-center">
+                <p className="text-sm font-semibold text-red-600">{tenantListError}</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTenantListLoading(true);
+                    void loadTenantSidebarPatients().finally(() => setTenantListLoading(false));
+                  }}
+                  className="rounded-xl border border-[#DDE7F1] bg-white px-4 py-2 text-sm font-black text-[#007E8C] hover:bg-[#F8FBFD]"
+                >
+                  Réessayer
+                </button>
+              </div>
             ) : sidebarSearchPending ? (
               <div className="p-10 text-center text-sm font-semibold text-[#64748B]">Recherche dans toutes les fiches…</div>
             ) : filteredSidebarRows.length === 0 ? (
