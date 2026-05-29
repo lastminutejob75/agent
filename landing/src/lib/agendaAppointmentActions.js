@@ -51,6 +51,18 @@ export function canRescheduleAgendaSlot(slot) {
   return apptId != null && Number.isFinite(slotId) && slotId > 0;
 }
 
+export function isAgendaSlotPast(startDate, now = Date.now()) {
+  return startDate.getTime() < now;
+}
+
+/** Ouvre le flux « déplacer » (calendrier) depuis la fiche patient. */
+export function canOpenReschedulePatientAppt(slot, startDate, now = Date.now()) {
+  if (isAgendaSlotPast(startDate, now)) return false;
+  if (canRescheduleAgendaSlot(slot)) return true;
+  const src = String(slot?.source || "").toUpperCase();
+  return src === "UWI" && Boolean(appointmentActionId(slot));
+}
+
 export function buildAgendaViewUrl({ date, phone, slot, action }) {
   const params = new URLSearchParams();
   if (date) params.set("date", date);

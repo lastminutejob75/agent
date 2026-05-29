@@ -17,7 +17,9 @@ import {
   agendaReschedulePayload,
   buildAgendaViewUrl,
   canCancelAgendaSlot,
+  canOpenReschedulePatientAppt,
   canRescheduleAgendaSlot,
+  isAgendaSlotPast,
 } from "../lib/agendaAppointmentActions.js";
 import AgendaReschedulePanel from "../components/agenda/AgendaReschedulePanel.jsx";
 import PatientDashboardMobile from "./PatientDashboardMobile";
@@ -729,8 +731,8 @@ function Modal({
   width?: string;
 }) {
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-[#0A1628]/35 p-6 backdrop-blur-sm" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className={cx("max-h-[88vh] w-full overflow-auto rounded-[28px] bg-white p-7 shadow-2xl", width)}>
+    <div className="fixed inset-0 z-[100] flex items-end justify-center bg-[#0A1628]/35 p-3 backdrop-blur-sm sm:items-center sm:p-6" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className={cx("max-h-[90vh] w-full overflow-auto rounded-[28px] bg-white p-5 shadow-2xl sm:p-7", width)}>
         <div className="mb-6 flex items-center justify-between gap-4">
           <h2 className="text-2xl font-black tracking-tight text-[#0A1628]">{title}</h2>
           <button onClick={onClose} className="grid h-10 w-10 place-items-center rounded-xl border border-[#DDE7F1] text-xl font-black hover:bg-[#F8FAFC]">
@@ -795,6 +797,7 @@ export default function PatientDashboardPage() {
   const [patientAgendaLoading, setPatientAgendaLoading] = useState(false);
   /** Fenêtre agenda déjà chargée (14j overview, 60j onglet rendez-vous). */
   const [agendaDaysLoaded, setAgendaDaysLoaded] = useState(0);
+  const [agendaRefreshNonce, setAgendaRefreshNonce] = useState(0);
   const [apptActionTarget, setApptActionTarget] = useState<ApptActionTarget | null>(null);
   const [apptActionLoading, setApptActionLoading] = useState(false);
   /** Recherche serveur GET /patients?q= ; null si la recherche API n’est pas utilisée (< 2 caractères). */
@@ -1412,7 +1415,7 @@ export default function PatientDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [activeView, agendaDaysLoaded]);
+  }, [activeView, agendaDaysLoaded, agendaRefreshNonce]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1442,6 +1445,7 @@ export default function PatientDashboardPage() {
 
   const refreshPatientAgenda = useCallback(() => {
     setAgendaDaysLoaded(0);
+    setAgendaRefreshNonce((n) => n + 1);
   }, []);
 
   const viewApptInAgenda = useCallback((
@@ -1477,37 +1481,24 @@ export default function PatientDashboardPage() {
     { compact = false }: { compact?: boolean } = {},
   ) => {
     const canCancel = canCancelAgendaSlot(slot);
-    const canReschedule = canRescheduleAgendaSlot(slot);
-    const isPast = start.getTime() < Date.now();
-    const sourceUwi = String(slot?.source || "").toUpperCase() === "UWI";
+    const canOpenReschedule = canOpenReschedulePatientAppt(slot, start);
+    const isPast = isAgendaSlotPast(start);
     const handleReschedule = () => {
       if (isPast) {
         notify("Impossible de déplacer un rendez-vous passé.");
         return;
       }
-      if (canReschedule) {
-        openRescheduleApptModal(slot, start);
+      if (!canOpenReschedule) {
+        notify("Déplacement indisponible pour ce rendez-vous.", { sticky: true });
         return;
       }
-      if (sourceUwi && canCancel) {
-        notify("Ouverture de l'agenda pour déplacer ce rendez-vous.", { sticky: true });
-        navigate(
-          buildAgendaViewUrl({
-            date: start.toISOString().slice(0, 10),
-            phone: tenantPatientPhone,
-            slot,
-            action: "reschedule",
-          }),
-        );
-        return;
-      }
-      notify("Déplacement indisponible pour ce rendez-vous.", { sticky: true });
+      openRescheduleApptModal(slot, start);
     };
     return (
       <div className={`flex flex-wrap gap-2${compact ? "" : " mt-5"}`}>
         <button
           type="button"
-          disabled={isPast || !sourceUwi}
+          disabled={isPast || !canOpenReschedule}
           onClick={handleReschedule}
           className="rounded-xl border border-[#72CDE0] px-4 py-2 text-sm font-black text-[#008EA1] hover:bg-[#E9FAFC] disabled:cursor-not-allowed disabled:opacity-50"
         >
@@ -1540,7 +1531,7 @@ export default function PatientDashboardPage() {
         )}
       </div>
     );
-  }, [navigate, notify, openCancelApptModal, openRescheduleApptModal, tenantPatientPhone, viewApptInAgenda]);
+  }, [notify, openCancelApptModal, openRescheduleApptModal, viewApptInAgenda]);
 
   const patientAgendaSlots = useMemo(() => {
     if (!tenantPatientPhone) return [];
