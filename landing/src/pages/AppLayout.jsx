@@ -35,6 +35,7 @@ export default function AppLayout() {
   const hideToProcessStrip =
     hideTopbar ||
     path.startsWith("/app/demandes") ||
+    path.startsWith("/app/patient-dashboard") ||
     path.startsWith("/app/onboarding") ||
     path.startsWith("/app/impersonate");
   const initials = (me?.tenant_name || "U")

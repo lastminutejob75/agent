@@ -566,43 +566,21 @@ def _ensure_cabinet_clients_table(conn: sqlite3.Connection) -> None:
         conn.execute("SELECT email FROM cabinet_clients LIMIT 0")
     except Exception:
         conn.execute("ALTER TABLE cabinet_clients ADD COLUMN email TEXT")
+    try:
+        conn.execute("SELECT birth_date FROM cabinet_clients LIMIT 0")
+    except Exception:
+        conn.execute("ALTER TABLE cabinet_clients ADD COLUMN birth_date TEXT")
+    try:
+        conn.execute("SELECT treating_physician_name FROM cabinet_clients LIMIT 0")
+    except Exception:
+        conn.execute("ALTER TABLE cabinet_clients ADD COLUMN treating_physician_name TEXT")
 
     _ensure_patient_documents_table(conn)
     _ensure_patient_notes_table(conn)
 
 
-def _ensure_cabinet_clients_table_pg(conn: Any) -> None:
-    if _pg_table_exists(conn, "cabinet_clients"):
-        return
+def _migrate_cabinet_clients_columns_pg(conn: Any) -> None:
     with conn.cursor() as cur:
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS cabinet_clients (
-                tenant_id INTEGER NOT NULL,
-                phone TEXT NOT NULL,
-                raw_name TEXT,
-                validated_name TEXT,
-                display_name TEXT,
-                validation_status TEXT NOT NULL DEFAULT 'pending',
-                email TEXT,
-                source_call_id TEXT,
-                last_call_id TEXT,
-                last_booking_start TIMESTAMPTZ,
-                last_booking_end TIMESTAMPTZ,
-                last_booking_motif TEXT,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                PRIMARY KEY (tenant_id, phone)
-            )
-            """
-        )
-        cur.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_cabinet_clients_search
-            ON cabinet_clients (tenant_id, display_name, raw_name, updated_at)
-            """
-        )
-        # migrate: add email column if missing
         cur.execute(
             """
             DO $$ BEGIN
@@ -611,8 +589,59 @@ def _ensure_cabinet_clients_table_pg(conn: Any) -> None:
             END $$;
             """
         )
+        cur.execute(
+            """
+            DO $$ BEGIN
+                ALTER TABLE cabinet_clients ADD COLUMN birth_date DATE;
+            EXCEPTION WHEN duplicate_column THEN NULL;
+            END $$;
+            """
+        )
+        cur.execute(
+            """
+            DO $$ BEGIN
+                ALTER TABLE cabinet_clients ADD COLUMN treating_physician_name TEXT;
+            EXCEPTION WHEN duplicate_column THEN NULL;
+            END $$;
+            """
+        )
+
+
+def _ensure_cabinet_clients_table_pg(conn: Any) -> None:
+    if not _pg_table_exists(conn, "cabinet_clients"):
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cabinet_clients (
+                    tenant_id INTEGER NOT NULL,
+                    phone TEXT NOT NULL,
+                    raw_name TEXT,
+                    validated_name TEXT,
+                    display_name TEXT,
+                    validation_status TEXT NOT NULL DEFAULT 'pending',
+                    email TEXT,
+                    birth_date DATE,
+                    treating_physician_name TEXT,
+                    source_call_id TEXT,
+                    last_call_id TEXT,
+                    last_booking_start TIMESTAMPTZ,
+                    last_booking_end TIMESTAMPTZ,
+                    last_booking_motif TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    PRIMARY KEY (tenant_id, phone)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_cabinet_clients_search
+                ON cabinet_clients (tenant_id, display_name, raw_name, updated_at)
+                """
+            )
         _ensure_patient_documents_table_pg(conn)
         _ensure_patient_notes_table_pg(conn)
+    _migrate_cabinet_clients_columns_pg(conn)
 
 
 def _cabinet_client_row_to_dict(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -623,6 +652,8 @@ def _cabinet_client_row_to_dict(row: Dict[str, Any]) -> Dict[str, Any]:
         "display_name": row.get("display_name") or row.get("validated_name") or row.get("raw_name") or "",
         "validation_status": row.get("validation_status") or "pending",
         "email": row.get("email") or "",
+        "birth_date": str(row.get("birth_date") or "")[:10] if row.get("birth_date") else "",
+        "treating_physician_name": row.get("treating_physician_name") or "",
         "source_call_id": row.get("source_call_id") or "",
         "last_call_id": row.get("last_call_id") or "",
         "last_booking_start": str(row.get("last_booking_start") or ""),
@@ -705,7 +736,14 @@ def _ensure_patient_notes_table_pg(conn: Any) -> None:
         )
 
 
-def update_patient_fields(tenant_id: int, phone: str, *, email: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def update_patient_fields(
+    tenant_id: int,
+    phone: str,
+    *,
+    email: Optional[str] = None,
+    birth_date: Optional[str] = None,
+    treating_physician_name: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     """Update specific fields on an existing cabinet_client row."""
     phone_norm = normalize_phone_number(phone)
     if not phone_norm:
@@ -717,6 +755,14 @@ def update_patient_fields(tenant_id: int, phone: str, *, email: Optional[str] = 
         clean_email = email.strip()[:254]
         sets.append("email = ?")
         params.append(clean_email)
+    if birth_date is not None:
+        clean_birth = birth_date.strip()[:10]
+        sets.append("birth_date = ?")
+        params.append(clean_birth or None)
+    if treating_physician_name is not None:
+        clean_physician = treating_physician_name.strip()[:200]
+        sets.append("treating_physician_name = ?")
+        params.append(clean_physician or None)
     if not sets:
         return get_cabinet_client_by_phone(tenant_id, phone)
 

@@ -3193,6 +3193,8 @@ def tenant_register_patient_practice(
 
 class PatientUpdateBody(BaseModel):
     email: Optional[str] = Field(default=None, max_length=254)
+    birth_date: Optional[str] = Field(default=None, max_length=10)
+    treating_physician_name: Optional[str] = Field(default=None, max_length=200)
 
     @validator("email")
     def _validate_email(cls, v):
@@ -3205,6 +3207,23 @@ class PatientUpdateBody(BaseModel):
         if " " in v or "@" not in v or "." not in v.split("@", 1)[1]:
             raise ValueError("Email invalide (format attendu: prenom@domaine.fr)")
         return v
+
+    @validator("birth_date")
+    def _validate_birth_date(cls, v):
+        if v is None:
+            return None
+        v = v.strip()
+        if v == "":
+            return ""
+        if len(v) != 10 or v[4] != "-" or v[7] != "-":
+            raise ValueError("Date de naissance invalide (format attendu: AAAA-MM-JJ)")
+        return v
+
+    @validator("treating_physician_name")
+    def _validate_treating_physician_name(cls, v):
+        if v is None:
+            return None
+        return v.strip()[:200]
 
 
 class PatientNoteCreateBody(BaseModel):
@@ -3235,7 +3254,13 @@ def tenant_update_patient(
         )
         raise HTTPException(404, "Fiche patient introuvable pour ce cabinet. Créez d'abord la fiche.")
 
-    updated = update_patient_fields(tenant_id, phone, email=body.email)
+    updated = update_patient_fields(
+        tenant_id,
+        phone,
+        email=body.email,
+        birth_date=body.birth_date,
+        treating_physician_name=body.treating_physician_name,
+    )
     if not updated:
         logger.error(
             "tenant_update_patient: update_patient_fields a renvoyé None tenant=%s phone=%s email_len=%s",

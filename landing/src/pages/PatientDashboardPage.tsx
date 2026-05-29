@@ -58,6 +58,14 @@ function formatCabinetMetaDate(value: unknown) {
   return Number.isNaN(d.getTime()) ? raw.slice(0, 10) || "—" : d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
+function formatBirthDateDisplay(value: unknown) {
+  const raw = String(value || "").trim().slice(0, 10);
+  if (!raw) return "Non renseignée";
+  const d = new Date(`${raw}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return raw;
+  return d.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
+}
+
 type SidebarPatientRow = {
   /** Téléphone normalisé comme clé (aligné tenant API). */
   phone: string;
@@ -589,6 +597,45 @@ function PatientQuickActions({
   );
 }
 
+function PatientProfileHeaderMeta({
+  birthDate,
+  treatingPhysician,
+  onOpenProfile,
+}: {
+  birthDate: unknown;
+  treatingPhysician: unknown;
+  onOpenProfile: () => void;
+}) {
+  const physician = String(treatingPhysician || "").trim();
+  return (
+    <div className="flex flex-col gap-3 rounded-2xl border border-[#E8EEF5] bg-[#F8FBFD] p-3.5 sm:flex-row sm:items-center sm:justify-between sm:gap-5 sm:p-4">
+      <div className="grid min-w-0 flex-1 grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
+        <div className="min-w-0">
+          <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#94A3B8] sm:text-[11px]">
+            Date de naissance
+          </div>
+          <div className="mt-0.5 text-sm font-black text-[#0A1628] sm:text-[15px]">{formatBirthDateDisplay(birthDate)}</div>
+        </div>
+        <div className="min-w-0">
+          <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#94A3B8] sm:text-[11px]">
+            Médecin traitant
+          </div>
+          <div className="mt-0.5 break-words text-sm font-black text-[#0A1628] sm:text-[15px]">
+            {physician || "Non renseigné"}
+          </div>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onOpenProfile}
+        className="inline-flex h-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#06355D] to-[#002D4E] px-4 text-sm font-black text-white shadow-[0_10px_24px_rgba(3,49,82,0.18)] transition hover:brightness-110 active:scale-[0.98] sm:h-12 sm:px-5"
+      >
+        Voir le profil détaillé
+      </button>
+    </div>
+  );
+}
+
 function HeaderAction({
   children,
   icon,
@@ -757,6 +804,8 @@ export default function PatientDashboardPage() {
   const [createFicheName, setCreateFicheName] = useState("");
   const [createFicheSaving, setCreateFicheSaving] = useState(false);
   const [profileNameDraft, setProfileNameDraft] = useState("");
+  const [profileBirthDateDraft, setProfileBirthDateDraft] = useState("");
+  const [profilePhysicianDraft, setProfilePhysicianDraft] = useState("");
   const [profileSaveSaving, setProfileSaveSaving] = useState(false);
   const [deletePreviewLoading, setDeletePreviewLoading] = useState(false);
   const [deletePreview, setDeletePreview] = useState<null | {
@@ -1498,8 +1547,11 @@ export default function PatientDashboardPage() {
   const pastPatientAppointments = patientPastAppointments;
 
   useEffect(() => {
-    if (modal === "profile" && urlPatientHero?.name) setProfileNameDraft(urlPatientHero.name);
-  }, [modal, urlPatientHero?.name]);
+    if (modal !== "profile") return;
+    if (urlPatientHero?.name) setProfileNameDraft(urlPatientHero.name);
+    setProfileBirthDateDraft(String(patientCabinetRow?.birth_date || "").trim().slice(0, 10));
+    setProfilePhysicianDraft(String(patientCabinetRow?.treating_physician_name || "").trim());
+  }, [modal, urlPatientHero?.name, patientCabinetRow]);
 
   const createPatientFichePractice = useCallback(
     async (validatedName: string) => {
@@ -1557,10 +1609,29 @@ export default function PatientDashboardPage() {
   };
 
   const saveProfileFromModal = async () => {
+    if (!tenantPatientPhone) return;
     setProfileSaveSaving(true);
     try {
-      const ok = await createPatientFichePractice(profileNameDraft);
-      if (ok) setModal(null);
+      const okName = await createPatientFichePractice(profileNameDraft);
+      if (!okName) return;
+      const res = await api.tenantUpdatePatient(tenantPatientPhone, {
+        birth_date: profileBirthDateDraft.trim(),
+        treating_physician_name: profilePhysicianDraft.trim(),
+      });
+      if (res?.patient) {
+        setPatientCabinetRow(res.patient as Record<string, unknown>);
+        const cached = patientDetailCacheRef.current.get(tenantPatientPhone);
+        if (cached) {
+          patientDetailCacheRef.current.set(tenantPatientPhone, {
+            ...cached,
+            patientCabinetRow: res.patient as Record<string, unknown>,
+          });
+        }
+      }
+      notify("Profil enregistré");
+      setModal(null);
+    } catch (e) {
+      notify((e as Error)?.message || "Impossible d'enregistrer le profil", { sticky: true });
     } finally {
       setProfileSaveSaving(false);
     }
@@ -2312,24 +2383,21 @@ export default function PatientDashboardPage() {
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-dashed border-[#DDE7F1] bg-[#FCFDFE] px-3.5 py-3 sm:px-4 sm:py-3.5">
-                  {patientInsightTags.length > 0 ? (
-                    <div className="flex flex-wrap gap-2.5">
-                      {patientInsightTags.map((tag) => (
-                        <OutlineTag key={tag.key} tone={tag.tone}>
-                          {tag.label}
-                        </OutlineTag>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="m-0 text-[13px] font-semibold leading-relaxed text-[#94A3B8] sm:text-sm">
-                      <span className="sm:hidden">Aucun repère patient pour l&apos;instant.</span>
-                      <span className="hidden sm:inline">
-                        Aucun repère automatique pour l&apos;instant. Les tags apparaîtront ici après des rendez-vous ou des notes du cabinet.
-                      </span>
-                    </p>
-                  )}
-                </div>
+                <PatientProfileHeaderMeta
+                  birthDate={patientCabinetRow?.birth_date}
+                  treatingPhysician={patientCabinetRow?.treating_physician_name}
+                  onOpenProfile={() => setModal("profile")}
+                />
+
+                {patientInsightTags.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {patientInsightTags.map((tag) => (
+                      <OutlineTag key={tag.key} tone={tag.tone}>
+                        {tag.label}
+                      </OutlineTag>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             </div>
           </section>
@@ -2356,8 +2424,7 @@ export default function PatientDashboardPage() {
               ))}
             </div>
 
-            <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 sm:gap-4 sm:p-5 lg:grid-cols-4">
-              <PrimaryCTA onClick={() => setModal("profile")}>✎ Voir le profil détaillé</PrimaryCTA>
+            <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 sm:gap-4 sm:p-5 lg:grid-cols-3">
               <PrimaryCTA variant="note" onClick={() => setModal("addNote")}>✎ Ajouter une note</PrimaryCTA>
               <PrimaryCTA variant="document" onClick={() => setModal("addDocument")}>▤ Ajouter un document</PrimaryCTA>
               <button
@@ -2786,6 +2853,24 @@ export default function PatientDashboardPage() {
                   />
                 </label>
                 <div className="rounded-2xl bg-[#F8FBFD] p-4">
+                  <div className="mb-1 text-xs font-bold text-[#7D8CA5]">Date de naissance</div>
+                  <input
+                    type="date"
+                    value={profileBirthDateDraft}
+                    onChange={(e) => setProfileBirthDateDraft(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-black text-[#0A1628] outline-none focus:border-[#009CA4]"
+                  />
+                </div>
+                <div className="rounded-2xl bg-[#F8FBFD] p-4 sm:col-span-2">
+                  <div className="mb-1 text-xs font-bold text-[#7D8CA5]">Médecin traitant</div>
+                  <input
+                    value={profilePhysicianDraft}
+                    onChange={(e) => setProfilePhysicianDraft(e.target.value)}
+                    placeholder="Dr Martin Dupont"
+                    className="mt-1 w-full rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-black text-[#0A1628] outline-none focus:border-[#009CA4]"
+                  />
+                </div>
+                <div className="rounded-2xl bg-[#F8FBFD] p-4">
                   <div className="mb-1 text-xs font-bold text-[#7D8CA5]">Téléphone</div>
                   <div className="font-black">{formatDisplayFrenchPhone(normalizePhone(urlPatientHero.phone))}</div>
                 </div>
@@ -2805,7 +2890,7 @@ export default function PatientDashboardPage() {
                   onClick={() => void saveProfileFromModal()}
                   className="flex-1 rounded-xl bg-[#009CA4] px-4 py-3 font-black text-white hover:bg-[#00838A] disabled:opacity-60"
                 >
-                  {profileSaveSaving ? "Enregistrement…" : "Enregistrer le nom"}
+                  {profileSaveSaving ? "Enregistrement…" : "Enregistrer le profil"}
                 </button>
                 <button
                   type="button"
