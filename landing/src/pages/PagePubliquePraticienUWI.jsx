@@ -584,6 +584,357 @@ function BookingFields({
   );
 }
 
+const CALLBACK_REASONS = [
+  { id: "question_rdv", label: "Question sur un rendez-vous" },
+  { id: "modifier", label: "Modifier un rendez-vous" },
+  { id: "annuler", label: "Annuler un rendez-vous" },
+  { id: "admin", label: "Question administrative" },
+  { id: "ordonnance", label: "Ordonnance / document" },
+  { id: "other", label: "Autre demande" },
+];
+
+const ACTION_TITLES = {
+  cancel: "Annuler un rendez-vous",
+  reschedule: "Modifier un rendez-vous",
+  callback: "Etre rappele par le cabinet",
+};
+
+function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefreshSlots }) {
+  const [step, setStep] = useState(mode === "callback" ? "callback" : "identify");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [lookupPhone, setLookupPhone] = useState("");
+  const [lookupEmail, setLookupEmail] = useState("");
+  const [lookupCode, setLookupCode] = useState("");
+  const [verifyPhone, setVerifyPhone] = useState("");
+  const [verifyEmail, setVerifyEmail] = useState("");
+  const [appointments, setAppointments] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [rescheduleSlots, setRescheduleSlots] = useState([]);
+  const [pickedSlot, setPickedSlot] = useState(null);
+  const [callbackName, setCallbackName] = useState("");
+  const [callbackPhone, setCallbackPhone] = useState("");
+  const [callbackEmail, setCallbackEmail] = useState("");
+  const [callbackReason, setCallbackReason] = useState("other");
+  const [callbackMessage, setCallbackMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+
+  useEffect(() => {
+    const handle = (event) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handle);
+    return () => document.removeEventListener("keydown", handle);
+  }, [onClose]);
+
+  const runLookup = async () => {
+    setError("");
+    const phone = lookupPhone.trim();
+    const email = lookupEmail.trim();
+    const bookingCode = lookupCode.trim();
+    if (!phone && !email && !bookingCode) {
+      setError("Renseignez votre telephone, email ou code rendez-vous.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const data = await fetchJson(`/api/public/${encodeURIComponent(slug)}/appointments/lookup`, {
+        method: "POST",
+        body: JSON.stringify({
+          phone: phone ? normalizeFrenchPhone(phone) : undefined,
+          email: email || undefined,
+          bookingCode: bookingCode || undefined,
+        }),
+      });
+      const found = safeArray(data?.appointments);
+      if (!found.length) {
+        setError("Aucun rendez-vous trouve. Verifiez vos informations ou demandez a etre rappele.");
+        return;
+      }
+      setAppointments(found);
+      if (found.length === 1) {
+        setSelected(found[0]);
+        if (mode === "cancel") setStep("confirm-cancel");
+        else if (mode === "reschedule") {
+          if (found[0].sourceType === "public_booking") {
+            setStep("reschedule-unavailable");
+          } else {
+            await loadRescheduleSlots();
+            setStep("reschedule-slots");
+          }
+        }
+      } else {
+        setStep("select");
+      }
+    } catch (err) {
+      setError(String(err?.message || "Recherche impossible pour le moment."));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadRescheduleSlots = async () => {
+    if (safeArray(slots).length) {
+      setRescheduleSlots(slots.slice(0, 8));
+      return;
+    }
+    if (typeof onRefreshSlots === "function") {
+      const fresh = await onRefreshSlots();
+      setRescheduleSlots(safeArray(fresh).slice(0, 8));
+      return;
+    }
+    try {
+      const data = await fetchJson(`/api/public/slots/${encodeURIComponent(slug)}?count=8`);
+      setRescheduleSlots(safeArray(data?.slots));
+    } catch {
+      setRescheduleSlots([]);
+    }
+  };
+
+  const pickAppointment = async (appt) => {
+    setSelected(appt);
+    setError("");
+    if (mode === "cancel") {
+      setStep("confirm-cancel");
+      return;
+    }
+    if (appt.sourceType === "public_booking") {
+      setStep("reschedule-unavailable");
+      return;
+    }
+    setLoading(true);
+    try {
+      await loadRescheduleSlots();
+      setStep("reschedule-slots");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const confirmCancel = async () => {
+    if (!selected?.actionToken) return;
+    const phone = verifyPhone.trim();
+    const email = verifyEmail.trim();
+    if (!phone && !email) {
+      setError("Indiquez le telephone ou l'email associe au rendez-vous.");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      await fetchJson(`/api/public/${encodeURIComponent(slug)}/appointments/cancel`, {
+        method: "POST",
+        body: JSON.stringify({
+          actionToken: selected.actionToken,
+          phone: phone ? normalizeFrenchPhone(phone) : undefined,
+          email: email || undefined,
+          reason: cancelReason.trim() || undefined,
+        }),
+      });
+      setSuccessMessage("Votre rendez-vous a bien ete annule. Le cabinet a ete informe.");
+      setStep("success");
+      push([{ from: "clara", text: "Votre rendez-vous a bien ete annule." }]);
+      trackPublicEvent({ slug, event: "booking_cancelled", source: "public_action" });
+    } catch (err) {
+      setError(String(err?.message || "Annulation impossible."));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const confirmReschedule = async () => {
+    if (!selected?.actionToken || !pickedSlot) return;
+    const phone = verifyPhone.trim();
+    const email = verifyEmail.trim();
+    if (!phone && !email) {
+      setError("Indiquez le telephone ou l'email associe au rendez-vous.");
+      return;
+    }
+    const slotId = parseInt(String(pickedSlot.id || pickedSlot.slot_id || ""), 10);
+    if (!Number.isFinite(slotId)) {
+      setError("Ce creneau ne peut pas etre selectionne. Choisissez un autre horaire.");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      await fetchJson(`/api/public/${encodeURIComponent(slug)}/appointments/reschedule`, {
+        method: "POST",
+        body: JSON.stringify({
+          actionToken: selected.actionToken,
+          phone: phone ? normalizeFrenchPhone(phone) : undefined,
+          email: email || undefined,
+          newSlotId: slotId,
+        }),
+      });
+      setSuccessMessage(`Votre rendez-vous a ete deplace au creneau ${pickedSlot.label || pickedSlot.time || ""}.`);
+      setStep("success");
+      push([{ from: "clara", text: "Votre rendez-vous a ete deplace avec succes." }]);
+      trackPublicEvent({ slug, event: "booking_rescheduled", source: "public_action" });
+    } catch (err) {
+      setError(String(err?.message || "Deplacement impossible."));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const submitCallback = async () => {
+    if (!callbackName.trim() || !isValidFrenchPhone(callbackPhone)) {
+      setError("Renseignez votre nom et un numero de telephone valide.");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      await fetchJson(`/api/public/${encodeURIComponent(slug)}/callback-requests`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: callbackName.trim(),
+          phone: normalizeFrenchPhone(callbackPhone),
+          email: callbackEmail.trim() || undefined,
+          reason: callbackReason,
+          message: callbackMessage.trim() || undefined,
+        }),
+      });
+      setSuccessMessage("Votre demande a ete transmise au cabinet. Vous serez recontacte dans les meilleurs delais.");
+      setStep("success");
+      push([{ from: "clara", text: "Votre demande de rappel a bien ete enregistree." }]);
+      trackPublicEvent({ slug, event: "callback_requested", source: "public_action" });
+    } catch (err) {
+      setError(String(err?.message || "Enregistrement impossible."));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const renderSelectedRecap = () => {
+    if (!selected) return null;
+    return (
+      <div className="modalSlotRecap">
+        {selected.slotLabel || `${selected.date || ""} ${selected.time || ""}`.trim()}
+        {selected.bookingCode ? ` — ${selected.bookingCode}` : ""}
+        {selected.motif ? ` · ${selected.motif}` : ""}
+      </div>
+    );
+  };
+
+  return (
+    <div className="overlay" onClick={(event) => event.target.classList.contains("overlay") && onClose()} role="dialog" aria-modal="true">
+      <div className="modal">
+        <div className="modalClaraBar">
+          <ClaraPortrait size={38} compact />
+          <span>{ACTION_TITLES[mode] || "Gerer mon rendez-vous"}</span>
+        </div>
+        <div className="modalBody">
+          {step === "identify" ? (
+            <>
+              <p className="actionModalHint">Renseignez votre telephone, email ou code rendez-vous (ex. RDV-A7K3M2).</p>
+              <input value={lookupPhone} onChange={(e) => setLookupPhone(e.target.value)} placeholder="Telephone" type="tel" />
+              <input value={lookupEmail} onChange={(e) => setLookupEmail(e.target.value)} placeholder="Email (facultatif)" type="email" />
+              <input value={lookupCode} onChange={(e) => setLookupCode(e.target.value.toUpperCase())} placeholder="Code rendez-vous (facultatif)" />
+              {error ? <p className="fieldError">{error}</p> : null}
+              <button className="primary" type="button" disabled={loading} onClick={() => void runLookup()}>
+                {loading ? "Recherche…" : "Retrouver mon rendez-vous"}
+              </button>
+            </>
+          ) : null}
+
+          {step === "select" ? (
+            <>
+              <p className="actionModalHint">Plusieurs rendez-vous trouves. Choisissez celui concerne :</p>
+              {appointments.map((appt) => (
+                <button key={appt.actionToken} type="button" className="actionApptPick" onClick={() => void pickAppointment(appt)}>
+                  <strong>{appt.slotLabel || `${appt.date} ${appt.time}`}</strong>
+                  <span>{appt.motif}{appt.bookingCode ? ` · ${appt.bookingCode}` : ""}</span>
+                </button>
+              ))}
+              {error ? <p className="fieldError">{error}</p> : null}
+            </>
+          ) : null}
+
+          {step === "confirm-cancel" ? (
+            <>
+              {renderSelectedRecap()}
+              <p className="actionModalHint">Pour confirmer l&apos;annulation, indiquez le telephone ou l&apos;email associe au rendez-vous.</p>
+              <input value={verifyPhone} onChange={(e) => setVerifyPhone(e.target.value)} placeholder="Telephone" type="tel" />
+              <input value={verifyEmail} onChange={(e) => setVerifyEmail(e.target.value)} placeholder="Email" type="email" />
+              <input value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} placeholder="Motif (facultatif)" />
+              {error ? <p className="fieldError">{error}</p> : null}
+              <button className="primary" type="button" disabled={loading} onClick={() => void confirmCancel()}>
+                {loading ? "Annulation…" : "Confirmer l'annulation"}
+              </button>
+            </>
+          ) : null}
+
+          {step === "reschedule-slots" ? (
+            <>
+              {renderSelectedRecap()}
+              <p className="actionModalHint">Choisissez un nouveau creneau, puis confirmez avec votre telephone ou email.</p>
+              <div className="actionSlotGrid">
+                {rescheduleSlots.map((slot) => (
+                  <button
+                    key={slot.id || slot.label}
+                    type="button"
+                    className={`actionSlotPick${pickedSlot?.id === slot.id ? " active" : ""}`}
+                    onClick={() => setPickedSlot(slot)}
+                  >
+                    {slot.label || `${slot.day || ""} ${slot.time || ""}`}
+                  </button>
+                ))}
+              </div>
+              {pickedSlot ? (
+                <>
+                  <input value={verifyPhone} onChange={(e) => setVerifyPhone(e.target.value)} placeholder="Telephone" type="tel" />
+                  <input value={verifyEmail} onChange={(e) => setVerifyEmail(e.target.value)} placeholder="Email" type="email" />
+                </>
+              ) : null}
+              {error ? <p className="fieldError">{error}</p> : null}
+              <button className="primary" type="button" disabled={loading || !pickedSlot} onClick={() => void confirmReschedule()}>
+                {loading ? "Deplacement…" : "Confirmer le nouveau creneau"}
+              </button>
+            </>
+          ) : null}
+
+          {step === "reschedule-unavailable" ? (
+            <>
+              {renderSelectedRecap()}
+              <p className="actionModalHint">Ce rendez-vous ne peut pas etre deplace automatiquement en ligne. Demandez a etre rappele par le cabinet.</p>
+              <button className="primary" type="button" onClick={() => setStep("callback")}>Demander a etre rappele</button>
+            </>
+          ) : null}
+
+          {step === "callback" ? (
+            <>
+              <p className="actionModalHint">Laissez vos coordonnees. Le cabinet pourra vous recontacter.</p>
+              <input value={callbackName} onChange={(e) => setCallbackName(e.target.value)} placeholder="Nom et prenom" />
+              <input value={callbackPhone} onChange={(e) => setCallbackPhone(e.target.value)} placeholder="Telephone" type="tel" />
+              <input value={callbackEmail} onChange={(e) => setCallbackEmail(e.target.value)} placeholder="Email (facultatif)" type="email" />
+              <select className="actionReasonSelect" value={callbackReason} onChange={(e) => setCallbackReason(e.target.value)}>
+                {CALLBACK_REASONS.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+              </select>
+              <textarea className="actionMessageArea" value={callbackMessage} onChange={(e) => setCallbackMessage(e.target.value)} placeholder="Message (facultatif)" rows={3} />
+              {error ? <p className="fieldError">{error}</p> : null}
+              <button className="primary" type="button" disabled={loading} onClick={() => void submitCallback()}>
+                {loading ? "Envoi…" : "Envoyer ma demande"}
+              </button>
+            </>
+          ) : null}
+
+          {step === "success" ? (
+            <div className="modalSuccess">
+              <div className="successIcon">✓</div>
+              <div className="successTitle">{successMessage}</div>
+              <button className="primary" type="button" onClick={onClose}>Fermer</button>
+            </div>
+          ) : null}
+        </div>
+        <button className="modalClose" onClick={onClose} type="button">x</button>
+      </div>
+    </div>
+  );
+}
+
 function SupervisedModal({ slot, slug, onClose, onConfirm, done, followup, onFollowupClick }) {
   useEffect(() => {
     const handle = (event) => {
@@ -635,6 +986,7 @@ export default function PagePubliquePraticienUWI() {
   const [showAllSlots, setShowAllSlots] = useState(false);
   const [bookingDone, setBookingDone] = useState(false);
   const [bookingFollowup, setBookingFollowup] = useState(null);
+  const [actionFlowMode, setActionFlowMode] = useState(null);
   const [voiceStatus, setVoiceStatus] = useState("idle");
   const [voiceError, setVoiceError] = useState("");
   const [composerOutOfView, setComposerOutOfView] = useState(false);
@@ -674,6 +1026,7 @@ export default function PagePubliquePraticienUWI() {
     setBookingSuccess(null);
     setBookingSubmitting(false);
     setModalSlot(null);
+    setActionFlowMode(null);
     conversationIdRef.current = null;
     streamConversationIdRef.current = null;
     pendingTurnRef.current = null;
@@ -1194,6 +1547,7 @@ export default function PagePubliquePraticienUWI() {
     const successText = confirmed
       ? `Parfait, votre rendez-vous pour ${booking.slot.label} est confirme. A bientot au cabinet.`
       : `Merci. Votre demande pour ${booking.slot.label} est enregistree. Le cabinet confirmera dans les meilleurs delais.`;
+    const bookingCode = responseData?.bookingCode || "";
     setInlineSlot(null);
     setBookingDone(true);
     setBookingFollowup(responseData?.followup || null);
@@ -1202,8 +1556,10 @@ export default function PagePubliquePraticienUWI() {
       message: successText,
       confirmed,
       confirmationId: responseData?.confirmationId,
+      bookingCode,
     });
-    push([{ from: "clara", text: successText }]);
+    const codeHint = bookingCode ? ` Votre code rendez-vous : ${bookingCode}. Conservez-le pour modifier ou annuler.` : "";
+    push([{ from: "clara", text: `${successText}${codeHint}` }]);
     trackPublicEvent({
       slug,
       event: "booking_confirmed",
@@ -1238,11 +1594,27 @@ export default function PagePubliquePraticienUWI() {
     void sendChatMessage(text);
   }, [input, sendChatMessage]);
 
+  const openActionFlow = useCallback((mode) => {
+    setActionFlowMode(mode);
+    trackPublicEvent({ slug, event: "manage_modal_opened", source: sourceRef.current, action: mode });
+  }, [slug]);
+
+  const refreshPublicSlots = useCallback(async () => {
+    try {
+      const data = await fetchJson(`/api/public/slots/${encodeURIComponent(slug)}?count=8`);
+      const next = safeArray(data?.slots);
+      if (next.length) setSlots(next);
+      return next;
+    } catch {
+      return safeArray(slots);
+    }
+  }, [slug, slots]);
+
   const mainChips = [
-    { label: "Prendre RDV", text: "Je souhaite prendre rendez-vous." },
-    { label: "Modifier", text: "Je souhaite modifier un rendez-vous." },
-    { label: "Annuler", text: "Je souhaite annuler un rendez-vous." },
-    { label: "Etre rappele", text: "Je souhaite etre rappele." },
+    { label: "Prendre RDV", text: "Je souhaite prendre rendez-vous.", action: "book" },
+    { label: "Modifier", action: "reschedule" },
+    { label: "Annuler", action: "cancel" },
+    { label: "Etre rappele", action: "callback" },
   ];
   const visibleSlots = showAllSlots ? slots : slots.slice(0, 6);
 
@@ -1342,6 +1714,16 @@ export default function PagePubliquePraticienUWI() {
           }}
         />
       )}
+      {actionFlowMode ? (
+        <PublicAppointmentActionModal
+          mode={actionFlowMode}
+          slug={slug}
+          onClose={() => setActionFlowMode(null)}
+          push={push}
+          slots={slots}
+          onRefreshSlots={refreshPublicSlots}
+        />
+      ) : null}
       <div className="pageShell">
         <header>
           <strong>UWI</strong>
@@ -1493,6 +1875,11 @@ export default function PagePubliquePraticienUWI() {
                     <b>{bookingSuccess.confirmed ? "Rendez-vous confirme" : "Demande enregistree"}</b>
                     <p>{bookingSuccess.message}</p>
                     {bookingSuccess.label ? <span className="bookingSuccessSlot">{bookingSuccess.label}</span> : null}
+                    {bookingSuccess.bookingCode ? (
+                      <p className="bookingSuccessCode">
+                        Code rendez-vous : <strong>{bookingSuccess.bookingCode}</strong>
+                      </p>
+                    ) : null}
                   </div>
                 ) : null}
                 {inlineSlot ? (
@@ -1531,7 +1918,15 @@ export default function PagePubliquePraticienUWI() {
           <div className="actionRows">
             <div className="actionRow">
               <span className="actionLabel">Actions rapides</span>
-              <div className="softChips">{mainChips.map((chip) => <button key={chip.label} onClick={() => ask(chip.text)} type="button">{chip.label}</button>)}</div>
+              <div className="softChips">{mainChips.map((chip) => (
+                <button
+                  key={chip.label}
+                  type="button"
+                  onClick={() => (chip.action === "book" ? ask(chip.text) : openActionFlow(chip.action))}
+                >
+                  {chip.label}
+                </button>
+              ))}</div>
             </div>
             <div className="actionRow">
               <span className="actionLabel">Questions frequentes</span>
@@ -1641,6 +2036,17 @@ header a.wa{color:#1b6d34;border-color:#cce9d2}
 .bookingSuccessCard{text-align:center;background:#e8f8f9;border:2px solid #009CA4;color:#0a4a50;margin-top:8px}
 .bookingSuccessIcon{font-size:28px;color:#009CA4;margin-bottom:6px}
 .bookingSuccessSlot{display:block;margin-top:8px;font-size:13px;opacity:.85}
+.bookingSuccessCode{margin:10px 0 0;font-size:14px}
+.bookingSuccessCode strong{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.06em}
+.actionModalHint{margin:0;font-size:13px;color:#5f7375;line-height:1.45}
+.actionApptPick{display:flex;flex-direction:column;align-items:flex-start;gap:4px;width:100%;text-align:left;border:1px solid #d6eeee;background:#f8fbfb;border-radius:12px;padding:12px 14px;color:#1f3138}
+.actionApptPick strong{font-size:14px;color:#0a4a50}.actionApptPick span{font-size:12px;color:#60757b}
+.actionApptPick:hover{border-color:#009CA4;background:#eefafa}
+.actionSlotGrid{display:flex;flex-wrap:wrap;gap:8px}
+.actionSlotPick{border:1px solid #cfe7ea;background:#fff;border-radius:10px;padding:8px 12px;font-size:12px;font-weight:700;color:#006b73}
+.actionSlotPick.active{background:#e8f8f9;border-color:#009CA4;color:#004950}
+.actionReasonSelect,.actionMessageArea{border:1.5px solid #e0e5e6;background:#f8fafa;border-radius:10px;padding:10px 12px;width:100%;font-size:14px}
+.actionMessageArea{resize:vertical;min-height:72px}
 .inlineOneCol{display:flex;flex-direction:column;gap:8px}
 .inlineEmailField{border:1.5px solid #e0e5e6;background:#f8fafa;border-radius:10px;padding:10px 12px;outline:none;width:100%;font-size:14px}
 .inlineEmailField:focus{border-color:#009CA4;background:#fff}

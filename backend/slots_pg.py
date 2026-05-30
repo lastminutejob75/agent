@@ -373,6 +373,7 @@ def pg_book_slot_atomic(
     motif: str,
     booking_origin: Optional[str] = None,
     google_event_id: Optional[str] = None,
+    booking_code: Optional[str] = None,
 ) -> Optional[bool]:
     """
     Booking atomique : UPDATE slots SET is_booked=TRUE WHERE id=? AND is_booked=FALSE RETURNING id.
@@ -400,14 +401,20 @@ def pg_book_slot_atomic(
                     return False
                 bo = (booking_origin or "").strip()[:40] or None
                 ge = (google_event_id or "").strip()[:256] or None
+                from backend.booking_code import create_unique_booking_code_pg
+
+                stored_code = (booking_code or "").strip().upper()[:8] or None
+                if not stored_code:
+                    stored_code = create_unique_booking_code_pg(cur, tenant_id)
                 cur.execute(
                     """
                     INSERT INTO appointments (
-                        tenant_id, slot_id, name, contact, contact_type, motif, booking_origin, google_event_id
+                        tenant_id, slot_id, name, contact, contact_type, motif,
+                        booking_origin, google_event_id, booking_code
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (tenant_id, slot_id, name, contact, contact_type, motif, bo, ge),
+                    (tenant_id, slot_id, name, contact, contact_type, motif, bo, ge, stored_code),
                 )
                 conn.commit()
                 return True
@@ -576,14 +583,18 @@ def pg_reschedule_booking_atomic(tenant_id: int, appt_id: int, new_slot_id: int)
 
                 bo = ((booking_origin or "").strip()[:40] if booking_origin else None)
                 ge = ((google_event_id or "").strip()[:256] if google_event_id else None)
+                from backend.booking_code import create_unique_booking_code_pg
+
+                new_code = create_unique_booking_code_pg(cur, tenant_id)
                 cur.execute(
                     """
                     INSERT INTO appointments (
-                        tenant_id, slot_id, name, contact, contact_type, motif, booking_origin, google_event_id
+                        tenant_id, slot_id, name, contact, contact_type, motif,
+                        booking_origin, google_event_id, booking_code
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (tenant_id, new_slot_id, name, contact, contact_type, motif, bo, ge),
+                    (tenant_id, new_slot_id, name, contact, contact_type, motif, bo, ge, new_code),
                 )
                 cur.execute(
                     "DELETE FROM appointments WHERE tenant_id = %s AND id = %s",

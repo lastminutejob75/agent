@@ -169,7 +169,12 @@ def _build_whatsapp_followup(practitioner: Dict[str, Any], payload: PublicBookin
     return {"enabled": False, "whatsappUrl": None}
 
 
-def _send_cabinet_email(practitioner: Dict[str, Any], payload: PublicBookingRequest, confirmation_id: str) -> bool:
+def _send_cabinet_email(
+    practitioner: Dict[str, Any],
+    payload: PublicBookingRequest,
+    confirmation_id: str,
+    booking_code: str = "",
+) -> bool:
     to_email = (
         str(practitioner.get("email") or "").strip()
         or (os.environ.get("PUBLIC_BOOKING_CABINET_EMAIL_TO") or "").strip()
@@ -180,6 +185,9 @@ def _send_cabinet_email(practitioner: Dict[str, Any], payload: PublicBookingRequ
     if not to_email:
         return False
 
+    from backend.booking_code import format_booking_code
+
+    code_label = format_booking_code(booking_code)
     subject = f"UWI - Nouvelle demande RDV ({practitioner.get('name')})"
     html = f"""
 <!DOCTYPE html>
@@ -190,6 +198,7 @@ def _send_cabinet_email(practitioner: Dict[str, Any], payload: PublicBookingRequ
   <p>Une demande a ete effectuee depuis la page publique UWI.</p>
   <ul>
     <li><strong>Confirmation ID:</strong> {confirmation_id}</li>
+    {f"<li><strong>Code rendez-vous:</strong> {code_label}</li>" if code_label else ""}
     <li><strong>Praticien:</strong> {practitioner.get("name") or "Cabinet"}</li>
     <li><strong>Slug:</strong> {payload.slug}</li>
     <li><strong>Creneau:</strong> {payload.slotLabel}</li>
@@ -442,18 +451,24 @@ def _dispatch_booking_notifications(
     payload: PublicBookingRequest,
     booking_status: str,
     confirmation_id: str,
+    booking_code: str,
 ) -> Tuple[bool, bool, bool]:
     """SMS patient + cabinet et email cabinet (hors requête HTTP pour réponse plus rapide)."""
+    from backend.booking_code import format_booking_code
+
+    code_label = format_booking_code(booking_code)
+    code_suffix = f" Code rendez-vous : {code_label}." if code_label else ""
     if booking_status == "confirmed":
         patient_sms = (
             f"Bonjour {payload.patientName.split()[0]}, votre rendez-vous avec "
-            f"{practitioner.get('name')} le {payload.slotLabel} pour {payload.motif} est confirme. UWI"
+            f"{practitioner.get('name')} le {payload.slotLabel} pour {payload.motif} est confirme."
+            f"{code_suffix} Conservez ce code pour modifier ou annuler. UWI"
         )
     else:
         patient_sms = (
             f"Bonjour {payload.patientName.split()[0]}, votre demande de RDV avec "
-            f"{practitioner.get('name')} le {payload.slotLabel} pour {payload.motif} a bien ete recue. "
-            "Le cabinet vous confirmera dans les meilleurs delais. UWI"
+            f"{practitioner.get('name')} le {payload.slotLabel} pour {payload.motif} a bien ete recue."
+            f"{code_suffix} Le cabinet vous confirmera dans les meilleurs delais. UWI"
         )
     patient_sms_sent = _send_sms(payload.patientPhone, patient_sms)
 
@@ -462,9 +477,10 @@ def _dispatch_booking_notifications(
     if cabinet_number:
         cabinet_sms_sent = _send_sms(
             cabinet_number,
-            f"UWI - Nouvelle demande RDV: {payload.patientName}, {payload.slotLabel}, {payload.motif}. Tel: {payload.patientPhone}",
+            f"UWI - Nouvelle demande RDV: {payload.patientName}, {payload.slotLabel}, {payload.motif}. "
+            f"Tel: {payload.patientPhone}{f' Code: {code_label}' if code_label else ''}",
         )
-    cabinet_email_sent = _send_cabinet_email(practitioner, payload, confirmation_id)
+    cabinet_email_sent = _send_cabinet_email(practitioner, payload, confirmation_id, booking_code)
     return patient_sms_sent, cabinet_sms_sent, cabinet_email_sent
 
 
@@ -489,7 +505,8 @@ def _insert_booking(
     tenant_id: Optional[str],
     *,
     status: str = "pending",
-) -> str:
+    booking_code: Optional[str] = None,
+) -> Dict[str, str]:
     from backend.public_bookings_pg import insert_public_booking
 
     tid: Optional[int] = None
@@ -508,6 +525,7 @@ def _insert_booking(
         source=payload.source,
         status=status,
         start_iso=(payload.startIso or "").strip() or None,
+        booking_code=booking_code,
     )
 
 
@@ -810,7 +828,11 @@ def _upsert_public_patient(tenant_id: int, payload: PublicBookingRequest) -> Non
     )
 
 
-def _public_session(tenant_id: int, payload: PublicBookingRequest) -> SimpleNamespace:
+def _public_session(
+    tenant_id: int,
+    payload: PublicBookingRequest,
+    booking_code: Optional[str] = None,
+) -> SimpleNamespace:
     """Session minimale pour réutiliser tools_booking (même logique que vocal)."""
     from backend.booking_origin import PUBLIC_PAGE
 
@@ -828,6 +850,7 @@ def _public_session(tenant_id: int, payload: PublicBookingRequest) -> SimpleName
         pending_slots=[],
         rejected_slot_starts=[],
         booking_origin=PUBLIC_PAGE,
+        booking_code=(booking_code or "").strip().upper() or None,
     )
 
 
@@ -875,14 +898,18 @@ def _resolve_public_slot_id(tenant_id: int, payload: PublicBookingRequest) -> Tu
     return None, book_src
 
 
-def _book_real_slot(tenant_id: int, payload: PublicBookingRequest) -> tuple[bool, Optional[str]]:
+def _book_real_slot(
+    tenant_id: int,
+    payload: PublicBookingRequest,
+    booking_code: Optional[str] = None,
+) -> tuple[bool, Optional[str]]:
     """
     Réserve un créneau via tools_booking (Google / PG / SQLite) — même chemin que l'agent vocal.
     Returns (success, reason) avec reason in slot_taken, technical, permission, None.
     """
     from backend import tools_booking
 
-    session = _public_session(tenant_id, payload)
+    session = _public_session(tenant_id, payload, booking_code=booking_code)
     src = (payload.slotSource or "sqlite").strip().lower()
 
     if src == "google" and payload.startIso:
@@ -1322,8 +1349,16 @@ async def public_book(
 
     booking_status = "pending"
     booking_reason: Optional[str] = None
+    booking_code: Optional[str] = None
+    try:
+        from backend.booking_code import create_unique_booking_code_for_tenant
+
+        booking_code = create_unique_booking_code_for_tenant(tenant_id)
+    except Exception as exc:
+        logger.warning("public_book booking_code generation skipped tenant=%s: %s", tenant_id, exc)
+
     if tenant_id:
-        ok, booking_reason = _book_real_slot(tenant_id, payload)
+        ok, booking_reason = _book_real_slot(tenant_id, payload, booking_code=booking_code)
         if ok:
             booking_status = "confirmed"
         elif booking_reason == "slot_taken":
@@ -1341,11 +1376,15 @@ async def public_book(
         else:
             booking_status = "pending"
 
-    confirmation_id = _insert_booking(
+    booking_record = _insert_booking(
         payload,
         str(tenant_id) if tenant_id else tenant_id_raw,
         status=booking_status,
+        booking_code=booking_code,
     )
+    confirmation_id = booking_record.get("id") or ""
+    if not booking_code:
+        booking_code = booking_record.get("booking_code") or ""
 
     # Décision produit stricte: aucune création / mise à jour automatique de fiche
     # patient depuis la prise de RDV publique. La reconnaissance "patient connu"
@@ -1357,12 +1396,14 @@ async def public_book(
         payload,
         booking_status,
         confirmation_id,
+        booking_code,
     )
 
     logger.info(
         "public_booking_created",
         extra={
             "confirmation_id": confirmation_id,
+            "booking_code": booking_code,
             "slug": payload.slug,
             "slot_id": payload.slotId,
             "source": payload.source,
@@ -1379,8 +1420,11 @@ async def public_book(
         booking_status,
     )
     followup = _build_whatsapp_followup(practitioner, payload)
+    from backend.booking_code import format_booking_code
+
     return {
         "confirmationId": confirmation_id,
+        "bookingCode": format_booking_code(booking_code),
         "slotLabel": payload.slotLabel,
         "status": booking_status,
         "confirmed": booking_status == "confirmed",

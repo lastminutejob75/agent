@@ -415,6 +415,9 @@ app.include_router(pre_onboarding.router)  # POST /api/pre-onboarding/commit
 app.include_router(pre_onboarding.public_router)  # POST /api/public/leads
 app.include_router(public_praticien.router)  # GET /api/public/praticiens/{slug}
 app.include_router(public_pages.router)  # /api/public/practitioner, /slots, /book, /search (page /p/:slug)
+from backend.routes import public_appointment_actions
+
+app.include_router(public_appointment_actions.router)  # lookup / cancel / reschedule / callback
 app.include_router(public_questionnaire.router)  # /api/public/patient-questionnaire/{token}
 from backend.routes import patient_context, public_questionnaire_v2
 

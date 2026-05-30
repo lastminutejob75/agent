@@ -2046,6 +2046,16 @@ def _migrate_sqlite_add_google_event_id(conn: sqlite3.Connection) -> None:
         pass
 
 
+def _migrate_sqlite_add_booking_code(conn: sqlite3.Connection) -> None:
+    try:
+        cur = conn.execute("PRAGMA table_info(appointments)")
+        cols = {r[1] for r in cur.fetchall()}
+        if "booking_code" not in cols:
+            conn.execute("ALTER TABLE appointments ADD COLUMN booking_code TEXT")
+    except Exception:
+        pass
+
+
 def init_db(days: int = 30) -> None:
     conn = get_conn()
     try:
@@ -2075,6 +2085,7 @@ def init_db(days: int = 30) -> None:
         _migrate_sqlite_add_tenant_id(conn)
         _migrate_sqlite_add_booking_origin(conn)
         _migrate_sqlite_add_google_event_id(conn)
+        _migrate_sqlite_add_booking_code(conn)
         _ensure_ivr_tables(conn)
         _ensure_tenants_tables(conn)
         try:
@@ -2342,6 +2353,7 @@ def book_slot_atomic(
     tenant_id: int = 1,
     booking_origin: Optional[str] = None,
     google_event_id: Optional[str] = None,
+    booking_code: Optional[str] = None,
 ) -> bool:
     """
     Book atomique. PG-first puis SQLite.
@@ -2360,6 +2372,7 @@ def book_slot_atomic(
                 motif,
                 booking_origin=booking_origin,
                 google_event_id=google_event_id,
+                booking_code=booking_code,
             )
             if result is not None:
                 return result
@@ -2370,6 +2383,7 @@ def book_slot_atomic(
     try:
         _migrate_sqlite_add_booking_origin(conn)
         _migrate_sqlite_add_google_event_id(conn)
+        _migrate_sqlite_add_booking_code(conn)
         conn.execute("BEGIN")
         conn.execute(
             "UPDATE slots SET is_booked=1 WHERE id=? AND tenant_id=? AND is_booked=0",
@@ -2379,13 +2393,19 @@ def book_slot_atomic(
             conn.rollback()
             return False
 
+        from backend.booking_code import create_unique_booking_code_sqlite
+
         ge = (google_event_id or "").strip()[:256] or None
+        stored_code = (booking_code or "").strip().upper()[:8] or None
+        if not stored_code:
+            stored_code = create_unique_booking_code_sqlite(conn, tenant_id)
         conn.execute(
             """
             INSERT INTO appointments (
-                tenant_id, slot_id, name, contact, contact_type, motif, created_at, booking_origin, google_event_id
+                tenant_id, slot_id, name, contact, contact_type, motif, created_at,
+                booking_origin, google_event_id, booking_code
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 tenant_id,
@@ -2397,6 +2417,7 @@ def book_slot_atomic(
                 datetime.utcnow().isoformat(),
                 booking_origin,
                 ge,
+                stored_code,
             ),
         )
         conn.commit()
@@ -2521,6 +2542,7 @@ def reschedule_booking_atomic(appt_id: int, new_slot_id: int, tenant_id: int = 1
     try:
         _migrate_sqlite_add_booking_origin(conn)
         _migrate_sqlite_add_google_event_id(conn)
+        _migrate_sqlite_add_booking_code(conn)
         conn.execute("BEGIN")
         cur = conn.execute(
             """
@@ -2548,12 +2570,16 @@ def reschedule_booking_atomic(appt_id: int, new_slot_id: int, tenant_id: int = 1
             conn.rollback()
             return False
 
+        from backend.booking_code import create_unique_booking_code_sqlite
+
+        new_code = create_unique_booking_code_sqlite(conn, tenant_id)
         conn.execute(
             """
             INSERT INTO appointments (
-                tenant_id, slot_id, name, contact, contact_type, motif, created_at, booking_origin, google_event_id
+                tenant_id, slot_id, name, contact, contact_type, motif, created_at,
+                booking_origin, google_event_id, booking_code
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 tenant_id,
@@ -2565,6 +2591,7 @@ def reschedule_booking_atomic(appt_id: int, new_slot_id: int, tenant_id: int = 1
                 datetime.utcnow().isoformat(),
                 row["booking_origin"],
                 row["google_event_id"],
+                new_code,
             ),
         )
         conn.execute("DELETE FROM appointments WHERE tenant_id = ? AND id = ?", (tenant_id, appt_id))

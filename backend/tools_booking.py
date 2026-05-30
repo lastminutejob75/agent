@@ -1426,6 +1426,7 @@ def _book_local_by_slot_id(
                 motif=session.qualif_data.motif or "",
                 booking_origin=bo,
                 google_event_id=google_event_id,
+                booking_code=getattr(session, "booking_code", None),
             )
             return result is True
         except Exception as e:
@@ -1443,6 +1444,7 @@ def _book_local_by_slot_id(
             tenant_id=tenant_id,
             booking_origin=bo,
             google_event_id=google_event_id,
+            booking_code=getattr(session, "booking_code", None),
         )
     except Exception as e:
         logger.error(f"Erreur book_sqlite_by_slot_id: {e}")

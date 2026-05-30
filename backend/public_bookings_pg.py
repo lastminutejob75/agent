@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
+from backend.booking_code import create_unique_booking_code_pg
 from backend.pg_pool import pg_connection
 from backend.pg_tenant_context import set_tenant_id_on_connection
 from backend.booking_origin import canonical as booking_origin_canonical
@@ -56,6 +57,16 @@ def ensure_public_bookings_schema() -> None:
                     "CREATE INDEX IF NOT EXISTS idx_public_bookings_tenant_created "
                     "ON public_bookings (tenant_id, created_at DESC)"
                 )
+                cur.execute(
+                    "ALTER TABLE public_bookings ADD COLUMN IF NOT EXISTS booking_code VARCHAR(8)"
+                )
+                cur.execute(
+                    """
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_public_bookings_tenant_booking_code
+                    ON public_bookings (tenant_id, booking_code)
+                    WHERE booking_code IS NOT NULL AND booking_code <> ''
+                    """
+                )
             conn.commit()
         _SCHEMA_READY = True
     except Exception as exc:
@@ -75,22 +86,27 @@ def insert_public_booking(
     source: str,
     status: str,
     start_iso: Optional[str],
-) -> str:
+    booking_code: Optional[str] = None,
+) -> Dict[str, str]:
     ensure_public_bookings_schema()
     start_ts = _parse_iso_ts(start_iso)
     confirmed_at = datetime.now(timezone.utc) if status == "confirmed" else None
+    stored_code = (booking_code or "").strip().upper()[:8] or None
     try:
         with pg_connection() as conn:
             if tenant_id is not None:
                 set_tenant_id_on_connection(conn, int(tenant_id))
             with conn.cursor() as cur:
+                if not stored_code:
+                    stored_code = create_unique_booking_code_pg(cur, tenant_id)
                 cur.execute(
                     """
                     INSERT INTO public_bookings (
                       id, tenant_id, slot_id, slot_label, patient_name, patient_phone,
-                      patient_email, motif, source, status, start_iso, created_at, confirmed_at
+                      patient_email, motif, source, status, start_iso, created_at, confirmed_at,
+                      booking_code
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s)
                     """,
                     (
                         booking_id,
@@ -105,12 +121,232 @@ def insert_public_booking(
                         status,
                         start_ts,
                         confirmed_at,
+                        stored_code,
                     ),
                 )
             conn.commit()
     except Exception as exc:
         logger.warning("public booking insert skipped: %s", exc)
-    return booking_id
+        if not stored_code:
+            from backend.booking_code import create_unique_booking_code_for_tenant
+
+            stored_code = create_unique_booking_code_for_tenant(tenant_id)
+    return {"id": booking_id, "booking_code": stored_code or ""}
+
+
+def _contact_phone_matches(stored: Optional[str], provided: Optional[str]) -> bool:
+    from backend.db import normalize_phone_number
+
+    a = normalize_phone_number(stored or "")
+    b = normalize_phone_number(provided or "")
+    return bool(a and b and a == b)
+
+
+def _contact_email_matches(stored: Optional[str], provided: Optional[str]) -> bool:
+    a = (stored or "").strip().lower()
+    b = (provided or "").strip().lower()
+    return bool(a and b and a == b)
+
+
+def lookup_public_bookings(
+    tenant_id: int,
+    *,
+    booking_code: Optional[str] = None,
+    phone: Optional[str] = None,
+    email: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Retourne les RDV publics à venir correspondant aux critères."""
+    ensure_public_bookings_schema()
+    from backend.booking_code import normalize_booking_code
+
+    code = normalize_booking_code(booking_code) if booking_code else ""
+    phone_val = (phone or "").strip()
+    email_val = (email or "").strip().lower()
+    if not code and not phone_val and not email_val:
+        return []
+
+    rows: List[Dict[str, Any]] = []
+    try:
+        with pg_connection() as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
+            with conn.cursor() as cur:
+                conditions = [
+                    "tenant_id = %s",
+                    "status IN ('confirmed', 'pending')",
+                    "COALESCE(start_iso, created_at) >= NOW() - INTERVAL '1 hour'",
+                ]
+                params: List[Any] = [tenant_id]
+                if code:
+                    conditions.append("UPPER(booking_code) = %s")
+                    params.append(code)
+                elif phone_val or email_val:
+                    contact_parts: List[str] = []
+                    if phone_val:
+                        from backend.db import normalize_phone_number
+
+                        norm_phone = normalize_phone_number(phone_val)
+                        contact_parts.append("patient_phone = %s")
+                        params.append(norm_phone or phone_val)
+                    if email_val:
+                        contact_parts.append("LOWER(COALESCE(patient_email, '')) = %s")
+                        params.append(email_val)
+                    if contact_parts:
+                        conditions.append(f"({' OR '.join(contact_parts)})")
+                cur.execute(
+                    f"""
+                    SELECT id, patient_name, patient_phone, patient_email, motif, slot_label,
+                           status, start_iso, created_at, booking_code
+                    FROM public_bookings
+                    WHERE {' AND '.join(conditions)}
+                    ORDER BY COALESCE(start_iso, created_at) ASC
+                    LIMIT 20
+                    """,
+                    tuple(params),
+                )
+                rows = [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        logger.debug("lookup_public_bookings failed tenant=%s: %s", tenant_id, exc)
+        return []
+    return rows
+
+
+def get_public_booking_by_id(tenant_id: int, booking_id: str) -> Optional[Dict[str, Any]]:
+    ensure_public_bookings_schema()
+    try:
+        with pg_connection() as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, patient_name, patient_phone, patient_email, motif, slot_label,
+                           status, start_iso, created_at, booking_code, slot_id, source
+                    FROM public_bookings
+                    WHERE tenant_id = %s AND id = %s
+                    LIMIT 1
+                    """,
+                    (tenant_id, booking_id),
+                )
+                row = cur.fetchone()
+                return dict(row) if row else None
+    except Exception as exc:
+        logger.debug("get_public_booking_by_id failed tenant=%s id=%s: %s", tenant_id, booking_id, exc)
+        return None
+
+
+def cancel_public_booking_by_id(tenant_id: int, booking_id: str) -> bool:
+    ensure_public_bookings_schema()
+    try:
+        with pg_connection() as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE public_bookings
+                    SET status = 'cancelled', cancelled_at = NOW()
+                    WHERE tenant_id = %s AND id = %s
+                      AND status IN ('confirmed', 'pending')
+                    RETURNING id
+                    """,
+                    (tenant_id, booking_id),
+                )
+                row = cur.fetchone()
+            conn.commit()
+            return bool(row)
+    except Exception as exc:
+        logger.warning("cancel_public_booking_by_id failed tenant=%s id=%s: %s", tenant_id, booking_id, exc)
+        return False
+
+
+def mark_public_booking_rescheduled(tenant_id: int, booking_id: str) -> bool:
+    ensure_public_bookings_schema()
+    try:
+        with pg_connection() as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE public_bookings
+                    SET status = 'cancelled', cancelled_at = NOW()
+                    WHERE tenant_id = %s AND id = %s
+                      AND status IN ('confirmed', 'pending')
+                    RETURNING id
+                    """,
+                    (tenant_id, booking_id),
+                )
+                row = cur.fetchone()
+            conn.commit()
+            return bool(row)
+    except Exception as exc:
+        logger.warning("mark_public_booking_rescheduled failed tenant=%s id=%s: %s", tenant_id, booking_id, exc)
+        return False
+
+
+def insert_callback_request(
+    *,
+    tenant_id: Optional[int],
+    name: Optional[str],
+    phone: str,
+    email: Optional[str],
+    reason: str,
+    message: Optional[str],
+    appointment_source: Optional[str] = None,
+    appointment_id: Optional[str] = None,
+    unmatched: bool = False,
+) -> Optional[str]:
+    req_id = str(__import__("uuid").uuid4())
+    try:
+        with pg_connection() as conn:
+            if tenant_id is not None:
+                set_tenant_id_on_connection(conn, int(tenant_id))
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS callback_requests (
+                      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                      tenant_id BIGINT REFERENCES tenants(tenant_id) ON DELETE SET NULL,
+                      appointment_source TEXT,
+                      appointment_id TEXT,
+                      patient_id BIGINT,
+                      name TEXT,
+                      phone TEXT NOT NULL,
+                      email TEXT,
+                      reason TEXT NOT NULL DEFAULT 'other',
+                      message TEXT,
+                      source TEXT NOT NULL DEFAULT 'public_page',
+                      status TEXT NOT NULL DEFAULT 'new',
+                      unmatched BOOLEAN NOT NULL DEFAULT FALSE,
+                      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                      handled_at TIMESTAMPTZ,
+                      handled_by TEXT
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    INSERT INTO callback_requests (
+                      id, tenant_id, appointment_source, appointment_id, name, phone, email,
+                      reason, message, source, status, unmatched
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'public_page', 'new', %s)
+                    """,
+                    (
+                        req_id,
+                        tenant_id,
+                        appointment_source,
+                        appointment_id,
+                        (name or "").strip()[:200] or None,
+                        phone,
+                        (email or "").strip()[:254] or None,
+                        (reason or "other").strip()[:80],
+                        (message or "").strip()[:2000] or None,
+                        unmatched,
+                    ),
+                )
+            conn.commit()
+        return req_id
+    except Exception as exc:
+        logger.warning("insert_callback_request failed tenant=%s: %s", tenant_id, exc)
+        return None
 
 
 def count_public_bookings(
@@ -190,7 +426,7 @@ def fetch_public_bookings_for_agenda(
                 cur.execute(
                     """
                     SELECT id, patient_name, patient_phone, motif, slot_label, status,
-                           start_iso, created_at, source
+                           start_iso, created_at, source, booking_code
                     FROM public_bookings
                     WHERE tenant_id = %s
                       AND status IN ('confirmed', 'pending')
@@ -239,6 +475,7 @@ def fetch_public_bookings_for_agenda(
                 "can_reschedule": False,
                 "booking_status": status,
                 "slot_label": (row.get("slot_label") or "").strip(),
+                "booking_code": (row.get("booking_code") or "").strip(),
             }
         )
     return slots
