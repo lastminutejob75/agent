@@ -22,6 +22,7 @@ const DISPONIBILITES_LABELS = {
 };
 
 const OPTION_LABELS = { ...TYPE_DEMANDE_LABELS, ...DISPONIBILITES_LABELS };
+const FILE_ACCEPT = ".pdf,.jpg,.jpeg,.png,.doc,.docx,.txt";
 
 export default function PatientQuestionnaireV2Page() {
   const { token } = useParams();
@@ -32,7 +33,11 @@ export default function PatientQuestionnaireV2Page() {
   const [cabinetName, setCabinetName] = useState("");
   const [patientName, setPatientName] = useState("");
   const [templateName, setTemplateName] = useState("");
+  const [templateType, setTemplateType] = useState("admin");
   const [uploadMessage, setUploadMessage] = useState("");
+  const [uploadAllowed, setUploadAllowed] = useState(false);
+  const [pendingUploads, setPendingUploads] = useState([]);
+  const [uploading, setUploading] = useState(false);
   const [consent, setConsent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
@@ -49,7 +54,10 @@ export default function PatientQuestionnaireV2Page() {
       setCabinetName(String(res?.cabinet_name || ""));
       setPatientName(String(res?.patient_name || ""));
       setTemplateName(String(tpl.name || "Préparer ma demande"));
+      setTemplateType(String(tpl.type || "admin"));
+      setUploadAllowed(Boolean(tpl.medical_upload_allowed));
       setUploadMessage(String(res?.medical_upload_message || ""));
+      setPendingUploads(Array.isArray(res?.pending_uploads) ? res.pending_uploads : []);
     } catch (e) {
       setError(e?.message || "Ce lien n'est plus valide.");
     } finally {
@@ -63,6 +71,25 @@ export default function PatientQuestionnaireV2Page() {
 
   const handleChange = (id, value) => {
     setAnswers((prev) => ({ ...prev, [id]: value }));
+  };
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !token) return;
+    setUploading(true);
+    setError("");
+    try {
+      const res = await api.publicUploadQuestionnaireV2File(token, file);
+      const doc = res?.document;
+      if (doc) {
+        setPendingUploads((prev) => [...prev, doc]);
+      }
+    } catch (err) {
+      setError(err?.message || "Impossible d'envoyer le document.");
+    } finally {
+      setUploading(false);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -82,6 +109,8 @@ export default function PatientQuestionnaireV2Page() {
       setSubmitting(false);
     }
   };
+
+  const isMedical = templateType === "medical";
 
   return (
     <div className="min-h-screen bg-[#F4F8FB] px-4 py-10 font-[Inter,'DM_Sans',sans-serif] text-[#0A1628]">
@@ -128,6 +157,29 @@ export default function PatientQuestionnaireV2Page() {
                 disabled={submitting}
                 optionLabels={OPTION_LABELS}
               />
+              {uploadAllowed ? (
+                <div className="mt-5 rounded-xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC] px-4 py-4">
+                  <div className="text-sm font-black text-[#334155]">Documents médicaux (optionnel)</div>
+                  <p className="mt-1 text-xs text-[#64748B]">PDF, images ou Word — max 10 Mo, 5 fichiers.</p>
+                  {pendingUploads.length > 0 ? (
+                    <ul className="mt-3 space-y-1 text-sm text-[#475569]">
+                      {pendingUploads.map((doc) => (
+                        <li key={doc.id || doc.filename}>✓ {doc.filename}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  <label className="mt-3 inline-flex cursor-pointer items-center gap-2 rounded-lg border border-[#94A3B8] bg-white px-3 py-2 text-xs font-black text-[#475569] hover:bg-slate-50">
+                    {uploading ? "Envoi…" : "Ajouter un document"}
+                    <input
+                      type="file"
+                      accept={FILE_ACCEPT}
+                      className="hidden"
+                      disabled={submitting || uploading || pendingUploads.length >= 5}
+                      onChange={(e) => void handleFileUpload(e)}
+                    />
+                  </label>
+                </div>
+              ) : null}
               <label className="mt-5 flex items-start gap-2.5 text-sm font-semibold text-[#334155]">
                 <input
                   type="checkbox"
@@ -147,7 +199,9 @@ export default function PatientQuestionnaireV2Page() {
                 {submitting ? "Envoi…" : "Envoyer mes réponses"}
               </button>
               <p className="mt-3 text-center text-xs text-[#94A3B8]">
-                Formulaire administratif — aucune donnée médicale n&apos;est demandée ici.
+                {isMedical
+                  ? "Données de santé — transmission sécurisée (HDS)."
+                  : "Formulaire administratif — aucune donnée médicale n'est demandée ici."}
               </p>
             </form>
           )}

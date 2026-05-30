@@ -19,7 +19,8 @@ function fmtDate(value) {
   return dt.toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" });
 }
 
-export default function PatientAdminQuestionnaireCard({
+/** Questionnaire médical V2 (HDS) — envoi lien /q/ + historique. */
+export default function PatientMedicalQuestionnaireCard({
   phone,
   patientEmail,
   notify,
@@ -46,10 +47,10 @@ export default function PatientAdminQuestionnaireCard({
     if (!phone) return;
     setLoading(true);
     try {
-      const res = await api.tenantListPatientQuestionnairesV2(phone, { templateType: "admin" });
+      const res = await api.tenantListPatientQuestionnairesV2(phone, { templateType: "medical" });
       setRequests(Array.isArray(res?.requests) ? res.requests : []);
     } catch (e) {
-      notifyFn(e?.message || "Impossible de charger les formulaires admin", { sticky: true });
+      notifyFn(e?.message || "Impossible de charger les questionnaires médicaux", { sticky: true });
     } finally {
       setLoading(false);
     }
@@ -68,15 +69,16 @@ export default function PatientAdminQuestionnaireCard({
     setSending(true);
     try {
       const res = await api.tenantCreatePatientQuestionnaireV2(phone, {
+        template_type: "medical",
         sent_to_email: patientEmail,
         send_email: true,
       });
       setLastLink(res?.questionnaire_url || "");
-      notifyFn(`Formulaire envoyé à ${res?.request?.sent_to_email || patientEmail}`);
+      notifyFn(`Questionnaire médical envoyé à ${res?.request?.sent_to_email || patientEmail}`);
       await load();
       if (typeof onApplied === "function") onApplied();
     } catch (e) {
-      notifyFn(e?.message || "Envoi impossible", { sticky: true });
+      notifyFn(e?.message || "Envoi impossible (HDS requis)", { sticky: true });
     } finally {
       setSending(false);
     }
@@ -102,7 +104,7 @@ export default function PatientAdminQuestionnaireCard({
     setIntegratingId(responseId);
     try {
       await api.tenantIntegrateQuestionnaireV2(responseId);
-      notifyFn("Formulaire intégré au dossier");
+      notifyFn("Questionnaire médical intégré au dossier");
       setViewResponse(null);
       await load();
       if (typeof onApplied === "function") onApplied();
@@ -127,12 +129,12 @@ export default function PatientAdminQuestionnaireCard({
     <section className="rounded-[24px] border border-[#E3EAF2] bg-white p-4 shadow-[0_8px_20px_rgba(15,23,42,0.06)] sm:p-5">
       <div className="flex items-start gap-3">
         <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border-2 border-[#0B1628] text-[20px]">
-          📋
+          🩺
         </div>
         <div className="min-w-0 flex-1">
-          <strong className="block text-base font-black text-[#0B1628]">Formulaire administratif (patient)</strong>
+          <strong className="block text-base font-black text-[#0B1628]">Questionnaire médical (patient)</strong>
           <p className="m-0 mt-1 text-[13px] text-[#667085]">
-            Type de demande, coordonnées, disponibilités — sans donnée médicale en ligne.
+            Antécédents, allergies, traitements — données de santé (HDS). Le patient peut joindre des documents.
           </p>
         </div>
       </div>
@@ -142,9 +144,9 @@ export default function PatientAdminQuestionnaireCard({
           type="button"
           onClick={handleSend}
           disabled={disabled || !phone || sending || !patientEmail}
-          className="rounded-[14px] bg-[#009CA4] px-3.5 py-2.5 text-xs font-black text-white hover:bg-[#007F87] disabled:opacity-60"
+          className="rounded-[14px] bg-[#0B1628] px-3.5 py-2.5 text-xs font-black text-white hover:bg-[#1E293B] disabled:opacity-60"
         >
-          {sending ? "Envoi…" : "Envoyer au patient"}
+          {sending ? "Envoi…" : "Envoyer le questionnaire médical"}
         </button>
         {lastLink ? (
           <button
@@ -158,11 +160,11 @@ export default function PatientAdminQuestionnaireCard({
       </div>
 
       <div className="mt-4">
-        <div className="mb-2 text-xs font-black uppercase tracking-wide text-[#64748B]">Historique des envois</div>
+        <div className="mb-2 text-xs font-black uppercase tracking-wide text-[#64748B]">Historique</div>
         {loading ? (
           <p className="text-sm text-[#667085]">Chargement…</p>
         ) : requests.length === 0 ? (
-          <p className="text-sm text-[#667085]">Aucun formulaire envoyé pour l&apos;instant.</p>
+          <p className="text-sm text-[#667085]">Aucun questionnaire médical envoyé.</p>
         ) : (
           <ul className="space-y-2">
             {requests.map((req) => {
@@ -198,7 +200,7 @@ export default function PatientAdminQuestionnaireCard({
                           onClick={() => void handleIntegrate(String(rid))}
                           className="rounded-lg border border-[#86EFAC] bg-[#F0FDF4] px-2.5 py-1 text-xs font-black text-[#15803D] hover:bg-[#DCFCE7] disabled:opacity-60"
                         >
-                          {integratingId === String(rid) ? "…" : "Valider"}
+                          {integratingId === String(rid) ? "…" : "Intégrer"}
                         </button>
                       ) : null}
                     </div>
@@ -218,7 +220,7 @@ export default function PatientAdminQuestionnaireCard({
             <div className="fixed inset-0 z-[120] flex items-center justify-center bg-[#0A1628]/50 p-4">
               <div className="flex max-h-[90vh] w-full max-w-[560px] flex-col rounded-2xl border border-[#E2E8F0] bg-white shadow-2xl">
                 <div className="flex items-center justify-between border-b border-[#EEF3F8] px-5 py-4">
-                  <h3 className="text-lg font-black text-[#0A1628]">Réponses du patient</h3>
+                  <h3 className="text-lg font-black text-[#0A1628]">Réponses médicales</h3>
                   <button type="button" onClick={() => setViewResponse(null)} className="rounded-full p-2 hover:bg-slate-100">
                     <X size={16} />
                   </button>
@@ -241,6 +243,16 @@ export default function PatientAdminQuestionnaireCard({
                           </li>
                         ))}
                       </ul>
+                      {Array.isArray(viewResponse.documents) && viewResponse.documents.length > 0 ? (
+                        <div className="mt-4">
+                          <div className="text-xs font-black uppercase tracking-wide text-[#64748B]">Documents joints</div>
+                          <ul className="mt-2 space-y-1 text-sm text-[#334155]">
+                            {viewResponse.documents.map((doc) => (
+                              <li key={doc.id}>📎 {doc.filename}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
                     </>
                   )}
                 </div>
@@ -252,7 +264,7 @@ export default function PatientAdminQuestionnaireCard({
                       onClick={() => void handleIntegrate(viewResponse.id)}
                       className="w-full rounded-xl bg-[#15803D] px-4 py-2.5 text-sm font-black text-white hover:bg-[#166534] disabled:opacity-60"
                     >
-                      {integratingId === viewResponse.id ? "Intégration…" : "Valider et intégrer au dossier"}
+                      {integratingId === viewResponse.id ? "Intégration…" : "Intégrer au dossier"}
                     </button>
                   </div>
                 ) : null}

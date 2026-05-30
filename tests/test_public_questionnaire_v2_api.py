@@ -10,6 +10,7 @@ from backend.patient_v2_db import ensure_patient_v2_schema
 from backend.questionnaire_v2 import (
     create_questionnaire_request,
     ensure_default_admin_template,
+    ensure_default_medical_template,
     submit_questionnaire_response,
 )
 
@@ -109,3 +110,46 @@ def test_public_questionnaire_v2_submit_requires_consent(client):
 def test_public_questionnaire_v2_invalid_token(client):
     r = client.get("/api/q/not-a-valid-token")
     assert r.status_code == 404
+
+
+def test_public_questionnaire_v2_upload_and_submit_medical(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("UWI_HDS_ENABLED", "true")
+    monkeypatch.setattr("backend.questionnaire_v2._tenant_detail", lambda _tid: {"params": {"hds_enabled": True}})
+
+    tenant_id = 1
+    phone = "+33666666666"
+    db.upsert_cabinet_client(tenant_id, phone, raw_name="Alice", validated_name="Alice Test")
+    db.update_patient_fields(tenant_id, phone, email="alice@example.com")
+    tpl = ensure_default_medical_template(tenant_id)
+    _, raw_token = create_questionnaire_request(
+        tenant_id,
+        phone,
+        template_id=tpl["id"],
+        sent_to_email="alice@example.com",
+    )
+
+    upload_root = tmp_path / "uploads"
+    monkeypatch.setattr(
+        "backend.services.patient_document_storage.UPLOAD_ROOT",
+        str(upload_root / "questionnaire_v2"),
+    )
+
+    r_up = client.post(
+        f"/api/q/{raw_token}/upload",
+        files={"file": ("ordonnance.pdf", b"%PDF-1.4 test", "application/pdf")},
+    )
+    assert r_up.status_code == 200
+    assert r_up.json()["document"]["filename"] == "ordonnance.pdf"
+
+    r = client.post(
+        f"/api/q/{raw_token}/submit",
+        json={
+            "consent_given": True,
+            "answers": {
+                "allergies": "iode",
+                "consentement": True,
+            },
+        },
+    )
+    assert r.status_code == 200
+    assert r.json()["is_health"] is True

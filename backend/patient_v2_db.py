@@ -107,6 +107,7 @@ CREATE TABLE IF NOT EXISTS patient_documents_v2 (
     id TEXT PRIMARY KEY,
     tenant_id INTEGER NOT NULL,
     patient_phone TEXT NOT NULL,
+    questionnaire_request_id TEXT,
     questionnaire_response_id TEXT,
     filename TEXT NOT NULL,
     storage_key TEXT NOT NULL,
@@ -123,6 +124,12 @@ def ensure_patient_v2_schema() -> None:
     conn = get_conn()
     try:
         conn.executescript(_SQLITE_TABLES)
+        try:
+            conn.execute(
+                "ALTER TABLE patient_documents_v2 ADD COLUMN questionnaire_request_id TEXT"
+            )
+        except Exception:
+            pass
         conn.commit()
     finally:
         conn.close()
@@ -256,3 +263,175 @@ def delete_patient_v2_data(tenant_id: int, patient_phone: str) -> None:
             """,
             (tenant_id, phone) * 6,
         )
+
+
+def insert_patient_document_v2(
+    tenant_id: int,
+    patient_phone: str,
+    *,
+    questionnaire_request_id: str,
+    filename: str,
+    storage_key: str,
+    mime_type: str = "",
+    is_health: bool = True,
+    uploaded_by: str = "patient",
+) -> Dict[str, Any]:
+    ensure_patient_v2_schema()
+    doc_id = _new_id()
+    phone = normalize_patient_phone(patient_phone)
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            INSERT INTO patient_documents_v2 (
+                id, tenant_id, patient_phone, questionnaire_request_id,
+                filename, storage_key, mime_type, is_health, uploaded_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                doc_id,
+                tenant_id,
+                phone,
+                questionnaire_request_id,
+                filename,
+                storage_key,
+                mime_type or "application/octet-stream",
+                1 if is_health else 0,
+                uploaded_by,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    exec_pg(
+        """
+        INSERT INTO patient_documents_v2 (
+            id, tenant_id, patient_phone, questionnaire_request_id,
+            filename, storage_key, mime_type, is_health, uploaded_by
+        ) VALUES (%s::uuid, %s, %s, %s::uuid, %s, %s, %s, %s, %s)
+        """,
+        (
+            doc_id,
+            tenant_id,
+            phone,
+            questionnaire_request_id,
+            filename,
+            storage_key,
+            mime_type or "application/octet-stream",
+            is_health,
+            uploaded_by,
+        ),
+    )
+    return {
+        "id": doc_id,
+        "filename": filename,
+        "mime_type": mime_type,
+        "questionnaire_request_id": questionnaire_request_id,
+    }
+
+
+def count_documents_for_request(questionnaire_request_id: str) -> int:
+    ensure_patient_v2_schema()
+    row = fetch_one_pg(
+        """
+        SELECT COUNT(*) AS n FROM patient_documents_v2
+        WHERE questionnaire_request_id = %s::uuid
+          AND questionnaire_response_id IS NULL
+        """,
+        (questionnaire_request_id,),
+    )
+    if row:
+        return int(row.get("n") or 0)
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            """
+            SELECT COUNT(*) AS n FROM patient_documents_v2
+            WHERE questionnaire_request_id = ?
+              AND (questionnaire_response_id IS NULL OR questionnaire_response_id = '')
+            """,
+            (questionnaire_request_id,),
+        ).fetchone()
+        return int(cur["n"] or 0) if cur else 0
+    finally:
+        conn.close()
+
+
+def list_documents_for_request(questionnaire_request_id: str) -> List[Dict[str, Any]]:
+    rows = fetch_all_pg(
+        """
+        SELECT id, filename, mime_type, created_at
+        FROM patient_documents_v2
+        WHERE questionnaire_request_id = %s::uuid
+        ORDER BY created_at ASC
+        """,
+        (questionnaire_request_id,),
+    )
+    if rows:
+        return [dict(r) for r in rows]
+    conn = get_conn()
+    try:
+        raw = conn.execute(
+            """
+            SELECT id, filename, mime_type, created_at
+            FROM patient_documents_v2
+            WHERE questionnaire_request_id = ?
+            ORDER BY created_at ASC
+            """,
+            (questionnaire_request_id,),
+        ).fetchall()
+        return [dict(r) for r in raw]
+    finally:
+        conn.close()
+
+
+def list_documents_for_response(response_id: str) -> List[Dict[str, Any]]:
+    rows = fetch_all_pg(
+        """
+        SELECT id, filename, mime_type, created_at
+        FROM patient_documents_v2
+        WHERE questionnaire_response_id = %s::uuid
+        ORDER BY created_at ASC
+        """,
+        (response_id,),
+    )
+    if rows:
+        return [dict(r) for r in rows]
+    conn = get_conn()
+    try:
+        raw = conn.execute(
+            """
+            SELECT id, filename, mime_type, created_at
+            FROM patient_documents_v2
+            WHERE questionnaire_response_id = ?
+            ORDER BY created_at ASC
+            """,
+            (response_id,),
+        ).fetchall()
+        return [dict(r) for r in raw]
+    finally:
+        conn.close()
+
+
+def link_documents_to_response(questionnaire_request_id: str, response_id: str) -> None:
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            UPDATE patient_documents_v2
+            SET questionnaire_response_id = ?
+            WHERE questionnaire_request_id = ?
+            """,
+            (response_id, questionnaire_request_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    exec_pg(
+        """
+        UPDATE patient_documents_v2
+        SET questionnaire_response_id = %s::uuid
+        WHERE questionnaire_request_id = %s::uuid
+        """,
+        (response_id, questionnaire_request_id),
+    )

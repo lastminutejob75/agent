@@ -32,6 +32,7 @@ import {
 import PatientDuplicateBanner from "../components/patients/PatientDuplicateBanner.jsx";
 import PatientQuestionnaireCard from "../components/patients/PatientQuestionnaireCard.jsx";
 import PatientAdminQuestionnaireCard from "../components/patients/PatientAdminQuestionnaireCard.jsx";
+import PatientMedicalQuestionnaireCard from "../components/patients/PatientMedicalQuestionnaireCard.jsx";
 import PatientContextSummary from "../components/patients/PatientContextSummary.jsx";
 import {
   checkPatientDuplicates,
@@ -2898,6 +2899,19 @@ export default function PatientDashboardPage() {
                 />
                 <div className="mt-4">
                   <PatientAdminQuestionnaireCard
+                    phone={tenantPatientPhone}
+                    patientEmail={patientEmail}
+                    notify={notify}
+                    summaryRefreshNonce={summaryRefreshNonce}
+                    onApplied={() => {
+                      setPatientFetchNonce((n) => n + 1);
+                      setSummaryRefreshNonce((n) => n + 1);
+                    }}
+                    disabled={tenantPatientNotFound}
+                  />
+                </div>
+                <div className="mt-4">
+                  <PatientMedicalQuestionnaireCard
                     phone={tenantPatientPhone}
                     patientEmail={patientEmail}
                     notify={notify}

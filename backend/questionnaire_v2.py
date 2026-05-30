@@ -14,13 +14,19 @@ from backend.patient_v2_db import (
     _json_dump,
     _json_load,
     _new_id,
+    count_documents_for_request,
     ensure_patient_v2_schema,
     exec_pg,
     fetch_all_pg,
     fetch_one_pg,
+    insert_patient_document_v2,
+    link_documents_to_response,
+    list_documents_for_request,
+    list_documents_for_response,
     normalize_patient_phone,
     pg_available,
 )
+from backend.services.patient_document_storage import save_questionnaire_upload
 from backend.services.patient_summary import invalidate_patient_summary
 from backend.tenant_capabilities import is_hds_active
 
@@ -269,8 +275,8 @@ def _format_answer_display(field: Dict[str, Any], value: Any) -> str:
     return raw
 
 
-def prefill_public_answers(profile: Dict[str, Any], patient_phone: str) -> Dict[str, Any]:
-    """Pré-remplit le formulaire public depuis la fiche (admin uniquement)."""
+def prefill_public_answers(profile: Dict[str, Any], patient_phone: str, *, template_type: str = "admin") -> Dict[str, Any]:
+    """Pré-remplit le formulaire public depuis la fiche."""
     out: Dict[str, Any] = {}
     email = str(profile.get("email") or "").strip()
     if email:
@@ -281,6 +287,14 @@ def prefill_public_answers(profile: Dict[str, Any], patient_phone: str) -> Dict[
     physician = str(profile.get("treating_physician_name") or "").strip()
     if physician:
         out["medecin_traitant"] = physician
+        out["treating_physician_name"] = physician
+    birth = profile.get("birth_date")
+    if birth:
+        out["birth_date"] = str(birth)[:10]
+    if template_type == "medical":
+        city = str(profile.get("treating_physician_city") or "").strip()
+        if city:
+            out["treating_physician_city"] = city
     return out
 
 
@@ -769,6 +783,24 @@ def _questionnaire_ai_summary(
         return fallback.strip()
 
 
+def _apply_medical_integrated_answers_to_profile(tenant_id: int, phone: str, answers: dict) -> None:
+    """Enrichit le profil patient depuis une réponse médicale intégrée."""
+    if not answers:
+        return
+    kwargs: Dict[str, Any] = {}
+    birth = str(answers.get("birth_date") or "").strip()
+    physician = str(answers.get("treating_physician_name") or "").strip()
+    city = str(answers.get("treating_physician_city") or "").strip()
+    if birth:
+        kwargs["birth_date"] = birth
+    if physician:
+        kwargs["treating_physician_name"] = physician
+    if city:
+        kwargs["treating_physician_city"] = city
+    if kwargs:
+        update_patient_fields(tenant_id, phone, **kwargs)
+
+
 def _apply_integrated_answers_to_profile(tenant_id: int, phone: str, answers: dict) -> None:
     """Enrichit la fiche patient depuis une réponse admin intégrée."""
     if not answers:
@@ -801,6 +833,56 @@ def _answers_with_labels(template: Dict[str, Any], answers: dict) -> List[Dict[s
     return out
 
 
+def upload_questionnaire_file(
+    raw_token: str,
+    content: bytes,
+    original_name: str,
+    mime_type: str = "",
+) -> Dict[str, Any]:
+    """Upload patient (token public) — HDS requis."""
+    req = resolve_token(raw_token)
+    if not req:
+        raise ValueError("Lien invalide, expiré ou déjà utilisé.")
+    tenant_id = int(req["tenant_id"])
+    if not _hds_active(tenant_id):
+        raise ValueError("Transmission de documents médicaux indisponible sans HDS.")
+    request_id = str(req["id"])
+    phone = normalize_patient_phone(req["patient_phone"])
+    if count_documents_for_request(request_id) >= 5:
+        raise ValueError("Maximum 5 documents par formulaire.")
+    storage_key, stored_name = save_questionnaire_upload(
+        tenant_id,
+        phone,
+        request_id,
+        content,
+        original_name,
+        mime_type,
+    )
+    doc = insert_patient_document_v2(
+        tenant_id,
+        phone,
+        questionnaire_request_id=request_id,
+        filename=original_name or stored_name,
+        storage_key=storage_key,
+        mime_type=mime_type,
+        is_health=True,
+        uploaded_by="patient",
+    )
+    try:
+        from backend.patient_access_audit import log_patient_access
+
+        log_patient_access(
+            tenant_id=tenant_id,
+            actor_user_id="patient",
+            action="patient_upload_document",
+            patient_phone=phone,
+            resource="questionnaire_v2_public",
+        )
+    except Exception:
+        logger.debug("upload audit failed", exc_info=True)
+    return doc
+
+
 def submit_questionnaire_response(
     raw_token: str,
     answers: dict,
@@ -821,10 +903,12 @@ def submit_questionnaire_response(
         raise ValueError("Template introuvable.")
 
     hds = _hds_active(tenant_id)
+    upload_count = count_documents_for_request(str(req["id"]))
+    effective_has_uploads = has_uploads or upload_count > 0
     clean = validate_answers_against_template(
-        template, answers, hds_active=hds, has_uploads=has_uploads
+        template, answers, hds_active=hds, has_uploads=effective_has_uploads
     )
-    is_health = compute_response_is_health(template, clean, has_uploads=has_uploads)
+    is_health = compute_response_is_health(template, clean, has_uploads=effective_has_uploads)
     if is_health and not hds:
         raise ValueError("Soumission refusée : données de santé sans HDS.")
 
@@ -921,16 +1005,21 @@ def submit_questionnaire_response(
         ),
     )
 
-    if not is_health:
-        fields_by_id = {str(f.get("field_id") or ""): f for f in (template.get("sections_json") or [])}
-        note_lines = []
-        for key, val in clean.items():
-            field = fields_by_id.get(key) or {"field_id": key, "label": key}
-            note_lines.append(f"{field.get('label') or key}: {_format_answer_display(field, val)}")
+    link_documents_to_response(str(req["id"]), response_id)
+
+    fields_by_id = {str(f.get("field_id") or ""): f for f in (template.get("sections_json") or [])}
+    note_lines = []
+    for key, val in clean.items():
+        field = fields_by_id.get(key) or {"field_id": key, "label": key}
+        note_lines.append(f"{field.get('label') or key}: {_format_answer_display(field, val)}")
+    if upload_count > 0:
+        note_lines.append(f"Documents joints: {upload_count}")
+    if note_lines:
+        prefix = "Questionnaire médical complété" if is_health else "Formulaire administratif complété"
         insert_patient_note(
             tenant_id,
             phone,
-            note_text="Formulaire administratif complété\n" + "\n".join(note_lines),
+            note_text=f"{prefix}\n" + "\n".join(note_lines),
             author="Questionnaire patient",
         )
 
@@ -989,14 +1078,19 @@ def integrate_response(tenant_id: int, response_id: str) -> Dict[str, Any]:
     phone = normalize_patient_phone(row.get("patient_phone") or "")
     template = get_template(tenant_id, str(row.get("template_id") or "")) or ensure_default_admin_template(tenant_id)
     answers = _json_load(row.get("answers_json"), {})
-    _apply_integrated_answers_to_profile(tenant_id, phone, answers)
+    is_medical = str(template.get("type") or "") == "medical" or bool(template.get("is_health"))
+    if is_medical:
+        _apply_medical_integrated_answers_to_profile(tenant_id, phone, answers)
+    else:
+        _apply_integrated_answers_to_profile(tenant_id, phone, answers)
 
     summary = str(row.get("ai_summary") or "").strip()
     if summary:
+        prefix = "Questionnaire médical intégré" if is_medical else "Formulaire administratif intégré"
         insert_patient_note(
             tenant_id,
             phone,
-            note_text=f"Formulaire administratif intégré\n{summary}",
+            note_text=f"{prefix}\n{summary}",
             author="Questionnaire patient",
         )
 
@@ -1070,16 +1164,23 @@ def get_questionnaire_response(tenant_id: int, response_id: str) -> Dict[str, An
         "answers": answers,
         "answers_display": _answers_with_labels(template, answers),
         "structured_summary": _json_load(row.get("structured_summary_json"), {}),
+        "documents": list_documents_for_response(str(row.get("id") or response_id)),
     }
 
 
-def list_patient_questionnaire_requests(tenant_id: int, patient_phone: str) -> List[Dict[str, Any]]:
+def list_patient_questionnaire_requests(
+    tenant_id: int,
+    patient_phone: str,
+    *,
+    template_type: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     expire_stale_questionnaire_requests()
     phone = normalize_patient_phone(patient_phone)
     rows = fetch_all_pg(
         """
         SELECT qreq.id, qreq.status, qreq.sent_to_email, qreq.created_at, qreq.completed_at,
-               qreq.integrated_at, qreq.expires_at,
+               qreq.integrated_at, qreq.expires_at, qreq.template_id,
+               qt.type AS template_type, qt.name AS template_name, qt.is_health AS template_is_health,
                (
                  SELECT qr.id FROM questionnaire_responses qr
                  WHERE qr.questionnaire_request_id = qreq.id
@@ -1091,31 +1192,44 @@ def list_patient_questionnaire_requests(tenant_id: int, patient_phone: str) -> L
                  ORDER BY qr.submitted_at DESC LIMIT 1
                ) AS ai_summary
         FROM questionnaire_requests qreq
+        LEFT JOIN questionnaire_templates qt ON qt.id = qreq.template_id
         WHERE qreq.tenant_id = %s AND qreq.patient_phone = %s
+        """
+        + (" AND qt.type = %s" if template_type else "")
+        + """
         ORDER BY qreq.created_at DESC
         LIMIT 20
         """,
-        (tenant_id, phone),
+        (tenant_id, phone, template_type) if template_type else (tenant_id, phone),
     )
     if rows:
         return [dict(r) for r in rows]
     conn = get_conn()
     try:
-        raw = conn.execute(
-            """
+        sql = """
             SELECT qreq.id, qreq.status, qreq.sent_to_email, qreq.created_at, qreq.completed_at,
-                   qreq.integrated_at, qreq.expires_at,
+                   qreq.integrated_at, qreq.expires_at, qreq.template_id,
+                   qt.type AS template_type, qt.name AS template_name, qt.is_health AS template_is_health,
                    (
                      SELECT qr.id FROM questionnaire_responses qr
                      WHERE qr.questionnaire_request_id = qreq.id
                      ORDER BY qr.submitted_at DESC LIMIT 1
-                   ) AS response_id
+                   ) AS response_id,
+                   (
+                     SELECT qr.ai_summary FROM questionnaire_responses qr
+                     WHERE qr.questionnaire_request_id = qreq.id
+                     ORDER BY qr.submitted_at DESC LIMIT 1
+                   ) AS ai_summary
             FROM questionnaire_requests qreq
+            LEFT JOIN questionnaire_templates qt ON qt.id = qreq.template_id
             WHERE qreq.tenant_id = ? AND qreq.patient_phone = ?
-            ORDER BY qreq.created_at DESC LIMIT 20
-            """,
-            (tenant_id, phone),
-        ).fetchall()
+        """
+        params: tuple = (tenant_id, phone)
+        if template_type:
+            sql += " AND qt.type = ?"
+            params = (tenant_id, phone, template_type)
+        sql += " ORDER BY qreq.created_at DESC LIMIT 20"
+        raw = conn.execute(sql, params).fetchall()
         return [dict(r) for r in raw]
     finally:
         conn.close()
@@ -1132,7 +1246,10 @@ def public_questionnaire_payload(raw_token: str) -> Dict[str, Any]:
     profile = get_cabinet_client_by_phone(tenant_id, phone) or {}
     template = get_template(tenant_id, str(req.get("template_id") or "")) or ensure_default_admin_template(tenant_id)
     hds = _hds_active(tenant_id)
-    prefill = prefill_public_answers(profile, phone)
+    tpl_type = str(template.get("type") or "admin")
+    prefill = prefill_public_answers(profile, phone, template_type=tpl_type)
+    request_id = str(req["id"])
+    pending_uploads = list_documents_for_request(request_id) if hds else []
     return {
         "tenant_id": tenant_id,
         "patient_phone": phone,
@@ -1141,11 +1258,14 @@ def public_questionnaire_payload(raw_token: str) -> Dict[str, Any]:
         "template": {
             "id": template["id"],
             "name": template["name"],
+            "type": tpl_type,
             "description": template["description"],
             "sections_json": template["sections_json"],
+            "is_health": bool(template.get("is_health")),
             "hds_active": hds,
             "medical_upload_allowed": hds,
         },
-        "request_id": str(req["id"]),
+        "request_id": request_id,
+        "pending_uploads": pending_uploads,
         "expires_at": str(req.get("expires_at") or ""),
     }

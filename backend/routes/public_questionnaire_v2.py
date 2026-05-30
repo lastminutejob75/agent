@@ -5,10 +5,16 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from backend.questionnaire_v2 import public_questionnaire_payload, submit_questionnaire_response
+from backend.questionnaire_v2 import (
+    count_documents_for_request,
+    public_questionnaire_payload,
+    resolve_token,
+    submit_questionnaire_response,
+    upload_questionnaire_file,
+)
 from backend.tenants_pg import pg_get_tenant_full
 
 logger = logging.getLogger(__name__)
@@ -37,29 +43,50 @@ def public_get_questionnaire_v2(token: str):
         payload = public_questionnaire_payload(token)
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
+    tpl = payload["template"]
     return {
         "ok": True,
         "cabinet_name": _cabinet_label(payload["tenant_id"]),
         "patient_name": payload.get("patient_name") or "",
         "prefill_answers": payload.get("prefill_answers") or {},
-        "template": payload["template"],
+        "template": tpl,
+        "pending_uploads": payload.get("pending_uploads") or [],
         "expires_at": payload.get("expires_at") or "",
         "medical_upload_message": (
             None
-            if payload["template"].get("medical_upload_allowed")
+            if tpl.get("medical_upload_allowed")
             else "Pour transmettre un document médical, merci d'utiliser le canal habituel du cabinet."
         ),
     }
 
 
+@router.post("/{token}/upload")
+async def public_upload_questionnaire_v2(token: str, file: UploadFile = File(...)):
+    if not file.filename:
+        raise HTTPException(400, "Fichier invalide")
+    content = await file.read()
+    try:
+        doc = upload_questionnaire_file(
+            token,
+            content,
+            file.filename,
+            file.content_type or "application/octet-stream",
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return {"ok": True, "document": doc}
+
+
 @router.post("/{token}/submit")
 def public_submit_questionnaire_v2(token: str, body: PublicQuestionnaireSubmitBody):
+    req = resolve_token(token)
+    upload_count = count_documents_for_request(str(req["id"])) if req else 0
     try:
         result = submit_questionnaire_response(
             token,
             body.answers,
             consent_given=body.consent_given,
-            has_uploads=False,
+            has_uploads=upload_count > 0,
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e

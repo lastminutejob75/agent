@@ -283,8 +283,15 @@ export const api = {
       body,
       tenant: true,
     }),
-  tenantListPatientQuestionnairesV2: (phone) =>
-    request(`/api/tenant/patients/${encodeURIComponent(phone)}/questionnaires-v2`, { tenant: true }),
+  tenantListPatientQuestionnairesV2: (phone, opts = {}) => {
+    const params = new URLSearchParams();
+    if (opts?.templateType) params.set("template_type", opts.templateType);
+    const qs = params.toString();
+    return request(
+      `/api/tenant/patients/${encodeURIComponent(phone)}/questionnaires-v2${qs ? `?${qs}` : ""}`,
+      { tenant: true },
+    );
+  },
   tenantGetQuestionnaireV2Response: (responseId) =>
     request(`/api/tenant/questionnaires-v2/${encodeURIComponent(responseId)}`, { tenant: true }),
   tenantIntegrateQuestionnaireV2: (responseId) =>
@@ -299,6 +306,18 @@ export const api = {
   publicGetQuestionnaireV2: (token) => request(`/api/q/${encodeURIComponent(token)}`),
   publicSubmitQuestionnaireV2: (token, body) =>
     request(`/api/q/${encodeURIComponent(token)}/submit`, { method: "POST", body }),
+  publicUploadQuestionnaireV2File: async (token, file) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const base = (typeof import.meta !== "undefined" && import.meta.env?.VITE_UWI_API_BASE_URL) || "";
+    const url = `${base}/api/q/${encodeURIComponent(token)}/upload`;
+    const res = await fetch(url, { method: "POST", body: formData, credentials: "include" });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.detail || res.statusText);
+    }
+    return res.json();
+  },
   tenantCreatePatientNote: (phone, body) =>
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/notes`, { method: "POST", body, tenant: true }),
   tenantDeletePatientNote: (phone, noteId) =>
