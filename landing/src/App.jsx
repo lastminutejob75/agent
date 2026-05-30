@@ -1,6 +1,7 @@
 import { Suspense, lazy, useEffect, useRef } from "react";
 import { Routes, Route, Navigate, Outlet, useLocation, useParams } from "react-router-dom";
 import SeoHead from "./components/SeoHead";
+import CookieConsentBanner from "./components/CookieConsentBanner.jsx";
 import AuthLayout from "./components/AuthLayout";
 import { scrollWindowToTop } from "./lib/scrollToTop.js";
 
@@ -12,6 +13,8 @@ const publicPageModules = import.meta.glob([
   "./pages/CGV.jsx",
   "./pages/CGU.jsx",
   "./pages/MentionsLegales.jsx",
+  "./pages/PolitiqueConfidentialite.jsx",
+  "./pages/PolitiqueCookies.jsx",
   "./pages/Contact.jsx",
   "./pages/Demo.jsx",
   "./pages/SeoVerticalPage.jsx",
@@ -36,6 +39,8 @@ const publicPageModulesEager = import.meta.glob([
   "./pages/CGV.jsx",
   "./pages/CGU.jsx",
   "./pages/MentionsLegales.jsx",
+  "./pages/PolitiqueConfidentialite.jsx",
+  "./pages/PolitiqueCookies.jsx",
   "./pages/Contact.jsx",
   "./pages/Demo.jsx",
   "./pages/SeoVerticalPage.jsx",
@@ -70,6 +75,8 @@ const UwiPricingPage = resolvePublicPage("./pages/UwiPricingPage.jsx");
 const CGV = resolvePublicPage("./pages/CGV.jsx");
 const CGU = resolvePublicPage("./pages/CGU.jsx");
 const MentionsLegales = resolvePublicPage("./pages/MentionsLegales.jsx");
+const PolitiqueConfidentialite = resolvePublicPage("./pages/PolitiqueConfidentialite.jsx");
+const PolitiqueCookies = resolvePublicPage("./pages/PolitiqueCookies.jsx");
 const Contact = resolvePublicPage("./pages/Contact.jsx");
 const Demo = resolvePublicPage("./pages/Demo.jsx");
 const SeoVerticalPage = resolvePublicPage("./pages/SeoVerticalPage.jsx");
@@ -205,6 +212,7 @@ export default function App() {
   return (
     <>
       <SeoHead />
+      <CookieConsentBanner />
       <RestoreScrollAfterNavigation />
       <Routes>
       <Route path="/" element={<LazyElement Component={UwiLandingPage} />} />
@@ -215,6 +223,8 @@ export default function App() {
       <Route path="/cgv" element={<LazyElement Component={CGV} />} />
       <Route path="/cgu" element={<LazyElement Component={CGU} />} />
       <Route path="/mentions-legales" element={<LazyElement Component={MentionsLegales} />} />
+      <Route path="/politique-de-confidentialite" element={<LazyElement Component={PolitiqueConfidentialite} />} />
+      <Route path="/politique-cookies" element={<LazyElement Component={PolitiqueCookies} />} />
       <Route path="/contact" element={<LazyElement Component={Contact} />} />
       <Route path="/demo" element={<LazyElement Component={Demo} />} />
       <Route path="/secretaire-medicale-augmentee" element={<LazyElement Component={SeoVerticalPage} pageKey="/secretaire-medicale-augmentee" />} />

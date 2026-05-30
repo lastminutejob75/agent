@@ -38,6 +38,8 @@
     { "source": "/cgv", "destination": "/cgv/index.html" },
     { "source": "/cgu", "destination": "/cgu/index.html" },
     { "source": "/mentions-legales", "destination": "/mentions-legales/index.html" },
+    { "source": "/politique-de-confidentialite", "destination": "/politique-de-confidentialite/index.html" },
+    { "source": "/politique-cookies", "destination": "/politique-cookies/index.html" },
     { "source": "/pricing", "destination": "/pricing/index.html" },
     { "source": "/securite", "destination": "/securite/index.html" },
     { "source": "/secretaire-medicale-augmentee", "destination": "/secretaire-medicale-augmentee/index.html" },

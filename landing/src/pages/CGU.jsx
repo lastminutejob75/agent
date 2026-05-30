@@ -19,7 +19,7 @@ export default function CGU() {
       <p>L'utilisateur s'engage à utiliser le service de manière licite, à ne pas contourner les dispositifs de sécurité, à ne pas exploiter des failles et à respecter les droits des tiers et la réglementation applicable (données de santé, secret médical).</p>
 
       <h2>5. Données et confidentialité</h2>
-      <p>Le traitement des données personnelles et de santé est décrit dans la Politique de confidentialité et réalisé conformément au RGPD. Les données sont hébergées en France chez un hébergeur certifié HDS.</p>
+      <p>Le traitement des données personnelles et de santé est décrit dans la <Link to="/politique-de-confidentialite">Politique de confidentialité</Link> et réalisé conformément au RGPD. Les données de santé relèvent de garanties renforcées (HDS) lorsque cette option est activée pour le cabinet.</p>
 
       <h2>6. Propriété intellectuelle</h2>
       <p>L'ensemble des éléments du site et de la plateforme (textes, logiciels, marques, visuels) est protégé par le droit de la propriété intellectuelle. Aucune reproduction ou réutilisation n'est autorisée sans accord écrit du Prestataire.</p>

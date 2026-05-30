@@ -20,6 +20,8 @@ const ROUTES = [
   "/cgv",
   "/cgu",
   "/mentions-legales",
+  "/politique-de-confidentialite",
+  "/politique-cookies",
   ...SEO_VERTICAL_PATHS,
 ];
 

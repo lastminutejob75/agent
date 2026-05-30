@@ -37,7 +37,11 @@ export default function MentionsLegales() {
       <p>Le directeur de la publication du site est M. Heni Goutal, Président de TROOPER.</p>
 
       <h2>4. Données personnelles et cookies</h2>
-      <p>Les données collectées via le site et la plateforme sont traitées conformément au Règlement général sur la protection des données (RGPD) et à la loi « Informatique et Libertés ». Les données de santé font l'objet de mesures renforcées et d'un hébergement certifié HDS.</p>
+      <p>Les données collectées via le site et la plateforme sont traitées conformément au Règlement général sur la protection des données (RGPD) et à la loi « Informatique et Libertés ». Les données de santé font l'objet de mesures renforcées lorsque les fonctionnalités HDS sont activées pour un cabinet.</p>
+      <p>
+        Consultez la <Link to="/politique-de-confidentialite">politique de confidentialité</Link> et la{" "}
+        <Link to="/politique-cookies">politique cookies</Link> pour le détail des traceurs et de vos droits.
+      </p>
       <p>Pour exercer vos droits (accès, rectification, effacement, opposition, portabilité) ou pour toute question : <Link to="/contact">page Contact</Link>.</p>
 
       <h2>5. Propriété intellectuelle</h2>

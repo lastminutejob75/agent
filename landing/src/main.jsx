@@ -4,6 +4,9 @@ import { BrowserRouter } from "react-router-dom";
 import { HelmetProvider } from "react-helmet-async";
 import App from "./App.jsx";
 import "./index.css";
+import { initCookieConsent } from "./lib/cookieConsent.js";
+
+initCookieConsent();
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>

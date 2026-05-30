@@ -2,6 +2,7 @@
 // Route / — CTAs vers /creer-assistante?new=1
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { openCookiePreferences } from "../lib/cookieConsent.js";
 import {
   Facebook,
   Linkedin,
@@ -2168,6 +2169,15 @@ export default function UwiLanding() {
           <Link to="/cgv">CGV</Link>
           <Link to="/cgu">CGU</Link>
           <Link to="/mentions-legales">Mentions légales</Link>
+          <Link to="/politique-de-confidentialite">Confidentialité</Link>
+          <Link to="/politique-cookies">Cookies</Link>
+          <button
+            type="button"
+            className="landing-footer-cookies-btn"
+            onClick={openCookiePreferences}
+          >
+            Gérer les cookies
+          </button>
           <div className="landing-footer-socials" aria-label="Réseaux sociaux UWi">
             <a
               href={UWI_LINKEDIN_URL}

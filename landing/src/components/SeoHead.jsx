@@ -53,6 +53,14 @@ const ROUTE_META = {
     title: "Mentions légales — UWi",
     description: "Mentions légales et informations légales UWi.",
   },
+  "/politique-de-confidentialite": {
+    title: "Politique de confidentialité — UWi",
+    description: "Traitement des données personnelles et droits RGPD sur uwiapp.com et la plateforme UWi.",
+  },
+  "/politique-cookies": {
+    title: "Politique cookies — UWi",
+    description: "Cookies et traceurs utilisés sur uwiapp.com, gestion du consentement.",
+  },
   "/app": {
     title: "Tableau de bord — Espace Client UWi",
     description: "Pilotez votre standard UWi, vos appels, votre agenda et la configuration de votre cabinet.",

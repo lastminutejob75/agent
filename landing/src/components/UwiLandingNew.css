@@ -2223,6 +2223,16 @@
 }
 .uwi-landing-new .landing-footer a { color: var(--muted-hi); text-decoration: none; }
 .uwi-landing-new .landing-footer a:hover { color: var(--teal); }
+.uwi-landing-new .landing-footer-cookies-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--muted-hi);
+  cursor: pointer;
+}
+.uwi-landing-new .landing-footer-cookies-btn:hover { color: var(--teal); }
 .uwi-landing-new .landing-footer-socials {
   display: inline-flex;
   align-items: center;

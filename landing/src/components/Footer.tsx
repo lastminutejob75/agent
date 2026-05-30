@@ -14,8 +14,9 @@ export default function Footer() {
           </div>
           <div className="flex gap-4 text-sm text-slate-500">
             <Link to="/login" className="hover:text-slate-900">Connexion</Link>
-            <a href="#" className="hover:text-slate-900">Mentions légales</a>
-            <a href="#" className="hover:text-slate-900">Confidentialité</a>
+            <a href="/mentions-legales" className="hover:text-slate-900">Mentions légales</a>
+            <a href="/politique-de-confidentialite" className="hover:text-slate-900">Confidentialité</a>
+            <a href="/politique-cookies" className="hover:text-slate-900">Cookies</a>
             <a href="#contact" className="hover:text-slate-900">Contact</a>
           </div>
         </div>

@@ -680,11 +680,16 @@ function ContactModal({
   onClose,
   onSubmit,
 }) {
+  const [privacyAccepted, setPrivacyAccepted] = useState(false);
   if (!open) return null;
   const emailValid = !email || isValidEmail(email);
   const phoneValid = !phone || isValidPhone(phone);
   const canSubmit =
-    !loading && (email.trim() || phone.trim()) && emailValid && phoneValid;
+    !loading &&
+    privacyAccepted &&
+    (email.trim() || phone.trim()) &&
+    emailValid &&
+    phoneValid;
 
   return (
     <div
@@ -755,6 +760,22 @@ function ContactModal({
             <span>{error}</span>
           </div>
         )}
+        <label className="mt-4 flex items-start gap-2.5 text-xs text-slate-600">
+          <input
+            type="checkbox"
+            checked={privacyAccepted}
+            onChange={(e) => setPrivacyAccepted(e.target.checked)}
+            className="mt-0.5 h-4 w-4 rounded border-slate-300"
+          />
+          <span>
+            J&apos;accepte que mes coordonnées soient utilisées pour me recontacter et j&apos;ai pris connaissance de
+            la{" "}
+            <Link to="/politique-de-confidentialite" className="font-semibold text-teal-700 hover:underline">
+              politique de confidentialité
+            </Link>
+            .
+          </span>
+        </label>
         <button
           type="button"
           onClick={onSubmit}
@@ -763,9 +784,6 @@ function ContactModal({
         >
           {loading ? "Envoi…" : "Terminer la configuration avec un expert"}
         </button>
-        <p className="mt-2 text-[11px] text-slate-500 text-center">
-          En envoyant, vous acceptez d&apos;être contacté par UWi pour finaliser votre essai.
-        </p>
       </div>
     </div>
   );
