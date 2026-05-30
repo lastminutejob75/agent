@@ -305,12 +305,20 @@ function RescheduleCalendar({ onClose, onReschedule, actionLoading }) {
   const [loadingDay, setLoadingDay] = useState(false);
   const [confirmSlot, setConfirmSlot] = useState(null);
 
+  const [datesError, setDatesError] = useState("");
+
   useEffect(() => {
     let cancelled = false;
     setLoadingDates(true);
+    setDatesError("");
     api.tenantGetAgendaAvailableDates(calMonth).then((res) => {
       if (!cancelled) setAvailDates(res?.dates || {});
-    }).catch(() => {}).finally(() => { if (!cancelled) setLoadingDates(false); });
+    }).catch((e) => {
+      if (!cancelled) {
+        setAvailDates({});
+        setDatesError(e?.message || "Impossible de charger les disponibilités.");
+      }
+    }).finally(() => { if (!cancelled) setLoadingDates(false); });
     return () => { cancelled = true; };
   }, [calMonth]);
 
@@ -407,6 +415,18 @@ function RescheduleCalendar({ onClose, onReschedule, actionLoading }) {
               );
             })}
           </div>
+          {!loadingDates && !Object.values(availDates).some((n) => Number(n) > 0) ? (
+            <div style={S.reschedulePanelEmpty}>
+              {datesError
+                ? datesError
+                : `Aucune disponibilité en ${monthLabel.toLowerCase()}.`}
+              <div style={{ marginTop: 8 }}>
+                <button type="button" onClick={nextMonth} style={S.calBackBtn}>
+                  Voir le mois suivant ›
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
       )}
     </div>

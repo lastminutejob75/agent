@@ -20,17 +20,22 @@ export default function AgendaReschedulePanel({ onClose, onReschedule, loading =
   const [daySlots, setDaySlots] = useState([]);
   const [loadingDay, setLoadingDay] = useState(false);
   const [confirmSlot, setConfirmSlot] = useState(null);
+  const [datesError, setDatesError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
     setLoadingDates(true);
+    setDatesError("");
     api
       .tenantGetAgendaAvailableDates(calMonth)
       .then((res) => {
         if (!cancelled) setAvailDates(res?.dates || {});
       })
-      .catch(() => {
-        if (!cancelled) setAvailDates({});
+      .catch((e) => {
+        if (!cancelled) {
+          setAvailDates({});
+          setDatesError(e?.message || "Impossible de charger les disponibilités.");
+        }
       })
       .finally(() => {
         if (!cancelled) setLoadingDates(false);
@@ -197,6 +202,22 @@ export default function AgendaReschedulePanel({ onClose, onReschedule, loading =
           );
         })}
       </div>
+      {!loadingDates && !Object.values(availDates).some((n) => Number(n) > 0) ? (
+        <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3 text-sm font-semibold text-[#61708B]">
+          {datesError ? datesError : `Aucune disponibilité en ${monthLabel.toLowerCase()}.`}
+          <button
+            type="button"
+            onClick={() => {
+              setCalMonth(fmtMonth(new Date(year, month + 1, 1)));
+              setPickedDate(null);
+              setConfirmSlot(null);
+            }}
+            className="ml-2 rounded-lg border border-[#B6C3D7] px-3 py-1 text-xs font-black text-[#008EA1] hover:bg-white"
+          >
+            Voir le mois suivant ›
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
