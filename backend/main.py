@@ -199,12 +199,26 @@ async def admin_cors_guard(request: Request, call_next):
 
 
 _PATIENT_PATH_PREFIX = "/api/tenant/patients"
+_QUESTIONNAIRE_V2_PREFIX = "/api/tenant/questionnaires-v2"
 
 
-def _classify_patient_action(method: str, path: str) -> str:
+def _classify_patient_action(method: str, path: str, query: str = "") -> str:
     """Mappe une route patient → action métier loggée dans patient_access_audit."""
     m = (method or "GET").upper()
     p = path or ""
+    q = (query or "").lower()
+    if "/summary" in p:
+        if "refresh=true" in q:
+            return "refresh_summary"
+        return "view_summary"
+    if "/questionnaires-v2" in p:
+        return "view_questionnaires"
+    if "/questionnaires" in p and m == "POST":
+        return "send_questionnaire"
+    if "/questionnaire" in p:
+        if m in ("POST", "PUT", "PATCH"):
+            return "write_questionnaire"
+        return "view_questionnaire"
     if "/notes" in p:
         if m == "DELETE":
             return "delete_note"
@@ -228,6 +242,62 @@ def _classify_patient_action(method: str, path: str) -> str:
     if m == "DELETE":
         return "delete_patient"
     return "view_profile"
+
+
+def _classify_questionnaire_v2_action(method: str, path: str) -> str:
+    m = (method or "GET").upper()
+    p = path or ""
+    if "/integrate" in p:
+        return "integrate_questionnaire"
+    if m == "GET":
+        return "view_questionnaire_response"
+    return "questionnaire_v2"
+
+
+def _extract_questionnaire_v2_resource(path: str) -> str:
+    if not path.startswith(_QUESTIONNAIRE_V2_PREFIX):
+        return ""
+    rest = path[len(_QUESTIONNAIRE_V2_PREFIX):].lstrip("/")
+    return rest.split("/", 1)[0] if rest else ""
+
+
+def _audit_patient_route(
+    request: Request,
+    response,
+    *,
+    path: str,
+    action: str,
+    patient_phone: str = "",
+    resource: str = "patient",
+) -> None:
+    from backend.patient_access_audit import log_patient_access
+    from backend.rate_limit import client_ip
+
+    actor_user_id = None
+    actor_email = None
+    actor_role = None
+    tenant_id = 0
+    auth = getattr(request.state, "auth", None) or {}
+    if isinstance(auth, dict):
+        tenant_id = int(auth.get("tenant_id") or 0)
+        actor_user_id = str(auth.get("user_id") or auth.get("sub") or "") or None
+        actor_email = (auth.get("email") or "") or None
+        actor_role = (auth.get("role") or "") or None
+
+    log_patient_access(
+        tenant_id=tenant_id,
+        actor_user_id=actor_user_id,
+        actor_email=actor_email,
+        actor_role=actor_role,
+        action=action,
+        patient_phone=patient_phone or None,
+        resource=resource,
+        method=request.method,
+        path=path[:255],
+        ip_address=client_ip(request),
+        user_agent=(request.headers.get("user-agent") or "")[:255],
+        status_code=response.status_code,
+    )
 
 
 def _extract_patient_phone(path: str) -> str:
@@ -256,45 +326,46 @@ async def audit_patient_access_middleware(request: Request, call_next):
     response = await call_next(request)
     try:
         path = request.url.path or ""
-        if not path.startswith(_PATIENT_PATH_PREFIX):
-            return response
         if request.method == "OPTIONS":
             return response
-        # On ne log que les codes 2xx/3xx (succès) — éviter le bruit des 401/404 brute-force.
-        # Pour les écritures, on log même les erreurs 4xx pour traçabilité forensique.
-        action = _classify_patient_action(request.method, path)
-        is_write = action not in ("view_profile", "view_notes", "view_docs")
-        if not is_write and not (200 <= response.status_code < 400):
+        query = request.url.query or ""
+
+        if path.startswith(_PATIENT_PATH_PREFIX):
+            action = _classify_patient_action(request.method, path, query)
+            is_write = action not in (
+                "view_profile",
+                "view_notes",
+                "view_docs",
+                "view_summary",
+                "view_questionnaires",
+                "view_questionnaire",
+            )
+            if not is_write and not (200 <= response.status_code < 400):
+                return response
+            _audit_patient_route(
+                request,
+                response,
+                path=path,
+                action=action,
+                patient_phone=_extract_patient_phone(path),
+            )
             return response
 
-        from backend.patient_access_audit import log_patient_access
-        from backend.rate_limit import client_ip
+        if path.startswith(_QUESTIONNAIRE_V2_PREFIX):
+            action = _classify_questionnaire_v2_action(request.method, path)
+            is_write = action in ("integrate_questionnaire",)
+            if not is_write and not (200 <= response.status_code < 400):
+                return response
+            _audit_patient_route(
+                request,
+                response,
+                path=path,
+                action=action,
+                resource=_extract_questionnaire_v2_resource(path) or "questionnaire_v2",
+            )
+            return response
 
-        actor_user_id = None
-        actor_email = None
-        actor_role = None
-        tenant_id = 0
-        auth = getattr(request.state, "auth", None) or {}
-        if isinstance(auth, dict):
-            tenant_id = int(auth.get("tenant_id") or 0)
-            actor_user_id = str(auth.get("user_id") or "") or None
-            actor_email = (auth.get("email") or "") or None
-            actor_role = (auth.get("role") or "") or None
-
-        log_patient_access(
-            tenant_id=tenant_id,
-            actor_user_id=actor_user_id,
-            actor_email=actor_email,
-            actor_role=actor_role,
-            action=action,
-            patient_phone=_extract_patient_phone(path),
-            resource="patient",
-            method=request.method,
-            path=path[:255],
-            ip_address=client_ip(request),
-            user_agent=(request.headers.get("user-agent") or "")[:255],
-            status_code=response.status_code,
-        )
+        return response
     except Exception:  # noqa: BLE001
         # Best-effort : le logging d'audit ne doit jamais casser la requête utilisateur.
         _logger.exception("audit_patient_access_middleware error")

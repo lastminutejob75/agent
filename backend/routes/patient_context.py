@@ -17,7 +17,7 @@ from backend.questionnaire_v2 import (
     list_patient_questionnaire_requests,
 )
 from backend.routes.tenant import require_tenant_auth
-from backend.services.patient_summary import get_or_generate_summary
+from backend.services.patient_summary import get_or_generate_summary, log_health_access
 from backend.services.email_service import send_patient_admin_form_email
 from backend.tenant_capabilities import get_tenant_capabilities, requester_from_auth
 
@@ -46,6 +46,20 @@ def _tenant_detail(tenant_id: int) -> Dict[str, Any]:
 def _public_v2_link(raw_token: str) -> str:
     base = (os.environ.get("PUBLIC_BASE_URL") or "https://www.uwiapp.com").rstrip("/")
     return f"{base}/q/{raw_token}"
+
+
+def _require_health_questionnaire_access(auth: dict, tenant_id: int, phone: str, is_health: bool) -> None:
+    """Bloque l'accès aux réponses santé sans HDS + profil soignant."""
+    if not is_health:
+        return
+    detail = _tenant_detail(tenant_id)
+    caps = get_tenant_capabilities(tenant_id, detail)
+    requester = requester_from_auth(auth)
+    if "hds_enabled" not in caps:
+        raise HTTPException(403, "Données de santé : HDS requis pour consulter cette réponse.")
+    if not requester.is_soignant:
+        raise HTTPException(403, "Accès réservé aux profils soignants.")
+    log_health_access(tenant_id, phone, requester, action="view_questionnaire_health")
 
 
 @router.get("/patients/{phone}/summary")
@@ -163,6 +177,12 @@ def tenant_get_questionnaire_response(
         response = get_questionnaire_response(tenant_id, response_id)
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
+    _require_health_questionnaire_access(
+        auth,
+        tenant_id,
+        str(response.get("patient_phone") or ""),
+        bool(response.get("is_health")),
+    )
     return {"ok": True, "response": response}
 
 
@@ -173,6 +193,13 @@ def tenant_integrate_questionnaire_response(
 ):
     tenant_id = auth["tenant_id"]
     try:
+        preview = get_questionnaire_response(tenant_id, response_id)
+        _require_health_questionnaire_access(
+            auth,
+            tenant_id,
+            str(preview.get("patient_phone") or ""),
+            bool(preview.get("is_health")),
+        )
         result = integrate_response(tenant_id, response_id)
     except ValueError as e:
         raise HTTPException(404, str(e)) from e

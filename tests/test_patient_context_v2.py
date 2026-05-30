@@ -10,7 +10,9 @@ from backend.questionnaire_v2 import (
     compute_response_is_health,
     create_questionnaire_request,
     default_admin_template,
+    default_medical_template,
     ensure_default_admin_template,
+    ensure_default_medical_template,
     expire_stale_questionnaire_requests,
     get_questionnaire_response,
     integrate_response,
@@ -206,6 +208,47 @@ def test_submit_admin_questionnaire_flow(monkeypatch):
     assert result["is_health"] is False
     with pytest.raises(ValueError, match="déjà utilisé"):
         submit_questionnaire_response(raw_token, {}, consent_given=True)
+
+
+def test_default_medical_template_requires_hds():
+    tpl = default_medical_template()
+    assert tpl["is_health"] is True
+    assert tpl["type"] == "medical"
+    with pytest.raises(ValueError, match="santé"):
+        validate_template_fields(tpl["sections_json"], hds_active=False)
+
+
+def test_ensure_medical_template_blocked_without_hds(monkeypatch):
+    monkeypatch.setenv("UWI_HDS_ENABLED", "false")
+    with pytest.raises(ValueError, match="HDS"):
+        ensure_default_medical_template(1)
+
+
+def test_ensure_medical_template_with_hds(monkeypatch):
+    monkeypatch.setenv("UWI_HDS_ENABLED", "true")
+
+    def _fake_tenant(_tid):
+        return {"params": {"hds_enabled": True}}
+
+    monkeypatch.setattr("backend.questionnaire_v2._tenant_detail", _fake_tenant)
+    tpl = ensure_default_medical_template(1)
+    assert tpl["type"] == "medical"
+    assert any(f.get("field_id") == "allergies" for f in tpl["sections_json"])
+
+
+def test_hds_active_respects_tenant_params(monkeypatch):
+    monkeypatch.setenv("UWI_HDS_ENABLED", "true")
+
+    def _fake_tenant(_tid):
+        return {"params": {"hds_enabled": True}}
+
+    monkeypatch.setattr("backend.questionnaire_v2._tenant_detail", _fake_tenant)
+    from backend.questionnaire_v2 import _hds_active
+
+    assert _hds_active(1) is True
+
+    monkeypatch.setattr("backend.questionnaire_v2._tenant_detail", lambda _tid: {"params": {}})
+    assert _hds_active(1) is False
 
 
 def test_summary_cache_and_context_pack():

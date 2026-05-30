@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { RefreshCw } from "lucide-react";
 import { api } from "../../lib/api";
 
 function formatSummaryAge(iso) {
@@ -70,58 +71,91 @@ function SummaryBody({ sections, accessLimited, loading, error, generatedAt, fro
 /** Résumé IA de fiche patient (GET /summary). */
 export default function PatientContextSummary({ phone, refreshNonce = 0, compact = false }) {
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [sections, setSections] = useState({});
   const [meta, setMeta] = useState({ generated_at: "", from_cache: false, access_limited: false });
 
-  const load = useCallback(async () => {
-    if (!phone) return;
-    setLoading(true);
-    setError("");
-    try {
-      const res = await api.tenantGetPatientSummary(phone);
-      const summary = res?.summary || {};
-      setSections(summary.sections_json || {});
-      setMeta({
-        generated_at: summary.generated_at || "",
-        from_cache: Boolean(summary.from_cache),
-        access_limited: Boolean(summary.access_limited),
-      });
-    } catch (e) {
-      setError(e?.message || "Résumé indisponible.");
-      setSections({});
-    } finally {
-      setLoading(false);
-    }
-  }, [phone]);
+  const load = useCallback(
+    async (opts = {}) => {
+      if (!phone) return;
+      const forceRefresh = Boolean(opts.refresh);
+      if (forceRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+      setError("");
+      try {
+        const res = await api.tenantGetPatientSummary(phone, forceRefresh ? { refresh: true } : {});
+        const summary = res?.summary || {};
+        setSections(summary.sections_json || {});
+        setMeta({
+          generated_at: summary.generated_at || "",
+          from_cache: Boolean(summary.from_cache),
+          access_limited: Boolean(summary.access_limited),
+        });
+      } catch (e) {
+        setError(e?.message || "Résumé indisponible.");
+        setSections({});
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [phone],
+  );
 
   useEffect(() => {
     void load();
   }, [load, refreshNonce]);
 
+  const handleRefresh = () => {
+    void load({ refresh: true });
+  };
+
+  const refreshButton = (
+    <button
+      type="button"
+      onClick={handleRefresh}
+      disabled={loading || refreshing || !phone}
+      className="inline-flex items-center gap-1.5 rounded-lg border border-white/20 bg-white/5 px-2.5 py-1 text-xs font-semibold text-white/80 transition hover:bg-white/10 disabled:opacity-50"
+      title="Régénérer le résumé IA"
+    >
+      <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+      Rafraîchir
+    </button>
+  );
+
   if (compact) {
     return (
-      <SummaryBody
-        sections={sections}
-        accessLimited={meta.access_limited}
-        loading={loading}
-        error={error}
-        generatedAt={meta.generated_at}
-        fromCache={meta.from_cache}
-      />
+      <div>
+        <div className="mb-2 flex justify-end">{refreshButton}</div>
+        <SummaryBody
+          sections={sections}
+          accessLimited={meta.access_limited}
+          loading={loading || refreshing}
+          error={error}
+          generatedAt={meta.generated_at}
+          fromCache={meta.from_cache}
+        />
+      </div>
     );
   }
 
   return (
     <div>
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex items-center justify-between gap-3">
         <div className="text-sm font-black uppercase tracking-wide text-[#11D6DB]">● Résumé IA</div>
-        <div className="text-sm italic text-white/60">Généré par IA</div>
+        <div className="flex items-center gap-3">
+          {refreshButton}
+          <div className="text-sm italic text-white/60">Généré par IA</div>
+        </div>
       </div>
       <SummaryBody
         sections={sections}
         accessLimited={meta.access_limited}
-        loading={loading}
+        loading={loading || refreshing}
         error={error}
         generatedAt={meta.generated_at}
         fromCache={meta.from_cache}

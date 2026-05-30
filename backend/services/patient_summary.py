@@ -136,15 +136,35 @@ STANDARD_SUMMARY_STORE = SummaryStore()
 HDS_SUMMARY_STORE = SummaryStore()  # TODO HDS : store certifié distinct
 
 
-def log_health_access(tenant_id: int, patient_phone: str, user_id: str, *, action: str) -> None:
-    """STUB traçabilité HDS — journalise en debug pour l'instant."""
+def log_health_access(
+    tenant_id: int,
+    patient_phone: str,
+    requester: RequesterContext,
+    *,
+    action: str,
+) -> None:
+    """Traçabilité accès PHI — journal applicatif + patient_access_audit (best-effort)."""
+    phone = normalize_patient_phone(patient_phone)
     logger.info(
         "health_access tenant=%s phone=%s user=%s action=%s",
         tenant_id,
-        normalize_patient_phone(patient_phone)[-4:].rjust(4, "*"),
-        user_id,
+        phone[-4:].rjust(len(phone), "*") if phone else "?",
+        requester.id,
         action,
     )
+    try:
+        from backend.patient_access_audit import log_patient_access
+
+        log_patient_access(
+            tenant_id=tenant_id,
+            actor_user_id=requester.id or None,
+            actor_role=requester.role or None,
+            action=action,
+            patient_phone=phone,
+            resource="health_phi",
+        )
+    except Exception:
+        logger.debug("log_health_access audit failed", exc_info=True)
 
 
 def _inputs_hash(pack: dict) -> str:
@@ -263,10 +283,29 @@ def get_or_generate_summary(
         return _reception_only_summary(db, tenant_id, patient_phone, tenant_caps)
 
     if contains_health:
-        log_health_access(tenant_id, patient_phone, requester.id, action="summary_view")
+        log_health_access(
+            tenant_id,
+            patient_phone,
+            requester,
+            action="summary_refresh" if force_refresh else "summary_view",
+        )
         store = HDS_SUMMARY_STORE
     else:
         store = STANDARD_SUMMARY_STORE
+        if force_refresh:
+            try:
+                from backend.patient_access_audit import log_patient_access
+
+                log_patient_access(
+                    tenant_id=tenant_id,
+                    actor_user_id=requester.id or None,
+                    actor_role=requester.role or None,
+                    action="refresh_summary",
+                    patient_phone=patient_phone,
+                    resource="patient_summary",
+                )
+            except Exception:
+                logger.debug("refresh_summary audit failed", exc_info=True)
 
     h = _inputs_hash(pack)
     if not force_refresh:

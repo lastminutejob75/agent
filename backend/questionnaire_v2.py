@@ -28,6 +28,19 @@ logger = logging.getLogger(__name__)
 
 TOKEN_TTL_DAYS = 7
 
+
+def _tenant_detail(tenant_id: int) -> Dict[str, Any]:
+    try:
+        from backend.tenants_pg import pg_get_tenant_full
+
+        return pg_get_tenant_full(tenant_id) or {}
+    except Exception:
+        return {}
+
+
+def _hds_active(tenant_id: int) -> bool:
+    return is_hds_active(tenant_id, _tenant_detail(tenant_id))
+
 ADMIN_TYPE_DEMANDE_OPTIONS = [
     "premiere_consultation",
     "suivi",
@@ -120,6 +133,64 @@ TYPE_DEMANDE_LABELS = {
     "autre_administratif": "Autre (administratif)",
 }
 
+DEFAULT_MEDICAL_TEMPLATE_FIELDS: List[Dict[str, Any]] = [
+    {
+        "field_id": "birth_date",
+        "label": "Date de naissance",
+        "type": "date",
+        "sensitivity": "health",
+        "required": False,
+        "constrained": True,
+    },
+    {
+        "field_id": "treating_physician_name",
+        "label": "Médecin traitant",
+        "type": "text",
+        "sensitivity": "health",
+        "required": False,
+        "constrained": True,
+    },
+    {
+        "field_id": "allergies",
+        "label": "Allergies connues",
+        "type": "textarea",
+        "sensitivity": "health",
+        "required": False,
+        "constrained": False,
+    },
+    {
+        "field_id": "current_treatments",
+        "label": "Traitements en cours",
+        "type": "textarea",
+        "sensitivity": "health",
+        "required": False,
+        "constrained": False,
+    },
+    {
+        "field_id": "medical_history",
+        "label": "Antécédents médicaux",
+        "type": "textarea",
+        "sensitivity": "health",
+        "required": False,
+        "constrained": False,
+    },
+    {
+        "field_id": "main_reason",
+        "label": "Motif principal de consultation",
+        "type": "textarea",
+        "sensitivity": "health",
+        "required": False,
+        "constrained": False,
+    },
+    {
+        "field_id": "consentement",
+        "label": "J'accepte que ces informations médicales soient transmises au cabinet",
+        "type": "boolean",
+        "sensitivity": "admin",
+        "required": True,
+    },
+]
+
 
 def default_admin_template() -> Dict[str, Any]:
     return {
@@ -129,6 +200,17 @@ def default_admin_template() -> Dict[str, Any]:
         "sections_json": DEFAULT_ADMIN_TEMPLATE_FIELDS,
         "is_default": True,
         "is_health": False,
+    }
+
+
+def default_medical_template() -> Dict[str, Any]:
+    return {
+        "name": "Questionnaire médical",
+        "type": "medical",
+        "description": "Questionnaire médical (données de santé — HDS requis).",
+        "sections_json": DEFAULT_MEDICAL_TEMPLATE_FIELDS,
+        "is_default": True,
+        "is_health": True,
     }
 
 
@@ -347,10 +429,43 @@ def ensure_default_admin_template(tenant_id: int) -> Dict[str, Any]:
     return create_template(tenant_id, tpl)
 
 
+def ensure_default_medical_template(tenant_id: int) -> Dict[str, Any]:
+    """Template médical par défaut (créé uniquement si HDS actif pour le tenant)."""
+    if not _hds_active(tenant_id):
+        raise ValueError("Questionnaire médical indisponible sans HDS.")
+    ensure_patient_v2_schema()
+    existing = fetch_one_pg(
+        """
+        SELECT * FROM questionnaire_templates
+        WHERE tenant_id = %s AND type = 'medical' AND is_default = true
+        ORDER BY created_at ASC LIMIT 1
+        """,
+        (tenant_id,),
+    )
+    if existing:
+        return _template_row(existing)
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT * FROM questionnaire_templates
+            WHERE tenant_id = ? AND type = 'medical' AND is_default = 1
+            ORDER BY created_at ASC LIMIT 1
+            """,
+            (tenant_id,),
+        ).fetchone()
+        if row:
+            return _template_row(dict(row))
+    finally:
+        conn.close()
+
+    return create_template(tenant_id, default_medical_template())
+
+
 def create_template(tenant_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
     ensure_patient_v2_schema()
     sections = payload.get("sections_json") or []
-    hds = is_hds_active(tenant_id)
+    hds = _hds_active(tenant_id)
     validate_template_fields(sections, hds_active=hds)
     tpl_id = _new_id()
     row = {
@@ -460,6 +575,8 @@ def create_questionnaire_request(
     template = get_template(tenant_id, template_id) if template_id else ensure_default_admin_template(tenant_id)
     if not template:
         template = ensure_default_admin_template(tenant_id)
+    if template.get("is_health") and not _hds_active(tenant_id):
+        raise ValueError("Questionnaire médical indisponible sans HDS.")
 
     raw_token = secrets.token_urlsafe(32)
     token_hash = _hash_token(raw_token)
@@ -703,7 +820,7 @@ def submit_questionnaire_response(
     if not template:
         raise ValueError("Template introuvable.")
 
-    hds = is_hds_active(tenant_id)
+    hds = _hds_active(tenant_id)
     clean = validate_answers_against_template(
         template, answers, hds_active=hds, has_uploads=has_uploads
     )
@@ -818,6 +935,20 @@ def submit_questionnaire_response(
         )
 
     invalidate_patient_summary(tenant_id, phone)
+
+    try:
+        from backend.patient_access_audit import log_patient_access
+
+        log_patient_access(
+            tenant_id=tenant_id,
+            actor_user_id="patient",
+            action="patient_submit_questionnaire",
+            patient_phone=phone,
+            resource="questionnaire_v2_public",
+        )
+    except Exception:
+        logger.debug("patient_submit_questionnaire audit failed", exc_info=True)
+
     return {
         "response_id": response_id,
         "is_health": is_health,
@@ -926,8 +1057,10 @@ def get_questionnaire_response(tenant_id: int, response_id: str) -> Dict[str, An
 
     template = get_template(tenant_id, str(row.get("template_id") or "")) or ensure_default_admin_template(tenant_id)
     answers = _json_load(row.get("answers_json"), {})
+    phone = normalize_patient_phone(row.get("patient_phone") or "")
     return {
         "id": str(row.get("id") or response_id),
+        "patient_phone": phone,
         "request_id": str(row.get("questionnaire_request_id") or ""),
         "request_status": row.get("request_status") or "",
         "sent_to_email": row.get("sent_to_email") or "",
@@ -998,7 +1131,7 @@ def public_questionnaire_payload(raw_token: str) -> Dict[str, Any]:
     phone = normalize_patient_phone(req["patient_phone"])
     profile = get_cabinet_client_by_phone(tenant_id, phone) or {}
     template = get_template(tenant_id, str(req.get("template_id") or "")) or ensure_default_admin_template(tenant_id)
-    hds = is_hds_active(tenant_id)
+    hds = _hds_active(tenant_id)
     prefill = prefill_public_answers(profile, phone)
     return {
         "tenant_id": tenant_id,
