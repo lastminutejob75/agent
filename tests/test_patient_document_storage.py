@@ -160,3 +160,97 @@ def test_delete_patient_v2_data_purges_local_files(tmp_path, monkeypatch):
         assert row["c"] == 0
     finally:
         conn.close()
+
+
+def test_delete_patient_document_v2_purges_local_file(tmp_path, monkeypatch):
+    from backend.db import upsert_cabinet_client
+    from backend.patient_v2_db import (
+        delete_patient_document_v2,
+        ensure_patient_v2_schema,
+        get_patient_document_v2,
+        insert_patient_document_v2,
+    )
+
+    monkeypatch.delenv("S3_BUCKET", raising=False)
+    monkeypatch.setattr(storage, "UPLOAD_ROOT", str(tmp_path))
+    ensure_patient_v2_schema()
+
+    tenant_id = 1
+    phone = "+33688887777"
+    upsert_cabinet_client(tenant_id, phone, raw_name="Doc Delete")
+    key, _ = storage.save_questionnaire_upload(
+        tenant_id,
+        phone,
+        "req-one",
+        b"to-delete",
+        "radio.pdf",
+        "application/pdf",
+    )
+    doc = insert_patient_document_v2(
+        tenant_id,
+        phone,
+        questionnaire_request_id="req-one",
+        filename="radio.pdf",
+        storage_key=key,
+    )
+    doc_id = doc["id"]
+    assert storage.document_exists(key)
+    assert get_patient_document_v2(tenant_id, doc_id) is not None
+
+    assert delete_patient_document_v2(tenant_id, doc_id, patient_phone=phone) is True
+    assert storage.document_exists(key) is False
+    assert get_patient_document_v2(tenant_id, doc_id) is None
+    assert delete_patient_document_v2(tenant_id, doc_id) is False
+
+
+def test_delete_questionnaire_v2_document_api(tmp_path, monkeypatch):
+    from backend.main import app
+    from backend.patient_v2_db import ensure_patient_v2_schema, insert_patient_document_v2
+    from backend.routes import tenant as tenant_routes
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("UWI_HDS_ENABLED", "true")
+    monkeypatch.delenv("S3_BUCKET", raising=False)
+    monkeypatch.setattr(storage, "UPLOAD_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        "backend.routes.patient_context._tenant_detail",
+        lambda _tid: {"params": {"hds_enabled": True}},
+    )
+    ensure_patient_v2_schema()
+
+    tenant_id = 1
+    phone = "+33666665555"
+    from backend.db import upsert_cabinet_client
+
+    upsert_cabinet_client(tenant_id, phone, raw_name="Api Del")
+    key, _ = storage.save_questionnaire_upload(
+        tenant_id,
+        phone,
+        "req-api",
+        b"api-del",
+        "scan.pdf",
+        "application/pdf",
+    )
+    doc = insert_patient_document_v2(
+        tenant_id,
+        phone,
+        questionnaire_request_id="req-api",
+        filename="scan.pdf",
+        storage_key=key,
+        is_health=True,
+    )
+
+    app.dependency_overrides[tenant_routes.require_tenant_auth] = lambda: {
+        "tenant_id": tenant_id,
+        "sub": "1",
+        "role": "owner",
+        "email": "owner@test.fr",
+    }
+    try:
+        client = TestClient(app)
+        r = client.delete(f"/api/tenant/questionnaires-v2/documents/{doc['id']}")
+        assert r.status_code == 200
+        assert r.json().get("ok") is True
+        assert storage.document_exists(key) is False
+    finally:
+        app.dependency_overrides.pop(tenant_routes.require_tenant_auth, None)

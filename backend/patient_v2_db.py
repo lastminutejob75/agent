@@ -481,6 +481,70 @@ def get_patient_document_v2(tenant_id: int, doc_id: str) -> Optional[Dict[str, A
         conn.close()
 
 
+def delete_patient_document_v2(tenant_id: int, doc_id: str, *, patient_phone: Optional[str] = None) -> bool:
+    """Supprime un document V2 (+ fichier S3/disque). Anti-IDOR si patient_phone fourni."""
+    doc = get_patient_document_v2(tenant_id, doc_id)
+    if not doc:
+        return False
+
+    phone = normalize_patient_phone(str(doc.get("patient_phone") or ""))
+    if patient_phone and normalize_patient_phone(patient_phone) != phone:
+        return False
+
+    storage_key = str(doc.get("storage_key") or "")
+    deleted_db = False
+
+    conn = get_conn()
+    try:
+        if patient_phone:
+            cur = conn.execute(
+                """
+                DELETE FROM patient_documents_v2
+                WHERE tenant_id = ? AND id = ? AND patient_phone = ?
+                """,
+                (tenant_id, doc_id, phone),
+            )
+        else:
+            cur = conn.execute(
+                "DELETE FROM patient_documents_v2 WHERE tenant_id = ? AND id = ?",
+                (tenant_id, doc_id),
+            )
+        conn.commit()
+        deleted_db = cur.rowcount > 0
+    finally:
+        conn.close()
+
+    if pg_available():
+        if patient_phone:
+            exec_pg(
+                """
+                DELETE FROM patient_documents_v2
+                WHERE tenant_id = %s AND id = %s::uuid AND patient_phone = %s
+                """,
+                (tenant_id, doc_id, phone),
+            )
+        else:
+            exec_pg(
+                "DELETE FROM patient_documents_v2 WHERE tenant_id = %s AND id = %s::uuid",
+                (tenant_id, doc_id),
+            )
+
+    if deleted_db and storage_key:
+        try:
+            from backend.services.patient_document_storage import delete_storage_object
+
+            delete_storage_object(storage_key)
+        except Exception:
+            logger.warning(
+                "delete_patient_document_v2 storage purge failed tenant=%s doc=%s",
+                tenant_id,
+                doc_id,
+                exc_info=True,
+            )
+
+    return deleted_db
+
+
 def link_documents_to_response(questionnaire_request_id: str, response_id: str) -> None:
     conn = get_conn()
     try:

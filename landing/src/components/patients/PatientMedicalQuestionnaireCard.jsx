@@ -280,7 +280,21 @@ export default function PatientMedicalQuestionnaireCard({
                           </li>
                         ))}
                       </ul>
-                      <QuestionnaireV2DocumentsList documents={viewResponse.documents} />
+                      <QuestionnaireV2DocumentsList
+                        documents={viewResponse.documents}
+                        allowDelete
+                        notify={notifyFn}
+                        onDocumentDeleted={(docId) =>
+                          setViewResponse((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  documents: (prev.documents || []).filter((d) => String(d.id) !== String(docId)),
+                                }
+                              : prev,
+                          )
+                        }
+                      />
                     </>
                   )}
                 </div>

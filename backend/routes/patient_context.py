@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 from backend.db import get_cabinet_client_by_phone, get_conn
-from backend.patient_v2_db import get_patient_document_v2
+from backend.patient_v2_db import delete_patient_document_v2, get_patient_document_v2
 from backend.questionnaire_v2 import (
     create_questionnaire_request,
     ensure_default_medical_template,
@@ -294,3 +294,35 @@ def tenant_download_questionnaire_v2_document(
 
     filepath = resolve_storage_path(storage_key)
     return FileResponse(filepath, filename=filename, media_type=mime)
+
+
+@router.delete("/questionnaires-v2/documents/{doc_id}")
+def tenant_delete_questionnaire_v2_document(
+    doc_id: str,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Supprime un document joint questionnaire V2 (+ stockage S3/disque)."""
+
+    tenant_id = auth["tenant_id"]
+    doc = get_patient_document_v2(tenant_id, doc_id)
+    if not doc:
+        raise HTTPException(404, "Document introuvable.")
+
+    _require_health_questionnaire_access(
+        auth,
+        tenant_id,
+        str(doc.get("patient_phone") or ""),
+        bool(doc.get("is_health")),
+    )
+
+    if doc.get("is_health"):
+        log_health_access(
+            tenant_id,
+            str(doc.get("patient_phone") or ""),
+            requester_from_auth(auth),
+            action="delete_questionnaire_document",
+        )
+
+    if not delete_patient_document_v2(tenant_id, doc_id):
+        raise HTTPException(404, "Document introuvable.")
+    return {"ok": True}

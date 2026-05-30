@@ -423,6 +423,7 @@ def pg_update_tenant_params(tenant_id: int, params: dict) -> bool:
         "assistant_name", "phone_number", "sector",
         "specialty_label", "address_line1", "postal_code", "city", "agenda_software",
         "client_onboarding_completed",
+        "hds_enabled",
         "faq_json",
         "booking_duration_minutes", "booking_start_hour", "booking_end_hour",
         "booking_buffer_minutes", "booking_days",
@@ -460,6 +461,7 @@ def pg_update_tenant_params(tenant_id: int, params: dict) -> bool:
         "transfer_live_enabled", "transfer_callback_enabled",
         "transfer_always_urgent", "transfer_no_consultation",
         "client_onboarding_completed",
+        "hds_enabled",
     }
     int_keys = {
         "default_appointment_duration_minutes", "minimum_booking_notice_hours",

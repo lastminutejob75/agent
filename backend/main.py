@@ -251,6 +251,8 @@ def _classify_questionnaire_v2_action(method: str, path: str) -> str:
         return "integrate_questionnaire"
     if "/documents/" in p and "/download" in p:
         return "download_doc"
+    if "/documents/" in p and m == "DELETE":
+        return "delete_doc"
     if m == "GET":
         return "view_questionnaire_response"
     return "questionnaire_v2"

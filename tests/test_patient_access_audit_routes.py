@@ -49,3 +49,7 @@ def test_classify_questionnaire_v2_detail_routes():
         "GET",
         "/api/tenant/questionnaires-v2/documents/doc-uuid/download",
     ) == "download_doc"
+    assert _classify_questionnaire_v2_action(
+        "DELETE",
+        "/api/tenant/questionnaires-v2/documents/doc-uuid",
+    ) == "delete_doc"
