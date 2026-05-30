@@ -7,9 +7,11 @@ import os
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from backend.db import get_cabinet_client_by_phone, get_conn
+from backend.patient_v2_db import get_patient_document_v2
 from backend.questionnaire_v2 import (
     create_questionnaire_request,
     ensure_default_medical_template,
@@ -20,6 +22,7 @@ from backend.questionnaire_v2 import (
 from backend.routes.tenant import require_tenant_auth
 from backend.services.patient_summary import get_or_generate_summary, log_health_access
 from backend.services.email_service import send_patient_admin_form_email, send_patient_questionnaire_email
+from backend.services.patient_document_storage import resolve_storage_path
 from backend.tenant_capabilities import get_tenant_capabilities, requester_from_auth
 
 logger = logging.getLogger(__name__)
@@ -224,3 +227,40 @@ def tenant_integrate_questionnaire_response(
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
     return result
+
+
+@router.get("/questionnaires-v2/documents/{doc_id}/download")
+def tenant_download_questionnaire_v2_document(
+    doc_id: str,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Télécharge un document joint à un questionnaire V2 (HDS si is_health)."""
+    import os
+
+    tenant_id = auth["tenant_id"]
+    doc = get_patient_document_v2(tenant_id, doc_id)
+    if not doc:
+        raise HTTPException(404, "Document introuvable.")
+
+    _require_health_questionnaire_access(
+        auth,
+        tenant_id,
+        str(doc.get("patient_phone") or ""),
+        bool(doc.get("is_health")),
+    )
+
+    storage_key = str(doc.get("storage_key") or "")
+    filepath = resolve_storage_path(storage_key)
+    if not os.path.isfile(filepath):
+        raise HTTPException(404, "Fichier introuvable sur le serveur.")
+
+    filename = str(doc.get("filename") or "document")
+    mime = str(doc.get("mime_type") or "application/octet-stream")
+    if doc.get("is_health"):
+        log_health_access(
+            tenant_id,
+            str(doc.get("patient_phone") or ""),
+            requester_from_auth(auth),
+            action="download_questionnaire_document",
+        )
+    return FileResponse(filepath, filename=filename, media_type=mime)

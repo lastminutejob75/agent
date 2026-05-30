@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { api } from "../../lib/api";
+import QuestionnaireV2DocumentsList from "./QuestionnaireV2DocumentsList.jsx";
 
 const STATUS_LABEL = {
   sent: "Envoyé · en attente",
@@ -243,16 +244,7 @@ export default function PatientMedicalQuestionnaireCard({
                           </li>
                         ))}
                       </ul>
-                      {Array.isArray(viewResponse.documents) && viewResponse.documents.length > 0 ? (
-                        <div className="mt-4">
-                          <div className="text-xs font-black uppercase tracking-wide text-[#64748B]">Documents joints</div>
-                          <ul className="mt-2 space-y-1 text-sm text-[#334155]">
-                            {viewResponse.documents.map((doc) => (
-                              <li key={doc.id}>📎 {doc.filename}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      ) : null}
+                      <QuestionnaireV2DocumentsList documents={viewResponse.documents} />
                     </>
                   )}
                 </div>

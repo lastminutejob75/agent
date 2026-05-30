@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { api } from "../../lib/api";
+import QuestionnaireV2DocumentsList from "./QuestionnaireV2DocumentsList.jsx";
 
 const STATUS_LABEL = {
   sent: "Envoyé · en attente",
@@ -241,6 +242,7 @@ export default function PatientAdminQuestionnaireCard({
                           </li>
                         ))}
                       </ul>
+                      <QuestionnaireV2DocumentsList documents={viewResponse.documents} />
                     </>
                   )}
                 </div>

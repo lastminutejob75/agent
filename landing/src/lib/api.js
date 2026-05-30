@@ -299,6 +299,8 @@ export const api = {
       method: "POST",
       tenant: true,
     }),
+  tenantDownloadQuestionnaireV2Document: (docId) =>
+    `${(typeof import.meta !== "undefined" && import.meta.env?.VITE_UWI_API_BASE_URL) || ""}/api/tenant/questionnaires-v2/documents/${encodeURIComponent(docId)}/download`,
   publicGetPatientQuestionnaire: (token) =>
     request(`/api/public/patient-questionnaire/${encodeURIComponent(token)}`),
   publicSubmitPatientQuestionnaire: (token, body) =>

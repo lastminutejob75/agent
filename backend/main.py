@@ -249,6 +249,8 @@ def _classify_questionnaire_v2_action(method: str, path: str) -> str:
     p = path or ""
     if "/integrate" in p:
         return "integrate_questionnaire"
+    if "/documents/" in p and "/download" in p:
+        return "download_doc"
     if m == "GET":
         return "view_questionnaire_response"
     return "questionnaire_v2"

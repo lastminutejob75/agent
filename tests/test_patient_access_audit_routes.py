@@ -45,3 +45,7 @@ def test_classify_questionnaire_v2_detail_routes():
         "POST",
         "/api/tenant/questionnaires-v2/abc-123/integrate",
     ) == "integrate_questionnaire"
+    assert _classify_questionnaire_v2_action(
+        "GET",
+        "/api/tenant/questionnaires-v2/documents/doc-uuid/download",
+    ) == "download_doc"

@@ -413,6 +413,34 @@ def list_documents_for_response(response_id: str) -> List[Dict[str, Any]]:
         conn.close()
 
 
+def get_patient_document_v2(tenant_id: int, doc_id: str) -> Optional[Dict[str, Any]]:
+    row = fetch_one_pg(
+        """
+        SELECT id, tenant_id, patient_phone, filename, storage_key, mime_type, is_health,
+               questionnaire_response_id, questionnaire_request_id
+        FROM patient_documents_v2
+        WHERE tenant_id = %s AND id = %s::uuid
+        """,
+        (tenant_id, doc_id),
+    )
+    if row:
+        return dict(row)
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            """
+            SELECT id, tenant_id, patient_phone, filename, storage_key, mime_type, is_health,
+                   questionnaire_response_id, questionnaire_request_id
+            FROM patient_documents_v2
+            WHERE tenant_id = ? AND id = ?
+            """,
+            (tenant_id, doc_id),
+        ).fetchone()
+        return dict(cur) if cur else None
+    finally:
+        conn.close()
+
+
 def link_documents_to_response(questionnaire_request_id: str, response_id: str) -> None:
     conn = get_conn()
     try:
