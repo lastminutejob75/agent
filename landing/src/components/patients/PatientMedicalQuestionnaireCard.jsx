@@ -36,6 +36,8 @@ export default function PatientMedicalQuestionnaireCard({
   const [lastLink, setLastLink] = useState("");
   const [viewResponse, setViewResponse] = useState(null);
   const [viewLoading, setViewLoading] = useState(false);
+  const [hdsEnabled, setHdsEnabled] = useState(null);
+  const [capsLoading, setCapsLoading] = useState(true);
 
   const notifyFn = useCallback(
     (msg, opts) => {
@@ -61,8 +63,34 @@ export default function PatientMedicalQuestionnaireCard({
     void load();
   }, [load, summaryRefreshNonce]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setCapsLoading(true);
+    void api
+      .tenantGetCapabilities()
+      .then((res) => {
+        if (!cancelled) setHdsEnabled(Boolean(res?.hds_enabled));
+      })
+      .catch(() => {
+        if (!cancelled) setHdsEnabled(false);
+      })
+      .finally(() => {
+        if (!cancelled) setCapsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const hdsBlocked = hdsEnabled === false;
+  const cardDisabled = disabled || hdsBlocked;
+
   const handleSend = async () => {
     if (!phone) return;
+    if (hdsBlocked) {
+      notifyFn("Questionnaire médical indisponible : activez l’HDS pour ce cabinet.", { sticky: true });
+      return;
+    }
     if (!patientEmail) {
       notifyFn("Ajoutez d'abord l'email du patient.", { sticky: true });
       return;
@@ -140,11 +168,18 @@ export default function PatientMedicalQuestionnaireCard({
         </div>
       </div>
 
+      {!capsLoading && hdsBlocked ? (
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-sm text-amber-950">
+          <strong className="font-black">HDS requis.</strong> Les questionnaires médicaux et pièces jointes ne sont
+          disponibles qu’avec l’hébergement de données de santé activé pour votre cabinet.
+        </div>
+      ) : null}
+
       <div className="mt-4 flex flex-wrap gap-2">
         <button
           type="button"
           onClick={handleSend}
-          disabled={disabled || !phone || sending || !patientEmail}
+          disabled={cardDisabled || !phone || sending || !patientEmail || capsLoading}
           className="rounded-[14px] bg-[#0B1628] px-3.5 py-2.5 text-xs font-black text-white hover:bg-[#1E293B] disabled:opacity-60"
         >
           {sending ? "Envoi…" : "Envoyer le questionnaire médical"}
@@ -188,8 +223,9 @@ export default function PatientMedicalQuestionnaireCard({
                       {rid ? (
                         <button
                           type="button"
+                          disabled={hdsBlocked}
                           onClick={() => void openResponse(String(rid))}
-                          className="rounded-lg border border-[#B6C3D7] px-2.5 py-1 text-xs font-black text-[#475569] hover:bg-white"
+                          className="rounded-lg border border-[#B6C3D7] px-2.5 py-1 text-xs font-black text-[#475569] hover:bg-white disabled:opacity-50"
                         >
                           Voir les réponses
                         </button>

@@ -23,7 +23,7 @@ from backend.questionnaire_v2 import (
     validate_template_fields,
     _questionnaire_ai_summary,
 )
-from backend.services.context_providers import build_context_pack
+from backend.services.context_providers import SanteProvider, build_context_pack
 from backend.services.patient_summary import _inputs_hash, get_or_generate_summary
 from backend.tenant_capabilities import RequesterContext
 
@@ -269,3 +269,121 @@ def test_summary_cache_and_context_pack():
     assert "sections_json" in summary
     cached = get_or_generate_summary(conn, tenant_id, phone, set(), requester)
     assert cached.get("from_cache") is True
+
+
+def test_sante_provider_mvp_and_v2_health(monkeypatch):
+    monkeypatch.setenv("UWI_HDS_ENABLED", "true")
+    tenant_id = 1
+    phone = "+33655556666"
+    from backend.db import get_conn, upsert_cabinet_client
+    from backend.patient_questionnaire import save_questionnaire
+
+    upsert_cabinet_client(tenant_id, phone, raw_name="Jean")
+    save_questionnaire(
+        tenant_id,
+        phone,
+        answers={
+            "medical_history": "Appendicectomie 2010",
+            "current_treatments": "Paracétamol si besoin",
+            "allergies": "Pénicilline",
+            "main_reason": "Suivi annuel",
+        },
+        status="completed",
+        filled_by="patient",
+        mark_completed=True,
+    )
+
+    def _fake_tenant(_tid):
+        return {"params": {"hds_enabled": True}}
+
+    monkeypatch.setattr("backend.questionnaire_v2._tenant_detail", _fake_tenant)
+    tpl = ensure_default_medical_template(tenant_id)
+    _, raw_token = create_questionnaire_request(
+        tenant_id,
+        phone,
+        template_id=tpl["id"],
+        sent_to_email="jean@example.com",
+    )
+    submit_questionnaire_response(
+        raw_token,
+        {"consentement": True, "allergies": "Pénicilline"},
+        consent_given=True,
+    )
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            UPDATE questionnaire_responses
+            SET ai_summary = 'Résumé clinique V2 test'
+            WHERE tenant_id = ? AND patient_phone = ?
+            """,
+            (tenant_id, phone),
+        )
+        conn.commit()
+        provider = SanteProvider()
+        data, exposes_health = provider.fetch(conn, tenant_id, phone, hds_active=True)
+    finally:
+        conn.close()
+
+    assert exposes_health is True
+    assert "Appendicectomie 2010" in data["antecedents"][0]
+    assert data["allergies"] == "Pénicilline"
+    assert any("Résumé clinique V2" in n for n in data["notes_cliniques"])
+
+
+def test_build_context_pack_includes_sante_with_hds(monkeypatch):
+    monkeypatch.setenv("UWI_HDS_ENABLED", "true")
+    tenant_id = 1
+    phone = "+33677778888"
+    from backend.db import get_conn, upsert_cabinet_client
+    from backend.patient_questionnaire import save_questionnaire
+
+    upsert_cabinet_client(tenant_id, phone, raw_name="Luc")
+    save_questionnaire(
+        tenant_id,
+        phone,
+        answers={"allergies": "Latex"},
+        status="completed",
+        filled_by="patient",
+        mark_completed=True,
+    )
+    conn = get_conn()
+    try:
+        pack, contains_health = build_context_pack(conn, tenant_id, phone, {"hds_enabled"})
+    finally:
+        conn.close()
+    assert contains_health is True
+    assert "SanteProvider" in pack
+    assert pack["SanteProvider"]["allergies"] == "Latex"
+
+
+def test_tenant_capabilities_endpoint(monkeypatch):
+    monkeypatch.setenv("UWI_HDS_ENABLED", "true")
+    monkeypatch.delenv("S3_BUCKET", raising=False)
+
+    def _fake_tenant(_tid):
+        return {"params": {"hds_enabled": True}}
+
+    monkeypatch.setattr("backend.routes.patient_context._tenant_detail", _fake_tenant)
+
+    from backend.main import app
+    from backend.routes import tenant as tenant_routes
+    from fastapi.testclient import TestClient
+
+    app.dependency_overrides[tenant_routes.require_tenant_auth] = lambda: {
+        "tenant_id": 1,
+        "sub": "1",
+        "role": "owner",
+        "email": "owner@test.fr",
+    }
+    try:
+        client = TestClient(app)
+        r = client.get("/api/tenant/capabilities")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["ok"] is True
+        assert body["hds_enabled"] is True
+        assert body["document_storage_backend"] == "local"
+        assert body["document_storage_configured"] is False
+    finally:
+        app.dependency_overrides.pop(tenant_routes.require_tenant_auth, None)

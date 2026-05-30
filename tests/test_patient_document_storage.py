@@ -98,3 +98,65 @@ def test_rejects_oversized_file(monkeypatch, tmp_path):
     big = b"x" * (storage.MAX_UPLOAD_BYTES + 1)
     with pytest.raises(ValueError, match="10 Mo"):
         storage.save_questionnaire_upload(1, "+336", "r", big, "a.pdf", "application/pdf")
+
+
+def test_delete_storage_object_local(tmp_path, monkeypatch):
+    monkeypatch.delenv("S3_BUCKET", raising=False)
+    monkeypatch.setattr(storage, "UPLOAD_ROOT", str(tmp_path))
+
+    key, _ = storage.save_questionnaire_upload(
+        1,
+        "+33611111111",
+        "req-del",
+        b"purge-me",
+        "note.pdf",
+        "application/pdf",
+    )
+    assert storage.document_exists(key)
+    assert storage.delete_storage_object(key) is True
+    assert storage.document_exists(key) is False
+    assert storage.delete_storage_object(key) is False
+
+
+def test_delete_patient_v2_data_purges_local_files(tmp_path, monkeypatch):
+    from backend.db import upsert_cabinet_client
+    from backend.patient_v2_db import delete_patient_v2_data, ensure_patient_v2_schema, insert_patient_document_v2
+
+    monkeypatch.delenv("S3_BUCKET", raising=False)
+    monkeypatch.setattr(storage, "UPLOAD_ROOT", str(tmp_path))
+    ensure_patient_v2_schema()
+
+    tenant_id = 1
+    phone = "+33699998888"
+    upsert_cabinet_client(tenant_id, phone, raw_name="Purge Test")
+    key, _ = storage.save_questionnaire_upload(
+        tenant_id,
+        phone,
+        "req-rgpd",
+        b"secret-doc",
+        "ordonnance.pdf",
+        "application/pdf",
+    )
+    insert_patient_document_v2(
+        tenant_id,
+        phone,
+        questionnaire_request_id="req-rgpd",
+        filename="ordonnance.pdf",
+        storage_key=key,
+    )
+    assert storage.document_exists(key)
+
+    delete_patient_v2_data(tenant_id, phone)
+
+    assert storage.document_exists(key) is False
+    from backend.db import get_conn
+
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM patient_documents_v2 WHERE tenant_id = ? AND patient_phone = ?",
+            (tenant_id, phone),
+        ).fetchone()
+        assert row["c"] == 0
+    finally:
+        conn.close()

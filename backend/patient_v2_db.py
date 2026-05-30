@@ -229,10 +229,37 @@ def exec_pg(sql: str, params: tuple) -> None:
         logger.debug("exec_pg failed", exc_info=True)
 
 
+def list_patient_document_storage_keys(tenant_id: int, patient_phone: str) -> List[str]:
+    """Liste les clés de stockage avant suppression RGPD."""
+    phone = normalize_patient_phone(patient_phone)
+    rows = fetch_all_pg(
+        """
+        SELECT storage_key FROM patient_documents_v2
+        WHERE tenant_id = %s AND patient_phone = %s AND storage_key IS NOT NULL
+        """,
+        (tenant_id, phone),
+    )
+    if rows:
+        return [str(r.get("storage_key") or "") for r in rows if r.get("storage_key")]
+    conn = get_conn()
+    try:
+        raw = conn.execute(
+            """
+            SELECT storage_key FROM patient_documents_v2
+            WHERE tenant_id = ? AND patient_phone = ? AND storage_key IS NOT NULL
+            """,
+            (tenant_id, phone),
+        ).fetchall()
+        return [str(r["storage_key"]) for r in raw if dict(r).get("storage_key")]
+    finally:
+        conn.close()
+
+
 def delete_patient_v2_data(tenant_id: int, patient_phone: str) -> None:
-    """Cascade RGPD : supprime toutes les données V2 d'un patient."""
+    """Cascade RGPD : supprime toutes les données V2 d'un patient (+ fichiers stockés)."""
     phone = normalize_patient_phone(patient_phone)
     ensure_patient_v2_schema()
+    storage_keys = list_patient_document_storage_keys(tenant_id, phone)
     conn = get_conn()
     try:
         for table in (
@@ -263,6 +290,19 @@ def delete_patient_v2_data(tenant_id: int, patient_phone: str) -> None:
             """,
             (tenant_id, phone) * 6,
         )
+
+    if storage_keys:
+        try:
+            from backend.services.patient_document_storage import delete_storage_keys
+
+            delete_storage_keys(storage_keys)
+        except Exception:
+            logger.warning(
+                "delete_patient_v2_data storage purge failed tenant=%s phone=%s",
+                tenant_id,
+                phone[-4:],
+                exc_info=True,
+            )
 
 
 def insert_patient_document_v2(

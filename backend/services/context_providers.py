@@ -269,16 +269,51 @@ def _fetch_pending_questionnaires(db, tenant_id: int, patient_phone: str) -> Lis
 
 
 class SanteProvider(ContextProvider):
-    """STUB — activé uniquement avec HDS."""
+    """Données cliniques MVP + questionnaires V2 santé (HDS requis)."""
 
     capability = "hds_enabled"
     is_health_data = True
 
     def fetch(self, db, tenant_id, patient_phone, *, hds_active):
+        from backend.patient_questionnaire import get_questionnaire
+
+        q = get_questionnaire(tenant_id, patient_phone)
+        answers = q.get("answers") or {}
+        antecedents: List[str] = []
+        traitements: List[str] = []
+        notes_cliniques: List[str] = []
+
+        hist = str(answers.get("medical_history") or "").strip()
+        if hist:
+            antecedents.append(hist[:500])
+        treat = str(answers.get("current_treatments") or "").strip()
+        if treat:
+            traitements.append(treat[:500])
+        allergies = str(answers.get("allergies") or "").strip()
+        if allergies:
+            notes_cliniques.append(f"Allergies : {allergies[:300]}")
+        motif = str(answers.get("main_reason") or "").strip()
+        if motif:
+            notes_cliniques.append(f"Motif : {motif[:300]}")
+        emergency = str(answers.get("emergency_contact") or "").strip()
+        if emergency:
+            notes_cliniques.append(f"Contact urgence : {emergency[:120]}")
+
+        health_rows = [
+            r for r in _fetch_questionnaire_responses(db, tenant_id, patient_phone, limit=3)
+            if r.get("is_health")
+        ]
+        for row in health_rows:
+            summary = str(row.get("ai_summary") or "").strip()
+            if summary:
+                notes_cliniques.append(summary[:400])
+
         return {
-            "antecedents": [],
-            "traitements_en_cours": [],
-            "notes_cliniques": [],
+            "antecedents": antecedents[:3],
+            "traitements_en_cours": traitements[:3],
+            "allergies": allergies[:300],
+            "notes_cliniques": notes_cliniques[:6],
+            "questionnaire_mvp_status": q.get("status") or "",
         }, True
 
 

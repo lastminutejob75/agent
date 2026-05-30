@@ -73,6 +73,22 @@ def _require_health_questionnaire_access(auth: dict, tenant_id: int, phone: str,
     log_health_access(tenant_id, phone, requester, action="view_questionnaire_health")
 
 
+@router.get("/capabilities")
+def tenant_get_capabilities(auth: dict = Depends(require_tenant_auth)):
+    """Capabilities tenant (HDS, stockage documents) pour l'UI praticien."""
+    tenant_id = auth["tenant_id"]
+    detail = _tenant_detail(tenant_id)
+    caps = get_tenant_capabilities(tenant_id, detail)
+    from backend.services.patient_document_storage import storage_backend_label, use_s3_storage
+
+    return {
+        "ok": True,
+        "hds_enabled": "hds_enabled" in caps,
+        "document_storage_backend": storage_backend_label(),
+        "document_storage_configured": use_s3_storage(),
+    }
+
+
 @router.get("/patients/{phone}/summary")
 def tenant_get_patient_summary(
     phone: str,

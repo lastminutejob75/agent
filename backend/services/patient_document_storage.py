@@ -232,6 +232,38 @@ def read_document(storage_key: str) -> bytes:
         return f.read()
 
 
+def delete_storage_object(storage_key: str) -> bool:
+    """Supprime un objet (S3-compatible ou disque). Retourne True si supprimé ou déjà absent."""
+    if not storage_key:
+        return False
+    if use_s3_storage():
+        client = _s3_client()
+        try:
+            client.delete_object(Bucket=s3_bucket(), Key=_object_key(storage_key))
+            return True
+        except Exception:
+            logger.warning("delete_storage_object s3 failed key=%s", storage_key, exc_info=True)
+            return False
+    filepath = resolve_storage_path(storage_key)
+    if os.path.isfile(filepath):
+        try:
+            os.remove(filepath)
+            return True
+        except OSError:
+            logger.warning("delete_storage_object local failed path=%s", filepath, exc_info=True)
+            return False
+    return False
+
+
+def delete_storage_keys(storage_keys: list) -> int:
+    """Suppression best-effort (RGPD). Retourne le nombre de suppressions réussies."""
+    deleted = 0
+    for key in storage_keys or []:
+        if delete_storage_object(str(key or "")):
+            deleted += 1
+    return deleted
+
+
 def content_disposition_attachment(filename: str) -> str:
     name = (filename or "document").replace('"', "")
     encoded = quote(name)
