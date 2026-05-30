@@ -11,10 +11,15 @@ from backend.questionnaire_v2 import (
     create_questionnaire_request,
     default_admin_template,
     ensure_default_admin_template,
+    expire_stale_questionnaire_requests,
+    get_questionnaire_response,
+    integrate_response,
+    prefill_public_answers,
     public_questionnaire_payload,
     submit_questionnaire_response,
     validate_answers_against_template,
     validate_template_fields,
+    _questionnaire_ai_summary,
 )
 from backend.services.context_providers import build_context_pack
 from backend.services.patient_summary import _inputs_hash, get_or_generate_summary
@@ -54,12 +59,118 @@ def test_validate_admin_answers_ok():
         {
             "type_demande": ADMIN_TYPE_DEMANDE_OPTIONS[0],
             "deja_patient": True,
+            "confirm_email": "patient@example.com",
+            "disponibilites": "matin",
             "consentement": True,
         },
         hds_active=False,
     )
     assert answers["type_demande"] == "premiere_consultation"
     assert answers["deja_patient"] is True
+    assert answers["confirm_email"] == "patient@example.com"
+    assert answers["disponibilites"] == "matin"
+
+
+def test_prefill_public_answers_from_profile():
+    profile = {
+        "email": "marie@example.com",
+        "treating_physician_name": "Dr Curie",
+    }
+    out = prefill_public_answers(profile, "+33698765432")
+    assert out["confirm_email"] == "marie@example.com"
+    assert out["confirm_phone"] == "+33698765432"
+    assert out["medecin_traitant"] == "Dr Curie"
+
+
+def test_questionnaire_ai_summary_fallback_without_api_key(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    tpl = default_admin_template()
+    summary = _questionnaire_ai_summary(
+        tpl,
+        {"type_demande": "suivi", "deja_patient": True, "consentement": True},
+        is_health=False,
+    )
+    assert "Suivi" in summary or "suivi" in summary.lower()
+
+
+def test_get_response_and_integrate_updates_profile(monkeypatch):
+    monkeypatch.setenv("UWI_HDS_ENABLED", "false")
+    tenant_id = 1
+    phone = "+33611112222"
+    from backend.db import upsert_cabinet_client, update_patient_fields, get_cabinet_client_by_phone
+
+    upsert_cabinet_client(tenant_id, phone, raw_name="Paul")
+    update_patient_fields(tenant_id, phone, email="old@example.com")
+    tpl = ensure_default_admin_template(tenant_id)
+    _, raw_token = create_questionnaire_request(
+        tenant_id,
+        phone,
+        template_id=tpl["id"],
+        sent_to_email="old@example.com",
+    )
+    result = submit_questionnaire_response(
+        raw_token,
+        {
+            "type_demande": "renouvellement",
+            "deja_patient": True,
+            "confirm_email": "new@example.com",
+            "medecin_traitant": "Dr House",
+            "consentement": True,
+        },
+        consent_given=True,
+    )
+    response_id = result["response_id"]
+    detail = get_questionnaire_response(tenant_id, response_id)
+    assert detail["answers"]["confirm_email"] == "new@example.com"
+    assert any(a["field_id"] == "type_demande" for a in detail["answers_display"])
+
+    integrate_response(tenant_id, response_id)
+    profile = get_cabinet_client_by_phone(tenant_id, phone)
+    assert profile.get("email") == "new@example.com"
+    assert profile.get("treating_physician_name") == "Dr House"
+
+
+def test_expire_stale_questionnaire_requests(tmp_path, monkeypatch):
+    monkeypatch.setattr("backend.db.DB_PATH", str(tmp_path / "expire.db"))
+    monkeypatch.setattr("backend.db._pg_events_url", lambda: None)
+    ensure_patient_v2_schema()
+    tenant_id = 1
+    phone = "+33633334444"
+    from backend.db import get_conn, upsert_cabinet_client
+
+    upsert_cabinet_client(tenant_id, phone, raw_name="Exp")
+    tpl = ensure_default_admin_template(tenant_id)
+    req, _ = create_questionnaire_request(
+        tenant_id,
+        phone,
+        template_id=tpl["id"],
+        sent_to_email="exp@example.com",
+    )
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            UPDATE questionnaire_requests
+            SET expires_at = datetime('now', '-1 day'), status = 'sent', token_used = 0
+            WHERE id = ?
+            """,
+            (req["id"],),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    count = expire_stale_questionnaire_requests()
+    assert count >= 1
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT status FROM questionnaire_requests WHERE id = ?",
+            (req["id"],),
+        ).fetchone()
+        assert row["status"] == "expired"
+    finally:
+        conn.close()
 
 
 def test_submit_admin_questionnaire_flow(monkeypatch):

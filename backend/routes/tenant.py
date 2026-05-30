@@ -3927,6 +3927,13 @@ def tenant_confirm_delete_patient(
     if not deleted_profile:
         raise HTTPException(500, "Suppression impossible (fiche non supprimée).")
 
+    try:
+        from backend.patient_v2_db import delete_patient_v2_data
+
+        delete_patient_v2_data(tenant_id, phone_norm)
+    except Exception:
+        logger.warning("delete_patient_v2_data failed tenant=%s", tenant_id, exc_info=True)
+
     logger.info(
         "tenant_delete_patient_confirmed tenant=%s phone=%s notes=%s docs=%s",
         tenant_id,

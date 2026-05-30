@@ -12,12 +12,13 @@ from pydantic import BaseModel, Field
 from backend.db import get_cabinet_client_by_phone, get_conn
 from backend.questionnaire_v2 import (
     create_questionnaire_request,
+    get_questionnaire_response,
     integrate_response,
     list_patient_questionnaire_requests,
 )
 from backend.routes.tenant import require_tenant_auth
 from backend.services.patient_summary import get_or_generate_summary
-from backend.services.email_service import send_patient_questionnaire_email
+from backend.services.email_service import send_patient_admin_form_email
 from backend.tenant_capabilities import get_tenant_capabilities, requester_from_auth
 
 logger = logging.getLogger(__name__)
@@ -122,7 +123,7 @@ def tenant_create_questionnaire_request(
         try:
             cabinet_name = str(_tenant_detail(tenant_id).get("name") or "Votre cabinet")
             patient_name = profile.get("display_name") or profile.get("validated_name") or "Patient"
-            send_patient_questionnaire_email(
+            send_patient_admin_form_email(
                 to_email=email,
                 patient_name=patient_name,
                 cabinet_name=cabinet_name,
@@ -150,6 +151,19 @@ def tenant_list_questionnaire_requests(
         raise HTTPException(404, "Fiche patient introuvable.")
     items = list_patient_questionnaire_requests(tenant_id, phone)
     return {"ok": True, "requests": items}
+
+
+@router.get("/questionnaires-v2/{response_id}")
+def tenant_get_questionnaire_response(
+    response_id: str,
+    auth: dict = Depends(require_tenant_auth),
+):
+    tenant_id = auth["tenant_id"]
+    try:
+        response = get_questionnaire_response(tenant_id, response_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e)) from e
+    return {"ok": True, "response": response}
 
 
 @router.post("/questionnaires-v2/{response_id}/integrate")

@@ -31,6 +31,7 @@ import {
 } from "../lib/patientProfileMeta.js";
 import PatientDuplicateBanner from "../components/patients/PatientDuplicateBanner.jsx";
 import PatientQuestionnaireCard from "../components/patients/PatientQuestionnaireCard.jsx";
+import PatientAdminQuestionnaireCard from "../components/patients/PatientAdminQuestionnaireCard.jsx";
 import PatientContextSummary from "../components/patients/PatientContextSummary.jsx";
 import {
   checkPatientDuplicates,
@@ -2889,13 +2890,25 @@ export default function PatientDashboardPage() {
                   patientEmail={patientEmail}
                   profile={patientCabinetRow}
                   notify={notify}
-                  summaryRefreshNonce={summaryRefreshNonce}
                   onApplied={() => {
                     setPatientFetchNonce((n) => n + 1);
                     setSummaryRefreshNonce((n) => n + 1);
                   }}
                   disabled={tenantPatientNotFound}
                 />
+                <div className="mt-4">
+                  <PatientAdminQuestionnaireCard
+                    phone={tenantPatientPhone}
+                    patientEmail={patientEmail}
+                    notify={notify}
+                    summaryRefreshNonce={summaryRefreshNonce}
+                    onApplied={() => {
+                      setPatientFetchNonce((n) => n + 1);
+                      setSummaryRefreshNonce((n) => n + 1);
+                    }}
+                    disabled={tenantPatientNotFound}
+                  />
+                </div>
               </div>
             </div>
           )}

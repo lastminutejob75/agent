@@ -9,7 +9,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from backend.db import get_cabinet_client_by_phone, get_conn, insert_patient_note
+from backend.db import get_cabinet_client_by_phone, get_conn, insert_patient_note, update_patient_fields
 from backend.patient_v2_db import (
     _json_dump,
     _json_load,
@@ -19,6 +19,7 @@ from backend.patient_v2_db import (
     fetch_all_pg,
     fetch_one_pg,
     normalize_patient_phone,
+    pg_available,
 )
 from backend.services.patient_summary import invalidate_patient_summary
 from backend.tenant_capabilities import is_hds_active
@@ -54,12 +55,36 @@ DEFAULT_ADMIN_TEMPLATE_FIELDS: List[Dict[str, Any]] = [
         "required": True,
     },
     {
+        "field_id": "confirm_email",
+        "label": "Confirmer votre email",
+        "type": "email",
+        "sensitivity": "admin",
+        "required": False,
+        "constrained": True,
+    },
+    {
+        "field_id": "confirm_phone",
+        "label": "Confirmer votre téléphone",
+        "type": "phone",
+        "sensitivity": "admin",
+        "required": False,
+        "constrained": True,
+    },
+    {
         "field_id": "medecin_traitant",
         "label": "Médecin traitant",
         "type": "text",
         "sensitivity": "admin",
         "required": False,
         "constrained": True,
+    },
+    {
+        "field_id": "disponibilites",
+        "label": "Disponibilités préférées",
+        "type": "select",
+        "sensitivity": "admin",
+        "required": False,
+        "options": ["matin", "apres_midi", "fin_de_semaine", "semaine_prochaine", "flexible"],
     },
     {
         "field_id": "besoin_rappel",
@@ -77,6 +102,24 @@ DEFAULT_ADMIN_TEMPLATE_FIELDS: List[Dict[str, Any]] = [
     },
 ]
 
+DISPONIBILITES_LABELS = {
+    "matin": "Matin",
+    "apres_midi": "Après-midi",
+    "fin_de_semaine": "Fin de semaine",
+    "semaine_prochaine": "Semaine prochaine",
+    "flexible": "Flexible",
+}
+
+TYPE_DEMANDE_LABELS = {
+    "premiere_consultation": "Première consultation",
+    "suivi": "Suivi",
+    "renouvellement": "Renouvellement",
+    "recuperation_document": "Récupération de document",
+    "question_administrative": "Question administrative",
+    "deplacement_rdv": "Déplacement de RDV",
+    "autre_administratif": "Autre (administratif)",
+}
+
 
 def default_admin_template() -> Dict[str, Any]:
     return {
@@ -87,6 +130,122 @@ def default_admin_template() -> Dict[str, Any]:
         "is_default": True,
         "is_health": False,
     }
+
+
+def _merge_template_fields(existing: List[Dict[str, Any]], target: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Ajoute les nouveaux champs du template par défaut sans écraser l'existant."""
+    by_id = {str(f.get("field_id") or ""): f for f in existing if f.get("field_id")}
+    merged = list(existing)
+    for field in target:
+        fid = str(field.get("field_id") or "")
+        if fid and fid not in by_id:
+            merged.append(field)
+    return merged
+
+
+def _upgrade_default_template_row(tenant_id: int, row: Dict[str, Any]) -> Dict[str, Any]:
+    sections = _json_load(row.get("sections_json"), [])
+    merged = _merge_template_fields(sections, DEFAULT_ADMIN_TEMPLATE_FIELDS)
+    if merged == sections:
+        return _template_row(row)
+    tpl_id = str(row.get("id") or "")
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            UPDATE questionnaire_templates
+            SET sections_json = ?, updated_at = datetime('now')
+            WHERE tenant_id = ? AND id = ?
+            """,
+            (_json_dump(merged), tenant_id, tpl_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    exec_pg(
+        """
+        UPDATE questionnaire_templates
+        SET sections_json = %s::jsonb, updated_at = now()
+        WHERE tenant_id = %s AND id = %s::uuid
+        """,
+        (_json_dump(merged), tenant_id, tpl_id),
+    )
+    row = dict(row)
+    row["sections_json"] = merged
+    return _template_row(row)
+
+
+def _format_answer_display(field: Dict[str, Any], value: Any) -> str:
+    fid = str(field.get("field_id") or "")
+    if isinstance(value, bool):
+        return "Oui" if value else "Non"
+    raw = str(value or "").strip()
+    if field.get("type") == "select" and fid == "type_demande":
+        return TYPE_DEMANDE_LABELS.get(raw, raw.replace("_", " "))
+    if field.get("type") == "select" and fid == "disponibilites":
+        return DISPONIBILITES_LABELS.get(raw, raw.replace("_", " "))
+    return raw
+
+
+def prefill_public_answers(profile: Dict[str, Any], patient_phone: str) -> Dict[str, Any]:
+    """Pré-remplit le formulaire public depuis la fiche (admin uniquement)."""
+    out: Dict[str, Any] = {}
+    email = str(profile.get("email") or "").strip()
+    if email:
+        out["confirm_email"] = email
+    phone = str(patient_phone or profile.get("phone") or "").strip()
+    if phone:
+        out["confirm_phone"] = phone
+    physician = str(profile.get("treating_physician_name") or "").strip()
+    if physician:
+        out["medecin_traitant"] = physician
+    return out
+
+
+def expire_stale_questionnaire_requests() -> int:
+    """Passe en `expired` les demandes non complétées dont le lien a expiré."""
+    ensure_patient_v2_schema()
+    count = 0
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            """
+            UPDATE questionnaire_requests
+            SET status = 'expired'
+            WHERE status IN ('sent', 'opened', 'started')
+              AND token_used = 0
+              AND expires_at IS NOT NULL
+              AND expires_at < datetime('now')
+            """
+        )
+        count = int(cur.rowcount or 0)
+        conn.commit()
+    finally:
+        conn.close()
+    if pg_available():
+        try:
+            from backend.patient_v2_db import _pg_events_url
+            import psycopg
+
+            url = _pg_events_url()
+            if url:
+                with psycopg.connect(url) as pg:
+                    with pg.cursor() as cur:
+                        cur.execute(
+                            """
+                            UPDATE questionnaire_requests
+                            SET status = 'expired'
+                            WHERE status IN ('sent', 'opened', 'started')
+                              AND token_used = false
+                              AND expires_at IS NOT NULL
+                              AND expires_at < now()
+                            """
+                        )
+                        count = max(count, int(cur.rowcount or 0))
+                    pg.commit()
+        except Exception:
+            logger.debug("expire_stale_questionnaire_requests pg failed", exc_info=True)
+    return count
 
 
 def validate_template_fields(sections_json: List[Dict[str, Any]], *, hds_active: bool) -> None:
@@ -168,7 +327,7 @@ def ensure_default_admin_template(tenant_id: int) -> Dict[str, Any]:
         (tenant_id,),
     )
     if existing:
-        return _template_row(existing)
+        return _upgrade_default_template_row(tenant_id, existing)
     conn = get_conn()
     try:
         row = conn.execute(
@@ -180,7 +339,7 @@ def ensure_default_admin_template(tenant_id: int) -> Dict[str, Any]:
             (tenant_id,),
         ).fetchone()
         if row:
-            return _template_row(dict(row))
+            return _upgrade_default_template_row(tenant_id, dict(row))
     finally:
         conn.close()
 
@@ -448,17 +607,81 @@ def _structured_summary_from_answers(template: Dict[str, Any], answers: dict) ->
     return out
 
 
-def _questionnaire_ai_summary(answers: dict, *, is_health: bool) -> str:
+def _questionnaire_ai_summary(
+    template: Dict[str, Any],
+    answers: dict,
+    *,
+    is_health: bool,
+) -> str:
+    """Résumé factuel de la réponse (LLM Haiku si dispo, sinon liste à puces)."""
+    structured = _structured_summary_from_answers(template, answers)
     lines = []
-    for key, val in answers.items():
-        if val is True or val is False:
-            val = "Oui" if val else "Non"
-        lines.append(f"- {key}: {val}")
-    if not lines:
-        return ""
-    if is_health:
-        return "Éléments transmis (questionnaire médical) :\n" + "\n".join(lines)
-    return "Demande administrative :\n" + "\n".join(lines)
+    for item in structured.values():
+        label = item.get("label") or item.get("field_id") or "Champ"
+        value = item.get("value")
+        if isinstance(value, bool):
+            value = "Oui" if value else "Non"
+        lines.append(f"- {label}: {value}")
+    fallback = ("Demande administrative :\n" if not is_health else "Éléments transmis :\n") + "\n".join(lines)
+
+    api_key = (__import__("os").environ.get("ANTHROPIC_API_KEY") or "").strip()
+    if not api_key or not lines:
+        return fallback.strip()
+
+    system = (
+        "Tu reformules UNIQUEMENT les réponses fournies d'un formulaire administratif patient. "
+        "Ne déduis rien, n'invente rien, pas de diagnostic ni conseil. "
+        "3 phrases maximum, ton neutre, français."
+    )
+    user = "Réponses (source de vérité) :\n" + json.dumps(structured, ensure_ascii=False, default=str)
+    try:
+        import anthropic
+
+        client = anthropic.Anthropic(api_key=api_key)
+        model = "claude-sonnet-4-20250514" if is_health else "claude-haiku-4-5-20251001"
+        resp = client.messages.create(
+            model=model,
+            max_tokens=220,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+        )
+        text = (resp.content[0].text or "").strip()
+        return text or fallback.strip()
+    except Exception:
+        logger.debug("questionnaire ai_summary LLM failed", exc_info=True)
+        return fallback.strip()
+
+
+def _apply_integrated_answers_to_profile(tenant_id: int, phone: str, answers: dict) -> None:
+    """Enrichit la fiche patient depuis une réponse admin intégrée."""
+    if not answers:
+        return
+    email = str(answers.get("confirm_email") or "").strip()
+    physician = str(answers.get("medecin_traitant") or "").strip()
+    kwargs: Dict[str, Any] = {}
+    if email:
+        kwargs["email"] = email
+    if physician:
+        kwargs["treating_physician_name"] = physician
+    if kwargs:
+        update_patient_fields(tenant_id, phone, **kwargs)
+
+
+def _answers_with_labels(template: Dict[str, Any], answers: dict) -> List[Dict[str, Any]]:
+    fields = {str(f.get("field_id") or ""): f for f in (template.get("sections_json") or [])}
+    out: List[Dict[str, Any]] = []
+    for key, value in (answers or {}).items():
+        field = fields.get(str(key)) or {"field_id": key, "label": key, "type": "text"}
+        out.append(
+            {
+                "field_id": str(key),
+                "label": field.get("label") or key,
+                "type": field.get("type") or "text",
+                "value": value,
+                "display_value": _format_answer_display(field, value),
+            }
+        )
+    return out
 
 
 def submit_questionnaire_response(
@@ -490,7 +713,7 @@ def submit_questionnaire_response(
 
     response_id = _new_id()
     structured = _structured_summary_from_answers(template, clean)
-    ai_summary = _questionnaire_ai_summary(clean, is_health=is_health)
+    ai_summary = _questionnaire_ai_summary(template, clean, is_health=is_health)
     now = datetime.now(timezone.utc).isoformat()
 
     conn = get_conn()
@@ -582,11 +805,15 @@ def submit_questionnaire_response(
     )
 
     if not is_health:
-        note_lines = [f"{k}: {v}" for k, v in clean.items()]
+        fields_by_id = {str(f.get("field_id") or ""): f for f in (template.get("sections_json") or [])}
+        note_lines = []
+        for key, val in clean.items():
+            field = fields_by_id.get(key) or {"field_id": key, "label": key}
+            note_lines.append(f"{field.get('label') or key}: {_format_answer_display(field, val)}")
         insert_patient_note(
             tenant_id,
             phone,
-            note_text=f"Questionnaire administratif complété\n" + "\n".join(note_lines),
+            note_text="Formulaire administratif complété\n" + "\n".join(note_lines),
             author="Questionnaire patient",
         )
 
@@ -629,6 +856,19 @@ def integrate_response(tenant_id: int, response_id: str) -> Dict[str, Any]:
 
     req_id = row.get("questionnaire_request_id")
     phone = normalize_patient_phone(row.get("patient_phone") or "")
+    template = get_template(tenant_id, str(row.get("template_id") or "")) or ensure_default_admin_template(tenant_id)
+    answers = _json_load(row.get("answers_json"), {})
+    _apply_integrated_answers_to_profile(tenant_id, phone, answers)
+
+    summary = str(row.get("ai_summary") or "").strip()
+    if summary:
+        insert_patient_note(
+            tenant_id,
+            phone,
+            note_text=f"Formulaire administratif intégré\n{summary}",
+            author="Questionnaire patient",
+        )
+
     now = datetime.now(timezone.utc).isoformat()
     conn = get_conn()
     try:
@@ -655,7 +895,53 @@ def integrate_response(tenant_id: int, response_id: str) -> Dict[str, Any]:
     return {"ok": True, "response_id": response_id, "status": "integrated"}
 
 
+def get_questionnaire_response(tenant_id: int, response_id: str) -> Dict[str, Any]:
+    row = fetch_one_pg(
+        """
+        SELECT qr.*, qreq.status AS request_status, qreq.template_id, qreq.sent_to_email, qreq.created_at AS request_created_at
+        FROM questionnaire_responses qr
+        JOIN questionnaire_requests qreq ON qreq.id = qr.questionnaire_request_id
+        WHERE qr.tenant_id = %s AND qr.id = %s::uuid
+        """,
+        (tenant_id, response_id),
+    )
+    if not row:
+        conn = get_conn()
+        try:
+            cur = conn.execute(
+                """
+                SELECT qr.*, qreq.status AS request_status, qreq.template_id, qreq.sent_to_email,
+                       qreq.created_at AS request_created_at
+                FROM questionnaire_responses qr
+                JOIN questionnaire_requests qreq ON qreq.id = qr.questionnaire_request_id
+                WHERE qr.tenant_id = ? AND qr.id = ?
+                """,
+                (tenant_id, response_id),
+            ).fetchone()
+            row = dict(cur) if cur else None
+        finally:
+            conn.close()
+    if not row:
+        raise ValueError("Réponse introuvable.")
+
+    template = get_template(tenant_id, str(row.get("template_id") or "")) or ensure_default_admin_template(tenant_id)
+    answers = _json_load(row.get("answers_json"), {})
+    return {
+        "id": str(row.get("id") or response_id),
+        "request_id": str(row.get("questionnaire_request_id") or ""),
+        "request_status": row.get("request_status") or "",
+        "sent_to_email": row.get("sent_to_email") or "",
+        "submitted_at": str(row.get("submitted_at") or ""),
+        "is_health": bool(row.get("is_health")),
+        "ai_summary": row.get("ai_summary") or "",
+        "answers": answers,
+        "answers_display": _answers_with_labels(template, answers),
+        "structured_summary": _json_load(row.get("structured_summary_json"), {}),
+    }
+
+
 def list_patient_questionnaire_requests(tenant_id: int, patient_phone: str) -> List[Dict[str, Any]]:
+    expire_stale_questionnaire_requests()
     phone = normalize_patient_phone(patient_phone)
     rows = fetch_all_pg(
         """
@@ -665,7 +951,12 @@ def list_patient_questionnaire_requests(tenant_id: int, patient_phone: str) -> L
                  SELECT qr.id FROM questionnaire_responses qr
                  WHERE qr.questionnaire_request_id = qreq.id
                  ORDER BY qr.submitted_at DESC LIMIT 1
-               ) AS response_id
+               ) AS response_id,
+               (
+                 SELECT qr.ai_summary FROM questionnaire_responses qr
+                 WHERE qr.questionnaire_request_id = qreq.id
+                 ORDER BY qr.submitted_at DESC LIMIT 1
+               ) AS ai_summary
         FROM questionnaire_requests qreq
         WHERE qreq.tenant_id = %s AND qreq.patient_phone = %s
         ORDER BY qreq.created_at DESC
@@ -698,6 +989,7 @@ def list_patient_questionnaire_requests(tenant_id: int, patient_phone: str) -> L
 
 
 def public_questionnaire_payload(raw_token: str) -> Dict[str, Any]:
+    expire_stale_questionnaire_requests()
     req = resolve_token(raw_token)
     if not req:
         raise ValueError("Lien invalide, expiré ou déjà utilisé.")
@@ -707,10 +999,12 @@ def public_questionnaire_payload(raw_token: str) -> Dict[str, Any]:
     profile = get_cabinet_client_by_phone(tenant_id, phone) or {}
     template = get_template(tenant_id, str(req.get("template_id") or "")) or ensure_default_admin_template(tenant_id)
     hds = is_hds_active(tenant_id)
+    prefill = prefill_public_answers(profile, phone)
     return {
         "tenant_id": tenant_id,
         "patient_phone": phone,
         "patient_name": profile.get("display_name") or profile.get("validated_name") or "",
+        "prefill_answers": prefill,
         "template": {
             "id": template["id"],
             "name": template["name"],

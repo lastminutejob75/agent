@@ -108,7 +108,7 @@ export default function PatientQuestionnaireFields({
             {field.type === "textarea" ? (
               <textarea {...common} rows={3} className={`${common.className} resize-none`} />
             ) : (
-              <input {...common} type={field.type === "date" ? "date" : field.type === "email" ? "email" : "text"} />
+              <input {...common} type={field.type === "date" ? "date" : field.type === "email" ? "email" : field.type === "phone" ? "tel" : "text"} />
             )}
           </label>
         );

@@ -6,6 +6,7 @@ import {
   formatPhysicianWithCity,
 } from "../lib/patientProfileMeta.js";
 import PatientQuestionnaireCard from "../components/patients/PatientQuestionnaireCard.jsx";
+import PatientAdminQuestionnaireCard from "../components/patients/PatientAdminQuestionnaireCard.jsx";
 import PatientContextSummary from "../components/patients/PatientContextSummary.jsx";
 function formatBirthDateDisplay(value: unknown) {
   const raw = String(value || "").trim().slice(0, 10);
@@ -758,10 +759,19 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
             patientEmail={patientEmail}
             profile={patientCabinetRow}
             notify={notify}
-            summaryRefreshNonce={summaryRefreshNonce}
             onApplied={onQuestionnaireApplied}
             disabled={tenantPatientNotFound}
           />
+          <div className="mt-3">
+            <PatientAdminQuestionnaireCard
+              phone={tenantPatientPhone}
+              patientEmail={patientEmail}
+              notify={notify}
+              summaryRefreshNonce={summaryRefreshNonce}
+              onApplied={onQuestionnaireApplied}
+              disabled={tenantPatientNotFound}
+            />
+          </div>
         </>
       ) : null}
 

@@ -1217,6 +1217,87 @@ def send_onboarding_link_email(
     return False, "Email non configuré (Postmark ou SMTP)"
 
 
+def send_patient_admin_form_email(
+    to_email: str,
+    patient_name: str,
+    cabinet_name: str,
+    questionnaire_url: str,
+) -> Tuple[bool, Optional[str]]:
+    """Envoie au patient le lien du formulaire administratif (V2, sans donnée médicale)."""
+    to_addr = (to_email or "").strip().lower()
+    if not to_addr:
+        return False, "Destinataire vide"
+    if not (questionnaire_url or "").strip():
+        return False, "questionnaire_url vide"
+    hello = (patient_name or "").strip()
+    hello_suffix = f" {hello}" if hello else ""
+    cabinet = (cabinet_name or "votre cabinet").strip() or "votre cabinet"
+    subject = f"{cabinet} — Préparez votre demande"
+    html = f"""
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Formulaire administratif</title></head>
+<body style="margin:0;background:#0a1628;padding:40px 20px;font-family:'DM Sans',Arial,sans-serif;">
+  <div style="max-width:520px;margin:0 auto;">
+    <div style="font-size:24px;font-weight:800;color:#00d4a0;margin-bottom:8px">UWI</div>
+    <h1 style="color:#ffffff;font-size:22px;line-height:1.3;margin:0 0 12px 0">
+      Bonjour{hello_suffix}
+    </h1>
+    <p style="color:rgba(255,255,255,0.72);font-size:15px;line-height:1.6;margin:0 0 28px 0">
+      {cabinet} vous invite à compléter un court formulaire administratif avant votre rendez-vous
+      (type de demande, coordonnées, disponibilités). Aucune donnée médicale n'est demandée en ligne.
+    </p>
+    <p style="margin:0 0 20px 0;">
+      <a href="{questionnaire_url}"
+         style="display:inline-block;background:#00d4a0;color:#0a1628;padding:14px 28px;border-radius:10px;font-weight:700;font-size:15px;text-decoration:none">
+        Compléter le formulaire →
+      </a>
+    </p>
+    <p style="color:rgba(255,255,255,0.28);font-size:12px;line-height:1.6;margin:14px 0 0 0">
+      Lien personnel, valable 7 jours, usage unique :
+      <br />
+      <a href="{questionnaire_url}" style="color:#8be8cf;word-break:break-all;">{questionnaire_url}</a>
+    </p>
+  </div>
+</body>
+</html>
+"""
+    from_addr = (
+        os.getenv("POSTMARK_FROM_EMAIL") or os.getenv("EMAIL_FROM") or os.getenv("SMTP_EMAIL") or ""
+    ).strip()
+    token = (os.getenv("POSTMARK_SERVER_TOKEN") or "").strip()
+    if token and from_addr:
+        try:
+            ok, err = _send_via_postmark(from_addr, to_addr, subject, html, token)
+            if ok:
+                logger.info("patient_admin_form_email_sent via postmark", extra={"to": to_addr[:50]})
+            return ok, err
+        except Exception as e:
+            logger.exception("send_patient_admin_form_email postmark failed")
+            return False, str(e)
+    smtp_user = (os.getenv("SMTP_EMAIL") or "").strip()
+    smtp_pass = (os.getenv("SMTP_PASSWORD") or "").strip()
+    if smtp_user and smtp_pass:
+        host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        port = int(os.getenv("SMTP_PORT", "587"))
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["From"] = smtp_user
+            msg["To"] = to_addr
+            msg["Subject"] = subject
+            msg.attach(MIMEText(html, "html", "utf-8"))
+            with smtplib.SMTP(host, port, timeout=15) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, [to_addr], msg.as_string())
+            logger.info("patient_admin_form_email_sent via smtp", extra={"to": to_addr[:50]})
+            return True, None
+        except Exception as e:
+            logger.exception("send_patient_admin_form_email smtp failed")
+            return False, str(e)
+    return False, "Email non configuré (Postmark ou SMTP)"
+
+
 def send_patient_questionnaire_email(
     to_email: str,
     patient_name: str,

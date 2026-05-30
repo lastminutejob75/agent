@@ -13,6 +13,16 @@ const TYPE_DEMANDE_LABELS = {
   autre_administratif: "Autre (administratif)",
 };
 
+const DISPONIBILITES_LABELS = {
+  matin: "Matin",
+  apres_midi: "Après-midi",
+  fin_de_semaine: "Fin de semaine",
+  semaine_prochaine: "Semaine prochaine",
+  flexible: "Flexible",
+};
+
+const OPTION_LABELS = { ...TYPE_DEMANDE_LABELS, ...DISPONIBILITES_LABELS };
+
 export default function PatientQuestionnaireV2Page() {
   const { token } = useParams();
   const [loading, setLoading] = useState(true);
@@ -35,7 +45,7 @@ export default function PatientQuestionnaireV2Page() {
       const res = await api.publicGetQuestionnaireV2(token);
       const tpl = res?.template || {};
       setSchema(normalizeQuestionnaireSchema(tpl.sections_json || []));
-      setAnswers({});
+      setAnswers(res?.prefill_answers && typeof res.prefill_answers === "object" ? res.prefill_answers : {});
       setCabinetName(String(res?.cabinet_name || ""));
       setPatientName(String(res?.patient_name || ""));
       setTemplateName(String(tpl.name || "Préparer ma demande"));
@@ -116,7 +126,7 @@ export default function PatientQuestionnaireV2Page() {
                 values={answers}
                 onChange={handleChange}
                 disabled={submitting}
-                optionLabels={TYPE_DEMANDE_LABELS}
+                optionLabels={OPTION_LABELS}
               />
               <label className="mt-5 flex items-start gap-2.5 text-sm font-semibold text-[#334155]">
                 <input

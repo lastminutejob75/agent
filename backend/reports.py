@@ -907,6 +907,17 @@ def setup_scheduler():
         except Exception as e:
             logger.warning("suspension_past_due_job failed: %s", e)
 
+    @scheduler.scheduled_job(CronTrigger(hour=3, minute=15))
+    def expire_questionnaire_requests_job():
+        try:
+            from backend.questionnaire_v2 import expire_stale_questionnaire_requests
+
+            n = expire_stale_questionnaire_requests()
+            if n:
+                logger.info("expire_questionnaire_requests_job: %s request(s) expired", n)
+        except Exception as e:
+            logger.warning("expire_questionnaire_requests_job failed: %s", e)
+
     # Pré-chauffage créneaux page publique (Google Calendar) — défaut toutes les 2 min
     try:
         from apscheduler.triggers.interval import IntervalTrigger

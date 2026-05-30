@@ -41,6 +41,7 @@ def public_get_questionnaire_v2(token: str):
         "ok": True,
         "cabinet_name": _cabinet_label(payload["tenant_id"]),
         "patient_name": payload.get("patient_name") or "",
+        "prefill_answers": payload.get("prefill_answers") or {},
         "template": payload["template"],
         "expires_at": payload.get("expires_at") or "",
         "medical_upload_message": (

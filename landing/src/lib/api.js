@@ -285,6 +285,8 @@ export const api = {
     }),
   tenantListPatientQuestionnairesV2: (phone) =>
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/questionnaires-v2`, { tenant: true }),
+  tenantGetQuestionnaireV2Response: (responseId) =>
+    request(`/api/tenant/questionnaires-v2/${encodeURIComponent(responseId)}`, { tenant: true }),
   tenantIntegrateQuestionnaireV2: (responseId) =>
     request(`/api/tenant/questionnaires-v2/${encodeURIComponent(responseId)}/integrate`, {
       method: "POST",
