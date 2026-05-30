@@ -20,6 +20,26 @@ def test_use_s3_storage_true_with_env(monkeypatch):
     assert storage.use_s3_storage() is True
 
 
+def test_ovh_credentials_and_endpoint(monkeypatch):
+    monkeypatch.setenv("S3_PROVIDER", "ovh")
+    monkeypatch.setenv("OVH_S3_BUCKET", "uwi-docs")
+    monkeypatch.setenv("OVH_S3_REGION", "gra")
+    monkeypatch.setenv("OVH_ACCESS_KEY_ID", "ovh-key")
+    monkeypatch.setenv("OVH_SECRET_ACCESS_KEY", "ovh-secret")
+    assert storage.use_s3_storage() is True
+    assert storage.s3_bucket() == "uwi-docs"
+    assert storage._endpoint_url() == "https://s3.gra.io.cloud.ovh.net"
+    assert storage.storage_backend_label() == "ovh"
+
+
+def test_ovh_explicit_endpoint(monkeypatch):
+    monkeypatch.setenv("OVH_S3_ENDPOINT", "s3.eu-west-par.io.cloud.ovh.net")
+    monkeypatch.setenv("OVH_S3_BUCKET", "b")
+    monkeypatch.setenv("OVH_ACCESS_KEY_ID", "k")
+    monkeypatch.setenv("OVH_SECRET_ACCESS_KEY", "s")
+    assert storage._endpoint_url() == "https://s3.eu-west-par.io.cloud.ovh.net"
+
+
 def test_save_local_disk(tmp_path, monkeypatch):
     monkeypatch.delenv("S3_BUCKET", raising=False)
     monkeypatch.setattr(storage, "UPLOAD_ROOT", str(tmp_path))
@@ -60,6 +80,16 @@ def test_save_s3_when_configured(monkeypatch):
     )
     assert stored[key][0] == b"%PDF"
     assert storage.read_document(key) == b"%PDF"
+
+
+def test_ovh_put_skips_sse_when_disabled(monkeypatch):
+    monkeypatch.setenv("S3_PROVIDER", "ovh")
+    monkeypatch.setenv("OVH_S3_BUCKET", "b")
+    monkeypatch.setenv("OVH_S3_REGION", "gra")
+    monkeypatch.setenv("OVH_ACCESS_KEY_ID", "k")
+    monkeypatch.setenv("OVH_SECRET_ACCESS_KEY", "s")
+    monkeypatch.setenv("S3_SERVER_SIDE_ENCRYPTION", "none")
+    assert storage._put_object_extra() == {}
 
 
 def test_rejects_oversized_file(monkeypatch, tmp_path):

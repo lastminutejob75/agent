@@ -1,11 +1,11 @@
-"""Stockage fichiers questionnaires V2 — disque local ou S3/R2 (compatible API S3)."""
+"""Stockage fichiers questionnaires V2 — disque local ou S3-compatible (AWS, R2, OVH)."""
 
 from __future__ import annotations
 
 import logging
 import os
 import uuid
-from typing import Tuple
+from typing import Dict, Tuple
 from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
@@ -23,17 +23,73 @@ def _env(name: str, default: str = "") -> str:
     return (os.environ.get(name) or default).strip()
 
 
+def _access_key() -> str:
+    return (
+        _env("AWS_ACCESS_KEY_ID")
+        or _env("S3_ACCESS_KEY_ID")
+        or _env("OVH_ACCESS_KEY_ID")
+    )
+
+
+def _secret_key() -> str:
+    return (
+        _env("AWS_SECRET_ACCESS_KEY")
+        or _env("S3_SECRET_ACCESS_KEY")
+        or _env("OVH_SECRET_ACCESS_KEY")
+    )
+
+
 def s3_bucket() -> str:
-    return _env("S3_BUCKET")
+    return _env("S3_BUCKET") or _env("OVH_S3_BUCKET")
+
+
+def _provider() -> str:
+    return _env("S3_PROVIDER").lower()
+
+
+def _endpoint_url() -> str:
+    """URL S3-compatible (AWS, Cloudflare R2, OVH Object Storage, MinIO…)."""
+    explicit = (
+        _env("S3_ENDPOINT_URL")
+        or _env("AWS_ENDPOINT_URL")
+        or _env("OVH_S3_ENDPOINT")
+    )
+    if explicit:
+        url = explicit if "://" in explicit else f"https://{explicit}"
+        return url.rstrip("/")
+
+    if _provider() == "ovh" or _env("OVH_S3_REGION"):
+        region = (_env("OVH_S3_REGION") or "gra").lower()
+        return f"https://s3.{region}.io.cloud.ovh.net"
+
+    return ""
+
+
+def _region_name() -> str:
+    return (
+        _env("S3_REGION")
+        or _env("AWS_DEFAULT_REGION")
+        or _env("OVH_S3_REGION")
+        or "eu-west-3"
+    ).lower()
+
+
+def storage_backend_label() -> str:
+    if not use_s3_storage():
+        return "local"
+    endpoint = _endpoint_url()
+    if _provider() == "ovh" or _env("OVH_S3_REGION") or ".io.cloud.ovh.net" in endpoint:
+        return "ovh"
+    if "r2.cloudflarestorage.com" in endpoint:
+        return "r2"
+    return "s3"
 
 
 def use_s3_storage() -> bool:
     """True si bucket + credentials sont configurés."""
     if not s3_bucket():
         return False
-    key = _env("AWS_ACCESS_KEY_ID") or _env("S3_ACCESS_KEY_ID")
-    secret = _env("AWS_SECRET_ACCESS_KEY") or _env("S3_SECRET_ACCESS_KEY")
-    return bool(key and secret)
+    return bool(_access_key() and _secret_key())
 
 
 def _object_key(storage_key: str) -> str:
@@ -42,31 +98,53 @@ def _object_key(storage_key: str) -> str:
     return f"{prefix}/{key}" if prefix else key
 
 
+def _s3_boto_config():
+    from botocore.config import Config
+
+    style = _env("S3_ADDRESSING_STYLE").lower()
+    if not style:
+        # OVH et la plupart des endpoints non-AWS : path-style plus fiable.
+        style = "path" if _endpoint_url() else "auto"
+    config_kwargs: Dict[str, object] = {"signature_version": "s3v4"}
+    if style in ("path", "virtual"):
+        config_kwargs["s3"] = {"addressing_style": style}
+    return Config(**config_kwargs)
+
+
 def _s3_client():
     import boto3
 
-    endpoint = _env("S3_ENDPOINT_URL") or _env("AWS_ENDPOINT_URL")
-    region = _env("S3_REGION") or _env("AWS_DEFAULT_REGION") or "eu-west-3"
     kwargs = {
         "service_name": "s3",
-        "region_name": region,
-        "aws_access_key_id": _env("AWS_ACCESS_KEY_ID") or _env("S3_ACCESS_KEY_ID"),
-        "aws_secret_access_key": _env("AWS_SECRET_ACCESS_KEY") or _env("S3_SECRET_ACCESS_KEY"),
+        "region_name": _region_name(),
+        "aws_access_key_id": _access_key(),
+        "aws_secret_access_key": _secret_key(),
+        "config": _s3_boto_config(),
     }
+    endpoint = _endpoint_url()
     if endpoint:
         kwargs["endpoint_url"] = endpoint
     return boto3.client(**kwargs)
 
 
+def _put_object_extra() -> Dict[str, str]:
+    """Chiffrement côté serveur (AWS oui ; OVH/R2 : désactivable via S3_SERVER_SIDE_ENCRYPTION=none)."""
+    sse = _env("S3_SERVER_SIDE_ENCRYPTION", "AES256")
+    if sse.lower() in ("0", "false", "no", "off", "none", "disabled"):
+        return {}
+    return {"ServerSideEncryption": sse}
+
+
 def _s3_put_object(storage_key: str, content: bytes, mime_type: str) -> None:
     client = _s3_client()
-    client.put_object(
-        Bucket=s3_bucket(),
-        Key=_object_key(storage_key),
-        Body=content,
-        ContentType=mime_type or "application/octet-stream",
-        ServerSideEncryption="AES256",
-    )
+    params = {
+        "Bucket": s3_bucket(),
+        "Key": _object_key(storage_key),
+        "Body": content,
+        "ContentType": mime_type or "application/octet-stream",
+        **_put_object_extra(),
+    }
+    client.put_object(**params)
 
 
 def _s3_get_object(storage_key: str) -> bytes:
@@ -105,7 +183,7 @@ def save_questionnaire_upload(
     original_name: str,
     mime_type: str,
 ) -> Tuple[str, str]:
-    """Écrit le fichier (S3 ou disque) et retourne (storage_key, stored_filename)."""
+    """Écrit le fichier (S3-compatible ou disque) et retourne (storage_key, stored_filename)."""
     if len(content) > MAX_UPLOAD_BYTES:
         raise ValueError("Fichier trop volumineux (max 10 Mo).")
     ext = _safe_ext(original_name)
@@ -118,7 +196,11 @@ def save_questionnaire_upload(
 
     if use_s3_storage():
         _s3_put_object(storage_key, content, mime_type)
-        logger.info("questionnaire upload stored s3 key=%s", _object_key(storage_key))
+        logger.info(
+            "questionnaire upload stored backend=%s key=%s",
+            storage_backend_label(),
+            _object_key(storage_key),
+        )
     else:
         filepath = resolve_storage_path(storage_key)
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
@@ -142,7 +224,7 @@ def document_exists(storage_key: str) -> bool:
 
 
 def read_document(storage_key: str) -> bytes:
-    """Lit le contenu binaire (S3 ou disque)."""
+    """Lit le contenu binaire (S3-compatible ou disque)."""
     if use_s3_storage():
         return _s3_get_object(storage_key)
     filepath = resolve_storage_path(storage_key)
