@@ -31,6 +31,7 @@ import {
 } from "../lib/patientProfileMeta.js";
 import PatientDuplicateBanner from "../components/patients/PatientDuplicateBanner.jsx";
 import PatientQuestionnaireCard from "../components/patients/PatientQuestionnaireCard.jsx";
+import PatientContextSummary from "../components/patients/PatientContextSummary.jsx";
 import {
   checkPatientDuplicates,
   hasBlockingPatientDuplicate,
@@ -814,6 +815,7 @@ export default function PatientDashboardPage() {
   const [patientListOpen, setPatientListOpen] = useState(false);
   /** Recharge GET /patients/{phone} (ex. après POST création ou mise à jour nom). */
   const [patientFetchNonce, setPatientFetchNonce] = useState(0);
+  const [summaryRefreshNonce, setSummaryRefreshNonce] = useState(0);
   /** Ligne brute API `cabinet_clients` pour le modal profil / métadonnées. */
   const [patientCabinetRow, setPatientCabinetRow] = useState<Record<string, unknown> | null>(null);
   const [patientInsightTags, setPatientInsightTags] = useState<PatientInsightTag[]>([]);
@@ -2396,7 +2398,11 @@ export default function PatientDashboardPage() {
               onOpenHistoryModal={() => setModal("history")}
               tenantPatientPhone={tenantPatientPhone}
               notify={notify}
-              onQuestionnaireApplied={() => setPatientFetchNonce((n) => n + 1)}
+              summaryRefreshNonce={summaryRefreshNonce}
+              onQuestionnaireApplied={() => {
+                setPatientFetchNonce((n) => n + 1);
+                setSummaryRefreshNonce((n) => n + 1);
+              }}
               upcomingAppointments={upcomingPatientAppointments}
               pastAppointments={pastPatientAppointments}
               patientAgendaLoading={patientAgendaLoading}
@@ -2834,17 +2840,7 @@ export default function PatientDashboardPage() {
                   <h2 className="mb-5 text-2xl font-black">☆ Contexte patient</h2>
                   <div className="grid grid-cols-2 gap-6">
                     <div>
-                      <div className="mb-4 flex items-center justify-between">
-                        <div className="text-sm font-black uppercase tracking-wide text-[#11D6DB]">● Résumé Clara</div>
-                        <div className="text-sm italic text-white/60">Généré par IA</div>
-                      </div>
-
-                      <p className="text-[17px] leading-8 text-white/95">
-                        {displayHero.name} contacte principalement le cabinet par téléphone. Les notes et documents ci-dessous sont
-                        synchronisés avec votre espace cabinet lorsque le numéro ou la fiche correspondent en base.
-                      </p>
-
-                      <p className="mt-5 text-sm italic text-white/65">Mis à jour · Aujourd'hui à 14:32</p>
+                      <PatientContextSummary phone={tenantPatientPhone} refreshNonce={summaryRefreshNonce} />
                     </div>
 
                     <div className="border-l border-white/25 pl-6">
@@ -2893,7 +2889,11 @@ export default function PatientDashboardPage() {
                   patientEmail={patientEmail}
                   profile={patientCabinetRow}
                   notify={notify}
-                  onApplied={() => setPatientFetchNonce((n) => n + 1)}
+                  summaryRefreshNonce={summaryRefreshNonce}
+                  onApplied={() => {
+                    setPatientFetchNonce((n) => n + 1);
+                    setSummaryRefreshNonce((n) => n + 1);
+                  }}
                   disabled={tenantPatientNotFound}
                 />
               </div>

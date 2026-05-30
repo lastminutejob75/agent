@@ -4,16 +4,23 @@ import { X } from "lucide-react";
 import { api } from "../../lib/api";
 import PatientQuestionnaireFields from "./PatientQuestionnaireFields";
 
-const STATUS_LABEL = {
+const MVP_STATUS_LABEL = {
   draft: "Pas encore rempli",
   sent: "Envoyé au patient · en attente de réponse",
   completed: "Complété",
 };
 
-// Champs du questionnaire alimentés par le profil de la fiche (miroir backend `maps_to: profile.*`).
+const V2_STATUS_LABEL = {
+  sent: "Questionnaire administratif envoyé",
+  opened: "Ouvert par le patient",
+  started: "En cours de saisie",
+  completed: "Réponses reçues · à valider",
+  integrated: "Intégré au dossier",
+  expired: "Lien expiré",
+};
+
 const PROFILE_PREFILL_KEYS = ["birth_date", "treating_physician_name", "treating_physician_city"];
 
-/** Pré-remplit les champs profil encore vides avec ce que la fiche connaît déjà (repli client). */
 function prefillFromProfile(answers, profile) {
   const merged = { ...(answers || {}) };
   if (!profile || typeof profile !== "object") return merged;
@@ -28,28 +35,43 @@ function prefillFromProfile(answers, profile) {
   return merged;
 }
 
-function statusLine(state) {
-  if (!state) return STATUS_LABEL.draft;
+function mvpStatusLine(state) {
+  if (!state) return MVP_STATUS_LABEL.draft;
   if (state.status === "completed") {
     const who = state.filled_by === "patient" ? "par le patient" : "par le praticien";
-    return `Complété ${who}`;
+    return `Questionnaire médical complété ${who}`;
   }
   if (state.status === "sent") {
     return state.sent_to_email
-      ? `Envoyé à ${state.sent_to_email} · en attente de réponse`
-      : STATUS_LABEL.sent;
+      ? `Questionnaire médical envoyé à ${state.sent_to_email}`
+      : MVP_STATUS_LABEL.sent;
   }
-  return STATUS_LABEL.draft;
+  return MVP_STATUS_LABEL.draft;
 }
 
-export default function PatientQuestionnaireCard({ phone, patientEmail, profile, notify, onApplied, disabled = false }) {
+function latestV2Request(requests) {
+  if (!Array.isArray(requests) || !requests.length) return null;
+  return requests[0];
+}
+
+export default function PatientQuestionnaireCard({
+  phone,
+  patientEmail,
+  profile,
+  notify,
+  onApplied,
+  disabled = false,
+  summaryRefreshNonce = 0,
+}) {
   const [schema, setSchema] = useState([]);
-  const [state, setState] = useState(null);
+  const [mvpState, setMvpState] = useState(null);
+  const [v2Requests, setV2Requests] = useState([]);
   const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [draft, setDraft] = useState({});
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
+  const [integrating, setIntegrating] = useState(false);
 
   const notifyFn = useCallback(
     (msg, opts) => {
@@ -62,14 +84,17 @@ export default function PatientQuestionnaireCard({ phone, patientEmail, profile,
     if (!phone) return;
     setLoading(true);
     try {
-      const res = await api.tenantGetPatientQuestionnaire(phone);
-      setSchema(Array.isArray(res?.schema) ? res.schema : []);
-      setState(res?.questionnaire || null);
+      const [mvpRes, v2Res] = await Promise.all([
+        api.tenantGetPatientQuestionnaire(phone).catch(() => null),
+        api.tenantListPatientQuestionnairesV2(phone).catch(() => ({ requests: [] })),
+      ]);
+      setSchema(Array.isArray(mvpRes?.schema) ? mvpRes.schema : []);
+      setMvpState(mvpRes?.questionnaire || null);
+      setV2Requests(Array.isArray(v2Res?.requests) ? v2Res.requests : []);
     } catch (e) {
       if (e?.status !== 404) {
-        notifyFn(e?.message || "Impossible de charger le questionnaire", { sticky: true });
+        notifyFn(e?.message || "Impossible de charger les questionnaires", { sticky: true });
       }
-      setState(null);
     } finally {
       setLoading(false);
     }
@@ -77,10 +102,14 @@ export default function PatientQuestionnaireCard({ phone, patientEmail, profile,
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, summaryRefreshNonce]);
+
+  const latestV2 = latestV2Request(v2Requests);
+  const v2Status = latestV2?.status || "";
+  const v2Line = v2Status ? V2_STATUS_LABEL[v2Status] || v2Status : "Aucun questionnaire administratif envoyé";
 
   const openModal = () => {
-    setDraft(prefillFromProfile(state?.answers, profile));
+    setDraft(prefillFromProfile(mvpState?.answers, profile));
     setModalOpen(true);
   };
 
@@ -93,9 +122,9 @@ export default function PatientQuestionnaireCard({ phone, patientEmail, profile,
     setSaving(true);
     try {
       const res = await api.tenantSavePatientQuestionnaire(phone, { answers: draft });
-      setState(res?.questionnaire || null);
+      setMvpState(res?.questionnaire || null);
       setModalOpen(false);
-      notifyFn("Questionnaire enregistré");
+      notifyFn("Questionnaire médical enregistré");
       if (typeof onApplied === "function") onApplied();
     } catch (e) {
       notifyFn(e?.message || "Impossible d'enregistrer le questionnaire", { sticky: true });
@@ -104,7 +133,7 @@ export default function PatientQuestionnaireCard({ phone, patientEmail, profile,
     }
   };
 
-  const handleSend = async () => {
+  const handleSendV2 = async () => {
     if (!phone) return;
     if (!patientEmail) {
       notifyFn("Ajoutez d'abord l'email du patient pour lui envoyer le questionnaire.", { sticky: true });
@@ -112,9 +141,13 @@ export default function PatientQuestionnaireCard({ phone, patientEmail, profile,
     }
     setSending(true);
     try {
-      const res = await api.tenantSendPatientQuestionnaire(phone);
-      setState(res?.questionnaire || null);
-      notifyFn(`Questionnaire envoyé à ${res?.sent_to || patientEmail}`);
+      const res = await api.tenantCreatePatientQuestionnaireV2(phone, {
+        sent_to_email: patientEmail,
+        send_email: true,
+      });
+      notifyFn(`Questionnaire envoyé à ${res?.request?.sent_to_email || patientEmail}`);
+      await load();
+      if (typeof onApplied === "function") onApplied();
     } catch (e) {
       notifyFn(e?.message || "Impossible d'envoyer le questionnaire", { sticky: true });
     } finally {
@@ -122,8 +155,26 @@ export default function PatientQuestionnaireCard({ phone, patientEmail, profile,
     }
   };
 
-  const completed = state?.status === "completed";
-  const sent = state?.status === "sent";
+  const handleIntegrate = async () => {
+    const responseId = latestV2?.response_id;
+    if (!responseId) {
+      notifyFn("Aucune réponse patient à intégrer.", { sticky: true });
+      return;
+    }
+    setIntegrating(true);
+    try {
+      await api.tenantIntegrateQuestionnaireV2(responseId);
+      notifyFn("Questionnaire intégré au dossier");
+      await load();
+      if (typeof onApplied === "function") onApplied();
+    } catch (e) {
+      notifyFn(e?.message || "Impossible d'intégrer le questionnaire", { sticky: true });
+    } finally {
+      setIntegrating(false);
+    }
+  };
+
+  const mvpCompleted = mvpState?.status === "completed";
 
   return (
     <section className="rounded-[24px] border border-[#E3EAF2] bg-white p-4 shadow-[0_8px_20px_rgba(15,23,42,0.06)] sm:p-5">
@@ -132,18 +183,15 @@ export default function PatientQuestionnaireCard({ phone, patientEmail, profile,
           ◰
         </div>
         <div className="min-w-0 flex-1">
-          <strong className="block text-base font-black text-[#0B1628]">Questionnaire médical</strong>
+          <strong className="block text-base font-black text-[#0B1628]">Questionnaires patient</strong>
           <p className="m-0 mt-1 text-[13px] text-[#667085]">
-            {loading ? "Chargement…" : statusLine(state)}
+            {loading ? "Chargement…" : mvpStatusLine(mvpState)}
           </p>
+          <p className="m-0 mt-1 text-[12px] font-semibold text-[#008EA1]">{v2Line}</p>
         </div>
-        {completed ? (
+        {mvpCompleted ? (
           <span className="shrink-0 rounded-full bg-[#E6FAED] px-2.5 py-1 text-[11px] font-black text-[#0BA64B]">
-            Complété
-          </span>
-        ) : sent ? (
-          <span className="shrink-0 rounded-full bg-[#FFF7ED] px-2.5 py-1 text-[11px] font-black text-[#C2410C]">
-            Envoyé
+            Médical OK
           </span>
         ) : null}
       </div>
@@ -155,17 +203,27 @@ export default function PatientQuestionnaireCard({ phone, patientEmail, profile,
           disabled={disabled || !phone}
           className="rounded-[14px] bg-[#009CA4] px-3.5 py-2.5 text-xs font-black text-white hover:bg-[#007F87] disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {completed ? "Voir / modifier" : "Remplir le questionnaire"}
+          {mvpCompleted ? "Voir / modifier (médical)" : "Remplir le questionnaire médical"}
         </button>
         <button
           type="button"
-          onClick={handleSend}
+          onClick={handleSendV2}
           disabled={disabled || !phone || sending || !patientEmail}
-          title={patientEmail ? `Envoyer à ${patientEmail}` : "Ajoutez un email patient"}
+          title={patientEmail ? `Envoyer le formulaire administratif à ${patientEmail}` : "Ajoutez un email patient"}
           className="rounded-[14px] border border-[#BFE9EC] bg-white px-3.5 py-2.5 text-xs font-black text-[#007F88] hover:bg-[#F0FAFB] disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {sending ? "Envoi…" : "Envoyer au patient"}
+          {sending ? "Envoi…" : "Envoyer au patient (admin)"}
         </button>
+        {v2Status === "completed" ? (
+          <button
+            type="button"
+            onClick={handleIntegrate}
+            disabled={disabled || integrating}
+            className="rounded-[14px] border border-[#86EFAC] bg-[#F0FDF4] px-3.5 py-2.5 text-xs font-black text-[#15803D] hover:bg-[#DCFCE7] disabled:opacity-60"
+          >
+            {integrating ? "Intégration…" : "Valider les réponses reçues"}
+          </button>
+        ) : null}
       </div>
 
       {modalOpen && typeof document !== "undefined"

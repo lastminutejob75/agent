@@ -6,6 +6,7 @@ import {
   formatPhysicianWithCity,
 } from "../lib/patientProfileMeta.js";
 import PatientQuestionnaireCard from "../components/patients/PatientQuestionnaireCard.jsx";
+import PatientContextSummary from "../components/patients/PatientContextSummary.jsx";
 function formatBirthDateDisplay(value: unknown) {
   const raw = String(value || "").trim().slice(0, 10);
   if (!raw) return "Non renseignée";
@@ -103,6 +104,7 @@ export type PatientDashboardMobileProps = {
   tenantPatientPhone: string;
   notify: (message: string, opts?: { sticky?: boolean }) => void;
   onQuestionnaireApplied: () => void;
+  summaryRefreshNonce: number;
   upcomingAppointments: Array<{ slot: Record<string, unknown>; start: Date }>;
   pastAppointments: Array<{ start: Date; key: string }>;
   patientAgendaLoading: boolean;
@@ -416,13 +418,15 @@ function MobileNextAppointment({
 }
 
 function MobileContextPatient({
-  displayName,
+  phone,
+  summaryRefreshNonce,
   notes,
   notesLoading,
   noteDeletingId,
   onRemoveNote,
 }: {
-  displayName: string;
+  phone: string;
+  summaryRefreshNonce: number;
   notes: PatientNote[];
   notesLoading: boolean;
   noteDeletingId: number | null;
@@ -431,14 +435,7 @@ function MobileContextPatient({
   return (
     <section className="mb-3 rounded-[24px] bg-gradient-to-br from-[#06213E] via-[#003B63] to-[#007B88] p-[18px] text-white shadow-[0_12px_28px_rgba(0,59,99,0.22)]">
       <h2 className="mb-4 text-[22px] font-black">☆ Contexte patient</h2>
-      <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.08em] text-[#24D0D8]">
-        <span className="h-2.5 w-2.5 rounded-full bg-[#24D0D8]" />
-        Résumé Clara
-      </div>
-      <p className="mt-2.5 text-[17px] leading-relaxed text-white/95">
-        {displayName} contacte principalement le cabinet par téléphone. Les notes et documents ci-dessous
-        permettent à l&apos;équipe de garder le contexte.
-      </p>
+      <PatientContextSummary phone={phone} refreshNonce={summaryRefreshNonce} compact />
       <div className="my-4 h-px bg-white/15" />
       <div className="text-[19px] font-black">✎ Notes de l&apos;équipe</div>
       {notesLoading ? (
@@ -708,6 +705,7 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
     tenantPatientPhone,
     notify,
     onQuestionnaireApplied,
+    summaryRefreshNonce,
     upcomingAppointments,
     pastAppointments,
     patientAgendaLoading,
@@ -748,7 +746,8 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
             renderApptActions={renderApptActions}
           />
           <MobileContextPatient
-            displayName={displayHero.name}
+            phone={tenantPatientPhone}
+            summaryRefreshNonce={summaryRefreshNonce}
             notes={patientNotes}
             notesLoading={notesLoading}
             noteDeletingId={noteDeletingId}
@@ -759,6 +758,7 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
             patientEmail={patientEmail}
             profile={patientCabinetRow}
             notify={notify}
+            summaryRefreshNonce={summaryRefreshNonce}
             onApplied={onQuestionnaireApplied}
             disabled={tenantPatientNotFound}
           />

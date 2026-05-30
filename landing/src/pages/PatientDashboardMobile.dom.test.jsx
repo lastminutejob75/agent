@@ -32,6 +32,7 @@ const baseProps = {
   tenantPatientPhone: "",
   notify: vi.fn(),
   onQuestionnaireApplied: vi.fn(),
+  summaryRefreshNonce: 0,
   upcomingAppointments: [],
   pastAppointments: [],
   patientAgendaLoading: false,

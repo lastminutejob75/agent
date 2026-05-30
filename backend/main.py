@@ -341,6 +341,10 @@ app.include_router(pre_onboarding.public_router)  # POST /api/public/leads
 app.include_router(public_praticien.router)  # GET /api/public/praticiens/{slug}
 app.include_router(public_pages.router)  # /api/public/practitioner, /slots, /book, /search (page /p/:slug)
 app.include_router(public_questionnaire.router)  # /api/public/patient-questionnaire/{token}
+from backend.routes import patient_context, public_questionnaire_v2
+
+app.include_router(patient_context.router)  # /api/tenant/patients/{phone}/summary, questionnaires V2
+app.include_router(public_questionnaire_v2.router)  # /api/q/{token}
 
 # Audit admin writes + endpoint admin/audit-log.
 from backend.audit_log import install_audit_middleware

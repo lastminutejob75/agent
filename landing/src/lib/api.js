@@ -268,10 +268,35 @@ export const api = {
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/questionnaire`, { method: "PUT", body, tenant: true }),
   tenantSendPatientQuestionnaire: (phone) =>
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/questionnaire/send`, { method: "POST", tenant: true }),
+  tenantGetPatientSummary: (phone, opts = {}) => {
+    const params = new URLSearchParams();
+    if (opts?.refresh) params.set("refresh", "true");
+    const qs = params.toString();
+    return request(
+      `/api/tenant/patients/${encodeURIComponent(phone)}/summary${qs ? `?${qs}` : ""}`,
+      { tenant: true },
+    );
+  },
+  tenantCreatePatientQuestionnaireV2: (phone, body = {}) =>
+    request(`/api/tenant/patients/${encodeURIComponent(phone)}/questionnaires`, {
+      method: "POST",
+      body,
+      tenant: true,
+    }),
+  tenantListPatientQuestionnairesV2: (phone) =>
+    request(`/api/tenant/patients/${encodeURIComponent(phone)}/questionnaires-v2`, { tenant: true }),
+  tenantIntegrateQuestionnaireV2: (responseId) =>
+    request(`/api/tenant/questionnaires-v2/${encodeURIComponent(responseId)}/integrate`, {
+      method: "POST",
+      tenant: true,
+    }),
   publicGetPatientQuestionnaire: (token) =>
     request(`/api/public/patient-questionnaire/${encodeURIComponent(token)}`),
   publicSubmitPatientQuestionnaire: (token, body) =>
     request(`/api/public/patient-questionnaire/${encodeURIComponent(token)}`, { method: "POST", body }),
+  publicGetQuestionnaireV2: (token) => request(`/api/q/${encodeURIComponent(token)}`),
+  publicSubmitQuestionnaireV2: (token, body) =>
+    request(`/api/q/${encodeURIComponent(token)}/submit`, { method: "POST", body }),
   tenantCreatePatientNote: (phone, body) =>
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/notes`, { method: "POST", body, tenant: true }),
   tenantDeletePatientNote: (phone, noteId) =>

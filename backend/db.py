@@ -2077,6 +2077,12 @@ def init_db(days: int = 30) -> None:
         _migrate_sqlite_add_google_event_id(conn)
         _ensure_ivr_tables(conn)
         _ensure_tenants_tables(conn)
+        try:
+            from backend.patient_v2_db import ensure_patient_v2_schema
+
+            ensure_patient_v2_schema()
+        except Exception:
+            pass
 
         # Seed slots (Lundi-Samedi) — tenant_id=1 par défaut
         for day in range(1, days + 1):
