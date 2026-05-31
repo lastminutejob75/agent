@@ -16,8 +16,15 @@ from backend.public_bookings_pg import (
     _contact_phone_matches,
     cancel_public_booking_by_id,
     get_public_booking_by_id,
+    insert_public_booking,
     lookup_public_bookings,
     mark_public_booking_rescheduled,
+)
+from backend.public_calendar_sync import (
+    cancel_google_event,
+    reschedule_google_event,
+    slot_window_for_reschedule,
+    uses_google_calendar,
 )
 
 logger = logging.getLogger(__name__)
@@ -316,24 +323,135 @@ def _load_record_from_token(token_payload: Dict[str, Any]) -> Dict[str, Any]:
     raise HTTPException(400, "Token invalide.")
 
 
-def _cancel_internal_appointment(tenant_id: int, row: Dict[str, Any]) -> bool:
+def _collect_google_event_ids(tenant_id: int, record: Dict[str, Any], booking_code: str) -> List[str]:
+    ids: List[str] = []
+    for key in ("google_event_id",):
+        val = (record.get(key) or "").strip()
+        if val and val not in ids:
+            ids.append(val)
+    code = (booking_code or "").strip()
+    if code:
+        for appt in _lookup_internal_appointments(tenant_id, booking_code=code):
+            ge = (appt.get("google_event_id") or "").strip()
+            if ge and ge not in ids:
+                ids.append(ge)
+        for pb in lookup_public_bookings(tenant_id, booking_code=code):
+            ge = (pb.get("google_event_id") or "").strip()
+            if ge and ge not in ids:
+                ids.append(ge)
+    return ids
+
+
+def _cancel_internal_appointment(tenant_id: int, row: Dict[str, Any], *, strict_google: bool = True) -> bool:
     appt_id = row.get("id")
     slot_id = row.get("slot_id")
     google_event_id = (row.get("google_event_id") or "").strip()
     if google_event_id:
-        try:
-            from backend.google_calendar import GoogleCalendarService
-            from backend.routes.tenant import _get_tenant_detail
-
-            detail = _get_tenant_detail(tenant_id) or {}
-            params = detail.get("params") or {}
-            calendar_id = (params.get("calendar_id") or "").strip()
-            service = GoogleCalendarService(calendar_id)
-            service.cancel_appointment(google_event_id)
-        except Exception as exc:
-            logger.warning("public cancel google failed tenant=%s event=%s: %s", tenant_id, google_event_id, exc)
+        cancel_google_event(tenant_id, google_event_id, strict=strict_google and uses_google_calendar(tenant_id))
     ok = cancel_booking_sqlite({"id": appt_id, "slot_id": slot_id}, tenant_id=tenant_id)
     return bool(ok)
+
+
+def _cancel_all_for_booking(
+    tenant_id: int,
+    record: Dict[str, Any],
+    booking_code: str,
+    *,
+    strict_google: bool = True,
+) -> bool:
+    """Annule public_booking, appointments liés et événements Google associés."""
+    cancelled_any = False
+    for event_id in _collect_google_event_ids(tenant_id, record, booking_code):
+        if cancel_google_event(tenant_id, event_id, strict=strict_google and uses_google_calendar(tenant_id)):
+            cancelled_any = True
+
+    source_type = record.get("source_type")
+    if source_type == "public_booking":
+        if cancel_public_booking_by_id(tenant_id, str(record.get("id"))):
+            cancelled_any = True
+    elif source_type == "appointment":
+        if _cancel_internal_appointment(tenant_id, record, strict_google=False):
+            cancelled_any = True
+
+    code = (booking_code or "").strip()
+    if code:
+        for appt in _lookup_internal_appointments(tenant_id, booking_code=code):
+            if str(appt.get("id")) != str(record.get("id")):
+                if _cancel_internal_appointment(tenant_id, appt, strict_google=False):
+                    cancelled_any = True
+        for pb in lookup_public_bookings(tenant_id, booking_code=code):
+            if str(pb.get("id")) != str(record.get("id")):
+                if cancel_public_booking_by_id(tenant_id, str(pb.get("id"))):
+                    cancelled_any = True
+    return cancelled_any
+
+
+def _reschedule_public_booking(
+    tenant_id: int,
+    record: Dict[str, Any],
+    *,
+    slug: str,
+    new_slot_id: str,
+    slot_label: str,
+    start_iso: Optional[str],
+    end_iso: Optional[str],
+    slot_source: Optional[str],
+) -> Dict[str, Any]:
+    import uuid
+
+    from backend.booking_code import create_unique_booking_code_for_tenant, format_booking_code
+    from backend.routes.public_pages import PublicBookingRequest, _book_real_slot
+
+    old_code = (record.get("booking_code") or "").strip()
+    if not _cancel_all_for_booking(tenant_id, record, old_code, strict_google=True):
+        raise HTTPException(400, "Impossible d'annuler l'ancien rendez-vous.")
+
+    try:
+        new_code = create_unique_booking_code_for_tenant(tenant_id)
+    except Exception as exc:
+        logger.warning("reschedule public booking code generation failed: %s", exc)
+        raise HTTPException(503, "Impossible de generer un nouveau code rendez-vous.")
+
+    payload = PublicBookingRequest(
+        slug=slug,
+        slotId=str(new_slot_id),
+        slotLabel=slot_label or "Nouveau creneau",
+        motif=(record.get("motif") or "Consultation").strip(),
+        patientName=(record.get("patient_name") or "Patient").strip(),
+        patientPhone=(record.get("patient_phone") or "").strip(),
+        patientEmail=(record.get("patient_email") or "").strip() or None,
+        source="page_publique_reschedule",
+        slotSource=(slot_source or "sqlite").strip() or "sqlite",
+        startIso=(start_iso or "").strip() or None,
+        endIso=(end_iso or "").strip() or None,
+    )
+    ok, reason, google_event_id = _book_real_slot(tenant_id, payload, booking_code=new_code)
+    if not ok:
+        if reason == "slot_taken":
+            raise HTTPException(409, "Ce creneau n'est plus disponible. Choisissez un autre horaire.")
+        raise HTTPException(502, "Impossible de reserver le nouveau creneau.")
+
+    booking_id = str(uuid.uuid4())
+    insert_public_booking(
+        booking_id=booking_id,
+        tenant_id=tenant_id,
+        slot_id=str(new_slot_id),
+        slot_label=payload.slotLabel,
+        patient_name=payload.patientName,
+        patient_phone=payload.patientPhone,
+        patient_email=payload.patientEmail,
+        motif=payload.motif,
+        source=payload.source,
+        status="confirmed",
+        start_iso=payload.startIso,
+        booking_code=new_code,
+        google_event_id=google_event_id,
+    )
+    return {
+        "ok": True,
+        "rescheduled": True,
+        "bookingCode": format_booking_code(new_code),
+    }
 
 
 def cancel_appointment(
@@ -354,20 +472,13 @@ def cancel_appointment(
     start_dt = _parse_start_dt(record)
     _enforce_action_rules(tenant_id, start_dt, "cancel")
 
-    cancelled = False
-    source_type = record.get("source_type")
     booking_code = (record.get("booking_code") or token_payload.get("booking_code") or "").strip()
-
-    if source_type == "public_booking":
-        cancelled = cancel_public_booking_by_id(tenant_id, str(record.get("id")))
-        if booking_code:
-            for appt in _lookup_internal_appointments(tenant_id, booking_code=booking_code):
-                _cancel_internal_appointment(tenant_id, appt)
-    else:
-        cancelled = _cancel_internal_appointment(tenant_id, record)
-        if booking_code:
-            for pb in lookup_public_bookings(tenant_id, booking_code=booking_code):
-                cancel_public_booking_by_id(tenant_id, str(pb.get("id")))
+    cancelled = _cancel_all_for_booking(
+        tenant_id,
+        record,
+        booking_code,
+        strict_google=uses_google_calendar(tenant_id),
+    )
 
     if not cancelled:
         raise HTTPException(400, "Annulation impossible. Contactez le cabinet.")
@@ -375,7 +486,7 @@ def cancel_appointment(
     logger.info(
         "public_appointment_cancelled tenant=%s source=%s id=%s code=%s reason=%s",
         tenant_id,
-        source_type,
+        record.get("source_type"),
         record.get("id"),
         booking_code,
         (reason or "")[:120],
@@ -388,14 +499,17 @@ def reschedule_appointment(
     action_token: str,
     phone: Optional[str] = None,
     email: Optional[str] = None,
-    new_slot_id: int,
+    new_slot_id: str,
+    slug: Optional[str] = None,
+    slot_label: Optional[str] = None,
+    start_iso: Optional[str] = None,
+    end_iso: Optional[str] = None,
+    slot_source: Optional[str] = None,
 ) -> Dict[str, Any]:
     token_payload = decode_public_action_token(action_token)
     if not token_payload:
         raise HTTPException(401, "Session expiree. Recherchez a nouveau votre rendez-vous.")
     record = _load_record_from_token(token_payload)
-    if record.get("source_type") != "appointment":
-        raise HTTPException(400, "Ce rendez-vous ne peut pas etre deplace automatiquement. Demandez a etre rappele.")
     if not _verify_contact_for_record(record, phone, email):
         raise HTTPException(403, "Telephone ou email incorrect pour confirmer cette action.")
 
@@ -403,16 +517,79 @@ def reschedule_appointment(
     start_dt = _parse_start_dt(record)
     _enforce_action_rules(tenant_id, start_dt, "reschedule")
 
+    clean_slot_id = str(new_slot_id or "").strip()
+    if not clean_slot_id:
+        raise HTTPException(422, "Creneau invalide.")
+    label = (slot_label or record.get("slot_label") or "").strip() or "Nouveau creneau"
+    src = (slot_source or "sqlite").strip().lower()
+
+    if record.get("source_type") == "public_booking":
+        if not slug:
+            raise HTTPException(400, "Contexte cabinet manquant.")
+        return _reschedule_public_booking(
+            tenant_id,
+            record,
+            slug=slug,
+            new_slot_id=clean_slot_id,
+            slot_label=label,
+            start_iso=start_iso,
+            end_iso=end_iso,
+            slot_source=src,
+        )
+
+    try:
+        slot_id_int = int(clean_slot_id)
+    except ValueError:
+        raise HTTPException(400, "Creneau invalide pour ce rendez-vous.")
+
     appt_id = int(record.get("id"))
-    from backend.slots_pg import pg_reschedule_booking_atomic
+    google_event_id = (record.get("google_event_id") or "").strip()
+    old_slot_id = int(record.get("slot_id") or 0)
 
-    ok = pg_reschedule_booking_atomic(tenant_id, appt_id, int(new_slot_id))
-    if ok is not True:
-        from backend.db import reschedule_booking_atomic
+    if google_event_id and uses_google_calendar(tenant_id):
+        new_window = slot_window_for_reschedule(tenant_id, slot_id_int)
+        old_window = slot_window_for_reschedule(tenant_id, old_slot_id) if old_slot_id else None
+        if not new_window:
+            raise HTTPException(400, "Creneau introuvable.")
+        new_start, new_end, tz_name = new_window
+        moved = reschedule_google_event(
+            tenant_id,
+            google_event_id,
+            new_start.isoformat(),
+            new_end.isoformat(),
+            timezone=tz_name,
+        )
+        if not moved:
+            raise HTTPException(502, "Impossible de deplacer le rendez-vous sur Google Calendar.")
+        from backend.slots_pg import pg_reschedule_booking_atomic
 
-        ok = reschedule_booking_atomic(appt_id, int(new_slot_id), tenant_id=tenant_id)
-    if not ok:
-        raise HTTPException(409, "Ce creneau n'est plus disponible. Choisissez un autre horaire.")
+        ok = pg_reschedule_booking_atomic(tenant_id, appt_id, slot_id_int)
+        if ok is not True:
+            from backend.db import reschedule_booking_atomic
+
+            ok = reschedule_booking_atomic(appt_id, slot_id_int, tenant_id=tenant_id)
+        if not ok and old_window:
+            old_start, old_end, _ = old_window
+            reschedule_google_event(
+                tenant_id,
+                google_event_id,
+                old_start.isoformat(),
+                old_end.isoformat(),
+                timezone=tz_name,
+            )
+            raise HTTPException(409, "Ce creneau n'est plus disponible. Choisissez un autre horaire.")
+        if not ok:
+            raise HTTPException(409, "Ce creneau n'est plus disponible. Choisissez un autre horaire.")
+    else:
+        from backend.slots_pg import pg_reschedule_booking_atomic
+
+        ok = pg_reschedule_booking_atomic(tenant_id, appt_id, slot_id_int)
+        if ok is not True:
+            from backend.db import reschedule_booking_atomic
+
+            ok = reschedule_booking_atomic(appt_id, slot_id_int, tenant_id=tenant_id)
+        if not ok:
+            raise HTTPException(409, "Ce creneau n'est plus disponible. Choisissez un autre horaire.")
 
     booking_code = (record.get("booking_code") or "").strip()
     if booking_code:
@@ -423,6 +600,6 @@ def reschedule_appointment(
         "public_appointment_rescheduled tenant=%s appt_id=%s new_slot=%s",
         tenant_id,
         appt_id,
-        new_slot_id,
+        slot_id_int,
     )
     return {"ok": True, "rescheduled": True}

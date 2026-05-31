@@ -28,6 +28,9 @@ export function classifyRequestType(callOrHandoff) {
   const source = callOrHandoff._source;
   const reason = String(callOrHandoff.reason || callOrHandoff.reason_category || "").toLowerCase();
   const summary = String(callOrHandoff.summary || "").toLowerCase();
+  if (source === "callback_request") {
+    return { type: "Rappel page publique", typeKey: "callback" };
+  }
   if (reason.includes("renew") || summary.includes("renouvel") || summary.includes("ordonnance")) {
     return { type: "Renouvellement", typeKey: "renewal" };
   }
@@ -47,8 +50,8 @@ function requestPriority(callOrHandoff) {
   return "Standard";
 }
 
-/** Construit les lignes demandes (appels + handoffs) comme la page Demandes. */
-export function buildTenantRequestRows(calls = [], handoffs = [], overrides = {}) {
+/** Construit les lignes demandes (appels + handoffs + rappels page publique). */
+export function buildTenantRequestRows(calls = [], handoffs = [], callbacks = [], overrides = {}) {
   const fromCalls = calls
     .filter((c) => c.followup_state === "callback" || c.status === "TRANSFERRED" || c.reason_category === "urgency")
     .map((c) => {
@@ -87,7 +90,34 @@ export function buildTenantRequestRows(calls = [], handoffs = [], overrides = {}
     };
   });
 
-  return [...fromHandoffs, ...fromCalls]
+  const fromCallbacks = callbacks.map((c) => {
+    const reasonLabel = {
+      question_rdv: "Question sur un rendez-vous",
+      modifier: "Modifier un rendez-vous",
+      annuler: "Annuler un rendez-vous",
+      admin: "Question administrative",
+      ordonnance: "Ordonnance / document",
+      other: "Autre demande",
+    }[String(c.reason || "").toLowerCase()] || String(c.reason || "Autre demande");
+    const rawStatus = String(c.status || "new").toLowerCase();
+    const statusRaw = rawStatus === "new" ? "callback_created" : rawStatus;
+    const t = classifyRequestType({ ...c, _source: "callback_request" });
+    return {
+      id: `callback-${c.id}`,
+      patientName: c.name || "Patient",
+      type: t.type,
+      typeKey: t.typeKey,
+      priority: "Standard",
+      status_raw: statusRaw,
+      summary: (c.message || "").trim() || reasonLabel,
+      phone: c.phone || "",
+      createdAtLabel: formatRequestDate(c.created_at),
+      createdAt: c.created_at,
+      source: "Page publique",
+    };
+  });
+
+  return [...fromHandoffs, ...fromCalls, ...fromCallbacks]
     .map((item) => {
       const override = overrides[item.id];
       const statusRaw = override?.status_raw ? String(override.status_raw).toLowerCase() : item.status_raw;
@@ -126,8 +156,8 @@ function isSameDay(a, b) {
   );
 }
 
-/** Construit les demandes visibles (appels + handoffs) pour compter les KPI dashboard. */
-export function buildRequestItemsFromCallsAndHandoffs(calls = [], handoffs = []) {
+/** Construit les demandes visibles (appels + handoffs + callbacks) pour compter les KPI dashboard. */
+export function buildRequestItemsFromCallsAndHandoffs(calls = [], handoffs = [], callbacks = []) {
   const fromCalls = calls
     .filter((c) => c.followup_state === "callback" || c.status === "TRANSFERRED" || c.reason_category === "urgency")
     .map((c) => ({
@@ -142,7 +172,13 @@ export function buildRequestItemsFromCallsAndHandoffs(calls = [], handoffs = [])
     createdAt: h.created_at,
   }));
 
-  return [...fromHandoffs, ...fromCalls].map((item) => ({
+  const fromCallbacks = callbacks.map((c) => ({
+    status_raw: String(c.status || "new").toLowerCase() === "new" ? "callback_created" : String(c.status || "").toLowerCase(),
+    priority: "Standard",
+    createdAt: c.created_at,
+  }));
+
+  return [...fromHandoffs, ...fromCalls, ...fromCallbacks].map((item) => ({
     ...item,
     status: toUiStatus(item.status_raw),
   }));

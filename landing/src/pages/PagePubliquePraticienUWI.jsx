@@ -657,12 +657,8 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
         setSelected(found[0]);
         if (mode === "cancel") setStep("confirm-cancel");
         else if (mode === "reschedule") {
-          if (found[0].sourceType === "public_booking") {
-            setStep("reschedule-unavailable");
-          } else {
-            await loadRescheduleSlots();
-            setStep("reschedule-slots");
-          }
+          await loadRescheduleSlots();
+          setStep("reschedule-slots");
         }
       } else {
         setStep("select");
@@ -697,10 +693,6 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
     setError("");
     if (mode === "cancel") {
       setStep("confirm-cancel");
-      return;
-    }
-    if (appt.sourceType === "public_booking") {
-      setStep("reschedule-unavailable");
       return;
     }
     setLoading(true);
@@ -751,26 +743,31 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
       setError("Indiquez le telephone ou l'email associe au rendez-vous.");
       return;
     }
-    const slotId = parseInt(String(pickedSlot.id || pickedSlot.slot_id || ""), 10);
-    if (!Number.isFinite(slotId)) {
+    const slotId = String(pickedSlot.id || pickedSlot.slot_id || "").trim();
+    if (!slotId) {
       setError("Ce creneau ne peut pas etre selectionne. Choisissez un autre horaire.");
       return;
     }
     setLoading(true);
     setError("");
     try {
-      await fetchJson(`/api/public/${encodeURIComponent(slug)}/appointments/reschedule`, {
+      const data = await fetchJson(`/api/public/${encodeURIComponent(slug)}/appointments/reschedule`, {
         method: "POST",
         body: JSON.stringify({
           actionToken: selected.actionToken,
           phone: phone ? normalizeFrenchPhone(phone) : undefined,
           email: email || undefined,
           newSlotId: slotId,
+          slotLabel: pickedSlot.label || "",
+          startIso: pickedSlot.startIso || "",
+          endIso: pickedSlot.endIso || "",
+          slotSource: pickedSlot.source || "sqlite",
         }),
       });
-      setSuccessMessage(`Votre rendez-vous a ete deplace au creneau ${pickedSlot.label || pickedSlot.time || ""}.`);
+      const codeHint = data?.bookingCode ? ` Nouveau code : ${data.bookingCode}.` : "";
+      setSuccessMessage(`Votre rendez-vous a ete deplace au creneau ${pickedSlot.label || pickedSlot.time || ""}.${codeHint}`);
       setStep("success");
-      push([{ from: "clara", text: "Votre rendez-vous a ete deplace avec succes." }]);
+      push([{ from: "clara", text: `Votre rendez-vous a ete deplace avec succes.${codeHint}` }]);
       trackPublicEvent({ slug, event: "booking_rescheduled", source: "public_action" });
     } catch (err) {
       setError(String(err?.message || "Deplacement impossible."));

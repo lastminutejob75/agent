@@ -36,7 +36,11 @@ class PublicAppointmentRescheduleBody(BaseModel):
     actionToken: str = Field(..., min_length=10)
     phone: Optional[str] = Field(None, max_length=40)
     email: Optional[str] = Field(None, max_length=254)
-    newSlotId: int = Field(..., ge=1)
+    newSlotId: str = Field(..., min_length=1, max_length=80)
+    slotLabel: Optional[str] = Field(None, max_length=140)
+    startIso: Optional[str] = Field(None, max_length=64)
+    endIso: Optional[str] = Field(None, max_length=64)
+    slotSource: Optional[str] = Field(None, max_length=20)
 
 
 class PublicCallbackRequestBody(BaseModel):
@@ -128,7 +132,12 @@ def public_appointments_reschedule(slug: str, body: PublicAppointmentRescheduleB
         action_token=body.actionToken,
         phone=phone,
         email=email,
-        new_slot_id=int(body.newSlotId),
+        new_slot_id=str(body.newSlotId).strip(),
+        slug=slug,
+        slot_label=(body.slotLabel or "").strip() or None,
+        start_iso=(body.startIso or "").strip() or None,
+        end_iso=(body.endIso or "").strip() or None,
+        slot_source=(body.slotSource or "").strip() or None,
     )
 
 

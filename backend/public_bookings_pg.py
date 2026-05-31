@@ -61,6 +61,9 @@ def ensure_public_bookings_schema() -> None:
                     "ALTER TABLE public_bookings ADD COLUMN IF NOT EXISTS booking_code VARCHAR(8)"
                 )
                 cur.execute(
+                    "ALTER TABLE public_bookings ADD COLUMN IF NOT EXISTS google_event_id VARCHAR(256)"
+                )
+                cur.execute(
                     """
                     CREATE UNIQUE INDEX IF NOT EXISTS idx_public_bookings_tenant_booking_code
                     ON public_bookings (tenant_id, booking_code)
@@ -87,6 +90,7 @@ def insert_public_booking(
     status: str,
     start_iso: Optional[str],
     booking_code: Optional[str] = None,
+    google_event_id: Optional[str] = None,
 ) -> Dict[str, str]:
     ensure_public_bookings_schema()
     start_ts = _parse_iso_ts(start_iso)
@@ -97,6 +101,7 @@ def insert_public_booking(
             if tenant_id is not None:
                 set_tenant_id_on_connection(conn, int(tenant_id))
             with conn.cursor() as cur:
+                ge = (google_event_id or "").strip()[:256] or None
                 if not stored_code:
                     stored_code = create_unique_booking_code_pg(cur, tenant_id)
                 cur.execute(
@@ -104,9 +109,9 @@ def insert_public_booking(
                     INSERT INTO public_bookings (
                       id, tenant_id, slot_id, slot_label, patient_name, patient_phone,
                       patient_email, motif, source, status, start_iso, created_at, confirmed_at,
-                      booking_code
+                      booking_code, google_event_id
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s)
                     """,
                     (
                         booking_id,
@@ -122,6 +127,7 @@ def insert_public_booking(
                         start_ts,
                         confirmed_at,
                         stored_code,
+                        ge,
                     ),
                 )
             conn.commit()
@@ -219,7 +225,8 @@ def get_public_booking_by_id(tenant_id: int, booking_id: str) -> Optional[Dict[s
                 cur.execute(
                     """
                     SELECT id, patient_name, patient_phone, patient_email, motif, slot_label,
-                           status, start_iso, created_at, booking_code, slot_id, source
+                           status, start_iso, created_at, booking_code, slot_id, source,
+                           google_event_id
                     FROM public_bookings
                     WHERE tenant_id = %s AND id = %s
                     LIMIT 1
@@ -346,6 +353,111 @@ def insert_callback_request(
         return req_id
     except Exception as exc:
         logger.warning("insert_callback_request failed tenant=%s: %s", tenant_id, exc)
+        return None
+
+
+CALLBACK_REASON_LABELS = {
+    "question_rdv": "Question sur un rendez-vous",
+    "modifier": "Modifier un rendez-vous",
+    "annuler": "Annuler un rendez-vous",
+    "admin": "Question administrative",
+    "ordonnance": "Ordonnance / document",
+    "other": "Autre demande",
+}
+
+
+def list_callback_requests(
+    tenant_id: int,
+    *,
+    status: Optional[str] = None,
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    try:
+        with pg_connection() as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS callback_requests (
+                      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                      tenant_id BIGINT REFERENCES tenants(tenant_id) ON DELETE SET NULL,
+                      appointment_source TEXT,
+                      appointment_id TEXT,
+                      patient_id BIGINT,
+                      name TEXT,
+                      phone TEXT NOT NULL,
+                      email TEXT,
+                      reason TEXT NOT NULL DEFAULT 'other',
+                      message TEXT,
+                      source TEXT NOT NULL DEFAULT 'public_page',
+                      status TEXT NOT NULL DEFAULT 'new',
+                      unmatched BOOLEAN NOT NULL DEFAULT FALSE,
+                      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                      handled_at TIMESTAMPTZ,
+                      handled_by TEXT
+                    )
+                    """
+                )
+                params: List[Any] = [tenant_id]
+                status_filter = ""
+                if status:
+                    status_filter = " AND status = %s"
+                    params.append(status.strip().lower())
+                params.append(max(1, min(int(limit), 200)))
+                cur.execute(
+                    f"""
+                    SELECT id, tenant_id, appointment_source, appointment_id, name, phone, email,
+                           reason, message, source, status, unmatched, created_at, handled_at, handled_by
+                    FROM callback_requests
+                    WHERE tenant_id = %s{status_filter}
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    tuple(params),
+                )
+                return [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        logger.debug("list_callback_requests failed tenant=%s: %s", tenant_id, exc)
+        return []
+
+
+def update_callback_request_status(
+    tenant_id: int,
+    request_id: str,
+    *,
+    status: str,
+    handled_by: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    clean_status = (status or "").strip().lower()
+    if clean_status not in {"processed", "cancelled", "new"}:
+        return None
+    try:
+        with pg_connection() as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE callback_requests
+                    SET status = %s,
+                        handled_at = CASE WHEN %s IN ('processed', 'cancelled') THEN NOW() ELSE handled_at END,
+                        handled_by = COALESCE(%s, handled_by)
+                    WHERE tenant_id = %s AND id = %s
+                    RETURNING id, tenant_id, name, phone, email, reason, message, source, status,
+                              unmatched, created_at, handled_at, handled_by
+                    """,
+                    (
+                        clean_status,
+                        clean_status,
+                        (handled_by or "").strip()[:120] or None,
+                        tenant_id,
+                        request_id,
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+            return dict(row) if row else None
+    except Exception as exc:
+        logger.warning("update_callback_request_status failed tenant=%s id=%s: %s", tenant_id, request_id, exc)
         return None
 
 

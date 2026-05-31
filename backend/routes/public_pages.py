@@ -506,6 +506,7 @@ def _insert_booking(
     *,
     status: str = "pending",
     booking_code: Optional[str] = None,
+    google_event_id: Optional[str] = None,
 ) -> Dict[str, str]:
     from backend.public_bookings_pg import insert_public_booking
 
@@ -526,6 +527,7 @@ def _insert_booking(
         status=status,
         start_iso=(payload.startIso or "").strip() or None,
         booking_code=booking_code,
+        google_event_id=google_event_id,
     )
 
 
@@ -902,7 +904,7 @@ def _book_real_slot(
     tenant_id: int,
     payload: PublicBookingRequest,
     booking_code: Optional[str] = None,
-) -> tuple[bool, Optional[str]]:
+) -> tuple[bool, Optional[str], Optional[str]]:
     """
     Réserve un créneau via tools_booking (Google / PG / SQLite) — même chemin que l'agent vocal.
     Returns (success, reason) avec reason in slot_taken, technical, permission, None.
@@ -926,7 +928,9 @@ def _book_real_slot(
                 "label_vocal": payload.slotLabel,
             }
         ]
-        return tools_booking.book_slot_from_session(session, 1)
+        ok, reason = tools_booking.book_slot_from_session(session, 1)
+        ge = getattr(session, "google_event_id", None)
+        return ok, reason, (str(ge).strip() if ge else None)
 
     slot_id, book_src = _resolve_public_slot_id(tenant_id, payload)
     if slot_id is None:
@@ -949,7 +953,9 @@ def _book_real_slot(
             "label_vocal": payload.slotLabel,
         }
     ]
-    return tools_booking.book_slot_from_session(session, 1)
+    ok, reason = tools_booking.book_slot_from_session(session, 1)
+    ge = getattr(session, "google_event_id", None)
+    return ok, reason, (str(ge).strip() if ge else None)
 
 
 def _format_public_slot(raw: Dict[str, Any], today: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
@@ -1357,8 +1363,9 @@ async def public_book(
     except Exception as exc:
         logger.warning("public_book booking_code generation skipped tenant=%s: %s", tenant_id, exc)
 
+    google_event_id: Optional[str] = None
     if tenant_id:
-        ok, booking_reason = _book_real_slot(tenant_id, payload, booking_code=booking_code)
+        ok, booking_reason, google_event_id = _book_real_slot(tenant_id, payload, booking_code=booking_code)
         if ok:
             booking_status = "confirmed"
         elif booking_reason == "slot_taken":
@@ -1381,6 +1388,7 @@ async def public_book(
         str(tenant_id) if tenant_id else tenant_id_raw,
         status=booking_status,
         booking_code=booking_code,
+        google_event_id=google_event_id,
     )
     confirmation_id = booking_record.get("id") or ""
     if not booking_code:

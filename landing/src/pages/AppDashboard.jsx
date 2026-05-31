@@ -171,6 +171,7 @@ export default function AppDashboard() {
   const [kpis, setKpis] = useState(null);
   const [agenda, setAgenda] = useState([]);
   const [handoffs, setHandoffs] = useState([]);
+  const [callbacks, setCallbacks] = useState([]);
   const [calls, setCalls] = useState([]);
   const [connections, setConnections] = useState({ vapi: null, calendar: null });
 
@@ -184,11 +185,12 @@ export default function AppDashboard() {
     let cancelled = false;
     async function load() {
       setLoading(true);
-      const [kpiRes, agendaRes, handoffRes, callRes, vapiRes, calendarRes] = await Promise.allSettled([
+      const [kpiRes, agendaRes, handoffRes, callRes, callbackRes, vapiRes, calendarRes] = await Promise.allSettled([
         api.tenantKpis(1),
         api.tenantGetAgenda("?upcoming_days=14&compact=1"),
         api.tenantGetHandoffs("?limit=30&days=30"),
         api.tenantGetCalls("?limit=30&days=7"),
+        api.tenantGetCallbackRequests("?limit=30"),
         api.tenantVapiStatus(),
         api.tenantGetCalendarStatus(),
       ]);
@@ -198,6 +200,7 @@ export default function AppDashboard() {
       if (agendaRes.status === "fulfilled") setAgenda(Array.isArray(agendaRes.value?.slots) ? agendaRes.value.slots : []);
       if (handoffRes.status === "fulfilled") setHandoffs(Array.isArray(handoffRes.value?.items) ? handoffRes.value.items : []);
       if (callRes.status === "fulfilled") setCalls(Array.isArray(callRes.value?.calls) ? callRes.value.calls : []);
+      if (callbackRes.status === "fulfilled") setCallbacks(Array.isArray(callbackRes.value?.items) ? callbackRes.value.items : []);
       setConnections({
         vapi: vapiRes.status === "fulfilled" ? vapiRes.value : null,
         calendar: calendarRes.status === "fulfilled" ? calendarRes.value : null,
@@ -267,9 +270,9 @@ export default function AppDashboard() {
   }), [handoffs]);
 
   const requestSummary = useMemo(() => {
-    const items = buildRequestItemsFromCallsAndHandoffs(calls, handoffs);
+    const items = buildRequestItemsFromCallsAndHandoffs(calls, handoffs, callbacks);
     return summarizeRequestItems(items);
-  }, [calls, handoffs]);
+  }, [calls, handoffs, callbacks]);
 
   const taskRows = useMemo(() => openHandoffs.slice(0, 2).map((h, idx) => {
     const title = String(h?.summary || h?.reason || h?.label || `Demande ${idx + 1}`).slice(0, 64);

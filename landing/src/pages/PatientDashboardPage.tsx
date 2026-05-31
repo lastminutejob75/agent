@@ -846,6 +846,7 @@ export default function PatientDashboardPage() {
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [deleteSaving, setDeleteSaving] = useState(false);
   const [tenantHandoffs, setTenantHandoffs] = useState<Array<Record<string, unknown>>>([]);
+  const [tenantCallbacks, setTenantCallbacks] = useState<Array<Record<string, unknown>>>([]);
   const [tenantCalls, setTenantCalls] = useState<Array<Record<string, unknown>>>([]);
   const [requestsLoading, setRequestsLoading] = useState(false);
   const [requestStatusOverrides, setRequestStatusOverrides] = useState<Record<string, { status_raw?: string }>>(
@@ -905,11 +906,13 @@ export default function PatientDashboardPage() {
     Promise.all([
       api.tenantGetHandoffs("?limit=50").catch(() => ({ items: [] })),
       api.tenantGetCalls("?limit=50&days=30&compact=1").catch(() => ({ calls: [] })),
+      api.tenantGetCallbackRequests("?limit=50").catch(() => ({ items: [] })),
     ])
-      .then(([handoffsRes, callsRes]) => {
+      .then(([handoffsRes, callsRes, callbacksRes]) => {
         if (cancelled) return;
         setTenantHandoffs(Array.isArray(handoffsRes?.items) ? handoffsRes.items : []);
         setTenantCalls(Array.isArray(callsRes?.calls) ? callsRes.calls : []);
+        setTenantCallbacks(Array.isArray(callbacksRes?.items) ? callbacksRes.items : []);
       })
       .finally(() => {
         if (!cancelled) setRequestsLoading(false);
@@ -920,8 +923,8 @@ export default function PatientDashboardPage() {
   }, []);
 
   const tenantRequestRows = useMemo(
-    () => buildTenantRequestRows(tenantCalls, tenantHandoffs, requestStatusOverrides),
-    [tenantCalls, tenantHandoffs, requestStatusOverrides],
+    () => buildTenantRequestRows(tenantCalls, tenantHandoffs, tenantCallbacks, requestStatusOverrides),
+    [tenantCalls, tenantHandoffs, tenantCallbacks, requestStatusOverrides],
   );
 
   const patientOpenRequests = useMemo(

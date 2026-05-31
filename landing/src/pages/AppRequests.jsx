@@ -111,6 +111,7 @@ export default function AppRequests() {
   const [searchParams] = useSearchParams();
   const [calls, setCalls] = useState([]);
   const [handoffs, setHandoffs] = useState([]);
+  const [callbacks, setCallbacks] = useState([]);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("À traiter");
   const [typeFilter, setTypeFilter] = useState("Tous types");
@@ -129,7 +130,7 @@ export default function AppRequests() {
     const urlSort = String(searchParams.get("sort") || "").trim().toLowerCase();
 
     if (["À traiter", "En cours", "Traitées", "Toutes"].includes(urlStatus)) setStatus(urlStatus);
-    if (["Tous types", "Transfert humain", "Rappel", "Renouvellement", "Document", "Question"].includes(urlType)) setTypeFilter(urlType);
+    if (["Tous types", "Transfert humain", "Rappel", "Rappel page publique", "Renouvellement", "Document", "Question"].includes(urlType)) setTypeFilter(urlType);
     if (["Toutes priorités", "Urgence", "Standard", "Faible"].includes(urlPriority)) setPriorityFilter(urlPriority);
     if (urlQuery) setQuery(urlQuery);
     if (urlSort === "asc" || urlSort === "desc") setSortOrder(urlSort);
@@ -154,13 +155,15 @@ export default function AppRequests() {
       setLoading(true);
       setError("");
       try {
-        const [callsData, handoffsData] = await Promise.all([
+        const [callsData, handoffsData, callbacksData] = await Promise.all([
           api.tenantGetCalls("?limit=50&days=30&compact=1"),
           api.tenantGetHandoffs("?limit=50"),
+          api.tenantGetCallbackRequests("?limit=50"),
         ]);
         if (cancelled) return;
         setCalls(Array.isArray(callsData?.calls) ? callsData.calls : []);
         setHandoffs(Array.isArray(handoffsData?.items) ? handoffsData.items : []);
+        setCallbacks(Array.isArray(callbacksData?.items) ? callbacksData.items : []);
       } catch (e) {
         if (!cancelled) setError(e?.message || "Erreur chargement des demandes");
       } finally {
@@ -220,7 +223,37 @@ export default function AppRequests() {
       };
     });
 
-    return [...fromHandoffs, ...fromCalls]
+    const fromCallbacks = callbacks.map((c) => {
+      const reasonLabel = {
+        question_rdv: "Question sur un rendez-vous",
+        modifier: "Modifier un rendez-vous",
+        annuler: "Annuler un rendez-vous",
+        admin: "Question administrative",
+        ordonnance: "Ordonnance / document",
+        other: "Autre demande",
+      }[String(c.reason || "").toLowerCase()] || String(c.reason || "Autre demande");
+      const rawStatus = String(c.status || "new").toLowerCase();
+      const statusRaw = rawStatus === "new" ? "callback_created" : rawStatus;
+      return {
+        id: `callback-${c.id}`,
+        patientId: `patient-${String(c.name || "patient").toLowerCase().replace(/\s+/g, "-")}`,
+        patientName: c.name || "Patient",
+        initials: (String(c.name || "PT").split(" ").slice(0, 2).map((x) => x[0] || "").join("").toUpperCase() || "PT"),
+        type: "Rappel page publique",
+        typeKey: "callback",
+        priority: "Standard",
+        status: toUiStatus(statusRaw),
+        status_raw: statusRaw,
+        summary: (c.message || "").trim() || reasonLabel,
+        phone: c.phone || "—",
+        createdAtLabel: formatDate(c.created_at),
+        source: "Page publique",
+        waitingTime: getWaitingTime(c.created_at),
+        createdAt: c.created_at,
+      };
+    });
+
+    return [...fromHandoffs, ...fromCalls, ...fromCallbacks]
       .map((item) => {
         const override = requestStatusOverrides[item.id];
         if (!override?.status_raw) return item;
@@ -233,7 +266,7 @@ export default function AppRequests() {
         };
       })
       .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-  }, [calls, handoffs, requestStatusOverrides]);
+  }, [calls, handoffs, callbacks, requestStatusOverrides]);
 
   const kpis = useMemo(() => {
     const toProcess = requests.filter((r) => r.status === "À traiter").length;
@@ -498,7 +531,7 @@ export default function AppRequests() {
               placeholder="Rechercher un patient, un motif, un téléphone..."
             />
             <Segment value={status} onChange={setStatus} options={["À traiter", "En cours", "Traitées", "Toutes"]} />
-            <SelectLike value={typeFilter} onChange={setTypeFilter} options={["Tous types", "Transfert humain", "Rappel", "Renouvellement", "Document", "Question"]} />
+            <SelectLike value={typeFilter} onChange={setTypeFilter} options={["Tous types", "Transfert humain", "Rappel", "Rappel page publique", "Renouvellement", "Document", "Question"]} />
             <SelectLike value={priorityFilter} onChange={setPriorityFilter} options={["Toutes priorités", "Urgence", "Standard", "Faible"]} />
             <button
               type="button"

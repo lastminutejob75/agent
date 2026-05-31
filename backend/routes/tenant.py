@@ -3993,6 +3993,46 @@ def tenant_patch_handoff(
     return {"ok": True, "item": item}
 
 
+class TenantCallbackRequestUpdateBody(BaseModel):
+    status: Optional[str] = None
+
+
+@router.get("/callback-requests")
+def tenant_list_callback_requests(
+    auth: dict = Depends(require_tenant_auth),
+    status: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+):
+    from backend.public_bookings_pg import list_callback_requests
+
+    tenant_id = auth["tenant_id"]
+    items = list_callback_requests(tenant_id, status=status, limit=limit)
+    return {"items": items, "total": len(items)}
+
+
+@router.patch("/callback-requests/{request_id}")
+def tenant_patch_callback_request(
+    request_id: str,
+    body: TenantCallbackRequestUpdateBody,
+    auth: dict = Depends(require_tenant_auth),
+):
+    from backend.public_bookings_pg import update_callback_request_status
+
+    tenant_id = auth["tenant_id"]
+    status = (body.status or "").strip().lower()
+    if status not in {"processed", "cancelled", "new"}:
+        raise HTTPException(400, "Invalid callback request status")
+    item = update_callback_request_status(
+        tenant_id,
+        request_id,
+        status=status,
+        handled_by=auth.get("email") or auth.get("sub") or "tenant",
+    )
+    if not item:
+        raise HTTPException(404, "Callback request not found")
+    return {"ok": True, "item": item}
+
+
 def _build_agenda_day_payload(date_str: str, provider: str, external_connected: bool) -> Dict[str, Any]:
     return {
         "slots": [],

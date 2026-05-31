@@ -363,6 +363,14 @@ export const api = {
       body,
       tenant: true,
     }),
+  tenantGetCallbackRequests: (params = "") =>
+    request(`/api/tenant/callback-requests${params}`, { tenant: true }),
+  tenantUpdateCallbackRequest: (requestId, body) =>
+    request(`/api/tenant/callback-requests/${encodeURIComponent(requestId)}`, {
+      method: "PATCH",
+      body,
+      tenant: true,
+    }),
   tenantGetAgenda: (params = "") => request(`/api/tenant/agenda${params}`, { tenant: true }),
   tenantGetAgendaBulk: async (dates, opts = {}) => {
     /* Un seul appel bulk (jusqu'à 42j). Plus rapide en pratique qu'un split en 3
