@@ -4016,12 +4016,13 @@ def tenant_patch_callback_request(
     body: TenantCallbackRequestUpdateBody,
     auth: dict = Depends(require_tenant_auth),
 ):
-    from backend.public_bookings_pg import update_callback_request_status
+    from backend.public_bookings_pg import update_callback_request_status, sync_handoff_status_from_callback, get_callback_request_by_id
 
     tenant_id = auth["tenant_id"]
     status = (body.status or "").strip().lower()
     if status not in {"processed", "cancelled", "new"}:
         raise HTTPException(400, "Invalid callback request status")
+    existing = get_callback_request_by_id(tenant_id, request_id)
     item = update_callback_request_status(
         tenant_id,
         request_id,
@@ -4030,6 +4031,9 @@ def tenant_patch_callback_request(
     )
     if not item:
         raise HTTPException(404, "Callback request not found")
+    handoff_id = (existing or item or {}).get("handoff_id")
+    if handoff_id and status in {"processed", "cancelled"}:
+        sync_handoff_status_from_callback(tenant_id, int(handoff_id), status)
     return {"ok": True, "item": item}
 
 

@@ -1,5 +1,22 @@
 /** Statuts UI des demandes (aligné AppRequests / dashboard). */
 
+export const CALLBACK_REASON_LABELS = {
+  question_rdv: "Question sur un rendez-vous",
+  modifier: "Modifier un rendez-vous",
+  annuler: "Annuler un rendez-vous",
+  admin: "Question administrative",
+  ordonnance: "Ordonnance / document",
+  other: "Autre demande",
+};
+
+const LIVE_HANDOFF_STATUSES = new Set([
+  "live_attempted",
+  "live_forwarding_confirmed",
+  "live_connected",
+  "live_failed",
+  "live_unconfirmed_timeout",
+]);
+
 export function toUiStatus(rawStatus) {
   const raw = String(rawStatus || "").toLowerCase();
   if (raw === "processed" || raw === "cancelled") return "Traitées";
@@ -24,12 +41,59 @@ export function formatRequestDate(value) {
   return `${date.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" })} ${date.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`;
 }
 
+export function isLiveTransferHandoff(handoff) {
+  const mode = String(handoff?.mode || handoff?.handoff_mode || "").toLowerCase();
+  const status = String(handoff?.status || handoff?.handoff_status || "").toLowerCase();
+  return mode === "live_then_callback" && LIVE_HANDOFF_STATUSES.has(status);
+}
+
+export function linkedHandoffIds(callbacks = []) {
+  return new Set(
+    callbacks
+      .map((c) => c.handoff_id)
+      .filter(Boolean)
+      .map((id) => String(id)),
+  );
+}
+
+export function shouldShowHandoffInRequestInbox(handoff, callbacks = []) {
+  const handoffId = String(handoff?.id || "");
+  if (!handoffId) return true;
+  if (!linkedHandoffIds(callbacks).has(handoffId)) return true;
+  return isLiveTransferHandoff(handoff);
+}
+
+export function callbackRequestSourceLabel(callback) {
+  return String(callback?.source || "").toLowerCase() === "vocal_agent" ? "Appel vocal" : "Page publique";
+}
+
+export function callbackRequestStatusRaw(callback) {
+  const handoffStatus = String(callback?.handoff_status || "").toLowerCase();
+  if (handoffStatus) return handoffStatus;
+  const raw = String(callback?.status || "new").toLowerCase();
+  return raw === "new" ? "callback_created" : raw;
+}
+
+export function callbackRequestPriority(callback) {
+  const priority = String(callback?.handoff_priority || "").toLowerCase();
+  if (priority.includes("urgent")) return "Urgence";
+  if (priority.includes("low") || priority.includes("faible")) return "Faible";
+  return "Standard";
+}
+
+export function callbackRequestSummary(callback) {
+  const reasonLabel =
+    CALLBACK_REASON_LABELS[String(callback?.reason || "").toLowerCase()] ||
+    String(callback?.reason || "Autre demande");
+  return (String(callback?.message || "").trim() || reasonLabel);
+}
+
 export function classifyRequestType(callOrHandoff) {
   const source = callOrHandoff._source;
   const reason = String(callOrHandoff.reason || callOrHandoff.reason_category || "").toLowerCase();
   const summary = String(callOrHandoff.summary || "").toLowerCase();
   if (source === "callback_request") {
-    return { type: "Rappel page publique", typeKey: "callback" };
+    return { type: "Rappel", typeKey: "callback" };
   }
   if (reason.includes("renew") || summary.includes("renouvel") || summary.includes("ordonnance")) {
     return { type: "Renouvellement", typeKey: "renewal" };
@@ -38,19 +102,42 @@ export function classifyRequestType(callOrHandoff) {
     return { type: "Document", typeKey: "document" };
   }
   if (reason.includes("question")) return { type: "Question", typeKey: "question" };
-  if (source === "handoff") return { type: "Transfert humain", typeKey: "transfer" };
+  if (source === "handoff" && isLiveTransferHandoff(callOrHandoff)) {
+    return { type: "Transfert humain", typeKey: "transfer" };
+  }
+  if (source === "handoff") return { type: "Rappel", typeKey: "callback" };
   return { type: "Rappel", typeKey: "callback" };
 }
 
 function requestPriority(callOrHandoff) {
-  const p = String(callOrHandoff.priority || "").toLowerCase();
+  const p = String(callOrHandoff.priority || callOrHandoff.handoff_priority || "").toLowerCase();
   const summary = String(callOrHandoff.summary || "").toLowerCase();
   if (p.includes("urgent") || summary.includes("urgence")) return "Urgence";
   if (p.includes("low") || p.includes("faible")) return "Faible";
   return "Standard";
 }
 
-/** Construit les lignes demandes (appels + handoffs + rappels page publique). */
+function mapCallbackRequestRow(callback) {
+  const statusRaw = callbackRequestStatusRaw(callback);
+  return {
+    id: `callback-${callback.id}`,
+    patientName: callback.name || "Patient",
+    type: "Rappel",
+    typeKey: "callback",
+    priority: callbackRequestPriority(callback),
+    status_raw: statusRaw,
+    summary: callbackRequestSummary(callback),
+    phone: callback.phone || "",
+    createdAtLabel: formatRequestDate(callback.created_at),
+    createdAt: callback.created_at,
+    source: callbackRequestSourceLabel(callback),
+    callbackId: callback.id,
+    handoffId: callback.handoff_id || null,
+    callId: callback.call_id || null,
+  };
+}
+
+/** Construit les lignes demandes (appels + handoffs + rappels unifiés). */
 export function buildTenantRequestRows(calls = [], handoffs = [], callbacks = [], overrides = {}) {
   const fromCalls = calls
     .filter((c) => c.followup_state === "callback" || c.status === "TRANSFERRED" || c.reason_category === "urgency")
@@ -72,50 +159,28 @@ export function buildTenantRequestRows(calls = [], handoffs = [], callbacks = []
       };
     });
 
-  const fromHandoffs = handoffs.map((h) => {
-    const t = classifyRequestType({ ...h, _source: "handoff" });
-    const rawStatus = String(h.status || "").toLowerCase();
-    return {
-      id: `req-${String(h.id || "").padStart(3, "0")}`,
-      patientName: h.display_name || "Patient",
-      type: t.type,
-      typeKey: t.typeKey,
-      priority: requestPriority(h),
-      status_raw: rawStatus,
-      summary: h.summary || h.reason || "Demande transférée nécessitant une action humaine.",
-      phone: h.patient_phone || "",
-      createdAtLabel: formatRequestDate(h.created_at),
-      createdAt: h.created_at,
-      source: "Via transfert",
-    };
-  });
+  const fromHandoffs = handoffs
+    .filter((h) => shouldShowHandoffInRequestInbox(h, callbacks))
+    .map((h) => {
+      const t = classifyRequestType({ ...h, _source: "handoff" });
+      const rawStatus = String(h.status || "").toLowerCase();
+      return {
+        id: `req-${String(h.id || "").padStart(3, "0")}`,
+        patientName: h.display_name || "Patient",
+        type: t.type,
+        typeKey: t.typeKey,
+        priority: requestPriority(h),
+        status_raw: rawStatus,
+        summary: h.summary || h.reason || "Demande transférée nécessitant une action humaine.",
+        phone: h.patient_phone || "",
+        createdAtLabel: formatRequestDate(h.created_at),
+        createdAt: h.created_at,
+        source: isLiveTransferHandoff(h) ? "Transfert live" : "Appel vocal",
+        handoffId: h.id || null,
+      };
+    });
 
-  const fromCallbacks = callbacks.map((c) => {
-    const reasonLabel = {
-      question_rdv: "Question sur un rendez-vous",
-      modifier: "Modifier un rendez-vous",
-      annuler: "Annuler un rendez-vous",
-      admin: "Question administrative",
-      ordonnance: "Ordonnance / document",
-      other: "Autre demande",
-    }[String(c.reason || "").toLowerCase()] || String(c.reason || "Autre demande");
-    const rawStatus = String(c.status || "new").toLowerCase();
-    const statusRaw = rawStatus === "new" ? "callback_created" : rawStatus;
-    const t = classifyRequestType({ ...c, _source: "callback_request" });
-    return {
-      id: `callback-${c.id}`,
-      patientName: c.name || "Patient",
-      type: t.type,
-      typeKey: t.typeKey,
-      priority: "Standard",
-      status_raw: statusRaw,
-      summary: (c.message || "").trim() || reasonLabel,
-      phone: c.phone || "",
-      createdAtLabel: formatRequestDate(c.created_at),
-      createdAt: c.created_at,
-      source: "Page publique",
-    };
-  });
+  const fromCallbacks = callbacks.map((c) => mapCallbackRequestRow(c));
 
   return [...fromHandoffs, ...fromCalls, ...fromCallbacks]
     .map((item) => {
@@ -166,15 +231,17 @@ export function buildRequestItemsFromCallsAndHandoffs(calls = [], handoffs = [],
       createdAt: c.started_at || c.last_event_at,
     }));
 
-  const fromHandoffs = handoffs.map((h) => ({
-    status_raw: String(h.status || "").toLowerCase(),
-    priority: requestPriority(h),
-    createdAt: h.created_at,
-  }));
+  const fromHandoffs = handoffs
+    .filter((h) => shouldShowHandoffInRequestInbox(h, callbacks))
+    .map((h) => ({
+      status_raw: String(h.status || "").toLowerCase(),
+      priority: requestPriority(h),
+      createdAt: h.created_at,
+    }));
 
   const fromCallbacks = callbacks.map((c) => ({
-    status_raw: String(c.status || "new").toLowerCase() === "new" ? "callback_created" : String(c.status || "").toLowerCase(),
-    priority: "Standard",
+    status_raw: callbackRequestStatusRaw(c),
+    priority: callbackRequestPriority(c),
     createdAt: c.created_at,
   }));
 

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../lib/api.js";
-import { toUiStatus } from "../lib/requestUiStatus.js";
+import { toUiStatus, classifyRequestType, shouldShowHandoffInRequestInbox, callbackRequestStatusRaw, callbackRequestPriority, callbackRequestSummary, callbackRequestSourceLabel, isLiveTransferHandoff } from "../lib/requestUiStatus.js";
 
 const REQUEST_STATUS_OVERRIDES_KEY = "uwi_request_status_overrides";
 const SYNC_BADGE_WINDOW_MS = 2 * 60 * 1000;
@@ -84,23 +84,8 @@ function formatDelayFromMinutes(minutes) {
   return `${hours}h${String(rem).padStart(2, "0")}`;
 }
 
-function requestType(callOrHandoff) {
-  const source = callOrHandoff._source;
-  const reason = String(callOrHandoff.reason || callOrHandoff.reason_category || "").toLowerCase();
-  const summary = String(callOrHandoff.summary || "").toLowerCase();
-  if (reason.includes("renew") || summary.includes("renouvel") || summary.includes("ordonnance")) {
-    return { type: "Renouvellement", typeKey: "renewal" };
-  }
-  if (reason.includes("document") || summary.includes("certificat") || summary.includes("arrêt") || summary.includes("arret")) {
-    return { type: "Document", typeKey: "document" };
-  }
-  if (reason.includes("question")) return { type: "Question", typeKey: "question" };
-  if (source === "handoff") return { type: "Transfert humain", typeKey: "transfer" };
-  return { type: "Rappel", typeKey: "callback" };
-}
-
 function requestPriority(callOrHandoff) {
-  const p = String(callOrHandoff.priority || "").toLowerCase();
+  const p = String(callOrHandoff.priority || callOrHandoff.handoff_priority || "").toLowerCase();
   const summary = String(callOrHandoff.summary || "").toLowerCase();
   if (p.includes("urgent") || summary.includes("urgence")) return "Urgence";
   if (p.includes("low") || p.includes("faible")) return "Faible";
@@ -130,7 +115,7 @@ export default function AppRequests() {
     const urlSort = String(searchParams.get("sort") || "").trim().toLowerCase();
 
     if (["À traiter", "En cours", "Traitées", "Toutes"].includes(urlStatus)) setStatus(urlStatus);
-    if (["Tous types", "Transfert humain", "Rappel", "Rappel page publique", "Renouvellement", "Document", "Question"].includes(urlType)) setTypeFilter(urlType);
+    if (["Tous types", "Transfert humain", "Rappel", "Renouvellement", "Document", "Question"].includes(urlType)) setTypeFilter(urlType);
     if (["Toutes priorités", "Urgence", "Standard", "Faible"].includes(urlPriority)) setPriorityFilter(urlPriority);
     if (urlQuery) setQuery(urlQuery);
     if (urlSort === "asc" || urlSort === "desc") setSortOrder(urlSort);
@@ -180,7 +165,7 @@ export default function AppRequests() {
     const fromCalls = calls
       .filter((c) => c.followup_state === "callback" || c.status === "TRANSFERRED" || c.reason_category === "urgency")
       .map((c) => {
-        const t = requestType({ ...c, _source: "call" });
+        const t = classifyRequestType({ ...c, _source: "call" });
         const statusRaw = c.followup_state === "processed" ? "processed" : "callback_created";
         return {
           id: `call-${c.call_id || c.id}`,
@@ -201,55 +186,52 @@ export default function AppRequests() {
         };
       });
 
-    const fromHandoffs = handoffs.map((h) => {
-      const t = requestType({ ...h, _source: "handoff" });
-      const rawStatus = String(h.status || "").toLowerCase();
-      return {
-        id: `req-${String(h.id || "").padStart(3, "0")}`,
-        patientId: `patient-${String(h.display_name || "patient").toLowerCase().replace(/\s+/g, "-")}`,
-        patientName: h.display_name || "Patient",
-        initials: (String(h.display_name || "PT").split(" ").slice(0, 2).map((x) => x[0] || "").join("").toUpperCase() || "PT"),
-        type: t.type,
-        typeKey: t.typeKey,
-        priority: requestPriority(h),
-        status: toUiStatus(rawStatus),
-        status_raw: rawStatus,
-        summary: h.summary || h.reason || "Demande transférée nécessitant une action humaine.",
-        phone: h.patient_phone || "—",
-        createdAtLabel: formatDate(h.created_at),
-        source: "Via transfert",
-        waitingTime: getWaitingTime(h.created_at),
-        createdAt: h.created_at,
-      };
-    });
+    const fromHandoffs = handoffs
+      .filter((h) => shouldShowHandoffInRequestInbox(h, callbacks))
+      .map((h) => {
+        const t = classifyRequestType({ ...h, _source: "handoff" });
+        const rawStatus = String(h.status || "").toLowerCase();
+        return {
+          id: `req-${String(h.id || "").padStart(3, "0")}`,
+          patientId: `patient-${String(h.display_name || "patient").toLowerCase().replace(/\s+/g, "-")}`,
+          patientName: h.display_name || "Patient",
+          initials: (String(h.display_name || "PT").split(" ").slice(0, 2).map((x) => x[0] || "").join("").toUpperCase() || "PT"),
+          type: t.type,
+          typeKey: t.typeKey,
+          priority: requestPriority(h),
+          status: toUiStatus(rawStatus),
+          status_raw: rawStatus,
+          summary: h.summary || h.reason || "Demande transférée nécessitant une action humaine.",
+          phone: h.patient_phone || "—",
+          createdAtLabel: formatDate(h.created_at),
+          source: isLiveTransferHandoff(h) ? "Transfert live" : "Appel vocal",
+          waitingTime: getWaitingTime(h.created_at),
+          createdAt: h.created_at,
+          handoffId: h.id || null,
+        };
+      });
 
     const fromCallbacks = callbacks.map((c) => {
-      const reasonLabel = {
-        question_rdv: "Question sur un rendez-vous",
-        modifier: "Modifier un rendez-vous",
-        annuler: "Annuler un rendez-vous",
-        admin: "Question administrative",
-        ordonnance: "Ordonnance / document",
-        other: "Autre demande",
-      }[String(c.reason || "").toLowerCase()] || String(c.reason || "Autre demande");
-      const rawStatus = String(c.status || "new").toLowerCase();
-      const statusRaw = rawStatus === "new" ? "callback_created" : rawStatus;
+      const statusRaw = callbackRequestStatusRaw(c);
       return {
         id: `callback-${c.id}`,
         patientId: `patient-${String(c.name || "patient").toLowerCase().replace(/\s+/g, "-")}`,
         patientName: c.name || "Patient",
         initials: (String(c.name || "PT").split(" ").slice(0, 2).map((x) => x[0] || "").join("").toUpperCase() || "PT"),
-        type: "Rappel page publique",
+        type: "Rappel",
         typeKey: "callback",
-        priority: "Standard",
+        priority: callbackRequestPriority(c),
         status: toUiStatus(statusRaw),
         status_raw: statusRaw,
-        summary: (c.message || "").trim() || reasonLabel,
+        summary: callbackRequestSummary(c),
         phone: c.phone || "—",
         createdAtLabel: formatDate(c.created_at),
-        source: "Page publique",
+        source: callbackRequestSourceLabel(c),
         waitingTime: getWaitingTime(c.created_at),
         createdAt: c.created_at,
+        callbackId: c.id,
+        handoffId: c.handoff_id || null,
+        callId: c.call_id || null,
       };
     });
 
@@ -531,7 +513,7 @@ export default function AppRequests() {
               placeholder="Rechercher un patient, un motif, un téléphone..."
             />
             <Segment value={status} onChange={setStatus} options={["À traiter", "En cours", "Traitées", "Toutes"]} />
-            <SelectLike value={typeFilter} onChange={setTypeFilter} options={["Tous types", "Transfert humain", "Rappel", "Rappel page publique", "Renouvellement", "Document", "Question"]} />
+            <SelectLike value={typeFilter} onChange={setTypeFilter} options={["Tous types", "Transfert humain", "Rappel", "Renouvellement", "Document", "Question"]} />
             <SelectLike value={priorityFilter} onChange={setPriorityFilter} options={["Toutes priorités", "Urgence", "Standard", "Faible"]} />
             <button
               type="button"

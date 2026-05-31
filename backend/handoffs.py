@@ -500,7 +500,27 @@ def update_handoff_status(
         conn.commit()
     finally:
         conn.close()
-    return get_handoff_by_id(tenant_id, handoff_id)
+    result = get_handoff_by_id(tenant_id, handoff_id)
+    if result:
+        try:
+            from backend.public_bookings_pg import sync_callback_status_from_handoff, upsert_callback_from_handoff
+
+            upsert_callback_from_handoff(tenant_id, result)
+            sync_callback_status_from_handoff(tenant_id, result)
+        except Exception:
+            pass
+    return result
+
+
+def _mirror_handoff_as_callback_request(tenant_id: int, handoff: Optional[Dict[str, Any]]) -> None:
+    if not handoff:
+        return
+    try:
+        from backend.public_bookings_pg import upsert_callback_from_handoff
+
+        upsert_callback_from_handoff(tenant_id, handoff)
+    except Exception:
+        pass
 
 
 def ensure_transfer_handoff(
@@ -515,6 +535,7 @@ def ensure_transfer_handoff(
         return None
     existing = get_handoff_by_call_id(tenant_id, call_id)
     if existing:
+        _mirror_handoff_as_callback_request(tenant_id, existing)
         return existing
     decision = resolve_handoff_decision(
         session,
@@ -581,4 +602,5 @@ def ensure_transfer_handoff(
                     )
         except Exception:
             pass
+    _mirror_handoff_as_callback_request(tenant_id, created)
     return created

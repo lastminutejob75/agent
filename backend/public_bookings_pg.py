@@ -365,6 +365,263 @@ CALLBACK_REASON_LABELS = {
     "other": "Autre demande",
 }
 
+_HANDOFF_REASON_TO_CALLBACK = {
+    "explicit_practitioner_request": "other",
+    "explicit_human_request": "other",
+    "urgent_non_vital_case": "admin",
+    "medical_question_requires_practitioner": "ordonnance",
+    "medical_sensitive": "ordonnance",
+    "technical_failure": "other",
+    "too_many_retries": "other",
+    "identity_uncertain": "other",
+    "fallback_transfer": "other",
+    "start_unclear": "other",
+}
+
+_LIVE_HANDOFF_STATUSES = frozenset(
+    {
+        "live_attempted",
+        "live_forwarding_confirmed",
+        "live_connected",
+        "live_failed",
+        "live_unconfirmed_timeout",
+    }
+)
+
+
+def _handoff_reason_to_callback_reason(reason: str) -> str:
+    clean = (reason or "").strip().lower()
+    return _HANDOFF_REASON_TO_CALLBACK.get(clean, "other")
+
+
+def _handoff_status_to_callback_status(handoff_status: str) -> str:
+    clean = (handoff_status or "").strip().lower()
+    if clean == "processed":
+        return "processed"
+    if clean == "cancelled":
+        return "cancelled"
+    return "new"
+
+
+def _callback_status_to_handoff_status(callback_status: str) -> Optional[str]:
+    clean = (callback_status or "").strip().lower()
+    if clean == "processed":
+        return "processed"
+    if clean == "cancelled":
+        return "cancelled"
+    return None
+
+
+def _ensure_callback_requests_link_columns(cur) -> None:
+    cur.execute("ALTER TABLE callback_requests ADD COLUMN IF NOT EXISTS call_id TEXT")
+    cur.execute("ALTER TABLE callback_requests ADD COLUMN IF NOT EXISTS handoff_id BIGINT")
+
+
+def _build_callback_message_from_handoff(handoff: Dict[str, Any]) -> Optional[str]:
+    summary = str(handoff.get("summary") or "").strip()
+    excerpt = str(handoff.get("transcript_excerpt") or "").strip()
+    if summary and excerpt and excerpt not in summary:
+        return f"{summary}\n\n{excerpt}"[:2000]
+    return (summary or excerpt or "")[:2000] or None
+
+
+def upsert_callback_from_handoff(tenant_id: int, handoff: Dict[str, Any]) -> Optional[str]:
+    """Crée ou met à jour une demande de rappel unifiée à partir d'un handoff vocal."""
+    handoff_id = int(handoff.get("id") or 0)
+    if not handoff_id:
+        return None
+    call_id = str(handoff.get("call_id") or "").strip()
+    phone = str(handoff.get("patient_phone") or "").strip()
+    unmatched = False
+    if not phone:
+        phone = "+33000000000"
+        unmatched = True
+    name = str(
+        handoff.get("display_name")
+        or handoff.get("validated_name")
+        or handoff.get("raw_name")
+        or "Patient"
+    ).strip()[:200]
+    reason = _handoff_reason_to_callback_reason(str(handoff.get("reason") or ""))
+    message = _build_callback_message_from_handoff(handoff)
+    status = _handoff_status_to_callback_status(str(handoff.get("status") or ""))
+    try:
+        with pg_connection() as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS callback_requests (
+                      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                      tenant_id BIGINT REFERENCES tenants(tenant_id) ON DELETE SET NULL,
+                      appointment_source TEXT,
+                      appointment_id TEXT,
+                      patient_id BIGINT,
+                      name TEXT,
+                      phone TEXT NOT NULL,
+                      email TEXT,
+                      reason TEXT NOT NULL DEFAULT 'other',
+                      message TEXT,
+                      source TEXT NOT NULL DEFAULT 'public_page',
+                      status TEXT NOT NULL DEFAULT 'new',
+                      unmatched BOOLEAN NOT NULL DEFAULT FALSE,
+                      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                      handled_at TIMESTAMPTZ,
+                      handled_by TEXT
+                    )
+                    """
+                )
+                _ensure_callback_requests_link_columns(cur)
+                cur.execute(
+                    """
+                    SELECT id
+                    FROM callback_requests
+                    WHERE tenant_id = %s AND handoff_id = %s
+                    LIMIT 1
+                    """,
+                    (tenant_id, handoff_id),
+                )
+                existing = cur.fetchone()
+                if existing:
+                    req_id = str(existing["id"])
+                    cur.execute(
+                        """
+                        UPDATE callback_requests
+                        SET name = %s,
+                            phone = %s,
+                            reason = %s,
+                            message = %s,
+                            call_id = %s,
+                            status = %s,
+                            unmatched = %s,
+                            source = 'vocal_agent',
+                            handled_at = CASE
+                                WHEN %s IN ('processed', 'cancelled') AND handled_at IS NULL THEN NOW()
+                                ELSE handled_at
+                            END
+                        WHERE tenant_id = %s AND handoff_id = %s
+                        """,
+                        (
+                            name or None,
+                            phone,
+                            reason,
+                            message,
+                            call_id or None,
+                            status,
+                            unmatched,
+                            status,
+                            tenant_id,
+                            handoff_id,
+                        ),
+                    )
+                else:
+                    req_id = str(__import__("uuid").uuid4())
+                    cur.execute(
+                        """
+                        INSERT INTO callback_requests (
+                          id, tenant_id, name, phone, reason, message, source, status,
+                          unmatched, call_id, handoff_id
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, 'vocal_agent', %s, %s, %s, %s)
+                        """,
+                        (
+                            req_id,
+                            tenant_id,
+                            name or None,
+                            phone,
+                            reason,
+                            message,
+                            status,
+                            unmatched,
+                            call_id or None,
+                            handoff_id,
+                        ),
+                    )
+            conn.commit()
+        return req_id
+    except Exception as exc:
+        logger.warning(
+            "upsert_callback_from_handoff failed tenant=%s handoff_id=%s: %s",
+            tenant_id,
+            handoff_id,
+            exc,
+        )
+        return None
+
+
+def sync_callback_status_from_handoff(tenant_id: int, handoff: Dict[str, Any]) -> None:
+    handoff_id = int(handoff.get("id") or 0)
+    if not handoff_id:
+        return
+    status = _handoff_status_to_callback_status(str(handoff.get("status") or ""))
+    try:
+        with pg_connection() as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
+            with conn.cursor() as cur:
+                _ensure_callback_requests_link_columns(cur)
+                cur.execute(
+                    """
+                    UPDATE callback_requests
+                    SET status = %s,
+                        handled_at = CASE
+                            WHEN %s IN ('processed', 'cancelled') AND handled_at IS NULL THEN NOW()
+                            ELSE handled_at
+                        END
+                    WHERE tenant_id = %s AND handoff_id = %s
+                    """,
+                    (status, status, tenant_id, handoff_id),
+                )
+            conn.commit()
+    except Exception as exc:
+        logger.debug(
+            "sync_callback_status_from_handoff failed tenant=%s handoff_id=%s: %s",
+            tenant_id,
+            handoff_id,
+            exc,
+        )
+
+
+def sync_handoff_status_from_callback(tenant_id: int, handoff_id: Optional[int], callback_status: str) -> None:
+    if not handoff_id:
+        return
+    target = _callback_status_to_handoff_status(callback_status)
+    if not target:
+        return
+    try:
+        from backend.handoffs import update_handoff_status
+
+        update_handoff_status(tenant_id, int(handoff_id), status=target)
+    except Exception as exc:
+        logger.debug(
+            "sync_handoff_status_from_callback failed tenant=%s handoff_id=%s: %s",
+            tenant_id,
+            handoff_id,
+            exc,
+        )
+
+
+def get_callback_request_by_id(tenant_id: int, request_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        with pg_connection() as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
+            with conn.cursor() as cur:
+                _ensure_callback_requests_link_columns(cur)
+                cur.execute(
+                    """
+                    SELECT id, tenant_id, name, phone, email, reason, message, source, status,
+                           unmatched, created_at, handled_at, handled_by, call_id, handoff_id
+                    FROM callback_requests
+                    WHERE tenant_id = %s AND id = %s
+                    LIMIT 1
+                    """,
+                    (tenant_id, request_id),
+                )
+                row = cur.fetchone()
+                return dict(row) if row else None
+    except Exception as exc:
+        logger.debug("get_callback_request_by_id failed tenant=%s id=%s: %s", tenant_id, request_id, exc)
+        return None
+
 
 def list_callback_requests(
     tenant_id: int,
@@ -398,23 +655,42 @@ def list_callback_requests(
                     )
                     """
                 )
+                _ensure_callback_requests_link_columns(cur)
                 params: List[Any] = [tenant_id]
-                status_filter = ""
+                status_sql = ""
                 if status:
-                    status_filter = " AND status = %s"
+                    status_sql = " AND status = %s"
                     params.append(status.strip().lower())
                 params.append(max(1, min(int(limit), 200)))
-                cur.execute(
-                    f"""
-                    SELECT id, tenant_id, appointment_source, appointment_id, name, phone, email,
-                           reason, message, source, status, unmatched, created_at, handled_at, handled_by
-                    FROM callback_requests
-                    WHERE tenant_id = %s{status_filter}
-                    ORDER BY created_at DESC
-                    LIMIT %s
-                    """,
-                    tuple(params),
-                )
+                try:
+                    cur.execute(
+                        f"""
+                        SELECT cr.id, cr.tenant_id, cr.appointment_source, cr.appointment_id, cr.name, cr.phone, cr.email,
+                               cr.reason, cr.message, cr.source, cr.status, cr.unmatched, cr.created_at, cr.handled_at,
+                               cr.handled_by, cr.call_id, cr.handoff_id,
+                               h.status AS handoff_status, h.priority AS handoff_priority, h.mode AS handoff_mode
+                        FROM callback_requests cr
+                        LEFT JOIN human_handoffs h
+                          ON h.tenant_id = cr.tenant_id AND h.id = cr.handoff_id
+                        WHERE cr.tenant_id = %s{status_sql.replace("status", "cr.status")}
+                        ORDER BY cr.created_at DESC
+                        LIMIT %s
+                        """,
+                        tuple(params),
+                    )
+                except Exception:
+                    cur.execute(
+                        f"""
+                        SELECT id, tenant_id, appointment_source, appointment_id, name, phone, email,
+                               reason, message, source, status, unmatched, created_at, handled_at, handled_by,
+                               call_id, handoff_id
+                        FROM callback_requests
+                        WHERE tenant_id = %s{status_sql}
+                        ORDER BY created_at DESC
+                        LIMIT %s
+                        """,
+                        tuple(params),
+                    )
                 return [dict(r) for r in cur.fetchall()]
     except Exception as exc:
         logger.debug("list_callback_requests failed tenant=%s: %s", tenant_id, exc)
