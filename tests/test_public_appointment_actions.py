@@ -46,6 +46,11 @@ def test_public_callback_request_links_appointment_from_token(monkeypatch):
     monkeypatch.setattr(routes, "_rate_limit_public_action", lambda *a, **k: None)
     monkeypatch.setattr(routes, "validate_phone", lambda p: True)
     monkeypatch.setattr(
+        routes,
+        "find_registered_patient",
+        lambda tenant_id, phone=None, email=None: {"phone": phone or "+33612345678"},
+    )
+    monkeypatch.setattr(
         "backend.public_action_tokens.decode_public_action_token",
         lambda token: {
             "tenant_id": 2,

@@ -114,6 +114,14 @@ MSG_TOO_LONG = "Votre message est trop long. Pouvez-vous résumer ?"
 MSG_FRENCH_ONLY = "Je ne parle actuellement que français."
 MSG_SESSION_EXPIRED = "Votre session a expiré. Puis-je vous aider ?"
 MSG_TRANSFER = "Je vous transfère vers un conseiller. Un instant, s'il vous plaît."
+MSG_REGISTERED_PATIENT_ONLY_WEB = (
+    "Cette demande est réservée aux patients déjà enregistrés au cabinet. "
+    "Pour un premier contact, vous pouvez prendre rendez-vous en ligne ou appeler le cabinet."
+)
+VOCAL_REGISTERED_PATIENT_ONLY = (
+    "Cette demande est réservée aux patients déjà enregistrés au cabinet. "
+    "Pour un premier contact, prenez rendez-vous en ligne ou appelez le cabinet."
+)
 MSG_ALREADY_TRANSFERRED = "Vous avez été transféré à un conseiller. Un instant, s'il vous plaît."
 MSG_NO_AGENDA_TRANSFER = "Je n'ai pas accès à l'agenda pour rechercher ou modifier votre rendez-vous. Je vous mets en relation avec quelqu'un qui pourra vous aider."
 

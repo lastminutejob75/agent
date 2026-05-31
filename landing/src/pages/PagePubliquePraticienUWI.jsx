@@ -644,7 +644,7 @@ const ACTION_TITLES = {
 };
 
 function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefreshSlots }) {
-  const [step, setStep] = useState(mode === "callback" ? "callback" : "identify");
+  const [step, setStep] = useState(mode === "callback" ? "callback_identify" : "identify");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [lookupPhone, setLookupPhone] = useState("");
@@ -891,7 +891,52 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
       push([{ from: "clara", text: "Votre demande de rappel a bien ete enregistree." }]);
       trackPublicEvent({ slug, event: "callback_requested", source: "public_action" });
     } catch (err) {
-      setError(mapPublicActionError(err));
+      const detail = String(err?.message || err?.detail || "").trim();
+      if (err?.status === 403 || /enregistr/i.test(detail)) {
+        setError("Cette demande est reservee aux patients deja enregistres au cabinet.");
+      } else {
+        setError(detail || "Impossible d'envoyer votre demande.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const verifyRegisteredPatientForCallback = async () => {
+    setError("");
+    const phone = lookupPhone.trim();
+    const email = lookupEmail.trim();
+    if (!phone && !email) {
+      setError("Indiquez le telephone ou l'email associe a votre fiche patient.");
+      return;
+    }
+    if (phone && !isValidFrenchPhone(phone)) {
+      setError("Numero de telephone invalide.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const qs = new URLSearchParams();
+      if (phone) qs.set("phone", normalizeFrenchPhone(phone));
+      if (email) qs.set("email", email);
+      const data = await fetchJson(
+        `/api/public/praticiens/${encodeURIComponent(slug)}/patient-hint?${qs.toString()}`
+      );
+      if (!data?.found) {
+        setError(
+          "Cette demande est reservee aux patients deja enregistres au cabinet. "
+          + "Prenez rendez-vous en ligne ou contactez le cabinet par telephone."
+        );
+        return;
+      }
+      const display = String(data.displayName || data.name || "").trim();
+      setCallbackName(display);
+      setCallbackPhone(data.phone ? normalizeFrenchPhone(data.phone) : (phone ? normalizeFrenchPhone(phone) : ""));
+      setCallbackEmail(String(data.email || email || "").trim());
+      rememberLookupContact(phone || data.phone || "", data.email || email || "");
+      setStep("callback");
+    } catch (err) {
+      setError(err?.message || "Verification impossible pour le moment.");
     } finally {
       setLoading(false);
     }
@@ -1011,16 +1056,30 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
           {step === "reschedule-unavailable" ? (
             <>
               {renderSelectedRecap()}
-              <p className="actionModalHint">Ce rendez-vous ne peut pas etre deplace automatiquement en ligne. Demandez a etre rappele par le cabinet.</p>
-              <button className="primary" type="button" onClick={() => setStep("callback")}>Demander a etre rappele</button>
+              <p className="actionModalHint">Ce rendez-vous ne peut pas etre deplace automatiquement en ligne. Seuls les patients enregistres peuvent demander un rappel.</p>
+              <button className="primary" type="button" onClick={() => setStep("callback_identify")}>Demander a etre rappele</button>
+            </>
+          ) : null}
+
+          {step === "callback_identify" ? (
+            <>
+              <p className="actionModalHint">
+                Pour etre rappele, identifiez-vous avec le telephone ou l&apos;email de votre fiche patient au cabinet.
+              </p>
+              <input value={lookupPhone} onChange={(e) => setLookupPhone(e.target.value)} placeholder="Telephone" type="tel" />
+              <input value={lookupEmail} onChange={(e) => setLookupEmail(e.target.value)} placeholder="Email (facultatif)" type="email" />
+              {error ? <p className="fieldError">{error}</p> : null}
+              <button className="primary" type="button" disabled={loading} onClick={() => void verifyRegisteredPatientForCallback()}>
+                {loading ? "Verification…" : "Continuer"}
+              </button>
             </>
           ) : null}
 
           {step === "callback" ? (
             <>
-              <p className="actionModalHint">Laissez vos coordonnees. Le cabinet pourra vous recontacter.</p>
-              <input value={callbackName} onChange={(e) => setCallbackName(e.target.value)} placeholder="Nom et prenom" />
-              <input value={callbackPhone} onChange={(e) => setCallbackPhone(e.target.value)} placeholder="Telephone" type="tel" />
+              <p className="actionModalHint">Patient reconnu. Precisez votre demande de rappel.</p>
+              <input value={callbackName} onChange={(e) => setCallbackName(e.target.value)} placeholder="Nom et prenom" readOnly />
+              <input value={callbackPhone} onChange={(e) => setCallbackPhone(e.target.value)} placeholder="Telephone" type="tel" readOnly />
               <input value={callbackEmail} onChange={(e) => setCallbackEmail(e.target.value)} placeholder="Email (facultatif)" type="email" />
               <select className="actionReasonSelect" value={callbackReason} onChange={(e) => setCallbackReason(e.target.value)}>
                 {CALLBACK_REASONS.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
@@ -1592,7 +1651,7 @@ export default function PagePubliquePraticienUWI() {
     }
 
     if (CALLBACK_INTENT.test(clean)) {
-      push([{ from: "clara", text: "Je vous propose de laisser vos coordonnees pour un rappel." }]);
+      push([{ from: "clara", text: "Pour etre rappele, vous devez etre deja enregistre comme patient du cabinet. Je vous propose de vous identifier." }]);
       openActionFlowRef.current?.("callback");
       return;
     }

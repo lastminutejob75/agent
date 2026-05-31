@@ -529,7 +529,11 @@ def ensure_transfer_handoff(
     trigger_reason: str,
     user_text: str = "",
 ) -> Optional[Dict[str, Any]]:
+    from backend.registered_patient_access import find_registered_patient_for_session
+
     tenant_id = int(getattr(session, "tenant_id", 1) or 1)
+    if not find_registered_patient_for_session(tenant_id, session):
+        return None
     call_id = str(getattr(session, "conv_id", "") or "").strip()
     if not call_id:
         return None

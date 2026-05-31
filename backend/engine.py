@@ -779,6 +779,21 @@ class Engine:
         "consent_fails", "qualif_motif_invalid", "unknown_state", "exception_fallback",
     })
 
+    def _reject_if_not_registered_patient(self, session: Session, channel: str) -> Optional[List[Event]]:
+        """Bloque rappel / message / transfert si le patient n'est pas enregistré au cabinet."""
+        from backend.registered_patient_access import (
+            find_registered_patient_for_session,
+            registered_patient_only_message,
+        )
+
+        tenant_id = int(getattr(session, "tenant_id", 1) or 1)
+        if find_registered_patient_for_session(tenant_id, session):
+            return None
+        msg = registered_patient_only_message(channel)
+        session.state = "CONFIRMED"
+        session.add_message("agent", msg)
+        return [Event("final", msg, conv_state=session.state)]
+
     def _trigger_transfer(
         self,
         session: Session,
@@ -792,6 +807,9 @@ class Engine:
         Centralise le transfert : state=TRANSFERRED, log, persist avec reason.
         Ne pas appeler si _maybe_prevent_transfer a retourné une réponse.
         """
+        blocked = self._reject_if_not_registered_patient(session, channel)
+        if blocked:
+            return blocked
         state_before = getattr(session, "_turn_state_before", session.state)
         budget = getattr(session, "transfer_budget_remaining", 2)
         reset_slots_reading(session)  # Fix #4: sortie WAIT_CONFIRM
@@ -3844,6 +3862,9 @@ class Engine:
                 return [Event("final", msg, conv_state="ORDONNANCE_MESSAGE")]
             session.qualif_data.contact = normalized
             session.qualif_data.contact_type = "phone"
+        blocked = self._reject_if_not_registered_patient(session, channel)
+        if blocked:
+            return blocked
         from datetime import datetime
         from backend.services.email_service import send_ordonnance_notification
         req = {"type": "ordonnance", "name": session.qualif_data.name, "phone": session.qualif_data.contact or "?", "timestamp": datetime.utcnow().isoformat()}
@@ -3863,6 +3884,9 @@ class Engine:
                 phone = "0" + phone[2:]
             session.qualif_data.contact = phone[:10] if len("".join(c for c in phone if c.isdigit())) >= 10 else phone
             session.qualif_data.contact_type = "phone"
+            blocked = self._reject_if_not_registered_patient(session, channel)
+            if blocked:
+                return blocked
             from datetime import datetime
             from backend.services.email_service import send_ordonnance_notification
             req = {"type": "ordonnance", "name": session.qualif_data.name, "phone": session.qualif_data.contact or "?", "timestamp": datetime.utcnow().isoformat()}
@@ -3916,6 +3940,9 @@ class Engine:
 
     def _start_callback_flow(self, session: Session) -> List[Event]:
         channel = getattr(session, "channel", "web")
+        blocked = self._reject_if_not_registered_patient(session, channel)
+        if blocked:
+            return blocked
         phone_digits = self._caller_phone_digits(session)
         if len(phone_digits) < 10:
             session.state = "CONFIRMED"
@@ -3944,6 +3971,12 @@ class Engine:
             session.add_message("agent", msg)
             self._save_session(session)
             return [Event("final", msg, conv_state=session.state)]
+
+        channel = getattr(session, "channel", "web")
+        blocked = self._reject_if_not_registered_patient(session, channel)
+        if blocked:
+            self._save_session(session)
+            return blocked
 
         from backend.public_bookings_pg import get_callback_request_by_call_id, insert_callback_request
 

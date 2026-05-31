@@ -13,6 +13,7 @@ from backend.public_appointment_actions import cancel_appointment, lookup_appoin
 from backend.public_bookings_pg import insert_callback_request
 from backend.public_slug_cache import tenant_id_for_slug
 from backend.rate_limit import check_sliding_window, client_ip
+from backend.registered_patient_access import REGISTERED_PATIENT_ONLY_DETAIL, find_registered_patient
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +153,8 @@ def public_callback_request(slug: str, body: PublicCallbackRequestBody, request:
     if email and not validate_email(email):
         raise HTTPException(422, "Adresse email invalide.")
     phone = normalize_phone_number(body.phone) or body.phone.strip()
+    if not find_registered_patient(tenant_id, phone=phone, email=email or None):
+        raise HTTPException(403, REGISTERED_PATIENT_ONLY_DETAIL)
     appointment_source = None
     appointment_id = None
     if (body.actionToken or "").strip():
