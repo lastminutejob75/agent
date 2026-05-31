@@ -415,6 +415,9 @@ function formatBytes(value: number) {
 }
 
 function normalizeRequestKind(requestId: string) {
+  if (requestId.startsWith("callback-")) {
+    return { kind: "callback" as const, rawId: requestId.slice("callback-".length) };
+  }
   if (requestId.startsWith("req-")) {
     const raw = requestId.slice(4).replace(/^0+/, "") || "0";
     return { kind: "handoff" as const, rawId: raw };
@@ -2110,7 +2113,9 @@ export default function PatientDashboardPage() {
     }
     setRequestActionLoading(nextStatus);
     try {
-      if (info.kind === "handoff") {
+      if (info.kind === "callback") {
+        await api.tenantUpdateCallbackRequest(info.rawId, { status: nextStatus });
+      } else if (info.kind === "handoff") {
         await api.tenantUpdateHandoff(info.rawId, { status: nextStatus });
       } else if (info.kind === "call") {
         await api.tenantUpdateCallFollowup(info.rawId, { followup_state: "processed" });
@@ -2121,8 +2126,12 @@ export default function PatientDashboardPage() {
       setRequestStatus(nextLabel);
       persistRequestStatusOverride(activeRequestDetail.id, nextStatus);
       window.dispatchEvent(new CustomEvent("uwi:request-status-updated"));
-      const handoffsRes = await api.tenantGetHandoffs("?limit=50").catch(() => ({ items: [] }));
+      const [handoffsRes, callbacksRes] = await Promise.all([
+        api.tenantGetHandoffs("?limit=50").catch(() => ({ items: [] })),
+        api.tenantGetCallbackRequests("?limit=50").catch(() => ({ items: [] })),
+      ]);
       setTenantHandoffs(Array.isArray(handoffsRes?.items) ? handoffsRes.items : []);
+      setTenantCallbacks(Array.isArray(callbacksRes?.items) ? callbacksRes.items : []);
       clearActiveRequest();
       notify(nextStatus === "cancelled" ? "Demande annulée" : "Demande marquée traitée");
     } catch (e) {
