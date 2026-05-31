@@ -124,6 +124,7 @@ function writeSessionSlots(slug, slotData) {
         ts: Date.now(),
         slots: safeArray(slotData?.slots),
         source: slotData?.source || null,
+        calendar: slotData?.calendar || null,
         cached: Boolean(slotData?.cached),
       }),
     );
@@ -621,7 +622,7 @@ function BookingFields({
           });
         }}
       >
-        {submitting ? "Confirmation en cours…" : "Confirmer ma demande"}
+        {submitting ? "Confirmation en cours…" : "Confirmer mon rendez-vous"}
       </button>
     </div>
   );
@@ -1085,6 +1086,7 @@ export default function PagePubliquePraticienUWI() {
   const { slug = defaultPractitioner.slug } = useParams();
   const [practitioner, setPractitioner] = useState(defaultPractitioner);
   const [slots, setSlots] = useState(defaultSlots);
+  const [slotsMeta, setSlotsMeta] = useState({ source: null, calendar: null });
   const [searchData, setSearchData] = useState(defaultSearchData);
   const [dataStatus, setDataStatus] = useState("loading");
   const [messages, setMessages] = useState([{ id: 0, from: "clara", text: "Bonjour, comment puis-je vous aider ?" }]);
@@ -1162,6 +1164,10 @@ export default function PagePubliquePraticienUWI() {
     const hasSessionCache = Boolean(sessionCached?.slots?.length);
 
     setSlots(hasSessionCache ? sessionCached.slots : defaultSlots);
+    setSlotsMeta({
+      source: sessionCached?.source || null,
+      calendar: sessionCached?.calendar || null,
+    });
     setSlotsLoading(!hasSessionCache);
     setSlotsRefreshing(hasSessionCache);
 
@@ -1199,6 +1205,7 @@ export default function PagePubliquePraticienUWI() {
         if (cancelled) return;
         if (safeArray(slotData.slots).length) {
           setSlots(slotData.slots);
+          setSlotsMeta({ source: slotData.source || null, calendar: slotData.calendar || null });
           writeSessionSlots(slug, slotData);
         }
       } catch {
@@ -1336,13 +1343,18 @@ export default function PagePubliquePraticienUWI() {
   }, [messages]);
 
   const chooseSlot = useCallback((slot) => {
+    if (slotsRefreshing) return;
+    if (slotsMeta.source === "agenda" && !slot?.startIso) {
+      push([{ from: "clara", text: "Les creneaux se mettent a jour. Patientez une seconde puis reessayez." }]);
+      return;
+    }
     const replace = Boolean(inlineSlot);
     setInlineSlot(slot);
     push([
       { from: "patient", text: `${replace ? "Je prefere le creneau " : "Je souhaite le creneau "}${slot.label}.` },
       {
         from: "clara",
-        text: `Parfait pour ${slot.label}. Indiquez votre nom et votre telephone ci-dessous pour confirmer en une seule fois.`,
+        text: `Parfait pour ${slot.label}. Indiquez votre nom et votre telephone ci-dessous pour confirmer votre rendez-vous.`,
       },
     ]);
     trackPublicEvent({
@@ -1361,7 +1373,7 @@ export default function PagePubliquePraticienUWI() {
       slotLabel: slot.label,
       motif: defaultMotif(slot),
     });
-  }, [inlineSlot, push, slug]);
+  }, [inlineSlot, push, slug, slotsMeta.source, slotsRefreshing]);
 
   const handleStreamPayload = useCallback((payload) => {
     const type = String(payload?.type || "");
@@ -1636,7 +1648,7 @@ export default function PagePubliquePraticienUWI() {
       patientPhone: booking.phone,
       ...(booking.email ? { patientEmail: booking.email } : {}),
       source: modalSlot ? "google_slot" : "page_publique",
-      slotSource: booking.slot.source || "sqlite",
+      slotSource: booking.slot.source || (booking.slot.startIso ? "google" : "sqlite"),
       startIso: booking.slot.startIso || "",
       endIso: booking.slot.endIso || "",
     };
@@ -1661,8 +1673,16 @@ export default function PagePubliquePraticienUWI() {
         push([{ from: "clara", text: "Telephone ou email invalide. Corrigez le formulaire puis reessayez." }]);
         return;
       }
-      if (msg.includes("503") || msg.toLowerCase().includes("enregistrement")) {
-        push([{ from: "clara", text: msg.includes("503") ? "Le serveur n'a pas pu enregistrer votre demande. Reessayez dans un instant." : msg }]);
+      if (msg.includes("503") || msg.includes("502") || msg.toLowerCase().includes("confirmer ce creneau") || msg.toLowerCase().includes("enregistrement")) {
+        const errText = msg.replace(/^HTTP \d+:\s*/i, "").trim();
+        push([
+          {
+            from: "clara",
+            text: msg.includes("503")
+              ? "Le serveur n'a pas pu confirmer votre rendez-vous. Reessayez dans un instant."
+              : errText || "Impossible de confirmer ce creneau. Choisissez un autre horaire.",
+          },
+        ]);
         return;
       }
       push([{ from: "clara", text: "La reservation n'a pas abouti. Verifiez vos informations et reessayez, ou choisissez un autre creneau." }]);
@@ -1948,7 +1968,13 @@ export default function PagePubliquePraticienUWI() {
                         <div key={`sk-${idx}`} className="slotChip slotChipSkeleton" aria-hidden="true" />
                       ))
                     : visibleSlots.map((slot) => (
-                        <button key={slot.id} className="slotChip" onClick={() => chooseSlot(slot)} type="button">
+                        <button
+                          key={slot.id}
+                          className="slotChip"
+                          disabled={slotsRefreshing || (slotsMeta.source === "agenda" && !slot.startIso)}
+                          onClick={() => chooseSlot(slot)}
+                          type="button"
+                        >
                           <span className="slotChipDay">{slot.day}</span>
                           <span className="slotChipTime">{slot.time}</span>
                         </button>
@@ -1974,7 +2000,7 @@ export default function PagePubliquePraticienUWI() {
                       {message.text}
                       {safeArray(message.slots).length ? (
                         <div className="chatSlotChoices">
-                          <span className="chatSlotHint">Choisissez un creneau — vos coordonnees seront demandees une seule fois pour confirmer.</span>
+                          <span className="chatSlotHint">Creneaux issus de l&apos;agenda du cabinet — confirmation immediate apres vos coordonnees.</span>
                           {message.slots.map((offer) => (
                             <button
                               key={`${message.id}-slot-${offer.index}`}

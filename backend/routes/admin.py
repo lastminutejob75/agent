@@ -1802,6 +1802,97 @@ def _get_kpis_today(tenant_id: int, tz_name: str = "Europe/Paris") -> dict:
     return out
 
 
+def _list_bookings_confirmed_today(tenant_id: int, tz_name: str = "Europe/Paris") -> dict:
+    """Liste des confirmations du jour (Clara, page publique, cabinet) — alignée sur kpis.today.bookings."""
+    import json
+    from datetime import datetime, timedelta
+
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        from backports.zoneinfo import ZoneInfo  # type: ignore
+
+    from backend.public_bookings_pg import list_public_bookings_created_between
+
+    tz = ZoneInfo((tz_name or "Europe/Paris").strip() or "Europe/Paris")
+    now_local = datetime.now(tz)
+    day_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = day_start + timedelta(days=1)
+    start_utc = day_start.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    end_utc = day_end.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    today_date = day_start.strftime("%Y-%m-%d")
+    items: List[Dict[str, Any]] = []
+
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    if url:
+        try:
+            from backend.pg_pool import pg_connection
+            from backend.pg_tenant_context import set_tenant_id_on_connection
+
+            with pg_connection() as conn:
+                set_tenant_id_on_connection(conn, tenant_id)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT created_at, context, call_id
+                        FROM ivr_events
+                        WHERE client_id = %s
+                          AND event = 'booking_confirmed'
+                          AND created_at >= %s
+                          AND created_at < %s
+                        ORDER BY created_at DESC
+                        LIMIT 50
+                        """,
+                        (tenant_id, start_utc, end_utc),
+                    )
+                    for row in cur.fetchall() or []:
+                        ctx_raw = row.get("context") if hasattr(row, "get") else row["context"]
+                        ctx: Dict[str, Any] = {}
+                        if ctx_raw:
+                            try:
+                                ctx = json.loads(ctx_raw) if isinstance(ctx_raw, str) else dict(ctx_raw or {})
+                            except Exception:
+                                ctx = {}
+                        created = row.get("created_at") if hasattr(row, "get") else row["created_at"]
+                        items.append(
+                            {
+                                "id": f"ivr-{row.get('call_id') or created}",
+                                "patient_name": (ctx.get("patient_name") or "Patient").strip(),
+                                "patient_phone": (ctx.get("patient_contact") or "").strip(),
+                                "motif": (ctx.get("motif") or "Consultation").strip(),
+                                "slot_label": (ctx.get("slot_label") or "").strip(),
+                                "status": "confirmed",
+                                "source": "clara",
+                                "created_at": str(created or ""),
+                                "start_iso": "",
+                                "booking_code": "",
+                            }
+                        )
+        except Exception as exc:
+            logger.debug("list_bookings_confirmed_today ivr failed tenant=%s: %s", tenant_id, exc)
+
+    for row in list_public_bookings_created_between(tenant_id, start_utc, end_utc):
+        raw_src = (row.get("source") or "page_publique").strip().lower()
+        src_label = "page_publique" if "public" in raw_src or raw_src == "page_publique" else raw_src or "page_publique"
+        items.append(
+            {
+                "id": f"public-{row.get('id')}",
+                "patient_name": (row.get("patient_name") or "Patient").strip(),
+                "patient_phone": (row.get("patient_phone") or "").strip(),
+                "motif": (row.get("motif") or "Consultation").strip(),
+                "slot_label": (row.get("slot_label") or "").strip(),
+                "status": (row.get("status") or "confirmed").strip(),
+                "source": src_label,
+                "created_at": str(row.get("created_at") or ""),
+                "start_iso": str(row.get("start_iso") or ""),
+                "booking_code": (row.get("booking_code") or "").strip(),
+            }
+        )
+
+    items.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
+    return {"date": today_date, "count": len(items), "bookings": items}
+
+
 def _get_rgpd(tenant_id: int, start: str, end: str) -> dict:
     """RGPD: consent_obtained, consent_rate."""
     url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")

@@ -884,64 +884,74 @@ def _resolve_public_slot_id(tenant_id: int, payload: PublicBookingRequest) -> Tu
 
     src = (payload.slotSource or "sqlite").strip().lower()
     book_src = src if src in ("pg", "sqlite") else "sqlite"
+    start_iso = (payload.startIso or "").strip()
+
+    if start_iso and src in ("google", "gcal"):
+        return None, book_src
+
+    if start_iso:
+        sid = tools_booking._resolve_slot_id_from_start_iso(start_iso, source=book_src, tenant_id=tenant_id)
+        if sid is not None:
+            return int(sid), book_src
+        # startIso agenda Google : id 1..n côté front n'est pas un slot PG/SQLite.
+        if src in ("sqlite", "google", "gcal"):
+            return None, book_src
 
     try:
         return int(str(payload.slotId).strip()), book_src
     except (TypeError, ValueError):
         pass
 
-    start_iso = (payload.startIso or "").strip()
     if start_iso:
         sid = tools_booking._resolve_slot_id_from_start_iso(start_iso, source=book_src, tenant_id=tenant_id)
         if sid is not None:
             return int(sid), book_src
 
-    # Pas de re-fetch agenda ici : trop lent (~2-8s) et le front envoie startIso / slotId numérique.
     return None, book_src
 
 
-def _book_real_slot(
-    tenant_id: int,
+def _book_google_iso_slot(
+    session: SimpleNamespace,
     payload: PublicBookingRequest,
-    booking_code: Optional[str] = None,
+    tenant_id: int,
 ) -> tuple[bool, Optional[str], Optional[str]]:
-    """
-    Réserve un créneau via tools_booking (Google / PG / SQLite) — même chemin que l'agent vocal.
-    Returns (success, reason) avec reason in slot_taken, technical, permission, None.
-    """
     from backend import tools_booking
 
-    session = _public_session(tenant_id, payload, booking_code=booking_code)
-    src = (payload.slotSource or "sqlite").strip().lower()
-
-    if src == "google" and payload.startIso:
-        end_iso = (payload.endIso or "").strip() or _end_iso_from_start(payload.startIso, tenant_id)
-        session.pending_slots = [
-            {
-                "id": payload.slotId,
-                "source": "google",
-                "start": payload.startIso,
-                "start_iso": payload.startIso,
-                "end": end_iso,
-                "end_iso": end_iso,
-                "label": payload.slotLabel,
-                "label_vocal": payload.slotLabel,
-            }
-        ]
-        ok, reason = tools_booking.book_slot_from_session(session, 1)
-        ge = getattr(session, "google_event_id", None)
-        return ok, reason, (str(ge).strip() if ge else None)
-
-    slot_id, book_src = _resolve_public_slot_id(tenant_id, payload)
-    if slot_id is None:
+    start_iso = (payload.startIso or "").strip()
+    if not start_iso:
+        return False, "technical", None
+    end_iso = (payload.endIso or "").strip() or _end_iso_from_start(start_iso, tenant_id)
+    if not end_iso:
         logger.warning(
-            "public_book unresolved slot slug=%s slotId=%r startIso=%r label=%r",
+            "public_book google slot missing end_iso slug=%s start=%s",
             payload.slug,
-            payload.slotId,
-            payload.startIso,
-            payload.slotLabel[:60] if payload.slotLabel else "",
+            start_iso,
         )
-        return False, "technical"
+        return False, "technical", None
+    session.pending_slots = [
+        {
+            "id": payload.slotId,
+            "source": "google",
+            "start": start_iso,
+            "start_iso": start_iso,
+            "end": end_iso,
+            "end_iso": end_iso,
+            "label": payload.slotLabel,
+            "label_vocal": payload.slotLabel,
+        }
+    ]
+    ok, reason = tools_booking.book_slot_from_session(session, 1)
+    ge = getattr(session, "google_event_id", None)
+    return ok, reason, (str(ge).strip() if ge else None)
+
+
+def _book_local_slot(
+    session: SimpleNamespace,
+    payload: PublicBookingRequest,
+    slot_id: int,
+    book_src: str,
+) -> tuple[bool, Optional[str], Optional[str]]:
+    from backend import tools_booking
 
     session.pending_slots = [
         {
@@ -956,6 +966,43 @@ def _book_real_slot(
     ok, reason = tools_booking.book_slot_from_session(session, 1)
     ge = getattr(session, "google_event_id", None)
     return ok, reason, (str(ge).strip() if ge else None)
+
+
+def _book_real_slot(
+    tenant_id: int,
+    payload: PublicBookingRequest,
+    booking_code: Optional[str] = None,
+) -> tuple[bool, Optional[str], Optional[str]]:
+    """
+    Réserve un créneau via tools_booking (Google / PG / SQLite) — même chemin que l'agent vocal.
+    Returns (success, reason) avec reason in slot_taken, technical, permission, None.
+    """
+    session = _public_session(tenant_id, payload, booking_code=booking_code)
+    src = (payload.slotSource or "sqlite").strip().lower()
+    start_iso = (payload.startIso or "").strip()
+
+    if src in ("google", "gcal") and start_iso:
+        return _book_google_iso_slot(session, payload, tenant_id)
+
+    slot_id, book_src = _resolve_public_slot_id(tenant_id, payload)
+    if slot_id is not None and src in ("pg", "sqlite"):
+        return _book_local_slot(session, payload, slot_id, book_src)
+
+    # startIso sans source fiable (ex. slotSource sqlite par défaut côté front) → agenda Google.
+    if start_iso:
+        return _book_google_iso_slot(session, payload, tenant_id)
+
+    if slot_id is not None:
+        return _book_local_slot(session, payload, slot_id, book_src)
+
+    logger.warning(
+        "public_book unresolved slot slug=%s slotId=%r startIso=%r label=%r",
+        payload.slug,
+        payload.slotId,
+        payload.startIso,
+        payload.slotLabel[:60] if payload.slotLabel else "",
+    )
+    return False, "technical", None
 
 
 def _format_public_slot(raw: Dict[str, Any], today: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
@@ -1373,15 +1420,17 @@ async def public_book(
                 status_code=409,
                 detail="Ce créneau n'est plus disponible. Choisissez un autre horaire.",
             )
-        elif booking_reason in ("technical", "permission"):
+        else:
             logger.warning(
                 "public_book real booking failed slug=%s tenant=%s reason=%s",
                 payload.slug,
                 tenant_id,
                 booking_reason,
             )
-        else:
-            booking_status = "pending"
+            raise HTTPException(
+                status_code=502,
+                detail="Impossible de confirmer ce creneau. Choisissez un autre horaire ou demandez a etre rappele par le cabinet.",
+            )
 
     booking_record = _insert_booking(
         payload,

@@ -859,6 +859,42 @@ def count_public_bookings(
         return 0
 
 
+def list_public_bookings_created_between(
+    tenant_id: int,
+    start: str,
+    end: str,
+    *,
+    statuses: Optional[List[str]] = None,
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    """RDV publics/chat enregistrés dans l'intervalle (created_at)."""
+    ensure_public_bookings_schema()
+    statuses = statuses or ["confirmed", "pending"]
+    safe_limit = max(1, min(int(limit or 50), 100))
+    try:
+        with pg_connection() as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, patient_name, patient_phone, motif, slot_label, status,
+                           start_iso, created_at, source, booking_code
+                    FROM public_bookings
+                    WHERE tenant_id = %s
+                      AND created_at >= %s::timestamptz
+                      AND created_at <= %s::timestamptz
+                      AND status = ANY(%s)
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    (tenant_id, start, end, statuses, safe_limit),
+                )
+                return [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        logger.debug("list_public_bookings_created_between failed tenant=%s: %s", tenant_id, exc)
+        return []
+
+
 def latest_public_booking(tenant_id: int) -> Optional[Dict[str, Any]]:
     ensure_public_bookings_schema()
     try:

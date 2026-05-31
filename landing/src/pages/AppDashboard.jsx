@@ -350,6 +350,7 @@ export default function AppDashboard() {
   const calendarConnected = connections.calendar?.connected === true;
 
   const agendaTodayHref = `/app/agenda?view=day&date=${encodeURIComponent(todayISO())}`;
+  const bookingsTodayHref = `/app/agenda?view=week&date=${encodeURIComponent(todayISO())}&focus=prises-jour`;
   const agendaAnnulationsHref = `${agendaTodayHref}&focus=annulations`;
   const agendaCreneauxRecuperesHref = `${agendaTodayHref}&focus=creneaux-recuperes`;
   const stats = [
@@ -359,7 +360,7 @@ export default function AppDashboard() {
       rdvCreatedToday > 0 ? "confirmées pour l'avenir" : "aucune confirmation aujourd'hui",
       "teal",
       "plus",
-      "/app/appels",
+      bookingsTodayHref,
     ],
     [
       String(rdvPlannedToday),
@@ -448,7 +449,7 @@ export default function AppDashboard() {
         voiceNumber={me?.voice_number || me?.phone_number}
         contactEmail={me?.contact_email}
         onOpenHandledRequests={() => navigate("/app/demandes?status=Trait%C3%A9es")}
-        onOpenRdvToday={() => navigate("/app/appels")}
+        onOpenRdvToday={() => navigate(bookingsTodayHref)}
         onOpenReminders={() => navigate("/app/demandes?status=En%20cours")}
         ClaraPhotoComponent={ClaraPhoto}
         PillComponent={Pill}

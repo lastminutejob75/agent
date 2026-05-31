@@ -2666,6 +2666,17 @@ def tenant_kpis(auth: dict = Depends(require_tenant_auth), days: int = Query(7, 
     return data
 
 
+@router.get("/bookings/today")
+def tenant_bookings_today(auth: dict = Depends(require_tenant_auth)):
+    """Confirmations de RDV enregistrées aujourd'hui (jour civil cabinet)."""
+    from backend.routes.admin import _list_bookings_confirmed_today
+
+    tenant_id = auth["tenant_id"]
+    detail = _get_tenant_detail(tenant_id) or {}
+    tz_name = _tenant_timezone(detail)
+    return _list_bookings_confirmed_today(tenant_id, tz_name)
+
+
 @router.get("/rgpd")
 def tenant_rgpd(auth: dict = Depends(require_tenant_owner)):
     """RGPD côté client : consent_rate 7j + derniers consent_obtained."""

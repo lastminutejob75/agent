@@ -820,7 +820,8 @@ export default function AppAgenda() {
   const urlPhone = searchParams.get("phone");
   const urlFocus = searchParams.get("focus");
   const urlAction = searchParams.get("action");
-  const isSpecialDashboardFocus = urlFocus === "annulations" || urlFocus === "creneaux-recuperes";
+  const isSpecialDashboardFocus =
+    urlFocus === "annulations" || urlFocus === "creneaux-recuperes" || urlFocus === "prises-jour";
   const [selectedDate, setSelectedDate] = useState(urlDate || todayISO());
   const [pendingFocusPhone, setPendingFocusPhone] = useState(urlPhone || null);
   const [pendingFocusApptId, setPendingFocusApptId] = useState(
@@ -848,7 +849,7 @@ export default function AppAgenda() {
       setViewMode(urlView);
     }
     if (urlPhone) setPendingFocusPhone(urlPhone);
-    if (urlFocus && urlFocus !== "annulations" && urlFocus !== "creneaux-recuperes") {
+    if (urlFocus && urlFocus !== "annulations" && urlFocus !== "creneaux-recuperes" && urlFocus !== "prises-jour") {
       setPendingFocusApptId(urlFocus);
     }
     if (urlAction === "cancel" || urlAction === "reschedule") {
@@ -863,6 +864,36 @@ export default function AppAgenda() {
     const d = urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate) ? urlDate : todayISO();
     setSelectedDate(d);
   }, [urlFocus, urlDate]);
+
+  /* Prises de RDV aujourd'hui (dashboard) → semaine + panneau confirmations */
+  useEffect(() => {
+    if (urlFocus !== "prises-jour") return;
+    setViewMode("week");
+    const d = urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate) ? urlDate : todayISO();
+    setSelectedDate(d);
+  }, [urlFocus, urlDate]);
+
+  useEffect(() => {
+    if (urlFocus !== "prises-jour") return undefined;
+    let cancelled = false;
+    setBookingsTodayPanel((prev) => ({ ...prev, loading: true }));
+    api.tenantBookingsToday()
+      .then((data) => {
+        if (cancelled) return;
+        setBookingsTodayPanel({
+          loading: false,
+          date: String(data?.date || ""),
+          items: Array.isArray(data?.bookings) ? data.bookings : [],
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setBookingsTodayPanel({ loading: false, date: "", items: [] });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [urlFocus]);
   const [agendaByDate, setAgendaByDate] = useState({});
   const [horaires, setHoraires] = useState(null);
   const [me, setMe] = useState(null);
@@ -903,6 +934,7 @@ export default function AppAgenda() {
     booking_date: "",
     booking_time: "",
   });
+  const [bookingsTodayPanel, setBookingsTodayPanel] = useState({ loading: false, items: [], date: "" });
 
   const weekDates = useMemo(() => buildWeekDates(selectedDate), [selectedDate]);
   const monthGrid = useMemo(() => buildMonthGrid(selectedDate), [selectedDate]);
@@ -1815,6 +1847,75 @@ export default function AppAgenda() {
           onShift={shiftAgendaPeriod}
           styles={S}
         />
+      ) : null}
+      {urlFocus === "prises-jour" ? (
+        <div
+          id="agenda-focus-prises-jour"
+          style={{
+            marginBottom: 16,
+            padding: "14px 16px",
+            borderRadius: 14,
+            border: `1px solid ${TEAL}44`,
+            background: "#ecfdf5",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+            <div>
+              <strong style={{ color: TEAL_DARK, fontSize: 15 }}>
+                Prises de RDV aujourd&apos;hui
+              </strong>
+              <p style={{ margin: "6px 0 0", color: MUTED, fontSize: 13 }}>
+                Confirmations enregistrées aujourd&apos;hui (Clara, page publique, cabinet). Les créneaux réservés apparaissent dans la semaine ci-dessous.
+              </p>
+            </div>
+            <span style={{ fontWeight: 800, color: TEAL_DARK, fontSize: 22 }}>
+              {bookingsTodayPanel.loading ? "…" : bookingsTodayPanel.items.length}
+            </span>
+          </div>
+          {!bookingsTodayPanel.loading && bookingsTodayPanel.items.length > 0 ? (
+            <ul style={{ listStyle: "none", margin: "12px 0 0", padding: 0, display: "grid", gap: 8 }}>
+              {bookingsTodayPanel.items.slice(0, 8).map((item) => {
+                const when = String(item.created_at || "");
+                const timeLabel = when
+                  ? new Date(when).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })
+                  : "";
+                const sourceLabel =
+                  String(item.source || "").toLowerCase() === "clara"
+                    ? "Clara"
+                    : String(item.source || "").toLowerCase().includes("public")
+                      ? "Page publique"
+                      : "Cabinet";
+                return (
+                  <li
+                    key={String(item.id)}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 10,
+                      padding: "10px 12px",
+                      borderRadius: 10,
+                      background: "#fff",
+                      border: `1px solid ${BORDER}`,
+                      fontSize: 13,
+                    }}
+                  >
+                    <span>
+                      <strong>{item.patient_name || "Patient"}</strong>
+                      {item.slot_label ? ` · ${item.slot_label}` : ""}
+                      {item.motif ? ` · ${item.motif}` : ""}
+                    </span>
+                    <span style={{ color: MUTED, whiteSpace: "nowrap" }}>
+                      {timeLabel ? `${timeLabel} · ` : ""}{sourceLabel}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+          {!bookingsTodayPanel.loading && bookingsTodayPanel.items.length === 0 ? (
+            <p style={{ margin: "12px 0 0", color: MUTED, fontSize: 13 }}>Aucune confirmation enregistrée aujourd&apos;hui.</p>
+          ) : null}
+        </div>
       ) : null}
       <div className="agenda-legend-row" style={S.legendRow}>
         {semanticLegend.map((item) => {
