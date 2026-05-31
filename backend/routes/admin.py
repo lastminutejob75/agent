@@ -11,6 +11,7 @@ import base64
 import json
 import logging
 import os
+import re
 import secrets
 import threading
 import time
@@ -1730,6 +1731,185 @@ def _get_kpis_daily(tenant_id: int, days: int = 7) -> dict:
     return {"days": days_data, "current": current, "previous": previous, "trend": trend}
 
 
+_FRENCH_MONTHS = {
+    "janvier": 1,
+    "fevrier": 2,
+    "février": 2,
+    "mars": 3,
+    "avril": 4,
+    "mai": 5,
+    "juin": 6,
+    "juillet": 7,
+    "aout": 8,
+    "août": 8,
+    "septembre": 9,
+    "octobre": 10,
+    "novembre": 11,
+    "decembre": 12,
+    "décembre": 12,
+}
+
+
+def _parse_french_slot_label_date(label: str, ref_local: datetime) -> Optional[date]:
+    """Extrait une date civile depuis un libellé type « Lundi 3 juin à 9h30 »."""
+    raw = str(label or "").strip().lower()
+    if not raw:
+        return None
+    m = re.search(
+        r"(\d{1,2})\s+(janvier|f[eé]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|novembre|d[eé]cembre)",
+        raw,
+    )
+    if not m:
+        return None
+    day = int(m.group(1))
+    month_key = (
+        m.group(2)
+        .replace("février", "fevrier")
+        .replace("août", "aout")
+        .replace("décembre", "decembre")
+    )
+    month = _FRENCH_MONTHS.get(month_key)
+    if not month:
+        return None
+    year = ref_local.year
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
+def _booking_start_date_local(item: Dict[str, Any], ref_local: datetime, tz) -> Optional[date]:
+    start_iso = str(item.get("start_iso") or "").strip()
+    if start_iso:
+        try:
+            dt = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(tz).date()
+        except Exception:
+            pass
+    return _parse_french_slot_label_date(str(item.get("slot_label") or ""), ref_local)
+
+
+def _is_future_booking_for_today_list(item: Dict[str, Any], day_start_local: datetime, tz) -> bool:
+    """RDV réservé pour un jour strictement après aujourd'hui (jour civil cabinet)."""
+    appt_date = _booking_start_date_local(item, day_start_local, tz)
+    if appt_date is None:
+        return False
+    return appt_date > day_start_local.date()
+
+
+def _collect_bookings_confirmed_today(tenant_id: int, tz_name: str = "Europe/Paris") -> List[Dict[str, Any]]:
+    """Confirmations enregistrées aujourd'hui pour une date ultérieure (sans doublons Clara/public)."""
+    import json
+
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        from backports.zoneinfo import ZoneInfo  # type: ignore
+
+    from backend.public_bookings_pg import list_public_bookings_created_between
+
+    tz = ZoneInfo((tz_name or "Europe/Paris").strip() or "Europe/Paris")
+    now_local = datetime.now(tz)
+    day_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = day_start + timedelta(days=1)
+    start_utc = day_start.astimezone(timezone.utc)
+    end_utc = day_end.astimezone(timezone.utc)
+    items: List[Dict[str, Any]] = []
+    public_ids: set[str] = set()
+
+    for row in list_public_bookings_created_between(
+        tenant_id,
+        start_utc.isoformat(),
+        end_utc.isoformat(),
+    ):
+        bid = str(row.get("id") or "").strip()
+        if bid:
+            public_ids.add(bid)
+        raw_src = (row.get("source") or "page_publique").strip().lower()
+        if "public" in raw_src or raw_src == "page_publique":
+            src_label = "page_publique"
+        elif raw_src == "clara":
+            src_label = "clara"
+        else:
+            src_label = raw_src or "cabinet"
+        item = {
+            "id": f"public-{bid}" if bid else f"public-{row.get('created_at')}",
+            "patient_name": (row.get("patient_name") or "Patient").strip(),
+            "patient_phone": (row.get("patient_phone") or "").strip(),
+            "motif": (row.get("motif") or "Consultation").strip(),
+            "slot_label": (row.get("slot_label") or "").strip(),
+            "status": (row.get("status") or "confirmed").strip(),
+            "source": src_label,
+            "created_at": str(row.get("confirmed_at") or row.get("created_at") or ""),
+            "start_iso": str(row.get("start_iso") or ""),
+            "booking_code": (row.get("booking_code") or "").strip(),
+        }
+        if not _is_future_booking_for_today_list(item, day_start, tz):
+            continue
+        items.append(item)
+
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    if url:
+        try:
+            from backend.pg_pool import pg_connection
+            from backend.pg_tenant_context import set_tenant_id_on_connection
+
+            with pg_connection() as conn:
+                set_tenant_id_on_connection(conn, tenant_id)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT created_at, context, call_id
+                        FROM ivr_events
+                        WHERE client_id = %s
+                          AND event = 'booking_confirmed'
+                          AND created_at >= %s
+                          AND created_at < %s
+                        ORDER BY created_at DESC
+                        LIMIT 80
+                        """,
+                        (tenant_id, start_utc, end_utc),
+                    )
+                    for row in cur.fetchall() or []:
+                        call_id = str(
+                            row.get("call_id") if hasattr(row, "get") else row["call_id"] or ""
+                        ).strip()
+                        if call_id.startswith("public-"):
+                            bid = call_id[len("public-") :].strip()
+                            if bid and bid in public_ids:
+                                continue
+                        ctx_raw = row.get("context") if hasattr(row, "get") else row["context"]
+                        ctx: Dict[str, Any] = {}
+                        if ctx_raw:
+                            try:
+                                ctx = json.loads(ctx_raw) if isinstance(ctx_raw, str) else dict(ctx_raw or {})
+                            except Exception:
+                                ctx = {}
+                        created = row.get("created_at") if hasattr(row, "get") else row["created_at"]
+                        item = {
+                            "id": f"ivr-{call_id or created}",
+                            "patient_name": (ctx.get("patient_name") or "Patient").strip(),
+                            "patient_phone": (ctx.get("patient_contact") or "").strip(),
+                            "motif": (ctx.get("motif") or "Consultation").strip(),
+                            "slot_label": (ctx.get("slot_label") or "").strip(),
+                            "status": "confirmed",
+                            "source": "clara",
+                            "created_at": str(created or ""),
+                            "start_iso": str(ctx.get("start_iso") or ctx.get("startIso") or ""),
+                            "booking_code": "",
+                        }
+                        if not _is_future_booking_for_today_list(item, day_start, tz):
+                            continue
+                        items.append(item)
+        except Exception as exc:
+            logger.debug("collect_bookings_confirmed_today ivr failed tenant=%s: %s", tenant_id, exc)
+
+    items.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
+    return items
+
+
 def _get_kpis_today(tenant_id: int, tz_name: str = "Europe/Paris") -> dict:
     """Compteurs du jour civil tenant (timezone cabinet), distincts du total glissant 7j."""
     from datetime import datetime, timedelta
@@ -1755,7 +1935,6 @@ def _get_kpis_today(tenant_id: int, tz_name: str = "Europe/Paris") -> dict:
     try:
         from backend.pg_pool import pg_connection
         from backend.pg_tenant_context import set_tenant_id_on_connection
-        from backend.public_bookings_pg import count_public_bookings
 
         with pg_connection() as conn:
             set_tenant_id_on_connection(conn, tenant_id)
@@ -1780,7 +1959,6 @@ def _get_kpis_today(tenant_id: int, tz_name: str = "Europe/Paris") -> dict:
                 cur.execute(
                     """
                     SELECT
-                      COUNT(*) FILTER (WHERE event = 'booking_confirmed') AS bookings,
                       COUNT(*) FILTER (WHERE event IN ('transferred_human', 'transferred')) AS transfers
                     FROM ivr_events
                     WHERE client_id = %s
@@ -1790,12 +1968,9 @@ def _get_kpis_today(tenant_id: int, tz_name: str = "Europe/Paris") -> dict:
                     (tenant_id, start_utc, end_utc),
                 )
                 row = cur.fetchone() or {}
-                out["bookings"] = int(row.get("bookings") or 0)
                 out["transfers"] = int(row.get("transfers") or 0)
 
-        out["bookings"] += int(
-            count_public_bookings(tenant_id, start_utc, end_utc) or 0
-        )
+        out["bookings"] = len(_collect_bookings_confirmed_today(tenant_id, tz_name))
     except Exception as exc:
         logger.warning("kpis_today failed tenant_id=%s: %s", tenant_id, exc)
 
@@ -1803,94 +1978,20 @@ def _get_kpis_today(tenant_id: int, tz_name: str = "Europe/Paris") -> dict:
 
 
 def _list_bookings_confirmed_today(tenant_id: int, tz_name: str = "Europe/Paris") -> dict:
-    """Liste des confirmations du jour (Clara, page publique, cabinet) — alignée sur kpis.today.bookings."""
-    import json
-    from datetime import datetime, timedelta
-
+    """Liste des confirmations du jour pour une date ultérieure — alignée sur kpis.today.bookings."""
     try:
         from zoneinfo import ZoneInfo
     except ImportError:
         from backports.zoneinfo import ZoneInfo  # type: ignore
 
-    from backend.public_bookings_pg import list_public_bookings_created_between
-
     tz = ZoneInfo((tz_name or "Europe/Paris").strip() or "Europe/Paris")
-    now_local = datetime.now(tz)
-    day_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
-    day_end = day_start + timedelta(days=1)
-    start_utc = day_start.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    end_utc = day_end.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    today_date = day_start.strftime("%Y-%m-%d")
-    items: List[Dict[str, Any]] = []
-
-    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
-    if url:
-        try:
-            from backend.pg_pool import pg_connection
-            from backend.pg_tenant_context import set_tenant_id_on_connection
-
-            with pg_connection() as conn:
-                set_tenant_id_on_connection(conn, tenant_id)
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        SELECT created_at, context, call_id
-                        FROM ivr_events
-                        WHERE client_id = %s
-                          AND event = 'booking_confirmed'
-                          AND created_at >= %s
-                          AND created_at < %s
-                        ORDER BY created_at DESC
-                        LIMIT 50
-                        """,
-                        (tenant_id, start_utc, end_utc),
-                    )
-                    for row in cur.fetchall() or []:
-                        ctx_raw = row.get("context") if hasattr(row, "get") else row["context"]
-                        ctx: Dict[str, Any] = {}
-                        if ctx_raw:
-                            try:
-                                ctx = json.loads(ctx_raw) if isinstance(ctx_raw, str) else dict(ctx_raw or {})
-                            except Exception:
-                                ctx = {}
-                        created = row.get("created_at") if hasattr(row, "get") else row["created_at"]
-                        items.append(
-                            {
-                                "id": f"ivr-{row.get('call_id') or created}",
-                                "patient_name": (ctx.get("patient_name") or "Patient").strip(),
-                                "patient_phone": (ctx.get("patient_contact") or "").strip(),
-                                "motif": (ctx.get("motif") or "Consultation").strip(),
-                                "slot_label": (ctx.get("slot_label") or "").strip(),
-                                "status": "confirmed",
-                                "source": "clara",
-                                "created_at": str(created or ""),
-                                "start_iso": "",
-                                "booking_code": "",
-                            }
-                        )
-        except Exception as exc:
-            logger.debug("list_bookings_confirmed_today ivr failed tenant=%s: %s", tenant_id, exc)
-
-    for row in list_public_bookings_created_between(tenant_id, start_utc, end_utc):
-        raw_src = (row.get("source") or "page_publique").strip().lower()
-        src_label = "page_publique" if "public" in raw_src or raw_src == "page_publique" else raw_src or "page_publique"
-        items.append(
-            {
-                "id": f"public-{row.get('id')}",
-                "patient_name": (row.get("patient_name") or "Patient").strip(),
-                "patient_phone": (row.get("patient_phone") or "").strip(),
-                "motif": (row.get("motif") or "Consultation").strip(),
-                "slot_label": (row.get("slot_label") or "").strip(),
-                "status": (row.get("status") or "confirmed").strip(),
-                "source": src_label,
-                "created_at": str(row.get("created_at") or ""),
-                "start_iso": str(row.get("start_iso") or ""),
-                "booking_code": (row.get("booking_code") or "").strip(),
-            }
-        )
-
-    items.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
-    return {"date": today_date, "count": len(items), "bookings": items}
+    day_start = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    items = _collect_bookings_confirmed_today(tenant_id, tz_name)
+    return {
+        "date": day_start.strftime("%Y-%m-%d"),
+        "count": len(items),
+        "bookings": items[:50],
+    }
 
 
 def _get_rgpd(tenant_id: int, start: str, end: str) -> dict:

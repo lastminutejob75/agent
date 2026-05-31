@@ -847,8 +847,8 @@ def count_public_bookings(
                     SELECT COUNT(*) AS c
                     FROM public_bookings
                     WHERE tenant_id = %s
-                      AND created_at >= %s::timestamptz
-                      AND created_at <= %s::timestamptz
+                      AND COALESCE(confirmed_at, created_at) >= %s::timestamptz
+                      AND COALESCE(confirmed_at, created_at) < %s::timestamptz
                       AND status = ANY(%s)
                     """,
                     (tenant_id, start, end, statuses),
@@ -879,11 +879,11 @@ def list_public_bookings_created_between(
                 cur.execute(
                     """
                     SELECT id, patient_name, patient_phone, motif, slot_label, status,
-                           start_iso, created_at, source, booking_code
+                           start_iso, created_at, confirmed_at, source, booking_code
                     FROM public_bookings
                     WHERE tenant_id = %s
-                      AND created_at >= %s::timestamptz
-                      AND created_at <= %s::timestamptz
+                      AND COALESCE(confirmed_at, created_at) >= %s::timestamptz
+                      AND COALESCE(confirmed_at, created_at) < %s::timestamptz
                       AND status = ANY(%s)
                     ORDER BY created_at DESC
                     LIMIT %s

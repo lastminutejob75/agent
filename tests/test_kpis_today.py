@@ -30,17 +30,39 @@ def test_get_kpis_today_counts_bookings_in_local_day(tenant_detail):
         def fetchone(self):
             if "vapi_calls" in getattr(self, "query", ""):
                 return {"calls": 0}
-            return {"bookings": 2, "transfers": 0}
+            return {"transfers": 0}
+
+        def fetchall(self):
+            return []
 
     fake_conn = MagicMock()
     fake_conn.cursor.return_value = FakeCursor()
     fake_conn.__enter__ = lambda s: s
     fake_conn.__exit__ = lambda s, *a: False
 
+    sample_bookings = [
+        {
+            "id": "a1",
+            "patient_name": "Alice",
+            "patient_phone": "",
+            "motif": "Consultation",
+            "slot_label": "Lundi 2 juin à 9h",
+            "status": "confirmed",
+            "source": "clara",
+            "created_at": "2026-05-30T10:00:00+00:00",
+            "confirmed_at": "2026-05-30T10:00:00+00:00",
+            "start_iso": "2026-06-02T07:00:00+00:00",
+            "booking_code": "",
+        }
+    ]
+
     with patch("backend.routes.admin.os.environ.get", side_effect=lambda k, d=None: "postgres://x" if "DATABASE" in k else d):
         with patch("backend.pg_pool.pg_connection", return_value=fake_conn):
             with patch("backend.pg_tenant_context.set_tenant_id_on_connection"):
-                with patch("backend.public_bookings_pg.count_public_bookings", return_value=1):
+                with patch(
+                    "backend.routes.admin._collect_bookings_confirmed_today",
+                    return_value=sample_bookings,
+                ):
                     with patch("backend.routes.admin.datetime") as mock_dt:
                         mock_dt.now.return_value = fixed.astimezone(
                             __import__("zoneinfo").ZoneInfo("Europe/Paris")
@@ -48,9 +70,87 @@ def test_get_kpis_today_counts_bookings_in_local_day(tenant_detail):
                         mock_dt.side_effect = lambda *a, **k: datetime(*a, **k)
                         out = _get_kpis_today(2, "Europe/Paris")
 
-    assert out["bookings"] == 3
+    assert out["bookings"] == 1
     assert out["calls"] == 0
     assert "date" in out
+
+
+def test_collect_bookings_confirmed_today_excludes_past_slots_and_dedupes():
+    from backend.routes.admin import _collect_bookings_confirmed_today
+
+    fixed = datetime(2026, 5, 31, 18, 0, 0, tzinfo=timezone.utc)
+    public_rows = [
+        {
+            "id": "pb-1",
+            "patient_name": "Johnny Halliday",
+            "patient_phone": "",
+            "motif": "Consultation",
+            "slot_label": "Lundi 1 juin à 9h15",
+            "status": "confirmed",
+            "source": "clara",
+            "created_at": "2026-05-31T17:48:00+00:00",
+            "confirmed_at": "2026-05-31T17:48:00+00:00",
+            "start_iso": "2026-06-01T07:15:00+00:00",
+            "booking_code": "",
+        },
+        {
+            "id": "pb-2",
+            "patient_name": "Hank Schroeder",
+            "patient_phone": "",
+            "motif": "Consultation",
+            "slot_label": "Jeudi 28 mai à 9h00",
+            "status": "confirmed",
+            "source": "cabinet",
+            "created_at": "2026-05-31T17:03:00+00:00",
+            "confirmed_at": "2026-05-31T17:03:00+00:00",
+            "start_iso": "2026-05-28T07:00:00+00:00",
+            "booking_code": "",
+        },
+    ]
+    ivr_rows = [
+        {
+            "created_at": "2026-05-31T17:48:00+00:00",
+            "call_id": "public-pb-1",
+            "context": '{"patient_name":"Johnny Halliday","motif":"Consultation","slot_label":"Lundi 1 juin à 9h15","start_iso":"2026-06-01T07:15:00+00:00"}',
+        }
+    ]
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, query, params):
+            pass
+
+        def fetchall(self):
+            return ivr_rows
+
+    fake_conn = MagicMock()
+    fake_conn.cursor.return_value = FakeCursor()
+    fake_conn.__enter__ = lambda s: s
+    fake_conn.__exit__ = lambda s, *a: False
+
+    with patch("backend.routes.admin.os.environ.get", side_effect=lambda k, d=None: "postgres://x" if "DATABASE" in k else d):
+        with patch(
+            "backend.public_bookings_pg.list_public_bookings_created_between",
+            return_value=public_rows,
+        ):
+            with patch("backend.pg_pool.pg_connection", return_value=fake_conn):
+                with patch("backend.pg_tenant_context.set_tenant_id_on_connection"):
+                    paris = __import__("zoneinfo").ZoneInfo("Europe/Paris")
+                    with patch(
+                        "backend.routes.admin.datetime",
+                        wraps=datetime,
+                    ) as mock_dt:
+                        mock_dt.now.return_value = fixed.astimezone(paris)
+                        items = _collect_bookings_confirmed_today(2, "Europe/Paris")
+
+    assert len(items) == 1
+    assert items[0]["patient_name"] == "Johnny Halliday"
+    assert items[0]["source"] == "clara"
 
 
 def test_pg_update_tenant_params_blocks_protected_key_drop():
