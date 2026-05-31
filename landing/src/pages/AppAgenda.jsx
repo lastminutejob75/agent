@@ -450,7 +450,21 @@ function InlineDetail({
 }) {
   const aPhone = normalizePhone(a.patient_phone || a.phone || "");
   const aPhoneFmt = formatPhone(aPhone);
-  const hasPatientFile = Boolean(a.patient_has_file);
+  const [hasPatientFile, setHasPatientFile] = useState(Boolean(a.patient_has_file));
+
+  useEffect(() => {
+    setHasPatientFile(Boolean(a.patient_has_file));
+    if (!aPhone || a.patient_has_file) return undefined;
+    let cancelled = false;
+    api.tenantGetPatient(aPhone, { lightweight: true })
+      .then((res) => {
+        if (!cancelled && res?.patient) setHasPatientFile(true);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [a.patient_has_file, aPhone]);
   const shellStyle = variant === "modal" ? S.inlineDetailModal : S.inlineDetail;
   return (
     <div style={shellStyle}>
@@ -1554,11 +1568,22 @@ export default function AppAgenda() {
     openPatientCreateFromAppointment(fakeAppt);
   }
 
-  function openPatientCreateFromAppointment(appt) {
+  async function openPatientCreateFromAppointment(appt) {
     const phone = normalizePhone(appt?.patient_phone || "");
-    if (phone && appt?.patient_has_file) {
-      navigate(`/app/patient-dashboard?phone=${encodeURIComponent(phone)}`);
-      return;
+    if (phone) {
+      if (appt?.patient_has_file) {
+        navigate(`/app/patient-dashboard?phone=${encodeURIComponent(phone)}`);
+        return;
+      }
+      try {
+        const res = await api.tenantGetPatient(phone, { lightweight: true });
+        if (res?.patient) {
+          navigate(`/app/patient-dashboard?phone=${encodeURIComponent(phone)}`);
+          return;
+        }
+      } catch {
+        /* pas de fiche : ouvrir le formulaire de création */
+      }
     }
     const fromName = splitAgendaPatientName(appt?.patient);
     const motif = String(appt?.type || "").trim();

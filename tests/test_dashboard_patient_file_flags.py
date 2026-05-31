@@ -33,3 +33,23 @@ def test_decorate_agenda_slots_patient_has_file(monkeypatch):
     assert slots[0]["patient_has_file"] is False
     assert slots[1]["patient_has_file"] is True
 
+
+def test_agenda_bulk_lightweight_still_decorates_patient_has_file(monkeypatch):
+    """Le mode lightweight bulk doit quand même peupler patient_has_file (lookup batch)."""
+    from backend.routes.tenant import (
+        _decorate_agenda_slots_patient_has_file,
+        _warm_agenda_profiles_from_slots_patient_phone,
+    )
+
+    slots = [{"patient_phone": "+33612345678", "hour": "10h"}]
+    cache: dict = {}
+
+    monkeypatch.setattr(
+        "backend.routes.tenant.get_cabinet_clients_by_phones",
+        lambda tenant_id, phones: {"+33612345678": {"phone": "+33612345678", "display_name": "Claire"}},
+    )
+
+    _warm_agenda_profiles_from_slots_patient_phone(1, slots, cache)
+    _decorate_agenda_slots_patient_has_file(1, slots, cache)
+    assert slots[0]["patient_has_file"] is True
+

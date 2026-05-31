@@ -4728,13 +4728,11 @@ def tenant_agenda_bulk(
         logger.debug("tenant agenda/bulk public_bookings merge skipped tenant=%s: %s", tenant_id, exc)
 
     flat_slots_bulk = [slot for payload in payloads.values() for slot in (payload.get("slots") or [])]
-    if not lightweight:
-        _warm_agenda_profiles_from_slots_patient_phone(tenant_id, flat_slots_bulk, profile_cache)
-        for payload in payloads.values():
-            _decorate_agenda_slots_patient_has_file(tenant_id, list(payload.get("slots") or []), profile_cache)
-    else:
-        for slot in flat_slots_bulk:
-            slot["patient_has_file"] = False
+    # Toujours décorer patient_has_file (lookup batch léger) — le mode lightweight
+    # n'allège que la résolution des noms depuis Google / profils.
+    _warm_agenda_profiles_from_slots_patient_phone(tenant_id, flat_slots_bulk, profile_cache)
+    for payload in payloads.values():
+        _decorate_agenda_slots_patient_has_file(tenant_id, list(payload.get("slots") or []), profile_cache)
 
     response = {
         "dates": {date_str: _finalize_agenda_day_payload(payload) for date_str, payload in payloads.items()},
