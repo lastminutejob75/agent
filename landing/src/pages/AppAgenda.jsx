@@ -858,12 +858,12 @@ export default function AppAgenda() {
     }
   }, [urlDate, urlView, urlPhone, urlFocus, urlAction, selectedDate]);
 
-  /* Liens depuis le dashboard : focus=annulations | creneaux-recuperes → jour + date explicite */
+  /* Liens depuis le dashboard : focus=annulations → jour ; creneaux-recuperes → semaine */
   useEffect(() => {
     if (urlFocus !== "annulations" && urlFocus !== "creneaux-recuperes") return;
-    setViewMode("day");
     const d = urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate) ? urlDate : todayISO();
     setSelectedDate(d);
+    setViewMode(urlFocus === "creneaux-recuperes" ? "week" : "day");
   }, [urlFocus, urlDate]);
 
   /* Prises de RDV aujourd'hui (dashboard) → semaine + panneau confirmations */

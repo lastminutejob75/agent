@@ -25,7 +25,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { useNavigate, useOutletContext } from "react-router-dom";
+import { useNavigate, useOutletContext, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api.js";
 import { useCalls } from "../lib/useCalls.js";
 import { canCreatePatientFromCall, getCallCounts } from "../lib/callJournal.utils.js";
@@ -863,6 +863,7 @@ function DetailPanel({ call, onClose, onCreatePatient, onOpenPatient, onMarkHand
 
 export default function UwiAppels() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { me } = useOutletContext() || {};
   const tenantLabel = String(me?.tenant_name || "Mon cabinet").trim() || "Mon cabinet";
   const { calls, loading, error, selectCall, markAsHandled, createPatientFromCall, addCallNote } = useCalls({ days: 30 });
@@ -944,6 +945,26 @@ export default function UwiAppels() {
     () => Object.values(subFilters).filter((value) => value !== "all").length,
     [subFilters],
   );
+
+  useEffect(() => {
+    const type = String(searchParams.get("type") || "").trim().toLowerCase();
+    const filter = String(searchParams.get("filter") || "").trim().toLowerCase();
+    const period = String(searchParams.get("period") || "").trim().toLowerCase();
+    if (filter === "rdv" || type === "rendez-vous") {
+      setActiveTab("rendez-vous");
+      setSubFilters({ status: "all", type: "all", patient: "all", period: period === "today" ? "today" : "all" });
+      return;
+    }
+    if (type === "annulation") {
+      setActiveTab("tous");
+      setSubFilters({
+        status: "all",
+        type: "annulation",
+        patient: "all",
+        period: period === "today" ? "today" : "all",
+      });
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;

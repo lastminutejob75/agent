@@ -163,6 +163,27 @@ function todayISO() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+function callTimestamp(call) {
+  const raw = call?.started_at || call?.last_event_at || call?.created_at || call?.createdAt;
+  const dt = new Date(String(raw || ""));
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+function isCancellationCall(call) {
+  const category = String(call?.reason_category || "").toLowerCase();
+  const summary = String(call?.summary || "").toLowerCase();
+  const result = String(call?.result || call?.status || "").toLowerCase();
+  return category.includes("cancel")
+    || /annul/.test(summary)
+    || result.includes("cancel")
+    || result === "cancelled";
+}
+
+function isRecoveredAgendaSlot(slot) {
+  const text = `${slot?.patient || slot?.patient_name || ""} ${slot?.type || ""} ${slot?.motif || ""} ${slot?.slot_label || ""}`.toLowerCase();
+  return /récup|recup|repris|sauvé|sauve/.test(text);
+}
+
 export default function AppDashboard() {
   const navigate = useNavigate();
   const { me } = useOutletContext() || {};
@@ -175,6 +196,7 @@ export default function AppDashboard() {
   const [handoffs, setHandoffs] = useState([]);
   const [callbacks, setCallbacks] = useState([]);
   const [calls, setCalls] = useState([]);
+  const [todayOpenSlots, setTodayOpenSlots] = useState([]);
   const [connections, setConnections] = useState({ vapi: null, calendar: null });
 
   const notify = (msg) => {
@@ -185,7 +207,7 @@ export default function AppDashboard() {
 
   const loadDashboard = useCallback(async (cancelledRef) => {
     setLoading(true);
-    const [kpiRes, agendaRes, handoffRes, callRes, callbackRes, vapiRes, calendarRes] = await Promise.allSettled([
+    const [kpiRes, agendaRes, handoffRes, callRes, callbackRes, vapiRes, calendarRes, openSlotsRes] = await Promise.allSettled([
       api.tenantKpis(1),
       api.tenantGetAgenda("?upcoming_days=14&compact=1"),
       api.tenantGetHandoffs("?limit=30&days=30"),
@@ -193,6 +215,7 @@ export default function AppDashboard() {
       api.tenantGetCallbackRequests("?limit=30"),
       api.tenantVapiStatus(),
       api.tenantGetCalendarStatus(),
+      api.tenantGetAgendaAvailableSlots(`?date=${todayISO()}`),
     ]);
 
     if (cancelledRef?.cancelled) return;
@@ -200,6 +223,11 @@ export default function AppDashboard() {
     if (agendaRes.status === "fulfilled") setAgenda(Array.isArray(agendaRes.value?.slots) ? agendaRes.value.slots : []);
     if (handoffRes.status === "fulfilled") setHandoffs(Array.isArray(handoffRes.value?.items) ? handoffRes.value.items : []);
     if (callRes.status === "fulfilled") setCalls(Array.isArray(callRes.value?.calls) ? callRes.value.calls : []);
+    if (openSlotsRes.status === "fulfilled") {
+      setTodayOpenSlots(Array.isArray(openSlotsRes.value?.slots) ? openSlotsRes.value.slots : []);
+    } else {
+      setTodayOpenSlots([]);
+    }
     if (callbackRes.status === "fulfilled") setCallbacks(Array.isArray(callbackRes.value?.items) ? callbackRes.value.items : []);
     setConnections({
       vapi: vapiRes.status === "fulfilled" ? vapiRes.value : null,
@@ -340,19 +368,30 @@ export default function AppDashboard() {
     })();
   /** Créneaux prévus dans l'agenda pour la journée civile (≠ prises de RDV confirmées aujourd'hui). */
   const rdvPlannedToday = todaySlots.length;
-  const callCount = Number.isFinite(Number(kpiCurrent.calls)) ? Number(kpiCurrent.calls) : calls.length;
-  const aiCount = Number.isFinite(Number(kpiCurrent.calls_ia)) ? Number(kpiCurrent.calls_ia) : 0;
-  const fillRate = callCount > 0 ? Math.min(100, Math.round((aiCount / callCount) * 100)) : 0;
-  const cancelledCount = agenda.filter((s) => String(s?.status || "").toLowerCase().includes("cancel")).length;
-  const recoveredCount = cancelledCount > 0 ? Math.min(cancelledCount, Math.round(cancelledCount * 0.6)) : 0;
+  const agendaCapacityToday = rdvPlannedToday + todayOpenSlots.length;
+  const fillRate = agendaCapacityToday > 0
+    ? Math.min(100, Math.round((rdvPlannedToday / agendaCapacityToday) * 100))
+    : 0;
+  const cancellationsToday = useMemo(
+    () => calls.filter((call) => {
+      if (!isCancellationCall(call)) return false;
+      const dt = callTimestamp(call);
+      return dt ? sameDay(dt, today) : false;
+    }).length,
+    [calls, today],
+  );
+  const recoveredCount = useMemo(
+    () => agenda.filter(isRecoveredAgendaSlot).length,
+    [agenda],
+  );
 
   const vapiConnected = connections.vapi?.connected ?? Boolean(me?.assistant_live);
   const calendarConnected = connections.calendar?.connected === true;
 
   const agendaTodayHref = `/app/agenda?view=day&date=${encodeURIComponent(todayISO())}`;
   const bookingsTodayHref = `/app/agenda?view=week&date=${encodeURIComponent(todayISO())}&focus=prises-jour`;
-  const agendaAnnulationsHref = `${agendaTodayHref}&focus=annulations`;
-  const agendaCreneauxRecuperesHref = `${agendaTodayHref}&focus=creneaux-recuperes`;
+  const agendaAnnulationsHref = `/app/appels?type=annulation&period=today`;
+  const agendaCreneauxRecuperesHref = `/app/agenda?view=week&date=${encodeURIComponent(todayISO())}&focus=creneaux-recuperes`;
   const stats = [
     [
       String(rdvCreatedToday),
@@ -373,15 +412,17 @@ export default function AppDashboard() {
     [
       `${fillRate}%`,
       "Taux de remplissage",
-      callCount > 0 ? (fillRate >= 75 ? "bon niveau" : "à optimiser") : "en attente d'appels",
+      agendaCapacityToday > 0
+        ? `${rdvPlannedToday}/${agendaCapacityToday} créneaux réservés aujourd'hui`
+        : "aucun créneau ouvert aujourd'hui",
       "green",
       "chart",
-      "/app/appels",
+      agendaTodayHref,
     ],
     [
-      String(cancelledCount),
+      String(cancellationsToday),
       "Annulations",
-      cancelledCount > 0 ? `dont ${recoveredCount} récupérée${recoveredCount > 1 ? "s" : ""}` : "aucune aujourd'hui",
+      cancellationsToday > 0 ? "traitées par Clara aujourd'hui" : "aucune aujourd'hui",
       "orange",
       "warn",
       agendaAnnulationsHref,
@@ -389,7 +430,7 @@ export default function AppDashboard() {
     [
       String(recoveredCount),
       "Créneaux récupérés",
-      recoveredCount > 0 ? "remis disponibles" : "—",
+      recoveredCount > 0 ? "créneaux sauvés par Clara" : "—",
       "purple",
       "check",
       agendaCreneauxRecuperesHref,
@@ -556,7 +597,7 @@ export default function AppDashboard() {
                 handledTodayCount={requestSummary.handledToday}
                 urgentCount={requestSummary.urgentOpen}
                 avgResponseMinutes={requestSummary.avgResponseMinutes}
-                cancelledCount={cancelledCount}
+                cancelledCount={cancellationsToday}
                 recoveredCount={recoveredCount}
                 loading={loading}
                 IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
@@ -595,7 +636,7 @@ export default function AppDashboard() {
                 handledTodayCount={requestSummary.handledToday}
                 urgentCount={requestSummary.urgentOpen}
                 avgResponseMinutes={requestSummary.avgResponseMinutes}
-                cancelledCount={cancelledCount}
+                cancelledCount={cancellationsToday}
                 recoveredCount={recoveredCount}
                 loading={loading}
                 IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
