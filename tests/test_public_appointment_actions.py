@@ -68,3 +68,102 @@ def test_public_callback_request_links_appointment_from_token(monkeypatch):
     assert out["ok"] is True
     assert captured.get("appointment_source") == "public"
     assert captured.get("appointment_id") == "abc-123"
+
+
+def test_dispatch_cancel_notifications_patient_sms_and_email(monkeypatch):
+    from backend import public_action_notifications as mod
+
+    sent = {"sms": [], "emails": []}
+
+    monkeypatch.setattr(
+        mod,
+        "_practitioner_for_slug",
+        lambda slug: {"name": "Dr Test", "email": "cabinet@example.com"},
+    )
+    monkeypatch.setattr(
+        "backend.routes.public_pages._send_sms",
+        lambda phone, body: sent["sms"].append((phone, body)) or True,
+    )
+    monkeypatch.setattr(
+        mod,
+        "_send_html_email",
+        lambda to, subject, html: sent["emails"].append((to, subject)) or True,
+    )
+    monkeypatch.setenv("PUBLIC_BOOKING_CABINET_SMS_TO", "+33600000001")
+
+    record = {
+        "source_type": "public_booking",
+        "patient_name": "Jean Dupont",
+        "patient_phone": "+33612345678",
+        "patient_email": "jean@example.com",
+        "slot_label": "mercredi a 09:30",
+    }
+    out = mod.dispatch_public_cancel_notifications(
+        slug="cabinet-demo",
+        tenant_id=2,
+        record=record,
+        booking_code="GTYEGG",
+        slot_label="mercredi a 09:30",
+        reason="Indisponible",
+    )
+
+    assert out["patient_sms"] is True
+    assert out["patient_email"] is True
+    assert out["cabinet_sms"] is True
+    assert out["cabinet_email"] is True
+    assert sent["sms"][0][0] == "+33612345678"
+    assert "RDV-GTYEGG" in sent["sms"][0][1]
+    assert sent["emails"][0][0] == "jean@example.com"
+
+
+def test_cancel_appointment_triggers_notifications(monkeypatch):
+    from backend import public_appointment_actions as actions
+
+    calls = []
+
+    monkeypatch.setattr(
+        actions,
+        "decode_public_action_token",
+        lambda token: {
+            "tenant_id": 2,
+            "source_type": "public_booking",
+            "source_id": "pb-1",
+            "booking_code": "GTYEGG",
+        },
+    )
+    monkeypatch.setattr(
+        actions,
+        "_load_record_from_token",
+        lambda payload: {
+            "source_type": "public_booking",
+            "id": "pb-1",
+            "patient_name": "Jean Dupont",
+            "patient_phone": "+33612345678",
+            "patient_email": "jean@example.com",
+            "slot_label": "mercredi a 09:30",
+            "booking_code": "GTYEGG",
+            "start_iso": "2026-06-03T09:30:00+02:00",
+        },
+    )
+    monkeypatch.setattr(actions, "_verify_contact_for_record", lambda *a, **k: True)
+    monkeypatch.setattr(actions, "_enforce_action_rules", lambda *a, **k: None)
+    monkeypatch.setattr(actions, "_cancel_all_for_booking", lambda *a, **k: True)
+    monkeypatch.setattr(
+        actions,
+        "uses_google_calendar",
+        lambda tenant_id: False,
+    )
+    monkeypatch.setattr(
+        "backend.public_action_notifications.dispatch_public_cancel_notifications",
+        lambda **kwargs: calls.append(kwargs) or {"patient_sms": True},
+    )
+
+    out = actions.cancel_appointment(
+        slug="cabinet-demo",
+        action_token="token",
+        phone="+33612345678",
+    )
+    assert out["cancelled"] is True
+    assert len(calls) == 1
+    assert calls[0]["slug"] == "cabinet-demo"
+    assert calls[0]["booking_code"] == "GTYEGG"

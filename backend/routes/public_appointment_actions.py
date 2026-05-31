@@ -114,6 +114,7 @@ def public_appointments_cancel(slug: str, body: PublicAppointmentCancelBody, req
     email = (body.email or "").strip().lower() or None
     _require_contact_verification(phone, email)
     return cancel_appointment(
+        slug=slug,
         action_token=body.actionToken,
         phone=phone,
         email=email,
@@ -129,11 +130,11 @@ def public_appointments_reschedule(slug: str, body: PublicAppointmentRescheduleB
     email = (body.email or "").strip().lower() or None
     _require_contact_verification(phone, email)
     return reschedule_appointment(
+        slug=slug,
         action_token=body.actionToken,
         phone=phone,
         email=email,
         new_slot_id=str(body.newSlotId).strip(),
-        slug=slug,
         slot_label=(body.slotLabel or "").strip() or None,
         start_iso=(body.startIso or "").strip() or None,
         end_iso=(body.endIso or "").strip() or None,

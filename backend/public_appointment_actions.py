@@ -447,6 +447,20 @@ def _reschedule_public_booking(
         booking_code=new_code,
         google_event_id=google_event_id,
     )
+    try:
+        from backend.public_action_notifications import dispatch_public_reschedule_notifications
+
+        dispatch_public_reschedule_notifications(
+            slug=slug,
+            tenant_id=tenant_id,
+            record=record,
+            old_booking_code=old_code,
+            new_booking_code=new_code,
+            slot_label=payload.slotLabel,
+            confirmation_id=booking_id,
+        )
+    except Exception as exc:
+        logger.warning("public reschedule notifications failed tenant=%s: %s", tenant_id, exc)
     return {
         "ok": True,
         "rescheduled": True,
@@ -456,6 +470,7 @@ def _reschedule_public_booking(
 
 def cancel_appointment(
     *,
+    slug: Optional[str] = None,
     action_token: str,
     phone: Optional[str] = None,
     email: Optional[str] = None,
@@ -491,16 +506,33 @@ def cancel_appointment(
         booking_code,
         (reason or "")[:120],
     )
+    if slug:
+        slot_label = str(record.get("slot_label") or "").strip()
+        if not slot_label and start_dt:
+            slot_label = start_dt.strftime("%A %d/%m à %H:%M")
+        try:
+            from backend.public_action_notifications import dispatch_public_cancel_notifications
+
+            dispatch_public_cancel_notifications(
+                slug=slug,
+                tenant_id=tenant_id,
+                record=record,
+                booking_code=booking_code,
+                slot_label=slot_label or None,
+                reason=reason,
+            )
+        except Exception as exc:
+            logger.warning("public cancel notifications failed tenant=%s: %s", tenant_id, exc)
     return {"ok": True, "cancelled": True, "bookingCode": format_booking_code(booking_code)}
 
 
 def reschedule_appointment(
     *,
+    slug: Optional[str] = None,
     action_token: str,
     phone: Optional[str] = None,
     email: Optional[str] = None,
     new_slot_id: str,
-    slug: Optional[str] = None,
     slot_label: Optional[str] = None,
     start_iso: Optional[str] = None,
     end_iso: Optional[str] = None,
@@ -596,10 +628,36 @@ def reschedule_appointment(
         for pb in lookup_public_bookings(tenant_id, booking_code=booking_code):
             mark_public_booking_rescheduled(tenant_id, str(pb.get("id")))
 
+    new_code_raw = None
+    try:
+        from backend.slots_pg import pg_booking_code_for_slot
+
+        new_code_raw = pg_booking_code_for_slot(tenant_id, slot_id_int)
+    except Exception:
+        new_code_raw = None
+
+    if slug and new_code_raw:
+        try:
+            from backend.public_action_notifications import dispatch_public_reschedule_notifications
+
+            dispatch_public_reschedule_notifications(
+                slug=slug,
+                tenant_id=tenant_id,
+                record=record,
+                old_booking_code=booking_code,
+                new_booking_code=new_code_raw,
+                slot_label=label,
+            )
+        except Exception as exc:
+            logger.warning("public reschedule notifications failed tenant=%s: %s", tenant_id, exc)
+
     logger.info(
         "public_appointment_rescheduled tenant=%s appt_id=%s new_slot=%s",
         tenant_id,
         appt_id,
         slot_id_int,
     )
-    return {"ok": True, "rescheduled": True}
+    out: Dict[str, Any] = {"ok": True, "rescheduled": True}
+    if new_code_raw:
+        out["bookingCode"] = format_booking_code(new_code_raw)
+    return out

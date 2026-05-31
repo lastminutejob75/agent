@@ -619,6 +619,37 @@ def pg_reschedule_booking_atomic(tenant_id: int, appt_id: int, new_slot_id: int)
         return None
 
 
+def pg_booking_code_for_slot(tenant_id: int, slot_id: int) -> Optional[str]:
+    """Code RDV de l'appointment actif sur un slot (après déplacement)."""
+    if not slot_id:
+        return None
+    url = _pg_url()
+    if not url:
+        return None
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+
+        with psycopg.connect(url, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT booking_code
+                    FROM appointments
+                    WHERE tenant_id = %s AND slot_id = %s
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (tenant_id, int(slot_id)),
+                )
+                row = cur.fetchone()
+                code = str((row or {}).get("booking_code") or "").strip()
+                return code or None
+    except Exception as exc:
+        logger.debug("pg_booking_code_for_slot failed tenant=%s slot=%s: %s", tenant_id, slot_id, exc)
+        return None
+
+
 def pg_cleanup_and_ensure_slots(tenant_id: int) -> Optional[bool]:
     """
     Supprime slots passés, garantit TARGET_MIN_SLOTS futurs (weekdays).

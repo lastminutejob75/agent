@@ -814,9 +814,9 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
           reason: cancelReason.trim() || undefined,
         }),
       });
-      setSuccessMessage("Votre rendez-vous a bien ete annule. Le cabinet a ete informe.");
+      setSuccessMessage("Votre rendez-vous a bien ete annule. Le cabinet a ete informe. Un SMS et/ou un email de confirmation vous sera envoye si vos coordonnees sont connues.");
       setStep("success");
-      push([{ from: "clara", text: "Votre rendez-vous a bien ete annule." }]);
+      push([{ from: "clara", text: "Votre rendez-vous a bien ete annule. Un SMS ou un email de confirmation vous a ete envoye si possible." }]);
       trackPublicEvent({ slug, event: "booking_cancelled", source: "public_action" });
     } catch (err) {
       setError(mapPublicActionError(err));
@@ -854,9 +854,10 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
         }),
       });
       const codeHint = data?.bookingCode ? ` Nouveau code : ${data.bookingCode}.` : "";
-      setSuccessMessage(`Votre rendez-vous a ete deplace au creneau ${pickedSlot.label || pickedSlot.time || ""}.${codeHint}`);
+      const notifyHint = " Un SMS et/ou un email de confirmation vous sera envoye si vos coordonnees sont connues.";
+      setSuccessMessage(`Votre rendez-vous a ete deplace au creneau ${pickedSlot.label || pickedSlot.time || ""}.${codeHint}${notifyHint}`);
       setStep("success");
-      push([{ from: "clara", text: `Votre rendez-vous a ete deplace avec succes.${codeHint}` }]);
+      push([{ from: "clara", text: `Votre rendez-vous a ete deplace avec succes.${codeHint} Un SMS ou un email de confirmation vous a ete envoye si possible.` }]);
       trackPublicEvent({ slug, event: "booking_rescheduled", source: "public_action" });
     } catch (err) {
       setError(mapPublicActionError(err));
