@@ -8,6 +8,7 @@ API admin / onboarding pour uwi-landing (Vite SPA).
 from __future__ import annotations
 
 import base64
+import copy
 import json
 import logging
 import os
@@ -1799,8 +1800,51 @@ def _is_future_booking_for_today_list(item: Dict[str, Any], day_start_local: dat
     return appt_date > day_start_local.date()
 
 
+_bookings_confirmed_today_cache: Dict[tuple, tuple] = {}
+_bookings_confirmed_today_cache_lock = threading.Lock()
+
+
+def _bookings_confirmed_today_cache_ttl() -> float:
+    try:
+        return float((os.environ.get("BOOKINGS_TODAY_CACHE_SECONDS") or "30").strip() or "30")
+    except ValueError:
+        return 30.0
+
+
 def _collect_bookings_confirmed_today(tenant_id: int, tz_name: str = "Europe/Paris") -> List[Dict[str, Any]]:
     """Confirmations enregistrées aujourd'hui pour une date ultérieure (sans doublons Clara/public)."""
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        from backports.zoneinfo import ZoneInfo  # type: ignore
+
+    tz = ZoneInfo((tz_name or "Europe/Paris").strip() or "Europe/Paris")
+    cache_key = (int(tenant_id), (tz_name or "Europe/Paris").strip() or "Europe/Paris", datetime.now(tz).strftime("%Y-%m-%d"))
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        ttl = _bookings_confirmed_today_cache_ttl()
+        if ttl > 0:
+            now_mono = time.monotonic()
+            with _bookings_confirmed_today_cache_lock:
+                hit = _bookings_confirmed_today_cache.get(cache_key)
+                if hit and hit[0] > now_mono:
+                    return copy.deepcopy(hit[1])
+
+    items = _collect_bookings_confirmed_today_uncached(tenant_id, tz_name)
+
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        ttl = _bookings_confirmed_today_cache_ttl()
+        if ttl > 0:
+            with _bookings_confirmed_today_cache_lock:
+                _bookings_confirmed_today_cache[cache_key] = (time.monotonic() + ttl, copy.deepcopy(items))
+                if len(_bookings_confirmed_today_cache) > 300:
+                    stale = [k for k, (exp, _) in _bookings_confirmed_today_cache.items() if exp <= time.monotonic()]
+                    for k in stale[:120]:
+                        _bookings_confirmed_today_cache.pop(k, None)
+    return items
+
+
+def _collect_bookings_confirmed_today_uncached(tenant_id: int, tz_name: str = "Europe/Paris") -> List[Dict[str, Any]]:
+    """Implémentation non cachée de la collecte des confirmations du jour."""
     import json
 
     try:

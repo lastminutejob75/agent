@@ -225,6 +225,52 @@ def pg_count_free_slots_by_month(tenant_id: int, month: str) -> Optional[Dict[st
         return None
 
 
+def pg_count_free_slots_horizon(
+    tenant_id: int,
+    days: int = 7,
+    tz_name: str = "Europe/Paris",
+) -> Optional[Dict[str, int]]:
+    """Créneaux libres par jour sur N jours civils à partir d'aujourd'hui (sans cleanup)."""
+    url = _pg_url()
+    if not url:
+        return None
+    safe_days = max(1, min(int(days or 7), 31))
+    tz_key = (tz_name or "Europe/Paris").strip() or "Europe/Paris"
+
+    def _query() -> Optional[Dict[str, int]]:
+        import psycopg
+
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT to_char(start_ts AT TIME ZONE %s, 'YYYY-MM-DD') AS d,
+                           COUNT(*)::int AS cnt
+                    FROM slots
+                    WHERE tenant_id = %s
+                      AND is_booked = FALSE
+                      AND (start_ts AT TIME ZONE %s)::date >= (CURRENT_TIMESTAMP AT TIME ZONE %s)::date
+                      AND (start_ts AT TIME ZONE %s)::date
+                          < (CURRENT_TIMESTAMP AT TIME ZONE %s)::date + %s
+                    GROUP BY 1
+                    ORDER BY 1
+                    """,
+                    (tz_key, tenant_id, tz_key, tz_key, tz_key, tz_key, safe_days),
+                )
+                return {str(row[0]): int(row[1]) for row in cur.fetchall() if row[0]}
+
+    try:
+        return _query()
+    except Exception as e:
+        if _is_transient(e):
+            try:
+                return _query()
+            except Exception:
+                pass
+        logger.debug("pg_count_free_slots_horizon failed: %s", e)
+        return None
+
+
 def pg_ensure_slot_id_by_datetime(
     date_str: str,
     time_str: str,

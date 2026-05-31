@@ -2682,6 +2682,119 @@ def tenant_kpis(auth: dict = Depends(require_tenant_auth), days: int = Query(7, 
     return data
 
 
+_TENANT_STATS_FAST_CACHE: Dict[int, tuple] = {}
+_TENANT_STATS_FAST_LOCK = threading.Lock()
+
+
+def _tenant_stats_fast_cache_ttl() -> float:
+    try:
+        return float((os.environ.get("TENANT_STATS_FAST_CACHE_SECONDS") or "20").strip() or "20")
+    except ValueError:
+        return 20.0
+
+
+def _tenant_dashboard_calls_light(
+    tenant_id: int,
+    detail: dict,
+    tz_name: str,
+    limit: int = 30,
+    days: int = 7,
+) -> List[Dict[str, Any]]:
+    """Appels récents allégés pour le bandeau stats (annulations du jour)."""
+    items = (_get_calls_list(tenant_id=tenant_id, days=days, limit=limit, tenant_detail=detail) or {}).get("items") or []
+    calls: List[Dict[str, Any]] = []
+    for item in items[:limit]:
+        call_id = (item.get("call_id") or "").strip()
+        if not call_id:
+            continue
+        detail_for_display = {
+            "call_id": call_id,
+            "tenant_id": tenant_id,
+            "customer_number": item.get("customer_number"),
+            "started_at": item.get("started_at"),
+            "last_event_at": item.get("last_event_at"),
+            "duration_sec": item.get("duration_sec"),
+            "duration_min": item.get("duration_min"),
+            "result": item.get("result") or "other",
+            "events": [{"event": item.get("last_event"), "meta": {}}] if item.get("last_event") else [],
+            "transcript": None,
+        }
+        status = _resolve_call_status(item, detail_for_display)
+        call_context = _classify_call_context(status, detail_for_display)
+        calls.append(
+            {
+                "id": call_id,
+                "call_id": call_id,
+                "started_at": item.get("started_at"),
+                "last_event_at": item.get("last_event_at"),
+                "created_at": item.get("started_at"),
+                "summary": _call_summary_from_detail(status, detail_for_display),
+                "result": item.get("result") or status,
+                "status": status,
+                "reason_category": call_context.get("reason_category") or "general",
+            }
+        )
+    return calls
+
+
+@router.get("/dashboard/stats-fast")
+def tenant_dashboard_stats_fast(auth: dict = Depends(require_tenant_auth)):
+    """KPI jour + créneaux libres (7j) + appels récents — une requête, parallélisée côté serveur."""
+    tenant_id = int(auth["tenant_id"])
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        ttl = _tenant_stats_fast_cache_ttl()
+        if ttl > 0:
+            now_mono = time.monotonic()
+            with _TENANT_STATS_FAST_LOCK:
+                hit = _TENANT_STATS_FAST_CACHE.get(tenant_id)
+                if hit and hit[0] > now_mono:
+                    return copy.deepcopy(hit[1])
+
+    detail = _get_tenant_me_detail(tenant_id)
+    if not detail:
+        raise HTTPException(404, "Tenant not found")
+    tz_name = _tenant_timezone(detail)
+    from backend.routes.admin import _get_kpis_today
+    from backend.slots_pg import pg_count_free_slots_horizon
+
+    today: dict = {}
+    free_slots: dict = {}
+    calls: List[Dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        f_today = pool.submit(_get_kpis_today, tenant_id, tz_name)
+        f_free = pool.submit(pg_count_free_slots_horizon, tenant_id, 7, tz_name)
+        f_calls = pool.submit(_tenant_dashboard_calls_light, tenant_id, detail, tz_name, 30, 7)
+        try:
+            today = f_today.result(timeout=20) or {}
+        except Exception as exc:
+            logger.warning("stats-fast kpis failed tenant=%s: %s", tenant_id, exc)
+        try:
+            raw_free = f_free.result(timeout=10)
+            free_slots = raw_free if isinstance(raw_free, dict) else {}
+        except Exception as exc:
+            logger.warning("stats-fast free slots failed tenant=%s: %s", tenant_id, exc)
+        try:
+            calls = f_calls.result(timeout=20) or []
+        except Exception as exc:
+            logger.warning("stats-fast calls failed tenant=%s: %s", tenant_id, exc)
+
+    payload = {
+        "today": today,
+        "free_slots_by_date": free_slots,
+        "calls": calls,
+    }
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        ttl = _tenant_stats_fast_cache_ttl()
+        if ttl > 0:
+            with _TENANT_STATS_FAST_LOCK:
+                _TENANT_STATS_FAST_CACHE[tenant_id] = (time.monotonic() + ttl, copy.deepcopy(payload))
+                if len(_TENANT_STATS_FAST_CACHE) > 200:
+                    stale = [k for k, (exp, _) in _TENANT_STATS_FAST_CACHE.items() if exp <= time.monotonic()]
+                    for k in stale[:50]:
+                        _TENANT_STATS_FAST_CACHE.pop(k, None)
+    return payload
+
+
 @router.get("/bookings/today")
 def tenant_bookings_today(auth: dict = Depends(require_tenant_auth)):
     """Confirmations de RDV enregistrées aujourd'hui (jour civil cabinet)."""
@@ -4849,9 +4962,8 @@ def tenant_agenda_available_dates(
 
     if config.USE_PG_SLOTS:
         try:
-            from backend.slots_pg import pg_cleanup_and_ensure_slots, pg_count_free_slots_by_month
+            from backend.slots_pg import pg_count_free_slots_by_month
 
-            pg_cleanup_and_ensure_slots(tenant_id)
             dates = pg_count_free_slots_by_month(tenant_id, month)
             if dates is not None:
                 return {"dates": dates, "month": month[:7]}

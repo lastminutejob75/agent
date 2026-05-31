@@ -3,7 +3,7 @@ import { useNavigate, useOutletContext } from "react-router-dom";
 import { agendaSlotMotif, formatAgendaSlotHour, parseAgendaSlotStart } from "../lib/agendaSlotParse.js";
 import { buildAgendaViewUrl } from "../lib/agendaAppointmentActions.js";
 import { api } from "../lib/api.js";
-import { computeUpcomingFillRate, monthsCoveringHorizon } from "../lib/agendaFillRate.js";
+import { computeUpcomingFillRate } from "../lib/agendaFillRate.js";
 import HomeHeroSection from "../components/home/HomeHeroSection.jsx";
 import { buildRequestItemsFromCallsAndHandoffs, summarizeRequestItems } from "../lib/requestUiStatus.js";
 import HomeTabsActionsPanel from "../components/home/HomeTabsActionsPanel.jsx";
@@ -192,6 +192,7 @@ export default function AppDashboard() {
   const [isMobile, setIsMobile] = useState(false);
   const [toast, setToast] = useState("");
   const [loading, setLoading] = useState(true);
+  const [statsLoading, setStatsLoading] = useState(true);
   const [kpis, setKpis] = useState(null);
   const [agenda, setAgenda] = useState([]);
   const [handoffs, setHandoffs] = useState([]);
@@ -206,38 +207,51 @@ export default function AppDashboard() {
     notify.t = window.setTimeout(() => setToast(""), 2200);
   };
 
-  const loadDashboard = useCallback(async (cancelledRef) => {
-    setLoading(true);
-    const availMonths = monthsCoveringHorizon(new Date(), 7);
-    const [kpiRes, agendaRes, handoffRes, callRes, callbackRes, vapiRes, calendarRes, ...availDateResults] = await Promise.allSettled([
-      api.tenantKpis(1),
-      api.tenantGetAgenda("?upcoming_days=14&compact=1"),
+  const loadDashboard = useCallback(async (cancelledRef, { silent = false } = {}) => {
+    if (!silent) {
+      setLoading(true);
+      setStatsLoading(true);
+    }
+
+    api.tenantDashboardStatsFast()
+      .then((data) => {
+        if (cancelledRef?.cancelled) return;
+        if (data?.today) setKpis({ today: data.today });
+        setFreeSlotsByDate(data?.free_slots_by_date && typeof data.free_slots_by_date === "object" ? data.free_slots_by_date : {});
+        setCalls(Array.isArray(data?.calls) ? data.calls : []);
+        setStatsLoading(false);
+        if (!silent) setLoading(false);
+      })
+      .catch(() => {
+        if (cancelledRef?.cancelled) return;
+        setStatsLoading(false);
+        if (!silent) setLoading(false);
+      });
+
+    api.tenantGetAgenda("?upcoming_days=14&compact=1")
+      .then((value) => {
+        if (cancelledRef?.cancelled) return;
+        setAgenda(Array.isArray(value?.slots) ? value.slots : []);
+      })
+      .catch(() => {
+        if (cancelledRef?.cancelled) return;
+        setAgenda([]);
+      });
+
+    Promise.allSettled([
       api.tenantGetHandoffs("?limit=30&days=30"),
-      api.tenantGetCalls("?limit=30&days=7"),
       api.tenantGetCallbackRequests("?limit=30"),
       api.tenantVapiStatus(),
       api.tenantGetCalendarStatus(),
-      ...availMonths.map((month) => api.tenantGetAgendaAvailableDates(month)),
-    ]);
-
-    if (cancelledRef?.cancelled) return;
-    if (kpiRes.status === "fulfilled") setKpis(kpiRes.value || null);
-    if (agendaRes.status === "fulfilled") setAgenda(Array.isArray(agendaRes.value?.slots) ? agendaRes.value.slots : []);
-    if (handoffRes.status === "fulfilled") setHandoffs(Array.isArray(handoffRes.value?.items) ? handoffRes.value.items : []);
-    if (callRes.status === "fulfilled") setCalls(Array.isArray(callRes.value?.calls) ? callRes.value.calls : []);
-    const mergedFree = {};
-    availDateResults.forEach((res) => {
-      if (res.status !== "fulfilled") return;
-      const dates = res.value?.dates;
-      if (dates && typeof dates === "object") Object.assign(mergedFree, dates);
+    ]).then(([handoffRes, callbackRes, vapiRes, calendarRes]) => {
+      if (cancelledRef?.cancelled) return;
+      if (handoffRes.status === "fulfilled") setHandoffs(Array.isArray(handoffRes.value?.items) ? handoffRes.value.items : []);
+      if (callbackRes.status === "fulfilled") setCallbacks(Array.isArray(callbackRes.value?.items) ? callbackRes.value.items : []);
+      setConnections({
+        vapi: vapiRes.status === "fulfilled" ? vapiRes.value : null,
+        calendar: calendarRes.status === "fulfilled" ? calendarRes.value : null,
+      });
     });
-    setFreeSlotsByDate(mergedFree);
-    if (callbackRes.status === "fulfilled") setCallbacks(Array.isArray(callbackRes.value?.items) ? callbackRes.value.items : []);
-    setConnections({
-      vapi: vapiRes.status === "fulfilled" ? vapiRes.value : null,
-      calendar: calendarRes.status === "fulfilled" ? calendarRes.value : null,
-    });
-    setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -249,7 +263,7 @@ export default function AppDashboard() {
   useEffect(() => {
     if (typeof document === "undefined") return undefined;
     const refresh = () => {
-      if (document.visibilityState === "visible") loadDashboard({ cancelled: false });
+      if (document.visibilityState === "visible") loadDashboard({ cancelled: false }, { silent: true });
     };
     document.addEventListener("visibilitychange", refresh);
     return () => document.removeEventListener("visibilitychange", refresh);
@@ -402,7 +416,18 @@ export default function AppDashboard() {
   const bookingsTodayHref = `/app/agenda?view=week&date=${encodeURIComponent(todayISO())}&focus=prises-jour`;
   const agendaAnnulationsHref = `/app/appels?type=annulation&period=today`;
   const agendaCreneauxRecuperesHref = `/app/agenda?view=week&date=${encodeURIComponent(todayISO())}&focus=creneaux-recuperes`;
-  const stats = [
+  const stats = useMemo(() => {
+    const placeholder = (label, note = "Chargement…") => ["—", label, note, "teal", "plus", ""];
+    if (statsLoading) {
+      return [
+        placeholder("Prises de RDV aujourd'hui"),
+        placeholder("RDV d'aujourd'hui"),
+        placeholder("Taux de remplissage"),
+        placeholder("Annulations"),
+        placeholder("Créneaux récupérés", "—"),
+      ];
+    }
+    return [
     [
       String(rdvCreatedToday),
       "Prises de RDV aujourd'hui",
@@ -446,6 +471,20 @@ export default function AppDashboard() {
       agendaCreneauxRecuperesHref,
     ],
   ];
+  }, [
+    statsLoading,
+    rdvCreatedToday,
+    rdvPlannedToday,
+    fillRate,
+    fillBooked,
+    fillCapacity,
+    cancellationsToday,
+    recoveredCount,
+    bookingsTodayHref,
+    agendaTodayHref,
+    agendaAnnulationsHref,
+    agendaCreneauxRecuperesHref,
+  ]);
 
   const priorityItems = [
     {
@@ -545,6 +584,7 @@ export default function AppDashboard() {
 
       <HomeStatsStrip
         stats={stats}
+        loading={statsLoading}
         styles={S}
         soft={soft}
         colors={C}
