@@ -87,6 +87,9 @@ const INSTANT_GREETING_REPLY = "Bonjour ! Comment puis-je vous aider ?";
 const INSTANT_SLOTS_LOOKUP = "Je consulte les créneaux disponibles, un instant…";
 const MORE_SLOTS_MSG = "Je souhaite voir d'autres créneaux.";
 const BOOKING_START = /\b(je\s+voudrais?|je\s+veux|je\s+souhaite|je\s+v\s+(?:in|un)\s+rdv|jv\s+(?:un\s+)?rdv|prendre\s+(?:un\s+)?rdv|un\s+rdv|rendez[- ]?vous)\b/iu;
+const CANCEL_INTENT = /\b(annuler|annulation|supprimer)\b.*\b(rdv|rendez[- ]?vous)\b|\b(rdv|rendez[- ]?vous)\b.*\b(annuler|annulation)\b/iu;
+const RESCHEDULE_INTENT = /\b(modifier|decaler|deplacer|changer|reporter)\b.*\b(rdv|rendez[- ]?vous)\b|\b(rdv|rendez[- ]?vous)\b.*\b(modifier|decaler|deplacer|changer|reporter)\b/iu;
+const CALLBACK_INTENT = /\b(etre\s+rappele|demande\s+de\s+rappel|rappelez[- ]?moi|me\s+rappele)\b/iu;
 const MORE_SLOTS_REQUEST = /\b(voir\s+d['\u2019]?autres?\s+cr[eé]neaux|voir\s+plus\s+de\s+cr[eé]neaux|autres?\s+cr[eé]neaux|plus\s+de\s+cr[eé]neaux|aucun\s+ne\s+convient|autre\s+horaire)\b/iu;
 const CHAT_REPLY_TIMEOUT_MS = 25000;
 const CHAT_UNCLEAR_FALLBACK = "Je n'ai pas bien compris. Reformulez, par exemple : « je voudrais un rendez-vous ».";
@@ -153,6 +156,46 @@ async function fetchJson(path, options = {}) {
     throw new Error(detail);
   }
   return response.json();
+}
+
+function mapPublicActionError(err) {
+  const raw = String(err?.message || err || "").trim();
+  const lower = raw.toLowerCase();
+  if (lower.includes("delai") || lower.includes("délai") || lower.includes("minimum")) {
+    return raw;
+  }
+  if (lower.includes("non autorise") || lower.includes("non autorisé") || lower.includes("desactive") || lower.includes("désactiv")) {
+    return raw;
+  }
+  if (lower.includes("401") || lower.includes("identifiant") || lower.includes("telephone") || lower.includes("email")) {
+    return "Telephone ou email incorrect pour ce rendez-vous.";
+  }
+  if (lower.includes("404") || lower.includes("introuvable")) {
+    return "Rendez-vous introuvable ou deja traite.";
+  }
+  if (lower.includes("409") || lower.includes("plus disponible")) {
+    return "Ce creneau n'est plus disponible. Choisissez un autre horaire.";
+  }
+  return raw || "Action impossible pour le moment.";
+}
+
+function rulesHint(rules, mode) {
+  if (!rules) return "";
+  if (mode === "cancel") {
+    if (rules.appointment_cancel_allowed === false) {
+      return "Les annulations en ligne ne sont pas autorisees pour ce cabinet.";
+    }
+    const h = Number(rules.appointment_cancel_notice_hours);
+    if (h > 0) return `Annulation possible jusqu'a ${h} h avant le rendez-vous.`;
+  }
+  if (mode === "reschedule") {
+    if (rules.appointment_reschedule_allowed === false) {
+      return "Le deplacement en ligne n'est pas autorise pour ce cabinet.";
+    }
+    const h = Number(rules.appointment_reschedule_notice_hours);
+    if (h > 0) return `Deplacement possible jusqu'a ${h} h avant le rendez-vous.`;
+  }
+  return "";
 }
 
 async function trackPublicEvent(payload) {
@@ -619,6 +662,7 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
   const [callbackReason, setCallbackReason] = useState("other");
   const [callbackMessage, setCallbackMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const [actionRules, setActionRules] = useState(null);
 
   useEffect(() => {
     const handle = (event) => {
@@ -653,39 +697,51 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
         return;
       }
       setAppointments(found);
+      setActionRules(data?.rules || null);
+      const rulesText = rulesHint(data?.rules, mode);
+      if (mode === "cancel" && data?.rules?.appointment_cancel_allowed === false) {
+        setError(rulesText || "Annulation en ligne indisponible.");
+        return;
+      }
+      if (mode === "reschedule" && data?.rules?.appointment_reschedule_allowed === false) {
+        if (found.length === 1) setSelected(found[0]);
+        setStep("reschedule-unavailable");
+        return;
+      }
       if (found.length === 1) {
         setSelected(found[0]);
         if (mode === "cancel") setStep("confirm-cancel");
         else if (mode === "reschedule") {
-          await loadRescheduleSlots();
-          setStep("reschedule-slots");
+          const loaded = await loadRescheduleSlots();
+          if (!loaded.length) setStep("reschedule-unavailable");
+          else setStep("reschedule-slots");
         }
       } else {
         setStep("select");
       }
     } catch (err) {
-      setError(String(err?.message || "Recherche impossible pour le moment."));
+      setError(mapPublicActionError(err));
     } finally {
       setLoading(false);
     }
   };
 
   const loadRescheduleSlots = async () => {
+    let loaded = [];
     if (safeArray(slots).length) {
-      setRescheduleSlots(slots.slice(0, 8));
-      return;
+      loaded = slots.slice(0, 8);
+    } else if (typeof onRefreshSlots === "function") {
+      loaded = safeArray(await onRefreshSlots()).slice(0, 8);
+    } else {
+      try {
+        const data = await fetchJson(`/api/public/slots/${encodeURIComponent(slug)}?count=8`);
+        loaded = safeArray(data?.slots);
+      } catch {
+        loaded = [];
+      }
     }
-    if (typeof onRefreshSlots === "function") {
-      const fresh = await onRefreshSlots();
-      setRescheduleSlots(safeArray(fresh).slice(0, 8));
-      return;
-    }
-    try {
-      const data = await fetchJson(`/api/public/slots/${encodeURIComponent(slug)}?count=8`);
-      setRescheduleSlots(safeArray(data?.slots));
-    } catch {
-      setRescheduleSlots([]);
-    }
+    setRescheduleSlots(loaded);
+    return loaded;
   };
 
   const pickAppointment = async (appt) => {
@@ -697,8 +753,9 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
     }
     setLoading(true);
     try {
-      await loadRescheduleSlots();
-      setStep("reschedule-slots");
+      const loaded = await loadRescheduleSlots();
+      if (!loaded.length) setStep("reschedule-unavailable");
+      else setStep("reschedule-slots");
     } finally {
       setLoading(false);
     }
@@ -729,7 +786,7 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
       push([{ from: "clara", text: "Votre rendez-vous a bien ete annule." }]);
       trackPublicEvent({ slug, event: "booking_cancelled", source: "public_action" });
     } catch (err) {
-      setError(String(err?.message || "Annulation impossible."));
+      setError(mapPublicActionError(err));
     } finally {
       setLoading(false);
     }
@@ -770,7 +827,7 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
       push([{ from: "clara", text: `Votre rendez-vous a ete deplace avec succes.${codeHint}` }]);
       trackPublicEvent({ slug, event: "booking_rescheduled", source: "public_action" });
     } catch (err) {
-      setError(String(err?.message || "Deplacement impossible."));
+      setError(mapPublicActionError(err));
     } finally {
       setLoading(false);
     }
@@ -792,6 +849,7 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
           email: callbackEmail.trim() || undefined,
           reason: callbackReason,
           message: callbackMessage.trim() || undefined,
+          actionToken: selected?.actionToken || undefined,
         }),
       });
       setSuccessMessage("Votre demande a ete transmise au cabinet. Vous serez recontacte dans les meilleurs delais.");
@@ -799,7 +857,7 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
       push([{ from: "clara", text: "Votre demande de rappel a bien ete enregistree." }]);
       trackPublicEvent({ slug, event: "callback_requested", source: "public_action" });
     } catch (err) {
-      setError(String(err?.message || "Enregistrement impossible."));
+      setError(mapPublicActionError(err));
     } finally {
       setLoading(false);
     }
@@ -853,6 +911,9 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
           {step === "confirm-cancel" ? (
             <>
               {renderSelectedRecap()}
+              {rulesHint(actionRules, "cancel") ? (
+                <p className="actionModalHint">{rulesHint(actionRules, "cancel")}</p>
+              ) : null}
               <p className="actionModalHint">Pour confirmer l&apos;annulation, indiquez le telephone ou l&apos;email associe au rendez-vous.</p>
               <input value={verifyPhone} onChange={(e) => setVerifyPhone(e.target.value)} placeholder="Telephone" type="tel" />
               <input value={verifyEmail} onChange={(e) => setVerifyEmail(e.target.value)} placeholder="Email" type="email" />
@@ -867,6 +928,9 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
           {step === "reschedule-slots" ? (
             <>
               {renderSelectedRecap()}
+              {rulesHint(actionRules, "reschedule") ? (
+                <p className="actionModalHint">{rulesHint(actionRules, "reschedule")}</p>
+              ) : null}
               <p className="actionModalHint">Choisissez un nouveau creneau, puis confirmez avec votre telephone ou email.</p>
               <div className="actionSlotGrid">
                 {rescheduleSlots.map((slot) => (
@@ -1001,6 +1065,7 @@ export default function PagePubliquePraticienUWI() {
   const eventSourceRef = useRef(null);
   const streamConversationIdRef = useRef(null);
   const pendingTurnRef = useRef(null);
+  const openActionFlowRef = useRef(null);
   const openingHours = safeArray(practitioner.openingHours).length ? practitioner.openingHours : defaultOpeningHours;
   const faqs = useMemo(() => makeFaqs(practitioner, openingHours), [practitioner, openingHours]);
   const vapiPublicKey = useMemo(() => getVapiPublicKey(), []);
@@ -1452,6 +1517,24 @@ export default function PagePubliquePraticienUWI() {
       return;
     }
 
+    if (CANCEL_INTENT.test(clean)) {
+      push([{ from: "clara", text: "J'ouvre le parcours d'annulation pour vous." }]);
+      openActionFlowRef.current?.("cancel");
+      return;
+    }
+
+    if (RESCHEDULE_INTENT.test(clean)) {
+      push([{ from: "clara", text: "J'ouvre le parcours de modification pour vous." }]);
+      openActionFlowRef.current?.("reschedule");
+      return;
+    }
+
+    if (CALLBACK_INTENT.test(clean)) {
+      push([{ from: "clara", text: "Je vous propose de laisser vos coordonnees pour un rappel." }]);
+      openActionFlowRef.current?.("callback");
+      return;
+    }
+
     if (BOOKING_START.test(clean)) {
       void syncChatInBackground(INSTANT_SLOTS_LOOKUP);
       return;
@@ -1595,6 +1678,7 @@ export default function PagePubliquePraticienUWI() {
     setActionFlowMode(mode);
     trackPublicEvent({ slug, event: "manage_modal_opened", source: sourceRef.current, action: mode });
   }, [slug]);
+  openActionFlowRef.current = openActionFlow;
 
   const refreshPublicSlots = useCallback(async () => {
     try {

@@ -151,6 +151,16 @@ def public_callback_request(slug: str, body: PublicCallbackRequestBody, request:
     if email and not validate_email(email):
         raise HTTPException(422, "Adresse email invalide.")
     phone = normalize_phone_number(body.phone) or body.phone.strip()
+    appointment_source = None
+    appointment_id = None
+    if (body.actionToken or "").strip():
+        from backend.public_action_tokens import decode_public_action_token
+
+        tok = decode_public_action_token(body.actionToken.strip())
+        if tok and int(tok.get("tenant_id") or 0) == tenant_id:
+            source_type = str(tok.get("source_type") or "").strip()
+            appointment_source = "public" if source_type == "public_booking" else source_type or None
+            appointment_id = str(tok.get("source_id") or "").strip() or None
     req_id = insert_callback_request(
         tenant_id=tenant_id,
         name=body.name.strip(),
@@ -158,6 +168,8 @@ def public_callback_request(slug: str, body: PublicCallbackRequestBody, request:
         email=email or None,
         reason=(body.reason or "other").strip(),
         message=(body.message or "").strip() or None,
+        appointment_source=appointment_source,
+        appointment_id=appointment_id,
         unmatched=False,
     )
     if not req_id:

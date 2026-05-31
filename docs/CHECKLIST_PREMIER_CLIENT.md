@@ -52,7 +52,73 @@
 ```
 □ Flow complet testé (création tenant → email → login → agenda)
 □ CLIENT_APP_ORIGIN configuré sur Railway
-□ ADMIN_ALERT_EMAIL configuré sur Railway
+□ ADMIN_NOTIFICATION_EMAIL / contact_email tenant configuré
 □ SERVICE_ACCOUNT_EMAIL configuré (ou Service Account JSON OK)
 □ Stripe : subscription active après création tenant
+□ Script link_client_tenant.py exécuté (routing + page publique)
+□ Test vocal sur le DID client (pas le numéro démo)
+□ Test page publique /p/{slug} (RDV + annuler/modifier + code RDV)
 ```
+
+---
+
+## 4. Provisionner le cabinet (après CreateTenantModal)
+
+Utiliser **`CreateTenantModal`** (admin) — pas le wizard léger seul — pour obtenir Vapi + Stripe + numéro Twilio.
+
+Puis exécuter le script de liaison client :
+
+```bash
+python3 scripts/link_client_tenant.py --prod \
+  --tenant-id ID \
+  --did +33XXXXXXXXX \
+  --slug dr-nom-ville \
+  --cabinet-name "Dr Nom" \
+  --contact-email email@cabinet.fr \
+  --vapi-assistant-id UUID_VAPI \
+  --calendar-id CALENDAR_ID@group.calendar.google.com
+```
+
+Le script configure :
+- `tenant_config.params_json` (Vapi, email, slug, page publique)
+- `tenant_routing` (DID vocal → tenant)
+- `tenant_profiles` + horaires par défaut
+
+**Cabinet démo** : utiliser `scripts/link_demo_tenant.py` (numéro 09 39 24 05 75, tenant 2).
+
+---
+
+## 5. Agenda Google (côté client)
+
+| Étape | Action |
+|-------|--------|
+| 1 | Client → `/app/agenda` |
+| 2 | Partager le calendrier Google avec le Service Account UWi |
+| 3 | Coller l’ID calendrier → **Vérifier et activer** |
+| 4 | Vérifier badge **Agenda connecté** sur le dashboard |
+
+---
+
+## 6. Page publique + actions patient
+
+| Test | URL / action |
+|------|----------------|
+| Page publique | `https://www.uwiapp.com/p/{slug}` |
+| Prendre RDV | Chip ou chat → code **RDV-XXXXXX** reçu |
+| Annuler | Chip Annuler → code ou téléphone → confirmation |
+| Modifier | Chip Modifier → nouveau créneau |
+| Être rappelé | Chip ou chat « rappelez-moi » |
+
+---
+
+## 7. Vocal Clara
+
+| Test | Vérification |
+|------|--------------|
+| Appeler le DID client | Clara répond |
+| Prendre RDV vocal | Visible dans agenda + dashboard |
+| Demande de rappel | Email cabinet (`contact_email`) |
+
+Variables Railway : `VAPI_ASSISTANT_ID`, `VAPI_PUBLIC_BACKEND_URL`, `USE_PG_EVENTS=true`, `TEST_TENANT_ID` = ID démo uniquement.
+
+---
