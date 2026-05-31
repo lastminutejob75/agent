@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../lib/api.js";
-import { toUiStatus, classifyRequestType, shouldShowHandoffInRequestInbox, callbackRequestStatusRaw, callbackRequestPriority, callbackRequestSummary, callbackRequestSourceLabel, isLiveTransferHandoff } from "../lib/requestUiStatus.js";
+import { toUiStatus, classifyRequestType, shouldShowHandoffInRequestInbox, shouldShowCallInRequestInbox, callbackRequestStatusRaw, callbackRequestPriority, callbackRequestSummary, callbackRequestSourceLabel, isLiveTransferHandoff } from "../lib/requestUiStatus.js";
 
 const REQUEST_STATUS_OVERRIDES_KEY = "uwi_request_status_overrides";
 const SYNC_BADGE_WINDOW_MS = 2 * 60 * 1000;
@@ -164,6 +164,7 @@ export default function AppRequests() {
   const requests = useMemo(() => {
     const fromCalls = calls
       .filter((c) => c.followup_state === "callback" || c.status === "TRANSFERRED" || c.reason_category === "urgency")
+      .filter((c) => shouldShowCallInRequestInbox(c, callbacks))
       .map((c) => {
         const t = classifyRequestType({ ...c, _source: "call" });
         const statusRaw = c.followup_state === "processed" ? "processed" : "callback_created";

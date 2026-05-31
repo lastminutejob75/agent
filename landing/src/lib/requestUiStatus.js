@@ -56,11 +56,26 @@ export function linkedHandoffIds(callbacks = []) {
   );
 }
 
+export function linkedCallIds(callbacks = []) {
+  return new Set(
+    callbacks
+      .map((c) => String(c.call_id || "").trim())
+      .filter(Boolean),
+  );
+}
+
 export function shouldShowHandoffInRequestInbox(handoff, callbacks = []) {
   const handoffId = String(handoff?.id || "");
   if (!handoffId) return true;
   if (!linkedHandoffIds(callbacks).has(handoffId)) return true;
   return isLiveTransferHandoff(handoff);
+}
+
+/** Masque un appel TRANSFERRED si un rappel unifié callback_requests existe déjà pour le même call_id. */
+export function shouldShowCallInRequestInbox(call, callbacks = []) {
+  const callId = String(call?.call_id || call?.id || "").trim();
+  if (!callId) return true;
+  return !linkedCallIds(callbacks).has(callId);
 }
 
 export function callbackRequestSourceLabel(callback) {
@@ -141,6 +156,7 @@ function mapCallbackRequestRow(callback) {
 export function buildTenantRequestRows(calls = [], handoffs = [], callbacks = [], overrides = {}) {
   const fromCalls = calls
     .filter((c) => c.followup_state === "callback" || c.status === "TRANSFERRED" || c.reason_category === "urgency")
+    .filter((c) => shouldShowCallInRequestInbox(c, callbacks))
     .map((c) => {
       const t = classifyRequestType({ ...c, _source: "call" });
       const statusRaw = c.followup_state === "processed" ? "processed" : "callback_created";
@@ -225,6 +241,7 @@ function isSameDay(a, b) {
 export function buildRequestItemsFromCallsAndHandoffs(calls = [], handoffs = [], callbacks = []) {
   const fromCalls = calls
     .filter((c) => c.followup_state === "callback" || c.status === "TRANSFERRED" || c.reason_category === "urgency")
+    .filter((c) => shouldShowCallInRequestInbox(c, callbacks))
     .map((c) => ({
       status_raw: c.followup_state === "processed" ? "processed" : "callback_created",
       priority: requestPriority(c),
