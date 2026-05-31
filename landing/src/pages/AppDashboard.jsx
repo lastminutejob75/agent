@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { agendaSlotMotif, formatAgendaSlotHour, parseAgendaSlotStart } from "../lib/agendaSlotParse.js";
+import { buildAgendaViewUrl } from "../lib/agendaAppointmentActions.js";
 import { api } from "../lib/api.js";
 import HomeHeroSection from "../components/home/HomeHeroSection.jsx";
 import { buildRequestItemsFromCallsAndHandoffs, summarizeRequestItems } from "../lib/requestUiStatus.js";
@@ -9,6 +10,7 @@ import HomeStatsStrip from "../components/home/HomeStatsStrip.jsx";
 import NextAppointmentCard from "../components/home/NextAppointmentCard.jsx";
 import TasksCard from "../components/home/TasksCard.jsx";
 import AgendaTodayCard from "../components/home/AgendaTodayCard.jsx";
+import UpcomingAppointmentsCard, { formatShortDate } from "../components/home/UpcomingAppointmentsCard.jsx";
 import DarkSummaryCard from "../components/home/DarkSummaryCard.jsx";
 import TeamNotesCard from "../components/home/TeamNotesCard.jsx";
 
@@ -181,35 +183,45 @@ export default function AppDashboard() {
     notify.t = window.setTimeout(() => setToast(""), 2200);
   };
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      setLoading(true);
-      const [kpiRes, agendaRes, handoffRes, callRes, callbackRes, vapiRes, calendarRes] = await Promise.allSettled([
-        api.tenantKpis(1),
-        api.tenantGetAgenda("?upcoming_days=14&compact=1"),
-        api.tenantGetHandoffs("?limit=30&days=30"),
-        api.tenantGetCalls("?limit=30&days=7"),
-        api.tenantGetCallbackRequests("?limit=30"),
-        api.tenantVapiStatus(),
-        api.tenantGetCalendarStatus(),
-      ]);
+  const loadDashboard = useCallback(async (cancelledRef) => {
+    setLoading(true);
+    const [kpiRes, agendaRes, handoffRes, callRes, callbackRes, vapiRes, calendarRes] = await Promise.allSettled([
+      api.tenantKpis(1),
+      api.tenantGetAgenda("?upcoming_days=14&compact=1"),
+      api.tenantGetHandoffs("?limit=30&days=30"),
+      api.tenantGetCalls("?limit=30&days=7"),
+      api.tenantGetCallbackRequests("?limit=30"),
+      api.tenantVapiStatus(),
+      api.tenantGetCalendarStatus(),
+    ]);
 
-      if (cancelled) return;
-      if (kpiRes.status === "fulfilled") setKpis(kpiRes.value || null);
-      if (agendaRes.status === "fulfilled") setAgenda(Array.isArray(agendaRes.value?.slots) ? agendaRes.value.slots : []);
-      if (handoffRes.status === "fulfilled") setHandoffs(Array.isArray(handoffRes.value?.items) ? handoffRes.value.items : []);
-      if (callRes.status === "fulfilled") setCalls(Array.isArray(callRes.value?.calls) ? callRes.value.calls : []);
-      if (callbackRes.status === "fulfilled") setCallbacks(Array.isArray(callbackRes.value?.items) ? callbackRes.value.items : []);
-      setConnections({
-        vapi: vapiRes.status === "fulfilled" ? vapiRes.value : null,
-        calendar: calendarRes.status === "fulfilled" ? calendarRes.value : null,
-      });
-      setLoading(false);
-    }
-    load();
-    return () => { cancelled = true; };
+    if (cancelledRef?.cancelled) return;
+    if (kpiRes.status === "fulfilled") setKpis(kpiRes.value || null);
+    if (agendaRes.status === "fulfilled") setAgenda(Array.isArray(agendaRes.value?.slots) ? agendaRes.value.slots : []);
+    if (handoffRes.status === "fulfilled") setHandoffs(Array.isArray(handoffRes.value?.items) ? handoffRes.value.items : []);
+    if (callRes.status === "fulfilled") setCalls(Array.isArray(callRes.value?.calls) ? callRes.value.calls : []);
+    if (callbackRes.status === "fulfilled") setCallbacks(Array.isArray(callbackRes.value?.items) ? callbackRes.value.items : []);
+    setConnections({
+      vapi: vapiRes.status === "fulfilled" ? vapiRes.value : null,
+      calendar: calendarRes.status === "fulfilled" ? calendarRes.value : null,
+    });
+    setLoading(false);
   }, []);
+
+  useEffect(() => {
+    const cancelledRef = { cancelled: false };
+    loadDashboard(cancelledRef);
+    return () => { cancelledRef.cancelled = true; };
+  }, [loadDashboard]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    const refresh = () => {
+      if (document.visibilityState === "visible") loadDashboard({ cancelled: false });
+    };
+    document.addEventListener("visibilitychange", refresh);
+    return () => document.removeEventListener("visibilitychange", refresh);
+  }, [loadDashboard]);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -246,23 +258,57 @@ export default function AppDashboard() {
       notify("Aucun rendez-vous à venir");
       return;
     }
-    const params = new URLSearchParams();
-    params.set("date", nextSlot.start.toISOString().slice(0, 10));
-    const focus = nextSlot.slot.appointment_id || nextSlot.slot.event_id;
-    if (focus) params.set("focus", String(focus));
-    if (action === "cancel" || action === "reschedule") params.set("action", action);
-    navigate(`/app/agenda?${params.toString()}`);
+    navigate(buildAgendaViewUrl({
+      date: nextSlot.start.toISOString().slice(0, 10),
+      slot: nextSlot.slot,
+      action,
+      view: "day",
+    }));
   };
 
-  const agendaForDay = useMemo(() => todaySlots.slice(0, 3).map((x) => {
-    const status = String(x.slot?.status || "").toLowerCase() === "confirmed" ? "Confirmé" : "Prévu";
-    return [
-      formatAgendaSlotHour(x.start),
-      String(x.slot?.patient || x.slot?.patient_name || "Patient"),
-      String(x.slot?.motif || x.slot?.reason || "Consultation"),
+  const openAgendaSlot = (slot, startDate, action) => {
+    if (!slot || !startDate) {
+      notify("Rendez-vous introuvable");
+      return;
+    }
+    navigate(buildAgendaViewUrl({
+      date: startDate.toISOString().slice(0, 10),
+      slot,
+      action,
+      view: "day",
+    }));
+  };
+
+  const buildAgendaRow = (entry, includeDate = false) => {
+    const { slot, start } = entry;
+    const name = String(slot?.patient || slot?.patient_name || "Patient").trim();
+    const reason = agendaSlotMotif(slot) || "Consultation";
+    const status = String(slot?.status || "").toLowerCase() === "confirmed" ? "Confirmé" : "Prévu";
+    const focus = slot?.appointment_id || slot?.event_id || name;
+    return {
+      key: `${start?.toISOString?.() || "na"}-${focus}`,
+      time: formatAgendaSlotHour(start),
+      name,
+      reason,
       status,
-    ];
-  }), [todaySlots]);
+      dateLabel: includeDate ? formatShortDate(start) : "",
+      slot,
+      start,
+    };
+  };
+
+  const agendaForDay = useMemo(
+    () => todaySlots.map((entry) => buildAgendaRow(entry, false)),
+    [todaySlots],
+  );
+
+  const upcomingRows = useMemo(
+    () => sortedBookedSlots
+      .filter((x) => x.start.getTime() >= Date.now())
+      .slice(0, 6)
+      .map((entry) => buildAgendaRow(entry, !sameDay(entry.start, today))),
+    [sortedBookedSlots, today],
+  );
 
   const openHandoffs = useMemo(() => handoffs.filter((h) => {
     const s = String(h?.status || "").toLowerCase();
@@ -470,8 +516,17 @@ export default function AppDashboard() {
 
               <AgendaTodayCard
                 agendaForDay={agendaForDay}
-                onOpenAgenda={() => navigate("/app/agenda")}
-                onRowClick={notify}
+                onOpenAgenda={() => navigate(`/app/agenda?view=day&date=${encodeURIComponent(todayISO())}`)}
+                onRowClick={(row) => openAgendaSlot(row.slot, row.start)}
+                CardComponent={Card}
+                PillComponent={Pill}
+                styles={S}
+              />
+
+              <UpcomingAppointmentsCard
+                rows={upcomingRows}
+                onOpenAgenda={() => navigate("/app/agenda?view=week")}
+                onRowClick={(row) => openAgendaSlot(row.slot, row.start)}
                 CardComponent={Card}
                 PillComponent={Pill}
                 styles={S}
@@ -569,8 +624,17 @@ export default function AppDashboard() {
 
               <AgendaTodayCard
                 agendaForDay={agendaForDay}
-                onOpenAgenda={() => navigate("/app/agenda")}
-                onRowClick={notify}
+                onOpenAgenda={() => navigate(`/app/agenda?view=day&date=${encodeURIComponent(todayISO())}`)}
+                onRowClick={(row) => openAgendaSlot(row.slot, row.start)}
+                CardComponent={Card}
+                PillComponent={Pill}
+                styles={S}
+              />
+
+              <UpcomingAppointmentsCard
+                rows={upcomingRows}
+                onOpenAgenda={() => navigate("/app/agenda?view=week")}
+                onRowClick={(row) => openAgendaSlot(row.slot, row.start)}
                 CardComponent={Card}
                 PillComponent={Pill}
                 styles={S}

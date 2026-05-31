@@ -63,8 +63,9 @@ export function canOpenReschedulePatientAppt(slot, startDate, now = Date.now()) 
   return src === "UWI" && Boolean(appointmentActionId(slot));
 }
 
-export function buildAgendaViewUrl({ date, phone, slot, action }) {
+export function buildAgendaViewUrl({ date, phone, slot, action, view = "day" }) {
   const params = new URLSearchParams();
+  if (view) params.set("view", view);
   if (date) params.set("date", date);
   if (phone) params.set("phone", phone);
   const focus = appointmentActionId(slot);

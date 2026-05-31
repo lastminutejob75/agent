@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { flushSync } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import CreatePatientFromCallModal from "../components/calls/CreatePatientFromCallModal.jsx";
+import AppAgendaMiniCalendar from "../components/AppAgendaMiniCalendar.jsx";
 import PatientDuplicateBanner from "../components/patients/PatientDuplicateBanner.jsx";
 import { api } from "../lib/api.js";
 import {
@@ -445,7 +446,6 @@ function InlineDetail({
   onReschedule,
   onCreatePatientFromAgenda,
   variant = "inline",
-  actionOnly = false,
 }) {
   const aPhone = normalizePhone(a.patient_phone || a.phone || "");
   const aPhoneFmt = formatPhone(aPhone);
@@ -461,17 +461,17 @@ function InlineDetail({
         {aPhoneFmt && <div style={S.inlineItem}><span style={S.inlineIcon}>📞</span><span>{aPhoneFmt}</span></div>}
       </div>
       <div style={S.inlineActions}>
-        {!actionOnly && aPhone ? <a href={`tel:${aPhone}`} style={S.inlineCallBtn}>📞 Appeler</a> : null}
-        {!actionOnly && aPhone && hasPatientFile ? (
+        {aPhone ? <a href={`tel:${aPhone}`} style={S.inlineCallBtn}>📞 Appeler</a> : null}
+        {aPhone && hasPatientFile ? (
           <button
             type="button"
             onClick={() => navigate(`/app/patient-dashboard?phone=${encodeURIComponent(aPhone)}`)}
             style={S.inlineSecBtn}
           >
-            👤 Fiche patient
+            👤 Voir fiche patient
           </button>
         ) : null}
-        {!actionOnly && aPhone && !hasPatientFile ? (
+        {aPhone && !hasPatientFile ? (
           <button
             type="button"
             onClick={() => onCreatePatientFromAgenda?.(a)}
@@ -480,7 +480,7 @@ function InlineDetail({
             👤 Créer fiche patient
           </button>
         ) : null}
-        {!actionOnly && !aPhone ? (
+        {!aPhone ? (
           <button
             type="button"
             onClick={() => navigate("/app/patient-dashboard")}
@@ -756,6 +756,62 @@ function AgendaMonthMobileView({
   );
 }
 
+function AgendaDateNavPanel({
+  selectedDate,
+  viewMode,
+  apptCountByDate,
+  onSelectDate,
+  onViewMode,
+  onGoToday,
+  onShift,
+  styles: panelStyles,
+}) {
+  const navHint = viewMode === "month"
+    ? "Mois précédent / suivant"
+    : viewMode === "week"
+      ? "Semaine précédente / suivante"
+      : "Jour précédent / suivant";
+  return (
+    <div style={panelStyles.dateNavPanel}>
+      <AppAgendaMiniCalendar
+        selectedDate={selectedDate}
+        onSelect={onSelectDate}
+        apptCountByDate={apptCountByDate}
+      />
+      <label style={panelStyles.dateJumpLabel}>
+        Aller à une date
+        <input
+          type="date"
+          value={selectedDate}
+          onChange={(e) => {
+            const next = e.target.value;
+            if (next && /^\d{4}-\d{2}-\d{2}$/.test(next)) onSelectDate(next);
+          }}
+          style={panelStyles.dateJumpInput}
+        />
+      </label>
+      <div style={panelStyles.dateNavQuickRow}>
+        <button type="button" onClick={() => onShift(-1)} style={panelStyles.dateNavQuickBtn}>‹ {viewMode === "month" ? "Mois" : viewMode === "week" ? "Sem." : "Jour"}</button>
+        <button type="button" onClick={onGoToday} style={panelStyles.dateNavTodayBtn}>Aujourd&apos;hui</button>
+        <button type="button" onClick={() => onShift(1)} style={panelStyles.dateNavQuickBtn}>{viewMode === "month" ? "Mois" : viewMode === "week" ? "Sem." : "Jour"} ›</button>
+      </div>
+      <div style={panelStyles.dateNavViewRow}>
+        {["day", "week", "month"].map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            onClick={() => onViewMode(mode)}
+            style={viewMode === mode ? panelStyles.dateNavViewBtnActive : panelStyles.dateNavViewBtn}
+          >
+            {mode === "day" ? "Jour" : mode === "week" ? "Semaine" : "Mois"}
+          </button>
+        ))}
+      </div>
+      <p style={panelStyles.dateNavHint}>{navHint}</p>
+    </div>
+  );
+}
+
 export default function AppAgenda() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -773,9 +829,6 @@ export default function AppAgenda() {
   const [pendingAgendaAction, setPendingAgendaAction] = useState(
     urlAction === "cancel" || urlAction === "reschedule" ? urlAction : null,
   );
-  const [actionOnlyMode, setActionOnlyMode] = useState(
-    urlAction === "cancel" || urlAction === "reschedule",
-  );
   const [viewMode, setViewMode] = useState("day");
   const [isMobileAgenda, setIsMobileAgenda] = useState(
     typeof window !== "undefined" ? window.innerWidth <= 760 : false,
@@ -790,7 +843,6 @@ export default function AppAgenda() {
   useEffect(() => {
     if (urlDate && urlDate !== selectedDate) {
       setSelectedDate(urlDate);
-      setViewMode("day");
     }
     if (urlView === "day" || urlView === "week" || urlView === "month") {
       setViewMode(urlView);
@@ -801,7 +853,6 @@ export default function AppAgenda() {
     }
     if (urlAction === "cancel" || urlAction === "reschedule") {
       setPendingAgendaAction(urlAction);
-      setActionOnlyMode(true);
     }
   }, [urlDate, urlView, urlPhone, urlFocus, urlAction, selectedDate]);
 
@@ -1194,11 +1245,9 @@ export default function AppAgenda() {
       if (pendingAgendaAction === "cancel") {
         setConfirmCancel(true);
         setRescheduleMode(false);
-        setActionOnlyMode(true);
       } else if (pendingAgendaAction === "reschedule") {
         setRescheduleMode(true);
         setConfirmCancel(false);
-        setActionOnlyMode(true);
       } else {
         setConfirmCancel(false);
         setRescheduleMode(false);
@@ -1250,8 +1299,35 @@ export default function AppAgenda() {
   function closeAppointmentDetail() {
     setSelectedAppt(null);
     setConfirmCancel(false);
-    setActionOnlyMode(false);
     resetReschedule();
+  }
+
+  const syncAgendaUrl = useCallback((nextDate, nextView, extra = {}) => {
+    const params = new URLSearchParams();
+    params.set("view", nextView || viewMode);
+    params.set("date", nextDate || selectedDate);
+    if (extra.focus) params.set("focus", String(extra.focus));
+    if (extra.action) params.set("action", String(extra.action));
+    navigate(`/app/agenda?${params.toString()}`, { replace: true });
+  }, [navigate, selectedDate, viewMode]);
+
+  function applyAgendaDate(dateStr, opts = {}) {
+    if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return;
+    setSelectedDate(dateStr);
+    const nextView = opts.view || viewMode;
+    if (opts.view) setViewMode(opts.view);
+    syncAgendaUrl(dateStr, nextView, opts);
+    if (isMobileAgenda && nextView === "week") {
+      window.requestAnimationFrame(() => {
+        document.getElementById(`agenda-week-day-${dateStr}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
+  }
+
+  function applyViewMode(mode) {
+    if (mode !== "day" && mode !== "week" && mode !== "month") return;
+    setViewMode(mode);
+    syncAgendaUrl(selectedDate, mode);
   }
 
   function toggleAppt(a) {
@@ -1531,25 +1607,34 @@ export default function AppAgenda() {
   }
 
   function navPrev() {
-    setSelectedDate((v) => viewMode === "month" ? shiftMonth(v, -1) : shiftDate(v, viewMode === "week" ? -7 : -1));
+    const nextDate = viewMode === "month"
+      ? shiftMonth(selectedDate, -1)
+      : shiftDate(selectedDate, viewMode === "week" ? -7 : -1);
+    applyAgendaDate(nextDate);
   }
   function navNext() {
-    setSelectedDate((v) => viewMode === "month" ? shiftMonth(v, 1) : shiftDate(v, viewMode === "week" ? 7 : 1));
+    const nextDate = viewMode === "month"
+      ? shiftMonth(selectedDate, 1)
+      : shiftDate(selectedDate, viewMode === "week" ? 7 : 1);
+    applyAgendaDate(nextDate);
   }
-  function goToday() { setSelectedDate(todayISO()); }
+  function goToday() {
+    applyAgendaDate(todayISO(), { view: viewMode });
+  }
 
   function selectAgendaDay(dateStr) {
-    setSelectedDate(dateStr);
-    if (isMobileAgenda && viewMode === "week") {
-      window.requestAnimationFrame(() => {
-        document.getElementById(`agenda-week-day-${dateStr}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
-      });
-    }
+    applyAgendaDate(dateStr);
   }
 
   function openDayView(dateStr) {
-    setSelectedDate(dateStr);
-    setViewMode("day");
+    applyAgendaDate(dateStr, { view: "day" });
+  }
+
+  function shiftAgendaPeriod(diff) {
+    const nextDate = viewMode === "month"
+      ? shiftMonth(selectedDate, diff)
+      : shiftDate(selectedDate, viewMode === "week" ? diff * 7 : diff);
+    applyAgendaDate(nextDate);
   }
 
   const subtitleMap = {
@@ -1681,9 +1766,18 @@ export default function AppAgenda() {
       {/* ─── BARRE UNIQUE : navigation + vues + stats ─── */}
       <div className="agenda-toolbar" style={S.toolbar}>
         <div className="agenda-toolbar-left" style={S.toolbarLeft}>
-          <button type="button" onClick={navPrev} style={S.navBtn}>‹</button>
-          <span className="agenda-nav-label" style={S.navDate}>{navLabel}</span>
-          <button type="button" onClick={navNext} style={S.navBtn}>›</button>
+          <button type="button" onClick={navPrev} style={S.navBtn} title={viewMode === "month" ? "Mois précédent" : viewMode === "week" ? "Semaine précédente" : "Jour précédent"}>‹</button>
+          <label style={S.toolbarDateJump}>
+            <span className="agenda-nav-label" style={S.navDate}>{navLabel}</span>
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => applyAgendaDate(e.target.value)}
+              style={S.toolbarDateInput}
+              aria-label="Choisir une date"
+            />
+          </label>
+          <button type="button" onClick={navNext} style={S.navBtn} title={viewMode === "month" ? "Mois suivant" : viewMode === "week" ? "Semaine suivante" : "Jour suivant"}>›</button>
           {selectedDate !== today && <button type="button" onClick={goToday} style={S.todayBtn}>Aujourd&apos;hui</button>}
           <button
             type="button"
@@ -1703,13 +1797,25 @@ export default function AppAgenda() {
           </span>
           <div className="agenda-view-switch" style={S.viewSwitch}>
             {["day", "week", "month"].map((m) => (
-              <button key={m} type="button" onClick={() => setViewMode(m)} style={viewMode === m ? S.viewBtnActive : S.viewBtn}>
+              <button key={m} type="button" onClick={() => applyViewMode(m)} style={viewMode === m ? S.viewBtnActive : S.viewBtn}>
                 {m === "day" ? "Jour" : m === "week" ? "Semaine" : "Mois"}
               </button>
             ))}
           </div>
         </div>
       </div>
+      {isMobileAgenda ? (
+        <AgendaDateNavPanel
+          selectedDate={selectedDate}
+          viewMode={viewMode}
+          apptCountByDate={apptCountByDate}
+          onSelectDate={applyAgendaDate}
+          onViewMode={applyViewMode}
+          onGoToday={goToday}
+          onShift={shiftAgendaPeriod}
+          styles={S}
+        />
+      ) : null}
       <div className="agenda-legend-row" style={S.legendRow}>
         {semanticLegend.map((item) => {
           const tone = APPT_TONE[item.tone] || APPT_TONE.teal;
@@ -1809,7 +1915,7 @@ export default function AppAgenda() {
                   >
                     <button
                       type="button"
-                      onClick={() => { setSelectedDate(d); setViewMode("day"); }}
+                      onClick={() => openDayView(d)}
                       style={{ ...S.monthDayNumBtn, ...(isToday ? S.monthDayNumToday : {}) }}
                     >
                       {dayNum}
@@ -1835,7 +1941,7 @@ export default function AppAgenda() {
                         </button>
                       );})}
                       {overflow > 0 && (
-                        <button type="button" onClick={() => { setSelectedDate(d); setViewMode("day"); }} style={S.monthOverflow}>
+                        <button type="button" onClick={() => openDayView(d)} style={S.monthOverflow}>
                           +{overflow} autre{overflow > 1 ? "s" : ""}
                         </button>
                       )}
@@ -1848,6 +1954,16 @@ export default function AppAgenda() {
             </div>
             {!isMobileAgenda ? (
             <div style={S.monthSide}>
+              <AgendaDateNavPanel
+                selectedDate={selectedDate}
+                viewMode={viewMode}
+                apptCountByDate={apptCountByDate}
+                onSelectDate={applyAgendaDate}
+                onViewMode={applyViewMode}
+                onGoToday={goToday}
+                onShift={shiftAgendaPeriod}
+                styles={S}
+              />
               <div style={S.sideCardPrimary}>
                 <div style={S.sideHeadLabel}>Mois en cours</div>
                 <div className="agenda-side-head-title" style={S.sideHeadTitle}>Synthèse du mois</div>
@@ -1935,7 +2051,7 @@ export default function AppAgenda() {
                     const isToday = d === today;
                     const isSelected = d === selectedDate;
                     return (
-                      <button key={d} type="button" onClick={() => { setSelectedDate(d); setViewMode("day"); }} style={{ ...S.weekDayHeader, ...(isToday ? S.weekDayToday : isSelected ? S.weekDaySelected : {}) }}>
+                      <button key={d} type="button" onClick={() => openDayView(d)} style={{ ...S.weekDayHeader, ...(isToday ? S.weekDayToday : isSelected ? S.weekDaySelected : {}) }}>
                         <span style={S.weekDayLabel}>{wd}</span>
                         <span style={{ ...S.weekDayNum, ...(isToday ? { color: BLUE } : {}) }}>{num}</span>
                         {isToday && <span style={S.todayDot} />}
@@ -1973,6 +2089,16 @@ export default function AppAgenda() {
             </div>
             {!isMobileAgenda ? (
             <div style={S.weekSide}>
+              <AgendaDateNavPanel
+                selectedDate={selectedDate}
+                viewMode={viewMode}
+                apptCountByDate={apptCountByDate}
+                onSelectDate={applyAgendaDate}
+                onViewMode={applyViewMode}
+                onGoToday={goToday}
+                onShift={shiftAgendaPeriod}
+                styles={S}
+              />
               <div style={S.sideCardPrimary}>
                 <div style={S.sideHeadLabel}>Semaine en cours</div>
                 <div className="agenda-side-head-title" style={S.sideHeadTitle}>6 actions qui comptent</div>
@@ -2091,6 +2217,18 @@ export default function AppAgenda() {
               </div>
             </div>
             <div style={S.daySide}>
+              {!isMobileAgenda ? (
+                <AgendaDateNavPanel
+                  selectedDate={selectedDate}
+                  viewMode={viewMode}
+                  apptCountByDate={apptCountByDate}
+                  onSelectDate={applyAgendaDate}
+                  onViewMode={applyViewMode}
+                  onGoToday={goToday}
+                  onShift={shiftAgendaPeriod}
+                  styles={S}
+                />
+              ) : null}
               <div style={S.sideCardPrimary}>
                 <div style={S.sideHeadLabel}>Journée en cours</div>
                 <div className="agenda-side-head-title" style={S.sideHeadTitle}>Résumé de la journée</div>
@@ -2161,7 +2299,6 @@ export default function AppAgenda() {
               onStartReschedule={handleStartReschedule}
               onReschedule={handleReschedule}
               onCreatePatientFromAgenda={openPatientCreateFromAppointment}
-              actionOnly={actionOnlyMode}
             />
           </div>
         </div>
@@ -2608,6 +2745,86 @@ const S = {
   toolbar: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 16, flexWrap: "wrap", padding: "12px 16px", background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 18, boxShadow: "0 8px 26px rgba(15,23,42,.05)" },
   toolbarLeft: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" },
   toolbarRight: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" },
+  toolbarDateJump: { position: "relative", display: "inline-flex", alignItems: "center", cursor: "pointer" },
+  toolbarDateInput: {
+    position: "absolute",
+    inset: 0,
+    opacity: 0,
+    width: "100%",
+    height: "100%",
+    cursor: "pointer",
+  },
+  dateNavPanel: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+    marginBottom: 4,
+  },
+  dateJumpLabel: {
+    display: "grid",
+    gap: 6,
+    fontSize: 12,
+    fontWeight: 700,
+    color: MUTED,
+  },
+  dateJumpInput: {
+    height: 38,
+    borderRadius: 10,
+    border: `1px solid ${BORDER}`,
+    padding: "0 10px",
+    fontSize: 13,
+    fontWeight: 600,
+    color: NAVY,
+    fontFamily: "inherit",
+  },
+  dateNavQuickRow: { display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 8 },
+  dateNavQuickBtn: {
+    height: 36,
+    borderRadius: 10,
+    border: `1px solid ${BORDER}`,
+    background: "#fff",
+    color: NAVY,
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  dateNavTodayBtn: {
+    height: 36,
+    borderRadius: 10,
+    border: `1px solid ${TEAL}`,
+    background: "#ECFDF5",
+    color: TEAL_DARK,
+    fontSize: 12,
+    fontWeight: 800,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    padding: "0 10px",
+  },
+  dateNavViewRow: { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 6 },
+  dateNavViewBtn: {
+    height: 34,
+    borderRadius: 10,
+    border: `1px solid ${BORDER}`,
+    background: "#fff",
+    color: MUTED,
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  dateNavViewBtnActive: {
+    height: 34,
+    borderRadius: 10,
+    border: `1px solid ${BLUE}`,
+    background: "#EFF6FF",
+    color: BLUE,
+    fontSize: 12,
+    fontWeight: 800,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  dateNavHint: { margin: 0, fontSize: 11, color: MUTED, lineHeight: 1.4 },
   stats: { fontSize: 12, color: MUTED, fontWeight: 600 },
   viewSwitch: { display: "flex", borderRadius: 12, border: `1px solid ${BORDER}`, overflow: "hidden", background: "#f8fafc" },
   viewBtn: { padding: "8px 18px", border: "none", background: "transparent", color: MUTED, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" },

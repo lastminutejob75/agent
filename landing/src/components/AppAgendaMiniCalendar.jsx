@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const BLUE = "#2563eb";
 const TEXT = "#111827";
@@ -88,11 +88,30 @@ const S = {
     background: BG,
     borderColor: BORDER,
   },
+  miniCalendarDayWrap: {
+    position: "relative",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 2,
+  },
+  miniCalendarDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 999,
+    background: BLUE,
+  },
 };
 
-export default function AppAgendaMiniCalendar({ selectedDate, onSelect }) {
+export default function AppAgendaMiniCalendar({ selectedDate, onSelect, apptCountByDate = {} }) {
   const selected = new Date(`${selectedDate}T12:00:00`);
   const [view, setView] = useState({ y: selected.getFullYear(), m: selected.getMonth() });
+
+  useEffect(() => {
+    const next = new Date(`${selectedDate}T12:00:00`);
+    if (Number.isNaN(next.getTime())) return;
+    setView({ y: next.getFullYear(), m: next.getMonth() });
+  }, [selectedDate]);
   const dim = getDaysInMonth(view.y, view.m);
   const first = getFirstWeekday(view.y, view.m);
   const cells = [...Array(first).fill(null), ...Array.from({ length: dim }, (_, index) => index + 1)];
@@ -132,19 +151,23 @@ export default function AppAgendaMiniCalendar({ selectedDate, onSelect }) {
             date.getDate() === today.getDate() &&
             date.getMonth() === today.getMonth() &&
             date.getFullYear() === today.getFullYear();
+          const apptCount = Number(apptCountByDate[iso] || 0);
           return (
-            <button
-              key={iso}
-              type="button"
-              onClick={() => onSelect(iso)}
-              style={{
-                ...S.miniCalendarDay,
-                ...(isSelected ? S.miniCalendarDaySelected : null),
-                ...(isToday && !isSelected ? S.miniCalendarDayToday : null),
-              }}
-            >
-              {day}
-            </button>
+            <div key={iso} style={S.miniCalendarDayWrap}>
+              <button
+                type="button"
+                onClick={() => onSelect(iso)}
+                style={{
+                  ...S.miniCalendarDay,
+                  width: "100%",
+                  ...(isSelected ? S.miniCalendarDaySelected : null),
+                  ...(isToday && !isSelected ? S.miniCalendarDayToday : null),
+                }}
+              >
+                {day}
+              </button>
+              {apptCount > 0 ? <span style={S.miniCalendarDot} aria-hidden="true" /> : null}
+            </div>
           );
         })}
       </div>

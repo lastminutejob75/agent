@@ -13,15 +13,20 @@ export default function AgendaTodayCard({
     <Card
       title="Agenda du jour"
       icon="calendar"
-      action={<button type="button" style={S.linkBtn} onClick={onOpenAgenda}>Voir l'agenda ›</button>}
+      action={<button type="button" style={S.linkBtn} onClick={onOpenAgenda}>Voir l&apos;agenda ›</button>}
     >
       {agendaForDay.length === 0 ? (
-        <p style={{ margin: 0, color: "#66758B", fontWeight: 600 }}>Aucun rendez-vous prévu aujourd'hui.</p>
-      ) : agendaForDay.map(([time, name, reason, status]) => (
-        <button key={`${time}-${name}`} type="button" onClick={() => onRowClick(name)} style={S.agendaRow}>
-          <b>{time}</b>
-          <span><strong>{name}</strong><small>{reason}</small></span>
-          <Pill tone={status === "Confirme" ? "green" : "blue"}>{status}</Pill>
+        <p style={{ margin: 0, color: "#66758B", fontWeight: 600 }}>Aucun rendez-vous prévu aujourd&apos;hui.</p>
+      ) : agendaForDay.map((row) => (
+        <button
+          key={row.key}
+          type="button"
+          onClick={() => onRowClick(row)}
+          style={S.agendaRow}
+        >
+          <b>{row.time}</b>
+          <span><strong>{row.name}</strong><small>{row.reason}</small></span>
+          <Pill tone={row.status === "Confirmé" ? "green" : "blue"}>{row.status}</Pill>
         </button>
       ))}
     </Card>
