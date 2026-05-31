@@ -794,6 +794,11 @@ VOCAL_CALLBACK_DONE = (
 VOCAL_CALLBACK_ALREADY = (
     "Votre demande de rappel est déjà enregistrée. Le cabinet vous rappellera sur ce numéro. Au revoir !"
 )
+VOCAL_CALLBACK_ASK_REASON = (
+    "Merci. Quel est le motif de votre demande ? "
+    "Par exemple : une question sur un rendez-vous, une question administrative, "
+    "un document ou ordonnance, ou autre chose."
+)
 # B) Caller ID absent ou masqué (state QUALIF_CONTACT / CONTACT_COLLECT)
 ASK_CONTACT = "Je n'ai pas votre numéro qui s'affiche. Pouvez-vous me le donner, s'il vous plaît ?"
 VOCAL_CONTACT_NO_CALLER_ID = ASK_CONTACT  # alias

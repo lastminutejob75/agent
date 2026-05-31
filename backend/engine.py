@@ -575,7 +575,7 @@ def should_override_current_flow_v3(session: Session, message: str) -> bool:
         return False
     if strong == "ORDONNANCE" and session.state in ("ORDONNANCE_CHOICE", "ORDONNANCE_MESSAGE", "ORDONNANCE_PHONE_CONFIRM"):
         return False
-    if strong == "CALLBACK" and session.state in ("CALLBACK_CONFIRM_CALLERID",):
+    if strong == "CALLBACK" and session.state in ("CALLBACK_CONFIRM_CALLERID", "CALLBACK_REASON"):
         return False
     last = getattr(session, "last_intent", None)
     if strong == last:
@@ -1499,6 +1499,8 @@ class Engine:
         # Si en confirmation contact (caller_id : 2 derniers chiffres)
         if session.state == "CALLBACK_CONFIRM_CALLERID":
             return safe_reply(self._handle_callback_confirm_callerid(session, user_text), session)
+        if session.state == "CALLBACK_REASON":
+            return safe_reply(self._handle_callback_reason(session, user_text), session)
         if session.state == "CONTACT_CONFIRM_CALLERID":
             return safe_reply(self._handle_contact_confirm_callerid(session, user_text), session)
         # Si en confirmation contact (après saisie utilisateur)
@@ -3955,20 +3957,15 @@ class Engine:
             return [Event("final", msg, conv_state=session.state)]
 
         name = self._callback_display_name(session)
-        user_text = ""
-        for msg in reversed(getattr(session, "messages", None) or []):
-            if getattr(msg, "role", "") == "user":
-                user_text = str(getattr(msg, "text", "") or "").strip()
-                break
-        message = "Demande de rappel vocale explicite (numero appelant confirme)."
-        if user_text:
-            message = f"{message} Motif: {user_text[:500]}"
+        reason = str(getattr(session, "callback_reason", "") or "other").strip().lower() or "other"
+        detail = str(getattr(session, "callback_message", "") or "").strip()
+        message = detail or "Demande de rappel vocale explicite (numero appelant confirme)."
         req_id = insert_callback_request(
             tenant_id=tenant_id,
             name=name,
             phone=phone,
             email=None,
-            reason="other",
+            reason=reason,
             message=message,
             appointment_source="vocal",
             appointment_id=call_id or None,
@@ -4001,7 +3998,13 @@ class Engine:
 
         if intent == "YES":
             session.callback_confirm_fails = 0
-            return self._finalize_callback_request(session)
+            session.state = "CALLBACK_REASON"
+            session.callback_reason = "other"
+            session.callback_message = ""
+            msg = prompts.VOCAL_CALLBACK_ASK_REASON
+            session.add_message("agent", msg)
+            self._save_session(session)
+            return [Event("final", msg, conv_state=session.state)]
 
         if intent == "NO":
             phone_digits = str(getattr(session, "callback_phone_digits", "") or self._caller_phone_digits(session))
@@ -4022,6 +4025,20 @@ class Engine:
             self._save_session(session)
             return [Event("final", msg, conv_state=session.state)]
         return self._trigger_intent_router(session, "callback_callerid_unclear_3", user_text)
+
+    def _handle_callback_reason(self, session: Session, user_text: str) -> List[Event]:
+        from backend.callback_reason import parse_vocal_callback_reason
+
+        if intent_parser.is_unclear_filler(user_text or "") or not (user_text or "").strip():
+            msg = prompts.VOCAL_CALLBACK_ASK_REASON
+            session.add_message("agent", msg)
+            self._save_session(session)
+            return [Event("final", msg, conv_state=session.state)]
+
+        reason, detail = parse_vocal_callback_reason(user_text or "")
+        session.callback_reason = reason
+        session.callback_message = detail
+        return self._finalize_callback_request(session)
 
     # ========================
     # CONFIRMATION CONTACT

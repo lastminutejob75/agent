@@ -301,6 +301,7 @@ def insert_callback_request(
     unmatched: bool = False,
     source: str = "public_page",
     call_id: Optional[str] = None,
+    notify: bool = True,
 ) -> Optional[str]:
     req_id = str(__import__("uuid").uuid4())
     clean_source = (source or "public_page").strip()[:32] or "public_page"
@@ -356,10 +357,54 @@ def insert_callback_request(
                     ),
                 )
             conn.commit()
+        if notify and req_id:
+            _notify_cabinet_callback_request(
+                tenant_id=int(tenant_id or 0),
+                request_id=req_id,
+                name=(name or "").strip()[:200] or None,
+                phone=phone,
+                reason=(reason or "other").strip(),
+                message=(message or "").strip() or None,
+                source=clean_source,
+                email=(email or "").strip() or None,
+                call_id=(call_id or "").strip() or None,
+            )
         return req_id
     except Exception as exc:
         logger.warning("insert_callback_request failed tenant=%s: %s", tenant_id, exc)
         return None
+
+
+def _notify_cabinet_callback_request(
+    *,
+    tenant_id: int,
+    request_id: str,
+    name: Optional[str],
+    phone: str,
+    reason: str,
+    message: Optional[str],
+    source: str,
+    email: Optional[str] = None,
+    call_id: Optional[str] = None,
+) -> None:
+    if not tenant_id or not request_id:
+        return
+    try:
+        from backend.services.callback_notifications import notify_cabinet_callback_request
+
+        notify_cabinet_callback_request(
+            tenant_id=tenant_id,
+            request_id=request_id,
+            name=name or "Patient",
+            phone=phone,
+            reason=reason,
+            message=message,
+            source=source,
+            email=email,
+            call_id=call_id,
+        )
+    except Exception as exc:
+        logger.debug("callback notification skipped tenant=%s: %s", tenant_id, exc)
 
 
 CALLBACK_REASON_LABELS = {
@@ -488,6 +533,7 @@ def upsert_callback_from_handoff(tenant_id: int, handoff: Dict[str, Any]) -> Opt
                     (tenant_id, handoff_id),
                 )
                 existing = cur.fetchone()
+                created_new = False
                 if existing:
                     req_id = str(existing["id"])
                     cur.execute(
@@ -522,6 +568,7 @@ def upsert_callback_from_handoff(tenant_id: int, handoff: Dict[str, Any]) -> Opt
                     )
                 else:
                     req_id = str(__import__("uuid").uuid4())
+                    created_new = True
                     cur.execute(
                         """
                         INSERT INTO callback_requests (
@@ -544,6 +591,17 @@ def upsert_callback_from_handoff(tenant_id: int, handoff: Dict[str, Any]) -> Opt
                         ),
                     )
             conn.commit()
+        if created_new and req_id and status == "new":
+            _notify_cabinet_callback_request(
+                tenant_id=tenant_id,
+                request_id=req_id,
+                name=name or None,
+                phone=phone,
+                reason=reason,
+                message=message,
+                source="vocal_agent",
+                call_id=call_id or None,
+            )
         return req_id
     except Exception as exc:
         logger.warning(
