@@ -292,6 +292,36 @@ def pg_get_tenant_params(tenant_id: int) -> Optional[Tuple[dict, str]]:
         return None
 
 
+def pg_load_tenant_params_bypass(tenant_id: int) -> dict:
+    """Charge params_json en contournant le RLS tenant (merge sûr des patches)."""
+    url = _pg_url()
+    if not url:
+        return {}
+    try:
+        import psycopg
+        from backend.pg_tenant_context import set_bypass_tenant_rls_on_connection
+
+        with psycopg.connect(url) as conn:
+            set_bypass_tenant_rls_on_connection(conn, enabled=True)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT params_json FROM tenant_config WHERE tenant_id = %s",
+                    (tenant_id,),
+                )
+                row = cur.fetchone()
+                if not row or not row[0]:
+                    return {}
+                data = row[0]
+                if isinstance(data, dict):
+                    return dict(data)
+                if isinstance(data, str):
+                    return json.loads(data) if data else {}
+        return {}
+    except Exception as e:
+        logger.warning("pg_load_tenant_params_bypass failed tenant_id=%s: %s", tenant_id, e)
+        return {}
+
+
 def pg_create_tenant(
     name: str,
     contact_email: str = "",
@@ -557,7 +587,30 @@ def pg_update_tenant_params(tenant_id: int, params: dict) -> bool:
     try:
         import psycopg
         current, _ = pg_get_tenant_params(tenant_id) or ({}, "pg")
+        if not isinstance(current, dict):
+            current = {}
+        if len(current) <= 1:
+            bypass = pg_load_tenant_params_bypass(tenant_id)
+            if len(bypass) > len(current):
+                current = bypass
         merged = {**current, **filtered}
+        protected = (
+            "vapi_assistant_id",
+            "calendar_id",
+            "calendar_provider",
+            "contact_email",
+            "phone_number",
+            "public_slug",
+        )
+        dropped = [k for k in protected if current.get(k) and not merged.get(k)]
+        if dropped:
+            logger.error(
+                "pg_update_tenant_params blocked tenant_id=%s dropped=%s patch_keys=%s",
+                tenant_id,
+                dropped,
+                list(filtered.keys()),
+            )
+            return False
         # timezone est dans tenants, pas params_json
         tz_val = merged.pop("timezone", None)
         with psycopg.connect(url) as conn:
@@ -593,6 +646,10 @@ def pg_delete_tenant_param_keys(tenant_id: int, keys: list[str]) -> bool:
         current, _ = pg_get_tenant_params(tenant_id) or ({}, "pg")
         if not isinstance(current, dict):
             current = {}
+        if len(current) <= 1:
+            bypass = pg_load_tenant_params_bypass(tenant_id)
+            if len(bypass) > len(current):
+                current = bypass
         for key in keys:
             current.pop(key, None)
         with psycopg.connect(url) as conn:

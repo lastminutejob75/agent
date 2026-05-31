@@ -286,7 +286,12 @@ export default function AppDashboard() {
   }), [openHandoffs]);
 
   const kpiCurrent = kpis?.current || {};
-  const rdvCreatedToday = Number.isFinite(Number(kpiCurrent.bookings)) ? Number(kpiCurrent.bookings) : 0;
+  const rdvCreatedToday = Number.isFinite(Number(kpis?.today?.bookings))
+    ? Number(kpis.today.bookings)
+    : (() => {
+      const day = (kpis?.days || []).find((d) => d?.date === todayISO());
+      return Number.isFinite(Number(day?.bookings)) ? Number(day.bookings) : 0;
+    })();
   const rdvPlannedToday = todaySlots.length;
   const callCount = Number.isFinite(Number(kpiCurrent.calls)) ? Number(kpiCurrent.calls) : calls.length;
   const aiCount = Number.isFinite(Number(kpiCurrent.calls_ia)) ? Number(kpiCurrent.calls_ia) : 0;

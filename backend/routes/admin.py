@@ -1730,6 +1730,78 @@ def _get_kpis_daily(tenant_id: int, days: int = 7) -> dict:
     return {"days": days_data, "current": current, "previous": previous, "trend": trend}
 
 
+def _get_kpis_today(tenant_id: int, tz_name: str = "Europe/Paris") -> dict:
+    """Compteurs du jour civil tenant (timezone cabinet), distincts du total glissant 7j."""
+    from datetime import datetime, timedelta
+
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        from backports.zoneinfo import ZoneInfo  # type: ignore
+
+    tz = ZoneInfo((tz_name or "Europe/Paris").strip() or "Europe/Paris")
+    now_local = datetime.now(tz)
+    day_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = day_start + timedelta(days=1)
+    start_utc = day_start.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    end_utc = day_end.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    today_date = day_start.strftime("%Y-%m-%d")
+    out = {"date": today_date, "calls": 0, "bookings": 0, "transfers": 0}
+
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")
+    if not url:
+        return out
+
+    try:
+        from backend.pg_pool import pg_connection
+        from backend.pg_tenant_context import set_tenant_id_on_connection
+        from backend.public_bookings_pg import count_public_bookings
+
+        with pg_connection() as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
+            with conn.cursor() as cur:
+                try:
+                    cur.execute(
+                        """
+                        SELECT COUNT(DISTINCT v.call_id) AS calls
+                        FROM vapi_calls v
+                        WHERE v.tenant_id = %s
+                          AND COALESCE(v.ended_at, v.updated_at, v.started_at, v.created_at) >= %s
+                          AND COALESCE(v.ended_at, v.updated_at, v.started_at, v.created_at) < %s
+                        """,
+                        (tenant_id, start_utc, end_utc),
+                    )
+                    row = cur.fetchone()
+                    out["calls"] = int((row or {}).get("calls") or 0)
+                except Exception as ve:
+                    if "does not exist" not in str(ve).lower():
+                        logger.debug("kpis_today vapi_calls failed: %s", ve)
+
+                cur.execute(
+                    """
+                    SELECT
+                      COUNT(*) FILTER (WHERE event = 'booking_confirmed') AS bookings,
+                      COUNT(*) FILTER (WHERE event IN ('transferred_human', 'transferred')) AS transfers
+                    FROM ivr_events
+                    WHERE client_id = %s
+                      AND created_at >= %s
+                      AND created_at < %s
+                    """,
+                    (tenant_id, start_utc, end_utc),
+                )
+                row = cur.fetchone() or {}
+                out["bookings"] = int(row.get("bookings") or 0)
+                out["transfers"] = int(row.get("transfers") or 0)
+
+        out["bookings"] += int(
+            count_public_bookings(tenant_id, start_utc, end_utc) or 0
+        )
+    except Exception as exc:
+        logger.warning("kpis_today failed tenant_id=%s: %s", tenant_id, exc)
+
+    return out
+
+
 def _get_rgpd(tenant_id: int, start: str, end: str) -> dict:
     """RGPD: consent_obtained, consent_rate."""
     url = os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL")

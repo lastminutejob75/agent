@@ -73,6 +73,7 @@ from backend.routes.admin import (
     _get_calls_list,
     _get_dashboard_snapshot,
     _get_kpis_daily,
+    _get_kpis_today,
     _get_stripe_price_ids_for_plan,
     _get_quota_used_minutes,
     _get_rgpd_extended,
@@ -2649,7 +2650,10 @@ def tenant_dashboard(auth: dict = Depends(require_tenant_auth)):
 def tenant_kpis(auth: dict = Depends(require_tenant_auth), days: int = Query(7, ge=1, le=30)):
     """KPIs par jour + trend vs semaine précédente (graphique 7j)."""
     tenant_id = auth["tenant_id"]
+    detail = _get_tenant_detail(tenant_id) or {}
+    tz_name = _tenant_timezone(detail)
     data = _get_kpis_daily(tenant_id, days=days)
+    data["today"] = _get_kpis_today(tenant_id, tz_name)
     current = data.get("current") or {}
     calls = int(current.get("calls") or 0)
     transfers = int(current.get("transfers") or 0)
