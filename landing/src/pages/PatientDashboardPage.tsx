@@ -36,6 +36,7 @@ import PatientMedicalQuestionnaireCard from "../components/patients/PatientMedic
 import PatientContextSummary from "../components/patients/PatientContextSummary.jsx";
 import {
   checkPatientDuplicates,
+  formatPatientDuplicateConflict,
   hasBlockingPatientDuplicate,
   parsePatientDuplicateError,
 } from "../lib/patientDuplicateCheck.js";
@@ -784,6 +785,10 @@ export default function PatientDashboardPage() {
   const [emailDraft, setEmailDraft] = useState("");
   const [emailSaving, setEmailSaving] = useState(false);
   const [emailDuplicateConflicts, setEmailDuplicateConflicts] = useState<Array<Record<string, unknown>>>([]);
+  const [editingPhone, setEditingPhone] = useState(false);
+  const [phoneDraft, setPhoneDraft] = useState("");
+  const [phoneSaving, setPhoneSaving] = useState(false);
+  const [phoneDuplicateConflicts, setPhoneDuplicateConflicts] = useState<Array<Record<string, unknown>>>([]);
   const [requestStatus, setRequestStatus] = useState("");
   const [requestActionLoading, setRequestActionLoading] = useState<"" | "processed" | "cancelled">("");
   const [tenantPatientNotFound, setTenantPatientNotFound] = useState(false);
@@ -1383,6 +1388,10 @@ export default function PatientDashboardPage() {
   }, [patientEmail, editingEmail, tenantPatientPhone]);
 
   useEffect(() => {
+    if (!editingPhone) setPhoneDraft(tenantPatientPhone || "");
+  }, [tenantPatientPhone, editingPhone]);
+
+  useEffect(() => {
     if (!editingEmail || !tenantPatientPhone) {
       setEmailDuplicateConflicts([]);
       return;
@@ -1415,6 +1424,40 @@ export default function PatientDashboardPage() {
       ctrl.abort();
     };
   }, [editingEmail, emailDraft, tenantPatientPhone]);
+
+  useEffect(() => {
+    if (!editingPhone || !tenantPatientPhone) {
+      setPhoneDuplicateConflicts([]);
+      return;
+    }
+    const phone = phoneDraft.trim();
+    if (!phone) {
+      setPhoneDuplicateConflicts([]);
+      return;
+    }
+    let cancelled = false;
+    const ctrl = new AbortController();
+    const tid = window.setTimeout(() => {
+      checkPatientDuplicates({
+        phone,
+        excludePhone: tenantPatientPhone,
+        signal: ctrl.signal,
+      })
+        .then((res) => {
+          if (!cancelled) {
+            setPhoneDuplicateConflicts(Array.isArray(res?.conflicts) ? res.conflicts : []);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setPhoneDuplicateConflicts([]);
+        });
+    }, 320);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(tid);
+      ctrl.abort();
+    };
+  }, [editingPhone, phoneDraft, tenantPatientPhone]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2089,6 +2132,86 @@ export default function PatientDashboardPage() {
     }
   };
 
+  const savePhone = async () => {
+    if (!tenantPatientPhone) {
+      notify("Aucun patient sélectionné", { sticky: true });
+      return;
+    }
+    if (tenantPatientNotFound) {
+      notify("Créez d'abord la fiche patient avant de modifier le numéro.", { sticky: true });
+      return;
+    }
+    const next = phoneDraft.trim();
+    if (!next) {
+      notify("Indiquez un numéro de téléphone", { sticky: true });
+      return;
+    }
+    const phoneConflict = phoneDuplicateConflicts.some((c) => c?.field === "phone");
+    if (phoneConflict) {
+      notify(formatPatientDuplicateConflict(phoneDuplicateConflicts[0]) || "Ce numéro est déjà utilisé", { sticky: true });
+      return;
+    }
+    setPhoneSaving(true);
+    try {
+      const res = await api.tenantUpdatePatient(tenantPatientPhone, { phone: next });
+      const newPhone = normalizePhone(String(res?.patient?.phone || next));
+      if (!newPhone) {
+        notify("Numéro invalide", { sticky: true });
+        return;
+      }
+      const cached = patientDetailCacheRef.current.get(tenantPatientPhone);
+      if (cached) {
+        patientDetailCacheRef.current.delete(tenantPatientPhone);
+        patientDetailCacheRef.current.set(newPhone, {
+          ...cached,
+          patientCabinetRow: res?.patient
+            ? (res.patient as Record<string, unknown>)
+            : cached.patientCabinetRow,
+          urlPatientHero: cached.urlPatientHero
+            ? { ...cached.urlPatientHero, phone: newPhone }
+            : cached.urlPatientHero,
+        });
+      }
+      setTenantSidebarRows((prev) =>
+        prev.map((row) => {
+          if (row.phone !== tenantPatientPhone) return row;
+          const updated = res?.patient ? cabinetRowToSidebar(res.patient as Record<string, unknown>) : null;
+          return updated || {
+            ...row,
+            phone: newPhone,
+            displayPhone: formatDisplayFrenchPhone(newPhone),
+          };
+        }),
+      );
+      if (patientSearchRows) {
+        setPatientSearchRows((prev) =>
+          (prev || []).map((row) => {
+            if (row.phone !== tenantPatientPhone) return row;
+            const updated = res?.patient ? cabinetRowToSidebar(res.patient as Record<string, unknown>) : null;
+            return updated || {
+              ...row,
+              phone: newPhone,
+              displayPhone: formatDisplayFrenchPhone(newPhone),
+            };
+          }),
+        );
+      }
+      if (res?.patient) setPatientCabinetRow(res.patient as Record<string, unknown>);
+      setUrlPatientHero((prev) => (prev ? { ...prev, phone: newPhone } : prev));
+      setEditingPhone(false);
+      setPhoneDuplicateConflicts([]);
+      const np = new URLSearchParams(searchParams);
+      np.set("phone", newPhone);
+      setSearchParams(np, { replace: true });
+      notify(`Numéro mis à jour : ${formatDisplayFrenchPhone(newPhone)}`);
+    } catch (e) {
+      const dup = parsePatientDuplicateError(e as Error & { data?: { detail?: unknown } });
+      notify(dup.message || (e as Error)?.message || "Erreur mise à jour téléphone", { sticky: true });
+    } finally {
+      setPhoneSaving(false);
+    }
+  };
+
   const updateRequestStatus = async (nextStatus: "processed" | "cancelled") => {
     if (!activeRequestDetail?.id) return;
     const info = normalizeRequestKind(activeRequestDetail.id);
@@ -2480,33 +2603,84 @@ export default function PatientDashboardPage() {
                     icon={<HeroSvgIcon name="phone" />}
                     label="Téléphone"
                     value={
-                      <button
-                        type="button"
-                        className="text-left hover:text-[#007E8C]"
-                        onClick={() => {
-                          const tel = normalizePhone(displayHero.phone);
-                          if (tel) window.location.href = `tel:${tel}`;
-                          else notify("Numéro absent pour passer un appel.");
-                        }}
-                      >
-                        {displayHero.phone}
-                      </button>
-                    }
-                    action={
-                      normalizePhone(displayHero.phone) ? (
+                      tenantPatientNotFound ? (
+                        <span className="text-[#94A3B8]">Créez la fiche pour modifier le numéro</span>
+                      ) : editingPhone ? (
+                        <span className="flex w-full flex-col gap-2">
+                          <span className="flex flex-wrap items-center gap-2">
+                            <input
+                              type="tel"
+                              value={phoneDraft}
+                              onChange={(event) => setPhoneDraft(event.target.value)}
+                              placeholder="06 12 34 56 78"
+                              className="h-9 min-w-0 flex-1 rounded-lg border border-[#DDE7F1] px-2.5 text-sm font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => void savePhone()}
+                              disabled={phoneSaving || phoneDuplicateConflicts.some((c) => c?.field === "phone")}
+                              className="rounded-lg bg-[#009CA4] px-2.5 py-1.5 text-xs font-black text-white disabled:opacity-60"
+                            >
+                              {phoneSaving ? "…" : "OK"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingPhone(false);
+                                setPhoneDuplicateConflicts([]);
+                              }}
+                              className="rounded-lg border border-[#DDE7F1] px-2.5 py-1.5 text-xs font-black text-[#475569]"
+                            >
+                              Annuler
+                            </button>
+                          </span>
+                          {phoneDuplicateConflicts.length ? (
+                            <PatientDuplicateBanner conflicts={phoneDuplicateConflicts} />
+                          ) : null}
+                        </span>
+                      ) : (
                         <button
                           type="button"
-                          className="rounded-lg border border-[#DDE7F1] bg-white px-2.5 py-1.5 text-[11px] font-black text-[#475569] hover:bg-[#F8FAFC]"
+                          className="text-left hover:text-[#007E8C]"
                           onClick={() => {
                             const tel = normalizePhone(displayHero.phone);
-                            if (tel && navigator.clipboard?.writeText) {
-                              void navigator.clipboard.writeText(formatDisplayFrenchPhone(tel));
-                              notify("Numéro copié.");
-                            }
+                            if (tel) window.location.href = `tel:${tel}`;
+                            else notify("Numéro absent pour passer un appel.");
                           }}
                         >
-                          Copier
+                          {displayHero.phone}
                         </button>
+                      )
+                    }
+                    action={
+                      !tenantPatientNotFound && !editingPhone ? (
+                        <span className="flex flex-wrap gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingPhone(true);
+                              setPhoneDraft(tenantPatientPhone || normalizePhone(displayHero.phone) || "");
+                            }}
+                            className="rounded-lg border border-[#DDE7F1] bg-white px-2.5 py-1.5 text-[11px] font-black text-[#475569] hover:bg-[#F8FAFC]"
+                          >
+                            Modifier
+                          </button>
+                          {normalizePhone(displayHero.phone) ? (
+                            <button
+                              type="button"
+                              className="rounded-lg border border-[#DDE7F1] bg-white px-2.5 py-1.5 text-[11px] font-black text-[#475569] hover:bg-[#F8FAFC]"
+                              onClick={() => {
+                                const tel = normalizePhone(displayHero.phone);
+                                if (tel && navigator.clipboard?.writeText) {
+                                  void navigator.clipboard.writeText(formatDisplayFrenchPhone(tel));
+                                  notify("Numéro copié.");
+                                }
+                              }}
+                            >
+                              Copier
+                            </button>
+                          ) : null}
+                        </span>
                       ) : null
                     }
                   />
