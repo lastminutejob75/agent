@@ -513,6 +513,24 @@ export default function AppDashboard() {
     },
   ];
 
+  const nextAppointmentCard = (
+    <NextAppointmentCard
+      hasAppointment={hasNextAppointment}
+      nextLabels={nextLabels}
+      nextHour={nextHour}
+      nextPatient={nextPatient}
+      nextReason={nextReason}
+      nextSource={nextSource}
+      onMove={() => openNextAgendaAction("reschedule")}
+      onCancel={() => openNextAgendaAction("cancel")}
+      onOpenAgenda={() => navigate("/app/agenda")}
+      CardComponent={Card}
+      PillComponent={Pill}
+      BtnComponent={Btn}
+      styles={S}
+    />
+  );
+
   return (
     <div className="uwi-dashboard-page" style={S.page}>
       {!loading && (connections.vapi || connections.calendar) ? (
@@ -591,6 +609,8 @@ export default function AppDashboard() {
         IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
       />
 
+      {isMobile ? <div style={S.mobileNextRdv}>{nextAppointmentCard}</div> : null}
+
       <div className="uwi-dashboard-grid" style={S.grid}>
         {isMobile ? (
           <>
@@ -625,21 +645,6 @@ export default function AppDashboard() {
                 styles={S}
               />
 
-              <NextAppointmentCard
-                hasAppointment={hasNextAppointment}
-                nextLabels={nextLabels}
-                nextHour={nextHour}
-                nextPatient={nextPatient}
-                nextReason={nextReason}
-                nextSource={nextSource}
-                onMove={() => openNextAgendaAction("reschedule")}
-                onCancel={() => openNextAgendaAction("cancel")}
-                onOpenAgenda={() => navigate("/app/agenda")}
-                CardComponent={Card}
-                PillComponent={Pill}
-                BtnComponent={Btn}
-                styles={S}
-              />
             </div>
 
             <div style={S.colRight}>
@@ -666,21 +671,7 @@ export default function AppDashboard() {
         ) : (
           <>
             <div style={S.colLeft}>
-              <NextAppointmentCard
-                hasAppointment={hasNextAppointment}
-                nextLabels={nextLabels}
-                nextHour={nextHour}
-                nextPatient={nextPatient}
-                nextReason={nextReason}
-                nextSource={nextSource}
-                onMove={() => openNextAgendaAction("reschedule")}
-                onCancel={() => openNextAgendaAction("cancel")}
-                onOpenAgenda={() => navigate("/app/agenda")}
-                CardComponent={Card}
-                PillComponent={Pill}
-                BtnComponent={Btn}
-                styles={S}
-              />
+              {nextAppointmentCard}
 
               <DarkSummaryCard
                 handledTodayCount={requestSummary.handledToday}
@@ -800,6 +791,7 @@ const S = {
   btnOrange: { height: 42, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, border: "1.5px solid #FED7AA", borderRadius: 12, padding: "0 17px", background: "#fff", color: C.orange, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" },
   btnGreen: { height: 42, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, border: "1.5px solid #BBF7D0", borderRadius: 12, padding: "0 17px", background: "#fff", color: C.green, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" },
   mobilePriorityCard: { background: "#fff", border: `1px solid ${C.border}`, borderRadius: 18, padding: 12, boxShadow: "0 10px 24px rgba(7,26,51,.05)", marginBottom: 12 },
+  mobileNextRdv: { marginBottom: 12 },
   mobilePriorityTitle: { margin: "0 0 10px", fontSize: 14, fontWeight: 800, color: C.navy },
   mobilePriorityGrid: { display: "grid", gridTemplateColumns: "1fr", gap: 8 },
   mobilePriorityItem: { width: "100%", border: `1px solid ${C.border}`, borderRadius: 14, padding: "10px 12px", background: "#fff", textAlign: "left", cursor: "pointer", fontFamily: "inherit" },
