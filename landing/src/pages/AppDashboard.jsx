@@ -804,6 +804,44 @@ const CSS = `
   .uwi-main p { line-height: 1.42; }
   .uwi-main em { width: 32px; height: 32px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; }
   .uwi-main p { margin: 0; }
+  .uwi-dashboard-agenda-row-text {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    min-width: 0;
+    text-align: left;
+  }
+  .uwi-dashboard-agenda-row-text strong {
+    font-size: 14px;
+    font-weight: 800;
+    color: ${C.navy};
+  }
+  .uwi-dashboard-agenda-row-text small {
+    font-size: 12px;
+    font-weight: 600;
+    color: ${C.muted};
+    line-height: 1.35;
+  }
+  .uwi-dashboard-rdv-detail {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    margin: 0;
+  }
+  .uwi-dashboard-rdv-detail span {
+    font-size: 12px;
+    font-weight: 700;
+    color: ${C.muted};
+    line-height: 1.2;
+  }
+  .uwi-dashboard-rdv-detail b {
+    font-size: 14px;
+    font-weight: 800;
+    color: ${C.navy};
+    line-height: 1.3;
+  }
   @media (max-width: 1180px) {
     .uwi-dashboard-grid { grid-template-columns: 1fr !important; }
     .uwi-dashboard-stats-grid { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }

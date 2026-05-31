@@ -25,7 +25,10 @@ export default function AgendaTodayCard({
           style={S.agendaRow}
         >
           <b>{row.time}</b>
-          <span><strong>{row.name}</strong><small>{row.reason}</small></span>
+          <span className="uwi-dashboard-agenda-row-text">
+            <strong>{row.name}</strong>
+            <small>{row.reason}</small>
+          </span>
           <Pill tone={row.status === "Confirmé" ? "green" : "blue"}>{row.status}</Pill>
         </button>
       ))}

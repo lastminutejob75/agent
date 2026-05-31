@@ -36,7 +36,10 @@ export default function NextAppointmentCard({
           </div>
           <div className="uwi-dashboard-rdv-details" style={S.rdvDetails}>
             {[["Motif", nextReason || "—"], ["Source", nextSource || "—"], ["Preference", "—"], ["Canal", "Telephone"]].map(([k, v]) => (
-              <p key={k}><span>{k}</span><b>{v}</b></p>
+              <p key={k} className="uwi-dashboard-rdv-detail">
+                <span>{k}</span>
+                <b>{v}</b>
+              </p>
             ))}
           </div>
           <div style={S.rowBtns}>

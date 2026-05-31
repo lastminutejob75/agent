@@ -30,7 +30,7 @@ export default function UpcomingAppointmentsCard({
           style={S.agendaRow}
         >
           <b>{row.time}</b>
-          <span>
+          <span className="uwi-dashboard-agenda-row-text">
             <strong>{row.name}</strong>
             <small>{row.dateLabel ? `${row.dateLabel} · ${row.reason}` : row.reason}</small>
           </span>
