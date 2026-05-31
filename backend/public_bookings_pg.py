@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 from backend.booking_code import create_unique_booking_code_pg
+from backend.db import normalize_phone_number
 from backend.pg_pool import pg_connection
 from backend.pg_tenant_context import set_tenant_id_on_connection
 from backend.booking_origin import canonical as booking_origin_canonical
@@ -978,7 +979,7 @@ def fetch_public_bookings_for_agenda(
                 "hour": start_local.strftime("%Hh"),
                 "start_iso": start_local.isoformat(),
                 "patient": (row.get("patient_name") or "Patient").strip(),
-                "patient_phone": (row.get("patient_phone") or "").strip(),
+                "patient_phone": normalize_phone_number(row.get("patient_phone") or "") or (row.get("patient_phone") or "").strip(),
                 "motif": (row.get("motif") or "Consultation").strip(),
                 "type": (row.get("motif") or "Consultation").strip(),
                 "source": "PAGE_PUBLIQUE",

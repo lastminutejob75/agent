@@ -53,3 +53,31 @@ def test_agenda_bulk_lightweight_still_decorates_patient_has_file(monkeypatch):
     _decorate_agenda_slots_patient_has_file(1, slots, cache)
     assert slots[0]["patient_has_file"] is True
 
+
+def test_get_cabinet_client_by_phone_matches_national_stored_format(monkeypatch):
+    """Une fiche stockée en 06xxxxxxxx doit matcher une recherche +33xxxxxxxxxx."""
+    from backend import db
+
+    stored = {"phone": "0612345678", "display_name": "Jean Dupont", "validated_name": ""}
+
+    def _fake_pg(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(db, "_pg_events_url", lambda: "")
+    conn = db.get_conn()
+    try:
+        db._ensure_cabinet_clients_table(conn)
+        conn.execute("DELETE FROM cabinet_clients WHERE tenant_id = ? AND phone = ?", (99, "0612345678"))
+        conn.execute(
+            """
+            INSERT INTO cabinet_clients (tenant_id, phone, display_name, validation_status)
+            VALUES (99, '0612345678', 'Jean Dupont', 'pending')
+            """,
+        )
+        conn.commit()
+        profile = db.get_cabinet_client_by_phone(99, "+33612345678")
+        assert profile is not None
+        assert profile.get("display_name") == "Jean Dupont"
+    finally:
+        conn.close()
+

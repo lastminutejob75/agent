@@ -1356,9 +1356,25 @@ def get_cabinet_client_by_email(tenant_id: int, email: str) -> Optional[Dict[str
         conn.close()
 
 
+def _cabinet_client_phone_lookup_keys(phone: str) -> List[str]:
+    """Variantes de clé téléphone (E.164 + national FR) pour matcher d'anciennes fiches."""
+    norm = normalize_phone_number(phone)
+    if not norm:
+        return []
+    keys: List[str] = [norm]
+    if norm.startswith("+33") and len(norm) == 12:
+        keys.append(f"0{norm[3:]}")
+    raw = re.sub(r"[^\d+]", "", str(phone or ""))
+    if raw:
+        keys.append(raw)
+        if raw.startswith("0") and len(raw) == 10:
+            keys.append(f"+33{raw[1:]}")
+    return list(dict.fromkeys(k for k in keys if k))
+
+
 def get_cabinet_client_by_phone(tenant_id: int, phone: str) -> Optional[Dict[str, Any]]:
-    phone_norm = normalize_phone_number(phone)
-    if not phone_norm:
+    lookup_keys = _cabinet_client_phone_lookup_keys(phone)
+    if not lookup_keys:
         return None
 
     url = _pg_events_url()
@@ -1374,10 +1390,10 @@ def get_cabinet_client_by_phone(tenant_id: int, phone: str) -> Optional[Dict[str
                         f"""
                         SELECT {cols}
                         FROM cabinet_clients
-                        WHERE tenant_id = %s AND phone = %s
+                        WHERE tenant_id = %s AND phone = ANY(%s)
                         LIMIT 1
                         """,
-                        (tenant_id, phone_norm),
+                        (tenant_id, lookup_keys),
                     )
                     row = cur.fetchone()
                     if row:
@@ -1386,21 +1402,22 @@ def get_cabinet_client_by_phone(tenant_id: int, phone: str) -> Optional[Dict[str
             logging.getLogger(__name__).warning(
                 "get_cabinet_client_by_phone pg failed tenant_id=%s phone=%s: %s",
                 tenant_id,
-                phone_norm,
+                lookup_keys[0],
                 exc,
             )
 
     conn = get_conn()
     try:
         _ensure_cabinet_clients_table(conn)
+        placeholders = ",".join("?" for _ in lookup_keys)
         row = conn.execute(
             f"""
             SELECT {_CABINET_CLIENT_COLS_EXTENDED}
             FROM cabinet_clients
-            WHERE tenant_id = ? AND phone = ?
+            WHERE tenant_id = ? AND phone IN ({placeholders})
             LIMIT 1
             """,
-            (tenant_id, phone_norm),
+            (tenant_id, *lookup_keys),
         ).fetchone()
         if not row:
             return None
@@ -1447,12 +1464,29 @@ def delete_cabinet_client_by_phone(tenant_id: int, phone: str) -> bool:
 
 
 def get_cabinet_clients_by_phones(tenant_id: int, phones: List[str]) -> Dict[str, Dict[str, Any]]:
-    """Retourne les fiches cabinet en lot, indexées par téléphone normalisé."""
-    phone_norms = [normalize_phone_number(phone) for phone in phones]
-    phone_norms = [phone for phone in phone_norms if phone]
-    if not phone_norms:
+    """Retourne les fiches cabinet en lot, indexées par téléphone normalisé E.164."""
+    lookup_keys: List[str] = []
+    canonical_by_key: Dict[str, str] = {}
+    for raw in phones:
+        canon = normalize_phone_number(raw or "")
+        if not canon:
+            continue
+        for key in _cabinet_client_phone_lookup_keys(raw or ""):
+            lookup_keys.append(key)
+            canonical_by_key[key] = canon
+    if not lookup_keys:
         return {}
-    phone_norms = list(dict.fromkeys(phone_norms))
+    lookup_keys = list(dict.fromkeys(lookup_keys))
+
+    def _index_rows(rows: List[Any]) -> Dict[str, Dict[str, Any]]:
+        out: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            stored = str(row.get("phone") if isinstance(row, dict) else row["phone"] or "").strip()
+            canon = normalize_phone_number(stored)
+            if not canon:
+                continue
+            out[canon] = _cabinet_client_row_to_dict(row if isinstance(row, dict) else dict(row))
+        return out
 
     url = _pg_events_url()
     if url:
@@ -1469,14 +1503,10 @@ def get_cabinet_clients_by_phones(tenant_id: int, phones: List[str]) -> Dict[str
                         FROM cabinet_clients
                         WHERE tenant_id = %s AND phone = ANY(%s)
                         """,
-                        (tenant_id, phone_norms),
+                        (tenant_id, lookup_keys),
                     )
                     rows = cur.fetchall()
-                    return {
-                        str(row.get("phone") or "").strip(): _cabinet_client_row_to_dict(row)
-                        for row in rows
-                        if str(row.get("phone") or "").strip()
-                    }
+                    return _index_rows(rows)
         except Exception as exc:
             logging.getLogger(__name__).warning(
                 "get_cabinet_clients_by_phones pg failed tenant_id=%s: %s",
@@ -1487,20 +1517,16 @@ def get_cabinet_clients_by_phones(tenant_id: int, phones: List[str]) -> Dict[str
     conn = get_conn()
     try:
         _ensure_cabinet_clients_table(conn)
-        placeholders = ",".join("?" for _ in phone_norms)
+        placeholders = ",".join("?" for _ in lookup_keys)
         rows = conn.execute(
             f"""
             SELECT {_CABINET_CLIENT_COLS_EXTENDED}
             FROM cabinet_clients
             WHERE tenant_id = ? AND phone IN ({placeholders})
             """,
-            [tenant_id, *phone_norms],
+            [tenant_id, *lookup_keys],
         ).fetchall()
-        return {
-            str(row["phone"] or "").strip(): _cabinet_client_row_to_dict(dict(row))
-            for row in rows
-            if str(row["phone"] or "").strip()
-        }
+        return _index_rows([dict(row) for row in rows])
     finally:
         conn.close()
 

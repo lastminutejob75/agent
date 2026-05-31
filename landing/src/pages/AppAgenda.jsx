@@ -19,6 +19,7 @@ import {
   canCancelAgendaSlot,
   canRescheduleAgendaSlot,
 } from "../lib/agendaAppointmentActions.js";
+import { normalizeFrenchPhone } from "../lib/transferConfig.js";
 
 const NAVY = "#111827";
 const TEAL = "#0DC991";
@@ -192,7 +193,7 @@ const APPT_TONE = {
 const WEEKDAY_LABELS = ["LUN", "MAR", "MER", "JEU", "VEN", "SAM", "DIM"];
 
 /** Stale-while-revalidate : affichage immédiat au retour sur l’agenda (session). */
-const AGENDA_BULK_CACHE_PREFIX = "uwi_agenda_bulk_v2:";
+const AGENDA_BULK_CACHE_PREFIX = "uwi_agenda_bulk_v3:";
 const AGENDA_BULK_CACHE_MS = 35000;
 
 function agendaBulkStorageKey(dates) {
@@ -244,9 +245,12 @@ function invalidateAgendaBulkCache() {
 }
 
 function normalizePhone(raw) {
-  const c = String(raw || "").replace(/[^\d+]/g, "");
-  if (!c || c.length < 6) return "";
-  return c.startsWith("00") ? `+${c.slice(2)}` : c;
+  return normalizeFrenchPhone(raw);
+}
+
+/** True dès qu'une fiche patient existe (aligné backend `patient_has_file`). */
+function cabinetPatientRecordExists(profile) {
+  return Boolean(profile && typeof profile === "object");
 }
 
 /** Téléphone facultatif (création RDV cabinet) ; si renseigné → 10 à 15 chiffres (E.164). */
@@ -454,13 +458,15 @@ function InlineDetail({
 
   useEffect(() => {
     setHasPatientFile(Boolean(a.patient_has_file));
-    if (!aPhone || a.patient_has_file) return undefined;
+    if (!aPhone) return undefined;
     let cancelled = false;
     api.tenantGetPatient(aPhone, { lightweight: true })
       .then((res) => {
-        if (!cancelled && res?.patient) setHasPatientFile(true);
+        if (!cancelled) setHasPatientFile(cabinetPatientRecordExists(res?.patient));
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled && !a.patient_has_file) setHasPatientFile(false);
+      });
     return () => {
       cancelled = true;
     };
@@ -1514,8 +1520,8 @@ export default function AppAgenda() {
       let needsPatientFile = false;
       if (phoneNorm) {
         try {
-          const prof = await api.tenantGetPatient(phoneNorm);
-          needsPatientFile = !dashboardPatientHasValidatedIdentity(prof?.patient);
+          const prof = await api.tenantGetPatient(phoneNorm, { lightweight: true });
+          needsPatientFile = !cabinetPatientRecordExists(prof?.patient);
         } catch (e) {
           needsPatientFile = e?.status === 404;
         }
@@ -1577,7 +1583,7 @@ export default function AppAgenda() {
       }
       try {
         const res = await api.tenantGetPatient(phone, { lightweight: true });
-        if (res?.patient) {
+        if (cabinetPatientRecordExists(res?.patient)) {
           navigate(`/app/patient-dashboard?phone=${encodeURIComponent(phone)}`);
           return;
         }
