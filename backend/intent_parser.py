@@ -23,6 +23,7 @@ class Intent(str, Enum):
     CANCEL = "CANCEL"
     MODIFY = "MODIFY"
     TRANSFER = "TRANSFER"
+    CALLBACK = "CALLBACK"
     ABANDON = "ABANDON"
     FAQ = "FAQ"
     REPEAT = "REPEAT"
@@ -69,6 +70,16 @@ _MODIFY_LEXICON = [
     "modifier", "changer", "deplacer", "reporter", "reprogrammer", "decaler", "avancer",
     "changer mon rendez vous", "deplacer mon rdv", "reporter mon rdv", "modifier mon rdv",
 ]
+_CALLBACK_LEXICON = [
+    "rappelez moi", "rappelez-moi", "vous rappelez", "vous rappeller", "vous me rappelez",
+    "etre rappele", "demande de rappel", "rappeler par le cabinet", "rappel du cabinet",
+    "on me rappelle", "souhaite etre rappele", "je souhaite etre rappele",
+    "je voudrais etre rappele", "pouvez vous me rappeler", "pourriez vous me rappeler",
+    "demander un rappel", "un rappel du cabinet", "me rappeler par le cabinet",
+]
+_CALLBACK_EXCLUDED = frozenset({
+    "je rappelle", "je vais rappeler", "je rappellerai", "j appellerai", "je rappellerai plus tard",
+})
 _ABANDON_LEXICON = [
     "au revoir", "bye", "merci au revoir", "c est tout", "c est tout merci",
     "ca sera tout", "ca sera tout merci", "ce sera tout", "ce sera tout merci",
@@ -129,7 +140,8 @@ FILLER_JE_SAIS_PAS = frozenset({
 # "oui"/"d'accord" → UNCLEAR pour éviter de déclencher un choix par erreur.
 # États où "oui"/"d'accord" est interprété comme YES (confirmations explicites + POST_FAQ disambiguation).
 ALLOWED_YESNO_STATES = frozenset({
-    "CONTACT_CONFIRM", "CONTACT_CONFIRM_CALLERID", "CANCEL_CONFIRM", "MODIFY_CONFIRM", "WAIT_CONFIRM",
+    "CONTACT_CONFIRM", "CONTACT_CONFIRM_CALLERID", "CALLBACK_CONFIRM_CALLERID",
+    "CANCEL_CONFIRM", "MODIFY_CONFIRM", "WAIT_CONFIRM",
     "PREFERENCE_CONFIRM", "POST_FAQ", "POST_FAQ_CHOICE",
 })
 
@@ -230,9 +242,19 @@ def _pattern_in_text(text_normalized: str, patterns: List[str]) -> bool:
     return False
 
 
+def _is_callback_request(text: str) -> bool:
+    """Demande explicite d'être rappelé par le cabinet (pas « je rappellerai moi-même »)."""
+    t = (text or "").strip().lower()
+    if not t:
+        return False
+    if any(excluded in t for excluded in _CALLBACK_EXCLUDED):
+        return False
+    return _pattern_in_text(t, _CALLBACK_LEXICON)
+
+
 def detect_strong_intent(text: str, state: str = "") -> Optional[Intent]:
     """
-    Priorité: TRANSFER > CANCEL > MODIFY > ABANDON > ORDONNANCE > FAQ
+    Priorité: TRANSFER > CANCEL > MODIFY > CALLBACK > ABANDON > ORDONNANCE > FAQ
     Lexiques dédiés (pas prompts.py). Retourne None si aucun. Pure.
     """
     if not text or not text.strip():
@@ -246,6 +268,8 @@ def detect_strong_intent(text: str, state: str = "") -> Optional[Intent]:
         return Intent.CANCEL
     if _pattern_in_text(t, _MODIFY_LEXICON):
         return Intent.MODIFY
+    if _is_callback_request(t):
+        return Intent.CALLBACK
     if _pattern_in_text(t, _ABANDON_LEXICON):
         if len(t) < _ABANDON_MIN_LEN:
             return None

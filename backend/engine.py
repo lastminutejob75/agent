@@ -575,6 +575,8 @@ def should_override_current_flow_v3(session: Session, message: str) -> bool:
         return False
     if strong == "ORDONNANCE" and session.state in ("ORDONNANCE_CHOICE", "ORDONNANCE_MESSAGE", "ORDONNANCE_PHONE_CONFIRM"):
         return False
+    if strong == "CALLBACK" and session.state in ("CALLBACK_CONFIRM_CALLERID",):
+        return False
     last = getattr(session, "last_intent", None)
     if strong == last:
         return False
@@ -1130,6 +1132,8 @@ class Engine:
                 return safe_reply(self._start_cancel(session), session)
             if strong == "MODIFY":
                 return safe_reply(self._start_modify(session), session)
+            if strong == "CALLBACK":
+                return safe_reply(self._start_callback_flow(session), session)
             if strong == "TRANSFER":
                 from backend.transfer_policy import classify_transfer_request
                 kind = classify_transfer_request(user_text or "")
@@ -1217,12 +1221,14 @@ class Engine:
             _t_ascii = intent_parser.normalize_stt_text(user_text or "")
             # Fix 5: strong intent AVANT slot_choice (annuler/humain pendant énumération → route direct)
             strong = detect_strong_intent(user_text or "")
-            if strong in ("CANCEL", "MODIFY", "TRANSFER", "ABANDON"):
+            if strong in ("CANCEL", "MODIFY", "CALLBACK", "TRANSFER", "ABANDON"):
                 reset_slots_reading(session)
                 if strong == "CANCEL":
                     return safe_reply(self._start_cancel(session), session)
                 if strong == "MODIFY":
                     return safe_reply(self._start_modify(session), session)
+                if strong == "CALLBACK":
+                    return safe_reply(self._start_callback_flow(session), session)
                 if strong == "TRANSFER":
                     from backend.transfer_policy import classify_transfer_request
                     kind = classify_transfer_request(user_text or "")
@@ -1416,6 +1422,8 @@ class Engine:
                 return safe_reply(self._start_cancel(session), session)
             if strong == "MODIFY":
                 return safe_reply(self._start_modify(session), session)
+            if strong == "CALLBACK":
+                return safe_reply(self._start_callback_flow(session), session)
             if strong == "TRANSFER":
                 from backend.transfer_policy import classify_transfer_request
                 kind = classify_transfer_request(user_text or "")
@@ -1489,6 +1497,8 @@ class Engine:
             return safe_reply(self._handle_clarify(session, user_text, intent), session)
         
         # Si en confirmation contact (caller_id : 2 derniers chiffres)
+        if session.state == "CALLBACK_CONFIRM_CALLERID":
+            return safe_reply(self._handle_callback_confirm_callerid(session, user_text), session)
         if session.state == "CONTACT_CONFIRM_CALLERID":
             return safe_reply(self._handle_contact_confirm_callerid(session, user_text), session)
         # Si en confirmation contact (après saisie utilisateur)
@@ -1514,7 +1524,7 @@ class Engine:
             intent = r.intent
             setattr(session, "last_intent_before_trigger", intent)  # pour DECISION_TRACE si transfert
             # strong intents ALWAYS override (sauf BOOKING avec très haute confiance)
-            if strong_intent in ("TRANSFER", "CANCEL", "MODIFY", "ABANDON", "ORDONNANCE"):
+            if strong_intent in ("TRANSFER", "CANCEL", "MODIFY", "CALLBACK", "ABANDON", "ORDONNANCE"):
                 if not (intent == "BOOKING" and getattr(r, "confidence", 0.0) >= 0.80):
                     intent = strong_intent
                     r.source = f"{getattr(r, 'source', 'router')}+strong_override"
@@ -1615,6 +1625,10 @@ class Engine:
             if intent == "MODIFY":
                 session.start_unclear_count = 0
                 return safe_reply(self._start_modify(session), session)
+
+            if intent == "CALLBACK":
+                session.start_unclear_count = 0
+                return safe_reply(self._start_callback_flow(session), session)
             
             # Fix #6: TRANSFER → politique courte (clarify) vs explicite (transfert direct)
             if intent == "TRANSFER":
@@ -1828,6 +1842,8 @@ class Engine:
             return self._start_cancel(session)
         if strong == "MODIFY":
             return self._start_modify(session)
+        if strong == "CALLBACK":
+            return self._start_callback_flow(session)
         if strong == "TRANSFER":
             from backend.transfer_policy import classify_transfer_request
             kind = classify_transfer_request(user_text or "")
@@ -3862,6 +3878,151 @@ class Engine:
         session.add_message("agent", msg)
         return [Event("final", msg, conv_state="ORDONNANCE_PHONE_CONFIRM")]
     
+    # ========================
+    # DEMANDE DE RAPPEL VOCAL (identifiant appelant)
+    # ========================
+
+    def _caller_phone_digits(self, session: Session) -> str:
+        phone = str(getattr(session, "customer_phone", "") or "").strip()
+        for prefix in ("+33", "33"):
+            if phone.startswith(prefix):
+                phone = "0" + phone[len(prefix):]
+                break
+        digits = "".join(c for c in phone if c.isdigit())
+        if len(digits) >= 10:
+            return digits[-10:]
+        return digits
+
+    def _callback_display_name(self, session: Session) -> str:
+        qualif = getattr(session, "qualif_data", None)
+        raw_name = str(getattr(qualif, "name", "") or "").strip()
+        if raw_name:
+            return raw_name.title()[:200]
+        tenant_id = int(getattr(session, "tenant_id", 1) or 1)
+        phone = backend_db.normalize_phone_number(getattr(session, "customer_phone", None))
+        if phone:
+            try:
+                profile = backend_db.get_cabinet_client_by_phone(tenant_id, phone)
+            except Exception:
+                profile = None
+            if profile:
+                for key in ("validated_name", "display_name", "raw_name"):
+                    value = str((profile or {}).get(key) or "").strip()
+                    if value:
+                        return value[:200]
+        return "Patient"
+
+    def _start_callback_flow(self, session: Session) -> List[Event]:
+        channel = getattr(session, "channel", "web")
+        phone_digits = self._caller_phone_digits(session)
+        if len(phone_digits) < 10:
+            session.state = "CONFIRMED"
+            msg = prompts.VOCAL_CALLBACK_NO_CALLER_ID
+            session.add_message("agent", msg)
+            self._save_session(session)
+            return [Event("final", msg, conv_state=session.state)]
+
+        session.callback_phone_digits = phone_digits
+        session.state = "CALLBACK_CONFIRM_CALLERID"
+        session.callback_confirm_fails = 0
+        last_two = prompts.last_two_digits_for_confirmation(phone_digits)
+        msg = prompts.VOCAL_CALLBACK_CONFIRM_CALLERID.format(last2=last_two)
+        session.add_message("agent", msg)
+        self._save_session(session)
+        return [Event("final", msg, conv_state=session.state)]
+
+    def _finalize_callback_request(self, session: Session) -> List[Event]:
+        tenant_id = int(getattr(session, "tenant_id", 1) or 1)
+        call_id = str(getattr(session, "conv_id", "") or "").strip()
+        phone_digits = str(getattr(session, "callback_phone_digits", "") or self._caller_phone_digits(session))
+        phone = backend_db.normalize_phone_number(phone_digits) or phone_digits
+        if not phone:
+            msg = prompts.VOCAL_CALLBACK_NO_CALLER_ID
+            session.state = "CONFIRMED"
+            session.add_message("agent", msg)
+            self._save_session(session)
+            return [Event("final", msg, conv_state=session.state)]
+
+        from backend.public_bookings_pg import get_callback_request_by_call_id, insert_callback_request
+
+        existing = get_callback_request_by_call_id(tenant_id, call_id) if call_id else None
+        existing_status = str((existing or {}).get("status") or "").lower()
+        if existing and existing_status not in {"cancelled"}:
+            session.state = "CONFIRMED"
+            msg = prompts.VOCAL_CALLBACK_ALREADY
+            session.add_message("agent", msg)
+            self._save_session(session)
+            return [Event("final", msg, conv_state=session.state)]
+
+        name = self._callback_display_name(session)
+        user_text = ""
+        for msg in reversed(getattr(session, "messages", None) or []):
+            if getattr(msg, "role", "") == "user":
+                user_text = str(getattr(msg, "text", "") or "").strip()
+                break
+        message = "Demande de rappel vocale explicite (numero appelant confirme)."
+        if user_text:
+            message = f"{message} Motif: {user_text[:500]}"
+        req_id = insert_callback_request(
+            tenant_id=tenant_id,
+            name=name,
+            phone=phone,
+            email=None,
+            reason="other",
+            message=message,
+            appointment_source="vocal",
+            appointment_id=call_id or None,
+            unmatched=False,
+            source="vocal_agent",
+            call_id=call_id or None,
+        )
+        session.state = "CONFIRMED"
+        if not req_id:
+            msg = prompts.VOCAL_TRANSFER_COMPLEX if getattr(session, "channel", "") == "vocal" else prompts.MSG_TRANSFER
+            session.add_message("agent", msg)
+            self._save_session(session)
+            return [Event("final", msg, conv_state=session.state)]
+
+        log_ivr_event(logger, session, "callback_request_created")
+        msg = prompts.VOCAL_CALLBACK_DONE
+        session.add_message("agent", msg)
+        self._save_session(session)
+        return [Event("final", msg, conv_state=session.state)]
+
+    def _handle_callback_confirm_callerid(self, session: Session, user_text: str) -> List[Event]:
+        """Confirme l'identifiant appelant (2 derniers chiffres) avant d'enregistrer le rappel."""
+        intent = detect_intent(user_text, session.state)
+        if intent != "YES" and (user_text or "").strip():
+            _raw = (user_text or "").strip().lower()
+            if not _raw.startswith(("non", "pas ")) and "attendez" not in _raw:
+                _norm = intent_parser.normalize_stt_text(_raw).replace(" ", "")
+                if "bienca" in _norm or "cestbienca" in _norm or "cestcorrect" in _norm or "exact" in _norm or "toutafait" in _norm:
+                    intent = "YES"
+
+        if intent == "YES":
+            session.callback_confirm_fails = 0
+            return self._finalize_callback_request(session)
+
+        if intent == "NO":
+            phone_digits = str(getattr(session, "callback_phone_digits", "") or self._caller_phone_digits(session))
+            last_two = prompts.last_two_digits_for_confirmation(phone_digits)
+            session.callback_confirm_fails = getattr(session, "callback_confirm_fails", 0) + 1
+            if session.callback_confirm_fails >= 3:
+                return self._trigger_intent_router(session, "callback_callerid_denied_3", user_text)
+            msg = prompts.VOCAL_CALLBACK_CALLERID_RETRY.format(last2=last_two)
+            session.add_message("agent", msg)
+            self._save_session(session)
+            return [Event("final", msg, conv_state=session.state)]
+
+        fail_count = getattr(session, "callback_confirm_fails", 0)
+        if fail_count == 0:
+            session.callback_confirm_fails = 1
+            msg = getattr(prompts, "CONFIRM_YESNO_RETRY", prompts.MSG_CONTACT_CONFIRM_INTENT_1)
+            session.add_message("agent", msg)
+            self._save_session(session)
+            return [Event("final", msg, conv_state=session.state)]
+        return self._trigger_intent_router(session, "callback_callerid_unclear_3", user_text)
+
     # ========================
     # CONFIRMATION CONTACT
     # ========================

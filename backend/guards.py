@@ -583,6 +583,7 @@ YESNO_ALLOWED_STATES = frozenset({
     "START",
     "CONTACT_CONFIRM",
     "CONTACT_CONFIRM_CALLERID",  # confirmation 2 derniers chiffres (caller ID)
+    "CALLBACK_CONFIRM_CALLERID",
     "CANCEL_CONFIRM",
     "MODIFY_CONFIRM",
     "WAIT_CONFIRM",  # "oui" seul ne suffit pas, on redemande 1/2/3

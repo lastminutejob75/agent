@@ -775,6 +775,25 @@ VOCAL_CONTACT_CONFIRM_RETRY = "D'accord, pouvez-vous me redonner votre numéro ?
 # A) Confirmation courte (state CONTACT_CONFIRM_CALLERID) — ne jamais lire le numéro complet
 CONFIRM_CALLERID_LAST2 = "J'ai un numéro qui s'affiche et qui se termine par {last2}. Est-ce bien le vôtre ? Dites oui ou non."
 VOCAL_CONTACT_CONFIRM_CALLER_ID = CONFIRM_CALLERID_LAST2  # alias
+VOCAL_CALLBACK_CONFIRM_CALLERID = (
+    "Très bien. Pour vous rappeler, j'utilise le numéro depuis lequel vous appelez, "
+    "qui se termine par {last2}. Est-ce bien le vôtre ? Dites oui ou non."
+)
+VOCAL_CALLBACK_CALLERID_RETRY = (
+    "Le cabinet vous rappellera uniquement sur le numéro depuis lequel vous appelez, "
+    "qui se termine par {last2}. Est-ce bien le vôtre ?"
+)
+VOCAL_CALLBACK_NO_CALLER_ID = (
+    "Je ne vois pas le numéro depuis lequel vous appelez. "
+    "Pour une demande de rappel, rappelez depuis votre mobile, "
+    "ou dites que vous souhaitez parler à quelqu'un."
+)
+VOCAL_CALLBACK_DONE = (
+    "C'est noté. Le cabinet vous rappellera sur ce numéro dans les meilleurs délais. Au revoir !"
+)
+VOCAL_CALLBACK_ALREADY = (
+    "Votre demande de rappel est déjà enregistrée. Le cabinet vous rappellera sur ce numéro. Au revoir !"
+)
 # B) Caller ID absent ou masqué (state QUALIF_CONTACT / CONTACT_COLLECT)
 ASK_CONTACT = "Je n'ai pas votre numéro qui s'affiche. Pouvez-vous me le donner, s'il vous plaît ?"
 VOCAL_CONTACT_NO_CALLER_ID = ASK_CONTACT  # alias

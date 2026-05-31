@@ -80,6 +80,13 @@ def test_strong_intent_modify():
     assert detect_strong_intent("modifier mon rendez-vous") == Intent.MODIFY
 
 
+def test_strong_intent_callback():
+    assert detect_strong_intent("rappelez moi s il vous plait") == Intent.CALLBACK
+    assert detect_strong_intent("je voudrais etre rappele") == Intent.CALLBACK
+    assert detect_strong_intent("je vais rappeler plus tard") == Intent.ABANDON
+    assert detect_strong_intent("je rappellerai demain") == Intent.ABANDON
+
+
 def test_strong_intent_abandon():
     assert detect_strong_intent("au revoir") == Intent.ABANDON
     assert detect_strong_intent("laisse tomber") == Intent.ABANDON

@@ -299,8 +299,11 @@ def insert_callback_request(
     appointment_source: Optional[str] = None,
     appointment_id: Optional[str] = None,
     unmatched: bool = False,
+    source: str = "public_page",
+    call_id: Optional[str] = None,
 ) -> Optional[str]:
     req_id = str(__import__("uuid").uuid4())
+    clean_source = (source or "public_page").strip()[:32] or "public_page"
     try:
         with pg_connection() as conn:
             if tenant_id is not None:
@@ -328,13 +331,14 @@ def insert_callback_request(
                     )
                     """
                 )
+                _ensure_callback_requests_link_columns(cur)
                 cur.execute(
                     """
                     INSERT INTO callback_requests (
                       id, tenant_id, appointment_source, appointment_id, name, phone, email,
-                      reason, message, source, status, unmatched
+                      reason, message, source, status, unmatched, call_id
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'public_page', 'new', %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'new', %s, %s)
                     """,
                     (
                         req_id,
@@ -346,7 +350,9 @@ def insert_callback_request(
                         (email or "").strip()[:254] or None,
                         (reason or "other").strip()[:80],
                         (message or "").strip()[:2000] or None,
+                        clean_source,
                         unmatched,
+                        (call_id or "").strip()[:120] or None,
                     ),
                 )
             conn.commit()
@@ -598,6 +604,33 @@ def sync_handoff_status_from_callback(tenant_id: int, handoff_id: Optional[int],
             handoff_id,
             exc,
         )
+
+
+def get_callback_request_by_call_id(tenant_id: int, call_id: str) -> Optional[Dict[str, Any]]:
+    clean_call_id = (call_id or "").strip()
+    if not clean_call_id:
+        return None
+    try:
+        with pg_connection() as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
+            with conn.cursor() as cur:
+                _ensure_callback_requests_link_columns(cur)
+                cur.execute(
+                    """
+                    SELECT id, tenant_id, name, phone, email, reason, message, source, status,
+                           unmatched, created_at, handled_at, handled_by, call_id, handoff_id
+                    FROM callback_requests
+                    WHERE tenant_id = %s AND call_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (tenant_id, clean_call_id),
+                )
+                row = cur.fetchone()
+                return dict(row) if row else None
+    except Exception as exc:
+        logger.debug("get_callback_request_by_call_id failed tenant=%s call_id=%s: %s", tenant_id, clean_call_id, exc)
+        return None
 
 
 def get_callback_request_by_id(tenant_id: int, request_id: str) -> Optional[Dict[str, Any]]:
