@@ -133,6 +133,13 @@ export default function AppPatientsLayout() {
     updatePatientInList: (phone, updates) => {
       setPatients((prev) => prev.map((p) => p.phone === phone ? { ...p, ...updates } : p));
     },
+    replacePatientInList: (oldPhone, patient) => {
+      setPatients((prev) =>
+        prev.map((p) =>
+          p.phone === oldPhone ? { ...p, ...patient, phone: patient?.phone || p.phone } : p
+        )
+      );
+    },
   };
 
   return (

@@ -305,6 +305,57 @@ def delete_patient_v2_data(tenant_id: int, patient_phone: str) -> None:
             )
 
 
+def migrate_patient_phone_v2_data(
+    tenant_id: int,
+    old_phone: str,
+    new_phone: str,
+    *,
+    old_keys: Optional[List[str]] = None,
+) -> None:
+    """Propage un changement de numéro dans les tables patient V2."""
+    old = normalize_patient_phone(old_phone)
+    new = normalize_patient_phone(new_phone)
+    if not old or not new or old == new:
+        return
+    keys = list(dict.fromkeys(old_keys or [old]))
+    if not keys:
+        keys = [old]
+
+    tables = (
+        "patient_documents_v2",
+        "questionnaire_responses",
+        "questionnaire_requests",
+        "patient_summaries",
+        "patient_metrics",
+        "patient_events",
+    )
+
+    conn = get_conn()
+    try:
+        for table in tables:
+            placeholders = ",".join("?" for _ in keys)
+            try:
+                conn.execute(
+                    f"UPDATE {table} SET patient_phone = ? WHERE tenant_id = ? AND patient_phone IN ({placeholders})",
+                    (new, tenant_id, *keys),
+                )
+            except Exception:
+                pass
+        conn.commit()
+    finally:
+        conn.close()
+
+    if pg_available():
+        for table in tables:
+            try:
+                exec_pg(
+                    f"UPDATE {table} SET patient_phone = %s WHERE tenant_id = %s AND patient_phone = ANY(%s)",
+                    (new, tenant_id, keys),
+                )
+            except Exception:
+                logger.debug("migrate_patient_phone_v2_data pg %s failed", table, exc_info=True)
+
+
 def insert_patient_document_v2(
     tenant_id: int,
     patient_phone: str,

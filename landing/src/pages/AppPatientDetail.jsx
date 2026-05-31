@@ -2,6 +2,11 @@ import { useEffect, useState, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../lib/api.js";
 import { usePatientListContext } from "./AppPatientsLayout.jsx";
+import {
+  checkPatientDuplicates,
+  formatPatientDuplicateConflict,
+  parsePatientDuplicateError,
+} from "../lib/patientDuplicateCheck.js";
 
 const NAVY = "#111827";
 const TEAL = "#0DC991";
@@ -100,6 +105,14 @@ const CATEGORY_LABELS = {
 const TAGS_KEY = "uwi_patient_tags_";
 function loadTags(phone) { try { return JSON.parse(localStorage.getItem(TAGS_KEY + phone) || "[]"); } catch { return []; } }
 function saveTags(phone, tags) { localStorage.setItem(TAGS_KEY + phone, JSON.stringify(tags)); }
+function migrateTags(oldPhone, newPhone) {
+  if (!oldPhone || !newPhone || oldPhone === newPhone) return;
+  const tags = loadTags(oldPhone);
+  if (tags.length) {
+    saveTags(newPhone, tags);
+    localStorage.removeItem(TAGS_KEY + oldPhone);
+  }
+}
 
 export default function AppPatientDetail() {
   const { phone } = useParams();
@@ -107,7 +120,7 @@ export default function AppPatientDetail() {
 
   let ctx;
   try { ctx = usePatientListContext(); } catch { ctx = null; }
-  const { goPrev, goNext, hasPrev, hasNext, selectedIndex, filtered, updatePatientInList } = ctx || {};
+  const { goPrev, goNext, hasPrev, hasNext, selectedIndex, filtered, updatePatientInList, replacePatientInList } = ctx || {};
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -126,6 +139,9 @@ export default function AppPatientDetail() {
   const [editingEmail, setEditingEmail] = useState(false);
   const [emailDraft, setEmailDraft] = useState("");
   const [savingEmail, setSavingEmail] = useState(false);
+  const [editingPhone, setEditingPhone] = useState(false);
+  const [phoneDraft, setPhoneDraft] = useState("");
+  const [savingPhone, setSavingPhone] = useState(false);
   const [documents, setDocuments] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [previewDoc, setPreviewDoc] = useState(null);
@@ -290,6 +306,35 @@ export default function AppPatientDetail() {
     finally { setSavingEmail(false); }
   }
 
+  async function handleSavePhone() {
+    const next = phoneDraft.trim();
+    if (!next) {
+      setToast("Indiquez un numéro de téléphone");
+      return;
+    }
+    setSavingPhone(true);
+    try {
+      const dup = await checkPatientDuplicates({ phone: next, excludePhone: phone });
+      if (dup?.has_conflict) {
+        setToast(formatPatientDuplicateConflict(dup.conflicts?.[0]) || "Ce numéro est déjà utilisé");
+        return;
+      }
+      const res = await api.tenantUpdatePatient(phone, { phone: next });
+      const newPhone = res?.patient?.phone || next;
+      migrateTags(phone, newPhone);
+      if (replacePatientInList) replacePatientInList(phone, res.patient);
+      else if (updatePatientInList) updatePatientInList(phone, { phone: newPhone });
+      navigate(`/app/patients/${encodeURIComponent(newPhone)}`, { replace: true });
+      setEditingPhone(false);
+      setToast("Numéro mis à jour");
+    } catch (e) {
+      const dup = parsePatientDuplicateError(e);
+      setToast(dup.message || e?.message || "Erreur");
+    } finally {
+      setSavingPhone(false);
+    }
+  }
+
   async function handleUploadDoc(e) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -419,7 +464,26 @@ export default function AppPatientDetail() {
               )}
             </div>
             <div style={S.metaRow}>
-              <a href={`tel:${phone}`} style={S.phoneLink}>{formatPhone(phone)}</a>
+              {editingPhone ? (
+                <div style={S.editRow}>
+                  <input
+                    type="tel"
+                    value={phoneDraft}
+                    onChange={(e) => setPhoneDraft(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleSavePhone(); if (e.key === "Escape") setEditingPhone(false); }}
+                    autoFocus
+                    placeholder="06 12 34 56 78"
+                    style={S.editInput}
+                  />
+                  <button type="button" onClick={handleSavePhone} disabled={savingPhone} style={S.saveBtn}>{savingPhone ? "…" : "OK"}</button>
+                  <button type="button" onClick={() => setEditingPhone(false)} style={S.cancelEditBtn}>✕</button>
+                </div>
+              ) : (
+                <>
+                  <a href={`tel:${phone}`} style={S.phoneLink}>{formatPhone(phone)}</a>
+                  <button type="button" onClick={() => { setEditingPhone(true); setPhoneDraft(phone); }} style={S.editNameBtn}>Modifier</button>
+                </>
+              )}
               <span style={S.dot} />
               <span style={{ ...S.statusBadge, color: stConfig.color, background: stConfig.bg }}>{stConfig.icon} {stConfig.label}</span>
               <span style={S.dot} />

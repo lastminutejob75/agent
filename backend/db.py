@@ -1463,6 +1463,233 @@ def delete_cabinet_client_by_phone(tenant_id: int, phone: str) -> bool:
         conn.close()
 
 
+class PatientPhoneChangeError(Exception):
+    """Erreur métier lors du changement de numéro patient."""
+
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
+
+
+def _apply_patient_phone_related_updates_pg(
+    cur: Any,
+    tenant_id: int,
+    old_keys: List[str],
+    new_norm: str,
+) -> None:
+    """Met à jour les tables liées au téléphone patient (Postgres)."""
+    key_list = list(dict.fromkeys(k for k in old_keys if k))
+    if not key_list:
+        return
+
+    def _safe_update(sql: str, params: tuple) -> None:
+        try:
+            cur.execute(sql, params)
+        except Exception as exc:
+            if "does not exist" in str(exc).lower():
+                return
+            raise
+
+    _safe_update(
+        "UPDATE patient_notes SET patient_phone = %s WHERE tenant_id = %s AND patient_phone = ANY(%s)",
+        (new_norm, tenant_id, key_list),
+    )
+    _safe_update(
+        "UPDATE patient_documents SET patient_phone = %s WHERE tenant_id = %s AND patient_phone = ANY(%s)",
+        (new_norm, tenant_id, key_list),
+    )
+    _safe_update(
+        "UPDATE human_handoffs SET patient_phone = %s WHERE tenant_id = %s AND patient_phone = ANY(%s)",
+        (new_norm, tenant_id, key_list),
+    )
+    _safe_update(
+        "UPDATE public_bookings SET patient_phone = %s WHERE tenant_id = %s AND patient_phone = ANY(%s)",
+        (new_norm, tenant_id, key_list),
+    )
+    _safe_update(
+        "UPDATE callback_requests SET phone = %s WHERE tenant_id = %s AND phone = ANY(%s)",
+        (new_norm, tenant_id, key_list),
+    )
+    _safe_update(
+        "UPDATE appointments SET contact = %s WHERE tenant_id = %s AND contact = ANY(%s)",
+        (new_norm, tenant_id, key_list),
+    )
+    _safe_update(
+        "UPDATE patient_questionnaires SET phone = %s WHERE tenant_id = %s AND phone = ANY(%s)",
+        (new_norm, tenant_id, key_list),
+    )
+
+
+def _apply_patient_phone_related_updates_sqlite(
+    conn: sqlite3.Connection,
+    tenant_id: int,
+    old_keys: List[str],
+    new_norm: str,
+) -> None:
+    key_list = list(dict.fromkeys(k for k in old_keys if k))
+    if not key_list:
+        return
+    placeholders = ",".join("?" for _ in key_list)
+
+    def _safe_update(sql: str, params: tuple) -> None:
+        try:
+            conn.execute(sql, params)
+        except Exception:
+            pass
+
+    _ensure_patient_notes_table(conn)
+    _ensure_patient_documents_table(conn)
+    _ensure_human_handoffs_table(conn)
+    _safe_update(
+        f"UPDATE patient_notes SET patient_phone = ? WHERE tenant_id = ? AND patient_phone IN ({placeholders})",
+        (new_norm, tenant_id, *key_list),
+    )
+    _safe_update(
+        f"UPDATE patient_documents SET patient_phone = ? WHERE tenant_id = ? AND patient_phone IN ({placeholders})",
+        (new_norm, tenant_id, *key_list),
+    )
+    _safe_update(
+        f"UPDATE human_handoffs SET patient_phone = ? WHERE tenant_id = ? AND patient_phone IN ({placeholders})",
+        (new_norm, tenant_id, *key_list),
+    )
+    try:
+        conn.execute(
+            f"UPDATE public_bookings SET patient_phone = ? WHERE tenant_id = ? AND patient_phone IN ({placeholders})",
+            (new_norm, tenant_id, *key_list),
+        )
+    except Exception:
+        pass
+    try:
+        conn.execute(
+            f"UPDATE callback_requests SET phone = ? WHERE tenant_id = ? AND phone IN ({placeholders})",
+            (new_norm, tenant_id, *key_list),
+        )
+    except Exception:
+        pass
+    try:
+        conn.execute(
+            f"UPDATE appointments SET contact = ? WHERE tenant_id = ? AND contact IN ({placeholders})",
+            (new_norm, tenant_id, *key_list),
+        )
+    except Exception:
+        pass
+    try:
+        from backend.patient_questionnaire import _ensure_table_sqlite
+
+        _ensure_table_sqlite(conn)
+        conn.execute(
+            f"UPDATE patient_questionnaires SET phone = ? WHERE tenant_id = ? AND phone IN ({placeholders})",
+            (new_norm, tenant_id, *key_list),
+        )
+    except Exception:
+        pass
+
+
+def change_cabinet_client_phone(tenant_id: int, old_phone: str, new_phone: str) -> Optional[Dict[str, Any]]:
+    """Change le numéro identifiant d'une fiche patient et propage aux données liées."""
+    profile = get_cabinet_client_by_phone(tenant_id, old_phone)
+    if not profile:
+        raise PatientPhoneChangeError("not_found")
+
+    old_stored = str(profile.get("phone") or "").strip()
+    old_keys = list(dict.fromkeys(_cabinet_client_phone_lookup_keys(old_stored or old_phone)))
+    if not old_keys:
+        raise PatientPhoneChangeError("not_found")
+
+    new_norm = normalize_phone_number(new_phone)
+    if not new_norm or not is_valid_patient_phone(new_phone):
+        raise PatientPhoneChangeError("invalid_phone")
+
+    if normalize_phone_number(old_stored or old_phone) == new_norm:
+        return profile
+
+    if get_cabinet_client_by_phone(tenant_id, new_norm):
+        raise PatientPhoneChangeError("phone_conflict")
+
+    stored_old = old_stored or old_keys[0]
+    url = _pg_events_url()
+    if url:
+        try:
+            from backend.pg_pool import pg_connection_for
+
+            with pg_connection_for(url) as conn:
+                _ensure_cabinet_clients_table_pg(conn)
+                with conn.cursor() as cur:
+                    _apply_patient_phone_related_updates_pg(cur, tenant_id, old_keys, new_norm)
+                    cur.execute(
+                        """
+                        UPDATE cabinet_clients
+                        SET phone = %s, updated_at = now()
+                        WHERE tenant_id = %s AND phone = %s
+                        """,
+                        (new_norm, tenant_id, stored_old),
+                    )
+                    if cur.rowcount == 0:
+                        conn.rollback()
+                        raise PatientPhoneChangeError("not_found")
+                conn.commit()
+            _reset_cabinet_client_cols_cache()
+            try:
+                from backend.patient_v2_db import migrate_patient_phone_v2_data
+
+                migrate_patient_phone_v2_data(tenant_id, stored_old, new_norm, old_keys=old_keys)
+            except Exception as exc:
+                logging.getLogger(__name__).warning(
+                    "change_cabinet_client_phone v2 migrate failed tenant=%s: %s",
+                    tenant_id,
+                    exc,
+                )
+            return get_cabinet_client_by_phone(tenant_id, new_norm)
+        except PatientPhoneChangeError:
+            raise
+        except Exception as exc:
+            logging.getLogger(__name__).error(
+                "change_cabinet_client_phone pg failed tenant=%s: %s",
+                tenant_id,
+                exc,
+            )
+            raise PatientPhoneChangeError("failed") from exc
+
+    conn = get_conn()
+    try:
+        _ensure_cabinet_clients_table(conn)
+        _apply_patient_phone_related_updates_sqlite(conn, tenant_id, old_keys, new_norm)
+        cur = conn.execute(
+            """
+            UPDATE cabinet_clients
+            SET phone = ?, updated_at = datetime('now')
+            WHERE tenant_id = ? AND phone = ?
+            """,
+            (new_norm, tenant_id, stored_old),
+        )
+        if cur.rowcount == 0:
+            conn.rollback()
+            raise PatientPhoneChangeError("not_found")
+        conn.commit()
+        try:
+            from backend.patient_v2_db import migrate_patient_phone_v2_data
+
+            migrate_patient_phone_v2_data(tenant_id, stored_old, new_norm, old_keys=old_keys)
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "change_cabinet_client_phone v2 migrate failed tenant=%s: %s",
+                tenant_id,
+                exc,
+            )
+        return get_cabinet_client_by_phone(tenant_id, new_norm)
+    except PatientPhoneChangeError:
+        raise
+    except Exception as exc:
+        logging.getLogger(__name__).error(
+            "change_cabinet_client_phone sqlite failed tenant=%s: %s",
+            tenant_id,
+            exc,
+        )
+        raise PatientPhoneChangeError("failed") from exc
+    finally:
+        conn.close()
+
+
 def get_cabinet_clients_by_phones(tenant_id: int, phones: List[str]) -> Dict[str, Dict[str, Any]]:
     """Retourne les fiches cabinet en lot, indexées par téléphone normalisé E.164."""
     lookup_keys: List[str] = []

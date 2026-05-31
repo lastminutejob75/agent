@@ -65,6 +65,8 @@ from backend.db import (
     update_patient_fields,
     upsert_cabinet_client,
     upsert_call_followup,
+    change_cabinet_client_phone,
+    PatientPhoneChangeError,
 )
 from backend.google_calendar import GoogleCalendarNotFoundError, GoogleCalendarPermissionError, GoogleCalendarService
 from backend.handoffs import get_handoff_by_id, list_handoffs, update_handoff_status
@@ -3477,10 +3479,22 @@ def tenant_register_patient_practice(
 
 
 class PatientUpdateBody(BaseModel):
+    phone: Optional[str] = Field(default=None, max_length=40)
     email: Optional[str] = Field(default=None, max_length=254)
     birth_date: Optional[str] = Field(default=None, max_length=10)
     treating_physician_name: Optional[str] = Field(default=None, max_length=200)
     treating_physician_city: Optional[str] = Field(default=None, max_length=120)
+
+    @validator("phone")
+    def _validate_phone(cls, v):
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            raise ValueError("Numéro de téléphone requis")
+        if not is_valid_patient_phone(v):
+            raise ValueError("Numéro de téléphone invalide")
+        return v
 
     @validator("email")
     def _validate_email(cls, v):
@@ -3528,13 +3542,44 @@ class PatientDeleteConfirmBody(BaseModel):
     confirmation_phrase: str = Field(..., min_length=1, max_length=40)
 
 
+def _patient_docs_upload_root() -> str:
+    return os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads", "patient_docs")
+
+
+def _migrate_patient_docs_upload_dir(tenant_id: int, old_phone: str, new_phone: str) -> None:
+    """Déplace le dossier local des pièces jointes patient après changement de numéro."""
+    import shutil
+
+    old_norm = normalize_phone_number(old_phone) or str(old_phone or "").strip()
+    new_norm = normalize_phone_number(new_phone) or str(new_phone or "").strip()
+    if not old_norm or not new_norm or old_norm == new_norm:
+        return
+    old_dir = os.path.join(_patient_docs_upload_root(), str(tenant_id), old_norm)
+    new_dir = os.path.join(_patient_docs_upload_root(), str(tenant_id), new_norm)
+    if not os.path.isdir(old_dir):
+        return
+    if os.path.isdir(new_dir):
+        for name in os.listdir(old_dir):
+            src = os.path.join(old_dir, name)
+            dst = os.path.join(new_dir, name)
+            if os.path.isfile(src) and not os.path.exists(dst):
+                shutil.move(src, dst)
+        try:
+            os.rmdir(old_dir)
+        except OSError:
+            pass
+    else:
+        os.makedirs(os.path.dirname(new_dir), exist_ok=True)
+        shutil.move(old_dir, new_dir)
+
+
 @router.patch("/patients/{phone}")
 def tenant_update_patient(
     phone: str,
     body: PatientUpdateBody,
     auth: dict = Depends(require_tenant_auth),
 ):
-    """Met à jour les champs modifiables d'un patient (email, etc.)."""
+    """Met à jour les champs modifiables d'un patient (email, téléphone, etc.)."""
     tenant_id = auth["tenant_id"]
     phone_norm = normalize_phone_number(phone) or phone.strip()
     profile = get_cabinet_client_by_phone(tenant_id, phone)
@@ -3547,6 +3592,50 @@ def tenant_update_patient(
         raise HTTPException(404, "Fiche patient introuvable pour ce cabinet. Créez d'abord la fiche.")
 
     payload = body.model_dump(exclude_unset=True)
+    phone_changed = False
+    previous_phone = profile.get("phone") or phone_norm
+    current_phone = phone
+    updated = profile
+
+    if "phone" in payload:
+        new_phone_raw = payload.pop("phone")
+        new_phone_norm = normalize_phone_number(new_phone_raw or "")
+        if new_phone_norm and new_phone_norm != phone_norm:
+            dup = detect_patient_duplicate_conflicts(
+                tenant_id,
+                phone=new_phone_norm,
+                exclude_phone=phone_norm,
+            )
+            phone_conflicts = [c for c in dup.get("conflicts") or [] if c.get("field") == "phone"]
+            if phone_conflicts:
+                raise HTTPException(409, detail=_patient_duplicate_http_detail(phone_conflicts))
+            try:
+                updated = change_cabinet_client_phone(tenant_id, phone, new_phone_raw)
+            except PatientPhoneChangeError as exc:
+                if exc.code == "not_found":
+                    raise HTTPException(404, "Fiche patient introuvable pour ce cabinet.")
+                if exc.code == "invalid_phone":
+                    raise HTTPException(422, "Numéro de téléphone invalide")
+                if exc.code == "phone_conflict":
+                    raise HTTPException(
+                        409,
+                        detail=_patient_duplicate_http_detail(
+                            [
+                                {
+                                    "field": "phone",
+                                    "phone": new_phone_norm,
+                                    "display_name": "Autre patient",
+                                    "email": "",
+                                }
+                            ]
+                        ),
+                    )
+                raise HTTPException(500, "Impossible de modifier le numéro de téléphone.")
+            _migrate_patient_docs_upload_dir(tenant_id, phone_norm, new_phone_norm)
+            phone_changed = True
+            current_phone = updated.get("phone") or new_phone_norm
+            phone_norm = normalize_phone_number(current_phone) or current_phone
+
     if "email" in payload:
         next_email = payload.get("email")
         if next_email is not None and str(next_email).strip():
@@ -3557,33 +3646,40 @@ def tenant_update_patient(
                 exclude_phone=phone_norm,
             )
 
-    updated = update_patient_fields(
-        tenant_id,
-        phone,
-        email=payload.get("email"),
-        birth_date=payload.get("birth_date"),
-        treating_physician_name=payload.get("treating_physician_name"),
-        treating_physician_city=payload.get("treating_physician_city"),
-    )
-    if not updated:
-        logger.error(
-            "tenant_update_patient: update_patient_fields a renvoyé None tenant=%s phone=%s fields=%s",
+    if payload:
+        field_updated = update_patient_fields(
             tenant_id,
-            phone_norm,
-            sorted(payload.keys()),
+            current_phone,
+            email=payload.get("email"),
+            birth_date=payload.get("birth_date"),
+            treating_physician_name=payload.get("treating_physician_name"),
+            treating_physician_city=payload.get("treating_physician_city"),
         )
-        raise HTTPException(
-            500,
-            "Impossible de mettre à jour la fiche patient. "
-            "Si le problème persiste, contactez le support (migration profil 040).",
-        )
+        if field_updated:
+            updated = field_updated
+        elif not phone_changed:
+            logger.error(
+                "tenant_update_patient: update_patient_fields a renvoyé None tenant=%s phone=%s fields=%s",
+                tenant_id,
+                phone_norm,
+                sorted(payload.keys()),
+            )
+            raise HTTPException(
+                500,
+                "Impossible de mettre à jour la fiche patient. "
+                "Si le problème persiste, contactez le support (migration profil 040).",
+            )
     logger.info(
-        "tenant_update_patient ok tenant=%s phone=%s email_set=%s",
+        "tenant_update_patient ok tenant=%s phone=%s phone_changed=%s email_set=%s",
         tenant_id,
         phone_norm,
+        phone_changed,
         bool((updated.get("email") or "").strip()),
     )
-    return {"ok": True, "patient": updated}
+    resp: Dict[str, Any] = {"ok": True, "patient": updated}
+    if phone_changed:
+        resp["previous_phone"] = previous_phone
+    return resp
 
 
 def _build_patient_questionnaire_link(token: str) -> str:
@@ -3836,7 +3932,7 @@ def tenant_delete_patient_note(
     return {"ok": True}
 
 
-UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads", "patient_docs")
+UPLOAD_DIR = _patient_docs_upload_root()
 
 
 @router.post("/patients/{phone}/documents")
