@@ -19,7 +19,7 @@ export default function HomeTabsActionsPanel({
       </div>
       <div className="uwi-dashboard-quick-actions" style={S.quickActions}>
         <Btn variant="dark" icon="warn" onClick={onPriority}>Traiter les demandes prioritaires</Btn>
-        <Btn icon="calendar" onClick={onDayAgenda}>Voir les rendez-vous du jour</Btn>
+        <Btn icon="calendar" onClick={onDayAgenda}>RDV d&apos;aujourd&apos;hui (agenda)</Btn>
         <Btn variant="green" icon="message" onClick={onMessages}>Consulter les messages patients</Btn>
       </div>
       <div style={S.panelFooter}>

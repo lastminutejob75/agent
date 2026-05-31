@@ -11,7 +11,7 @@ export default function AgendaTodayCard({
   const Pill = PillComponent;
   return (
     <Card
-      title="Agenda du jour"
+      title="RDV d'aujourd'hui"
       icon="calendar"
       action={<button type="button" style={S.linkBtn} onClick={onOpenAgenda}>Voir l&apos;agenda ›</button>}
     >

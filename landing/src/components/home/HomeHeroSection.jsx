@@ -48,8 +48,8 @@ export default function HomeHeroSection({
             <Pill icon="check" onClick={onOpenHandledRequests}>
               {handledRequestsCount} demande{handledRequestsCount > 1 ? "s" : ""} traitée{handledRequestsCount > 1 ? "s" : ""}
             </Pill>
-            <Pill tone="blue" icon="plus" onClick={onOpenRdvToday}>
-              {rdvCreatedToday} RDV pris aujourd&apos;hui
+            <Pill tone="blue" icon="plus" onClick={onOpenRdvToday} title="Demandes confirmées aujourd'hui pour des dates futures (Clara, page publique, cabinet)">
+              {rdvCreatedToday} prise{rdvCreatedToday > 1 ? "s" : ""} de RDV aujourd&apos;hui
             </Pill>
             <Pill tone="green" icon="message" onClick={onOpenReminders}>
               {inProgressRequestsCount} en cours

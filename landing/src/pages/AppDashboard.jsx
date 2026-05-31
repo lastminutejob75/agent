@@ -338,6 +338,7 @@ export default function AppDashboard() {
       const day = (kpis?.days || []).find((d) => d?.date === todayISO());
       return Number.isFinite(Number(day?.bookings)) ? Number(day.bookings) : 0;
     })();
+  /** Créneaux prévus dans l'agenda pour la journée civile (≠ prises de RDV confirmées aujourd'hui). */
   const rdvPlannedToday = todaySlots.length;
   const callCount = Number.isFinite(Number(kpiCurrent.calls)) ? Number(kpiCurrent.calls) : calls.length;
   const aiCount = Number.isFinite(Number(kpiCurrent.calls_ia)) ? Number(kpiCurrent.calls_ia) : 0;
@@ -354,19 +355,19 @@ export default function AppDashboard() {
   const stats = [
     [
       String(rdvCreatedToday),
-      "RDV pris aujourd'hui",
-      rdvCreatedToday > 0 ? `+${Math.max(1, Math.round(rdvCreatedToday / 3))} depuis 9h` : "aucun pour l'instant",
+      "Prises de RDV aujourd'hui",
+      rdvCreatedToday > 0 ? "confirmées pour l'avenir" : "aucune confirmation aujourd'hui",
       "teal",
       "plus",
-      agendaTodayHref,
+      "/app/appels",
     ],
     [
       String(rdvPlannedToday),
-      "RDV au planning",
-      rdvPlannedToday > 0 ? "journée en cours" : "agenda vide",
+      "RDV d'aujourd'hui",
+      rdvPlannedToday > 0 ? "prévus dans l'agenda" : "agenda vide",
       "blue",
       "calendar",
-      "/app/agenda",
+      agendaTodayHref,
     ],
     [
       `${fillRate}%`,
@@ -413,9 +414,9 @@ export default function AppDashboard() {
     },
     {
       key: "today",
-      title: "Agenda du jour",
+      title: "RDV d'aujourd'hui",
       value: String(rdvPlannedToday),
-      hint: "Rendez-vous planifies aujourd'hui",
+      hint: "Prévus dans l'agenda (pas les prises du jour)",
       tone: "blue",
       action: () => navigate(`/app/agenda?view=day&date=${encodeURIComponent(todayISO())}`),
     },
@@ -447,7 +448,7 @@ export default function AppDashboard() {
         voiceNumber={me?.voice_number || me?.phone_number}
         contactEmail={me?.contact_email}
         onOpenHandledRequests={() => navigate("/app/demandes?status=Trait%C3%A9es")}
-        onOpenRdvToday={() => navigate(`/app/agenda?view=day&date=${encodeURIComponent(todayISO())}`)}
+        onOpenRdvToday={() => navigate("/app/appels")}
         onOpenReminders={() => navigate("/app/demandes?status=En%20cours")}
         ClaraPhotoComponent={ClaraPhoto}
         PillComponent={Pill}
