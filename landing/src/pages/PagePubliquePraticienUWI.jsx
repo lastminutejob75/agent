@@ -663,6 +663,39 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
   const [callbackMessage, setCallbackMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [actionRules, setActionRules] = useState(null);
+  const [verifiedContact, setVerifiedContact] = useState({ phone: "", email: "" });
+
+  const rememberLookupContact = (phoneRaw, emailRaw) => {
+    const phone = phoneRaw ? normalizeFrenchPhone(phoneRaw) : "";
+    const email = String(emailRaw || "").trim();
+    setVerifiedContact({ phone, email });
+    if (phone) setVerifyPhone(phoneRaw.trim());
+    if (email) setVerifyEmail(email);
+  };
+
+  const hasVerifiedContact = Boolean(
+    verifiedContact.phone || verifiedContact.email || verifyPhone.trim() || verifyEmail.trim(),
+  );
+
+  const resolveConfirmContact = () => {
+    const phoneRaw = verifyPhone.trim() || verifiedContact.phone || lookupPhone.trim();
+    const emailRaw = verifyEmail.trim() || verifiedContact.email || lookupEmail.trim();
+    return {
+      phone: phoneRaw ? normalizeFrenchPhone(phoneRaw) : "",
+      email: emailRaw.trim().toLowerCase(),
+      phoneRaw,
+      emailRaw,
+    };
+  };
+
+  const verifiedContactHint = () => {
+    if (selected?.phoneHint) return selected.phoneHint;
+    const { phoneRaw } = resolveConfirmContact();
+    if (!phoneRaw) return verifiedContact.email || lookupEmail.trim() || "";
+    const digits = phoneRaw.replace(/\D/g, "");
+    if (digits.length >= 4) return `${"•".repeat(Math.max(0, digits.length - 2))}${digits.slice(-2)}`;
+    return phoneRaw;
+  };
 
   useEffect(() => {
     const handle = (event) => {
@@ -698,6 +731,7 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
       }
       setAppointments(found);
       setActionRules(data?.rules || null);
+      rememberLookupContact(phone, email);
       const rulesText = rulesHint(data?.rules, mode);
       if (mode === "cancel" && data?.rules?.appointment_cancel_allowed === false) {
         setError(rulesText || "Annulation en ligne indisponible.");
@@ -763,8 +797,7 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
 
   const confirmCancel = async () => {
     if (!selected?.actionToken) return;
-    const phone = verifyPhone.trim();
-    const email = verifyEmail.trim();
+    const { phone, email } = resolveConfirmContact();
     if (!phone && !email) {
       setError("Indiquez le telephone ou l'email associe au rendez-vous.");
       return;
@@ -776,7 +809,7 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
         method: "POST",
         body: JSON.stringify({
           actionToken: selected.actionToken,
-          phone: phone ? normalizeFrenchPhone(phone) : undefined,
+          phone: phone || undefined,
           email: email || undefined,
           reason: cancelReason.trim() || undefined,
         }),
@@ -794,8 +827,7 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
 
   const confirmReschedule = async () => {
     if (!selected?.actionToken || !pickedSlot) return;
-    const phone = verifyPhone.trim();
-    const email = verifyEmail.trim();
+    const { phone, email } = resolveConfirmContact();
     if (!phone && !email) {
       setError("Indiquez le telephone ou l'email associe au rendez-vous.");
       return;
@@ -812,7 +844,7 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
         method: "POST",
         body: JSON.stringify({
           actionToken: selected.actionToken,
-          phone: phone ? normalizeFrenchPhone(phone) : undefined,
+          phone: phone || undefined,
           email: email || undefined,
           newSlotId: slotId,
           slotLabel: pickedSlot.label || "",
@@ -914,9 +946,17 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
               {rulesHint(actionRules, "cancel") ? (
                 <p className="actionModalHint">{rulesHint(actionRules, "cancel")}</p>
               ) : null}
-              <p className="actionModalHint">Pour confirmer l&apos;annulation, indiquez le telephone ou l&apos;email associe au rendez-vous.</p>
-              <input value={verifyPhone} onChange={(e) => setVerifyPhone(e.target.value)} placeholder="Telephone" type="tel" />
-              <input value={verifyEmail} onChange={(e) => setVerifyEmail(e.target.value)} placeholder="Email" type="email" />
+              {hasVerifiedContact ? (
+                <p className="actionModalHint">
+                  Confirmation avec vos coordonnees deja renseignees ({verifiedContactHint()}).
+                </p>
+              ) : (
+                <>
+                  <p className="actionModalHint">Pour confirmer l&apos;annulation, indiquez le telephone ou l&apos;email associe au rendez-vous.</p>
+                  <input value={verifyPhone} onChange={(e) => setVerifyPhone(e.target.value)} placeholder="Telephone" type="tel" />
+                  <input value={verifyEmail} onChange={(e) => setVerifyEmail(e.target.value)} placeholder="Email" type="email" />
+                </>
+              )}
               <input value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} placeholder="Motif (facultatif)" />
               {error ? <p className="fieldError">{error}</p> : null}
               <button className="primary" type="button" disabled={loading} onClick={() => void confirmCancel()}>
@@ -931,7 +971,11 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
               {rulesHint(actionRules, "reschedule") ? (
                 <p className="actionModalHint">{rulesHint(actionRules, "reschedule")}</p>
               ) : null}
-              <p className="actionModalHint">Choisissez un nouveau creneau, puis confirmez avec votre telephone ou email.</p>
+              <p className="actionModalHint">
+                {hasVerifiedContact
+                  ? "Choisissez un nouveau creneau, puis confirmez."
+                  : "Choisissez un nouveau creneau, puis confirmez avec votre telephone ou email."}
+              </p>
               <div className="actionSlotGrid">
                 {rescheduleSlots.map((slot) => (
                   <button
@@ -944,7 +988,12 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
                   </button>
                 ))}
               </div>
-              {pickedSlot ? (
+              {pickedSlot && hasVerifiedContact ? (
+                <p className="actionModalHint">
+                  Confirmation avec vos coordonnees deja renseignees ({verifiedContactHint()}).
+                </p>
+              ) : null}
+              {pickedSlot && !hasVerifiedContact ? (
                 <>
                   <input value={verifyPhone} onChange={(e) => setVerifyPhone(e.target.value)} placeholder="Telephone" type="tel" />
                   <input value={verifyEmail} onChange={(e) => setVerifyEmail(e.target.value)} placeholder="Email" type="email" />
