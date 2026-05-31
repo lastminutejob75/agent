@@ -40,15 +40,19 @@ export function agendaReschedulePayload(slot, newSlotId) {
 export function canCancelAgendaSlot(slot) {
   if (slot?.can_cancel === true) return true;
   const src = String(slot?.source || "").toUpperCase();
-  if (src !== "UWI") return false;
-  return Boolean(appointmentActionId(slot));
+  if (src !== "UWI" && src !== "PAGE_PUBLIQUE") return false;
+  return Boolean(appointmentActionId(slot) || appointmentGoogleEventId(slot));
 }
 
 export function canRescheduleAgendaSlot(slot) {
   if (slot?.can_reschedule === true) return true;
   const apptId = appointmentLocalId(slot);
   const slotId = Number(slot?.slot_id);
-  return apptId != null && Number.isFinite(slotId) && slotId > 0;
+  if (apptId != null && Number.isFinite(slotId) && slotId > 0) return true;
+  const googleId = appointmentGoogleEventId(slot);
+  const src = String(slot?.source || "").toUpperCase();
+  if (googleId && (src === "UWI" || src === "PAGE_PUBLIQUE")) return true;
+  return false;
 }
 
 export function isAgendaSlotPast(startDate, now = Date.now()) {

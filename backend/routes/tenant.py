@@ -1094,6 +1094,20 @@ def _dashboard_patient_file_has_validated_identity(profile: Optional[Dict[str, A
     return len(vn) >= 2
 
 
+def _cabinet_patient_record_exists(profile: Optional[Dict[str, Any]]) -> bool:
+    """True dès qu'une fiche patient existe pour ce numéro (même sans identité validée)."""
+    return profile is not None
+
+
+def _agenda_uwi_can_reschedule(source: str, mirror_booking: Optional[Dict[str, Any]], event_id: Any) -> bool:
+    """Déplacement autorisé : miroir local complet ou événement Google UWI (RDV page publique / Clara)."""
+    if (source or "").strip().upper() != "UWI":
+        return False
+    if mirror_booking and int(mirror_booking.get("id") or 0) > 0 and int(mirror_booking.get("slot_id") or 0) > 0:
+        return True
+    return bool(str(event_id or "").strip())
+
+
 def _agenda_lookup_dashboard_patient_profile(
     tenant_id: int,
     phone_norm: str,
@@ -1114,14 +1128,16 @@ def _decorate_agenda_slots_patient_has_file(
     slots: List[Dict[str, Any]],
     profile_cache: Dict[str, Optional[Dict[str, Any]]],
 ) -> None:
-    """Ajoute ``patient_has_file`` : True si une fiche patient existe avec identité validée sur le dashboard client."""
+    """Ajoute ``patient_has_file`` : True si une fiche patient existe pour ce numéro (cabinet_clients)."""
     for item in slots:
         phone_norm = normalize_phone_number(item.get("patient_phone") or "")
         if not phone_norm:
             item["patient_has_file"] = False
+            item["patient_identity_validated"] = False
             continue
         profile = _agenda_lookup_dashboard_patient_profile(tenant_id, phone_norm, profile_cache)
-        item["patient_has_file"] = _dashboard_patient_file_has_validated_identity(profile)
+        item["patient_has_file"] = _cabinet_patient_record_exists(profile)
+        item["patient_identity_validated"] = _dashboard_patient_file_has_validated_identity(profile)
 
 
 def _warm_agenda_profiles_from_contact_strings(
@@ -4203,11 +4219,7 @@ def tenant_agenda(
                     "appointment_id": int(mirror_booking.get("id") or 0) if mirror_booking else None,
                     "slot_id": int(mirror_booking.get("slot_id") or 0) if mirror_booking else None,
                     "can_cancel": bool(source == "UWI"),
-                    "can_reschedule": bool(
-                        mirror_booking
-                        and int(mirror_booking.get("id") or 0) > 0
-                        and int(mirror_booking.get("slot_id") or 0) > 0
-                    ),
+                    "can_reschedule": _agenda_uwi_can_reschedule(source, mirror_booking, event.get("id")),
                     **meta,
                 })
         except Exception as e:
@@ -4554,7 +4566,7 @@ def tenant_agenda_bulk(
                         "appointment_id": int(mirror_booking.get("id") or 0) if mirror_booking else None,
                         "slot_id": int(mirror_booking.get("slot_id") or 0) if mirror_booking else None,
                         "can_cancel": bool(source == "UWI"),
-                        "can_reschedule": bool(mirror_booking),
+                        "can_reschedule": _agenda_uwi_can_reschedule(source, mirror_booking, event.get("id")),
                     }
                 )
         except Exception as e:
@@ -5120,26 +5132,33 @@ def _mark_pending_handoffs_processed(tenant_id: int, booking: dict) -> None:
 
 @router.post("/agenda/appointments/{appointment_id}/reschedule")
 def tenant_agenda_reschedule_appointment(
-    appointment_id: int,
+    appointment_id: str,
     body: TenantAgendaRescheduleBody,
     auth: dict = Depends(require_tenant_auth),
 ):
-    """Déplace un RDV UWI local vers un autre créneau libre (mode local uniquement)."""
+    """Déplace un RDV UWI (local et/ou Google Calendar)."""
     tenant_id = auth["tenant_id"]
     detail = _get_tenant_detail(tenant_id)
     if not detail:
         raise HTTPException(404, "Tenant not found")
     params = detail.get("params") or {}
-    booking = _get_local_appointment_by_id(tenant_id, appointment_id)
-    if not booking:
-        raise HTTPException(404, "Rendez-vous introuvable")
+    raw_appointment_id = (appointment_id or "").strip()
+    local_appt_id: Optional[int] = None
+    booking: Optional[Dict[str, Any]] = None
+    if raw_appointment_id.isdigit():
+        local_appt_id = int(raw_appointment_id)
+        booking = _get_local_appointment_by_id(tenant_id, local_appt_id)
+        if not booking:
+            local_appt_id = None
+
     if (params.get("calendar_provider") or "").strip() == "google":
-        if not _google_mirror_enabled(detail):
-            raise HTTPException(400, "Déplacement automatique indisponible avec Google Calendar")
+        explicit_event_id = (body.external_event_id or "").strip()
+        if not explicit_event_id and raw_appointment_id and not raw_appointment_id.isdigit():
+            explicit_event_id = raw_appointment_id
         event_id = _resolve_google_event_id_for_booking(
             tenant_id,
             detail,
-            explicit_event_id=(body.external_event_id or "").strip(),
+            explicit_event_id=explicit_event_id,
             local_booking=booking,
         )
         if not event_id:
@@ -5147,14 +5166,84 @@ def tenant_agenda_reschedule_appointment(
         rules = get_booking_rules(tenant_id)
         duration_minutes = int(rules.get("duration_minutes") or 15)
         tz_name = _tenant_timezone(detail)
-        old_window = _get_slot_window(tenant_id, int(booking.get("slot_id") or 0), tz_name, duration_minutes)
         new_window = _get_slot_window(tenant_id, int(body.new_slot_id), tz_name, duration_minutes)
-        if not old_window or not new_window:
+        if not new_window:
             raise HTTPException(400, "Créneau introuvable")
-
-        old_start, old_end = old_window
         new_start, new_end = new_window
         service = GoogleCalendarService((params.get("calendar_id") or "").strip())
+
+        if booking and local_appt_id:
+            if not _google_mirror_enabled(detail):
+                raise HTTPException(400, "Déplacement automatique indisponible avec Google Calendar")
+            old_window = _get_slot_window(tenant_id, int(booking.get("slot_id") or 0), tz_name, duration_minutes)
+            if not old_window:
+                raise HTTPException(400, "Créneau introuvable")
+            old_start, old_end = old_window
+            try:
+                moved = service.reschedule_appointment(
+                    event_id,
+                    new_start.isoformat(),
+                    new_end.isoformat(),
+                    timezone=tz_name,
+                )
+            except Exception as e:
+                logger.warning(
+                    "tenant agenda reschedule google failed tenant_id=%s appointment_id=%s event_id=%s err=%s",
+                    tenant_id,
+                    local_appt_id,
+                    event_id,
+                    e,
+                )
+                raise HTTPException(502, "Impossible de déplacer ce rendez-vous Google pour le moment")
+            if not moved:
+                raise HTTPException(400, "Déplacement impossible")
+            try:
+                ok = reschedule_booking_atomic(local_appt_id, int(body.new_slot_id), tenant_id=tenant_id)
+            except Exception as e:
+                logger.warning(
+                    "tenant agenda reschedule local mirror exception tenant_id=%s appointment_id=%s new_slot_id=%s err=%s",
+                    tenant_id,
+                    local_appt_id,
+                    body.new_slot_id,
+                    e,
+                )
+                rollback_ok = service.reschedule_appointment(
+                    event_id,
+                    old_start.isoformat(),
+                    old_end.isoformat(),
+                    timezone=tz_name,
+                )
+                if rollback_ok:
+                    raise HTTPException(409, "Le créneau sélectionné n'est plus disponible")
+                raise HTTPException(502, "Le rendez-vous Google a été déplacé mais le miroir interne n'a pas pu être remis à jour")
+            if ok is False:
+                rollback_ok = service.reschedule_appointment(
+                    event_id,
+                    old_start.isoformat(),
+                    old_end.isoformat(),
+                    timezone=tz_name,
+                )
+                logger.warning(
+                    "tenant agenda reschedule local mirror failed tenant_id=%s appointment_id=%s new_slot_id=%s rollback_ok=%s",
+                    tenant_id,
+                    local_appt_id,
+                    body.new_slot_id,
+                    rollback_ok,
+                )
+                if rollback_ok:
+                    raise HTTPException(409, "Le créneau sélectionné n'est plus disponible")
+                raise HTTPException(502, "Le rendez-vous Google a été déplacé mais le miroir interne n'a pas pu être remis à jour")
+            logger.info(
+                "tenant agenda reschedule google ok tenant_id=%s appointment_id=%s event_id=%s new_slot_id=%s",
+                tenant_id,
+                local_appt_id,
+                event_id,
+                body.new_slot_id,
+            )
+            _mark_pending_handoffs_processed(tenant_id, booking)
+            _invalidate_tenant_agenda_detail_cache(tenant_id)
+            return {"ok": True, "rescheduled": True, "provider": "google+local", "google_synced": True}
+
         try:
             moved = service.reschedule_appointment(
                 event_id,
@@ -5164,68 +5253,32 @@ def tenant_agenda_reschedule_appointment(
             )
         except Exception as e:
             logger.warning(
-                "tenant agenda reschedule google failed tenant_id=%s appointment_id=%s event_id=%s err=%s",
+                "tenant agenda reschedule google-only failed tenant_id=%s event_id=%s err=%s",
                 tenant_id,
-                appointment_id,
                 event_id,
                 e,
             )
             raise HTTPException(502, "Impossible de déplacer ce rendez-vous Google pour le moment")
         if not moved:
             raise HTTPException(400, "Déplacement impossible")
-        try:
-            ok = reschedule_booking_atomic(appointment_id, int(body.new_slot_id), tenant_id=tenant_id)
-        except Exception as e:
-            logger.warning(
-                "tenant agenda reschedule local mirror exception tenant_id=%s appointment_id=%s new_slot_id=%s err=%s",
-                tenant_id,
-                appointment_id,
-                body.new_slot_id,
-                e,
-            )
-            rollback_ok = service.reschedule_appointment(
-                event_id,
-                old_start.isoformat(),
-                old_end.isoformat(),
-                timezone=tz_name,
-            )
-            if rollback_ok:
-                raise HTTPException(409, "Le créneau sélectionné n'est plus disponible")
-            raise HTTPException(502, "Le rendez-vous Google a été déplacé mais le miroir interne n'a pas pu être remis à jour")
-        if ok is False:
-            rollback_ok = service.reschedule_appointment(
-                event_id,
-                old_start.isoformat(),
-                old_end.isoformat(),
-                timezone=tz_name,
-            )
-            logger.warning(
-                "tenant agenda reschedule local mirror failed tenant_id=%s appointment_id=%s new_slot_id=%s rollback_ok=%s",
-                tenant_id,
-                appointment_id,
-                body.new_slot_id,
-                rollback_ok,
-            )
-            if rollback_ok:
-                raise HTTPException(409, "Le créneau sélectionné n'est plus disponible")
-            raise HTTPException(502, "Le rendez-vous Google a été déplacé mais le miroir interne n'a pas pu être remis à jour")
         logger.info(
-            "tenant agenda reschedule google ok tenant_id=%s appointment_id=%s event_id=%s new_slot_id=%s",
+            "tenant agenda reschedule google-only ok tenant_id=%s event_id=%s new_slot_id=%s",
             tenant_id,
-            appointment_id,
             event_id,
             body.new_slot_id,
         )
-        _mark_pending_handoffs_processed(tenant_id, booking)
         _invalidate_tenant_agenda_detail_cache(tenant_id)
-        return {"ok": True, "rescheduled": True, "provider": "google+local", "google_synced": True}
-    ok = reschedule_booking_atomic(appointment_id, int(body.new_slot_id), tenant_id=tenant_id)
+        return {"ok": True, "rescheduled": True, "provider": "google", "google_synced": True}
+
+    if not booking or local_appt_id is None:
+        raise HTTPException(404, "Rendez-vous introuvable")
+    ok = reschedule_booking_atomic(local_appt_id, int(body.new_slot_id), tenant_id=tenant_id)
     if ok is False:
         raise HTTPException(409, "Le créneau sélectionné n'est plus disponible")
     logger.info(
         "tenant agenda reschedule local ok tenant_id=%s appointment_id=%s new_slot_id=%s",
         tenant_id,
-        appointment_id,
+        local_appt_id,
         body.new_slot_id,
     )
     _mark_pending_handoffs_processed(tenant_id, booking)

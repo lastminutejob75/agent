@@ -14,6 +14,7 @@ import { bookingOriginLabel } from "../lib/agendaPatientMeta.js";
 import {
   agendaCancelPayload,
   agendaReschedulePayload,
+  appointmentGoogleEventId,
   appointmentLocalId,
   canCancelAgendaSlot,
   canRescheduleAgendaSlot,
@@ -490,7 +491,7 @@ function InlineDetail({
           </button>
         ) : null}
         {a.canReschedule && !confirmCancel && !rescheduleMode && (
-          <button type="button" onClick={onStartReschedule} style={S.inlineRescheduleBtn}>🔄 Déplacer</button>
+          <button type="button" onClick={onStartReschedule} style={S.inlineRescheduleBtn}>🔄 Déplacer RDV</button>
         )}
         {a.canCancel && !confirmCancel && !rescheduleMode && (
           <button type="button" onClick={() => setConfirmCancel(true)} style={S.inlineDangerBtn}>Annuler RDV</button>
@@ -1390,14 +1391,17 @@ export default function AppAgenda() {
   async function handleReschedule(slot) {
     if (!selectedAppt) return;
     const apptId = appointmentLocalId(selectedAppt);
-    if (!apptId) {
-      setActionMsg({ text: "Déplacement impossible : rendez-vous introuvable en base UWi.", type: "error" });
+    const actionId = apptId
+      ? String(apptId)
+      : (appointmentGoogleEventId(selectedAppt) || String(selectedAppt.event_id || "").trim());
+    if (!actionId) {
+      setActionMsg({ text: "Déplacement impossible : rendez-vous introuvable.", type: "error" });
       return;
     }
     setActionLoading(true);
     try {
       const res = await api.tenantRescheduleAgendaAppointment(
-        String(apptId),
+        actionId,
         agendaReschedulePayload(selectedAppt, slot.slot_id),
       );
       const fmtDate = new Date(`${slot.date}T12:00:00`).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
@@ -1551,6 +1555,11 @@ export default function AppAgenda() {
   }
 
   function openPatientCreateFromAppointment(appt) {
+    const phone = normalizePhone(appt?.patient_phone || "");
+    if (phone && appt?.patient_has_file) {
+      navigate(`/app/patient-dashboard?phone=${encodeURIComponent(phone)}`);
+      return;
+    }
     const fromName = splitAgendaPatientName(appt?.patient);
     const motif = String(appt?.type || "").trim();
     const initialNote = [

@@ -941,7 +941,7 @@ def fetch_public_bookings_for_agenda(
                 cur.execute(
                     """
                     SELECT id, patient_name, patient_phone, motif, slot_label, status,
-                           start_iso, created_at, source, booking_code
+                           start_iso, created_at, source, booking_code, google_event_id
                     FROM public_bookings
                     WHERE tenant_id = %s
                       AND status IN ('confirmed', 'pending')
@@ -970,6 +970,8 @@ def fetch_public_bookings_for_agenda(
         status = (row.get("status") or "pending").strip()
         raw_src = (row.get("source") or "").strip()
         booking_origin_disp = booking_origin_canonical(raw_src or "page_publique")
+        google_event_id = str(row.get("google_event_id") or "").strip()
+        confirmed = status == "confirmed"
         slots.append(
             {
                 "date": start_local.strftime("%Y-%m-%d"),
@@ -983,14 +985,16 @@ def fetch_public_bookings_for_agenda(
                 "booking_origin": booking_origin_disp,
                 "done": end_local <= now_local,
                 "current": start_local <= now_local < end_local,
-                "event_id": str(row.get("id") or ""),
+                "event_id": google_event_id or str(row.get("id") or ""),
                 "appointment_id": None,
                 "slot_id": None,
-                "can_cancel": False,
-                "can_reschedule": False,
+                "can_cancel": confirmed and bool(google_event_id or start_local),
+                "can_reschedule": confirmed and bool(google_event_id),
                 "booking_status": status,
                 "slot_label": (row.get("slot_label") or "").strip(),
                 "booking_code": (row.get("booking_code") or "").strip(),
+                "public_booking_id": str(row.get("id") or ""),
+                "google_event_id": google_event_id,
             }
         )
     return slots
