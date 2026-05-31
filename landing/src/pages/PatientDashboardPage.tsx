@@ -793,7 +793,6 @@ export default function PatientDashboardPage() {
   const [tenantListLoading, setTenantListLoading] = useState(true);
   const [tenantListError, setTenantListError] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
-  const sidebarBootstrapDoneRef = useRef(false);
   const patientDetailCacheRef = useRef(new Map<string, {
     nonce: number;
     ts: number;
@@ -1078,20 +1077,6 @@ export default function PatientDashboardPage() {
       window.clearTimeout(timer);
     };
   }, [query]);
-
-  useEffect(() => {
-    if (tenantListLoading) return;
-    if (normalizePhone(searchParams.get("phone") || "")) return;
-    if ((searchParams.get("requestId") || "").trim()) return;
-    if (!tenantSidebarRows.length) return;
-    if (sidebarBootstrapDoneRef.current) return;
-    sidebarBootstrapDoneRef.current = true;
-    const first = normalizePhone(tenantSidebarRows[0]?.phone || "");
-    if (!first) return;
-    const np = new URLSearchParams(searchParams);
-    np.set("phone", first);
-    setSearchParams(np, { replace: true });
-  }, [tenantListLoading, tenantSidebarRows, searchParams, setSearchParams]);
 
   const effectiveSidebarRows = useMemo(() => {
     let rows = injectSelectedPatientRow([...tenantSidebarRows], tenantPatientPhone, urlPatientHero);
@@ -2436,6 +2421,18 @@ export default function PatientDashboardPage() {
           ) : null}
 
           <div className="hidden xl:block">
+          {!tenantPatientPhone ? (
+            <div className="flex min-h-[420px] items-center justify-center rounded-[28px] border border-[#E2EAF4] bg-white p-10 text-center shadow-[0_12px_32px_rgba(10,22,40,0.05)]">
+              <div className="max-w-md">
+                <div className="mb-4 text-5xl">👤</div>
+                <h2 className="text-2xl font-black text-[#0A1628]">Sélectionnez un patient</h2>
+                <p className="mt-3 text-sm leading-7 text-[#61708B]">
+                  Choisissez un patient dans la liste pour afficher sa fiche, son historique et ses rendez-vous.
+                </p>
+              </div>
+            </div>
+          ) : (
+          <>
           <section className="overflow-hidden rounded-[24px] border border-[#E2EAF4] bg-white shadow-[0_12px_32px_rgba(10,22,40,0.05)] sm:rounded-[28px] sm:shadow-[0_18px_45px_rgba(10,22,40,0.06)]">
             <div className="h-1 bg-gradient-to-r from-[#009CA4] via-[#00B3A4] to-[#004C69]" />
             {tenantPatientPhone ? (
@@ -2619,6 +2616,8 @@ export default function PatientDashboardPage() {
               <PrimaryCTA variant="document" onClick={() => setModal("addDocument")}>▤ Ajouter un document</PrimaryCTA>
             </div>
           </section>
+          </>
+          )}
           </div>
 
           {tenantPatientPhone && !activeRequestDetail && (patientOpenRequests.length > 0 || requestsLoading) ? (
