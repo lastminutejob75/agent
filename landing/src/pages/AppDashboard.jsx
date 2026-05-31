@@ -3,6 +3,7 @@ import { useNavigate, useOutletContext } from "react-router-dom";
 import { agendaSlotMotif, formatAgendaSlotHour, parseAgendaSlotStart } from "../lib/agendaSlotParse.js";
 import { buildAgendaViewUrl } from "../lib/agendaAppointmentActions.js";
 import { api } from "../lib/api.js";
+import { computeUpcomingFillRate, monthsCoveringHorizon } from "../lib/agendaFillRate.js";
 import HomeHeroSection from "../components/home/HomeHeroSection.jsx";
 import { buildRequestItemsFromCallsAndHandoffs, summarizeRequestItems } from "../lib/requestUiStatus.js";
 import HomeTabsActionsPanel from "../components/home/HomeTabsActionsPanel.jsx";
@@ -196,7 +197,7 @@ export default function AppDashboard() {
   const [handoffs, setHandoffs] = useState([]);
   const [callbacks, setCallbacks] = useState([]);
   const [calls, setCalls] = useState([]);
-  const [todayOpenSlots, setTodayOpenSlots] = useState([]);
+  const [freeSlotsByDate, setFreeSlotsByDate] = useState({});
   const [connections, setConnections] = useState({ vapi: null, calendar: null });
 
   const notify = (msg) => {
@@ -207,7 +208,8 @@ export default function AppDashboard() {
 
   const loadDashboard = useCallback(async (cancelledRef) => {
     setLoading(true);
-    const [kpiRes, agendaRes, handoffRes, callRes, callbackRes, vapiRes, calendarRes, openSlotsRes] = await Promise.allSettled([
+    const availMonths = monthsCoveringHorizon(new Date(), 7);
+    const [kpiRes, agendaRes, handoffRes, callRes, callbackRes, vapiRes, calendarRes, ...availDateResults] = await Promise.allSettled([
       api.tenantKpis(1),
       api.tenantGetAgenda("?upcoming_days=14&compact=1"),
       api.tenantGetHandoffs("?limit=30&days=30"),
@@ -215,7 +217,7 @@ export default function AppDashboard() {
       api.tenantGetCallbackRequests("?limit=30"),
       api.tenantVapiStatus(),
       api.tenantGetCalendarStatus(),
-      api.tenantGetAgendaAvailableSlots(`?date=${todayISO()}`),
+      ...availMonths.map((month) => api.tenantGetAgendaAvailableDates(month)),
     ]);
 
     if (cancelledRef?.cancelled) return;
@@ -223,11 +225,13 @@ export default function AppDashboard() {
     if (agendaRes.status === "fulfilled") setAgenda(Array.isArray(agendaRes.value?.slots) ? agendaRes.value.slots : []);
     if (handoffRes.status === "fulfilled") setHandoffs(Array.isArray(handoffRes.value?.items) ? handoffRes.value.items : []);
     if (callRes.status === "fulfilled") setCalls(Array.isArray(callRes.value?.calls) ? callRes.value.calls : []);
-    if (openSlotsRes.status === "fulfilled") {
-      setTodayOpenSlots(Array.isArray(openSlotsRes.value?.slots) ? openSlotsRes.value.slots : []);
-    } else {
-      setTodayOpenSlots([]);
-    }
+    const mergedFree = {};
+    availDateResults.forEach((res) => {
+      if (res.status !== "fulfilled") return;
+      const dates = res.value?.dates;
+      if (dates && typeof dates === "object") Object.assign(mergedFree, dates);
+    });
+    setFreeSlotsByDate(mergedFree);
     if (callbackRes.status === "fulfilled") setCallbacks(Array.isArray(callbackRes.value?.items) ? callbackRes.value.items : []);
     setConnections({
       vapi: vapiRes.status === "fulfilled" ? vapiRes.value : null,
@@ -368,10 +372,16 @@ export default function AppDashboard() {
     })();
   /** Créneaux prévus dans l'agenda pour la journée civile (≠ prises de RDV confirmées aujourd'hui). */
   const rdvPlannedToday = todaySlots.length;
-  const agendaCapacityToday = rdvPlannedToday + todayOpenSlots.length;
-  const fillRate = agendaCapacityToday > 0
-    ? Math.min(100, Math.round((rdvPlannedToday / agendaCapacityToday) * 100))
-    : 0;
+  const fillStats = useMemo(
+    () => computeUpcomingFillRate({
+      today,
+      bookedEntries: sortedBookedSlots,
+      freeSlotsByDate,
+      horizonDays: 7,
+    }),
+    [today, sortedBookedSlots, freeSlotsByDate],
+  );
+  const { fillRate, totalBooked: fillBooked, totalCapacity: fillCapacity } = fillStats;
   const cancellationsToday = useMemo(
     () => calls.filter((call) => {
       if (!isCancellationCall(call)) return false;
@@ -412,12 +422,12 @@ export default function AppDashboard() {
     [
       `${fillRate}%`,
       "Taux de remplissage",
-      agendaCapacityToday > 0
-        ? `${rdvPlannedToday}/${agendaCapacityToday} créneaux réservés aujourd'hui`
-        : "aucun créneau ouvert aujourd'hui",
+      fillCapacity > 0
+        ? `${fillBooked}/${fillCapacity} créneaux réservés sur 7 jours`
+        : "aucun créneau ouvert sur 7 jours",
       "green",
       "chart",
-      agendaTodayHref,
+      `/app/agenda?view=week&date=${encodeURIComponent(todayISO())}`,
     ],
     [
       String(cancellationsToday),
