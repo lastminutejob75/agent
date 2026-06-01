@@ -330,15 +330,9 @@ export default function ClientCabinetProfilePage() {
       setLoading(true);
       setError("");
       try {
-        const [profileData, summaryData, calendarData] = await Promise.all([
-          api.tenantGetProfile(),
-          api.tenantGetProfileSummary().catch(() => null),
-          api.tenantGetCalendarStatus().catch(() => ({ connected: false, permission_status: "unknown" })),
-        ]);
+        const profileData = await api.tenantGetProfile();
         if (cancelled) return;
         setProfile({ ...emptyProfile, ...(profileData || {}) });
-        if (summaryData) setProfileSummary(summaryData);
-        setCalendarStatus(calendarData || { connected: false, permission_status: "unknown" });
         loadedTabsRef.current.add("cabinet");
         setDirty(false);
       } catch (e) {
@@ -347,6 +341,18 @@ export default function ClientCabinetProfilePage() {
       } finally {
         if (!cancelled) setLoading(false);
       }
+
+      api
+        .tenantGetProfileSummary()
+        .then((summaryData) => {
+          if (cancelled || !summaryData) return;
+          setProfileSummary(summaryData);
+          setCalendarStatus({
+            connected: Boolean(summaryData.calendar_connected),
+            permission_status: summaryData.calendar_connected ? "ok" : "missing",
+          });
+        })
+        .catch(() => {});
     }
     loadEssentials();
     return () => {

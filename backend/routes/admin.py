@@ -3984,8 +3984,22 @@ def _get_calls_list(
                     cursor=cursor,
                     result_filter=result_filter,
                 )
-                if canonical_items:
-                    items.extend(canonical_items)
+                items.extend(canonical_items or [])
+                # Espace client : vapi_calls suffit — évite le double scan PG + agrégat ivr_events.
+                if tenant_detail is not None:
+                    items.sort(
+                        key=lambda x: ((x.get("last_event_at") or ""), (x.get("call_id") or "")),
+                        reverse=True,
+                    )
+                    if len(items) > limit:
+                        last_item = items[limit - 1]
+                        t_iso = str(last_item.get("last_event_at") or "")
+                        c_id = last_item.get("call_id") or ""
+                        next_cursor = base64.urlsafe_b64encode(
+                            json.dumps({"t": t_iso, "c": c_id}).encode()
+                        ).decode().rstrip("=")
+                        items = items[:limit]
+                    return {"items": items, "next_cursor": next_cursor, "days": days}
 
             import psycopg
             from psycopg.rows import dict_row

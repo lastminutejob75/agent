@@ -2877,6 +2877,13 @@ def tenant_calls(
             conn.close()
     items = items[:limit]
     compact_mode = bool(compact)
+    if compact_mode and not items:
+        return {
+            "calls": [],
+            "total": 0,
+            "date": datetime.now(_get_zoneinfo(tz_name)).strftime("%Y-%m-%d"),
+            "_debug_tenant_id": tenant_id,
+        }
     if compact_mode:
         calls = []
         for item in items:

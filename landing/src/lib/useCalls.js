@@ -19,7 +19,7 @@ export function useCalls({ days = 30 } = {}) {
     setLoading(true);
     setError("");
     try {
-      const list = await getCalls({ days, limit: 50 });
+      const list = await getCalls({ days, limit: 50, compact: true });
       setCalls(list);
     } catch (e) {
       setError(e?.message || "Impossible de charger les appels.");
