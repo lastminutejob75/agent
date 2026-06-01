@@ -2028,6 +2028,7 @@ export default function PatientDashboardPage() {
           documents: [newDoc, ...cached.documents],
         });
       }
+      setPatientFetchNonce((n) => n + 1);
       notify("Document ajouté");
     } catch (e) {
       notify((e as Error)?.message || "Erreur upload document");
@@ -2039,10 +2040,7 @@ export default function PatientDashboardPage() {
   const downloadDocument = async (doc: PatientDocument) => {
     if (!tenantPatientPhone) return;
     try {
-      const url = api.tenantDownloadPatientDocument(tenantPatientPhone, doc.id);
-      const res = await fetch(url, { credentials: "include" });
-      if (!res.ok) throw new Error("Téléchargement échoué");
-      const blob = await res.blob();
+      const blob = await api.tenantFetchPatientDocument(tenantPatientPhone, doc.id);
       const objectUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = objectUrl;
@@ -2064,10 +2062,7 @@ export default function PatientDashboardPage() {
       return;
     }
     try {
-      const url = api.tenantDownloadPatientDocument(tenantPatientPhone, doc.id);
-      const res = await fetch(url, { credentials: "include" });
-      if (!res.ok) throw new Error("Impossible de charger le document");
-      const blob = await res.blob();
+      const blob = await api.tenantFetchPatientDocument(tenantPatientPhone, doc.id);
       const objectUrl = URL.createObjectURL(blob);
       setPreviewDoc(doc);
       setPreviewUrl(objectUrl);

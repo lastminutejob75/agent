@@ -90,6 +90,28 @@ export function isTenantUnauthorized(err) {
 const MSG_BACKEND_UNREACHABLE =
   "Impossible de joindre le serveur. Vérifiez VITE_UWI_API_BASE_URL, CORS et que le backend est démarré.";
 
+function tenantAuthHeaders(extra = {}) {
+  const headers = { ...extra };
+  const tenantToken = getTenantToken();
+  if (tenantToken && !headers.Authorization) {
+    headers.Authorization = `Bearer ${tenantToken}`;
+  }
+  return headers;
+}
+
+function parseApiError(data, statusText) {
+  let msg = (data && (data.detail || data.error || data.message)) || statusText;
+  if (typeof msg === "object" && msg !== null) {
+    msg = msg.message || JSON.stringify(msg);
+  }
+  if (Array.isArray(msg)) {
+    msg = msg
+      .map((item) => (typeof item === "object" && item !== null ? item.msg || JSON.stringify(item) : String(item)))
+      .join("; ");
+  }
+  return typeof msg === "string" ? msg : JSON.stringify(msg);
+}
+
 async function request(path, { method = "GET", body, admin: _admin = false, tenant: _tenant = false, leadToken = "", signal } = {}) {
   const url = `${BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
 
@@ -128,11 +150,7 @@ async function request(path, { method = "GET", body, admin: _admin = false, tena
   }
 
   if (!res.ok) {
-    let msg = (data && (data.detail || data.error || data.message)) || `HTTP ${res.status}`;
-    if (typeof msg === "object" && msg !== null) {
-      msg = msg.message || JSON.stringify(msg);
-    }
-    const err = new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+    const err = new Error(parseApiError(data, `HTTP ${res.status}`));
     err.status = res.status;
     err.data = data;
     throw err;
@@ -337,14 +355,46 @@ export const api = {
   tenantUploadPatientDocument: async (phone, file) => {
     const formData = new FormData();
     formData.append("file", file);
-    const base = (typeof import.meta !== "undefined" && import.meta.env?.VITE_UWI_API_BASE_URL) || "";
-    const url = `${base}/api/tenant/patients/${encodeURIComponent(phone)}/documents`;
-    const res = await fetch(url, { method: "POST", body: formData, credentials: "include" });
-    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || res.statusText); }
+    const url = `${BASE_URL}/api/tenant/patients/${encodeURIComponent(phone)}/documents`;
+    let res;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+        headers: tenantAuthHeaders(),
+      });
+    } catch (e) {
+      if (e?.message === "Failed to fetch" || (e?.name === "TypeError" && /fetch|network/i.test(e?.message || ""))) {
+        throw new Error(MSG_BACKEND_UNREACHABLE);
+      }
+      throw e;
+    }
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(parseApiError(e, res.statusText));
+    }
     return res.json();
   },
   tenantDownloadPatientDocument: (phone, docId) =>
-    `${(typeof import.meta !== "undefined" && import.meta.env?.VITE_UWI_API_BASE_URL) || ""}/api/tenant/patients/${encodeURIComponent(phone)}/documents/${docId}/download`,
+    `${BASE_URL}/api/tenant/patients/${encodeURIComponent(phone)}/documents/${docId}/download`,
+  tenantFetchPatientDocument: async (phone, docId) => {
+    const url = `${BASE_URL}/api/tenant/patients/${encodeURIComponent(phone)}/documents/${docId}/download`;
+    let res;
+    try {
+      res = await fetch(url, { credentials: "include", headers: tenantAuthHeaders() });
+    } catch (e) {
+      if (e?.message === "Failed to fetch" || (e?.name === "TypeError" && /fetch|network/i.test(e?.message || ""))) {
+        throw new Error(MSG_BACKEND_UNREACHABLE);
+      }
+      throw e;
+    }
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(parseApiError(e, res.statusText));
+    }
+    return res.blob();
+  },
   tenantDeletePatientDocument: (phone, docId) =>
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/documents/${docId}`, { method: "DELETE", tenant: true }),
   tenantPreparePatientDelete: (phone) =>

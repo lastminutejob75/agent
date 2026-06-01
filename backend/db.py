@@ -990,18 +990,15 @@ def list_patient_documents(tenant_id: int, phone: str) -> List[Dict[str, Any]]:
     phone_norm = normalize_phone_number(phone) or phone.strip()
     url = _pg_events_url()
     if url:
-        try:
-            from backend.pg_pool import pg_connection_for
-            with pg_connection_for(url) as conn:
-                _ensure_patient_documents_table_pg(conn)
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT * FROM patient_documents WHERE tenant_id = %s AND patient_phone = %s ORDER BY created_at DESC",
-                        (tenant_id, phone_norm),
-                    )
-                    return [dict(r) for r in cur.fetchall()]
-        except Exception:
-            pass
+        from backend.pg_pool import pg_connection_for
+        with pg_connection_for(url) as conn:
+            _ensure_patient_documents_table_pg(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM patient_documents WHERE tenant_id = %s AND patient_phone = %s ORDER BY created_at DESC",
+                    (tenant_id, phone_norm),
+                )
+                return [dict(r) for r in cur.fetchall()]
     conn = get_conn()
     _ensure_patient_documents_table(conn)
     conn.row_factory = sqlite3.Row

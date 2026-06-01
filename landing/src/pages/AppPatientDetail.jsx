@@ -361,10 +361,7 @@ export default function AppPatientDetail() {
 
   async function handleDownloadDoc(doc) {
     try {
-      const url = api.tenantDownloadPatientDocument(phone, doc.id);
-      const res = await fetch(url, { credentials: "include" });
-      if (!res.ok) throw new Error("Téléchargement échoué");
-      const blob = await res.blob();
+      const blob = await api.tenantFetchPatientDocument(phone, doc.id);
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
       a.download = doc.original_name || "document";
@@ -377,10 +374,7 @@ export default function AppPatientDetail() {
 
   async function handlePreviewDoc(doc) {
     try {
-      const url = api.tenantDownloadPatientDocument(phone, doc.id);
-      const res = await fetch(url, { credentials: "include" });
-      if (!res.ok) throw new Error("Impossible de charger le document");
-      const blob = await res.blob();
+      const blob = await api.tenantFetchPatientDocument(phone, doc.id);
       const objUrl = URL.createObjectURL(blob);
       setPreviewDoc(doc);
       setPreviewUrl(objUrl);
