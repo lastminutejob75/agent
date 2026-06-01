@@ -1028,9 +1028,11 @@ export default function AppAgenda() {
           .catch(() => null);
         if (isStaleLoad()) return;
         if (dayBulk?.dates && Object.prototype.hasOwnProperty.call(dayBulk.dates, selectedDate)) {
-          writeAgendaBulkStale([selectedDate], dayBulk);
           mergeAgendaDates(dayBulk, [selectedDate]);
           dayBulkSlotsCount = countSlotsInBulk(dayBulk, [selectedDate]);
+          if (dayBulkSlotsCount > 0) {
+            writeAgendaBulkStale([selectedDate], dayBulk);
+          }
           setCalendarLoading(false);
         }
         if (!dayBulk?.dates || !Object.prototype.hasOwnProperty.call(dayBulk.dates, selectedDate) || dayBulkSlotsCount === 0) {
@@ -1050,9 +1052,12 @@ export default function AppAgenda() {
           api.tenantGetAgendaBulk(fetchDates, { lightweight: true, timeoutMs: 22000 })
             .then(async (weekBulk) => {
               if (isStaleLoad() || !weekBulk?.dates) return;
-              writeAgendaBulkStale(fetchDates, weekBulk);
+              const weekBulkSlots = countSlotsInBulk(weekBulk, fetchDates);
+              if (weekBulkSlots > 0) {
+                writeAgendaBulkStale(fetchDates, weekBulk);
+              }
               mergeAgendaDates(weekBulk, fetchDates);
-              if (countSlotsInBulk(weekBulk, fetchDates) === 0 && !showedStale) {
+              if (weekBulkSlots === 0) {
                 await loadDatesFallback(fetchDates);
               }
             })
@@ -1067,9 +1072,12 @@ export default function AppAgenda() {
       const bulkRes = await api.tenantGetAgendaBulk(fetchDates, { lightweight: true }).catch(() => null);
       if (isStaleLoad()) return;
       if (bulkRes?.dates) {
-        writeAgendaBulkStale(fetchDates, bulkRes);
+        const bulkSlots = countSlotsInBulk(bulkRes, fetchDates);
+        if (bulkSlots > 0) {
+          writeAgendaBulkStale(fetchDates, bulkRes);
+        }
         mergeAgendaDates(bulkRes, fetchDates);
-        if (countSlotsInBulk(bulkRes, fetchDates) === 0 && !showedStale) {
+        if (bulkSlots === 0) {
           const results = await loadDatesFallback(fetchDates);
           if (!results) return;
           if (!results.some((row) => (row?.slots || []).length > 0)) {
