@@ -1180,6 +1180,12 @@ def _agenda_lookup_dashboard_patient_profile(
     return profile
 
 
+def _apply_agenda_lightweight_slot_defaults(slots: List[Dict[str, Any]]) -> None:
+    for item in slots or []:
+        item.setdefault("patient_has_file", False)
+        item.setdefault("patient_identity_validated", False)
+
+
 def _decorate_agenda_slots_patient_has_file(
     tenant_id: int,
     slots: List[Dict[str, Any]],
@@ -4776,6 +4782,7 @@ def tenant_agenda(
     date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     upcoming_days: int = Query(1, ge=1, le=366),
     compact: bool = Query(False),
+    lightweight: bool = Query(False, description="Mode allégé (sans enrichissement profils / public_bookings)"),
 ):
     """Retourne les rendez-vous du jour ou à venir depuis Google Calendar ou le stockage local."""
     tenant_id = auth["tenant_id"]
@@ -4797,10 +4804,11 @@ def tenant_agenda(
         day_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
         day_end = day_start + timedelta(days=max(1, int(upcoming_days)))
     compact_mode = bool(compact and not date)
+    fast_mode = compact_mode or lightweight
     slots: List[Dict[str, Any]] = []
     profile_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 
-    mirror_enabled = _google_mirror_enabled(detail)
+    mirror_enabled = _google_mirror_enabled(detail) and not lightweight
     mirror_lookup: Optional[Dict[str, List[Dict[str, Any]]]] = None
 
     google_cal = (
@@ -4843,7 +4851,7 @@ def tenant_agenda(
                 if executor is not None:
                     executor.shutdown(wait=True)
             google_events = result.get("items") or []
-            if not compact_mode:
+            if not fast_mode:
                 _warm_profile_cache_google_event_descriptions(tenant_id, google_events, profile_cache)
             for event in google_events:
                 raw_start = (event.get("start") or {}).get("dateTime") or (event.get("start") or {}).get("date")
@@ -4860,7 +4868,7 @@ def tenant_agenda(
                 description = (event.get("description") or "").strip()
                 patient = summary.replace("RDV - ", "", 1).strip() if summary.startswith("RDV - ") else (summary or "Patient")
                 patient_contact = _extract_calendar_event_patient_contact(description)
-                if not compact_mode:
+                if not fast_mode:
                     patient = _resolve_agenda_patient_name_cached(tenant_id, patient_contact, patient, profile_cache)
                 motif = _extract_google_description_line(description, "Motif") or (summary if summary and not summary.startswith("RDV - ") else "Consultation")
                 source = "UWI" if summary.startswith("RDV - ") or "Patient:" in description else "EXTERNAL"
@@ -4926,7 +4934,7 @@ def tenant_agenda(
                             (tenant_id, day_start.astimezone(timezone.utc), day_end.astimezone(timezone.utc)),
                         )
                         agenda_rows_pg_day = cur.fetchall()
-                        if not compact_mode:
+                        if not fast_mode:
                             _warm_agenda_profiles_from_contact_strings(
                                 tenant_id,
                                 (r.get("contact") for r in agenda_rows_pg_day),
@@ -4940,12 +4948,15 @@ def tenant_agenda(
                             if not date and start_local < now_local:
                                 continue
                             end_local = start_local + timedelta(minutes=30)
-                            patient_name = _resolve_agenda_patient_name_cached(
-                                tenant_id,
-                                row.get("contact"),
-                                row.get("name"),
-                                profile_cache,
-                            )
+                            if fast_mode:
+                                patient_name = str(row.get("name") or "").strip() or "Patient"
+                            else:
+                                patient_name = _resolve_agenda_patient_name_cached(
+                                    tenant_id,
+                                    row.get("contact"),
+                                    row.get("name"),
+                                    profile_cache,
+                                )
                             meta = _agenda_slot_meta(
                                 start_local=start_local,
                                 end_local=end_local,
@@ -4987,11 +4998,12 @@ def tenant_agenda(
                     """,
                     (tenant_id, day_start.strftime("%Y-%m-%d")),
                 ).fetchall()
-                _warm_agenda_profiles_from_contact_strings(
-                    tenant_id,
-                    (row["contact"] for row in sqlite_agenda_day_rows),
-                    profile_cache,
-                )
+                if not fast_mode:
+                    _warm_agenda_profiles_from_contact_strings(
+                        tenant_id,
+                        (row["contact"] for row in sqlite_agenda_day_rows),
+                        profile_cache,
+                    )
                 for row in sqlite_agenda_day_rows:
                     start_local = _parse_dt(f"{row['date']}T{row['time']}:00", tz_name)
                     if not start_local:
@@ -4999,7 +5011,10 @@ def tenant_agenda(
                     if not date and start_local < now_local:
                         continue
                     end_local = start_local + timedelta(minutes=30)
-                    patient_name = _resolve_agenda_patient_name_cached(tenant_id, row["contact"], row["name"], profile_cache)
+                    if fast_mode:
+                        patient_name = str(row["name"] or "").strip() or "Patient"
+                    else:
+                        patient_name = _resolve_agenda_patient_name_cached(tenant_id, row["contact"], row["name"], profile_cache)
                     meta = _agenda_slot_meta(
                         start_local=start_local,
                         end_local=end_local,
@@ -5027,29 +5042,32 @@ def tenant_agenda(
             finally:
                 conn.close()
 
-    try:
-        from backend.public_bookings_pg import fetch_public_bookings_for_agenda
+    if not lightweight:
+        try:
+            from backend.public_bookings_pg import fetch_public_bookings_for_agenda
 
-        public_slots = fetch_public_bookings_for_agenda(
-            tenant_id,
-            day_start,
-            day_end,
-            tz_name,
-            now_local,
-            include_past_on_date=bool(date),
-        )
-        existing_ids = {str(item.get("event_id") or "") for item in slots}
-        for item in public_slots:
-            event_id = str(item.get("event_id") or "")
-            if event_id and event_id in existing_ids:
-                continue
-            slots.append(item)
-    except Exception as exc:
-        logger.debug("tenant agenda public_bookings merge skipped tenant=%s: %s", tenant_id, exc)
+            public_slots = fetch_public_bookings_for_agenda(
+                tenant_id,
+                day_start,
+                day_end,
+                tz_name,
+                now_local,
+                include_past_on_date=bool(date),
+            )
+            existing_ids = {str(item.get("event_id") or "") for item in slots}
+            for item in public_slots:
+                event_id = str(item.get("event_id") or "")
+                if event_id and event_id in existing_ids:
+                    continue
+                slots.append(item)
+        except Exception as exc:
+            logger.debug("tenant agenda public_bookings merge skipped tenant=%s: %s", tenant_id, exc)
 
-    _warm_agenda_profiles_from_slots_patient_phone(tenant_id, slots, profile_cache)
-
-    _decorate_agenda_slots_patient_has_file(tenant_id, slots, profile_cache)
+    if lightweight:
+        _apply_agenda_lightweight_slot_defaults(slots)
+    else:
+        _warm_agenda_profiles_from_slots_patient_phone(tenant_id, slots, profile_cache)
+        _decorate_agenda_slots_patient_has_file(tenant_id, slots, profile_cache)
     slots.sort(key=lambda item: item.get("hour") or "")
     done_count = sum(1 for item in slots if item.get("done"))
     return {
@@ -5118,7 +5136,7 @@ def tenant_agenda_bulk(
     cache_key = (int(tenant_id), tuple(requested_dates))
     if not os.environ.get("PYTEST_CURRENT_TEST"):
         try:
-            bulk_ttl = float((os.environ.get("AGENDA_BULK_CACHE_SECONDS") or "18").strip() or "18")
+            bulk_ttl = float((os.environ.get("AGENDA_BULK_CACHE_SECONDS") or "90").strip() or "90")
         except ValueError:
             bulk_ttl = 18.0
         if bulk_ttl > 0:
@@ -5378,40 +5396,42 @@ def tenant_agenda_bulk(
     les RDV pris hors Google Calendar / hors local mirror disparaissent dès qu'on
     quitte la vue jour (qui est la seule à appeler fetch_public_bookings_for_agenda).
     """
-    try:
-        from backend.public_bookings_pg import fetch_public_bookings_for_agenda
+    if not lightweight:
+        try:
+            from backend.public_bookings_pg import fetch_public_bookings_for_agenda
 
-        public_slots = fetch_public_bookings_for_agenda(
-            tenant_id,
-            day_start,
-            day_end,
-            tz_name,
-            now_local,
-            include_past_on_date=True,
-        )
-        existing_ids_by_date: Dict[str, set] = {
-            date_str: {str(slot.get("event_id") or "") for slot in (payload.get("slots") or [])}
-            for date_str, payload in payloads.items()
-        }
-        for slot in public_slots:
-            date_key = str(slot.get("date") or "")
-            if date_key not in payloads:
-                continue
-            event_id = str(slot.get("event_id") or "")
-            if event_id and event_id in existing_ids_by_date.get(date_key, set()):
-                continue
-            payloads[date_key]["slots"].append(slot)
-            if event_id:
-                existing_ids_by_date.setdefault(date_key, set()).add(event_id)
-    except Exception as exc:
-        logger.debug("tenant agenda/bulk public_bookings merge skipped tenant=%s: %s", tenant_id, exc)
+            public_slots = fetch_public_bookings_for_agenda(
+                tenant_id,
+                day_start,
+                day_end,
+                tz_name,
+                now_local,
+                include_past_on_date=True,
+            )
+            existing_ids_by_date: Dict[str, set] = {
+                date_str: {str(slot.get("event_id") or "") for slot in (payload.get("slots") or [])}
+                for date_str, payload in payloads.items()
+            }
+            for slot in public_slots:
+                date_key = str(slot.get("date") or "")
+                if date_key not in payloads:
+                    continue
+                event_id = str(slot.get("event_id") or "")
+                if event_id and event_id in existing_ids_by_date.get(date_key, set()):
+                    continue
+                payloads[date_key]["slots"].append(slot)
+                if event_id:
+                    existing_ids_by_date.setdefault(date_key, set()).add(event_id)
+        except Exception as exc:
+            logger.debug("tenant agenda/bulk public_bookings merge skipped tenant=%s: %s", tenant_id, exc)
 
     flat_slots_bulk = [slot for payload in payloads.values() for slot in (payload.get("slots") or [])]
-    # Toujours décorer patient_has_file (lookup batch léger) — le mode lightweight
-    # n'allège que la résolution des noms depuis Google / profils.
-    _warm_agenda_profiles_from_slots_patient_phone(tenant_id, flat_slots_bulk, profile_cache)
-    for payload in payloads.values():
-        _decorate_agenda_slots_patient_has_file(tenant_id, list(payload.get("slots") or []), profile_cache)
+    if lightweight:
+        _apply_agenda_lightweight_slot_defaults(flat_slots_bulk)
+    else:
+        _warm_agenda_profiles_from_slots_patient_phone(tenant_id, flat_slots_bulk, profile_cache)
+        for payload in payloads.values():
+            _decorate_agenda_slots_patient_has_file(tenant_id, list(payload.get("slots") or []), profile_cache)
 
     response = {
         "dates": {date_str: _finalize_agenda_day_payload(payload) for date_str, payload in payloads.items()},
@@ -5420,7 +5440,7 @@ def tenant_agenda_bulk(
     }
     if not os.environ.get("PYTEST_CURRENT_TEST"):
         try:
-            bulk_ttl = float((os.environ.get("AGENDA_BULK_CACHE_SECONDS") or "18").strip() or "18")
+            bulk_ttl = float((os.environ.get("AGENDA_BULK_CACHE_SECONDS") or "90").strip() or "90")
         except ValueError:
             bulk_ttl = 18.0
         if bulk_ttl > 0:

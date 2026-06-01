@@ -194,7 +194,7 @@ const WEEKDAY_LABELS = ["LUN", "MAR", "MER", "JEU", "VEN", "SAM", "DIM"];
 
 /** Stale-while-revalidate : affichage immédiat au retour sur l’agenda (session). */
 const AGENDA_BULK_CACHE_PREFIX = "uwi_agenda_bulk_v3:";
-const AGENDA_BULK_CACHE_MS = 35000;
+const AGENDA_BULK_CACHE_MS = 120000;
 
 function agendaBulkStorageKey(dates) {
   return AGENDA_BULK_CACHE_PREFIX + (dates || []).join(",");
@@ -995,16 +995,34 @@ export default function AppAgenda() {
     };
 
     try {
-      if (viewMode === "day" && !showedStale) {
-        const quickDay = await api.tenantGetAgenda(`?date=${selectedDate}`).catch(() => null);
+      if (viewMode === "day") {
+        const dayBulk = await api.tenantGetAgendaBulk([selectedDate], { lightweight: true }).catch(() => null);
         if (isStaleLoad()) return;
-        if (quickDay?.slots) {
-          setAgendaByDate((prev) => ({
-            ...(prev || {}),
-            [selectedDate]: quickDay,
-          }));
-          setCalendarLoading(false);
+        if (dayBulk?.dates) {
+          writeAgendaBulkStale([selectedDate], dayBulk);
+          mergeAgendaDates(dayBulk, [selectedDate]);
+        } else if (!showedStale) {
+          const fallback = await api
+            .tenantGetAgenda(`?date=${selectedDate}&lightweight=1`)
+            .catch(() => ({ slots: [], date: selectedDate }));
+          if (isStaleLoad()) return;
+          setAgendaByDate((prev) => ({ ...(prev || {}), [selectedDate]: fallback }));
         }
+        if (!isStaleLoad()) setCalendarLoading(false);
+
+        if (fetchDates.length > 1) {
+          api.tenantGetAgendaBulk(fetchDates, { lightweight: true })
+            .then((weekBulk) => {
+              if (isStaleLoad() || !weekBulk?.dates) return;
+              writeAgendaBulkStale(fetchDates, weekBulk);
+              mergeAgendaDates(weekBulk, fetchDates);
+            })
+            .catch(() => null);
+        }
+        horairesPromise.then((nextHoraires) => {
+          if (!isStaleLoad() && nextHoraires) setHoraires(nextHoraires);
+        });
+        return;
       }
 
       const bulkRes = await api.tenantGetAgendaBulk(fetchDates, { lightweight: true }).catch(() => null);
@@ -1046,8 +1064,7 @@ export default function AppAgenda() {
     if (!calendarLoading) return undefined;
     const safetyTimer = window.setTimeout(() => {
       setCalendarLoading(false);
-      setError((prev) => prev || "Le chargement de l'agenda prend trop de temps. Réessayez.");
-    }, 30000);
+    }, 45000);
     return () => window.clearTimeout(safetyTimer);
   }, [calendarLoading]);
 
