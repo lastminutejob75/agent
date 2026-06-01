@@ -161,6 +161,9 @@ jobs:
 
   backend-tests-full:
     name: pytest full (info only)
+    # Le full est utile pour la visibilité qualité, mais allonge trop
+    # la voie de déploiement sur push main (~8 min).
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 12
     continue-on-error: true
