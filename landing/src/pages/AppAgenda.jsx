@@ -92,8 +92,20 @@ function getMonthFromDate(dateStr) {
 function formatTimeLabel(hour) {
   const v = String(hour || "").trim();
   if (/^\d{2}:\d{2}$/.test(v)) return v;
+  if (/^\d{1,2}h\d{2}$/.test(v)) {
+    const m = v.match(/^(\d{1,2})h(\d{2})$/);
+    if (m) return `${m[1].padStart(2, "0")}:${m[2]}`;
+  }
   if (/^\d{1,2}h$/.test(v)) return `${v.replace("h", "").padStart(2, "0")}:00`;
   return v.replace("h", ":");
+}
+
+/** Clé grille horaire : un RDV à 09h15 s'affiche sur la ligne 09:00. */
+function agendaGridHourKey(displayTime) {
+  const normalized = formatTimeLabel(displayTime);
+  const match = normalized.match(/^(\d{2}):(\d{2})$/);
+  if (!match) return normalized;
+  return `${match[1]}:00`;
 }
 
 function addMinutes(timeLabel, mins) {
@@ -995,19 +1007,42 @@ export default function AppAgenda() {
     };
 
     const loadDatesDirect = async (dates, timeoutMs = 25000) => {
+      let authError = null;
       const results = await Promise.all(
         (dates || []).map((d) =>
           api
             .tenantGetAgenda(`?date=${d}&lightweight=1`, { timeoutMs })
-            .catch(() => ({ slots: [], date: d })),
+            .catch((e) => {
+              if (e?.status === 401 || e?.status === 403) authError = e;
+              return { slots: [], date: d };
+            }),
         ),
       );
+      if (authError) throw authError;
       applyDayResults(dates, results);
       return results;
     };
 
     try {
-      if (viewMode === "month") {
+      if (viewMode === "day") {
+        const dayRes = await api
+          .tenantGetAgenda(`?date=${selectedDate}&lightweight=1`, { timeoutMs: 25000 })
+          .catch((e) => {
+            if (e?.status === 401 || e?.status === 403) throw e;
+            return { slots: [], date: selectedDate };
+          });
+        if (isStaleLoad()) return;
+        setAgendaByDate((prev) => ({ ...(prev || {}), [selectedDate]: dayRes }));
+        setCalendarLoading(false);
+        const others = fetchDates.filter((d) => d !== selectedDate);
+        if (others.length) {
+          loadDatesDirect(others, 20000).catch((e) => {
+            if (!isStaleLoad() && (e?.status === 401 || e?.status === 403)) {
+              setError("Session expirée. Reconnectez-vous pour voir l'agenda.");
+            }
+          });
+        }
+      } else if (viewMode === "month") {
         const bulkRes = await api
           .tenantGetAgendaBulk(fetchDates, { lightweight: true, timeoutMs: 35000 })
           .catch(() => null);
@@ -1023,7 +1058,6 @@ export default function AppAgenda() {
           await loadDatesDirect(fetchDates);
         }
       } else {
-        // Vue jour / semaine : appels directs (fiables), sans bulk ni cache session.
         await loadDatesDirect(fetchDates);
       }
 
@@ -1032,12 +1066,16 @@ export default function AppAgenda() {
       });
     } catch (e) {
       if (!isStaleLoad()) {
-        setError(e?.message || "Impossible de charger l'agenda.");
+        if (e?.status === 401 || e?.status === 403) {
+          setError("Session expirée. Reconnectez-vous pour voir l'agenda.");
+        } else {
+          setError(e?.message || "Impossible de charger l'agenda.");
+        }
       }
     } finally {
       if (!isStaleLoad()) setCalendarLoading(false);
     }
-  }, [fetchDates, viewMode]);
+  }, [fetchDates, selectedDate, viewMode]);
 
   useEffect(() => { loadAgenda(); }, [loadAgenda]);
 
@@ -1266,7 +1304,7 @@ export default function AppAgenda() {
   const appointmentsByDateHour = useMemo(() => {
     const map = {};
     appointments.forEach((a) => {
-      const key = `${a.date}|${a.displayTime}`;
+      const key = `${a.date}|${agendaGridHourKey(a.displayTime)}`;
       if (!map[key]) map[key] = [];
       map[key].push(a);
     });
