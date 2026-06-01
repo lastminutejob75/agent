@@ -137,7 +137,13 @@ export default function AppLayout() {
             d.setDate(start.getDate() + i);
             return d.toISOString().slice(0, 10);
           });
-          api.tenantGetAgendaBulk(dates, { lightweight: true }).catch(() => null);
+          api
+            .tenantGetAgendaBulk([today], { lightweight: true, timeoutMs: 12000 })
+            .catch(() => null)
+            .finally(() => {
+              if (cancelled) return;
+              api.tenantGetAgendaBulk(dates, { lightweight: true, timeoutMs: 22000 }).catch(() => null);
+            });
         };
         if (typeof requestIdleCallback === "function") {
           requestIdleCallback(prefetchAgendaWeek, { timeout: 4000 });

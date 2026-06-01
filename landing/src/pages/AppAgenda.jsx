@@ -971,6 +971,7 @@ export default function AppAgenda() {
     const horairesPromise = api.tenantGetHoraires().catch(() => null);
 
     const staleBulk = readAgendaBulkStale(fetchDates);
+    const staleDayBulk = viewMode === "day" ? readAgendaBulkStale([selectedDate]) : null;
     let showedStale = false;
     if (staleBulk?.dates) {
       setAgendaByDate((prev) => {
@@ -978,6 +979,13 @@ export default function AppAgenda() {
         fetchDates.forEach((d) => { next[d] = staleBulk.dates[d] || { slots: [], date: d }; });
         return next;
       });
+      showedStale = true;
+      setCalendarLoading(false);
+    } else if (staleDayBulk?.dates?.[selectedDate]) {
+      setAgendaByDate((prev) => ({
+        ...(prev || {}),
+        [selectedDate]: staleDayBulk.dates[selectedDate] || { slots: [], date: selectedDate },
+      }));
       showedStale = true;
       setCalendarLoading(false);
     } else {
@@ -996,19 +1004,29 @@ export default function AppAgenda() {
 
     try {
       if (viewMode === "day") {
-        const quickDay = await api
-          .tenantGetAgenda(`?date=${selectedDate}&lightweight=1`, { timeoutMs: 20000 })
+        const dayBulk = await api
+          .tenantGetAgendaBulk([selectedDate], { lightweight: true, timeoutMs: 18000 })
           .catch(() => null);
         if (isStaleLoad()) return;
-        if (quickDay?.slots) {
-          setAgendaByDate((prev) => ({ ...(prev || {}), [selectedDate]: quickDay }));
+        if (dayBulk?.dates && Object.prototype.hasOwnProperty.call(dayBulk.dates, selectedDate)) {
+          writeAgendaBulkStale([selectedDate], dayBulk);
+          mergeAgendaDates(dayBulk, [selectedDate]);
           setCalendarLoading(false);
-        } else if (!showedStale) {
-          setError("Impossible de charger l'agenda du jour. Réessayez.");
+        } else {
+          const quickDay = await api
+            .tenantGetAgenda(`?date=${selectedDate}&lightweight=1`, { timeoutMs: 20000 })
+            .catch(() => null);
+          if (isStaleLoad()) return;
+          if (quickDay?.slots) {
+            setAgendaByDate((prev) => ({ ...(prev || {}), [selectedDate]: quickDay }));
+            setCalendarLoading(false);
+          } else if (!showedStale) {
+            setError("Impossible de charger l'agenda du jour. Réessayez.");
+          }
         }
 
         if (fetchDates.length > 1) {
-          api.tenantGetAgendaBulk(fetchDates, { lightweight: true })
+          api.tenantGetAgendaBulk(fetchDates, { lightweight: true, timeoutMs: 22000 })
             .then((weekBulk) => {
               if (isStaleLoad() || !weekBulk?.dates) return;
               writeAgendaBulkStale(fetchDates, weekBulk);
