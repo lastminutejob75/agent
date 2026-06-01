@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { api } from "../../lib/api";
+
+const EMPTY_META = { generated_at: "", from_cache: false, access_limited: false };
 
 function formatSummaryAge(iso) {
   if (!iso) return "";
@@ -70,24 +72,38 @@ function SummaryBody({ sections, accessLimited, loading, error, generatedAt, fro
 
 /** Résumé IA de fiche patient (GET /summary). */
 export default function PatientContextSummary({ phone, refreshNonce = 0, compact = false }) {
-  const [loading, setLoading] = useState(false);
+  const phoneRef = useRef(phone);
+  phoneRef.current = phone;
+
+  const [loading, setLoading] = useState(() => Boolean(phone));
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [sections, setSections] = useState({});
-  const [meta, setMeta] = useState({ generated_at: "", from_cache: false, access_limited: false });
+  const [meta, setMeta] = useState(EMPTY_META);
+  const [loadedPhone, setLoadedPhone] = useState("");
 
-  const load = useCallback(
-    async (opts = {}) => {
-      if (!phone) return;
-      const forceRefresh = Boolean(opts.refresh);
-      if (forceRefresh) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
+  /* Changement de fiche : purge immédiate — ne jamais afficher le résumé du patient précédent. */
+  useEffect(() => {
+    setSections({});
+    setMeta(EMPTY_META);
+    setError("");
+    setRefreshing(false);
+    setLoadedPhone("");
+    setLoading(Boolean(phone));
+  }, [phone]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!phone) {
+      setLoading(false);
+      return undefined;
+    }
+
+    (async () => {
       setError("");
       try {
-        const res = await api.tenantGetPatientSummary(phone, forceRefresh ? { refresh: true } : {});
+        const res = await api.tenantGetPatientSummary(phone, {});
+        if (cancelled || phoneRef.current !== phone) return;
         const summary = res?.summary || {};
         setSections(summary.sections_json || {});
         setMeta({
@@ -95,29 +111,63 @@ export default function PatientContextSummary({ phone, refreshNonce = 0, compact
           from_cache: Boolean(summary.from_cache),
           access_limited: Boolean(summary.access_limited),
         });
+        setLoadedPhone(phone);
       } catch (e) {
+        if (cancelled || phoneRef.current !== phone) return;
         setError(e?.message || "Résumé indisponible.");
         setSections({});
+        setMeta(EMPTY_META);
+        setLoadedPhone(phone);
       } finally {
-        setLoading(false);
+        if (!cancelled && phoneRef.current === phone) {
+          setLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [phone, refreshNonce]);
+
+  const handleRefresh = useCallback(async () => {
+    const requestPhone = phone;
+    if (!requestPhone) return;
+    setRefreshing(true);
+    setError("");
+    try {
+      const res = await api.tenantGetPatientSummary(requestPhone, { refresh: true });
+      if (phoneRef.current !== requestPhone) return;
+      const summary = res?.summary || {};
+      setSections(summary.sections_json || {});
+      setMeta({
+        generated_at: summary.generated_at || "",
+        from_cache: Boolean(summary.from_cache),
+        access_limited: Boolean(summary.access_limited),
+      });
+      setLoadedPhone(requestPhone);
+    } catch (e) {
+      if (phoneRef.current !== requestPhone) return;
+      setError(e?.message || "Résumé indisponible.");
+      setSections({});
+      setMeta(EMPTY_META);
+    } finally {
+      if (phoneRef.current === requestPhone) {
         setRefreshing(false);
       }
-    },
-    [phone],
-  );
+    }
+  }, [phone]);
 
-  useEffect(() => {
-    void load();
-  }, [load, refreshNonce]);
-
-  const handleRefresh = () => {
-    void load({ refresh: true });
-  };
+  const safeSections = loadedPhone === phone ? sections : {};
+  const safeMeta = loadedPhone === phone ? meta : EMPTY_META;
+  const safeError = loadedPhone === phone ? error : "";
 
   const refreshButton = (
     <button
       type="button"
-      onClick={handleRefresh}
+      onClick={() => {
+        void handleRefresh();
+      }}
       disabled={loading || refreshing || !phone}
       className="inline-flex items-center gap-1.5 rounded-lg border border-white/20 bg-white/5 px-2.5 py-1 text-xs font-semibold text-white/80 transition hover:bg-white/10 disabled:opacity-50"
       title="Régénérer le résumé IA"
@@ -132,12 +182,12 @@ export default function PatientContextSummary({ phone, refreshNonce = 0, compact
       <div>
         <div className="mb-2 flex justify-end">{refreshButton}</div>
         <SummaryBody
-          sections={sections}
-          accessLimited={meta.access_limited}
+          sections={safeSections}
+          accessLimited={safeMeta.access_limited}
           loading={loading || refreshing}
-          error={error}
-          generatedAt={meta.generated_at}
-          fromCache={meta.from_cache}
+          error={safeError}
+          generatedAt={safeMeta.generated_at}
+          fromCache={safeMeta.from_cache}
         />
       </div>
     );
@@ -153,12 +203,12 @@ export default function PatientContextSummary({ phone, refreshNonce = 0, compact
         </div>
       </div>
       <SummaryBody
-        sections={sections}
-        accessLimited={meta.access_limited}
+        sections={safeSections}
+        accessLimited={safeMeta.access_limited}
         loading={loading || refreshing}
-        error={error}
-        generatedAt={meta.generated_at}
-        fromCache={meta.from_cache}
+        error={safeError}
+        generatedAt={safeMeta.generated_at}
+        fromCache={safeMeta.from_cache}
       />
     </div>
   );

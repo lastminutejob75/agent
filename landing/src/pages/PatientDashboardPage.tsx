@@ -3042,7 +3042,11 @@ export default function PatientDashboardPage() {
                   <h2 className="mb-5 text-2xl font-black">☆ Contexte patient</h2>
                   <div className="grid grid-cols-2 gap-6">
                     <div>
-                      <PatientContextSummary phone={tenantPatientPhone} refreshNonce={summaryRefreshNonce} />
+                      <PatientContextSummary
+                        key={tenantPatientPhone || "no-patient"}
+                        phone={tenantPatientPhone}
+                        refreshNonce={summaryRefreshNonce}
+                      />
                     </div>
 
                     <div className="border-l border-white/25 pl-6">

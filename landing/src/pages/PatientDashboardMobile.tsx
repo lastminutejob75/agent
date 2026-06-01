@@ -437,7 +437,12 @@ function MobileContextPatient({
   return (
     <section className="mb-3 rounded-[24px] bg-gradient-to-br from-[#06213E] via-[#003B63] to-[#007B88] p-[18px] text-white shadow-[0_12px_28px_rgba(0,59,99,0.22)]">
       <h2 className="mb-4 text-[22px] font-black">☆ Contexte patient</h2>
-      <PatientContextSummary phone={phone} refreshNonce={summaryRefreshNonce} compact />
+      <PatientContextSummary
+        key={phone || "no-patient"}
+        phone={phone}
+        refreshNonce={summaryRefreshNonce}
+        compact
+      />
       <div className="my-4 h-px bg-white/15" />
       <div className="text-[19px] font-black">✎ Notes de l&apos;équipe</div>
       {notesLoading ? (
