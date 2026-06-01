@@ -442,7 +442,7 @@ export const api = {
       tenant: true,
     }),
   tenantGetAgenda: (params = "", opts = {}) =>
-    request(`/api/tenant/agenda${params}`, { tenant: true, timeoutMs: 28000, ...opts }),
+    request(`/api/tenant/agenda${params}`, { tenant: true, timeoutMs: 10000, ...opts }),
   tenantGetAgendaBulk: async (dates, opts = {}) => {
     /* Un seul appel bulk (jusqu'à 42j). Plus rapide en pratique qu'un split en 3
        chunks concurrents qui surcharge Google Calendar et dégrade la latence. */
@@ -453,7 +453,7 @@ export const api = {
     if (opts?.lightweight) params.set("lightweight", "1");
     return request(`/api/tenant/agenda/bulk?${params.toString()}`, {
       tenant: true,
-      timeoutMs: opts?.timeoutMs ?? 28000,
+      timeoutMs: opts?.timeoutMs ?? 12000,
     });
   },
   tenantGetAgendaAvailableSlots: (params = "") =>

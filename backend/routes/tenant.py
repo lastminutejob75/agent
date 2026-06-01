@@ -4815,7 +4815,9 @@ def tenant_agenda(
         (params.get("calendar_provider") or "").strip() == "google"
         and bool((params.get("calendar_id") or "").strip())
     )
-    if google_cal:
+    # Mode lightweight = affichage cabinet (public_bookings + RDV locaux) sans attendre Google.
+    google_cal_active = google_cal and not lightweight
+    if google_cal_active:
         try:
             cal_id = (params.get("calendar_id") or "").strip()
             executor: Optional[ThreadPoolExecutor] = None
@@ -4911,7 +4913,7 @@ def tenant_agenda(
                 })
         except Exception as e:
             logger.warning("tenant agenda google failed tenant_id=%s: %s", tenant_id, e)
-    else:
+    elif not (lightweight and google_cal):
         url = os.environ.get("DATABASE_URL") or os.environ.get("PG_SLOTS_URL")
         if url:
             try:
@@ -5176,7 +5178,8 @@ def tenant_agenda_bulk(
         (params.get("calendar_provider") or "").strip() == "google"
         and bool((params.get("calendar_id") or "").strip())
     )
-    if google_cal_bulk:
+    google_cal_bulk_active = google_cal_bulk and not lightweight
+    if google_cal_bulk_active:
         try:
             cal_id = (params.get("calendar_id") or "").strip()
             executor: Optional[ThreadPoolExecutor] = None
@@ -5267,7 +5270,7 @@ def tenant_agenda_bulk(
                 )
         except Exception as e:
             logger.warning("tenant agenda bulk google failed tenant_id=%s: %s", tenant_id, e)
-    else:
+    elif not (lightweight and google_cal_bulk):
         url = os.environ.get("DATABASE_URL") or os.environ.get("PG_SLOTS_URL")
         if url:
             try:

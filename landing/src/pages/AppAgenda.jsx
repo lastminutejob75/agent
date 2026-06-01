@@ -989,10 +989,14 @@ export default function AppAgenda() {
   const loadAgenda = useCallback(async () => {
     const loadId = ++agendaLoadSeqRef.current;
     const isStaleLoad = () => loadId !== agendaLoadSeqRef.current;
+    const AGENDA_TIMEOUT_MS = 10000;
+    const AGENDA_BULK_TIMEOUT_MS = 12000;
 
     setError("");
     setCalendarLoading(true);
-    const horairesPromise = api.tenantGetHoraires().catch(() => null);
+    api.tenantGetHoraires().catch(() => null).then((nextHoraires) => {
+      if (!isStaleLoad() && nextHoraires) setHoraires(nextHoraires);
+    });
 
     const applyDayResults = (dates, results) => {
       if (isStaleLoad()) return false;
@@ -1006,27 +1010,30 @@ export default function AppAgenda() {
       return true;
     };
 
-    const loadDatesDirect = async (dates, timeoutMs = 25000) => {
-      let authError = null;
-      const results = await Promise.all(
-        (dates || []).map((d) =>
-          api
-            .tenantGetAgenda(`?date=${d}&lightweight=1`, { timeoutMs })
-            .catch((e) => {
-              if (e?.status === 401 || e?.status === 403) authError = e;
-              return { slots: [], date: d };
-            }),
-        ),
-      );
-      if (authError) throw authError;
-      applyDayResults(dates, results);
-      return results;
+    const applyBulkResults = (dates, bulkRes) => {
+      if (!bulkRes?.dates) return false;
+      return applyDayResults(dates, dates.map((d) => bulkRes.dates[d] || { slots: [], date: d }));
+    };
+
+    const loadBulk = async (dates, timeoutMs = AGENDA_BULK_TIMEOUT_MS) => {
+      const bulkRes = await api.tenantGetAgendaBulk(dates, { lightweight: true, timeoutMs });
+      applyBulkResults(dates, bulkRes);
+      return bulkRes;
+    };
+
+    const prefetchWeekBulk = (dates) => {
+      if (!dates?.length) return;
+      loadBulk(dates, AGENDA_BULK_TIMEOUT_MS).catch((e) => {
+        if (!isStaleLoad() && (e?.status === 401 || e?.status === 403)) {
+          setError("Session expirée. Reconnectez-vous pour voir l'agenda.");
+        }
+      });
     };
 
     try {
       if (viewMode === "day") {
         const dayRes = await api
-          .tenantGetAgenda(`?date=${selectedDate}&lightweight=1`, { timeoutMs: 25000 })
+          .tenantGetAgenda(`?date=${selectedDate}&lightweight=1`, { timeoutMs: AGENDA_TIMEOUT_MS })
           .catch((e) => {
             if (e?.status === 401 || e?.status === 403) throw e;
             return { slots: [], date: selectedDate };
@@ -1035,35 +1042,17 @@ export default function AppAgenda() {
         setAgendaByDate((prev) => ({ ...(prev || {}), [selectedDate]: dayRes }));
         setCalendarLoading(false);
         const others = fetchDates.filter((d) => d !== selectedDate);
-        if (others.length) {
-          loadDatesDirect(others, 20000).catch((e) => {
-            if (!isStaleLoad() && (e?.status === 401 || e?.status === 403)) {
-              setError("Session expirée. Reconnectez-vous pour voir l'agenda.");
-            }
-          });
-        }
-      } else if (viewMode === "month") {
-        const bulkRes = await api
-          .tenantGetAgendaBulk(fetchDates, { lightweight: true, timeoutMs: 35000 })
-          .catch(() => null);
-        if (isStaleLoad()) return;
-        if (bulkRes?.dates) {
-          const results = fetchDates.map((d) => bulkRes.dates[d] || { slots: [], date: d });
-          applyDayResults(fetchDates, results);
-          const emptyDates = fetchDates.filter((d, i) => !((results[i]?.slots || []).length));
-          if (emptyDates.length) {
-            await loadDatesDirect(emptyDates, 20000);
-          }
-        } else {
-          await loadDatesDirect(fetchDates);
-        }
-      } else {
-        await loadDatesDirect(fetchDates);
+        if (others.length) prefetchWeekBulk(fetchDates);
+        return;
       }
 
-      horairesPromise.then((nextHoraires) => {
-        if (!isStaleLoad() && nextHoraires) setHoraires(nextHoraires);
-      });
+      if (viewMode === "week") {
+        await loadBulk(fetchDates, AGENDA_BULK_TIMEOUT_MS);
+        if (isStaleLoad()) return;
+        return;
+      }
+
+      await loadBulk(fetchDates, AGENDA_BULK_TIMEOUT_MS);
     } catch (e) {
       if (!isStaleLoad()) {
         if (e?.status === 401 || e?.status === 403) {
@@ -1083,7 +1072,7 @@ export default function AppAgenda() {
     if (!calendarLoading) return undefined;
     const safetyTimer = window.setTimeout(() => {
       setCalendarLoading(false);
-    }, 45000);
+    }, 12000);
     return () => window.clearTimeout(safetyTimer);
   }, [calendarLoading]);
 
