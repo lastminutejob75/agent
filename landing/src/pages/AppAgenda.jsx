@@ -193,11 +193,18 @@ const APPT_TONE = {
 const WEEKDAY_LABELS = ["LUN", "MAR", "MER", "JEU", "VEN", "SAM", "DIM"];
 
 /** Stale-while-revalidate : affichage immédiat au retour sur l’agenda (session). */
-const AGENDA_BULK_CACHE_PREFIX = "uwi_agenda_bulk_v3:";
+const AGENDA_BULK_CACHE_PREFIX = "uwi_agenda_bulk_v4:";
 const AGENDA_BULK_CACHE_MS = 120000;
 
 function agendaBulkStorageKey(dates) {
   return AGENDA_BULK_CACHE_PREFIX + (dates || []).join(",");
+}
+
+function countBulkSlots(bulkRes, dates) {
+  return (dates || []).reduce(
+    (sum, d) => sum + ((bulkRes?.dates?.[d]?.slots || []).length),
+    0,
+  );
 }
 
 function readAgendaBulkStale(dates) {
@@ -208,6 +215,10 @@ function readAgendaBulkStale(dates) {
     const rec = JSON.parse(raw);
     if (!rec || typeof rec.ts !== "number" || !rec.payload?.dates) return null;
     if (Date.now() - rec.ts > AGENDA_BULK_CACHE_MS) {
+      sessionStorage.removeItem(agendaBulkStorageKey(dates));
+      return null;
+    }
+    if (countBulkSlots(rec.payload, dates) === 0) {
       sessionStorage.removeItem(agendaBulkStorageKey(dates));
       return null;
     }
@@ -996,13 +1007,22 @@ export default function AppAgenda() {
       if (!bulkRes?.dates) return false;
       setAgendaByDate((prev) => {
         const next = { ...(prev || {}) };
-        dates.forEach((d) => { next[d] = bulkRes.dates[d] || { slots: [], date: d }; });
+        dates.forEach((d) => {
+          const incoming = bulkRes.dates[d] || { slots: [], date: d };
+          const incomingSlots = incoming.slots || [];
+          const existingSlots = prev?.[d]?.slots || [];
+          // Ne pas écraser des RDV déjà affichés par une réponse bulk vide (timeout Google, etc.).
+          if (incomingSlots.length === 0 && existingSlots.length > 0) {
+            next[d] = prev[d];
+          } else {
+            next[d] = incoming;
+          }
+        });
         return next;
       });
       return true;
     };
-    const countSlotsInBulk = (bulkRes, dates) =>
-      (dates || []).reduce((sum, d) => sum + ((bulkRes?.dates?.[d]?.slots || []).length), 0);
+    const countSlotsInBulk = countBulkSlots;
     const loadDatesFallback = async (dates) => {
       const results = await Promise.all(
         (dates || []).map((d) =>
@@ -1014,7 +1034,16 @@ export default function AppAgenda() {
       if (isStaleLoad()) return null;
       setAgendaByDate((prev) => {
         const next = { ...(prev || {}) };
-        (dates || []).forEach((d, i) => { next[d] = results[i]; });
+        (dates || []).forEach((d, i) => {
+          const incoming = results[i] || { slots: [], date: d };
+          const incomingSlots = incoming.slots || [];
+          const existingSlots = prev?.[d]?.slots || [];
+          if (incomingSlots.length === 0 && existingSlots.length > 0) {
+            next[d] = prev[d];
+          } else {
+            next[d] = incoming;
+          }
+        });
         return next;
       });
       return results;
