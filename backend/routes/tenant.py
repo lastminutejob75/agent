@@ -4782,7 +4782,7 @@ def tenant_agenda(
     date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     upcoming_days: int = Query(1, ge=1, le=366),
     compact: bool = Query(False),
-    lightweight: bool = Query(False, description="Mode allégé (sans enrichissement profils / public_bookings)"),
+    lightweight: bool = Query(False, description="Mode allégé (sans enrichissement profils patients)"),
 ):
     """Retourne les rendez-vous du jour ou à venir depuis Google Calendar ou le stockage local."""
     tenant_id = auth["tenant_id"]
@@ -5042,26 +5042,25 @@ def tenant_agenda(
             finally:
                 conn.close()
 
-    if not lightweight:
-        try:
-            from backend.public_bookings_pg import fetch_public_bookings_for_agenda
+    try:
+        from backend.public_bookings_pg import fetch_public_bookings_for_agenda
 
-            public_slots = fetch_public_bookings_for_agenda(
-                tenant_id,
-                day_start,
-                day_end,
-                tz_name,
-                now_local,
-                include_past_on_date=bool(date),
-            )
-            existing_ids = {str(item.get("event_id") or "") for item in slots}
-            for item in public_slots:
-                event_id = str(item.get("event_id") or "")
-                if event_id and event_id in existing_ids:
-                    continue
-                slots.append(item)
-        except Exception as exc:
-            logger.debug("tenant agenda public_bookings merge skipped tenant=%s: %s", tenant_id, exc)
+        public_slots = fetch_public_bookings_for_agenda(
+            tenant_id,
+            day_start,
+            day_end,
+            tz_name,
+            now_local,
+            include_past_on_date=bool(date),
+        )
+        existing_ids = {str(item.get("event_id") or "") for item in slots}
+        for item in public_slots:
+            event_id = str(item.get("event_id") or "")
+            if event_id and event_id in existing_ids:
+                continue
+            slots.append(item)
+    except Exception as exc:
+        logger.debug("tenant agenda public_bookings merge skipped tenant=%s: %s", tenant_id, exc)
 
     if lightweight:
         _apply_agenda_lightweight_slot_defaults(slots)
@@ -5396,34 +5395,33 @@ def tenant_agenda_bulk(
     les RDV pris hors Google Calendar / hors local mirror disparaissent dès qu'on
     quitte la vue jour (qui est la seule à appeler fetch_public_bookings_for_agenda).
     """
-    if not lightweight:
-        try:
-            from backend.public_bookings_pg import fetch_public_bookings_for_agenda
+    try:
+        from backend.public_bookings_pg import fetch_public_bookings_for_agenda
 
-            public_slots = fetch_public_bookings_for_agenda(
-                tenant_id,
-                day_start,
-                day_end,
-                tz_name,
-                now_local,
-                include_past_on_date=True,
-            )
-            existing_ids_by_date: Dict[str, set] = {
-                date_str: {str(slot.get("event_id") or "") for slot in (payload.get("slots") or [])}
-                for date_str, payload in payloads.items()
-            }
-            for slot in public_slots:
-                date_key = str(slot.get("date") or "")
-                if date_key not in payloads:
-                    continue
-                event_id = str(slot.get("event_id") or "")
-                if event_id and event_id in existing_ids_by_date.get(date_key, set()):
-                    continue
-                payloads[date_key]["slots"].append(slot)
-                if event_id:
-                    existing_ids_by_date.setdefault(date_key, set()).add(event_id)
-        except Exception as exc:
-            logger.debug("tenant agenda/bulk public_bookings merge skipped tenant=%s: %s", tenant_id, exc)
+        public_slots = fetch_public_bookings_for_agenda(
+            tenant_id,
+            day_start,
+            day_end,
+            tz_name,
+            now_local,
+            include_past_on_date=True,
+        )
+        existing_ids_by_date: Dict[str, set] = {
+            date_str: {str(slot.get("event_id") or "") for slot in (payload.get("slots") or [])}
+            for date_str, payload in payloads.items()
+        }
+        for slot in public_slots:
+            date_key = str(slot.get("date") or "")
+            if date_key not in payloads:
+                continue
+            event_id = str(slot.get("event_id") or "")
+            if event_id and event_id in existing_ids_by_date.get(date_key, set()):
+                continue
+            payloads[date_key]["slots"].append(slot)
+            if event_id:
+                existing_ids_by_date.setdefault(date_key, set()).add(event_id)
+    except Exception as exc:
+        logger.debug("tenant agenda/bulk public_bookings merge skipped tenant=%s: %s", tenant_id, exc)
 
     flat_slots_bulk = [slot for payload in payloads.values() for slot in (payload.get("slots") or [])]
     if lightweight:

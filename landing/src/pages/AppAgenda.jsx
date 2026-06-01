@@ -996,19 +996,16 @@ export default function AppAgenda() {
 
     try {
       if (viewMode === "day") {
-        const dayBulk = await api.tenantGetAgendaBulk([selectedDate], { lightweight: true }).catch(() => null);
+        const quickDay = await api
+          .tenantGetAgenda(`?date=${selectedDate}&lightweight=1`, { timeoutMs: 20000 })
+          .catch(() => null);
         if (isStaleLoad()) return;
-        if (dayBulk?.dates) {
-          writeAgendaBulkStale([selectedDate], dayBulk);
-          mergeAgendaDates(dayBulk, [selectedDate]);
+        if (quickDay?.slots) {
+          setAgendaByDate((prev) => ({ ...(prev || {}), [selectedDate]: quickDay }));
+          setCalendarLoading(false);
         } else if (!showedStale) {
-          const fallback = await api
-            .tenantGetAgenda(`?date=${selectedDate}&lightweight=1`)
-            .catch(() => ({ slots: [], date: selectedDate }));
-          if (isStaleLoad()) return;
-          setAgendaByDate((prev) => ({ ...(prev || {}), [selectedDate]: fallback }));
+          setError("Impossible de charger l'agenda du jour. Réessayez.");
         }
-        if (!isStaleLoad()) setCalendarLoading(false);
 
         if (fetchDates.length > 1) {
           api.tenantGetAgendaBulk(fetchDates, { lightweight: true })
