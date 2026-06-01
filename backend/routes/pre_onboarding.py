@@ -13,6 +13,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Header, Query, Request, BackgroundTasks
 from pydantic import BaseModel, Field
 
+from backend.db import is_valid_patient_phone
 from backend.leads_pg import count_leads_total, get_lead, lead_exists, update_lead, update_lead_callback_booking, upsert_lead
 from backend.pre_onboarding_rate_limit import check_pre_onboarding_commit
 from backend.services.email_service import send_lead_founder_email, send_lead_prospect_confirmation_email
@@ -212,6 +213,11 @@ async def commit_pre_onboarding(request: Request, body: PreOnboardingCommitBody)
         )
     if email and not _validate_email(email):
         raise HTTPException(status_code=400, detail="Email invalide")
+    if callback_phone and not is_valid_patient_phone(callback_phone):
+        raise HTTPException(
+            status_code=400,
+            detail="Numéro de téléphone invalide (format attendu : 06 12 34 56 78 ou +33 6 12 34 56 78).",
+        )
 
     # 0) Rate limit (anti-spam) — clé = email ou téléphone
     try:

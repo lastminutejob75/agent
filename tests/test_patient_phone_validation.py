@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from backend.db import is_valid_patient_phone, normalize_phone_number
+from backend.db import is_valid_contact_email, is_valid_patient_phone, normalize_phone_number
 
 
 @pytest.mark.parametrize(
@@ -42,3 +42,30 @@ def test_invalid_phone_passes_through_normalize_but_is_rejected():
     assert normalize_phone_number("06968547855555555") == "06968547855555555"
     # …mais la validation stricte la refuse.
     assert is_valid_patient_phone("06968547855555555") is False
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "prenom@gmail.com",
+        "jean.dupont@cabinet-medical.fr",
+        "",
+        None,
+    ],
+)
+def test_valid_emails(value):
+    assert is_valid_contact_email(value) is True
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "pas-un-email",
+        "a@b",
+        "foo@bar",
+        "test @mail.com",
+        "x" * 250 + "@example.com",
+    ],
+)
+def test_invalid_emails(value):
+    assert is_valid_contact_email(value) is False

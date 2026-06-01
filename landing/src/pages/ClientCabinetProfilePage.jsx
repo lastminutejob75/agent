@@ -28,6 +28,7 @@ import {
   X,
 } from "lucide-react";
 import { api } from "../lib/api.js";
+import { validatePatientPhone, validateContactEmail } from "../lib/contactValidation.js";
 
 const C = {
   navy: "#071A33",
@@ -450,9 +451,11 @@ export default function ClientCabinetProfilePage() {
 
   function validateProfile() {
     const next = {};
-    if (!String(profile.email || "").match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) next.email = "Email invalide";
+    const emailCheck = validateContactEmail(profile.email || "", { required: true });
+    if (!emailCheck.ok) next.email = emailCheck.message || "Email invalide";
     if (profile.website_url && !String(profile.website_url).match(/^https?:\/\//i)) next.website_url = "URL invalide";
-    if (profile.phone && String(profile.phone).replace(/[^\d+]/g, "").length < 10) next.phone = "Telephone invalide";
+    const phoneCheck = validatePatientPhone(profile.phone || "", { required: true });
+    if (!phoneCheck.ok) next.phone = phoneCheck.message || "Telephone invalide";
     setProfileErrors(next);
     return Object.keys(next).length === 0;
   }

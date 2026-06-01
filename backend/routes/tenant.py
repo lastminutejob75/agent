@@ -49,6 +49,7 @@ from backend.db import (
     get_conn,
     insert_patient_note,
     is_valid_patient_phone,
+    is_valid_contact_email,
     insert_patient_document,
     list_cabinet_clients,
     search_cabinet_clients,
@@ -1837,6 +1838,26 @@ class TenantAgendaCreateBookingBody(BaseModel):
     start_iso: str = Field(..., min_length=10, description="ISO 8601 début")
     end_iso: str = Field("", max_length=64, description="Fin ISO (optionnel)")
 
+    @validator("patient_phone")
+    def _validate_booking_phone(cls, v):
+        raw = str(v or "").strip()
+        if not raw:
+            return ""
+        if not is_valid_patient_phone(raw):
+            raise ValueError(
+                "Numéro de téléphone invalide (format attendu : 06 12 34 56 78 ou +33 6 12 34 56 78)."
+            )
+        return raw
+
+    @validator("patient_email")
+    def _validate_booking_email(cls, v):
+        raw = str(v or "").strip()
+        if not raw:
+            return ""
+        if not is_valid_contact_email(raw):
+            raise ValueError("Email invalide (format attendu: prenom@domaine.fr)")
+        return raw
+
 
 class TenantCallFollowupBody(BaseModel):
     followup_state: str
@@ -1868,6 +1889,30 @@ class TenantProfileBody(BaseModel):
     accepts_new_patients: Optional[bool] = None
     practitioner_photo_url: Optional[str] = None
     public_slug: Optional[str] = None
+
+    @validator("phone")
+    def _validate_profile_phone(cls, v):
+        if v is None:
+            return None
+        raw = str(v).strip()
+        if not raw:
+            return ""
+        if not is_valid_patient_phone(raw):
+            raise ValueError(
+                "Numéro de téléphone invalide (format attendu : 06 12 34 56 78 ou +33 6 12 34 56 78)."
+            )
+        return raw
+
+    @validator("email")
+    def _validate_profile_email(cls, v):
+        if v is None:
+            return None
+        raw = str(v).strip()
+        if not raw:
+            return ""
+        if not is_valid_contact_email(raw):
+            raise ValueError("Email invalide (format attendu: prenom@domaine.fr)")
+        return raw
 
 
 class OpeningHoursBody(BaseModel):
@@ -3214,6 +3259,11 @@ def tenant_call_patient_update(
     patient = _build_patient_payload(tenant_id, None, raw)
     phone_from_call = patient.get("phone") or ""
     phone_from_body = normalize_phone_number(body.patient_phone or "")
+    if phone_from_body and not is_valid_patient_phone(body.patient_phone):
+        raise HTTPException(
+            400,
+            "Numéro de téléphone invalide (format attendu : 06 12 34 56 78 ou +33 6 12 34 56 78).",
+        )
     phone = phone_from_call or phone_from_body
     if not phone:
         raise HTTPException(400, "Numéro du patient introuvable pour cet appel")
@@ -3426,6 +3476,17 @@ class TenantPatientPracticeCreateBody(BaseModel):
     agenda_motif: Optional[str] = Field(default=None, max_length=240)
     patient_email: Optional[str] = Field(default=None, max_length=254)
 
+    @validator("patient_email")
+    def _validate_register_email(cls, v):
+        if v is None:
+            return None
+        raw = str(v).strip()
+        if not raw:
+            return None
+        if not is_valid_contact_email(raw):
+            raise ValueError("Email invalide (format attendu: prenom@domaine.fr)")
+        return raw
+
 
 @router.post("/patients")
 def tenant_register_patient_practice(
@@ -3446,6 +3507,8 @@ def tenant_register_patient_practice(
     motif = (body.agenda_motif or "").strip()[:240] or None
     rn = (body.raw_name or "").strip()[:160] or None
     patient_email = (body.patient_email or "").strip()[:254] or None
+    if patient_email and not is_valid_contact_email(patient_email):
+        raise HTTPException(400, "Email invalide (format attendu: prenom@domaine.fr).")
 
     _raise_on_blocking_patient_duplicate(tenant_id, phone=phone, email=patient_email)
 
@@ -3511,8 +3574,7 @@ class PatientUpdateBody(BaseModel):
         v = v.strip()
         if v == "":
             return ""
-        # Validation simple (rejet espaces et absence de @, sans dépendre de la couverture RFC complète).
-        if " " in v or "@" not in v or "." not in v.split("@", 1)[1]:
+        if not is_valid_contact_email(v):
             raise ValueError("Email invalide (format attendu: prenom@domaine.fr)")
         return v
 
@@ -5425,6 +5487,8 @@ def tenant_agenda_create_booking(
         )
     phone_norm = normalize_phone_number(body.patient_phone) or ""
     email_part = (body.patient_email or "").strip()
+    if email_part and not is_valid_contact_email(email_part):
+        raise HTTPException(400, "Email invalide (format attendu: prenom@domaine.fr).")
     contact_bits = []
     if phone_norm:
         contact_bits.append(f"Tél. {phone_norm}")

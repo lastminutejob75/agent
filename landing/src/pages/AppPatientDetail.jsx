@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../lib/api.js";
+import { validatePatientPhone, validateContactEmail } from "../lib/contactValidation.js";
 import { usePatientListContext } from "./AppPatientsLayout.jsx";
 import {
   checkPatientDuplicates,
@@ -296,6 +297,11 @@ export default function AppPatientDetail() {
 
   async function handleSaveEmail() {
     const email = emailDraft.trim();
+    const emailCheck = validateContactEmail(email);
+    if (!emailCheck.ok) {
+      setToast(emailCheck.message || "Email invalide");
+      return;
+    }
     setSavingEmail(true);
     try {
       const res = await api.tenantUpdatePatient(phone, { email });
@@ -308,8 +314,9 @@ export default function AppPatientDetail() {
 
   async function handleSavePhone() {
     const next = phoneDraft.trim();
-    if (!next) {
-      setToast("Indiquez un numéro de téléphone");
+    const phoneCheck = validatePatientPhone(next, { required: true });
+    if (!phoneCheck.ok) {
+      setToast(phoneCheck.message || "Numéro invalide");
       return;
     }
     setSavingPhone(true);

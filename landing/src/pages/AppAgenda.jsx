@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams, useOutletContext } from "react-router-dom
 import CreatePatientFromCallModal from "../components/calls/CreatePatientFromCallModal.jsx";
 import AppAgendaMiniCalendar from "../components/AppAgendaMiniCalendar.jsx";
 import PatientDuplicateBanner from "../components/patients/PatientDuplicateBanner.jsx";
-import { api } from "../lib/api.js";
+import { validatePatientPhone, validateContactEmail, isValidContactEmail } from "../lib/contactValidation.js";
 import {
   checkPatientDuplicates,
   hasBlockingPatientDuplicate,
@@ -253,26 +253,14 @@ function cabinetPatientRecordExists(profile) {
   return Boolean(profile && typeof profile === "object");
 }
 
-/** Téléphone facultatif (création RDV cabinet) ; si renseigné → 10 à 15 chiffres (E.164). */
+/** Téléphone facultatif (création RDV cabinet) ; si renseigné → format E.164 strict. */
 function validateCabinetBookingPhone(raw) {
-  const trimmed = String(raw || "").trim();
-  if (!trimmed) return { ok: true };
-  const norm = normalizePhone(trimmed);
-  if (!norm) {
-    return { ok: false, message: "Le numéro de téléphone est trop court ou incomplet." };
-  }
-  const digitsOnly = norm.replace(/\D/g, "");
-  if (digitsOnly.length < 10 || digitsOnly.length > 15) {
-    return { ok: false, message: "Indiquez un numéro valide (entre 10 et 15 chiffres, ex. 06 12 34 56 78)." };
-  }
-  return { ok: true };
+  return validatePatientPhone(raw);
 }
 
-/** E-mail facultatif ; si renseigné → forme générale adresse@domaine.extension */
+/** E-mail facultatif ; si renseigné → format contact strict. */
 function isCabinetBookingEmailValid(raw) {
-  const t = String(raw || "").trim();
-  if (!t) return true;
-  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(t);
+  return isValidContactEmail(raw);
 }
 
 /** Aligné backend / agenda (`patient_has_file`) : identité validée ↔ `validated_name` ≥ 2 caractères. */

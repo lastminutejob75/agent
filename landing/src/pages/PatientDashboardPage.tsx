@@ -24,6 +24,7 @@ import {
 import AgendaReschedulePanel from "../components/agenda/AgendaReschedulePanel.jsx";
 import PatientDashboardMobile from "./PatientDashboardMobile";
 import { normalizePhoneBusinessKey } from "../lib/phoneNormalize";
+import { validatePatientPhone, validateContactEmail, isValidContactEmail } from "../lib/contactValidation.js";
 import { patientDashboardFileHasValidatedIdentity } from "../lib/callsService.js";
 import {
   formatBirthDateWithAge,
@@ -1406,7 +1407,7 @@ export default function PatientDashboardPage() {
       return;
     }
     const email = emailDraft.trim();
-    if (!email || !email.includes("@")) {
+    if (!email || !isValidContactEmail(email)) {
       setEmailDuplicateConflicts([]);
       return;
     }
@@ -1441,6 +1442,11 @@ export default function PatientDashboardPage() {
     }
     const phone = phoneDraft.trim();
     if (!phone) {
+      setPhoneDuplicateConflicts([]);
+      return;
+    }
+    const phoneCheck = validatePatientPhone(phone);
+    if (!phoneCheck.ok) {
       setPhoneDuplicateConflicts([]);
       return;
     }
@@ -2106,9 +2112,9 @@ export default function PatientDashboardPage() {
       return;
     }
     const next = emailDraft.trim();
-    /* Validation côté front : alignée sur la validation backend pour éviter les 422 silencieux. */
-    if (next && (!next.includes("@") || next.includes(" ") || !next.split("@")[1]?.includes("."))) {
-      notify("Email invalide (format attendu : prenom@domaine.fr)", { sticky: true });
+    const emailCheck = validateContactEmail(next);
+    if (!emailCheck.ok) {
+      notify(emailCheck.message || "Email invalide", { sticky: true });
       return;
     }
     if (hasBlockingPatientDuplicate(emailDuplicateConflicts)) {
@@ -2159,6 +2165,11 @@ export default function PatientDashboardPage() {
     const next = phoneDraft.trim();
     if (!next) {
       notify("Indiquez un numéro de téléphone", { sticky: true });
+      return;
+    }
+    const phoneCheck = validatePatientPhone(next, { required: true });
+    if (!phoneCheck.ok) {
+      notify(phoneCheck.message || "Numéro invalide", { sticky: true });
       return;
     }
     const phoneConflict = phoneDuplicateConflicts.some((c) => c?.field === "phone");

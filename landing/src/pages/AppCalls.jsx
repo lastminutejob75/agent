@@ -1,6 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api.js";
+import { validateContactEmail } from "../lib/contactValidation.js";
 
 const AppCallDetailModal = lazy(() => import("../components/AppCallDetailModal.jsx"));
 
@@ -396,7 +397,13 @@ export default function AppCalls() {
       let noteSaved = false;
       let docsSaved = 0;
       if (phone && String(patientEmailDraft || "").trim()) {
-        await api.tenantUpdatePatient(phone, { email: String(patientEmailDraft || "").trim() });
+        const emailRaw = String(patientEmailDraft || "").trim();
+        const emailCheck = validateContactEmail(emailRaw);
+        if (!emailCheck.ok) {
+          setActionMessage(emailCheck.message || "Email invalide");
+          return;
+        }
+        await api.tenantUpdatePatient(phone, { email: emailRaw });
         emailSaved = true;
       }
       if (phone && String(patientInitialNoteDraft || "").trim()) {

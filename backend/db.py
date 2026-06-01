@@ -509,6 +509,16 @@ def is_valid_patient_phone(value: Optional[str]) -> bool:
     return bool(re.fullmatch(r"\+\d{8,15}", norm))
 
 
+def is_valid_contact_email(value: Optional[str]) -> bool:
+    """E-mail contact plausible (vide accepté = pas de valeur)."""
+    v = str(value or "").strip()
+    if not v:
+        return True
+    if len(v) > 254 or " " in v:
+        return False
+    return bool(re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", v))
+
+
 def _phone_digit_search_patterns(digits_fragment: str) -> List[str]:
     """
     Fragments pour LIKE sur regexp_replace(phone, '\\D', '', 'g').
