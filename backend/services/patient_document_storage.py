@@ -175,6 +175,105 @@ def _safe_ext(filename: str) -> str:
     return ext if ext in ALLOWED_EXTENSIONS else ""
 
 
+PATIENT_DOSSIER_PREFIX = "patient_docs"
+
+LEGACY_PATIENT_DOSSIER_ROOT = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)),
+    "uploads",
+    "patient_docs",
+)
+
+
+def patient_dossier_storage_key(tenant_id: int, patient_phone: str, stored_name: str) -> str:
+    phone_norm = (patient_phone or "").strip()
+    return f"{PATIENT_DOSSIER_PREFIX}/{tenant_id}/{phone_norm}/{stored_name}"
+
+
+def _is_patient_dossier_storage_key(filename_field: str) -> bool:
+    return str(filename_field or "").strip().startswith(f"{PATIENT_DOSSIER_PREFIX}/")
+
+
+def legacy_patient_dossier_path(tenant_id: int, patient_phone: str, bare_filename: str) -> str:
+    phone_norm = (patient_phone or "").strip()
+    return os.path.join(LEGACY_PATIENT_DOSSIER_ROOT, str(tenant_id), phone_norm, bare_filename)
+
+
+def save_patient_dossier_upload(
+    tenant_id: int,
+    patient_phone: str,
+    content: bytes,
+    original_name: str,
+    mime_type: str,
+) -> Tuple[str, str]:
+    """Écrit un document fiche patient (S3-compatible ou disque) et retourne (storage_key, stored_filename)."""
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise ValueError("Fichier trop volumineux (max 10 Mo).")
+    ext = _safe_ext(original_name)
+    if not ext:
+        raise ValueError("Type de fichier non autorisé (PDF, images, Word, texte).")
+
+    phone_norm = (patient_phone or "").strip()
+    stored_name = f"{uuid.uuid4().hex}{ext}"
+    storage_key = patient_dossier_storage_key(tenant_id, phone_norm, stored_name)
+
+    if use_s3_storage():
+        _s3_put_object(storage_key, content, mime_type)
+        logger.info(
+            "patient dossier upload stored backend=%s key=%s",
+            storage_backend_label(),
+            _object_key(storage_key),
+        )
+    else:
+        filepath = resolve_storage_path(storage_key)
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        with open(filepath, "wb") as f:
+            f.write(content)
+
+    return storage_key, stored_name
+
+
+def patient_dossier_exists(filename_field: str, tenant_id: int, patient_phone: str) -> bool:
+    fn = str(filename_field or "").strip()
+    if not fn:
+        return False
+    if _is_patient_dossier_storage_key(fn):
+        return document_exists(fn)
+    return os.path.isfile(legacy_patient_dossier_path(tenant_id, patient_phone, fn))
+
+
+def read_patient_dossier(filename_field: str, tenant_id: int, patient_phone: str) -> bytes:
+    fn = str(filename_field or "").strip()
+    if not fn:
+        raise FileNotFoundError("missing filename")
+    if _is_patient_dossier_storage_key(fn):
+        return read_document(fn)
+    filepath = legacy_patient_dossier_path(tenant_id, patient_phone, fn)
+    with open(filepath, "rb") as f:
+        return f.read()
+
+
+def delete_patient_dossier(filename_field: str, tenant_id: int, patient_phone: str) -> bool:
+    fn = str(filename_field or "").strip()
+    if not fn:
+        return False
+    if _is_patient_dossier_storage_key(fn):
+        return delete_storage_object(fn)
+    filepath = legacy_patient_dossier_path(tenant_id, patient_phone, fn)
+    if os.path.isfile(filepath):
+        try:
+            os.remove(filepath)
+            return True
+        except OSError:
+            logger.warning("delete_patient_dossier legacy failed path=%s", filepath, exc_info=True)
+            return False
+    return False
+
+
+def patient_dossier_local_filepath(filename_field: str) -> str:
+    """Chemin local pour FileResponse (clé stockage, mode disque uniquement)."""
+    return resolve_storage_path(str(filename_field or "").strip())
+
+
 def save_questionnaire_upload(
     tenant_id: int,
     patient_phone: str,

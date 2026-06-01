@@ -1,6 +1,7 @@
 # backend/db.py
 from __future__ import annotations
 
+import logging
 import os
 import re
 import sqlite3
@@ -9,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 DB_PATH = "agent.db"
+logger = logging.getLogger(__name__)
 
 SLOT_TIMES = [
     "08:00", "08:15", "08:30", "08:45",
@@ -836,6 +838,7 @@ def _ensure_patient_documents_table_pg(conn: Any) -> None:
             )
             """
         )
+    conn.commit()
 
 
 def _ensure_patient_notes_table(conn: sqlite3.Connection) -> None:
@@ -1015,21 +1018,20 @@ def insert_patient_document(
     phone_norm = normalize_phone_number(phone) or phone.strip()
     url = _pg_events_url()
     if url:
-        try:
-            from backend.pg_pool import pg_connection_for
-            with pg_connection_for(url) as conn:
-                _ensure_patient_documents_table_pg(conn)
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """INSERT INTO patient_documents (tenant_id, patient_phone, filename, original_name, mime_type, size_bytes)
-                           VALUES (%s, %s, %s, %s, %s, %s) RETURNING *""",
-                        (tenant_id, phone_norm, filename, original_name, mime_type, size_bytes),
-                    )
-                    row = cur.fetchone()
-                conn.commit()
-                return dict(row) if row else {}
-        except Exception:
-            pass
+        from backend.pg_pool import pg_connection_for
+        with pg_connection_for(url) as conn:
+            _ensure_patient_documents_table_pg(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO patient_documents (tenant_id, patient_phone, filename, original_name, mime_type, size_bytes)
+                       VALUES (%s, %s, %s, %s, %s, %s) RETURNING *""",
+                    (tenant_id, phone_norm, filename, original_name, mime_type, size_bytes),
+                )
+                row = cur.fetchone()
+            conn.commit()
+            if not row:
+                raise RuntimeError("insert_patient_document: INSERT sans ligne retournée")
+            return dict(row)
     conn = get_conn()
     _ensure_patient_documents_table(conn)
     cur = conn.execute(

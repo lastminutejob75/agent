@@ -24,7 +24,7 @@ from typing import Any, Dict, Iterable, List, Optional
 import bcrypt
 import jwt
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field, validator
 
 from backend.auth_pg import pg_get_tenant_user_by_id, pg_update_password
@@ -110,6 +110,16 @@ from backend.cabinet_profile_pg import (
     sync_opening_hours_from_booking_rules as pg_sync_opening_hours_from_booking_rules,
 )
 from backend.services.email_service import send_agenda_contact_request_email, send_patient_document_email
+from backend.services.patient_document_storage import (
+    content_disposition_attachment,
+    delete_patient_dossier,
+    patient_dossier_exists,
+    patient_dossier_local_filepath,
+    read_document,
+    read_patient_dossier,
+    save_patient_dossier_upload,
+    use_s3_storage,
+)
 from backend.tenant_config import (
     DEFAULT_FAQ,
     derive_horaires_text,
@@ -3613,7 +3623,33 @@ class PatientDeleteConfirmBody(BaseModel):
 
 
 def _patient_docs_upload_root() -> str:
-    return os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads", "patient_docs")
+    from backend.services.patient_document_storage import LEGACY_PATIENT_DOSSIER_ROOT
+
+    return LEGACY_PATIENT_DOSSIER_ROOT
+
+
+def _patient_dossier_download_response(doc: dict, tenant_id: int, phone_norm: str):
+    """Réponse HTTP pour télécharger un document fiche patient (S3, disque neuf ou legacy)."""
+    filename_field = str(doc.get("filename") or "").strip()
+    if not patient_dossier_exists(filename_field, tenant_id, phone_norm):
+        raise HTTPException(404, "File not found on disk")
+
+    original = str(doc.get("original_name") or "document")
+    mime = str(doc.get("mime_type") or "application/octet-stream")
+
+    if filename_field.startswith("patient_docs/") and use_s3_storage():
+        content = read_document(filename_field)
+        return Response(
+            content=content,
+            media_type=mime,
+            headers={"Content-Disposition": content_disposition_attachment(original)},
+        )
+    if filename_field.startswith("patient_docs/"):
+        filepath = patient_dossier_local_filepath(filename_field)
+        return FileResponse(filepath, filename=original, media_type=mime)
+
+    filepath = os.path.join(_patient_docs_upload_root(), str(tenant_id), phone_norm, filename_field)
+    return FileResponse(filepath, filename=original, media_type=mime)
 
 
 def _migrate_patient_docs_upload_dir(tenant_id: int, old_phone: str, new_phone: str) -> None:
@@ -4021,8 +4057,6 @@ def tenant_delete_patient_note(
     return {"ok": True}
 
 
-UPLOAD_DIR = _patient_docs_upload_root()
-
 
 @router.post("/patients/{phone}/documents")
 async def tenant_upload_patient_document(
@@ -4045,25 +4079,52 @@ async def tenant_upload_patient_document(
         raise HTTPException(413, "Fichier trop volumineux (max 10 Mo)")
 
     phone_norm = normalize_phone_number(phone) or phone.strip()
-    safe_dir = os.path.join(UPLOAD_DIR, str(tenant_id), phone_norm)
-    os.makedirs(safe_dir, exist_ok=True)
+    mime_type = file.content_type or "application/octet-stream"
 
-    import uuid as _uuid
-    ext = os.path.splitext(file.filename)[1][:10]
-    stored_name = f"{_uuid.uuid4().hex}{ext}"
-    filepath = os.path.join(safe_dir, stored_name)
-    with open(filepath, "wb") as f:
-        f.write(content)
+    try:
+        storage_key, _stored_name = save_patient_dossier_upload(
+            tenant_id,
+            phone_norm,
+            content,
+            file.filename,
+            mime_type,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
-    doc = insert_patient_document(
-        tenant_id, phone,
-        filename=stored_name,
-        original_name=file.filename,
-        mime_type=file.content_type or "application/octet-stream",
-        size_bytes=len(content),
-    )
-    return {"ok": True, "document": {"id": doc.get("id"), "original_name": file.filename,
-            "mime_type": file.content_type, "size_bytes": len(content), "created_at": str(doc.get("created_at", ""))}}
+    try:
+        doc = insert_patient_document(
+            tenant_id,
+            phone,
+            filename=storage_key,
+            original_name=file.filename,
+            mime_type=mime_type,
+            size_bytes=len(content),
+        )
+    except Exception:
+        delete_patient_dossier(storage_key, tenant_id, phone_norm)
+        logger.exception(
+            "tenant_upload_patient_document db insert failed tenant=%s phone=%s",
+            tenant_id,
+            phone_norm,
+        )
+        raise HTTPException(500, "Impossible d'enregistrer le document")
+
+    doc_id = doc.get("id")
+    if not doc_id:
+        delete_patient_dossier(storage_key, tenant_id, phone_norm)
+        raise HTTPException(500, "Impossible d'enregistrer le document")
+
+    return {
+        "ok": True,
+        "document": {
+            "id": doc_id,
+            "original_name": file.filename,
+            "mime_type": mime_type,
+            "size_bytes": len(content),
+            "created_at": str(doc.get("created_at", "")),
+        },
+    }
 
 
 @router.get("/patients/{phone}/documents/{doc_id}/download")
@@ -4080,11 +4141,7 @@ def tenant_download_patient_document(
         raise HTTPException(404, "Document not found")
 
     phone_norm = normalize_phone_number(phone) or phone.strip()
-    filepath = os.path.join(UPLOAD_DIR, str(tenant_id), phone_norm, doc["filename"])
-    if not os.path.isfile(filepath):
-        raise HTTPException(404, "File not found on disk")
-
-    return FileResponse(filepath, filename=doc["original_name"], media_type=doc.get("mime_type") or "application/octet-stream")
+    return _patient_dossier_download_response(doc, tenant_id, phone_norm)
 
 
 @router.delete("/patients/{phone}/documents/{doc_id}")
@@ -4101,9 +4158,7 @@ def tenant_delete_patient_document(
         raise HTTPException(404, "Document not found")
 
     phone_norm = normalize_phone_number(phone) or phone.strip()
-    filepath = os.path.join(UPLOAD_DIR, str(tenant_id), phone_norm, doc["filename"])
-    if os.path.isfile(filepath):
-        os.remove(filepath)
+    delete_patient_dossier(str(doc.get("filename") or ""), tenant_id, phone_norm)
 
     # Anti-IDOR : la suppression DB cible aussi le patient_phone (pas seulement doc_id+tenant).
     delete_patient_document(tenant_id, doc_id, patient_phone=phone)
@@ -4132,22 +4187,37 @@ def tenant_send_patient_document(
         raise HTTPException(404, "Document not found")
 
     phone_norm = normalize_phone_number(phone) or phone.strip()
-    filepath = os.path.join(UPLOAD_DIR, str(tenant_id), phone_norm, doc["filename"])
-    if not os.path.isfile(filepath):
+    filename_field = str(doc.get("filename") or "").strip()
+    if not patient_dossier_exists(filename_field, tenant_id, phone_norm):
         raise HTTPException(404, "Fichier introuvable sur le serveur")
 
     detail = _get_tenant_detail(tenant_id)
     cabinet_name = (detail or {}).get("name") or ""
     patient_name = profile.get("display_name") or profile.get("raw_name") or ""
 
-    ok, err = send_patient_document_email(
-        to=patient_email,
-        patient_name=patient_name,
-        cabinet_name=cabinet_name,
-        doc_original_name=doc.get("original_name", "document"),
-        doc_path=filepath,
-        doc_mime_type=doc.get("mime_type", "application/octet-stream"),
-    )
+    import tempfile
+
+    file_bytes = read_patient_dossier(filename_field, tenant_id, phone_norm)
+    ext = os.path.splitext(str(doc.get("original_name") or "document"))[1] or ".bin"
+    tmp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
+        ok, err = send_patient_document_email(
+            to=patient_email,
+            patient_name=patient_name,
+            cabinet_name=cabinet_name,
+            doc_original_name=doc.get("original_name", "document"),
+            doc_path=tmp_path,
+            doc_mime_type=doc.get("mime_type", "application/octet-stream"),
+        )
+    finally:
+        if tmp_path:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
     if not ok:
         raise HTTPException(500, err or "Impossible d'envoyer l'email")
 
@@ -4243,12 +4313,7 @@ def tenant_confirm_delete_patient(
             continue
         filename = str(d.get("filename") or "").strip()
         if filename:
-            path = os.path.join(UPLOAD_DIR, str(tenant_id), phone_norm, filename)
-            if os.path.isfile(path):
-                try:
-                    os.remove(path)
-                except Exception:
-                    pass
+            delete_patient_dossier(filename, tenant_id, phone_norm)
         if delete_patient_document(tenant_id, did, patient_phone=phone_norm):
             deleted_documents += 1
 

@@ -348,7 +348,12 @@ export default function AppPatientDetail() {
     setUploading(true);
     try {
       const res = await api.tenantUploadPatientDocument(phone, file);
-      if (res?.document) setDocuments((prev) => [res.document, ...prev]);
+      const created = res?.document;
+      const docId = Number(created?.id);
+      if (!created || !Number.isFinite(docId) || docId <= 0) {
+        throw new Error("Document non enregistré sur le serveur");
+      }
+      if (created) setDocuments((prev) => [{ ...created, id: docId }, ...prev]);
       setToast("Document ajouté");
     } catch (err) { setToast(err?.message || "Erreur upload"); }
     finally { setUploading(false); e.target.value = ""; }

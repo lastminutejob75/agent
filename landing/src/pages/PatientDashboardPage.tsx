@@ -2009,17 +2009,24 @@ export default function PatientDashboardPage() {
     try {
       const res = await api.tenantUploadPatientDocument(tenantPatientPhone, file);
       const created = res?.document;
-      if (created) {
-        setDocuments((prev) => [
-          {
-            id: Number(created.id),
-            original_name: String(created.original_name || file.name),
-            mime_type: String(created.mime_type || file.type || "application/octet-stream"),
-            size_bytes: Number(created.size_bytes || file.size || 0),
-            created_at: String(created.created_at || ""),
-          },
-          ...prev,
-        ]);
+      const docId = Number(created?.id);
+      if (!created || !Number.isFinite(docId) || docId <= 0) {
+        throw new Error("Document non enregistré sur le serveur");
+      }
+      const newDoc: PatientDocument = {
+        id: docId,
+        original_name: String(created.original_name || file.name),
+        mime_type: String(created.mime_type || file.type || "application/octet-stream"),
+        size_bytes: Number(created.size_bytes || file.size || 0),
+        created_at: String(created.created_at || ""),
+      };
+      setDocuments((prev) => [newDoc, ...prev]);
+      const cached = patientDetailCacheRef.current.get(tenantPatientPhone);
+      if (cached) {
+        patientDetailCacheRef.current.set(tenantPatientPhone, {
+          ...cached,
+          documents: [newDoc, ...cached.documents],
+        });
       }
       notify("Document ajouté");
     } catch (e) {

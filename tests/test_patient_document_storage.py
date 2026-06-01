@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from backend.services import patient_document_storage as storage
@@ -254,3 +256,35 @@ def test_delete_questionnaire_v2_document_api(tmp_path, monkeypatch):
         assert storage.document_exists(key) is False
     finally:
         app.dependency_overrides.pop(tenant_routes.require_tenant_auth, None)
+
+
+def test_save_patient_dossier_local_disk(tmp_path, monkeypatch):
+    monkeypatch.delenv("S3_BUCKET", raising=False)
+    monkeypatch.setattr(storage, "UPLOAD_ROOT", str(tmp_path))
+
+    key, _name = storage.save_patient_dossier_upload(
+        2,
+        "+33696854785",
+        b"patient-doc",
+        "ordonnance.pdf",
+        "application/pdf",
+    )
+    assert key.startswith("patient_docs/2/+33696854785/")
+    assert storage.patient_dossier_exists(key, 2, "+33696854785")
+    assert storage.read_patient_dossier(key, 2, "+33696854785") == b"patient-doc"
+
+
+def test_patient_dossier_legacy_path(tmp_path, monkeypatch):
+    monkeypatch.delenv("S3_BUCKET", raising=False)
+    monkeypatch.setattr(storage, "LEGACY_PATIENT_DOSSIER_ROOT", str(tmp_path))
+
+    legacy_name = "abc123.pdf"
+    legacy_path = storage.legacy_patient_dossier_path(2, "+33696854785", legacy_name)
+    os.makedirs(os.path.dirname(legacy_path), exist_ok=True)
+    with open(legacy_path, "wb") as f:
+        f.write(b"legacy")
+
+    assert storage.patient_dossier_exists(legacy_name, 2, "+33696854785")
+    assert storage.read_patient_dossier(legacy_name, 2, "+33696854785") == b"legacy"
+    assert storage.delete_patient_dossier(legacy_name, 2, "+33696854785") is True
+    assert storage.patient_dossier_exists(legacy_name, 2, "+33696854785") is False
