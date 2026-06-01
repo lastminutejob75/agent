@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useOutletContext } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   AlertTriangle,
@@ -253,9 +254,10 @@ function normalizeHoursForUi(payload) {
 }
 
 export default function ClientCabinetProfilePage() {
+  const { me } = useOutletContext() || {};
   const restrictedMode = true;
   const editableTabs = new Set(["cabinet", "horaires"]);
-  const [userRole, setUserRole] = useState("owner");
+  const [userRole, setUserRole] = useState(() => String(me?.role || "owner").toLowerCase());
   const isOwner = userRole === "owner";
   const visibleTabs = useMemo(
     () => TABS.filter((tab) => isOwner || tab.id !== "abonnement"),
@@ -263,6 +265,8 @@ export default function ClientCabinetProfilePage() {
   );
   const [active, setActive] = useState("cabinet");
   const [loading, setLoading] = useState(true);
+  const [tabLoading, setTabLoading] = useState("");
+  const loadedTabsRef = useRef(new Set());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -313,60 +317,29 @@ export default function ClientCabinetProfilePage() {
   const billingRef = useRef(null);
 
   useEffect(() => {
+    const role = String(me?.role || "owner").toLowerCase();
+    setUserRole(role);
+    if (role !== "owner") {
+      setActive((current) => (current === "abonnement" ? "cabinet" : current));
+    }
+  }, [me?.role]);
+
+  useEffect(() => {
     let cancelled = false;
-    async function loadAll() {
+    async function loadEssentials() {
       setLoading(true);
       setError("");
       try {
-        const me = await api.tenantMe().catch(() => null);
-        const role = String(me?.role || "owner").toLowerCase();
-        const owner = role === "owner";
-        if (!cancelled) {
-          setUserRole(role);
-          if (!owner && active === "abonnement") {
-            setActive("cabinet");
-          }
-        }
-
-        const baseRequests = [
+        const [profileData, summaryData, calendarData] = await Promise.all([
           api.tenantGetProfile(),
-          api.tenantGetOpeningHours(),
-          api.tenantGetAvailabilitySettings(),
-          api.tenantGetBookingRules(),
-          api.tenantGetAppointmentReasons(),
-          api.tenantGetAssistantSettings(),
-          api.tenantGetCalendarStatus().catch(() => ({ connected: false, permission_status: "unknown" })),
           api.tenantGetProfileSummary().catch(() => null),
-        ];
-        if (owner) {
-          baseRequests.push(api.tenantGetBillingSummary().catch(() => null));
-        }
-
-        const results = await Promise.all(baseRequests);
-        const [
-          profileData,
-          openingData,
-          availabilityData,
-          bookingData,
-          reasonsData,
-          assistantData,
-          calendarData,
-          summaryData,
-          billingData,
-        ] = owner
-          ? results
-          : [...results, null];
-
+          api.tenantGetCalendarStatus().catch(() => ({ connected: false, permission_status: "unknown" })),
+        ]);
         if (cancelled) return;
         setProfile({ ...emptyProfile, ...(profileData || {}) });
-        setOpeningHours(normalizeHoursForUi(openingData || {}));
-        setAvailability({ ...emptyAvailability, ...(availabilityData || {}) });
-        setBookingRules({ ...emptyBookingRules, ...(bookingData || {}) });
-        setAppointmentReasons(Array.isArray(reasonsData?.items) ? reasonsData.items : []);
-        setAssistant({ ...emptyAssistant, ...(assistantData || {}) });
-        setCalendarStatus(calendarData || { connected: false, permission_status: "unknown" });
         if (summaryData) setProfileSummary(summaryData);
-        if (billingData) setBillingSummary((prev) => ({ ...prev, ...billingData }));
+        setCalendarStatus(calendarData || { connected: false, permission_status: "unknown" });
+        loadedTabsRef.current.add("cabinet");
         setDirty(false);
       } catch (e) {
         if (cancelled) return;
@@ -375,11 +348,63 @@ export default function ClientCabinetProfilePage() {
         if (!cancelled) setLoading(false);
       }
     }
-    loadAll();
+    loadEssentials();
     return () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const tab = active;
+    if (loadedTabsRef.current.has(tab)) return undefined;
+
+    async function loadTabData() {
+      setTabLoading(tab);
+      setError("");
+      try {
+        if (tab === "horaires") {
+          const [openingData, availabilityData] = await Promise.all([
+            api.tenantGetOpeningHours(),
+            api.tenantGetAvailabilitySettings(),
+          ]);
+          if (cancelled) return;
+          setOpeningHours(normalizeHoursForUi(openingData || {}));
+          setAvailability({ ...emptyAvailability, ...(availabilityData || {}) });
+        } else if (tab === "regles") {
+          const [bookingData, reasonsData] = await Promise.all([
+            api.tenantGetBookingRules(),
+            api.tenantGetAppointmentReasons(),
+          ]);
+          if (cancelled) return;
+          setBookingRules({ ...emptyBookingRules, ...(bookingData || {}) });
+          setAppointmentReasons(Array.isArray(reasonsData?.items) ? reasonsData.items : []);
+        } else if (tab === "clara") {
+          const assistantData = await api.tenantGetAssistantSettings();
+          if (cancelled) return;
+          setAssistant({ ...emptyAssistant, ...(assistantData || {}) });
+        } else if (tab === "abonnement") {
+          if (!isOwner) return;
+          const billingData = await api.tenantGetBillingSummary().catch(() => null);
+          if (cancelled) return;
+          if (billingData) setBillingSummary((prev) => ({ ...prev, ...billingData }));
+        } else {
+          return;
+        }
+        loadedTabsRef.current.add(tab);
+      } catch (e) {
+        if (cancelled) return;
+        setError(e?.message || "Impossible de charger cette section.");
+      } finally {
+        if (!cancelled) setTabLoading("");
+      }
+    }
+
+    loadTabData();
+    return () => {
+      cancelled = true;
+    };
+  }, [active, isOwner]);
 
   useEffect(() => {
     if (!dirty) return undefined;
@@ -709,7 +734,11 @@ export default function ClientCabinetProfilePage() {
 
         <main className="mt-5 grid gap-5 lg:grid-cols-[1fr_320px]">
           <div className="grid gap-5">
-            {active === "cabinet" ? (
+            {tabLoading === active && active !== "cabinet" ? (
+              <div className="rounded-3xl border border-slate-200 bg-white p-8 text-sm font-semibold text-slate-500">
+                Chargement de la section...
+              </div>
+            ) : active === "cabinet" ? (
               <>
                 <SectionCard
                   title="Identite du cabinet"
@@ -769,9 +798,7 @@ export default function ClientCabinetProfilePage() {
                   </div>
                 </SectionCard>
               </>
-            ) : null}
-
-            {active === "horaires" ? (
+            ) : active === "horaires" ? (
               <>
                 <SectionCard
                   title="Horaires d'ouverture"
@@ -874,9 +901,7 @@ export default function ClientCabinetProfilePage() {
                   </div>
                 </SectionCard>
               </>
-            ) : null}
-
-            {active === "regles" ? (
+            ) : active === "regles" ? (
               <>
                 <SectionCard
                   title="Regles de prise de rendez-vous"
@@ -919,9 +944,7 @@ export default function ClientCabinetProfilePage() {
                   </button>
                 </SectionCard>
               </>
-            ) : null}
-
-            {active === "clara" ? (
+            ) : active === "clara" ? (
               <>
                 <SectionCard
                   title="Informations utilisees par Clara"
@@ -957,9 +980,7 @@ export default function ClientCabinetProfilePage() {
                   </div>
                 </SectionCard>
               </>
-            ) : null}
-
-            {active === "abonnement" ? (
+            ) : active === "abonnement" ? (
               <>
                 <SectionCard
                   id="billing-summary"

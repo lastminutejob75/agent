@@ -1491,7 +1491,7 @@ export default function PatientDashboardPage() {
 
     setPatientAgendaLoading(true);
     api
-      .tenantGetAgenda(`?upcoming_days=${daysNeeded}&compact=1`)
+      .tenantGetPatientAppointments(tenantPatientPhone, `?upcoming_days=${daysNeeded}`)
       .then((res) => {
         if (cancelled) return;
         const slots = Array.isArray(res?.slots) ? res.slots : [];
@@ -1510,7 +1510,7 @@ export default function PatientDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [activeView, agendaDaysLoaded, agendaRefreshNonce]);
+  }, [activeView, agendaDaysLoaded, agendaRefreshNonce, tenantPatientPhone]);
 
   useEffect(() => {
     let cancelled = false;

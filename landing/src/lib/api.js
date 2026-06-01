@@ -264,6 +264,8 @@ export const api = {
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/notes${params}`, { tenant: true }),
   tenantGetPatientHistory: (phone, params = "") =>
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/history${params}`, { tenant: true }),
+  tenantGetPatientAppointments: (phone, params = "") =>
+    request(`/api/tenant/patients/${encodeURIComponent(phone)}/appointments${params}`, { tenant: true }),
   tenantGetPatientQuestionnaire: (phone) =>
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/questionnaire`, { tenant: true }),
   tenantSavePatientQuestionnaire: (phone, body) =>

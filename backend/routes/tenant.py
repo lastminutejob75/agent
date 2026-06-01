@@ -67,6 +67,7 @@ from backend.db import (
     upsert_call_followup,
     change_cabinet_client_phone,
     PatientPhoneChangeError,
+    _cabinet_client_phone_lookup_keys,
 )
 from backend.google_calendar import GoogleCalendarNotFoundError, GoogleCalendarPermissionError, GoogleCalendarService
 from backend.handoffs import get_handoff_by_id, list_handoffs, update_handoff_status
@@ -3863,6 +3864,25 @@ def tenant_patient_history(
     )
 
 
+@router.get("/patients/{phone}/appointments")
+def tenant_patient_appointments(
+    phone: str,
+    auth: dict = Depends(require_tenant_auth),
+    upcoming_days: int = Query(14, ge=1, le=366),
+):
+    """RDV à venir d'un patient sans charger tout l'agenda cabinet."""
+    tenant_id = auth["tenant_id"]
+    profile = get_cabinet_client_by_phone(tenant_id, phone)
+    if not profile:
+        raise HTTPException(404, "Patient not found")
+    slots = _collect_patient_upcoming_appointment_slots(
+        tenant_id,
+        phone,
+        upcoming_days=upcoming_days,
+    )
+    return {"slots": slots, "upcoming_days": upcoming_days}
+
+
 @router.get("/patients/{phone}/notes")
 def tenant_list_patient_notes(
     phone: str,
@@ -4298,6 +4318,279 @@ def _finalize_agenda_day_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     payload["done"] = done_count
     payload["remaining"] = max(0, len(slots) - done_count)
     return payload
+
+
+def _patient_phone_lookup_keys(phone: str) -> List[str]:
+    norm = normalize_phone_number(phone) or str(phone or "").strip()
+    keys = list(dict.fromkeys(_cabinet_client_phone_lookup_keys(norm) or ([norm] if norm else [])))
+    return [k for k in keys if k]
+
+
+def _local_appointment_rows_for_patient(
+    tenant_id: int,
+    phone_keys: List[str],
+    day_start: datetime,
+    day_end: datetime,
+    tz_name: str,
+) -> List[Dict[str, Any]]:
+    if not phone_keys:
+        return []
+    rows: List[Dict[str, Any]] = []
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_SLOTS_URL")
+    if url:
+        try:
+            from backend.pg_pool import pg_connection_for
+
+            with pg_connection_for(url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif,
+                               a.google_event_id, s.start_ts, a.booking_origin
+                        FROM appointments a
+                        JOIN slots s ON s.id = a.slot_id
+                        WHERE a.tenant_id = %s
+                          AND a.contact = ANY(%s)
+                          AND s.start_ts >= %s
+                          AND s.start_ts < %s
+                        ORDER BY s.start_ts ASC
+                        """,
+                        (
+                            tenant_id,
+                            phone_keys,
+                            day_start.astimezone(timezone.utc),
+                            day_end.astimezone(timezone.utc),
+                        ),
+                    )
+                    for row in cur.fetchall() or []:
+                        start_local = _parse_dt(row.get("start_ts"), tz_name)
+                        if not start_local:
+                            continue
+                        rows.append(
+                            {
+                                "id": int(row.get("id") or 0),
+                                "slot_id": int(row.get("slot_id") or 0),
+                                "name": row.get("name") or "",
+                                "contact": row.get("contact") or "",
+                                "contact_type": row.get("contact_type") or "",
+                                "motif": row.get("motif") or "",
+                                "booking_origin": row.get("booking_origin") or "",
+                                "google_event_id": row.get("google_event_id") or "",
+                                "date": start_local.strftime("%Y-%m-%d"),
+                                "time": start_local.strftime("%H:%M"),
+                            }
+                        )
+                    return rows
+        except Exception as exc:
+            logger.debug("patient appointments pg lookup failed tenant=%s: %s", tenant_id, exc)
+
+    ensure_tenant_config()
+    placeholders = ",".join("?" for _ in phone_keys)
+    conn = get_conn()
+    try:
+        _migrate_sqlite_add_booking_origin(conn)
+        sqlite_rows = conn.execute(
+            f"""
+            SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif,
+                   a.booking_origin, a.google_event_id, s.date, s.time
+            FROM appointments a
+            JOIN slots s ON s.id = a.slot_id AND s.tenant_id = a.tenant_id
+            WHERE a.tenant_id = ?
+              AND a.contact IN ({placeholders})
+              AND s.date >= ?
+              AND s.date < ?
+            ORDER BY s.date ASC, s.time ASC
+            """,
+            (tenant_id, *phone_keys, day_start.strftime("%Y-%m-%d"), day_end.strftime("%Y-%m-%d")),
+        ).fetchall()
+        for row in sqlite_rows:
+            rows.append(dict(row))
+    finally:
+        conn.close()
+    return rows
+
+
+def _collect_patient_upcoming_appointment_slots(
+    tenant_id: int,
+    phone: str,
+    *,
+    upcoming_days: int,
+) -> List[Dict[str, Any]]:
+    """RDV à venir d'un patient sans charger tout l'agenda cabinet."""
+    phone_keys = _patient_phone_lookup_keys(phone)
+    if not phone_keys:
+        return []
+
+    detail = _get_tenant_detail_for_agenda_cached(tenant_id)
+    if not detail:
+        return []
+
+    params = detail.get("params") or {}
+    tz_name = _tenant_timezone(detail)
+    tz = _get_zoneinfo(tz_name)
+    now_local = datetime.now(tz)
+    day_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = day_start + timedelta(days=max(1, int(upcoming_days)))
+    profile_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+    slots: List[Dict[str, Any]] = []
+    seen_event_ids: set[str] = set()
+
+    for row in _local_appointment_rows_for_patient(tenant_id, phone_keys, day_start, day_end, tz_name):
+        start_local = _parse_dt(f"{row['date']}T{row['time']}:00", tz_name)
+        if not start_local:
+            continue
+        if start_local < now_local:
+            continue
+        end_local = start_local + timedelta(minutes=30)
+        patient_name = _resolve_agenda_patient_name_cached(
+            tenant_id,
+            row.get("contact"),
+            row.get("name"),
+            profile_cache,
+        )
+        meta = _agenda_slot_meta(
+            start_local=start_local,
+            end_local=end_local,
+            contact_type=str(row.get("contact_type") or ""),
+        )
+        event_id = str(row.get("google_event_id") or row.get("id") or "")
+        if event_id:
+            seen_event_ids.add(event_id)
+        slots.append(
+            {
+                "date": start_local.strftime("%Y-%m-%d"),
+                "hour": start_local.strftime("%Hh"),
+                "start_iso": start_local.isoformat(),
+                "patient": patient_name,
+                "patient_phone": normalize_phone_number(row.get("contact")),
+                "motif": row.get("motif") or "Consultation",
+                "type": row.get("motif") or "Consultation",
+                "source": "UWI",
+                "booking_origin": _agenda_booking_origin_from_local_row(row),
+                "done": False,
+                "current": start_local <= now_local < end_local,
+                "event_id": event_id,
+                "appointment_id": int(row.get("id") or 0),
+                "slot_id": int(row.get("slot_id") or 0),
+                "can_cancel": True,
+                "can_reschedule": True,
+                **meta,
+            }
+        )
+
+    try:
+        from backend.public_bookings_pg import fetch_public_bookings_for_agenda
+
+        public_slots = fetch_public_bookings_for_agenda(
+            tenant_id,
+            day_start,
+            day_end,
+            tz_name,
+            now_local,
+            include_past_on_date=False,
+        )
+        phone_key_set = set(phone_keys)
+        for item in public_slots:
+            pn = normalize_phone_number(item.get("patient_phone") or "")
+            if pn and pn not in phone_key_set:
+                continue
+            event_id = str(item.get("event_id") or "")
+            if event_id and event_id in seen_event_ids:
+                continue
+            if event_id:
+                seen_event_ids.add(event_id)
+            slots.append(item)
+    except Exception as exc:
+        logger.debug("patient appointments public_bookings skipped tenant=%s: %s", tenant_id, exc)
+
+    google_cal = (
+        (params.get("calendar_provider") or "").strip() == "google"
+        and bool((params.get("calendar_id") or "").strip())
+    )
+    if google_cal:
+        try:
+            cal_id = (params.get("calendar_id") or "").strip()
+            service = GoogleCalendarService(cal_id)
+            search_terms = list(
+                dict.fromkeys(
+                    t
+                    for t in (
+                        phone_keys[0] if phone_keys else "",
+                        (phone_keys[0][3:] if phone_keys and phone_keys[0].startswith("+33") else ""),
+                        (f"0{phone_keys[0][3:]}" if phone_keys and phone_keys[0].startswith("+33") else ""),
+                    )
+                    if t
+                )
+            )[:2]
+            for term in search_terms:
+                result = (
+                    service.service.events()
+                    .list(
+                        calendarId=cal_id,
+                        timeMin=day_start.isoformat(),
+                        timeMax=day_end.isoformat(),
+                        singleEvents=True,
+                        orderBy="startTime",
+                        q=term,
+                        fields="items(id,summary,description,start,end)",
+                    )
+                    .execute()
+                )
+                for event in result.get("items") or []:
+                    event_id = str(event.get("id") or "")
+                    if not event_id or event_id in seen_event_ids:
+                        continue
+                    description = (event.get("description") or "").strip()
+                    patient_contact = _extract_calendar_event_patient_contact(description)
+                    contact_norm = normalize_phone_number(patient_contact)
+                    if contact_norm and contact_norm not in phone_key_set:
+                        continue
+                    raw_start = (event.get("start") or {}).get("dateTime") or (event.get("start") or {}).get("date")
+                    start_dt = _parse_dt(raw_start, tz_name)
+                    if not start_dt:
+                        continue
+                    start_local = start_dt.astimezone(tz)
+                    if start_local < now_local:
+                        continue
+                    end_raw = (event.get("end") or {}).get("dateTime") or (event.get("end") or {}).get("date")
+                    end_dt = _parse_dt(end_raw, tz_name)
+                    end_local = end_dt.astimezone(tz) if end_dt else start_local + timedelta(minutes=30)
+                    summary = (event.get("summary") or "").strip()
+                    patient = summary.replace("RDV - ", "", 1).strip() if summary.startswith("RDV - ") else (summary or "Patient")
+                    motif = _extract_google_description_line(description, "Motif") or "Consultation"
+                    source = "UWI" if summary.startswith("RDV - ") or "Patient:" in description else "EXTERNAL"
+                    meta = _agenda_slot_meta(
+                        start_local=start_local,
+                        end_local=end_local,
+                        description=description,
+                    )
+                    seen_event_ids.add(event_id)
+                    slots.append(
+                        {
+                            "date": start_local.strftime("%Y-%m-%d"),
+                            "hour": start_local.strftime("%Hh"),
+                            "start_iso": start_local.isoformat(),
+                            "patient": patient,
+                            "patient_phone": contact_norm or phone_keys[0],
+                            "motif": motif,
+                            "type": motif,
+                            "source": source,
+                            "booking_origin": "google",
+                            "done": end_local <= now_local,
+                            "current": start_local <= now_local < end_local,
+                            "event_id": event_id,
+                            "appointment_id": 0,
+                            "slot_id": 0,
+                            "can_cancel": source == "UWI",
+                            "can_reschedule": source == "UWI",
+                            **meta,
+                        }
+                    )
+        except Exception as exc:
+            logger.debug("patient appointments google search failed tenant=%s: %s", tenant_id, exc)
+
+    slots.sort(key=lambda item: item.get("start_iso") or "")
+    return slots
 
 
 @router.get("/agenda")
