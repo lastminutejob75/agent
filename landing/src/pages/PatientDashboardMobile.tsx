@@ -102,6 +102,7 @@ export type PatientDashboardMobileProps = {
   onSms: () => void;
   onAddNote: () => void;
   onAddDocument: () => void;
+  onViewDocuments: () => void;
   onOpenHistoryModal: () => void;
   tenantPatientPhone: string;
   notify: (message: string, opts?: { sticky?: boolean }) => void;
@@ -303,12 +304,18 @@ function MobileQuickActions({
 function MobileContentActions({
   onAddNote,
   onAddDocument,
+  onViewDocuments,
+  documentsCount,
+  documentsLoading,
 }: {
   onAddNote: () => void;
   onAddDocument: () => void;
+  onViewDocuments: () => void;
+  documentsCount: number;
+  documentsLoading: boolean;
 }) {
   return (
-    <section className="mb-3 grid grid-cols-2 gap-2.5">
+    <section className="mb-3 grid grid-cols-1 gap-2.5 sm:grid-cols-3">
       <button
         type="button"
         onClick={onAddNote}
@@ -322,6 +329,13 @@ function MobileContentActions({
         className="min-h-[50px] rounded-[15px] border border-[#86EFAC] bg-white text-sm font-black text-[#16A34A] shadow-[0_8px_18px_rgba(15,23,42,0.05)]"
       >
         ▤ Ajouter un document
+      </button>
+      <button
+        type="button"
+        onClick={onViewDocuments}
+        className="min-h-[50px] rounded-[15px] border border-[#75D3DF] bg-white text-sm font-black text-[#008EA1] shadow-[0_8px_18px_rgba(15,23,42,0.05)]"
+      >
+        ▤ Consulter les documents{!documentsLoading && documentsCount > 0 ? ` (${documentsCount})` : ""}
       </button>
     </section>
   );
@@ -620,7 +634,7 @@ function MobileDocumentsTab({
                 onClick={() => onPreviewDocument(doc)}
                 className="shrink-0 rounded-[11px] border border-[#E3EAF2] bg-white px-3.5 py-2 text-sm font-extrabold text-[#475569]"
               >
-                Voir
+                Consulter
               </button>
             </div>
           ))}
@@ -709,6 +723,7 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
     onSms,
     onAddNote,
     onAddDocument,
+    onViewDocuments,
     tenantPatientPhone,
     notify,
     onQuestionnaireApplied,
@@ -741,7 +756,13 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
         onBackToList={onBackToList}
       />
       <MobileQuickActions onCall={onCall} onWhatsApp={onWhatsApp} onSms={onSms} onMore={onOpenProfile} />
-      <MobileContentActions onAddNote={onAddNote} onAddDocument={onAddDocument} />
+      <MobileContentActions
+        onAddNote={onAddNote}
+        onAddDocument={onAddDocument}
+        onViewDocuments={onViewDocuments}
+        documentsCount={documents.length}
+        documentsLoading={documentsLoading}
+      />
       <MobileTabs active={activeView} onChange={setActiveView} />
 
       {activeView === "overview" ? (

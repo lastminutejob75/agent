@@ -336,6 +336,7 @@ function buildPatientHeroFromProfile(p: Record<string, unknown> | undefined, fal
 const viewTabs: Array<{ id: ViewType; label: string; shortLabel: string }> = [
   { id: "overview", label: "Vue d'ensemble", shortLabel: "Aperçu" },
   { id: "appointments", label: "Rendez-vous", shortLabel: "RDV" },
+  { id: "documents", label: "Documents", shortLabel: "Docs" },
   { id: "history", label: "Historique", shortLabel: "Historique" },
 ];
 
@@ -473,7 +474,7 @@ function Toast({ message }: { message: string }) {
   );
 }
 
-function HeroSvgIcon({ name }: { name: "phone" | "mail" | "whatsapp" | "sms" | "more" | "overview" | "calendar" | "history" }) {
+function HeroSvgIcon({ name }: { name: "phone" | "mail" | "whatsapp" | "sms" | "more" | "overview" | "calendar" | "history" | "documents" }) {
   const common = "h-[18px] w-[18px] shrink-0";
   if (name === "phone") {
     return (
@@ -529,6 +530,14 @@ function HeroSvgIcon({ name }: { name: "phone" | "mail" | "whatsapp" | "sms" | "
       <svg className={common} viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <rect x="4" y="5.5" width="16" height="14" rx="2.2" stroke="currentColor" strokeWidth="1.8" />
         <path d="M8 4v3M16 4v3M4 10h16" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  if (name === "documents") {
+    return (
+      <svg className={common} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M8 4.5h8l4 4.5V19a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6.5a2 2 0 0 1 2-2Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+        <path d="M16 4.5V9h4M10 12h6M10 15.5h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
       </svg>
     );
   }
@@ -711,19 +720,115 @@ function OutlineTag({ children, tone = "blue" }: { children: React.ReactNode; to
   return <span className={cx("rounded-lg border bg-white px-4 py-2 text-sm font-extrabold", tones[tone])}>{children}</span>;
 }
 
+function PatientDocumentsList({
+  documents,
+  loading,
+  patientEmail,
+  documentSendingId,
+  documentDeletingId,
+  onPreview,
+  onDownload,
+  onSend,
+  onDelete,
+  onAddDocument,
+}: {
+  documents: PatientDocument[];
+  loading: boolean;
+  patientEmail: string;
+  documentSendingId: number | null;
+  documentDeletingId: number | null;
+  onPreview: (doc: PatientDocument) => void;
+  onDownload: (doc: PatientDocument) => void;
+  onSend: (docId: number) => void;
+  onDelete: (docId: number) => void;
+  onAddDocument?: () => void;
+}) {
+  if (loading) {
+    return (
+      <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3 text-sm text-[#64748B]">
+        Chargement des documents…
+      </div>
+    );
+  }
+
+  if (documents.length === 0) {
+    return (
+      <div className="rounded-2xl border border-dashed border-[#DDE7F1] bg-[#F8FAFC] px-4 py-8 text-center">
+        <div className="text-3xl">▤</div>
+        <p className="mt-3 text-sm font-semibold text-[#61708B]">Aucun document pour ce patient.</p>
+        {onAddDocument ? (
+          <button
+            type="button"
+            onClick={onAddDocument}
+            className="mt-4 rounded-xl border border-[#6AD58B] bg-white px-4 py-2.5 text-sm font-black text-[#0EA348] hover:bg-[#F0FFF5]"
+          >
+            ▤ Ajouter un document
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {documents.map((doc) => {
+        const canPreview = doc.mime_type.includes("pdf") || doc.mime_type.startsWith("image/");
+        return (
+          <div key={doc.id} className="flex items-center justify-between gap-3 rounded-xl border border-[#E2E8F0] bg-white px-3 py-3 sm:px-4">
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-bold text-[#0A1628]">{doc.original_name}</div>
+              <div className="text-xs text-[#64748B]">
+                {formatBytes(doc.size_bytes)} · {doc.created_at ? new Date(doc.created_at).toLocaleDateString("fr-FR") : "récemment"}
+              </div>
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+              {canPreview ? (
+                <button type="button" onClick={() => onPreview(doc)} className="rounded-lg border border-[#75D3DF] bg-[#E9FAFC] px-2.5 py-1 text-xs font-black text-[#008EA1] hover:bg-[#DDF6FA]">
+                  Consulter
+                </button>
+              ) : null}
+              <button type="button" onClick={() => onDownload(doc)} className="rounded-lg border border-[#DDE7F1] px-2.5 py-1 text-xs font-black text-[#0A1628] hover:bg-[#F8FAFC]">
+                Télécharger
+              </button>
+              <button
+                type="button"
+                onClick={() => onSend(doc.id)}
+                disabled={documentSendingId === doc.id || !patientEmail}
+                className="rounded-lg border border-[#86EFAC] px-2.5 py-1 text-xs font-black text-[#15803D] hover:bg-[#F0FDF4] disabled:opacity-50"
+                title={patientEmail ? `Envoyer à ${patientEmail}` : "Ajoutez un email patient"}
+              >
+                {documentSendingId === doc.id ? "..." : "Envoyer"}
+              </button>
+              <button
+                type="button"
+                onClick={() => onDelete(doc.id)}
+                disabled={documentDeletingId === doc.id}
+                className="rounded-lg border border-[#FCA5A5] px-2.5 py-1 text-xs font-black text-[#B91C1C] hover:bg-[#FEF2F2] disabled:opacity-50"
+              >
+                {documentDeletingId === doc.id ? "..." : "Supprimer"}
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function PrimaryCTA({
   children,
   variant = "dark",
   onClick,
 }: {
   children: React.ReactNode;
-  variant?: "dark" | "note" | "document";
+  variant?: "dark" | "note" | "document" | "consult";
   onClick: () => void;
 }) {
   const variants = {
     dark: "bg-gradient-to-br from-[#06355D] to-[#002D4E] text-white shadow-[0_12px_30px_rgba(3,49,82,.20)] hover:brightness-110",
     note: "border border-[#FF9C4B] bg-white text-[#F26C00] hover:bg-[#FFF7EF]",
     document: "border border-[#6AD58B] bg-white text-[#0EA348] hover:bg-[#F0FFF5]",
+    consult: "border border-[#75D3DF] bg-white text-[#008EA1] hover:bg-[#E9FAFC]",
   };
 
   return (
@@ -2029,6 +2134,8 @@ export default function PatientDashboardPage() {
         });
       }
       setPatientFetchNonce((n) => n + 1);
+      setModal(null);
+      setActiveView("documents");
       notify("Document ajouté");
     } catch (e) {
       notify((e as Error)?.message || "Erreur upload document");
@@ -2545,6 +2652,7 @@ export default function PatientDashboardPage() {
               }}
               onAddNote={() => setModal("addNote")}
               onAddDocument={() => setModal("addDocument")}
+              onViewDocuments={() => setActiveView("documents")}
               onOpenHistoryModal={() => setModal("history")}
               tenantPatientPhone={tenantPatientPhone}
               notify={notify}
@@ -2799,11 +2907,21 @@ export default function PatientDashboardPage() {
                   type="button"
                   onClick={() => setActiveView(tab.id)}
                   className={cx(
-                    "relative flex h-14 min-w-[33%] shrink-0 snap-start items-center justify-center gap-2 px-3 text-sm font-black transition sm:min-w-0 sm:flex-1 sm:gap-2.5 sm:px-6",
+                    "relative flex h-14 min-w-[25%] shrink-0 snap-start items-center justify-center gap-2 px-2 text-sm font-black transition sm:min-w-0 sm:flex-1 sm:gap-2.5 sm:px-4",
                     activeView === tab.id ? "text-[#008EA1]" : "text-[#42536E] hover:bg-[#F8FBFD]",
                   )}
                 >
-                  <HeroSvgIcon name={tab.id === "overview" ? "overview" : tab.id === "appointments" ? "calendar" : "history"} />
+                  <HeroSvgIcon
+                    name={
+                      tab.id === "overview"
+                        ? "overview"
+                        : tab.id === "appointments"
+                          ? "calendar"
+                          : tab.id === "documents"
+                            ? "documents"
+                            : "history"
+                    }
+                  />
                   <span className="hidden sm:inline">{tab.label}</span>
                   <span className="sm:hidden">{tab.shortLabel}</span>
                   {activeView === tab.id ? (
@@ -2813,9 +2931,12 @@ export default function PatientDashboardPage() {
               ))}
             </div>
 
-            <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 sm:gap-4 sm:p-5">
+            <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-3 sm:gap-4 sm:p-5">
               <PrimaryCTA variant="note" onClick={() => setModal("addNote")}>✎ Ajouter une note</PrimaryCTA>
               <PrimaryCTA variant="document" onClick={() => setModal("addDocument")}>▤ Ajouter un document</PrimaryCTA>
+              <PrimaryCTA variant="consult" onClick={() => setActiveView("documents")}>
+                ▤ Consulter les documents{!documentsLoading && documents.length > 0 ? ` (${documents.length})` : ""}
+              </PrimaryCTA>
             </div>
           </section>
           </>
@@ -3247,6 +3368,49 @@ export default function PatientDashboardPage() {
               <HistoryList items={patientHistory} loading={patientHistoryLoading} />
             </section>
           )}
+
+          {activeView === "documents" && (
+            <section className="mt-6 hidden rounded-[28px] border border-[#E2EAF4] bg-white p-4 shadow-sm sm:p-6 lg:p-8 xl:block">
+              <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-2xl font-black">Documents du patient</h2>
+                  {!documentsLoading ? (
+                    <p className="mt-2 text-sm font-bold text-[#008EA1]">
+                      {documents.length} document{documents.length > 1 ? "s" : ""} enregistré{documents.length > 1 ? "s" : ""}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setModal("addDocument")}
+                    className="rounded-xl border border-[#6AD58B] bg-white px-4 py-2 text-sm font-black text-[#0EA348] hover:bg-[#F0FFF5]"
+                  >
+                    ▤ Ajouter un document
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveView("overview")}
+                    className="rounded-xl border border-[#B6C3D7] px-4 py-2 text-sm font-black text-[#53647F] hover:bg-[#F8FAFC]"
+                  >
+                    ◂ Retour vue d&apos;ensemble
+                  </button>
+                </div>
+              </div>
+              <PatientDocumentsList
+                documents={documents}
+                loading={documentsLoading}
+                patientEmail={patientEmail}
+                documentSendingId={documentSendingId}
+                documentDeletingId={documentDeletingId}
+                onPreview={(doc) => void openPreview(doc)}
+                onDownload={(doc) => void downloadDocument(doc)}
+                onSend={(docId) => void sendDocument(docId)}
+                onDelete={(docId) => void deleteDocument(docId)}
+                onAddDocument={() => setModal("addDocument")}
+              />
+            </section>
+          )}
         </main>
       </div>
 
@@ -3376,52 +3540,13 @@ export default function PatientDashboardPage() {
               />
             </label>
           </div>
-
-          <div className="mt-5">
-            <h4 className="mb-2 text-sm font-black text-[#334155]">Documents patient</h4>
-            {documentsLoading ? (
-              <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3 text-sm text-[#64748B]">Chargement...</div>
-            ) : documents.length === 0 ? (
-              <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3 text-sm text-[#64748B]">Aucun document pour ce patient.</div>
-            ) : (
-              <div className="max-h-64 space-y-2 overflow-auto pr-1">
-                {documents.map((doc) => {
-                  const canPreview = doc.mime_type.includes("pdf") || doc.mime_type.startsWith("image/");
-                  return (
-                    <div key={doc.id} className="flex items-center justify-between gap-3 rounded-xl border border-[#E2E8F0] bg-white px-3 py-2">
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-bold text-[#0A1628]">{doc.original_name}</div>
-                        <div className="text-xs text-[#64748B]">{formatBytes(doc.size_bytes)} · {doc.created_at ? new Date(doc.created_at).toLocaleDateString("fr-FR") : "maintenant"}</div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {canPreview ? (
-                          <button type="button" onClick={() => openPreview(doc)} className="rounded-lg border border-[#DDE7F1] px-2 py-1 text-xs font-black text-[#0A1628] hover:bg-[#F8FAFC]">Voir</button>
-                        ) : null}
-                        <button type="button" onClick={() => downloadDocument(doc)} className="rounded-lg border border-[#DDE7F1] px-2 py-1 text-xs font-black text-[#0A1628] hover:bg-[#F8FAFC]">Télécharger</button>
-                        <button
-                          type="button"
-                          onClick={() => sendDocument(doc.id)}
-                          disabled={documentSendingId === doc.id || !patientEmail}
-                          className="rounded-lg border border-[#86EFAC] px-2 py-1 text-xs font-black text-[#15803D] hover:bg-[#F0FDF4] disabled:opacity-50"
-                          title={patientEmail ? `Envoyer à ${patientEmail}` : "Ajoute un email patient"}
-                        >
-                          {documentSendingId === doc.id ? "..." : "Envoyer"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => deleteDocument(doc.id)}
-                          disabled={documentDeletingId === doc.id}
-                          className="rounded-lg border border-[#FCA5A5] px-2 py-1 text-xs font-black text-[#B91C1C] hover:bg-[#FEF2F2] disabled:opacity-50"
-                        >
-                          {documentDeletingId === doc.id ? "..." : "Supprimer"}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+          <p className="mt-4 text-center text-sm text-[#61708B]">
+            Le document sera visible dans{" "}
+            <button type="button" onClick={() => { setModal(null); setActiveView("documents"); }} className="font-black text-[#008EA1] underline">
+              Consulter les documents
+            </button>
+            .
+          </p>
         </Modal>
       )}
 
