@@ -124,32 +124,6 @@ export default function AppLayout() {
         } else {
           window.setTimeout(loadDashboardCounters, 0);
         }
-        const prefetchAgendaWeek = () => {
-          if (cancelled) return;
-          const today = new Date().toISOString().slice(0, 10);
-          const anchor = new Date(`${today}T12:00:00`);
-          const diff = (anchor.getDay() + 6) % 7;
-          anchor.setDate(anchor.getDate() - diff);
-          const weekStart = anchor.toISOString().slice(0, 10);
-          const start = new Date(`${weekStart}T12:00:00`);
-          const dates = Array.from({ length: 7 }, (_, i) => {
-            const d = new Date(start);
-            d.setDate(start.getDate() + i);
-            return d.toISOString().slice(0, 10);
-          });
-          api
-            .tenantGetAgendaBulk([today], { lightweight: true, timeoutMs: 12000 })
-            .catch(() => null)
-            .finally(() => {
-              if (cancelled) return;
-              api.tenantGetAgendaBulk(dates, { lightweight: true, timeoutMs: 22000 }).catch(() => null);
-            });
-        };
-        if (typeof requestIdleCallback === "function") {
-          requestIdleCallback(prefetchAgendaWeek, { timeout: 4000 });
-        } else {
-          window.setTimeout(prefetchAgendaWeek, 1500);
-        }
       })
       .catch((e) => {
         if (cancelled) return;

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
@@ -939,6 +939,7 @@ def fetch_public_bookings_for_agenda(
         with pg_connection() as conn:
             set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
+                lookback_start = day_start.astimezone(timezone.utc) - timedelta(days=120)
                 cur.execute(
                     """
                     SELECT id, patient_name, patient_phone, motif, slot_label, status,
@@ -946,14 +947,17 @@ def fetch_public_bookings_for_agenda(
                     FROM public_bookings
                     WHERE tenant_id = %s
                       AND status IN ('confirmed', 'pending')
-                      AND COALESCE(start_iso, created_at) >= %s
-                      AND COALESCE(start_iso, created_at) < %s
+                      AND (
+                        (start_iso IS NOT NULL AND start_iso >= %s AND start_iso < %s)
+                        OR (start_iso IS NULL AND created_at >= %s)
+                      )
                     ORDER BY COALESCE(start_iso, created_at) ASC
                     """,
                     (
                         tenant_id,
                         day_start.astimezone(timezone.utc),
                         day_end.astimezone(timezone.utc),
+                        lookback_start,
                     ),
                 )
                 rows = [dict(r) for r in cur.fetchall()]
@@ -961,12 +965,18 @@ def fetch_public_bookings_for_agenda(
         logger.debug("fetch_public_bookings_for_agenda failed tenant=%s: %s", tenant_id, exc)
         return slots
 
+    day_start_local = day_start.astimezone(tz) if day_start.tzinfo else day_start.replace(tzinfo=tz)
+    day_end_local = day_end.astimezone(tz) if day_end.tzinfo else day_end.replace(tzinfo=tz)
+
     for row in rows:
         start_local = _booking_start_local(row, tz)
         if not start_local:
             continue
+        if start_local < day_start_local or start_local >= day_end_local:
+            continue
         if not include_past_on_date and start_local < now_local:
             continue
+        _maybe_persist_booking_start_iso(row, start_local)
         end_local = start_local + timedelta(minutes=30)
         status = (row.get("status") or "pending").strip()
         raw_src = (row.get("source") or "").strip()
@@ -976,7 +986,7 @@ def fetch_public_bookings_for_agenda(
         slots.append(
             {
                 "date": start_local.strftime("%Y-%m-%d"),
-                "hour": start_local.strftime("%Hh"),
+                "hour": _format_agenda_hour(start_local),
                 "start_iso": start_local.isoformat(),
                 "patient": (row.get("patient_name") or "Patient").strip(),
                 "patient_phone": normalize_phone_number(row.get("patient_phone") or "") or (row.get("patient_phone") or "").strip(),
@@ -1014,6 +1024,55 @@ def _parse_iso_ts(raw: Optional[str]) -> Optional[datetime]:
         return None
 
 
+_FRENCH_MONTHS = {
+    "janvier": 1,
+    "fevrier": 2,
+    "février": 2,
+    "mars": 3,
+    "avril": 4,
+    "mai": 5,
+    "juin": 6,
+    "juillet": 7,
+    "aout": 8,
+    "août": 8,
+    "septembre": 9,
+    "octobre": 10,
+    "novembre": 11,
+    "decembre": 12,
+    "décembre": 12,
+}
+
+
+def _parse_french_slot_label_date(label: str, ref_local: datetime) -> Optional[date]:
+    """Extrait une date civile depuis un libellé type « Lundi 3 juin à 9h30 »."""
+    raw = str(label or "").strip().lower()
+    if not raw:
+        return None
+    if "aujourd" in raw:
+        return ref_local.date()
+    match = re.search(
+        r"(\d{1,2})\s+(janvier|f[eé]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|novembre|d[eé]cembre)",
+        raw,
+    )
+    if not match:
+        return None
+    day = int(match.group(1))
+    month_key = (
+        match.group(2)
+        .replace("février", "fevrier")
+        .replace("août", "aout")
+        .replace("décembre", "decembre")
+    )
+    month = _FRENCH_MONTHS.get(month_key)
+    if not month:
+        return None
+    year = ref_local.year
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
 def _booking_start_local(row: Dict[str, Any], tz: ZoneInfo) -> Optional[datetime]:
     start_iso = row.get("start_iso")
     if start_iso:
@@ -1025,22 +1084,52 @@ def _booking_start_local(row: Dict[str, Any], tz: ZoneInfo) -> Optional[datetime
             return dt.astimezone(tz)
 
     created = row.get("created_at")
-    base_date = None
+    ref_local = datetime.now(tz)
     if isinstance(created, datetime):
-        base_date = created.astimezone(tz).date()
-    elif created:
-        try:
-            base_date = datetime.fromisoformat(str(created).replace("Z", "+00:00")).astimezone(tz).date()
-        except Exception:
-            base_date = None
+        ref_local = created.astimezone(tz)
 
-    label = (row.get("slot_label") or "").strip().lower()
+    label_raw = (row.get("slot_label") or "").strip()
+    label = label_raw.lower()
     hour, minute = _parse_time_from_label(label)
-    if base_date and hour is not None:
+    parsed_date = _parse_french_slot_label_date(label_raw, ref_local)
+    if parsed_date and hour is not None:
+        return datetime(parsed_date.year, parsed_date.month, parsed_date.day, hour, minute or 0, tzinfo=tz)
+
+    base_date = ref_local.date()
+    if hour is not None:
         return datetime(base_date.year, base_date.month, base_date.day, hour, minute or 0, tzinfo=tz)
     if isinstance(created, datetime):
         return created.astimezone(tz)
     return None
+
+
+def _format_agenda_hour(start_local: datetime) -> str:
+    if start_local.minute:
+        return start_local.strftime("%Hh%M")
+    return start_local.strftime("%Hh")
+
+
+def _maybe_persist_booking_start_iso(row: Dict[str, Any], start_local: datetime) -> None:
+    """Backfill start_iso pour les anciennes lignes sans date explicite."""
+    if row.get("start_iso"):
+        return
+    booking_id = row.get("id")
+    if not booking_id:
+        return
+    try:
+        with pg_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE public_bookings
+                    SET start_iso = %s
+                    WHERE id = %s AND start_iso IS NULL
+                    """,
+                    (start_local.astimezone(timezone.utc), booking_id),
+                )
+            conn.commit()
+    except Exception as exc:
+        logger.debug("persist booking start_iso skipped id=%s: %s", booking_id, exc)
 
 
 def _parse_time_from_label(label: str) -> tuple[Optional[int], Optional[int]]:
