@@ -15,7 +15,7 @@ import os
 import re
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from types import SimpleNamespace
 from uuid import uuid4
 from datetime import datetime, timedelta, timezone
@@ -180,6 +180,61 @@ _AGENDA_GCAL_EVENTS_LOCK = threading.Lock()
 _AGENDA_GCAL_EVENTS_CACHE: Dict[tuple, tuple[float, dict]] = {}
 
 
+def _google_calendar_events_list_execute(calendar_svc: GoogleCalendarService, *, calendar_id: str, time_min_iso: str, time_max_iso: str) -> dict:
+    return (
+        calendar_svc.service.events()
+        .list(
+            calendarId=(calendar_id or "").strip(),
+            timeMin=time_min_iso,
+            timeMax=time_max_iso,
+            singleEvents=True,
+            orderBy="startTime",
+            fields="items(id,summary,description,start,end)",
+        )
+        .execute()
+    )
+
+
+def _google_calendar_events_list_execute_with_timeout(
+    calendar_svc: GoogleCalendarService,
+    *,
+    calendar_id: str,
+    time_min_iso: str,
+    time_max_iso: str,
+) -> dict:
+    """Borne ``events.list()`` même si le client HTTP Google n'a pas de timeout (fallback prod)."""
+    try:
+        timeout = float((os.environ.get("AGENDA_GOOGLE_EXECUTE_TIMEOUT_SECONDS") or "18").strip() or "18")
+    except ValueError:
+        timeout = 18.0
+    if timeout <= 0:
+        return _google_calendar_events_list_execute(
+            calendar_svc,
+            calendar_id=calendar_id,
+            time_min_iso=time_min_iso,
+            time_max_iso=time_max_iso,
+        )
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        fut = pool.submit(
+            _google_calendar_events_list_execute,
+            calendar_svc,
+            calendar_id=calendar_id,
+            time_min_iso=time_min_iso,
+            time_max_iso=time_max_iso,
+        )
+        try:
+            return fut.result(timeout=timeout)
+        except FuturesTimeoutError:
+            logger.warning(
+                "Google Calendar events.list timed out after %.1fs calendar=%s window=%s..%s",
+                timeout,
+                (calendar_id or "")[:48],
+                time_min_iso,
+                time_max_iso,
+            )
+            return {"items": []}
+
+
 def _tenant_google_calendar_list_events_cached(
     calendar_svc: GoogleCalendarService,
     *,
@@ -197,17 +252,11 @@ def _tenant_google_calendar_list_events_cached(
     if os.environ.get("PYTEST_CURRENT_TEST"):
         ttl = -1.0
     if ttl <= 0:
-        return (
-            calendar_svc.service.events()
-            .list(
-                calendarId=cid,
-                timeMin=time_min_iso,
-                timeMax=time_max_iso,
-                singleEvents=True,
-                orderBy="startTime",
-                fields="items(id,summary,description,start,end)",
-            )
-            .execute()
+        return _google_calendar_events_list_execute_with_timeout(
+            calendar_svc,
+            calendar_id=cid,
+            time_min_iso=time_min_iso,
+            time_max_iso=time_max_iso,
         )
 
     key = (cid, time_min_iso, time_max_iso)
@@ -217,17 +266,11 @@ def _tenant_google_calendar_list_events_cached(
         if hit and hit[0] > now_mono:
             return copy.deepcopy(hit[1])
 
-    executed = (
-        calendar_svc.service.events()
-        .list(
-            calendarId=cid,
-            timeMin=time_min_iso,
-            timeMax=time_max_iso,
-            singleEvents=True,
-            orderBy="startTime",
-            fields="items(id,summary,description,start,end)",
-        )
-        .execute()
+    executed = _google_calendar_events_list_execute_with_timeout(
+        calendar_svc,
+        calendar_id=cid,
+        time_min_iso=time_min_iso,
+        time_max_iso=time_max_iso,
     )
 
     with _AGENDA_GCAL_EVENTS_LOCK:

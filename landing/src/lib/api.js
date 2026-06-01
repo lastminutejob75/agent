@@ -112,7 +112,7 @@ function parseApiError(data, statusText) {
   return typeof msg === "string" ? msg : JSON.stringify(msg);
 }
 
-async function request(path, { method = "GET", body, admin: _admin = false, tenant: _tenant = false, leadToken = "", signal } = {}) {
+async function request(path, { method = "GET", body, admin: _admin = false, tenant: _tenant = false, leadToken = "", signal, timeoutMs } = {}) {
   const url = `${BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
 
   /* Session : cookie HttpOnly via `credentials: include`. Plus de Bearer JWT en JS. */
@@ -125,6 +125,17 @@ async function request(path, { method = "GET", body, admin: _admin = false, tena
     headers.Authorization = `Bearer ${tenantToken}`;
   }
 
+  let timeoutId;
+  let timeoutController;
+  let fetchSignal = signal;
+  if (timeoutMs && timeoutMs > 0 && !signal) {
+    timeoutController = new AbortController();
+    fetchSignal = timeoutController.signal;
+    if (typeof window !== "undefined") {
+      timeoutId = window.setTimeout(() => timeoutController.abort(), timeoutMs);
+    }
+  }
+
   let res;
   try {
     res = await fetch(url, {
@@ -132,13 +143,18 @@ async function request(path, { method = "GET", body, admin: _admin = false, tena
       headers,
       body: body ? JSON.stringify(body) : undefined,
       credentials: "include", // cookie uwi_session (login email+mdp ou Google)
-      signal,
+      signal: fetchSignal,
     });
   } catch (e) {
+    if (e?.name === "AbortError") {
+      throw new Error("Délai dépassé. Le serveur met trop de temps à répondre.");
+    }
     if (e?.message === "Failed to fetch" || (e?.name === "TypeError" && /fetch|network/i.test(e?.message || ""))) {
       throw new Error(MSG_BACKEND_UNREACHABLE);
     }
     throw e;
+  } finally {
+    if (timeoutId && typeof window !== "undefined") window.clearTimeout(timeoutId);
   }
 
   const text = await res.text();
@@ -425,7 +441,8 @@ export const api = {
       body,
       tenant: true,
     }),
-  tenantGetAgenda: (params = "") => request(`/api/tenant/agenda${params}`, { tenant: true }),
+  tenantGetAgenda: (params = "", opts = {}) =>
+    request(`/api/tenant/agenda${params}`, { tenant: true, timeoutMs: 28000, ...opts }),
   tenantGetAgendaBulk: async (dates, opts = {}) => {
     /* Un seul appel bulk (jusqu'à 42j). Plus rapide en pratique qu'un split en 3
        chunks concurrents qui surcharge Google Calendar et dégrade la latence. */
@@ -434,7 +451,10 @@ export const api = {
     const params = new URLSearchParams();
     params.set("dates", all.join(","));
     if (opts?.lightweight) params.set("lightweight", "1");
-    return request(`/api/tenant/agenda/bulk?${params.toString()}`, { tenant: true });
+    return request(`/api/tenant/agenda/bulk?${params.toString()}`, {
+      tenant: true,
+      timeoutMs: opts?.timeoutMs ?? 28000,
+    });
   },
   tenantGetAgendaAvailableSlots: (params = "") =>
     request(`/api/tenant/agenda/available-slots${params}`, { tenant: true }),

@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useNavigate, useSearchParams, useOutletContext } from "react-router-dom";
 import CreatePatientFromCallModal from "../components/calls/CreatePatientFromCallModal.jsx";
@@ -908,6 +908,7 @@ export default function AppAgenda() {
   const [horaires, setHoraires] = useState(null);
   const [calendarLoading, setCalendarLoading] = useState(true);
   const [error, setError] = useState("");
+  const agendaLoadSeqRef = useRef(0);
   const [selectedAppt, setSelectedAppt] = useState(null);
   const [actionMsg, setActionMsg] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
@@ -963,6 +964,9 @@ export default function AppAgenda() {
   }, [viewMode, monthGrid, weekDates]);
 
   const loadAgenda = useCallback(async () => {
+    const loadId = ++agendaLoadSeqRef.current;
+    const isStaleLoad = () => loadId !== agendaLoadSeqRef.current;
+
     setError("");
     const horairesPromise = api.tenantGetHoraires().catch(() => null);
 
@@ -980,40 +984,72 @@ export default function AppAgenda() {
       setCalendarLoading(true);
     }
 
+    const mergeAgendaDates = (bulkRes, dates) => {
+      if (!bulkRes?.dates) return false;
+      setAgendaByDate((prev) => {
+        const next = { ...(prev || {}) };
+        dates.forEach((d) => { next[d] = bulkRes.dates[d] || { slots: [], date: d }; });
+        return next;
+      });
+      return true;
+    };
+
     try {
+      if (viewMode === "day" && !showedStale) {
+        const quickDay = await api.tenantGetAgenda(`?date=${selectedDate}`).catch(() => null);
+        if (isStaleLoad()) return;
+        if (quickDay?.slots) {
+          setAgendaByDate((prev) => ({
+            ...(prev || {}),
+            [selectedDate]: quickDay,
+          }));
+          setCalendarLoading(false);
+        }
+      }
+
       const bulkRes = await api.tenantGetAgendaBulk(fetchDates, { lightweight: true }).catch(() => null);
+      if (isStaleLoad()) return;
       if (bulkRes?.dates) {
         writeAgendaBulkStale(fetchDates, bulkRes);
       }
       if (bulkRes?.dates) {
-        setAgendaByDate((prev) => {
-          const next = { ...(prev || {}) };
-          fetchDates.forEach((d) => { next[d] = bulkRes.dates[d] || { slots: [], date: d }; });
-          return next;
-        });
+        mergeAgendaDates(bulkRes, fetchDates);
       } else if (!showedStale) {
         const results = await Promise.all(
           fetchDates.map((d) => api.tenantGetAgenda(`?date=${d}`).catch(() => ({ slots: [], date: d }))),
         );
+        if (isStaleLoad()) return;
         setAgendaByDate((prev) => {
           const next = { ...(prev || {}) };
           fetchDates.forEach((d, i) => { next[d] = results[i]; });
           return next;
         });
+        if (!results.some((row) => (row?.slots || []).length > 0)) {
+          setError("Impossible de charger l'agenda. Vérifiez votre connexion Google Calendar ou réessayez.");
+        }
       }
       horairesPromise.then((nextHoraires) => {
-        if (nextHoraires) setHoraires(nextHoraires);
+        if (!isStaleLoad() && nextHoraires) setHoraires(nextHoraires);
       });
     } catch (e) {
-      if (!showedStale) {
+      if (!showedStale && !isStaleLoad()) {
         setError(e?.message || "Impossible de charger l'agenda.");
       }
     } finally {
-      setCalendarLoading(false);
+      if (!isStaleLoad()) setCalendarLoading(false);
     }
-  }, [fetchDates]);
+  }, [fetchDates, selectedDate, viewMode]);
 
   useEffect(() => { loadAgenda(); }, [loadAgenda]);
+
+  useEffect(() => {
+    if (!calendarLoading) return undefined;
+    const safetyTimer = window.setTimeout(() => {
+      setCalendarLoading(false);
+      setError((prev) => prev || "Le chargement de l'agenda prend trop de temps. Réessayez.");
+    }, 30000);
+    return () => window.clearTimeout(safetyTimer);
+  }, [calendarLoading]);
 
   useEffect(() => {
     if (!patientCreateOpen) {
@@ -1815,7 +1851,15 @@ export default function AppAgenda() {
     <div className="agenda-page" style={S.page}>
       <style>{CSS}</style>
 
-      {error ? <div style={S.errorBox}>{error}</div> : null}
+      {error ? (
+        <div style={S.errorBox}>
+          {error}
+          {" "}
+          <button type="button" onClick={loadAgenda} style={S.errorRetryBtn}>
+            Réessayer
+          </button>
+        </div>
+      ) : null}
       {actionMsg ? <div style={actionMsg.type === "error" ? S.toastError : S.toast}>
         {actionMsg.type === "error" ? "⚠️ " : "✅ "}{actionMsg.text || actionMsg}
       </div> : null}
@@ -2685,6 +2729,7 @@ const S = {
     minHeight: 220,
   },
   errorBox: { marginBottom: 14, borderRadius: 12, border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", padding: "12px 14px", fontSize: 14, fontWeight: 600 },
+  errorRetryBtn: { marginLeft: 8, padding: "4px 10px", borderRadius: 8, border: "1px solid #fca5a5", background: "#fff", color: "#b91c1c", fontSize: 13, fontWeight: 700, cursor: "pointer" },
   toast: { marginBottom: 14, borderRadius: 10, border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#047857", padding: "12px 16px", fontSize: 14, fontWeight: 700, animation: "toastIn .3s ease" },
   toastError: { marginBottom: 14, borderRadius: 10, border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", padding: "12px 16px", fontSize: 14, fontWeight: 700, animation: "toastIn .3s ease" },
 
