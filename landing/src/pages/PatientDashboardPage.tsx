@@ -40,6 +40,11 @@ import {
   hasBlockingPatientDuplicate,
   parsePatientDuplicateError,
 } from "../lib/patientDuplicateCheck.js";
+import {
+  fetchTenantCallbacksCached,
+  fetchTenantHandoffsCached,
+  fetchTenantRequestsBundleCached,
+} from "../lib/tenantRequestsCache.js";
 
 /** Clé téléphone métier (= backend `normalize_phone_number`). */
 function normalizePhone(value: string) {
@@ -908,14 +913,18 @@ export default function PatientDashboardPage() {
   }, []);
 
   useEffect(() => {
+    if (!tenantPatientPhone && !requestIdFromUrl) {
+      setRequestsLoading(false);
+      return undefined;
+    }
     let cancelled = false;
     setRequestsLoading(true);
-    Promise.all([
-      api.tenantGetHandoffs("?limit=50").catch(() => ({ items: [] })),
-      api.tenantGetCalls("?limit=50&days=30&compact=1").catch(() => ({ calls: [] })),
-      api.tenantGetCallbackRequests("?limit=50").catch(() => ({ items: [] })),
-    ])
-      .then(([handoffsRes, callsRes, callbacksRes]) => {
+    fetchTenantRequestsBundleCached(api, {
+      callsQuery: "?limit=50&days=30&compact=1",
+      handoffsQuery: "?limit=50",
+      callbacksQuery: "?limit=50",
+    })
+      .then(({ callsRes, handoffsRes, callbacksRes }) => {
         if (cancelled) return;
         setTenantHandoffs(Array.isArray(handoffsRes?.items) ? handoffsRes.items : []);
         setTenantCalls(Array.isArray(callsRes?.calls) ? callsRes.calls : []);
@@ -927,7 +936,7 @@ export default function PatientDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [tenantPatientPhone, requestIdFromUrl]);
 
   const tenantRequestRows = useMemo(
     () => buildTenantRequestRows(tenantCalls, tenantHandoffs, tenantCallbacks, requestStatusOverrides),
@@ -1461,6 +1470,12 @@ export default function PatientDashboardPage() {
 
   useEffect(() => {
     let cancelled = false;
+    if (!tenantPatientPhone) {
+      setPatientAgendaLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
     if (activeView === "history") {
       return () => {
         cancelled = true;
@@ -2235,8 +2250,8 @@ export default function PatientDashboardPage() {
       persistRequestStatusOverride(activeRequestDetail.id, nextStatus);
       window.dispatchEvent(new CustomEvent("uwi:request-status-updated"));
       const [handoffsRes, callbacksRes] = await Promise.all([
-        api.tenantGetHandoffs("?limit=50").catch(() => ({ items: [] })),
-        api.tenantGetCallbackRequests("?limit=50").catch(() => ({ items: [] })),
+        fetchTenantHandoffsCached(api, "?limit=50").catch(() => ({ items: [] })),
+        fetchTenantCallbacksCached(api, "?limit=50").catch(() => ({ items: [] })),
       ]);
       setTenantHandoffs(Array.isArray(handoffsRes?.items) ? handoffsRes.items : []);
       setTenantCallbacks(Array.isArray(callbacksRes?.items) ? callbacksRes.items : []);

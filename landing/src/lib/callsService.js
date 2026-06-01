@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { fetchTenantCallsCached } from "./tenantRequestsCache.js";
 
 function normalizePhone(value) {
   const raw = String(value || "").trim();
@@ -168,7 +169,8 @@ function buildQuery(filters = {}) {
 }
 
 export async function getCalls(filters = {}) {
-  const payload = await api.tenantGetCalls(buildQuery(filters));
+  const query = buildQuery(filters);
+  const payload = await fetchTenantCallsCached(api, query);
   const source = Array.isArray(payload?.calls) ? payload.calls : Array.isArray(payload?.items) ? payload.items : [];
   return source.map(normalizeCallItem).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }

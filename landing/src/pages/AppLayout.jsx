@@ -108,6 +108,22 @@ export default function AppLayout() {
         if (cancelled) return;
         setMe(data);
         setLoading(false);
+        const loadDashboardCounters = () => {
+          if (cancelled) return;
+          api
+            .tenantDashboard()
+            .then((dash) => {
+              if (!cancelled) setDashboard(dash);
+            })
+            .catch(() => {
+              if (!cancelled) setDashboard(null);
+            });
+        };
+        if (typeof requestIdleCallback === "function") {
+          requestIdleCallback(loadDashboardCounters, { timeout: 2500 });
+        } else {
+          window.setTimeout(loadDashboardCounters, 0);
+        }
       })
       .catch((e) => {
         if (cancelled) return;
@@ -120,15 +136,6 @@ export default function AppLayout() {
         }
         setErr(e?.message || e?.data?.detail || "Chargement impossible.");
         setLoading(false);
-      });
-
-    api
-      .tenantDashboard()
-      .then((data) => {
-        if (!cancelled) setDashboard(data);
-      })
-      .catch(() => {
-        if (!cancelled) setDashboard(null);
       });
 
     return () => {

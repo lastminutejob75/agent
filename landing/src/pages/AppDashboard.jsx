@@ -6,6 +6,7 @@ import { api } from "../lib/api.js";
 import { computeUpcomingFillRate } from "../lib/agendaFillRate.js";
 import HomeHeroSection from "../components/home/HomeHeroSection.jsx";
 import { buildRequestItemsFromCallsAndHandoffs, summarizeRequestItems } from "../lib/requestUiStatus.js";
+import { fetchTenantCallbacksCached, fetchTenantHandoffsCached } from "../lib/tenantRequestsCache.js";
 import HomeTabsActionsPanel from "../components/home/HomeTabsActionsPanel.jsx";
 import HomeStatsStrip from "../components/home/HomeStatsStrip.jsx";
 import NextAppointmentCard from "../components/home/NextAppointmentCard.jsx";
@@ -239,8 +240,8 @@ export default function AppDashboard() {
       });
 
     Promise.allSettled([
-      api.tenantGetHandoffs("?limit=30&days=30"),
-      api.tenantGetCallbackRequests("?limit=30"),
+      fetchTenantHandoffsCached(api, "?limit=30&days=30"),
+      fetchTenantCallbacksCached(api, "?limit=30"),
       api.tenantVapiStatus(),
       api.tenantGetCalendarStatus(),
     ]).then(([handoffRes, callbackRes, vapiRes, calendarRes]) => {

@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { flushSync } from "react-dom";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams, useOutletContext } from "react-router-dom";
 import CreatePatientFromCallModal from "../components/calls/CreatePatientFromCallModal.jsx";
 import AppAgendaMiniCalendar from "../components/AppAgendaMiniCalendar.jsx";
 import PatientDuplicateBanner from "../components/patients/PatientDuplicateBanner.jsx";
@@ -835,6 +835,7 @@ function AgendaDateNavPanel({
 
 export default function AppAgenda() {
   const navigate = useNavigate();
+  const { me } = useOutletContext() || {};
   const [searchParams] = useSearchParams();
   const urlDate = searchParams.get("date");
   const urlView = searchParams.get("view");
@@ -917,7 +918,6 @@ export default function AppAgenda() {
   }, [urlFocus]);
   const [agendaByDate, setAgendaByDate] = useState({});
   const [horaires, setHoraires] = useState(null);
-  const [me, setMe] = useState(null);
   const [calendarLoading, setCalendarLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedAppt, setSelectedAppt] = useState(null);
@@ -976,9 +976,6 @@ export default function AppAgenda() {
 
   const loadAgenda = useCallback(async () => {
     setError("");
-    api.tenantMe().catch(() => null).then((nextMe) => {
-      if (nextMe) setMe(nextMe);
-    });
     const horairesPromise = api.tenantGetHoraires().catch(() => null);
 
     const staleBulk = readAgendaBulkStale(fetchDates);

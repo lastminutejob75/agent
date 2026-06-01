@@ -4,6 +4,7 @@ import SeoHead from "./components/SeoHead";
 import CookieConsentBanner from "./components/CookieConsentBanner.jsx";
 import AuthLayout from "./components/AuthLayout";
 import { scrollWindowToTop } from "./lib/scrollToTop.js";
+import PageRouteSkeleton from "./components/PageRouteSkeleton.jsx";
 
 const publicPageModules = import.meta.glob([
   "./pages/CreerAssistante.jsx",
@@ -134,7 +135,7 @@ const AdminLeadDetail = lazy(() => import("./admin/pages/AdminLeadDetail"));
 const AdminNotFound = lazy(() => import("./admin/pages/AdminNotFound"));
 
 function RouteLoader() {
-  return <div style={{ minHeight: "30vh" }} />;
+  return <PageRouteSkeleton />;
 }
 
 function LazyElement({ Component, ...props }) {

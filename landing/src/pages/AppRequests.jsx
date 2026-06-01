@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../lib/api.js";
+import { fetchTenantRequestsBundleCached } from "../lib/tenantRequestsCache.js";
 import { toUiStatus, classifyRequestType, shouldShowHandoffInRequestInbox, shouldShowCallInRequestInbox, callbackRequestStatusRaw, callbackRequestPriority, callbackRequestSummary, callbackRequestSourceLabel, isLiveTransferHandoff } from "../lib/requestUiStatus.js";
 
 const REQUEST_STATUS_OVERRIDES_KEY = "uwi_request_status_overrides";
@@ -140,15 +141,15 @@ export default function AppRequests() {
       setLoading(true);
       setError("");
       try {
-        const [callsData, handoffsData, callbacksData] = await Promise.all([
-          api.tenantGetCalls("?limit=50&days=30&compact=1"),
-          api.tenantGetHandoffs("?limit=50"),
-          api.tenantGetCallbackRequests("?limit=50"),
-        ]);
+        const { callsRes, handoffsRes, callbacksRes } = await fetchTenantRequestsBundleCached(api, {
+          callsQuery: "?limit=50&days=30&compact=1",
+          handoffsQuery: "?limit=50",
+          callbacksQuery: "?limit=50",
+        });
         if (cancelled) return;
-        setCalls(Array.isArray(callsData?.calls) ? callsData.calls : []);
-        setHandoffs(Array.isArray(handoffsData?.items) ? handoffsData.items : []);
-        setCallbacks(Array.isArray(callbacksData?.items) ? callbacksData.items : []);
+        setCalls(Array.isArray(callsRes?.calls) ? callsRes.calls : []);
+        setHandoffs(Array.isArray(handoffsRes?.items) ? handoffsRes.items : []);
+        setCallbacks(Array.isArray(callbacksRes?.items) ? callbacksRes.items : []);
       } catch (e) {
         if (!cancelled) setError(e?.message || "Erreur chargement des demandes");
       } finally {
