@@ -1001,9 +1001,28 @@ export default function AppAgenda() {
       });
       return true;
     };
+    const countSlotsInBulk = (bulkRes, dates) =>
+      (dates || []).reduce((sum, d) => sum + ((bulkRes?.dates?.[d]?.slots || []).length), 0);
+    const loadDatesFallback = async (dates) => {
+      const results = await Promise.all(
+        (dates || []).map((d) =>
+          api
+            .tenantGetAgenda(`?date=${d}&lightweight=1`, { timeoutMs: 14000 })
+            .catch(() => ({ slots: [], date: d })),
+        ),
+      );
+      if (isStaleLoad()) return null;
+      setAgendaByDate((prev) => {
+        const next = { ...(prev || {}) };
+        (dates || []).forEach((d, i) => { next[d] = results[i]; });
+        return next;
+      });
+      return results;
+    };
 
     try {
       if (viewMode === "day") {
+        let dayBulkSlotsCount = 0;
         const dayBulk = await api
           .tenantGetAgendaBulk([selectedDate], { lightweight: true, timeoutMs: 18000 })
           .catch(() => null);
@@ -1011,13 +1030,15 @@ export default function AppAgenda() {
         if (dayBulk?.dates && Object.prototype.hasOwnProperty.call(dayBulk.dates, selectedDate)) {
           writeAgendaBulkStale([selectedDate], dayBulk);
           mergeAgendaDates(dayBulk, [selectedDate]);
+          dayBulkSlotsCount = countSlotsInBulk(dayBulk, [selectedDate]);
           setCalendarLoading(false);
-        } else {
+        }
+        if (!dayBulk?.dates || !Object.prototype.hasOwnProperty.call(dayBulk.dates, selectedDate) || dayBulkSlotsCount === 0) {
           const quickDay = await api
             .tenantGetAgenda(`?date=${selectedDate}&lightweight=1`, { timeoutMs: 20000 })
             .catch(() => null);
           if (isStaleLoad()) return;
-          if (quickDay?.slots) {
+          if (Array.isArray(quickDay?.slots)) {
             setAgendaByDate((prev) => ({ ...(prev || {}), [selectedDate]: quickDay }));
             setCalendarLoading(false);
           } else if (!showedStale) {
@@ -1027,10 +1048,13 @@ export default function AppAgenda() {
 
         if (fetchDates.length > 1) {
           api.tenantGetAgendaBulk(fetchDates, { lightweight: true, timeoutMs: 22000 })
-            .then((weekBulk) => {
+            .then(async (weekBulk) => {
               if (isStaleLoad() || !weekBulk?.dates) return;
               writeAgendaBulkStale(fetchDates, weekBulk);
               mergeAgendaDates(weekBulk, fetchDates);
+              if (countSlotsInBulk(weekBulk, fetchDates) === 0 && !showedStale) {
+                await loadDatesFallback(fetchDates);
+              }
             })
             .catch(() => null);
         }
@@ -1044,19 +1068,17 @@ export default function AppAgenda() {
       if (isStaleLoad()) return;
       if (bulkRes?.dates) {
         writeAgendaBulkStale(fetchDates, bulkRes);
-      }
-      if (bulkRes?.dates) {
         mergeAgendaDates(bulkRes, fetchDates);
+        if (countSlotsInBulk(bulkRes, fetchDates) === 0 && !showedStale) {
+          const results = await loadDatesFallback(fetchDates);
+          if (!results) return;
+          if (!results.some((row) => (row?.slots || []).length > 0)) {
+            setError("Impossible de charger l'agenda. Vérifiez votre connexion Google Calendar ou réessayez.");
+          }
+        }
       } else if (!showedStale) {
-        const results = await Promise.all(
-          fetchDates.map((d) => api.tenantGetAgenda(`?date=${d}`).catch(() => ({ slots: [], date: d }))),
-        );
-        if (isStaleLoad()) return;
-        setAgendaByDate((prev) => {
-          const next = { ...(prev || {}) };
-          fetchDates.forEach((d, i) => { next[d] = results[i]; });
-          return next;
-        });
+        const results = await loadDatesFallback(fetchDates);
+        if (!results) return;
         if (!results.some((row) => (row?.slots || []).length > 0)) {
           setError("Impossible de charger l'agenda. Vérifiez votre connexion Google Calendar ou réessayez.");
         }

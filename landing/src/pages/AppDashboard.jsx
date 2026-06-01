@@ -229,7 +229,7 @@ export default function AppDashboard() {
         if (!silent) setLoading(false);
       });
 
-    api.tenantGetAgenda("?upcoming_days=14&compact=1")
+    api.tenantGetAgenda("?upcoming_days=14&compact=1&lightweight=1")
       .then((value) => {
         if (cancelledRef?.cancelled) return;
         setAgenda(Array.isArray(value?.slots) ? value.slots : []);
