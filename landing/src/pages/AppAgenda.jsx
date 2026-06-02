@@ -20,7 +20,7 @@ import {
   canRescheduleAgendaSlot,
 } from "../lib/agendaAppointmentActions.js";
 import { normalizeFrenchPhone } from "../lib/transferConfig.js";
-import api, { isTenantUnauthorized } from "../lib/api.js";
+import { api, isTenantUnauthorized } from "../lib/api.js";
 
 const NAVY = "#111827";
 const TEAL = "#0DC991";
