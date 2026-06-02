@@ -1,5 +1,4 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { flushSync } from "react-dom";
 import { useNavigate, useSearchParams, useOutletContext } from "react-router-dom";
 import CreatePatientFromCallModal from "../components/calls/CreatePatientFromCallModal.jsx";
 import AppAgendaMiniCalendar from "../components/AppAgendaMiniCalendar.jsx";
@@ -300,9 +299,10 @@ function normalizePhone(raw) {
   return normalizeFrenchPhone(raw);
 }
 
-/** True dès qu'une fiche patient existe (aligné backend `patient_has_file`). */
-function cabinetPatientRecordExists(profile) {
-  return Boolean(profile && typeof profile === "object");
+/** Fiche patient « prête » sur le dashboard : identité validée (`validated_name` ≥ 2 car.). */
+function agendaPatientHasPracticeFile(appt, profile) {
+  if (Boolean(appt?.patient_identity_validated || appt?.patient_has_file)) return true;
+  return dashboardPatientHasValidatedIdentity(profile);
 }
 
 /** Téléphone facultatif (création RDV cabinet) ; si renseigné → format E.164 strict. */
@@ -489,44 +489,14 @@ function InlineDetail({
   rescheduleMode,
   onStartReschedule,
   onReschedule,
-  onCreatePatientFromAgenda,
+  hasPatientFile,
+  patientFileKnown,
+  onViewPatientFile,
+  onCreatePatientFile,
   variant = "inline",
 }) {
   const aPhone = normalizePhone(a.patient_phone || a.phone || "");
   const aPhoneFmt = formatPhone(aPhone);
-  const [hasPatientFile, setHasPatientFile] = useState(Boolean(a.patient_has_file));
-  const [patientFileKnown, setPatientFileKnown] = useState(Boolean(a.patient_has_file) || !aPhone);
-
-  useEffect(() => {
-    const fromAgenda = Boolean(a.patient_has_file);
-    setHasPatientFile(fromAgenda);
-    if (!aPhone) {
-      setPatientFileKnown(true);
-      return undefined;
-    }
-    if (fromAgenda) {
-      setPatientFileKnown(true);
-      return undefined;
-    }
-    let cancelled = false;
-    setPatientFileKnown(false);
-    api.tenantGetPatient(aPhone, { lightweight: true })
-      .then((res) => {
-        if (!cancelled) {
-          setHasPatientFile(cabinetPatientRecordExists(res?.patient));
-          setPatientFileKnown(true);
-        }
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setHasPatientFile(e?.status === 404 ? false : fromAgenda);
-          setPatientFileKnown(true);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [a.patient_has_file, aPhone, a.id]);
   const shellStyle = variant === "modal" ? S.inlineDetailModal : S.inlineDetail;
   return (
     <div style={shellStyle}>
@@ -542,7 +512,7 @@ function InlineDetail({
         {aPhone && patientFileKnown && hasPatientFile ? (
           <button
             type="button"
-            onClick={() => navigate(`/app/patient-dashboard?phone=${encodeURIComponent(aPhone)}`)}
+            onClick={() => onViewPatientFile?.()}
             style={S.inlineSecBtn}
           >
             👤 Consulter la fiche patient
@@ -551,7 +521,7 @@ function InlineDetail({
         {aPhone && patientFileKnown && !hasPatientFile ? (
           <button
             type="button"
-            onClick={() => onCreatePatientFromAgenda?.(a)}
+            onClick={() => onCreatePatientFile?.()}
             style={S.inlineSecBtn}
           >
             👤 Créer la fiche patient
@@ -978,6 +948,7 @@ export default function AppAgenda() {
   const [error, setError] = useState("");
   const agendaLoadSeqRef = useRef(0);
   const [selectedAppt, setSelectedAppt] = useState(null);
+  const [selectedApptPatientFile, setSelectedApptPatientFile] = useState({ known: true, hasFile: false });
   const [actionMsg, setActionMsg] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
@@ -1449,9 +1420,53 @@ export default function AppAgenda() {
 
   function closeAppointmentDetail() {
     setSelectedAppt(null);
+    setSelectedApptPatientFile({ known: true, hasFile: false });
     setConfirmCancel(false);
     resetReschedule();
   }
+
+  useEffect(() => {
+    if (!selectedAppt) {
+      setSelectedApptPatientFile({ known: true, hasFile: false });
+      return undefined;
+    }
+    const phone = normalizePhone(selectedAppt.patient_phone || selectedAppt.phone || "");
+    if (agendaPatientHasPracticeFile(selectedAppt, null)) {
+      setSelectedApptPatientFile({ known: true, hasFile: true });
+      return undefined;
+    }
+    if (!phone) {
+      setSelectedApptPatientFile({ known: true, hasFile: false });
+      return undefined;
+    }
+    let cancelled = false;
+    setSelectedApptPatientFile({ known: false, hasFile: false });
+    api.tenantGetPatient(phone, { lightweight: true })
+      .then((res) => {
+        if (!cancelled) {
+          setSelectedApptPatientFile({
+            known: true,
+            hasFile: agendaPatientHasPracticeFile(selectedAppt, res?.patient),
+          });
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setSelectedApptPatientFile({
+            known: true,
+            hasFile: e?.status === 404 ? false : agendaPatientHasPracticeFile(selectedAppt, null),
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    selectedAppt?.id,
+    selectedAppt?.patient_phone,
+    selectedAppt?.patient_has_file,
+    selectedAppt?.patient_identity_validated,
+  ]);
 
   const syncAgendaUrl = useCallback((nextDate, nextView, extra = {}) => {
     const params = new URLSearchParams();
@@ -1485,10 +1500,43 @@ export default function AppAgenda() {
     if (selectedAppt?.id === a.id) {
       closeAppointmentDetail();
     } else {
+      setPatientCreateOpen(false);
       setSelectedAppt(a);
       setConfirmCancel(false);
       resetReschedule();
     }
+  }
+
+  function viewPatientFileFromSelectedAppt() {
+    const phone = normalizePhone(selectedAppt?.patient_phone || selectedAppt?.phone || "");
+    if (!phone) return;
+    closeAppointmentDetail();
+    navigate(`/app/patient-dashboard?phone=${encodeURIComponent(phone)}`);
+  }
+
+  function openCreatePatientFormFromAppt(appt) {
+    const fromName = splitAgendaPatientName(appt?.patient);
+    const motif = String(appt?.type || "").trim();
+    const initialNote = [
+      `Rendez-vous : ${formatLongDate(appt?.date)} · ${appt?.displayTime || ""}`,
+      motif ? `Motif : ${motif}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    setPatientCreateForm({
+      firstName: fromName.firstName,
+      lastName: fromName.lastName,
+      phone: normalizePhone(appt?.patient_phone || ""),
+      initialNote,
+      agendaMotif: motif,
+      rawCalendarName: String(appt?.patient || "").trim(),
+      callId: "",
+    });
+    setPatientCreateSummary(
+      `${formatLongDate(appt?.date)} · ${appt?.displayTime || "—"}${motif ? ` · ${motif}` : ""}`,
+    );
+    closeAppointmentDetail();
+    setPatientCreateOpen(true);
   }
 
   useEffect(() => {
@@ -1619,7 +1667,7 @@ export default function AppAgenda() {
       if (phoneNorm) {
         try {
           const prof = await api.tenantGetPatient(phoneNorm, { lightweight: true });
-          needsPatientFile = !cabinetPatientRecordExists(prof?.patient);
+          needsPatientFile = !agendaPatientHasPracticeFile(null, prof?.patient);
         } catch (e) {
           needsPatientFile = e?.status === 404;
         }
@@ -1672,47 +1720,16 @@ export default function AppAgenda() {
     openPatientCreateFromAppointment(fakeAppt);
   }
 
-  async function openPatientCreateFromAppointment(appt) {
-    const phone = normalizePhone(appt?.patient_phone || "");
-    if (phone) {
-      if (appt?.patient_has_file) {
+  function openPatientCreateFromAppointment(appt) {
+    if (agendaPatientHasPracticeFile(appt, null)) {
+      const phone = normalizePhone(appt?.patient_phone || "");
+      if (phone) {
+        closeAppointmentDetail();
         navigate(`/app/patient-dashboard?phone=${encodeURIComponent(phone)}`);
         return;
       }
-      try {
-        const res = await api.tenantGetPatient(phone, { lightweight: true });
-        if (cabinetPatientRecordExists(res?.patient)) {
-          navigate(`/app/patient-dashboard?phone=${encodeURIComponent(phone)}`);
-          return;
-        }
-      } catch {
-        /* pas de fiche : ouvrir le formulaire de création */
-      }
     }
-    const fromName = splitAgendaPatientName(appt?.patient);
-    const motif = String(appt?.type || "").trim();
-    const initialNote = [
-      `Rendez-vous : ${formatLongDate(appt?.date)} · ${appt?.displayTime || ""}`,
-      motif ? `Motif : ${motif}` : null,
-    ]
-      .filter(Boolean)
-      .join("\n");
-    setPatientCreateForm({
-      firstName: fromName.firstName,
-      lastName: fromName.lastName,
-      phone: normalizePhone(appt?.patient_phone || ""),
-      initialNote,
-      agendaMotif: motif,
-      rawCalendarName: String(appt?.patient || "").trim(),
-      callId: "",
-    });
-    setPatientCreateSummary(
-      `${formatLongDate(appt?.date)} · ${appt?.displayTime || "—"}${motif ? ` · ${motif}` : ""}`,
-    );
-    flushSync(() => {
-      closeAppointmentDetail();
-    });
-    setPatientCreateOpen(true);
+    openCreatePatientFormFromAppt(appt);
   }
 
   async function handlePatientCreateFromAgendaSubmit() {
@@ -2545,7 +2562,10 @@ export default function AppAgenda() {
               rescheduleMode={rescheduleMode}
               onStartReschedule={handleStartReschedule}
               onReschedule={handleReschedule}
-              onCreatePatientFromAgenda={openPatientCreateFromAppointment}
+              hasPatientFile={selectedApptPatientFile.hasFile}
+              patientFileKnown={selectedApptPatientFile.known}
+              onViewPatientFile={viewPatientFileFromSelectedAppt}
+              onCreatePatientFile={() => openCreatePatientFormFromAppt(selectedAppt)}
             />
           </div>
         </div>
