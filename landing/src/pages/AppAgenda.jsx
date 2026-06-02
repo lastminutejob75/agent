@@ -2154,18 +2154,6 @@ export default function AppAgenda() {
           </div>
         </div>
       </div>
-      {isMobileAgenda ? (
-        <AgendaDateNavPanel
-          selectedDate={selectedDate}
-          viewMode={viewMode}
-          apptCountByDate={apptCountByDate}
-          onSelectDate={applyAgendaDate}
-          onViewMode={applyViewMode}
-          onGoToday={goToday}
-          onShift={shiftAgendaPeriod}
-          styles={S}
-        />
-      ) : null}
       {urlFocus === "prises-jour" ? (
         <div
           id="agenda-focus-prises-jour"
