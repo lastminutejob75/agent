@@ -6,6 +6,7 @@ import PatientDuplicateBanner from "../components/patients/PatientDuplicateBanne
 import { validatePatientPhone, validateContactEmail, isValidContactEmail } from "../lib/contactValidation.js";
 import {
   checkPatientDuplicates,
+  formatPatientDuplicateConflict,
   hasBlockingPatientDuplicate,
   parsePatientDuplicateError,
 } from "../lib/patientDuplicateCheck.js";
@@ -953,6 +954,7 @@ export default function AppAgenda() {
     firstName: "",
     lastName: "",
     phone: "",
+    email: "",
     initialNote: "",
     agendaMotif: "",
     rawCalendarName: "",
@@ -1092,20 +1094,53 @@ export default function AppAgenda() {
     return () => window.clearTimeout(safetyTimer);
   }, [calendarLoading]);
 
+  const patientCreatePhoneError = useMemo(() => {
+    const raw = String(patientCreateForm.phone || "").trim();
+    if (!raw) return "Indiquez un numéro de téléphone.";
+    const check = validatePatientPhone(raw, { required: true });
+    return check.ok ? "" : (check.message || "Numéro invalide.");
+  }, [patientCreateForm.phone]);
+
+  const patientCreateEmailError = useMemo(() => {
+    const check = validateContactEmail(patientCreateForm.email || "");
+    return check.ok ? "" : (check.message || "Email invalide.");
+  }, [patientCreateForm.email]);
+
+  const patientCreateSubmitBlocked = useMemo(
+    () =>
+      Boolean(patientCreatePhoneError)
+      || Boolean(patientCreateEmailError)
+      || hasBlockingPatientDuplicate(patientCreateConflicts),
+    [patientCreatePhoneError, patientCreateEmailError, patientCreateConflicts],
+  );
+
   useEffect(() => {
     if (apptPanel !== "create-patient" || !selectedAppt) {
       setPatientCreateConflicts([]);
-      return;
+      return undefined;
     }
-    const phone = normalizePhone(patientCreateForm.phone);
-    if (!phone) {
+    const phoneRaw = String(patientCreateForm.phone || "").trim();
+    const emailRaw = String(patientCreateForm.email || "").trim();
+    const phoneCheck = validatePatientPhone(phoneRaw, { required: true });
+    if (!phoneCheck.ok && !emailRaw) {
       setPatientCreateConflicts([]);
-      return;
+      return undefined;
+    }
+    if (!phoneCheck.ok && emailRaw) {
+      const emailCheck = validateContactEmail(emailRaw);
+      if (!emailCheck.ok) {
+        setPatientCreateConflicts([]);
+        return undefined;
+      }
     }
     let cancelled = false;
     const ctrl = new AbortController();
     const tid = window.setTimeout(() => {
-      checkPatientDuplicates({ phone, signal: ctrl.signal })
+      checkPatientDuplicates({
+        phone: phoneCheck.ok ? phoneRaw : "",
+        email: emailRaw,
+        signal: ctrl.signal,
+      })
         .then((res) => {
           if (!cancelled) {
             setPatientCreateConflicts(Array.isArray(res?.conflicts) ? res.conflicts : []);
@@ -1120,7 +1155,7 @@ export default function AppAgenda() {
       window.clearTimeout(tid);
       ctrl.abort();
     };
-  }, [apptPanel, selectedAppt, patientCreateForm.phone]);
+  }, [apptPanel, selectedAppt, patientCreateForm.phone, patientCreateForm.email]);
 
   useEffect(() => {
     if (!createBookingOpen) {
@@ -1477,11 +1512,13 @@ export default function AppAgenda() {
       firstName: fromName.firstName,
       lastName: fromName.lastName,
       phone: normalizePhone(appt?.patient_phone || ""),
+      email: "",
       initialNote,
       agendaMotif: motif,
       rawCalendarName: String(appt?.patient || "").trim(),
       callId: "",
     });
+    setPatientCreateConflicts([]);
     setPatientCreateSummary(
       `${formatLongDate(appt?.date)} · ${appt?.displayTime || "—"}${motif ? ` · ${motif}` : ""}`,
     );
@@ -1685,15 +1722,22 @@ export default function AppAgenda() {
   }
 
   async function handlePatientCreateFromAgendaSubmit() {
-    const phone = normalizePhone(patientCreateForm.phone);
+    const phoneRaw = String(patientCreateForm.phone || "").trim();
+    const emailRaw = String(patientCreateForm.email || "").trim();
     const name = composeAgendaPatientName(patientCreateForm);
-    if (!phone) {
-      setActionMsg({ type: "error", text: "Le téléphone est requis pour créer une fiche patient." });
+    const phoneCheck = validatePatientPhone(phoneRaw, { required: true });
+    if (!phoneCheck.ok) {
+      setActionMsg({ type: "error", text: phoneCheck.message || "Numéro de téléphone invalide." });
       return;
     }
-    const phoneCheck = validateCabinetBookingPhone(patientCreateForm.phone);
-    if (!phoneCheck.ok) {
-      setActionMsg({ type: "error", text: phoneCheck.message });
+    const emailCheck = validateContactEmail(emailRaw);
+    if (!emailCheck.ok) {
+      setActionMsg({ type: "error", text: emailCheck.message || "Email invalide." });
+      return;
+    }
+    const phone = normalizePhone(phoneRaw);
+    if (!phone) {
+      setActionMsg({ type: "error", text: "Le téléphone est requis pour créer une fiche patient." });
       return;
     }
     if ((name || "").trim().length < 2) {
@@ -1703,10 +1747,19 @@ export default function AppAgenda() {
       });
       return;
     }
-    if (hasBlockingPatientDuplicate(patientCreateConflicts)) {
+    let conflicts = patientCreateConflicts;
+    try {
+      const dupRes = await checkPatientDuplicates({ phone: phoneRaw, email: emailRaw });
+      conflicts = Array.isArray(dupRes?.conflicts) ? dupRes.conflicts : [];
+      setPatientCreateConflicts(conflicts);
+    } catch {
+      /* garde les conflits déjà affichés */
+    }
+    if (hasBlockingPatientDuplicate(conflicts)) {
+      const first = conflicts[0];
       setActionMsg({
         type: "error",
-        text: "Cet email est déjà utilisé par une autre fiche patient.",
+        text: formatPatientDuplicateConflict(first) || "Ce numéro ou cet email appartient déjà à une autre fiche.",
       });
       return;
     }
@@ -1718,6 +1771,7 @@ export default function AppAgenda() {
         raw_name: (patientCreateForm.rawCalendarName || "").trim() || name,
         agenda_motif: (patientCreateForm.agendaMotif || "").trim() || undefined,
         initial_note: (patientCreateForm.initialNote || "").trim() || undefined,
+        patient_email: emailRaw || undefined,
       });
       const mode = res?.register_mode;
       const okText =
@@ -2485,8 +2539,12 @@ export default function AppAgenda() {
               <CreatePatientFromCallModal
                 embedded
                 open
+                showEmail
                 loading={patientCreateLoading}
                 form={patientCreateForm}
+                phoneError={patientCreatePhoneError}
+                emailError={patientCreateEmailError}
+                submitDisabled={patientCreateSubmitBlocked}
                 onChange={(field, value) => setPatientCreateForm((prev) => ({ ...prev, [field]: value }))}
                 onClose={closeAppointmentDetail}
                 onBack={() => setApptPanel("detail")}

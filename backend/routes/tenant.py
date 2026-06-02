@@ -3391,8 +3391,12 @@ def tenant_list_patients(
 
 
 def _patient_duplicate_http_detail(conflicts: list) -> dict:
+    phone_conflict = next((c for c in conflicts if c.get("field") == "phone"), None)
     email_conflict = next((c for c in conflicts if c.get("field") == "email"), None)
-    if email_conflict:
+    if phone_conflict:
+        name = (phone_conflict.get("display_name") or "un autre patient").strip()
+        message = f"Ce numéro est déjà enregistré pour la fiche de {name}."
+    elif email_conflict:
         name = (email_conflict.get("display_name") or "un autre patient").strip()
         message = f"Cet email est déjà utilisé par la fiche de {name}."
     else:
@@ -3412,16 +3416,16 @@ def _raise_on_blocking_patient_duplicate(
     email: Optional[str] = None,
     exclude_phone: Optional[str] = None,
 ) -> None:
-    """Bloque si l'email appartient déjà à une autre fiche (téléphone différent)."""
+    """Bloque si le numéro ou l'email est déjà rattaché à une autre fiche patient."""
     dup = detect_patient_duplicate_conflicts(
         tenant_id,
         phone=phone,
         email=email,
         exclude_phone=exclude_phone,
     )
-    email_conflicts = [c for c in dup.get("conflicts") or [] if c.get("field") == "email"]
-    if email_conflicts:
-        raise HTTPException(409, detail=_patient_duplicate_http_detail(email_conflicts))
+    conflicts = list(dup.get("conflicts") or [])
+    if conflicts:
+        raise HTTPException(409, detail=_patient_duplicate_http_detail(conflicts))
 
 
 @router.get("/patients/duplicate-check")

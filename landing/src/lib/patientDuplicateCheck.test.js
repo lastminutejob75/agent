@@ -16,11 +16,12 @@ describe("patientDuplicateCheck", () => {
     ).toContain("Claire Dupont");
   });
 
-  it("detects blocking email conflict", () => {
+  it("detects blocking phone or email conflict", () => {
     expect(
       hasBlockingPatientDuplicate([{ field: "phone" }, { field: "email" }]),
     ).toBe(true);
-    expect(hasBlockingPatientDuplicate([{ field: "phone" }])).toBe(false);
+    expect(hasBlockingPatientDuplicate([{ field: "phone" }])).toBe(true);
+    expect(hasBlockingPatientDuplicate([])).toBe(false);
   });
 
   it("parses structured duplicate error", () => {

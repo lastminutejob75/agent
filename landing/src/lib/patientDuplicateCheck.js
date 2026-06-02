@@ -31,8 +31,9 @@ export function patientDuplicateDashboardUrl(conflict) {
   return `/app/patient-dashboard?phone=${encodeURIComponent(phone)}`;
 }
 
+/** Bloque si le numéro ou l'email appartient déjà à une autre fiche (création agenda / anti-fraude). */
 export function hasBlockingPatientDuplicate(conflicts) {
-  return (conflicts || []).some((c) => c?.field === "email");
+  return (conflicts || []).some((c) => c?.field === "email" || c?.field === "phone");
 }
 
 export async function checkPatientDuplicates({ phone, email, excludePhone, signal } = {}) {

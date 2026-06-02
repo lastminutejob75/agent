@@ -1,5 +1,6 @@
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
+import { sanitizePhoneInput } from "../../lib/transferConfig.js";
 
 export default function CreatePatientFromCallModal({
   open,
@@ -11,89 +12,122 @@ export default function CreatePatientFromCallModal({
   subtitleLine,
   embedded = false,
   onBack,
+  phoneError = "",
+  emailError = "",
+  submitDisabled = false,
+  showEmail = false,
 }) {
   if (!open) return null;
   if (!embedded && typeof document === "undefined") return null;
 
+  const handlePhoneChange = (event) => {
+    onChange("phone", sanitizePhoneInput(event.target.value));
+  };
+
   const panel = (
-      <div className={embedded ? "px-4 pb-4" : "w-full max-w-[560px] rounded-2xl border border-[#E2E8F0] bg-white p-5 shadow-2xl"}>
-        <div className="mb-4 flex items-center justify-between">
-          <h3 id="create-patient-from-call-heading" className="text-lg font-black text-[#0A1628]">
-            Créer une fiche patient
-          </h3>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Fermer la modale"
-            className="rounded-full p-2 text-[#64748B] hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#009CA4] focus-visible:ring-offset-1"
-          >
-            <X size={16} />
-          </button>
-        </div>
+    <div className={embedded ? "px-4 pb-4" : "w-full max-w-[560px] rounded-2xl border border-[#E2E8F0] bg-white p-5 shadow-2xl"}>
+      <div className="mb-4 flex items-center justify-between">
+        <h3 id="create-patient-from-call-heading" className="text-lg font-black text-[#0A1628]">
+          Créer une fiche patient
+        </h3>
+        <button
+          type="button"
+          onClick={onBack || onClose}
+          aria-label={embedded ? "Retour au rendez-vous" : "Fermer la modale"}
+          className="rounded-full p-2 text-[#64748B] hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#009CA4] focus-visible:ring-offset-1"
+        >
+          <X size={16} />
+        </button>
+      </div>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <label className="flex flex-col gap-1 text-sm font-semibold text-[#334155]">
-            Nom
-            <input
-              value={form.lastName}
-              onChange={(event) => onChange("lastName", event.target.value)}
-              className="rounded-xl border border-[#E2E8F0] px-3 py-2 text-sm outline-none focus:border-[#009CA4]"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm font-semibold text-[#334155]">
-            Prénom
-            <input
-              value={form.firstName}
-              onChange={(event) => onChange("firstName", event.target.value)}
-              className="rounded-xl border border-[#E2E8F0] px-3 py-2 text-sm outline-none focus:border-[#009CA4]"
-            />
-          </label>
-        </div>
-
-        <label className="mt-3 flex flex-col gap-1 text-sm font-semibold text-[#334155]">
-          Téléphone
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <label className="flex flex-col gap-1 text-sm font-semibold text-[#334155]">
+          Nom
           <input
-            value={form.phone}
-            onChange={(event) => onChange("phone", event.target.value)}
+            value={form.lastName}
+            onChange={(event) => onChange("lastName", event.target.value)}
             className="rounded-xl border border-[#E2E8F0] px-3 py-2 text-sm outline-none focus:border-[#009CA4]"
           />
         </label>
-
-        <label className="mt-3 flex flex-col gap-1 text-sm font-semibold text-[#334155]">
-          Note initiale
-          <textarea
-            value={form.initialNote}
-            onChange={(event) => onChange("initialNote", event.target.value)}
-            className="h-24 resize-none rounded-xl border border-[#E2E8F0] px-3 py-2 text-sm outline-none focus:border-[#009CA4]"
+        <label className="flex flex-col gap-1 text-sm font-semibold text-[#334155]">
+          Prénom
+          <input
+            value={form.firstName}
+            onChange={(event) => onChange("firstName", event.target.value)}
+            className="rounded-xl border border-[#E2E8F0] px-3 py-2 text-sm outline-none focus:border-[#009CA4]"
           />
         </label>
-
-        <div className="mt-2 text-xs text-[#64748B]">
-          {subtitleLine || (
-            <>
-              Source : <strong>appel téléphonique</strong> · Call ID : <strong>{form.callId || "—"}</strong>
-            </>
-          )}
-        </div>
-
-        <div className="mt-5 flex items-center justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-xl border border-[#E2E8F0] px-4 py-2 text-sm font-bold text-[#334155] hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#009CA4] focus-visible:ring-offset-1"
-          >
-            Annuler
-          </button>
-          <button
-            type="button"
-            onClick={onSubmit}
-            disabled={loading}
-            className="rounded-xl bg-[#009CA4] px-4 py-2 text-sm font-extrabold text-white hover:bg-[#007F87] disabled:cursor-not-allowed disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#009CA4] focus-visible:ring-offset-1"
-          >
-            {loading ? "Création..." : "Créer la fiche"}
-          </button>
-        </div>
       </div>
+
+      <label className="mt-3 flex flex-col gap-1 text-sm font-semibold text-[#334155]">
+        Téléphone
+        <input
+          type="tel"
+          inputMode="tel"
+          autoComplete="tel"
+          value={form.phone}
+          onChange={handlePhoneChange}
+          placeholder="06 12 34 56 78"
+          aria-invalid={phoneError ? "true" : undefined}
+          className={`rounded-xl border px-3 py-2 text-sm outline-none focus:border-[#009CA4] ${
+            phoneError ? "border-red-400 bg-red-50/40" : "border-[#E2E8F0]"
+          }`}
+        />
+        {phoneError ? (
+          <span className="text-xs font-semibold text-red-600">{phoneError}</span>
+        ) : (
+          <span className="text-xs font-normal text-[#64748B]">Format : 06 12 34 56 78 ou +33 6 12 34 56 78</span>
+        )}
+      </label>
+
+      {showEmail ? (
+        <label className="mt-3 flex flex-col gap-1 text-sm font-semibold text-[#334155]">
+          E-mail (facultatif)
+          <input
+            type="email"
+            inputMode="email"
+            autoComplete="email"
+            value={form.email || ""}
+            onChange={(event) => onChange("email", event.target.value)}
+            placeholder="prenom@exemple.fr"
+            aria-invalid={emailError ? "true" : undefined}
+            className={`rounded-xl border px-3 py-2 text-sm outline-none focus:border-[#009CA4] ${
+              emailError ? "border-red-400 bg-red-50/40" : "border-[#E2E8F0]"
+            }`}
+          />
+          {emailError ? <span className="text-xs font-semibold text-red-600">{emailError}</span> : null}
+        </label>
+      ) : null}
+
+      <label className="mt-3 flex flex-col gap-1 text-sm font-semibold text-[#334155]">
+        Note initiale
+        <textarea
+          value={form.initialNote}
+          onChange={(event) => onChange("initialNote", event.target.value)}
+          className="h-24 resize-none rounded-xl border border-[#E2E8F0] px-3 py-2 text-sm outline-none focus:border-[#009CA4]"
+        />
+      </label>
+
+      <div className="mt-2 text-xs text-[#64748B]">{subtitleLine}</div>
+
+      <div className="mt-5 flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-xl border border-[#E2E8F0] px-4 py-2 text-sm font-bold text-[#334155] hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#009CA4] focus-visible:ring-offset-1"
+        >
+          Annuler
+        </button>
+        <button
+          type="button"
+          onClick={onSubmit}
+          disabled={loading || submitDisabled}
+          className="rounded-xl bg-[#009CA4] px-4 py-2 text-sm font-extrabold text-white hover:bg-[#007F87] disabled:cursor-not-allowed disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#009CA4] focus-visible:ring-offset-1"
+        >
+          {loading ? "Création..." : "Créer la fiche"}
+        </button>
+      </div>
+    </div>
   );
 
   if (embedded) return panel;

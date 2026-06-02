@@ -13,7 +13,7 @@ export default function PatientDuplicateBanner({ conflicts, className = "" }) {
   const borderClass = blocking ? "border-red-200 bg-red-50 text-red-950" : "border-amber-200 bg-amber-50 text-amber-950";
   const title = blocking
     ? "Doublon détecté — enregistrement bloqué"
-    : "Une fiche existe déjà pour ce numéro";
+    : "Vérification en cours";
 
   return (
     <div className={`rounded-xl border px-3 py-2.5 text-xs font-semibold leading-snug ${borderClass} ${className}`.trim()}>
@@ -36,11 +36,6 @@ export default function PatientDuplicateBanner({ conflicts, className = "" }) {
           );
         })}
       </ul>
-      {!blocking ? (
-        <p className="mb-0 mt-2 opacity-90">
-          En validant, vous enrichissez la fiche existante pour ce numéro.
-        </p>
-      ) : null}
     </div>
   );
 }
