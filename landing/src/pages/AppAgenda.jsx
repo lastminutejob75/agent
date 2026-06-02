@@ -20,6 +20,7 @@ import {
   canRescheduleAgendaSlot,
 } from "../lib/agendaAppointmentActions.js";
 import { normalizeFrenchPhone } from "../lib/transferConfig.js";
+import api, { isTenantUnauthorized } from "../lib/api.js";
 
 const NAVY = "#111827";
 const TEAL = "#0DC991";
@@ -106,6 +107,33 @@ function agendaGridHourKey(displayTime) {
   const match = normalized.match(/^(\d{2}):(\d{2})$/);
   if (!match) return normalized;
   return `${match[1]}:00`;
+}
+
+function agendaSlotMergeKey(slot) {
+  return String(
+    slot?.event_id || slot?.public_booking_id || slot?.appointment_id || `${slot?.start_iso || ""}|${slot?.patient || ""}`,
+  );
+}
+
+function mergeAgendaDayPayload(existing, incoming) {
+  if (!incoming) return existing;
+  const prevSlots = existing?.slots || [];
+  const nextSlots = incoming?.slots || [];
+  if (!nextSlots.length) return prevSlots.length ? existing : incoming;
+  const map = new Map();
+  prevSlots.forEach((s) => map.set(agendaSlotMergeKey(s), s));
+  nextSlots.forEach((s) => map.set(agendaSlotMergeKey(s), s));
+  return { ...incoming, date: incoming.date || existing?.date, slots: [...map.values()] };
+}
+
+function mergeAgendaBulkIntoState(prev, dates, bulkRes) {
+  if (!bulkRes?.dates) return prev;
+  const next = { ...(prev || {}) };
+  (dates || []).forEach((d) => {
+    const incoming = bulkRes.dates[d] || { slots: [], date: d };
+    next[d] = mergeAgendaDayPayload(next[d], incoming);
+  });
+  return next;
 }
 
 function addMinutes(timeLabel, mins) {
@@ -242,6 +270,7 @@ function readAgendaBulkStale(dates) {
 
 function writeAgendaBulkStale(dates, bulkRes) {
   if (typeof sessionStorage === "undefined" || !dates?.length || !bulkRes?.dates) return;
+  if (countBulkSlots(bulkRes, dates) === 0) return;
   try {
     sessionStorage.setItem(
       agendaBulkStorageKey(dates),
@@ -998,66 +1027,73 @@ export default function AppAgenda() {
       if (!isStaleLoad() && nextHoraires) setHoraires(nextHoraires);
     });
 
-    const applyDayResults = (dates, results) => {
-      if (isStaleLoad()) return false;
-      setAgendaByDate((prev) => {
-        const next = { ...(prev || {}) };
-        (dates || []).forEach((d, i) => {
-          next[d] = results[i] || { slots: [], date: d };
-        });
-        return next;
-      });
-      return true;
+    const handleAgendaAuthError = (e) => {
+      if (isTenantUnauthorized(e) || e?.status === 401 || e?.status === 403) {
+        setError("Votre session a expiré. Veuillez vous reconnecter.");
+        return true;
+      }
+      return false;
     };
 
-    const applyBulkResults = (dates, bulkRes) => {
-      if (!bulkRes?.dates) return false;
-      return applyDayResults(dates, dates.map((d) => bulkRes.dates[d] || { slots: [], date: d }));
-    };
-
-    const loadBulk = async (dates, timeoutMs = AGENDA_BULK_TIMEOUT_MS) => {
-      const bulkRes = await api.tenantGetAgendaBulk(dates, { lightweight: true, timeoutMs });
-      applyBulkResults(dates, bulkRes);
+    const loadBulk = async (dates, { timeoutMs = AGENDA_BULK_TIMEOUT_MS, skipGoogle = false } = {}) => {
+      const bulkRes = await api.tenantGetAgendaBulk(dates, { lightweight: true, timeoutMs, skipGoogle });
+      if (isStaleLoad()) return null;
+      setAgendaByDate((prev) => mergeAgendaBulkIntoState(prev, dates, bulkRes));
+      if (bulkRes && countBulkSlots(bulkRes, dates) > 0) writeAgendaBulkStale(dates, bulkRes);
       return bulkRes;
     };
 
-    const prefetchWeekBulk = (dates) => {
+    const enrichWithGoogle = (dates) => {
       if (!dates?.length) return;
-      loadBulk(dates, AGENDA_BULK_TIMEOUT_MS).catch((e) => {
-        if (!isStaleLoad() && (e?.status === 401 || e?.status === 403)) {
-          setError("Session expirée. Reconnectez-vous pour voir l'agenda.");
-        }
+      loadBulk(dates, { timeoutMs: 15000, skipGoogle: false }).catch((e) => {
+        if (!isStaleLoad() && handleAgendaAuthError(e)) return;
       });
     };
 
     try {
+      if (viewMode !== "day" && fetchDates.length) {
+        const cachedBulk = readAgendaBulkStale(fetchDates);
+        if (cachedBulk) {
+          setAgendaByDate((prev) => mergeAgendaBulkIntoState(prev, fetchDates, cachedBulk));
+        }
+      }
+
       if (viewMode === "day") {
-        const dayRes = await api
-          .tenantGetAgenda(`?date=${selectedDate}&lightweight=1`, { timeoutMs: AGENDA_TIMEOUT_MS })
-          .catch((e) => {
-            if (e?.status === 401 || e?.status === 403) throw e;
-            return { slots: [], date: selectedDate };
-          });
+        const dayFast = await api.tenantGetAgenda(`?date=${selectedDate}`, {
+          lightweight: true,
+          skipGoogle: true,
+          timeoutMs: AGENDA_TIMEOUT_MS,
+        });
         if (isStaleLoad()) return;
-        setAgendaByDate((prev) => ({ ...(prev || {}), [selectedDate]: dayRes }));
+        setAgendaByDate((prev) => ({
+          ...(prev || {}),
+          [selectedDate]: dayFast || { slots: [], date: selectedDate },
+        }));
         setCalendarLoading(false);
-        const others = fetchDates.filter((d) => d !== selectedDate);
-        if (others.length) prefetchWeekBulk(fetchDates);
+        api
+          .tenantGetAgenda(`?date=${selectedDate}`, { lightweight: true, timeoutMs: 15000 })
+          .then((dayFull) => {
+            if (isStaleLoad()) return;
+            setAgendaByDate((prev) => ({
+              ...(prev || {}),
+              [selectedDate]: mergeAgendaDayPayload(prev?.[selectedDate], dayFull),
+            }));
+          })
+          .catch((e) => {
+            if (!isStaleLoad() && handleAgendaAuthError(e)) return;
+          });
+        if (fetchDates.length > 1) enrichWithGoogle(fetchDates);
         return;
       }
 
-      if (viewMode === "week") {
-        await loadBulk(fetchDates, AGENDA_BULK_TIMEOUT_MS);
-        if (isStaleLoad()) return;
-        return;
-      }
-
-      await loadBulk(fetchDates, AGENDA_BULK_TIMEOUT_MS);
+      await loadBulk(fetchDates, { timeoutMs: AGENDA_BULK_TIMEOUT_MS, skipGoogle: true });
+      if (isStaleLoad()) return;
+      setCalendarLoading(false);
+      enrichWithGoogle(fetchDates);
+      return;
     } catch (e) {
       if (!isStaleLoad()) {
-        if (e?.status === 401 || e?.status === 403) {
-          setError("Session expirée. Reconnectez-vous pour voir l'agenda.");
-        } else {
+        if (!handleAgendaAuthError(e)) {
           setError(e?.message || "Impossible de charger l'agenda.");
         }
       }

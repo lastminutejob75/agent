@@ -94,7 +94,13 @@ def insert_public_booking(
     google_event_id: Optional[str] = None,
 ) -> Dict[str, str]:
     ensure_public_bookings_schema()
-    start_ts = _parse_iso_ts(start_iso)
+    start_ts = resolve_booking_start_ts(start_iso, slot_label)
+    if not start_ts:
+        logger.warning(
+            "public_booking insert without start_iso tenant=%s slot_label=%r",
+            tenant_id,
+            (slot_label or "")[:80],
+        )
     confirmed_at = datetime.now(timezone.utc) if status == "confirmed" else None
     stored_code = (booking_code or "").strip().upper()[:8] or None
     try:
@@ -1100,6 +1106,26 @@ def _booking_start_local(row: Dict[str, Any], tz: ZoneInfo) -> Optional[datetime
         return datetime(base_date.year, base_date.month, base_date.day, hour, minute or 0, tzinfo=tz)
     if isinstance(created, datetime):
         return created.astimezone(tz)
+    return None
+
+
+def resolve_booking_start_ts(
+    start_iso: Optional[str],
+    slot_label: Optional[str],
+    tz_name: str = "Europe/Paris",
+) -> Optional[datetime]:
+    """Dérive start_iso à l'écriture (obligatoire pour l'agenda)."""
+    start_ts = _parse_iso_ts(start_iso)
+    if start_ts:
+        return start_ts
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = ZoneInfo("Europe/Paris")
+    row = {"slot_label": slot_label or "", "created_at": datetime.now(timezone.utc)}
+    start_local = _booking_start_local(row, tz)
+    if start_local:
+        return start_local.astimezone(timezone.utc)
     return None
 
 

@@ -441,16 +441,24 @@ export const api = {
       body,
       tenant: true,
     }),
-  tenantGetAgenda: (params = "", opts = {}) =>
-    request(`/api/tenant/agenda${params}`, { tenant: true, timeoutMs: 10000, ...opts }),
+  tenantGetAgenda: (params = "", opts = {}) => {
+    const raw = String(params || "").trim();
+    const qs = raw.startsWith("?") ? raw.slice(1) : raw;
+    const search = new URLSearchParams(qs);
+    if (opts?.lightweight) search.set("lightweight", "1");
+    if (opts?.skipGoogle) search.set("skip_google", "1");
+    const query = search.toString();
+    const path = query ? `/api/tenant/agenda?${query}` : "/api/tenant/agenda";
+    const { lightweight: _lw, skipGoogle: _sg, timeoutMs, ...rest } = opts || {};
+    return request(path, { tenant: true, timeoutMs: timeoutMs ?? 10000, ...rest });
+  },
   tenantGetAgendaBulk: async (dates, opts = {}) => {
-    /* Un seul appel bulk (jusqu'à 42j). Plus rapide en pratique qu'un split en 3
-       chunks concurrents qui surcharge Google Calendar et dégrade la latence. */
     const all = Array.from(new Set((dates || []).filter(Boolean))).sort();
     if (all.length === 0) return { dates: {} };
     const params = new URLSearchParams();
     params.set("dates", all.join(","));
     if (opts?.lightweight) params.set("lightweight", "1");
+    if (opts?.skipGoogle) params.set("skip_google", "1");
     return request(`/api/tenant/agenda/bulk?${params.toString()}`, {
       tenant: true,
       timeoutMs: opts?.timeoutMs ?? 12000,

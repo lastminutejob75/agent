@@ -201,12 +201,16 @@ def _google_calendar_events_list_execute_with_timeout(
     calendar_id: str,
     time_min_iso: str,
     time_max_iso: str,
+    execute_timeout: Optional[float] = None,
 ) -> dict:
     """Borne ``events.list()`` même si le client HTTP Google n'a pas de timeout (fallback prod)."""
-    try:
-        timeout = float((os.environ.get("AGENDA_GOOGLE_EXECUTE_TIMEOUT_SECONDS") or "18").strip() or "18")
-    except ValueError:
-        timeout = 18.0
+    if execute_timeout is not None:
+        timeout = float(execute_timeout)
+    else:
+        try:
+            timeout = float((os.environ.get("AGENDA_GOOGLE_EXECUTE_TIMEOUT_SECONDS") or "18").strip() or "18")
+        except ValueError:
+            timeout = 18.0
     if timeout <= 0:
         return _google_calendar_events_list_execute(
             calendar_svc,
@@ -241,6 +245,7 @@ def _tenant_google_calendar_list_events_cached(
     calendar_id: str,
     time_min_iso: str,
     time_max_iso: str,
+    execute_timeout: Optional[float] = None,
 ) -> dict:
     """Même fenêtre temporelle dans les ~AGENDA_GOOGLE_CACHE_SECONDS s = pas d'appel Google répété."""
     cid = (calendar_id or "").strip()
@@ -257,6 +262,7 @@ def _tenant_google_calendar_list_events_cached(
             calendar_id=cid,
             time_min_iso=time_min_iso,
             time_max_iso=time_max_iso,
+            execute_timeout=execute_timeout,
         )
 
     key = (cid, time_min_iso, time_max_iso)
@@ -271,6 +277,7 @@ def _tenant_google_calendar_list_events_cached(
         calendar_id=cid,
         time_min_iso=time_min_iso,
         time_max_iso=time_max_iso,
+        execute_timeout=execute_timeout,
     )
 
     with _AGENDA_GCAL_EVENTS_LOCK:
@@ -4783,6 +4790,10 @@ def tenant_agenda(
     upcoming_days: int = Query(1, ge=1, le=366),
     compact: bool = Query(False),
     lightweight: bool = Query(False, description="Mode allégé (sans enrichissement profils patients)"),
+    skip_google: bool = Query(
+        False,
+        description="Réponse immédiate DB (public_bookings + local) sans appel Google — enrichissement ensuite",
+    ),
 ):
     """Retourne les rendez-vous du jour ou à venir depuis Google Calendar ou le stockage local."""
     tenant_id = auth["tenant_id"]
@@ -4815,8 +4826,15 @@ def tenant_agenda(
         (params.get("calendar_provider") or "").strip() == "google"
         and bool((params.get("calendar_id") or "").strip())
     )
-    # Mode lightweight = affichage cabinet (public_bookings + RDV locaux) sans attendre Google.
-    google_cal_active = google_cal and not lightweight
+    google_cal_active = google_cal and not skip_google
+    google_execute_timeout: Optional[float] = None
+    if lightweight and google_cal_active:
+        try:
+            google_execute_timeout = float(
+                (os.environ.get("AGENDA_LIGHTWEIGHT_GOOGLE_TIMEOUT_SECONDS") or "6").strip() or "6"
+            )
+        except ValueError:
+            google_execute_timeout = 6.0
     if google_cal_active:
         try:
             cal_id = (params.get("calendar_id") or "").strip()
@@ -4838,6 +4856,7 @@ def tenant_agenda(
                     calendar_id=cal_id,
                     time_min_iso=day_start.isoformat(),
                     time_max_iso=day_end.isoformat(),
+                    execute_timeout=google_execute_timeout,
                 )
                 if mirror_fut is not None:
                     try:
@@ -4913,7 +4932,7 @@ def tenant_agenda(
                 })
         except Exception as e:
             logger.warning("tenant agenda google failed tenant_id=%s: %s", tenant_id, e)
-    elif not (lightweight and google_cal):
+    elif not google_cal:
         url = os.environ.get("DATABASE_URL") or os.environ.get("PG_SLOTS_URL")
         if url:
             try:
@@ -4925,7 +4944,7 @@ def tenant_agenda(
                     with conn.cursor() as cur:
                         cur.execute(
                             """
-                            SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif, s.start_ts, a.booking_origin
+                            SELECT a.id, a.slot_id, a.name, a.contact, a.contact_type, a.motif, s.start_ts
                             FROM appointments a
                             JOIN slots s ON s.id = a.slot_id
                             WHERE a.tenant_id = %s
@@ -5094,6 +5113,10 @@ def tenant_agenda_bulk(
     auth: dict = Depends(require_tenant_auth),
     dates: str = Query(..., description="Liste CSV de dates YYYY-MM-DD (max 42)"),
     lightweight: bool = Query(False, description="Mode allégé (moins d'enrichissements, plus rapide)"),
+    skip_google: bool = Query(
+        False,
+        description="Réponse immédiate DB sans Google (enrichissement Google ensuite)",
+    ),
 ):
     """Retourne plusieurs jours d'agenda en une seule réponse pour limiter le fan-out frontend.
 
@@ -5178,7 +5201,15 @@ def tenant_agenda_bulk(
         (params.get("calendar_provider") or "").strip() == "google"
         and bool((params.get("calendar_id") or "").strip())
     )
-    google_cal_bulk_active = google_cal_bulk and not lightweight
+    google_cal_bulk_active = google_cal_bulk and not skip_google
+    google_bulk_timeout: Optional[float] = None
+    if lightweight and google_cal_bulk_active:
+        try:
+            google_bulk_timeout = float(
+                (os.environ.get("AGENDA_LIGHTWEIGHT_GOOGLE_TIMEOUT_SECONDS") or "6").strip() or "6"
+            )
+        except ValueError:
+            google_bulk_timeout = 6.0
     if google_cal_bulk_active:
         try:
             cal_id = (params.get("calendar_id") or "").strip()
@@ -5200,6 +5231,7 @@ def tenant_agenda_bulk(
                     calendar_id=cal_id,
                     time_min_iso=day_start.isoformat(),
                     time_max_iso=day_end.isoformat(),
+                    execute_timeout=google_bulk_timeout,
                 )
                 if mirror_fut is not None:
                     try:
@@ -5270,7 +5302,7 @@ def tenant_agenda_bulk(
                 )
         except Exception as e:
             logger.warning("tenant agenda bulk google failed tenant_id=%s: %s", tenant_id, e)
-    elif not (lightweight and google_cal_bulk):
+    elif not google_cal_bulk:
         url = os.environ.get("DATABASE_URL") or os.environ.get("PG_SLOTS_URL")
         if url:
             try:
@@ -5281,7 +5313,7 @@ def tenant_agenda_bulk(
                     with conn.cursor() as cur:
                         cur.execute(
                             """
-                            SELECT a.id, a.slot_id, a.name, a.contact, a.motif, s.start_ts, a.booking_origin
+                            SELECT a.id, a.slot_id, a.name, a.contact, a.motif, s.start_ts
                             FROM appointments a
                             JOIN slots s ON s.id = a.slot_id
                             WHERE a.tenant_id = %s

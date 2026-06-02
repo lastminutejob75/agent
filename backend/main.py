@@ -970,7 +970,16 @@ async def health() -> dict:
 
     Pour un check approfondi (PG, Vapi, Stripe…), utiliser ``GET /health/full``.
     """
-    return {"status": "ok"}
+    out: dict = {"status": "ok"}
+    try:
+        from backend.system_info import _git_sha_short
+
+        sha = _git_sha_short()
+        if sha:
+            out["git_sha"] = sha
+    except Exception:
+        pass
+    return out
 
 
 @app.get("/health/full")
