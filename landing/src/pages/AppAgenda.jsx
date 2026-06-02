@@ -1919,9 +1919,24 @@ export default function AppAgenda() {
       setPatientCreateConflicts([]);
       setActionMsg({ type: "success", text: okText });
       invalidateAgendaBulkCache();
-      await loadAgenda();
       closeAppointmentDetail();
-      navigate(`/app/patient-dashboard?phone=${encodeURIComponent(phone)}`);
+      const profile = res?.patient as Record<string, unknown> | undefined;
+      const displayName = String(
+        profile?.display_name || profile?.validated_name || name,
+      ).trim() || name;
+      navigate(`/app/patient-dashboard?phone=${encodeURIComponent(phone)}`, {
+        state: {
+          bootstrapPatient: {
+            name: displayName,
+            phone,
+            email: emailRaw,
+            birth_date: birthDateRaw,
+            treating_physician_name: physicianName,
+            treating_physician_city: physicianCity,
+          },
+        },
+      });
+      void loadAgenda();
     } catch (e) {
       const dup = parsePatientDuplicateError(e);
       setActionMsg({

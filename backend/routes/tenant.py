@@ -3515,8 +3515,6 @@ def tenant_get_patient(
 
     if lightweight:
         docs = list_patient_documents(tenant_id, phone)
-        notes = list_patient_notes(tenant_id, phone, limit=200)
-        insights = compute_patient_insights(tenant_id, phone, notes=notes)
         return {
             "patient": profile,
             "calls": [],
@@ -3527,7 +3525,7 @@ def tenant_get_patient(
                  "size_bytes": d.get("size_bytes"), "created_at": str(d.get("created_at", ""))}
                 for d in docs
             ],
-            "insights": insights,
+            "insights": {"tags": [], "stats": {}, "recent_past_appointments": []},
         }
 
     phone_norm = normalize_phone_number(phone)
@@ -4125,6 +4123,7 @@ def tenant_patient_appointments(
     phone: str,
     auth: dict = Depends(require_tenant_auth),
     upcoming_days: int = Query(14, ge=1, le=366),
+    skip_google: bool = Query(False, description="RDV locaux/public_bookings uniquement (affichage rapide)"),
 ):
     """RDV à venir d'un patient sans charger tout l'agenda cabinet."""
     tenant_id = auth["tenant_id"]
@@ -4135,6 +4134,7 @@ def tenant_patient_appointments(
         tenant_id,
         phone,
         upcoming_days=upcoming_days,
+        skip_google=skip_google,
     )
     return {"slots": slots, "upcoming_days": upcoming_days}
 
@@ -4700,6 +4700,7 @@ def _collect_patient_upcoming_appointment_slots(
     phone: str,
     *,
     upcoming_days: int,
+    skip_google: bool = False,
 ) -> List[Dict[str, Any]]:
     """RDV à venir d'un patient sans charger tout l'agenda cabinet."""
     phone_keys = _patient_phone_lookup_keys(phone)
@@ -4789,7 +4790,8 @@ def _collect_patient_upcoming_appointment_slots(
         logger.debug("patient appointments public_bookings skipped tenant=%s: %s", tenant_id, exc)
 
     google_cal = (
-        (params.get("calendar_provider") or "").strip() == "google"
+        not skip_google
+        and (params.get("calendar_provider") or "").strip() == "google"
         and bool((params.get("calendar_id") or "").strip())
     )
     if google_cal:

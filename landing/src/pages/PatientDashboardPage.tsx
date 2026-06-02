@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { agendaSlotMotif, formatAgendaSlotHour, parseAgendaSlotStart } from "../lib/agendaSlotParse.js";
 import { api } from "../lib/api.js";
 import { buildTenantRequestRows, filterOpenPatientRequests } from "../lib/requestUiStatus.js";
@@ -872,6 +872,7 @@ function Modal({
 
 export default function PatientDashboardPage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("Tous");
@@ -1004,6 +1005,7 @@ export default function PatientDashboardPage() {
   const phoneFromDashboardUrl = useMemo(() => (searchParams.get("phone") || "").trim(), [searchParams]);
   const isDirectPhoneView = Boolean(phoneFromDashboardUrl);
   const tenantPatientPhone = useMemo(() => normalizePhone(phoneFromDashboardUrl), [phoneFromDashboardUrl]);
+  const [patientProfileReady, setPatientProfileReady] = useState(false);
 
   useEffect(() => {
     const refresh = () => setRequestStatusOverrides(readRequestStatusOverrides());
@@ -1023,13 +1025,18 @@ export default function PatientDashboardPage() {
       setRequestsLoading(false);
       return undefined;
     }
+    if (!requestIdFromUrl && !patientProfileReady) {
+      return undefined;
+    }
     let cancelled = false;
     setRequestsLoading(true);
-    fetchTenantRequestsBundleCached(api, {
-      callsQuery: "?limit=50&days=30&compact=1",
-      handoffsQuery: "?limit=50",
-      callbacksQuery: "?limit=50",
-    })
+    const deferMs = requestIdFromUrl ? 0 : 80;
+    const tid = window.setTimeout(() => {
+      fetchTenantRequestsBundleCached(api, {
+        callsQuery: "?limit=50&days=30&compact=1",
+        handoffsQuery: "?limit=50",
+        callbacksQuery: "?limit=50",
+      })
       .then(({ callsRes, handoffsRes, callbacksRes }) => {
         if (cancelled) return;
         setTenantHandoffs(Array.isArray(handoffsRes?.items) ? handoffsRes.items : []);
@@ -1039,10 +1046,12 @@ export default function PatientDashboardPage() {
       .finally(() => {
         if (!cancelled) setRequestsLoading(false);
       });
+    }, deferMs);
     return () => {
       cancelled = true;
+      window.clearTimeout(tid);
     };
-  }, [tenantPatientPhone, requestIdFromUrl]);
+  }, [tenantPatientPhone, requestIdFromUrl, patientProfileReady]);
 
   const tenantRequestRows = useMemo(
     () => buildTenantRequestRows(tenantCalls, tenantHandoffs, tenantCallbacks, requestStatusOverrides),
@@ -1427,7 +1436,7 @@ export default function PatientDashboardPage() {
     setNotesLoading(activeView === "overview");
 
     const notesPromise = activeView === "overview"
-      ? api.tenantGetPatientNotes(tenantPatientPhone, "?limit=100").catch(() => ({ items: [] }))
+      ? api.tenantGetPatientNotes(tenantPatientPhone, "?limit=40").catch(() => ({ items: [] }))
       : Promise.resolve({ items: [] as unknown[] });
 
     api.tenantGetPatient(tenantPatientPhone, { lightweight: true })
@@ -1483,12 +1492,23 @@ export default function PatientDashboardPage() {
         if (!cancelled) {
           setDocumentsLoading(false);
           setNotesLoading(false);
+          setPatientProfileReady(true);
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [tenantPatientPhone, patientFetchNonce, activeView, applyPatientDetailBundle, syncPatientEmailDraft]);
+  }, [
+    tenantPatientPhone,
+    patientFetchNonce,
+    activeView,
+    applyPatientDetailBundle,
+    syncPatientEmailDraft,
+    location.pathname,
+    location.search,
+    location.state,
+    navigate,
+  ]);
 
   useEffect(() => {
     if (!tenantPatientPhone) return;
@@ -1601,8 +1621,9 @@ export default function PatientDashboardPage() {
     }
 
     setPatientAgendaLoading(true);
+    const fastQuery = `?upcoming_days=${daysNeeded}&skip_google=1`;
     api
-      .tenantGetPatientAppointments(tenantPatientPhone, `?upcoming_days=${daysNeeded}`)
+      .tenantGetPatientAppointments(tenantPatientPhone, fastQuery)
       .then((res) => {
         if (cancelled) return;
         const slots = Array.isArray(res?.slots) ? res.slots : [];
@@ -1618,6 +1639,21 @@ export default function PatientDashboardPage() {
       .finally(() => {
         if (!cancelled) setPatientAgendaLoading(false);
       });
+    if (!cancelled && activeView === "overview") {
+      window.setTimeout(() => {
+        if (cancelled) return;
+        api
+          .tenantGetPatientAppointments(tenantPatientPhone, `?upcoming_days=${daysNeeded}`)
+          .then((fullRes) => {
+            if (cancelled) return;
+            const fullSlots = Array.isArray(fullRes?.slots) ? fullRes.slots : [];
+            if (fullSlots.length) {
+              setTenantAgendaRawSlots(fullSlots as Array<Record<string, unknown>>);
+            }
+          })
+          .catch(() => {});
+      }, 1200);
+    }
     return () => {
       cancelled = true;
     };
