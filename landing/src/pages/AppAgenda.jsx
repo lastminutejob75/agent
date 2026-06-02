@@ -1920,7 +1920,7 @@ export default function AppAgenda() {
       setActionMsg({ type: "success", text: okText });
       invalidateAgendaBulkCache();
       closeAppointmentDetail();
-      const profile = res?.patient as Record<string, unknown> | undefined;
+      const profile = res?.patient;
       const displayName = String(
         profile?.display_name || profile?.validated_name || name,
       ).trim() || name;
