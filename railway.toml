@@ -1,8 +1,10 @@
 [build]
 builder = "dockerfile"
 dockerfilePath = "Dockerfile"
-# Ne déployer que si backend/frontend (widget) change, pas landing/
-watchPatterns = ["backend/**", "frontend/**", "requirements.txt", "Dockerfile", "railway.toml", "migrations/**", "scripts/**", ".dockerignore"]
+# Déploiement à chaque push sur main (plus de SKIPPED « No changes to watched files »).
+# Le front marketing vit sur Vercel (landing/) ; Railway = API backend uniquement.
+# Ancien filtre (watchPatterns backend/**) faisait sauter des deploys alors que des
+# correctifs agenda touchaient surtout landing/ — l’API restait sur un vieux build.
 
 [deploy]
 # Healthcheck désactivé : le deploy réussit sans attendre /health (voir docs/RAILWAY_HEALTHCHECK.md).
