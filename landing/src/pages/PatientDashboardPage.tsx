@@ -22,6 +22,7 @@ import {
   isAgendaSlotPast,
 } from "../lib/agendaAppointmentActions.js";
 import AgendaReschedulePanel from "../components/agenda/AgendaReschedulePanel.jsx";
+import CreateCabinetBookingModal from "../components/agenda/CreateCabinetBookingModal.jsx";
 import PatientDashboardMobile from "./PatientDashboardMobile";
 import { normalizePhoneBusinessKey } from "../lib/phoneNormalize";
 import { validatePatientPhone, validateContactEmail, isValidContactEmail } from "../lib/contactValidation.js";
@@ -593,10 +594,14 @@ function PatientQuickActions({
   displayHero,
   notify,
   onOpenProfile,
+  onCreateBooking,
+  createBookingDisabled,
 }: {
   displayHero: { phone: string };
   notify: (message: string, opts?: { sticky?: boolean }) => void;
   onOpenProfile: () => void;
+  onCreateBooking: () => void;
+  createBookingDisabled?: boolean;
 }) {
   const dial = () => {
     const t = normalizePhone(displayHero.phone);
@@ -619,6 +624,20 @@ function PatientQuickActions({
 
   return (
     <div className="flex flex-wrap gap-2">
+      <HeaderAction
+        variant="secondary"
+        compact
+        icon={<HeroSvgIcon name="calendar" />}
+        onClick={() => {
+          if (createBookingDisabled) {
+            notify("Numéro patient requis pour créer un rendez-vous.");
+            return;
+          }
+          onCreateBooking();
+        }}
+      >
+        Créer un RDV
+      </HeaderAction>
       <HeaderAction variant="primary" compact icon={<HeroSvgIcon name="phone" />} onClick={dial}>
         Appeler
       </HeaderAction>
@@ -928,6 +947,7 @@ export default function PatientDashboardPage() {
   /** Fenêtre agenda déjà chargée (14j overview, 60j onglet rendez-vous). */
   const [agendaDaysLoaded, setAgendaDaysLoaded] = useState(0);
   const [agendaRefreshNonce, setAgendaRefreshNonce] = useState(0);
+  const [createPatientBookingOpen, setCreatePatientBookingOpen] = useState(false);
   const [apptActionTarget, setApptActionTarget] = useState<ApptActionTarget | null>(null);
   const [apptActionLoading, setApptActionLoading] = useState(false);
   /** Recherche serveur GET /patients?q= ; null si la recherche API n’est pas utilisée (< 2 caractères). */
@@ -2690,6 +2710,8 @@ export default function PatientDashboardPage() {
               onAddDocument={() => setModal("addDocument")}
               onViewDocuments={() => setActiveView("documents")}
               onOpenHistoryModal={() => setModal("history")}
+              onCreateBooking={() => setCreatePatientBookingOpen(true)}
+              createBookingDisabled={!tenantPatientPhone}
               tenantPatientPhone={tenantPatientPhone}
               notify={notify}
               summaryRefreshNonce={summaryRefreshNonce}
@@ -2768,6 +2790,8 @@ export default function PatientDashboardPage() {
                   displayHero={displayHero}
                   notify={notify}
                   onOpenProfile={() => setModal("profile")}
+                  onCreateBooking={() => setCreatePatientBookingOpen(true)}
+                  createBookingDisabled={!tenantPatientPhone}
                 />
 
                 <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2">
@@ -3737,6 +3761,23 @@ export default function PatientDashboardPage() {
           )}
         </Modal>
       )}
+
+      <CreateCabinetBookingModal
+        open={createPatientBookingOpen && !!tenantPatientPhone}
+        onClose={() => setCreatePatientBookingOpen(false)}
+        lockedPatient={{
+          patient_name: displayHero?.name || urlPatientHero?.name || "",
+          patient_phone: tenantPatientPhone,
+          patient_email: patientEmail || "",
+        }}
+        excludePhoneForDuplicate={tenantPatientPhone}
+        introVariant="patient"
+        onSuccess={() => {
+          setAgendaDaysLoaded(0);
+          setAgendaRefreshNonce((n) => n + 1);
+          notify("Rendez-vous enregistré pour ce patient.");
+        }}
+      />
     </div>
   );
 }

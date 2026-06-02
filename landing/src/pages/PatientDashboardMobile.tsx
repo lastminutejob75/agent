@@ -104,6 +104,8 @@ export type PatientDashboardMobileProps = {
   onAddDocument: () => void;
   onViewDocuments: () => void;
   onOpenHistoryModal: () => void;
+  onCreateBooking: () => void;
+  createBookingDisabled?: boolean;
   tenantPatientPhone: string;
   notify: (message: string, opts?: { sticky?: boolean }) => void;
   onQuestionnaireApplied: () => void;
@@ -302,12 +304,16 @@ function MobileQuickActions({
 }
 
 function MobileContentActions({
+  onCreateBooking,
+  createBookingDisabled,
   onAddNote,
   onAddDocument,
   onViewDocuments,
   documentsCount,
   documentsLoading,
 }: {
+  onCreateBooking: () => void;
+  createBookingDisabled?: boolean;
   onAddNote: () => void;
   onAddDocument: () => void;
   onViewDocuments: () => void;
@@ -315,7 +321,15 @@ function MobileContentActions({
   documentsLoading: boolean;
 }) {
   return (
-    <section className="mb-3 grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+    <section className="mb-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+      <button
+        type="button"
+        onClick={onCreateBooking}
+        disabled={createBookingDisabled}
+        className="min-h-[50px] rounded-[15px] border border-[#009CA4] bg-[#009CA4] text-sm font-black text-white shadow-[0_8px_18px_rgba(15,23,42,0.05)] disabled:opacity-50 sm:col-span-2"
+      >
+        + Créer un rendez-vous
+      </button>
       <button
         type="button"
         onClick={onAddNote}
@@ -724,6 +738,8 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
     onAddNote,
     onAddDocument,
     onViewDocuments,
+    onCreateBooking,
+    createBookingDisabled,
     tenantPatientPhone,
     notify,
     onQuestionnaireApplied,
@@ -757,6 +773,8 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
       />
       <MobileQuickActions onCall={onCall} onWhatsApp={onWhatsApp} onSms={onSms} onMore={onOpenProfile} />
       <MobileContentActions
+        onCreateBooking={onCreateBooking}
+        createBookingDisabled={createBookingDisabled}
         onAddNote={onAddNote}
         onAddDocument={onAddDocument}
         onViewDocuments={onViewDocuments}
