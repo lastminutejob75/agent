@@ -1327,6 +1327,50 @@ export default function AppAgenda() {
     return !Number.isNaN(dt.getTime());
   }, [createBookingForm]);
 
+  const createBookingPhoneError = useMemo(() => {
+    const raw = String(createBookingForm.patient_phone || "").trim();
+    if (!raw) return "";
+    const check = validateCabinetBookingPhone(createBookingForm.patient_phone);
+    return check.ok ? "" : (check.message || "Numéro invalide (format attendu : 06 12 34 56 78 ou +33 6 12 34 56 78).");
+  }, [createBookingForm.patient_phone]);
+
+  const createBookingEmailError = useMemo(() => {
+    const raw = String(createBookingForm.patient_email || "").trim();
+    if (!raw) return "";
+    const check = validateContactEmail(raw);
+    return check.ok ? "" : (check.message || "Email invalide (format attendu : prenom@domaine.fr).");
+  }, [createBookingForm.patient_email]);
+
+  const createBookingSubmitHint = useMemo(() => {
+    if (cabinetBookingFormValid) return "";
+    const parts = [];
+    const name = (createBookingForm.patient_name || "").trim();
+    if (!name || name.length < 2) {
+      parts.push("Indiquez le nom du patient (au moins 2 caractères).");
+    }
+    if (createBookingPhoneError) parts.push(createBookingPhoneError);
+    if (createBookingEmailError) parts.push(createBookingEmailError);
+    if (hasBlockingPatientDuplicate(createBookingConflicts)) {
+      parts.push("Ce numéro ou cet e-mail est déjà utilisé par une autre fiche patient.");
+    }
+    const { booking_date, booking_time } = createBookingForm;
+    const dateOk = booking_date && /^\d{4}-\d{2}-\d{2}$/.test(String(booking_date).trim());
+    const timeOk = booking_time && /^\d{2}:\d{2}$/.test(String(booking_time).trim());
+    if (!dateOk || !timeOk) {
+      parts.push("Choisissez une date et une heure valides.");
+    }
+    if (!parts.length) {
+      return "Complétez les champs obligatoires pour enregistrer le rendez-vous.";
+    }
+    return parts.join(" ");
+  }, [
+    cabinetBookingFormValid,
+    createBookingForm,
+    createBookingPhoneError,
+    createBookingEmailError,
+    createBookingConflicts,
+  ]);
+
   const apptHourBounds = useMemo(() => {
     let min = null, max = null;
     visibleDates.forEach((date) => {
@@ -2755,24 +2799,42 @@ export default function AppAgenda() {
             <label style={S.modalLabel}>
               Téléphone
               <input
-                style={S.modalInput}
+                style={{
+                  ...S.modalInput,
+                  ...(createBookingPhoneError ? S.modalInputInvalid : {}),
+                }}
                 value={createBookingForm.patient_phone}
                 onChange={(e) => setCreateBookingForm((p) => ({ ...p, patient_phone: e.target.value }))}
                 autoComplete="tel"
                 inputMode="tel"
                 placeholder="ex. 06 12 34 56 78"
+                aria-invalid={createBookingPhoneError ? "true" : undefined}
               />
+              {createBookingPhoneError ? (
+                <span style={S.modalFieldError}>{createBookingPhoneError}</span>
+              ) : (
+                <span style={S.modalFieldHint}>Format : 06 12 34 56 78 ou +33 6 12 34 56 78</span>
+              )}
             </label>
             <label style={S.modalLabel}>
               E-mail (optionnel)
               <input
                 type="email"
-                style={S.modalInput}
+                style={{
+                  ...S.modalInput,
+                  ...(createBookingEmailError ? S.modalInputInvalid : {}),
+                }}
                 value={createBookingForm.patient_email}
                 onChange={(e) => setCreateBookingForm((p) => ({ ...p, patient_email: e.target.value }))}
                 autoComplete="email"
                 placeholder="ex. patient@gmail.com"
+                aria-invalid={createBookingEmailError ? "true" : undefined}
               />
+              {createBookingEmailError ? (
+                <span style={S.modalFieldError}>{createBookingEmailError}</span>
+              ) : (
+                <span style={S.modalFieldHint}>Si renseigné : prenom@domaine.fr (sans espace)</span>
+              )}
             </label>
             {createBookingConflicts.length ? (
               <PatientDuplicateBanner conflicts={createBookingConflicts} className="mb-3" />
@@ -2822,6 +2884,11 @@ export default function AppAgenda() {
                 </label>
               </div>
             </div>
+            {!cabinetBookingFormValid && createBookingSubmitHint ? (
+              <p style={S.modalSubmitHint} role="status">
+                {createBookingSubmitHint}
+              </p>
+            ) : null}
             <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
               <button
                 type="button"
@@ -3067,6 +3134,20 @@ const S = {
   modalClose: { border: "none", background: "transparent", cursor: "pointer", fontSize: 18, lineHeight: 1, padding: 4, color: MUTED },
   modalLabel: { display: "block", fontSize: 12, fontWeight: 700, color: NAVY, marginBottom: 10 },
   modalInput: { display: "block", width: "100%", marginTop: 6, padding: "10px 11px", borderRadius: 10, border: `1px solid ${BORDER}`, fontSize: 14, boxSizing: "border-box", fontFamily: "inherit" },
+  modalInputInvalid: { borderColor: "#F87171", background: "#FEF2F2" },
+  modalFieldError: { display: "block", marginTop: 6, fontSize: 11, fontWeight: 700, color: "#DC2626", lineHeight: 1.4 },
+  modalFieldHint: { display: "block", marginTop: 6, fontSize: 11, fontWeight: 500, color: MUTED, lineHeight: 1.4 },
+  modalSubmitHint: {
+    margin: "14px 0 0",
+    padding: "10px 12px",
+    borderRadius: 10,
+    border: "1px solid #FDE68A",
+    background: "#FFFBEB",
+    fontSize: 12,
+    fontWeight: 600,
+    color: "#92400E",
+    lineHeight: 1.45,
+  },
   modalSelect: { cursor: "pointer", backgroundColor: "#fff", WebkitAppearance: "none", appearance: "none", backgroundImage: "linear-gradient(45deg, transparent 50%, #64748b 50%), linear-gradient(135deg, #64748b 50%, transparent 50%)", backgroundPosition: "calc(100% - 18px) 50%, calc(100% - 13px) 50%", backgroundSize: "6px 6px, 6px 6px", backgroundRepeat: "no-repeat", paddingRight: 36 },
   modalDatetimeRow: { display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" },
   modalDatetimeCol: { flex: "1 1 160px", minWidth: 140 },
