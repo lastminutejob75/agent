@@ -191,6 +191,14 @@ function pickDefaultCabinetTime(slots, preferredHour = 9) {
   return after || slots[0];
 }
 
+/** ISO local (heure murale) pour l'API agenda — évite le décalage UTC sur les créneaux. */
+function buildCabinetBookingStartIso(bookingDate, bookingTime) {
+  const date = String(bookingDate || "").trim();
+  const time = String(bookingTime || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) return "";
+  return `${date}T${time}:00`;
+}
+
 function typeIcon(type) {
   const v = String(type || "").toLowerCase();
   if (v.includes("ordonnance")) return "💊";
@@ -975,6 +983,7 @@ export default function AppAgenda() {
 
   const [createBookingOpen, setCreateBookingOpen] = useState(false);
   const [createBookingLoading, setCreateBookingLoading] = useState(false);
+  const [createBookingError, setCreateBookingError] = useState("");
   /** Après création réussie : détail pour la modale de confirmation verte */
   const [createBookingConfirm, setCreateBookingConfirm] = useState(null);
   const [createBookingSuggestions, setCreateBookingSuggestions] = useState([]);
@@ -1667,6 +1676,7 @@ export default function AppAgenda() {
   }
 
   function openCreateCabinetBooking() {
+    setCreateBookingError("");
     setCreateBookingForm({
       patient_name: "",
       patient_phone: "",
@@ -1706,40 +1716,40 @@ export default function AppAgenda() {
       setActionMsg({ type: "error", text: "Choisissez une heure pour le RDV." });
       return;
     }
-    const dt = new Date(`${booking_date.trim()}T${booking_time.trim()}:00`);
-    if (!dt || Number.isNaN(dt.getTime())) {
-      setActionMsg({ type: "error", text: "Choisissez une date et une heure valides pour le RDV." });
+    const startIso = buildCabinetBookingStartIso(booking_date, booking_time);
+    if (!startIso) {
+      setCreateBookingError("Choisissez une date et une heure valides pour le RDV.");
       return;
     }
     const phoneCheck = validateCabinetBookingPhone(createBookingForm.patient_phone);
     if (!phoneCheck.ok) {
-      setActionMsg({ type: "error", text: phoneCheck.message });
+      setCreateBookingError(phoneCheck.message || "Numéro de téléphone invalide.");
       return;
     }
     const emailTrim = (createBookingForm.patient_email || "").trim();
     if (emailTrim && !isCabinetBookingEmailValid(emailTrim)) {
-      setActionMsg({ type: "error", text: "L’adresse e-mail n’est pas valide (exemple : prenom@gmail.com)." });
+      setCreateBookingError("L’adresse e-mail n’est pas valide (exemple : prenom@gmail.com).");
       return;
     }
     if (hasBlockingPatientDuplicate(createBookingConflicts)) {
-      setActionMsg({
-        type: "error",
-        text: "Cet email est déjà utilisé par une autre fiche patient. Corrigez-le avant de créer le RDV.",
-      });
+      setCreateBookingError(
+        "Cet e-mail ou ce numéro est déjà utilisé par une autre fiche patient. Corrigez avant de créer le RDV.",
+      );
       return;
     }
     setCreateBookingLoading(true);
+    setCreateBookingError("");
     try {
       await api.tenantCreateAgendaBooking({
         patient_name: name,
         patient_phone: normalizePhone(createBookingForm.patient_phone || ""),
         patient_email: (createBookingForm.patient_email || "").trim(),
         motif: (createBookingForm.motif || "Consultation").trim(),
-        start_iso: dt.toISOString(),
+        start_iso: startIso,
       });
-      const dIso = dt.toISOString().slice(0, 10);
+      const dIso = booking_date.trim();
       const timeHm = createBookingForm.booking_time.trim();
-      const timeStr = dt.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+      const timeStr = formatTimeChoiceFR(timeHm);
       const phoneNorm = normalizePhone(createBookingForm.patient_phone || "");
       let needsPatientFile = false;
       if (phoneNorm) {
@@ -1762,10 +1772,14 @@ export default function AppAgenda() {
         needsPatientFile: Boolean(phoneNorm && needsPatientFile),
       });
       setCreateBookingOpen(false);
+      setCreateBookingError("");
       invalidateAgendaBulkCache();
       await loadAgenda();
+      setActionMsg({ type: "success", text: "Rendez-vous créé avec succès." });
     } catch (e) {
-      setActionMsg({ type: "error", text: e?.message || "Impossible de créer ce rendez-vous." });
+      const msg = e?.message || "Impossible de créer ce rendez-vous.";
+      setCreateBookingError(msg);
+      setActionMsg({ type: "error", text: msg });
     } finally {
       setCreateBookingLoading(false);
     }
@@ -2742,7 +2756,10 @@ export default function AppAgenda() {
               <button
                 type="button"
                 style={S.modalClose}
-                onClick={() => setCreateBookingOpen(false)}
+                onClick={() => {
+                  setCreateBookingOpen(false);
+                  setCreateBookingError("");
+                }}
                 aria-label="Fermer"
               >
                 ✕
@@ -2889,6 +2906,11 @@ export default function AppAgenda() {
             {!cabinetBookingFormValid && createBookingSubmitHint ? (
               <p style={S.modalSubmitHint} role="status">
                 {createBookingSubmitHint}
+              </p>
+            ) : null}
+            {createBookingError ? (
+              <p style={S.modalFieldError} role="alert">
+                {createBookingError}
               </p>
             ) : null}
             <div style={{ display: "flex", gap: 10, marginTop: 18 }}>

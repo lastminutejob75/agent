@@ -5706,15 +5706,31 @@ def _tenant_cabinet_booking_duration_minutes(tenant_id: int) -> int:
         return 30
 
 
-def _tenant_agenda_compute_end_iso(start_iso: str, tenant_id: int, end_iso_in: str) -> str:
+def _tenant_agenda_parse_start_local(start_iso: str, tz_name: str) -> tuple[str, str, datetime]:
+    """Retourne (date YYYY-MM-DD, heure HH:MM, datetime aware fuseau cabinet) depuis start_iso."""
+    raw = (start_iso or "").strip()
+    if not raw:
+        raise ValueError("start_iso empty")
+    dt_parse = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    tz = _get_zoneinfo(tz_name)
+    if dt_parse.tzinfo is None:
+        dt_local = dt_parse.replace(tzinfo=tz)
+    else:
+        dt_local = dt_parse.astimezone(tz)
+    return dt_local.strftime("%Y-%m-%d"), dt_local.strftime("%H:%M"), dt_local
+
+
+def _tenant_agenda_compute_end_iso(start_iso: str, tenant_id: int, end_iso_in: str, tz_name: str = "Europe/Paris") -> str:
     end = (end_iso_in or "").strip()
     if end:
         return end
     try:
-        dt = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+        _, _, dt_local = _tenant_agenda_parse_start_local(start_iso, tz_name)
     except ValueError:
         return ""
-    return (dt + timedelta(minutes=_tenant_cabinet_booking_duration_minutes(tenant_id))).isoformat()
+    end_local = dt_local + timedelta(minutes=_tenant_cabinet_booking_duration_minutes(tenant_id))
+    # Google Calendar : dateTime sans offset + timeZone Europe/Paris (heure murale cabinet).
+    return end_local.replace(tzinfo=None).isoformat(timespec="seconds")
 
 
 @router.post("/agenda/bookings")
@@ -5751,7 +5767,14 @@ def tenant_agenda_create_booking(
     contact_line = " · ".join(contact_bits) if contact_bits else "—"
     contact_for_qualif = phone_norm or email_part or contact_line
     qualif_contact_type = "phone" if phone_norm else ("email" if email_part else "phone")
-    end_iso = _tenant_agenda_compute_end_iso(start_iso, tenant_id, body.end_iso)
+    tz_name = _tenant_timezone(detail)
+    try:
+        start_local_iso = _tenant_agenda_parse_start_local(start_iso, tz_name)[2].replace(tzinfo=None).isoformat(
+            timespec="seconds"
+        )
+    except ValueError:
+        raise HTTPException(400, "Date ou heure de début invalide.") from None
+    end_iso = _tenant_agenda_compute_end_iso(start_iso, tenant_id, body.end_iso, tz_name)
 
     google_calendar = (
         (params.get("calendar_provider") or "").strip() == "google"
@@ -5771,7 +5794,7 @@ def tenant_agenda_create_booking(
         svc = GoogleCalendarService(cal_id)
         try:
             ev = svc.book_appointment(
-                start_iso,
+                start_local_iso,
                 end_iso,
                 pname,
                 contact_line,
@@ -5800,7 +5823,7 @@ def tenant_agenda_create_booking(
                         pref=None,
                     ),
                 )
-                tools_booking._mirror_google_booking_to_internal(qs, start_iso, ev)
+                tools_booking._mirror_google_booking_to_internal(qs, start_local_iso, ev)
         except Exception as exc:
             logger.warning("mirror after tenant booking failed tenant_id=%s: %s", tenant_id, exc)
 
@@ -5808,9 +5831,7 @@ def tenant_agenda_create_booking(
         return {"ok": True, "provider": "google", "event_id": ev}
 
     try:
-        dt_parse = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
-        date_str = dt_parse.strftime("%Y-%m-%d")
-        time_str = dt_parse.strftime("%H:%M")
+        date_str, time_str, _ = _tenant_agenda_parse_start_local(start_iso, tz_name)
     except ValueError:
         raise HTTPException(400, "Date ou heure de début invalide.") from None
 
