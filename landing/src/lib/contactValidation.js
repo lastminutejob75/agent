@@ -59,3 +59,50 @@ export function validateContactEmail(value, opts = {}) {
   }
   return { ok: true };
 }
+
+/**
+ * @param {{ required?: boolean }} opts
+ * @returns {{ ok: boolean, message?: string }}
+ */
+export function validatePatientBirthDate(value, opts = {}) {
+  const v = String(value ?? "").trim();
+  if (!v) {
+    return opts.required
+      ? { ok: false, message: "Indiquez la date de naissance." }
+      : { ok: true };
+  }
+  if (v.length !== 10 || v[4] !== "-" || v[7] !== "-") {
+    return {
+      ok: false,
+      message: "Date de naissance invalide (format attendu : AAAA-MM-JJ).",
+    };
+  }
+  const parsed = new Date(`${v}T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) {
+    return { ok: false, message: "Date de naissance invalide." };
+  }
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+  if (parsed > today) {
+    return { ok: false, message: "La date de naissance ne peut pas être dans le futur." };
+  }
+  return { ok: true };
+}
+
+/**
+ * @param {{ required?: boolean, label?: string, maxLength?: number }} opts
+ * @returns {{ ok: boolean, message?: string }}
+ */
+export function validateRequiredText(value, opts = {}) {
+  const label = opts.label || "ce champ";
+  const t = String(value ?? "").trim();
+  if (!t) {
+    return opts.required
+      ? { ok: false, message: `Indiquez ${label}.` }
+      : { ok: true };
+  }
+  if (opts.maxLength && t.length > opts.maxLength) {
+    return { ok: false, message: `${label} trop long.` };
+  }
+  return { ok: true };
+}

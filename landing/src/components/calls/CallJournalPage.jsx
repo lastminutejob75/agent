@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, LayoutList, Search, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import CallRow from "./CallRow.jsx";
@@ -7,33 +7,25 @@ import CreatePatientFromCallModal from "./CreatePatientFromCallModal.jsx";
 import DetailPanel from "./DetailPanel.jsx";
 import EmptyDetailPanel from "./EmptyDetailPanel.jsx";
 import KpiCard from "./KpiCard.jsx";
+import PatientDuplicateBanner from "../patients/PatientDuplicateBanner.jsx";
 import { api } from "../../lib/api.js";
 import { useCalls } from "../../lib/useCalls.js";
 import { canCreatePatientFromCall, filterCalls, getCallCounts } from "../../lib/callJournal.utils.js";
-
-function splitName(value) {
-  const full = String(value || "").trim();
-  if (!full) return { firstName: "", lastName: "" };
-  const parts = full.split(/\s+/);
-  if (parts.length === 1) return { firstName: "", lastName: parts[0] };
-  return { firstName: parts.slice(0, -1).join(" "), lastName: parts.slice(-1)[0] };
-}
-
-function buildCreateForm(call) {
-  const fromName = splitName(call?.patient?.name);
-  const fallbackNote = call?.claraResume || call?.summary || "Aucun résumé Clara disponible.";
-  return {
-    firstName: fromName.firstName,
-    lastName: fromName.lastName,
-    phone: call?.phone || "",
-    initialNote: fallbackNote,
-    callId: call?.id || "",
-  };
-}
-
-function composePatientName({ firstName, lastName }) {
-  return [String(firstName || "").trim(), String(lastName || "").trim()].filter(Boolean).join(" ").trim();
-}
+import {
+  buildCallPatientApiPayload,
+  buildPatientCreateFormFromCall,
+  computePatientCreateFieldErrors,
+  isPatientCreateSubmitBlocked,
+  PATIENT_CREATE_FORM_EMPTY,
+  usePatientCreateDuplicateCheck,
+  validatePatientCreateFormForSubmit,
+} from "../../lib/patientCreateForm.js";
+import {
+  checkPatientDuplicates,
+  formatPatientDuplicateConflict,
+  hasBlockingPatientDuplicate,
+  parsePatientDuplicateError,
+} from "../../lib/patientDuplicateCheck.js";
 
 export default function CallJournalPage() {
   const navigate = useNavigate();
@@ -62,12 +54,24 @@ export default function CallJournalPage() {
   const [createdBadges, setCreatedBadges] = useState({});
   const toastTimerRef = useRef(0);
   const badgeTimersRef = useRef({});
-  const [createForm, setCreateForm] = useState({
-    firstName: "",
-    lastName: "",
-    phone: "",
-    initialNote: "",
-    callId: "",
+  const [createForm, setCreateForm] = useState(PATIENT_CREATE_FORM_EMPTY);
+  const [createConflicts, setCreateConflicts] = useState([]);
+
+  const createFieldErrors = useMemo(() => computePatientCreateFieldErrors(createForm), [createForm]);
+  const createSubmitBlocked = useMemo(
+    () => isPatientCreateSubmitBlocked(createFieldErrors, createConflicts),
+    [createFieldErrors, createConflicts],
+  );
+
+  const handleCreateConflicts = useCallback((conflicts) => {
+    setCreateConflicts(conflicts);
+  }, []);
+
+  usePatientCreateDuplicateCheck({
+    enabled: createModalOpen,
+    phone: createForm.phone,
+    email: createForm.email,
+    onConflicts: handleCreateConflicts,
   });
 
   const displayCalls = useMemo(
@@ -126,7 +130,8 @@ export default function CallJournalPage() {
   }
 
   function openCreateModal(call) {
-    setCreateForm(buildCreateForm(call));
+    setCreateForm(buildPatientCreateFormFromCall(call));
+    setCreateConflicts([]);
     setCreateModalOpen(true);
   }
 
@@ -144,23 +149,45 @@ export default function CallJournalPage() {
 
   async function handleCreatePatientSubmit() {
     const currentCallId = createForm.callId;
-    const patientName = composePatientName(createForm);
-    const phone = String(createForm.phone || "").trim();
     if (!currentCallId) return;
-    if (!phone) {
-      notify("Le téléphone est requis pour créer un profil patient.");
+
+    const validated = validatePatientCreateFormForSubmit(createForm);
+    if (!validated.ok) {
+      notify(validated.message || "Complétez le formulaire.");
       return;
     }
+
+    let conflicts = createConflicts;
+    try {
+      const dupRes = await checkPatientDuplicates({
+        phone: validated.phone,
+        email: validated.email,
+      });
+      conflicts = Array.isArray(dupRes?.conflicts) ? dupRes.conflicts : [];
+      setCreateConflicts(conflicts);
+    } catch {
+      /* conserve les conflits affichés */
+    }
+    if (hasBlockingPatientDuplicate(conflicts)) {
+      notify(formatPatientDuplicateConflict(conflicts[0]) || "Doublon téléphone ou e-mail.");
+      return;
+    }
+
+    const payload = buildCallPatientApiPayload(createForm, {
+      validatedName: validated.name,
+      rawName: validated.name,
+    });
+    if (!payload.ok) {
+      notify(payload.message || "Formulaire incomplet.");
+      return;
+    }
+
     setCreateLoading(true);
     try {
-      const result = await createPatientFromCall(currentCallId, {
-        validated_name: patientName || "Patient",
-        raw_name: patientName || "Patient inconnu",
-        patient_phone: phone,
-      });
-      const linkedPhone = String(result?.patient?.phone || phone).trim();
+      const result = await createPatientFromCall(currentCallId, payload.body);
+      const linkedPhone = String(result?.patient?.phone || validated.phone).trim();
       if (!linkedPhone) throw new Error("Profil créé mais téléphone introuvable.");
-      const linkedName = String(result?.patient?.display_name || patientName || "Patient").trim();
+      const linkedName = String(result?.patient?.display_name || validated.name || "Patient").trim();
 
       setCreatedOverrides((prev) => ({
         ...prev,
@@ -195,13 +222,14 @@ export default function CallJournalPage() {
         }
       }
 
-      // Vérification explicite: le profil doit être récupérable après création.
       await api.tenantGetPatient(linkedPhone);
       setCreateModalOpen(false);
+      setCreateConflicts([]);
       notify("Profil patient créé avec succès.", { keepCreatedPhone: true });
       await selectCall(currentCallId);
     } catch (e) {
-      notify(e?.message || "Impossible de créer la fiche patient.");
+      const dup = parsePatientDuplicateError(e);
+      notify(dup.message || e?.message || "Impossible de créer la fiche patient.");
     } finally {
       setCreateLoading(false);
     }
@@ -221,10 +249,9 @@ export default function CallJournalPage() {
   }
 
   async function handleAddNote(call) {
-    const text = String(noteDraft || "").trim();
-    if (!text || !call?.id) return;
+    if (!call?.id || !noteDraft.trim()) return;
     try {
-      await addCallNote(call.id, text);
+      await addCallNote(call.id, noteDraft.trim());
       setNoteDraft("");
       notify("Note ajoutée.");
       await selectCall(call.id);
@@ -234,118 +261,81 @@ export default function CallJournalPage() {
   }
 
   return (
-    <div className="min-h-full bg-[#F5F9FA] px-4 py-6 text-[#0A1628] sm:px-6">
-      <div className="mx-auto max-w-[1480px]">
-        <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-black tracking-tight">Journal d&apos;appels</h1>
-            <p className="mt-1 text-sm text-[#52637A]">
-              Suivez les appels traités par Clara et les actions à réaliser.
-            </p>
-          </div>
-          <label className="flex h-12 w-full max-w-[420px] items-center gap-3 rounded-2xl border border-[#E2E8F0] bg-white px-4 shadow-sm">
-            <Search size={18} className="text-[#64748B]" />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Rechercher un patient, un numéro..."
-              className="w-full bg-transparent text-sm font-medium outline-none placeholder:text-[#94A3B8]"
-            />
-          </label>
-        </header>
-
-        <section className="mb-5 grid grid-cols-1 gap-4 md:grid-cols-3">
-          <KpiCard value={counts.total} label="Appels" subLabel="30 derniers jours" />
-          <KpiCard value={counts.appointmentsTaken} label="Rendez-vous pris" subLabel="ajoutés à l&apos;agenda" />
-          <KpiCard value={counts.toProcess} label="À traiter" subLabel="action nécessaire" />
-        </section>
-
-        <div className="mb-4">
-          <CallTabs
-            activeTab={activeTab}
-            onChange={setActiveTab}
-            toProcessCount={counts.toProcess}
-            unknownCount={counts.unknownWithPhone}
-          />
-        </div>
-
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-          <button
-            type="button"
-            onClick={() => setActiveTab("a-traiter")}
-            className="inline-flex h-12 items-center rounded-xl bg-[#009CA4] px-5 text-sm font-extrabold text-white shadow-[0_12px_24px_rgba(0,156,164,.22)] transition hover:bg-[#007F87] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#009CA4] focus-visible:ring-offset-1"
-          >
-            <LayoutList size={17} className="mr-2" />
-            Voir les appels à traiter
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("sans-fiche")}
-            className="inline-flex items-center gap-2 rounded-xl border border-[#FFD7B2] bg-[#FFF3EA] px-4 py-2 text-sm font-extrabold text-[#C2410C] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#009CA4] focus-visible:ring-offset-1"
-          >
-            <AlertCircle size={16} />
-            {counts.unknownWithPhone} numéro{counts.unknownWithPhone > 1 ? "s" : ""} sans fiche patient
-          </button>
-        </div>
-
+    <div className="min-h-full bg-[#F5F9FA]">
+      <div className="mx-auto max-w-[1440px] px-4 py-5 lg:px-6">
         {actionMsg ? (
-          <div className="mb-4 rounded-xl border border-[#BFEAF0] bg-[#E6F7F8] px-4 py-3 text-sm font-bold text-[#007F87]">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span>{actionMsg}</span>
-              {lastCreatedPhone ? (
-                <button
-                  type="button"
-                  onClick={() => navigate(`/app/patient-dashboard?phone=${encodeURIComponent(lastCreatedPhone)}`)}
-                  className="rounded-lg border border-[#009CA4] bg-white px-3 py-1 text-xs font-extrabold text-[#007F87] hover:bg-[#F0FAFB] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#009CA4] focus-visible:ring-offset-1"
-                >
-                  Ouvrir la fiche patient
-                </button>
-              ) : null}
-            </div>
+          <div className="mb-4 rounded-xl border border-[#CFE8EA] bg-[#E8F7F8] px-4 py-3 text-sm font-semibold text-[#0A5C62]">
+            {actionMsg}
+            {lastCreatedPhone ? (
+              <button
+                type="button"
+                className="ml-3 font-extrabold text-[#009CA4] underline"
+                onClick={() => navigate(`/app/patient-dashboard?phone=${encodeURIComponent(lastCreatedPhone)}`)}
+              >
+                Ouvrir la fiche
+              </button>
+            ) : null}
           </div>
         ) : null}
+
         {error ? (
-          <div className="mb-4 rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-sm font-bold text-[#B91C1C]">
+          <div className="mb-4 flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+            <AlertCircle size={16} />
             {error}
           </div>
         ) : null}
 
-        <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <section className="overflow-hidden rounded-[24px] border border-[#E2E8F0] bg-white shadow-sm">
-            <div className="hidden grid-cols-[1.45fr_1.05fr_2.1fr_.75fr_1.25fr] gap-5 border-b border-[#E2E8F0] bg-[#FAFCFD] px-5 py-3 text-[11px] font-extrabold uppercase tracking-[0.08em] text-[#94A3B8] md:grid">
-              <div>Patient</div>
-              <div>Type</div>
-              <div>Résumé</div>
-              <div>Heure</div>
-              <div className="text-right">Action</div>
+        <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <KpiCard label="Total" value={counts.total} />
+          <KpiCard label="À traiter" value={counts.aTraiter} accent="orange" />
+          <KpiCard label="RDV" value={counts.rdv} accent="teal" />
+          <KpiCard label="Rappels" value={counts.rappel} accent="blue" />
+        </div>
+
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <CallTabs activeTab={activeTab} onChange={setActiveTab} counts={counts} />
+          <label className="relative w-full sm:max-w-xs">
+            <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Rechercher un appel..."
+              className="w-full rounded-xl border border-[#E2E8F0] py-2.5 pl-9 pr-3 text-sm outline-none focus:border-[#009CA4]"
+            />
+          </label>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+          <section className="rounded-[24px] border border-[#E2E8F0] bg-white">
+            <div className="flex items-center justify-between border-b border-[#EEF2F6] px-4 py-3">
+              <div className="flex items-center gap-2 text-sm font-extrabold text-[#0A1628]">
+                <LayoutList size={16} />
+                Journal des appels
+              </div>
+              <span className="text-xs font-semibold text-[#64748B]">{filteredCalls.length} résultat(s)</span>
             </div>
 
-            {loading ? (
-              <div className="space-y-2 p-4">
-                {Array.from({ length: 6 }).map((_, i) => (
-                  <div key={i} className="h-16 animate-pulse rounded-xl bg-[#F3F6FA]" />
-                ))}
-              </div>
-            ) : filteredCalls.length === 0 ? (
-              <div className="p-12 text-center text-sm font-semibold text-[#64748B]">
-                {query ? "Aucun résultat pour cette recherche." : "Aucun appel trouvé pour ces filtres."}
-              </div>
-            ) : (
-              filteredCalls.map((call) => (
-                <CallRow
-                  key={call.id}
-                  call={call}
-                  isSelected={call.id === selectedCallId}
-                  canCreatePatient={canCreatePatientFromCall(call)}
-                  justCreated={Boolean(createdBadges[call.id])}
-                  onSelect={selectCall}
-                  onPrimaryAction={handlePrimaryAction}
-                />
-              ))
-            )}
+            <div className="divide-y divide-[#EEF2F6]">
+              {loading ? (
+                <div className="p-6 text-sm text-[#64748B]">Chargement des appels...</div>
+              ) : filteredCalls.length === 0 ? (
+                <div className="p-6 text-sm text-[#64748B]">Aucun appel pour ce filtre.</div>
+              ) : (
+                filteredCalls.map((call) => (
+                  <CallRow
+                    key={call.id}
+                    call={call}
+                    selected={selectedCallId === call.id}
+                    createdBadge={Boolean(createdBadges[call.id])}
+                    onSelect={() => selectCall(call.id)}
+                    onPrimaryAction={() => handlePrimaryAction(call)}
+                  />
+                ))
+              )}
+            </div>
           </section>
 
-          <aside className="hidden xl:sticky xl:top-4 xl:block xl:h-[calc(100vh-128px)] xl:overflow-y-auto">
+          <aside className="hidden xl:block">
             {detailLoading ? (
               <div className="space-y-3 rounded-[24px] border border-[#E2E8F0] bg-white p-4">
                 <div className="h-16 animate-pulse rounded-xl bg-[#F3F6FA]" />
@@ -409,9 +399,31 @@ export default function CallJournalPage() {
         open={createModalOpen}
         loading={createLoading}
         form={createForm}
+        showEmail
+        emailRequired
+        extendedProfile
+        phoneError={createFieldErrors.phoneError}
+        emailError={createFieldErrors.emailError}
+        birthDateError={createFieldErrors.birthDateError}
+        physicianNameError={createFieldErrors.physicianNameError}
+        physicianCityError={createFieldErrors.physicianCityError}
+        submitDisabled={createSubmitBlocked}
         onChange={(field, value) => setCreateForm((prev) => ({ ...prev, [field]: value }))}
-        onClose={() => setCreateModalOpen(false)}
+        onClose={() => {
+          setCreateModalOpen(false);
+          setCreateConflicts([]);
+        }}
         onSubmit={handleCreatePatientSubmit}
+        subtitleLine={
+          <>
+            {createConflicts.length ? (
+              <PatientDuplicateBanner conflicts={createConflicts} className="mb-3" />
+            ) : null}
+            <span>
+              Source : <strong>appel entrant</strong>
+            </span>
+          </>
+        }
       />
     </div>
   );

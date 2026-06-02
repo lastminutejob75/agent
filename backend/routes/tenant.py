@@ -1934,6 +1934,44 @@ class TenantCallPatientBody(BaseModel):
     validated_name: str
     raw_name: str = ""
     patient_phone: str = ""
+    patient_email: Optional[str] = Field(default=None, max_length=254)
+    birth_date: Optional[str] = Field(default=None, max_length=10)
+    treating_physician_name: Optional[str] = Field(default=None, max_length=200)
+    treating_physician_city: Optional[str] = Field(default=None, max_length=120)
+
+    @validator("patient_email")
+    def _validate_call_patient_email(cls, v):
+        if v is None:
+            return None
+        raw = str(v).strip()
+        if not raw:
+            return None
+        if not is_valid_contact_email(raw):
+            raise ValueError("Email invalide (format attendu: prenom@domaine.fr)")
+        return raw
+
+    @validator("birth_date")
+    def _validate_call_patient_birth_date(cls, v):
+        if v is None:
+            return None
+        v = v.strip()
+        if v == "":
+            return ""
+        if len(v) != 10 or v[4] != "-" or v[7] != "-":
+            raise ValueError("Date de naissance invalide (format attendu: AAAA-MM-JJ)")
+        return v
+
+    @validator("treating_physician_name")
+    def _validate_call_treating_physician_name(cls, v):
+        if v is None:
+            return None
+        return v.strip()[:200]
+
+    @validator("treating_physician_city")
+    def _validate_call_treating_physician_city(cls, v):
+        if v is None:
+            return None
+        return v.strip()[:120]
 
 
 class TenantHandoffUpdateBody(BaseModel):
@@ -3338,6 +3376,12 @@ def tenant_call_patient_update(
     if len(validated_name) < 2:
         raise HTTPException(400, "validated_name too short")
 
+    patient_email = (body.patient_email or "").strip()[:254] or None
+    if patient_email and not is_valid_contact_email(patient_email):
+        raise HTTPException(400, "Email invalide (format attendu: prenom@domaine.fr).")
+
+    _raise_on_blocking_patient_duplicate(tenant_id, phone=phone, email=patient_email)
+
     booking = _build_booking_payload(raw) or {}
     profile = upsert_cabinet_client(
         tenant_id,
@@ -3352,6 +3396,18 @@ def tenant_call_patient_update(
     )
     if not profile:
         raise HTTPException(500, "Impossible d'enregistrer la fiche client")
+
+    profile_field_kwargs: dict = {}
+    if patient_email:
+        profile_field_kwargs["email"] = patient_email
+    if body.birth_date is not None:
+        profile_field_kwargs["birth_date"] = body.birth_date
+    if body.treating_physician_name is not None:
+        profile_field_kwargs["treating_physician_name"] = body.treating_physician_name
+    if body.treating_physician_city is not None:
+        profile_field_kwargs["treating_physician_city"] = body.treating_physician_city
+    if profile_field_kwargs:
+        profile = update_patient_fields(tenant_id, phone, **profile_field_kwargs) or profile
 
     profile_payload = _build_patient_payload(tenant_id, None, raw)
     if not profile_payload.get("phone"):
@@ -3545,6 +3601,9 @@ class TenantPatientPracticeCreateBody(BaseModel):
     initial_note: Optional[str] = Field(default=None, max_length=4000)
     agenda_motif: Optional[str] = Field(default=None, max_length=240)
     patient_email: Optional[str] = Field(default=None, max_length=254)
+    birth_date: Optional[str] = Field(default=None, max_length=10)
+    treating_physician_name: Optional[str] = Field(default=None, max_length=200)
+    treating_physician_city: Optional[str] = Field(default=None, max_length=120)
 
     @validator("patient_email")
     def _validate_register_email(cls, v):
@@ -3556,6 +3615,29 @@ class TenantPatientPracticeCreateBody(BaseModel):
         if not is_valid_contact_email(raw):
             raise ValueError("Email invalide (format attendu: prenom@domaine.fr)")
         return raw
+
+    @validator("birth_date")
+    def _validate_register_birth_date(cls, v):
+        if v is None:
+            return None
+        v = v.strip()
+        if v == "":
+            return ""
+        if len(v) != 10 or v[4] != "-" or v[7] != "-":
+            raise ValueError("Date de naissance invalide (format attendu: AAAA-MM-JJ)")
+        return v
+
+    @validator("treating_physician_name")
+    def _validate_register_treating_physician_name(cls, v):
+        if v is None:
+            return None
+        return v.strip()[:200]
+
+    @validator("treating_physician_city")
+    def _validate_register_treating_physician_city(cls, v):
+        if v is None:
+            return None
+        return v.strip()[:120]
 
 
 @router.post("/patients")
@@ -3596,8 +3678,17 @@ def tenant_register_patient_practice(
     if not profile:
         raise HTTPException(500, "Impossible d'enregistrer la fiche client")
 
+    profile_field_kwargs: dict = {}
     if patient_email:
-        profile = update_patient_fields(tenant_id, phone, email=patient_email) or profile
+        profile_field_kwargs["email"] = patient_email
+    if body.birth_date is not None:
+        profile_field_kwargs["birth_date"] = body.birth_date
+    if body.treating_physician_name is not None:
+        profile_field_kwargs["treating_physician_name"] = body.treating_physician_name
+    if body.treating_physician_city is not None:
+        profile_field_kwargs["treating_physician_city"] = body.treating_physician_city
+    if profile_field_kwargs:
+        profile = update_patient_fields(tenant_id, phone, **profile_field_kwargs) or profile
 
     if had_validated:
         register_mode = "updated"

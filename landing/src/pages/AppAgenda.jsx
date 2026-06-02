@@ -3,7 +3,13 @@ import { useNavigate, useSearchParams, useOutletContext } from "react-router-dom
 import CreatePatientFromCallModal from "../components/calls/CreatePatientFromCallModal.jsx";
 import AppAgendaMiniCalendar from "../components/AppAgendaMiniCalendar.jsx";
 import PatientDuplicateBanner from "../components/patients/PatientDuplicateBanner.jsx";
-import { validatePatientPhone, validateContactEmail, isValidContactEmail } from "../lib/contactValidation.js";
+import {
+  validatePatientPhone,
+  validateContactEmail,
+  validatePatientBirthDate,
+  validateRequiredText,
+  isValidContactEmail,
+} from "../lib/contactValidation.js";
 import {
   checkPatientDuplicates,
   formatPatientDuplicateConflict,
@@ -955,6 +961,9 @@ export default function AppAgenda() {
     lastName: "",
     phone: "",
     email: "",
+    birthDate: "",
+    treatingPhysicianName: "",
+    treatingPhysicianCity: "",
     initialNote: "",
     agendaMotif: "",
     rawCalendarName: "",
@@ -1102,16 +1111,49 @@ export default function AppAgenda() {
   }, [patientCreateForm.phone]);
 
   const patientCreateEmailError = useMemo(() => {
-    const check = validateContactEmail(patientCreateForm.email || "");
+    const check = validateContactEmail(patientCreateForm.email || "", { required: true });
     return check.ok ? "" : (check.message || "Email invalide.");
   }, [patientCreateForm.email]);
+
+  const patientCreateBirthDateError = useMemo(() => {
+    const check = validatePatientBirthDate(patientCreateForm.birthDate || "", { required: true });
+    return check.ok ? "" : (check.message || "Date de naissance invalide.");
+  }, [patientCreateForm.birthDate]);
+
+  const patientCreatePhysicianNameError = useMemo(() => {
+    const check = validateRequiredText(patientCreateForm.treatingPhysicianName || "", {
+      required: true,
+      label: "le médecin traitant",
+      maxLength: 200,
+    });
+    return check.ok ? "" : (check.message || "Médecin traitant requis.");
+  }, [patientCreateForm.treatingPhysicianName]);
+
+  const patientCreatePhysicianCityError = useMemo(() => {
+    const check = validateRequiredText(patientCreateForm.treatingPhysicianCity || "", {
+      required: true,
+      label: "la ville du médecin traitant",
+      maxLength: 120,
+    });
+    return check.ok ? "" : (check.message || "Ville requise.");
+  }, [patientCreateForm.treatingPhysicianCity]);
 
   const patientCreateSubmitBlocked = useMemo(
     () =>
       Boolean(patientCreatePhoneError)
       || Boolean(patientCreateEmailError)
+      || Boolean(patientCreateBirthDateError)
+      || Boolean(patientCreatePhysicianNameError)
+      || Boolean(patientCreatePhysicianCityError)
       || hasBlockingPatientDuplicate(patientCreateConflicts),
-    [patientCreatePhoneError, patientCreateEmailError, patientCreateConflicts],
+    [
+      patientCreatePhoneError,
+      patientCreateEmailError,
+      patientCreateBirthDateError,
+      patientCreatePhysicianNameError,
+      patientCreatePhysicianCityError,
+      patientCreateConflicts,
+    ],
   );
 
   useEffect(() => {
@@ -1513,6 +1555,9 @@ export default function AppAgenda() {
       lastName: fromName.lastName,
       phone: normalizePhone(appt?.patient_phone || ""),
       email: "",
+      birthDate: "",
+      treatingPhysicianName: "",
+      treatingPhysicianCity: "",
       initialNote,
       agendaMotif: motif,
       rawCalendarName: String(appt?.patient || "").trim(),
@@ -1730,9 +1775,35 @@ export default function AppAgenda() {
       setActionMsg({ type: "error", text: phoneCheck.message || "Numéro de téléphone invalide." });
       return;
     }
-    const emailCheck = validateContactEmail(emailRaw);
+    const emailCheck = validateContactEmail(emailRaw, { required: true });
     if (!emailCheck.ok) {
       setActionMsg({ type: "error", text: emailCheck.message || "Email invalide." });
+      return;
+    }
+    const birthDateRaw = String(patientCreateForm.birthDate || "").trim();
+    const birthCheck = validatePatientBirthDate(birthDateRaw, { required: true });
+    if (!birthCheck.ok) {
+      setActionMsg({ type: "error", text: birthCheck.message || "Date de naissance invalide." });
+      return;
+    }
+    const physicianName = String(patientCreateForm.treatingPhysicianName || "").trim();
+    const physicianCity = String(patientCreateForm.treatingPhysicianCity || "").trim();
+    const physicianNameCheck = validateRequiredText(physicianName, {
+      required: true,
+      label: "le médecin traitant",
+      maxLength: 200,
+    });
+    if (!physicianNameCheck.ok) {
+      setActionMsg({ type: "error", text: physicianNameCheck.message || "Médecin traitant requis." });
+      return;
+    }
+    const physicianCityCheck = validateRequiredText(physicianCity, {
+      required: true,
+      label: "la ville du médecin traitant",
+      maxLength: 120,
+    });
+    if (!physicianCityCheck.ok) {
+      setActionMsg({ type: "error", text: physicianCityCheck.message || "Ville du médecin requise." });
       return;
     }
     const phone = normalizePhone(phoneRaw);
@@ -1771,7 +1842,10 @@ export default function AppAgenda() {
         raw_name: (patientCreateForm.rawCalendarName || "").trim() || name,
         agenda_motif: (patientCreateForm.agendaMotif || "").trim() || undefined,
         initial_note: (patientCreateForm.initialNote || "").trim() || undefined,
-        patient_email: emailRaw || undefined,
+        patient_email: emailRaw,
+        birth_date: birthDateRaw,
+        treating_physician_name: physicianName,
+        treating_physician_city: physicianCity,
       });
       const mode = res?.register_mode;
       const okText =
@@ -2540,10 +2614,15 @@ export default function AppAgenda() {
                 embedded
                 open
                 showEmail
+                emailRequired
+                extendedProfile
                 loading={patientCreateLoading}
                 form={patientCreateForm}
                 phoneError={patientCreatePhoneError}
                 emailError={patientCreateEmailError}
+                birthDateError={patientCreateBirthDateError}
+                physicianNameError={patientCreatePhysicianNameError}
+                physicianCityError={patientCreatePhysicianCityError}
                 submitDisabled={patientCreateSubmitBlocked}
                 onChange={(field, value) => setPatientCreateForm((prev) => ({ ...prev, [field]: value }))}
                 onClose={closeAppointmentDetail}

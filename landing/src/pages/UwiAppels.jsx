@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   Calendar,
@@ -26,9 +26,26 @@ import {
   X,
 } from "lucide-react";
 import { useNavigate, useOutletContext, useSearchParams } from "react-router-dom";
+import CreatePatientFromCallModal from "../components/calls/CreatePatientFromCallModal.jsx";
+import PatientDuplicateBanner from "../components/patients/PatientDuplicateBanner.jsx";
 import { api } from "../lib/api.js";
 import { useCalls } from "../lib/useCalls.js";
 import { canCreatePatientFromCall, getCallCounts } from "../lib/callJournal.utils.js";
+import {
+  buildCallPatientApiPayload,
+  buildPatientCreateFormFromCall,
+  computePatientCreateFieldErrors,
+  isPatientCreateSubmitBlocked,
+  PATIENT_CREATE_FORM_EMPTY,
+  usePatientCreateDuplicateCheck,
+  validatePatientCreateFormForSubmit,
+} from "../lib/patientCreateForm.js";
+import {
+  checkPatientDuplicates,
+  formatPatientDuplicateConflict,
+  hasBlockingPatientDuplicate,
+  parsePatientDuplicateError,
+} from "../lib/patientDuplicateCheck.js";
 
 const C = {
   teal: "#009CA4",
@@ -886,6 +903,26 @@ export default function UwiAppels() {
   });
   const [toast, setToast] = useState("");
   const toastTimerRef = useRef(0);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [createLoading, setCreateLoading] = useState(false);
+  const [createForm, setCreateForm] = useState(PATIENT_CREATE_FORM_EMPTY);
+  const [createConflicts, setCreateConflicts] = useState([]);
+
+  const createFieldErrors = useMemo(() => computePatientCreateFieldErrors(createForm), [createForm]);
+  const createSubmitBlocked = useMemo(
+    () => isPatientCreateSubmitBlocked(createFieldErrors, createConflicts),
+    [createFieldErrors, createConflicts],
+  );
+  const handleCreateConflicts = useCallback((conflicts) => {
+    setCreateConflicts(conflicts);
+  }, []);
+
+  usePatientCreateDuplicateCheck({
+    enabled: createModalOpen,
+    phone: createForm.phone,
+    email: createForm.email,
+    onConflicts: handleCreateConflicts,
+  });
 
   const counts = useMemo(() => {
     const c = getCallCounts(calls);
@@ -1038,32 +1075,87 @@ export default function UwiAppels() {
     await selectCall(call.id);
   }
 
-  async function handleCreateFromCall(call) {
-    const fullName = String(call.patient?.name || "").trim();
-    const split = splitName(fullName);
-    const patientName = composePatientName(split) || "Patient";
-    const phone = String(call.patient?.phone || call.phone || "").trim();
-    if (!phone) {
-      notify("Téléphone requis pour créer la fiche patient.");
+  function openCreatePatientModal(call) {
+    setCreateForm(buildPatientCreateFormFromCall(call));
+    setCreateConflicts([]);
+    setCreateModalOpen(true);
+  }
+
+  async function handleCreatePatientSubmit() {
+    const currentCallId = createForm.callId;
+    if (!currentCallId) return;
+
+    const validated = validatePatientCreateFormForSubmit(createForm);
+    if (!validated.ok) {
+      notify(validated.message || "Complétez le formulaire.");
       return;
     }
+
+    let conflicts = createConflicts;
     try {
-      const result = await createPatientFromCall(call.id, {
-        validated_name: patientName,
-        raw_name: patientName,
-        patient_phone: phone,
+      const dupRes = await checkPatientDuplicates({
+        phone: validated.phone,
+        email: validated.email,
       });
-      const linkedPhone = String(result?.patient?.phone || phone).trim();
-      if (call.claraResume || call.summary) {
-        await api.tenantCreatePatientNote(linkedPhone, {
-          text: call.claraResume || call.summary,
-          author: "Cabinet",
-        });
+      conflicts = Array.isArray(dupRes?.conflicts) ? dupRes.conflicts : [];
+      setCreateConflicts(conflicts);
+    } catch {
+      /* conserve les conflits affichés */
+    }
+    if (hasBlockingPatientDuplicate(conflicts)) {
+      notify(formatPatientDuplicateConflict(conflicts[0]) || "Doublon téléphone ou e-mail.");
+      return;
+    }
+
+    const payload = buildCallPatientApiPayload(createForm, {
+      validatedName: validated.name,
+      rawName: validated.name,
+    });
+    if (!payload.ok) {
+      notify(payload.message || "Formulaire incomplet.");
+      return;
+    }
+
+    setCreateLoading(true);
+    try {
+      const result = await createPatientFromCall(currentCallId, payload.body);
+      const linkedPhone = String(result?.patient?.phone || validated.phone).trim();
+      if (!linkedPhone) throw new Error("Profil créé mais téléphone introuvable.");
+
+      const noteText = createForm.initialNote.trim();
+      if (noteText) {
+        try {
+          await api.tenantCreatePatientNote(linkedPhone, { text: noteText, author: "Cabinet" });
+        } catch {
+          await addCallNote(currentCallId, noteText);
+        }
       }
+
+      await api.tenantGetPatient(linkedPhone);
+      setCreateModalOpen(false);
+      setCreateConflicts([]);
       notify("Profil patient créé.");
-      await selectCall(call.id);
+      await selectCall(currentCallId);
+      setSelectedCall((prev) =>
+        prev?.id === currentCallId
+          ? {
+              ...prev,
+              phone: linkedPhone,
+              patient: {
+                ...prev.patient,
+                known: true,
+                masked: false,
+                name: validated.name,
+                phone: linkedPhone,
+              },
+            }
+          : prev,
+      );
     } catch (e) {
-      notify(e?.message || "Impossible de créer le profil patient.");
+      const dup = parsePatientDuplicateError(e);
+      notify(dup.message || e?.message || "Impossible de créer le profil patient.");
+    } finally {
+      setCreateLoading(false);
     }
   }
 
@@ -1090,7 +1182,7 @@ export default function UwiAppels() {
 
   function handlePrimaryAction(call) {
     if (canCreatePatientFromCall(call)) {
-      handleCreateFromCall(call);
+      openCreatePatientModal(call);
       return;
     }
     handleSelect(call);
@@ -1790,13 +1882,44 @@ export default function UwiAppels() {
         <DetailPanel
           call={selectedCall}
           onClose={() => setSelectedCall(null)}
-          onCreatePatient={handleCreateFromCall}
+          onCreatePatient={openCreatePatientModal}
           onOpenPatient={(call) => navigate(`/app/patient-dashboard?phone=${encodeURIComponent(call.patient.phone || call.phone || "")}`)}
           onMarkHandled={handleMarkHandled}
           onAddNote={handleAddNote}
           compact={compactHeader}
         />
       </div>
+
+      <CreatePatientFromCallModal
+        open={createModalOpen}
+        loading={createLoading}
+        form={createForm}
+        showEmail
+        emailRequired
+        extendedProfile
+        phoneError={createFieldErrors.phoneError}
+        emailError={createFieldErrors.emailError}
+        birthDateError={createFieldErrors.birthDateError}
+        physicianNameError={createFieldErrors.physicianNameError}
+        physicianCityError={createFieldErrors.physicianCityError}
+        submitDisabled={createSubmitBlocked}
+        onChange={(field, value) => setCreateForm((prev) => ({ ...prev, [field]: value }))}
+        onClose={() => {
+          setCreateModalOpen(false);
+          setCreateConflicts([]);
+        }}
+        onSubmit={handleCreatePatientSubmit}
+        subtitleLine={
+          <>
+            {createConflicts.length ? (
+              <PatientDuplicateBanner conflicts={createConflicts} className="mb-3" />
+            ) : null}
+            <span>
+              Source : <strong>appel entrant</strong>
+            </span>
+          </>
+        }
+      />
     </div>
   );
 }

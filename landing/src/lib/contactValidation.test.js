@@ -3,7 +3,9 @@ import {
   isValidContactEmail,
   isValidPatientPhone,
   validateContactEmail,
+  validatePatientBirthDate,
   validatePatientPhone,
+  validateRequiredText,
 } from "./contactValidation.js";
 
 describe("contactValidation", () => {
@@ -28,5 +30,16 @@ describe("contactValidation", () => {
     expect(isValidContactEmail("a@b")).toBe(false);
     expect(isValidContactEmail("a @b.com")).toBe(false);
     expect(validateContactEmail("foo", { required: true }).ok).toBe(false);
+  });
+
+  it("valide la date de naissance", () => {
+    expect(validatePatientBirthDate("1980-05-12").ok).toBe(true);
+    expect(validatePatientBirthDate("", { required: true }).ok).toBe(false);
+    expect(validatePatientBirthDate("1980/05/12").ok).toBe(false);
+  });
+
+  it("exige les champs texte requis", () => {
+    expect(validateRequiredText("", { required: true, label: "le médecin" }).ok).toBe(false);
+    expect(validateRequiredText("Dr Martin", { required: true, label: "le médecin" }).ok).toBe(true);
   });
 });
