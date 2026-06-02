@@ -1163,6 +1163,82 @@ def _cabinet_patient_record_exists(profile: Optional[Dict[str, Any]]) -> bool:
     return profile is not None
 
 
+def _is_agenda_dummy_phone(phone_norm: str) -> bool:
+    """Numéros factices (Google / page publique) qui ne doivent pas lier une fiche patient."""
+    if not phone_norm:
+        return True
+    if not is_valid_patient_phone(phone_norm):
+        return True
+    digits = re.sub(r"\D", "", phone_norm)
+    if not digits:
+        return True
+    if len(set(digits)) == 1 and digits[0] == "0":
+        return True
+    if digits in ("33000000000", "0000000000", "00000000"):
+        return True
+    return False
+
+
+def _agenda_slot_contact_for_patient_phone(
+    google_contact: str,
+    mirror_booking: Optional[Dict[str, Any]],
+) -> str:
+    """Préfère le contact du RDV local miroir si le Google en affiche un numéro factice."""
+    contact_norm = normalize_phone_number(google_contact or "")
+    if mirror_booking:
+        mirror_contact = normalize_phone_number(str(mirror_booking.get("contact") or ""))
+        if mirror_contact and not _is_agenda_dummy_phone(mirror_contact):
+            return mirror_contact
+    if contact_norm and not _is_agenda_dummy_phone(contact_norm):
+        return contact_norm
+    return contact_norm
+
+
+def _agenda_resolve_profile_phone_for_slot(
+    tenant_id: int,
+    item: Dict[str, Any],
+    profile_cache: Dict[str, Optional[Dict[str, Any]]],
+) -> str:
+    """Téléphone métier pour lier ``patient_has_file`` (ignore numéros factices agenda)."""
+    phone_norm = normalize_phone_number(item.get("patient_phone") or "")
+    if phone_norm and not _is_agenda_dummy_phone(phone_norm):
+        return phone_norm
+    appt_id = int(item.get("appointment_id") or 0)
+    if appt_id > 0:
+        local = _get_local_appointment_by_id(tenant_id, appt_id)
+        if local:
+            contact_norm = normalize_phone_number(local.get("contact") or "")
+            if contact_norm and not _is_agenda_dummy_phone(contact_norm):
+                return contact_norm
+    return ""
+
+
+def _agenda_lookup_profile_by_patient_name(
+    tenant_id: int,
+    patient_name: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    """Une seule fiche si le nom affiché correspond exactement (évite les homonymes)."""
+    name_clean = str(patient_name or "").strip()
+    if len(name_clean) < 2:
+        return None
+    try:
+        rows = search_cabinet_clients(tenant_id, name_clean, limit=8)
+    except Exception:
+        return None
+    name_fold = name_clean.casefold()
+    exact = [
+        row
+        for row in rows
+        if any(
+            str(row.get(key) or "").strip().casefold() == name_fold
+            for key in ("display_name", "validated_name", "raw_name")
+        )
+    ]
+    if len(exact) == 1:
+        return exact[0]
+    return None
+
+
 def _agenda_uwi_can_reschedule(source: str, mirror_booking: Optional[Dict[str, Any]], event_id: Any) -> bool:
     """Déplacement autorisé : miroir local complet ou événement Google UWI (RDV page publique / Clara)."""
     if (source or "").strip().upper() != "UWI":
@@ -1200,12 +1276,16 @@ def _decorate_agenda_slots_patient_has_file(
 ) -> None:
     """Ajoute ``patient_has_file`` si une ligne existe dans cabinet_clients pour ce numéro."""
     for item in slots:
-        phone_norm = normalize_phone_number(item.get("patient_phone") or "")
-        if not phone_norm:
-            item["patient_has_file"] = False
-            item["patient_identity_validated"] = False
-            continue
-        profile = _agenda_lookup_dashboard_patient_profile(tenant_id, phone_norm, profile_cache)
+        phone_norm = _agenda_resolve_profile_phone_for_slot(tenant_id, item, profile_cache)
+        profile: Optional[Dict[str, Any]] = None
+        if phone_norm:
+            profile = _agenda_lookup_dashboard_patient_profile(tenant_id, phone_norm, profile_cache)
+        if profile is None:
+            profile = _agenda_lookup_profile_by_patient_name(tenant_id, item.get("patient"))
+            if profile:
+                pn = normalize_phone_number(profile.get("phone") or "")
+                if pn:
+                    profile_cache[pn] = profile
         item["patient_has_file"] = _cabinet_patient_record_exists(profile)
         item["patient_identity_validated"] = _dashboard_patient_file_has_validated_identity(profile)
 
@@ -4991,7 +5071,7 @@ def tenant_agenda(
                 motif = _extract_google_description_line(description, "Motif") or (summary if summary and not summary.startswith("RDV - ") else "Consultation")
                 source = "UWI" if summary.startswith("RDV - ") or "Patient:" in description else "EXTERNAL"
                 mirror_booking = None
-                if mirror_enabled and source == "UWI":
+                if mirror_enabled:
                     mirror_booking = _find_local_appointment_for_google_event(
                         tenant_id=tenant_id,
                         start_local=start_local,
@@ -5014,7 +5094,7 @@ def tenant_agenda(
                     "start_iso": start_local.isoformat(),
                     "patient": patient,
                     "motif": motif,
-                    "patient_phone": normalize_phone_number(patient_contact),
+                    "patient_phone": _agenda_slot_contact_for_patient_phone(patient_contact, mirror_booking),
                     "type": motif,
                     "source": source,
                     "booking_origin": bo_origin,
@@ -5366,7 +5446,7 @@ def tenant_agenda_bulk(
                 motif = _extract_google_description_line(description, "Motif") or (summary if summary and not summary.startswith("RDV - ") else "Consultation")
                 source = "UWI" if summary.startswith("RDV - ") or "Patient:" in description else "EXTERNAL"
                 mirror_booking = None
-                if mirror_enabled and source == "UWI":
+                if mirror_enabled:
                     mirror_booking = _find_local_appointment_for_google_event(
                         tenant_id=tenant_id,
                         start_local=start_local,
@@ -5383,7 +5463,7 @@ def tenant_agenda_bulk(
                         "start_iso": start_local.isoformat(),
                         "patient": patient,
                         "motif": motif,
-                        "patient_phone": normalize_phone_number(patient_contact),
+                        "patient_phone": _agenda_slot_contact_for_patient_phone(patient_contact, mirror_booking),
                         "type": motif,
                         "source": source,
                         "booking_origin": bo_origin,

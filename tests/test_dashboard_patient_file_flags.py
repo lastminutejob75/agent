@@ -13,6 +13,39 @@ def test_dashboard_patient_file_has_validated_identity_pure():
     assert _dashboard_patient_file_has_validated_identity({"validated_name": "Jean M"}) is True
 
 
+def test_is_agenda_dummy_phone():
+    from backend.routes.tenant import _is_agenda_dummy_phone
+
+    assert _is_agenda_dummy_phone("") is True
+    assert _is_agenda_dummy_phone("+00000000") is True
+    assert _is_agenda_dummy_phone("+33000000000") is True
+    assert _is_agenda_dummy_phone("+33612345678") is False
+
+
+def test_decorate_agenda_slots_patient_has_file_by_name_when_dummy_phone(monkeypatch):
+    from backend.routes.tenant import _decorate_agenda_slots_patient_has_file
+
+    monkeypatch.setattr(
+        "backend.routes.tenant.get_cabinet_client_by_phone",
+        lambda tenant_id, phone: None,
+    )
+    monkeypatch.setattr(
+        "backend.routes.tenant.search_cabinet_clients",
+        lambda tenant_id, q, limit=8: [
+            {
+                "phone": "+33611111111",
+                "display_name": "Napoleon Bonaparte",
+                "validated_name": "Napoleon Bonaparte",
+            }
+        ],
+    )
+
+    slots = [{"patient_phone": "+00000000", "patient": "Napoleon Bonaparte", "hour": "09h"}]
+    cache: dict = {}
+    _decorate_agenda_slots_patient_has_file(1, slots, cache)
+    assert slots[0]["patient_has_file"] is True
+
+
 def test_decorate_agenda_slots_patient_has_file(monkeypatch):
     from backend.routes.tenant import _decorate_agenda_slots_patient_has_file
 
