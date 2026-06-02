@@ -2,8 +2,6 @@ export default function DarkSummaryCard({
   handledTodayCount,
   urgentCount,
   avgResponseMinutes,
-  cancelledCount,
-  recoveredCount,
   loading,
   IconRenderer,
   styles,
@@ -19,7 +17,7 @@ export default function DarkSummaryCard({
         Clara a traité {handledTodayCount} demande{handledTodayCount > 1 ? "s" : ""} aujourd&apos;hui
         {urgentCount > 0 ? `, dont ${urgentCount} classée${urgentCount > 1 ? "s" : ""} urgente${urgentCount > 1 ? "s" : ""}` : ""}.
         {" "}Le délai moyen de réponse est de {delayLabel}.
-        {` ${cancelledCount > 0 ? `${recoveredCount} creneau${recoveredCount > 1 ? "x" : ""} d'urgence recuperes.` : " Aucun creneau d'urgence utilise."}`}
+        {" "}Les prises de RDV, annulations et créneaux récupérés sont résumés dans les cartes du haut.
       </p>
       <small style={S.darkFooter}>Mis a jour · {loading ? "Synchronisation..." : `Aujourd'hui a ${new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`}</small>
     </section>

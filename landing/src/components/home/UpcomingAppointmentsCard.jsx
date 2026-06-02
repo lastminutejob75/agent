@@ -5,6 +5,7 @@ function formatShortDate(d) {
 
 export default function UpcomingAppointmentsCard({
   rows,
+  title = "Prochains rendez-vous",
   onOpenAgenda,
   onRowClick,
   CardComponent,
@@ -16,7 +17,7 @@ export default function UpcomingAppointmentsCard({
   const Pill = PillComponent;
   return (
     <Card
-      title="Prochains rendez-vous"
+      title={title}
       icon="calendar"
       action={<button type="button" style={S.linkBtn} onClick={onOpenAgenda}>Voir l&apos;agenda ›</button>}
     >

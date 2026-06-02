@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
-import { agendaSlotMotif, formatAgendaSlotHour, parseAgendaSlotStart } from "../lib/agendaSlotParse.js";
+import {
+  agendaSlotMotif,
+  dedupeAgendaSlots,
+  formatAgendaSlotHour,
+  isSameAgendaSlotEntry,
+  parseAgendaSlotStart,
+} from "../lib/agendaSlotParse.js";
 import { buildAgendaViewUrl } from "../lib/agendaAppointmentActions.js";
 import { api } from "../lib/api.js";
 import { computeUpcomingFillRate } from "../lib/agendaFillRate.js";
@@ -279,7 +285,10 @@ export default function AppDashboard() {
   }, []);
 
   const today = new Date();
-  const bookedSlots = useMemo(() => agenda.filter((s) => Boolean(s?.patient || s?.patient_name)), [agenda]);
+  const bookedSlots = useMemo(
+    () => dedupeAgendaSlots(agenda.filter((s) => Boolean(s?.patient || s?.patient_name))),
+    [agenda],
+  );
   const sortedBookedSlots = useMemo(() => bookedSlots
     .map((slot) => ({ slot, start: parseAgendaSlotStart(slot) }))
     .filter((x) => x.start)
@@ -344,18 +353,25 @@ export default function AppDashboard() {
     };
   };
 
-  const agendaForDay = useMemo(
-    () => todaySlots.map((entry) => buildAgendaRow(entry, false)),
-    [todaySlots],
-  );
+  const agendaForDay = useMemo(() => {
+    const rows = todaySlots.map((entry) => buildAgendaRow(entry, false));
+    if (!nextSlot || !sameDay(nextSlot.start, today)) return rows;
+    return rows.filter((row) => {
+      const key = buildAgendaRow(nextSlot, false).key;
+      return row.key !== key;
+    });
+  }, [todaySlots, nextSlot, today]);
 
   const upcomingRows = useMemo(
     () => sortedBookedSlots
       .filter((x) => x.start.getTime() >= Date.now())
+      .filter((entry) => !nextSlot || !isSameAgendaSlotEntry(entry, nextSlot))
       .slice(0, 6)
       .map((entry) => buildAgendaRow(entry, !sameDay(entry.start, today))),
-    [sortedBookedSlots, today],
+    [sortedBookedSlots, today, nextSlot],
   );
+
+  const showAgendaTodayCard = agendaForDay.length > 0;
 
   const openHandoffs = useMemo(() => handoffs.filter((h) => {
     const s = String(h?.status || "").toLowerCase();
@@ -551,14 +567,12 @@ export default function AppDashboard() {
 
       <HomeHeroSection
         handledRequestsCount={requestSummary.handled}
-        rdvCreatedToday={rdvCreatedToday}
         inProgressRequestsCount={requestSummary.inProgress}
         assistantName={me?.assistant_name}
         assistantLive={Boolean(me?.assistant_live)}
         voiceNumber={me?.voice_number || me?.phone_number}
         contactEmail={me?.contact_email}
         onOpenHandledRequests={() => navigate("/app/demandes?status=Trait%C3%A9es")}
-        onOpenRdvToday={() => navigate(bookingsTodayHref)}
         onOpenReminders={() => navigate("/app/demandes?status=En%20cours")}
         ClaraPhotoComponent={ClaraPhoto}
         PillComponent={Pill}
@@ -628,17 +642,20 @@ export default function AppDashboard() {
                 colors={C}
               />
 
-              <AgendaTodayCard
-                agendaForDay={agendaForDay}
-                onOpenAgenda={() => navigate(`/app/agenda?view=day&date=${encodeURIComponent(todayISO())}`)}
-                onRowClick={(row) => openAgendaSlot(row.slot, row.start)}
-                CardComponent={Card}
-                PillComponent={Pill}
-                styles={S}
-              />
+              {showAgendaTodayCard ? (
+                <AgendaTodayCard
+                  agendaForDay={agendaForDay}
+                  onOpenAgenda={() => navigate(`/app/agenda?view=day&date=${encodeURIComponent(todayISO())}`)}
+                  onRowClick={(row) => openAgendaSlot(row.slot, row.start)}
+                  CardComponent={Card}
+                  PillComponent={Pill}
+                  styles={S}
+                />
+              ) : null}
 
               <UpcomingAppointmentsCard
                 rows={upcomingRows}
+                title={hasNextAppointment ? "Autres rendez-vous à venir" : "Prochains rendez-vous"}
                 onOpenAgenda={() => navigate("/app/agenda?view=week")}
                 onRowClick={(row) => openAgendaSlot(row.slot, row.start)}
                 CardComponent={Card}
@@ -653,8 +670,6 @@ export default function AppDashboard() {
                 handledTodayCount={requestSummary.handledToday}
                 urgentCount={requestSummary.urgentOpen}
                 avgResponseMinutes={requestSummary.avgResponseMinutes}
-                cancelledCount={cancellationsToday}
-                recoveredCount={recoveredCount}
                 loading={loading}
                 IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
                 styles={S}
@@ -678,8 +693,6 @@ export default function AppDashboard() {
                 handledTodayCount={requestSummary.handledToday}
                 urgentCount={requestSummary.urgentOpen}
                 avgResponseMinutes={requestSummary.avgResponseMinutes}
-                cancelledCount={cancellationsToday}
-                recoveredCount={recoveredCount}
                 loading={loading}
                 IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
                 styles={S}
@@ -707,17 +720,20 @@ export default function AppDashboard() {
                 colors={C}
               />
 
-              <AgendaTodayCard
-                agendaForDay={agendaForDay}
-                onOpenAgenda={() => navigate(`/app/agenda?view=day&date=${encodeURIComponent(todayISO())}`)}
-                onRowClick={(row) => openAgendaSlot(row.slot, row.start)}
-                CardComponent={Card}
-                PillComponent={Pill}
-                styles={S}
-              />
+              {showAgendaTodayCard ? (
+                <AgendaTodayCard
+                  agendaForDay={agendaForDay}
+                  onOpenAgenda={() => navigate(`/app/agenda?view=day&date=${encodeURIComponent(todayISO())}`)}
+                  onRowClick={(row) => openAgendaSlot(row.slot, row.start)}
+                  CardComponent={Card}
+                  PillComponent={Pill}
+                  styles={S}
+                />
+              ) : null}
 
               <UpcomingAppointmentsCard
                 rows={upcomingRows}
+                title={hasNextAppointment ? "Autres rendez-vous à venir" : "Prochains rendez-vous"}
                 onOpenAgenda={() => navigate("/app/agenda?view=week")}
                 onRowClick={(row) => openAgendaSlot(row.slot, row.start)}
                 CardComponent={Card}
