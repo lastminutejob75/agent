@@ -5085,9 +5085,8 @@ def tenant_agenda(
 
     if lightweight:
         _apply_agenda_lightweight_slot_defaults(slots)
-    else:
-        _warm_agenda_profiles_from_slots_patient_phone(tenant_id, slots, profile_cache)
-        _decorate_agenda_slots_patient_has_file(tenant_id, slots, profile_cache)
+    _warm_agenda_profiles_from_slots_patient_phone(tenant_id, slots, profile_cache)
+    _decorate_agenda_slots_patient_has_file(tenant_id, slots, profile_cache)
     slots.sort(key=lambda item: item.get("hour") or "")
     done_count = sum(1 for item in slots if item.get("done"))
     return {
@@ -5461,10 +5460,9 @@ def tenant_agenda_bulk(
     flat_slots_bulk = [slot for payload in payloads.values() for slot in (payload.get("slots") or [])]
     if lightweight:
         _apply_agenda_lightweight_slot_defaults(flat_slots_bulk)
-    else:
-        _warm_agenda_profiles_from_slots_patient_phone(tenant_id, flat_slots_bulk, profile_cache)
-        for payload in payloads.values():
-            _decorate_agenda_slots_patient_has_file(tenant_id, list(payload.get("slots") or []), profile_cache)
+    _warm_agenda_profiles_from_slots_patient_phone(tenant_id, flat_slots_bulk, profile_cache)
+    for payload in payloads.values():
+        _decorate_agenda_slots_patient_has_file(tenant_id, list(payload.get("slots") or []), profile_cache)
 
     response = {
         "dates": {date_str: _finalize_agenda_day_payload(payload) for date_str, payload in payloads.items()},

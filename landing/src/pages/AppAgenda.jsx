@@ -495,22 +495,38 @@ function InlineDetail({
   const aPhone = normalizePhone(a.patient_phone || a.phone || "");
   const aPhoneFmt = formatPhone(aPhone);
   const [hasPatientFile, setHasPatientFile] = useState(Boolean(a.patient_has_file));
+  const [patientFileKnown, setPatientFileKnown] = useState(Boolean(a.patient_has_file) || !aPhone);
 
   useEffect(() => {
-    setHasPatientFile(Boolean(a.patient_has_file));
-    if (!aPhone) return undefined;
+    const fromAgenda = Boolean(a.patient_has_file);
+    setHasPatientFile(fromAgenda);
+    if (!aPhone) {
+      setPatientFileKnown(true);
+      return undefined;
+    }
+    if (fromAgenda) {
+      setPatientFileKnown(true);
+      return undefined;
+    }
     let cancelled = false;
+    setPatientFileKnown(false);
     api.tenantGetPatient(aPhone, { lightweight: true })
       .then((res) => {
-        if (!cancelled) setHasPatientFile(cabinetPatientRecordExists(res?.patient));
+        if (!cancelled) {
+          setHasPatientFile(cabinetPatientRecordExists(res?.patient));
+          setPatientFileKnown(true);
+        }
       })
-      .catch(() => {
-        if (!cancelled && !a.patient_has_file) setHasPatientFile(false);
+      .catch((e) => {
+        if (!cancelled) {
+          setHasPatientFile(e?.status === 404 ? false : fromAgenda);
+          setPatientFileKnown(true);
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [a.patient_has_file, aPhone]);
+  }, [a.patient_has_file, aPhone, a.id]);
   const shellStyle = variant === "modal" ? S.inlineDetailModal : S.inlineDetail;
   return (
     <div style={shellStyle}>
@@ -523,22 +539,22 @@ function InlineDetail({
       </div>
       <div style={S.inlineActions}>
         {aPhone ? <a href={`tel:${aPhone}`} style={S.inlineCallBtn}>📞 Appeler</a> : null}
-        {aPhone && hasPatientFile ? (
+        {aPhone && patientFileKnown && hasPatientFile ? (
           <button
             type="button"
             onClick={() => navigate(`/app/patient-dashboard?phone=${encodeURIComponent(aPhone)}`)}
             style={S.inlineSecBtn}
           >
-            👤 Voir fiche patient
+            👤 Consulter la fiche patient
           </button>
         ) : null}
-        {aPhone && !hasPatientFile ? (
+        {aPhone && patientFileKnown && !hasPatientFile ? (
           <button
             type="button"
             onClick={() => onCreatePatientFromAgenda?.(a)}
             style={S.inlineSecBtn}
           >
-            👤 Créer fiche patient
+            👤 Créer la fiche patient
           </button>
         ) : null}
         {!aPhone ? (
