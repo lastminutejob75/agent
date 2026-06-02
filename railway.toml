@@ -1,14 +1,29 @@
 [build]
 builder = "dockerfile"
 dockerfilePath = "Dockerfile"
-# Déploiement à chaque push sur main (plus de SKIPPED « No changes to watched files »).
-# Le front marketing vit sur Vercel (landing/) ; Railway = API backend uniquement.
-# Ancien filtre (watchPatterns backend/**) faisait sauter des deploys alors que des
-# correctifs agenda touchaient surtout landing/ — l’API restait sur un vieux build.
+# IMPORTANT : écrase les « Watch Paths » du dashboard Railway.
+# Sans cette liste, le dashboard garde souvent backend/** seul → SKIPPED sur les commits landing/.
+# Tout changement utile dans le repo doit déclencher un déploiement API.
+watchPatterns = [
+  "backend/**",
+  "frontend/**",
+  "landing/**",
+  "migrations/**",
+  "scripts/**",
+  "tests/**",
+  ".github/**",
+  "docs/**",
+  "railway.toml",
+  "railway.json",
+  "Dockerfile",
+  "requirements.txt",
+  "pyproject.toml",
+  "package.json",
+  "package-lock.json",
+]
 
 [deploy]
 # Healthcheck désactivé : le deploy réussit sans attendre /health (voir docs/RAILWAY_HEALTHCHECK.md).
-# Réactiver après avoir vérifié les logs et que l'app répond sur l'URL du service.
 # healthcheckPath = "/health"
 # healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"

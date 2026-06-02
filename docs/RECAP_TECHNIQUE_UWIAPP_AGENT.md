@@ -154,11 +154,7 @@ Avec **Root Directory = landing** :
 
 Pour éviter un rebuild inutile quand seul `landing/` change :
 
-1. **`railway.toml`** : `watchPatterns` limite les déploiements aux changements backend :
-   ```
-   watchPatterns = ["backend/**", "frontend/**", "requirements.txt", "Dockerfile", "railway.toml", "migrations/**"]
-   ```
-   *Note : si le "new builder" Railway est activé, les watch paths peuvent être ignorés ; désactiver le new builder si besoin.*
+1. **`railway.toml`** : `watchPatterns` **explicites** (backend, landing, tests, CI, …) pour écraser le dashboard et éviter les SKIPPED. Voir [RAILWAY_DEPLOIEMENT_SKIPPED.md](./RAILWAY_DEPLOIEMENT_SKIPPED.md).
 
 2. **`.dockerignore`** : exclut `landing/`, `node_modules`, etc. du contexte Docker → build plus rapide.
 
