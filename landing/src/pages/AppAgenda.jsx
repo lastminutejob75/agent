@@ -1598,7 +1598,7 @@ export default function AppAgenda() {
       firstName: fromName.firstName,
       lastName: fromName.lastName,
       phone: normalizePhone(appt?.patient_phone || ""),
-      email: "",
+      email: String(appt?.patient_email || appt?.email || "").trim(),
       birthDate: "",
       treatingPhysicianName: "",
       treatingPhysicianCity: "",
@@ -1758,6 +1758,7 @@ export default function AppAgenda() {
         dateIso: dIso,
         timeHHMM: timeHm,
         patientPhone: phoneNorm,
+        patientEmail: emailTrim,
         needsPatientFile: Boolean(phoneNorm && needsPatientFile),
       });
       setCreateBookingOpen(false);
@@ -1787,6 +1788,7 @@ export default function AppAgenda() {
       endTime: confirmPayload.timeHHMM || "",
       patient: confirmPayload.patientName,
       patient_phone: confirmPayload.patientPhone,
+      patient_email: confirmPayload.patientEmail || "",
       patient_has_file: false,
       type: confirmPayload.motif || "Consultation",
       typeIcon: "📋",
