@@ -1198,7 +1198,7 @@ def _decorate_agenda_slots_patient_has_file(
     slots: List[Dict[str, Any]],
     profile_cache: Dict[str, Optional[Dict[str, Any]]],
 ) -> None:
-    """Ajoute ``patient_has_file`` : True si identité validée (``validated_name`` ≥ 2 car.)."""
+    """Ajoute ``patient_has_file`` si une ligne existe dans cabinet_clients pour ce numéro."""
     for item in slots:
         phone_norm = normalize_phone_number(item.get("patient_phone") or "")
         if not phone_norm:
@@ -1206,9 +1206,8 @@ def _decorate_agenda_slots_patient_has_file(
             item["patient_identity_validated"] = False
             continue
         profile = _agenda_lookup_dashboard_patient_profile(tenant_id, phone_norm, profile_cache)
-        validated = _dashboard_patient_file_has_validated_identity(profile)
-        item["patient_has_file"] = validated
-        item["patient_identity_validated"] = validated
+        item["patient_has_file"] = _cabinet_patient_record_exists(profile)
+        item["patient_identity_validated"] = _dashboard_patient_file_has_validated_identity(profile)
 
 
 def _warm_agenda_profiles_from_contact_strings(

@@ -46,13 +46,7 @@ def test_agenda_bulk_lightweight_still_decorates_patient_has_file(monkeypatch):
 
     monkeypatch.setattr(
         "backend.routes.tenant.get_cabinet_clients_by_phones",
-        lambda tenant_id, phones: {
-            "+33612345678": {
-                "phone": "+33612345678",
-                "display_name": "Claire",
-                "validated_name": "Claire Martin",
-            }
-        },
+        lambda tenant_id, phones: {"+33612345678": {"phone": "+33612345678", "display_name": "Claire"}},
     )
 
     _warm_agenda_profiles_from_slots_patient_phone(1, slots, cache)

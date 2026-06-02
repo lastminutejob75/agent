@@ -299,12 +299,6 @@ function normalizePhone(raw) {
   return normalizeFrenchPhone(raw);
 }
 
-/** Fiche patient « prête » sur le dashboard : identité validée (`validated_name` ≥ 2 car.). */
-function agendaPatientHasPracticeFile(appt, profile) {
-  if (Boolean(appt?.patient_identity_validated || appt?.patient_has_file)) return true;
-  return dashboardPatientHasValidatedIdentity(profile);
-}
-
 /** Téléphone facultatif (création RDV cabinet) ; si renseigné → format E.164 strict. */
 function validateCabinetBookingPhone(raw) {
   return validatePatientPhone(raw);
@@ -489,14 +483,13 @@ function InlineDetail({
   rescheduleMode,
   onStartReschedule,
   onReschedule,
-  hasPatientFile,
-  patientFileKnown,
   onViewPatientFile,
   onCreatePatientFile,
   variant = "inline",
 }) {
   const aPhone = normalizePhone(a.patient_phone || a.phone || "");
   const aPhoneFmt = formatPhone(aPhone);
+  const hasPatientFile = Boolean(a.patient_has_file);
   const shellStyle = variant === "modal" ? S.inlineDetailModal : S.inlineDetail;
   return (
     <div style={shellStyle}>
@@ -509,7 +502,7 @@ function InlineDetail({
       </div>
       <div style={S.inlineActions}>
         {aPhone ? <a href={`tel:${aPhone}`} style={S.inlineCallBtn}>📞 Appeler</a> : null}
-        {aPhone && patientFileKnown && hasPatientFile ? (
+        {aPhone && hasPatientFile ? (
           <button
             type="button"
             onClick={() => onViewPatientFile?.()}
@@ -518,7 +511,7 @@ function InlineDetail({
             👤 Consulter la fiche patient
           </button>
         ) : null}
-        {aPhone && patientFileKnown && !hasPatientFile ? (
+        {aPhone && !hasPatientFile ? (
           <button
             type="button"
             onClick={() => onCreatePatientFile?.()}
@@ -948,12 +941,12 @@ export default function AppAgenda() {
   const [error, setError] = useState("");
   const agendaLoadSeqRef = useRef(0);
   const [selectedAppt, setSelectedAppt] = useState(null);
-  const [selectedApptPatientFile, setSelectedApptPatientFile] = useState({ known: true, hasFile: false });
+  /** Une seule fenêtre RDV : détail ou création fiche (jamais deux modales empilées). */
+  const [apptPanel, setApptPanel] = useState("detail");
   const [actionMsg, setActionMsg] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [rescheduleMode, setRescheduleMode] = useState(false);
-  const [patientCreateOpen, setPatientCreateOpen] = useState(false);
   const [patientCreateLoading, setPatientCreateLoading] = useState(false);
   const [patientCreateSummary, setPatientCreateSummary] = useState("");
   const [patientCreateForm, setPatientCreateForm] = useState({
@@ -1100,7 +1093,7 @@ export default function AppAgenda() {
   }, [calendarLoading]);
 
   useEffect(() => {
-    if (!patientCreateOpen) {
+    if (apptPanel !== "create-patient" || !selectedAppt) {
       setPatientCreateConflicts([]);
       return;
     }
@@ -1127,7 +1120,7 @@ export default function AppAgenda() {
       window.clearTimeout(tid);
       ctrl.abort();
     };
-  }, [patientCreateOpen, patientCreateForm.phone]);
+  }, [apptPanel, selectedAppt, patientCreateForm.phone]);
 
   useEffect(() => {
     if (!createBookingOpen) {
@@ -1420,53 +1413,10 @@ export default function AppAgenda() {
 
   function closeAppointmentDetail() {
     setSelectedAppt(null);
-    setSelectedApptPatientFile({ known: true, hasFile: false });
+    setApptPanel("detail");
     setConfirmCancel(false);
     resetReschedule();
   }
-
-  useEffect(() => {
-    if (!selectedAppt) {
-      setSelectedApptPatientFile({ known: true, hasFile: false });
-      return undefined;
-    }
-    const phone = normalizePhone(selectedAppt.patient_phone || selectedAppt.phone || "");
-    if (agendaPatientHasPracticeFile(selectedAppt, null)) {
-      setSelectedApptPatientFile({ known: true, hasFile: true });
-      return undefined;
-    }
-    if (!phone) {
-      setSelectedApptPatientFile({ known: true, hasFile: false });
-      return undefined;
-    }
-    let cancelled = false;
-    setSelectedApptPatientFile({ known: false, hasFile: false });
-    api.tenantGetPatient(phone, { lightweight: true })
-      .then((res) => {
-        if (!cancelled) {
-          setSelectedApptPatientFile({
-            known: true,
-            hasFile: agendaPatientHasPracticeFile(selectedAppt, res?.patient),
-          });
-        }
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setSelectedApptPatientFile({
-            known: true,
-            hasFile: e?.status === 404 ? false : agendaPatientHasPracticeFile(selectedAppt, null),
-          });
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    selectedAppt?.id,
-    selectedAppt?.patient_phone,
-    selectedAppt?.patient_has_file,
-    selectedAppt?.patient_identity_validated,
-  ]);
 
   const syncAgendaUrl = useCallback((nextDate, nextView, extra = {}) => {
     const params = new URLSearchParams();
@@ -1500,8 +1450,8 @@ export default function AppAgenda() {
     if (selectedAppt?.id === a.id) {
       closeAppointmentDetail();
     } else {
-      setPatientCreateOpen(false);
       setSelectedAppt(a);
+      setApptPanel("detail");
       setConfirmCancel(false);
       resetReschedule();
     }
@@ -1535,8 +1485,10 @@ export default function AppAgenda() {
     setPatientCreateSummary(
       `${formatLongDate(appt?.date)} · ${appt?.displayTime || "—"}${motif ? ` · ${motif}` : ""}`,
     );
-    closeAppointmentDetail();
-    setPatientCreateOpen(true);
+    setSelectedAppt(appt);
+    setApptPanel("create-patient");
+    setConfirmCancel(false);
+    resetReschedule();
   }
 
   useEffect(() => {
@@ -1667,7 +1619,7 @@ export default function AppAgenda() {
       if (phoneNorm) {
         try {
           const prof = await api.tenantGetPatient(phoneNorm, { lightweight: true });
-          needsPatientFile = !agendaPatientHasPracticeFile(null, prof?.patient);
+          needsPatientFile = !prof?.patient;
         } catch (e) {
           needsPatientFile = e?.status === 404;
         }
@@ -1721,7 +1673,7 @@ export default function AppAgenda() {
   }
 
   function openPatientCreateFromAppointment(appt) {
-    if (agendaPatientHasPracticeFile(appt, null)) {
+    if (Boolean(appt?.patient_has_file)) {
       const phone = normalizePhone(appt?.patient_phone || "");
       if (phone) {
         closeAppointmentDetail();
@@ -1776,11 +1728,11 @@ export default function AppAgenda() {
             : mode === "updated"
               ? "Fiche patient mise à jour pour ce numéro (éléments ajoutés sur une fiche existante)."
               : "Fiche patient enregistrée.";
-      setPatientCreateOpen(false);
       setPatientCreateConflicts([]);
       setActionMsg({ type: "success", text: okText });
       invalidateAgendaBulkCache();
       await loadAgenda();
+      closeAppointmentDetail();
       navigate(`/app/patient-dashboard?phone=${encodeURIComponent(phone)}`);
     } catch (e) {
       const dup = parsePatientDuplicateError(e);
@@ -2516,8 +2468,7 @@ export default function AppAgenda() {
         )}
       </div>
 
-      {/* Tant que la création de fiche est ouverte, ne pas monter le détail RDV (z-index / double modale). */}
-      {selectedAppt && !patientCreateOpen ? (
+      {selectedAppt ? (
         <div
           style={S.apptDetailOverlay}
           role="presentation"
@@ -2526,47 +2477,76 @@ export default function AppAgenda() {
           <div
             role="dialog"
             aria-modal="true"
-            aria-labelledby="appt-detail-heading"
+            aria-labelledby={apptPanel === "create-patient" ? "create-patient-from-call-heading" : "appt-detail-heading"}
             style={S.apptDetailCard}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={S.apptDetailHeader}>
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flex: 1 }}>
-                <span style={{ fontSize: 22, lineHeight: 1 }}>{selectedAppt.typeIcon}</span>
-                <div>
-                  <div id="appt-detail-heading" style={{ fontSize: 17, fontWeight: 800, color: NAVY }}>
-                    {selectedAppt.patient || "Patient"}
+            {apptPanel === "create-patient" ? (
+              <CreatePatientFromCallModal
+                embedded
+                open
+                loading={patientCreateLoading}
+                form={patientCreateForm}
+                onChange={(field, value) => setPatientCreateForm((prev) => ({ ...prev, [field]: value }))}
+                onClose={closeAppointmentDetail}
+                onBack={() => setApptPanel("detail")}
+                onSubmit={handlePatientCreateFromAgendaSubmit}
+                subtitleLine={
+                  <>
+                    {patientCreateConflicts.length ? (
+                      <PatientDuplicateBanner conflicts={patientCreateConflicts} className="mb-3" />
+                    ) : null}
+                    <span className="text-[#64748B]">
+                      Source : <strong>rendez-vous agenda</strong>
+                      {patientCreateSummary ? (
+                        <>
+                          {" "}
+                          · <span>{patientCreateSummary}</span>
+                        </>
+                      ) : null}
+                    </span>
+                  </>
+                }
+              />
+            ) : (
+              <>
+                <div style={S.apptDetailHeader}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flex: 1 }}>
+                    <span style={{ fontSize: 22, lineHeight: 1 }}>{selectedAppt.typeIcon}</span>
+                    <div>
+                      <div id="appt-detail-heading" style={{ fontSize: 17, fontWeight: 800, color: NAVY }}>
+                        {selectedAppt.patient || "Patient"}
+                      </div>
+                      <div style={{ fontSize: 13, color: MUTED, marginTop: 2 }}>
+                        {selectedAppt.type || "Consultation"}
+                      </div>
+                    </div>
                   </div>
-                  <div style={{ fontSize: 13, color: MUTED, marginTop: 2 }}>
-                    {selectedAppt.type || "Consultation"}
-                  </div>
+                  <button
+                    type="button"
+                    onClick={closeAppointmentDetail}
+                    style={S.weekDetailClose}
+                    aria-label="Fermer la fiche rendez-vous"
+                  >
+                    ✕
+                  </button>
                 </div>
-              </div>
-              <button
-                type="button"
-                onClick={closeAppointmentDetail}
-                style={S.weekDetailClose}
-                aria-label="Fermer la fiche rendez-vous"
-              >
-                ✕
-              </button>
-            </div>
-            <InlineDetail
-              variant="modal"
-              a={selectedAppt}
-              navigate={navigate}
-              confirmCancel={confirmCancel}
-              setConfirmCancel={setConfirmCancel}
-              handleCancel={handleCancel}
-              actionLoading={actionLoading}
-              rescheduleMode={rescheduleMode}
-              onStartReschedule={handleStartReschedule}
-              onReschedule={handleReschedule}
-              hasPatientFile={selectedApptPatientFile.hasFile}
-              patientFileKnown={selectedApptPatientFile.known}
-              onViewPatientFile={viewPatientFileFromSelectedAppt}
-              onCreatePatientFile={() => openCreatePatientFormFromAppt(selectedAppt)}
-            />
+                <InlineDetail
+                  variant="modal"
+                  a={selectedAppt}
+                  navigate={navigate}
+                  confirmCancel={confirmCancel}
+                  setConfirmCancel={setConfirmCancel}
+                  handleCancel={handleCancel}
+                  actionLoading={actionLoading}
+                  rescheduleMode={rescheduleMode}
+                  onStartReschedule={handleStartReschedule}
+                  onReschedule={handleReschedule}
+                  onViewPatientFile={viewPatientFileFromSelectedAppt}
+                  onCreatePatientFile={() => openCreatePatientFormFromAppt(selectedAppt)}
+                />
+              </>
+            )}
           </div>
         </div>
       ) : null}
@@ -2782,30 +2762,6 @@ export default function AppAgenda() {
         </div>
       ) : null}
 
-      <CreatePatientFromCallModal
-        open={patientCreateOpen}
-        loading={patientCreateLoading}
-        form={patientCreateForm}
-        onChange={(field, value) => setPatientCreateForm((prev) => ({ ...prev, [field]: value }))}
-        onClose={() => setPatientCreateOpen(false)}
-        onSubmit={handlePatientCreateFromAgendaSubmit}
-        subtitleLine={
-          <>
-            {patientCreateConflicts.length ? (
-              <PatientDuplicateBanner conflicts={patientCreateConflicts} className="mb-3" />
-            ) : null}
-            <span className="text-[#64748B]">
-              Source : <strong>rendez-vous agenda</strong>
-              {patientCreateSummary ? (
-                <>
-                  {" "}
-                  · <span>{patientCreateSummary}</span>
-                </>
-              ) : null}
-            </span>
-          </>
-        }
-      />
     </div>
   );
 }
