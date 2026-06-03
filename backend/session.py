@@ -68,6 +68,8 @@ class Session:
     # Qualification
     qualif_step: str = "name"
     qualif_data: QualifData = field(default_factory=QualifData)
+    # Préférences RDV structurées (parseur appointment_preference_parser)
+    appointment_preferences: Optional[Dict[str, Any]] = None
     motif_help_used: bool = False  # NEW: utilisé pour empêcher la boucle sur le motif
 
     # Extraction (Option 2 - entités extraites du premier message)

@@ -966,6 +966,25 @@ def get_slots_for_display(
             len(rejected_ids or []),
             channel,
         )
+    # Préférences structurées (page publique / langage naturel)
+    appt_prefs = getattr(session, "appointment_preferences", None) if session else None
+    if appt_prefs and pool:
+        try:
+            from backend.appointment_preference_parser import (
+                filter_slots_by_appointment_preferences,
+                rank_slots_by_appointment_preferences,
+            )
+            before_ap = len(pool)
+            pool = filter_slots_by_appointment_preferences(pool, appt_prefs)
+            if before_ap != len(pool):
+                logger.info(
+                    "get_slots_for_display: appointment_prefs hard filter %s→%s",
+                    before_ap,
+                    len(pool),
+                )
+        except Exception as e:
+            logger.debug("appointment_prefs filter skipped: %s", e)
+
     # RÈGLE 7: contrainte horaire AVANT spread (sinon on casse la variété après coup)
     filtered_by_time_constraint = None
     if session is not None:
@@ -976,6 +995,14 @@ def get_slots_for_display(
             pool = filter_slots_by_time_constraint(pool, session)
         except Exception:
             pass
+
+    if appt_prefs and pool:
+        try:
+            from backend.appointment_preference_parser import rank_slots_by_appointment_preferences
+            pool = rank_slots_by_appointment_preferences(pool, appt_prefs)
+        except Exception:
+            pass
+
     # Étaler : plusieurs horaires le même jour si date ciblée, sinon diversité jour/période
     slots = _spread_slots(
         pool,

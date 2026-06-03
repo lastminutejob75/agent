@@ -424,6 +424,15 @@ def infer_time_preference(text: str) -> Optional[str]:
     """
     if not text or not text.strip():
         return None
+    try:
+        from backend.entity_extraction import detect_time_slot
+        slot = detect_time_slot(text)
+        if slot == "matin":
+            return "morning"
+        if slot in ("après-midi", "soir"):
+            return "afternoon"
+    except Exception:
+        pass
     t = normalize_pref(text)
     if not t:
         return None
@@ -466,6 +475,15 @@ def infer_preference_plausible(text: str) -> Optional[str]:
     for w in ANY_WORDS:
         if w in s:
             return "any"
+    try:
+        from backend.entity_extraction import detect_time_slot
+        slot = detect_time_slot(text)
+        if slot == "matin":
+            return "morning"
+        if slot in ("après-midi", "soir"):
+            return "afternoon"
+    except Exception:
+        pass
     for w in MORNING_WORDS:
         if w in s:
             return "morning"

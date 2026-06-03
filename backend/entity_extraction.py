@@ -114,22 +114,115 @@ PAIN_LOCATIONS = [
     "dent", "dents", "pied", "main", "hanche",
 ]
 
-# Préférences horaires
+
+def _normalize_fr_text(text: str) -> str:
+    """Minuscules sans accents pour matching robuste."""
+    lowered = (text or "").lower().strip()
+    return "".join(
+        c for c in unicodedata.normalize("NFD", lowered)
+        if unicodedata.category(c) != "Mn"
+    )
+
+
+# Préférences horaires (legacy / rétrocompat)
 PREF_PATTERNS: Dict[str, List[str]] = {
-    "matin": [
-        "matin", "matinée", "le matin", "plutôt le matin",
-        "9h", "10h", "11h", "début de journée",
-    ],
-    "après-midi": [
-        "après-midi", "après midi", "aprem", "l'après-midi",
-        "14h", "15h", "16h", "17h", "cet après-midi",
-    ],
-    "soir": [
-        "soir", "soirée", "fin de journée", "fin de journee", "18h", "19h",
-        "fin d'après-midi", "fin d apres-midi", "fin d apres midi",
-        "en fin de journée", "en fin de journee", "tard", "plus tard",
-    ],
+    "matin": ["matin", "matinée", "le matin", "9h", "10h", "11h"],
+    "après-midi": ["après-midi", "après midi", "aprem", "14h", "15h", "16h"],
+    "soir": ["soir", "soirée", "fin de journée", "18h", "19h"],
 }
+
+# Phrases normalisées (sans accents) → créneau ; les plus longues en premier
+_TIME_SLOT_PHRASES_RAW: List[tuple[str, str]] = [
+    # Soir / fin de journée
+    ("plutot en fin de journee", "soir"),
+    ("en fin de journee", "soir"),
+    ("fin de journee", "soir"),
+    ("fin d apres-midi", "soir"),
+    ("fin d apres midi", "soir"),
+    ("fin apres-midi", "soir"),
+    ("fin apres midi", "soir"),
+    ("vers le soir", "soir"),
+    ("en soiree", "soir"),
+    ("le soir", "soir"),
+    ("apres le travail", "soir"),
+    ("apres le boulot", "soir"),
+    ("apres 19h", "soir"),
+    ("apres 18h", "soir"),
+    ("apres 17h", "soir"),
+    ("plus tard dans la journee", "soir"),
+    ("tard dans la journee", "soir"),
+    ("en fin de soiree", "soir"),
+    ("derniere partie de la journee", "soir"),
+    ("derniers creneaux", "soir"),
+    # Matin
+    ("fin de matinee", "matin"),
+    ("en fin de matinee", "matin"),
+    ("debut de matinee", "matin"),
+    ("en debut de matinee", "matin"),
+    ("debut de journee", "matin"),
+    ("en debut de journee", "matin"),
+    ("tot le matin", "matin"),
+    ("premiere partie de la journee", "matin"),
+    ("premiers creneaux", "matin"),
+    ("premier creneau", "matin"),
+    ("avant midi", "matin"),
+    ("avant 12h", "matin"),
+    ("avant 12", "matin"),
+    ("en matinee", "matin"),
+    ("la matinee", "matin"),
+    ("plutot matinee", "matin"),
+    ("plutot le matin", "matin"),
+    ("de preference le matin", "matin"),
+    ("si possible le matin", "matin"),
+    ("le matin", "matin"),
+    ("du matin", "matin"),
+    ("en matin", "matin"),
+    ("matinee", "matin"),
+    ("matinée", "matin"),
+    ("matin", "matin"),
+    # Après-midi
+    ("milieu d apres-midi", "après-midi"),
+    ("debut d apres-midi", "après-midi"),
+    ("en debut d apres-midi", "après-midi"),
+    ("apres le dejeuner", "après-midi"),
+    ("apres dejeuner", "après-midi"),
+    ("apres le repas", "après-midi"),
+    ("milieu de journee", "après-midi"),
+    ("plutot apres-midi", "après-midi"),
+    ("plutot l apres-midi", "après-midi"),
+    ("plutot apres midi", "après-midi"),
+    ("de preference l apres-midi", "après-midi"),
+    ("cet apres-midi", "après-midi"),
+    ("cet apres midi", "après-midi"),
+    ("l apres-midi", "après-midi"),
+    ("l apres midi", "après-midi"),
+    ("apres-midi", "après-midi"),
+    ("apres midi", "après-midi"),
+    ("aprem", "après-midi"),
+    ("aprèm", "après-midi"),
+]
+
+_TIME_SLOT_PHRASES: List[tuple[str, str]] = sorted(
+    [( _normalize_fr_text(p), s) for p, s in _TIME_SLOT_PHRASES_RAW],
+    key=lambda x: len(x[0]),
+    reverse=True,
+)
+
+# « plutôt », « de préférence », etc. — extrait le fragment qui suit
+_PREF_QUALIFIER_RE = re.compile(
+    r"(?:"
+    r"plut[oô]t|de\s+pr[eé]f[eé]rence|si\s+possible|"
+    r"pr[eé]f[eé]r[eé]rais|pr[eé]f[eé]re|j\s*aimerais|j'aimerais|"
+    r"id[eé]alement|vers|autour\s+de"
+    r")\s+(?:le\s+|l'|en\s+|vers\s+)?",
+    re.IGNORECASE,
+)
+
+_HOUR_RE = re.compile(
+    r"(?:vers|a|à|autour\s+de|apres|après|avant|jusqu\s*a|finis?\s+a|finir\s+a)?\s*"
+    r"(\d{1,2})\s*h(?:\s*(\d{2}))?",
+    re.IGNORECASE,
+)
 
 _FRENCH_MONTHS: Dict[str, int] = {
     "janvier": 1,
@@ -241,15 +334,6 @@ def extract_motif(message: str) -> Dict[str, Optional[str]]:
     return result
 
 
-def _normalize_fr_text(text: str) -> str:
-    """Minuscules sans accents pour matching robuste."""
-    lowered = (text or "").lower().strip()
-    return "".join(
-        c for c in unicodedata.normalize("NFD", lowered)
-        if unicodedata.category(c) != "Mn"
-    )
-
-
 def _infer_year(day: int, month: int, ref: date) -> int:
     """Si la date est déjà passée cette année, prendre l'année suivante."""
     try:
@@ -341,18 +425,105 @@ def format_date_fr(value: date | str) -> str:
     return f"{weekday} {value.day} {month_names[value.month - 1]}"
 
 
+def extract_hour_from_message(message: str) -> Optional[int]:
+    """Extrait une heure (0–23) depuis le message."""
+    if not message:
+        return None
+    m = _HOUR_RE.search(_normalize_fr_text(message))
+    if not m:
+        return None
+    hour = int(m.group(1))
+    if hour > 23:
+        return None
+    return hour
+
+
+def _match_time_phrases(text_norm: str) -> Optional[str]:
+    """Retourne matin / après-midi / soir si une phrase connue est trouvée."""
+    if not text_norm:
+        return None
+    for phrase, slot in _TIME_SLOT_PHRASES:
+        if phrase in text_norm:
+            return slot
+    return None
+
+
+def detect_time_slot(message: str) -> Optional[str]:
+    """
+    Détecte une préférence horaire en langage naturel.
+
+    Exemples : « plutôt fin de journée », « plutôt matinée », « de préférence le matin »,
+    « après le déjeuner », « vers 14h », « je finis à 17h ».
+    """
+    if not (message or "").strip():
+        return None
+    norm = _normalize_fr_text(message)
+
+    # Négations / indisponibilité matin
+    if "matin" in norm and any(
+        x in norm
+        for x in (
+            "pas le matin", "pas disponible le matin", "jamais le matin",
+            "matin occupe", "matin impossible", "matin je suis occupe",
+            "le matin je suis occupe", "suis occupe le matin", "suis occupee le matin",
+        )
+    ):
+        return "après-midi"
+    if ("apres-midi" in norm or "apres midi" in norm) and any(
+        x in norm for x in ("pas l apres", "pas l'apres", "jamais l apres", "apres-midi occupe", "apres midi occupe")
+    ):
+        return "matin"
+
+    # Contraintes de disponibilité (« je travaille jusqu'à 16h »)
+    if any(x in norm for x in ("jusqu a 16h", "jusqu a 17h", "finis a 16h", "finis a 17h", "finir a 16h", "finir a 17h")):
+        return "après-midi"
+    if any(x in norm for x in ("finis a 18h", "finir a 18h", "jusqu a 18h")):
+        return "soir"
+    if "travaille le matin" in norm or "travail le matin" in norm:
+        return "après-midi"
+
+    slot = _match_time_phrases(norm)
+    if slot:
+        return slot
+
+    # Fragment après « plutôt », « de préférence », etc.
+    for m in _PREF_QUALIFIER_RE.finditer(message):
+        fragment = norm[m.end():].strip()
+        if len(fragment) > 2:
+            slot = _match_time_phrases(fragment)
+            if slot:
+                return slot
+
+    # Heure explicite
+    hour = extract_hour_from_message(message)
+    if hour is not None:
+        if hour < 12:
+            return "matin"
+        if hour < 18:
+            return "après-midi"
+        return "soir"
+
+    # Reformulations courtes sans « plutôt »
+    if norm in ("tard", "plus tard"):
+        return "soir"
+
+    return None
+
+
 def time_pref_from_pref(pref: Optional[str]) -> Optional[str]:
     """Extrait matin / après-midi / soir d'une préférence combinée (« jeudi matin »)."""
     if not pref:
         return None
     p = _normalize_fr_text(pref)
+    if any(x in p for x in ("fin de journee", "fin d apres", "fin apres", "apres 17h", "apres 18h")):
+        return "soir"
     if "apres-midi" in p or "apres midi" in p or "aprem" in p:
         return "après-midi"
-    if "matin" in p or "matinee" in p:
+    if "matin" in p or "matinee" in p or "debut de journee" in p:
         return "matin"
     if "soir" in p or "soiree" in p:
         return "soir"
-    return None
+    return detect_time_slot(pref)
 
 
 def weekday_from_pref(pref: Optional[str]) -> Optional[int]:
@@ -377,28 +548,19 @@ def extract_pref(message: str) -> Optional[str]:
     message_lower = message.lower().strip()
     
     day_found: Optional[str] = None
-    time_found: Optional[str] = None
-    
+    time_found: Optional[str] = detect_time_slot(message)
+
     # Chercher le jour
     for day, patterns in DAYS_PATTERNS.items():
         if any(p in message_lower for p in patterns):
             day_found = day
             break
-    
-    # Reformulations (« plutôt en fin d'après-midi »)
-    norm = _normalize_fr_text(message_lower)
-    if any(p in norm for p in ("fin d apres-midi", "fin d apres midi", "fin apres-midi")):
-        time_found = "soir"
-    elif "plutot" in norm or "plutôt" in message_lower:
+
+    # Fallback legacy (heures courtes « 14h » sans mot-clé)
+    if not time_found:
+        norm = _normalize_fr_text(message_lower)
         for time_slot, patterns in PREF_PATTERNS.items():
             if any(_normalize_fr_text(p) in norm for p in patterns):
-                time_found = time_slot
-                break
-
-    # Chercher le moment de la journée
-    if not time_found:
-        for time_slot, patterns in PREF_PATTERNS.items():
-            if any(p in message_lower for p in patterns):
                 time_found = time_slot
                 break
     
@@ -414,54 +576,8 @@ def extract_pref(message: str) -> Optional[str]:
 
 
 def infer_preference_from_context(message: str) -> Optional[str]:
-    """
-    Infère la préférence temporelle depuis une phrase contextuelle (spec V3).
-    
-    Exemples :
-    - "je travaille jusqu'à 16h" → "après-midi"
-    - "je finis à 18h" → "fin d'après-midi"
-    - "le matin je suis occupé" → "après-midi"
-    - "après 17h" → "soir"
-    - "en fin de matinée" → "matin"
-    
-    Returns:
-        Préférence inférée ("matin", "après-midi", "soir") ou None
-    """
-    msg_lower = message.lower().strip()
-    if not msg_lower:
-        return None
-
-    # Contraintes temporelles explicites → après le travail
-    if any(p in msg_lower for p in ["jusqu'à 16h", "jusqu'à 17h", "finis à", "travaille jusqu'à", "travail jusqu'à"]):
-        return "après-midi"
-    if any(p in msg_lower for p in ["je travaille jusqu'à", "je finis à", "finir à"]):
-        return "après-midi"
-
-    # Soir / fin de journée / fin d'après-midi
-    norm = _normalize_fr_text(msg_lower)
-    if any(
-        p in norm
-        for p in (
-            "apres 17h", "apres 18h", "en soiree", "apres le travail", "apres le boulot",
-            "fin d apres-midi", "fin d apres midi", "fin apres-midi", "fin de journee",
-            "fin de journee", "en fin de journee",
-        )
-    ):
-        return "soir"
-    if any(p in msg_lower for p in ["après 17h", "après 18h", "en soirée", "après le travail", "après le boulot"]):
-        return "soir"
-
-    # Matin explicite
-    if any(p in msg_lower for p in ["avant midi", "en matinée", "tôt le matin", "début de matinée"]):
-        return "matin"
-
-    # Exclusions (négatif) : "matin occupé" → après-midi
-    if "matin" in msg_lower and any(p in msg_lower for p in ["pas le", "jamais le", "occupé le", "occupée le"]):
-        return "après-midi"
-    if "après-midi" in msg_lower and any(p in msg_lower for p in ["pas l'", "jamais l'", "occupé l'", "occupée l'"]):
-        return "matin"
-
-    return None
+    """Alias vers detect_time_slot (phrases contextuelles et reformulations)."""
+    return detect_time_slot(message)
 
 
 def extract_entities(message: str) -> ExtractedEntities:
@@ -493,8 +609,12 @@ def extract_entities(message: str) -> ExtractedEntities:
         entities.motif_detail = motif_info.get("detail")
         confidence_points += 1
     
-    # Extraction de la préférence
+    # Extraction de la préférence (jour + créneau ou reformulation seule)
     pref = extract_pref(message)
+    if not pref:
+        slot = detect_time_slot(message)
+        if slot:
+            pref = slot
     if pref:
         entities.pref = pref
         confidence_points += 1

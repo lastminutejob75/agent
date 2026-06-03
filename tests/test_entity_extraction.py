@@ -11,6 +11,7 @@ from backend.entity_extraction import (
     extract_name,
     extract_motif,
     extract_pref,
+    detect_time_slot,
     extract_target_date,
     extract_entities,
     format_date_fr,
@@ -167,6 +168,37 @@ class TestTimePrefFromPref:
     def test_combined(self):
         assert time_pref_from_pref("jeudi matin") == "matin"
         assert time_pref_from_pref("mardi") is None
+
+
+class TestDetectTimeSlot:
+    """Reformulations naturelles (plutôt matinée, fin de journée, etc.)."""
+
+    def test_plutot_fin_journee(self):
+        assert detect_time_slot("plutôt fin de journée") == "soir"
+        assert detect_time_slot("de préférence en fin de journée") == "soir"
+
+    def test_plutot_matinee(self):
+        assert detect_time_slot("plutôt matinée") == "matin"
+        assert detect_time_slot("plutot matinee") == "matin"
+
+    def test_de_preference_matin(self):
+        assert detect_time_slot("de préférence le matin") == "matin"
+        assert detect_time_slot("si possible le matin") == "matin"
+
+    def test_apres_dejeuner(self):
+        assert detect_time_slot("après le déjeuner") == "après-midi"
+
+    def test_heure_explicite(self):
+        assert detect_time_slot("vers 14h") == "après-midi"
+        assert detect_time_slot("vers 9h") == "matin"
+        assert detect_time_slot("vers 18h") == "soir"
+
+    def test_contexte_travail(self):
+        assert detect_time_slot("je travaille jusqu'à 16h") == "après-midi"
+        assert detect_time_slot("le matin je suis occupé") == "après-midi"
+
+    def test_fin_matinée(self):
+        assert detect_time_slot("en fin de matinée") == "matin"
 
 
 class TestExtractPref:

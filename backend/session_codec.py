@@ -43,6 +43,7 @@ def session_to_dict(session: Session) -> Dict[str, Any]:
         "transfer_budget_remaining": getattr(session, "transfer_budget_remaining", 2),
         "time_constraint_type": getattr(session, "time_constraint_type", "") or "",
         "time_constraint_minute": getattr(session, "time_constraint_minute", -1),
+        "appointment_preferences": getattr(session, "appointment_preferences", None),
         # Counters
         "no_match_turns": getattr(session, "no_match_turns", 0),
         "confirm_retry_count": getattr(session, "confirm_retry_count", 0),
@@ -97,6 +98,7 @@ def session_from_dict(conv_id: str, d: Dict[str, Any]) -> Session:
         name=qd.get("name"),
         motif=qd.get("motif"),
         pref=qd.get("pref"),
+        target_date=qd.get("target_date"),
         contact=qd.get("contact"),
         contact_type=qd.get("contact_type"),
     )
@@ -112,6 +114,7 @@ def session_from_dict(conv_id: str, d: Dict[str, Any]) -> Session:
     session.transfer_budget_remaining = d.get("transfer_budget_remaining", 2)
     session.time_constraint_type = d.get("time_constraint_type", "") or ""
     session.time_constraint_minute = d.get("time_constraint_minute", -1)
+    session.appointment_preferences = d.get("appointment_preferences")
     session.no_match_turns = d.get("no_match_turns", 0)
     session.confirm_retry_count = d.get("confirm_retry_count", 0)
     session.contact_retry_count = d.get("contact_retry_count", 0)

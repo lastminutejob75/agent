@@ -2041,12 +2041,25 @@ class Engine:
 
         # Web public : créneaux d'abord, coordonnées une seule fois dans le formulaire après choix
         if channel == "web":
+            from backend.appointment_preference_parser import process_user_availability_message
+            merged_prefs = process_user_availability_message(session, user_text)
+            if merged_prefs.get("clarification_needed") and not (
+                merged_prefs.get("preferred_time_windows")
+                or merged_prefs.get("excluded_time_windows")
+                or merged_prefs.get("excluded_days")
+            ):
+                msg = merged_prefs["clarification_needed"]
+                session.state = "WAIT_CONFIRM"
+                session.add_message("agent", msg)
+                self._save_session(session)
+                return [Event("final", msg, conv_state=session.state)]
+
             entities = extract_entities(user_text)
             if entities.motif:
                 session.qualif_data.motif = entities.motif
             elif not getattr(session.qualif_data, "motif", None):
                 session.qualif_data.motif = "Consultation"
-            if entities.pref:
+            if entities.pref and not session.qualif_data.pref:
                 session.qualif_data.pref = entities.pref
             if entities.target_date:
                 session.qualif_data.target_date = entities.target_date.isoformat()
@@ -2920,6 +2933,15 @@ class Engine:
             if target_date:
                 intro = f"Voici les créneaux disponibles le {format_date_fr(target_date)} :\n"
                 msg = intro + msg.replace("Créneaux disponibles :\n", "", 1)
+            appt_prefs = getattr(session, "appointment_preferences", None)
+            if appt_prefs:
+                try:
+                    from backend.appointment_preference_parser import build_preference_ack
+                    ack = build_preference_ack(appt_prefs)
+                    if ack and ack not in (msg or ""):
+                        msg = f"{ack}\n\n{msg}"
+                except Exception:
+                    pass
             set_reading_slots(session, True, "propose_slots")
         # Vocal: pas de wrap "Je regarde" si déjà VOCAL_AGENDA_LOOKUP (évite redondance)
         if channel == "vocal" and msg and not getattr(prompts, "VOCAL_AGENDA_LOOKUP", ""):
@@ -3003,6 +3025,9 @@ class Engine:
 
         from backend.start_router import is_more_slots_request_message
 
+        from backend.appointment_preference_parser import process_user_availability_message
+
+        process_user_availability_message(session, user_text or "")
         entities = extract_entities(user_text)
         date_changed = False
         if entities.target_date:
@@ -3013,6 +3038,8 @@ class Engine:
         pref_update = entities.pref or infer_preference_from_context(user_text or "")
         if pref_update:
             session.qualif_data.pref = pref_update
+            date_changed = True
+        if getattr(session, "appointment_preferences", None):
             date_changed = True
         if date_changed:
             tools_booking.clear_slots_cache(int(getattr(session, "tenant_id", None) or 1), None)
