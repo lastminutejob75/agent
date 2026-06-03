@@ -448,6 +448,37 @@ def _match_time_phrases(text_norm: str) -> Optional[str]:
     return None
 
 
+def _morning_unavailable(norm: str) -> bool:
+    """Vrai si le patient exclut le matin (pas une préférence matin)."""
+    if "matin" not in norm:
+        return False
+    return any(
+        x in norm
+        for x in (
+            "pas le matin", "pas disponible le matin", "pas dispo le matin",
+            "je ne suis pas dispo le matin",
+            "je ne suis pas disponible le matin", "je ne peux pas le matin",
+            "jamais le matin", "matin occupe", "matin impossible",
+            "matin je suis occupe", "le matin je suis occupe",
+            "suis occupe le matin", "suis occupee le matin",
+            "evitez le matin", "eviter le matin",
+        )
+    )
+
+
+def _afternoon_unavailable(norm: str) -> bool:
+    if "apres-midi" not in norm and "apres midi" not in norm:
+        return False
+    return any(
+        x in norm
+        for x in (
+            "pas l apres-midi", "pas l apres midi", "pas disponible l apres",
+            "pas dispo l apres", "je ne suis pas dispo l apres",
+            "jamais l apres",
+        )
+    )
+
+
 def detect_time_slot(message: str) -> Optional[str]:
     """
     Détecte une préférence horaire en langage naturel.
@@ -459,19 +490,10 @@ def detect_time_slot(message: str) -> Optional[str]:
         return None
     norm = _normalize_fr_text(message)
 
-    # Négations / indisponibilité matin
-    if "matin" in norm and any(
-        x in norm
-        for x in (
-            "pas le matin", "pas disponible le matin", "jamais le matin",
-            "matin occupe", "matin impossible", "matin je suis occupe",
-            "le matin je suis occupe", "suis occupe le matin", "suis occupee le matin",
-        )
-    ):
+    # Négations / indisponibilité (avant toute phrase positive « le matin »)
+    if _morning_unavailable(norm):
         return "après-midi"
-    if ("apres-midi" in norm or "apres midi" in norm) and any(
-        x in norm for x in ("pas l apres", "pas l'apres", "jamais l apres", "apres-midi occupe", "apres midi occupe")
-    ):
+    if _afternoon_unavailable(norm):
         return "matin"
 
     # Contraintes de disponibilité (« je travaille jusqu'à 16h »)
@@ -546,7 +568,8 @@ def extract_pref(message: str) -> Optional[str]:
         ou None si rien trouvé
     """
     message_lower = message.lower().strip()
-    
+    norm = _normalize_fr_text(message_lower)
+
     day_found: Optional[str] = None
     time_found: Optional[str] = detect_time_slot(message)
 

@@ -2059,8 +2059,20 @@ class Engine:
                 session.qualif_data.motif = entities.motif
             elif not getattr(session.qualif_data, "motif", None):
                 session.qualif_data.motif = "Consultation"
-            if entities.pref and not session.qualif_data.pref:
+            if entities.pref and not getattr(session.qualif_data, "pref", None):
                 session.qualif_data.pref = entities.pref
+            elif entities.pref and merged_prefs.get("excluded_time_windows"):
+                from backend.entity_extraction import time_pref_from_pref
+                ex_hard = {
+                    w.get("label")
+                    for w in merged_prefs["excluded_time_windows"]
+                    if w.get("strength") == "hard"
+                }
+                tp = time_pref_from_pref(entities.pref)
+                if tp == "matin" and "matin" in ex_hard:
+                    pass  # garder pref imposée par le parseur (après-midi)
+                elif not session.qualif_data.pref:
+                    session.qualif_data.pref = entities.pref
             if entities.target_date:
                 session.qualif_data.target_date = entities.target_date.isoformat()
             if entities.name:
@@ -2895,6 +2907,27 @@ class Engine:
                         "Je n'ai pas d'autres créneaux disponibles pour l'instant. "
                         "Précisez un jour ou un horaire (ex. mercredi après-midi), "
                         "ou choisissez un créneau dans la liste ci-dessus si l'un vous convient."
+                    )
+                session.pending_slots = []
+                session.add_message("agent", msg)
+                self._save_session(session)
+                return [Event("final", msg, conv_state=session.state)]
+            if channel == "web":
+                session.state = "WAIT_CONFIRM"
+                appt_prefs = getattr(session, "appointment_preferences", None) or {}
+                hard_matin = any(
+                    w.get("label") == "matin" and w.get("strength") == "hard"
+                    for w in (appt_prefs.get("excluded_time_windows") or [])
+                )
+                if hard_matin:
+                    msg = (
+                        "Je n'ai pas trouvé de créneau l'après-midi ou en soirée sur les prochains jours. "
+                        "Précisez un jour (ex. « mercredi après-midi ») ou élargissez vos disponibilités."
+                    )
+                else:
+                    msg = (
+                        "Je n'ai pas de créneau libre avec ces critères pour l'instant. "
+                        "Précisez un jour ou un horaire (ex. « jeudi matin »), ou réessayez un peu plus tard."
                     )
                 session.pending_slots = []
                 session.add_message("agent", msg)

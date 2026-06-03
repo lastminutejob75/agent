@@ -784,6 +784,20 @@ def get_slots_for_display(
     weekday_pref = weekday_from_pref(pref) if not target_date_obj else None
     fetch_pref = time_pref
 
+    appt_prefs_early = getattr(session, "appointment_preferences", None) if session else None
+    if appt_prefs_early:
+        hard_labels = {
+            w.get("label")
+            for w in (appt_prefs_early.get("excluded_time_windows") or [])
+            if w.get("strength") == "hard"
+        }
+        if "matin" in hard_labels and fetch_pref == "matin":
+            fetch_pref = "après-midi"
+            time_pref = "après-midi"
+        elif "milieu_apres_midi" in hard_labels and fetch_pref in ("après-midi", None):
+            fetch_pref = "matin"
+            time_pref = "matin"
+
     # Fast-path absolu : cache avant toute résolution adapter/tenant-config (évite overhead DB).
     rejected = getattr(session, "rejected_slot_starts", None) if session else None
     rejected_ids = getattr(session, "rejected_slot_ids", None) if session else None
@@ -975,7 +989,22 @@ def get_slots_for_display(
                 rank_slots_by_appointment_preferences,
             )
             before_ap = len(pool)
-            pool = filter_slots_by_appointment_preferences(pool, appt_prefs)
+            pool_filtered = filter_slots_by_appointment_preferences(pool, appt_prefs)
+            if pool_filtered:
+                pool = pool_filtered
+            elif before_ap > 0:
+                hard_labels = {
+                    w.get("label")
+                    for w in (appt_prefs.get("excluded_time_windows") or [])
+                    if w.get("strength") == "hard"
+                }
+                if "matin" in hard_labels:
+                    pool = [s for s in pool if _slot_minute_of_day(s) >= 12 * 60]
+                    logger.info(
+                        "get_slots_for_display: fallback après-midi %s→%s",
+                        before_ap,
+                        len(pool),
+                    )
             if before_ap != len(pool):
                 logger.info(
                     "get_slots_for_display: appointment_prefs hard filter %s→%s",

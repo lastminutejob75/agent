@@ -182,10 +182,17 @@ def _append_window(target: List[Dict], label: str, strength: str) -> None:
 
 
 def _parse_positive_windows(norm: str, preferred: List[Dict]) -> None:
+    from backend.entity_extraction import _morning_unavailable, _afternoon_unavailable
+
     sorted_phrases = sorted(_POSITIVE_PHRASES, key=lambda x: len(x[0]), reverse=True)
     for phrase, label, strength in sorted_phrases:
-        if phrase in norm:
-            _append_window(preferred, label, strength)
+        if phrase not in norm:
+            continue
+        if label in ("matin", "debut_matin", "fin_matin", "milieu_matin") and _morning_unavailable(norm):
+            continue
+        if label in ("milieu_apres_midi", "debut_apres_midi", "fin_apres_midi") and _afternoon_unavailable(norm):
+            continue
+        _append_window(preferred, label, strength)
 
 
 def _parse_negative_windows(norm: str, excluded: List[Dict]) -> None:
@@ -378,14 +385,18 @@ def parse_appointment_preferences(
         result["earliest_date"] = td.isoformat()
         result["latest_date"] = td.isoformat()
 
-    slot = detect_time_slot(raw)
-    if slot:
-        label = {
-            "matin": "matin",
-            "après-midi": "milieu_apres_midi",
-            "soir": "fin_de_journee",
-        }.get(slot, "matin")
-        _append_window(result["preferred_time_windows"], label, "soft")
+    from backend.entity_extraction import _morning_unavailable, _afternoon_unavailable
+
+    norm_slot = _normalize(raw)
+    if not _morning_unavailable(norm_slot) and not _afternoon_unavailable(norm_slot):
+        slot = detect_time_slot(raw)
+        if slot:
+            label = {
+                "matin": "matin",
+                "après-midi": "milieu_apres_midi",
+                "soir": "fin_de_journee",
+            }.get(slot, "matin")
+            _append_window(result["preferred_time_windows"], label, "soft")
 
     _parse_flexibility_urgency(norm, result)
     result["clarification_needed"] = _detect_clarification(norm, result)
@@ -434,14 +445,27 @@ def preferences_to_legacy_pref(prefs: Dict[str, Any]) -> Optional[str]:
         return None
     days = prefs.get("preferred_days") or []
     windows = prefs.get("preferred_time_windows") or []
-    label = windows[0]["label"] if windows else None
+    excluded = prefs.get("excluded_time_windows") or []
+    hard_labels = {w.get("label") for w in excluded if w.get("strength") == "hard"}
+
     slot_word = None
-    if label in ("matin", "debut_matin", "fin_matin", "milieu_matin"):
-        slot_word = "matin"
-    elif label in ("fin_de_journee", "soiree", "apres_travail"):
-        slot_word = "soir"
-    elif label:
+    # Exclusions fortes d'abord (évite « pas le matin » lu comme préférence matin)
+    if "matin" in hard_labels and "milieu_apres_midi" not in hard_labels:
         slot_word = "après-midi"
+    elif "milieu_apres_midi" in hard_labels and "matin" not in hard_labels:
+        slot_word = "matin"
+    elif hard_labels & {"fin_de_journee", "soiree", "fin_apres_midi"} and "matin" not in hard_labels:
+        slot_word = "matin"
+
+    label = windows[0]["label"] if windows else None
+    if not slot_word:
+        if label in ("matin", "debut_matin", "fin_matin", "milieu_matin"):
+            slot_word = "matin"
+        elif label in ("fin_de_journee", "soiree", "apres_travail"):
+            slot_word = "soir"
+        elif label:
+            slot_word = "après-midi"
+
     if days and slot_word:
         return f"{days[0]} {slot_word}"
     if days:
@@ -467,6 +491,10 @@ def apply_preferences_to_session(session: Any, prefs: Dict[str, Any]) -> None:
     legacy = preferences_to_legacy_pref(prefs)
     if legacy:
         qualif.pref = legacy
+    elif prefs.get("excluded_time_windows"):
+        inferred = preferences_to_legacy_pref({**prefs, "preferred_time_windows": []})
+        if inferred:
+            qualif.pref = inferred
 
     if prefs.get("earliest_date") and not getattr(qualif, "target_date", None):
         qualif.target_date = str(prefs["earliest_date"])[:10]

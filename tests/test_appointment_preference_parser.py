@@ -11,6 +11,7 @@ from backend.appointment_preference_parser import (
     filter_slots_by_appointment_preferences,
     build_preference_ack,
     empty_preferences,
+    preferences_to_legacy_pref,
 )
 from backend import prompts
 
@@ -32,6 +33,16 @@ class TestParseNegative:
         labels = [w["label"] for w in p["excluded_time_windows"]]
         assert "matin" in labels
         assert any(w["strength"] == "hard" for w in p["excluded_time_windows"])
+
+    def test_rdv_pas_dispo_matin_legacy_pref(self):
+        """Bug prod : ne doit pas fixer pref=matin ni préférer le matin."""
+        text = "je veux un rdv mais je ne suis pas dispo le matin"
+        p = parse_appointment_preferences(text)
+        assert preferences_to_legacy_pref(p) == "après-midi"
+        assert not any(
+            w["label"] == "matin" and w["strength"] == "soft"
+            for w in p["preferred_time_windows"]
+        )
 
 
 class TestParsePositive:

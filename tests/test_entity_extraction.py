@@ -197,6 +197,10 @@ class TestDetectTimeSlot:
         assert detect_time_slot("je travaille jusqu'à 16h") == "après-midi"
         assert detect_time_slot("le matin je suis occupé") == "après-midi"
 
+    def test_pas_dispo_matin(self):
+        assert detect_time_slot("je veux un rdv mais je ne suis pas dispo le matin") == "après-midi"
+        assert extract_pref("je ne suis pas dispo le matin") == "après-midi"
+
     def test_fin_matinée(self):
         assert detect_time_slot("en fin de matinée") == "matin"
 
