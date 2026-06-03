@@ -2871,11 +2871,18 @@ class Engine:
                 return [Event("final", msg, conv_state=session.state)]
             if channel == "web" and (has_rejected or more_round):
                 session.state = "WAIT_CONFIRM"
-                msg = (
-                    "Je n'ai pas d'autres créneaux disponibles pour l'instant. "
-                    "Précisez un jour ou un horaire (ex. mercredi après-midi), "
-                    "ou choisissez un créneau dans la liste ci-dessus si l'un vous convient."
-                )
+                if target_date:
+                    msg = (
+                        f"Je n'ai pas d'autre horaire libre le {format_date_fr(target_date)} "
+                        "avec ces critères. Essayez un autre jour (ex. « le 5 juillet ») "
+                        "ou précisez matin / après-midi."
+                    )
+                else:
+                    msg = (
+                        "Je n'ai pas d'autres créneaux disponibles pour l'instant. "
+                        "Précisez un jour ou un horaire (ex. mercredi après-midi), "
+                        "ou choisissez un créneau dans la liste ci-dessus si l'un vous convient."
+                    )
                 session.pending_slots = []
                 session.add_message("agent", msg)
                 self._save_session(session)
@@ -2971,6 +2978,8 @@ class Engine:
         pref = getattr(session.qualif_data, "pref", None)
         tools_booking.clear_slots_cache(tenant_id, pref)
         tools_booking.clear_slots_cache(tenant_id, None)
+        # Invalider tout le cache tenant pour recharger l'agenda (date ciblée incluse)
+        tools_booking.clear_slots_cache(tenant_id)
         self._save_session(session)
         logger.info(
             "[MORE_SLOTS] conv_id=%s rejected_starts=%s rejected_ids=%s reproposing",

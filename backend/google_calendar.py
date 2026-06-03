@@ -318,7 +318,8 @@ class GoogleCalendarService:
                             'end': slot_end.isoformat(),
                             'label': self._format_slot_label(current),
                         })
-                        break
+                        if len(free_slots) >= limit:
+                            break
                     current += timedelta(minutes=duration_minutes)
                 if len(free_slots) >= limit:
                     break

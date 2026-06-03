@@ -391,16 +391,35 @@ def _spread_slots(
     slots: List[prompts.SlotDisplay],
     limit: int = 3,
     min_gap_minutes: int = MIN_SLOT_GAP_MINUTES,
+    *,
+    same_day_focus: bool = False,
 ) -> List[prompts.SlotDisplay]:
     """
     Étale les créneaux pour une UX naturelle :
     1) Max 1 slot par (jour, période) : matin / après-midi / soir → ex. lun 9h, lun 14h, mar 9h
     2) Max 2 créneaux par jour dans les 3 proposés
     3) Si pas assez : compléter avec règle d'écart >= 2h (fallback)
+
+    same_day_focus: date ciblée (ex. « le 3 juillet ») → plusieurs horaires le même jour.
     """
     if not slots or limit <= 0:
         return slots[:limit]
     ordered = sorted(slots, key=lambda s: _slot_start_dt(s) or datetime.max)
+
+    if same_day_focus:
+        picked: List[prompts.SlotDisplay] = []
+        for s in ordered:
+            if len(picked) >= limit:
+                break
+            if not picked:
+                picked.append(s)
+                continue
+            dt = _slot_start_dt(s)
+            last_dt = _slot_start_dt(picked[-1])
+            if dt and last_dt and abs((dt - last_dt).total_seconds()) < min_gap_minutes * 60:
+                continue
+            picked.append(s)
+        return picked
 
     def day_count(picked_list: List[Any], day: str) -> int:
         return sum(1 for x in picked_list if (getattr(x, "day", "") or "") == day)
@@ -776,7 +795,10 @@ def get_slots_for_display(
             logger.info(f"⚡ get_slots_for_display: cache hit pref={fetch_pref} ({(time.time() - t_start) * 1000:.0f}ms)")
             return cached
 
-    pool_limit = max(limit, SLOTS_POOL_SIZE_MORE) if has_rejected else limit
+    if target_date_obj:
+        pool_limit = max(limit, SLOTS_POOL_SIZE_MORE if has_rejected else SLOTS_POOL_SIZE)
+    else:
+        pool_limit = max(limit, SLOTS_POOL_SIZE_MORE) if has_rejected else limit
 
     strict_google_mode = False
     try:
@@ -826,7 +848,9 @@ def get_slots_for_display(
                 pref,
                 e,
             )
-            pool = _get_slots_from_sqlite(pool_limit, pref=fetch_pref, tenant_id=tenant_id)
+            pool = _get_slots_from_local(
+                pool_limit, pref=fetch_pref, tenant_id=tenant_id, target_date=target_date_obj
+            )
         except (GoogleCalendarNotFoundError, GoogleCalendarError) as e:
             if strict_google_mode:
                 logger.warning(
@@ -842,17 +866,23 @@ def get_slots_for_display(
                 fetch_pref,
                 e,
             )
-            pool = _get_slots_from_sqlite(pool_limit, pref=fetch_pref, tenant_id=tenant_id)
+            pool = _get_slots_from_local(
+                pool_limit, pref=fetch_pref, tenant_id=tenant_id, target_date=target_date_obj
+            )
     else:
         if strict_google_mode and not use_local_fallback:
             logger.warning("GOOGLE_CALENDAR_STRICT_NO_FALLBACK tenant_id=%s pref=%s", tenant_id, fetch_pref)
             return []
-        pool = _get_slots_from_sqlite(pool_limit, pref=fetch_pref, tenant_id=tenant_id)
+        pool = _get_slots_from_local(
+            pool_limit, pref=fetch_pref, tenant_id=tenant_id, target_date=target_date_obj
+        )
 
     # « Autres créneaux » : si Google/strict renvoie vide, tenter le pool local élargi
     if has_rejected and (not pool or len(pool) == 0):
         try:
-            local_pool = _get_slots_from_sqlite(pool_limit, pref=fetch_pref, tenant_id=tenant_id)
+            local_pool = _get_slots_from_local(
+                pool_limit, pref=fetch_pref, tenant_id=tenant_id, target_date=target_date_obj
+            )
             if local_pool:
                 logger.info(
                     "get_slots_for_display: fallback local après refus (%s créneaux)",
@@ -946,8 +976,13 @@ def get_slots_for_display(
             pool = filter_slots_by_time_constraint(pool, session)
         except Exception:
             pass
-    # Étaler : 1 par (jour, période) + max 2/jour, fallback 2h
-    slots = _spread_slots(pool, limit=limit, min_gap_minutes=MIN_SLOT_GAP_MINUTES)
+    # Étaler : plusieurs horaires le même jour si date ciblée, sinon diversité jour/période
+    slots = _spread_slots(
+        pool,
+        limit=limit,
+        min_gap_minutes=MIN_SLOT_GAP_MINUTES,
+        same_day_focus=bool(target_date_obj),
+    )
 
     # V3: exclure le créneau (start_iso, end_iso) si fourni (retry après slot_taken)
     if exclude_start_iso or exclude_end_iso:
@@ -1054,7 +1089,7 @@ def _get_slots_from_google_calendar(
             logger.info(f"Google Calendar: {len(pool)} créneaux en pool batch (pref={pref})")
             return pool
 
-    per_day = limit if target_date else 1
+    per_day = target_pool_size if target_date else 1
     days_fr = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
     for date in candidate_dates:
         if len(pool) >= target_pool_size:
@@ -1069,28 +1104,30 @@ def _get_slots_from_google_calendar(
         )
         if not day_slots:
             continue
-        slot = day_slots[0]  # max 1 créneau par jour → propositions sur jours différents
-        start_iso = slot.get('start', '')
-        day_fr, hour, label_vocal = '', 0, ''
-        try:
-            dt = datetime.fromisoformat(start_iso.replace('Z', '+00:00'))
-            if dt.tzinfo:
-                dt = dt.replace(tzinfo=None)
-            day_fr = days_fr[dt.weekday()]
-            hour = dt.hour
-            label_vocal = f"{day_fr} à {hour}h"
-        except Exception:
-            pass
-        pool.append(prompts.SlotDisplay(
-            idx=len(pool) + 1,
-            label=slot['label'],
-            slot_id=len(pool),
-            start=start_iso,
-            day=day_fr,
-            hour=hour,
-            label_vocal=label_vocal or slot.get('label', ''),
-            source="google",
-        ))
+        for slot in day_slots:
+            if len(pool) >= target_pool_size:
+                break
+            start_iso = slot.get('start', '')
+            day_fr, hour, label_vocal = '', 0, ''
+            try:
+                dt = datetime.fromisoformat(start_iso.replace('Z', '+00:00'))
+                if dt.tzinfo:
+                    dt = dt.replace(tzinfo=None)
+                day_fr = days_fr[dt.weekday()]
+                hour = dt.hour
+                label_vocal = f"{day_fr} à {hour}h"
+            except Exception:
+                pass
+            pool.append(prompts.SlotDisplay(
+                idx=len(pool) + 1,
+                label=slot['label'],
+                slot_id=len(pool),
+                start=start_iso,
+                day=day_fr,
+                hour=hour,
+                label_vocal=label_vocal or slot.get('label', ''),
+                source="google",
+            ))
     logger.info(f"Google Calendar: {len(pool)} créneaux en pool rapide (pref={pref})")
     return pool
 
@@ -1099,12 +1136,14 @@ def _get_slots_from_local(
     limit: int,
     pref: Optional[str] = None,
     tenant_id: int = 1,
+    target_date: Optional[date] = None,
 ) -> List[prompts.SlotDisplay]:
     """
     PG-first puis SQLite fallback : récupère le pool de créneaux local.
     Returns SlotDisplay avec source="pg" ou "sqlite".
     """
     days_fr = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
+    pool_limit = max(int(limit or 3), SLOTS_POOL_SIZE)
 
     def _to_slot_display(r: dict, i: int, src: str) -> prompts.SlotDisplay:
         label = _format_slot_label_vocal(r.get('date', ''), r.get('time', '09:00'))
@@ -1131,11 +1170,20 @@ def _get_slots_from_local(
     # PG-first
     if config.USE_PG_SLOTS:
         try:
-            from backend.slots_pg import pg_list_free_slots, pg_cleanup_and_ensure_slots
+            from backend.slots_pg import (
+                pg_list_free_slots,
+                pg_list_free_slots_for_date,
+                pg_cleanup_and_ensure_slots,
+            )
             pg_cleanup_and_ensure_slots(tenant_id)
-            raw = pg_list_free_slots(tenant_id, limit=SLOTS_POOL_SIZE, pref=pref)
+            if target_date is not None:
+                raw = pg_list_free_slots_for_date(tenant_id, target_date.isoformat())
+            else:
+                raw = pg_list_free_slots(tenant_id, limit=pool_limit, pref=pref)
             if raw:
-                pool = [_to_slot_display(r, i, "pg") for i, r in enumerate(raw, start=1)]
+                pool = [_to_slot_display(r, i, "pg") for i, r in enumerate(raw[:pool_limit], start=1)]
+                if target_date is not None:
+                    pool = _filter_slots_by_target_date(pool, target_date)
                 logger.info("SLOTS_READ source=pg tenant_id=%s (%s créneaux)", tenant_id, len(pool))
                 return pool
         except Exception as e:
@@ -1144,8 +1192,10 @@ def _get_slots_from_local(
     # Fallback SQLite
     try:
         from backend.db import list_free_slots
-        raw = list_free_slots(limit=SLOTS_POOL_SIZE, pref=pref)
+        raw = list_free_slots(limit=pool_limit, pref=pref, tenant_id=tenant_id)
         pool = [_to_slot_display(dict(r), i, "sqlite") for i, r in enumerate(raw, start=1)]
+        if target_date is not None:
+            pool = _filter_slots_by_target_date(pool, target_date)
         logger.info("SLOTS_READ source=sqlite tenant_id=%s (%s créneaux)", tenant_id, len(pool))
         return pool
     except Exception as e:
@@ -1153,9 +1203,14 @@ def _get_slots_from_local(
         return []
 
 
-def _get_slots_from_sqlite(limit: int, pref: Optional[str] = None, tenant_id: int = 1) -> List[prompts.SlotDisplay]:
+def _get_slots_from_sqlite(
+    limit: int,
+    pref: Optional[str] = None,
+    tenant_id: int = 1,
+    target_date: Optional[date] = None,
+) -> List[prompts.SlotDisplay]:
     """Alias pour _get_slots_from_local (rétrocompat)."""
-    return _get_slots_from_local(limit, pref, tenant_id)
+    return _get_slots_from_local(limit, pref, tenant_id, target_date=target_date)
 
 
 def _format_slot_label_vocal(date_str: str, time_str: str) -> str:
