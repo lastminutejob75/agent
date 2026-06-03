@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useParams } from "react-router-dom";
 import { getApiBaseUrl } from "../lib/api";
 
-const CLARA_IMAGE = "/ia-en-direct.png?v=2";
+const CLARA_IMAGE = "/clara-avatar.png?v=1";
 
 const defaultPractitioner = {
   slug: "cabinet-dupond-demo",
@@ -2231,7 +2231,7 @@ header a.wa{color:#1b6d34;border-color:#cce9d2}
 .chatHero .chatHeader{padding:16px 16px 12px;margin:0}
 .chatHeader{display:flex;align-items:center;gap:14px;padding-bottom:12px;border-bottom:1px solid #d8eeee}.chatHeaderText{flex:1;min-width:0}.chatHeaderName{font-weight:900;font-size:17px;color:#162634}.chatHeaderName span{color:#13bd67;font-size:13px;font-weight:800}.chatHeaderText p{margin:3px 0 0;color:#60708c;font-size:13px}.chatHelperBubble{margin:0}.chatHeaderBadge{border:1px solid #cbe7eb;background:#fff;color:#007f89;border-radius:999px;padding:7px 12px;font-size:12px;font-weight:800}
 .voiceControls{display:flex;flex-direction:column;align-items:flex-end;gap:4px}.voiceBtn{border:1px solid #bfe3e7;background:#fff;color:#006f75;border-radius:999px;padding:8px 12px;font-size:12px;font-weight:800}.voiceBtn:disabled{opacity:.5;cursor:not-allowed}.voiceBtnStop{border-color:#f2c4c4;color:#9e1a1a;background:#fff5f5}.voiceError{max-width:220px;text-align:right;font-size:11px;color:#9e1a1a}
-.claraPhoto{position:relative;flex-shrink:0;border-radius:50%;overflow:hidden;background:linear-gradient(135deg,#eaf7f8,#fff);border:1px solid #d7e9ec;box-shadow:0 8px 20px rgba(13,72,82,.12)}.claraPhoto img{width:100%;height:100%;display:block;object-fit:cover;object-position:center 12%}.claraOnlineDot{position:absolute;right:1px;bottom:1px;width:10px;height:10px;border-radius:50%;background:#22b04d;border:2px solid #fff;z-index:2}.claraFallback{width:100%;height:100%;background:linear-gradient(135deg,#009CA4,#006f75);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:22px}
+.claraPhoto{position:relative;flex-shrink:0;border-radius:50%;overflow:hidden;background:linear-gradient(135deg,#eaf7f8,#fff);border:1px solid #d7e9ec;box-shadow:0 8px 20px rgba(13,72,82,.12)}.claraPhoto img{width:100%;height:100%;display:block;object-fit:cover;object-position:center 22%}.claraOnlineDot{position:absolute;right:1px;bottom:1px;width:10px;height:10px;border-radius:50%;background:#22b04d;border:2px solid #fff;z-index:2}.claraFallback{width:100%;height:100%;background:linear-gradient(135deg,#009CA4,#006f75);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:22px}
 .slotsStrip{flex-shrink:0;display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(255,255,255,.72);border-top:1px solid #d8eeee;border-bottom:1px solid #d8eeee}
 .slotsStripLabel{margin:0;display:flex;align-items:center;gap:6px;font-size:10px;font-weight:900;letter-spacing:.08em;color:#52727a;white-space:nowrap}
 .slotsStripRefresh{display:inline-flex;font-size:12px;color:#009CA4;animation:uwiSpin 1s linear infinite;opacity:.85}
