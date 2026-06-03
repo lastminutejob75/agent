@@ -85,8 +85,11 @@ function isGreetingOnly(text) {
 }
 const INSTANT_GREETING_REPLY = "Bonjour ! Comment puis-je vous aider ?";
 const INSTANT_SLOTS_LOOKUP = "Je consulte les créneaux disponibles, un instant…";
+const INSTANT_SLOTS_DATE_LOOKUP = "Je cherche les créneaux à la date demandée, un instant…";
+const CHAT_SSE_TIMEOUT_FALLBACK =
+  "La recherche de créneaux prend plus de temps que prévu. Réessayez dans un instant ou précisez un jour (ex. mardi matin).";
 const MORE_SLOTS_MSG = "Je souhaite voir d'autres créneaux.";
-const BOOKING_START = /\b(je\s+voudrais?|je\s+veux|je\s+souhaite|je\s+v\s+(?:in|un)\s+rdv|jv\s+(?:un\s+)?rdv|prendre\s+(?:un\s+)?rdv|un\s+rdv|rendez[- ]?vous)\b/iu;
+const BOOKING_START = /\b(je\s+voudrais?|je\s+veux|je\s+souhaite|je\s+v\s+(?:in|un)\s+rdv|jv\s+(?:un\s+)?rdv|prendre\s+(?:un\s+)?rdv|un\s+rdv|rendez[- ]?vous|c\s+est\s+pour|c\s+pour)\b/iu;
 const CANCEL_INTENT = /\b(annuler|annulation|supprimer)\b.*\b(rdv|rendez[- ]?vous)\b|\b(rdv|rendez[- ]?vous)\b.*\b(annuler|annulation)\b/iu;
 const RESCHEDULE_INTENT = /\b(modifier|decaler|deplacer|changer|reporter)\b.*\b(rdv|rendez[- ]?vous)\b|\b(rdv|rendez[- ]?vous)\b.*\b(modifier|decaler|deplacer|changer|reporter)\b/iu;
 const CALLBACK_INTENT = /\b(etre\s+rappele|demande\s+de\s+rappel|rappelez[- ]?moi|me\s+rappele)\b/iu;
@@ -95,7 +98,13 @@ const CHAT_REPLY_TIMEOUT_MS = 25000;
 const CHAT_UNCLEAR_FALLBACK =
   "Je peux vous aider à prendre un rendez-vous, répondre à une question, annuler ou modifier un rendez-vous. Que souhaitez-vous ?";
 const CHAT_PROCESSING_REPLY = "Un instant, je traite votre demande…";
-const BOOKING_DATE_HINT = /\b(\d{1,2})\s+(janv|f[eé]vr|mars|avr|mai|juin|juill|ao[uû]t|sept|oct|nov|d[eé]c)|\b(\d{1,2})[/\-.](\d{1,2})\b|\b(demain|apr[eè]s[- ]?demain)\b/iu;
+const CHAT_PROCESSING_PLACEHOLDERS = new Set([
+  INSTANT_SLOTS_LOOKUP,
+  INSTANT_SLOTS_DATE_LOOKUP,
+  CHAT_PROCESSING_REPLY,
+]);
+const BOOKING_DATE_HINT =
+  /\b(\d{1,2})\s+(janv|f[eé]vr|mars|avr|mai|juin|juill|ao[uû]t|sept|oct|nov|d[eé]c)|\b(janvier|f[eé]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|novembre|d[eé]cembre)\b|\b(\d{1,2})[/\-.](\d{1,2})\b|\b(demain|apr[eè]s[- ]?demain)\b/iu;
 const LOOKS_LIKE_NAME = /^(?:(?:M\.|Mme|Mlle)\s+)?[A-ZÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ' -]{1,58}$/u;
 const PLAUSIBLE_PATIENT_NAME = /^[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ' -]{2,58}$/u;
 
@@ -1456,10 +1465,15 @@ export default function PagePubliquePraticienUWI() {
       if (text) {
         setMessages((prev) => {
           const last = prev[prev.length - 1];
-          if (last?.from === "clara" && String(last?.text || "").trim() === text && !slotsPayload.length) {
+          const lastText = last?.from === "clara" ? String(last?.text || "").trim() : "";
+          if (last?.from === "clara" && lastText && CHAT_PROCESSING_PLACEHOLDERS.has(lastText)) {
+            return prev.slice(0, -1).concat([
+              { id: msgId.current++, from: "clara", text, slots: slotsPayload.length ? slotsPayload : undefined },
+            ]);
+          }
+          if (last?.from === "clara" && lastText === text && !slotsPayload.length) {
             return prev;
           }
-          const lastText = last?.from === "clara" ? String(last?.text || "").trim() : "";
           const asksNameAgain =
             /nom\s+et\s+pr[ée]nom/i.test(text) &&
             /nom\s+et\s+pr[ée]nom/i.test(lastText) &&
@@ -1596,7 +1610,7 @@ export default function PagePubliquePraticienUWI() {
       if (instantText) showInstantReply(instantText);
       ensureStream(convId);
       const turnWait = waitForAgentTurn();
-      let gotReply = Boolean(instantText);
+      let gotFinalReply = false;
       try {
         let response;
         try {
@@ -1611,26 +1625,29 @@ export default function PagePubliquePraticienUWI() {
         }
         if (!instantText && response?.reply) {
           applyChatResponse(response);
-          gotReply = true;
+          gotFinalReply = true;
           if (pendingTurnRef.current) {
             const resolve = pendingTurnRef.current;
             pendingTurnRef.current = null;
             resolve(true);
           }
-        } else if (!instantText) {
-          const sseOk = await turnWait;
-          gotReply = Boolean(sseOk);
         } else {
-          await turnWait;
+          const sseOk = await turnWait;
+          gotFinalReply = Boolean(sseOk);
         }
-        if (!gotReply) {
-          push([{ from: "clara", text: CHAT_UNCLEAR_FALLBACK }]);
+        if (!gotFinalReply) {
+          push([
+            {
+              from: "clara",
+              text: instantText ? CHAT_SSE_TIMEOUT_FALLBACK : CHAT_UNCLEAR_FALLBACK,
+            },
+          ]);
         }
       } catch {
         if (pendingTurnRef.current) {
           pendingTurnRef.current = null;
         }
-        if (!gotReply) {
+        if (!gotFinalReply) {
           push([{ from: "clara", text: "Impossible de contacter l'agent pour le moment. Merci de reessayer." }]);
         }
       }
@@ -1660,9 +1677,7 @@ export default function PagePubliquePraticienUWI() {
     }
 
     if (BOOKING_START.test(clean)) {
-      const lookupMsg = BOOKING_DATE_HINT.test(clean)
-        ? "Je cherche les créneaux à la date demandée, un instant…"
-        : INSTANT_SLOTS_LOOKUP;
+      const lookupMsg = BOOKING_DATE_HINT.test(clean) ? INSTANT_SLOTS_DATE_LOOKUP : INSTANT_SLOTS_LOOKUP;
       void syncChatInBackground(lookupMsg);
       return;
     }

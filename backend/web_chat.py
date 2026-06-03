@@ -175,7 +175,8 @@ async def _run_engine_locked(conv_id: str, message: str, channel: str = "web") -
             await push_event(conv_id, {"type": "partial", "text": "…", "timestamp": now_iso()})
 
         engine = _get_engine(conv_id)
-        events = engine.handle_message(conv_id, message)
+        # handle_message est synchrone (LLM + agenda) : ne pas bloquer la boucle SSE.
+        events = await asyncio.to_thread(engine.handle_message, conv_id, message)
 
         session = ENGINE.session_store.get(conv_id)
         for ev in events:

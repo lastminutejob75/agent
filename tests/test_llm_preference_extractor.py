@@ -70,16 +70,21 @@ class TestLlmExtractStub:
         assert meta.source == "regex"
         assert preferences_to_legacy_pref(merged) == "après-midi"
 
-    def test_hybrid_llm_plus_regex(self):
+    def test_hybrid_skips_llm_when_regex_covers(self):
         client = StubPrefLLMClient()
         merged, meta = extract_preferences_hybrid(
             "je veux un rdv mais je ne suis pas dispo le matin",
             client=client,
         )
-        assert meta.source in ("llm+regex", "llm")
+        assert meta.source == "regex"
         assert preferences_to_legacy_pref(merged) == "après-midi"
+
+    def test_hybrid_llm_when_regex_ambiguous(self):
+        client = StubPrefLLMClient()
+        merged, meta = extract_preferences_hybrid("c'est pour un rdv", client=client)
+        assert meta.source in ("llm+regex", "llm")
         ack = resolve_preference_user_ack(merged)
-        assert "matin" in ack.lower()
+        assert ack
 
     def test_retry_on_invalid_json(self):
         bad = StubPrefLLMClient(response="not json")

@@ -1322,7 +1322,7 @@ def slot_to_vocal_label(slot: Any) -> str:
     return _format_slot_label_vocal(date_str, time_str)
 
 
-def store_pending_slots(session, slots: List[Any], enrich_google: bool = True) -> None:
+def store_pending_slots(session, slots: List[Any], enrich_google: bool = False) -> None:
     """
     Stocke les créneaux proposés dans la session (Fix 3: format canonique unique).
     slots: SlotDisplay ou dicts → convertis en format canonique.

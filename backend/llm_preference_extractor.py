@@ -407,6 +407,21 @@ def extract_preferences_with_llm(
     return None, meta
 
 
+def _regex_covers_message(regex_parsed: Dict[str, Any]) -> bool:
+    """True si le parseur déterministe a déjà extrait des contraintes exploitables."""
+    if regex_parsed.get("safety_required"):
+        return True
+    if regex_parsed.get("preferred_time_windows") or regex_parsed.get("excluded_time_windows"):
+        return True
+    if regex_parsed.get("preferred_days") or regex_parsed.get("excluded_days"):
+        return True
+    if regex_parsed.get("earliest_date") or regex_parsed.get("latest_date"):
+        return True
+    if regex_parsed.get("earliest_time") or regex_parsed.get("latest_time"):
+        return True
+    return False
+
+
 def extract_preferences_hybrid(
     text: str,
     ref: Optional[date] = None,
@@ -414,9 +429,14 @@ def extract_preferences_hybrid(
     client: Optional[PrefLLMClient] = None,
 ) -> Tuple[Dict[str, Any], ExtractionMeta]:
     """
-    LLM d'abord (si activé), puis enrichissement / fallback regex.
+    Regex d'abord ; LLM seulement si le message reste ambigu (latence web).
     """
     regex_parsed = parse_appointment_preferences(text, ref=ref)
+    if not LLM_PREF_EXTRACT_ENABLED or _regex_covers_message(regex_parsed):
+        meta = ExtractionMeta(source="regex", confidence=0.88, attempts=0)
+        regex_parsed["user_ack"] = build_preference_ack(regex_parsed)
+        return regex_parsed, meta
+
     llm_parsed, meta = extract_preferences_with_llm(text, ref=ref, channel=channel, client=client)
 
     if llm_parsed is not None:
