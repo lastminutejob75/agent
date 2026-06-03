@@ -33,9 +33,12 @@ from backend.llm_assist import (
 )
 from backend.entity_extraction import (
     extract_entities,
+    extract_target_date,
+    format_date_fr,
     get_next_missing_field,
     extract_pref,
     infer_preference_from_context,
+    time_pref_from_pref,
 )
 from backend.start_router import route_start, FAQ_BUCKET_WHITELIST
 from backend.tenant_flags_cache import get_tenant_flags
@@ -429,6 +432,13 @@ def detect_slot_choice(text: str, num_slots: int = 3) -> Optional[int]:
 
 SAFE_REPLY_FALLBACK = "D'accord. Je vous écoute."
 
+
+def _safe_reply_fallback_message(channel: str) -> str:
+    """Réponse minimale garantie (web : orienter RDV / FAQ / annulation)."""
+    if channel == "web":
+        return getattr(prompts, "MSG_WEB_ALWAYS_REPLY", prompts.MSG_SAFE_DEFAULT_MENU_1_WEB)
+    return SAFE_REPLY_FALLBACK
+
 # États où la question posée est explicitement oui/non (confirmations).
 YESNO_CONFIRM_STATES = frozenset({
     "CONTACT_CONFIRM", "CONTACT_CONFIRM_CALLERID", "CANCEL_CONFIRM", "MODIFY_CONFIRM", "WAIT_CONFIRM",
@@ -483,7 +493,7 @@ def safe_reply(events: List[Event], session: Session) -> List[Event]:
     """
     if not events:
         log_ivr_event(logger, session, "safe_reply")
-        msg = SAFE_REPLY_FALLBACK
+        msg = _safe_reply_fallback_message(getattr(session, "channel", "web"))
         session.add_message("agent", msg)
         return [Event("final", msg, conv_state=session.state)]
     channel = getattr(session, "channel", "web")
@@ -516,7 +526,7 @@ def safe_reply(events: List[Event], session: Session) -> List[Event]:
         if ev.text and ev.text.strip():
             return events
     log_ivr_event(logger, session, "safe_reply")
-    msg = SAFE_REPLY_FALLBACK
+    msg = _safe_reply_fallback_message(channel)
     session.add_message("agent", msg)
     return [Event("final", msg, conv_state=session.state)]
 
@@ -2038,6 +2048,8 @@ class Engine:
                 session.qualif_data.motif = "Consultation"
             if entities.pref:
                 session.qualif_data.pref = entities.pref
+            if entities.target_date:
+                session.qualif_data.target_date = entities.target_date.isoformat()
             if entities.name:
                 session.qualif_data.name = entities.name
             return self._propose_slots(session)
@@ -2057,7 +2069,9 @@ class Engine:
         if entities.pref:
             session.qualif_data.pref = entities.pref
             session.extracted_pref = True
-        
+        if entities.target_date:
+            session.qualif_data.target_date = entities.target_date.isoformat()
+
         # Construire le contexte pour trouver le prochain champ manquant
         context = {
             "name": session.qualif_data.name,
@@ -2801,7 +2815,8 @@ class Engine:
         
         channel = getattr(session, "channel", "web")
         pref = getattr(session.qualif_data, "pref", None) or None
-        logger.info("[PROPOSE_SLOTS] conv_id=%s pref=%s", session.conv_id, pref)
+        target_date = getattr(session.qualif_data, "target_date", None)
+        logger.info("[PROPOSE_SLOTS] conv_id=%s pref=%s target_date=%s", session.conv_id, pref, target_date)
         
         # Patch A: utiliser prefetch si disponible (évite blanc après "le matin"/"l'après-midi")
         slots = None
@@ -2844,6 +2859,16 @@ class Engine:
             )
             more_round = bool(getattr(session, "requesting_more_slots", False))
             session.requesting_more_slots = False
+            if channel == "web" and target_date and not has_rejected:
+                session.state = "WAIT_CONFIRM"
+                msg = (
+                    f"Je n'ai malheureusement pas de créneau disponible le {format_date_fr(target_date)}. "
+                    "Souhaitez-vous un autre jour (ex. « mercredi matin ») ou voir les prochains créneaux libres ?"
+                )
+                session.pending_slots = []
+                session.add_message("agent", msg)
+                self._save_session(session)
+                return [Event("final", msg, conv_state=session.state)]
             if channel == "web" and (has_rejected or more_round):
                 session.state = "WAIT_CONFIRM"
                 msg = (
@@ -2885,6 +2910,9 @@ class Engine:
             reset_slots_reading(session)
         else:
             msg = prompts.format_slot_proposal(slots, include_instruction=True, channel=channel)
+            if target_date:
+                intro = f"Voici les créneaux disponibles le {format_date_fr(target_date)} :\n"
+                msg = intro + msg.replace("Créneaux disponibles :\n", "", 1)
             set_reading_slots(session, True, "propose_slots")
         # Vocal: pas de wrap "Je regarde" si déjà VOCAL_AGENDA_LOOKUP (évite redondance)
         if channel == "vocal" and msg and not getattr(prompts, "VOCAL_AGENDA_LOOKUP", ""):
@@ -2965,6 +2993,26 @@ class Engine:
         logger.info("[BOOKING_CONFIRM] conv_id=%s user=%s pending_len=%s state=%s", session.conv_id, _mask_for_log(user_text or ""), len(session.pending_slots or []), session.state)
 
         from backend.start_router import is_more_slots_request_message
+
+        entities = extract_entities(user_text)
+        date_changed = False
+        if entities.target_date:
+            new_td = entities.target_date.isoformat()
+            if new_td != getattr(session.qualif_data, "target_date", None):
+                session.qualif_data.target_date = new_td
+                date_changed = True
+        pref_update = entities.pref or infer_preference_from_context(user_text or "")
+        if pref_update:
+            session.qualif_data.pref = pref_update
+            date_changed = True
+        if date_changed:
+            tools_booking.clear_slots_cache(int(getattr(session, "tenant_id", None) or 1), None)
+            return self._propose_slots(session)
+
+        # Web : question libre pendant le choix de créneau → FAQ ou menu (jamais silence)
+        if channel == "web" and intent_parser.looks_like_side_question(user_text or ""):
+            if not re.match(r"^(?:oui\s*)?[123]\s*$", (user_text or "").strip(), re.I):
+                return safe_reply(self._handle_faq(session, user_text, include_low=True), session)
 
         if is_more_slots_request_message(user_text):
             return self._reject_pending_and_repropose_slots(session)
@@ -3383,11 +3431,14 @@ class Engine:
         if fail_count == 1:
             # 1er échec : clarification, pas de transfert. Adapter au mode : séquentiel → oui/non, 3 slots → 1/2/3
             use_yesno = (session.pending_slot_choice is not None) or getattr(session, "slot_proposal_sequential", False)
-            msg = (
-                getattr(prompts, "VOCAL_CONFIRM_CLARIFY_YESNO", "Dites oui ou non, s'il vous plaît.")
-                if use_yesno
-                else prompts.get_clarification_message("slot_choice", 1, user_text, channel=channel)
-            )
+            if channel == "web" and not use_yesno:
+                msg = getattr(prompts, "MSG_WEB_ALWAYS_REPLY", prompts.MSG_SAFE_DEFAULT_MENU_1_WEB)
+            else:
+                msg = (
+                    getattr(prompts, "VOCAL_CONFIRM_CLARIFY_YESNO", "Dites oui ou non, s'il vous plaît.")
+                    if use_yesno
+                    else prompts.get_clarification_message("slot_choice", 1, user_text, channel=channel)
+                )
             session.add_message("agent", msg)
             return [Event("final", msg, conv_state=session.state)]
         # 2e échec → transfert (P0: budget peut prévenir)

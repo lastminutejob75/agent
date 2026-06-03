@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 import logging
 
@@ -659,6 +659,51 @@ def _normalize_iso(s: Optional[str]) -> str:
     return s
 
 
+def _slot_start_date(slot: Any) -> Optional[date]:
+    """Date civile d'un créneau (SlotDisplay ou dict)."""
+    start = _slot_get(slot, "start_iso") or _slot_get(slot, "start")
+    if not start:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+        if dt.tzinfo:
+            dt = dt.astimezone()
+        return dt.date()
+    except Exception:
+        return None
+
+
+def _filter_slots_by_target_date(pool: List[Any], target: date) -> List[Any]:
+    """Ne garde que les créneaux du jour demandé."""
+    out = [s for s in pool if _slot_start_date(s) == target]
+    return out
+
+
+def _filter_slots_by_weekday(pool: List[Any], weekday: int) -> List[Any]:
+    """Ne garde que les créneaux dont le jour de semaine correspond (0=lundi)."""
+    out = []
+    for s in pool:
+        d = _slot_get(s, "day") or ""
+        days_fr = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+        if d and days_fr[weekday] == str(d).lower():
+            out.append(s)
+            continue
+        sd = _slot_start_date(s)
+        if sd is not None and sd.weekday() == weekday:
+            out.append(s)
+    return out
+
+
+def _resolve_booking_pref(session: Optional[Any]) -> Optional[str]:
+    """Préférence horaire (matin/après-midi/soir) depuis la session."""
+    from backend.entity_extraction import time_pref_from_pref
+
+    raw = None
+    if session is not None:
+        raw = getattr(getattr(session, "qualif_data", None), "pref", None)
+    return time_pref_from_pref(raw) or (raw if raw in ("matin", "après-midi", "soir") else None)
+
+
 def normalize_slot_start_key(start: Optional[str]) -> str:
     """Clé stable pour comparer / exclure un créneau déjà proposé."""
     if not start:
@@ -702,18 +747,33 @@ def get_slots_for_display(
     Cache utilisé seulement si pref est None (sinon filtre spécifique).
     """
     import time
+    from backend.entity_extraction import time_pref_from_pref, weekday_from_pref
+
     t_start = time.time()
     tenant_id = getattr(session, "tenant_id", None) or 1
+
+    target_date_obj: Optional[date] = None
+    qualif = getattr(session, "qualif_data", None) if session else None
+    if qualif:
+        td_raw = getattr(qualif, "target_date", None)
+        if td_raw:
+            try:
+                target_date_obj = date.fromisoformat(str(td_raw)[:10])
+            except ValueError:
+                target_date_obj = None
+    time_pref = time_pref_from_pref(pref) or (pref if pref in ("matin", "après-midi", "soir") else None)
+    weekday_pref = weekday_from_pref(pref) if not target_date_obj else None
+    fetch_pref = time_pref
 
     # Fast-path absolu : cache avant toute résolution adapter/tenant-config (évite overhead DB).
     rejected = getattr(session, "rejected_slot_starts", None) if session else None
     rejected_ids = getattr(session, "rejected_slot_ids", None) if session else None
     more_round = bool(getattr(session, "requesting_more_slots", False)) if session else False
     has_rejected = bool(rejected) or bool(rejected_ids) or more_round
-    if not has_rejected:
-        cached = _get_cached_slots(limit, tenant_id, pref=pref)
+    if not has_rejected and not target_date_obj:
+        cached = _get_cached_slots(limit, tenant_id, pref=fetch_pref)
         if cached:
-            logger.info(f"⚡ get_slots_for_display: cache hit pref={pref} ({(time.time() - t_start) * 1000:.0f}ms)")
+            logger.info(f"⚡ get_slots_for_display: cache hit pref={fetch_pref} ({(time.time() - t_start) * 1000:.0f}ms)")
             return cached
 
     pool_limit = max(limit, SLOTS_POOL_SIZE_MORE) if has_rejected else limit
@@ -744,7 +804,13 @@ def get_slots_for_display(
     # Récupérer le pool brut (pas encore étalé) pour pouvoir filtrer refus puis étaler
     if calendar_or_adapter:
         try:
-            pool = _get_slots_from_google_calendar(calendar_or_adapter, pool_limit, pref=pref, tenant_id=tenant_id)
+            pool = _get_slots_from_google_calendar(
+                calendar_or_adapter,
+                pool_limit,
+                pref=fetch_pref,
+                tenant_id=tenant_id,
+                target_date=target_date_obj,
+            )
         except GoogleCalendarPermissionError as e:
             if strict_google_mode:
                 logger.warning(
@@ -760,33 +826,33 @@ def get_slots_for_display(
                 pref,
                 e,
             )
-            pool = _get_slots_from_sqlite(pool_limit, pref=pref, tenant_id=tenant_id)
+            pool = _get_slots_from_sqlite(pool_limit, pref=fetch_pref, tenant_id=tenant_id)
         except (GoogleCalendarNotFoundError, GoogleCalendarError) as e:
             if strict_google_mode:
                 logger.warning(
                     "GOOGLE_CALENDAR_READ_STRICT tenant_id=%s pref=%s error=%s",
                     tenant_id,
-                    pref,
+                    fetch_pref,
                     e,
                 )
                 return []
             logger.warning(
                 "GOOGLE_CALENDAR_READ_FALLBACK tenant_id=%s pref=%s error=%s",
                 tenant_id,
-                pref,
+                fetch_pref,
                 e,
             )
-            pool = _get_slots_from_sqlite(pool_limit, pref=pref, tenant_id=tenant_id)
+            pool = _get_slots_from_sqlite(pool_limit, pref=fetch_pref, tenant_id=tenant_id)
     else:
         if strict_google_mode and not use_local_fallback:
-            logger.warning("GOOGLE_CALENDAR_STRICT_NO_FALLBACK tenant_id=%s pref=%s", tenant_id, pref)
+            logger.warning("GOOGLE_CALENDAR_STRICT_NO_FALLBACK tenant_id=%s pref=%s", tenant_id, fetch_pref)
             return []
-        pool = _get_slots_from_sqlite(pool_limit, pref=pref, tenant_id=tenant_id)
+        pool = _get_slots_from_sqlite(pool_limit, pref=fetch_pref, tenant_id=tenant_id)
 
     # « Autres créneaux » : si Google/strict renvoie vide, tenter le pool local élargi
     if has_rejected and (not pool or len(pool) == 0):
         try:
-            local_pool = _get_slots_from_sqlite(pool_limit, pref=pref, tenant_id=tenant_id)
+            local_pool = _get_slots_from_sqlite(pool_limit, pref=fetch_pref, tenant_id=tenant_id)
             if local_pool:
                 logger.info(
                     "get_slots_for_display: fallback local après refus (%s créneaux)",
@@ -796,12 +862,27 @@ def get_slots_for_display(
         except Exception as e:
             logger.debug("get_slots_for_display: fallback local failed: %s", e)
 
-    # Si préférence demandée mais aucun créneau trouvé, fallback sans filtre (ne pas bloquer)
-    if pref and (not pool or len(pool) == 0):
-        logger.info(f"⚠️ Aucun créneau pour pref={pref}, fallback sans filtre")
+    # Filtre date / jour de semaine demandé explicitement
+    if target_date_obj and pool:
+        filtered = _filter_slots_by_target_date(pool, target_date_obj)
+        if filtered:
+            pool = filtered
+        else:
+            logger.info("get_slots_for_display: aucun créneau le %s dans le pool", target_date_obj)
+            pool = []
+    elif weekday_pref is not None and pool:
+        filtered = _filter_slots_by_weekday(pool, weekday_pref)
+        if filtered:
+            pool = filtered
+
+    # Si préférence horaire demandée mais aucun créneau, fallback sans filtre (sauf date ciblée)
+    if fetch_pref and not target_date_obj and (not pool or len(pool) == 0):
+        logger.info(f"⚠️ Aucun créneau pour pref={fetch_pref}, fallback sans filtre")
         if calendar_or_adapter:
             try:
-                pool = _get_slots_from_google_calendar(calendar_or_adapter, limit, pref=None, tenant_id=tenant_id)
+                pool = _get_slots_from_google_calendar(
+                    calendar_or_adapter, limit, pref=None, tenant_id=tenant_id, target_date=target_date_obj
+                )
             except GoogleCalendarPermissionError as e:
                 if strict_google_mode:
                     logger.warning(
@@ -901,6 +982,7 @@ def _get_slots_from_google_calendar(
     limit: int,
     pref: Optional[str] = None,
     tenant_id: int = 1,
+    target_date: Optional[date] = None,
 ) -> List[prompts.SlotDisplay]:
     """Récupère le pool de créneaux via Google Calendar (étalement fait dans get_slots_for_display)."""
     from backend.tenant_config import get_booking_rules
@@ -925,12 +1007,15 @@ def _get_slots_from_google_calendar(
         start_hour, end_hour = base_start, base_end
 
     candidate_dates = []
-    day_horizon = 14 if target_pool_size >= SLOTS_POOL_SIZE_MORE else 8
-    for day_offset in range(1, day_horizon):
-        date = datetime.now() + timedelta(days=day_offset)
-        if date.weekday() not in booking_days:
-            continue
-        candidate_dates.append(date)
+    if target_date is not None:
+        candidate_dates = [datetime(target_date.year, target_date.month, target_date.day)]
+    else:
+        day_horizon = 14 if target_pool_size >= SLOTS_POOL_SIZE_MORE else 8
+        for day_offset in range(1, day_horizon):
+            dt = datetime.now() + timedelta(days=day_offset)
+            if dt.weekday() not in booking_days:
+                continue
+            candidate_dates.append(dt)
 
     batched_getter = getattr(calendar, "get_free_slots_range", None)
     if callable(batched_getter) and candidate_dates:
@@ -969,7 +1054,7 @@ def _get_slots_from_google_calendar(
             logger.info(f"Google Calendar: {len(pool)} créneaux en pool batch (pref={pref})")
             return pool
 
-    per_day = 1
+    per_day = limit if target_date else 1
     days_fr = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
     for date in candidate_dates:
         if len(pool) >= target_pool_size:

@@ -413,6 +413,10 @@ MSG_SAFE_RECOVERY_CONTACT_CONFIRM = "Dites oui ou non, s'il vous plaît."
 MSG_SAFE_DEFAULT_MENU_1_WEB = (
     "Je peux vous aider à prendre un rendez-vous, répondre à une question, annuler ou modifier un rendez-vous. Que souhaitez-vous ?"
 )
+
+# Web chat : aucun message utilisateur ne doit rester sans réponse (même si incompris)
+MSG_WEB_ALWAYS_REPLY = MSG_SAFE_DEFAULT_MENU_1_WEB
+MSG_WEB_PROCESSING = "Un instant, je traite votre demande…"
 MSG_SAFE_DEFAULT_MENU_2_WEB = (
     "Dites : rendez-vous, question, annuler, modifier, ou humain."
 )

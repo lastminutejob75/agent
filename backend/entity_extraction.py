@@ -13,8 +13,11 @@ Entités extraites :
 
 from __future__ import annotations
 import re
+import unicodedata
+from datetime import date, datetime, timedelta
 from typing import Dict, Optional, List, Any
 from dataclasses import dataclass
+from zoneinfo import ZoneInfo
 
 
 @dataclass
@@ -24,6 +27,7 @@ class ExtractedEntities:
     motif: Optional[str] = None
     motif_detail: Optional[str] = None  # ex: "dos" pour "douleur dos"
     pref: Optional[str] = None
+    target_date: Optional[date] = None  # ex: 2026-06-18 pour « le 18 juin »
     confidence: float = 0.0  # 0.0 à 1.0
     
     def to_dict(self) -> Dict[str, Any]:
@@ -32,12 +36,13 @@ class ExtractedEntities:
             "motif": self.motif,
             "motif_detail": self.motif_detail,
             "pref": self.pref,
+            "target_date": self.target_date.isoformat() if self.target_date else None,
             "confidence": self.confidence,
         }
     
     def has_any(self) -> bool:
         """Retourne True si au moins une entité a été extraite."""
-        return any([self.name, self.motif, self.pref])
+        return any([self.name, self.motif, self.pref, self.target_date])
 
 
 # ----------------------------
@@ -120,9 +125,33 @@ PREF_PATTERNS: Dict[str, List[str]] = {
         "14h", "15h", "16h", "17h", "cet après-midi",
     ],
     "soir": [
-        "soir", "soirée", "fin de journée", "18h", "19h",
+        "soir", "soirée", "fin de journée", "fin de journee", "18h", "19h",
+        "fin d'après-midi", "fin d apres-midi", "fin d apres midi",
+        "en fin de journée", "en fin de journee", "tard", "plus tard",
     ],
 }
+
+_FRENCH_MONTHS: Dict[str, int] = {
+    "janvier": 1,
+    "fevrier": 2,
+    "février": 2,
+    "mars": 3,
+    "avril": 4,
+    "mai": 5,
+    "juin": 6,
+    "juillet": 7,
+    "aout": 8,
+    "août": 8,
+    "septembre": 9,
+    "octobre": 10,
+    "novembre": 11,
+    "decembre": 12,
+    "décembre": 12,
+}
+
+_FR_WEEKDAY_NAMES = [
+    "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche",
+]
 
 # Jours de la semaine
 DAYS_PATTERNS: Dict[str, List[str]] = {
@@ -212,6 +241,131 @@ def extract_motif(message: str) -> Dict[str, Optional[str]]:
     return result
 
 
+def _normalize_fr_text(text: str) -> str:
+    """Minuscules sans accents pour matching robuste."""
+    lowered = (text or "").lower().strip()
+    return "".join(
+        c for c in unicodedata.normalize("NFD", lowered)
+        if unicodedata.category(c) != "Mn"
+    )
+
+
+def _infer_year(day: int, month: int, ref: date) -> int:
+    """Si la date est déjà passée cette année, prendre l'année suivante."""
+    try:
+        candidate = date(ref.year, month, day)
+    except ValueError:
+        return ref.year
+    if candidate < ref:
+        return ref.year + 1
+    return ref.year
+
+
+def extract_target_date(message: str, ref: Optional[date] = None) -> Optional[date]:
+    """
+    Extrait une date civile depuis le langage naturel français.
+
+    Exemples : « le 18 juin », « pour le 18/06 », « demain », « après-demain ».
+    """
+    if not (message or "").strip():
+        return None
+    ref = ref or datetime.now(ZoneInfo("Europe/Paris")).date()
+    raw = (message or "").strip().lower()
+    norm = _normalize_fr_text(raw)
+
+    if re.search(r"\bapres[- ]?demain\b", norm):
+        return ref + timedelta(days=2)
+    if re.search(r"\bdemain\b", norm):
+        return ref + timedelta(days=1)
+    if "aujourd" in norm:
+        return ref
+
+    iso_match = re.search(r"\b(\d{4})-(\d{2})-(\d{2})\b", raw)
+    if iso_match:
+        try:
+            return date(int(iso_match.group(1)), int(iso_match.group(2)), int(iso_match.group(3)))
+        except ValueError:
+            pass
+
+    slash_match = re.search(r"\b(\d{1,2})[/\-.](\d{1,2})(?:[/\-.](\d{2,4}))?\b", raw)
+    if slash_match:
+        day = int(slash_match.group(1))
+        month = int(slash_match.group(2))
+        year_raw = slash_match.group(3)
+        if year_raw:
+            year = int(year_raw)
+            if year < 100:
+                year += 2000
+        else:
+            year = _infer_year(day, month, ref)
+        try:
+            return date(year, month, day)
+        except ValueError:
+            pass
+
+    month_match = re.search(
+        r"(?:le\s+)?(\d{1,2})\s+"
+        r"(janvier|fevrier|f[eé]vrier|mars|avril|mai|juin|juillet|ao[uû]t|"
+        r"septembre|octobre|novembre|decembre|d[eé]cembre)",
+        norm,
+    )
+    if month_match:
+        day = int(month_match.group(1))
+        month_key = (
+            month_match.group(2)
+            .replace("février", "fevrier")
+            .replace("août", "aout")
+            .replace("décembre", "decembre")
+        )
+        month = _FRENCH_MONTHS.get(month_key)
+        if month:
+            year = _infer_year(day, month, ref)
+            try:
+                return date(year, month, day)
+            except ValueError:
+                return None
+
+    return None
+
+
+def format_date_fr(value: date | str) -> str:
+    """Affiche une date en français (ex. « jeudi 18 juin »)."""
+    if isinstance(value, str):
+        try:
+            value = date.fromisoformat(value[:10])
+        except ValueError:
+            return value
+    weekday = _FR_WEEKDAY_NAMES[value.weekday()]
+    month_names = ["janvier", "février", "mars", "avril", "mai", "juin",
+                   "juillet", "août", "septembre", "octobre", "novembre", "décembre"]
+    return f"{weekday} {value.day} {month_names[value.month - 1]}"
+
+
+def time_pref_from_pref(pref: Optional[str]) -> Optional[str]:
+    """Extrait matin / après-midi / soir d'une préférence combinée (« jeudi matin »)."""
+    if not pref:
+        return None
+    p = _normalize_fr_text(pref)
+    if "apres-midi" in p or "apres midi" in p or "aprem" in p:
+        return "après-midi"
+    if "matin" in p or "matinee" in p:
+        return "matin"
+    if "soir" in p or "soiree" in p:
+        return "soir"
+    return None
+
+
+def weekday_from_pref(pref: Optional[str]) -> Optional[int]:
+    """Retourne 0=lundi … 6=dimanche si un jour de semaine est dans pref."""
+    if not pref:
+        return None
+    p = _normalize_fr_text(pref)
+    for i, day in enumerate(_FR_WEEKDAY_NAMES):
+        if day in p:
+            return i
+    return None
+
+
 def extract_pref(message: str) -> Optional[str]:
     """
     Extrait la préférence horaire.
@@ -231,11 +385,22 @@ def extract_pref(message: str) -> Optional[str]:
             day_found = day
             break
     
+    # Reformulations (« plutôt en fin d'après-midi »)
+    norm = _normalize_fr_text(message_lower)
+    if any(p in norm for p in ("fin d apres-midi", "fin d apres midi", "fin apres-midi")):
+        time_found = "soir"
+    elif "plutot" in norm or "plutôt" in message_lower:
+        for time_slot, patterns in PREF_PATTERNS.items():
+            if any(_normalize_fr_text(p) in norm for p in patterns):
+                time_found = time_slot
+                break
+
     # Chercher le moment de la journée
-    for time_slot, patterns in PREF_PATTERNS.items():
-        if any(p in message_lower for p in patterns):
-            time_found = time_slot
-            break
+    if not time_found:
+        for time_slot, patterns in PREF_PATTERNS.items():
+            if any(p in message_lower for p in patterns):
+                time_found = time_slot
+                break
     
     # Combiner
     if day_found and time_found:
@@ -272,7 +437,17 @@ def infer_preference_from_context(message: str) -> Optional[str]:
     if any(p in msg_lower for p in ["je travaille jusqu'à", "je finis à", "finir à"]):
         return "après-midi"
 
-    # Soir / fin de journée
+    # Soir / fin de journée / fin d'après-midi
+    norm = _normalize_fr_text(msg_lower)
+    if any(
+        p in norm
+        for p in (
+            "apres 17h", "apres 18h", "en soiree", "apres le travail", "apres le boulot",
+            "fin d apres-midi", "fin d apres midi", "fin apres-midi", "fin de journee",
+            "fin de journee", "en fin de journee",
+        )
+    ):
+        return "soir"
     if any(p in msg_lower for p in ["après 17h", "après 18h", "en soirée", "après le travail", "après le boulot"]):
         return "soir"
 
@@ -323,10 +498,15 @@ def extract_entities(message: str) -> ExtractedEntities:
     if pref:
         entities.pref = pref
         confidence_points += 1
+
+    target = extract_target_date(message)
+    if target:
+        entities.target_date = target
+        confidence_points += 1
     
     # Calcul de la confiance (simple)
     if confidence_points > 0:
-        entities.confidence = min(confidence_points / 3, 1.0)
+        entities.confidence = min(confidence_points / 4, 1.0)
     
     return entities
 
@@ -360,6 +540,10 @@ def merge_entities(
     if not result.get("pref") and extracted.pref:
         result["pref"] = extracted.pref
         result["pref_extracted"] = True
+
+    if not result.get("target_date") and extracted.target_date:
+        result["target_date"] = extracted.target_date.isoformat()
+        result["target_date_extracted"] = True
     
     return result
 

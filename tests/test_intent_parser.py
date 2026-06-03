@@ -129,6 +129,10 @@ def test_detect_intent_booking():
     assert detect_intent("prendre rdv", "START") == Intent.BOOKING
 
 
+def test_detect_intent_question_mark_faq():
+    assert detect_intent("vous etes ouverts le samedi ?", "START") == Intent.FAQ
+
+
 # ---------------------------------------------------------------------------
 # 5) parse_router_choice
 # ---------------------------------------------------------------------------

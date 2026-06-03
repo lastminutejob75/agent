@@ -34,6 +34,7 @@ class QualifData:
     name: Optional[str] = None
     motif: Optional[str] = None
     pref: Optional[str] = None
+    target_date: Optional[str] = None  # YYYY-MM-DD (ex. « le 18 juin »)
     contact: Optional[str] = None
     contact_type: Optional[str] = None  # "email" | "phone"
     contact_channel: Optional[str] = None  # "email" | "phone" (quand user dit "mail" / "téléphone")

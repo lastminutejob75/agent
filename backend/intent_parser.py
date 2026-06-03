@@ -463,8 +463,8 @@ def detect_intent(text: str, state: str = "") -> Intent:
     # BOOKING (explicite)
     if _is_booking(text):
         return Intent.BOOKING
-    # FAQ par défaut si mots-clés
-    if _is_faq_keywords(text):
+    # FAQ par défaut si mots-clés ou formulation interrogative
+    if _is_faq_keywords(text) or looks_like_side_question(text):
         return Intent.FAQ
     return Intent.UNCLEAR
 

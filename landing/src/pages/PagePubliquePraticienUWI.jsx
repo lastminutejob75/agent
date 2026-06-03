@@ -92,7 +92,10 @@ const RESCHEDULE_INTENT = /\b(modifier|decaler|deplacer|changer|reporter)\b.*\b(
 const CALLBACK_INTENT = /\b(etre\s+rappele|demande\s+de\s+rappel|rappelez[- ]?moi|me\s+rappele)\b/iu;
 const MORE_SLOTS_REQUEST = /\b(voir\s+d['\u2019]?autres?\s+cr[eé]neaux|voir\s+plus\s+de\s+cr[eé]neaux|autres?\s+cr[eé]neaux|plus\s+de\s+cr[eé]neaux|aucun\s+ne\s+convient|autre\s+horaire)\b/iu;
 const CHAT_REPLY_TIMEOUT_MS = 25000;
-const CHAT_UNCLEAR_FALLBACK = "Je n'ai pas bien compris. Reformulez, par exemple : « je voudrais un rendez-vous ».";
+const CHAT_UNCLEAR_FALLBACK =
+  "Je peux vous aider à prendre un rendez-vous, répondre à une question, annuler ou modifier un rendez-vous. Que souhaitez-vous ?";
+const CHAT_PROCESSING_REPLY = "Un instant, je traite votre demande…";
+const BOOKING_DATE_HINT = /\b(\d{1,2})\s+(janv|f[eé]vr|mars|avr|mai|juin|juill|ao[uû]t|sept|oct|nov|d[eé]c)|\b(\d{1,2})[/\-.](\d{1,2})\b|\b(demain|apr[eè]s[- ]?demain)\b/iu;
 const LOOKS_LIKE_NAME = /^(?:(?:M\.|Mme|Mlle)\s+)?[A-ZÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ' -]{1,58}$/u;
 const PLAUSIBLE_PATIENT_NAME = /^[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ' -]{2,58}$/u;
 
@@ -1448,7 +1451,7 @@ export default function PagePubliquePraticienUWI() {
       if (pendingTurnRef.current) {
         const resolve = pendingTurnRef.current;
         pendingTurnRef.current = null;
-        resolve(text || true);
+        resolve(Boolean(text));
       }
       if (text) {
         setMessages((prev) => {
@@ -1657,7 +1660,10 @@ export default function PagePubliquePraticienUWI() {
     }
 
     if (BOOKING_START.test(clean)) {
-      void syncChatInBackground(INSTANT_SLOTS_LOOKUP);
+      const lookupMsg = BOOKING_DATE_HINT.test(clean)
+        ? "Je cherche les créneaux à la date demandée, un instant…"
+        : INSTANT_SLOTS_LOOKUP;
+      void syncChatInBackground(lookupMsg);
       return;
     }
 
@@ -1678,7 +1684,7 @@ export default function PagePubliquePraticienUWI() {
       }
     }
 
-    void syncChatInBackground(null);
+    void syncChatInBackground(CHAT_PROCESSING_REPLY);
   }, [chooseSlot, ensureConversationId, ensureStream, lastSlotOffers, push, slug, slots, waitForAgentTurn]);
 
   const pickChatSlot = useCallback(

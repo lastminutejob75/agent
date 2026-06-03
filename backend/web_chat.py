@@ -187,14 +187,25 @@ async def _run_engine_locked(conv_id: str, message: str, channel: str = "web") -
             from backend.engine import Event as Evt
             from backend import prompts
 
-            fallback = getattr(prompts, "MSG_UNCLEAR_1", "Je n'ai pas bien compris. Pouvez-vous répéter ?")
+            fallback = getattr(
+                prompts,
+                "MSG_WEB_ALWAYS_REPLY",
+                getattr(prompts, "MSG_SAFE_DEFAULT_MENU_1_WEB", prompts.MSG_UNCLEAR_1),
+            )
             await emit_event(conv_id, Evt("final", fallback, conv_state="START"), session)
 
     except Exception:
         logger.exception("run_engine failed conv_id=%s", conv_id)
+        from backend import prompts
+
+        err_msg = getattr(
+            prompts,
+            "MSG_WEB_ALWAYS_REPLY",
+            "Erreur serveur. Je peux vous aider pour un rendez-vous ou une question.",
+        )
         await push_event(
             conv_id,
-            {"type": "error", "message": "Erreur serveur, veuillez réessayer", "timestamp": now_iso()},
+            {"type": "final", "text": err_msg, "conv_state": "START", "timestamp": now_iso()},
         )
 
 
@@ -266,6 +277,8 @@ def _instant_reply(message: str, channel: str, conv_id: Optional[str] = None) ->
 
     if is_more_slots_request_message(msg):
         return SLOTS_LOOKUP_MSG
+    if channel == "web":
+        return getattr(prompts, "MSG_WEB_PROCESSING", SLOTS_LOOKUP_MSG)
     return None
 
 
@@ -292,6 +305,10 @@ async def start_web_chat(
     instant = _instant_reply(msg, channel, conv_id)
     if instant:
         out["reply"] = instant
+    elif channel == "web" and msg:
+        from backend import prompts
+
+        out["reply"] = getattr(prompts, "MSG_WEB_PROCESSING", SLOTS_LOOKUP_MSG)
         # Ne pas forcer QUALIF_NAME avant run_engine : « je veux un rdv » serait traité
         # comme une répétition et renverrait « Parfait, j'ai besoin de votre nom… » en double.
 

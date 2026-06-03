@@ -5,11 +5,16 @@ Vérifie l'extraction conservatrice de noms, motifs et préférences.
 """
 
 import pytest
+from datetime import date
+
 from backend.entity_extraction import (
     extract_name,
     extract_motif,
     extract_pref,
+    extract_target_date,
     extract_entities,
+    format_date_fr,
+    time_pref_from_pref,
     get_missing_fields,
     get_next_missing_field,
     merge_entities,
@@ -135,8 +140,41 @@ class TestExtractMotif:
 # Tests extraction de préférence
 # ============================================
 
+class TestExtractTargetDate:
+    """Tests pour l'extraction de dates en langage naturel."""
+
+    def test_18_juin(self):
+        ref = date(2026, 6, 2)
+        assert extract_target_date("je veux un rdv pour le 18 juin", ref=ref) == date(2026, 6, 18)
+
+    def test_demain(self):
+        ref = date(2026, 6, 2)
+        assert extract_target_date("plutôt demain matin", ref=ref) == date(2026, 6, 3)
+
+    def test_slash_format(self):
+        ref = date(2026, 6, 2)
+        assert extract_target_date("rdv le 18/06", ref=ref) == date(2026, 6, 18)
+
+    def test_year_rollover(self):
+        ref = date(2026, 12, 20)
+        assert extract_target_date("le 5 janvier", ref=ref) == date(2027, 1, 5)
+
+    def test_no_match(self):
+        assert extract_target_date("je voudrais un rendez-vous") is None
+
+
+class TestTimePrefFromPref:
+    def test_combined(self):
+        assert time_pref_from_pref("jeudi matin") == "matin"
+        assert time_pref_from_pref("mardi") is None
+
+
 class TestExtractPref:
     """Tests pour l'extraction de préférences horaires."""
+
+    def test_fin_apres_midi(self):
+        assert extract_pref("et si c etait plutot en fin d apres-midi") == "soir"
+        assert extract_pref("plutôt le matin") == "matin"
     
     def test_matin(self):
         """Détecte 'matin'."""
@@ -199,7 +237,15 @@ class TestExtractEntities:
         assert entities.name is None
         assert entities.motif is None
         assert entities.pref is None
+        assert entities.target_date is None
         assert entities.has_any() is False
+
+    def test_message_avec_date(self):
+        msg = "je veux un rdv pour le 18 juin"
+        entities = extract_entities(msg)
+        assert entities.target_date is not None
+        assert entities.target_date.month == 6
+        assert entities.target_date.day == 18
     
     def test_to_dict(self):
         """Conversion en dict."""
