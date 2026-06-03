@@ -10,7 +10,8 @@ sse-starlette==1.8.2
 # RAG
 rapidfuzz==3.6.1
 
-# LLM Assist (zone grise START, optionnel)
+# LLM (OpenAI + Anthropic — extraction préférences RDV, assist START)
+openai>=1.40.0
 anthropic>=0.39.0
 
 # DB

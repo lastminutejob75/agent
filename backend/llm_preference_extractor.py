@@ -33,8 +33,7 @@ LLM_PREF_EXTRACT_TIMEOUT_MS = int(os.getenv("LLM_PREF_EXTRACT_TIMEOUT_MS", "2500
 LLM_PREF_EXTRACT_MAX_RETRIES = int(os.getenv("LLM_PREF_EXTRACT_MAX_RETRIES", "2"))
 LLM_PREF_MIN_CONFIDENCE = float(os.getenv("LLM_PREF_MIN_CONFIDENCE", "0.55"))
 LLM_PREF_MAX_TEXT_LEN = int(os.getenv("LLM_PREF_MAX_TEXT_LEN", "600"))
-# Aligné sur questionnaire_v2 / patient_summary (claude-3-5-haiku-* → 404 sur plusieurs comptes API)
-LLM_PREF_MODEL = (os.getenv("LLM_PREF_MODEL") or "claude-haiku-4-5-20251001").strip()
+# Modèle : voir backend/llm_provider.py (OpenAI gpt-4o-mini ou Anthropic Haiku 4.5)
 
 ALLOWED_WINDOW_LABELS = frozenset(TIME_WINDOW_CATALOG.keys())
 ALLOWED_DAYS = frozenset(
@@ -102,30 +101,6 @@ class PrefLLMClient(Protocol):
         ...
 
 
-class AnthropicPrefClient:
-    def __init__(self, api_key: str, model: str = LLM_PREF_MODEL):
-        self._api_key = api_key
-        self._model = model
-
-    def complete(self, system: str, user: str, timeout_ms: int) -> str:
-        from anthropic import Anthropic
-
-        client = Anthropic(api_key=self._api_key)
-        timeout_sec = max(timeout_ms / 1000.0, 1.0)
-        msg = client.messages.create(
-            model=self._model,
-            max_tokens=512,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-            timeout=timeout_sec,
-        )
-        out = ""
-        for block in getattr(msg, "content", []):
-            if getattr(block, "type", None) == "text":
-                out += getattr(block, "text", "") or ""
-        return (out.strip() or "").replace("\n", " ").replace("\r", " ")
-
-
 class StubPrefLLMClient:
     """Tests : JSON configurable."""
 
@@ -161,14 +136,9 @@ class StubPrefLLMClient:
 def get_pref_llm_client() -> Optional[PrefLLMClient]:
     if not LLM_PREF_EXTRACT_ENABLED:
         return None
-    key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
-    if not key:
-        return None
-    try:
-        return AnthropicPrefClient(api_key=key)
-    except Exception as e:
-        logger.warning("llm_pref_client_init_failed: %s", e)
-        return None
+    from backend.llm_provider import create_chat_client
+
+    return create_chat_client(purpose="pref", provider_env_key="LLM_PREF_PROVIDER")
 
 
 def _looks_like_pure_json(text: str) -> bool:

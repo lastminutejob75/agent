@@ -723,9 +723,17 @@ async def debug_env_vars():
     all_keys = sorted(list(os.environ.keys()))
     google_keys = sorted([k for k in all_keys if "GOOGLE" in k])
     
+    from backend.llm_provider import get_llm_pref_status, resolve_llm_provider
+
     llm_enabled = (os.getenv("LLM_ASSIST_ENABLED") or "").lower() == "true"
-    pref_llm_enabled = (os.getenv("LLM_PREF_EXTRACT_ENABLED") or "true").lower() == "true"
-    anthropic_key_set = bool(os.getenv("ANTHROPIC_API_KEY"))
+    openai_key_set = bool((os.getenv("OPENAI_API_KEY") or "").strip())
+    anthropic_key_set = bool((os.getenv("ANTHROPIC_API_KEY") or "").strip())
+    assist_provider = resolve_llm_provider("LLM_ASSIST_PROVIDER")
+    assist_ready = llm_enabled and assist_provider and (
+        (assist_provider == "openai" and openai_key_set)
+        or (assist_provider == "anthropic" and anthropic_key_set)
+    )
+    pref_status = get_llm_pref_status()
     return {
         "env_count": len(all_keys),
         "sample_keys": all_keys[:25],
@@ -734,10 +742,12 @@ async def debug_env_vars():
         "port_present": bool(os.getenv("PORT")),
         "railway_env_present": bool(os.getenv("RAILWAY_ENVIRONMENT")),
         "llm_assist_enabled": llm_enabled,
+        "llm_assist_provider": assist_provider,
+        "openai_api_key_set": openai_key_set,
         "anthropic_api_key_set": anthropic_key_set,
-        "llm_ready": llm_enabled and anthropic_key_set,
-        "llm_pref_extract_enabled": pref_llm_enabled,
-        "llm_pref_ready": pref_llm_enabled and anthropic_key_set,
+        "llm_ready": assist_ready,
+        "llm_pref": pref_status,
+        "llm_pref_ready": pref_status.get("ready"),
     }
 
 

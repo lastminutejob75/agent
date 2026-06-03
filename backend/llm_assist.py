@@ -116,17 +116,25 @@ class StubLLMClient:
 
 
 def get_default_llm_client() -> Optional[LLMClient]:
-    """Retourne un client LLM (Anthropic) si ANTHROPIC_API_KEY et LLM_ASSIST_ENABLED sont définis."""
+    """Client LLM pour zone grise START (OpenAI ou Anthropic selon LLM_ASSIST_PROVIDER)."""
     if not LLM_ASSIST_ENABLED:
         return None
-    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-    if not api_key:
+    from backend.llm_provider import create_chat_client
+
+    client = create_chat_client(purpose="assist", provider_env_key="LLM_ASSIST_PROVIDER")
+    if client is None:
         return None
-    try:
-        return AnthropicLLMClient(api_key=api_key)
-    except Exception as e:
-        logger.warning("llm_assist_anthropic_init_failed: %s", e)
-        return None
+    return _AssistClientAdapter(client)
+
+
+class _AssistClientAdapter:
+    """Adapte ChatLLMClient au protocole LLMClient de llm_assist."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def complete(self, system: str, user: str, timeout_ms: int) -> str:
+        return self._inner.complete(system, user, timeout_ms)
 
 
 class AnthropicLLMClient:
