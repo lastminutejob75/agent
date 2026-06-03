@@ -724,6 +724,7 @@ async def debug_env_vars():
     google_keys = sorted([k for k in all_keys if "GOOGLE" in k])
     
     llm_enabled = (os.getenv("LLM_ASSIST_ENABLED") or "").lower() == "true"
+    pref_llm_enabled = (os.getenv("LLM_PREF_EXTRACT_ENABLED") or "true").lower() == "true"
     anthropic_key_set = bool(os.getenv("ANTHROPIC_API_KEY"))
     return {
         "env_count": len(all_keys),
@@ -735,6 +736,8 @@ async def debug_env_vars():
         "llm_assist_enabled": llm_enabled,
         "anthropic_api_key_set": anthropic_key_set,
         "llm_ready": llm_enabled and anthropic_key_set,
+        "llm_pref_extract_enabled": pref_llm_enabled,
+        "llm_pref_ready": pref_llm_enabled and anthropic_key_set,
     }
 
 

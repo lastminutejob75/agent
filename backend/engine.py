@@ -2043,6 +2043,16 @@ class Engine:
         if channel == "web":
             from backend.appointment_preference_parser import process_user_availability_message
             merged_prefs = process_user_availability_message(session, user_text)
+            if merged_prefs.get("safety_required") and merged_prefs.get("safety_message"):
+                msg = (
+                    f"{merged_prefs['safety_message']}\n\n"
+                    "Si ce n'est pas une urgence vitale, vous pouvez préciser "
+                    "vos disponibilités pour prendre un rendez-vous classique."
+                )
+                session.state = "WAIT_CONFIRM"
+                session.add_message("agent", msg)
+                self._save_session(session)
+                return [Event("final", msg, conv_state=session.state)]
             if merged_prefs.get("clarification_needed") and not (
                 merged_prefs.get("preferred_time_windows")
                 or merged_prefs.get("excluded_time_windows")
@@ -2969,8 +2979,8 @@ class Engine:
             appt_prefs = getattr(session, "appointment_preferences", None)
             if appt_prefs:
                 try:
-                    from backend.appointment_preference_parser import build_preference_ack
-                    ack = build_preference_ack(appt_prefs)
+                    from backend.llm_preference_extractor import resolve_preference_user_ack
+                    ack = resolve_preference_user_ack(appt_prefs)
                     if ack and ack not in (msg or ""):
                         msg = f"{ack}\n\n{msg}"
                 except Exception:

@@ -700,10 +700,18 @@ def process_user_availability_message(
 ) -> Dict[str, Any]:
     """
     Parse, fusionne avec les préférences session existantes, applique sur la session.
+    LLM (JSON validé + retry) si activé, sinon regex seul.
     Retourne le dict fusionné.
     """
+    from backend.llm_preference_extractor import extract_preferences_hybrid
+
     existing = getattr(session, "appointment_preferences", None)
-    parsed = parse_appointment_preferences(text, ref=ref)
+    channel = getattr(session, "channel", "web") or "web"
+    parsed, meta = extract_preferences_hybrid(text, ref=ref, channel=channel)
     merged = merge_appointment_preferences(existing, parsed)
+    if not merged.get("user_ack"):
+        merged["user_ack"] = build_preference_ack(merged)
+    merged["_extraction_source"] = meta.source
+    merged["_extraction_confidence"] = meta.confidence
     apply_preferences_to_session(session, merged)
     return merged
