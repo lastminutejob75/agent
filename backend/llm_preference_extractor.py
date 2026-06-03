@@ -33,7 +33,8 @@ LLM_PREF_EXTRACT_TIMEOUT_MS = int(os.getenv("LLM_PREF_EXTRACT_TIMEOUT_MS", "2500
 LLM_PREF_EXTRACT_MAX_RETRIES = int(os.getenv("LLM_PREF_EXTRACT_MAX_RETRIES", "2"))
 LLM_PREF_MIN_CONFIDENCE = float(os.getenv("LLM_PREF_MIN_CONFIDENCE", "0.55"))
 LLM_PREF_MAX_TEXT_LEN = int(os.getenv("LLM_PREF_MAX_TEXT_LEN", "600"))
-LLM_PREF_MODEL = (os.getenv("LLM_PREF_MODEL") or "claude-3-5-haiku-20241022").strip()
+# Aligné sur questionnaire_v2 / patient_summary (claude-3-5-haiku-* → 404 sur plusieurs comptes API)
+LLM_PREF_MODEL = (os.getenv("LLM_PREF_MODEL") or "claude-haiku-4-5-20251001").strip()
 
 ALLOWED_WINDOW_LABELS = frozenset(TIME_WINDOW_CATALOG.keys())
 ALLOWED_DAYS = frozenset(
