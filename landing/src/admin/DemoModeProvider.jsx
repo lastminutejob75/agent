@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState } from "react";
+import { getApiUrl } from "../lib/authConfig.js";
 
 /**
  * Provider qui detecte le mode demo backend (GET /api/admin/_meta).
@@ -17,7 +18,7 @@ export function DemoModeProvider({ children }) {
   const [meta, setMeta] = useState({ isDemoMode: false });
 
   useEffect(() => {
-    const base = (import.meta.env.VITE_UWI_API_BASE_URL || "").replace(/\/$/, "");
+    const base = getApiUrl();
     const url = base ? `${base}/api/admin/_meta` : "/api/admin/_meta";
     fetch(url)
       .then((r) => (r.ok ? r.json() : null))

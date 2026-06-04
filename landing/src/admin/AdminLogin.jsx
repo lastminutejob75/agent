@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAdminAuth } from "./AdminAuthProvider";
 import { adminApi } from "../lib/adminApi.js";
+import { getApiUrl } from "../lib/authConfig.js";
 import { T, font, keyframes, radius, shadow } from "./theme.js";
 
-const API_BASE = (import.meta.env.VITE_UWI_API_BASE_URL || "").replace(/\/$/, "");
+const API_BASE = getApiUrl();
 const SHOW_DIAGNOSTIC = import.meta.env.DEV;
 
 // ── Sous-composants UI ──────────────────────────────────────────────────────

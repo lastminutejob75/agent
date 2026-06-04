@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Download } from "lucide-react";
 import { Button } from "./Button.jsx";
+import { getApiUrl } from "../../../lib/authConfig.js";
 
 /**
  * Bouton d'export CSV.
@@ -28,8 +29,7 @@ export default function ExportCsvButton({
   const handleClick = async () => {
     setLoading(true);
     try {
-      const base = (import.meta.env.VITE_UWI_API_BASE_URL || "").replace(/\/$/, "");
-      if (!base) throw new Error("VITE_UWI_API_BASE_URL non configure.");
+      const base = getApiUrl();
       const headers = {};
       if (bearerToken) headers["Authorization"] = `Bearer ${bearerToken}`;
 

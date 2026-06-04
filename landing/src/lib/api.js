@@ -4,7 +4,9 @@
  * Routes: /api/public/onboarding, /api/admin/*
  */
 
-const BASE_URL = (import.meta.env.VITE_UWI_API_BASE_URL || "").replace(/\/$/, "");
+import { getApiUrl } from "./authConfig.js";
+
+const BASE_URL = getApiUrl();
 const TENANT_TOKEN_KEY = "uwi_tenant_token";
 
 export function getApiBaseUrl() {
@@ -339,7 +341,7 @@ export const api = {
     }),
   tenantGetCapabilities: () => request("/api/tenant/capabilities", { tenant: true }),
   tenantDownloadQuestionnaireV2Document: (docId) =>
-    `${(typeof import.meta !== "undefined" && import.meta.env?.VITE_UWI_API_BASE_URL) || ""}/api/tenant/questionnaires-v2/documents/${encodeURIComponent(docId)}/download`,
+    `${getApiUrl()}/api/tenant/questionnaires-v2/documents/${encodeURIComponent(docId)}/download`,
   tenantDeleteQuestionnaireV2Document: (docId) =>
     request(`/api/tenant/questionnaires-v2/documents/${encodeURIComponent(docId)}`, {
       method: "DELETE",
@@ -355,7 +357,7 @@ export const api = {
   publicUploadQuestionnaireV2File: async (token, file) => {
     const formData = new FormData();
     formData.append("file", file);
-    const base = (typeof import.meta !== "undefined" && import.meta.env?.VITE_UWI_API_BASE_URL) || "";
+    const base = getApiUrl();
     const url = `${base}/api/q/${encodeURIComponent(token)}/upload`;
     const res = await fetch(url, { method: "POST", body: formData, credentials: "include" });
     if (!res.ok) {

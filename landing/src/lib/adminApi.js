@@ -1,9 +1,11 @@
 /**
  * API admin : session = cookie HttpOnly `uwi_admin_session` via `credentials: "include"`.
- * Base URL = VITE_UWI_API_BASE_URL (même que api.js).
+ * Base URL = getApiUrl() (même que api.js).
  */
+import { getApiUrl } from "./authConfig.js";
+
 async function adminFetch(path, options = {}) {
-  const base = (import.meta.env.VITE_UWI_API_BASE_URL || "").replace(/\/$/, "");
+  const base = getApiUrl();
   const headers = {
     "Content-Type": "application/json",
     ...(options.headers || {}),
