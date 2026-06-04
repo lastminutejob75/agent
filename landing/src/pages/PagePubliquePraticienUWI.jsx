@@ -494,8 +494,63 @@ function buildBookingSuccessClipboardText(success, cabinetName = "") {
   if (cabinetName) lines.push(cabinetName);
   if (success.message) lines.push(success.message);
   if (success.label) lines.push(success.label);
+  if (success.motif) lines.push(`Motif : ${success.motif}`);
   if (success.bookingCode) lines.push(`Code rendez-vous : ${success.bookingCode}`);
   return lines.filter(Boolean).join("\n");
+}
+
+function escapeIcsText(value) {
+  return String(value || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/\n/g, "\\n")
+    .replace(/,/g, "\\,")
+    .replace(/;/g, "\\;");
+}
+
+function toIcsUtcCompact(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${d.toISOString().replace(/[-:]/g, "").split(".")[0]}Z`;
+}
+
+function downloadBookingIcs({ title, location, description, startIso, endIso, durationMinutes = 30 }) {
+  const start = toIcsUtcCompact(startIso);
+  if (!start) return false;
+  let end = endIso ? toIcsUtcCompact(endIso) : null;
+  if (!end) {
+    const d = new Date(startIso);
+    if (Number.isNaN(d.getTime())) return false;
+    d.setMinutes(d.getMinutes() + durationMinutes);
+    end = toIcsUtcCompact(d.toISOString());
+  }
+  if (!end) return false;
+  const stamp = toIcsUtcCompact(new Date().toISOString());
+  const ics = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//UWI//FR",
+    "CALSCALE:GREGORIAN",
+    "BEGIN:VEVENT",
+    `UID:uwi-${Date.now()}@uwiapp.com`,
+    `DTSTAMP:${stamp}`,
+    `DTSTART:${start}`,
+    `DTEND:${end}`,
+    `SUMMARY:${escapeIcsText(title)}`,
+    location ? `LOCATION:${escapeIcsText(location)}` : "",
+    description ? `DESCRIPTION:${escapeIcsText(description)}` : "",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ]
+    .filter(Boolean)
+    .join("\r\n");
+  const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "rendez-vous-uwi.ics";
+  link.click();
+  URL.revokeObjectURL(url);
+  return true;
 }
 
 async function copyTextToClipboard(text) {
@@ -526,12 +581,24 @@ async function copyTextToClipboard(text) {
   return ok;
 }
 
-function BookingSuccessCard({ success, cabinetName }) {
+function BookingSuccessCard({
+  success,
+  cabinetName,
+  location = "",
+  followup,
+  onModify,
+  onCancel,
+  onDocuments,
+  onAddress,
+  onAskAnother,
+}) {
   const [copyState, setCopyState] = useState("idle");
+  const [calendarState, setCalendarState] = useState("idle");
   const copyPayload = useMemo(
     () => buildBookingSuccessClipboardText(success, cabinetName),
     [success, cabinetName],
   );
+  const canCalendar = Boolean(success?.startIso);
 
   const handleCopy = useCallback(async () => {
     const ok = await copyTextToClipboard(copyPayload);
@@ -539,10 +606,22 @@ function BookingSuccessCard({ success, cabinetName }) {
     window.setTimeout(() => setCopyState("idle"), 2200);
   }, [copyPayload]);
 
+  const handleCalendar = useCallback(() => {
+    const ok = downloadBookingIcs({
+      title: `RDV — ${cabinetName || "Cabinet"}`.trim(),
+      location,
+      description: copyPayload,
+      startIso: success.startIso,
+      endIso: success.endIso,
+    });
+    setCalendarState(ok ? "done" : "error");
+    window.setTimeout(() => setCalendarState("idle"), 2200);
+  }, [cabinetName, copyPayload, location, success]);
+
   if (!success) return null;
 
   return (
-    <div className="inlineCard bookingSuccessCard">
+    <div className="inlineCard bookingSuccessCard" role="status" aria-live="polite">
       <div className="bookingSuccessIcon">✓</div>
       <b>{success.confirmed ? "Rendez-vous confirme" : "Demande enregistree"}</b>
       <p>{success.message}</p>
@@ -552,9 +631,50 @@ function BookingSuccessCard({ success, cabinetName }) {
           Code rendez-vous : <strong>{success.bookingCode}</strong>
         </p>
       ) : null}
-      <button className="bookingSuccessCopyBtn" type="button" onClick={() => void handleCopy()}>
-        {copyState === "done" ? "Copie !" : copyState === "error" ? "Copie impossible" : "Copier le message"}
-      </button>
+
+      <div className="bookingSuccessActions">
+        <button className="bookingSuccessCopyBtn" type="button" onClick={() => void handleCopy()}>
+          {copyState === "done" ? "Copie !" : copyState === "error" ? "Copie impossible" : "Copier le recap"}
+        </button>
+        {canCalendar ? (
+          <button className="bookingSuccessActionBtn" type="button" onClick={handleCalendar}>
+            {calendarState === "done"
+              ? "Fichier telecharge"
+              : calendarState === "error"
+                ? "Calendrier indisponible"
+                : "Ajouter au calendrier"}
+          </button>
+        ) : null}
+        <div className="bookingSuccessActionRow">
+          <button className="bookingSuccessActionBtn" type="button" onClick={onModify}>
+            Modifier
+          </button>
+          <button className="bookingSuccessActionBtn" type="button" onClick={onCancel}>
+            Annuler
+          </button>
+        </div>
+        <div className="bookingSuccessActionRow">
+          <button className="bookingSuccessActionBtn bookingSuccessActionBtnSoft" type="button" onClick={onDocuments}>
+            Documents
+          </button>
+          <button className="bookingSuccessActionBtn bookingSuccessActionBtnSoft" type="button" onClick={onAddress}>
+            Adresse
+          </button>
+        </div>
+        {followup?.enabled && followup?.whatsappUrl ? (
+          <a
+            className="bookingSuccessWaBtn"
+            href={followup.whatsappUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Continuer sur WhatsApp
+          </a>
+        ) : null}
+        <button className="bookingSuccessAskBtn" type="button" onClick={onAskAnother}>
+          Autre question pour Clara
+        </button>
+      </div>
     </div>
   );
 }
@@ -729,13 +849,14 @@ const ACTION_TITLES = {
   callback: "Etre rappele par le cabinet",
 };
 
-function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefreshSlots }) {
+function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefreshSlots, initialBookingCode = "" }) {
   const [step, setStep] = useState(mode === "callback" ? "callback_identify" : "identify");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [lookupPhone, setLookupPhone] = useState("");
   const [lookupEmail, setLookupEmail] = useState("");
-  const [lookupCode, setLookupCode] = useState("");
+  const [lookupCode, setLookupCode] = useState(() => String(initialBookingCode || "").trim().toUpperCase());
+  const autoLookupStarted = useRef(false);
   const [verifyPhone, setVerifyPhone] = useState("");
   const [verifyEmail, setVerifyEmail] = useState("");
   const [appointments, setAppointments] = useState([]);
@@ -792,11 +913,17 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
     return () => document.removeEventListener("keydown", handle);
   }, [onClose]);
 
-  const runLookup = async () => {
+  useEffect(() => {
+    const code = String(initialBookingCode || "").trim().toUpperCase();
+    if (code) setLookupCode(code);
+    autoLookupStarted.current = false;
+  }, [initialBookingCode, mode]);
+
+  const runLookup = async (overrides = {}) => {
     setError("");
-    const phone = lookupPhone.trim();
-    const email = lookupEmail.trim();
-    const bookingCode = lookupCode.trim();
+    const phone = String(overrides.phone ?? lookupPhone).trim();
+    const email = String(overrides.email ?? lookupEmail).trim();
+    const bookingCode = String(overrides.bookingCode ?? lookupCode).trim();
     if (!phone && !email && !bookingCode) {
       setError("Renseignez votre telephone, email ou code rendez-vous.");
       return;
@@ -846,6 +973,14 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    const code = String(initialBookingCode || "").trim();
+    if (!code || mode === "callback" || autoLookupStarted.current) return;
+    autoLookupStarted.current = true;
+    void runLookup({ bookingCode: code, phone: "", email: "" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- lookup initial une fois a l'ouverture
+  }, [initialBookingCode, mode, slug]);
 
   const loadRescheduleSlots = async () => {
     let loaded = [];
@@ -1245,6 +1380,8 @@ export default function PagePubliquePraticienUWI() {
   const [bookingDone, setBookingDone] = useState(false);
   const [bookingFollowup, setBookingFollowup] = useState(null);
   const [actionFlowMode, setActionFlowMode] = useState(null);
+  const [actionFlowInitialCode, setActionFlowInitialCode] = useState("");
+  const [postBookingChatOpen, setPostBookingChatOpen] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState("idle");
   const [voiceError, setVoiceError] = useState("");
   const [composerOutOfView, setComposerOutOfView] = useState(false);
@@ -1488,7 +1625,9 @@ export default function PagePubliquePraticienUWI() {
   }, [messages]);
 
   const contactFormOpen = Boolean(inlineSlot || modalSlot || actionFlowMode);
-  const hideChatComposer = contactFormOpen || Boolean(bookingSuccess);
+  const postBookingMode = Boolean(bookingSuccess);
+  const postBookingLocked = postBookingMode && !postBookingChatOpen;
+  const hideChatComposer = contactFormOpen || (postBookingMode && !postBookingChatOpen);
 
   useEffect(() => {
     if (hideChatComposer) setInput("");
@@ -1863,12 +2002,16 @@ export default function PagePubliquePraticienUWI() {
     setInlineSlot(null);
     setBookingDone(true);
     setBookingFollowup(responseData?.followup || null);
+    setPostBookingChatOpen(false);
     setBookingSuccess({
       label: booking.slot.label,
       message: successText,
       confirmed,
       confirmationId: responseData?.confirmationId,
       bookingCode,
+      startIso: booking.slot.startIso || payload.startIso || "",
+      endIso: booking.slot.endIso || payload.endIso || "",
+      motif: booking.motif || "Consultation",
     });
     const codeHint = bookingCode ? ` Votre code rendez-vous : ${bookingCode}. Conservez-le pour modifier ou annuler.` : "";
     push([{ from: "clara", text: `${successText}${codeHint}` }]);
@@ -1906,11 +2049,46 @@ export default function PagePubliquePraticienUWI() {
     void sendChatMessage(text);
   }, [input, sendChatMessage]);
 
-  const openActionFlow = useCallback((mode) => {
-    setActionFlowMode(mode);
-    trackPublicEvent({ slug, event: "manage_modal_opened", source: sourceRef.current, action: mode });
-  }, [slug]);
+  const openActionFlow = useCallback(
+    (mode, bookingCode = "") => {
+      const code = String(bookingCode || bookingSuccess?.bookingCode || "").trim().toUpperCase();
+      setActionFlowInitialCode(code);
+      setActionFlowMode(mode);
+      trackPublicEvent({ slug, event: "manage_modal_opened", source: sourceRef.current, action: mode });
+    },
+    [bookingSuccess, slug],
+  );
   openActionFlowRef.current = openActionFlow;
+
+  const handlePostBookingDocuments = useCallback(() => {
+    const text =
+      practitioner.documents ||
+      "Carte Vitale, piece d'identite, ordonnances et examens recents si besoin.";
+    push([{ from: "clara", text: `Documents utiles : ${text}` }]);
+    setPostBookingChatOpen(true);
+  }, [practitioner.documents, push]);
+
+  const handlePostBookingAddress = useCallback(() => {
+    const text = addr(practitioner) || "Adresse communiquee par le cabinet.";
+    const access = [practitioner.access, practitioner.parking].filter(Boolean).join(" — ");
+    push([
+      {
+        from: "clara",
+        text: access ? `${text}. Acces : ${access}.` : text,
+      },
+    ]);
+    setPostBookingChatOpen(true);
+  }, [practitioner, push]);
+
+  const handlePostBookingAskAnother = useCallback(() => {
+    setPostBookingChatOpen(true);
+    push([
+      {
+        from: "clara",
+        text: "Je suis la pour vos autres questions : documents, acces, horaires, tarifs…",
+      },
+    ]);
+  }, [push]);
 
   const refreshPublicSlots = useCallback(async () => {
     try {
@@ -2031,7 +2209,11 @@ export default function PagePubliquePraticienUWI() {
         <PublicAppointmentActionModal
           mode={actionFlowMode}
           slug={slug}
-          onClose={() => setActionFlowMode(null)}
+          initialBookingCode={actionFlowInitialCode}
+          onClose={() => {
+            setActionFlowMode(null);
+            setActionFlowInitialCode("");
+          }}
           push={push}
           slots={slots}
           onRefreshSlots={refreshPublicSlots}
@@ -2091,7 +2273,7 @@ export default function PagePubliquePraticienUWI() {
 
         <section className="mainCard">
           <section
-            className={`chatHero${hideChatComposer ? " chatHeroBookingFocus" : ""}`}
+            className={`chatHero${hideChatComposer ? " chatHeroBookingFocus" : ""}${postBookingMode ? " chatHeroPostBooking" : ""}`}
             ref={chatHeroRef}
             aria-busy={hideChatComposer}
           >
@@ -2117,7 +2299,7 @@ export default function PagePubliquePraticienUWI() {
               <div className="chatHeaderBadge">Reponse 24/7</div>
             </div>
 
-            {!inlineSlot && slots.length > 0 ? (
+            {!inlineSlot && !postBookingMode && slots.length > 0 ? (
               <div className="slotsStrip" aria-label="Creneaux disponibles">
                 <p className="slotsStripLabel">
                   <span className="slotDot" />
@@ -2172,13 +2354,14 @@ export default function PagePubliquePraticienUWI() {
                               key={`${message.id}-slot-${offer.index}`}
                               className="chatSlotBtn"
                               type="button"
-                              onClick={() => pickChatSlot(offer)}
+                              disabled={postBookingLocked}
+                              onClick={() => !postBookingLocked && pickChatSlot(offer)}
                             >
                               <span className="chatSlotBtnNum">{offer.index}</span>
                               <span className="chatSlotBtnLabel">{offer.label}</span>
                             </button>
                           ))}
-                          {message.id === lastSlotsMessageId ? (
+                          {message.id === lastSlotsMessageId && !postBookingLocked ? (
                             <button
                               className="chatSlotMoreBtn"
                               type="button"
@@ -2193,7 +2376,17 @@ export default function PagePubliquePraticienUWI() {
                   </div>
                 ))}
                 {bookingSuccess ? (
-                  <BookingSuccessCard success={bookingSuccess} cabinetName={practitioner.name} />
+                  <BookingSuccessCard
+                    success={bookingSuccess}
+                    cabinetName={practitioner.name}
+                    location={addr(practitioner)}
+                    followup={bookingFollowup}
+                    onModify={() => openActionFlow("reschedule", bookingSuccess.bookingCode)}
+                    onCancel={() => openActionFlow("cancel", bookingSuccess.bookingCode)}
+                    onDocuments={handlePostBookingDocuments}
+                    onAddress={handlePostBookingAddress}
+                    onAskAnother={handlePostBookingAskAnother}
+                  />
                 ) : null}
                 {inlineSlot ? (
                   <BookingFields
@@ -2357,8 +2550,15 @@ header a.wa{color:#1b6d34;border-color:#cce9d2}
 .bookingSuccessSlot{display:block;margin-top:8px;font-size:13px;opacity:.85}
 .bookingSuccessCode{margin:10px 0 0;font-size:14px}
 .bookingSuccessCode strong{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.06em}
-.bookingSuccessCopyBtn{margin-top:14px;width:100%;border:1px solid #009CA4;background:#fff;color:#006b73;border-radius:12px;padding:11px 14px;font-size:14px;font-weight:800}
-.bookingSuccessCopyBtn:hover{background:#f0fbfc}
+.bookingSuccessActions{margin-top:16px;display:flex;flex-direction:column;gap:8px;width:100%;text-align:left}
+.bookingSuccessActionRow{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.bookingSuccessCopyBtn,.bookingSuccessActionBtn{width:100%;border:1px solid #009CA4;background:#fff;color:#006b73;border-radius:12px;padding:11px 14px;font-size:14px;font-weight:800}
+.bookingSuccessActionBtnSoft{border-color:#c5e3e6;background:#f8fdfd;font-weight:700}
+.bookingSuccessCopyBtn:hover,.bookingSuccessActionBtn:hover{background:#f0fbfc}
+.bookingSuccessWaBtn{display:block;text-align:center;text-decoration:none;color:#fff;background:#25D366;border-radius:12px;padding:11px 14px;font-size:14px;font-weight:800}
+.bookingSuccessAskBtn{width:100%;border:none;background:transparent;color:#006b73;font-size:13px;font-weight:700;text-decoration:underline;padding:6px 0}
+.chatHeroPostBooking .chatScroll{opacity:.92}
+.chatSlotBtn:disabled{opacity:.45;cursor:not-allowed}
 .actionModalHint{margin:0;font-size:13px;color:#5f7375;line-height:1.45}
 .actionApptPick{display:flex;flex-direction:column;align-items:flex-start;gap:4px;width:100%;text-align:left;border:1px solid #d6eeee;background:#f8fbfb;border-radius:12px;padding:12px 14px;color:#1f3138}
 .actionApptPick strong{font-size:14px;color:#0a4a50}.actionApptPick span{font-size:12px;color:#60757b}
