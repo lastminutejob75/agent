@@ -264,7 +264,11 @@ def _store_extracted_name(conv_id: str, tenant_id: int, name: str) -> None:
 
 def _instant_reply(message: str, channel: str, conv_id: Optional[str] = None) -> Optional[str]:
     """Réponse synchrone immédiate : salutation ou début de prise de RDV."""
-    from backend.start_router import is_booking_start_message, is_greeting_only_message
+    from backend.start_router import (
+        is_booking_start_message,
+        is_greeting_only_message,
+        is_more_slots_request_message,
+    )
     from backend import prompts
 
     msg = (message or "").strip()
@@ -274,8 +278,6 @@ def _instant_reply(message: str, channel: str, conv_id: Optional[str] = None) ->
         return _greeting_reply(channel)
     if is_booking_start_message(msg):
         return SLOTS_LOOKUP_MSG
-    from backend.start_router import is_more_slots_request_message
-
     if is_more_slots_request_message(msg):
         return SLOTS_LOOKUP_MSG
     if channel == "web":
@@ -313,8 +315,33 @@ async def start_web_chat(
         # Ne pas forcer QUALIF_NAME avant run_engine : « je veux un rdv » serait traité
         # comme une répétition et renverrait « Parfait, j'ai besoin de votre nom… » en double.
 
+    from backend.start_router import is_booking_start_message, is_more_slots_request_message
+
+    if is_booking_start_message(msg) or is_more_slots_request_message(msg):
+        asyncio.create_task(_warm_slots_cache(tid))
     asyncio.create_task(run_engine(conv_id, msg, channel))
     return out
+
+
+async def _warm_slots_cache(tenant_id: int) -> None:
+    """Précharge le cache créneaux pendant le traitement chat (barre + moteur)."""
+    try:
+        from types import SimpleNamespace
+
+        from backend import tools_booking
+
+        session = SimpleNamespace(
+            tenant_id=int(tenant_id),
+            rejected_slot_starts=[],
+            rejected_slot_ids=[],
+        )
+
+        def _run() -> None:
+            tools_booking.get_slots_for_display(limit=3, pref=None, session=session)
+
+        await asyncio.to_thread(_run)
+    except Exception:
+        logger.debug("warm_slots_cache failed tenant_id=%s", tenant_id, exc_info=True)
 
 
 def _resolve_session_tenant(conv_id: str, expected_tenant_id: Optional[int] = None):

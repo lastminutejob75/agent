@@ -94,7 +94,7 @@ const CANCEL_INTENT = /\b(annuler|annulation|supprimer)\b.*\b(rdv|rendez[- ]?vou
 const RESCHEDULE_INTENT = /\b(modifier|decaler|deplacer|changer|reporter)\b.*\b(rdv|rendez[- ]?vous)\b|\b(rdv|rendez[- ]?vous)\b.*\b(modifier|decaler|deplacer|changer|reporter)\b/iu;
 const CALLBACK_INTENT = /\b(etre\s+rappele|demande\s+de\s+rappel|rappelez[- ]?moi|me\s+rappele)\b/iu;
 const MORE_SLOTS_REQUEST = /\b(voir\s+d['\u2019]?autres?\s+cr[eé]neaux|voir\s+plus\s+de\s+cr[eé]neaux|autres?\s+cr[eé]neaux|plus\s+de\s+cr[eé]neaux|aucun\s+ne\s+convient|autre\s+horaire)\b/iu;
-const CHAT_REPLY_TIMEOUT_MS = 25000;
+const CHAT_REPLY_TIMEOUT_MS = 45000;
 const CHAT_UNCLEAR_FALLBACK =
   "Je peux vous aider à prendre un rendez-vous, répondre à une question, annuler ou modifier un rendez-vous. Que souhaitez-vous ?";
 const CHAT_PROCESSING_REPLY = "Un instant, je traite votre demande…";
@@ -416,6 +416,29 @@ function UwiSearchBar({ data = defaultSearchData, onSearchUsed }) {
       )}
     </div>
   );
+}
+
+function barSlotsToChatOffers(apiSlots, max = 3) {
+  return safeArray(apiSlots)
+    .slice(0, max)
+    .map((slot, i) => ({
+      index: i + 1,
+      label: slot.label || `Créneau ${i + 1}`,
+      id: String(slot.id || ""),
+      source: slot.source || "sqlite",
+      startIso: slot.startIso || "",
+      endIso: slot.endIso || "",
+      motifs: safeArray(slot.motifs).length
+        ? slot.motifs
+        : ["Consultation", "Suivi", "Premiere consultation", "Renouvellement"],
+    }));
+}
+
+function formatBarSlotsProposalMessage(apiSlots) {
+  const offers = barSlotsToChatOffers(apiSlots, 3);
+  if (!offers.length) return "";
+  const lines = offers.map((o) => `${o.index}. ${o.label}`).join("\n");
+  return `Créneaux disponibles :\n${lines}\n\nRépondez par le numéro (1, 2 ou 3), ou cliquez sur un créneau ci-dessous.`;
 }
 
 function slotFromChatOffer(offer) {
@@ -1681,7 +1704,7 @@ export default function PagePubliquePraticienUWI() {
       if (pendingTurnRef.current) {
         const resolve = pendingTurnRef.current;
         pendingTurnRef.current = null;
-        resolve(Boolean(text));
+        resolve(Boolean(text) || slotsPayload.length > 0);
       }
       if (text) {
         setMessages((prev) => {
@@ -1827,10 +1850,24 @@ export default function PagePubliquePraticienUWI() {
         body: JSON.stringify(chatPayload),
       });
 
+    const applyBarSlotsFallback = () => {
+      const offers = barSlotsToChatOffers(slots, 3);
+      const msg = formatBarSlotsProposalMessage(slots);
+      if (!offers.length || !msg) return false;
+      push([
+        {
+          from: "clara",
+          text: msg,
+          slots: offers,
+        },
+      ]);
+      return true;
+    };
+
     const syncChatInBackground = async (instantText) => {
-      if (instantText) showInstantReply(instantText);
       ensureStream(convId);
       const turnWait = waitForAgentTurn();
+      if (instantText) showInstantReply(instantText);
       let gotFinalReply = false;
       try {
         let response;
@@ -1857,12 +1894,16 @@ export default function PagePubliquePraticienUWI() {
           gotFinalReply = Boolean(sseOk);
         }
         if (!gotFinalReply) {
-          push([
-            {
-              from: "clara",
-              text: instantText ? CHAT_SSE_TIMEOUT_FALLBACK : CHAT_UNCLEAR_FALLBACK,
-            },
-          ]);
+          if (instantText && applyBarSlotsFallback()) {
+            gotFinalReply = true;
+          } else {
+            push([
+              {
+                from: "clara",
+                text: instantText ? CHAT_SSE_TIMEOUT_FALLBACK : CHAT_UNCLEAR_FALLBACK,
+              },
+            ]);
+          }
         }
       } catch {
         if (pendingTurnRef.current) {

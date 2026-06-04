@@ -2045,8 +2045,20 @@ class Engine:
             session.rejected_slot_starts = []
             session.rejected_slot_ids = []
             session.requesting_more_slots = False
-            from backend.appointment_preference_parser import process_user_availability_message
-            merged_prefs = process_user_availability_message(session, user_text)
+            from backend.appointment_preference_parser import (
+                message_has_availability_hints,
+                process_user_availability_message,
+            )
+            if message_has_availability_hints(user_text):
+                merged_prefs = process_user_availability_message(session, user_text)
+            else:
+                from backend.appointment_preference_parser import (
+                    apply_preferences_to_session,
+                    parse_appointment_preferences,
+                )
+
+                merged_prefs = parse_appointment_preferences(user_text)
+                apply_preferences_to_session(session, merged_prefs)
             if merged_prefs.get("safety_required") and merged_prefs.get("safety_message"):
                 msg = (
                     f"{merged_prefs['safety_message']}\n\n"

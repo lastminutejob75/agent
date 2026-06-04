@@ -431,6 +431,15 @@ def extract_preferences_hybrid(
     """
     Regex d'abord ; LLM seulement si le message reste ambigu (latence web).
     """
+    from backend.start_router import is_booking_start_message
+    from backend.appointment_preference_parser import message_has_availability_hints
+
+    if is_booking_start_message(text) and not message_has_availability_hints(text):
+        regex_parsed = parse_appointment_preferences(text, ref=ref)
+        meta = ExtractionMeta(source="booking_start_skip", confidence=0.9, attempts=0)
+        regex_parsed["user_ack"] = build_preference_ack(regex_parsed)
+        return regex_parsed, meta
+
     regex_parsed = parse_appointment_preferences(text, ref=ref)
     if not LLM_PREF_EXTRACT_ENABLED or _regex_covers_message(regex_parsed):
         meta = ExtractionMeta(source="regex", confidence=0.88, attempts=0)

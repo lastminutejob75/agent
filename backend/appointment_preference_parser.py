@@ -693,6 +693,22 @@ def rank_slots_by_appointment_preferences(
     return sorted(slots, key=lambda s: (-_slot_soft_score(s, prefs), _slot_minutes(s)))
 
 
+def message_has_availability_hints(text: str) -> bool:
+    """True si le message contient jour/horaire/contraintes (pas une simple demande de RDV)."""
+    from backend.entity_extraction import extract_entities
+    from backend.llm_preference_extractor import _regex_covers_message
+
+    t = (text or "").strip()
+    if not t:
+        return False
+    if _regex_covers_message(parse_appointment_preferences(t, ref=None)):
+        return True
+    ent = extract_entities(t)
+    if ent.pref or ent.target_date:
+        return True
+    return False
+
+
 def process_user_availability_message(
     session: Any,
     text: str,

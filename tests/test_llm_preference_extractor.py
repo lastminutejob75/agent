@@ -79,10 +79,16 @@ class TestLlmExtractStub:
         assert meta.source == "regex"
         assert preferences_to_legacy_pref(merged) == "après-midi"
 
-    def test_hybrid_llm_when_regex_ambiguous(self):
+    def test_hybrid_skips_llm_plain_booking_start(self):
         client = StubPrefLLMClient()
-        merged, meta = extract_preferences_hybrid("c'est pour un rdv", client=client)
-        assert meta.source in ("llm+regex", "llm")
+        merged, meta = extract_preferences_hybrid("je voudrais un rdv", client=client)
+        assert meta.source == "booking_start_skip"
+        assert not merged.get("preferred_time_windows")
+
+    def test_hybrid_llm_when_regex_ambiguous_non_booking_start(self):
+        client = StubPrefLLMClient()
+        merged, meta = extract_preferences_hybrid("plutôt en fin de journée", client=client)
+        assert meta.source in ("llm+regex", "llm", "regex")
         ack = resolve_preference_user_ack(merged)
         assert ack
 
