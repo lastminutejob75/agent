@@ -2041,6 +2041,10 @@ class Engine:
 
         # Web public : créneaux d'abord, coordonnées une seule fois dans le formulaire après choix
         if channel == "web":
+            session.more_slots_round_count = 0
+            session.rejected_slot_starts = []
+            session.rejected_slot_ids = []
+            session.requesting_more_slots = False
             from backend.appointment_preference_parser import process_user_availability_message
             merged_prefs = process_user_availability_message(session, user_text)
             if merged_prefs.get("safety_required") and merged_prefs.get("safety_message"):
@@ -3007,30 +3011,34 @@ class Engine:
     def _reject_pending_and_repropose_slots(self, session: Session) -> List[Event]:
         """Exclut les créneaux déjà proposés et en propose de nouveaux (web + vocal)."""
         channel = getattr(session, "channel", "web")
-        rejected = list(getattr(session, "rejected_slot_starts", None) or [])
-        rejected_ids = list(getattr(session, "rejected_slot_ids", None) or [])
+        round_count = int(getattr(session, "more_slots_round_count", 0) or 0) + 1
+        session.more_slots_round_count = round_count
+
+        tools_booking.append_rejected_slots_from_pending(session)
+
         rdp = list(getattr(session, "rejected_day_periods", None) or [])
-        for slot_obj in session.pending_slots or []:
-            cur_start = tools_booking._slot_get(slot_obj, "start_iso") or tools_booking._slot_get(slot_obj, "start")
-            key = tools_booking.normalize_slot_start_key(cur_start)
-            if key and key not in {tools_booking.normalize_slot_start_key(s) for s in rejected}:
-                rejected.append(key)
-            sid = tools_booking._slot_get(slot_obj, "slot_id") or tools_booking._slot_get(slot_obj, "id")
-            if sid is not None:
-                sid_s = str(sid)
-                if sid_s not in rejected_ids:
-                    rejected_ids.append(sid_s)
-            # Web : ne pas bloquer tout un (jour, période) — seulement les créneaux affichés
-            if channel == "vocal":
+        if channel == "vocal":
+            for slot_obj in session.pending_slots or []:
                 day = tools_booking._slot_get(slot_obj, "day") or ""
                 period = tools_booking.slot_period(slot_obj)
                 if day and period:
                     dp_key = f"{day}|{period}"
                     if dp_key not in rdp:
                         rdp.append(dp_key)
-        session.rejected_slot_starts = rejected
-        session.rejected_slot_ids = rejected_ids
         session.rejected_day_periods = rdp
+
+        if channel == "web" and round_count >= 2 and not tools_booking.session_has_booking_preferences(session):
+            session.requesting_more_slots = False
+            msg = getattr(prompts, "MSG_WEB_MORE_SLOTS_ASK_PREF", prompts.MSG_QUALIF_PREF_RETRY)
+            session.add_message("agent", msg)
+            self._save_session(session)
+            logger.info(
+                "[MORE_SLOTS] conv_id=%s round=%s → ask_preferences",
+                session.conv_id,
+                round_count,
+            )
+            return [Event("final", msg, conv_state=session.state)]
+
         session.requesting_more_slots = True
         session.pending_slot_choice = None
         session.awaiting_confirmation = None
@@ -3046,9 +3054,12 @@ class Engine:
         # Invalider tout le cache tenant pour recharger l'agenda (date ciblée incluse)
         tools_booking.clear_slots_cache(tenant_id)
         self._save_session(session)
+        rejected = getattr(session, "rejected_slot_starts", None) or []
+        rejected_ids = getattr(session, "rejected_slot_ids", None) or []
         logger.info(
-            "[MORE_SLOTS] conv_id=%s rejected_starts=%s rejected_ids=%s reproposing",
+            "[MORE_SLOTS] conv_id=%s round=%s rejected_starts=%s rejected_ids=%s reproposing",
             session.conv_id,
+            round_count,
             len(rejected),
             len(rejected_ids),
         )
@@ -3085,6 +3096,7 @@ class Engine:
         if getattr(session, "appointment_preferences", None):
             date_changed = True
         if date_changed:
+            session.more_slots_round_count = 0
             tools_booking.clear_slots_cache(int(getattr(session, "tenant_id", None) or 1), None)
             return self._propose_slots(session)
 

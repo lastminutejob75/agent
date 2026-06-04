@@ -723,6 +723,55 @@ def _resolve_booking_pref(session: Optional[Any]) -> Optional[str]:
     return time_pref_from_pref(raw) or (raw if raw in ("matin", "après-midi", "soir") else None)
 
 
+def session_has_booking_preferences(session: Any) -> bool:
+    """True si le patient a déjà exprimé une préférence horaire / date exploitable."""
+    if session is None:
+        return False
+    qualif = getattr(session, "qualif_data", None)
+    pref = getattr(qualif, "pref", None) if qualif else None
+    if pref in ("matin", "après-midi", "soir"):
+        return True
+    appt = getattr(session, "appointment_preferences", None) or {}
+    if not isinstance(appt, dict):
+        return False
+    if appt.get("preferred_time_windows") or appt.get("excluded_time_windows"):
+        return True
+    if appt.get("preferred_days") or appt.get("excluded_days"):
+        return True
+    if appt.get("earliest_date") or appt.get("latest_date"):
+        return True
+    if appt.get("earliest_time") or appt.get("latest_time"):
+        return True
+    return False
+
+
+def append_rejected_slots_from_pending(session: Any) -> None:
+    """Marque les créneaux affichés comme refusés (clés ISO normalisées + id stable)."""
+    rejected = list(getattr(session, "rejected_slot_starts", None) or [])
+    rejected_ids = list(getattr(session, "rejected_slot_ids", None) or [])
+    seen_keys = {normalize_slot_start_key(s) for s in rejected if s}
+    seen_ids = {str(i) for i in rejected_ids if i is not None and str(i).strip()}
+
+    for slot_obj in getattr(session, "pending_slots", None) or []:
+        cur_start = _slot_get(slot_obj, "start_iso") or _slot_get(slot_obj, "start")
+        key = normalize_slot_start_key(cur_start)
+        if key and key not in seen_keys:
+            rejected.append(key)
+            seen_keys.add(key)
+            if key not in seen_ids:
+                rejected_ids.append(key)
+                seen_ids.add(key)
+        sid = _slot_get(slot_obj, "slot_id") or _slot_get(slot_obj, "id")
+        if sid is not None:
+            sid_s = str(sid).strip()
+            if sid_s and sid_s not in seen_ids:
+                rejected_ids.append(sid_s)
+                seen_ids.add(sid_s)
+
+    session.rejected_slot_starts = rejected
+    session.rejected_slot_ids = rejected_ids
+
+
 def normalize_slot_start_key(start: Optional[str]) -> str:
     """Clé stable pour comparer / exclure un créneau déjà proposé."""
     if not start:
@@ -965,20 +1014,26 @@ def get_slots_for_display(
                 return []
             pool = _get_slots_from_sqlite(limit, pref=None, tenant_id=tenant_id)
 
-    # Exclure créneaux déjà proposés (exact + id). Vocal : aussi voisins ±90 min.
+    # Exclure créneaux déjà proposés (exact + id). Web : aussi voisins proches (évite « les mêmes » à 15–30 min).
     if has_rejected:
         before = len(pool)
         pool = _filter_slots_exclude_exact(pool, rejected or [], rejected_ids)
         channel = getattr(session, "channel", "web") if session else "web"
-        if channel == "vocal":
-            pool = _filter_slots_away_from_rejected(pool, rejected or [], REJECTED_SLOT_WINDOW_MINUTES)
+        neighbor_window = REJECTED_SLOT_WINDOW_MINUTES if channel == "vocal" else 45
+        pool = _filter_slots_away_from_rejected(pool, rejected or [], neighbor_window)
+        round_count = int(getattr(session, "more_slots_round_count", 0) or 0) if session else 0
+        if round_count > 0 and len(pool) > limit:
+            pool_sorted = sorted(pool, key=lambda s: _slot_start_dt(s) or datetime.max)
+            skip = min(round_count * limit, max(0, len(pool_sorted) - limit))
+            pool = pool_sorted[skip:]
         logger.info(
-            "🔄 get_slots_for_display: exclusion refusés %s→%s (rejected=%s ids=%s channel=%s)",
+            "🔄 get_slots_for_display: exclusion refusés %s→%s (rejected=%s ids=%s channel=%s round=%s)",
             before,
             len(pool),
             len(rejected or []),
             len(rejected_ids or []),
             channel,
+            round_count,
         )
     # Préférences structurées (page publique / langage naturel)
     appt_prefs = getattr(session, "appointment_preferences", None) if session else None
@@ -1132,10 +1187,11 @@ def _get_slots_from_google_calendar(
                     label_vocal = f"{day_fr} à {hour}h"
                 except Exception:
                     pass
+                stable_id = normalize_slot_start_key(start_iso) or str(len(pool))
                 pool.append(prompts.SlotDisplay(
                     idx=len(pool) + 1,
                     label=slot['label'],
-                    slot_id=len(pool),
+                    slot_id=stable_id,
                     start=start_iso,
                     day=day_fr,
                     hour=hour,
@@ -1174,10 +1230,11 @@ def _get_slots_from_google_calendar(
                 label_vocal = f"{day_fr} à {hour}h"
             except Exception:
                 pass
+            stable_id = normalize_slot_start_key(start_iso) or str(len(pool))
             pool.append(prompts.SlotDisplay(
                 idx=len(pool) + 1,
                 label=slot['label'],
-                slot_id=len(pool),
+                slot_id=stable_id,
                 start=start_iso,
                 day=day_fr,
                 hour=hour,

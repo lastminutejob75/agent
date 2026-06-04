@@ -1016,6 +1016,11 @@ MSG_MOTIF_HELP = (
 MSG_QUALIF_NAME_RETRY = "Merci de me donner votre nom et prénom pour continuer."
 MSG_QUALIF_MOTIF_RETRY = "Merci de me donner le motif de votre demande pour continuer."
 MSG_QUALIF_PREF_RETRY = "Merci de me donner votre créneau préféré pour continuer."
+MSG_WEB_MORE_SLOTS_ASK_PREF = (
+    "Je n'ai pas d'autres horaires proches de ceux-ci pour l'instant. "
+    "Précisez vos préférences : par exemple « mercredi matin », « plutôt en fin de journée », "
+    "ou un jour en particulier — je vous proposerai de nouveaux créneaux."
+)
 MSG_QUALIF_CONTACT_RETRY = "Merci de me donner votre email ou téléphone pour continuer."
 
 # Vocal - ton naturel

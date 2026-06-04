@@ -37,6 +37,7 @@ def session_to_dict(session: Session) -> Dict[str, Any]:
         "rejected_slot_starts": getattr(session, "rejected_slot_starts", None) or [],
         "rejected_slot_ids": getattr(session, "rejected_slot_ids", None) or [],
         "requesting_more_slots": bool(getattr(session, "requesting_more_slots", False)),
+        "more_slots_round_count": int(getattr(session, "more_slots_round_count", 0) or 0),
         "rejected_day_periods": getattr(session, "rejected_day_periods", None) or [],
         "slot_offer_index": getattr(session, "slot_offer_index", 0),
         "slot_proposal_sequential": getattr(session, "slot_proposal_sequential", False),
@@ -108,6 +109,7 @@ def session_from_dict(conv_id: str, d: Dict[str, Any]) -> Session:
     session.rejected_slot_starts = d.get("rejected_slot_starts") or []
     session.rejected_slot_ids = d.get("rejected_slot_ids") or []
     session.requesting_more_slots = bool(d.get("requesting_more_slots", False))
+    session.more_slots_round_count = int(d.get("more_slots_round_count", 0) or 0)
     session.rejected_day_periods = d.get("rejected_day_periods") or []
     session.slot_offer_index = d.get("slot_offer_index", 0)
     session.slot_proposal_sequential = d.get("slot_proposal_sequential", False)
