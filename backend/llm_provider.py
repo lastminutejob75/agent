@@ -98,7 +98,7 @@ def default_model_for_provider(provider: str, purpose: str = "pref") -> str:
     if purpose == "assist":
         if provider == "openai":
             return (os.getenv("LLM_ASSIST_MODEL") or DEFAULT_OPENAI_MODEL).strip()
-        return (os.getenv("LLM_ASSIST_MODEL") or "claude-sonnet-4-20250514").strip()
+        return (os.getenv("LLM_ASSIST_MODEL") or DEFAULT_ANTHROPIC_MODEL).strip()
     if provider == "openai":
         return (os.getenv("LLM_PREF_MODEL") or DEFAULT_OPENAI_MODEL).strip()
     return (os.getenv("LLM_PREF_MODEL") or DEFAULT_ANTHROPIC_MODEL).strip()
