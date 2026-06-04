@@ -28,6 +28,16 @@ from backend.db import init_db, list_free_slots, count_free_slots
 from backend.deps import require_tenant_web, TenantIdWeb
 # Nouvelle architecture multi-canal
 from backend.routes import voice, whatsapp, bland, reports, admin, auth, tenant, client, stripe_webhook, pre_onboarding, checkout_embedded, public_praticien, public_pages, public_questionnaire
+from backend.routes import public_appointment_actions, patient_context, public_questionnaire_v2
+from backend.timing_log import install_api_timing
+
+install_api_timing(
+    extra_modules=(
+        public_appointment_actions,
+        patient_context,
+        public_questionnaire_v2,
+    )
+)
 
 app = FastAPI()
 _logger = logging.getLogger(__name__)
@@ -64,13 +74,20 @@ async def server_timing_middleware(request: Request, call_next):
     - ``Server-Timing: app;dur=<ms>`` (standard W3C, visible dans l'onglet Network DevTools)
     - ``X-Response-Time-Ms`` (entier, pratique pour logger côté client)
 
-    Loggue aussi côté serveur toute route >1500 ms pour identifier les goulots.
+    Loggue TIMING START/END pour chaque requête HTTP (stdout + uwi.timing).
     """
-    import time as _t
+    from backend.timing_log import time_end, time_start
 
-    started = _t.monotonic()
-    response = await call_next(request)
-    elapsed_ms = int((_t.monotonic() - started) * 1000)
+    req_tag = f"{id(request):x}"
+    route_label = f"HTTP {request.method} {request.url.path} [{req_tag}]"
+    time_start(route_label)
+    try:
+        response = await call_next(request)
+    except Exception:
+        time_end(route_label)
+        raise
+
+    elapsed_ms = int(time_end(route_label))
     response.headers["X-Response-Time-Ms"] = str(elapsed_ms)
     response.headers["Server-Timing"] = f"app;dur={elapsed_ms}"
     if elapsed_ms >= 1500:
@@ -415,11 +432,9 @@ app.include_router(pre_onboarding.router)  # POST /api/pre-onboarding/commit
 app.include_router(pre_onboarding.public_router)  # POST /api/public/leads
 app.include_router(public_praticien.router)  # GET /api/public/praticiens/{slug}
 app.include_router(public_pages.router)  # /api/public/practitioner, /slots, /book, /search (page /p/:slug)
-from backend.routes import public_appointment_actions
 
 app.include_router(public_appointment_actions.router)  # lookup / cancel / reschedule / callback
 app.include_router(public_questionnaire.router)  # /api/public/patient-questionnaire/{token}
-from backend.routes import patient_context, public_questionnaire_v2
 
 app.include_router(patient_context.router)  # /api/tenant/patients/{phone}/summary, questionnaires V2
 app.include_router(public_questionnaire_v2.router)  # /api/q/{token}

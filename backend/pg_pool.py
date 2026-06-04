@@ -78,18 +78,22 @@ def pg_connection_for(url: Optional[str]):
     if not target:
         raise RuntimeError("No PostgreSQL URL configured")
 
+    from backend.timing_log import time_block, wrap_connection
+
     pool_url = _get_pg_url()
     pool = get_pool()
     if pool is not None and _urls_equivalent(target, pool_url):
         try:
-            with pool.connection() as conn:
-                yield conn
-                return
+            with time_block("PG.connect[events:pool]"):
+                with pool.connection() as conn:
+                    yield wrap_connection(conn, "pg:events")
+                    return
         except Exception as e:
             logger.debug("Pool connection failed, falling back to direct: %s", e)
 
     import psycopg
     from psycopg.rows import dict_row
 
-    with psycopg.connect(target, row_factory=dict_row, connect_timeout=3) as conn:
-        yield conn
+    with time_block("PG.connect[events:direct]"):
+        with psycopg.connect(target, row_factory=dict_row, connect_timeout=3) as conn:
+            yield wrap_connection(conn, "pg:events")

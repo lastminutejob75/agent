@@ -61,12 +61,15 @@ def _get_tenant_pool():
 
 @contextmanager
 def pg_tenants_connection():
+    from backend.timing_log import time_block, wrap_connection
+
     pool = _get_tenant_pool()
     if pool is not None:
         try:
-            with pool.connection() as conn:
-                yield conn
-                return
+            with time_block("PG.connect[tenants:pool]"):
+                with pool.connection() as conn:
+                    yield wrap_connection(conn, "pg:tenants")
+                    return
         except Exception as e:
             logger.debug("Tenant PG pool connection failed, fallback direct: %s", e)
 
@@ -75,8 +78,9 @@ def pg_tenants_connection():
         raise RuntimeError("No tenant PostgreSQL URL configured")
     import psycopg
 
-    with psycopg.connect(url, row_factory=_dict_row_factory(), connect_timeout=3) as conn:
-        yield conn
+    with time_block("PG.connect[tenants:direct]"):
+        with psycopg.connect(url, row_factory=_dict_row_factory(), connect_timeout=3) as conn:
+            yield wrap_connection(conn, "pg:tenants")
 
 
 def _is_transient(e: Exception) -> bool:
