@@ -235,7 +235,9 @@ function makeFaqs(p, openingHours) {
 function getAutoReply(text, faqs) {
   const t = norm(text);
   if (t.includes("urgence")) return "En cas d'urgence medicale, appelez le 15 ou le 112.";
-  if (t.includes("horaire") || t.includes("ouvert")) return faqs.find((f) => f.id === "f4")?.a || "Je peux vous donner les horaires.";
+  if (t.includes("horaire") || t.includes("horraire") || t.includes("ouvert")) {
+    return faqs.find((f) => f.id === "f4")?.a || "Je peux vous donner les horaires.";
+  }
   if (t.includes("adresse") || t.includes("acces") || t.includes("venir")) return faqs.find((f) => f.id === "f3")?.a || "Je peux vous indiquer comment venir.";
   if (t.includes("document") || t.includes("carte vitale")) return faqs.find((f) => f.id === "f2")?.a || "Je peux vous preciser les documents utiles.";
   if (t.includes("nouveau")) return faqs.find((f) => f.id === "f1")?.a || "Je peux vous indiquer si le cabinet accepte de nouveaux patients.";

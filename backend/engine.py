@@ -1559,8 +1559,8 @@ class Engine:
                     intent = strong_intent
                     r.source = f"{getattr(r, 'source', 'router')}+strong_override"
                     r.confidence = max(getattr(r, "confidence", 0.0), 0.95)
-            # FAQ strong override (UNCLEAR -> FAQ si lexique fort)
-            if strong_intent == "FAQ" and intent == "UNCLEAR":
+            # FAQ strong override (UNCLEAR/REPEAT -> FAQ si lexique fort ; « quoi » seul ≠ répéter)
+            if strong_intent == "FAQ" and intent in ("UNCLEAR", "REPEAT"):
                 intent = "FAQ"
                 r.source = f"{getattr(r, 'source', 'router')}+strong_override"
                 r.confidence = max(getattr(r, "confidence", 0.0), 0.85)

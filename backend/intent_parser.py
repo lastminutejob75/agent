@@ -98,6 +98,7 @@ _ORDONNANCE_LEXICON = [
 _FAQ_STRONG_LEXICON = [
     "adresse", "ou etes vous", "ou est", "c est ou",
     "horaires", "horaire", "heures d ouverture", "ouvert", "ferme",
+    "c est quoi vos", "c quoi vos", "quels sont vos",
     "tarif", "tarifs", "prix", "combien coute",
     "parking", "acces", "telephone du cabinet",
     "vacance", "vacances", "conge", "conges", "part en vacance",
@@ -187,17 +188,43 @@ _CHAT_SHORTHAND_PATTERNS = [
     (re.compile(r"\bjv\s+(?:un\s+)?rdv\b", re.IGNORECASE), "je veux un rdv"),
     (re.compile(r"\bprendre\s+rdv\b", re.IGNORECASE), "prendre un rdv"),
     (re.compile(r"\bun\s+rdv\s+svp\b", re.IGNORECASE), "je veux un rdv"),
+    (re.compile(r"\bc\s+quoi\b", re.IGNORECASE), "c est quoi"),
+    (re.compile(r"\bc\s+est\s+combien\b", re.IGNORECASE), "c est combien"),
 ]
+# Fautes courantes chat (horraires, quelle sont…)
+_CHAT_TYPO_PATTERNS = [
+    (re.compile(r"\bhorraires\b", re.IGNORECASE), "horaires"),
+    (re.compile(r"\bhorraire\b", re.IGNORECASE), "horaire"),
+    (re.compile(r"\bquelle\s+sont\b", re.IGNORECASE), "quels sont"),
+]
+# « quoi » dans une question d'info ≠ « répétez » (ex. c quoi vos horaires)
+_INFO_QUESTION_MARKERS = (
+    "c est quoi", "c quoi", "qu est ce que", "quest ce que",
+    "quels sont", "quelles sont", "quelle est", "quel est",
+    "c est combien", "ca coute", "c est ou", "vous etes ou",
+)
 
 
 def expand_chat_shorthand(raw: str) -> str:
-    """Abréviations chat web (je v in rdv, jv rdv…)."""
+    """Abréviations chat web (je v in rdv, jv rdv, c quoi…)."""
     t = (raw or "").strip()
     if not t:
         return t
     for pattern, replacement in _CHAT_SHORTHAND_PATTERNS:
         t = pattern.sub(replacement, t)
+    for pattern, replacement in _CHAT_TYPO_PATTERNS:
+        t = pattern.sub(replacement, t)
     return t
+
+
+def _is_info_question(text: str) -> bool:
+    """Question d'information cabinet (horaires, adresse…) — pas une demande de répéter."""
+    t = normalize_stt_text(text)
+    if not t:
+        return False
+    if _is_faq_keywords(text):
+        return True
+    return any(m in t for m in _INFO_QUESTION_MARKERS)
 
 
 def normalize_stt_text(raw: str) -> str:
@@ -346,6 +373,8 @@ def extract_slot_choice(text: str, num_slots: int = 3) -> Optional[int]:
 def _is_repeat(text: str) -> bool:
     t = normalize_stt_text(text)
     if not t:
+        return False
+    if _is_info_question(text):
         return False
     tokens = t.split()
     if any(w in _REPEAT_SINGLE_WORDS for w in tokens):

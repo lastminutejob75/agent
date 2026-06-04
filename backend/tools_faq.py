@@ -11,8 +11,13 @@ logger = logging.getLogger(__name__)
 
 
 def _norm(s: str) -> str:
-    """Normalisation simple V1 (déterministe)."""
-    return (s or "").strip().lower()
+    """Normalisation alignée sur le chat (abréviations, typos, accents)."""
+    try:
+        from backend.intent_parser import normalize_stt_text
+
+        return normalize_stt_text(s)
+    except Exception:
+        return (s or "").strip().lower()
 
 
 @dataclass(frozen=True)
@@ -100,6 +105,8 @@ def default_faq_store() -> FaqStore:
         
         # HORAIRES - plusieurs variations (dont réponses courtes après "question ou rdv ?")
         FaqItem(faq_id="FAQ_HORAIRES", question="quels sont vos horaires", answer=REPONSE_HORAIRES),
+        FaqItem(faq_id="FAQ_HORAIRES", question="c est quoi vos horaires", answer=REPONSE_HORAIRES),
+        FaqItem(faq_id="FAQ_HORAIRES", question="c quoi vos horaires", answer=REPONSE_HORAIRES),
         FaqItem(faq_id="FAQ_HORAIRES", question="les horaires", answer=REPONSE_HORAIRES),
         FaqItem(faq_id="FAQ_HORAIRES", question="horaires", answer=REPONSE_HORAIRES),
         FaqItem(faq_id="FAQ_HORAIRES", question="horaires ouverture", answer=REPONSE_HORAIRES),
@@ -169,6 +176,7 @@ def default_faq_store() -> FaqStore:
 _CATEGORY_VARIATIONS: Dict[str, List[str]] = {
     "horaires": [
         "horaires", "les horaires", "quels sont vos horaires",
+        "c est quoi vos horaires", "c quoi vos horaires",
         "horaires ouverture", "vous êtes ouvert quand",
         "c'est ouvert à quelle heure", "ouvert le samedi",
         "heures ouverture", "à quelle heure vous ouvrez",
