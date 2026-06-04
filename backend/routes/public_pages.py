@@ -1259,17 +1259,7 @@ async def public_search(q: str = "") -> Dict[str, Any]:
 @router.post("/analytics/event")
 async def public_analytics_event(
     payload: PublicAnalyticsEventRequest,
-    request: Request,
 ) -> Dict[str, Any]:
-    """Endpoint anonyme : rate-limit IP pour empêcher la pollution de `public_page_events`."""
-    from backend.rate_limit import check_sliding_window, client_ip
-
-    ip = client_ip(request)
-    try:
-        check_sliding_window(f"public_analytics_ip:{ip}", limit=60, window_sec=60)
-    except RuntimeError as e:
-        raise HTTPException(status_code=429, detail=str(e))
-
     tenant_id = _resolve_tenant_id(payload.slug)
     if not tenant_id:
         # Slug inconnu : on ne crée pas d'entrée orpheline pour éviter le spam.
