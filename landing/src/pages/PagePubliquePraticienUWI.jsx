@@ -1415,6 +1415,12 @@ export default function PagePubliquePraticienUWI() {
     return null;
   }, [messages]);
 
+  const contactFormOpen = Boolean(inlineSlot || modalSlot || actionFlowMode);
+
+  useEffect(() => {
+    if (contactFormOpen) setInput("");
+  }, [contactFormOpen]);
+
   const chooseSlot = useCallback((slot) => {
     if (slotsRefreshing) return;
     if (slotsMeta.source === "agenda" && !slot?.startIso) {
@@ -1422,6 +1428,7 @@ export default function PagePubliquePraticienUWI() {
       return;
     }
     const replace = Boolean(inlineSlot);
+    setInput("");
     setInlineSlot(slot);
     push([
       { from: "patient", text: `${replace ? "Je prefere le creneau " : "Je souhaite le creneau "}${slot.label}.` },
@@ -2010,7 +2017,11 @@ export default function PagePubliquePraticienUWI() {
         </div>
 
         <section className="mainCard">
-          <section className="chatHero" ref={chatHeroRef}>
+          <section
+            className={`chatHero${contactFormOpen ? " chatHeroBookingFocus" : ""}`}
+            ref={chatHeroRef}
+            aria-busy={contactFormOpen}
+          >
             <div className="chatHeader">
               <ClaraPortrait size={54} />
               <div className="chatHeaderText">
@@ -2137,23 +2148,26 @@ export default function PagePubliquePraticienUWI() {
               </div>
             </div>
 
-            <div className="chatComposerBar">
-              <div className="composerInputWrap">
-                <span className="composerInputIcon">☺</span>
-                <input
-                  value={input}
-                  onChange={(event) => setInput(event.target.value)}
-                  onKeyDown={(event) => event.key === "Enter" && send()}
-                  placeholder={inputExamples[placeholderIdx]}
-                  aria-label="Message a Clara"
-                />
+            {!contactFormOpen ? (
+              <div className="chatComposerBar">
+                <div className="composerInputWrap">
+                  <span className="composerInputIcon">☺</span>
+                  <input
+                    value={input}
+                    onChange={(event) => setInput(event.target.value)}
+                    onKeyDown={(event) => event.key === "Enter" && send()}
+                    placeholder={inputExamples[placeholderIdx]}
+                    aria-label="Message a Clara"
+                  />
+                </div>
+                <button className="composerSendBtn" onClick={send} type="button">
+                  Envoyer
+                </button>
               </div>
-              <button className="composerSendBtn" onClick={send} type="button">
-                Envoyer
-              </button>
-            </div>
+            ) : null}
           </section>
 
+          {!contactFormOpen ? (
           <div className="actionRows">
             <div className="actionRow">
               <span className="actionLabel">Actions rapides</span>
@@ -2172,6 +2186,7 @@ export default function PagePubliquePraticienUWI() {
               <div className="faqLinks">{faqs.map((faq) => <button key={faq.id} onClick={() => { ask(faq.q); trackPublicEvent({ slug, event: "faq_clicked", source: sourceRef.current, question: faq.q }); }} type="button">{faq.q}</button>)}</div>
             </div>
           </div>
+          ) : null}
           <div className="urgencyNote">⚠️ Urgence medicale : appelez le <strong>15</strong> ou le <strong>112</strong>. N'utilisez pas ce chat.</div>
         </section>
 
@@ -2198,9 +2213,9 @@ export default function PagePubliquePraticienUWI() {
       </div>
       <button
         type="button"
-        className={`mobileStickyCta${composerOutOfView ? " show" : ""}`}
+        className={`mobileStickyCta${composerOutOfView && !contactFormOpen ? " show" : ""}`}
         onClick={scrollToComposer}
-        aria-hidden={!composerOutOfView}
+        aria-hidden={!composerOutOfView || contactFormOpen}
       >
         <span className="mobileStickyCtaIcon" aria-hidden="true">📅</span>
         Reserver un creneau
@@ -2260,6 +2275,8 @@ header a.wa{color:#1b6d34;border-color:#cce9d2}
 .slotsStripMore,.slotsStripAlt{flex-shrink:0;width:36px;height:36px;border-radius:10px;border:1px solid rgba(0,156,164,.25);background:#fff;color:#006b73;font-size:16px;font-weight:900}
 .chatScroll{flex:1;min-height:140px;overflow-y:auto;background:#fff;border-top:1px solid #e3ecef;border-bottom:1px solid #e3ecef;scroll-behavior:smooth}
 .chatScrollInner{display:flex;flex-direction:column;justify-content:flex-end;gap:12px;min-height:100%;padding:14px 16px}
+.chatHero.chatHeroBookingFocus .chatScroll{border-bottom:none;border-radius:0 0 20px 20px}
+.chatHero.chatHeroBookingFocus .inlineCard{margin-bottom:4px}
 .chatComposerBar{flex-shrink:0;display:grid;grid-template-columns:1fr 140px;gap:10px;align-items:center;padding:12px 14px;background:#fff;border-radius:0 0 22px 22px}
 .chatComposerBar .composerInputWrap{min-height:52px}
 .chatComposerBar .composerSendBtn{height:52px;font-size:15px}
