@@ -487,6 +487,78 @@ function emailValidationError(raw) {
   return "";
 }
 
+function buildBookingSuccessClipboardText(success, cabinetName = "") {
+  if (!success) return "";
+  const lines = [];
+  lines.push(success.confirmed ? "Rendez-vous confirme" : "Demande enregistree");
+  if (cabinetName) lines.push(cabinetName);
+  if (success.message) lines.push(success.message);
+  if (success.label) lines.push(success.label);
+  if (success.bookingCode) lines.push(`Code rendez-vous : ${success.bookingCode}`);
+  return lines.filter(Boolean).join("\n");
+}
+
+async function copyTextToClipboard(text) {
+  if (!text) return false;
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    /* fallback */
+  }
+  if (typeof document === "undefined") return false;
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.left = "-9999px";
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch {
+    ok = false;
+  }
+  document.body.removeChild(ta);
+  return ok;
+}
+
+function BookingSuccessCard({ success, cabinetName }) {
+  const [copyState, setCopyState] = useState("idle");
+  const copyPayload = useMemo(
+    () => buildBookingSuccessClipboardText(success, cabinetName),
+    [success, cabinetName],
+  );
+
+  const handleCopy = useCallback(async () => {
+    const ok = await copyTextToClipboard(copyPayload);
+    setCopyState(ok ? "done" : "error");
+    window.setTimeout(() => setCopyState("idle"), 2200);
+  }, [copyPayload]);
+
+  if (!success) return null;
+
+  return (
+    <div className="inlineCard bookingSuccessCard">
+      <div className="bookingSuccessIcon">✓</div>
+      <b>{success.confirmed ? "Rendez-vous confirme" : "Demande enregistree"}</b>
+      <p>{success.message}</p>
+      {success.label ? <span className="bookingSuccessSlot">{success.label}</span> : null}
+      {success.bookingCode ? (
+        <p className="bookingSuccessCode">
+          Code rendez-vous : <strong>{success.bookingCode}</strong>
+        </p>
+      ) : null}
+      <button className="bookingSuccessCopyBtn" type="button" onClick={() => void handleCopy()}>
+        {copyState === "done" ? "Copie !" : copyState === "error" ? "Copie impossible" : "Copier le message"}
+      </button>
+    </div>
+  );
+}
+
 function BookingFields({
   slot,
   slug,
@@ -1416,10 +1488,11 @@ export default function PagePubliquePraticienUWI() {
   }, [messages]);
 
   const contactFormOpen = Boolean(inlineSlot || modalSlot || actionFlowMode);
+  const hideChatComposer = contactFormOpen || Boolean(bookingSuccess);
 
   useEffect(() => {
-    if (contactFormOpen) setInput("");
-  }, [contactFormOpen]);
+    if (hideChatComposer) setInput("");
+  }, [hideChatComposer]);
 
   const chooseSlot = useCallback((slot) => {
     if (slotsRefreshing) return;
@@ -2018,9 +2091,9 @@ export default function PagePubliquePraticienUWI() {
 
         <section className="mainCard">
           <section
-            className={`chatHero${contactFormOpen ? " chatHeroBookingFocus" : ""}`}
+            className={`chatHero${hideChatComposer ? " chatHeroBookingFocus" : ""}`}
             ref={chatHeroRef}
-            aria-busy={contactFormOpen}
+            aria-busy={hideChatComposer}
           >
             <div className="chatHeader">
               <ClaraPortrait size={54} />
@@ -2120,17 +2193,7 @@ export default function PagePubliquePraticienUWI() {
                   </div>
                 ))}
                 {bookingSuccess ? (
-                  <div className="inlineCard bookingSuccessCard">
-                    <div className="bookingSuccessIcon">✓</div>
-                    <b>{bookingSuccess.confirmed ? "Rendez-vous confirme" : "Demande enregistree"}</b>
-                    <p>{bookingSuccess.message}</p>
-                    {bookingSuccess.label ? <span className="bookingSuccessSlot">{bookingSuccess.label}</span> : null}
-                    {bookingSuccess.bookingCode ? (
-                      <p className="bookingSuccessCode">
-                        Code rendez-vous : <strong>{bookingSuccess.bookingCode}</strong>
-                      </p>
-                    ) : null}
-                  </div>
+                  <BookingSuccessCard success={bookingSuccess} cabinetName={practitioner.name} />
                 ) : null}
                 {inlineSlot ? (
                   <BookingFields
@@ -2148,7 +2211,7 @@ export default function PagePubliquePraticienUWI() {
               </div>
             </div>
 
-            {!contactFormOpen ? (
+            {!hideChatComposer ? (
               <div className="chatComposerBar">
                 <div className="composerInputWrap">
                   <span className="composerInputIcon">☺</span>
@@ -2167,7 +2230,7 @@ export default function PagePubliquePraticienUWI() {
             ) : null}
           </section>
 
-          {!contactFormOpen ? (
+          {!hideChatComposer ? (
           <div className="actionRows">
             <div className="actionRow">
               <span className="actionLabel">Actions rapides</span>
@@ -2213,9 +2276,9 @@ export default function PagePubliquePraticienUWI() {
       </div>
       <button
         type="button"
-        className={`mobileStickyCta${composerOutOfView && !contactFormOpen ? " show" : ""}`}
+        className={`mobileStickyCta${composerOutOfView && !hideChatComposer ? " show" : ""}`}
         onClick={scrollToComposer}
-        aria-hidden={!composerOutOfView || contactFormOpen}
+        aria-hidden={!composerOutOfView || hideChatComposer}
       >
         <span className="mobileStickyCtaIcon" aria-hidden="true">📅</span>
         Reserver un creneau
@@ -2294,6 +2357,8 @@ header a.wa{color:#1b6d34;border-color:#cce9d2}
 .bookingSuccessSlot{display:block;margin-top:8px;font-size:13px;opacity:.85}
 .bookingSuccessCode{margin:10px 0 0;font-size:14px}
 .bookingSuccessCode strong{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.06em}
+.bookingSuccessCopyBtn{margin-top:14px;width:100%;border:1px solid #009CA4;background:#fff;color:#006b73;border-radius:12px;padding:11px 14px;font-size:14px;font-weight:800}
+.bookingSuccessCopyBtn:hover{background:#f0fbfc}
 .actionModalHint{margin:0;font-size:13px;color:#5f7375;line-height:1.45}
 .actionApptPick{display:flex;flex-direction:column;align-items:flex-start;gap:4px;width:100%;text-align:left;border:1px solid #d6eeee;background:#f8fbfb;border-radius:12px;padding:12px 14px;color:#1f3138}
 .actionApptPick strong{font-size:14px;color:#0a4a50}.actionApptPick span{font-size:12px;color:#60757b}
