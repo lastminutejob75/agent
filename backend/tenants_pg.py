@@ -42,6 +42,7 @@ def _get_tenant_pool():
         return _TENANT_POOL
     try:
         from psycopg_pool import ConnectionPool
+        from backend.pg_pool import _reset_pooled_connection
 
         _TENANT_POOL = ConnectionPool(
             conninfo=url,
@@ -49,6 +50,7 @@ def _get_tenant_pool():
             max_size=5,
             timeout=3.0,
             max_idle=300.0,
+            reset=_reset_pooled_connection,
             kwargs={"row_factory": _dict_row_factory()},
         )
         _TENANT_POOL_URL = url

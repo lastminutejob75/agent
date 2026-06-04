@@ -189,6 +189,235 @@ def get_public_profile_bundle(tenant_id: int) -> Dict[str, Any]:
     return {"profile": profile, "params": params}
 
 
+def _parse_profile_row(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not row:
+        return {}
+    langs = row.get("languages_json")
+    if isinstance(langs, str):
+        try:
+            langs = json.loads(langs)
+        except Exception:
+            langs = []
+    if not isinstance(langs, list):
+        langs = []
+    return {
+        "practitioner_name": row.get("practitioner_name") or "",
+        "cabinet_name": row.get("cabinet_name") or "",
+        "specialty": row.get("specialty") or "",
+        "phone": row.get("phone") or "",
+        "email": row.get("email") or "",
+        "address_line": row.get("address_line") or "",
+        "postal_code": row.get("postal_code") or "",
+        "city": row.get("city") or "",
+        "website_url": row.get("website_url") or "",
+        "languages": [str(v).strip() for v in langs if str(v).strip()],
+        "accepts_new_patients": bool(row.get("accepts_new_patients", True)),
+        "practitioner_photo_url": row.get("practitioner_photo_url") or "",
+        "public_slug": row.get("public_slug") or "",
+    }
+
+
+def _parse_params_json(raw: Any) -> Dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            loaded = json.loads(raw)
+            return loaded if isinstance(loaded, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _parse_assistant_row(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not row:
+        return {}
+    faq_items = row.get("faq_items_json")
+    if isinstance(faq_items, str):
+        try:
+            faq_items = json.loads(faq_items)
+        except Exception:
+            faq_items = []
+    if not isinstance(faq_items, list):
+        faq_items = []
+    return {
+        "assistant_name": row.get("assistant_name") or "Clara",
+        "welcome_message": row.get("welcome_message") or "",
+        "documents_to_bring": row.get("documents_to_bring") or "",
+        "documents_hint": row.get("documents_to_bring") or "",
+        "access_instructions": row.get("access_instructions") or "",
+        "payment_methods": row.get("payment_methods") or "",
+        "parking_info": row.get("parking_info") or "",
+        "pmr_access": row.get("pmr_access") or "",
+        "sensitive_medical_instruction": row.get("sensitive_medical_instruction") or "",
+        "escalation_instruction": row.get("escalation_instruction") or "",
+        "human_handoff_instruction": row.get("human_handoff_instruction") or "",
+        "faq_items": faq_items,
+        "vapi_assistant_id": row.get("vapi_assistant_id") or "",
+    }
+
+
+def fetch_public_practitioner_bundle_by_slug(slug: str) -> Optional[Dict[str, Any]]:
+    """
+    Charge en une seule connexion pool PG toutes les données page publique pour un slug.
+    Évite 6+ sessions PG séquentielles (SET LOCAL + SELECT répétés).
+    """
+    slug_key = (slug or "").strip().lower()
+    if not slug_key:
+        return None
+
+    if not _pg_url():
+        tid = _get_tenant_id_by_public_slug_sqlite(slug_key)
+        if not tid:
+            return None
+        bundle = get_public_profile_bundle(int(tid))
+        return {
+            "tenant_id": int(tid),
+            "profile": bundle.get("profile") or {},
+            "params": bundle.get("params") if isinstance(bundle.get("params"), dict) else {},
+            "assistant": get_assistant_settings(int(tid)) or {},
+            "reasons": list_appointment_reasons(int(tid)) or [],
+            "opening_hours": get_opening_hours(int(tid)) or [],
+        }
+
+    try:
+        from backend.pg_tenant_context import set_bypass_tenant_rls_on_connection, set_tenant_id_on_connection
+
+        with pg_tenants_connection() as conn:
+            set_bypass_tenant_rls_on_connection(conn, enabled=True)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT tenant_id FROM tenant_profiles WHERE LOWER(public_slug) = %s LIMIT 1",
+                    (slug_key,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    cur.execute(
+                        """
+                        SELECT tenant_id
+                        FROM tenant_config
+                        WHERE LOWER(params_json->>'public_slug') = %s
+                        LIMIT 1
+                        """,
+                        (slug_key,),
+                    )
+                    row = cur.fetchone()
+                if not row:
+                    return None
+                tenant_id = int(row.get("tenant_id") if hasattr(row, "get") else row[0])
+
+            set_tenant_id_on_connection(conn, tenant_id)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT practitioner_name, cabinet_name, specialty, phone, email, address_line, postal_code, city,
+                           website_url, languages_json, accepts_new_patients, practitioner_photo_url, public_slug
+                    FROM tenant_profiles
+                    WHERE tenant_id = %s
+                    """,
+                    (tenant_id,),
+                )
+                profile = _parse_profile_row(cur.fetchone())
+
+                cur.execute(
+                    "SELECT params_json FROM tenant_config WHERE tenant_id = %s",
+                    (tenant_id,),
+                )
+                params_row = cur.fetchone()
+                params = _parse_params_json(params_row.get("params_json") if params_row else None)
+
+                cur.execute(
+                    """
+                    SELECT assistant_name, welcome_message, documents_to_bring, access_instructions,
+                           payment_methods, parking_info, pmr_access, sensitive_medical_instruction,
+                           escalation_instruction, human_handoff_instruction, faq_items_json
+                    FROM tenant_assistant_settings
+                    WHERE tenant_id = %s
+                    """,
+                    (tenant_id,),
+                )
+                assistant = _parse_assistant_row(cur.fetchone())
+
+                cur.execute(
+                    """
+                    SELECT id::text, label, duration_minutes, description, enabled, allowed_for_new_patients
+                    FROM tenant_appointment_reasons
+                    WHERE tenant_id = %s
+                    ORDER BY created_at ASC
+                    """,
+                    (tenant_id,),
+                )
+                reasons = [
+                    {
+                        "id": r.get("id"),
+                        "label": r.get("label") or "",
+                        "duration_minutes": int(r.get("duration_minutes") or 30),
+                        "description": r.get("description") or "",
+                        "enabled": bool(r.get("enabled", True)),
+                        "allowed_for_new_patients": bool(r.get("allowed_for_new_patients", True)),
+                    }
+                    for r in (cur.fetchall() or [])
+                    if str(r.get("label") or "").strip()
+                ]
+
+                cur.execute(
+                    """
+                    SELECT day_of_week, is_open, morning_start, morning_end, afternoon_start, afternoon_end
+                    FROM tenant_opening_hours
+                    WHERE tenant_id = %s
+                    ORDER BY CASE day_of_week
+                        WHEN 'monday' THEN 1
+                        WHEN 'tuesday' THEN 2
+                        WHEN 'wednesday' THEN 3
+                        WHEN 'thursday' THEN 4
+                        WHEN 'friday' THEN 5
+                        WHEN 'saturday' THEN 6
+                        WHEN 'sunday' THEN 7
+                        ELSE 99 END
+                    """,
+                    (tenant_id,),
+                )
+                opening_hours = [
+                    {
+                        "day": r.get("day_of_week"),
+                        "is_open": bool(r.get("is_open")),
+                        "morning_start": r.get("morning_start") or "",
+                        "morning_end": r.get("morning_end") or "",
+                        "afternoon_start": r.get("afternoon_start") or "",
+                        "afternoon_end": r.get("afternoon_end") or "",
+                    }
+                    for r in (cur.fetchall() or [])
+                ]
+
+        if not profile and params:
+            profile = {
+                "practitioner_name": params.get("practitioner_name") or params.get("primary_practitioner_name") or "",
+                "cabinet_name": params.get("business_name") or "",
+                "specialty": params.get("specialty_label") or params.get("profession") or "",
+                "phone": params.get("phone_number") or "",
+                "email": params.get("contact_email") or "",
+                "address_line": params.get("address_line1") or params.get("address") or "",
+                "postal_code": params.get("postal_code") or "",
+                "city": params.get("city") or "",
+                "website_url": params.get("website_url") or "",
+                "languages": params.get("languages") or [],
+                "accepts_new_patients": params.get("accepts_new_patients", True),
+                "practitioner_photo_url": params.get("practitioner_photo_url") or "",
+            }
+
+        return {
+            "tenant_id": tenant_id,
+            "profile": profile,
+            "params": params,
+            "assistant": assistant,
+            "reasons": reasons,
+            "opening_hours": opening_hours,
+        }
+    except Exception as e:
+        logger.debug("fetch_public_practitioner_bundle_by_slug slug=%s err=%s", slug_key[:80], e)
+        return None
+
+
 def get_profile(tenant_id: int) -> Optional[Dict[str, Any]]:
     if not _pg_url():
         return None

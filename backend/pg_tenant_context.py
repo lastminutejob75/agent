@@ -22,10 +22,13 @@ def _is_strict_rls() -> bool:
 
 def set_bypass_tenant_rls_on_connection(conn, *, enabled: bool = True) -> None:
     """Réservé aux routes admin authentifiées (liste cross-tenant)."""
+    if getattr(conn, "_uwi_bypass_rls", None) is enabled:
+        return
     value = "on" if enabled else "off"
     try:
         with conn.cursor() as cur:
             cur.execute(f"SET LOCAL app.bypass_tenant_rls = '{value}'")
+        conn._uwi_bypass_rls = enabled
     except Exception as e:
         logger.warning("set_bypass_tenant_rls failed enabled=%s err=%s", enabled, e)
         try:
@@ -42,12 +45,16 @@ def set_tenant_id_on_connection(conn, tenant_id: Optional[int]) -> None:
     """
     if tenant_id is None or tenant_id < 1:
         return
+    tid = int(tenant_id)
+    if getattr(conn, "_uwi_current_tenant_id", None) == tid:
+        return
     try:
         with conn.cursor() as cur:
-            tenant_id_sql = str(int(tenant_id))
+            tenant_id_sql = str(tid)
             if not re.fullmatch(r"\d+", tenant_id_sql):
                 return
             cur.execute(f"SET LOCAL app.current_tenant_id = '{tenant_id_sql}'")
+        conn._uwi_current_tenant_id = tid
     except Exception as e:
         try:
             conn.rollback()
@@ -61,3 +68,12 @@ def set_tenant_id_on_connection(conn, tenant_id: Optional[int]) -> None:
             )
             raise
         logger.debug("set_tenant_id_on_connection skipped tenant_id=%s err=%s", tenant_id, e)
+
+
+def reset_pg_connection_session_state(conn) -> None:
+    """Réinitialise le cache session (appelé au retour connexion → pool)."""
+    for attr in ("_uwi_current_tenant_id", "_uwi_bypass_rls"):
+        try:
+            delattr(conn, attr)
+        except AttributeError:
+            pass

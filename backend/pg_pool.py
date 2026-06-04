@@ -19,6 +19,15 @@ def _get_pg_url() -> Optional[str]:
     return (os.environ.get("DATABASE_URL") or os.environ.get("PG_EVENTS_URL") or "").strip() or None
 
 
+def _reset_pooled_connection(conn) -> None:
+    try:
+        from backend.pg_tenant_context import reset_pg_connection_session_state
+
+        reset_pg_connection_session_state(conn)
+    except Exception:
+        pass
+
+
 def get_pool():
     """Return the singleton ConnectionPool, creating it on first call."""
     global _pool, _pool_url
@@ -35,6 +44,7 @@ def get_pool():
             max_size=max(5, min(int(os.environ.get("PG_POOL_MAX_SIZE", "12") or "12"), 32)),
             timeout=3.0,
             max_idle=300.0,
+            reset=_reset_pooled_connection,
             kwargs={"row_factory": _dict_row_factory()},
         )
         _pool_url = url

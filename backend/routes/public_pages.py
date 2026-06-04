@@ -311,24 +311,18 @@ def _map_opening_hours(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def _try_fetch_practitioner_from_cabinet_profile(slug: str) -> Optional[Dict[str, Any]]:
     """Résolution slug via cabinet_profile_pg (PG + SQLite local)."""
     try:
-        from backend.cabinet_profile_pg import (
-            get_assistant_settings,
-            get_public_profile_bundle,
-            get_tenant_id_by_public_slug,
-            get_opening_hours,
-            list_appointment_reasons,
-        )
-
-        tid = get_tenant_id_by_public_slug(slug)
-        if not tid:
-            return None
+        from backend.cabinet_profile_pg import fetch_public_practitioner_bundle_by_slug
         from backend.public_slug_cache import remember_slug_tenant
 
-        remember_slug_tenant(slug, int(tid))
-        bundle = get_public_profile_bundle(int(tid))
-        profile = bundle.get("profile") or {}
-        params = bundle.get("params") if isinstance(bundle.get("params"), dict) else {}
-        assistant = get_assistant_settings(int(tid)) or {}
+        data = fetch_public_practitioner_bundle_by_slug(slug)
+        if not data:
+            return None
+
+        tid = int(data["tenant_id"])
+        remember_slug_tenant(slug, tid)
+        profile = data.get("profile") or {}
+        params = data.get("params") if isinstance(data.get("params"), dict) else {}
+        assistant = data.get("assistant") or {}
         cabinet_name = str(profile.get("cabinet_name") or params.get("business_name") or "").strip()
         practitioner_name = str(profile.get("practitioner_name") or params.get("practitioner_name") or "").strip()
         name = practitioner_name or cabinet_name
@@ -336,7 +330,7 @@ def _try_fetch_practitioner_from_cabinet_profile(slug: str) -> Optional[Dict[str
             return None
         motives = [
             str(r.get("label") or "").strip()
-            for r in (list_appointment_reasons(int(tid)) or [])
+            for r in (data.get("reasons") or [])
             if isinstance(r, dict) and r.get("enabled", True) and str(r.get("label") or "").strip()
         ]
         if not motives:
@@ -372,7 +366,7 @@ def _try_fetch_practitioner_from_cabinet_profile(slug: str) -> Optional[Dict[str
             "fee": str(assistant.get("payment_methods") or params.get("payment_methods") or DEMO_PRACTITIONER["fee"]),
             "voiceEnabled": bool(vapi_assistant_id),
             "vapiAssistantId": vapi_assistant_id,
-            "openingHours": _map_opening_hours(get_opening_hours(int(tid)) or []),
+            "openingHours": _map_opening_hours(data.get("opening_hours") or []),
             "newPatients": "Oui" if profile.get("accepts_new_patients", True) else "Selon disponibilite",
             "documents": str(assistant.get("documents_hint") or params.get("documents_hint") or DEMO_PRACTITIONER["documents"]),
         }
@@ -581,11 +575,20 @@ def _ensure_public_events_schema() -> None:
         logger.warning("public events schema init failed: %s", exc)
 
 
-def _resolve_tenant_id(slug: str) -> Optional[str]:
-    practitioner = _try_fetch_practitioner(slug)
-    if practitioner and practitioner.get("tenantId"):
-        return str(practitioner["tenantId"])
+def _coerce_tenant_id_for_db(tenant_id: Optional[str]) -> Optional[int]:
+    if tenant_id is None:
+        return None
+    raw = str(tenant_id).strip()
+    if raw.isdigit():
+        return int(raw)
     return None
+
+
+def _resolve_tenant_id(slug: str) -> Optional[str]:
+    from backend.public_slug_cache import tenant_id_for_slug
+
+    tid = tenant_id_for_slug(slug)
+    return str(tid) if tid else None
 
 
 def _insert_public_event(payload: PublicAnalyticsEventRequest, tenant_id: Optional[str]) -> None:
@@ -1260,11 +1263,13 @@ async def public_search(q: str = "") -> Dict[str, Any]:
 async def public_analytics_event(
     payload: PublicAnalyticsEventRequest,
 ) -> Dict[str, Any]:
-    tenant_id = _resolve_tenant_id(payload.slug)
+    from backend.public_slug_cache import tenant_id_for_slug
+
+    tenant_id = tenant_id_for_slug(payload.slug)
     if not tenant_id:
         # Slug inconnu : on ne crée pas d'entrée orpheline pour éviter le spam.
         return {"ok": True, "ignored": True}
-    _insert_public_event(payload, tenant_id)
+    _insert_public_event(payload, str(tenant_id))
     return {"ok": True}
 
 
