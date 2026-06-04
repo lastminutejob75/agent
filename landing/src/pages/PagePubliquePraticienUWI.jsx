@@ -213,9 +213,14 @@ function rulesHint(rules, mode) {
 
 async function trackPublicEvent(payload) {
   try {
+    let body = payload;
+    if (!body?.tenant_id && body?.slug && typeof window !== "undefined") {
+      const storedTenantId = window.sessionStorage?.getItem(`uwi_public_tenant:${body.slug}`);
+      if (storedTenantId) body = { ...body, tenant_id: Number(storedTenantId) || undefined };
+    }
     await fetchJson("/api/public/analytics/event", {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: JSON.stringify(body),
     });
   } catch {
     // Tracking non-bloquant.
@@ -1484,7 +1489,12 @@ export default function PagePubliquePraticienUWI() {
         );
         if (cancelled) return;
         const tid = practitionerData?.tenantId ?? practitionerData?.tenant_id;
-        if (tid != null && tid !== "") tenantIdRef.current = Number(tid) || null;
+        if (tid != null && tid !== "") {
+          tenantIdRef.current = Number(tid) || null;
+          if (tenantIdRef.current && typeof window !== "undefined") {
+            window.sessionStorage?.setItem(`uwi_public_tenant:${slug}`, String(tenantIdRef.current));
+          }
+        }
         setPractitioner({
           ...defaultPractitioner,
           ...practitionerData,
@@ -1983,6 +1993,7 @@ export default function PagePubliquePraticienUWI() {
   const confirm = useCallback(async (booking) => {
     const payload = {
       slug,
+      ...(tenantIdRef.current ? { tenant_id: tenantIdRef.current } : {}),
       slotId: String(booking.slot.id || booking.slot.index || "1"),
       slotLabel: booking.slot.label,
       motif: booking.motif,

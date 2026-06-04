@@ -21,8 +21,6 @@ from backend.pg_pool import pg_connection
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/public", tags=["public_pages"])
-_public_events_schema_ready = False
-_public_bookings_schema_ready = False
 
 
 DEMO_PRACTITIONER: Dict[str, Any] = {
@@ -83,6 +81,8 @@ DEMO_SEARCH = [
 
 class PublicBookingRequest(BaseModel):
     slug: str = Field(..., min_length=2, max_length=160)
+    tenant_id: Optional[int] = None
+    tenantId: Optional[int] = None
     slotId: str = Field(..., min_length=1, max_length=80)
     slotLabel: str = Field(..., min_length=2, max_length=140)
     motif: str = Field(..., min_length=2, max_length=120)
@@ -121,6 +121,8 @@ class PublicAnalyticsEventRequest(BaseModel):
     slug: str = Field(..., min_length=2, max_length=160)
     event: str = Field(..., min_length=2, max_length=80)
     source: str = Field("direct", max_length=40)
+    tenant_id: Optional[int] = None
+    tenantId: Optional[int] = None
     slotId: Optional[str] = Field(None, max_length=80)
     slotLabel: Optional[str] = Field(None, max_length=140)
     motif: Optional[str] = Field(None, max_length=120)
@@ -312,14 +314,12 @@ def _try_fetch_practitioner_from_cabinet_profile(slug: str) -> Optional[Dict[str
     """Résolution slug via cabinet_profile_pg (PG + SQLite local)."""
     try:
         from backend.cabinet_profile_pg import fetch_public_practitioner_bundle_by_slug
-        from backend.public_slug_cache import remember_slug_tenant
 
         data = fetch_public_practitioner_bundle_by_slug(slug)
         if not data:
             return None
 
         tid = int(data["tenant_id"])
-        remember_slug_tenant(slug, tid)
         profile = data.get("profile") or {}
         params = data.get("params") if isinstance(data.get("params"), dict) else {}
         assistant = data.get("assistant") or {}
@@ -478,6 +478,16 @@ def _dispatch_booking_notifications(
     return patient_sms_sent, cabinet_sms_sent, cabinet_email_sent
 
 
+def _dispatch_booking_notifications_for_slug(
+    payload: PublicBookingRequest,
+    booking_status: str,
+    confirmation_id: str,
+    booking_code: str,
+) -> None:
+    practitioner = _try_fetch_practitioner(payload.slug) or _demo_practitioner(payload.slug)
+    _dispatch_booking_notifications(practitioner, payload, booking_status, confirmation_id, booking_code)
+
+
 def _send_sms(to_number: str, body: str) -> bool:
     sid = (os.environ.get("TWILIO_ACCOUNT_SID") or "").strip()
     token = (os.environ.get("TWILIO_AUTH_TOKEN") or "").strip()
@@ -525,56 +535,6 @@ def _insert_booking(
     )
 
 
-def _ensure_public_events_schema() -> None:
-    global _public_events_schema_ready
-    if _public_events_schema_ready:
-        return
-    try:
-        with pg_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS public_page_events (
-                      id UUID PRIMARY KEY,
-                      tenant_id BIGINT REFERENCES tenants(tenant_id) ON DELETE SET NULL,
-                      slug VARCHAR(160) NOT NULL,
-                      event_name VARCHAR(80) NOT NULL,
-                      source VARCHAR(40) DEFAULT 'direct',
-                      slot_id VARCHAR(80),
-                      slot_label VARCHAR(140),
-                      motif VARCHAR(120),
-                      question VARCHAR(180),
-                      query VARCHAR(180),
-                      results_count INT,
-                      metadata JSONB DEFAULT '{}'::jsonb,
-                      created_at TIMESTAMP DEFAULT NOW()
-                    )
-                    """
-                )
-                cur.execute(
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_public_page_events_slug_created
-                    ON public_page_events (slug, created_at DESC)
-                    """
-                )
-                cur.execute(
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_public_page_events_tenant_created
-                    ON public_page_events (tenant_id, created_at DESC)
-                    """
-                )
-                cur.execute(
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_public_page_events_event_created
-                    ON public_page_events (event_name, created_at DESC)
-                    """
-                )
-                conn.commit()
-        _public_events_schema_ready = True
-    except Exception as exc:
-        logger.warning("public events schema init failed: %s", exc)
-
-
 def _coerce_tenant_id_for_db(tenant_id: Optional[str]) -> Optional[int]:
     if tenant_id is None:
         return None
@@ -585,14 +545,62 @@ def _coerce_tenant_id_for_db(tenant_id: Optional[str]) -> Optional[int]:
 
 
 def _resolve_tenant_id(slug: str) -> Optional[str]:
-    from backend.public_slug_cache import tenant_id_for_slug
+    slug_key = (slug or "").strip().lower()
+    if not slug_key:
+        return None
+    try:
+        with pg_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT tenant_id FROM tenant_profiles WHERE LOWER(public_slug) = %s LIMIT 1",
+                    (slug_key,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    cur.execute(
+                        """
+                        SELECT tenant_id
+                        FROM tenant_config
+                        WHERE LOWER(params_json->>'public_slug') = %s
+                           OR LOWER(params_json->>'slug') = %s
+                        LIMIT 1
+                        """,
+                        (slug_key, slug_key),
+                    )
+                    row = cur.fetchone()
+    except Exception as exc:
+        logger.debug("public tenant resolve failed slug=%s: %s", slug_key[:80], exc)
+        return None
+    if not row:
+        return None
+    value = row.get("tenant_id") if hasattr(row, "get") else row[0]
+    return str(value) if value is not None else None
 
-    tid = tenant_id_for_slug(slug)
-    return str(tid) if tid else None
+
+def _tenant_id_from_analytics_payload(payload: PublicAnalyticsEventRequest) -> Optional[int]:
+    for value in (payload.tenant_id, payload.tenantId):
+        try:
+            tid = int(value) if value is not None else 0
+        except (TypeError, ValueError):
+            tid = 0
+        if tid > 0:
+            return tid
+    resolved = _resolve_tenant_id(payload.slug)
+    return _coerce_tenant_id_for_db(resolved)
+
+
+def _tenant_id_from_booking_payload(payload: PublicBookingRequest) -> Optional[int]:
+    for value in (payload.tenant_id, payload.tenantId):
+        try:
+            tid = int(value) if value is not None else 0
+        except (TypeError, ValueError):
+            tid = 0
+        if tid > 0:
+            return tid
+    return None
 
 
 def _insert_public_event(payload: PublicAnalyticsEventRequest, tenant_id: Optional[str]) -> None:
-    _ensure_public_events_schema()
     event_name = _norm(payload.event).replace(" ", "_")
     if not event_name:
         return
@@ -632,7 +640,6 @@ def _insert_public_event(payload: PublicAnalyticsEventRequest, tenant_id: Option
 
 
 def _analytics_summary(slug: str, days: int) -> Dict[str, Any]:
-    _ensure_public_events_schema()
     safe_days = max(1, min(int(days or 30), 365))
     base = {
         "slug": slug,
@@ -720,33 +727,16 @@ def _load_public_slugs() -> List[str]:
     return slugs
 
 
-_PRACTITIONER_HTTP_CACHE: Dict[str, tuple] = {}
-_PRACTITIONER_CACHE_TTL = 300.0
-
-
 @router.get("/practitioner/{slug}")
 async def get_public_practitioner(slug: str, requireExists: bool = Query(False)) -> Dict[str, Any]:
-    import time
-
-    cache_key = f"{slug}:{bool(requireExists)}"
-    hit = _PRACTITIONER_HTTP_CACHE.get(cache_key)
-    if hit and (time.time() - hit[0]) < _PRACTITIONER_CACHE_TTL:
-        return hit[1]
-
     practitioner = _try_fetch_practitioner(slug)
     if practitioner:
-        out = {**practitioner, "source": "tenant"}
-        _PRACTITIONER_HTTP_CACHE[cache_key] = (time.time(), out)
-        return out
+        return {**practitioner, "source": "tenant"}
     if slug == DEMO_PRACTITIONER["slug"]:
-        out = {**_demo_practitioner(slug), "source": "demo"}
-        _PRACTITIONER_HTTP_CACHE[cache_key] = (time.time(), out)
-        return out
+        return {**_demo_practitioner(slug), "source": "demo"}
     if requireExists:
         raise HTTPException(status_code=404, detail="public_practitioner_not_found")
-    out = {**_demo_practitioner(slug), "source": "demo"}
-    _PRACTITIONER_HTTP_CACHE[cache_key] = (time.time(), out)
-    return out
+    return {**_demo_practitioner(slug), "source": "demo"}
 
 
 _DEFAULT_PUBLIC_MOTIFS = ["Consultation", "Suivi", "Premiere consultation", "Renouvellement"]
@@ -1113,33 +1103,13 @@ def _format_slot_from_display(
     }
 
 
-_SLOTS_HTTP_CACHE: Dict[str, tuple] = {}
-_SLOTS_CACHE_TTL = 120.0
 _SLOTS_FETCH_TIMEOUT = 8.0
 
 
-def _slots_cache_key(slug: str, safe_count: int) -> str:
-    return f"{slug}:{safe_count}"
-
-
-def _get_cached_slots_response(slug: str, safe_count: int) -> Optional[Dict[str, Any]]:
+def _slots_response(out: Dict[str, Any]) -> Dict[str, Any]:
     import time
 
-    hit = _SLOTS_HTTP_CACHE.get(_slots_cache_key(slug, safe_count))
-    if hit and (time.time() - hit[0]) < _SLOTS_CACHE_TTL:
-        out = dict(hit[1])
-        out["cached"] = True
-        out["fetchedAt"] = int(hit[0])
-        return out
-    return None
-
-
-def _store_slots_response(slug: str, safe_count: int, out: Dict[str, Any]) -> Dict[str, Any]:
-    import time
-
-    payload = {**out, "cached": False, "fetchedAt": int(time.time())}
-    _SLOTS_HTTP_CACHE[_slots_cache_key(slug, safe_count)] = (payload["fetchedAt"], payload)
-    return payload
+    return {**out, "fetchedAt": int(time.time())}
 
 
 def prewarm_slots_for_slug(slug: str, count: int = 12) -> Dict[str, Any]:
@@ -1147,24 +1117,20 @@ def prewarm_slots_for_slug(slug: str, count: int = 12) -> Dict[str, Any]:
     Force le remplissage du cache créneaux pour un slug (cron / startup).
     Retourne { ok, skipped, slug, slots, source }.
     """
-    from backend.public_slug_cache import tenant_id_for_slug
-
     safe_count = max(1, min(int(count or 12), 24))
     slug = (slug or "").strip()
     if not slug:
         return {"ok": False, "skipped": True, "slug": slug}
 
-    tenant_id = tenant_id_for_slug(slug)
+    tenant_id = _resolve_tenant_id(slug)
     if not tenant_id:
         out = {"slug": slug, "slots": DEMO_SLOTS[:safe_count], "source": "demo"}
-        _store_slots_response(slug, safe_count, out)
         return {"ok": True, "skipped": False, "slug": slug, "slots": len(out["slots"]), "source": "demo"}
 
     try:
         out = _fetch_public_slots_payload(int(tenant_id), slug, safe_count)
         if not out.get("slots"):
             out = {"slug": slug, "slots": DEMO_SLOTS[:safe_count], "source": "demo", "pending": True}
-        _store_slots_response(slug, safe_count, out)
         return {
             "ok": True,
             "skipped": False,
@@ -1210,22 +1176,13 @@ def _fetch_public_slots_payload(tenant_id: int, slug: str, safe_count: int) -> D
 @router.get("/slots/{slug}")
 async def get_public_slots(slug: str, count: int = 6) -> Dict[str, Any]:
     import asyncio
-    import time
-
-    from backend.public_slug_cache import tenant_id_for_slug
 
     safe_count = max(1, min(int(count or 6), 24))
-    cached = _get_cached_slots_response(slug, safe_count)
-    if cached is not None:
-        return cached
 
-    tenant_id = tenant_id_for_slug(slug)
+    tenant_id = _resolve_tenant_id(slug)
     if not tenant_id:
         out = {"slug": slug, "slots": DEMO_SLOTS[:safe_count], "source": "demo"}
-        return _store_slots_response(slug, safe_count, out)
-
-    cache_key = _slots_cache_key(slug, safe_count)
-    stale_hit = _SLOTS_HTTP_CACHE.get(cache_key)
+        return _slots_response(out)
 
     try:
         out = await asyncio.wait_for(
@@ -1234,15 +1191,12 @@ async def get_public_slots(slug: str, count: int = 6) -> Dict[str, Any]:
         )
     except asyncio.TimeoutError:
         logger.warning("public slots timeout slug=%s tenant=%s", slug, tenant_id)
-        if stale_hit and stale_hit[1].get("slots"):
-            stale = {**stale_hit[1], "stale": True, "cached": True, "fetchedAt": int(stale_hit[0])}
-            return stale
         out = {"slug": slug, "slots": DEMO_SLOTS[:safe_count], "source": "demo", "pending": True}
     except Exception as exc:
         logger.warning("public slots failed slug=%s tenant=%s: %s", slug, tenant_id, exc)
         out = {"slug": slug, "slots": DEMO_SLOTS[:safe_count], "source": "demo"}
 
-    return _store_slots_response(slug, safe_count, out)
+    return _slots_response(out)
 
 
 @router.get("/search")
@@ -1262,14 +1216,13 @@ async def public_search(q: str = "") -> Dict[str, Any]:
 @router.post("/analytics/event")
 async def public_analytics_event(
     payload: PublicAnalyticsEventRequest,
+    background_tasks: BackgroundTasks,
 ) -> Dict[str, Any]:
-    from backend.public_slug_cache import tenant_id_for_slug
-
-    tenant_id = tenant_id_for_slug(payload.slug)
+    tenant_id = _tenant_id_from_analytics_payload(payload)
     if not tenant_id:
         # Slug inconnu : on ne crée pas d'entrée orpheline pour éviter le spam.
         return {"ok": True, "ignored": True}
-    _insert_public_event(payload, str(tenant_id))
+    background_tasks.add_task(_insert_public_event, payload, str(tenant_id))
     return {"ok": True}
 
 
@@ -1386,14 +1339,17 @@ async def public_book(
         raise HTTPException(status_code=429, detail=str(e))
 
     payload = _sanitize_public_booking_payload(payload)
-    practitioner = _try_fetch_practitioner(payload.slug) or _demo_practitioner(payload.slug)
-    tenant_id_raw = practitioner.get("tenantId")
-    tenant_id: Optional[int] = None
-    if tenant_id_raw is not None:
-        try:
-            tenant_id = int(tenant_id_raw)
-        except (TypeError, ValueError):
-            tenant_id = None
+    tenant_id = _tenant_id_from_booking_payload(payload)
+    tenant_id_raw: Optional[Any] = tenant_id
+    practitioner: Optional[Dict[str, Any]] = None
+    if tenant_id is None:
+        practitioner = _try_fetch_practitioner(payload.slug) or _demo_practitioner(payload.slug)
+        tenant_id_raw = practitioner.get("tenantId")
+        if tenant_id_raw is not None:
+            try:
+                tenant_id = int(tenant_id_raw)
+            except (TypeError, ValueError):
+                tenant_id = None
 
     booking_status = "pending"
     booking_reason: Optional[str] = None
@@ -1443,8 +1399,7 @@ async def public_book(
     # reste en lecture seule via /api/public/praticiens/{slug}/patient-hint.
 
     background_tasks.add_task(
-        _dispatch_booking_notifications,
-        practitioner,
+        _dispatch_booking_notifications_for_slug,
         payload,
         booking_status,
         confirmation_id,
@@ -1471,7 +1426,7 @@ async def public_book(
         confirmation_id,
         booking_status,
     )
-    followup = _build_whatsapp_followup(practitioner, payload)
+    followup = _build_whatsapp_followup(practitioner, payload) if practitioner else {"enabled": False, "whatsappUrl": None}
     from backend.booking_code import format_booking_code
 
     return {

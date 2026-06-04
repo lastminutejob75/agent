@@ -93,7 +93,6 @@ def insert_public_booking(
     booking_code: Optional[str] = None,
     google_event_id: Optional[str] = None,
 ) -> Dict[str, str]:
-    ensure_public_bookings_schema()
     start_ts = resolve_booking_start_ts(start_iso, slot_label)
     if not start_ts:
         logger.warning(
