@@ -1282,7 +1282,7 @@ def _tenant_owns_slug(request: Request, slug: str) -> bool:
 
 @router.get("/analytics/{slug}/summary")
 async def public_analytics_summary(slug: str, request: Request, days: int = 30) -> Dict[str, Any]:
-    """Resume des stats analytics publiques d'une page praticien.
+    """Resume des stats analytics publiques d'une page raticien.
 
     Audit securite 2026-05 : auth requise pour eviter l'enumeration concurrentielle.
     Acces autorise si :
