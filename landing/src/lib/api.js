@@ -288,12 +288,15 @@ export const api = {
   tenantGetPatient: (phone, opts = {}) => {
     const params = new URLSearchParams();
     if (opts?.lightweight) params.set("lightweight", "1");
+    if (opts?.includeDocuments) params.set("include_documents", "1");
     const qs = params.toString();
     return request(
       `/api/tenant/patients/${encodeURIComponent(phone)}${qs ? `?${qs}` : ""}`,
       { tenant: true },
     );
   },
+  tenantGetPatientDocuments: (phone) =>
+    request(`/api/tenant/patients/${encodeURIComponent(phone)}/documents`, { tenant: true }),
   tenantUpdatePatient: (phone, body) =>
     request(`/api/tenant/patients/${encodeURIComponent(phone)}`, { method: "PATCH", body, tenant: true }),
   tenantGetPatientNotes: (phone, params = "") =>

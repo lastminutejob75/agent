@@ -655,6 +655,9 @@ _CABINET_CLIENT_COLS_BASE = (
 _CABINET_CLIENT_COLS_EXTENDED = (
     f"{_CABINET_CLIENT_COLS_BASE}, birth_date, treating_physician_name, treating_physician_city"
 )
+_CABINET_CLIENT_COLS_COMPACT = (
+    "phone, display_name, validated_name, raw_name, validation_status, updated_at, created_at"
+)
 _cabinet_client_cols_cache: Optional[str] = None
 
 
@@ -1767,8 +1770,14 @@ def get_cabinet_clients_by_phones(tenant_id: int, phones: List[str]) -> Dict[str
         conn.close()
 
 
-def list_cabinet_clients(tenant_id: int, *, limit: int = 200, offset: int = 0) -> List[Dict[str, Any]]:
-    """Liste tous les patients/clients d'un tenant, triés par dernière mise à jour."""
+def _list_cabinet_clients_with_cols(
+    tenant_id: int,
+    *,
+    cols: str,
+    limit: int = 200,
+    offset: int = 0,
+) -> List[Dict[str, Any]]:
+    """Liste les patients/clients d'un tenant (colonnes configurables), triés par dernière mise à jour."""
     _select = """
         SELECT {cols}
         FROM cabinet_clients
@@ -1782,7 +1791,6 @@ def list_cabinet_clients(tenant_id: int, *, limit: int = 200, offset: int = 0) -
             from backend.pg_pool import pg_connection_for
             with pg_connection_for(url) as conn:
                 _ensure_cabinet_clients_table_pg(conn)
-                cols = _cabinet_client_select_columns_pg(conn)
                 with conn.cursor() as cur:
                     cur.execute(
                         _select.format(cols=cols, ph="%s", lph="%s", oph="%s"),
@@ -1800,12 +1808,37 @@ def list_cabinet_clients(tenant_id: int, *, limit: int = 200, offset: int = 0) -
     try:
         _ensure_cabinet_clients_table(conn)
         rows = conn.execute(
-            _select.format(cols=_CABINET_CLIENT_COLS_EXTENDED, ph="?", lph="?", oph="?"),
+            _select.format(cols=cols, ph="?", lph="?", oph="?"),
             (tenant_id, limit, offset),
         ).fetchall()
         return [_cabinet_client_row_to_dict(dict(r)) for r in rows]
     finally:
         conn.close()
+
+
+def list_cabinet_clients(tenant_id: int, *, limit: int = 200, offset: int = 0) -> List[Dict[str, Any]]:
+    """Liste tous les patients/clients d'un tenant, triés par dernière mise à jour."""
+    url = _pg_events_url()
+    if url:
+        try:
+            from backend.pg_pool import pg_connection_for
+            with pg_connection_for(url) as conn:
+                cols = _cabinet_client_select_columns_pg(conn)
+                return _list_cabinet_clients_with_cols(
+                    tenant_id, cols=cols, limit=limit, offset=offset,
+                )
+        except Exception:
+            pass
+    return _list_cabinet_clients_with_cols(
+        tenant_id, cols=_CABINET_CLIENT_COLS_EXTENDED, limit=limit, offset=offset,
+    )
+
+
+def list_cabinet_clients_compact(tenant_id: int, *, limit: int = 200, offset: int = 0) -> List[Dict[str, Any]]:
+    """Liste minimale pour la sidebar patient (moins de colonnes, plus rapide)."""
+    return _list_cabinet_clients_with_cols(
+        tenant_id, cols=_CABINET_CLIENT_COLS_COMPACT, limit=limit, offset=offset,
+    )
 
 
 def _patient_search_tokens(q: str) -> List[tuple]:

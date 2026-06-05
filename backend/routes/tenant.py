@@ -52,6 +52,7 @@ from backend.db import (
     is_valid_contact_email,
     insert_patient_document,
     list_cabinet_clients,
+    list_cabinet_clients_compact,
     search_cabinet_clients,
     search_cabinet_clients_with_fallback,
     list_free_slots,
@@ -294,6 +295,25 @@ _TENANT_AGENDA_DETAIL_LOCK = threading.Lock()
 _TENANT_AGENDA_DETAIL_CACHE: Dict[int, tuple[float, dict]] = {}
 _TENANT_AGENDA_BULK_LOCK = threading.Lock()
 _TENANT_AGENDA_BULK_CACHE: Dict[tuple, tuple[float, dict]] = {}
+_TENANT_PATIENTS_LIST_LOCK = threading.Lock()
+_TENANT_PATIENTS_LIST_CACHE: Dict[tuple, tuple[float, list]] = {}
+
+
+def _patients_list_cache_ttl_seconds() -> float:
+    raw = (os.environ.get("TENANT_PATIENTS_LIST_CACHE_SECONDS") or "60").strip()
+    try:
+        ttl = float(raw or "60")
+    except ValueError:
+        ttl = 60.0
+    return max(0.0, ttl)
+
+
+def _invalidate_tenant_patients_list_cache(tenant_id: int) -> None:
+    tid = int(tenant_id)
+    with _TENANT_PATIENTS_LIST_LOCK:
+        keys = [k for k in _TENANT_PATIENTS_LIST_CACHE if int(k[0]) == tid]
+        for key in keys:
+            _TENANT_PATIENTS_LIST_CACHE.pop(key, None)
 
 
 def _get_tenant_detail_for_agenda_cached(tenant_id: int) -> Optional[dict]:
@@ -3524,6 +3544,7 @@ def tenant_list_patients(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     q: Optional[str] = Query(None, max_length=160, description="Filtre recherche nom / téléphone / email"),
+    compact: bool = Query(False, description="Colonnes minimales pour la sidebar (plus rapide)"),
 ):
     """Liste les fiches patient du tenant (dashboard client)."""
     tenant_id = auth["tenant_id"]
@@ -3532,7 +3553,27 @@ def tenant_list_patients(
         cap = min(limit, 100)
         items = search_cabinet_clients_with_fallback(tenant_id, qs, limit=cap)
         return {"items": items, "total": len(items), "mode": "search"}
-    items = list_cabinet_clients(tenant_id, limit=limit, offset=offset)
+    cache_key = (int(tenant_id), int(limit), int(offset), bool(compact))
+    ttl = _patients_list_cache_ttl_seconds()
+    if ttl > 0 and not os.environ.get("PYTEST_CURRENT_TEST"):
+        now = time.monotonic()
+        with _TENANT_PATIENTS_LIST_LOCK:
+            hit = _TENANT_PATIENTS_LIST_CACHE.get(cache_key)
+            if hit and hit[0] > now:
+                items = copy.deepcopy(hit[1])
+                return {"items": items, "total": len(items), "mode": "list", "cached": True}
+    items = (
+        list_cabinet_clients_compact(tenant_id, limit=limit, offset=offset)
+        if compact
+        else list_cabinet_clients(tenant_id, limit=limit, offset=offset)
+    )
+    if ttl > 0 and not os.environ.get("PYTEST_CURRENT_TEST"):
+        with _TENANT_PATIENTS_LIST_LOCK:
+            _TENANT_PATIENTS_LIST_CACHE[cache_key] = (time.monotonic() + ttl, copy.deepcopy(items))
+            if len(_TENANT_PATIENTS_LIST_CACHE) > 400:
+                stale_keys = [k for k, (exp, _) in _TENANT_PATIENTS_LIST_CACHE.items() if exp <= time.monotonic()]
+                for key in stale_keys[:160]:
+                    _TENANT_PATIENTS_LIST_CACHE.pop(key, None)
     return {"items": items, "total": len(items), "mode": "list"}
 
 
@@ -3595,7 +3636,11 @@ def tenant_check_patient_duplicate(
 def tenant_get_patient(
     phone: str,
     auth: dict = Depends(require_tenant_auth),
-    lightweight: bool = Query(False, description="Profil + documents uniquement (plus rapide)"),
+    lightweight: bool = Query(False, description="Profil uniquement (plus rapide, sans appels/handoffs)"),
+    include_documents: bool = Query(
+        False,
+        description="Inclure la liste des documents (défaut: non — charger via GET /patients/{phone}/documents)",
+    ),
 ):
     """Fiche patient complète : profil, appels liés, handoffs liés."""
     tenant_id = auth["tenant_id"]
@@ -3604,7 +3649,7 @@ def tenant_get_patient(
         raise HTTPException(404, "Patient not found")
 
     if lightweight:
-        docs = list_patient_documents(tenant_id, phone)
+        docs = list_patient_documents(tenant_id, phone) if include_documents else []
         return {
             "patient": profile,
             "calls": [],
@@ -3795,6 +3840,7 @@ def tenant_register_patient_practice(
                 phone,
             )
 
+    _invalidate_tenant_patients_list_cache(tenant_id)
     return {"ok": True, "patient": profile, "register_mode": register_mode}
 
 
@@ -4021,6 +4067,7 @@ def tenant_update_patient(
         phone_changed,
         bool((updated.get("email") or "").strip()),
     )
+    _invalidate_tenant_patients_list_cache(tenant_id)
     resp: Dict[str, Any] = {"ok": True, "patient": updated}
     if phone_changed:
         resp["previous_phone"] = previous_phone
@@ -4297,6 +4344,31 @@ def tenant_delete_patient_note(
         raise HTTPException(404, "Note not found")
     return {"ok": True}
 
+
+
+@router.get("/patients/{phone}/documents")
+def tenant_list_patient_documents_route(
+    phone: str,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Liste les documents d'une fiche patient (chargement différé côté dashboard)."""
+    tenant_id = auth["tenant_id"]
+    profile = get_cabinet_client_by_phone(tenant_id, phone)
+    if not profile:
+        raise HTTPException(404, "Patient not found")
+    docs = list_patient_documents(tenant_id, phone)
+    return {
+        "items": [
+            {
+                "id": d.get("id"),
+                "original_name": d.get("original_name"),
+                "mime_type": d.get("mime_type"),
+                "size_bytes": d.get("size_bytes"),
+                "created_at": str(d.get("created_at", "")),
+            }
+            for d in docs
+        ],
+    }
 
 
 @router.post("/patients/{phone}/documents")

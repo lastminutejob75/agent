@@ -47,6 +47,13 @@ import {
   fetchTenantHandoffsCached,
   fetchTenantRequestsBundleCached,
 } from "../lib/tenantRequestsCache.js";
+import {
+  fetchTenantPatientsListCached,
+  getCachedTenantPatientsList,
+  invalidateTenantPatientsListCache,
+} from "../lib/patientsListCache.js";
+
+const TENANT_PATIENTS_LIST_QUERY = "?limit=80&compact=1";
 
 /** Clé téléphone métier (= backend `normalize_phone_number`). */
 function normalizePhone(value: string) {
@@ -925,8 +932,16 @@ export default function PatientDashboardPage() {
   const [tenantPatientNotFound, setTenantPatientNotFound] = useState(false);
   /** Profil réel (API) pour l’en-tête quand on ouvre /patient-dashboard?phone=… ou un numéro reconnu en base. */
   const [urlPatientHero, setUrlPatientHero] = useState<{ name: string; phone: string; initials: string } | null>(null);
-  const [tenantSidebarRows, setTenantSidebarRows] = useState<SidebarPatientRow[]>([]);
-  const [tenantListLoading, setTenantListLoading] = useState(true);
+  const [tenantSidebarRows, setTenantSidebarRows] = useState<SidebarPatientRow[]>(() => {
+    const cached = getCachedTenantPatientsList(TENANT_PATIENTS_LIST_QUERY);
+    if (!cached?.items?.length) return [];
+    return cached.items
+      .map((item: Record<string, unknown>) => cabinetRowToSidebar(item))
+      .filter((item): item is SidebarPatientRow => Boolean(item));
+  });
+  const [tenantListLoading, setTenantListLoading] = useState(
+    () => !getCachedTenantPatientsList(TENANT_PATIENTS_LIST_QUERY)?.items?.length,
+  );
   const [tenantListError, setTenantListError] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const patientDetailCacheRef = useRef(new Map<string, {
@@ -1028,6 +1043,10 @@ export default function PatientDashboardPage() {
   const [patientProfileReady, setPatientProfileReady] = useState(false);
 
   useEffect(() => {
+    setPatientProfileReady(false);
+  }, [tenantPatientPhone]);
+
+  useEffect(() => {
     const refresh = () => setRequestStatusOverrides(readRequestStatusOverrides());
     const onStorage = (event: StorageEvent) => {
       if (!event.key || event.key === REQUEST_STATUS_OVERRIDES_KEY) refresh();
@@ -1050,12 +1069,14 @@ export default function PatientDashboardPage() {
     }
     let cancelled = false;
     setRequestsLoading(true);
-    const deferMs = requestIdFromUrl ? 0 : 80;
+    const deferMs = requestIdFromUrl ? 0 : 2000;
     const tid = window.setTimeout(() => {
       fetchTenantRequestsBundleCached(api, {
-        callsQuery: "?limit=50&days=30&compact=1",
-        handoffsQuery: "?limit=50",
-        callbacksQuery: "?limit=50",
+        callsQuery: requestIdFromUrl
+          ? "?limit=50&days=30&compact=1"
+          : "?limit=25&days=14&compact=1",
+        handoffsQuery: requestIdFromUrl ? "?limit=50" : "?limit=20",
+        callbacksQuery: requestIdFromUrl ? "?limit=50" : "?limit=20",
       })
       .then(({ callsRes, handoffsRes, callbacksRes }) => {
         if (cancelled) return;
@@ -1167,16 +1188,23 @@ export default function PatientDashboardPage() {
     setSearchParams(np, { replace: true });
   }, [searchParams, setSearchParams]);
 
-  const loadTenantSidebarPatients = useCallback(async () => {
+  const loadTenantSidebarPatients = useCallback(async (opts?: { force?: boolean }) => {
     try {
       setTenantListError(null);
-      const res = await api.tenantGetPatients("?limit=100");
-      const items = Array.isArray(res?.items) ? res.items : [];
+      if (opts?.force) invalidateTenantPatientsListCache();
+      const { items } = await fetchTenantPatientsListCached(api, {
+        query: TENANT_PATIENTS_LIST_QUERY,
+        force: Boolean(opts?.force),
+      });
       const mapped = items
         .map((item: Record<string, unknown>) => cabinetRowToSidebar(item))
         .filter((item): item is SidebarPatientRow => Boolean(item));
       setTenantSidebarRows(mapped);
     } catch (e) {
+      if (!opts?.force) {
+        const cached = getCachedTenantPatientsList(TENANT_PATIENTS_LIST_QUERY);
+        if (cached?.items?.length) return;
+      }
       setTenantSidebarRows([]);
       setTenantListError((e as Error)?.message || "Impossible de charger la liste des fiches patients.");
     }
@@ -1184,14 +1212,29 @@ export default function PatientDashboardPage() {
 
   useEffect(() => {
     let cancelled = false;
-    setTenantListLoading(true);
-    loadTenantSidebarPatients().finally(() => {
-      if (!cancelled) setTenantListLoading(false);
-    });
+    const cached = getCachedTenantPatientsList(TENANT_PATIENTS_LIST_QUERY);
+    if (cached?.items?.length) {
+      const mapped = cached.items
+        .map((item: Record<string, unknown>) => cabinetRowToSidebar(item))
+        .filter((item): item is SidebarPatientRow => Boolean(item));
+      setTenantSidebarRows(mapped);
+      setTenantListLoading(false);
+    } else if (!phoneFromDashboardUrl) {
+      setTenantListLoading(true);
+    } else {
+      setTenantListLoading(false);
+    }
+    const deferMs = phoneFromDashboardUrl ? 350 : 0;
+    const tid = window.setTimeout(() => {
+      loadTenantSidebarPatients({ force: !cached?.items?.length }).finally(() => {
+        if (!cancelled) setTenantListLoading(false);
+      });
+    }, deferMs);
     return () => {
       cancelled = true;
+      window.clearTimeout(tid);
     };
-  }, [loadTenantSidebarPatients]);
+  }, [loadTenantSidebarPatients, phoneFromDashboardUrl]);
 
   useEffect(() => {
     const q = query.trim();
@@ -1374,7 +1417,7 @@ export default function PatientDashboardPage() {
         statusBucket,
       };
     }
-    if (documentsLoading && tenantPatientPhone) {
+    if (tenantPatientPhone && !urlPatientHero && !patientCabinetRow && !tenantPatientNotFound) {
       return {
         name: "Chargement…",
         phone: formatDisplayFrenchPhone(tenantPatientPhone),
@@ -1396,9 +1439,8 @@ export default function PatientDashboardPage() {
     phoneFromDashboardUrl,
     tenantPatientPhone,
     urlPatientHero,
-    documentsLoading,
-    sidebarHeroFallback,
     patientCabinetRow,
+    sidebarHeroFallback,
   ]);
 
   useEffect(() => {
@@ -1452,14 +1494,14 @@ export default function PatientDashboardPage() {
     applyPatientDetailBundle(emptyPatientDetailBundle());
     syncPatientEmailDraft("");
     setPatientHistory([]);
-    setDocumentsLoading(true);
+    setDocumentsLoading(false);
     setNotesLoading(activeView === "overview");
 
     const notesPromise = activeView === "overview"
       ? api.tenantGetPatientNotes(tenantPatientPhone, "?limit=40").catch(() => ({ items: [] }))
       : Promise.resolve({ items: [] as unknown[] });
 
-    api.tenantGetPatient(tenantPatientPhone, { lightweight: true })
+    api.tenantGetPatient(tenantPatientPhone, { lightweight: true, includeDocuments: false })
       .then(async (res) => {
         if (cancelled) return;
         const p = res?.patient as Record<string, unknown> | undefined;
@@ -1470,7 +1512,7 @@ export default function PatientDashboardPage() {
           patientCabinetRow: p ?? null,
           urlPatientHero: buildPatientHeroFromProfile(p, tenantPatientPhone),
           patientEmail: String(p?.email || ""),
-          documents: mapPatientDocuments(Array.isArray(res?.documents) ? res.documents : []),
+          documents: cached?.documents?.length ? cached.documents : [],
           patientNotes: activeView === "overview"
             ? mapPatientNotes(Array.isArray(notesRes?.items) ? notesRes.items : [])
             : (cached?.patientNotes || []),
@@ -1529,6 +1571,49 @@ export default function PatientDashboardPage() {
     location.state,
     navigate,
   ]);
+
+  useEffect(() => {
+    if (!tenantPatientPhone) {
+      setDocuments([]);
+      setDocumentsLoading(false);
+      return undefined;
+    }
+    const needDocs = activeView === "overview" || activeView === "documents";
+    if (!needDocs) return undefined;
+
+    const cached = patientDetailCacheRef.current.get(tenantPatientPhone);
+    if (cached?.documents?.length && isPatientDetailCacheValid(cached, patientFetchNonce, activeView)) {
+      setDocuments(cached.documents);
+      setDocumentsLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    setDocumentsLoading(true);
+    const deferMs = activeView === "documents" ? 0 : 700;
+    const tid = window.setTimeout(() => {
+      api.tenantGetPatientDocuments(tenantPatientPhone)
+        .then((res) => {
+          if (cancelled) return;
+          const docs = mapPatientDocuments(Array.isArray(res?.items) ? res.items : []);
+          setDocuments(docs);
+          const entry = patientDetailCacheRef.current.get(tenantPatientPhone);
+          if (entry) {
+            patientDetailCacheRef.current.set(tenantPatientPhone, { ...entry, documents: docs });
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setDocuments([]);
+        })
+        .finally(() => {
+          if (!cancelled) setDocumentsLoading(false);
+        });
+    }, deferMs);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(tid);
+    };
+  }, [tenantPatientPhone, activeView, patientFetchNonce]);
 
   useEffect(() => {
     if (!tenantPatientPhone) return;
@@ -1893,7 +1978,7 @@ export default function PatientDashboardPage() {
           notify(res?.register_mode === "updated" ? "Fiche mise à jour" : "Fiche patient enregistrée");
         }
         setPatientFetchNonce((n) => n + 1);
-        await loadTenantSidebarPatients();
+        await loadTenantSidebarPatients({ force: true });
         return true;
       } catch (e) {
         console.error("[fiche.create] failure", debugCtx, e);
@@ -2014,7 +2099,7 @@ export default function PatientDashboardPage() {
       setModal(null);
       setDeletePreview(null);
       setDeleteConfirmText("");
-      await loadTenantSidebarPatients();
+      await loadTenantSidebarPatients({ force: true });
       const np = new URLSearchParams(searchParams);
       np.delete("phone");
       setSearchParams(np, { replace: true });
@@ -2554,7 +2639,7 @@ export default function PatientDashboardPage() {
                   type="button"
                   onClick={() => {
                     setTenantListLoading(true);
-                    void loadTenantSidebarPatients().finally(() => setTenantListLoading(false));
+                    void loadTenantSidebarPatients({ force: true }).finally(() => setTenantListLoading(false));
                   }}
                   className="rounded-xl border border-[#DDE7F1] bg-white px-4 py-2 text-sm font-black text-[#007E8C] hover:bg-[#F8FBFD]"
                 >
@@ -3003,7 +3088,7 @@ export default function PatientDashboardPage() {
           )}
           </div>
 
-          {tenantPatientPhone && !activeRequestDetail && (patientOpenRequests.length > 0 || requestsLoading) ? (
+          {tenantPatientPhone && !activeRequestDetail && (patientOpenRequests.length > 0 || (requestsLoading && requestIdFromUrl)) ? (
             <section className="mt-6 rounded-[28px] border border-[#E2EAF4] bg-white p-7 shadow-sm">
               <div className="mb-5 flex items-center justify-between">
                 <h2 className="text-2xl font-black">
