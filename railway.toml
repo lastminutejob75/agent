@@ -2,24 +2,18 @@
 builder = "dockerfile"
 dockerfilePath = "Dockerfile"
 # IMPORTANT : écrase les « Watch Paths » du dashboard Railway.
-# Sans cette liste, le dashboard garde souvent backend/** seul → SKIPPED sur les commits landing/.
-# Tout changement utile dans le repo doit déclencher un déploiement API.
+# landing/** → Vercel uniquement (www.uwiapp.com). Ne pas surveiller landing ici :
+# sinon SKIPPED ou rebuilds inutiles sans changement API.
+# Toucher backend/DEPLOY_REVISION pour forcer un déploiement Railway à la main.
 watchPatterns = [
   "backend/**",
   "frontend/**",
-  "landing/**",
   "migrations/**",
   "scripts/**",
-  "tests/**",
-  ".github/**",
-  "docs/**",
-  "railway.toml",
-  "railway.json",
   "Dockerfile",
   "requirements.txt",
   "pyproject.toml",
-  "package.json",
-  "package-lock.json",
+  "railway.toml",
 ]
 
 [deploy]
