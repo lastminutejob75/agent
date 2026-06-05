@@ -9,7 +9,7 @@ import {
 } from "../lib/agendaSlotParse.js";
 import { buildAgendaViewUrl } from "../lib/agendaAppointmentActions.js";
 import { api } from "../lib/api.js";
-import { computeUpcomingFillRate } from "../lib/agendaFillRate.js";
+import { computeDashboardFillRate } from "../lib/agendaFillRate.js";
 import HomeHeroSection from "../components/home/HomeHeroSection.jsx";
 import { buildRequestItemsFromCallsAndHandoffs, summarizeRequestItems } from "../lib/requestUiStatus.js";
 import { fetchTenantCallbacksCached, fetchTenantHandoffsCached } from "../lib/tenantRequestsCache.js";
@@ -206,6 +206,9 @@ export default function AppDashboard() {
   const [callbacks, setCallbacks] = useState([]);
   const [calls, setCalls] = useState([]);
   const [freeSlotsByDate, setFreeSlotsByDate] = useState({});
+  const [todayAgenda, setTodayAgenda] = useState([]);
+  const [openingHours, setOpeningHours] = useState([]);
+  const [bookingDurationMinutes, setBookingDurationMinutes] = useState(30);
   const [connections, setConnections] = useState({ vapi: null, calendar: null });
 
   const notify = (msg) => {
@@ -235,7 +238,8 @@ export default function AppDashboard() {
         if (!silent) setLoading(false);
       });
 
-    api.tenantGetAgenda("?upcoming_days=14&compact=1&lightweight=1")
+    const todayKey = todayISO();
+    api.tenantGetAgenda("?upcoming_days=7&lightweight=1")
       .then((value) => {
         if (cancelledRef?.cancelled) return;
         setAgenda(Array.isArray(value?.slots) ? value.slots : []);
@@ -245,12 +249,24 @@ export default function AppDashboard() {
         setAgenda([]);
       });
 
+    api.tenantGetAgenda(`?date=${encodeURIComponent(todayKey)}&lightweight=1`)
+      .then((value) => {
+        if (cancelledRef?.cancelled) return;
+        setTodayAgenda(Array.isArray(value?.slots) ? value.slots : []);
+      })
+      .catch(() => {
+        if (cancelledRef?.cancelled) return;
+        setTodayAgenda([]);
+      });
+
     Promise.allSettled([
       fetchTenantHandoffsCached(api, "?limit=30&days=30"),
       fetchTenantCallbacksCached(api, "?limit=30"),
       api.tenantVapiStatus(),
       api.tenantGetCalendarStatus(),
-    ]).then(([handoffRes, callbackRes, vapiRes, calendarRes]) => {
+      api.tenantGetOpeningHours(),
+      api.tenantGetHoraires(),
+    ]).then(([handoffRes, callbackRes, vapiRes, calendarRes, openingRes, horairesRes]) => {
       if (cancelledRef?.cancelled) return;
       if (handoffRes.status === "fulfilled") setHandoffs(Array.isArray(handoffRes.value?.items) ? handoffRes.value.items : []);
       if (callbackRes.status === "fulfilled") setCallbacks(Array.isArray(callbackRes.value?.items) ? callbackRes.value.items : []);
@@ -258,6 +274,13 @@ export default function AppDashboard() {
         vapi: vapiRes.status === "fulfilled" ? vapiRes.value : null,
         calendar: calendarRes.status === "fulfilled" ? calendarRes.value : null,
       });
+      if (openingRes.status === "fulfilled") {
+        setOpeningHours(Array.isArray(openingRes.value?.opening_hours) ? openingRes.value.opening_hours : []);
+      }
+      if (horairesRes.status === "fulfilled") {
+        const duration = Number(horairesRes.value?.booking_duration_minutes || horairesRes.value?.booking_rules?.booking_duration_minutes);
+        if (Number.isFinite(duration) && duration > 0) setBookingDurationMinutes(duration);
+      }
     });
   }, []);
 
@@ -294,7 +317,17 @@ export default function AppDashboard() {
     .filter((x) => x.start)
     .sort((a, b) => a.start.getTime() - b.start.getTime()), [bookedSlots]);
 
-  const todaySlots = useMemo(() => sortedBookedSlots.filter((x) => sameDay(x.start, today)), [sortedBookedSlots, today]);
+  const todayAgendaBooked = useMemo(
+    () => dedupeAgendaSlots(todayAgenda.filter((slot) => Boolean(slot?.patient || slot?.patient_name))),
+    [todayAgenda],
+  );
+  const todaySlots = useMemo(
+    () => todayAgendaBooked
+      .map((slot) => ({ slot, start: parseAgendaSlotStart(slot) }))
+      .filter((entry) => entry.start),
+    [todayAgendaBooked],
+  );
+  const rdvPlannedToday = todaySlots.length;
   /** Pas de repli sur le 1er créneau chronologique : après filtrage passé par l’API, un échec ici éviterait d’afficher un RDV déjà terminé */
   const nextSlot = useMemo(
     () => sortedBookedSlots.find((x) => x.start.getTime() >= Date.now()) ?? null,
@@ -401,18 +434,18 @@ export default function AppDashboard() {
       const day = (kpis?.days || []).find((d) => d?.date === todayISO());
       return Number.isFinite(Number(day?.bookings)) ? Number(day.bookings) : 0;
     })();
-  /** Créneaux prévus dans l'agenda pour la journée civile (≠ prises de RDV confirmées aujourd'hui). */
-  const rdvPlannedToday = todaySlots.length;
   const fillStats = useMemo(
-    () => computeUpcomingFillRate({
+    () => computeDashboardFillRate({
       today,
       bookedEntries: sortedBookedSlots,
+      openingHours,
+      slotDurationMinutes: bookingDurationMinutes,
       freeSlotsByDate,
       horizonDays: 7,
     }),
-    [today, sortedBookedSlots, freeSlotsByDate],
+    [today, sortedBookedSlots, openingHours, bookingDurationMinutes, freeSlotsByDate],
   );
-  const { fillRate, totalBooked: fillBooked, totalCapacity: fillCapacity } = fillStats;
+  const { fillRate, totalBooked: fillBooked, totalCapacity: fillCapacity, source: fillSource } = fillStats;
   const cancellationsToday = useMemo(
     () => calls.filter((call) => {
       if (!isCancellationCall(call)) return false;
@@ -465,8 +498,12 @@ export default function AppDashboard() {
       `${fillRate}%`,
       "Taux de remplissage",
       fillCapacity > 0
-        ? `${fillBooked}/${fillCapacity} créneaux réservés sur 7 jours`
-        : "aucun créneau ouvert sur 7 jours",
+        ? (
+          fillSource === "opening_hours"
+            ? `${fillBooked}/${fillCapacity} RDV / capacité horaire (7 jours)`
+            : `${fillBooked}/${fillCapacity} créneaux réservés sur 7 jours`
+        )
+        : "horaires cabinet non configurés",
       "green",
       "chart",
       `/app/agenda?view=week&date=${encodeURIComponent(todayISO())}`,

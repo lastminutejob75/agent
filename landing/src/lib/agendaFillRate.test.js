@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { computeUpcomingFillRate, monthsCoveringHorizon } from "./agendaFillRate.js";
+import {
+  computeDashboardFillRate,
+  computeFillRateFromOpeningHours,
+  computeUpcomingFillRate,
+  monthsCoveringHorizon,
+  openingRowOpenMinutes,
+} from "./agendaFillRate.js";
 
 describe("agendaFillRate", () => {
   it("monthsCoveringHorizon inclut le mois suivant si la fenêtre le chevauche", () => {
@@ -30,5 +36,66 @@ describe("agendaFillRate", () => {
     const out = computeUpcomingFillRate({ today, bookedEntries: [], freeSlotsByDate: {}, horizonDays: 7 });
     expect(out.fillRate).toBe(0);
     expect(out.totalCapacity).toBe(0);
+  });
+
+  it("calcule l'amplitude horaire matin + après-midi", () => {
+    const minutes = openingRowOpenMinutes({
+      is_open: true,
+      morning_start: "08:30",
+      morning_end: "12:30",
+      afternoon_start: "14:00",
+      afternoon_end: "18:00",
+    });
+    expect(minutes).toBe(8 * 60);
+  });
+
+  it("calcule le taux depuis les horaires cabinet", () => {
+    const today = new Date(2026, 5, 2, 10, 0, 0); // mardi
+    const openingHours = [
+      { day: "monday", is_open: true, morning_start: "09:00", morning_end: "12:00", afternoon_start: "", afternoon_end: "" },
+      { day: "tuesday", is_open: true, morning_start: "09:00", morning_end: "12:00", afternoon_start: "", afternoon_end: "" },
+      { day: "wednesday", is_open: false, morning_start: "", morning_end: "", afternoon_start: "", afternoon_end: "" },
+      { day: "thursday", is_open: true, morning_start: "09:00", morning_end: "12:00", afternoon_start: "", afternoon_end: "" },
+      { day: "friday", is_open: true, morning_start: "09:00", morning_end: "12:00", afternoon_start: "", afternoon_end: "" },
+      { day: "saturday", is_open: false, morning_start: "", morning_end: "", afternoon_start: "", afternoon_end: "" },
+      { day: "sunday", is_open: false, morning_start: "", morning_end: "", afternoon_start: "", afternoon_end: "" },
+    ];
+    const bookedEntries = [
+      { start: new Date(2026, 5, 2, 9, 0, 0) },
+      { start: new Date(2026, 5, 2, 9, 30, 0) },
+      { start: new Date(2026, 5, 4, 10, 0, 0) },
+    ];
+    const out = computeFillRateFromOpeningHours({
+      today,
+      bookedEntries,
+      openingHours,
+      slotDurationMinutes: 30,
+      horizonDays: 7,
+    });
+    expect(out.totalBooked).toBe(3);
+    expect(out.totalCapacity).toBeGreaterThan(0);
+    expect(out.fillRate).toBeGreaterThan(0);
+    expect(out.source).toBe("opening_hours");
+  });
+
+  it("préfère les horaires cabinet au repli créneaux libres", () => {
+    const today = new Date(2026, 5, 2, 10, 0, 0);
+    const out = computeDashboardFillRate({
+      today,
+      bookedEntries: [{ start: new Date(2026, 5, 2, 9, 0, 0) }],
+      openingHours: [{
+        day: "tuesday",
+        is_open: true,
+        morning_start: "09:00",
+        morning_end: "12:00",
+        afternoon_start: "",
+        afternoon_end: "",
+      }],
+      slotDurationMinutes: 30,
+      freeSlotsByDate: {},
+      horizonDays: 7,
+    });
+    expect(out.source).toBe("opening_hours");
+    expect(out.totalCapacity).toBeGreaterThan(0);
   });
 });
