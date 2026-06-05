@@ -33,14 +33,68 @@ const defaultPractitioner = {
   canonicalUrl: "https://www.uwiapp.com/p/cabinet-dupond-demo",
 };
 
-const defaultSlots = [
-  { id: "s1", label: "aujourd'hui a 14:00", day: "Auj.", time: "14:00", motifs: ["Consultation", "Suivi", "Premiere consultation", "Renouvellement"] },
-  { id: "s2", label: "aujourd'hui a 16:30", day: "Auj.", time: "16:30", motifs: ["Consultation", "Suivi"] },
-  { id: "s3", label: "mercredi a 09:15", day: "Mer.", time: "09:15", motifs: ["Consultation", "Suivi", "Premiere consultation"] },
-  { id: "s4", label: "mercredi a 11:00", day: "Mer.", time: "11:00", motifs: ["Consultation", "Suivi"] },
-  { id: "s5", label: "jeudi a 10:00", day: "Jeu.", time: "10:00", motifs: ["Consultation", "Suivi", "Renouvellement"] },
-  { id: "s6", label: "jeudi a 15:45", day: "Jeu.", time: "15:45", motifs: ["Consultation", "Suivi"] },
+const DEMO_SLOT_SPECS = [
+  { id: "s1", businessOffset: 0, time: "14:00", motifs: ["Consultation", "Suivi", "Premiere consultation", "Renouvellement"] },
+  { id: "s2", businessOffset: 0, time: "16:30", motifs: ["Consultation", "Suivi"] },
+  { id: "s3", businessOffset: 1, time: "09:15", motifs: ["Consultation", "Suivi", "Premiere consultation"] },
+  { id: "s4", businessOffset: 1, time: "11:00", motifs: ["Consultation", "Suivi"] },
+  { id: "s5", businessOffset: 2, time: "10:00", motifs: ["Consultation", "Suivi", "Renouvellement"] },
+  { id: "s6", businessOffset: 2, time: "15:45", motifs: ["Consultation", "Suivi"] },
 ];
+
+const FR_WEEKDAYS_SHORT = ["Lun.", "Mar.", "Mer.", "Jeu.", "Ven.", "Sam.", "Dim."];
+const FR_WEEKDAYS_LONG = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"];
+
+function jsWeekdayIndex(date) {
+  const day = date.getDay();
+  return day === 0 ? 6 : day - 1;
+}
+
+function businessDayOnOrAfter(baseDate, businessOffset) {
+  if (businessOffset <= 0) return new Date(baseDate);
+  const cursor = new Date(baseDate);
+  let added = 0;
+  while (added < businessOffset) {
+    cursor.setDate(cursor.getDate() + 1);
+    if (cursor.getDay() !== 0 && cursor.getDay() !== 6) added += 1;
+  }
+  return cursor;
+}
+
+function publicSlotDayLabels(targetDate, refDate) {
+  const ref = new Date(refDate);
+  ref.setHours(0, 0, 0, 0);
+  const target = new Date(targetDate);
+  target.setHours(0, 0, 0, 0);
+  const diffDays = Math.round((target.getTime() - ref.getTime()) / 86400000);
+  if (diffDays === 0) return { day: "Auj.", long: "aujourd'hui" };
+  if (diffDays === 1) return { day: "Dem.", long: "demain" };
+  if (diffDays > 0 && diffDays < 7) {
+    const idx = jsWeekdayIndex(target);
+    return { day: FR_WEEKDAYS_SHORT[idx], long: FR_WEEKDAYS_LONG[idx] };
+  }
+  const formatted = `${String(target.getDate()).padStart(2, "0")}/${String(target.getMonth() + 1).padStart(2, "0")}`;
+  return { day: formatted, long: formatted };
+}
+
+function buildDefaultDemoSlots(refDate = new Date()) {
+  return DEMO_SLOT_SPECS.map(({ id, businessOffset, time, motifs }) => {
+    const target = businessDayOnOrAfter(refDate, businessOffset);
+    const date = formatLocalDate(target);
+    const { day, long } = publicSlotDayLabels(target, refDate);
+    return {
+      id,
+      label: `${long} a ${time}`,
+      day,
+      time,
+      date,
+      startIso: `${date}T${time}:00`,
+      motifs,
+    };
+  });
+}
+
+const defaultSlots = buildDefaultDemoSlots();
 
 const defaultOpeningHours = [
   { day: "Lundi", opens: "08:30", closes: "18:30", schemaDay: "Monday" },
@@ -195,13 +249,24 @@ function parsePublicSlotStartMs(slot, refDate = new Date()) {
   return null;
 }
 
+function normalizePublicSlotDisplay(slot, refDate = new Date()) {
+  const date = String(slot?.date || "").slice(0, 10) || resolvePublicSlotDate(slot, refDate);
+  const time = String(slot?.time || "").slice(0, 5);
+  if (!date || !time) return slot;
+  const target = new Date(`${date}T12:00:00`);
+  const { day, long } = publicSlotDayLabels(target, refDate);
+  return {
+    ...slot,
+    date,
+    time,
+    day,
+    label: `${long} a ${time}`,
+    startIso: slot.startIso || `${date}T${time}:00`,
+  };
+}
+
 function materializeDemoSlots(slots, refDate = new Date()) {
-  return safeArray(slots).map((slot) => {
-    const date = resolvePublicSlotDate(slot, refDate);
-    const time = String(slot?.time || "").slice(0, 5);
-    if (!date || !time || slot?.startIso) return slot;
-    return { ...slot, date, startIso: `${date}T${time}:00` };
-  });
+  return safeArray(slots).map((slot) => normalizePublicSlotDisplay(slot, refDate));
 }
 
 function filterFuturePublicSlots(slots, minLeadMinutes = 30) {
@@ -1533,7 +1598,7 @@ export default function PagePubliquePraticienUWI() {
     const sessionCached = readSessionSlots(slug);
     const hasSessionCache = Boolean(sessionCached?.slots?.length);
 
-    setSlots(hasSessionCache ? filterFuturePublicSlots(sessionCached.slots) : filterFuturePublicSlots(defaultSlots));
+    setSlots(hasSessionCache ? filterFuturePublicSlots(sessionCached.slots) : filterFuturePublicSlots(buildDefaultDemoSlots()));
     setSlotsMeta({
       source: sessionCached?.source || null,
       calendar: sessionCached?.calendar || null,

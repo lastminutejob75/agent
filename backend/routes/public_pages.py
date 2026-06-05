@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import uuid
 import json
 import smtplib
@@ -71,6 +70,16 @@ DEMO_SLOTS: List[Dict[str, Any]] = [
     {"id": "s4", "label": "mercredi a 11:00", "day": "Mer.", "time": "11:00", "motifs": ["Consultation", "Suivi"]},
     {"id": "s5", "label": "jeudi a 10:00", "day": "Jeu.", "time": "10:00", "motifs": ["Consultation", "Suivi", "Renouvellement"]},
     {"id": "s6", "label": "jeudi a 15:45", "day": "Jeu.", "time": "15:45", "motifs": ["Consultation", "Suivi"]},
+]
+
+# Offsets en jours ouvrés (0 = aujourd'hui, 1 = prochain jour ouvré, etc.)
+_DEMO_SLOT_SPECS: List[Tuple[str, int, str]] = [
+    ("s1", 0, "14:00"),
+    ("s2", 0, "16:30"),
+    ("s3", 1, "09:15"),
+    ("s4", 1, "11:00"),
+    ("s5", 2, "10:00"),
+    ("s6", 2, "15:45"),
 ]
 
 DEMO_SEARCH = [
@@ -753,39 +762,53 @@ def _public_slots_now() -> datetime:
     return datetime.now(_PUBLIC_SLOTS_TZ).replace(tzinfo=None)
 
 
+def _business_day_on_or_after(base_date, business_offset: int):
+    """Jour ouvré (lun-ven) : 0 = base_date, 1 = prochain jour ouvré, etc."""
+    if business_offset <= 0:
+        return base_date
+    cursor = base_date
+    added = 0
+    while added < business_offset:
+        cursor += timedelta(days=1)
+        if cursor.weekday() < 5:
+            added += 1
+    return cursor
+
+
+def _public_slot_day_labels(target_date, ref: datetime) -> Tuple[str, str]:
+    today_d = ref.date()
+    diff_days = (target_date - today_d).days
+    weekday_index = target_date.weekday()
+    if diff_days == 0:
+        return "Auj.", "aujourd'hui"
+    if diff_days == 1:
+        return "Dem.", "demain"
+    if 0 < diff_days < 7:
+        return _FR_WEEKDAYS_SHORT[weekday_index], _FR_WEEKDAYS_LONG[weekday_index]
+    formatted = target_date.strftime("%d/%m")
+    return formatted, formatted
+
+
 def _materialize_demo_slots(now: Optional[datetime] = None) -> List[Dict[str, Any]]:
-    """Injecte date/startIso sur les créneaux démo (labels relatifs type « aujourd'hui »)."""
+    """Créneaux démo alignés sur aujourd'hui + prochains jours ouvrés."""
     ref = now or _public_slots_now()
     today = ref.date()
     materialized: List[Dict[str, Any]] = []
-    for tpl in DEMO_SLOTS:
-        item = dict(tpl)
-        label = str(item.get("label") or "").lower()
-        day_short = str(item.get("day") or "")
-        time_str = str(item.get("time") or "")[:5]
-        if not time_str:
-            match = re.search(r"(\d{1,2}:\d{2})", str(item.get("label") or ""))
-            time_str = match.group(1) if match else "09:00"
-        target_date = None
-        if "aujourd" in label or day_short == "Auj.":
-            target_date = today
-        elif "demain" in label or day_short == "Dem.":
-            target_date = today + timedelta(days=1)
-        else:
-            for idx, day_name in enumerate(_FR_WEEKDAYS_LONG):
-                if day_name in label:
-                    days_ahead = (idx - ref.weekday()) % 7
-                    if days_ahead == 0:
-                        days_ahead = 7
-                    target_date = today + timedelta(days=days_ahead)
-                    break
-        if target_date is None:
-            continue
+    for slot_id, business_offset, time_str in _DEMO_SLOT_SPECS:
+        target_date = _business_day_on_or_after(today, business_offset)
         date_str = target_date.strftime("%Y-%m-%d")
-        item["date"] = date_str
-        item["time"] = time_str
-        item["startIso"] = f"{date_str}T{time_str}:00"
-        materialized.append(item)
+        day_short, day_long = _public_slot_day_labels(target_date, ref)
+        materialized.append(
+            {
+                "id": slot_id,
+                "label": f"{day_long} a {time_str}",
+                "day": day_short,
+                "time": time_str,
+                "date": date_str,
+                "startIso": f"{date_str}T{time_str}:00",
+                "motifs": list(_DEFAULT_PUBLIC_MOTIFS),
+            }
+        )
     return materialized
 
 
