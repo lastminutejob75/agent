@@ -636,7 +636,6 @@ function BookingSuccessCard({
   success,
   cabinetName,
   location = "",
-  followup,
   onModify,
   onCancel,
   onDocuments,
@@ -712,18 +711,8 @@ function BookingSuccessCard({
             Adresse
           </button>
         </div>
-        {followup?.enabled && followup?.whatsappUrl ? (
-          <a
-            className="bookingSuccessWaBtn"
-            href={followup.whatsappUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Continuer sur WhatsApp
-          </a>
-        ) : null}
-        <button className="bookingSuccessAskBtn" type="button" onClick={onAskAnother}>
-          Autre question pour Clara
+        <button className="bookingSuccessWaBtn" type="button" onClick={onAskAnother}>
+          Poser une question à Clara
         </button>
       </div>
     </div>
@@ -1378,7 +1367,7 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
   );
 }
 
-function SupervisedModal({ slot, slug, onClose, onConfirm, done, followup, onFollowupClick }) {
+function SupervisedModal({ slot, slug, onClose, onConfirm, done, onAskClara }) {
   useEffect(() => {
     const handle = (event) => {
       if (event.key === "Escape") onClose();
@@ -1398,11 +1387,16 @@ function SupervisedModal({ slot, slug, onClose, onConfirm, done, followup, onFol
           <div className="modalSuccess">
             <div className="successIcon">✓</div>
             <div className="successTitle">Demande enregistree</div>
-            {followup?.enabled && followup?.whatsappUrl && (
-              <a className="modalWaCta" href={followup.whatsappUrl} onClick={onFollowupClick}>
-                Continuer sur WhatsApp
-              </a>
-            )}
+            <button
+              className="modalWaCta"
+              type="button"
+              onClick={() => {
+                onClose();
+                onAskClara?.();
+              }}
+            >
+              Poser une question à Clara
+            </button>
           </div>
         ) : (
           <BookingFields slot={slot} slug={slug} onConfirm={onConfirm} onCancel={onClose} compact />
@@ -1429,7 +1423,6 @@ export default function PagePubliquePraticienUWI() {
   const [placeholderIdx, setPlaceholderIdx] = useState(0);
   const [showAllSlots, setShowAllSlots] = useState(false);
   const [bookingDone, setBookingDone] = useState(false);
-  const [bookingFollowup, setBookingFollowup] = useState(null);
   const [actionFlowMode, setActionFlowMode] = useState(null);
   const [actionFlowInitialCode, setActionFlowInitialCode] = useState("");
   const [postBookingChatOpen, setPostBookingChatOpen] = useState(false);
@@ -2077,7 +2070,6 @@ export default function PagePubliquePraticienUWI() {
     const bookingCode = responseData?.bookingCode || "";
     setInlineSlot(null);
     setBookingDone(true);
-    setBookingFollowup(responseData?.followup || null);
     setPostBookingChatOpen(false);
     setBookingSuccess({
       label: booking.slot.label,
@@ -2269,16 +2261,7 @@ export default function PagePubliquePraticienUWI() {
           onClose={closeModal}
           onConfirm={confirm}
           done={bookingDone}
-          followup={bookingFollowup}
-          onFollowupClick={() => {
-            trackPublicEvent({
-              slug,
-              event: "whatsapp_clicked",
-              source: "post_booking",
-              slotId: modalSlot?.id,
-              slotLabel: modalSlot?.label,
-            });
-          }}
+          onAskClara={handlePostBookingAskAnother}
         />
       )}
       {actionFlowMode ? (
@@ -2456,7 +2439,6 @@ export default function PagePubliquePraticienUWI() {
                     success={bookingSuccess}
                     cabinetName={practitioner.name}
                     location={addr(practitioner)}
-                    followup={bookingFollowup}
                     onModify={() => openActionFlow("reschedule", bookingSuccess.bookingCode)}
                     onCancel={() => openActionFlow("cancel", bookingSuccess.bookingCode)}
                     onDocuments={handlePostBookingDocuments}
@@ -2631,8 +2613,7 @@ header a.wa{color:#1b6d34;border-color:#cce9d2}
 .bookingSuccessCopyBtn,.bookingSuccessActionBtn{width:100%;border:1px solid #009CA4;background:#fff;color:#006b73;border-radius:12px;padding:11px 14px;font-size:14px;font-weight:800}
 .bookingSuccessActionBtnSoft{border-color:#c5e3e6;background:#f8fdfd;font-weight:700}
 .bookingSuccessCopyBtn:hover,.bookingSuccessActionBtn:hover{background:#f0fbfc}
-.bookingSuccessWaBtn{display:block;text-align:center;text-decoration:none;color:#fff;background:#25D366;border-radius:12px;padding:11px 14px;font-size:14px;font-weight:800}
-.bookingSuccessAskBtn{width:100%;border:none;background:transparent;color:#006b73;font-size:13px;font-weight:700;text-decoration:underline;padding:6px 0}
+.bookingSuccessWaBtn{display:block;width:100%;border:none;cursor:pointer;text-align:center;text-decoration:none;color:#fff;background:#25D366;border-radius:12px;padding:11px 14px;font-size:14px;font-weight:800}
 .chatHeroPostBooking .chatScroll{opacity:.92}
 .chatSlotBtn:disabled{opacity:.45;cursor:not-allowed}
 .actionModalHint{margin:0;font-size:13px;color:#5f7375;line-height:1.45}
@@ -2668,7 +2649,7 @@ header a.wa{color:#1b6d34;border-color:#cce9d2}
 .inlineCard{background:#fff;border:1px solid #d5eeee;border-left:4px solid #009CA4;border-radius:14px;padding:14px 15px;display:flex;flex-direction:column;gap:9px}.inlineCardTop{display:flex;align-items:center;justify-content:space-between}.inlineCard b{font-size:13px}.inlineCard>span{font-size:11px;color:#888}.inlineClose{border:0;background:transparent;color:#007f89;font-size:11px;font-weight:700}.motifs{display:flex;flex-wrap:wrap;gap:7px}.motif{border:1px solid #dfe5e6;background:#f6f8f8;border-radius:999px;padding:7px 12px;font-size:12px;font-weight:600}.motif.active{background:#e8f9f9;border-color:#009CA4;color:#006e74}.inlineTwoCol{display:grid;grid-template-columns:1fr 1fr;gap:9px}.inlineTwoCol input,.inlineOneCol input,.modalBody input{border:1.5px solid #e0e5e6;background:#f8fafa;border-radius:10px;padding:10px 12px;outline:none;width:100%}.primary{border:0;background:#009CA4;color:#fff;border-radius:11px;padding:11px 16px;font-weight:700;box-shadow:0 5px 16px rgba(0,156,164,.22);width:100%}.primary:disabled{opacity:.4;cursor:not-allowed}
 .actionRows{border:1px solid #edf0f2;border-top:0;border-radius:0 0 18px 18px;background:#fff}.actionRow{display:grid;grid-template-columns:150px 1fr;gap:14px;align-items:center;padding:12px 20px;border-top:1px solid #eef1f3}.actionLabel{font-weight:700;color:#354260;font-size:13px}.softChips,.faqLinks{display:flex;flex-wrap:wrap;gap:9px}.softChips button{border:1px solid #e2e8eb;background:#fff;border-radius:11px;padding:8px 14px;color:#357b88;font-size:13px;font-weight:700}.faqLinks button{border:0;background:transparent;color:#0094a0;font-size:13px;font-weight:700;text-decoration:underline;text-underline-offset:3px;padding:3px 0}.urgencyNote{text-align:center;color:#8a9ab0;font-size:12px;margin:12px 0 0;padding:10px 0 4px;border-top:1px solid #f0eeea}
 .infoSeo{display:grid;grid-template-columns:1.1fr .9fr;gap:14px;margin:16px 0 0}.infoCard{background:#fff;border:1px solid #e4eaec;border-radius:18px;padding:20px;box-shadow:0 8px 20px rgba(20,40,50,.05)}.infoCard h2{margin:0 0 14px;font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:#8a9ab0;font-weight:700}.infoGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.infoGrid p{margin:0;display:flex;flex-direction:column;gap:3px}.infoGrid b{font-size:10px;color:#33405b;text-transform:uppercase;letter-spacing:.05em}.infoGrid span{font-size:12px;color:#556070;font-weight:500}.hoursCard p{display:grid;grid-template-columns:80px 1fr;margin:0 0 8px;font-size:13px}.hoursCard span{color:#6a7890}.hoursCard b{color:#009CA4;font-weight:700}footer{text-align:center;color:#a8afba;font-size:12px;padding:18px}footer a{color:#009CA4}
-.overlay{position:fixed;inset:0;background:rgba(0,0,0,.44);z-index:50;display:flex;align-items:center;justify-content:center;padding:16px}.modal{width:100%;max-width:430px;background:#fff;border-radius:24px;overflow:hidden;box-shadow:0 28px 80px rgba(0,0,0,.22);position:relative}.modalClaraBar{background:#009CA4;color:#fff;padding:14px 18px;display:flex;align-items:flex-start;gap:10px;font-size:13px;line-height:1.55}.modalBody{padding:16px 18px 18px;display:flex;flex-direction:column;gap:11px}.modalSlotRecap{font-size:12px;color:#5f7375;background:#f4fbfb;border:1px solid #d6eeee;border-radius:11px;padding:9px 12px}.modalSuccess{padding:24px 18px;text-align:center;display:flex;flex-direction:column;gap:12px;align-items:center}.successIcon{width:48px;height:48px;border-radius:50%;background:#009CA4;color:#fff;font-size:20px;display:flex;align-items:center;justify-content:center;margin:0 auto 2px}.successTitle{font-size:16px;font-weight:700}.modalWaCta{text-decoration:none;color:#fff;background:#1f9d4f;border-radius:10px;padding:10px 14px;font-size:13px;font-weight:800;display:inline-block}.modalClose{position:absolute;right:11px;width:26px;height:26px;border:0;border-radius:7px;background:rgba(255,255,255,.18);color:#fff;font-size:15px}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.44);z-index:50;display:flex;align-items:center;justify-content:center;padding:16px}.modal{width:100%;max-width:430px;background:#fff;border-radius:24px;overflow:hidden;box-shadow:0 28px 80px rgba(0,0,0,.22);position:relative}.modalClaraBar{background:#009CA4;color:#fff;padding:14px 18px;display:flex;align-items:flex-start;gap:10px;font-size:13px;line-height:1.55}.modalBody{padding:16px 18px 18px;display:flex;flex-direction:column;gap:11px}.modalSlotRecap{font-size:12px;color:#5f7375;background:#f4fbfb;border:1px solid #d6eeee;border-radius:11px;padding:9px 12px}.modalSuccess{padding:24px 18px;text-align:center;display:flex;flex-direction:column;gap:12px;align-items:center}.successIcon{width:48px;height:48px;border-radius:50%;background:#009CA4;color:#fff;font-size:20px;display:flex;align-items:center;justify-content:center;margin:0 auto 2px}.successTitle{font-size:16px;font-weight:700}.modalWaCta{border:none;cursor:pointer;text-decoration:none;color:#fff;background:#1f9d4f;border-radius:10px;padding:10px 14px;font-size:13px;font-weight:800;display:inline-block}.modalClose{position:absolute;right:11px;width:26px;height:26px;border:0;border-radius:7px;background:rgba(255,255,255,.18);color:#fff;font-size:15px}
 @media(max-width:860px){
 .pageShell{margin:0;border:0;border-radius:0;box-shadow:none;padding:8px 8px 12px;gap:6px}
 .demoNotice{margin:0 0 4px;padding:6px 10px;font-size:11px;font-weight:600;border-radius:8px}
