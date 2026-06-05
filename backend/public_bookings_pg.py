@@ -294,6 +294,37 @@ def mark_public_booking_rescheduled(tenant_id: int, booking_id: str) -> bool:
         return False
 
 
+def attach_public_booking_google_event(
+    tenant_id: int,
+    booking_id: str,
+    google_event_id: Optional[str],
+) -> bool:
+    ge = (google_event_id or "").strip()[:256] or None
+    if not ge:
+        return False
+    try:
+        with pg_connection() as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE public_bookings
+                    SET google_event_id = %s,
+                        status = 'confirmed',
+                        confirmed_at = COALESCE(confirmed_at, NOW())
+                    WHERE tenant_id = %s AND id = %s
+                    RETURNING id
+                    """,
+                    (ge, tenant_id, booking_id),
+                )
+                row = cur.fetchone()
+            conn.commit()
+            return bool(row)
+    except Exception as exc:
+        logger.warning("attach_public_booking_google_event failed tenant=%s id=%s: %s", tenant_id, booking_id, exc)
+        return False
+
+
 def insert_callback_request(
     *,
     tenant_id: Optional[int],

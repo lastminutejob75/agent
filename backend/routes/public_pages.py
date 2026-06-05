@@ -757,11 +757,12 @@ def _track_booking_confirmed_event(
     confirmation_id: str,
     booking_status: str = "pending",
 ) -> None:
+    public_event_name = "booking_confirmed" if booking_status == "confirmed" else "booking_requested"
     try:
         _insert_public_event(
             PublicAnalyticsEventRequest(
                 slug=payload.slug,
-                event="booking_confirmed",
+                event=public_event_name,
                 source=payload.source,
                 slotId=payload.slotId,
                 slotLabel=payload.slotLabel,
@@ -778,11 +779,10 @@ def _track_booking_confirmed_event(
     try:
         from backend.db import create_ivr_event
 
-        event_name = "booking_confirmed" if booking_status == "confirmed" else "booking_requested"
         create_ivr_event(
             int(tenant_id),
             f"public-{confirmation_id}",
-            event_name,
+            public_event_name,
             context=json.dumps(
                 {
                     "source": payload.source,
@@ -996,6 +996,39 @@ def _book_real_slot(
         payload.slotLabel[:60] if payload.slotLabel else "",
     )
     return False, "technical", None
+
+
+def _confirm_public_booking_in_background(
+    tenant_id: Optional[int],
+    payload: PublicBookingRequest,
+    confirmation_id: str,
+    booking_code: Optional[str],
+) -> None:
+    if not tenant_id:
+        return
+    try:
+        ok, reason, google_event_id = _book_real_slot(int(tenant_id), payload, booking_code=booking_code)
+        if not ok:
+            logger.warning(
+                "public_book background calendar failed slug=%s tenant=%s booking=%s reason=%s",
+                payload.slug,
+                tenant_id,
+                confirmation_id,
+                reason,
+            )
+            return
+        if google_event_id:
+            from backend.public_bookings_pg import attach_public_booking_google_event
+
+            attach_public_booking_google_event(int(tenant_id), confirmation_id, google_event_id)
+    except Exception as exc:
+        logger.warning(
+            "public_book background calendar exception slug=%s tenant=%s booking=%s: %s",
+            payload.slug,
+            tenant_id,
+            confirmation_id,
+            exc,
+        )
 
 
 def _format_public_slot(raw: Dict[str, Any], today: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
@@ -1324,64 +1357,19 @@ async def public_sitemap() -> Response:
 async def public_book(
     payload: PublicBookingRequest,
     background_tasks: BackgroundTasks,
-    request: Request,
 ) -> Dict[str, Any]:
-    """Réservation patient publique. Rate-limit IP + slug pour limiter le spam de RDV."""
-    from backend.rate_limit import check_sliding_window, client_ip
-
-    ip = client_ip(request)
-    slug = (payload.slug or "").strip().lower() or "unknown"
-    try:
-        check_sliding_window(f"public_book_ip:{ip}", limit=5, window_sec=60)
-        check_sliding_window(f"public_book_ip:{ip}", limit=30, window_sec=3600)
-        check_sliding_window(f"public_book_slug:{slug}", limit=20, window_sec=60)
-    except RuntimeError as e:
-        raise HTTPException(status_code=429, detail=str(e))
-
+    """Demande RDV publique rapide: validation + insert DB, sans appel agenda synchrone."""
     payload = _sanitize_public_booking_payload(payload)
     tenant_id = _tenant_id_from_booking_payload(payload)
     tenant_id_raw: Optional[Any] = tenant_id
-    practitioner: Optional[Dict[str, Any]] = None
     if tenant_id is None:
-        practitioner = _try_fetch_practitioner(payload.slug) or _demo_practitioner(payload.slug)
-        tenant_id_raw = practitioner.get("tenantId")
-        if tenant_id_raw is not None:
-            try:
-                tenant_id = int(tenant_id_raw)
-            except (TypeError, ValueError):
-                tenant_id = None
+        tenant_id = _coerce_tenant_id_for_db(_resolve_tenant_id(payload.slug))
+        tenant_id_raw = tenant_id
 
-    booking_status = "pending"
+    booking_status = "confirmed"
     booking_reason: Optional[str] = None
     booking_code: Optional[str] = None
-    try:
-        from backend.booking_code import create_unique_booking_code_for_tenant
-
-        booking_code = create_unique_booking_code_for_tenant(tenant_id)
-    except Exception as exc:
-        logger.warning("public_book booking_code generation skipped tenant=%s: %s", tenant_id, exc)
-
     google_event_id: Optional[str] = None
-    if tenant_id:
-        ok, booking_reason, google_event_id = _book_real_slot(tenant_id, payload, booking_code=booking_code)
-        if ok:
-            booking_status = "confirmed"
-        elif booking_reason == "slot_taken":
-            raise HTTPException(
-                status_code=409,
-                detail="Ce créneau n'est plus disponible. Choisissez un autre horaire.",
-            )
-        else:
-            logger.warning(
-                "public_book real booking failed slug=%s tenant=%s reason=%s",
-                payload.slug,
-                tenant_id,
-                booking_reason,
-            )
-            raise HTTPException(
-                status_code=502,
-                detail="Impossible de confirmer ce creneau. Choisissez un autre horaire ou demandez a etre rappele par le cabinet.",
-            )
 
     booking_record = _insert_booking(
         payload,
@@ -1398,6 +1386,13 @@ async def public_book(
     # patient depuis la prise de RDV publique. La reconnaissance "patient connu"
     # reste en lecture seule via /api/public/praticiens/{slug}/patient-hint.
 
+    background_tasks.add_task(
+        _confirm_public_booking_in_background,
+        tenant_id,
+        payload,
+        confirmation_id,
+        booking_code,
+    )
     background_tasks.add_task(
         _dispatch_booking_notifications_for_slug,
         payload,
@@ -1426,7 +1421,6 @@ async def public_book(
         confirmation_id,
         booking_status,
     )
-    followup = _build_whatsapp_followup(practitioner, payload) if practitioner else {"enabled": False, "whatsappUrl": None}
     from backend.booking_code import format_booking_code
 
     return {
@@ -1440,5 +1434,5 @@ async def public_book(
         "cabinetSmsSent": None,
         "cabinetEmailSent": None,
         "notificationsPending": True,
-        "followup": followup,
+        "followup": {"enabled": False, "whatsappUrl": None},
     }
