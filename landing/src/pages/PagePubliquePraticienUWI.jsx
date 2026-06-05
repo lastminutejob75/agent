@@ -145,14 +145,49 @@ function writeSessionSlots(slug, slotData) {
   }
 }
 
-function parsePublicSlotStartMs(slot) {
+function formatLocalDate(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function nextWeekdayFrom(baseDate, weekdayIndex) {
+  const next = new Date(baseDate);
+  const daysAhead = (weekdayIndex - next.getDay() + 7) % 7 || 7;
+  next.setDate(next.getDate() + daysAhead);
+  return next;
+}
+
+function resolvePublicSlotDate(slot, refDate = new Date()) {
+  const explicit = String(slot?.date || "").slice(0, 10);
+  if (explicit) return explicit;
+  const label = norm(String(slot?.label || ""));
+  const dayShort = String(slot?.day || "");
+  const base = new Date(refDate);
+  if (label.includes("aujourd") || dayShort === "Auj.") return formatLocalDate(base);
+  if (label.includes("demain") || dayShort === "Dem.") {
+    base.setDate(base.getDate() + 1);
+    return formatLocalDate(base);
+  }
+  const weekdays = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"];
+  for (let i = 0; i < weekdays.length; i += 1) {
+    if (label.includes(weekdays[i])) {
+      const jsWeekday = i === 6 ? 0 : i + 1;
+      return formatLocalDate(nextWeekdayFrom(base, jsWeekday));
+    }
+  }
+  return "";
+}
+
+function parsePublicSlotStartMs(slot, refDate = new Date()) {
   const startIso = String(slot?.startIso || slot?.start_iso || "").trim();
   if (startIso) {
     const ms = Date.parse(startIso);
     if (!Number.isNaN(ms)) return ms;
   }
-  const date = String(slot?.date || "").slice(0, 10);
   const time = String(slot?.time || "").slice(0, 5);
+  const date = resolvePublicSlotDate(slot, refDate);
   if (date && time) {
     const ms = Date.parse(`${date}T${time}:00`);
     if (!Number.isNaN(ms)) return ms;
@@ -160,10 +195,20 @@ function parsePublicSlotStartMs(slot) {
   return null;
 }
 
+function materializeDemoSlots(slots, refDate = new Date()) {
+  return safeArray(slots).map((slot) => {
+    const date = resolvePublicSlotDate(slot, refDate);
+    const time = String(slot?.time || "").slice(0, 5);
+    if (!date || !time || slot?.startIso) return slot;
+    return { ...slot, date, startIso: `${date}T${time}:00` };
+  });
+}
+
 function filterFuturePublicSlots(slots, minLeadMinutes = 30) {
+  const refDate = new Date();
   const cutoff = Date.now() + Math.max(0, minLeadMinutes) * 60 * 1000;
-  return safeArray(slots).filter((slot) => {
-    const startMs = parsePublicSlotStartMs(slot);
+  return materializeDemoSlots(slots, refDate).filter((slot) => {
+    const startMs = parsePublicSlotStartMs(slot, refDate);
     return startMs != null && startMs >= cutoff;
   });
 }
@@ -1459,7 +1504,6 @@ export default function PagePubliquePraticienUWI() {
     pageViewTracked.current = false;
     slotInitDone.current = false;
     setBookingDone(false);
-    setBookingFollowup(null);
     setVoiceError("");
     setVoiceStatus("idle");
     setInlineSlot(null);
@@ -1539,6 +1583,8 @@ export default function PagePubliquePraticienUWI() {
           setSlots(freshSlots);
           setSlotsMeta({ source: slotData.source || null, calendar: slotData.calendar || null });
           writeSessionSlots(slug, { ...slotData, slots: freshSlots });
+        } else if (safeArray(slotData.slots).length) {
+          setSlotsMeta({ source: slotData.source || null, calendar: slotData.calendar || null });
         }
       } catch {
         // Conserve les créneaux affichés (cache session ou démo).
@@ -2098,7 +2144,6 @@ export default function PagePubliquePraticienUWI() {
     const label = modalSlot?.label;
     setModalSlot(null);
     setBookingDone(false);
-    setBookingFollowup(null);
     if (label) push([{ from: "clara", text: `Aucun souci. Le creneau ${label} reste disponible. Vous pouvez le reprendre ou choisir un autre horaire.` }]);
     if (label) {
       trackPublicEvent({
@@ -2148,26 +2193,30 @@ export default function PagePubliquePraticienUWI() {
     setPostBookingChatOpen(true);
   }, [practitioner, push]);
 
+  const refreshPublicSlots = useCallback(async () => {
+    try {
+      const data = await fetchJson(`/api/public/slots/${encodeURIComponent(slug)}?count=8`);
+      const next = filterFuturePublicSlots(safeArray(data?.slots));
+      if (next.length) {
+        setSlots(next);
+        setSlotsMeta({ source: data?.source || null, calendar: data?.calendar || null });
+      }
+      return next;
+    } catch {
+      return filterFuturePublicSlots(safeArray(slots));
+    }
+  }, [slug, slots]);
+
   const handlePostBookingAskAnother = useCallback(() => {
     setPostBookingChatOpen(true);
+    void refreshPublicSlots();
     push([
       {
         from: "clara",
         text: "Je suis la pour vos autres questions : documents, acces, horaires, tarifs…",
       },
     ]);
-  }, [push]);
-
-  const refreshPublicSlots = useCallback(async () => {
-    try {
-      const data = await fetchJson(`/api/public/slots/${encodeURIComponent(slug)}?count=8`);
-      const next = filterFuturePublicSlots(safeArray(data?.slots));
-      if (next.length) setSlots(next);
-      return next;
-    } catch {
-      return filterFuturePublicSlots(safeArray(slots));
-    }
-  }, [slug, slots]);
+  }, [push, refreshPublicSlots]);
 
   const mainChips = [
     { label: "Prendre RDV", text: "Je souhaite prendre rendez-vous.", action: "book" },
@@ -2358,7 +2407,7 @@ export default function PagePubliquePraticienUWI() {
               <div className="chatHeaderBadge">Reponse 24/7</div>
             </div>
 
-            {!inlineSlot && !postBookingMode && slots.length > 0 ? (
+            {!inlineSlot && (!postBookingMode || postBookingChatOpen) && slots.length > 0 ? (
               <div className="slotsStrip" aria-label="Creneaux disponibles">
                 <p className="slotsStripLabel">
                   <span className="slotDot" />

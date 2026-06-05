@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import uuid
 import json
 import smtplib
@@ -752,6 +753,49 @@ def _public_slots_now() -> datetime:
     return datetime.now(_PUBLIC_SLOTS_TZ).replace(tzinfo=None)
 
 
+def _materialize_demo_slots(now: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    """Injecte date/startIso sur les créneaux démo (labels relatifs type « aujourd'hui »)."""
+    ref = now or _public_slots_now()
+    today = ref.date()
+    materialized: List[Dict[str, Any]] = []
+    for tpl in DEMO_SLOTS:
+        item = dict(tpl)
+        label = str(item.get("label") or "").lower()
+        day_short = str(item.get("day") or "")
+        time_str = str(item.get("time") or "")[:5]
+        if not time_str:
+            match = re.search(r"(\d{1,2}:\d{2})", str(item.get("label") or ""))
+            time_str = match.group(1) if match else "09:00"
+        target_date = None
+        if "aujourd" in label or day_short == "Auj.":
+            target_date = today
+        elif "demain" in label or day_short == "Dem.":
+            target_date = today + timedelta(days=1)
+        else:
+            for idx, day_name in enumerate(_FR_WEEKDAYS_LONG):
+                if day_name in label:
+                    days_ahead = (idx - ref.weekday()) % 7
+                    if days_ahead == 0:
+                        days_ahead = 7
+                    target_date = today + timedelta(days=days_ahead)
+                    break
+        if target_date is None:
+            continue
+        date_str = target_date.strftime("%Y-%m-%d")
+        item["date"] = date_str
+        item["time"] = time_str
+        item["startIso"] = f"{date_str}T{time_str}:00"
+        materialized.append(item)
+    return materialized
+
+
+def _demo_slots_payload(slug: str, safe_count: int, **extra: Any) -> Dict[str, Any]:
+    return _apply_public_slots_payload(
+        {"slug": slug, "slots": _materialize_demo_slots(), "source": "demo", **extra},
+        safe_count,
+    )
+
+
 def _parse_public_slot_start(item: Dict[str, Any]) -> Optional[datetime]:
     start_iso = str(item.get("startIso") or item.get("start_iso") or "").strip()
     if start_iso:
@@ -1212,16 +1256,13 @@ def prewarm_slots_for_slug(slug: str, count: int = 12) -> Dict[str, Any]:
 
     tenant_id = _resolve_tenant_id(slug)
     if not tenant_id:
-        out = _apply_public_slots_payload({"slug": slug, "slots": DEMO_SLOTS, "source": "demo"}, safe_count)
+        out = _demo_slots_payload(slug, safe_count)
         return {"ok": True, "skipped": False, "slug": slug, "slots": len(out["slots"]), "source": "demo"}
 
     try:
         out = _fetch_public_slots_payload(int(tenant_id), slug, safe_count)
         if not out.get("slots"):
-            out = _apply_public_slots_payload(
-                {"slug": slug, "slots": DEMO_SLOTS, "source": "demo", "pending": True},
-                safe_count,
-            )
+            out = _demo_slots_payload(slug, safe_count, pending=True)
         return {
             "ok": True,
             "skipped": False,
@@ -1275,7 +1316,7 @@ async def get_public_slots(slug: str, count: int = 6) -> Dict[str, Any]:
 
     tenant_id = _resolve_tenant_id(slug)
     if not tenant_id:
-        out = _apply_public_slots_payload({"slug": slug, "slots": DEMO_SLOTS, "source": "demo"}, safe_count)
+        out = _demo_slots_payload(slug, safe_count)
         return _slots_response(out)
 
     try:
@@ -1285,13 +1326,10 @@ async def get_public_slots(slug: str, count: int = 6) -> Dict[str, Any]:
         )
     except asyncio.TimeoutError:
         logger.warning("public slots timeout slug=%s tenant=%s", slug, tenant_id)
-        out = _apply_public_slots_payload(
-            {"slug": slug, "slots": DEMO_SLOTS, "source": "demo", "pending": True},
-            safe_count,
-        )
+        out = _demo_slots_payload(slug, safe_count, pending=True)
     except Exception as exc:
         logger.warning("public slots failed slug=%s tenant=%s: %s", slug, tenant_id, exc)
-        out = _apply_public_slots_payload({"slug": slug, "slots": DEMO_SLOTS, "source": "demo"}, safe_count)
+        out = _demo_slots_payload(slug, safe_count)
 
     return _slots_response(out)
 
