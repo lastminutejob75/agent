@@ -8,6 +8,7 @@ import smtplib
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 from urllib.parse import quote
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -742,6 +743,60 @@ async def get_public_practitioner(slug: str, requireExists: bool = Query(False))
 _DEFAULT_PUBLIC_MOTIFS = ["Consultation", "Suivi", "Premiere consultation", "Renouvellement"]
 _FR_WEEKDAYS_SHORT = ["Lun.", "Mar.", "Mer.", "Jeu.", "Ven.", "Sam.", "Dim."]
 _FR_WEEKDAYS_LONG = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+_PUBLIC_SLOTS_TZ = ZoneInfo("Europe/Paris")
+_PUBLIC_SLOTS_MIN_LEAD_MINUTES = 30
+
+
+def _public_slots_now() -> datetime:
+    """Horloge cabinet (Europe/Paris), naive pour comparaison avec startIso local."""
+    return datetime.now(_PUBLIC_SLOTS_TZ).replace(tzinfo=None)
+
+
+def _parse_public_slot_start(item: Dict[str, Any]) -> Optional[datetime]:
+    start_iso = str(item.get("startIso") or item.get("start_iso") or "").strip()
+    if start_iso:
+        try:
+            dt = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+            if dt.tzinfo is not None:
+                return dt.astimezone(_PUBLIC_SLOTS_TZ).replace(tzinfo=None)
+            return dt
+        except ValueError:
+            pass
+    date_str = str(item.get("date") or "")[:10]
+    time_str = str(item.get("time") or "")[:5]
+    if date_str and time_str:
+        try:
+            return datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            pass
+    return None
+
+
+def _filter_future_public_slots(
+    slots: List[Dict[str, Any]],
+    *,
+    now: Optional[datetime] = None,
+    min_lead_minutes: int = _PUBLIC_SLOTS_MIN_LEAD_MINUTES,
+) -> List[Dict[str, Any]]:
+    """Exclut créneaux passés ou trop proches (cache HTTP inclus)."""
+    ref = now or _public_slots_now()
+    cutoff = ref + timedelta(minutes=max(0, int(min_lead_minutes or 0)))
+    kept: List[Dict[str, Any]] = []
+    for item in slots or []:
+        if not isinstance(item, dict):
+            continue
+        start = _parse_public_slot_start(item)
+        if start is None or start < cutoff:
+            continue
+        kept.append(item)
+    return kept
+
+
+def _apply_public_slots_payload(out: Dict[str, Any], safe_count: int) -> Dict[str, Any]:
+    payload = dict(out or {})
+    slots = _filter_future_public_slots(list(payload.get("slots") or []))
+    payload["slots"] = slots[:safe_count]
+    return payload
 
 
 def _upsert_public_patient_safe(tenant_id: int, payload: PublicBookingRequest) -> None:
@@ -1041,7 +1096,7 @@ def _format_public_slot(raw: Dict[str, Any], today: Optional[datetime] = None) -
         dt = datetime.strptime(date_str, "%Y-%m-%d")
     except ValueError:
         return None
-    today = today or datetime.now()
+    today = today or _public_slots_now()
     today_d = today.date()
     diff_days = (dt.date() - today_d).days
     weekday_index = dt.weekday()  # 0..6 Monday=0
@@ -1084,7 +1139,7 @@ def _format_slot_from_display(
     if slot_id is None and isinstance(slot, dict):
         slot_id = slot.get("slot_id") or slot.get("id")
 
-    today = today or datetime.now()
+    today = today or _public_slots_now()
     date_str, time_str = "", ""
     if start_iso:
         try:
@@ -1157,13 +1212,16 @@ def prewarm_slots_for_slug(slug: str, count: int = 12) -> Dict[str, Any]:
 
     tenant_id = _resolve_tenant_id(slug)
     if not tenant_id:
-        out = {"slug": slug, "slots": DEMO_SLOTS[:safe_count], "source": "demo"}
+        out = _apply_public_slots_payload({"slug": slug, "slots": DEMO_SLOTS, "source": "demo"}, safe_count)
         return {"ok": True, "skipped": False, "slug": slug, "slots": len(out["slots"]), "source": "demo"}
 
     try:
         out = _fetch_public_slots_payload(int(tenant_id), slug, safe_count)
         if not out.get("slots"):
-            out = {"slug": slug, "slots": DEMO_SLOTS[:safe_count], "source": "demo", "pending": True}
+            out = _apply_public_slots_payload(
+                {"slug": slug, "slots": DEMO_SLOTS, "source": "demo", "pending": True},
+                safe_count,
+            )
         return {
             "ok": True,
             "skipped": False,
@@ -1187,7 +1245,7 @@ def _fetch_public_slots_payload(tenant_id: int, slug: str, safe_count: int) -> D
         pref=None,
         session=session,
     ) or []
-    now = datetime.now()
+    now = _public_slots_now()
     formatted: List[Dict[str, Any]] = []
     for slot in display_slots:
         item = _format_slot_from_display(slot, today=now, tenant_id=tenant_id)
@@ -1197,12 +1255,15 @@ def _fetch_public_slots_payload(tenant_id: int, slug: str, safe_count: int) -> D
             formatted.append(item)
     if formatted:
         calendar_src = "google" if any(s.get("source") == "google" for s in formatted) else "local"
-        return {
-            "slug": slug,
-            "slots": formatted[:safe_count],
-            "source": "agenda",
-            "calendar": calendar_src,
-        }
+        return _apply_public_slots_payload(
+            {
+                "slug": slug,
+                "slots": formatted,
+                "source": "agenda",
+                "calendar": calendar_src,
+            },
+            safe_count,
+        )
     return {"slug": slug, "slots": [], "source": "agenda", "calendar": "none"}
 
 
@@ -1214,7 +1275,7 @@ async def get_public_slots(slug: str, count: int = 6) -> Dict[str, Any]:
 
     tenant_id = _resolve_tenant_id(slug)
     if not tenant_id:
-        out = {"slug": slug, "slots": DEMO_SLOTS[:safe_count], "source": "demo"}
+        out = _apply_public_slots_payload({"slug": slug, "slots": DEMO_SLOTS, "source": "demo"}, safe_count)
         return _slots_response(out)
 
     try:
@@ -1224,10 +1285,13 @@ async def get_public_slots(slug: str, count: int = 6) -> Dict[str, Any]:
         )
     except asyncio.TimeoutError:
         logger.warning("public slots timeout slug=%s tenant=%s", slug, tenant_id)
-        out = {"slug": slug, "slots": DEMO_SLOTS[:safe_count], "source": "demo", "pending": True}
+        out = _apply_public_slots_payload(
+            {"slug": slug, "slots": DEMO_SLOTS, "source": "demo", "pending": True},
+            safe_count,
+        )
     except Exception as exc:
         logger.warning("public slots failed slug=%s tenant=%s: %s", slug, tenant_id, exc)
-        out = {"slug": slug, "slots": DEMO_SLOTS[:safe_count], "source": "demo"}
+        out = _apply_public_slots_payload({"slug": slug, "slots": DEMO_SLOTS, "source": "demo"}, safe_count)
 
     return _slots_response(out)
 

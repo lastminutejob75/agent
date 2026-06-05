@@ -2467,6 +2467,7 @@ def list_free_slots(limit: int = 3, pref: Optional[str] = None, tenant_id: int =
     conn = get_conn()
     try:
         today = datetime.now().strftime("%Y-%m-%d")
+        now_time = datetime.now().strftime("%H:%M")
         time_condition = ""
         if pref == "matin":
             time_condition = " AND time < '12:00'"
@@ -2478,11 +2479,12 @@ def list_free_slots(limit: int = 3, pref: Optional[str] = None, tenant_id: int =
             f"""
             SELECT id, date, time 
             FROM slots 
-            WHERE tenant_id = ? AND is_booked=0 AND date >= ?{time_condition}
+            WHERE tenant_id = ? AND is_booked=0
+              AND (date > ? OR (date = ? AND time >= ?)){time_condition}
             ORDER BY date ASC, time ASC 
             LIMIT ?
             """,
-            (tenant_id, today, limit),
+            (tenant_id, today, today, now_time, limit),
         )
         out = []
         for r in cur.fetchall():

@@ -70,7 +70,7 @@ def pg_list_free_slots(
                     SELECT id, start_ts
                     FROM slots
                     WHERE tenant_id = %s AND is_booked = FALSE
-                      AND start_ts >= CURRENT_DATE + INTERVAL '1 day'
+                      AND start_ts >= (NOW() AT TIME ZONE 'Europe/Paris') + INTERVAL '30 minutes'
                       {time_cond}
                     ORDER BY start_ts ASC
                     LIMIT %s

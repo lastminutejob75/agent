@@ -1157,7 +1157,7 @@ def _get_slots_from_google_calendar(
         candidate_dates = [datetime(target_date.year, target_date.month, target_date.day)]
     else:
         day_horizon = 14 if target_pool_size >= SLOTS_POOL_SIZE_MORE else 8
-        for day_offset in range(1, day_horizon):
+        for day_offset in range(0, day_horizon):
             dt = datetime.now() + timedelta(days=day_offset)
             if dt.weekday() not in booking_days:
                 continue

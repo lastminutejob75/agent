@@ -144,6 +144,29 @@ function writeSessionSlots(slug, slotData) {
     /* quota / private mode */
   }
 }
+
+function parsePublicSlotStartMs(slot) {
+  const startIso = String(slot?.startIso || slot?.start_iso || "").trim();
+  if (startIso) {
+    const ms = Date.parse(startIso);
+    if (!Number.isNaN(ms)) return ms;
+  }
+  const date = String(slot?.date || "").slice(0, 10);
+  const time = String(slot?.time || "").slice(0, 5);
+  if (date && time) {
+    const ms = Date.parse(`${date}T${time}:00`);
+    if (!Number.isNaN(ms)) return ms;
+  }
+  return null;
+}
+
+function filterFuturePublicSlots(slots, minLeadMinutes = 30) {
+  const cutoff = Date.now() + Math.max(0, minLeadMinutes) * 60 * 1000;
+  return safeArray(slots).filter((slot) => {
+    const startMs = parsePublicSlotStartMs(slot);
+    return startMs != null && startMs >= cutoff;
+  });
+}
 const norm = (value) => String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 const addr = (p) => [p?.address?.street, [p?.address?.postalCode, p?.address?.city].filter(Boolean).join(" ")].filter(Boolean).join(", ");
 const telHref = (p) => "tel:" + String(p?.phoneTel || p?.phone || "").replace(/[^+0-9]/g, "");
@@ -1013,13 +1036,13 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
   const loadRescheduleSlots = async () => {
     let loaded = [];
     if (safeArray(slots).length) {
-      loaded = slots.slice(0, 8);
+      loaded = filterFuturePublicSlots(slots).slice(0, 8);
     } else if (typeof onRefreshSlots === "function") {
       loaded = safeArray(await onRefreshSlots()).slice(0, 8);
     } else {
       try {
         const data = await fetchJson(`/api/public/slots/${encodeURIComponent(slug)}?count=8`);
-        loaded = safeArray(data?.slots);
+        loaded = filterFuturePublicSlots(safeArray(data?.slots));
       } catch {
         loaded = [];
       }
@@ -1473,7 +1496,7 @@ export default function PagePubliquePraticienUWI() {
     const sessionCached = readSessionSlots(slug);
     const hasSessionCache = Boolean(sessionCached?.slots?.length);
 
-    setSlots(hasSessionCache ? sessionCached.slots : defaultSlots);
+    setSlots(hasSessionCache ? filterFuturePublicSlots(sessionCached.slots) : filterFuturePublicSlots(defaultSlots));
     setSlotsMeta({
       source: sessionCached?.source || null,
       calendar: sessionCached?.calendar || null,
@@ -1518,10 +1541,11 @@ export default function PagePubliquePraticienUWI() {
       try {
         const slotData = await fetchJson(`/api/public/slots/${encodeURIComponent(slug)}?count=12`);
         if (cancelled) return;
-        if (safeArray(slotData.slots).length) {
-          setSlots(slotData.slots);
+        const freshSlots = filterFuturePublicSlots(slotData.slots);
+        if (freshSlots.length) {
+          setSlots(freshSlots);
           setSlotsMeta({ source: slotData.source || null, calendar: slotData.calendar || null });
-          writeSessionSlots(slug, slotData);
+          writeSessionSlots(slug, { ...slotData, slots: freshSlots });
         }
       } catch {
         // Conserve les créneaux affichés (cache session ou démo).
@@ -2145,11 +2169,11 @@ export default function PagePubliquePraticienUWI() {
   const refreshPublicSlots = useCallback(async () => {
     try {
       const data = await fetchJson(`/api/public/slots/${encodeURIComponent(slug)}?count=8`);
-      const next = safeArray(data?.slots);
+      const next = filterFuturePublicSlots(safeArray(data?.slots));
       if (next.length) setSlots(next);
       return next;
     } catch {
-      return safeArray(slots);
+      return filterFuturePublicSlots(safeArray(slots));
     }
   }, [slug, slots]);
 
