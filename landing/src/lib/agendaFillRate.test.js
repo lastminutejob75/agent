@@ -3,6 +3,7 @@ import {
   computeDashboardFillRate,
   computeFillRateFromOpeningHours,
   computeUpcomingFillRate,
+  mergeBookedEntryStarts,
   monthsCoveringHorizon,
   openingRowOpenMinutes,
 } from "./agendaFillRate.js";
@@ -76,6 +77,15 @@ describe("agendaFillRate", () => {
     expect(out.totalCapacity).toBeGreaterThan(0);
     expect(out.fillRate).toBeGreaterThan(0);
     expect(out.source).toBe("opening_hours");
+  });
+
+  it("mergeBookedEntryStarts fusionne agenda et stats-fast sans doublon", () => {
+    const d1 = new Date(2026, 5, 2, 9, 0, 0);
+    const merged = mergeBookedEntryStarts(
+      [{ start: d1 }],
+      [d1.toISOString(), "2026-06-04T10:00:00+02:00"],
+    );
+    expect(merged).toHaveLength(2);
   });
 
   it("préfère les horaires cabinet au repli créneaux libres", () => {

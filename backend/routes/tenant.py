@@ -2986,16 +2986,19 @@ def tenant_dashboard_stats_fast(auth: dict = Depends(require_tenant_auth)):
     if not detail:
         raise HTTPException(404, "Tenant not found")
     tz_name = _tenant_timezone(detail)
+    from backend.public_bookings_pg import dashboard_booking_horizon
     from backend.routes.admin import _get_kpis_today
     from backend.slots_pg import pg_count_free_slots_horizon
 
     today: dict = {}
     free_slots: dict = {}
     calls: List[Dict[str, Any]] = []
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    booking_horizon: dict = {}
+    with ThreadPoolExecutor(max_workers=4) as pool:
         f_today = pool.submit(_get_kpis_today, tenant_id, tz_name)
         f_free = pool.submit(pg_count_free_slots_horizon, tenant_id, 7, tz_name)
         f_calls = pool.submit(_tenant_dashboard_calls_light, tenant_id, detail, tz_name, 30, 7)
+        f_booked = pool.submit(dashboard_booking_horizon, tenant_id, horizon_days=7, tz_name=tz_name)
         try:
             today = f_today.result(timeout=20) or {}
         except Exception as exc:
@@ -3009,11 +3012,18 @@ def tenant_dashboard_stats_fast(auth: dict = Depends(require_tenant_auth)):
             calls = f_calls.result(timeout=20) or []
         except Exception as exc:
             logger.warning("stats-fast calls failed tenant=%s: %s", tenant_id, exc)
+        try:
+            raw_horizon = f_booked.result(timeout=15) or {}
+            booking_horizon = raw_horizon if isinstance(raw_horizon, dict) else {}
+        except Exception as exc:
+            logger.warning("stats-fast booking horizon failed tenant=%s: %s", tenant_id, exc)
 
     payload = {
         "today": today,
         "free_slots_by_date": free_slots,
         "calls": calls,
+        "booked_starts": booking_horizon.get("booked_starts") or [],
+        "appointments_today": int(booking_horizon.get("appointments_today") or 0),
     }
     if not os.environ.get("PYTEST_CURRENT_TEST"):
         ttl = _tenant_stats_fast_cache_ttl()

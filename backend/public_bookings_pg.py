@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -894,6 +895,106 @@ def count_public_bookings(
     except Exception as exc:
         logger.debug("count_public_bookings failed tenant=%s: %s", tenant_id, exc)
         return 0
+
+
+def dashboard_booking_horizon(
+    tenant_id: int,
+    *,
+    horizon_days: int = 7,
+    tz_name: str = "Europe/Paris",
+) -> Dict[str, Any]:
+    """
+    Créneaux réservés (public_bookings) sur la fenêtre [aujourd'hui, aujourd'hui + horizon).
+    Alimente le dashboard sans dépendre de Google Calendar (mode lightweight).
+    """
+    ensure_public_bookings_schema()
+    safe_days = max(1, min(int(horizon_days or 7), 31))
+    tz_key = (tz_name or "Europe/Paris").strip() or "Europe/Paris"
+    try:
+        tz = ZoneInfo(tz_key)
+    except Exception:
+        tz = ZoneInfo("Europe/Paris")
+    today_key = datetime.now(tz).strftime("%Y-%m-%d")
+    starts: List[str] = []
+    today_count = 0
+    seen: set[str] = set()
+
+    def _ingest(iso_raw: Any) -> None:
+        nonlocal today_count
+        iso = str(iso_raw or "").strip()
+        if not iso or iso in seen:
+            return
+        try:
+            dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            local = dt.astimezone(tz)
+            if local.strftime("%Y-%m-%d") == today_key:
+                today_count += 1
+            seen.add(iso)
+            starts.append(iso)
+        except Exception:
+            return
+
+    try:
+        with pg_connection() as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT start_iso
+                    FROM public_bookings
+                    WHERE tenant_id = %s
+                      AND status IN ('confirmed', 'pending')
+                      AND start_iso IS NOT NULL
+                      AND (start_iso AT TIME ZONE %s)::date >= (CURRENT_TIMESTAMP AT TIME ZONE %s)::date
+                      AND (start_iso AT TIME ZONE %s)::date
+                          < (CURRENT_TIMESTAMP AT TIME ZONE %s)::date + %s
+                    ORDER BY start_iso ASC
+                    """,
+                    (tenant_id, tz_key, tz_key, tz_key, tz_key, safe_days),
+                )
+                for row in cur.fetchall() or []:
+                    raw = row.get("start_iso") if hasattr(row, "get") else row[0]
+                    _ingest(raw)
+    except Exception as exc:
+        logger.debug("dashboard_booking_horizon public_bookings failed tenant=%s: %s", tenant_id, exc)
+
+    url = os.environ.get("DATABASE_URL") or os.environ.get("PG_SLOTS_URL")
+    if url:
+        try:
+            with pg_connection() as conn:
+                set_tenant_id_on_connection(conn, tenant_id)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT s.start_ts
+                        FROM appointments a
+                        JOIN slots s ON s.id = a.slot_id
+                        WHERE a.tenant_id = %s
+                          AND (s.start_ts AT TIME ZONE %s)::date >= (CURRENT_TIMESTAMP AT TIME ZONE %s)::date
+                          AND (s.start_ts AT TIME ZONE %s)::date
+                              < (CURRENT_TIMESTAMP AT TIME ZONE %s)::date + %s
+                        ORDER BY s.start_ts ASC
+                        """,
+                        (tenant_id, tz_key, tz_key, tz_key, tz_key, safe_days),
+                    )
+                    for row in cur.fetchall() or []:
+                        raw = row.get("start_ts") if hasattr(row, "get") else row[0]
+                        if raw is None:
+                            continue
+                        if hasattr(raw, "isoformat"):
+                            _ingest(raw.isoformat())
+                        else:
+                            _ingest(str(raw))
+        except Exception as exc:
+            logger.debug("dashboard_booking_horizon appointments failed tenant=%s: %s", tenant_id, exc)
+
+    return {
+        "booked_starts": starts,
+        "appointments_today": today_count,
+        "horizon_days": safe_days,
+    }
 
 
 def list_public_bookings_created_between(

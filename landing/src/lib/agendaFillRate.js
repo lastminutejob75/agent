@@ -158,6 +158,24 @@ export function computeUpcomingFillRate({
   return { fillRate, totalBooked, totalCapacity, horizonDays, source: "free_slots" };
 }
 
+/** Fusionne créneaux agenda + starts ISO stats-fast (dédupliqués). */
+export function mergeBookedEntryStarts(agendaEntries = [], isoStarts = []) {
+  const byKey = new Map();
+  const add = (start) => {
+    if (!(start instanceof Date) || Number.isNaN(start.getTime())) return;
+    byKey.set(start.toISOString(), { start });
+  };
+  (agendaEntries || []).forEach((entry) => {
+    if (entry?.start) add(entry.start);
+    else if (entry instanceof Date) add(entry);
+  });
+  (isoStarts || []).forEach((iso) => {
+    const d = new Date(String(iso || "").trim());
+    add(d);
+  });
+  return [...byKey.values()];
+}
+
 /** Préfère le calcul horaires cabinet ; repli sur créneaux libres PG si horaires absents. */
 export function computeDashboardFillRate({
   today,

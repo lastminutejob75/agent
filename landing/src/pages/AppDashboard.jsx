@@ -9,7 +9,7 @@ import {
 } from "../lib/agendaSlotParse.js";
 import { buildAgendaViewUrl } from "../lib/agendaAppointmentActions.js";
 import { api } from "../lib/api.js";
-import { computeDashboardFillRate } from "../lib/agendaFillRate.js";
+import { computeDashboardFillRate, mergeBookedEntryStarts } from "../lib/agendaFillRate.js";
 import HomeHeroSection from "../components/home/HomeHeroSection.jsx";
 import { buildRequestItemsFromCallsAndHandoffs, summarizeRequestItems } from "../lib/requestUiStatus.js";
 import { fetchTenantCallbacksCached, fetchTenantHandoffsCached } from "../lib/tenantRequestsCache.js";
@@ -201,6 +201,8 @@ export default function AppDashboard() {
   const [loading, setLoading] = useState(true);
   const [statsLoading, setStatsLoading] = useState(true);
   const [kpis, setKpis] = useState(null);
+  const [bookedStarts, setBookedStarts] = useState([]);
+  const [appointmentsTodayFromStats, setAppointmentsTodayFromStats] = useState(0);
   const [agenda, setAgenda] = useState([]);
   const [handoffs, setHandoffs] = useState([]);
   const [callbacks, setCallbacks] = useState([]);
@@ -227,6 +229,10 @@ export default function AppDashboard() {
       .then((data) => {
         if (cancelledRef?.cancelled) return;
         if (data?.today) setKpis({ today: data.today });
+        setBookedStarts(Array.isArray(data?.booked_starts) ? data.booked_starts : []);
+        setAppointmentsTodayFromStats(Number.isFinite(Number(data?.appointments_today))
+          ? Number(data.appointments_today)
+          : 0);
         setFreeSlotsByDate(data?.free_slots_by_date && typeof data.free_slots_by_date === "object" ? data.free_slots_by_date : {});
         setCalls(Array.isArray(data?.calls) ? data.calls : []);
         setStatsLoading(false);
@@ -327,7 +333,15 @@ export default function AppDashboard() {
       .filter((entry) => entry.start),
     [todayAgendaBooked],
   );
-  const rdvPlannedToday = todaySlots.length;
+  const fillBookedEntries = useMemo(
+    () => mergeBookedEntryStarts(sortedBookedSlots, bookedStarts),
+    [sortedBookedSlots, bookedStarts],
+  );
+  const rdvPlannedToday = useMemo(() => {
+    const fromAgenda = todaySlots.length;
+    const fromMerged = fillBookedEntries.filter((entry) => entry.start && sameDay(entry.start, today)).length;
+    return Math.max(fromAgenda, fromMerged, appointmentsTodayFromStats);
+  }, [todaySlots.length, fillBookedEntries, today, appointmentsTodayFromStats]);
   /** Pas de repli sur le 1er créneau chronologique : après filtrage passé par l’API, un échec ici éviterait d’afficher un RDV déjà terminé */
   const nextSlot = useMemo(
     () => sortedBookedSlots.find((x) => x.start.getTime() >= Date.now()) ?? null,
@@ -437,13 +451,13 @@ export default function AppDashboard() {
   const fillStats = useMemo(
     () => computeDashboardFillRate({
       today,
-      bookedEntries: sortedBookedSlots,
+      bookedEntries: fillBookedEntries,
       openingHours,
       slotDurationMinutes: bookingDurationMinutes,
       freeSlotsByDate,
       horizonDays: 7,
     }),
-    [today, sortedBookedSlots, openingHours, bookingDurationMinutes, freeSlotsByDate],
+    [today, fillBookedEntries, openingHours, bookingDurationMinutes, freeSlotsByDate],
   );
   const { fillRate, totalBooked: fillBooked, totalCapacity: fillCapacity, source: fillSource } = fillStats;
   const cancellationsToday = useMemo(
