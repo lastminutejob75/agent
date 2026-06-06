@@ -4,7 +4,6 @@ import {
   agendaSlotMotif,
   dedupeAgendaSlots,
   formatAgendaSlotHour,
-  isSameAgendaSlotEntry,
   parseAgendaSlotStart,
 } from "../lib/agendaSlotParse.js";
 import { buildAgendaViewUrl } from "../lib/agendaAppointmentActions.js";
@@ -18,7 +17,6 @@ import HomeStatsStrip from "../components/home/HomeStatsStrip.jsx";
 import NextAppointmentCard from "../components/home/NextAppointmentCard.jsx";
 import TasksCard from "../components/home/TasksCard.jsx";
 import AgendaTodayCard from "../components/home/AgendaTodayCard.jsx";
-import UpcomingAppointmentsCard, { formatShortDate } from "../components/home/UpcomingAppointmentsCard.jsx";
 import DarkSummaryCard from "../components/home/DarkSummaryCard.jsx";
 import TeamNotesCard from "../components/home/TeamNotesCard.jsx";
 
@@ -192,6 +190,19 @@ function isRecoveredAgendaSlot(slot) {
   return /récup|recup|repris|sauvé|sauve/.test(text);
 }
 
+function isBookedAppointmentSlot(slot) {
+  const appointmentId = Number(slot?.appointment_id || 0);
+  const eventId = String(slot?.event_id || "").trim();
+  const patientLike = String(
+    slot?.patient || slot?.patient_name || slot?.display_name || slot?.name || "",
+  ).trim();
+  const status = String(slot?.status || slot?.booking_status || "").toLowerCase();
+  if (appointmentId > 0) return true;
+  if (eventId) return true;
+  if (patientLike) return true;
+  return status.includes("confirm") || status.includes("book") || status.includes("occupied");
+}
+
 export default function AppDashboard() {
   const navigate = useNavigate();
   const { me } = useOutletContext() || {};
@@ -245,7 +256,7 @@ export default function AppDashboard() {
       });
 
     const todayKey = todayISO();
-    api.tenantGetAgenda("?upcoming_days=7&lightweight=1")
+    api.tenantGetAgenda("?upcoming_days=14&lightweight=1")
       .then((value) => {
         if (cancelledRef?.cancelled) return;
         setAgenda(Array.isArray(value?.slots) ? value.slots : []);
@@ -315,7 +326,7 @@ export default function AppDashboard() {
 
   const today = new Date();
   const bookedSlots = useMemo(
-    () => dedupeAgendaSlots(agenda.filter((s) => Boolean(s?.patient || s?.patient_name))),
+    () => dedupeAgendaSlots(agenda.filter((s) => isBookedAppointmentSlot(s))),
     [agenda],
   );
   const sortedBookedSlots = useMemo(() => bookedSlots
@@ -324,7 +335,7 @@ export default function AppDashboard() {
     .sort((a, b) => a.start.getTime() - b.start.getTime()), [bookedSlots]);
 
   const todayAgendaBooked = useMemo(
-    () => dedupeAgendaSlots(todayAgenda.filter((slot) => Boolean(slot?.patient || slot?.patient_name))),
+    () => dedupeAgendaSlots(todayAgenda.filter((slot) => isBookedAppointmentSlot(slot))),
     [todayAgenda],
   );
   const todaySlots = useMemo(
@@ -382,7 +393,7 @@ export default function AppDashboard() {
     }));
   };
 
-  const buildAgendaRow = (entry, includeDate = false) => {
+  const buildAgendaRow = (entry) => {
     const { slot, start } = entry;
     const name = String(slot?.patient || slot?.patient_name || "Patient").trim();
     const reason = agendaSlotMotif(slot) || "Consultation";
@@ -394,29 +405,19 @@ export default function AppDashboard() {
       name,
       reason,
       status,
-      dateLabel: includeDate ? formatShortDate(start) : "",
       slot,
       start,
     };
   };
 
   const agendaForDay = useMemo(() => {
-    const rows = todaySlots.map((entry) => buildAgendaRow(entry, false));
+    const rows = todaySlots.map((entry) => buildAgendaRow(entry));
     if (!nextSlot || !sameDay(nextSlot.start, today)) return rows;
     return rows.filter((row) => {
-      const key = buildAgendaRow(nextSlot, false).key;
+      const key = buildAgendaRow(nextSlot).key;
       return row.key !== key;
     });
   }, [todaySlots, nextSlot, today]);
-
-  const upcomingRows = useMemo(
-    () => sortedBookedSlots
-      .filter((x) => x.start.getTime() >= Date.now())
-      .filter((entry) => !nextSlot || !isSameAgendaSlotEntry(entry, nextSlot))
-      .slice(0, 6)
-      .map((entry) => buildAgendaRow(entry, !sameDay(entry.start, today))),
-    [sortedBookedSlots, today, nextSlot],
-  );
 
   const showAgendaTodayCard = agendaForDay.length > 0;
 
@@ -704,16 +705,6 @@ export default function AppDashboard() {
                 />
               ) : null}
 
-              <UpcomingAppointmentsCard
-                rows={upcomingRows}
-                title={hasNextAppointment ? "Autres rendez-vous à venir" : "Prochains rendez-vous"}
-                onOpenAgenda={() => navigate("/app/agenda?view=week")}
-                onRowClick={(row) => openAgendaSlot(row.slot, row.start)}
-                CardComponent={Card}
-                PillComponent={Pill}
-                styles={S}
-              />
-
             </div>
 
             <div style={S.colRight}>
@@ -782,15 +773,6 @@ export default function AppDashboard() {
                 />
               ) : null}
 
-              <UpcomingAppointmentsCard
-                rows={upcomingRows}
-                title={hasNextAppointment ? "Autres rendez-vous à venir" : "Prochains rendez-vous"}
-                onOpenAgenda={() => navigate("/app/agenda?view=week")}
-                onRowClick={(row) => openAgendaSlot(row.slot, row.start)}
-                CardComponent={Card}
-                PillComponent={Pill}
-                styles={S}
-              />
             </div>
           </>
         )}
