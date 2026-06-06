@@ -8,6 +8,10 @@ import { getApiUrl } from "./authConfig.js";
 
 const BASE_URL = getApiUrl();
 const TENANT_TOKEN_KEY = "uwi_tenant_token";
+const PROD_API_FALLBACK_BASES = [
+  "https://api.uwiapp.com",
+  "https://agent-production-c246.up.railway.app",
+];
 
 export function getApiBaseUrl() {
   return BASE_URL;
@@ -115,8 +119,43 @@ function parseApiError(data, statusText) {
   return typeof msg === "string" ? msg : JSON.stringify(msg);
 }
 
+function isLikelyNetworkError(e) {
+  return (
+    e?.message === "Failed to fetch" ||
+    (e?.name === "TypeError" && /fetch|network|load failed/i.test(e?.message || ""))
+  );
+}
+
+function buildCandidateApiBases() {
+  const first = String(BASE_URL || "").trim().replace(/\/$/, "");
+  const out = [];
+
+  // En prod UWi, on garde un plan B automatique entre domaine custom et Railway.
+  let isUwiProdHost = false;
+  if (typeof window !== "undefined") {
+    const host = String(window.location.hostname || "").toLowerCase();
+    if (host.endsWith("uwiapp.com")) {
+      isUwiProdHost = true;
+      for (const base of PROD_API_FALLBACK_BASES) {
+        const clean = String(base || "").trim().replace(/\/$/, "");
+        if (!out.includes(clean)) out.push(clean);
+      }
+    }
+  }
+
+  // Garder l'URL configurée en priorité lorsqu'elle existe.
+  if (first) {
+    if (!out.includes(first)) out.unshift(first);
+  } else if (!isUwiProdHost) {
+    // En local/dev sans config, on garde les URLs relatives pour le proxy Vite.
+    out.unshift("");
+  }
+  return out;
+}
+
 async function request(path, { method = "GET", body, admin: _admin = false, tenant: _tenant = false, leadToken = "", signal, timeoutMs } = {}) {
-  const url = `${BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+  const pathPart = path.startsWith("/") ? path : `/${path}`;
+  const baseCandidates = buildCandidateApiBases();
 
   /* Session : cookie HttpOnly via `credentials: include`. Plus de Bearer JWT en JS. */
   const headers = { "Content-Type": "application/json" };
@@ -139,42 +178,54 @@ async function request(path, { method = "GET", body, admin: _admin = false, tena
     }
   }
 
-  let res;
   try {
-    res = await fetch(url, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-      credentials: "include", // cookie uwi_session (login email+mdp ou Google)
-      signal: fetchSignal,
-    });
-  } catch (e) {
-    if (e?.name === "AbortError") {
-      throw new Error("Délai dépassé. Le serveur met trop de temps à répondre.");
+    let res;
+    let lastNetworkError = null;
+    for (const base of baseCandidates) {
+      const url = `${base}${pathPart}`;
+      try {
+        res = await fetch(url, {
+          method,
+          headers,
+          body: body ? JSON.stringify(body) : undefined,
+          credentials: "include", // cookie uwi_session (login email+mdp ou Google)
+          signal: fetchSignal,
+        });
+        break;
+      } catch (e) {
+        if (e?.name === "AbortError") {
+          throw new Error("Délai dépassé. Le serveur met trop de temps à répondre.");
+        }
+        if (isLikelyNetworkError(e)) {
+          lastNetworkError = e;
+          continue;
+        }
+        throw e;
+      }
     }
-    if (e?.message === "Failed to fetch" || (e?.name === "TypeError" && /fetch|network/i.test(e?.message || ""))) {
+    if (!res) {
+      if (lastNetworkError) throw new Error(MSG_BACKEND_UNREACHABLE);
       throw new Error(MSG_BACKEND_UNREACHABLE);
     }
-    throw e;
+
+    const text = await res.text();
+    let data = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = { raw: text };
+    }
+
+    if (!res.ok) {
+      const err = new Error(parseApiError(data, `HTTP ${res.status}`));
+      err.status = res.status;
+      err.data = data;
+      throw err;
+    }
+    return data;
   } finally {
     if (timeoutId && typeof window !== "undefined") window.clearTimeout(timeoutId);
   }
-
-  const text = await res.text();
-  let data = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = { raw: text };
-  }
-
-  if (!res.ok) {
-    const err = new Error(parseApiError(data, `HTTP ${res.status}`));
-    err.status = res.status;
-    err.data = data;
-    throw err;
-  }
-  return data;
 }
 
 export const api = {
