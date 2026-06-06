@@ -9,8 +9,8 @@ import { getApiUrl } from "./authConfig.js";
 const BASE_URL = getApiUrl();
 const TENANT_TOKEN_KEY = "uwi_tenant_token";
 const PROD_API_FALLBACK_BASES = [
-  "https://api.uwiapp.com",
   "https://agent-production-c246.up.railway.app",
+  "https://api.uwiapp.com",
 ];
 
 export function getApiBaseUrl() {
@@ -120,6 +120,9 @@ function parseApiError(data, statusText) {
 }
 
 function isLikelyNetworkError(e) {
+  // Browser fetch() rejects network/CORS/DNS failures as TypeError, with message variants
+  // that differ by engine/language ("Failed to fetch", "Load failed", etc.).
+  if (e?.name === "TypeError") return true;
   return (
     e?.message === "Failed to fetch" ||
     (e?.name === "TypeError" && /fetch|network|load failed/i.test(e?.message || ""))
@@ -145,7 +148,10 @@ function buildCandidateApiBases() {
 
   // Garder l'URL configurée en priorité lorsqu'elle existe.
   if (first) {
-    if (!out.includes(first)) out.unshift(first);
+    // Toujours prioriser l'URL configurée, même si elle est déjà dans la liste.
+    const idx = out.indexOf(first);
+    if (idx >= 0) out.splice(idx, 1);
+    out.unshift(first);
   } else if (!isUwiProdHost) {
     // En local/dev sans config, on garde les URLs relatives pour le proxy Vite.
     out.unshift("");

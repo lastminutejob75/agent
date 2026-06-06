@@ -13,8 +13,8 @@ export function getApiUrl() {
     const host = String(window.location.hostname || "").toLowerCase();
     if (host.endsWith("uwiapp.com") && host !== "api.uwiapp.com") {
       // Filet de sécurité prod: si VITE_UWI_API_BASE_URL est absente sur uwiapp.com,
-      // on pointe vers l'API publique pour éviter les erreurs réseau côté dashboard.
-      return "https://api.uwiapp.com";
+      // on pointe vers Railway (actif), le domaine api.uwiapp.com pouvant être indisponible DNS.
+      return "https://agent-production-c246.up.railway.app";
     }
   }
   return "";
