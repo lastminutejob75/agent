@@ -613,12 +613,14 @@ function PatientQuickActions({
   notify,
   onOpenProfile,
   onCreateBooking,
+  onOpenSmsPro,
   createBookingDisabled,
 }: {
   displayHero: { phone: string };
   notify: (message: string, opts?: { sticky?: boolean }) => void;
   onOpenProfile: () => void;
   onCreateBooking: () => void;
+  onOpenSmsPro: () => void;
   createBookingDisabled?: boolean;
 }) {
   const dial = () => {
@@ -636,8 +638,11 @@ function PatientQuickActions({
   };
   const sms = () => {
     const t = normalizePhone(displayHero.phone);
-    if (t) window.location.href = `sms:${t}`;
-    else notify("Numéro absent pour envoyer un SMS.");
+    if (!t) {
+      notify("Numéro absent pour envoyer un SMS.");
+      return;
+    }
+    onOpenSmsPro();
   };
 
   return (
@@ -3039,8 +3044,11 @@ export default function PatientDashboardPage() {
               }}
               onSms={() => {
                 const t = normalizePhone(displayHero.phone);
-                if (t) window.location.href = `sms:${t}`;
-                else notify("Numéro absent pour envoyer un SMS.");
+                if (!t) {
+                  notify("Numéro absent pour envoyer un SMS.");
+                  return;
+                }
+                openSingleMessageModal("sms");
               }}
               onAddNote={() => setModal("addNote")}
               onAddDocument={() => setModal("addDocument")}
@@ -3127,6 +3135,7 @@ export default function PatientDashboardPage() {
                   notify={notify}
                   onOpenProfile={() => setModal("profile")}
                   onCreateBooking={() => setCreatePatientBookingOpen(true)}
+                  onOpenSmsPro={() => openSingleMessageModal("sms")}
                   createBookingDisabled={!tenantPatientPhone}
                 />
 
