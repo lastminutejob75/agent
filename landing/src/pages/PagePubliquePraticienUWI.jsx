@@ -140,6 +140,7 @@ function isGreetingOnly(text) {
 const INSTANT_GREETING_REPLY = "Bonjour ! Comment puis-je vous aider ?";
 const INSTANT_SLOTS_LOOKUP = "Je consulte les créneaux disponibles, un instant…";
 const INSTANT_SLOTS_DATE_LOOKUP = "Je cherche les créneaux à la date demandée, un instant…";
+const INSTANT_MORE_SLOTS_LOOKUP = "Je cherche d'autres créneaux disponibles, un instant…";
 const CHAT_SSE_TIMEOUT_FALLBACK =
   "La recherche de créneaux prend plus de temps que prévu. Réessayez dans un instant ou précisez un jour (ex. mardi matin).";
 const MORE_SLOTS_MSG = "Je souhaite voir d'autres créneaux.";
@@ -159,6 +160,7 @@ const CHAT_PROCESSING_REPLY = "Un instant, je traite votre demande…";
 const CHAT_PROCESSING_PLACEHOLDERS = new Set([
   INSTANT_SLOTS_LOOKUP,
   INSTANT_SLOTS_DATE_LOOKUP,
+  INSTANT_MORE_SLOTS_LOOKUP,
   CHAT_PROCESSING_REPLY,
 ]);
 const BOOKING_DATE_HINT =
@@ -2095,10 +2097,11 @@ export default function PagePubliquePraticienUWI() {
       }
     };
 
-    const syncChatInBackground = async (instantText) => {
+    const syncChatInBackground = async (instantText, opts = {}) => {
       ensureStream(convId);
       const turnWait = waitForAgentTurn();
       const isSlotsLookup = Boolean(instantText && isSlotsLookupPlaceholder(instantText));
+      const allowSlotsReuse = opts?.allowSlotsReuse !== false;
       const timers = [];
 
       if (instantText) showInstantReply(instantText);
@@ -2108,7 +2111,7 @@ export default function PagePubliquePraticienUWI() {
         return applyBarSlotsFallback({ provisional: true });
       };
 
-      if (isSlotsLookup) {
+      if (isSlotsLookup && allowSlotsReuse) {
         timers.push(
           window.setTimeout(() => {
             void tryShowCachedSlots();
@@ -2134,7 +2137,7 @@ export default function PagePubliquePraticienUWI() {
           conversationIdRef.current = conversationId;
           ensureStream(conversationId);
         }
-        if (isSlotsLookup && safeArray(response?.slots).length) {
+        if (isSlotsLookup && allowSlotsReuse && safeArray(response?.slots).length) {
           applyResponseSlots(response, { provisional: true });
         }
         if (!instantText && response?.reply) {
@@ -2150,7 +2153,11 @@ export default function PagePubliquePraticienUWI() {
           gotFinalReply = Boolean(sseOk);
         }
         if (!gotFinalReply) {
-          if (isSlotsLookup && (await tryShowCachedSlots({ refresh: true }) || applyBarSlotsFallback({ provisional: true }))) {
+          if (
+            isSlotsLookup
+            && allowSlotsReuse
+            && (await tryShowCachedSlots({ refresh: true }) || applyBarSlotsFallback({ provisional: true }))
+          ) {
             gotFinalReply = true;
           } else {
             push([
@@ -2203,7 +2210,8 @@ export default function PagePubliquePraticienUWI() {
     }
 
     if (MORE_SLOTS_REQUEST.test(clean) || clean === MORE_SLOTS_MSG) {
-      void syncChatInBackground(INSTANT_SLOTS_LOOKUP);
+      // Ne pas réafficher le cache barre ici: on veut de nouveaux créneaux côté moteur.
+      void syncChatInBackground(INSTANT_MORE_SLOTS_LOOKUP, { allowSlotsReuse: false });
       return;
     }
 
@@ -2671,7 +2679,7 @@ export default function PagePubliquePraticienUWI() {
                               <span className="chatSlotBtnLabel">{offer.label}</span>
                             </button>
                           ))}
-                          {message.id === lastSlotsMessageId && !postBookingLocked ? (
+                          {message.id === lastSlotsMessageId && !postBookingLocked && !message.provisional ? (
                             <button
                               className="chatSlotMoreBtn"
                               type="button"

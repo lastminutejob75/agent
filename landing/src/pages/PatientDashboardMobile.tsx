@@ -100,6 +100,9 @@ export type PatientDashboardMobileProps = {
   onCall: () => void;
   onWhatsApp: () => void;
   onSms: () => void;
+  onSendProfessionalSms: () => void;
+  onSendProfessionalEmail: () => void;
+  canSendProfessionalEmail: boolean;
   onAddNote: () => void;
   onAddDocument: () => void;
   onViewDocuments: () => void;
@@ -351,6 +354,39 @@ function MobileContentActions({
       >
         ▤ Consulter les documents{!documentsLoading && documentsCount > 0 ? ` (${documentsCount})` : ""}
       </button>
+    </section>
+  );
+}
+
+function MobileMessageActions({
+  onSendProfessionalSms,
+  onSendProfessionalEmail,
+  canSendProfessionalEmail,
+}: {
+  onSendProfessionalSms: () => void;
+  onSendProfessionalEmail: () => void;
+  canSendProfessionalEmail: boolean;
+}) {
+  return (
+    <section className="mb-3 rounded-[20px] border border-[#E3EAF2] bg-white p-3.5 shadow-[0_10px_24px_rgba(15,23,42,0.07)]">
+      <h3 className="text-sm font-black uppercase tracking-[0.08em] text-[#64748B]">Messages pro</h3>
+      <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+        <button
+          type="button"
+          onClick={onSendProfessionalSms}
+          className="min-h-[50px] rounded-[15px] border border-[#75D3DF] bg-[#E9FAFC] text-sm font-black text-[#007F88]"
+        >
+          SMS pro
+        </button>
+        <button
+          type="button"
+          onClick={onSendProfessionalEmail}
+          disabled={!canSendProfessionalEmail}
+          className="min-h-[50px] rounded-[15px] border border-[#86EFAC] bg-[#F0FFF5] text-sm font-black text-[#0EA348] disabled:opacity-50"
+        >
+          Email pro
+        </button>
+      </div>
     </section>
   );
 }
@@ -735,6 +771,9 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
     onCall,
     onWhatsApp,
     onSms,
+    onSendProfessionalSms,
+    onSendProfessionalEmail,
+    canSendProfessionalEmail,
     onAddNote,
     onAddDocument,
     onViewDocuments,
@@ -772,6 +811,11 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
         onBackToList={onBackToList}
       />
       <MobileQuickActions onCall={onCall} onWhatsApp={onWhatsApp} onSms={onSms} onMore={onOpenProfile} />
+      <MobileMessageActions
+        onSendProfessionalSms={onSendProfessionalSms}
+        onSendProfessionalEmail={onSendProfessionalEmail}
+        canSendProfessionalEmail={canSendProfessionalEmail}
+      />
       <MobileContentActions
         onCreateBooking={onCreateBooking}
         createBookingDisabled={createBookingDisabled}

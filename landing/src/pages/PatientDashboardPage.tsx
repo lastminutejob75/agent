@@ -1032,6 +1032,7 @@ export default function PatientDashboardPage() {
   const [bulkMessageBody, setBulkMessageBody] = useState("");
   const [bulkMessageSendToAll, setBulkMessageSendToAll] = useState(false);
   const [bulkMessageSending, setBulkMessageSending] = useState(false);
+  const [bulkModalQuery, setBulkModalQuery] = useState("");
 
   useEffect(() => {
     return () => {
@@ -1401,6 +1402,32 @@ export default function PatientDashboardPage() {
     if (names.length <= 3) return names.join(", ");
     return `${names.slice(0, 3).join(", ")} +${names.length - 3}`;
   }, [selectedSidebarRows]);
+  const bulkModalRows = useMemo(() => {
+    const q = bulkModalQuery.trim().toLowerCase();
+    let rows = effectiveSidebarRows;
+    if (q) {
+      rows = rows.filter((row) => {
+        const hay = `${row.name} ${row.displayPhone} ${row.phone}`.toLowerCase();
+        if (hay.includes(q)) return true;
+        const needle = normalizePhone(bulkModalQuery);
+        return Boolean(needle && row.phone === needle);
+      });
+    }
+    const selectedSet = new Set(selectedPatientPhones);
+    return [...rows].sort((a, b) => {
+      const aSel = selectedSet.has(a.phone) ? 1 : 0;
+      const bSel = selectedSet.has(b.phone) ? 1 : 0;
+      if (aSel !== bSel) return bSel - aSel;
+      return a.name.localeCompare(b.name, "fr");
+    });
+  }, [effectiveSidebarRows, bulkModalQuery, selectedPatientPhones]);
+  const modalSelectablePhones = useMemo(
+    () => bulkModalRows.map((row) => row.phone).filter(Boolean),
+    [bulkModalRows],
+  );
+  const allModalSelected =
+    modalSelectablePhones.length > 0 &&
+    modalSelectablePhones.every((phone) => selectedPatientPhones.includes(phone));
 
   useEffect(() => {
     const allowed = new Set(effectiveSidebarRows.map((row) => row.phone).filter(Boolean));
@@ -1427,6 +1454,20 @@ export default function PatientDashboardPage() {
       return merged;
     });
   }, [allVisibleSelected, visibleSelectablePhones]);
+  const toggleSelectAllModalPatients = useCallback(() => {
+    setSelectedPatientPhones((prev) => {
+      if (!modalSelectablePhones.length) return prev;
+      const modalSet = new Set(modalSelectablePhones);
+      if (allModalSelected) {
+        return prev.filter((phone) => !modalSet.has(phone));
+      }
+      const merged = [...prev];
+      for (const phone of modalSelectablePhones) {
+        if (!merged.includes(phone)) merged.push(phone);
+      }
+      return merged;
+    });
+  }, [allModalSelected, modalSelectablePhones]);
 
   const clearSelectedPatients = useCallback(() => {
     setSelectedPatientPhones([]);
@@ -2492,6 +2533,7 @@ export default function PatientDashboardPage() {
     setBulkMessageSubject("Message de votre cabinet");
     setBulkMessageBody("");
     setBulkMessageSendToAll(false);
+    setBulkModalQuery("");
     setModal("sendBulkMessage");
   };
 
@@ -3032,6 +3074,9 @@ export default function PatientDashboardPage() {
                 }
                 openSingleMessageModal("sms");
               }}
+              onSendProfessionalSms={() => openSingleMessageModal("sms")}
+              onSendProfessionalEmail={() => openSingleMessageModal("email")}
+              canSendProfessionalEmail={Boolean(patientEmail && !tenantPatientNotFound)}
               onAddNote={() => setModal("addNote")}
               onAddDocument={() => setModal("addDocument")}
               onViewDocuments={() => setActiveView("documents")}
@@ -4063,6 +4108,61 @@ export default function PatientDashboardPage() {
               />
               Tous les patients du cabinet
             </label>
+            <div className={cx("space-y-3 rounded-2xl border border-[#E2EAF4] bg-white p-3", bulkMessageSendToAll ? "opacity-60" : "")}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs font-black uppercase tracking-[0.07em] text-[#64748B]">
+                  Sélection dans la modale
+                </div>
+                <button
+                  type="button"
+                  disabled={bulkMessageSendToAll || modalSelectablePhones.length === 0}
+                  onClick={() => toggleSelectAllModalPatients()}
+                  className="rounded-lg border border-[#DDE7F1] bg-white px-2.5 py-1 text-[11px] font-black text-[#475569] hover:bg-[#F8FAFC] disabled:opacity-50"
+                >
+                  {allModalSelected ? "Tout désélectionner" : "Tout sélectionner"}
+                </button>
+              </div>
+              <input
+                value={bulkModalQuery}
+                onChange={(e) => setBulkModalQuery(e.target.value)}
+                disabled={bulkMessageSendToAll}
+                placeholder="Rechercher un patient (nom ou téléphone)…"
+                className="h-10 w-full rounded-xl border border-[#DDE7F1] bg-[#F8FBFD] px-3 text-sm font-semibold text-[#0A1628] outline-none focus:border-[#009CA4] disabled:opacity-60"
+              />
+              <div className="max-h-56 overflow-y-auto rounded-xl border border-[#EEF3F8]">
+                {bulkModalRows.length === 0 ? (
+                  <div className="p-3 text-sm font-semibold text-[#64748B]">
+                    Aucun patient trouvé.
+                  </div>
+                ) : (
+                  bulkModalRows.map((row) => {
+                    const checked = selectedPatientPhones.includes(row.phone);
+                    return (
+                      <label
+                        key={`bulk-modal-${row.phone}`}
+                        className={cx(
+                          "flex cursor-pointer items-center gap-3 border-b border-[#EEF3F8] px-3 py-2.5 last:border-b-0",
+                          checked ? "bg-[#EAF8FC]" : "bg-white hover:bg-[#F8FBFD]",
+                          bulkMessageSendToAll ? "pointer-events-none" : "",
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={bulkMessageSendToAll}
+                          onChange={() => toggleSelectedPatientPhone(row.phone)}
+                          className="h-4 w-4 accent-[#009CA4]"
+                        />
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-black text-[#0A1628]">{row.name}</div>
+                          <div className="text-xs font-semibold text-[#64748B]">{row.displayPhone}</div>
+                        </div>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+            </div>
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"

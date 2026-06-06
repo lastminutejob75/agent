@@ -356,11 +356,17 @@ async def start_web_chat(
 
     from backend.start_router import is_booking_start_message, is_more_slots_request_message
 
-    if is_booking_start_message(msg) or is_more_slots_request_message(msg):
+    is_booking_start = is_booking_start_message(msg)
+    is_more_slots = is_more_slots_request_message(msg)
+
+    if is_booking_start:
         cached_slots = await asyncio.to_thread(_peek_cached_chat_slots, tid)
         if cached_slots:
             out["slots"] = cached_slots
             out["slots_source"] = "cache"
+        asyncio.create_task(_warm_slots_cache(tid))
+    elif is_more_slots:
+        # "Voir d'autres créneaux" doit forcer une nouvelle proposition, pas rejouer le cache instantané.
         asyncio.create_task(_warm_slots_cache(tid))
     asyncio.create_task(run_engine(conv_id, msg, channel))
     return out
