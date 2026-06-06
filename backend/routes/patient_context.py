@@ -106,14 +106,34 @@ def tenant_get_patient_summary(
     requester = requester_from_auth(auth)
     conn = get_conn()
     try:
-        summary = get_or_generate_summary(
-            conn,
-            tenant_id,
-            phone,
-            caps,
-            requester,
-            force_refresh=refresh,
-        )
+        try:
+            summary = get_or_generate_summary(
+                conn,
+                tenant_id,
+                phone,
+                caps,
+                requester,
+                force_refresh=refresh,
+            )
+        except Exception:
+            logger.exception(
+                "tenant_get_patient_summary failed tenant=%s phone=%s",
+                tenant_id,
+                str(phone)[-4:] if phone else "?",
+            )
+            summary = {
+                "sections_json": {
+                    "une_ligne": "Résumé indisponible pour le moment.",
+                    "points_attention": [],
+                    "contexte_recent": "",
+                    "en_attente": [],
+                },
+                "generated_at": "",
+                "from_cache": False,
+                "is_health": False,
+                "model": "fallback_error",
+                "access_limited": False,
+            }
     finally:
         conn.close()
     return {

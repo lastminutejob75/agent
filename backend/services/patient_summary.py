@@ -71,8 +71,9 @@ class SummaryStore:
         )
         if row:
             return _row_to_summary(row)
-        conn = get_conn()
+        conn = None
         try:
+            conn = get_conn()
             cur = conn.execute(
                 """
                 SELECT sections_json, inputs_hash, model, is_health, generated_at
@@ -81,8 +82,17 @@ class SummaryStore:
                 (tenant_id, phone),
             ).fetchone()
             return _row_to_summary(dict(cur)) if cur else None
+        except Exception:
+            logger.warning(
+                "patient_summary store.get sqlite failed tenant=%s phone=%s",
+                tenant_id,
+                phone[-4:] if phone else "?",
+                exc_info=True,
+            )
+            return None
         finally:
-            conn.close()
+            if conn is not None:
+                conn.close()
 
     def save(
         self,
@@ -97,8 +107,9 @@ class SummaryStore:
         sections = summary.get("sections_json") or EMPTY_SECTIONS
         model = summary.get("model") or ""
         payload = json.dumps(sections, ensure_ascii=False)
-        conn = get_conn()
+        conn = None
         try:
+            conn = get_conn()
             conn.execute(
                 """
                 INSERT INTO patient_summaries
@@ -114,8 +125,16 @@ class SummaryStore:
                 (tenant_id, phone, payload, inputs_hash, model, 1 if is_health else 0),
             )
             conn.commit()
+        except Exception:
+            logger.warning(
+                "patient_summary store.save sqlite failed tenant=%s phone=%s",
+                tenant_id,
+                phone[-4:] if phone else "?",
+                exc_info=True,
+            )
         finally:
-            conn.close()
+            if conn is not None:
+                conn.close()
         exec_pg(
             """
             INSERT INTO patient_summaries
@@ -257,7 +276,16 @@ def _fallback_summary(pack: dict, *, contains_health: bool, model: str) -> Dict[
 
 
 def _reception_only_summary(db, tenant_id: int, patient_phone: str, tenant_caps: set) -> Dict[str, Any]:
-    pack, _ = build_context_pack(db, tenant_id, patient_phone, tenant_caps)
+    try:
+        pack, _ = build_context_pack(db, tenant_id, patient_phone, tenant_caps)
+    except Exception:
+        logger.warning(
+            "patient_summary reception-only context failed tenant=%s phone=%s",
+            tenant_id,
+            str(patient_phone)[-4:] if patient_phone else "?",
+            exc_info=True,
+        )
+        pack = {"identite": {"telephone": normalize_patient_phone(patient_phone)}, "ReceptionProvider": {"metriques": {}}}
     summary = _fallback_summary(pack, contains_health=False, model="reception_only")
     return {
         **summary,
@@ -276,8 +304,29 @@ def get_or_generate_summary(
     *,
     force_refresh: bool = False,
 ) -> Dict[str, Any]:
-    ensure_patient_v2_schema()
-    pack, contains_health = build_context_pack(db, tenant_id, patient_phone, tenant_caps)
+    try:
+        ensure_patient_v2_schema()
+    except Exception:
+        logger.warning("patient_summary ensure schema failed", exc_info=True)
+    try:
+        pack, contains_health = build_context_pack(db, tenant_id, patient_phone, tenant_caps)
+    except Exception:
+        logger.warning(
+            "patient_summary context build failed tenant=%s phone=%s",
+            tenant_id,
+            str(patient_phone)[-4:] if patient_phone else "?",
+            exc_info=True,
+        )
+        pack = {
+            "identite": {"telephone": normalize_patient_phone(patient_phone)},
+            "ReceptionProvider": {"metriques": {}, "flags": [], "notes_recentes": [], "events_recents": []},
+            "QuestionnaireProvider": {
+                "questionnaires_admin": [],
+                "questionnaires_sante": [],
+                "questionnaires_en_attente": [],
+            },
+        }
+        contains_health = False
 
     if contains_health and not requester.is_soignant:
         return _reception_only_summary(db, tenant_id, patient_phone, tenant_caps)
@@ -309,12 +358,19 @@ def get_or_generate_summary(
 
     h = _inputs_hash(pack)
     if not force_refresh:
-        cached = store.get(tenant_id, patient_phone)
+        try:
+            cached = store.get(tenant_id, patient_phone)
+        except Exception:
+            logger.warning("patient_summary cache read failed", exc_info=True)
+            cached = None
         if cached and cached.get("inputs_hash") == h:
             return {**cached, "from_cache": True}
 
     summary = _call_llm(pack, contains_health=contains_health)
-    store.save(tenant_id, patient_phone, summary, inputs_hash=h, is_health=contains_health)
+    try:
+        store.save(tenant_id, patient_phone, summary, inputs_hash=h, is_health=contains_health)
+    except Exception:
+        logger.warning("patient_summary cache write failed", exc_info=True)
     return {
         "sections_json": summary["sections_json"],
         "model": summary.get("model"),
