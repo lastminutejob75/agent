@@ -6360,6 +6360,12 @@ def tenant_agenda_cancel_appointment(
             local_booking=local_booking,
         ) or ""
 
+        if local_appt_id is None and google_event_id:
+            mirrored = _find_local_appointment_by_google_event_id(tenant_id, google_event_id)
+            if mirrored and int(mirrored.get("id") or 0) > 0:
+                local_booking = mirrored
+                local_appt_id = int(mirrored["id"])
+
         if not google_event_id and local_appt_id is None:
             raise HTTPException(400, "appointment_id ou event_id requis")
 

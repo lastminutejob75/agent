@@ -250,6 +250,11 @@ function semanticLabelForAppointment(appt) {
   return "Consultation";
 }
 
+function isAgendaCancelledSlot(slot) {
+  const text = `${slot?.status || ""} ${slot?.booking_status || ""}`.toLowerCase();
+  return text.includes("cancel") || text.includes("annul");
+}
+
 const APPT_TONE = {
   green: { bg: "#ECFDF5", border: "#34D399", time: "#047857", text: "#065F46" },
   orange: { bg: "#FFF7ED", border: "#F59E0B", time: "#C2410C", text: "#9A3412" },
@@ -1422,24 +1427,25 @@ export default function AppAgenda() {
     return h;
   }, [startHour, endHour, apptHourBounds]);
 
-  const appointments = useMemo(() =>
-    visibleDates.flatMap((date) =>
-      (agendaByDate[date]?.slots || []).map((s, i) => {
-        const appt = {
-          ...s,
-          id: `${date}-${s.event_id || s.appointment_id || i}`,
-          date,
-          displayTime: formatTimeLabel(s.hour),
-          endTime: addMinutes(formatTimeLabel(s.hour), duration),
-          typeIcon: typeIcon(s.type),
-          isUWI: s.source === "UWI",
-          canCancel: canCancelAgendaSlot(s),
-          canReschedule: canRescheduleAgendaSlot(s),
-          actionId: s.appointment_id || s.event_id || "",
-        };
-        return { ...appt, tone: toneForAppointment(appt) };
-      }),
-    ),
+  const appointments = useMemo(
+    () => visibleDates.flatMap((date) =>
+      (agendaByDate[date]?.slots || [])
+        .filter((s) => !isAgendaCancelledSlot(s))
+        .map((s, i) => {
+          const appt = {
+            ...s,
+            id: `${date}-${s.event_id || s.appointment_id || i}`,
+            date,
+            displayTime: formatTimeLabel(s.hour),
+            endTime: addMinutes(formatTimeLabel(s.hour), duration),
+            typeIcon: typeIcon(s.type),
+            isUWI: s.source === "UWI",
+            canCancel: canCancelAgendaSlot(s),
+            canReschedule: canRescheduleAgendaSlot(s),
+            actionId: s.appointment_id || s.event_id || "",
+          };
+          return { ...appt, tone: toneForAppointment(appt) };
+        })),
     [agendaByDate, visibleDates, duration],
   );
 
