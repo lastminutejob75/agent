@@ -3091,7 +3091,17 @@ class Engine:
 
         from backend.start_router import is_more_slots_request_message
 
-        from backend.appointment_preference_parser import process_user_availability_message
+        from backend.appointment_preference_parser import (
+            message_has_availability_hints,
+            process_user_availability_message,
+        )
+
+        # "Voir d'autres créneaux" doit d'abord exclure les slots déjà proposés.
+        # Sinon on repasse par le parsing de préférences et on peut reproposer la même liste.
+        more_slots_requested = is_more_slots_request_message(user_text)
+        availability_hint = message_has_availability_hints(user_text or "")
+        if more_slots_requested and not availability_hint:
+            return self._reject_pending_and_repropose_slots(session)
 
         process_user_availability_message(session, user_text or "")
         entities = extract_entities(user_text)
@@ -3105,7 +3115,7 @@ class Engine:
         if pref_update:
             session.qualif_data.pref = pref_update
             date_changed = True
-        if getattr(session, "appointment_preferences", None):
+        if availability_hint:
             date_changed = True
         if date_changed:
             session.more_slots_round_count = 0
@@ -3117,7 +3127,7 @@ class Engine:
             if not re.match(r"^(?:oui\s*)?[123]\s*$", (user_text or "").strip(), re.I):
                 return safe_reply(self._handle_faq(session, user_text, include_low=True), session)
 
-        if is_more_slots_request_message(user_text):
+        if more_slots_requested:
             return self._reject_pending_and_repropose_slots(session)
         
         # 🔄 Si pas de slots en mémoire (session perdue) → re-proposer
