@@ -18,7 +18,8 @@ export function GoogleLoginButton() {
           setLoading(false);
           return;
         }
-        const url = new URL(`${API_URL}/api/auth/google/start`);
+        const base = (API_URL || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
+        const url = new URL(`${base}/api/auth/google/start`);
         url.searchParams.set("redirect_uri", GOOGLE_REDIRECT_URI);
 
         const res = await fetch(url.toString(), {
