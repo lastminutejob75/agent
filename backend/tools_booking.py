@@ -268,12 +268,22 @@ _DISABLE_SLOT_CACHE = _os.getenv("DISABLE_SLOT_CACHE", "").lower() in ("1", "tru
 
 _slots_cache: Dict[str, Any] = {
     "by_key": {},  # (tenant_id, pref) -> {"slots": [...], "timestamp": float}
-    "ttl_seconds": 150,
+    "ttl_seconds": 240,
 }
 
 
 def _cache_key(tenant_id: int, pref: Optional[str] = None) -> tuple:
     return (tenant_id, pref or "__none__")
+
+
+def peek_cached_slots_for_display(
+    limit: int = 3,
+    tenant_id: int = 1,
+    pref: Optional[str] = None,
+) -> List[prompts.SlotDisplay]:
+    """Retourne les créneaux en cache sans déclencher d'appel Google/PG (réponse chat instantanée)."""
+    cached = _get_cached_slots(limit, tenant_id, pref)
+    return list(cached or [])
 
 
 def _get_cached_slots(limit: int, tenant_id: int = 1, pref: Optional[str] = None) -> Optional[List[prompts.SlotDisplay]]:

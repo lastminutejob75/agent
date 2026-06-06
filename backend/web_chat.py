@@ -26,6 +26,45 @@ _ENGINE_LOCKS: Dict[str, asyncio.Lock] = {}
 SLOTS_LOOKUP_MSG = "Je consulte les créneaux disponibles, un instant…"
 
 
+def _slot_displays_to_chat_ui(display_slots: list) -> list:
+    """Formate des SlotDisplay pour boutons cliquables (POST chat / SSE)."""
+    out: list = []
+    for i, slot in enumerate(display_slots[:3]):
+        if isinstance(slot, dict):
+            label = (slot.get("label") or slot.get("label_vocal") or "").strip()
+            slot_id = slot.get("slot_id") or slot.get("id")
+            src = slot.get("source") or "sqlite"
+            start_iso = slot.get("start_iso") or slot.get("start") or ""
+            end_iso = slot.get("end_iso") or slot.get("end") or ""
+        else:
+            label = (getattr(slot, "label", None) or getattr(slot, "label_vocal", None) or "").strip()
+            slot_id = getattr(slot, "slot_id", None) or getattr(slot, "id", None)
+            src = getattr(slot, "source", None) or "sqlite"
+            start_iso = getattr(slot, "start", None) or getattr(slot, "start_iso", None) or ""
+            end_iso = getattr(slot, "end_iso", None) or getattr(slot, "end", None) or ""
+        if not label:
+            continue
+        out.append(
+            {
+                "index": i + 1,
+                "label": label,
+                "id": str(slot_id) if slot_id is not None else "",
+                "source": str(src).lower(),
+                "startIso": str(start_iso or ""),
+                "endIso": str(end_iso or ""),
+                "motifs": ["Consultation", "Suivi", "Premiere consultation", "Renouvellement"],
+            }
+        )
+    return out
+
+
+def _peek_cached_chat_slots(tenant_id: int) -> list:
+    from backend import tools_booking
+
+    cached = tools_booking.peek_cached_slots_for_display(limit=3, tenant_id=int(tenant_id), pref=None)
+    return _slot_displays_to_chat_ui(cached) if cached else []
+
+
 def _slots_ui_payload(session: Any) -> list:
     """Créneaux proposés pour boutons cliquables (web)."""
     if getattr(session, "state", None) != "WAIT_CONFIRM":
@@ -318,6 +357,10 @@ async def start_web_chat(
     from backend.start_router import is_booking_start_message, is_more_slots_request_message
 
     if is_booking_start_message(msg) or is_more_slots_request_message(msg):
+        cached_slots = await asyncio.to_thread(_peek_cached_chat_slots, tid)
+        if cached_slots:
+            out["slots"] = cached_slots
+            out["slots_source"] = "cache"
         asyncio.create_task(_warm_slots_cache(tid))
     asyncio.create_task(run_engine(conv_id, msg, channel))
     return out
@@ -337,7 +380,7 @@ async def _warm_slots_cache(tenant_id: int) -> None:
         )
 
         def _run() -> None:
-            tools_booking.get_slots_for_display(limit=3, pref=None, session=session)
+            tools_booking.get_slots_for_display(limit=12, pref=None, session=session)
 
         await asyncio.to_thread(_run)
     except Exception:

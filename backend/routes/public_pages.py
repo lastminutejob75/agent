@@ -1299,19 +1299,16 @@ def prewarm_slots_for_slug(slug: str, count: int = 12) -> Dict[str, Any]:
         return {"ok": False, "skipped": False, "slug": slug, "error": str(exc)}
 
 
-def _fetch_public_slots_payload(tenant_id: int, slug: str, safe_count: int) -> Dict[str, Any]:
-    """Récupère et formate les créneaux (Google/local) — exécuté dans un thread."""
-    from backend import tools_booking
-
-    session = SimpleNamespace(tenant_id=tenant_id, rejected_slot_starts=[])
-    display_slots = tools_booking.get_slots_for_display(
-        limit=safe_count,
-        pref=None,
-        session=session,
-    ) or []
+def _format_display_slots_payload(
+    tenant_id: int,
+    slug: str,
+    display_slots: List[Any],
+    safe_count: int,
+) -> Dict[str, Any]:
+    """Formate des SlotDisplay en payload public /slots."""
     now = _public_slots_now()
     formatted: List[Dict[str, Any]] = []
-    for slot in display_slots:
+    for slot in display_slots or []:
         item = _format_slot_from_display(slot, today=now, tenant_id=tenant_id)
         if item:
             if item.get("startIso") and not item.get("endIso"):
@@ -1331,6 +1328,37 @@ def _fetch_public_slots_payload(tenant_id: int, slug: str, safe_count: int) -> D
     return {"slug": slug, "slots": [], "source": "agenda", "calendar": "none"}
 
 
+def _fetch_public_slots_payload(tenant_id: int, slug: str, safe_count: int) -> Dict[str, Any]:
+    """Récupère et formate les créneaux (Google/local) — exécuté dans un thread."""
+    from backend import tools_booking
+
+    session = SimpleNamespace(tenant_id=tenant_id, rejected_slot_starts=[])
+    display_slots = tools_booking.get_slots_for_display(
+        limit=safe_count,
+        pref=None,
+        session=session,
+    ) or []
+    return _format_display_slots_payload(tenant_id, slug, display_slots, safe_count)
+
+
+def _peek_public_slots_payload(tenant_id: int, slug: str, safe_count: int) -> Optional[Dict[str, Any]]:
+    """Retourne les créneaux déjà en cache (sans appel Google)."""
+    from backend import tools_booking
+
+    cached = tools_booking.peek_cached_slots_for_display(
+        limit=safe_count,
+        tenant_id=int(tenant_id),
+        pref=None,
+    )
+    if not cached:
+        return None
+    out = _format_display_slots_payload(tenant_id, slug, cached, safe_count)
+    if out.get("slots"):
+        out["cached"] = True
+        return out
+    return None
+
+
 @router.get("/slots/{slug}")
 async def get_public_slots(slug: str, count: int = 6) -> Dict[str, Any]:
     import asyncio
@@ -1343,6 +1371,12 @@ async def get_public_slots(slug: str, count: int = 6) -> Dict[str, Any]:
         return _slots_response(out)
 
     try:
+        cached_out = await asyncio.to_thread(
+            _peek_public_slots_payload, int(tenant_id), slug, safe_count,
+        )
+        if cached_out and cached_out.get("slots"):
+            return _slots_response(cached_out)
+
         out = await asyncio.wait_for(
             asyncio.to_thread(_fetch_public_slots_payload, int(tenant_id), slug, safe_count),
             timeout=_SLOTS_FETCH_TIMEOUT,

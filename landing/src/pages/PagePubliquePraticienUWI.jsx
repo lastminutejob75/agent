@@ -149,6 +149,10 @@ const RESCHEDULE_INTENT = /\b(modifier|decaler|deplacer|changer|reporter)\b.*\b(
 const CALLBACK_INTENT = /\b(etre\s+rappele|demande\s+de\s+rappel|rappelez[- ]?moi|me\s+rappele)\b/iu;
 const MORE_SLOTS_REQUEST = /\b(voir\s+d['\u2019]?autres?\s+cr[eé]neaux|voir\s+plus\s+de\s+cr[eé]neaux|autres?\s+cr[eé]neaux|plus\s+de\s+cr[eé]neaux|aucun\s+ne\s+convient|autre\s+horaire)\b/iu;
 const CHAT_REPLY_TIMEOUT_MS = 45000;
+/** Délai avant d'afficher les créneaux déjà chargés dans la barre (sans attendre le moteur). */
+const CHAT_SLOTS_BAR_INSTANT_MS = 280;
+/** Repli barre si le SSE tarde encore (créneaux agenda pas prêts au 1er essai). */
+const CHAT_SLOTS_EARLY_FALLBACK_MS = 1800;
 const CHAT_UNCLEAR_FALLBACK =
   "Je peux vous aider à prendre un rendez-vous, répondre à une question, annuler ou modifier un rendez-vous. Que souhaitez-vous ?";
 const CHAT_PROCESSING_REPLY = "Un instant, je traite votre demande…";
@@ -577,6 +581,39 @@ function formatBarSlotsProposalMessage(apiSlots) {
   if (!offers.length) return "";
   const lines = offers.map((o) => `${o.index}. ${o.label}`).join("\n");
   return `Créneaux disponibles :\n${lines}\n\nRépondez par le numéro (1, 2 ou 3), ou cliquez sur un créneau ci-dessous.`;
+}
+
+function chatOffersFromResponse(apiSlots) {
+  return safeArray(apiSlots)
+    .slice(0, 3)
+    .map((slot, i) => ({
+      index: Number(slot?.index) || i + 1,
+      label: slot?.label || `Créneau ${i + 1}`,
+      id: String(slot?.id || ""),
+      source: slot?.source || "sqlite",
+      startIso: slot?.startIso || slot?.start_iso || "",
+      endIso: slot?.endIso || slot?.end_iso || "",
+      motifs: safeArray(slot?.motifs).length
+        ? slot.motifs
+        : ["Consultation", "Suivi", "Premiere consultation", "Renouvellement"],
+    }));
+}
+
+function formatChatSlotsProposalMessage(offers) {
+  if (!offers.length) return "";
+  const lines = offers.map((o) => `${o.index}. ${o.label}`).join("\n");
+  return `Créneaux disponibles :\n${lines}\n\nRépondez par le numéro (1, 2 ou 3), ou cliquez sur un créneau ci-dessous.`;
+}
+
+function hasBookableAgendaSlots(apiSlots, meta) {
+  if (meta?.source !== "agenda") return false;
+  const list = filterFuturePublicSlots(apiSlots);
+  return list.some((slot) => String(slot?.startIso || "").trim());
+}
+
+function isSlotsLookupPlaceholder(text) {
+  const t = String(text || "").trim();
+  return CHAT_PROCESSING_PLACEHOLDERS.has(t);
 }
 
 function slotFromChatOffer(offer) {
@@ -1553,6 +1590,8 @@ export default function PagePubliquePraticienUWI() {
   const eventSourceRef = useRef(null);
   const streamConversationIdRef = useRef(null);
   const pendingTurnRef = useRef(null);
+  const slotsRef = useRef(defaultSlots);
+  const slotsMetaRef = useRef({ source: null, calendar: null });
   const openActionFlowRef = useRef(null);
   const openingHours = safeArray(practitioner.openingHours).length ? practitioner.openingHours : defaultOpeningHours;
   const faqs = useMemo(() => makeFaqs(practitioner, openingHours), [practitioner, openingHours]);
@@ -1560,6 +1599,34 @@ export default function PagePubliquePraticienUWI() {
   const voiceReady = Boolean(vapiPublicKey && practitioner?.vapiAssistantId);
 
   const push = useCallback((items) => setMessages((prev) => prev.concat(items.map((m) => ({ ...m, id: msgId.current++ })))), []);
+
+  useEffect(() => {
+    slotsRef.current = slots;
+  }, [slots]);
+
+  useEffect(() => {
+    slotsMetaRef.current = slotsMeta;
+  }, [slotsMeta]);
+
+  const pushSlotProposal = useCallback((offers, messageText, { provisional = false } = {}) => {
+    if (!offers.length || !messageText) return false;
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      const lastText = last?.from === "clara" ? String(last?.text || "").trim() : "";
+      const nextMsg = {
+        id: msgId.current++,
+        from: "clara",
+        text: messageText,
+        slots: offers,
+        ...(provisional ? { provisional: true } : {}),
+      };
+      if (last?.from === "clara" && (isSlotsLookupPlaceholder(lastText) || last?.provisional)) {
+        return prev.slice(0, -1).concat([nextMsg]);
+      }
+      return prev.concat([nextMsg]);
+    });
+    return true;
+  }, []);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -1641,7 +1708,7 @@ export default function PagePubliquePraticienUWI() {
 
     async function loadSlots() {
       try {
-        const slotData = await fetchJson(`/api/public/slots/${encodeURIComponent(slug)}?count=12`);
+        const slotData = await fetchJson(`/api/public/slots/${encodeURIComponent(slug)}?count=8`);
         if (cancelled) return;
         const freshSlots = filterFuturePublicSlots(slotData.slots);
         if (freshSlots.length) {
@@ -1848,9 +1915,17 @@ export default function PagePubliquePraticienUWI() {
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           const lastText = last?.from === "clara" ? String(last?.text || "").trim() : "";
-          if (last?.from === "clara" && lastText && CHAT_PROCESSING_PLACEHOLDERS.has(lastText)) {
+          if (
+            last?.from === "clara"
+            && (isSlotsLookupPlaceholder(lastText) || last?.provisional)
+          ) {
             return prev.slice(0, -1).concat([
-              { id: msgId.current++, from: "clara", text, slots: slotsPayload.length ? slotsPayload : undefined },
+              {
+                id: msgId.current++,
+                from: "clara",
+                text,
+                slots: slotsPayload.length ? slotsPayload : undefined,
+              },
             ]);
           }
           if (last?.from === "clara" && lastText === text && !slotsPayload.length) {
@@ -1988,24 +2063,64 @@ export default function PagePubliquePraticienUWI() {
         body: JSON.stringify(chatPayload),
       });
 
-    const applyBarSlotsFallback = () => {
-      const offers = barSlotsToChatOffers(slots, 3);
-      const msg = formatBarSlotsProposalMessage(slots);
+    const applyBarSlotsFallback = ({ provisional = true } = {}) => {
+      const currentSlots = slotsRef.current;
+      const currentMeta = slotsMetaRef.current;
+      if (!hasBookableAgendaSlots(currentSlots, currentMeta)) return false;
+      const offers = barSlotsToChatOffers(currentSlots, 3);
+      const msg = formatBarSlotsProposalMessage(currentSlots);
+      return pushSlotProposal(offers, msg, { provisional });
+    };
+
+    const applyResponseSlots = (response, { provisional = true } = {}) => {
+      const offers = chatOffersFromResponse(response?.slots);
+      const msg = formatChatSlotsProposalMessage(offers);
       if (!offers.length || !msg) return false;
-      push([
-        {
-          from: "clara",
-          text: msg,
-          slots: offers,
-        },
-      ]);
-      return true;
+      return pushSlotProposal(offers, msg, { provisional });
+    };
+
+    const refreshAgendaSlotsForChat = async () => {
+      try {
+        const data = await fetchJson(`/api/public/slots/${encodeURIComponent(slug)}?count=8`);
+        const fresh = filterFuturePublicSlots(safeArray(data?.slots));
+        if (!fresh.length || data?.source !== "agenda") return false;
+        setSlots(fresh);
+        setSlotsMeta({ source: data.source || "agenda", calendar: data.calendar || null });
+        writeSessionSlots(slug, { ...data, slots: fresh });
+        slotsRef.current = fresh;
+        slotsMetaRef.current = { source: data.source || "agenda", calendar: data.calendar || null };
+        return true;
+      } catch {
+        return false;
+      }
     };
 
     const syncChatInBackground = async (instantText) => {
       ensureStream(convId);
       const turnWait = waitForAgentTurn();
+      const isSlotsLookup = Boolean(instantText && isSlotsLookupPlaceholder(instantText));
+      const timers = [];
+
       if (instantText) showInstantReply(instantText);
+
+      const tryShowCachedSlots = async ({ refresh = false } = {}) => {
+        if (refresh) await refreshAgendaSlotsForChat();
+        return applyBarSlotsFallback({ provisional: true });
+      };
+
+      if (isSlotsLookup) {
+        timers.push(
+          window.setTimeout(() => {
+            void tryShowCachedSlots();
+          }, CHAT_SLOTS_BAR_INSTANT_MS),
+        );
+        timers.push(
+          window.setTimeout(() => {
+            void tryShowCachedSlots({ refresh: true });
+          }, CHAT_SLOTS_EARLY_FALLBACK_MS),
+        );
+      }
+
       let gotFinalReply = false;
       try {
         let response;
@@ -2018,6 +2133,9 @@ export default function PagePubliquePraticienUWI() {
         if (conversationId) {
           conversationIdRef.current = conversationId;
           ensureStream(conversationId);
+        }
+        if (isSlotsLookup && safeArray(response?.slots).length) {
+          applyResponseSlots(response, { provisional: true });
         }
         if (!instantText && response?.reply) {
           applyChatResponse(response);
@@ -2032,7 +2150,7 @@ export default function PagePubliquePraticienUWI() {
           gotFinalReply = Boolean(sseOk);
         }
         if (!gotFinalReply) {
-          if (instantText && applyBarSlotsFallback()) {
+          if (isSlotsLookup && (await tryShowCachedSlots({ refresh: true }) || applyBarSlotsFallback({ provisional: true }))) {
             gotFinalReply = true;
           } else {
             push([
@@ -2050,6 +2168,8 @@ export default function PagePubliquePraticienUWI() {
         if (!gotFinalReply) {
           push([{ from: "clara", text: "Impossible de contacter l'agent pour le moment. Merci de reessayer." }]);
         }
+      } finally {
+        timers.forEach((id) => window.clearTimeout(id));
       }
     };
 
@@ -2100,7 +2220,7 @@ export default function PagePubliquePraticienUWI() {
     }
 
     void syncChatInBackground(CHAT_PROCESSING_REPLY);
-  }, [chooseSlot, ensureConversationId, ensureStream, lastSlotOffers, push, slug, slots, waitForAgentTurn]);
+  }, [chooseSlot, ensureConversationId, ensureStream, lastSlotOffers, push, pushSlotProposal, slug, waitForAgentTurn]);
 
   const pickChatSlot = useCallback(
     (offer) => {
