@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import os
 import smtplib
+import html
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Any, Dict, Optional, Tuple
@@ -1611,3 +1612,71 @@ def send_patient_document_email(
             logger.exception("patient_doc_email smtp err: %s", _exc)
             return False, str(_exc)
     return False, "Email non configuré pour envoi de documents"
+
+
+def send_patient_message_email(
+    *,
+    to: str,
+    patient_name: str,
+    cabinet_name: str,
+    subject: str,
+    message: str,
+) -> Tuple[bool, Optional[str]]:
+    """Envoie un message email libre à un patient (Postmark ou SMTP)."""
+    to_addr = (to or "").strip().lower()
+    if not to_addr:
+        return False, "Adresse email du patient manquante"
+    subj = (subject or "").strip()[:180] or "Message de votre cabinet"
+    body = (message or "").strip()
+    if not body:
+        return False, "Message vide"
+    if len(body) > 4000:
+        return False, "Message trop long (max 4000 caractères)"
+
+    patient_safe = html.escape((patient_name or "").strip() or "Patient")
+    cabinet_safe = html.escape((cabinet_name or "").strip() or "Votre cabinet")
+    body_html = html.escape(body).replace("\n", "<br/>")
+    html_body = f"""<!DOCTYPE html><html><body style="font-family:sans-serif;color:#333;line-height:1.5;">
+<p>Bonjour {patient_safe},</p>
+<p>Votre cabinet <strong>{cabinet_safe}</strong> vous a envoyé le message suivant :</p>
+<div style="padding:12px 14px;border-radius:10px;background:#F8FAFC;border:1px solid #E2E8F0;">{body_html}</div>
+<p style="color:#666;font-size:0.85rem;margin-top:14px;">Merci de contacter directement votre cabinet pour toute question.</p>
+</body></html>"""
+
+    postmark_token = (os.getenv("POSTMARK_SERVER_TOKEN") or "").strip()
+    postmark_from = (
+        os.getenv("POSTMARK_FROM_EMAIL")
+        or os.getenv("EMAIL_FROM")
+        or os.getenv("SMTP_EMAIL")
+        or ""
+    ).strip()
+    if postmark_token and postmark_from:
+        try:
+            ok, err = _send_via_postmark(postmark_from, to_addr, subj, html_body, postmark_token)
+            if ok:
+                logger.info("patient_message_email via postmark to=%s", to_addr[:50])
+            return ok, err
+        except Exception as exc:
+            logger.exception("patient_message_email postmark err: %s", exc)
+
+    smtp_user = (os.getenv("SMTP_EMAIL") or "").strip()
+    smtp_pass = (os.getenv("SMTP_PASSWORD") or "").strip()
+    if smtp_user and smtp_pass:
+        host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        port = int(os.getenv("SMTP_PORT", "587"))
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["From"] = smtp_user
+            msg["To"] = to_addr
+            msg["Subject"] = subj
+            msg.attach(MIMEText(html_body, "html", "utf-8"))
+            with smtplib.SMTP(host, port) as srv:
+                srv.starttls()
+                srv.login(smtp_user, smtp_pass)
+                srv.sendmail(smtp_user, [to_addr], msg.as_string())
+            logger.info("patient_message_email via smtp to=%s", to_addr[:50])
+            return True, None
+        except Exception as exc:
+            logger.exception("patient_message_email smtp err: %s", exc)
+            return False, str(exc)
+    return False, "Email non configuré"

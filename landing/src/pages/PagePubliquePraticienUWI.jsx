@@ -1538,8 +1538,8 @@ function SupervisedModal({ slot, slug, onClose, onConfirm, done, onAskClara }) {
               className="modalWaCta"
               type="button"
               onClick={() => {
-                onClose();
-                onAskClara?.();
+                if (onAskClara) onAskClara();
+                else onClose();
               }}
             >
               Poser une question à Clara
@@ -2359,6 +2359,11 @@ export default function PagePubliquePraticienUWI() {
   openActionFlowRef.current = openActionFlow;
 
   const handlePostBookingDocuments = useCallback(() => {
+    // Évite que la réponse chat soit masquée par une modale encore affichée.
+    setModalSlot(null);
+    setBookingDone(false);
+    setActionFlowMode(null);
+    setActionFlowInitialCode("");
     const text =
       practitioner.documents ||
       "Carte Vitale, piece d'identite, ordonnances et examens recents si besoin.";
@@ -2367,6 +2372,11 @@ export default function PagePubliquePraticienUWI() {
   }, [practitioner.documents, push]);
 
   const handlePostBookingAddress = useCallback(() => {
+    // Évite que la réponse chat soit masquée par une modale encore affichée.
+    setModalSlot(null);
+    setBookingDone(false);
+    setActionFlowMode(null);
+    setActionFlowInitialCode("");
     const text = addr(practitioner) || "Adresse communiquee par le cabinet.";
     const access = [practitioner.access, practitioner.parking].filter(Boolean).join(" — ");
     push([
@@ -2393,6 +2403,12 @@ export default function PagePubliquePraticienUWI() {
   }, [slug, slots]);
 
   const handlePostBookingAskAnother = useCallback(() => {
+    // Retourne à la landing (sans modale ni état "succès" bloquant), puis rouvre le chat normal.
+    setModalSlot(null);
+    setBookingDone(false);
+    setBookingSuccess(null);
+    setActionFlowMode(null);
+    setActionFlowInitialCode("");
     setPostBookingChatOpen(true);
     void refreshPublicSlots();
     push([

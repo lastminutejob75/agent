@@ -110,9 +110,20 @@ type SidebarPatientRow = {
   statusBucket: "new" | "active" | "inactive";
 };
 
-type ModalType = "profile" | "addNote" | "addDocument" | "history" | "deletePatient" | "cancelAppt" | "rescheduleAppt" | null;
+type ModalType =
+  | "profile"
+  | "addNote"
+  | "addDocument"
+  | "history"
+  | "deletePatient"
+  | "cancelAppt"
+  | "rescheduleAppt"
+  | "sendSingleMessage"
+  | "sendBulkMessage"
+  | null;
 type ApptActionTarget = { slot: Record<string, unknown>; start: Date };
 type ViewType = "overview" | "appointments" | "history" | "documents";
+type MessageChannel = "sms" | "email";
 type RequestContext = {
   id: string;
   phone: string;
@@ -1006,6 +1017,17 @@ export default function PatientDashboardPage() {
   const [requestStatusOverrides, setRequestStatusOverrides] = useState<Record<string, { status_raw?: string }>>(
     () => readRequestStatusOverrides(),
   );
+  const [bulkSelectionMode, setBulkSelectionMode] = useState(false);
+  const [selectedPatientPhones, setSelectedPatientPhones] = useState<string[]>([]);
+  const [singleMessageChannel, setSingleMessageChannel] = useState<MessageChannel>("sms");
+  const [singleMessageSubject, setSingleMessageSubject] = useState("Message de votre cabinet");
+  const [singleMessageBody, setSingleMessageBody] = useState("");
+  const [singleMessageSending, setSingleMessageSending] = useState(false);
+  const [bulkMessageChannel, setBulkMessageChannel] = useState<MessageChannel>("sms");
+  const [bulkMessageSubject, setBulkMessageSubject] = useState("Message de votre cabinet");
+  const [bulkMessageBody, setBulkMessageBody] = useState("");
+  const [bulkMessageSendToAll, setBulkMessageSendToAll] = useState(false);
+  const [bulkMessageSending, setBulkMessageSending] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -1356,6 +1378,55 @@ export default function PatientDashboardPage() {
   ]);
 
   const sidebarSearchPending = Boolean(query.trim().length >= 2 && patientSearchLoading);
+  const visibleSelectablePhones = useMemo(
+    () => filteredSidebarRows.map((row) => row.phone).filter(Boolean),
+    [filteredSidebarRows],
+  );
+  const selectedVisibleCount = useMemo(
+    () => visibleSelectablePhones.filter((phone) => selectedPatientPhones.includes(phone)).length,
+    [visibleSelectablePhones, selectedPatientPhones],
+  );
+  const allVisibleSelected = visibleSelectablePhones.length > 0 && selectedVisibleCount === visibleSelectablePhones.length;
+  const selectedSidebarRows = useMemo(() => {
+    const selectedSet = new Set(selectedPatientPhones);
+    return effectiveSidebarRows.filter((row) => selectedSet.has(row.phone));
+  }, [effectiveSidebarRows, selectedPatientPhones]);
+  const selectedPatientsPreviewLabel = useMemo(() => {
+    if (!selectedSidebarRows.length) return "";
+    const names = selectedSidebarRows.map((row) => row.name);
+    if (names.length <= 3) return names.join(", ");
+    return `${names.slice(0, 3).join(", ")} +${names.length - 3}`;
+  }, [selectedSidebarRows]);
+
+  useEffect(() => {
+    const allowed = new Set(effectiveSidebarRows.map((row) => row.phone).filter(Boolean));
+    setSelectedPatientPhones((prev) => prev.filter((phone) => allowed.has(phone)));
+  }, [effectiveSidebarRows]);
+
+  const toggleSelectedPatientPhone = useCallback((phone: string) => {
+    setSelectedPatientPhones((prev) =>
+      prev.includes(phone) ? prev.filter((p) => p !== phone) : [...prev, phone],
+    );
+  }, []);
+
+  const toggleSelectAllVisiblePatients = useCallback(() => {
+    setSelectedPatientPhones((prev) => {
+      if (!visibleSelectablePhones.length) return prev;
+      const visibleSet = new Set(visibleSelectablePhones);
+      if (allVisibleSelected) {
+        return prev.filter((phone) => !visibleSet.has(phone));
+      }
+      const merged = [...prev];
+      for (const phone of visibleSelectablePhones) {
+        if (!merged.includes(phone)) merged.push(phone);
+      }
+      return merged;
+    });
+  }, [allVisibleSelected, visibleSelectablePhones]);
+
+  const clearSelectedPatients = useCallback(() => {
+    setSelectedPatientPhones([]);
+  }, []);
 
   useEffect(() => {
     if (!phoneFromDashboardUrl) setUrlPatientHero(null);
@@ -2356,6 +2427,114 @@ export default function PatientDashboardPage() {
     }
   };
 
+  const openSingleMessageModal = useCallback(
+    (channel: MessageChannel) => {
+      if (!tenantPatientPhone) {
+        notify("Aucun patient sélectionné", { sticky: true });
+        return;
+      }
+      if (channel === "email" && !patientEmail) {
+        notify("Ajoute d'abord l'email du patient", { sticky: true });
+        return;
+      }
+      setSingleMessageChannel(channel);
+      setSingleMessageSubject("Message de votre cabinet");
+      setSingleMessageBody("");
+      setModal("sendSingleMessage");
+    },
+    [tenantPatientPhone, patientEmail, notify],
+  );
+
+  const sendSingleMessage = async () => {
+    if (!tenantPatientPhone) {
+      notify("Aucun patient sélectionné", { sticky: true });
+      return;
+    }
+    const message = singleMessageBody.trim();
+    if (!message) {
+      notify("Saisissez un message.", { sticky: true });
+      return;
+    }
+    if (singleMessageChannel === "email" && !patientEmail) {
+      notify("Ajoute d'abord l'email du patient", { sticky: true });
+      return;
+    }
+    setSingleMessageSending(true);
+    try {
+      const payload: Record<string, string> = {
+        channel: singleMessageChannel,
+        message,
+      };
+      if (singleMessageChannel === "email") {
+        payload.subject = singleMessageSubject.trim() || "Message de votre cabinet";
+      }
+      const res = await api.tenantSendPatientMessage(tenantPatientPhone, payload);
+      notify(
+        singleMessageChannel === "sms"
+          ? `SMS envoyé à ${formatDisplayFrenchPhone(String(res?.sent_to || tenantPatientPhone))}`
+          : `Email envoyé à ${String(res?.sent_to || patientEmail)}`,
+      );
+      setModal(null);
+      setSingleMessageBody("");
+    } catch (e) {
+      notify((e as Error)?.message || "Erreur envoi message", { sticky: true });
+    } finally {
+      setSingleMessageSending(false);
+    }
+  };
+
+  const openBulkMessageModal = () => {
+    setBulkMessageChannel("sms");
+    setBulkMessageSubject("Message de votre cabinet");
+    setBulkMessageBody("");
+    setBulkMessageSendToAll(false);
+    setModal("sendBulkMessage");
+  };
+
+  const sendBulkMessage = async () => {
+    const message = bulkMessageBody.trim();
+    if (!message) {
+      notify("Saisissez un message pour l'envoi groupé.", { sticky: true });
+      return;
+    }
+    if (!bulkMessageSendToAll && selectedPatientPhones.length === 0) {
+      notify("Sélectionnez au moins un patient ou cochez « Tous les patients ».", { sticky: true });
+      return;
+    }
+    setBulkMessageSending(true);
+    try {
+      const payload: Record<string, unknown> = {
+        channel: bulkMessageChannel,
+        message,
+        send_to_all: bulkMessageSendToAll,
+      };
+      if (!bulkMessageSendToAll) {
+        payload.phone_numbers = selectedPatientPhones;
+      }
+      if (bulkMessageChannel === "email") {
+        payload.subject = bulkMessageSubject.trim() || "Message de votre cabinet";
+      }
+      const res = await api.tenantSendBulkPatientMessage(payload);
+      const sent = Number(res?.sent_count || 0);
+      const failed = Number(res?.failed_count || 0);
+      const skipped = Number(res?.skipped_count || 0);
+      notify(
+        `${bulkMessageChannel === "sms" ? "SMS" : "Emails"} groupé envoyé(s): ${sent} OK, ${failed} échec(s), ${skipped} ignoré(s).`,
+        { sticky: true },
+      );
+      if (!bulkMessageSendToAll) {
+        setSelectedPatientPhones([]);
+      }
+      setModal(null);
+      setBulkMessageBody("");
+      setBulkSelectionMode(false);
+    } catch (e) {
+      notify((e as Error)?.message || "Erreur envoi groupé", { sticky: true });
+    } finally {
+      setBulkMessageSending(false);
+    }
+  };
+
   const saveEmail = async () => {
     if (!tenantPatientPhone) {
       notify("Aucun patient sélectionné", { sticky: true });
@@ -2556,6 +2735,9 @@ export default function PatientDashboardPage() {
     </div>
   );
 
+  const canSubmitBulkMessage =
+    !!bulkMessageBody.trim() && (bulkMessageSendToAll || selectedPatientPhones.length > 0) && !bulkMessageSending;
+
   return (
     <div className="min-h-0 bg-[#F7FAFC] text-[#0A1628] xl:min-h-screen">
       <Toast message={toast} />
@@ -2629,6 +2811,60 @@ export default function PatientDashboardPage() {
             ))}
           </div>
 
+          <div className="mb-5 rounded-2xl border border-[#E2EAF4] bg-[#F8FBFD] p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setBulkSelectionMode((prev) => !prev);
+                  if (bulkSelectionMode) setSelectedPatientPhones([]);
+                }}
+                className={cx(
+                  "rounded-lg border px-3 py-1.5 text-xs font-black",
+                  bulkSelectionMode
+                    ? "border-[#009CA4] bg-[#E9FAFC] text-[#007E8C]"
+                    : "border-[#DDE7F1] bg-white text-[#475569] hover:bg-[#F8FAFC]",
+                )}
+              >
+                {bulkSelectionMode ? "Quitter la sélection" : "Sélection SMS groupé"}
+              </button>
+              <button
+                type="button"
+                onClick={openBulkMessageModal}
+                className="rounded-lg border border-[#009CA4] bg-white px-3 py-1.5 text-xs font-black text-[#007E8C] hover:bg-[#E9FAFC]"
+              >
+                Envoyer un message groupé
+              </button>
+              {selectedPatientPhones.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={clearSelectedPatients}
+                  className="rounded-lg border border-[#DDE7F1] bg-white px-3 py-1.5 text-xs font-black text-[#475569] hover:bg-[#F8FAFC]"
+                >
+                  Effacer la sélection
+                </button>
+              ) : null}
+              <span className="text-xs font-semibold text-[#64748B]">
+                {selectedPatientPhones.length} patient{selectedPatientPhones.length > 1 ? "s" : ""} sélectionné{selectedPatientPhones.length > 1 ? "s" : ""}
+              </span>
+            </div>
+            {selectedPatientPhones.length > 0 ? (
+              <p className="mt-2 text-[11px] font-semibold text-[#64748B]">
+                {selectedPatientsPreviewLabel}
+              </p>
+            ) : null}
+            {bulkSelectionMode ? (
+              <label className="mt-3 flex items-center gap-2 text-xs font-semibold text-[#334155]">
+                <input
+                  type="checkbox"
+                  checked={allVisibleSelected}
+                  onChange={() => toggleSelectAllVisiblePatients()}
+                />
+                Tout sélectionner (liste affichée)
+              </label>
+            ) : null}
+          </div>
+
           <div className="overflow-hidden rounded-3xl border border-[#E5EDF5] bg-white shadow-sm">
             {tenantListLoading ? (
               <div className="p-10 text-center text-sm font-semibold text-[#64748B]">Chargement de la liste…</div>
@@ -2653,11 +2889,16 @@ export default function PatientDashboardPage() {
             ) : (
               filteredSidebarRows.map((patient) => {
                 const selected = patient.phone === tenantPatientPhone;
+                const checkedForBulk = selectedPatientPhones.includes(patient.phone);
                 return (
                   <button
                     key={patient.phone}
                     type="button"
                     onClick={() => {
+                      if (bulkSelectionMode) {
+                        toggleSelectedPatientPhone(patient.phone);
+                        return;
+                      }
                       const cached = patientDetailCacheRef.current.get(patient.phone);
                       const cacheValid = isPatientDetailCacheValid(cached, patientFetchNonce, activeView);
                       if (cacheValid && cached) {
@@ -2683,10 +2924,20 @@ export default function PatientDashboardPage() {
                       setPatientListOpen(false);
                     }}
                     className={cx(
-                      "flex w-full items-center gap-4 border-b border-[#EEF3F8] p-4 text-left transition last:border-b-0",
+                      "flex w-full items-center gap-3 border-b border-[#EEF3F8] p-4 text-left transition last:border-b-0",
                       selected ? "bg-[#EAF8FC] ring-1 ring-inset ring-[#BFEAF0]" : "hover:bg-[#F8FBFD]",
                     )}
                   >
+                    {bulkSelectionMode ? (
+                      <input
+                        type="checkbox"
+                        checked={checkedForBulk}
+                        onClick={(event) => event.stopPropagation()}
+                        onChange={() => toggleSelectedPatientPhone(patient.phone)}
+                        className="h-4 w-4 shrink-0 accent-[#009CA4]"
+                        aria-label={`Sélectionner ${patient.name}`}
+                      />
+                    ) : null}
                     <div className={cx("grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-gradient-to-br text-lg font-black text-white shadow-sm", patient.gradient)}>
                       {patient.initials}
                     </div>
@@ -2961,6 +3212,13 @@ export default function PatientDashboardPage() {
                               Copier
                             </button>
                           ) : null}
+                          <button
+                            type="button"
+                            onClick={() => openSingleMessageModal("sms")}
+                            className="rounded-lg border border-[#75D3DF] bg-[#E9FAFC] px-2.5 py-1.5 text-[11px] font-black text-[#007E8C] hover:bg-[#DDF6FA]"
+                          >
+                            SMS pro
+                          </button>
                         </span>
                       ) : null
                     }
@@ -3012,13 +3270,23 @@ export default function PatientDashboardPage() {
                     }
                     action={
                       !tenantPatientNotFound && !editingEmail ? (
-                        <button
-                          type="button"
-                          onClick={() => setEditingEmail(true)}
-                          className="rounded-lg border border-[#DDE7F1] bg-white px-2.5 py-1.5 text-[11px] font-black text-[#475569] hover:bg-[#F8FAFC]"
-                        >
-                          {patientEmail ? "Modifier" : "Ajouter"}
-                        </button>
+                        <span className="flex flex-wrap gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setEditingEmail(true)}
+                            className="rounded-lg border border-[#DDE7F1] bg-white px-2.5 py-1.5 text-[11px] font-black text-[#475569] hover:bg-[#F8FAFC]"
+                          >
+                            {patientEmail ? "Modifier" : "Ajouter"}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={!patientEmail}
+                            onClick={() => openSingleMessageModal("email")}
+                            className="rounded-lg border border-[#6AD58B] bg-white px-2.5 py-1.5 text-[11px] font-black text-[#0EA348] hover:bg-[#F0FFF5] disabled:opacity-50"
+                          >
+                            Envoyer
+                          </button>
+                        </span>
                       ) : null
                     }
                   />
@@ -3692,6 +3960,180 @@ export default function PatientDashboardPage() {
             </button>
             .
           </p>
+        </Modal>
+      )}
+
+      {modal === "sendSingleMessage" && (
+        <Modal title="Envoyer un message au patient" onClose={() => setModal(null)} width="max-w-xl">
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-[#E2EAF4] bg-[#F8FBFD] p-3 text-sm font-semibold text-[#334155]">
+              Destinataire: <span className="font-black">{displayHero?.name || "Patient"}</span>{" "}
+              {singleMessageChannel === "sms" ? `(${formatDisplayFrenchPhone(tenantPatientPhone)})` : patientEmail ? `(${patientEmail})` : ""}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setSingleMessageChannel("sms")}
+                className={cx(
+                  "rounded-lg border px-3 py-1.5 text-xs font-black",
+                  singleMessageChannel === "sms"
+                    ? "border-[#009CA4] bg-[#E9FAFC] text-[#007E8C]"
+                    : "border-[#DDE7F1] bg-white text-[#475569]",
+                )}
+              >
+                SMS
+              </button>
+              <button
+                type="button"
+                onClick={() => setSingleMessageChannel("email")}
+                disabled={!patientEmail}
+                className={cx(
+                  "rounded-lg border px-3 py-1.5 text-xs font-black",
+                  singleMessageChannel === "email"
+                    ? "border-[#0EA348] bg-[#F0FFF5] text-[#0EA348]"
+                    : "border-[#DDE7F1] bg-white text-[#475569]",
+                  !patientEmail ? "opacity-50" : "",
+                )}
+              >
+                Email
+              </button>
+            </div>
+            {singleMessageChannel === "email" ? (
+              <label className="block text-sm font-semibold text-[#334155]">
+                Objet
+                <input
+                  value={singleMessageSubject}
+                  onChange={(e) => setSingleMessageSubject(e.target.value)}
+                  maxLength={180}
+                  className="mt-2 w-full rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
+                />
+              </label>
+            ) : null}
+            <label className="block text-sm font-semibold text-[#334155]">
+              Message
+              <textarea
+                value={singleMessageBody}
+                onChange={(e) => setSingleMessageBody(e.target.value)}
+                rows={6}
+                maxLength={4000}
+                placeholder="Votre message pour le patient…"
+                className="mt-2 w-full resize-none rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
+              />
+            </label>
+            <button
+              type="button"
+              disabled={singleMessageSending}
+              onClick={() => void sendSingleMessage()}
+              className="w-full rounded-xl bg-[#009CA4] px-4 py-3 font-black text-white hover:bg-[#00838A] disabled:opacity-60"
+            >
+              {singleMessageSending
+                ? "Envoi…"
+                : singleMessageChannel === "sms"
+                  ? "Envoyer le SMS"
+                  : "Envoyer l'email"}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {modal === "sendBulkMessage" && (
+        <Modal title="Envoyer un message groupé" onClose={() => setModal(null)} width="max-w-2xl">
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-[#E2EAF4] bg-[#F8FBFD] p-3 text-sm text-[#334155]">
+              {bulkMessageSendToAll ? (
+                <span className="font-black">Mode: tous les patients du cabinet</span>
+              ) : (
+                <span>
+                  Patients sélectionnés:{" "}
+                  <span className="font-black">
+                    {selectedPatientPhones.length}
+                  </span>
+                </span>
+              )}
+            </div>
+            {bulkMessageSendToAll ? (
+              <p className="text-xs font-semibold text-[#64748B]">
+                L&apos;envoi couvrira l&apos;ensemble des fiches patients du cabinet.
+              </p>
+            ) : selectedPatientPhones.length > 0 ? (
+              <p className="text-xs font-semibold text-[#64748B]">
+                Cibles: {selectedPatientsPreviewLabel}
+              </p>
+            ) : (
+              <p className="text-xs font-semibold text-amber-700">
+                Sélectionnez des patients dans la liste ou cochez « Tous les patients du cabinet ».
+              </p>
+            )}
+            <label className="flex items-center gap-2 text-sm font-semibold text-[#334155]">
+              <input
+                type="checkbox"
+                checked={bulkMessageSendToAll}
+                onChange={(e) => setBulkMessageSendToAll(e.target.checked)}
+              />
+              Tous les patients du cabinet
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setBulkMessageChannel("sms")}
+                className={cx(
+                  "rounded-lg border px-3 py-1.5 text-xs font-black",
+                  bulkMessageChannel === "sms"
+                    ? "border-[#009CA4] bg-[#E9FAFC] text-[#007E8C]"
+                    : "border-[#DDE7F1] bg-white text-[#475569]",
+                )}
+              >
+                SMS groupé
+              </button>
+              <button
+                type="button"
+                onClick={() => setBulkMessageChannel("email")}
+                className={cx(
+                  "rounded-lg border px-3 py-1.5 text-xs font-black",
+                  bulkMessageChannel === "email"
+                    ? "border-[#0EA348] bg-[#F0FFF5] text-[#0EA348]"
+                    : "border-[#DDE7F1] bg-white text-[#475569]",
+                )}
+              >
+                Email groupé
+              </button>
+            </div>
+            {bulkMessageChannel === "email" ? (
+              <p className="text-xs font-semibold text-[#64748B]">
+                Les patients sans email valide seront ignorés automatiquement.
+              </p>
+            ) : null}
+            {bulkMessageChannel === "email" ? (
+              <label className="block text-sm font-semibold text-[#334155]">
+                Objet
+                <input
+                  value={bulkMessageSubject}
+                  onChange={(e) => setBulkMessageSubject(e.target.value)}
+                  maxLength={180}
+                  className="mt-2 w-full rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
+                />
+              </label>
+            ) : null}
+            <label className="block text-sm font-semibold text-[#334155]">
+              Message
+              <textarea
+                value={bulkMessageBody}
+                onChange={(e) => setBulkMessageBody(e.target.value)}
+                rows={7}
+                maxLength={4000}
+                placeholder="Message à envoyer en groupe…"
+                className="mt-2 w-full resize-none rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
+              />
+            </label>
+            <button
+              type="button"
+              disabled={!canSubmitBulkMessage}
+              onClick={() => void sendBulkMessage()}
+              className="w-full rounded-xl bg-[#009CA4] px-4 py-3 font-black text-white hover:bg-[#00838A] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {bulkMessageSending ? "Envoi groupé…" : "Lancer l'envoi groupé"}
+            </button>
+          </div>
         </Modal>
       )}
 

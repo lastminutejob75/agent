@@ -428,6 +428,10 @@ export const api = {
     }),
   tenantSendPatientDocument: (phone, docId) =>
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/documents/${docId}/send`, { method: "POST", tenant: true }),
+  tenantSendPatientMessage: (phone, body) =>
+    request(`/api/tenant/patients/${encodeURIComponent(phone)}/messages`, { method: "POST", body, tenant: true }),
+  tenantSendBulkPatientMessage: (body) =>
+    request("/api/tenant/patients/messages/bulk", { method: "POST", body, tenant: true }),
   tenantGetHandoffs: (params = "") =>
     request(`/api/tenant/handoffs${params}`, { tenant: true }),
   tenantGetHandoff: (handoffId) =>

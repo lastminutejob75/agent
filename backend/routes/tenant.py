@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from types import SimpleNamespace
 from uuid import uuid4
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Literal, Optional
 
 import bcrypt
 import jwt
@@ -110,7 +110,12 @@ from backend.cabinet_profile_pg import (
     sync_normalized_from_params as pg_sync_normalized_from_params,
     sync_opening_hours_from_booking_rules as pg_sync_opening_hours_from_booking_rules,
 )
-from backend.services.email_service import send_agenda_contact_request_email, send_patient_document_email
+from backend.services.email_service import (
+    send_agenda_contact_request_email,
+    send_patient_document_email,
+    send_patient_message_email,
+)
+from backend.services.sms_service import send_sms_message
 from backend.services.patient_document_storage import (
     content_disposition_attachment,
     delete_patient_dossier,
@@ -3897,6 +3902,37 @@ class PatientUpdateBody(BaseModel):
         return v.strip()[:120]
 
 
+class PatientMessageBody(BaseModel):
+    channel: Literal["sms", "email"] = Field(..., description="Canal d'envoi")
+    message: str = Field(..., min_length=1, max_length=4000)
+    subject: Optional[str] = Field(default=None, max_length=180)
+
+    @validator("message")
+    def _validate_message(cls, v):
+        value = str(v or "").strip()
+        if not value:
+            raise ValueError("Message vide")
+        return value
+
+    @validator("subject")
+    def _validate_subject(cls, v):
+        if v is None:
+            return None
+        return str(v).strip()[:180]
+
+
+class PatientsBulkMessageBody(PatientMessageBody):
+    phone_numbers: List[str] = Field(default_factory=list, description="Numéros patients ciblés")
+    send_to_all: bool = Field(default=False, description="Envoyer à toutes les fiches patients du cabinet")
+
+    @validator("phone_numbers", each_item=True)
+    def _validate_phone_numbers(cls, v):
+        clean = str(v or "").strip()
+        if not clean:
+            raise ValueError("Numéro patient vide")
+        return clean
+
+
 class PatientNoteCreateBody(BaseModel):
     text: str = Field(..., min_length=1, max_length=4000)
     author: Optional[str] = Field(default="Praticien", max_length=120)
@@ -4072,6 +4108,227 @@ def tenant_update_patient(
     if phone_changed:
         resp["previous_phone"] = previous_phone
     return resp
+
+
+def _patient_display_name(profile: Dict[str, Any]) -> str:
+    return (
+        str(
+            profile.get("display_name")
+            or profile.get("validated_name")
+            or profile.get("raw_name")
+            or "Patient"
+        ).strip()
+        or "Patient"
+    )
+
+
+def _tenant_cabinet_name_for_patient_messages(tenant_id: int) -> str:
+    detail = _get_tenant_detail(tenant_id) or {}
+    return str(detail.get("name") or "Votre cabinet").strip() or "Votre cabinet"
+
+
+@router.post("/patients/{phone}/messages")
+def tenant_send_patient_message(
+    phone: str,
+    body: PatientMessageBody,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Envoie un message SMS ou email à un patient unique."""
+    tenant_id = auth["tenant_id"]
+    phone_norm = normalize_phone_number(phone) or phone.strip()
+    profile = get_cabinet_client_by_phone(tenant_id, phone_norm)
+    if not profile:
+        raise HTTPException(404, "Patient not found")
+
+    patient_name = _patient_display_name(profile)
+    channel = body.channel
+    message = body.message.strip()
+    if channel == "sms":
+        recipient = normalize_phone_number(str(profile.get("phone") or phone_norm))
+        if not recipient:
+            raise HTTPException(422, "Numéro patient invalide")
+        ok, err = send_sms_message(recipient, message)
+        if not ok:
+            raise HTTPException(502, err or "Envoi SMS échoué")
+        return {"ok": True, "channel": "sms", "sent_to": recipient}
+
+    recipient_email = str(profile.get("email") or "").strip().lower()
+    if not recipient_email:
+        raise HTTPException(400, "Le patient n'a pas d'adresse email renseignée.")
+    if not is_valid_contact_email(recipient_email):
+        raise HTTPException(422, "Adresse email patient invalide.")
+    ok, err = send_patient_message_email(
+        to=recipient_email,
+        patient_name=patient_name,
+        cabinet_name=_tenant_cabinet_name_for_patient_messages(tenant_id),
+        subject=(body.subject or "").strip() or "Message de votre cabinet",
+        message=message,
+    )
+    if not ok:
+        raise HTTPException(502, err or "Envoi email échoué")
+    return {"ok": True, "channel": "email", "sent_to": recipient_email}
+
+
+@router.post("/patients/messages/bulk")
+def tenant_send_bulk_patient_message(
+    body: PatientsBulkMessageBody,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Envoi groupé SMS/email vers une sélection de patients ou tous les patients du cabinet."""
+    tenant_id = auth["tenant_id"]
+    send_to_all = bool(body.send_to_all)
+    channel = body.channel
+    message = body.message.strip()
+
+    targets: List[Dict[str, Any]] = []
+    if send_to_all:
+        batch_size = 500
+        max_recipients = 3000
+        offset = 0
+        while len(targets) < max_recipients:
+            batch = list_cabinet_clients(tenant_id, limit=batch_size, offset=offset)
+            if not batch:
+                break
+            targets.extend(batch)
+            if len(batch) < batch_size:
+                break
+            offset += batch_size
+        targets = targets[:max_recipients]
+    else:
+        normalized_phones: List[str] = []
+        for raw in body.phone_numbers:
+            norm = normalize_phone_number(raw)
+            if norm:
+                normalized_phones.append(norm)
+        normalized_phones = list(dict.fromkeys(normalized_phones))
+        if not normalized_phones:
+            raise HTTPException(400, "Sélectionnez au moins un patient.")
+        profiles_by_phone = get_cabinet_clients_by_phones(tenant_id, normalized_phones)
+        for phone_norm in normalized_phones:
+            profile = profiles_by_phone.get(phone_norm)
+            if profile:
+                targets.append(profile)
+            else:
+                row = get_cabinet_client_by_phone(tenant_id, phone_norm)
+                if row:
+                    targets.append(row)
+                else:
+                    targets.append({"phone": phone_norm, "display_name": "", "email": ""})
+
+    if not targets:
+        raise HTTPException(400, "Aucun patient trouvé pour cet envoi.")
+
+    cabinet_name = _tenant_cabinet_name_for_patient_messages(tenant_id)
+    requested_count = len(targets)
+    sent_count = 0
+    failed_count = 0
+    skipped_count = 0
+    results: List[Dict[str, Any]] = []
+
+    for row in targets:
+        phone_norm = normalize_phone_number(str(row.get("phone") or ""))
+        patient_name = _patient_display_name(row)
+
+        if channel == "sms":
+            if not phone_norm:
+                skipped_count += 1
+                results.append(
+                    {
+                        "phone": str(row.get("phone") or ""),
+                        "patient_name": patient_name,
+                        "status": "skipped",
+                        "reason": "numéro manquant",
+                    }
+                )
+                continue
+            ok, err = send_sms_message(phone_norm, message)
+            if ok:
+                sent_count += 1
+                results.append({"phone": phone_norm, "patient_name": patient_name, "status": "sent"})
+            else:
+                failed_count += 1
+                results.append(
+                    {
+                        "phone": phone_norm,
+                        "patient_name": patient_name,
+                        "status": "failed",
+                        "reason": (err or "envoi sms échoué")[:220],
+                    }
+                )
+            continue
+
+        recipient_email = str(row.get("email") or "").strip().lower()
+        if not recipient_email:
+            skipped_count += 1
+            results.append(
+                {
+                    "phone": phone_norm,
+                    "patient_name": patient_name,
+                    "status": "skipped",
+                    "reason": "email manquant",
+                }
+            )
+            continue
+        if not is_valid_contact_email(recipient_email):
+            skipped_count += 1
+            results.append(
+                {
+                    "phone": phone_norm,
+                    "patient_name": patient_name,
+                    "status": "skipped",
+                    "reason": "email invalide",
+                }
+            )
+            continue
+        ok, err = send_patient_message_email(
+            to=recipient_email,
+            patient_name=patient_name,
+            cabinet_name=cabinet_name,
+            subject=(body.subject or "").strip() or "Message de votre cabinet",
+            message=message,
+        )
+        if ok:
+            sent_count += 1
+            results.append(
+                {
+                    "phone": phone_norm,
+                    "patient_name": patient_name,
+                    "email": recipient_email,
+                    "status": "sent",
+                }
+            )
+        else:
+            failed_count += 1
+            results.append(
+                {
+                    "phone": phone_norm,
+                    "patient_name": patient_name,
+                    "email": recipient_email,
+                    "status": "failed",
+                    "reason": (err or "envoi email échoué")[:220],
+                }
+            )
+
+    logger.info(
+        "tenant bulk patient message tenant=%s channel=%s scope=%s requested=%s sent=%s failed=%s skipped=%s",
+        tenant_id,
+        channel,
+        "all" if send_to_all else "selected",
+        requested_count,
+        sent_count,
+        failed_count,
+        skipped_count,
+    )
+    return {
+        "ok": failed_count == 0,
+        "channel": channel,
+        "scope": "all" if send_to_all else "selected",
+        "requested_count": requested_count,
+        "sent_count": sent_count,
+        "failed_count": failed_count,
+        "skipped_count": skipped_count,
+        "results": results[:200],
+    }
 
 
 def _build_patient_questionnaire_link(token: str) -> str:
