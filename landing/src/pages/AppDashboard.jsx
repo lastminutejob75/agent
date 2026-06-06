@@ -223,6 +223,8 @@ export default function AppDashboard() {
   const [openingHours, setOpeningHours] = useState([]);
   const [bookingDurationMinutes, setBookingDurationMinutes] = useState(30);
   const [connections, setConnections] = useState({ vapi: null, calendar: null });
+  const [teamNote, setTeamNote] = useState("");
+  const [teamNoteSaving, setTeamNoteSaving] = useState(false);
 
   const notify = (msg) => {
     setToast(msg);
@@ -344,6 +346,11 @@ export default function AppDashboard() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
+  useEffect(() => {
+    const existing = String(me?.dashboard_team_note || "");
+    setTeamNote(existing);
+  }, [me?.dashboard_team_note]);
+
   const today = new Date();
   const bookedSlots = useMemo(
     () => dedupeAgendaSlots(agenda.filter((s) => isBookedAppointmentSlot(s))),
@@ -423,6 +430,24 @@ export default function AppDashboard() {
       view: "day",
     }));
   };
+
+  const saveTeamNote = useCallback(async () => {
+    if (teamNoteSaving) return;
+    const normalizedNote = String(teamNote || "").trim();
+    setTeamNoteSaving(true);
+    try {
+      await api.tenantPatchParams({
+        dashboard_team_note: normalizedNote,
+        dashboard_team_note_updated_at: new Date().toISOString(),
+      });
+      setTeamNote(normalizedNote);
+      notify("Note enregistrée");
+    } catch {
+      notify("Impossible d'enregistrer la note");
+    } finally {
+      setTeamNoteSaving(false);
+    }
+  }, [teamNote, teamNoteSaving]);
 
   const buildAgendaRow = (entry) => {
     const { slot, start } = entry;
@@ -749,7 +774,10 @@ export default function AppDashboard() {
               />
 
               <TeamNotesCard
-                onSave={() => notify("Note enregistrée")}
+                noteText={teamNote}
+                onNoteChange={setTeamNote}
+                onSave={saveTeamNote}
+                saving={teamNoteSaving}
                 IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
                 BtnComponent={Btn}
                 styles={S}
@@ -772,7 +800,10 @@ export default function AppDashboard() {
               />
 
               <TeamNotesCard
-                onSave={() => notify("Note enregistrée")}
+                noteText={teamNote}
+                onNoteChange={setTeamNote}
+                onSave={saveTeamNote}
+                saving={teamNoteSaving}
                 IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
                 BtnComponent={Btn}
                 styles={S}

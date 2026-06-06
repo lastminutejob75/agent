@@ -2263,6 +2263,8 @@ def tenant_me(auth: dict = Depends(require_tenant_auth)):
         "transfer_no_consultation": _is_truthy(params.get("transfer_no_consultation")),
         "transfer_config_confirmed_signature": params.get("transfer_config_confirmed_signature", ""),
         "transfer_config_confirmed_at": params.get("transfer_config_confirmed_at", ""),
+        "dashboard_team_note": params.get("dashboard_team_note", ""),
+        "dashboard_team_note_updated_at": params.get("dashboard_team_note_updated_at", ""),
         "onboarding_steps": onboarding_steps,
         "onboarding_completed": onboarding_completed,
         "faq_items_count": _count_active_faq_items(faq),
@@ -6607,6 +6609,7 @@ def tenant_patch_params(
         "emergency_instruction", "new_patient_instruction", "booking_notes", "appointment_reasons_json",
         "welcome_message", "documents_to_bring", "access_instructions", "payment_methods", "parking_info", "pmr_access",
         "sensitive_medical_instruction", "escalation_instruction", "human_handoff_instruction", "faq_items_json",
+        "dashboard_team_note", "dashboard_team_note_updated_at",
     }
     body = body or {}
     tenant_id = auth["tenant_id"]
