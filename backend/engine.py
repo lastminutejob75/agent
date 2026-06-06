@@ -3039,7 +3039,10 @@ class Engine:
                         rdp.append(dp_key)
         session.rejected_day_periods = rdp
 
-        if channel == "web" and round_count >= 2 and not tools_booking.session_has_booking_preferences(session):
+        # UX demandée: à la 2e demande "voir d'autres créneaux", on demande
+        # explicitement une précision de préférence (jour/horaire), même si une
+        # préférence existe déjà, pour éviter de tourner sur des variantes proches.
+        if channel == "web" and round_count >= 2:
             session.requesting_more_slots = False
             msg = getattr(prompts, "MSG_WEB_MORE_SLOTS_ASK_PREF", prompts.MSG_QUALIF_PREF_RETRY)
             session.add_message("agent", msg)
