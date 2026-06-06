@@ -9,6 +9,14 @@ export function getApiUrl() {
   const configured = (import.meta.env.VITE_UWI_API_BASE_URL || "").trim().replace(/\/$/, "");
   if (configured) return configured;
   if (import.meta.env.DEV) return "";
+  if (typeof window !== "undefined") {
+    const host = String(window.location.hostname || "").toLowerCase();
+    if (host.endsWith("uwiapp.com") && host !== "api.uwiapp.com") {
+      // Filet de sécurité prod: si VITE_UWI_API_BASE_URL est absente sur uwiapp.com,
+      // on pointe vers l'API publique pour éviter les erreurs réseau côté dashboard.
+      return "https://api.uwiapp.com";
+    }
+  }
   return "";
 }
 

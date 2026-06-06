@@ -89,8 +89,9 @@ export function isTenantUnauthorized(err) {
   );
 }
 
-const MSG_BACKEND_UNREACHABLE =
-  "Impossible de joindre le serveur. Vérifiez VITE_UWI_API_BASE_URL, CORS et que le backend est démarré.";
+const MSG_BACKEND_UNREACHABLE = import.meta.env.DEV
+  ? "Impossible de joindre le serveur. Vérifiez VITE_UWI_API_BASE_URL, CORS et que le backend est démarré."
+  : "Impossible de joindre le serveur pour le moment. Vérifiez votre connexion puis réessayez.";
 
 function tenantAuthHeaders(extra = {}) {
   const headers = { ...extra };
