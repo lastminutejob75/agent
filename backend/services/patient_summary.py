@@ -56,6 +56,50 @@ EMPTY_SECTIONS = {
 }
 
 
+def _pack_has_signal(pack: dict) -> bool:
+    reception = pack.get("ReceptionProvider") or {}
+    questionnaire = pack.get("QuestionnaireProvider") or {}
+    sante = pack.get("SanteProvider") or {}
+    metrics = reception.get("metriques") or {}
+
+    if reception.get("flags"):
+        return True
+    if reception.get("notes_recentes"):
+        return True
+    if reception.get("events_recents"):
+        return True
+    if questionnaire.get("questionnaires_admin"):
+        return True
+    if questionnaire.get("questionnaires_en_attente"):
+        return True
+    if questionnaire.get("questionnaires_sante"):
+        return True
+    if sante.get("antecedents"):
+        return True
+    if sante.get("traitements_en_cours"):
+        return True
+    if str(sante.get("allergies") or "").strip():
+        return True
+    if sante.get("notes_cliniques"):
+        return True
+
+    for key in ("taux_assiduite", "score_fiabilite", "dernier_rdv", "prochain_rdv"):
+        if metrics.get(key) not in (None, ""):
+            return True
+    return False
+
+
+def _is_placeholder_sections(sections: Dict[str, Any]) -> bool:
+    line = str((sections or {}).get("une_ligne") or "").strip().lower()
+    context = str((sections or {}).get("contexte_recent") or "").strip()
+    points = [x for x in ((sections or {}).get("points_attention") or []) if x]
+    pending = [x for x in ((sections or {}).get("en_attente") or []) if x]
+
+    if "aucune donnée clinique ou administrative disponible" in line:
+        return True
+    return not line and not context and not points and not pending
+
+
 class SummaryStore:
     """Store résumé (standard ; HDS utilisera un store distinct — stub)."""
 
@@ -243,6 +287,8 @@ def _call_llm(pack: dict, *, contains_health: bool) -> Dict[str, Any]:
         )
         raw = resp.content[0].text
         sections = _parse_llm_json(raw)
+        if _is_placeholder_sections(sections) and _pack_has_signal(pack):
+            return _fallback_summary(pack, contains_health=contains_health, model=f"{resp.model}:fallback_guard")
         return {"sections_json": sections, "model": resp.model}
     except Exception:
         logger.warning("patient summary LLM failed", exc_info=True)
@@ -251,7 +297,9 @@ def _call_llm(pack: dict, *, contains_health: bool) -> Dict[str, Any]:
 
 def _fallback_summary(pack: dict, *, contains_health: bool, model: str) -> Dict[str, Any]:
     ident = pack.get("identite") or {}
-    metrics = ((pack.get("ReceptionProvider") or {}).get("metriques")) or {}
+    reception = pack.get("ReceptionProvider") or {}
+    questionnaire = pack.get("QuestionnaireProvider") or {}
+    metrics = reception.get("metriques") or {}
     prenom = (ident.get("prenom") or "Patient").split()[0] if ident.get("prenom") else "Patient"
     taux = metrics.get("taux_assiduite")
     assiduite_txt = "historique insuffisant" if taux is None else f"assiduité {taux}%"
@@ -259,8 +307,28 @@ def _fallback_summary(pack: dict, *, contains_health: bool, model: str) -> Dict[
     une_ligne = f"{prenom} — {assiduite_txt}"
     if prochain:
         une_ligne += f", prochain RDV {str(prochain)[:10]}"
-    flags = ((pack.get("ReceptionProvider") or {}).get("flags")) or []
-    pending = ((pack.get("QuestionnaireProvider") or {}).get("questionnaires_en_attente")) or []
+    flags = reception.get("flags") or []
+    pending = questionnaire.get("questionnaires_en_attente") or []
+    notes = reception.get("notes_recentes") or []
+    events = reception.get("events_recents") or []
+    admin_forms = questionnaire.get("questionnaires_admin") or []
+
+    context_bits = []
+    if notes:
+        note_text = str((notes[0] or {}).get("content") or "").strip()
+        if note_text:
+            context_bits.append(f"Dernière note praticien : {note_text[:180]}")
+    if events:
+        ev = events[0] or {}
+        motif = str(ev.get("motif") or "").strip()
+        statut = str(ev.get("statut") or "").strip()
+        if motif or statut:
+            context_bits.append(f"Dernière interaction : {(motif or statut)[:140]}")
+    if admin_forms:
+        type_demande = str((admin_forms[0] or {}).get("type_demande") or "").strip()
+        if type_demande:
+            context_bits.append(f"Questionnaire récent : {type_demande[:120]}")
+
     en_attente = []
     if pending:
         en_attente.append("Questionnaire envoyé, en attente de réponse")
@@ -268,7 +336,7 @@ def _fallback_summary(pack: dict, *, contains_health: bool, model: str) -> Dict[
         "sections_json": {
             "une_ligne": une_ligne[:120],
             "points_attention": flags[:5],
-            "contexte_recent": "",
+            "contexte_recent": " ".join(context_bits)[:1200],
             "en_attente": en_attente,
         },
         "model": model,
@@ -364,7 +432,15 @@ def get_or_generate_summary(
             logger.warning("patient_summary cache read failed", exc_info=True)
             cached = None
         if cached and cached.get("inputs_hash") == h:
-            return {**cached, "from_cache": True}
+            cached_sections = cached.get("sections_json") or {}
+            if _is_placeholder_sections(cached_sections) and _pack_has_signal(pack):
+                logger.info(
+                    "patient_summary bypass stale placeholder cache tenant=%s phone=%s",
+                    tenant_id,
+                    str(patient_phone)[-4:] if patient_phone else "?",
+                )
+            else:
+                return {**cached, "from_cache": True}
 
     summary = _call_llm(pack, contains_health=contains_health)
     try:
