@@ -1854,6 +1854,18 @@ export default function PagePubliquePraticienUWI() {
     return null;
   }, [messages]);
 
+  const removeLastSlotsMessage = useCallback(() => {
+    setMessages((prev) => {
+      for (let i = prev.length - 1; i >= 0; i -= 1) {
+        const msg = prev[i];
+        if (msg?.from === "clara" && safeArray(msg?.slots).length) {
+          return prev.filter((_, idx) => idx !== i);
+        }
+      }
+      return prev;
+    });
+  }, []);
+
   const contactFormOpen = Boolean(inlineSlot || modalSlot || actionFlowMode);
   const postBookingMode = Boolean(bookingSuccess);
   const postBookingLocked = postBookingMode && !postBookingChatOpen;
@@ -2210,6 +2222,8 @@ export default function PagePubliquePraticienUWI() {
     }
 
     if (MORE_SLOTS_REQUEST.test(clean) || clean === MORE_SLOTS_MSG) {
+      // UX: éviter de garder quelques secondes les anciens créneaux affichés.
+      removeLastSlotsMessage();
       // Ne pas réafficher le cache barre ici: on veut de nouveaux créneaux côté moteur.
       void syncChatInBackground(INSTANT_MORE_SLOTS_LOOKUP, { allowSlotsReuse: false });
       return;
@@ -2228,7 +2242,7 @@ export default function PagePubliquePraticienUWI() {
     }
 
     void syncChatInBackground(CHAT_PROCESSING_REPLY);
-  }, [chooseSlot, ensureConversationId, ensureStream, lastSlotOffers, push, pushSlotProposal, slug, waitForAgentTurn]);
+  }, [chooseSlot, ensureConversationId, ensureStream, lastSlotOffers, push, pushSlotProposal, removeLastSlotsMessage, slug, waitForAgentTurn]);
 
   const pickChatSlot = useCallback(
     (offer) => {
