@@ -256,14 +256,34 @@ export default function AppDashboard() {
       });
 
     const todayKey = todayISO();
-    api.tenantGetAgenda("?upcoming_days=14&lightweight=1")
-      .then((value) => {
+    api.tenantGetAgenda("?upcoming_days=30&lightweight=1", { timeoutMs: 18000 })
+      .then(async (value) => {
         if (cancelledRef?.cancelled) return;
-        setAgenda(Array.isArray(value?.slots) ? value.slots : []);
+        const primarySlots = Array.isArray(value?.slots) ? value.slots : [];
+        if (primarySlots.length > 0) {
+          setAgenda(primarySlots);
+          return;
+        }
+        try {
+          const fallback = await api.tenantGetAgenda("?upcoming_days=30", { timeoutMs: 25000 });
+          if (cancelledRef?.cancelled) return;
+          const fallbackSlots = Array.isArray(fallback?.slots) ? fallback.slots : [];
+          setAgenda(fallbackSlots);
+        } catch {
+          if (cancelledRef?.cancelled) return;
+          setAgenda(primarySlots);
+        }
       })
-      .catch(() => {
+      .catch(async () => {
         if (cancelledRef?.cancelled) return;
-        setAgenda([]);
+        try {
+          const fallback = await api.tenantGetAgenda("?upcoming_days=30", { timeoutMs: 25000 });
+          if (cancelledRef?.cancelled) return;
+          setAgenda(Array.isArray(fallback?.slots) ? fallback.slots : []);
+        } catch {
+          if (cancelledRef?.cancelled) return;
+          setAgenda([]);
+        }
       });
 
     api.tenantGetAgenda(`?date=${encodeURIComponent(todayKey)}&lightweight=1`)
@@ -359,17 +379,28 @@ export default function AppDashboard() {
     [sortedBookedSlots],
   );
 
-  const nextDate = nextSlot?.start || null;
-  const hasNextAppointment = Boolean(nextSlot);
+  const nextFallbackDate = useMemo(
+    () => fillBookedEntries
+      .map((entry) => (entry?.start instanceof Date ? entry.start : null))
+      .filter((d) => d && !Number.isNaN(d.getTime()) && d.getTime() >= Date.now())
+      .sort((a, b) => a.getTime() - b.getTime())[0] || null,
+    [fillBookedEntries],
+  );
+
+  const nextDate = nextSlot?.start || nextFallbackDate || null;
+  const hasNextAppointment = Boolean(nextDate);
   const nextLabels = firstDateLabel(nextDate);
   const nextHour = nextDate ? formatAgendaSlotHour(nextDate) : "—";
-  const nextReason = agendaSlotMotif(nextSlot?.slot || null);
-  const nextSource = String(nextSlot?.slot?.source || "").toUpperCase() === "UWI" ? "Pris par Clara" : "Agenda cabinet";
-  const nextPatient = String(nextSlot?.slot?.patient || nextSlot?.slot?.patient_name || "").trim();
+  const nextReason = agendaSlotMotif(nextSlot?.slot || null) || "Consultation";
+  const nextSource = nextSlot?.slot
+    ? (String(nextSlot.slot.source || "").toUpperCase() === "UWI" ? "Pris par Clara" : "Agenda cabinet")
+    : "Agenda cabinet";
+  const nextPatient = String(nextSlot?.slot?.patient || nextSlot?.slot?.patient_name || "Patient").trim() || "Patient";
+  const canManageNextAppointment = Boolean(nextSlot?.slot && nextSlot?.start);
 
   const openNextAgendaAction = (action) => {
     if (!nextSlot?.slot || !nextSlot?.start) {
-      notify("Aucun rendez-vous à venir");
+      navigate("/app/agenda?view=week");
       return;
     }
     navigate(buildAgendaViewUrl({
@@ -590,8 +621,8 @@ export default function AppDashboard() {
       nextPatient={nextPatient}
       nextReason={nextReason}
       nextSource={nextSource}
-      onMove={() => openNextAgendaAction("reschedule")}
-      onCancel={() => openNextAgendaAction("cancel")}
+      onMove={canManageNextAppointment ? () => openNextAgendaAction("reschedule") : null}
+      onCancel={canManageNextAppointment ? () => openNextAgendaAction("cancel") : null}
       onOpenAgenda={() => navigate("/app/agenda")}
       CardComponent={Card}
       PillComponent={Pill}

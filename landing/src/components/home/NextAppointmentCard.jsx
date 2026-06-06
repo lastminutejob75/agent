@@ -43,8 +43,8 @@ export default function NextAppointmentCard({
             ))}
           </div>
           <div style={S.rowBtns}>
-            <Btn variant="green" icon="calendar" onClick={onMove}>Deplacer</Btn>
-            <Btn variant="orange" icon="warn" onClick={onCancel}>Annuler</Btn>
+            {typeof onMove === "function" ? <Btn variant="green" icon="calendar" onClick={onMove}>Deplacer</Btn> : null}
+            {typeof onCancel === "function" ? <Btn variant="orange" icon="warn" onClick={onCancel}>Annuler</Btn> : null}
             <Btn icon="calendar" onClick={onOpenAgenda}>Agenda</Btn>
           </div>
         </div>
