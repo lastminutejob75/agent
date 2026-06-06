@@ -3115,7 +3115,7 @@ class Engine:
         if pref_update:
             session.qualif_data.pref = pref_update
             date_changed = True
-        if availability_hint:
+        if getattr(session, "appointment_preferences", None):
             date_changed = True
         if date_changed:
             session.more_slots_round_count = 0
