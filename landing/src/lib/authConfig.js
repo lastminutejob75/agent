@@ -6,17 +6,17 @@
  * Dev local : laisser VITE_UWI_API_BASE_URL vide → URLs relatives + proxy Vite (:5173 → :8000).
  */
 export function getApiUrl() {
-  const configured = (import.meta.env.VITE_UWI_API_BASE_URL || "").trim().replace(/\/$/, "");
-  if (configured) return configured;
-  if (import.meta.env.DEV) return "";
   if (typeof window !== "undefined") {
     const host = String(window.location.hostname || "").toLowerCase();
     if (host.endsWith("uwiapp.com") && host !== "api.uwiapp.com") {
-      // Filet de sécurité prod: si VITE_UWI_API_BASE_URL est absente sur uwiapp.com,
-      // on pointe vers Railway (actif), le domaine api.uwiapp.com pouvant être indisponible DNS.
-      return "https://agent-production-c246.up.railway.app";
+      // En prod web, on privilégie le même domaine (/api/*) via rewrite Vercel
+      // pour éviter les pannes DNS/CORS côté navigateur.
+      return "";
     }
   }
+  const configured = (import.meta.env.VITE_UWI_API_BASE_URL || "").trim().replace(/\/$/, "");
+  if (configured) return configured;
+  if (import.meta.env.DEV) return "";
   return "";
 }
 

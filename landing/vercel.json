@@ -27,6 +27,7 @@
     }
   ],
   "rewrites": [
+    { "source": "/api/(.*)", "destination": "https://agent-production-c246.up.railway.app/api/$1" },
     { "source": "/assets/(.*)", "destination": "/assets/$1" },
     { "source": "/favicon.ico", "destination": "/favicon.ico" },
     { "source": "/favicon.png", "destination": "/favicon.png" },

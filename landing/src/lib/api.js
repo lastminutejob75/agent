@@ -139,6 +139,8 @@ function buildCandidateApiBases() {
     const host = String(window.location.hostname || "").toLowerCase();
     if (host.endsWith("uwiapp.com")) {
       isUwiProdHost = true;
+      // Priorité au même domaine via rewrite Vercel (/api/* -> Railway).
+      if (!out.includes("")) out.push("");
       for (const base of PROD_API_FALLBACK_BASES) {
         const clean = String(base || "").trim().replace(/\/$/, "");
         if (!out.includes(clean)) out.push(clean);
