@@ -271,6 +271,35 @@ def test_summary_cache_and_context_pack():
     assert cached.get("from_cache") is True
 
 
+def test_build_context_pack_keeps_notes_if_metrics_fail(monkeypatch):
+    tenant_id = 1
+    phone = "+33690001122"
+    from backend.db import get_conn, upsert_cabinet_client
+
+    upsert_cabinet_client(tenant_id, phone, raw_name="Nora")
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("metrics down")
+
+    monkeypatch.setattr("backend.services.context_providers.get_patient_metrics", _boom)
+    monkeypatch.setattr(
+        "backend.services.context_providers._fetch_notes",
+        lambda *_args, **_kwargs: [{"author": "Praticien", "content": "Douleur mandibulaire", "created_at": "2026-06-06"}],
+    )
+
+    conn = get_conn()
+    try:
+        pack, contains_health = build_context_pack(conn, tenant_id, phone, set())
+    finally:
+        conn.close()
+
+    assert contains_health is False
+    reception = pack.get("ReceptionProvider") or {}
+    assert reception.get("metriques") == {}
+    assert reception.get("notes_recentes")
+    assert "Douleur mandibulaire" in reception["notes_recentes"][0]["content"]
+
+
 def test_sante_provider_mvp_and_v2_health(monkeypatch):
     monkeypatch.setenv("UWI_HDS_ENABLED", "true")
     tenant_id = 1

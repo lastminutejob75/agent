@@ -31,7 +31,16 @@ class ContextProvider(ABC):
 
 
 def _fetch_identite(tenant_id: int, patient_phone: str) -> Dict[str, Any]:
-    profile = get_cabinet_client_by_phone(tenant_id, patient_phone) or {}
+    try:
+        profile = get_cabinet_client_by_phone(tenant_id, patient_phone) or {}
+    except Exception:
+        logger.warning(
+            "context_providers identite fetch failed tenant=%s phone=%s",
+            tenant_id,
+            str(patient_phone)[-4:] if patient_phone else "?",
+            exc_info=True,
+        )
+        profile = {}
     return {
         "prenom": profile.get("display_name") or profile.get("validated_name") or profile.get("raw_name") or "",
         "telephone": patient_phone,
@@ -199,11 +208,51 @@ class ReceptionProvider(ContextProvider):
     is_health_data = False
 
     def fetch(self, db, tenant_id, patient_phone, *, hds_active):
+        try:
+            metriques = get_patient_metrics(tenant_id, patient_phone)
+        except Exception:
+            logger.warning(
+                "context_providers metrics fetch failed tenant=%s phone=%s",
+                tenant_id,
+                str(patient_phone)[-4:] if patient_phone else "?",
+                exc_info=True,
+            )
+            metriques = {}
+        try:
+            flags = _fetch_flags(db, tenant_id, patient_phone)
+        except Exception:
+            logger.warning(
+                "context_providers flags fetch failed tenant=%s phone=%s",
+                tenant_id,
+                str(patient_phone)[-4:] if patient_phone else "?",
+                exc_info=True,
+            )
+            flags = []
+        try:
+            notes = _fetch_notes(db, tenant_id, patient_phone, limit=5)
+        except Exception:
+            logger.warning(
+                "context_providers notes fetch failed tenant=%s phone=%s",
+                tenant_id,
+                str(patient_phone)[-4:] if patient_phone else "?",
+                exc_info=True,
+            )
+            notes = []
+        try:
+            events = _fetch_events(db, tenant_id, patient_phone, limit=5)
+        except Exception:
+            logger.warning(
+                "context_providers events fetch failed tenant=%s phone=%s",
+                tenant_id,
+                str(patient_phone)[-4:] if patient_phone else "?",
+                exc_info=True,
+            )
+            events = []
         data = {
-            "metriques": get_patient_metrics(tenant_id, patient_phone),
-            "flags": _fetch_flags(db, tenant_id, patient_phone),
-            "notes_recentes": _fetch_notes(db, tenant_id, patient_phone, limit=5),
-            "events_recents": _fetch_events(db, tenant_id, patient_phone, limit=5),
+            "metriques": metriques,
+            "flags": flags,
+            "notes_recentes": notes,
+            "events_recents": events,
         }
         return data, False
 
@@ -331,7 +380,31 @@ def build_context_pack(db, tenant_id: int, patient_phone: str, tenant_caps: set)
     for provider in PROVIDERS:
         if provider.capability and provider.capability not in tenant_caps:
             continue
-        data, exposes_health = provider.fetch(db, tenant_id, patient_phone, hds_active=hds_active)
+        try:
+            data, exposes_health = provider.fetch(db, tenant_id, patient_phone, hds_active=hds_active)
+        except Exception:
+            logger.warning(
+                "context_providers provider failed provider=%s tenant=%s phone=%s",
+                provider.__class__.__name__,
+                tenant_id,
+                str(patient_phone)[-4:] if patient_phone else "?",
+                exc_info=True,
+            )
+            if isinstance(provider, ReceptionProvider):
+                data = {"metriques": {}, "flags": [], "notes_recentes": [], "events_recents": []}
+            elif isinstance(provider, QuestionnaireProvider):
+                data = {"questionnaires_admin": [], "questionnaires_sante": [], "questionnaires_en_attente": []}
+            elif isinstance(provider, SanteProvider):
+                data = {
+                    "antecedents": [],
+                    "traitements_en_cours": [],
+                    "allergies": "",
+                    "notes_cliniques": [],
+                    "questionnaire_mvp_status": "",
+                }
+            else:
+                data = {}
+            exposes_health = False
         pack[provider.__class__.__name__] = data
         contains_health = contains_health or exposes_health
     return pack, contains_health
