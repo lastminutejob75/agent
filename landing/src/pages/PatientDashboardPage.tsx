@@ -892,7 +892,7 @@ function Modal({
   onClose,
   width = "max-w-3xl",
 }: {
-  title: string;
+  title: React.ReactNode;
   children: React.ReactNode;
   onClose: () => void;
   width?: string;
@@ -2782,6 +2782,23 @@ export default function PatientDashboardPage() {
 
   const canSubmitBulkMessage =
     !!bulkMessageBody.trim() && (bulkMessageSendToAll || selectedPatientPhones.length > 0) && !bulkMessageSending;
+  const bulkModalTitle = (
+    <span className="inline-flex flex-wrap items-center gap-2">
+      <span>Envoyer un message groupé</span>
+      <span
+        className={cx(
+          "rounded-full px-2.5 py-1 text-xs font-black",
+          bulkMessageSendToAll
+            ? "bg-[#E9FAFC] text-[#007E8C]"
+            : "bg-[#EEF2FF] text-[#3730A3]",
+        )}
+      >
+        {bulkMessageSendToAll
+          ? "Tous les patients"
+          : `${selectedPatientPhones.length} sélectionné${selectedPatientPhones.length > 1 ? "s" : ""}`}
+      </span>
+    </span>
+  );
 
   return (
     <div className="min-h-0 bg-[#F7FAFC] text-[#0A1628] xl:min-h-screen">
@@ -4073,7 +4090,7 @@ export default function PatientDashboardPage() {
       )}
 
       {modal === "sendBulkMessage" && (
-        <Modal title="Envoyer un message groupé" onClose={() => setModal(null)} width="max-w-2xl">
+        <Modal title={bulkModalTitle} onClose={() => setModal(null)} width="max-w-2xl">
           <div className="space-y-4">
             <div className="rounded-2xl border border-[#E2EAF4] bg-[#F8FBFD] p-3 text-sm text-[#334155]">
               {bulkMessageSendToAll ? (
