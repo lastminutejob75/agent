@@ -1048,6 +1048,56 @@ export default function PatientDashboardPage() {
     toastTimerRef.current = window.setTimeout(() => setToast(""), ms);
   }, []);
 
+  const confirmImportantAction = useCallback((message: string) => {
+    if (typeof window === "undefined") return true;
+    return window.confirm(message);
+  }, []);
+
+  const globalLoadingLabel = useMemo(() => {
+    if (singleMessageSending) return "Envoi du message individuel…";
+    if (bulkMessageSending) return "Envoi groupé en cours…";
+    if (profileSaveSaving) return "Enregistrement du profil patient…";
+    if (createFicheSaving) return "Création de la fiche patient…";
+    if (notesSaving) return "Enregistrement de la note…";
+    if (absenceNoteSavingKey) return "Enregistrement de l'absence…";
+    if (emailSaving) return "Enregistrement de l'email…";
+    if (phoneSaving) return "Enregistrement du numéro…";
+    if (documentsUploading) return "Ajout du document…";
+    if (documentsLoading) return "Chargement des documents…";
+    if (notesLoading) return "Chargement des notes…";
+    if (patientAgendaLoading) return "Chargement des rendez-vous…";
+    if (patientHistoryLoading) return "Chargement de l'historique…";
+    if (tenantListLoading) return "Chargement des patients…";
+    if (patientSearchLoading) return "Recherche de patients…";
+    if (requestsLoading) return "Chargement des demandes…";
+    if (deletePreviewLoading) return "Préparation de la suppression…";
+    if (deleteSaving) return "Suppression de la fiche en cours…";
+    if (apptActionLoading) return "Traitement du rendez-vous…";
+    if (requestActionLoading) return "Mise à jour de la demande…";
+    return "";
+  }, [
+    singleMessageSending,
+    bulkMessageSending,
+    profileSaveSaving,
+    createFicheSaving,
+    notesSaving,
+    absenceNoteSavingKey,
+    emailSaving,
+    phoneSaving,
+    documentsUploading,
+    documentsLoading,
+    notesLoading,
+    patientAgendaLoading,
+    patientHistoryLoading,
+    tenantListLoading,
+    patientSearchLoading,
+    requestsLoading,
+    deletePreviewLoading,
+    deleteSaving,
+    apptActionLoading,
+    requestActionLoading,
+  ]);
+
   const requestContextFromUrl = useMemo<RequestContext | null>(() => {
     const requestId = (searchParams.get("requestId") || "").trim();
     if (!requestId) return null;
@@ -2123,6 +2173,9 @@ export default function PatientDashboardPage() {
       notify("Saisissez un nom valide (au moins 2 caractères).", { sticky: true });
       return;
     }
+    if (!confirmImportantAction("Confirmer l'enregistrement des modifications de la fiche patient ?")) {
+      return;
+    }
     setProfileSaveSaving(true);
     try {
       if (tenantPatientNotFound) {
@@ -2296,6 +2349,9 @@ export default function PatientDashboardPage() {
       notify("Aucun patient sélectionné");
       return false;
     }
+    if (!confirmImportantAction("Confirmer l'enregistrement de cette note dans le dossier patient ?")) {
+      return false;
+    }
     setNotesSaving(true);
     const noteText = note.trim();
     try {
@@ -2331,6 +2387,9 @@ export default function PatientDashboardPage() {
       notify("Aucun patient sélectionné");
       return;
     }
+    if (!confirmImportantAction("Confirmer l'enregistrement de cette absence dans les notes patient ?")) {
+      return;
+    }
     const rowKey = start.toISOString();
     setAbsenceNoteSavingKey(rowKey);
     try {
@@ -2359,6 +2418,7 @@ export default function PatientDashboardPage() {
 
   const removeNote = async (noteId: number) => {
     if (!tenantPatientPhone || !noteId) return;
+    if (!confirmImportantAction("Confirmer la suppression de cette note ?")) return;
     setNoteDeletingId(noteId);
     try {
       await api.tenantDeletePatientNote(tenantPatientPhone, noteId);
@@ -2514,6 +2574,10 @@ export default function PatientDashboardPage() {
       notify("Ajoute d'abord l'email du patient", { sticky: true });
       return;
     }
+    const channelLabel = singleMessageChannel === "sms" ? "SMS" : "email";
+    if (!confirmImportantAction(`Confirmer l'envoi du ${channelLabel} à ce patient ?`)) {
+      return;
+    }
     setSingleMessageSending(true);
     try {
       const payload: Record<string, string> = {
@@ -2555,6 +2619,13 @@ export default function PatientDashboardPage() {
     }
     if (!bulkMessageSendToAll && selectedPatientPhones.length === 0) {
       notify("Sélectionnez au moins un patient ou cochez « Tous les patients ».", { sticky: true });
+      return;
+    }
+    const targetLabel = bulkMessageSendToAll
+      ? "tous les patients"
+      : `${selectedPatientPhones.length} patient${selectedPatientPhones.length > 1 ? "s" : ""}`;
+    const channelLabel = bulkMessageChannel === "sms" ? "SMS" : "emails";
+    if (!confirmImportantAction(`Confirmer l'envoi groupé (${channelLabel}) vers ${targetLabel} ?`)) {
       return;
     }
     setBulkMessageSending(true);
@@ -2603,6 +2674,9 @@ export default function PatientDashboardPage() {
     }
     if (hasBlockingPatientDuplicate(emailDuplicateConflicts)) {
       notify("Cet email est déjà utilisé par une autre fiche patient.", { sticky: true });
+      return;
+    }
+    if (!confirmImportantAction("Confirmer la mise à jour de l'email du patient ?")) {
       return;
     }
     setEmailSaving(true);
@@ -2659,6 +2733,9 @@ export default function PatientDashboardPage() {
     const phoneConflict = phoneDuplicateConflicts.some((c) => c?.field === "phone");
     if (phoneConflict) {
       notify(formatPatientDuplicateConflict(phoneDuplicateConflicts[0]) || "Ce numéro est déjà utilisé", { sticky: true });
+      return;
+    }
+    if (!confirmImportantAction("Confirmer la mise à jour du numéro de téléphone du patient ?")) {
       return;
     }
     setPhoneSaving(true);
@@ -2813,6 +2890,14 @@ export default function PatientDashboardPage() {
   return (
     <div className="min-h-0 bg-[#F7FAFC] text-[#0A1628] xl:min-h-screen">
       <Toast message={toast} />
+      {globalLoadingLabel ? (
+        <div className="fixed left-1/2 top-3 z-[90] -translate-x-1/2 rounded-xl bg-[#0A1628] px-4 py-2 text-sm font-semibold text-white shadow-lg">
+          <span className="inline-flex items-center gap-2">
+            <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-[#11D6DB]" />
+            {globalLoadingLabel}
+          </span>
+        </div>
+      ) : null}
 
       {patientListOpen && tenantPatientPhone ? (
         <button
