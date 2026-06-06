@@ -142,3 +142,54 @@ def test_tenant_register_patient_persists_profile_fields(
     assert kwargs["treating_physician_city"] == "Lyon"
     data = r.json()
     assert data["patient"]["birth_date"] == "1980-05-12"
+
+
+@patch("backend.routes.tenant.pg_get_tenant_user_by_id")
+@patch("backend.routes.tenant.update_patient_fields")
+@patch("backend.routes.tenant.upsert_cabinet_client")
+@patch("backend.routes.tenant.get_cabinet_client_by_phone")
+def test_tenant_update_patient_allows_validated_name(
+    mock_get_profile,
+    mock_upsert,
+    mock_update_fields,
+    mock_get_user,
+    client,
+):
+    mock_get_user.return_value = {"tenant_id": 1, "email": "test@example.com", "role": "owner"}
+    mock_get_profile.return_value = {
+        "phone": "+33622222222",
+        "validated_name": "Ancien Nom",
+        "display_name": "Ancien Nom",
+    }
+    mock_upsert.return_value = {
+        "phone": "+33622222222",
+        "validated_name": "Nouveau Nom",
+        "raw_name": "Nouveau Nom",
+        "display_name": "Nouveau Nom",
+    }
+    mock_update_fields.return_value = {
+        "phone": "+33622222222",
+        "validated_name": "Nouveau Nom",
+        "raw_name": "Nouveau Nom",
+        "display_name": "Nouveau Nom",
+        "birth_date": "1990-01-01",
+    }
+
+    token = _make_jwt()
+    r = client.patch(
+        "/api/tenant/patients/%2B33622222222",
+        json={
+            "validated_name": "Nouveau Nom",
+            "raw_name": "Nouveau Nom",
+            "birth_date": "1990-01-01",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert r.status_code == 200
+    mock_upsert.assert_called_once()
+    upsert_kwargs = mock_upsert.call_args.kwargs
+    assert upsert_kwargs["validated_name"] == "Nouveau Nom"
+    assert upsert_kwargs["raw_name"] == "Nouveau Nom"
+    data = r.json()
+    assert data["patient"]["display_name"] == "Nouveau Nom"

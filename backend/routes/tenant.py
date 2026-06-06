@@ -3852,6 +3852,8 @@ def tenant_register_patient_practice(
 class PatientUpdateBody(BaseModel):
     phone: Optional[str] = Field(default=None, max_length=40)
     email: Optional[str] = Field(default=None, max_length=254)
+    validated_name: Optional[str] = Field(default=None, max_length=160)
+    raw_name: Optional[str] = Field(default=None, max_length=160)
     birth_date: Optional[str] = Field(default=None, max_length=10)
     treating_physician_name: Optional[str] = Field(default=None, max_length=200)
     treating_physician_city: Optional[str] = Field(default=None, max_length=120)
@@ -3877,6 +3879,23 @@ class PatientUpdateBody(BaseModel):
         if not is_valid_contact_email(v):
             raise ValueError("Email invalide (format attendu: prenom@domaine.fr)")
         return v
+
+    @validator("validated_name")
+    def _validate_validated_name(cls, v):
+        if v is None:
+            return None
+        value = str(v).strip()
+        if value == "":
+            raise ValueError("Nom affiché requis")
+        if len(value) < 2:
+            raise ValueError("Nom affiché trop court")
+        return value[:160]
+
+    @validator("raw_name")
+    def _validate_raw_name(cls, v):
+        if v is None:
+            return None
+        return str(v).strip()[:160]
 
     @validator("birth_date")
     def _validate_birth_date(cls, v):
@@ -4072,6 +4091,19 @@ def tenant_update_patient(
                 email=str(next_email).strip(),
                 exclude_phone=phone_norm,
             )
+
+    validated_name = payload.pop("validated_name", None)
+    raw_name = payload.pop("raw_name", None)
+    if validated_name is not None:
+        name_updated = upsert_cabinet_client(
+            tenant_id,
+            current_phone,
+            validated_name=str(validated_name).strip(),
+            raw_name=str(raw_name).strip() if raw_name is not None else str(validated_name).strip(),
+        )
+        if not name_updated:
+            raise HTTPException(500, "Impossible de mettre à jour le nom du patient.")
+        updated = name_updated
 
     if payload:
         field_updated = update_patient_fields(

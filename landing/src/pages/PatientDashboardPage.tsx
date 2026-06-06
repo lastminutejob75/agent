@@ -2125,9 +2125,7 @@ export default function PatientDashboardPage() {
     }
     setProfileSaveSaving(true);
     try {
-      const currentName = String(urlPatientHero?.name || "").trim();
-      const needsNameSave = tenantPatientNotFound || name !== currentName;
-      if (needsNameSave) {
+      if (tenantPatientNotFound) {
         const okName = await createPatientFichePractice(name, { silent: true });
         if (!okName) return;
       }
@@ -2135,13 +2133,20 @@ export default function PatientDashboardPage() {
       const physician = profilePhysicianDraft.trim();
       const physicianCity = profilePhysicianCityDraft.trim();
       const res = await api.tenantUpdatePatient(tenantPatientPhone, {
+        validated_name: name,
+        raw_name: name,
         birth_date: birthDate,
         treating_physician_name: physician,
         treating_physician_city: physicianCity,
       });
+      const savedDisplayName =
+        String((res?.patient as Record<string, unknown> | undefined)?.display_name || name).trim() || name;
       const savedPatient = {
         ...(patientCabinetRow || {}),
         ...(res?.patient as Record<string, unknown> | undefined),
+        validated_name: String((res?.patient as Record<string, unknown> | undefined)?.validated_name || name),
+        raw_name: String((res?.patient as Record<string, unknown> | undefined)?.raw_name || name),
+        display_name: savedDisplayName,
         birth_date: String((res?.patient as Record<string, unknown> | undefined)?.birth_date || birthDate),
         treating_physician_name: String(
           (res?.patient as Record<string, unknown> | undefined)?.treating_physician_name || physician,
@@ -2151,6 +2156,11 @@ export default function PatientDashboardPage() {
         ),
       };
       setPatientCabinetRow(savedPatient);
+      setUrlPatientHero((prev) =>
+        prev
+          ? { ...prev, name: savedDisplayName, initials: initialsFromFullName(savedDisplayName) }
+          : { name: savedDisplayName, phone: tenantPatientPhone, initials: initialsFromFullName(savedDisplayName) },
+      );
       const cached = patientDetailCacheRef.current.get(tenantPatientPhone);
       if (cached) {
         patientDetailCacheRef.current.set(tenantPatientPhone, {
