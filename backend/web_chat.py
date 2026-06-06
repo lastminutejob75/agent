@@ -135,6 +135,21 @@ def ensure_stream(conv_id: str, *, reset: bool = False) -> None:
         STREAMS[conv_id] = asyncio.Queue()
 
 
+def _stream_has_terminal_marker(conv_id: str) -> bool:
+    """
+    Détecte un marqueur terminal (None) restant dans la file SSE.
+    Sans reset, un reconnect peut se fermer instantanément et laisser le POST sans réponse finale.
+    """
+    q = STREAMS.get(conv_id)
+    if not q:
+        return False
+    try:
+        queued = list(getattr(q, "_queue", []) or [])
+    except Exception:
+        return False
+    return any(item is None for item in queued)
+
+
 async def emit_event(conv_id: str, ev: Event, session: Any = None) -> None:
     payload: Dict[str, Any] = {
         "type": ev.type,
@@ -336,8 +351,9 @@ async def start_web_chat(
     tid = int(tenant_id)
     current_tenant_id.set(str(tid))
     _register_web_conv_tenant(tid, conv_id)
-    # Ne pas reset si une connexion SSE lit déjà la file (sinon réponse perdue = chat bloqué).
-    ensure_stream(conv_id, reset=conv_id not in STREAMS)
+    # Ne reset pas en routine (évite de perdre un message en vol), mais purge
+    # explicitement les anciennes files déjà terminées (marqueur None résiduel).
+    ensure_stream(conv_id, reset=(conv_id not in STREAMS) or _stream_has_terminal_marker(conv_id))
 
     from backend.intent_parser import expand_chat_shorthand
 

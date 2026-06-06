@@ -768,9 +768,6 @@ def append_rejected_slots_from_pending(session: Any) -> None:
         if key and key not in seen_keys:
             rejected.append(key)
             seen_keys.add(key)
-            if key not in seen_ids:
-                rejected_ids.append(key)
-                seen_ids.add(key)
         sid = _slot_get(slot_obj, "slot_id") or _slot_get(slot_obj, "id")
         if sid is not None:
             sid_s = str(sid).strip()
