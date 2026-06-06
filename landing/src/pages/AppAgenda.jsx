@@ -56,6 +56,23 @@ function formatLongDate(dateStr) {
   return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
+function isSameAgendaSlotForCancel(slot, appt, date, index) {
+  const targetAppointmentId = String(appt?.appointment_id || "");
+  const targetEventId = String(appt?.event_id || "");
+  const targetActionId = String(appt?.actionId || "");
+  const targetSyntheticId = String(appt?.id || "");
+
+  const slotAppointmentId = String(slot?.appointment_id || "");
+  const slotEventId = String(slot?.event_id || "");
+  const slotActionId = String(slot?.appointment_id || slot?.event_id || "");
+  const slotSyntheticId = `${date}-${slot?.event_id || slot?.appointment_id || index}`;
+
+  if (targetAppointmentId && slotAppointmentId === targetAppointmentId) return true;
+  if (targetEventId && slotEventId === targetEventId) return true;
+  if (targetActionId && slotActionId === targetActionId) return true;
+  return Boolean(targetSyntheticId && slotSyntheticId === targetSyntheticId);
+}
+
 function formatMonthLabel(dateStr) {
   const d = new Date(`${dateStr}T12:00:00`);
   const t = d.toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
@@ -986,6 +1003,8 @@ export default function AppAgenda() {
   const [createBookingError, setCreateBookingError] = useState("");
   /** Après création réussie : détail pour la modale de confirmation verte */
   const [createBookingConfirm, setCreateBookingConfirm] = useState(null);
+  /** Après annulation réussie : message de confirmation visuelle */
+  const [cancelBookingConfirm, setCancelBookingConfirm] = useState(null);
   const [createBookingSuggestions, setCreateBookingSuggestions] = useState([]);
   const [createBookingSuggestLoading, setCreateBookingSuggestLoading] = useState(false);
   const [createBookingForm, setCreateBookingForm] = useState({
@@ -1522,10 +1541,33 @@ export default function AppAgenda() {
 
   async function handleCancel() {
     if (!selectedAppt?.canCancel) return;
+    const apptToCancel = selectedAppt;
     setActionLoading(true);
     try {
-      await api.tenantCancelAgendaAppointment(selectedAppt.actionId || selectedAppt.appointment_id || selectedAppt.event_id || selectedAppt.id, agendaCancelPayload(selectedAppt));
-      setActionMsg({ text: "Rendez-vous annulé. Le patient a été notifié par SMS.", type: "success" });
+      await api.tenantCancelAgendaAppointment(
+        apptToCancel.actionId || apptToCancel.appointment_id || apptToCancel.event_id || apptToCancel.id,
+        agendaCancelPayload(apptToCancel),
+      );
+      const cancelledWhen = `${formatLongDate(apptToCancel.date)} à ${apptToCancel.displayTime || formatTimeLabel(apptToCancel.hour) || "—"}`;
+      setCancelBookingConfirm({
+        patientName: String(apptToCancel.patient || "Patient").trim() || "Patient",
+        whenLine: cancelledWhen,
+      });
+      setActionMsg({ text: "Rendez-vous annulé.", type: "success" });
+      setAgendaByDate((prev) => {
+        const date = String(apptToCancel?.date || "");
+        if (!date || !prev?.[date]?.slots) return prev;
+        const slots = Array.isArray(prev[date].slots) ? prev[date].slots : [];
+        const filtered = slots.filter((slot, idx) => !isSameAgendaSlotForCancel(slot, apptToCancel, date, idx));
+        if (filtered.length === slots.length) return prev;
+        return {
+          ...(prev || {}),
+          [date]: {
+            ...(prev[date] || {}),
+            slots: filtered,
+          },
+        };
+      });
       closeAppointmentDetail();
       invalidateAgendaBulkCache();
       await loadAgenda();
@@ -2929,6 +2971,33 @@ export default function AppAgenda() {
                 Annuler
               </button>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {cancelBookingConfirm ? (
+        <div
+          style={S.bookingConfirmOverlay}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="cancel-confirm-title"
+        >
+          <div style={S.bookingConfirmCard}>
+            <div style={S.bookingConfirmIcon} aria-hidden>✓</div>
+            <div id="cancel-confirm-title" style={S.bookingConfirmTitle}>
+              Rendez-vous annulé
+            </div>
+            <p style={S.bookingConfirmLead}>
+              Le rendez-vous du <strong>{cancelBookingConfirm.whenLine}</strong> de{" "}
+              <strong>{cancelBookingConfirm.patientName}</strong> a bien été annulé.
+            </p>
+            <button
+              type="button"
+              style={S.bookingConfirmBtn}
+              onClick={() => setCancelBookingConfirm(null)}
+            >
+              OK
+            </button>
           </div>
         </div>
       ) : null}

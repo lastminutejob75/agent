@@ -365,6 +365,18 @@ def _invalidate_tenant_agenda_detail_cache(tenant_id: int) -> None:
             _TENANT_AGENDA_BULK_CACHE.pop(k, None)
 
 
+def _invalidate_google_agenda_events_cache(calendar_id: Optional[str] = None) -> None:
+    """Invalide le cache court ``events.list`` après mutation (create/cancel/reschedule)."""
+    cid = str(calendar_id or "").strip()
+    with _AGENDA_GCAL_EVENTS_LOCK:
+        if not cid:
+            _AGENDA_GCAL_EVENTS_CACHE.clear()
+            return
+        keys = [k for k in _AGENDA_GCAL_EVENTS_CACHE.keys() if str(k[0] or "").strip() == cid]
+        for k in keys:
+            _AGENDA_GCAL_EVENTS_CACHE.pop(k, None)
+
+
 def _patient_delete_token_secret() -> bytes:
     raw = (
         os.environ.get("PATIENT_DELETE_TOKEN_SECRET")
@@ -6389,6 +6401,7 @@ def tenant_agenda_cancel_appointment(
             google_event_id,
             local_cancelled,
         )
+        _invalidate_google_agenda_events_cache(params.get("calendar_id"))
         _invalidate_tenant_agenda_detail_cache(tenant_id)
         provider = "google+local" if google_cancelled and local_appt_id is not None else ("google" if google_cancelled else "local")
         return {
