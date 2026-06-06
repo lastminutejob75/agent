@@ -1022,7 +1022,6 @@ export default function PatientDashboardPage() {
   const [requestStatusOverrides, setRequestStatusOverrides] = useState<Record<string, { status_raw?: string }>>(
     () => readRequestStatusOverrides(),
   );
-  const [bulkSelectionMode, setBulkSelectionMode] = useState(false);
   const [selectedPatientPhones, setSelectedPatientPhones] = useState<string[]>([]);
   const [singleMessageChannel, setSingleMessageChannel] = useState<MessageChannel>("sms");
   const [singleMessageSubject, setSingleMessageSubject] = useState("Message de votre cabinet");
@@ -2532,7 +2531,6 @@ export default function PatientDashboardPage() {
       }
       setModal(null);
       setBulkMessageBody("");
-      setBulkSelectionMode(false);
     } catch (e) {
       notify((e as Error)?.message || "Erreur envoi groupé", { sticky: true });
     } finally {
@@ -2820,18 +2818,15 @@ export default function PatientDashboardPage() {
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() => {
-                  setBulkSelectionMode((prev) => !prev);
-                  if (bulkSelectionMode) setSelectedPatientPhones([]);
-                }}
+                onClick={() => toggleSelectAllVisiblePatients()}
                 className={cx(
                   "rounded-lg border px-3 py-1.5 text-xs font-black",
-                  bulkSelectionMode
+                  allVisibleSelected
                     ? "border-[#009CA4] bg-[#E9FAFC] text-[#007E8C]"
                     : "border-[#DDE7F1] bg-white text-[#475569] hover:bg-[#F8FAFC]",
                 )}
               >
-                {bulkSelectionMode ? "Quitter la sélection" : "Sélection SMS groupé"}
+                {allVisibleSelected ? "Tout désélectionner (liste affichée)" : "Tout sélectionner (liste affichée)"}
               </button>
               <button
                 type="button"
@@ -2858,16 +2853,9 @@ export default function PatientDashboardPage() {
                 {selectedPatientsPreviewLabel}
               </p>
             ) : null}
-            {bulkSelectionMode ? (
-              <label className="mt-3 flex items-center gap-2 text-xs font-semibold text-[#334155]">
-                <input
-                  type="checkbox"
-                  checked={allVisibleSelected}
-                  onChange={() => toggleSelectAllVisiblePatients()}
-                />
-                Tout sélectionner (liste affichée)
-              </label>
-            ) : null}
+            <p className="mt-2 text-[11px] font-semibold text-[#64748B]">
+              Cochez directement les patients dans la liste pour cibler votre SMS groupé.
+            </p>
           </div>
 
           <div className="overflow-hidden rounded-3xl border border-[#E5EDF5] bg-white shadow-sm">
@@ -2900,10 +2888,6 @@ export default function PatientDashboardPage() {
                     key={patient.phone}
                     type="button"
                     onClick={() => {
-                      if (bulkSelectionMode) {
-                        toggleSelectedPatientPhone(patient.phone);
-                        return;
-                      }
                       const cached = patientDetailCacheRef.current.get(patient.phone);
                       const cacheValid = isPatientDetailCacheValid(cached, patientFetchNonce, activeView);
                       if (cacheValid && cached) {
@@ -2933,16 +2917,14 @@ export default function PatientDashboardPage() {
                       selected ? "bg-[#EAF8FC] ring-1 ring-inset ring-[#BFEAF0]" : "hover:bg-[#F8FBFD]",
                     )}
                   >
-                    {bulkSelectionMode ? (
-                      <input
-                        type="checkbox"
-                        checked={checkedForBulk}
-                        onClick={(event) => event.stopPropagation()}
-                        onChange={() => toggleSelectedPatientPhone(patient.phone)}
-                        className="h-4 w-4 shrink-0 accent-[#009CA4]"
-                        aria-label={`Sélectionner ${patient.name}`}
-                      />
-                    ) : null}
+                    <input
+                      type="checkbox"
+                      checked={checkedForBulk}
+                      onClick={(event) => event.stopPropagation()}
+                      onChange={() => toggleSelectedPatientPhone(patient.phone)}
+                      className="h-4 w-4 shrink-0 accent-[#009CA4]"
+                      aria-label={`Sélectionner ${patient.name}`}
+                    />
                     <div className={cx("grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-gradient-to-br text-lg font-black text-white shadow-sm", patient.gradient)}>
                       {patient.initials}
                     </div>
