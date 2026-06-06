@@ -6335,8 +6335,42 @@ def tenant_agenda_cancel_appointment(
         raise HTTPException(404, "Tenant not found")
     params = detail.get("params") or {}
     source = (body.source or "UWI").strip().upper()
-    if source != "UWI":
-        raise HTTPException(400, "Seuls les rendez-vous UWI sont modifiables depuis cet espace")
+    if source not in {"UWI", "PAGE_PUBLIQUE"}:
+        raise HTTPException(400, "Seuls les rendez-vous UWI/page publique sont modifiables depuis cet espace")
+
+    if source == "PAGE_PUBLIQUE":
+        raw_booking_id = (appointment_id or "").strip()
+        if not raw_booking_id:
+            raise HTTPException(400, "booking_id requis")
+        google_event_id = (body.external_event_id or "").strip()
+        if google_event_id:
+            if (params.get("calendar_provider") or "").strip() == "google":
+                try:
+                    service = GoogleCalendarService((params.get("calendar_id") or "").strip())
+                    service.cancel_appointment(google_event_id)
+                except Exception as e:
+                    logger.warning(
+                        "tenant agenda cancel public google failed tenant_id=%s booking_id=%s event_id=%s err=%s",
+                        tenant_id,
+                        raw_booking_id,
+                        google_event_id,
+                        e,
+                    )
+                    raise HTTPException(502, "Impossible d'annuler ce rendez-vous Google pour le moment")
+        from backend.public_bookings_pg import cancel_public_booking_by_id
+
+        cancelled_public = cancel_public_booking_by_id(tenant_id, raw_booking_id)
+        if not cancelled_public:
+            raise HTTPException(404, "Rendez-vous public introuvable ou déjà annulé")
+        _invalidate_google_agenda_events_cache(params.get("calendar_id"))
+        _invalidate_tenant_agenda_detail_cache(tenant_id)
+        return {
+            "ok": True,
+            "cancelled": True,
+            "provider": "public+google" if google_event_id else "public",
+            "google_cancelled": bool(google_event_id),
+            "local_cancelled": True,
+        }
 
     if (params.get("calendar_provider") or "").strip() == "google":
         raw_appointment_id = (appointment_id or "").strip()

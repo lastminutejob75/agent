@@ -1442,7 +1442,9 @@ export default function AppAgenda() {
             isUWI: s.source === "UWI",
             canCancel: canCancelAgendaSlot(s),
             canReschedule: canRescheduleAgendaSlot(s),
-            actionId: s.appointment_id || s.event_id || "",
+            actionId: s.source === "PAGE_PUBLIQUE"
+              ? (s.public_booking_id || s.event_id || "")
+              : (s.appointment_id || s.event_id || ""),
           };
           return { ...appt, tone: toneForAppointment(appt) };
         })),
