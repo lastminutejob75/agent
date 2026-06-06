@@ -95,7 +95,14 @@ def _is_placeholder_sections(sections: Dict[str, Any]) -> bool:
     points = [x for x in ((sections or {}).get("points_attention") or []) if x]
     pending = [x for x in ((sections or {}).get("en_attente") or []) if x]
 
-    if "aucune donnée clinique ou administrative disponible" in line:
+    placeholder_markers = (
+        "aucune donnée clinique ou administrative disponible",
+        "aucune donnée disponible dans le dossier",
+        "aucune donnée disponible",
+        "aucune information disponible",
+        "dossier sans donnée",
+    )
+    if any(marker in line for marker in placeholder_markers):
         return True
     return not line and not context and not points and not pending
 
