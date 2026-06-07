@@ -876,7 +876,7 @@ export default function AppDashboard() {
                 handledTodayCount={requestSummary.handledToday}
                 urgentCount={requestSummary.urgentOpen}
                 avgResponseMinutes={requestSummary.avgResponseMinutes}
-                summaryLoading={loading || statsLoading || requestsLoading}
+                summaryLoading={loading || statsLoading}
                 teamNotes={teamNotes}
                 teamNoteDraft={teamNoteDraft}
                 onTeamNoteChange={setTeamNoteDraft}
@@ -900,7 +900,7 @@ export default function AppDashboard() {
                 handledTodayCount={requestSummary.handledToday}
                 urgentCount={requestSummary.urgentOpen}
                 avgResponseMinutes={requestSummary.avgResponseMinutes}
-                summaryLoading={loading || statsLoading || requestsLoading}
+                summaryLoading={loading || statsLoading}
                 teamNotes={teamNotes}
                 teamNoteDraft={teamNoteDraft}
                 onTeamNoteChange={setTeamNoteDraft}
