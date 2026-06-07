@@ -640,7 +640,7 @@ def _parse_dashboard_team_notes(value: Any) -> List[Dict[str, str]]:
                 -idx,
                 {
                     "id": item_id,
-                    "text": text[:2000],
+                    "text": text[:DASHBOARD_TEAM_NOTE_MAX_LEN],
                     "author": author,
                     "created_at": created_at,
                 },
@@ -660,7 +660,7 @@ def _dashboard_team_notes_from_params(params: Dict[str, Any]) -> List[Dict[str, 
     return [
         {
             "id": "legacy",
-            "text": legacy_text[:2000],
+            "text": legacy_text[:DASHBOARD_TEAM_NOTE_MAX_LEN],
             "author": "Equipe",
             "created_at": str((params or {}).get("dashboard_team_note_updated_at") or ""),
         }
@@ -676,6 +676,8 @@ DAY_ORDER = [
     ("saturday", "Samedi"),
     ("sunday", "Dimanche"),
 ]
+
+DASHBOARD_TEAM_NOTE_MAX_LEN = 8000
 
 
 def _slugify(value: str) -> str:
@@ -2166,11 +2168,11 @@ class TenantHandoffUpdateBody(BaseModel):
 
 
 class TenantDashboardTeamNoteBody(BaseModel):
-    note: str = Field(default="", max_length=2000)
+    note: str = Field(default="")
 
     @validator("note")
     def _validate_note(cls, v):
-        return str(v or "")[:2000]
+        return str(v or "")[:DASHBOARD_TEAM_NOTE_MAX_LEN]
 
 
 class TenantProfileBody(BaseModel):
@@ -6781,7 +6783,7 @@ def tenant_patch_dashboard_team_note(
     existing_notes = _dashboard_team_notes_from_params(current_params)
     item = {
         "id": uuid4().hex[:12],
-        "text": note[:2000],
+        "text": note[:DASHBOARD_TEAM_NOTE_MAX_LEN],
         "author": "Equipe",
         "created_at": updated_at,
     }
@@ -6822,7 +6824,7 @@ def tenant_patch_dashboard_team_note_item(
             notes.append(
                 {
                     **item,
-                    "text": note[:2000],
+                    "text": note[:DASHBOARD_TEAM_NOTE_MAX_LEN],
                     "created_at": updated_at,
                 }
             )

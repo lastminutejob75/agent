@@ -187,6 +187,30 @@ def test_dashboard_team_note_uses_bypass_params_for_history(client, monkeypatch)
     assert any(item.get("text") == "Note précédente" for item in items[1:])
 
 
+def test_dashboard_team_note_accepts_long_text(client, monkeypatch):
+    monkeypatch.setattr(
+        "backend.routes.tenant.pg_get_tenant_user_by_id",
+        lambda uid: {"user_id": uid, "tenant_id": 1, "role": "member", "email": "m@t.fr"},
+    )
+    captured = {}
+
+    def _update_params(_tid, params):
+        captured["params"] = params
+        return True
+
+    monkeypatch.setattr("backend.routes.tenant.pg_update_tenant_params", _update_params)
+    token = _client_token(1, 107, "member")
+    long_note = "A" * 2500
+    res = client.patch(
+        "/api/tenant/dashboard/team-note",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"note": long_note},
+    )
+    assert res.status_code == 200
+    saved = ((captured.get("params") or {}).get("dashboard_team_notes_json") or [{}])[0]
+    assert str(saved.get("text") or "") == long_note
+
+
 def test_dashboard_team_note_returns_500_on_pg_write_failure(client, monkeypatch):
     monkeypatch.setattr("backend.routes.tenant.config.USE_PG_TENANTS", True)
     monkeypatch.setattr(

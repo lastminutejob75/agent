@@ -54,6 +54,8 @@ const border = {
   teal: "#A7F3F0",
 };
 
+const TEAM_NOTE_MAX_LEN = 8000;
+
 function Icon({ name, size = 18, color = "currentColor" }) {
   const common = {
     width: size,
@@ -466,10 +468,14 @@ export default function AppDashboard() {
 
   const saveTeamNote = useCallback(async () => {
     if (teamNoteSaving) return;
-    const normalizedNote = String(teamNoteDraft || "").trim();
-    if (!normalizedNote) {
+    const rawNote = String(teamNoteDraft || "").trim();
+    if (!rawNote) {
       notify("Ajoute une note avant d'enregistrer");
       return;
+    }
+    const normalizedNote = rawNote.slice(0, TEAM_NOTE_MAX_LEN);
+    if (rawNote.length > TEAM_NOTE_MAX_LEN) {
+      notify(`Note trop longue, limitée à ${TEAM_NOTE_MAX_LEN} caractères.`);
     }
     setTeamNoteSaving(true);
     try {
@@ -499,14 +505,18 @@ export default function AppDashboard() {
 
   const updateTeamNote = useCallback(async (noteId, nextText) => {
     const targetId = String(noteId || "").trim();
-    const normalizedNote = String(nextText || "").trim();
+    const rawNote = String(nextText || "").trim();
     if (!targetId) {
       notify("Note introuvable");
       return false;
     }
-    if (!normalizedNote) {
+    if (!rawNote) {
       notify("Ajoute un texte avant d'enregistrer");
       return false;
+    }
+    const normalizedNote = rawNote.slice(0, TEAM_NOTE_MAX_LEN);
+    if (rawNote.length > TEAM_NOTE_MAX_LEN) {
+      notify(`Note trop longue, limitée à ${TEAM_NOTE_MAX_LEN} caractères.`);
     }
     setTeamNoteActionLoadingId(targetId);
     try {
