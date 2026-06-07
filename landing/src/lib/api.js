@@ -326,6 +326,17 @@ export const api = {
       body: { note: String(note || "") },
       tenant: true,
     }),
+  tenantUpdateDashboardTeamNote: (noteId, note) =>
+    request(`/api/tenant/dashboard/team-note/${encodeURIComponent(String(noteId || ""))}`, {
+      method: "PATCH",
+      body: { note: String(note || "") },
+      tenant: true,
+    }),
+  tenantDeleteDashboardTeamNote: (noteId) =>
+    request(`/api/tenant/dashboard/team-note/${encodeURIComponent(String(noteId || ""))}`, {
+      method: "DELETE",
+      tenant: true,
+    }),
   tenantGetHoraires: () => request("/api/tenant/horaires", { tenant: true }),
   tenantUpdateHoraires: (rules) =>
     request("/api/tenant/horaires", { method: "PATCH", body: rules, tenant: true }),

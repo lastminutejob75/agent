@@ -241,6 +241,7 @@ export default function AppDashboard() {
   const [teamNoteDraft, setTeamNoteDraft] = useState("");
   const [teamNotes, setTeamNotes] = useState([]);
   const [teamNoteSaving, setTeamNoteSaving] = useState(false);
+  const [teamNoteActionLoadingId, setTeamNoteActionLoadingId] = useState("");
 
   const notify = (msg) => {
     setToast(msg);
@@ -495,6 +496,56 @@ export default function AppDashboard() {
       setTeamNoteSaving(false);
     }
   }, [teamNoteDraft, teamNoteSaving]);
+
+  const updateTeamNote = useCallback(async (noteId, nextText) => {
+    const targetId = String(noteId || "").trim();
+    const normalizedNote = String(nextText || "").trim();
+    if (!targetId) {
+      notify("Note introuvable");
+      return false;
+    }
+    if (!normalizedNote) {
+      notify("Ajoute un texte avant d'enregistrer");
+      return false;
+    }
+    setTeamNoteActionLoadingId(targetId);
+    try {
+      const data = await api.tenantUpdateDashboardTeamNote(targetId, normalizedNote);
+      const incoming = mapDashboardTeamNotes(data?.items || data?.dashboard_team_notes);
+      if (incoming.length > 0) {
+        setTeamNotes(incoming);
+      }
+      notify("Note modifiée");
+      return true;
+    } catch (e) {
+      notify(e?.message || "Impossible de modifier la note");
+      return false;
+    } finally {
+      setTeamNoteActionLoadingId("");
+    }
+  }, []);
+
+  const deleteTeamNote = useCallback(async (noteId) => {
+    const targetId = String(noteId || "").trim();
+    if (!targetId) {
+      notify("Note introuvable");
+      return false;
+    }
+    if (!window.confirm("Supprimer cette note ?")) return false;
+    setTeamNoteActionLoadingId(targetId);
+    try {
+      const data = await api.tenantDeleteDashboardTeamNote(targetId);
+      const incoming = mapDashboardTeamNotes(data?.items || data?.dashboard_team_notes);
+      setTeamNotes(incoming);
+      notify("Note supprimée");
+      return true;
+    } catch (e) {
+      notify(e?.message || "Impossible de supprimer la note");
+      return false;
+    } finally {
+      setTeamNoteActionLoadingId("");
+    }
+  }, []);
 
   const buildAgendaRow = (entry) => {
     const { slot, start } = entry;
@@ -819,7 +870,10 @@ export default function AppDashboard() {
                 teamNoteDraft={teamNoteDraft}
                 onTeamNoteChange={setTeamNoteDraft}
                 onTeamNoteSave={saveTeamNote}
+                onTeamNoteEdit={updateTeamNote}
+                onTeamNoteDelete={deleteTeamNote}
                 teamNoteSaving={teamNoteSaving}
+                teamNoteActionLoadingId={teamNoteActionLoadingId}
                 loading={loading}
                 IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
                 styles={S}
@@ -839,7 +893,10 @@ export default function AppDashboard() {
                 teamNoteDraft={teamNoteDraft}
                 onTeamNoteChange={setTeamNoteDraft}
                 onTeamNoteSave={saveTeamNote}
+                onTeamNoteEdit={updateTeamNote}
+                onTeamNoteDelete={deleteTeamNote}
                 teamNoteSaving={teamNoteSaving}
+                teamNoteActionLoadingId={teamNoteActionLoadingId}
                 loading={loading}
                 IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
                 styles={S}
@@ -933,6 +990,42 @@ const S = {
   darkNoteItem: { borderBottom: "1px solid rgba(255,255,255,.16)", paddingBottom: 8 },
   darkNoteText: { margin: 0, color: "#fff", fontWeight: 700, lineHeight: 1.4, whiteSpace: "pre-wrap" },
   darkNoteMeta: { margin: "4px 0 0", color: "rgba(255,255,255,.72)", fontSize: 12, lineHeight: 1.3 },
+  darkNoteActions: { display: "flex", gap: 10, marginTop: 6, flexWrap: "wrap" },
+  darkNoteActionBtn: {
+    border: 0,
+    background: "transparent",
+    color: "#B7F5FF",
+    fontWeight: 700,
+    fontSize: 12,
+    cursor: "pointer",
+    padding: 0,
+    fontFamily: "inherit",
+  },
+  darkNoteEditor: { display: "grid", gap: 6, marginTop: 8 },
+  darkNoteEditInput: {
+    width: "100%",
+    minHeight: 62,
+    borderRadius: 10,
+    border: "1px solid rgba(255,255,255,.28)",
+    background: "rgba(255,255,255,.96)",
+    color: C.navy,
+    padding: "9px 10px",
+    resize: "vertical",
+    boxSizing: "border-box",
+    fontFamily: "inherit",
+  },
+  darkNoteEditorBtns: { display: "flex", gap: 8, flexWrap: "wrap" },
+  darkNoteMiniBtn: {
+    border: "1px solid rgba(255,255,255,.34)",
+    background: "rgba(255,255,255,.08)",
+    color: "#fff",
+    borderRadius: 10,
+    height: 30,
+    padding: "0 10px",
+    fontWeight: 700,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
   darkNoteInput: {
     width: "100%",
     minHeight: 64,

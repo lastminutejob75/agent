@@ -201,3 +201,67 @@ def test_dashboard_team_note_returns_500_on_pg_write_failure(client, monkeypatch
         json={"note": "note"},
     )
     assert res.status_code == 500
+
+
+def test_dashboard_team_note_can_be_edited(client, monkeypatch):
+    from backend.tenant_config import get_params
+
+    monkeypatch.setattr("backend.routes.tenant.config.USE_PG_TENANTS", False)
+    monkeypatch.setattr(
+        "backend.routes.tenant.pg_get_tenant_user_by_id",
+        lambda uid: {"user_id": uid, "tenant_id": 1, "role": "member", "email": "m@t.fr"},
+    )
+    monkeypatch.setattr("backend.routes.tenant.pg_update_tenant_params", lambda tid, params: False)
+    token = _client_token(1, 105, "member")
+    first = client.patch(
+        "/api/tenant/dashboard/team-note",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"note": "Texte initial"},
+    )
+    assert first.status_code == 200
+    note_id = (first.json().get("item") or {}).get("id")
+    assert note_id
+    edited = client.patch(
+        f"/api/tenant/dashboard/team-note/{note_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"note": "Texte modifie"},
+    )
+    assert edited.status_code == 200
+    params = get_params(1)
+    items = params.get("dashboard_team_notes_json") or []
+    assert items and items[0].get("id") == note_id
+    assert items[0].get("text") == "Texte modifie"
+
+
+def test_dashboard_team_note_can_be_deleted(client, monkeypatch):
+    from backend.tenant_config import get_params
+
+    monkeypatch.setattr("backend.routes.tenant.config.USE_PG_TENANTS", False)
+    monkeypatch.setattr(
+        "backend.routes.tenant.pg_get_tenant_user_by_id",
+        lambda uid: {"user_id": uid, "tenant_id": 1, "role": "member", "email": "m@t.fr"},
+    )
+    monkeypatch.setattr("backend.routes.tenant.pg_update_tenant_params", lambda tid, params: False)
+    token = _client_token(1, 106, "member")
+    one = client.patch(
+        "/api/tenant/dashboard/team-note",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"note": "Note a supprimer"},
+    )
+    two = client.patch(
+        "/api/tenant/dashboard/team-note",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"note": "Note qui reste"},
+    )
+    assert one.status_code == 200
+    assert two.status_code == 200
+    note_id = (one.json().get("item") or {}).get("id")
+    assert note_id
+    deleted = client.delete(
+        f"/api/tenant/dashboard/team-note/{note_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert deleted.status_code == 200
+    params = get_params(1)
+    items = params.get("dashboard_team_notes_json") or []
+    assert all(item.get("id") != note_id for item in items)

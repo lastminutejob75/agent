@@ -6740,7 +6740,101 @@ def tenant_patch_dashboard_team_note(
     note = str(body.note or "").strip()
     if not note:
         raise HTTPException(400, "Ajoutez une note avant d'enregistrer")
+
     updated_at = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    current_params = _load_dashboard_team_note_params(tenant_id)
+    existing_notes = _dashboard_team_notes_from_params(current_params)
+    item = {
+        "id": uuid4().hex[:12],
+        "text": note[:2000],
+        "author": "Equipe",
+        "created_at": updated_at,
+    }
+    notes = [item, *existing_notes][:60]
+    _persist_dashboard_team_notes(tenant_id, notes, updated_at=updated_at)
+    return {
+        "ok": True,
+        "item": item,
+        "items": notes,
+        "dashboard_team_notes": notes,
+        "dashboard_team_note": item["text"],
+        "dashboard_team_note_updated_at": updated_at,
+    }
+
+
+@router.patch("/dashboard/team-note/{note_id}")
+def tenant_patch_dashboard_team_note_item(
+    note_id: str,
+    body: TenantDashboardTeamNoteBody,
+    auth: dict = Depends(require_tenant_auth),
+):
+    tenant_id = auth["tenant_id"]
+    target_id = str(note_id or "").strip()[:64]
+    if not target_id:
+        raise HTTPException(400, "Identifiant de note invalide")
+    note = str(body.note or "").strip()
+    if not note:
+        raise HTTPException(400, "Ajoutez une note avant d'enregistrer")
+    current_params = _load_dashboard_team_note_params(tenant_id)
+    existing_notes = _dashboard_team_notes_from_params(current_params)
+    if not existing_notes:
+        raise HTTPException(404, "Note introuvable")
+    updated_at = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    updated = False
+    notes: List[Dict[str, str]] = []
+    for item in existing_notes:
+        if str(item.get("id") or "") == target_id:
+            notes.append(
+                {
+                    **item,
+                    "text": note[:2000],
+                    "created_at": updated_at,
+                }
+            )
+            updated = True
+        else:
+            notes.append(item)
+    if not updated:
+        raise HTTPException(404, "Note introuvable")
+    notes = notes[:60]
+    _persist_dashboard_team_notes(tenant_id, notes, updated_at=updated_at)
+    return {
+        "ok": True,
+        "items": notes,
+        "dashboard_team_notes": notes,
+        "dashboard_team_note": notes[0]["text"] if notes else "",
+        "dashboard_team_note_updated_at": notes[0]["created_at"] if notes else "",
+    }
+
+
+@router.delete("/dashboard/team-note/{note_id}")
+def tenant_delete_dashboard_team_note_item(
+    note_id: str,
+    auth: dict = Depends(require_tenant_auth),
+):
+    tenant_id = auth["tenant_id"]
+    target_id = str(note_id or "").strip()[:64]
+    if not target_id:
+        raise HTTPException(400, "Identifiant de note invalide")
+    current_params = _load_dashboard_team_note_params(tenant_id)
+    existing_notes = _dashboard_team_notes_from_params(current_params)
+    if not existing_notes:
+        raise HTTPException(404, "Note introuvable")
+    notes = [item for item in existing_notes if str(item.get("id") or "") != target_id]
+    if len(notes) == len(existing_notes):
+        raise HTTPException(404, "Note introuvable")
+    updated_at = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    _persist_dashboard_team_notes(tenant_id, notes[:60], updated_at=updated_at)
+    return {
+        "ok": True,
+        "items": notes[:60],
+        "dashboard_team_notes": notes[:60],
+        "dashboard_team_note": notes[0]["text"] if notes else "",
+        "dashboard_team_note_updated_at": notes[0]["created_at"] if notes else "",
+    }
+
+
+def _load_dashboard_team_note_params(tenant_id: int) -> Dict[str, Any]:
     current_params: Dict[str, Any] = {}
     if config.USE_PG_TENANTS:
         try:
@@ -6763,17 +6857,16 @@ def tenant_patch_dashboard_team_note(
                 current_params = maybe_params
         except Exception:
             current_params = {}
-    existing_notes = _dashboard_team_notes_from_params(current_params)
-    item = {
-        "id": uuid4().hex[:12],
-        "text": note[:2000],
-        "author": "Equipe",
-        "created_at": updated_at,
-    }
-    notes = [item, *existing_notes][:60]
+    return current_params
+
+
+def _persist_dashboard_team_notes(tenant_id: int, notes: List[Dict[str, str]], *, updated_at: str) -> None:
+    first = notes[0] if notes else {}
+    latest_text = str(first.get("text") or "")
+    latest_updated_at = str(first.get("created_at") or updated_at or "")
     payload = {
-        "dashboard_team_note": item["text"],
-        "dashboard_team_note_updated_at": updated_at,
+        "dashboard_team_note": latest_text,
+        "dashboard_team_note_updated_at": latest_updated_at,
         "dashboard_team_notes_json": notes,
     }
     ok = pg_update_tenant_params(tenant_id, payload)
@@ -6785,14 +6878,6 @@ def tenant_patch_dashboard_team_note(
             )
             raise HTTPException(500, "Impossible d'enregistrer la note pour le moment")
         set_params(tenant_id, payload)
-    return {
-        "ok": True,
-        "item": item,
-        "items": notes,
-        "dashboard_team_notes": notes,
-        "dashboard_team_note": item["text"],
-        "dashboard_team_note_updated_at": updated_at,
-    }
 
 
 @router.patch("/params")
