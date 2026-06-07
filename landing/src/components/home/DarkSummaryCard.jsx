@@ -50,10 +50,20 @@ export default function DarkSummaryCard({
     if (!hasSignals) {
       return "Résumé IA prêt, mais aucune activité significative n'a encore été détectée aujourd'hui.";
     }
+    const latestNote = String(teamNotes[0]?.text || "").trim();
+    const latestSnippet = latestNote.length > 240
+      ? `${latestNote.slice(0, 240).trimEnd()}...`
+      : latestNote;
+    const notesPrefix = latestSnippet
+      ? `Dernière note équipe : "${latestSnippet}"`
+      : `${teamNotes.length} note${teamNotes.length > 1 ? "s" : ""} d'équipe enregistrée${teamNotes.length > 1 ? "s" : ""}`;
+    const notesSuffix = teamNotes.length > 1
+      ? ` (${teamNotes.length} notes au total)`
+      : "";
     if (teamNotes.length > 0 && handledTodayCount <= 0 && urgentCount <= 0 && !Number.isFinite(avgResponseMinutes)) {
-      return `Résumé IA : ${teamNotes.length} note${teamNotes.length > 1 ? "s" : ""} d'équipe enregistrée${teamNotes.length > 1 ? "s" : ""} dans le contexte cabinet.`;
+      return `Résumé IA : ${notesPrefix}${notesSuffix}.`;
     }
-    return `Résumé IA : ${handledTodayCount} demande${handledTodayCount > 1 ? "s" : ""} traitée${handledTodayCount > 1 ? "s" : ""} aujourd'hui`
+    return `Résumé IA : ${notesPrefix}${notesSuffix}. ${handledTodayCount} demande${handledTodayCount > 1 ? "s" : ""} traitée${handledTodayCount > 1 ? "s" : ""} aujourd'hui`
       + `${urgentCount > 0 ? `, dont ${urgentCount} urgente${urgentCount > 1 ? "s" : ""}` : ""}`
       + `. Délai moyen de réponse : ${delayLabel}.`;
   })();
