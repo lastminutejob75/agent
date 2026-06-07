@@ -2397,6 +2397,7 @@ export default function PatientDashboardPage() {
       }
       setNote("");
       notify("Note ajoutée au contexte patient");
+      setSummaryRefreshNonce((n) => n + 1);
       if (String(created?.text || noteText).includes("[ABSENCE-RDV]")) {
         setPatientFetchNonce((n) => n + 1);
       }
@@ -2484,6 +2485,7 @@ export default function PatientDashboardPage() {
       setNoteEditingId(null);
       setNoteEditDraft("");
       notify("Note modifiée");
+      setSummaryRefreshNonce((n) => n + 1);
       return true;
     } catch (e) {
       notify((e as Error)?.message || "Erreur modification note");
@@ -2510,6 +2512,7 @@ export default function PatientDashboardPage() {
         setNoteEditDraft("");
       }
       notify("Note supprimée");
+      setSummaryRefreshNonce((n) => n + 1);
     } catch (e) {
       notify((e as Error)?.message || "Erreur suppression note");
     } finally {
