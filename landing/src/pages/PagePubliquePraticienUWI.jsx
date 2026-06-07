@@ -883,22 +883,25 @@ function BookingFields({
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [knownHint, setKnownHint] = useState("");
+  const [recognizedName, setRecognizedName] = useState("");
   const [touched, setTouched] = useState({ phone: false, email: false, name: false });
   const lookupTimerRef = useRef(null);
   const showNameField = !phoneOnly || !defaultName.trim();
   const phoneErr = phoneValidationError(phone);
   const emailErr = emailValidationError(email);
+  const effectiveName = (recognizedName || name).trim();
   const nameErr =
-    showNameField && touched.name && name.trim().length < 2
+    showNameField && touched.name && effectiveName.length < 2
       ? "Indiquez votre nom complet."
       : "";
   const ok =
-    Boolean(motif && name.trim().length >= 2 && !phoneErr && !emailErr) &&
+    Boolean(motif && effectiveName.length >= 2 && !phoneErr && !emailErr) &&
     !submitting;
 
   useEffect(() => {
     setMotif(defaultMotif(slot));
     setKnownHint("");
+    setRecognizedName("");
     setTouched({ phone: false, email: false, name: false });
   }, [slot]);
 
@@ -925,14 +928,17 @@ function BookingFields({
         );
         if (data?.found) {
           const display = String(data.displayName || data.name || "").trim();
-          if (display && !name.trim()) setName(display);
+          setRecognizedName(display || "");
+          if (display && name.trim() !== display) setName(display);
           if (data.email && !email.trim()) setEmail(String(data.email).trim());
           setKnownHint(display ? `Patient reconnu : ${display}` : "Patient reconnu.");
         } else {
           setKnownHint("");
+          setRecognizedName("");
         }
       } catch {
         setKnownHint("");
+        setRecognizedName("");
       }
     }, 450);
     return () => {
@@ -1011,7 +1017,7 @@ function BookingFields({
           onConfirm({
             slot,
             motif,
-            name: name.trim(),
+            name: effectiveName,
             phone: normalizeFrenchPhone(phone),
             email: email.trim(),
           });

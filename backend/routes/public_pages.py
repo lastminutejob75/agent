@@ -128,6 +128,42 @@ def _sanitize_public_booking_payload(payload: PublicBookingRequest) -> PublicBoo
     )
 
 
+def _align_public_booking_patient_name(
+    tenant_id: Optional[int],
+    payload: PublicBookingRequest,
+) -> PublicBookingRequest:
+    """
+    Force le nom du booking sur le patient reconnu via telephone/email.
+    Evite de confirmer un RDV avec un nom incoherent quand le contact
+    correspond deja a une fiche patient existante.
+    """
+    if not tenant_id:
+        return payload
+    try:
+        from backend.db import find_cabinet_client
+
+        phone_s = (payload.patientPhone or "").strip()
+        email_s = (payload.patientEmail or "").strip()
+        if not phone_s and not email_s:
+            return payload
+        profile = find_cabinet_client(int(tenant_id), phone=phone_s, email=email_s)
+        if not profile:
+            return payload
+        display = (
+            (profile.get("display_name") or "").strip()
+            or (profile.get("validated_name") or "").strip()
+            or (profile.get("raw_name") or "").strip()
+        )
+        if not display:
+            return payload
+        if display.casefold() == (payload.patientName or "").strip().casefold():
+            return payload
+        return payload.model_copy(update={"patientName": display[:200]})
+    except Exception as exc:
+        logger.debug("public booking name align skipped: %s", exc)
+        return payload
+
+
 class PublicAnalyticsEventRequest(BaseModel):
     slug: str = Field(..., min_length=2, max_length=160)
     event: str = Field(..., min_length=2, max_length=80)
@@ -1524,6 +1560,7 @@ async def public_book(
     if tenant_id is None:
         tenant_id = _coerce_tenant_id_for_db(_resolve_tenant_id(payload.slug))
         tenant_id_raw = tenant_id
+    payload = _align_public_booking_patient_name(tenant_id, payload)
 
     booking_status = "confirmed"
     booking_reason: Optional[str] = None
