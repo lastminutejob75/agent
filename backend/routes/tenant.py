@@ -677,7 +677,7 @@ DAY_ORDER = [
     ("sunday", "Dimanche"),
 ]
 
-DASHBOARD_TEAM_NOTE_MAX_LEN = 8000
+DASHBOARD_TEAM_NOTE_MAX_LEN = 50000
 
 
 def _slugify(value: str) -> str:

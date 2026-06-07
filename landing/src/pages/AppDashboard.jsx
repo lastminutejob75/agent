@@ -54,7 +54,7 @@ const border = {
   teal: "#A7F3F0",
 };
 
-const TEAM_NOTE_MAX_LEN = 8000;
+const TEAM_NOTE_MAX_LEN = 50000;
 
 function Icon({ name, size = 18, color = "currentColor" }) {
   const common = {

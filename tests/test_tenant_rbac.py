@@ -200,7 +200,7 @@ def test_dashboard_team_note_accepts_long_text(client, monkeypatch):
 
     monkeypatch.setattr("backend.routes.tenant.pg_update_tenant_params", _update_params)
     token = _client_token(1, 107, "member")
-    long_note = "A" * 2500
+    long_note = "A" * 12000
     res = client.patch(
         "/api/tenant/dashboard/team-note",
         headers={"Authorization": f"Bearer {token}"},
