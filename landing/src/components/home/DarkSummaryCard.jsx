@@ -46,9 +46,12 @@ export default function DarkSummaryCard({
     if (summaryLoading) {
       return "Résumé IA du contexte cabinet en cours de génération…";
     }
-    const hasSignals = handledTodayCount > 0 || urgentCount > 0 || Number.isFinite(avgResponseMinutes);
+    const hasSignals = teamNotes.length > 0 || handledTodayCount > 0 || urgentCount > 0 || Number.isFinite(avgResponseMinutes);
     if (!hasSignals) {
       return "Résumé IA prêt, mais aucune activité significative n'a encore été détectée aujourd'hui.";
+    }
+    if (teamNotes.length > 0 && handledTodayCount <= 0 && urgentCount <= 0 && !Number.isFinite(avgResponseMinutes)) {
+      return `Résumé IA : ${teamNotes.length} note${teamNotes.length > 1 ? "s" : ""} d'équipe enregistrée${teamNotes.length > 1 ? "s" : ""} dans le contexte cabinet.`;
     }
     return `Résumé IA : ${handledTodayCount} demande${handledTodayCount > 1 ? "s" : ""} traitée${handledTodayCount > 1 ? "s" : ""} aujourd'hui`
       + `${urgentCount > 0 ? `, dont ${urgentCount} urgente${urgentCount > 1 ? "s" : ""}` : ""}`
