@@ -436,10 +436,7 @@ export default function AppDashboard() {
     const normalizedNote = String(teamNote || "").trim();
     setTeamNoteSaving(true);
     try {
-      await api.tenantPatchParams({
-        dashboard_team_note: normalizedNote,
-        dashboard_team_note_updated_at: new Date().toISOString(),
-      });
+      await api.tenantPatchDashboardTeamNote(normalizedNote);
       setTeamNote(normalizedNote);
       notify("Note enregistrée");
     } catch {

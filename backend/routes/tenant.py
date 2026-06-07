@@ -2096,6 +2096,14 @@ class TenantHandoffUpdateBody(BaseModel):
     notes: Optional[str] = Field(default=None, max_length=1000)
 
 
+class TenantDashboardTeamNoteBody(BaseModel):
+    note: str = Field(default="", max_length=2000)
+
+    @validator("note")
+    def _validate_note(cls, v):
+        return str(v or "")[:2000]
+
+
 class TenantProfileBody(BaseModel):
     practitioner_name: Optional[str] = None
     cabinet_name: Optional[str] = None
@@ -6650,6 +6658,25 @@ def tenant_agenda_reschedule_appointment(
     _mark_pending_handoffs_processed(tenant_id, booking)
     _invalidate_tenant_agenda_detail_cache(tenant_id)
     return {"ok": True, "rescheduled": True, "provider": "local"}
+
+
+@router.patch("/dashboard/team-note")
+def tenant_patch_dashboard_team_note(
+    body: TenantDashboardTeamNoteBody,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Note rapide interne du cabinet affichée sur la home dashboard."""
+    tenant_id = auth["tenant_id"]
+    note = str(body.note or "").strip()
+    updated_at = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    payload = {
+        "dashboard_team_note": note,
+        "dashboard_team_note_updated_at": updated_at,
+    }
+    ok = pg_update_tenant_params(tenant_id, payload)
+    if not ok:
+        set_params(tenant_id, payload)
+    return {"ok": True, "dashboard_team_note": note, "dashboard_team_note_updated_at": updated_at}
 
 
 @router.patch("/params")

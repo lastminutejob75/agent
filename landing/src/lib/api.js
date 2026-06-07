@@ -320,6 +320,12 @@ export const api = {
   tenantRgpd: () => request("/api/tenant/rgpd", { tenant: true }),
   tenantPatchParams: (params) =>
     request("/api/tenant/params", { method: "PATCH", body: params, tenant: true }),
+  tenantPatchDashboardTeamNote: (note) =>
+    request("/api/tenant/dashboard/team-note", {
+      method: "PATCH",
+      body: { note: String(note || "") },
+      tenant: true,
+    }),
   tenantGetHoraires: () => request("/api/tenant/horaires", { tenant: true }),
   tenantUpdateHoraires: (rules) =>
     request("/api/tenant/horaires", { method: "PATCH", body: rules, tenant: true }),

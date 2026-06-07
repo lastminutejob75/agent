@@ -62,3 +62,28 @@ def test_billing_summary_allowed_for_owner(client, monkeypatch):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 200
+
+
+def test_dashboard_team_note_allowed_for_member(client, monkeypatch):
+    monkeypatch.setattr(
+        "backend.routes.tenant.pg_get_tenant_user_by_id",
+        lambda uid: {"user_id": uid, "tenant_id": 1, "role": "member", "email": "m@t.fr"},
+    )
+    captured = {}
+
+    def _update_params(tid, params):
+        captured["tenant_id"] = tid
+        captured["params"] = params
+        return True
+
+    monkeypatch.setattr("backend.routes.tenant.pg_update_tenant_params", _update_params)
+    token = _client_token(1, 99, "member")
+    r = client.patch(
+        "/api/tenant/dashboard/team-note",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"note": "Note équipe"},
+    )
+    assert r.status_code == 200
+    assert captured["tenant_id"] == 1
+    assert captured["params"]["dashboard_team_note"] == "Note équipe"
+    assert captured["params"]["dashboard_team_note_updated_at"].endswith("Z")
