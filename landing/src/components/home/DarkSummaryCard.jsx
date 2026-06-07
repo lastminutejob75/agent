@@ -8,6 +8,12 @@ function shortNote(text) {
   return `${raw.slice(0, NOTE_PREVIEW_LIMIT).trimEnd()}...`;
 }
 
+function compactSnippet(text, maxLen = 120) {
+  const raw = String(text || "").replace(/\s+/g, " ").trim();
+  if (raw.length <= maxLen) return raw;
+  return `${raw.slice(0, maxLen).trimEnd()}...`;
+}
+
 export default function DarkSummaryCard({
   handledTodayCount,
   urgentCount,
@@ -50,20 +56,26 @@ export default function DarkSummaryCard({
     if (!hasSignals) {
       return "Résumé IA prêt, mais aucune activité significative n'a encore été détectée aujourd'hui.";
     }
-    const latestNote = String(teamNotes[0]?.text || "").trim();
-    const latestSnippet = latestNote.length > 240
-      ? `${latestNote.slice(0, 240).trimEnd()}...`
-      : latestNote;
-    const notesPrefix = latestSnippet
-      ? `Dernière note équipe : "${latestSnippet}"`
-      : `${teamNotes.length} note${teamNotes.length > 1 ? "s" : ""} d'équipe enregistrée${teamNotes.length > 1 ? "s" : ""}`;
+    const recentNotes = teamNotes
+      .slice(0, 3)
+      .map((item) => compactSnippet(item?.text || ""))
+      .filter(Boolean);
+    const notesCorpus = recentNotes.join(" ").toLowerCase();
+    const themes = [];
+    if (/no[\s-]?show|absence|absent/.test(notesCorpus)) themes.push("no-show");
+    if (/t[ée]l[ée]m[ée]decine|t[ée]l[ée]consultation|visio/.test(notesCorpus)) themes.push("télémédecine");
+    if (/rappel|relance/.test(notesCorpus)) themes.push("rappels");
+    const themesLabel = themes.length > 0 ? `Points clés: ${themes.join(", ")}.` : "";
+    const notesDigest = recentNotes.length > 0
+      ? `Notes récentes: ${recentNotes.map((n, idx) => `N${idx + 1} "${n}"`).join(" | ")}.`
+      : `${teamNotes.length} note${teamNotes.length > 1 ? "s" : ""} d'équipe enregistrée${teamNotes.length > 1 ? "s" : ""}.`;
     const notesSuffix = teamNotes.length > 1
       ? ` (${teamNotes.length} notes au total)`
       : "";
     if (teamNotes.length > 0 && handledTodayCount <= 0 && urgentCount <= 0 && !Number.isFinite(avgResponseMinutes)) {
-      return `Résumé IA : ${notesPrefix}${notesSuffix}.`;
+      return `Résumé IA : ${themesLabel} ${notesDigest}${notesSuffix}`.trim();
     }
-    return `Résumé IA : ${notesPrefix}${notesSuffix}. ${handledTodayCount} demande${handledTodayCount > 1 ? "s" : ""} traitée${handledTodayCount > 1 ? "s" : ""} aujourd'hui`
+    return `Résumé IA : ${themesLabel} ${notesDigest}${notesSuffix} ${handledTodayCount} demande${handledTodayCount > 1 ? "s" : ""} traitée${handledTodayCount > 1 ? "s" : ""} aujourd'hui`
       + `${urgentCount > 0 ? `, dont ${urgentCount} urgente${urgentCount > 1 ? "s" : ""}` : ""}`
       + `. Délai moyen de réponse : ${delayLabel}.`;
   })();
