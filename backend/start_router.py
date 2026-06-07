@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 # ---- Heuristique minimal (filet pour formulations type "voir le docteur Dupont") ----
 _BOOKING_HINTS = re.compile(
-    r"\b(rdv|rendez[- ]?vous|prendre\s+un\s+rendez[- ]?vous|"
+    r"\b(rdv|rendez[- ]?vous|rendes[- ]?vous|prendre\s+un\s+rendez[- ]?vous|"
     r"voir|consulter|rencontrer|passer\s+voir)\b",
     re.IGNORECASE,
 )
@@ -63,7 +63,7 @@ def is_greeting_only_message(text: str) -> bool:
 # Début de prise de RDV (réponse HTTP immédiate côté web, sans attendre PG)
 _BOOKING_START_QUICK = re.compile(
     r"\b(je\s+voudrais?|je\s+veux|je\s+souhaite|je\s+v\s+(?:in|un)\s+rdv|jv\s+(?:un\s+)?rdv|"
-    r"prendre\s+un\s+rdv|prendre\s+un\s+rendez|prendre\s+rdv|un\s+rdv|rendez[- ]?vous|"
+    r"prendre\s+un\s+rdv|prendre\s+un\s+rendez|prendre\s+rdv|un\s+rdv|rendez[- ]?vous|rendes[- ]?vous|"
     r"c\s+est\s+pour|c\s+pour)\b",
     re.IGNORECASE,
 )

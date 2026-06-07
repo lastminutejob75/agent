@@ -124,6 +124,23 @@ def _normalize_fr_text(text: str) -> str:
     )
 
 
+_MONTH_TYPO_MAP: Dict[str, str] = {
+    # Typos fréquentes "juin"
+    "jin": "juin",
+    "juinn": "juin",
+    "juinnn": "juin",
+    "juan": "juin",
+}
+
+
+def _normalize_month_typos(text_norm: str) -> str:
+    """Corrige quelques fautes de frappe récurrentes sur les mois FR."""
+    out = text_norm or ""
+    for bad, good in _MONTH_TYPO_MAP.items():
+        out = re.sub(rf"\b{re.escape(bad)}\b", good, out)
+    return out
+
+
 # Préférences horaires (legacy / rétrocompat)
 PREF_PATTERNS: Dict[str, List[str]] = {
     "matin": ["matin", "matinée", "le matin", "9h", "10h", "11h"],
@@ -356,6 +373,7 @@ def extract_target_date(message: str, ref: Optional[date] = None) -> Optional[da
     ref = ref or datetime.now(ZoneInfo("Europe/Paris")).date()
     raw = (message or "").strip().lower()
     norm = _normalize_fr_text(raw)
+    norm = _normalize_month_typos(norm)
 
     if re.search(r"\bapres[- ]?demain\b", norm):
         return ref + timedelta(days=2)

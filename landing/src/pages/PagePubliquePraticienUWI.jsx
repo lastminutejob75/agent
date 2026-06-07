@@ -2176,6 +2176,7 @@ export default function PagePubliquePraticienUWI() {
               {
                 from: "clara",
                 text: instantText ? CHAT_SSE_TIMEOUT_FALLBACK : CHAT_UNCLEAR_FALLBACK,
+                provisional: true,
               },
             ]);
           }

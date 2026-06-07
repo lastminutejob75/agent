@@ -196,6 +196,11 @@ _CHAT_TYPO_PATTERNS = [
     (re.compile(r"\bhorraires\b", re.IGNORECASE), "horaires"),
     (re.compile(r"\bhorraire\b", re.IGNORECASE), "horaire"),
     (re.compile(r"\bquelle\s+sont\b", re.IGNORECASE), "quels sont"),
+    # Fautes fréquentes sur "rendez-vous" (STT + saisie rapide)
+    (re.compile(r"\brendes[-\s]?vous\b", re.IGNORECASE), "rendez vous"),
+    (re.compile(r"\brendez[-\s]?vous\b", re.IGNORECASE), "rendez vous"),
+    (re.compile(r"\brendes\b", re.IGNORECASE), "rendez"),
+    (re.compile(r"\brendez\b", re.IGNORECASE), "rendez"),
 ]
 # « quoi » dans une question d'info ≠ « répétez » (ex. c quoi vos horaires)
 _INFO_QUESTION_MARKERS = (
@@ -419,9 +424,11 @@ def _is_booking(text: str) -> bool:
         return True
     booking_markers = [
         "rendez-vous", "rendez vous", "rdv",
+        "rendes vous", "rendes-vous", "rendez vous", "rendez-vous",
         "prendre rendez-vous", "prendre rendez vous", "prendre rdv",
         "prise de rendez vous", "rendez vous svp", "un rendez vous", "un rdv",
         "réserver", "reserver", "booker", "je veux venir", "je veux un rendez", "je voudrais un rendez",
+        "je veux un rendes", "je voudrais un rendes", "je veux un rendez", "je voudrais un rendez",
         "je voudrais un créneau", "je voudrais un creneau",
         "je voudrais rdv", "je voudrais une rendez", "je voudrais un rendez vous", "voudrais un rdv",
     ]
