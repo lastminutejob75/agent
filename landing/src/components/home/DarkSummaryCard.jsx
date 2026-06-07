@@ -12,6 +12,7 @@ export default function DarkSummaryCard({
   handledTodayCount,
   urgentCount,
   avgResponseMinutes,
+  summaryLoading = false,
   teamNotes = [],
   teamNoteDraft = "",
   onTeamNoteChange,
@@ -41,6 +42,19 @@ export default function DarkSummaryCard({
     ? `${avgResponseMinutes} min`
     : "—";
 
+  const summaryText = (() => {
+    if (summaryLoading) {
+      return "Résumé IA du contexte cabinet en cours de génération…";
+    }
+    const hasSignals = handledTodayCount > 0 || urgentCount > 0 || Number.isFinite(avgResponseMinutes);
+    if (!hasSignals) {
+      return "Résumé IA prêt, mais aucune activité significative n'a encore été détectée aujourd'hui.";
+    }
+    return `Résumé IA : ${handledTodayCount} demande${handledTodayCount > 1 ? "s" : ""} traitée${handledTodayCount > 1 ? "s" : ""} aujourd'hui`
+      + `${urgentCount > 0 ? `, dont ${urgentCount} urgente${urgentCount > 1 ? "s" : ""}` : ""}`
+      + `. Délai moyen de réponse : ${delayLabel}.`;
+  })();
+
   const toggleExpanded = (noteId) => {
     setExpandedIds((prev) => ({ ...prev, [noteId]: !prev[noteId] }));
   };
@@ -64,12 +78,8 @@ export default function DarkSummaryCard({
   return (
     <section style={S.darkCard}>
       <h3 style={S.darkTitle}>{IconRenderer("star")}Contexte cabinet</h3>
-      <p style={S.darkText}>
-        Clara a traité {handledTodayCount} demande{handledTodayCount > 1 ? "s" : ""} aujourd&apos;hui
-        {urgentCount > 0 ? `, dont ${urgentCount} classée${urgentCount > 1 ? "s" : ""} urgente${urgentCount > 1 ? "s" : ""}` : ""}.
-        {" "}Le délai moyen de réponse est de {delayLabel}.
-        {" "}Les prises de RDV, annulations et créneaux récupérés sont résumés dans les cartes du haut.
-      </p>
+      <p style={S.darkAiStatus}>{summaryLoading ? "⏳ Résumé IA en cours…" : "✓ Résumé IA à jour"}</p>
+      <p style={S.darkText}>{summaryText}</p>
       <div style={S.darkDivider} />
       <h4 style={S.darkNotesTitle}>✎ Notes de l&apos;équipe</h4>
       {teamNotes.length === 0 ? (

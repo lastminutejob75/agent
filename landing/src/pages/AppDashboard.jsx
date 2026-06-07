@@ -876,6 +876,7 @@ export default function AppDashboard() {
                 handledTodayCount={requestSummary.handledToday}
                 urgentCount={requestSummary.urgentOpen}
                 avgResponseMinutes={requestSummary.avgResponseMinutes}
+                summaryLoading={loading || statsLoading || requestsLoading}
                 teamNotes={teamNotes}
                 teamNoteDraft={teamNoteDraft}
                 onTeamNoteChange={setTeamNoteDraft}
@@ -899,6 +900,7 @@ export default function AppDashboard() {
                 handledTodayCount={requestSummary.handledToday}
                 urgentCount={requestSummary.urgentOpen}
                 avgResponseMinutes={requestSummary.avgResponseMinutes}
+                summaryLoading={loading || statsLoading || requestsLoading}
                 teamNotes={teamNotes}
                 teamNoteDraft={teamNoteDraft}
                 onTeamNoteChange={setTeamNoteDraft}
@@ -992,6 +994,7 @@ const S = {
   rowBtns: { display: "flex", gap: 9, flexWrap: "wrap" },
   darkCard: { borderRadius: 22, background: "linear-gradient(135deg,#071A33 0%,#063A4A 52%,#009CA4 135%)", color: "#fff", padding: 26, boxShadow: "0 20px 44px rgba(7,26,51,.24)" },
   darkTitle: { margin: "0 0 8px", display: "inline-flex", alignItems: "center", gap: 8, fontSize: 21, fontWeight: 800 },
+  darkAiStatus: { margin: "0 0 6px", fontSize: 12, fontWeight: 800, color: "rgba(183,245,255,.96)", letterSpacing: ".02em", textTransform: "uppercase" },
   darkText: { margin: 0, lineHeight: 1.5, color: "rgba(255,255,255,.92)" },
   darkDivider: { height: 1, width: "100%", background: "rgba(255,255,255,.22)", margin: "14px 0 12px" },
   darkNotesTitle: { margin: "0 0 10px", fontSize: 20, fontWeight: 800, color: "#fff" },
