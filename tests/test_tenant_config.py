@@ -162,3 +162,16 @@ def test_set_params_allows_dashboard_team_note(monkeypatch, tmp_path):
     params = get_params(1)
     assert params["dashboard_team_note"] == "Point de vigilance patient X"
     assert params["dashboard_team_note_updated_at"] == "2026-06-07T12:00:00Z"
+
+
+def test_set_params_allows_dashboard_team_notes_json(monkeypatch, tmp_path):
+    import backend.db as db
+
+    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "agent.db"))
+    db.init_db(days=0)
+    db.ensure_tenant_config()
+    payload = [{"id": "n1", "text": "Note A", "author": "Equipe", "created_at": "2026-06-07T12:00:00Z"}]
+    set_params(1, {"dashboard_team_notes_json": payload})
+    params = get_params(1)
+    assert isinstance(params["dashboard_team_notes_json"], list)
+    assert params["dashboard_team_notes_json"][0]["text"] == "Note A"

@@ -18,7 +18,6 @@ import NextAppointmentCard from "../components/home/NextAppointmentCard.jsx";
 import TasksCard from "../components/home/TasksCard.jsx";
 import AgendaTodayCard from "../components/home/AgendaTodayCard.jsx";
 import DarkSummaryCard from "../components/home/DarkSummaryCard.jsx";
-import TeamNotesCard from "../components/home/TeamNotesCard.jsx";
 
 const CLARA_PHOTO = "/images/clara-headset.png";
 
@@ -203,6 +202,22 @@ function isBookedAppointmentSlot(slot) {
   return status.includes("confirm") || status.includes("book") || status.includes("occupied");
 }
 
+function mapDashboardTeamNotes(items) {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item, idx) => {
+      const text = String(item?.text || item?.note || "").trim();
+      if (!text) return null;
+      return {
+        id: String(item?.id || `note-${idx}`),
+        text,
+        author: String(item?.author || "Equipe").trim() || "Equipe",
+        createdAt: String(item?.created_at || item?.updated_at || ""),
+      };
+    })
+    .filter(Boolean);
+}
+
 export default function AppDashboard() {
   const navigate = useNavigate();
   const { me } = useOutletContext() || {};
@@ -223,9 +238,8 @@ export default function AppDashboard() {
   const [openingHours, setOpeningHours] = useState([]);
   const [bookingDurationMinutes, setBookingDurationMinutes] = useState(30);
   const [connections, setConnections] = useState({ vapi: null, calendar: null });
-  const [teamNote, setTeamNote] = useState("");
-  const [savedTeamNote, setSavedTeamNote] = useState("");
-  const [savedTeamNoteUpdatedAt, setSavedTeamNoteUpdatedAt] = useState("");
+  const [teamNoteDraft, setTeamNoteDraft] = useState("");
+  const [teamNotes, setTeamNotes] = useState([]);
   const [teamNoteSaving, setTeamNoteSaving] = useState(false);
 
   const notify = (msg) => {
@@ -349,9 +363,25 @@ export default function AppDashboard() {
   }, []);
 
   useEffect(() => {
-    setSavedTeamNote(String(me?.dashboard_team_note || ""));
-    setSavedTeamNoteUpdatedAt(String(me?.dashboard_team_note_updated_at || ""));
-  }, [me?.dashboard_team_note, me?.dashboard_team_note_updated_at]);
+    const incoming = mapDashboardTeamNotes(me?.dashboard_team_notes);
+    if (incoming.length > 0) {
+      setTeamNotes(incoming);
+      return;
+    }
+    const legacy = String(me?.dashboard_team_note || "").trim();
+    if (!legacy) {
+      setTeamNotes([]);
+      return;
+    }
+    setTeamNotes([
+      {
+        id: "legacy",
+        text: legacy,
+        author: "Equipe",
+        createdAt: String(me?.dashboard_team_note_updated_at || ""),
+      },
+    ]);
+  }, [me?.dashboard_team_notes, me?.dashboard_team_note, me?.dashboard_team_note_updated_at]);
 
   const today = new Date();
   const bookedSlots = useMemo(
@@ -435,20 +465,36 @@ export default function AppDashboard() {
 
   const saveTeamNote = useCallback(async () => {
     if (teamNoteSaving) return;
-    const normalizedNote = String(teamNote || "").trim();
+    const normalizedNote = String(teamNoteDraft || "").trim();
+    if (!normalizedNote) {
+      notify("Ajoute une note avant d'enregistrer");
+      return;
+    }
     setTeamNoteSaving(true);
     try {
       const data = await api.tenantPatchDashboardTeamNote(normalizedNote);
-      setSavedTeamNote(String(data?.dashboard_team_note ?? normalizedNote));
-      setSavedTeamNoteUpdatedAt(String(data?.dashboard_team_note_updated_at || new Date().toISOString()));
-      setTeamNote("");
+      const incoming = mapDashboardTeamNotes(data?.items || data?.dashboard_team_notes);
+      if (incoming.length > 0) {
+        setTeamNotes(incoming);
+      } else {
+        setTeamNotes((prev) => [
+          {
+            id: `local-${Date.now()}`,
+            text: normalizedNote,
+            author: "Equipe",
+            createdAt: String(data?.dashboard_team_note_updated_at || new Date().toISOString()),
+          },
+          ...prev,
+        ]);
+      }
+      setTeamNoteDraft("");
       notify("Note enregistrée");
-    } catch {
-      notify("Impossible d'enregistrer la note");
+    } catch (e) {
+      notify(e?.message || "Impossible d'enregistrer la note");
     } finally {
       setTeamNoteSaving(false);
     }
-  }, [teamNote, teamNoteSaving]);
+  }, [teamNoteDraft, teamNoteSaving]);
 
   const buildAgendaRow = (entry) => {
     const { slot, start } = entry;
@@ -769,22 +815,14 @@ export default function AppDashboard() {
                 handledTodayCount={requestSummary.handledToday}
                 urgentCount={requestSummary.urgentOpen}
                 avgResponseMinutes={requestSummary.avgResponseMinutes}
+                teamNotes={teamNotes}
+                teamNoteDraft={teamNoteDraft}
+                onTeamNoteChange={setTeamNoteDraft}
+                onTeamNoteSave={saveTeamNote}
+                teamNoteSaving={teamNoteSaving}
                 loading={loading}
                 IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
                 styles={S}
-              />
-
-              <TeamNotesCard
-                noteText={teamNote}
-                onNoteChange={setTeamNote}
-                onSave={saveTeamNote}
-                savedNoteText={savedTeamNote}
-                savedUpdatedAt={savedTeamNoteUpdatedAt}
-                saving={teamNoteSaving}
-                IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
-                BtnComponent={Btn}
-                styles={S}
-                colors={C}
               />
             </div>
           </>
@@ -797,22 +835,14 @@ export default function AppDashboard() {
                 handledTodayCount={requestSummary.handledToday}
                 urgentCount={requestSummary.urgentOpen}
                 avgResponseMinutes={requestSummary.avgResponseMinutes}
+                teamNotes={teamNotes}
+                teamNoteDraft={teamNoteDraft}
+                onTeamNoteChange={setTeamNoteDraft}
+                onTeamNoteSave={saveTeamNote}
+                teamNoteSaving={teamNoteSaving}
                 loading={loading}
                 IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
                 styles={S}
-              />
-
-              <TeamNotesCard
-                noteText={teamNote}
-                onNoteChange={setTeamNote}
-                onSave={saveTeamNote}
-                savedNoteText={savedTeamNote}
-                savedUpdatedAt={savedTeamNoteUpdatedAt}
-                saving={teamNoteSaving}
-                IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
-                BtnComponent={Btn}
-                styles={S}
-                colors={C}
               />
             </div>
 
@@ -896,6 +926,40 @@ const S = {
   darkCard: { borderRadius: 22, background: "linear-gradient(135deg,#071A33 0%,#063A4A 52%,#009CA4 135%)", color: "#fff", padding: 26, boxShadow: "0 20px 44px rgba(7,26,51,.24)" },
   darkTitle: { margin: "0 0 8px", display: "inline-flex", alignItems: "center", gap: 8, fontSize: 21, fontWeight: 800 },
   darkText: { margin: 0, lineHeight: 1.5, color: "rgba(255,255,255,.92)" },
+  darkDivider: { height: 1, width: "100%", background: "rgba(255,255,255,.22)", margin: "14px 0 12px" },
+  darkNotesTitle: { margin: "0 0 10px", fontSize: 20, fontWeight: 800, color: "#fff" },
+  darkNotesEmpty: { margin: "0 0 10px", color: "rgba(255,255,255,.75)", fontSize: 14 },
+  darkNotesList: { display: "grid", gap: 8, marginBottom: 10 },
+  darkNoteItem: { borderBottom: "1px solid rgba(255,255,255,.16)", paddingBottom: 8 },
+  darkNoteText: { margin: 0, color: "#fff", fontWeight: 700, lineHeight: 1.4, whiteSpace: "pre-wrap" },
+  darkNoteMeta: { margin: "4px 0 0", color: "rgba(255,255,255,.72)", fontSize: 12, lineHeight: 1.3 },
+  darkNoteInput: {
+    width: "100%",
+    minHeight: 64,
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,.28)",
+    background: "rgba(255,255,255,.96)",
+    color: C.navy,
+    padding: "10px 12px",
+    resize: "vertical",
+    boxSizing: "border-box",
+    fontFamily: "inherit",
+    marginBottom: 8,
+  },
+  darkNoteBtn: {
+    height: 40,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    border: 0,
+    borderRadius: 12,
+    padding: "0 16px",
+    background: "linear-gradient(135deg,#00C4CC,#00A5AE)",
+    color: "#fff",
+    fontWeight: 800,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
   darkFooter: { display: "block", marginTop: 12, color: "rgba(255,255,255,.75)" },
   task: { width: "100%", display: "grid", gridTemplateColumns: "42px 1fr auto", alignItems: "center", gap: 12, border: `1px solid ${C.border}`, borderRadius: 14, background: "#fff", padding: 11, marginTop: 10, textAlign: "left", cursor: "pointer", fontFamily: "inherit" },
   agendaRow: { width: "100%", display: "grid", gridTemplateColumns: "64px 1fr auto", alignItems: "center", gap: 12, border: `1px solid ${C.border}`, borderRadius: 14, background: "#fff", padding: 11, marginTop: 9, textAlign: "left", cursor: "pointer", fontFamily: "inherit" },

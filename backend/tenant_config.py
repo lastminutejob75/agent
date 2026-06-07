@@ -861,7 +861,7 @@ def set_params(tenant_id: int, params: Dict[str, str]) -> None:
         "assistant_name", "phone_number", "sector",
         "specialty_label", "address_line1", "postal_code", "city", "agenda_software",
         "client_onboarding_completed", "dashboard_tour_completed",
-        "dashboard_team_note", "dashboard_team_note_updated_at",
+        "dashboard_team_note", "dashboard_team_note_updated_at", "dashboard_team_notes_json",
         "faq_json",
         "booking_duration_minutes", "booking_start_hour", "booking_end_hour",
         "booking_buffer_minutes", "booking_days",
@@ -914,6 +914,17 @@ def set_params(tenant_id: int, params: Dict[str, str]) -> None:
                     filtered[k] = {}
             else:
                 filtered[k] = {}
+        elif k == "dashboard_team_notes_json":
+            if isinstance(v, list):
+                filtered[k] = v
+            elif isinstance(v, str):
+                try:
+                    parsed = json.loads(v)
+                    filtered[k] = parsed if isinstance(parsed, list) else []
+                except Exception:
+                    filtered[k] = []
+            else:
+                filtered[k] = []
         else:
             filtered[k] = str(v)
     if any(k in filtered for k in ("booking_days", "booking_start_hour", "booking_end_hour")):

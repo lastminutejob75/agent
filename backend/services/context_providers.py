@@ -10,6 +10,8 @@ from typing import Any, Dict, List, Tuple
 from backend.db import get_cabinet_client_by_phone, list_patient_notes
 from backend.patient_v2_db import fetch_all_pg, normalize_patient_phone
 from backend.services.patient_metrics import get_patient_metrics
+from backend.tenants_pg import pg_get_tenant_params
+from backend.tenant_config import get_params
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +65,61 @@ def _fetch_notes(db, tenant_id: int, patient_phone: str, *, limit: int = 5) -> L
             }
         )
     return out
+
+
+def _fetch_cabinet_team_notes(tenant_id: int, *, limit: int = 5) -> List[Dict[str, Any]]:
+    params: Dict[str, Any] = {}
+    try:
+        got = pg_get_tenant_params(tenant_id)
+        maybe_params = got[0] if got else {}
+        if isinstance(maybe_params, dict):
+            params = maybe_params
+    except Exception:
+        params = {}
+    if not params:
+        try:
+            maybe_params = get_params(tenant_id)
+            if isinstance(maybe_params, dict):
+                params = maybe_params
+        except Exception:
+            params = {}
+
+    raw_notes = params.get("dashboard_team_notes_json")
+    if isinstance(raw_notes, str):
+        try:
+            raw_notes = json.loads(raw_notes)
+        except Exception:
+            raw_notes = []
+    out: List[Dict[str, Any]] = []
+    if isinstance(raw_notes, list):
+        for item in raw_notes:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text") or item.get("note") or "").strip()
+            if not text:
+                continue
+            out.append(
+                {
+                    "author": str(item.get("author") or "Equipe")[:80],
+                    "content": text[:500],
+                    "created_at": str(item.get("created_at") or item.get("updated_at") or ""),
+                }
+            )
+            if len(out) >= limit:
+                break
+    if out:
+        return out
+
+    legacy = str(params.get("dashboard_team_note") or "").strip()
+    if legacy:
+        return [
+            {
+                "author": "Equipe",
+                "content": legacy[:500],
+                "created_at": str(params.get("dashboard_team_note_updated_at") or ""),
+            }
+        ]
+    return []
 
 
 def _fetch_events(db, tenant_id: int, patient_phone: str, *, limit: int = 5) -> List[Dict[str, Any]]:
@@ -239,6 +296,16 @@ class ReceptionProvider(ContextProvider):
             )
             notes = []
         try:
+            cabinet_notes = _fetch_cabinet_team_notes(tenant_id, limit=5)
+        except Exception:
+            logger.warning(
+                "context_providers cabinet notes fetch failed tenant=%s phone=%s",
+                tenant_id,
+                str(patient_phone)[-4:] if patient_phone else "?",
+                exc_info=True,
+            )
+            cabinet_notes = []
+        try:
             events = _fetch_events(db, tenant_id, patient_phone, limit=5)
         except Exception:
             logger.warning(
@@ -252,6 +319,7 @@ class ReceptionProvider(ContextProvider):
             "metriques": metriques,
             "flags": flags,
             "notes_recentes": notes,
+            "notes_cabinet": cabinet_notes,
             "events_recents": events,
         }
         return data, False
@@ -391,7 +459,7 @@ def build_context_pack(db, tenant_id: int, patient_phone: str, tenant_caps: set)
                 exc_info=True,
             )
             if isinstance(provider, ReceptionProvider):
-                data = {"metriques": {}, "flags": [], "notes_recentes": [], "events_recents": []}
+                data = {"metriques": {}, "flags": [], "notes_recentes": [], "notes_cabinet": [], "events_recents": []}
             elif isinstance(provider, QuestionnaireProvider):
                 data = {"questionnaires_admin": [], "questionnaires_sante": [], "questionnaires_en_attente": []}
             elif isinstance(provider, SanteProvider):

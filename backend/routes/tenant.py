@@ -131,6 +131,7 @@ from backend.tenant_config import (
     derive_horaires_text,
     get_booking_rules,
     get_tenant_display_config,
+    get_params,
     get_faq,
     normalize_faq_payload,
     reset_faq_params,
@@ -596,6 +597,73 @@ def _parse_dict_value(value: Any) -> Dict[str, Any]:
         except Exception:
             return {}
     return {}
+
+
+def _parse_iso_datetime(value: str) -> Optional[datetime]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _parse_dashboard_team_notes(value: Any) -> List[Dict[str, str]]:
+    parsed = value
+    if isinstance(parsed, str):
+        raw = parsed.strip()
+        if not raw:
+            return []
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return []
+    if not isinstance(parsed, list):
+        return []
+    ranked: List[tuple[float, int, Dict[str, str]]] = []
+    for idx, item in enumerate(parsed):
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or item.get("note") or "").strip()
+        if not text:
+            continue
+        created_at = str(item.get("created_at") or item.get("updated_at") or "").strip()
+        author = str(item.get("author") or "Equipe").strip()[:80] or "Equipe"
+        item_id = str(item.get("id") or uuid4().hex[:12]).strip()[:64] or uuid4().hex[:12]
+        dt = _parse_iso_datetime(created_at)
+        rank_ts = dt.timestamp() if dt else float("-inf")
+        ranked.append(
+            (
+                rank_ts,
+                -idx,
+                {
+                    "id": item_id,
+                    "text": text[:2000],
+                    "author": author,
+                    "created_at": created_at,
+                },
+            )
+        )
+    ranked.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    return [entry for _, __, entry in ranked][:60]
+
+
+def _dashboard_team_notes_from_params(params: Dict[str, Any]) -> List[Dict[str, str]]:
+    notes = _parse_dashboard_team_notes((params or {}).get("dashboard_team_notes_json"))
+    if notes:
+        return notes
+    legacy_text = str((params or {}).get("dashboard_team_note") or "").strip()
+    if not legacy_text:
+        return []
+    return [
+        {
+            "id": "legacy",
+            "text": legacy_text[:2000],
+            "author": "Equipe",
+            "created_at": str((params or {}).get("dashboard_team_note_updated_at") or ""),
+        }
+    ]
 
 
 DAY_ORDER = [
@@ -2242,6 +2310,7 @@ def tenant_me(auth: dict = Depends(require_tenant_auth)):
     client_onboarding_completed = _explicit or onboarding_completed
     transfer_hours = _parse_dict_value(params.get("transfer_hours"))
     transfer_cases = _parse_string_list(params.get("transfer_cases"))
+    dashboard_team_notes = _dashboard_team_notes_from_params(params)
     tenant_display_name = _tenant_display_name(d, tenant_id)
     try:
         from backend.auth_pg import pg_get_must_change_password
@@ -2285,6 +2354,7 @@ def tenant_me(auth: dict = Depends(require_tenant_auth)):
         "transfer_config_confirmed_at": params.get("transfer_config_confirmed_at", ""),
         "dashboard_team_note": params.get("dashboard_team_note", ""),
         "dashboard_team_note_updated_at": params.get("dashboard_team_note_updated_at", ""),
+        "dashboard_team_notes": dashboard_team_notes,
         "onboarding_steps": onboarding_steps,
         "onboarding_completed": onboarding_completed,
         "faq_items_count": _count_active_faq_items(faq),
@@ -6665,13 +6735,42 @@ def tenant_patch_dashboard_team_note(
     body: TenantDashboardTeamNoteBody,
     auth: dict = Depends(require_tenant_auth),
 ):
-    """Note rapide interne du cabinet affichée sur la home dashboard."""
+    """Ajoute une note interne cabinet (historique cumulé)."""
     tenant_id = auth["tenant_id"]
     note = str(body.note or "").strip()
+    if not note:
+        raise HTTPException(400, "Ajoutez une note avant d'enregistrer")
     updated_at = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    current_params: Dict[str, Any] = {}
+    if config.USE_PG_TENANTS:
+        try:
+            from backend.tenants_pg import pg_get_tenant_params
+
+            got = pg_get_tenant_params(tenant_id)
+            maybe_params = got[0] if got else {}
+            if isinstance(maybe_params, dict):
+                current_params = maybe_params
+        except Exception:
+            current_params = {}
+    if not current_params:
+        try:
+            maybe_params = get_params(tenant_id)
+            if isinstance(maybe_params, dict):
+                current_params = maybe_params
+        except Exception:
+            current_params = {}
+    existing_notes = _dashboard_team_notes_from_params(current_params)
+    item = {
+        "id": uuid4().hex[:12],
+        "text": note[:2000],
+        "author": "Equipe",
+        "created_at": updated_at,
+    }
+    notes = [item, *existing_notes][:60]
     payload = {
-        "dashboard_team_note": note,
+        "dashboard_team_note": item["text"],
         "dashboard_team_note_updated_at": updated_at,
+        "dashboard_team_notes_json": notes,
     }
     ok = pg_update_tenant_params(tenant_id, payload)
     if not ok:
@@ -6682,7 +6781,14 @@ def tenant_patch_dashboard_team_note(
             )
             raise HTTPException(500, "Impossible d'enregistrer la note pour le moment")
         set_params(tenant_id, payload)
-    return {"ok": True, "dashboard_team_note": note, "dashboard_team_note_updated_at": updated_at}
+    return {
+        "ok": True,
+        "item": item,
+        "items": notes,
+        "dashboard_team_notes": notes,
+        "dashboard_team_note": item["text"],
+        "dashboard_team_note_updated_at": updated_at,
+    }
 
 
 @router.patch("/params")
@@ -6708,7 +6814,7 @@ def tenant_patch_params(
         "emergency_instruction", "new_patient_instruction", "booking_notes", "appointment_reasons_json",
         "welcome_message", "documents_to_bring", "access_instructions", "payment_methods", "parking_info", "pmr_access",
         "sensitive_medical_instruction", "escalation_instruction", "human_handoff_instruction", "faq_items_json",
-        "dashboard_team_note", "dashboard_team_note_updated_at",
+        "dashboard_team_note", "dashboard_team_note_updated_at", "dashboard_team_notes_json",
     }
     body = body or {}
     tenant_id = auth["tenant_id"]

@@ -87,6 +87,8 @@ def test_dashboard_team_note_allowed_for_member(client, monkeypatch):
     assert captured["tenant_id"] == 1
     assert captured["params"]["dashboard_team_note"] == "Note équipe"
     assert captured["params"]["dashboard_team_note_updated_at"].endswith("Z")
+    assert isinstance(captured["params"]["dashboard_team_notes_json"], list)
+    assert captured["params"]["dashboard_team_notes_json"][0]["text"] == "Note équipe"
 
 
 def test_dashboard_team_note_persists_via_fallback_set_params(client, monkeypatch):
@@ -110,6 +112,39 @@ def test_dashboard_team_note_persists_via_fallback_set_params(client, monkeypatc
     params = get_params(1)
     assert params.get("dashboard_team_note") == note
     assert str(params.get("dashboard_team_note_updated_at") or "").endswith("Z")
+    items = params.get("dashboard_team_notes_json") or []
+    assert isinstance(items, list)
+    assert items and items[0].get("text") == note
+
+
+def test_dashboard_team_note_keeps_history_on_new_save(client, monkeypatch):
+    from backend.tenant_config import get_params
+
+    monkeypatch.setattr("backend.routes.tenant.config.USE_PG_TENANTS", False)
+    monkeypatch.setattr(
+        "backend.routes.tenant.pg_get_tenant_user_by_id",
+        lambda uid: {"user_id": uid, "tenant_id": 1, "role": "member", "email": "m@t.fr"},
+    )
+    monkeypatch.setattr("backend.routes.tenant.pg_update_tenant_params", lambda tid, params: False)
+    token = _client_token(1, 103, "member")
+    first = client.patch(
+        "/api/tenant/dashboard/team-note",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"note": "Première note"},
+    )
+    second = client.patch(
+        "/api/tenant/dashboard/team-note",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"note": "Deuxième note"},
+    )
+    assert first.status_code == 200
+    assert second.status_code == 200
+    params = get_params(1)
+    items = params.get("dashboard_team_notes_json") or []
+    assert isinstance(items, list)
+    assert len(items) >= 2
+    assert items[0].get("text") == "Deuxième note"
+    assert any(str(item.get("text") or "") == "Première note" for item in items[1:])
 
 
 def test_dashboard_team_note_returns_500_on_pg_write_failure(client, monkeypatch):

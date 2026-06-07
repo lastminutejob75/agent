@@ -300,6 +300,41 @@ def test_build_context_pack_keeps_notes_if_metrics_fail(monkeypatch):
     assert "Douleur mandibulaire" in reception["notes_recentes"][0]["content"]
 
 
+def test_build_context_pack_includes_cabinet_notes(monkeypatch):
+    tenant_id = 1
+    phone = "+33690002233"
+    from backend.db import get_conn, upsert_cabinet_client
+
+    upsert_cabinet_client(tenant_id, phone, raw_name="Noah")
+    monkeypatch.setattr(
+        "backend.services.context_providers.pg_get_tenant_params",
+        lambda _tid: (
+            {
+                "dashboard_team_notes_json": [
+                    {
+                        "id": "n1",
+                        "text": "Patient loin du cabinet, privilégier téléconsultation.",
+                        "author": "Equipe",
+                        "created_at": "2026-06-07T12:00:00Z",
+                    }
+                ]
+            },
+            "pg",
+        ),
+    )
+
+    conn = get_conn()
+    try:
+        pack, contains_health = build_context_pack(conn, tenant_id, phone, set())
+    finally:
+        conn.close()
+
+    assert contains_health is False
+    reception = pack.get("ReceptionProvider") or {}
+    assert reception.get("notes_cabinet")
+    assert "téléconsultation" in reception["notes_cabinet"][0]["content"]
+
+
 def test_sante_provider_mvp_and_v2_health(monkeypatch):
     monkeypatch.setenv("UWI_HDS_ENABLED", "true")
     tenant_id = 1

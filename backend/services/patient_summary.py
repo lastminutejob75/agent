@@ -66,6 +66,8 @@ def _pack_has_signal(pack: dict) -> bool:
         return True
     if reception.get("notes_recentes"):
         return True
+    if reception.get("notes_cabinet"):
+        return True
     if reception.get("events_recents"):
         return True
     if questionnaire.get("questionnaires_admin"):
@@ -317,6 +319,7 @@ def _fallback_summary(pack: dict, *, contains_health: bool, model: str) -> Dict[
     flags = reception.get("flags") or []
     pending = questionnaire.get("questionnaires_en_attente") or []
     notes = reception.get("notes_recentes") or []
+    cabinet_notes = reception.get("notes_cabinet") or []
     events = reception.get("events_recents") or []
     admin_forms = questionnaire.get("questionnaires_admin") or []
 
@@ -325,6 +328,10 @@ def _fallback_summary(pack: dict, *, contains_health: bool, model: str) -> Dict[
         note_text = str((notes[0] or {}).get("content") or "").strip()
         if note_text:
             context_bits.append(f"Dernière note praticien : {note_text[:180]}")
+    if cabinet_notes:
+        cab_note_text = str((cabinet_notes[0] or {}).get("content") or "").strip()
+        if cab_note_text:
+            context_bits.append(f"Note organisation cabinet : {cab_note_text[:180]}")
     if events:
         ev = events[0] or {}
         motif = str(ev.get("motif") or "").strip()
