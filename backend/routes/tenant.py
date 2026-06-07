@@ -6434,6 +6434,19 @@ def tenant_agenda_cancel_appointment(
                     google_event_id,
                 )
 
+        if google_event_id:
+            try:
+                from backend.public_bookings_pg import cancel_public_booking_by_google_event_id
+
+                cancel_public_booking_by_google_event_id(tenant_id, google_event_id)
+            except Exception as exc:
+                logger.debug(
+                    "tenant agenda cancel public mirror skip tenant_id=%s event_id=%s err=%s",
+                    tenant_id,
+                    google_event_id,
+                    exc,
+                )
+
         logger.info(
             "tenant agenda cancel google ok tenant_id=%s appointment_id=%s event_id=%s local_cancelled=%s",
             tenant_id,

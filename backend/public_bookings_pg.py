@@ -271,6 +271,38 @@ def cancel_public_booking_by_id(tenant_id: int, booking_id: str) -> bool:
         return False
 
 
+def cancel_public_booking_by_google_event_id(tenant_id: int, google_event_id: str) -> bool:
+    ensure_public_bookings_schema()
+    ge = (google_event_id or "").strip()
+    if not ge:
+        return False
+    try:
+        with pg_connection() as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE public_bookings
+                    SET status = 'cancelled', cancelled_at = NOW()
+                    WHERE tenant_id = %s AND google_event_id = %s
+                      AND status IN ('confirmed', 'pending')
+                    RETURNING id
+                    """,
+                    (tenant_id, ge),
+                )
+                row = cur.fetchone()
+            conn.commit()
+            return bool(row)
+    except Exception as exc:
+        logger.warning(
+            "cancel_public_booking_by_google_event_id failed tenant=%s ge=%s: %s",
+            tenant_id,
+            ge[:80],
+            exc,
+        )
+        return False
+
+
 def mark_public_booking_rescheduled(tenant_id: int, booking_id: str) -> bool:
     ensure_public_bookings_schema()
     try:
