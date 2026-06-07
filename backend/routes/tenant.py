@@ -6675,6 +6675,12 @@ def tenant_patch_dashboard_team_note(
     }
     ok = pg_update_tenant_params(tenant_id, payload)
     if not ok:
+        if config.USE_PG_TENANTS:
+            logger.error(
+                "tenant dashboard team note persist failed tenant_id=%s",
+                tenant_id,
+            )
+            raise HTTPException(500, "Impossible d'enregistrer la note pour le moment")
         set_params(tenant_id, payload)
     return {"ok": True, "dashboard_team_note": note, "dashboard_team_note_updated_at": updated_at}
 

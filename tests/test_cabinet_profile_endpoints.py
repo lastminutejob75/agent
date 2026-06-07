@@ -97,10 +97,10 @@ def test_pg_update_tenant_params_accepts_practitioner_name_and_string_fields():
                         },
                     )
     assert ok is True
-    # Le merge contient bien nos clés (sérialisées dans le payload JSON UPDATE).
-    upd = [q for q in captured["queries"] if "UPDATE tenant_config" in q[0]]
-    assert upd, "UPDATE tenant_config doit avoir été exécuté"
-    payload_str = upd[0][1][0]  # premier param = json.dumps(merged)
+    # Le merge contient bien nos clés (sérialisées dans le payload JSON d'écriture tenant_config).
+    upd = [q for q in captured["queries"] if "INSERT INTO tenant_config" in q[0] or "UPDATE tenant_config" in q[0]]
+    assert upd, "Une écriture tenant_config doit avoir été exécutée"
+    payload_str = upd[0][1][-1]  # dernier param = json.dumps(merged)
     assert "practitioner_name" in payload_str
     assert "website_url" in payload_str
     assert "public_slug" in payload_str
@@ -120,8 +120,8 @@ def test_pg_update_tenant_params_normalizes_bools_and_ints():
                 return False
 
             def execute(self_inner, q, params):
-                if "UPDATE tenant_config" in q:
-                    captured_payload["merged"] = params[0]
+                if "INSERT INTO tenant_config" in q or "UPDATE tenant_config" in q:
+                    captured_payload["merged"] = params[-1]
 
             @property
             def rowcount(self_inner):
@@ -200,8 +200,8 @@ def test_pg_update_tenant_params_canonicalizes_legacy_wizard_keys():
                 return False
 
             def execute(self_inner, q, params):
-                if "UPDATE tenant_config" in q:
-                    captured_payload["merged"] = params[0]
+                if "INSERT INTO tenant_config" in q or "UPDATE tenant_config" in q:
+                    captured_payload["merged"] = params[-1]
 
             @property
             def rowcount(self_inner):
@@ -259,8 +259,8 @@ def test_pg_update_tenant_params_drops_unknown_keys():
                 return False
 
             def execute(self_inner, q, params):
-                if "UPDATE tenant_config" in q:
-                    captured_payload["merged"] = params[0]
+                if "INSERT INTO tenant_config" in q or "UPDATE tenant_config" in q:
+                    captured_payload["merged"] = params[-1]
 
             @property
             def rowcount(self_inner):
@@ -317,8 +317,8 @@ def test_pg_update_tenant_params_accepts_dashboard_team_note_keys():
                 return False
 
             def execute(self_inner, q, params):
-                if "UPDATE tenant_config" in q:
-                    captured_payload["merged"] = params[0]
+                if "INSERT INTO tenant_config" in q or "UPDATE tenant_config" in q:
+                    captured_payload["merged"] = params[-1]
 
             @property
             def rowcount(self_inner):

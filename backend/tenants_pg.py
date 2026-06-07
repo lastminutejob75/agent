@@ -624,8 +624,13 @@ def pg_update_tenant_params(tenant_id: int, params: dict) -> bool:
             set_tenant_id_on_connection(conn, tenant_id)
             with conn.cursor() as cur:
                 cur.execute(
-                    "UPDATE tenant_config SET params_json = %s, updated_at = now() WHERE tenant_id = %s",
-                    (json.dumps(merged), tenant_id),
+                    """
+                    INSERT INTO tenant_config (tenant_id, flags_json, params_json, updated_at)
+                    VALUES (%s, %s, %s, now())
+                    ON CONFLICT (tenant_id)
+                    DO UPDATE SET params_json = EXCLUDED.params_json, updated_at = now()
+                    """,
+                    (tenant_id, "{}", json.dumps(merged)),
                 )
                 if tz_val:
                     cur.execute(

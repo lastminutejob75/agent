@@ -92,6 +92,7 @@ def test_dashboard_team_note_allowed_for_member(client, monkeypatch):
 def test_dashboard_team_note_persists_via_fallback_set_params(client, monkeypatch):
     from backend.tenant_config import get_params
 
+    monkeypatch.setattr("backend.routes.tenant.config.USE_PG_TENANTS", False)
     monkeypatch.setattr(
         "backend.routes.tenant.pg_get_tenant_user_by_id",
         lambda uid: {"user_id": uid, "tenant_id": 1, "role": "member", "email": "m@t.fr"},
@@ -109,3 +110,19 @@ def test_dashboard_team_note_persists_via_fallback_set_params(client, monkeypatc
     params = get_params(1)
     assert params.get("dashboard_team_note") == note
     assert str(params.get("dashboard_team_note_updated_at") or "").endswith("Z")
+
+
+def test_dashboard_team_note_returns_500_on_pg_write_failure(client, monkeypatch):
+    monkeypatch.setattr("backend.routes.tenant.config.USE_PG_TENANTS", True)
+    monkeypatch.setattr(
+        "backend.routes.tenant.pg_get_tenant_user_by_id",
+        lambda uid: {"user_id": uid, "tenant_id": 1, "role": "member", "email": "m@t.fr"},
+    )
+    monkeypatch.setattr("backend.routes.tenant.pg_update_tenant_params", lambda tid, params: False)
+    token = _client_token(1, 102, "member")
+    res = client.patch(
+        "/api/tenant/dashboard/team-note",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"note": "note"},
+    )
+    assert res.status_code == 500
