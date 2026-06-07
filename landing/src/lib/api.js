@@ -448,6 +448,11 @@ export const api = {
   },
   tenantCreatePatientNote: (phone, body) =>
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/notes`, { method: "POST", body, tenant: true }),
+  tenantUpdatePatientNote: (phone, noteId, body) =>
+    request(
+      `/api/tenant/patients/${encodeURIComponent(phone)}/notes/${encodeURIComponent(noteId)}`,
+      { method: "PATCH", body, tenant: true },
+    ),
   tenantDeletePatientNote: (phone, noteId) =>
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/notes/${encodeURIComponent(noteId)}`, { method: "DELETE", tenant: true }),
   tenantUploadPatientDocument: async (phone, file) => {

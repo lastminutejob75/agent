@@ -1239,6 +1239,102 @@ def delete_patient_note(
     return cur.rowcount > 0
 
 
+def update_patient_note(
+    tenant_id: int,
+    note_id: int,
+    *,
+    note_text: str,
+    patient_phone: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Met à jour une note patient (texte) avec scope anti-IDOR optionnel."""
+    from backend.crypto_at_rest import encrypt_str
+
+    phone_norm = normalize_phone_number(patient_phone) if patient_phone else ""
+    text = (note_text or "").strip()[:4000]
+    if not text:
+        return {}
+    stored = encrypt_str(text)
+    url = _pg_events_url()
+    if url:
+        try:
+            from backend.pg_pool import pg_connection_for
+
+            with pg_connection_for(url) as conn:
+                _ensure_patient_notes_table_pg(conn)
+                with conn.cursor() as cur:
+                    if phone_norm:
+                        cur.execute(
+                            """
+                            UPDATE patient_notes
+                            SET note_text = %s
+                            WHERE id = %s AND tenant_id = %s AND patient_phone = %s
+                            RETURNING id, tenant_id, patient_phone, author, created_at
+                            """,
+                            (stored, note_id, tenant_id, phone_norm),
+                        )
+                    else:
+                        cur.execute(
+                            """
+                            UPDATE patient_notes
+                            SET note_text = %s
+                            WHERE id = %s AND tenant_id = %s
+                            RETURNING id, tenant_id, patient_phone, author, created_at
+                            """,
+                            (stored, note_id, tenant_id),
+                        )
+                    row = cur.fetchone()
+                conn.commit()
+                if not row:
+                    return {}
+                out = dict(row)
+                out["note_text"] = text
+                return out
+        except Exception:
+            pass
+
+    conn = get_conn()
+    _ensure_patient_notes_table(conn)
+    if phone_norm:
+        cur = conn.execute(
+            "UPDATE patient_notes SET note_text = ? WHERE id = ? AND tenant_id = ? AND patient_phone = ?",
+            (stored, note_id, tenant_id, phone_norm),
+        )
+    else:
+        cur = conn.execute(
+            "UPDATE patient_notes SET note_text = ? WHERE id = ? AND tenant_id = ?",
+            (stored, note_id, tenant_id),
+        )
+    conn.commit()
+    if cur.rowcount <= 0:
+        return {}
+    conn.row_factory = sqlite3.Row
+    if phone_norm:
+        row = conn.execute(
+            """
+            SELECT id, tenant_id, patient_phone, author, created_at
+            FROM patient_notes
+            WHERE id = ? AND tenant_id = ? AND patient_phone = ?
+            LIMIT 1
+            """,
+            (note_id, tenant_id, phone_norm),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            """
+            SELECT id, tenant_id, patient_phone, author, created_at
+            FROM patient_notes
+            WHERE id = ? AND tenant_id = ?
+            LIMIT 1
+            """,
+            (note_id, tenant_id),
+        ).fetchone()
+    if not row:
+        return {}
+    out = dict(row)
+    out["note_text"] = text
+    return out
+
+
 def _normalize_patient_email(email: str) -> str:
     return (email or "").strip().lower()[:254]
 

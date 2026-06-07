@@ -345,6 +345,14 @@ function mapPatientNotes(items: unknown[]) {
   }));
 }
 
+const PATIENT_NOTE_PREVIEW_LIMIT = 180;
+
+function previewPatientNoteText(text: string) {
+  const raw = String(text || "");
+  if (raw.length <= PATIENT_NOTE_PREVIEW_LIMIT) return raw;
+  return `${raw.slice(0, PATIENT_NOTE_PREVIEW_LIMIT).trimEnd()}...`;
+}
+
 function buildPatientHeroFromProfile(p: Record<string, unknown> | undefined, fallbackPhone: string) {
   if (!p) return null;
   const name = String(p.display_name || p.validated_name || p.raw_name || "Patient").trim() || "Patient";
@@ -927,6 +935,10 @@ export default function PatientDashboardPage() {
   const [notesSaving, setNotesSaving] = useState(false);
   const [absenceNoteSavingKey, setAbsenceNoteSavingKey] = useState("");
   const [noteDeletingId, setNoteDeletingId] = useState<number | null>(null);
+  const [noteUpdatingId, setNoteUpdatingId] = useState<number | null>(null);
+  const [noteEditingId, setNoteEditingId] = useState<number | null>(null);
+  const [noteEditDraft, setNoteEditDraft] = useState("");
+  const [noteExpandedIds, setNoteExpandedIds] = useState<Record<number, boolean>>({});
   const [documents, setDocuments] = useState<PatientDocument[]>([]);
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [documentsUploading, setDocumentsUploading] = useState(false);
@@ -1040,6 +1052,14 @@ export default function PatientDashboardPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (noteEditingId === null) return;
+    if (!patientNotes.some((item) => item.id === noteEditingId)) {
+      setNoteEditingId(null);
+      setNoteEditDraft("");
+    }
+  }, [noteEditingId, patientNotes]);
+
   const notify = useCallback((message: string, opts?: { sticky?: boolean }) => {
     setToast(message);
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
@@ -1059,6 +1079,7 @@ export default function PatientDashboardPage() {
     if (profileSaveSaving) return "Enregistrement du profil patient…";
     if (createFicheSaving) return "Création de la fiche patient…";
     if (notesSaving) return "Enregistrement de la note…";
+    if (noteUpdatingId) return "Modification de la note…";
     if (absenceNoteSavingKey) return "Enregistrement de l'absence…";
     if (emailSaving) return "Enregistrement de l'email…";
     if (phoneSaving) return "Enregistrement du numéro…";
@@ -1081,6 +1102,7 @@ export default function PatientDashboardPage() {
     profileSaveSaving,
     createFicheSaving,
     notesSaving,
+    noteUpdatingId,
     absenceNoteSavingKey,
     emailSaving,
     phoneSaving,
@@ -1662,6 +1684,11 @@ export default function PatientDashboardPage() {
     setPatientHistory([]);
     setDocumentsLoading(false);
     setNotesLoading(activeView === "overview");
+    setNoteDeletingId(null);
+    setNoteUpdatingId(null);
+    setNoteEditingId(null);
+    setNoteEditDraft("");
+    setNoteExpandedIds({});
 
     const notesPromise = activeView === "overview"
       ? api.tenantGetPatientNotes(tenantPatientPhone, "?limit=40").catch(() => ({ items: [] }))
@@ -2416,6 +2443,56 @@ export default function PatientDashboardPage() {
     }
   };
 
+  const toggleNoteExpanded = (noteId: number) => {
+    setNoteExpandedIds((prev) => ({ ...prev, [noteId]: !prev[noteId] }));
+  };
+
+  const startNoteEdit = (item: PatientNote) => {
+    setNoteEditingId(item.id);
+    setNoteEditDraft(String(item.text || ""));
+  };
+
+  const cancelNoteEdit = () => {
+    setNoteEditingId(null);
+    setNoteEditDraft("");
+  };
+
+  const saveEditedNote = async (noteId: number) => {
+    if (!tenantPatientPhone || !noteId) return false;
+    const normalizedText = String(noteEditDraft || "").trim();
+    if (!normalizedText) {
+      notify("Ajoute une note avant d'enregistrer");
+      return false;
+    }
+    if (!confirmImportantAction("Confirmer la modification de cette note patient ?")) return false;
+    setNoteUpdatingId(noteId);
+    try {
+      const res = await api.tenantUpdatePatientNote(tenantPatientPhone, noteId, { text: normalizedText });
+      const updated = res?.item;
+      setPatientNotes((prev) =>
+        prev.map((item) =>
+          item.id === noteId
+            ? {
+              ...item,
+              text: String(updated?.text || normalizedText),
+              author: String(updated?.author || item.author || "Praticien"),
+              created_at: String(updated?.created_at || item.created_at || ""),
+            }
+            : item,
+        ),
+      );
+      setNoteEditingId(null);
+      setNoteEditDraft("");
+      notify("Note modifiée");
+      return true;
+    } catch (e) {
+      notify((e as Error)?.message || "Erreur modification note");
+      return false;
+    } finally {
+      setNoteUpdatingId(null);
+    }
+  };
+
   const removeNote = async (noteId: number) => {
     if (!tenantPatientPhone || !noteId) return;
     if (!confirmImportantAction("Confirmer la suppression de cette note ?")) return;
@@ -2423,6 +2500,15 @@ export default function PatientDashboardPage() {
     try {
       await api.tenantDeletePatientNote(tenantPatientPhone, noteId);
       setPatientNotes((prev) => prev.filter((item) => item.id !== noteId));
+      setNoteExpandedIds((prev) => {
+        const next = { ...prev };
+        delete next[noteId];
+        return next;
+      });
+      if (noteEditingId === noteId) {
+        setNoteEditingId(null);
+        setNoteEditDraft("");
+      }
       notify("Note supprimée");
     } catch (e) {
       notify((e as Error)?.message || "Erreur suppression note");
@@ -3210,7 +3296,18 @@ export default function PatientDashboardPage() {
               patientNotes={patientNotes}
               notesLoading={notesLoading}
               noteDeletingId={noteDeletingId}
+              noteUpdatingId={noteUpdatingId}
+              noteEditingId={noteEditingId}
+              noteEditDraft={noteEditDraft}
+              noteExpandedIds={noteExpandedIds}
               onRemoveNote={removeNote}
+              onStartEditNote={startNoteEdit}
+              onCancelEditNote={cancelNoteEdit}
+              onChangeNoteEditDraft={setNoteEditDraft}
+              onSaveNoteEdit={(id) => {
+                void saveEditedNote(id);
+              }}
+              onToggleNoteExpanded={toggleNoteExpanded}
               patientHistory={patientHistory}
               patientHistoryLoading={patientHistoryLoading}
               documents={documents}
@@ -3753,22 +3850,83 @@ export default function PatientDashboardPage() {
                         ) : patientNotes.length === 0 ? (
                           <div className="text-sm text-white/70">Aucune note pour ce patient.</div>
                         ) : (
-                          patientNotes.slice(0, 4).map((item) => (
-                            <div key={item.id} className="border-b border-white/20 pb-4">
-                              <div className="text-base font-semibold">♡ {item.text}</div>
-                              <div className="mt-1 flex items-center justify-between text-sm text-white/60">
-                                <span>{item.author} · {new Date(item.created_at).toLocaleDateString("fr-FR")}</span>
-                                <button
-                                  type="button"
-                                  onClick={() => removeNote(item.id)}
-                                  disabled={noteDeletingId === item.id}
-                                  className="rounded border border-white/25 px-2 py-0.5 text-xs font-bold text-white/80 hover:bg-white/10 disabled:opacity-50"
-                                >
-                                  {noteDeletingId === item.id ? "..." : "Supprimer"}
-                                </button>
+                          patientNotes.slice(0, 4).map((item) => {
+                            const isDeleting = noteDeletingId === item.id;
+                            const isUpdating = noteUpdatingId === item.id;
+                            const isEditing = noteEditingId === item.id;
+                            const isExpanded = Boolean(noteExpandedIds[item.id]);
+                            const rawText = String(item.text || "");
+                            const hasOverflow = rawText.length > PATIENT_NOTE_PREVIEW_LIMIT;
+                            return (
+                              <div key={item.id} className="border-b border-white/20 pb-4">
+                                {isEditing ? (
+                                  <div className="space-y-2">
+                                    <textarea
+                                      value={noteEditDraft}
+                                      onChange={(event) => setNoteEditDraft(event.target.value)}
+                                      disabled={isUpdating}
+                                      className="h-20 w-full resize-none rounded-xl border border-white/20 bg-white px-3 py-2 text-sm font-semibold text-[#0A1628] outline-none focus:ring-4 focus:ring-[#00C4CC]/25 disabled:opacity-60"
+                                    />
+                                    <div className="flex flex-wrap gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          void saveEditedNote(item.id);
+                                        }}
+                                        disabled={isUpdating}
+                                        className="rounded border border-[#9DE7EC] bg-[#00A5AE] px-3 py-1 text-xs font-black text-white hover:bg-[#00939B] disabled:opacity-60"
+                                      >
+                                        {isUpdating ? "Enregistrement..." : "Enregistrer"}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={cancelNoteEdit}
+                                        disabled={isUpdating}
+                                        className="rounded border border-white/30 px-3 py-1 text-xs font-black text-white/85 hover:bg-white/10 disabled:opacity-60"
+                                      >
+                                        Annuler
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <div className="text-base font-semibold">♡ {isExpanded ? rawText : previewPatientNoteText(rawText)}</div>
+                                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                                      {hasOverflow ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleNoteExpanded(item.id)}
+                                          disabled={isDeleting || isUpdating}
+                                          className="rounded border border-white/25 px-2 py-0.5 text-xs font-bold text-white/80 hover:bg-white/10 disabled:opacity-50"
+                                        >
+                                          {isExpanded ? "Afficher moins" : "Lire la suite"}
+                                        </button>
+                                      ) : null}
+                                      <button
+                                        type="button"
+                                        onClick={() => startNoteEdit(item)}
+                                        disabled={isDeleting || isUpdating}
+                                        className="rounded border border-white/25 px-2 py-0.5 text-xs font-bold text-white/80 hover:bg-white/10 disabled:opacity-50"
+                                      >
+                                        Modifier
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => removeNote(item.id)}
+                                        disabled={isDeleting || isUpdating}
+                                        className="rounded border border-white/25 px-2 py-0.5 text-xs font-bold text-white/80 hover:bg-white/10 disabled:opacity-50"
+                                      >
+                                        {isDeleting ? "..." : "Supprimer"}
+                                      </button>
+                                    </div>
+                                  </>
+                                )}
+                                <div className="mt-1 text-sm text-white/60">
+                                  <span>{item.author} · {new Date(item.created_at).toLocaleDateString("fr-FR")}</span>
+                                </div>
                               </div>
-                            </div>
-                          ))
+                            );
+                          })
                         )}
                       </div>
 

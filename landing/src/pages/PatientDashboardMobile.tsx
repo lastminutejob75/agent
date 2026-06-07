@@ -36,6 +36,14 @@ type PatientNote = {
   created_at: string;
 };
 
+const PATIENT_NOTE_PREVIEW_LIMIT = 150;
+
+function previewPatientNoteText(text: string) {
+  const raw = String(text || "");
+  if (raw.length <= PATIENT_NOTE_PREVIEW_LIMIT) return raw;
+  return `${raw.slice(0, PATIENT_NOTE_PREVIEW_LIMIT).trimEnd()}...`;
+}
+
 type PatientDocument = {
   id: number;
   original_name: string;
@@ -121,7 +129,16 @@ export type PatientDashboardMobileProps = {
   patientNotes: PatientNote[];
   notesLoading: boolean;
   noteDeletingId: number | null;
+  noteUpdatingId: number | null;
+  noteEditingId: number | null;
+  noteEditDraft: string;
+  noteExpandedIds: Record<number, boolean>;
   onRemoveNote: (id: number) => void;
+  onStartEditNote: (note: PatientNote) => void;
+  onCancelEditNote: () => void;
+  onChangeNoteEditDraft: (value: string) => void;
+  onSaveNoteEdit: (id: number) => void;
+  onToggleNoteExpanded: (id: number) => void;
   patientHistory: HistoryItem[];
   patientHistoryLoading: boolean;
   documents: PatientDocument[];
@@ -489,14 +506,32 @@ function MobileContextPatient({
   notes,
   notesLoading,
   noteDeletingId,
+  noteUpdatingId,
+  noteEditingId,
+  noteEditDraft,
+  noteExpandedIds,
   onRemoveNote,
+  onStartEditNote,
+  onCancelEditNote,
+  onChangeNoteEditDraft,
+  onSaveNoteEdit,
+  onToggleNoteExpanded,
 }: {
   phone: string;
   summaryRefreshNonce: number;
   notes: PatientNote[];
   notesLoading: boolean;
   noteDeletingId: number | null;
+  noteUpdatingId: number | null;
+  noteEditingId: number | null;
+  noteEditDraft: string;
+  noteExpandedIds: Record<number, boolean>;
   onRemoveNote: (id: number) => void;
+  onStartEditNote: (note: PatientNote) => void;
+  onCancelEditNote: () => void;
+  onChangeNoteEditDraft: (value: string) => void;
+  onSaveNoteEdit: (id: number) => void;
+  onToggleNoteExpanded: (id: number) => void;
 }) {
   return (
     <section className="mb-3 rounded-[24px] bg-gradient-to-br from-[#06213E] via-[#003B63] to-[#007B88] p-[18px] text-white shadow-[0_12px_28px_rgba(0,59,99,0.22)]">
@@ -515,24 +550,81 @@ function MobileContextPatient({
         <p className="mt-3 text-sm text-white/70">Aucune note pour ce patient.</p>
       ) : (
         <div className="mt-3 space-y-4">
-          {notes.slice(0, 3).map((item) => (
-            <div key={item.id} className="flex items-end justify-between gap-2.5">
-              <div className="min-w-0">
-                <p className="m-0 text-base leading-snug">{item.text}</p>
-                <span className="text-sm text-white/60">
+          {notes.slice(0, 3).map((item) => {
+            const isDeleting = noteDeletingId === item.id;
+            const isUpdating = noteUpdatingId === item.id;
+            const isEditing = noteEditingId === item.id;
+            const isExpanded = Boolean(noteExpandedIds[item.id]);
+            const rawText = String(item.text || "");
+            const hasOverflow = rawText.length > PATIENT_NOTE_PREVIEW_LIMIT;
+            return (
+              <div key={item.id} className="rounded-xl border border-white/20 p-3">
+                {isEditing ? (
+                  <div className="space-y-2">
+                    <textarea
+                      value={noteEditDraft}
+                      onChange={(event) => onChangeNoteEditDraft(event.target.value)}
+                      disabled={isUpdating}
+                      className="h-20 w-full resize-none rounded-xl border border-white/20 bg-white px-3 py-2 text-sm font-semibold text-[#0A1628] outline-none focus:ring-4 focus:ring-[#00C4CC]/25 disabled:opacity-60"
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onSaveNoteEdit(item.id)}
+                        disabled={isUpdating}
+                        className="rounded border border-[#9DE7EC] bg-[#00A5AE] px-3 py-1 text-xs font-black text-white disabled:opacity-60"
+                      >
+                        {isUpdating ? "Enregistrement..." : "Enregistrer"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={onCancelEditNote}
+                        disabled={isUpdating}
+                        className="rounded border border-white/45 px-3 py-1 text-xs font-black text-white disabled:opacity-60"
+                      >
+                        Annuler
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <p className="m-0 text-base leading-snug">{isExpanded ? rawText : previewPatientNoteText(rawText)}</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {hasOverflow ? (
+                        <button
+                          type="button"
+                          onClick={() => onToggleNoteExpanded(item.id)}
+                          disabled={isDeleting || isUpdating}
+                          className="rounded border border-white/45 px-2.5 py-1 text-xs font-extrabold text-white disabled:opacity-50"
+                        >
+                          {isExpanded ? "Afficher moins" : "Lire la suite"}
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => onStartEditNote(item)}
+                        disabled={isDeleting || isUpdating}
+                        className="rounded border border-white/45 px-2.5 py-1 text-xs font-extrabold text-white disabled:opacity-50"
+                      >
+                        Modifier
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onRemoveNote(item.id)}
+                        disabled={isDeleting || isUpdating}
+                        className="rounded border border-white/45 px-2.5 py-1 text-xs font-extrabold text-white disabled:opacity-50"
+                      >
+                        {isDeleting ? "…" : "Supprimer"}
+                      </button>
+                    </div>
+                  </>
+                )}
+                <span className="mt-2 block text-sm text-white/60">
                   {item.author} · {new Date(item.created_at).toLocaleDateString("fr-FR")}
                 </span>
               </div>
-              <button
-                type="button"
-                onClick={() => onRemoveNote(item.id)}
-                disabled={noteDeletingId === item.id}
-                className="shrink-0 rounded-xl border border-white/45 px-3.5 py-2 text-sm font-extrabold text-white disabled:opacity-50"
-              >
-                {noteDeletingId === item.id ? "…" : "Supprimer"}
-              </button>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </section>
@@ -791,7 +883,16 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
     patientNotes,
     notesLoading,
     noteDeletingId,
+    noteUpdatingId,
+    noteEditingId,
+    noteEditDraft,
+    noteExpandedIds,
     onRemoveNote,
+    onStartEditNote,
+    onCancelEditNote,
+    onChangeNoteEditDraft,
+    onSaveNoteEdit,
+    onToggleNoteExpanded,
     patientHistory,
     patientHistoryLoading,
     documents,
@@ -841,7 +942,16 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
             notes={patientNotes}
             notesLoading={notesLoading}
             noteDeletingId={noteDeletingId}
+            noteUpdatingId={noteUpdatingId}
+            noteEditingId={noteEditingId}
+            noteEditDraft={noteEditDraft}
+            noteExpandedIds={noteExpandedIds}
             onRemoveNote={onRemoveNote}
+            onStartEditNote={onStartEditNote}
+            onCancelEditNote={onCancelEditNote}
+            onChangeNoteEditDraft={onChangeNoteEditDraft}
+            onSaveNoteEdit={onSaveNoteEdit}
+            onToggleNoteExpanded={onToggleNoteExpanded}
           />
           <PatientQuestionnaireCard
             phone={tenantPatientPhone}

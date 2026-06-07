@@ -48,6 +48,7 @@ from backend.db import (
     get_call_followup,
     get_conn,
     insert_patient_note,
+    update_patient_note,
     is_valid_patient_phone,
     is_valid_contact_email,
     insert_patient_document,
@@ -4049,6 +4050,10 @@ class PatientNoteCreateBody(BaseModel):
     author: Optional[str] = Field(default="Praticien", max_length=120)
 
 
+class PatientNoteUpdateBody(BaseModel):
+    text: str = Field(..., min_length=1, max_length=4000)
+
+
 class PatientDeleteConfirmBody(BaseModel):
     confirmation_token: str = Field(..., min_length=20, max_length=4096)
     confirmation_phrase: str = Field(..., min_length=1, max_length=40)
@@ -4724,6 +4729,36 @@ def tenant_delete_patient_note(
     if not delete_patient_note(tenant_id, note_id, patient_phone=phone):
         raise HTTPException(404, "Note not found")
     return {"ok": True}
+
+
+@router.patch("/patients/{phone}/notes/{note_id}")
+def tenant_update_patient_note(
+    phone: str,
+    note_id: int,
+    body: PatientNoteUpdateBody,
+    auth: dict = Depends(require_tenant_auth),
+):
+    tenant_id = auth["tenant_id"]
+    profile = get_cabinet_client_by_phone(tenant_id, phone)
+    if not profile:
+        raise HTTPException(404, "Patient not found")
+    updated = update_patient_note(
+        tenant_id,
+        note_id,
+        note_text=body.text,
+        patient_phone=phone,
+    )
+    if not updated:
+        raise HTTPException(404, "Note not found")
+    return {
+        "ok": True,
+        "item": {
+            "id": updated.get("id"),
+            "text": updated.get("note_text") or "",
+            "author": updated.get("author") or "Cabinet",
+            "created_at": str(updated.get("created_at", "")),
+        },
+    }
 
 
 
