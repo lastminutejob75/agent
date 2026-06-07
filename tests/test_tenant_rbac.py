@@ -147,6 +147,46 @@ def test_dashboard_team_note_keeps_history_on_new_save(client, monkeypatch):
     assert any(str(item.get("text") or "") == "Première note" for item in items[1:])
 
 
+def test_dashboard_team_note_uses_bypass_params_for_history(client, monkeypatch):
+    monkeypatch.setattr("backend.routes.tenant.config.USE_PG_TENANTS", True)
+    monkeypatch.setattr(
+        "backend.routes.tenant.pg_get_tenant_user_by_id",
+        lambda uid: {"user_id": uid, "tenant_id": 1, "role": "member", "email": "m@t.fr"},
+    )
+    monkeypatch.setattr(
+        "backend.tenants_pg.pg_load_tenant_params_bypass",
+        lambda _tid: {
+            "dashboard_team_notes_json": [
+                {
+                    "id": "old",
+                    "text": "Note précédente",
+                    "author": "Equipe",
+                    "created_at": "2026-06-07T10:00:00Z",
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr("backend.tenants_pg.pg_get_tenant_params", lambda _tid: ({}, "pg"))
+    captured = {}
+
+    def _update_params(_tid, params):
+        captured["params"] = params
+        return True
+
+    monkeypatch.setattr("backend.routes.tenant.pg_update_tenant_params", _update_params)
+    token = _client_token(1, 104, "member")
+    res = client.patch(
+        "/api/tenant/dashboard/team-note",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"note": "Nouvelle note"},
+    )
+    assert res.status_code == 200
+    items = (captured.get("params") or {}).get("dashboard_team_notes_json") or []
+    assert len(items) >= 2
+    assert items[0]["text"] == "Nouvelle note"
+    assert any(item.get("text") == "Note précédente" for item in items[1:])
+
+
 def test_dashboard_team_note_returns_500_on_pg_write_failure(client, monkeypatch):
     monkeypatch.setattr("backend.routes.tenant.config.USE_PG_TENANTS", True)
     monkeypatch.setattr(

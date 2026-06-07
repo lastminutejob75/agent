@@ -6744,12 +6744,16 @@ def tenant_patch_dashboard_team_note(
     current_params: Dict[str, Any] = {}
     if config.USE_PG_TENANTS:
         try:
-            from backend.tenants_pg import pg_get_tenant_params
+            from backend.tenants_pg import pg_get_tenant_params, pg_load_tenant_params_bypass
 
-            got = pg_get_tenant_params(tenant_id)
-            maybe_params = got[0] if got else {}
-            if isinstance(maybe_params, dict):
-                current_params = maybe_params
+            bypass = pg_load_tenant_params_bypass(tenant_id)
+            if isinstance(bypass, dict) and bypass:
+                current_params = bypass
+            if not current_params:
+                got = pg_get_tenant_params(tenant_id)
+                maybe_params = got[0] if got else {}
+                if isinstance(maybe_params, dict):
+                    current_params = maybe_params
         except Exception:
             current_params = {}
     if not current_params:

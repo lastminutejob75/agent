@@ -307,6 +307,19 @@ def test_build_context_pack_includes_cabinet_notes(monkeypatch):
 
     upsert_cabinet_client(tenant_id, phone, raw_name="Noah")
     monkeypatch.setattr(
+        "backend.services.context_providers.pg_load_tenant_params_bypass",
+        lambda _tid: {
+            "dashboard_team_notes_json": [
+                {
+                    "id": "n1",
+                    "text": "Patient loin du cabinet, privilégier téléconsultation.",
+                    "author": "Equipe",
+                    "created_at": "2026-06-07T12:00:00Z",
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(
         "backend.services.context_providers.pg_get_tenant_params",
         lambda _tid: (
             {

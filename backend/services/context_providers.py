@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Tuple
 from backend.db import get_cabinet_client_by_phone, list_patient_notes
 from backend.patient_v2_db import fetch_all_pg, normalize_patient_phone
 from backend.services.patient_metrics import get_patient_metrics
-from backend.tenants_pg import pg_get_tenant_params
+from backend.tenants_pg import pg_get_tenant_params, pg_load_tenant_params_bypass
 from backend.tenant_config import get_params
 
 logger = logging.getLogger(__name__)
@@ -70,12 +70,19 @@ def _fetch_notes(db, tenant_id: int, patient_phone: str, *, limit: int = 5) -> L
 def _fetch_cabinet_team_notes(tenant_id: int, *, limit: int = 5) -> List[Dict[str, Any]]:
     params: Dict[str, Any] = {}
     try:
-        got = pg_get_tenant_params(tenant_id)
-        maybe_params = got[0] if got else {}
-        if isinstance(maybe_params, dict):
-            params = maybe_params
+        bypass = pg_load_tenant_params_bypass(tenant_id)
+        if isinstance(bypass, dict) and bypass:
+            params = bypass
     except Exception:
         params = {}
+    if not params:
+        try:
+            got = pg_get_tenant_params(tenant_id)
+            maybe_params = got[0] if got else {}
+            if isinstance(maybe_params, dict):
+                params = maybe_params
+        except Exception:
+            params = {}
     if not params:
         try:
             maybe_params = get_params(tenant_id)
