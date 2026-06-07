@@ -459,6 +459,7 @@ def pg_update_tenant_params(tenant_id: int, params: dict) -> bool:
         "assistant_name", "phone_number", "sector",
         "specialty_label", "address_line1", "postal_code", "city", "agenda_software",
         "client_onboarding_completed",
+        "dashboard_team_note", "dashboard_team_note_updated_at",
         "hds_enabled",
         "faq_json",
         "booking_duration_minutes", "booking_start_hour", "booking_end_hour",

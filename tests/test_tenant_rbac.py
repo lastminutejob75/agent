@@ -87,3 +87,25 @@ def test_dashboard_team_note_allowed_for_member(client, monkeypatch):
     assert captured["tenant_id"] == 1
     assert captured["params"]["dashboard_team_note"] == "Note équipe"
     assert captured["params"]["dashboard_team_note_updated_at"].endswith("Z")
+
+
+def test_dashboard_team_note_persists_via_fallback_set_params(client, monkeypatch):
+    from backend.tenant_config import get_params
+
+    monkeypatch.setattr(
+        "backend.routes.tenant.pg_get_tenant_user_by_id",
+        lambda uid: {"user_id": uid, "tenant_id": 1, "role": "member", "email": "m@t.fr"},
+    )
+    # Force le chemin fallback SQLite pour valider la persistance locale aussi.
+    monkeypatch.setattr("backend.routes.tenant.pg_update_tenant_params", lambda tid, params: False)
+    token = _client_token(1, 101, "member")
+    note = "Note équipe persistée test"
+    save = client.patch(
+        "/api/tenant/dashboard/team-note",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"note": note},
+    )
+    assert save.status_code == 200
+    params = get_params(1)
+    assert params.get("dashboard_team_note") == note
+    assert str(params.get("dashboard_team_note_updated_at") or "").endswith("Z")

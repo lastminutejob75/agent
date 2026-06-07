@@ -144,3 +144,21 @@ def test_set_params_auto_derives_horaires(monkeypatch, tmp_path):
     })
     params = get_params(1)
     assert params["horaires"] == "Lun, Mer, Ven · 10h–17h"
+
+
+def test_set_params_allows_dashboard_team_note(monkeypatch, tmp_path):
+    import backend.db as db
+
+    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "agent.db"))
+    db.init_db(days=0)
+    db.ensure_tenant_config()
+    set_params(
+        1,
+        {
+            "dashboard_team_note": "Point de vigilance patient X",
+            "dashboard_team_note_updated_at": "2026-06-07T12:00:00Z",
+        },
+    )
+    params = get_params(1)
+    assert params["dashboard_team_note"] == "Point de vigilance patient X"
+    assert params["dashboard_team_note_updated_at"] == "2026-06-07T12:00:00Z"

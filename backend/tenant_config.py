@@ -861,6 +861,7 @@ def set_params(tenant_id: int, params: Dict[str, str]) -> None:
         "assistant_name", "phone_number", "sector",
         "specialty_label", "address_line1", "postal_code", "city", "agenda_software",
         "client_onboarding_completed", "dashboard_tour_completed",
+        "dashboard_team_note", "dashboard_team_note_updated_at",
         "faq_json",
         "booking_duration_minutes", "booking_start_hour", "booking_end_hour",
         "booking_buffer_minutes", "booking_days",

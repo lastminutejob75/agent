@@ -303,6 +303,63 @@ def test_pg_update_tenant_params_drops_unknown_keys():
     assert "another_unknown" not in merged
 
 
+def test_pg_update_tenant_params_accepts_dashboard_team_note_keys():
+    from backend import tenants_pg
+
+    captured_payload = {}
+
+    def _fake_connect(url):
+        class Cur:
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *a):
+                return False
+
+            def execute(self_inner, q, params):
+                if "UPDATE tenant_config" in q:
+                    captured_payload["merged"] = params[0]
+
+            @property
+            def rowcount(self_inner):
+                return 1
+
+        class Conn:
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *a):
+                return False
+
+            def cursor(self_inner):
+                return Cur()
+
+            def commit(self_inner):
+                pass
+
+        return Conn()
+
+    fake_psycopg = type("M", (), {"connect": staticmethod(_fake_connect)})()
+
+    with patch.dict(sys.modules, {"psycopg": fake_psycopg}):
+        with patch("backend.tenants_pg._pg_url", return_value="postgres://test"):
+            with patch("backend.tenants_pg.pg_get_tenant_params", return_value=({}, "pg")):
+                with patch("backend.tenants_pg.set_tenant_id_on_connection"):
+                    tenants_pg.pg_update_tenant_params(
+                        12,
+                        {
+                            "dashboard_team_note": "Note persistée",
+                            "dashboard_team_note_updated_at": "2026-06-07T12:00:00Z",
+                        },
+                    )
+
+    import json as _json
+
+    merged = _json.loads(captured_payload["merged"])
+    assert merged["dashboard_team_note"] == "Note persistée"
+    assert merged["dashboard_team_note_updated_at"] == "2026-06-07T12:00:00Z"
+
+
 # ============================================================
 # 2. PATCH /api/tenant/profile : double écriture PG + params_json
 # ============================================================
