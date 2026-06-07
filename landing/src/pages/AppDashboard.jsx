@@ -224,6 +224,8 @@ export default function AppDashboard() {
   const [bookingDurationMinutes, setBookingDurationMinutes] = useState(30);
   const [connections, setConnections] = useState({ vapi: null, calendar: null });
   const [teamNote, setTeamNote] = useState("");
+  const [savedTeamNote, setSavedTeamNote] = useState("");
+  const [savedTeamNoteUpdatedAt, setSavedTeamNoteUpdatedAt] = useState("");
   const [teamNoteSaving, setTeamNoteSaving] = useState(false);
 
   const notify = (msg) => {
@@ -347,9 +349,9 @@ export default function AppDashboard() {
   }, []);
 
   useEffect(() => {
-    const existing = String(me?.dashboard_team_note || "");
-    setTeamNote(existing);
-  }, [me?.dashboard_team_note]);
+    setSavedTeamNote(String(me?.dashboard_team_note || ""));
+    setSavedTeamNoteUpdatedAt(String(me?.dashboard_team_note_updated_at || ""));
+  }, [me?.dashboard_team_note, me?.dashboard_team_note_updated_at]);
 
   const today = new Date();
   const bookedSlots = useMemo(
@@ -436,8 +438,10 @@ export default function AppDashboard() {
     const normalizedNote = String(teamNote || "").trim();
     setTeamNoteSaving(true);
     try {
-      await api.tenantPatchDashboardTeamNote(normalizedNote);
-      setTeamNote(normalizedNote);
+      const data = await api.tenantPatchDashboardTeamNote(normalizedNote);
+      setSavedTeamNote(String(data?.dashboard_team_note ?? normalizedNote));
+      setSavedTeamNoteUpdatedAt(String(data?.dashboard_team_note_updated_at || new Date().toISOString()));
+      setTeamNote("");
       notify("Note enregistrée");
     } catch {
       notify("Impossible d'enregistrer la note");
@@ -774,6 +778,8 @@ export default function AppDashboard() {
                 noteText={teamNote}
                 onNoteChange={setTeamNote}
                 onSave={saveTeamNote}
+                savedNoteText={savedTeamNote}
+                savedUpdatedAt={savedTeamNoteUpdatedAt}
                 saving={teamNoteSaving}
                 IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
                 BtnComponent={Btn}
@@ -800,6 +806,8 @@ export default function AppDashboard() {
                 noteText={teamNote}
                 onNoteChange={setTeamNote}
                 onSave={saveTeamNote}
+                savedNoteText={savedTeamNote}
+                savedUpdatedAt={savedTeamNoteUpdatedAt}
                 saving={teamNoteSaving}
                 IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
                 BtnComponent={Btn}
