@@ -8,10 +8,12 @@ function shortNote(text) {
   return `${raw.slice(0, NOTE_PREVIEW_LIMIT).trimEnd()}...`;
 }
 
-function compactSnippet(text, maxLen = 120) {
-  const raw = String(text || "").replace(/\s+/g, " ").trim();
-  if (raw.length <= maxLen) return raw;
-  return `${raw.slice(0, maxLen).trimEnd()}...`;
+function joinHumanList(parts = []) {
+  const clean = parts.filter(Boolean);
+  if (clean.length === 0) return "";
+  if (clean.length === 1) return clean[0];
+  if (clean.length === 2) return `${clean[0]} et ${clean[1]}`;
+  return `${clean.slice(0, -1).join(", ")} et ${clean[clean.length - 1]}`;
 }
 
 export default function DarkSummaryCard({
@@ -56,28 +58,59 @@ export default function DarkSummaryCard({
     if (!hasSignals) {
       return "Résumé IA prêt, mais aucune activité significative n'a encore été détectée aujourd'hui.";
     }
-    const recentNotes = teamNotes
-      .slice(0, 3)
-      .map((item) => compactSnippet(item?.text || ""))
-      .filter(Boolean);
-    const notesCorpus = recentNotes.join(" ").toLowerCase();
-    const themes = [];
-    if (/no[\s-]?show|absence|absent/.test(notesCorpus)) themes.push("no-show");
-    if (/t[ée]l[ée]m[ée]decine|t[ée]l[ée]consultation|visio/.test(notesCorpus)) themes.push("télémédecine");
-    if (/rappel|relance/.test(notesCorpus)) themes.push("rappels");
-    const themesLabel = themes.length > 0 ? `Points clés: ${themes.join(", ")}.` : "";
-    const notesDigest = recentNotes.length > 0
-      ? `Notes récentes: ${recentNotes.map((n, idx) => `N${idx + 1} "${n}"`).join(" | ")}.`
-      : `${teamNotes.length} note${teamNotes.length > 1 ? "s" : ""} d'équipe enregistrée${teamNotes.length > 1 ? "s" : ""}.`;
-    const notesSuffix = teamNotes.length > 1
-      ? ` (${teamNotes.length} notes au total)`
-      : "";
-    if (teamNotes.length > 0 && handledTodayCount <= 0 && urgentCount <= 0 && !Number.isFinite(avgResponseMinutes)) {
-      return `Résumé IA : ${themesLabel} ${notesDigest}${notesSuffix}`.trim();
+    const notesCorpus = teamNotes
+      .slice(0, 6)
+      .map((item) => String(item?.text || ""))
+      .join(" ")
+      .toLowerCase();
+    const hasNoShow = /no[\s-]?show|absence|absent/.test(notesCorpus);
+    const hasTelemed = /t[ée]l[ée]m[ée]decine|t[ée]l[ée]consultation|visio/.test(notesCorpus);
+    const hasReminder = /rappel|relance/.test(notesCorpus);
+
+    const contextParts = [];
+    if (hasNoShow) contextParts.push("les absences et no-show restent un enjeu operationnel");
+    if (hasTelemed) contextParts.push("la telemedecine est utilisee comme modalite de suivi");
+    if (hasReminder) contextParts.push("les relances patients structurent une partie du suivi");
+    if (teamNotes.length > 0 && contextParts.length === 0) {
+      contextParts.push("les notes d'equipe indiquent un suivi clinique et administratif actif");
     }
-    return `Résumé IA : ${themesLabel} ${notesDigest}${notesSuffix} ${handledTodayCount} demande${handledTodayCount > 1 ? "s" : ""} traitée${handledTodayCount > 1 ? "s" : ""} aujourd'hui`
-      + `${urgentCount > 0 ? `, dont ${urgentCount} urgente${urgentCount > 1 ? "s" : ""}` : ""}`
-      + `. Délai moyen de réponse : ${delayLabel}.`;
+
+    const contextSentence = teamNotes.length > 0
+      ? `Les dernieres notes d'equipe montrent que ${joinHumanList(contextParts)}`
+      : "Le contexte cabinet repose principalement sur l'activite operationnelle du jour";
+
+    const activityParts = [];
+    if (handledTodayCount > 0) {
+      activityParts.push(`${handledTodayCount} demande${handledTodayCount > 1 ? "s" : ""} traitee${handledTodayCount > 1 ? "s" : ""} aujourd'hui`);
+    }
+    if (urgentCount > 0) {
+      activityParts.push(`${urgentCount} urgente${urgentCount > 1 ? "s" : ""}`);
+    }
+    if (Number.isFinite(avgResponseMinutes)) {
+      activityParts.push(`un delai moyen de reponse de ${delayLabel}`);
+    }
+    const activitySentence = activityParts.length > 0
+      ? `Sur l'activite recente, on observe ${joinHumanList(activityParts)}.`
+      : "L'activite recente reste moderee.";
+
+    const priorityParts = [];
+    if (hasNoShow || hasReminder) {
+      priorityParts.push("renforcer les rappels J-1 et J-0 pour limiter les absences evitables");
+    }
+    if (hasTelemed) {
+      priorityParts.push("stabiliser les criteres d'orientation vers la teleconsultation");
+    }
+    if (urgentCount > 0) {
+      priorityParts.push("maintenir un tri prioritaire des demandes urgentes");
+    }
+    if (priorityParts.length === 0 && handledTodayCount > 0) {
+      priorityParts.push("poursuivre la cadence actuelle de traitement");
+    }
+    const prioritySentence = priorityParts.length > 0
+      ? `Priorites recommandees : ${joinHumanList(priorityParts)}.`
+      : "";
+
+    return `Resume IA : ${contextSentence}. ${activitySentence}${prioritySentence ? ` ${prioritySentence}` : ""}`.trim();
   })();
 
   const toggleExpanded = (noteId) => {
