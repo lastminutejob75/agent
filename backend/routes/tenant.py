@@ -1381,15 +1381,23 @@ def _decorate_agenda_slots_patient_has_file(
     tenant_id: int,
     slots: List[Dict[str, Any]],
     profile_cache: Dict[str, Optional[Dict[str, Any]]],
+    allow_name_lookup: bool = True,
 ) -> None:
     """Ajoute ``patient_has_file`` si une ligne existe dans cabinet_clients pour ce numéro."""
+    name_cache: Dict[str, Optional[Dict[str, Any]]] = {}
     for item in slots:
         phone_norm = _agenda_resolve_profile_phone_for_slot(tenant_id, item, profile_cache)
         profile: Optional[Dict[str, Any]] = None
         if phone_norm:
             profile = _agenda_lookup_dashboard_patient_profile(tenant_id, phone_norm, profile_cache)
-        if profile is None:
-            profile = _agenda_lookup_profile_by_patient_name(tenant_id, item.get("patient"))
+        if profile is None and allow_name_lookup:
+            name_key = str(item.get("patient") or "").strip().casefold()
+            if name_key:
+                if name_key in name_cache:
+                    profile = name_cache.get(name_key)
+                else:
+                    profile = _agenda_lookup_profile_by_patient_name(tenant_id, item.get("patient"))
+                    name_cache[name_key] = profile
             if profile:
                 pn = normalize_phone_number(profile.get("phone") or "")
                 if pn:
@@ -5763,7 +5771,12 @@ def tenant_agenda(
     if lightweight:
         _apply_agenda_lightweight_slot_defaults(slots)
     _warm_agenda_profiles_from_slots_patient_phone(tenant_id, slots, profile_cache)
-    _decorate_agenda_slots_patient_has_file(tenant_id, slots, profile_cache)
+    _decorate_agenda_slots_patient_has_file(
+        tenant_id,
+        slots,
+        profile_cache,
+        allow_name_lookup=not lightweight,
+    )
     slots.sort(key=lambda item: item.get("hour") or "")
     done_count = sum(1 for item in slots if item.get("done"))
     return {
@@ -6139,7 +6152,12 @@ def tenant_agenda_bulk(
         _apply_agenda_lightweight_slot_defaults(flat_slots_bulk)
     _warm_agenda_profiles_from_slots_patient_phone(tenant_id, flat_slots_bulk, profile_cache)
     for payload in payloads.values():
-        _decorate_agenda_slots_patient_has_file(tenant_id, list(payload.get("slots") or []), profile_cache)
+        _decorate_agenda_slots_patient_has_file(
+            tenant_id,
+            list(payload.get("slots") or []),
+            profile_cache,
+            allow_name_lookup=not lightweight,
+        )
 
     response = {
         "dates": {date_str: _finalize_agenda_day_payload(payload) for date_str, payload in payloads.items()},

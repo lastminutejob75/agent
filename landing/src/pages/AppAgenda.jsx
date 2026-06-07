@@ -1039,14 +1039,26 @@ export default function AppAgenda() {
     return weekDates;
   }, [viewMode, monthGrid, weekDates]);
 
+  const agendaByDateRef = useRef(agendaByDate);
+  useEffect(() => {
+    agendaByDateRef.current = agendaByDate;
+  }, [agendaByDate]);
+
+  const hasLoadedAgendaForDates = useCallback((dates) => {
+    if (!Array.isArray(dates) || dates.length === 0) return false;
+    return dates.every((dateValue) => Array.isArray(agendaByDateRef.current?.[dateValue]?.slots));
+  }, []);
+
   const loadAgenda = useCallback(async () => {
     const loadId = ++agendaLoadSeqRef.current;
     const isStaleLoad = () => loadId !== agendaLoadSeqRef.current;
     const AGENDA_TIMEOUT_MS = 10000;
     const AGENDA_BULK_TIMEOUT_MS = 12000;
+    const requiredDates = viewMode === "day" ? [selectedDate] : fetchDates;
+    const hasVisibleCache = hasLoadedAgendaForDates(requiredDates);
 
     setError("");
-    setCalendarLoading(true);
+    setCalendarLoading(!hasVisibleCache);
     api.tenantGetHoraires().catch(() => null).then((nextHoraires) => {
       if (!isStaleLoad() && nextHoraires) setHoraires(nextHoraires);
     });
@@ -1075,7 +1087,7 @@ export default function AppAgenda() {
     };
 
     try {
-      if (viewMode !== "day" && fetchDates.length) {
+      if (fetchDates.length) {
         const cachedBulk = readAgendaBulkStale(fetchDates);
         if (cachedBulk) {
           setAgendaByDate((prev) => mergeAgendaBulkIntoState(prev, fetchDates, cachedBulk));
@@ -1094,19 +1106,22 @@ export default function AppAgenda() {
           [selectedDate]: dayFast || { slots: [], date: selectedDate },
         }));
         setCalendarLoading(false);
-        api
-          .tenantGetAgenda(`?date=${selectedDate}`, { lightweight: true, timeoutMs: 15000 })
-          .then((dayFull) => {
-            if (isStaleLoad()) return;
-            setAgendaByDate((prev) => ({
-              ...(prev || {}),
-              [selectedDate]: mergeAgendaDayPayload(prev?.[selectedDate], dayFull),
-            }));
-          })
-          .catch((e) => {
-            if (!isStaleLoad() && handleAgendaAuthError(e)) return;
-          });
-        if (fetchDates.length > 1) enrichWithGoogle(fetchDates);
+        if (fetchDates.length > 1) {
+          enrichWithGoogle(fetchDates);
+        } else {
+          api
+            .tenantGetAgenda(`?date=${selectedDate}`, { lightweight: true, timeoutMs: 15000 })
+            .then((dayFull) => {
+              if (isStaleLoad()) return;
+              setAgendaByDate((prev) => ({
+                ...(prev || {}),
+                [selectedDate]: mergeAgendaDayPayload(prev?.[selectedDate], dayFull),
+              }));
+            })
+            .catch((e) => {
+              if (!isStaleLoad() && handleAgendaAuthError(e)) return;
+            });
+        }
         return;
       }
 
@@ -1118,13 +1133,14 @@ export default function AppAgenda() {
     } catch (e) {
       if (!isStaleLoad()) {
         if (!handleAgendaAuthError(e)) {
-          setError(e?.message || "Impossible de charger l'agenda.");
+          const hasFallback = hasLoadedAgendaForDates(requiredDates);
+          if (!hasFallback) setError(e?.message || "Impossible de charger l'agenda.");
         }
       }
     } finally {
       if (!isStaleLoad()) setCalendarLoading(false);
     }
-  }, [fetchDates, selectedDate, viewMode]);
+  }, [fetchDates, hasLoadedAgendaForDates, selectedDate, viewMode]);
 
   useEffect(() => { loadAgenda(); }, [loadAgenda]);
 
