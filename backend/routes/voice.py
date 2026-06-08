@@ -1284,6 +1284,7 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
                         _s2 = _wt.monotonic()
                         sl, src, err = th.handle_get_slots(
                             session, params.get("preference"), w_call_id,
+                            user_message=params.get("user_message"),
                             exclude_start_iso=params.get("exclude_start_iso"),
                             exclude_end_iso=params.get("exclude_end_iso"),
                         )
@@ -1794,6 +1795,7 @@ async def vapi_tool(request: Request):
                 _s2 = _time.monotonic()
                 slots_list, source, err = th.handle_get_slots(
                     session, preference, call_id,
+                    user_message=user_message,
                     exclude_start_iso=exclude_start_iso,
                     exclude_end_iso=exclude_end_iso,
                 )

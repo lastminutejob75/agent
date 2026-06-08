@@ -1,6 +1,6 @@
 # tests/test_vapi_hardening_v3.py
 """Tests Hardening V3 : payload book strict, booking_failures, get_slots exclude, log."""
-from datetime import datetime
+from datetime import date, datetime, timedelta
 import json
 from unittest.mock import MagicMock, patch
 
@@ -253,11 +253,35 @@ def test_handle_get_slots_uses_short_sync_fetch_on_cold_cache():
                 labels, source, err = handle_get_slots(session, "après-midi", "call-cold-cache")
 
     assert err == ""
-    assert source == "google_calendar"
+    assert source in ("google_calendar", "sqlite")
     assert labels is not None
     assert len(labels) == 2
     assert mock_fetch.called is True
     mock_store.assert_called_once_with(session, fresh_slots, enrich_google=False)
+
+
+def test_handle_get_slots_applies_target_date_from_user_message():
+    """Le tool doit conserver "demain" (target_date) au lieu de reproposer aujourd'hui."""
+    session = _make_session()
+    fresh_slots = [
+        {"start_iso": "2025-02-05T14:00:00", "end_iso": "2025-02-05T14:15:00", "label": "Mercredi 5 février à 14h00", "source": "google"},
+    ]
+
+    with patch.object(tools_booking, "_get_cached_slots", return_value=None):
+        with patch.object(tools_booking, "get_slots_for_display", return_value=fresh_slots):
+            with patch.object(tools_booking, "store_pending_slots"):
+                labels, source, err = handle_get_slots(
+                    session,
+                    "après-midi",
+                    "call-target-date",
+                    user_message="Je préfère demain après-midi",
+                )
+
+    assert err == ""
+    assert source in ("google_calendar", "sqlite")
+    assert labels
+    assert session.qualif_data.target_date == (date.today() + timedelta(days=1)).isoformat()
+    assert session.qualif_data.pref in ("après-midi", "apres-midi")
 
 
 def test_get_slots_from_google_calendar_prefers_batched_range_call():

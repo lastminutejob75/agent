@@ -45,6 +45,7 @@ def handle_get_slots(
     session: Any,
     preference: Optional[str],
     call_id: str,
+    user_message: Optional[str] = None,
     exclude_start_iso: Optional[str] = None,
     exclude_end_iso: Optional[str] = None,
 ) -> Tuple[Optional[List[str]], Optional[str], str]:
@@ -62,7 +63,31 @@ def handle_get_slots(
         },
     )
     try:
-        pref = (preference or "").strip().lower()
+        # Conserver la contrainte explicite de jour/date (ex: "demain", "mardi")
+        # même si le modèle ne passe que "après-midi" dans `preference`.
+        parse_source = " ".join(
+            p for p in ((user_message or "").strip(), (preference or "").strip()) if p
+        ).strip()
+        if parse_source:
+            try:
+                from backend.entity_extraction import extract_pref, extract_target_date
+
+                extracted_pref = extract_pref(parse_source)
+                extracted_date = extract_target_date(parse_source)
+                if extracted_pref:
+                    session.qualif_data.pref = extracted_pref
+                elif preference:
+                    session.qualif_data.pref = preference.strip()
+                if extracted_date:
+                    session.qualif_data.target_date = extracted_date.isoformat()
+            except Exception:
+                # Ne jamais bloquer le tool pour un souci de parsing.
+                if preference:
+                    session.qualif_data.pref = preference.strip()
+        elif preference:
+            session.qualif_data.pref = preference.strip()
+
+        pref = ((getattr(session.qualif_data, "pref", None) or preference or "")).strip().lower()
         if pref not in ("matin", "après-midi", "apres-midi", "soir", ""):
             pref = None
         if pref == "apres-midi":
