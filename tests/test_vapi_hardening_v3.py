@@ -284,6 +284,30 @@ def test_handle_get_slots_applies_target_date_from_user_message():
     assert session.qualif_data.pref in ("après-midi", "apres-midi")
 
 
+def test_handle_get_slots_preserves_weekday_preference_for_booking_search():
+    """Une préférence 'mardi après-midi' doit être transmise telle quelle à get_slots_for_display."""
+    session = _make_session()
+    fresh_slots = [
+        {"start_iso": "2025-02-11T14:00:00", "end_iso": "2025-02-11T14:15:00", "label": "Mardi 11 février à 14h00", "source": "google"},
+    ]
+
+    with patch.object(tools_booking, "_get_cached_slots", return_value=None):
+        with patch.object(tools_booking, "get_slots_for_display", return_value=fresh_slots) as mock_fetch:
+            with patch.object(tools_booking, "store_pending_slots"):
+                labels, source, err = handle_get_slots(
+                    session,
+                    "après-midi",
+                    "call-weekday-pref",
+                    user_message="Je préfère mardi après-midi",
+                )
+
+    assert err == ""
+    assert labels
+    assert source in ("google_calendar", "sqlite")
+    assert "mardi" in (session.qualif_data.pref or "").lower()
+    assert mock_fetch.call_args.kwargs["pref"] == session.qualif_data.pref
+
+
 def test_get_slots_from_google_calendar_prefers_batched_range_call():
     """Le fetch Google multi-jours doit utiliser la lecture groupée pour éviter 1 appel API par jour."""
 

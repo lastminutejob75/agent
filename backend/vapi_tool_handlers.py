@@ -87,22 +87,22 @@ def handle_get_slots(
         elif preference:
             session.qualif_data.pref = preference.strip()
 
-        pref = ((getattr(session.qualif_data, "pref", None) or preference or "")).strip().lower()
-        if pref not in ("matin", "après-midi", "apres-midi", "soir", ""):
-            pref = None
+        raw_pref = (getattr(session.qualif_data, "pref", None) or preference or "").strip()
+        pref = raw_pref.lower()
         if pref == "apres-midi":
             pref = "après-midi"
+        cache_pref = pref if pref in ("matin", "après-midi", "soir", "") else None
         tenant_id = getattr(session, "tenant_id", None) or 1
 
         # Fast path vocal: répondre depuis le cache chaud pour rester sous les timeouts Vapi.
         # On tente pref demandée, puis fallback pref=None avant d'appeler Google.
-        slots = tools_booking._get_cached_slots(limit=3, tenant_id=tenant_id, pref=pref or None)
-        if not slots and pref:
+        slots = tools_booking._get_cached_slots(limit=3, tenant_id=tenant_id, pref=cache_pref or None)
+        if not slots and cache_pref:
             slots = tools_booking._get_cached_slots(limit=3, tenant_id=tenant_id, pref=None)
             if slots:
                 logger.info(
                     "CALENDAR_FETCH_CACHE_FALLBACK",
-                    extra={"call_id": call_id[:24] if call_id else "", "from_pref": pref, "to_pref": "none"},
+                    extra={"call_id": call_id[:24] if call_id else "", "from_pref": cache_pref, "to_pref": "none"},
                 )
 
         if not slots:
@@ -111,7 +111,7 @@ def handle_get_slots(
             def _load_slots_sync():
                 return tools_booking.get_slots_for_display(
                     limit=3,
-                    pref=pref or None,
+                    pref=raw_pref or None,
                     session=session,
                     exclude_start_iso=exclude_start_iso or None,
                     exclude_end_iso=exclude_end_iso or None,
@@ -127,14 +127,14 @@ def handle_get_slots(
                 logger.warning(
                     "CALENDAR_FETCH_SYNC_TIMEOUT call_id=%s pref=%s",
                     call_id[:24] if call_id else "",
-                    pref or "any",
+                    raw_pref or "any",
                 )
             except Exception as e:
                 slots = None
                 logger.warning(
                     "CALENDAR_FETCH_SYNC_ERROR call_id=%s pref=%s err=%s",
                     call_id[:24] if call_id else "",
-                    pref or "any",
+                    raw_pref or "any",
                     str(e)[:120],
                 )
 
@@ -144,7 +144,7 @@ def handle_get_slots(
                 try:
                     tools_booking.get_slots_for_display(
                         limit=3,
-                        pref=pref or None,
+                        pref=raw_pref or None,
                         session=session,
                         exclude_start_iso=exclude_start_iso or None,
                         exclude_end_iso=exclude_end_iso or None,
@@ -156,7 +156,7 @@ def handle_get_slots(
             logger.warning(
                 "CALENDAR_FETCH_CACHE_MISS_FAST_FAIL call_id=%s pref=%s",
                 call_id[:24] if call_id else "",
-                pref or "any",
+                raw_pref or "any",
             )
             return (None, None, "Impossible de consulter l'agenda pour le moment.")
 
