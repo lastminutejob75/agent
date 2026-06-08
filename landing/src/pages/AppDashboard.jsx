@@ -987,8 +987,9 @@ const S = {
   cardHead: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
   cardTitle: { margin: 0, display: "inline-flex", alignItems: "center", gap: 8, fontSize: 20, fontWeight: 800 },
   linkBtn: { border: 0, background: "transparent", color: C.teal, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" },
-  rdv: { display: "flex", gap: 22 },
-  dateBlock: { width: 108, borderRadius: 16, background: "linear-gradient(160deg,#00A9AC,#06455C)", color: "#fff", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", boxShadow: "0 10px 22px rgba(0,156,164,.24)" },
+  rdv: { display: "flex", flexDirection: "column", gap: 14 },
+  rdvMain: { display: "flex", alignItems: "stretch", gap: 22, width: "100%", minWidth: 0 },
+  dateBlock: { width: 108, minHeight: 108, borderRadius: 16, background: "linear-gradient(160deg,#00A9AC,#06455C)", color: "#fff", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", boxShadow: "0 10px 22px rgba(0,156,164,.24)" },
   rdvTop: { display: "flex", alignItems: "center", gap: 12, marginBottom: 14, flexWrap: "wrap" },
   rdvDetails: { display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 14 },
   rowBtns: { display: "flex", gap: 9, flexWrap: "wrap" },
@@ -1133,6 +1134,26 @@ const CSS = `
     flex: 1;
     min-width: 0;
   }
+  .uwi-dashboard-rdv-main {
+    display: flex;
+    align-items: stretch;
+    gap: 22px;
+    width: 100%;
+    min-width: 0;
+  }
+  .uwi-dashboard-rdv-date {
+    text-align: center;
+  }
+  .uwi-dashboard-rdv-date-day,
+  .uwi-dashboard-rdv-date span,
+  .uwi-dashboard-rdv-date strong {
+    display: block;
+    width: 100%;
+    text-align: center;
+  }
+  .uwi-dashboard-rdv-actions {
+    width: 100%;
+  }
   .uwi-dashboard-rdv-headline {
     display: flex;
     flex-wrap: wrap;
@@ -1174,15 +1195,19 @@ const CSS = `
     .uwi-dashboard-mobile-rdv section { padding: 14px !important; }
     .uwi-dashboard-mobile-rdv h3 { font-size: 17px !important; margin-bottom: 8px !important; }
     .uwi-dashboard-rdv {
-      flex-direction: row !important;
-      align-items: flex-start !important;
+      gap: 12px !important;
+    }
+    .uwi-dashboard-rdv-main {
+      align-items: center !important;
       gap: 10px !important;
     }
     .uwi-dashboard-rdv-date {
       width: 72px !important;
       min-width: 72px !important;
-      padding: 8px 4px !important;
+      min-height: 78px !important;
+      padding: 8px 6px !important;
       border-radius: 14px !important;
+      align-self: center !important;
     }
     .uwi-dashboard-rdv-date-day {
       font-size: 24px !important;
@@ -1237,6 +1262,8 @@ const CSS = `
       display: grid !important;
       grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
       gap: 6px !important;
+      width: 100% !important;
+      margin: 0 !important;
     }
     .uwi-dashboard-rdv-actions button {
       width: 100% !important;
@@ -1245,6 +1272,7 @@ const CSS = `
       padding: 0 6px !important;
       font-size: 11px !important;
       gap: 4px !important;
+      justify-content: center !important;
     }
     .uwi-dashboard-tabs { overflow-x: auto !important; }
     .uwi-dashboard-tabs button { flex: 0 0 auto !important; padding: 0 18px !important; }
