@@ -1646,6 +1646,33 @@ async def vapi_tool(request: Request):
         call_id = _tool_extract_call_id(payload)
         tool_call_id = _tool_extract_tool_call_id(payload)
 
+        def _persist_tool_call_trace(tenant_id: int, status_hint: str = "in-progress") -> None:
+            """
+            Persiste une trace minimale d'appel côté /tool pour garantir sa visibilité
+            dashboard, même si les webhooks status-update manquent/arrivent en retard.
+            """
+            try:
+                _cid = (call_id or "").strip()
+                if not _cid or _cid == "unknown":
+                    return
+                from backend.tenant_routing import extract_customer_phone_from_vapi_payload
+                from backend.vapi_calls_pg import upsert_vapi_call
+
+                _phone = extract_customer_phone_from_vapi_payload(payload)
+                upsert_vapi_call(
+                    tenant_id,
+                    _cid,
+                    customer_number=_phone,
+                    status=status_hint or "in-progress",
+                )
+            except Exception as _persist_err:
+                logger.warning(
+                    "[VAPI_TOOL_TRACE_UPSERT_FAILED] call_id=%s tenant_id=%s err=%s",
+                    (call_id or "")[:24],
+                    tenant_id,
+                    str(_persist_err)[:120],
+                )
+
         logger.info(
             "TOOL_CALL",
             extra={"call_id": call_id[:24] if call_id else "", "action": action or "(legacy)", "tool_call_id": (tool_call_id or "")[:24]},
@@ -1693,6 +1720,7 @@ async def vapi_tool(request: Request):
             resolved_tid_for_lock, _ = _resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
             request.state.tenant_id = resolved_tid_for_lock
             _current_tenant_id.set(str(resolved_tid_for_lock))
+            _persist_tool_call_trace(resolved_tid_for_lock, status_hint="in-progress")
 
             if _pg_lock_ok():
                 try:
@@ -1840,6 +1868,7 @@ async def vapi_tool(request: Request):
 
             request.state.tenant_id = resolved_tenant_id
             current_tenant_id.set(str(resolved_tenant_id))
+            _persist_tool_call_trace(resolved_tenant_id, status_hint="in-progress")
 
             if err:
                 return JSONResponse(
@@ -1871,6 +1900,7 @@ async def vapi_tool(request: Request):
         resolved_tenant_id, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
         request.state.tenant_id = resolved_tenant_id
         current_tenant_id.set(str(resolved_tenant_id))
+        _persist_tool_call_trace(resolved_tenant_id, status_hint="in-progress")
 
         def _get_session():
             return _get_or_resume_voice_session(resolved_tenant_id, call_id)
