@@ -27,7 +27,7 @@ export function timePreferenceLabel(value) {
   return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
-export function agendaSlotDurationMinutes(slot) {
+export function agendaSlotDurationMinutes(slot, tenantDefaultMinutes = 30) {
   const explicit = Number(slot?.duration_minutes);
   if (Number.isFinite(explicit) && explicit > 0) return explicit;
   const startRaw = slot?.start_iso;
@@ -39,7 +39,8 @@ export function agendaSlotDurationMinutes(slot) {
       return Math.max(5, Math.round((end.getTime() - start.getTime()) / 60000));
     }
   }
-  return 30;
+  const fallback = Number(tenantDefaultMinutes);
+  return Number.isFinite(fallback) && fallback > 0 ? fallback : 30;
 }
 
 /** Origine affichée sur la fiche patient (booking_origin prioritaire). */

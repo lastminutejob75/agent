@@ -6,6 +6,7 @@ import {
   formatAgendaSlotHour,
   parseAgendaSlotStart,
 } from "../lib/agendaSlotParse.js";
+import { agendaSlotDurationMinutes } from "../lib/agendaPatientMeta.js";
 import { buildAgendaViewUrl } from "../lib/agendaAppointmentActions.js";
 import { api } from "../lib/api.js";
 import { computeDashboardFillRate, mergeBookedEntryStarts } from "../lib/agendaFillRate.js";
@@ -438,6 +439,9 @@ export default function AppDashboard() {
     ? (String(nextSlot.slot.source || "").toUpperCase() === "UWI" ? "Pris par Clara" : "Agenda cabinet")
     : "Agenda cabinet";
   const nextPatient = String(nextSlot?.slot?.patient || nextSlot?.slot?.patient_name || "Patient").trim() || "Patient";
+  const nextDurationMinutes = nextSlot?.slot
+    ? agendaSlotDurationMinutes(nextSlot.slot, bookingDurationMinutes)
+    : bookingDurationMinutes;
   const canManageNextAppointment = Boolean(nextSlot?.slot && nextSlot?.start);
 
   const openNextAgendaAction = (action) => {
@@ -754,6 +758,7 @@ export default function AppDashboard() {
       nextPatient={nextPatient}
       nextReason={nextReason}
       nextSource={nextSource}
+      nextDurationMinutes={nextDurationMinutes}
       onMove={canManageNextAppointment ? () => openNextAgendaAction("reschedule") : null}
       onCancel={canManageNextAppointment ? () => openNextAgendaAction("cancel") : null}
       onOpenAgenda={() => navigate("/app/agenda")}

@@ -12,6 +12,7 @@ export default function NextAppointmentCard({
   nextPatient,
   nextReason,
   nextSource,
+  nextDurationMinutes = 15,
   onMove,
   onCancel,
   onOpenAgenda,
@@ -60,7 +61,11 @@ export default function NextAppointmentCard({
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                 <b className="text-[22px] font-extrabold leading-none text-[#071A33] sm:text-[30px]">{nextHour}</b>
-                <span className="text-xs font-semibold text-[#66758B] sm:text-sm">(20 min)</span>
+                {Number.isFinite(Number(nextDurationMinutes)) && Number(nextDurationMinutes) > 0 ? (
+                  <span className="text-xs font-semibold text-[#66758B] sm:text-sm">
+                    ({Number(nextDurationMinutes)} min)
+                  </span>
+                ) : null}
               </div>
               <strong className="mt-1 block truncate text-sm font-extrabold text-[#071A33] sm:text-base">
                 {nextPatient || "Patient"}
