@@ -271,9 +271,15 @@ const WEEKDAY_LABELS = ["LUN", "MAR", "MER", "JEU", "VEN", "SAM", "DIM"];
 /** Stale-while-revalidate : affichage immédiat au retour sur l’agenda (session). */
 const AGENDA_BULK_CACHE_PREFIX = "uwi_agenda_bulk_v4:";
 const AGENDA_BULK_CACHE_MS = 120000;
+const AGENDA_GOOGLE_ENRICH_COOLDOWN_MS = 45000;
+const AGENDA_HORAIRES_REFRESH_MS = 120000;
 
 function agendaBulkStorageKey(dates) {
   return AGENDA_BULK_CACHE_PREFIX + (dates || []).join(",");
+}
+
+function agendaDatesKey(dates) {
+  return [...new Set((dates || []).filter(Boolean))].sort().join(",");
 }
 
 function countBulkSlots(bulkRes, dates) {
@@ -1021,6 +1027,14 @@ export default function AppAgenda() {
     booking_time: "",
   });
   const [bookingsTodayPanel, setBookingsTodayPanel] = useState({ loading: false, items: [], date: "" });
+  const horairesRef = useRef(horaires);
+  const horairesFetchedAtRef = useRef(0);
+  const googleEnrichInFlightRef = useRef(new Set());
+  const googleEnrichLastAtRef = useRef(new Map());
+
+  useEffect(() => {
+    horairesRef.current = horaires;
+  }, [horaires]);
 
   const weekDates = useMemo(() => buildWeekDates(selectedDate), [selectedDate]);
   const monthGrid = useMemo(() => buildMonthGrid(selectedDate), [selectedDate]);
@@ -1049,6 +1063,12 @@ export default function AppAgenda() {
     return dates.every((dateValue) => Array.isArray(agendaByDateRef.current?.[dateValue]?.slots));
   }, []);
 
+  const resetAgendaRuntimeCaches = useCallback(() => {
+    googleEnrichInFlightRef.current.clear();
+    googleEnrichLastAtRef.current.clear();
+    horairesFetchedAtRef.current = 0;
+  }, []);
+
   const loadAgenda = useCallback(async () => {
     const loadId = ++agendaLoadSeqRef.current;
     const isStaleLoad = () => loadId !== agendaLoadSeqRef.current;
@@ -1059,9 +1079,16 @@ export default function AppAgenda() {
 
     setError("");
     setCalendarLoading(!hasVisibleCache);
-    api.tenantGetHoraires().catch(() => null).then((nextHoraires) => {
-      if (!isStaleLoad() && nextHoraires) setHoraires(nextHoraires);
-    });
+    const shouldRefreshHoraires =
+      !horairesRef.current || (Date.now() - horairesFetchedAtRef.current > AGENDA_HORAIRES_REFRESH_MS);
+    if (shouldRefreshHoraires) {
+      api.tenantGetHoraires().catch(() => null).then((nextHoraires) => {
+        if (!isStaleLoad() && nextHoraires) {
+          setHoraires(nextHoraires);
+          horairesFetchedAtRef.current = Date.now();
+        }
+      });
+    }
 
     const handleAgendaAuthError = (e) => {
       if (isTenantUnauthorized(e) || e?.status === 401 || e?.status === 403) {
@@ -1081,9 +1108,20 @@ export default function AppAgenda() {
 
     const enrichWithGoogle = (dates) => {
       if (!dates?.length) return;
-      loadBulk(dates, { timeoutMs: 15000, skipGoogle: false }).catch((e) => {
-        if (!isStaleLoad() && handleAgendaAuthError(e)) return;
-      });
+      const key = agendaDatesKey(dates);
+      if (!key) return;
+      if (googleEnrichInFlightRef.current.has(key)) return;
+      const lastAt = Number(googleEnrichLastAtRef.current.get(key) || 0);
+      if (Date.now() - lastAt < AGENDA_GOOGLE_ENRICH_COOLDOWN_MS) return;
+      googleEnrichLastAtRef.current.set(key, Date.now());
+      googleEnrichInFlightRef.current.add(key);
+      loadBulk(dates, { timeoutMs: 15000, skipGoogle: false })
+        .catch((e) => {
+          if (!isStaleLoad() && handleAgendaAuthError(e)) return;
+        })
+        .finally(() => {
+          googleEnrichInFlightRef.current.delete(key);
+        });
     };
 
     try {
@@ -1593,6 +1631,7 @@ export default function AppAgenda() {
         };
       });
       closeAppointmentDetail();
+      resetAgendaRuntimeCaches();
       invalidateAgendaBulkCache();
       await loadAgenda();
     } catch (e) {
@@ -1732,6 +1771,7 @@ export default function AppAgenda() {
         type: "success",
       });
       closeAppointmentDetail();
+      resetAgendaRuntimeCaches();
       invalidateAgendaBulkCache();
       await loadAgenda();
     } catch (e) {
@@ -1839,6 +1879,7 @@ export default function AppAgenda() {
       });
       setCreateBookingOpen(false);
       setCreateBookingError("");
+      resetAgendaRuntimeCaches();
       invalidateAgendaBulkCache();
       await loadAgenda();
       setActionMsg({ type: "success", text: "Rendez-vous créé avec succès." });
@@ -1984,6 +2025,7 @@ export default function AppAgenda() {
               : "Fiche patient enregistrée.";
       setPatientCreateConflicts([]);
       setActionMsg({ type: "success", text: okText });
+      resetAgendaRuntimeCaches();
       invalidateAgendaBulkCache();
       closeAppointmentDetail();
       const profile = res?.patient;
