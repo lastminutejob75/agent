@@ -128,6 +128,17 @@ def test_build_vapi_tool_response_result_is_string():
     assert parsed["event_id"] == "e1"
 
 
+def test_build_vapi_tool_response_error_also_has_result():
+    """En erreur tool, garder `result` pour compat Vapi."""
+    body = build_vapi_tool_response("call_2", None, "Impossible de consulter l'agenda")
+    assert "results" in body
+    assert len(body["results"]) == 1
+    row = body["results"][0]
+    assert row["toolCallId"] == "call_2"
+    assert row["error"] == "Impossible de consulter l'agenda"
+    assert row["result"] == "Impossible de consulter l'agenda"
+
+
 def test_get_slots_for_display_excludes_slot():
     """get_slots_for_display avec exclude_start_iso / exclude_end_iso exclut le créneau correspondant."""
     from backend.tools_booking import get_slots_for_display

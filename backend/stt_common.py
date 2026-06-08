@@ -7,11 +7,14 @@ Pas de partial/confidence : whitelist tokens critiques + détection garbage/angl
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Literal, Tuple
 
 from backend.stt_utils import normalize_transcript, is_filler_only
 
-# Tokens critiques : jamais UNCLEAR/NOISE (oui/non/ok, 1/2/3, variantes)
+# Tokens critiques : jamais UNCLEAR/NOISE.
+# Inclut aussi les préférences horaires courtes ("matin", "après-midi")
+# pour éviter qu'elles soient rejetées en overlap pendant QUALIF_PREF.
 # Source unique de vérité pour webhook + chat/completions
 CRITICAL_TOKENS = frozenset({
     "oui", "non", "ok", "okay", "daccord", "d'accord",
@@ -21,6 +24,9 @@ CRITICAL_TOKENS = frozenset({
     "le premier", "le deuxième", "le troisième",
     "la première", "la deuxième", "la troisième",
     "confirme", "je confirme", "oui je confirme",  # Réponse à "Vous confirmez ?"
+    "matin", "matinee", "matinée",
+    "apres midi", "après midi", "apres-midi", "après-midi", "aprem", "aprèm",
+    "soir", "soiree", "soirée",
 })
 
 # Mots anglais fréquents (STT en anglais = garbage pour nous)
@@ -35,6 +41,19 @@ ENGLISH_STOPWORDS = frozenset({
 })
 
 
+def _normalize_critical_text(text: str) -> str:
+    """Normalise un token court pour matching critique (accents + tirets)."""
+    t = (text or "").strip().lower()
+    t = t.replace("-", " ")
+    t = "".join(
+        c for c in unicodedata.normalize("NFD", t)
+        if unicodedata.category(c) != "Mn"
+    )
+    t = re.sub(r"['’]", "", t)
+    t = "".join(ch for ch in t if ch.isalnum() or ch.isspace()).strip()
+    return " ".join(t.split())
+
+
 def is_critical_token(text: str) -> bool:
     """
     Vrai si le texte est un token critique (jamais classé UNCLEAR/NOISE).
@@ -42,9 +61,7 @@ def is_critical_token(text: str) -> bool:
     """
     if not text:
         return False
-    t = text.strip().lower()
-    t = re.sub(r"['']", "", t)
-    t = "".join(ch for ch in t if ch.isalnum() or ch.isspace()).strip()
+    t = _normalize_critical_text(text)
     if not t:
         return False
     if t in CRITICAL_TOKENS or t in CRITICAL_OVERLAP:
@@ -107,6 +124,9 @@ CRITICAL_OVERLAP = frozenset({
     "annuler", "annulation",
     "transfert", "transférer", "transfere",
     "confirme", "je confirme", "oui je confirme",  # Réponse à "Vous confirmez ?" pendant overlap
+    "matin", "matinee", "matinée",
+    "apres midi", "après midi", "apres-midi", "après-midi", "aprem", "aprèm",
+    "soir", "soiree", "soirée",
 })
 
 
@@ -114,8 +134,7 @@ def is_critical_overlap(text: str) -> bool:
     """True si le texte est un mot critique qui doit être traité même pendant que l'agent parle."""
     if not text:
         return False
-    normalized = normalize_transcript(text or "").strip().lower()
-    normalized = "".join(c for c in normalized if c.isalnum() or c.isspace()).strip()
+    normalized = _normalize_critical_text(normalize_transcript(text or ""))
     if not normalized:
         return False
     return normalized in CRITICAL_OVERLAP

@@ -147,6 +147,8 @@ def test_stt_common_critical_tokens():
     assert is_critical_token("non") is True
     assert is_critical_token("1") is True
     assert is_critical_token("deux") is True
+    assert is_critical_token("matin") is True
+    assert is_critical_token("après-midi") is True
     assert is_critical_token("ouais") is True
     assert is_critical_token("d'accord") is True
     assert is_critical_token("euh") is False
@@ -592,6 +594,8 @@ def test_is_critical_overlap():
     """Mots critiques pendant overlap → doivent passer."""
     assert is_critical_overlap("oui") is True
     assert is_critical_overlap("non") is True
+    assert is_critical_overlap("matin") is True
+    assert is_critical_overlap("après-midi") is True
     assert is_critical_overlap("stop") is True
     assert is_critical_overlap("humain") is True
     assert is_critical_overlap("annuler") is True

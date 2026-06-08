@@ -307,7 +307,17 @@ def build_vapi_tool_response(
     if tool_call_id is None:
         tool_call_id = "call_default"
     if error_message:
-        return {"results": [{"toolCallId": tool_call_id, "error": error_message}]}
+        # Compat Vapi: certains runtimes lisent uniquement `result`.
+        # On renvoie donc aussi `result` pour éviter "No result returned".
+        return {
+            "results": [
+                {
+                    "toolCallId": tool_call_id,
+                    "result": error_message,
+                    "error": error_message,
+                }
+            ]
+        }
     if result_body is not None:
         result = result_body if isinstance(result_body, str) else _vapi_result_string(result_body)
         return {"results": [{"toolCallId": tool_call_id, "result": result}]}

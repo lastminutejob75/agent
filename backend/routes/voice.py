@@ -1227,8 +1227,8 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
             if not tool_calls:
                 tool_calls = payload.get("toolCallList") or payload.get("toolCalls") or []
             results = []
-            for tc in tool_calls:
-                tc_id = tc.get("id") or ""
+            for idx, tc in enumerate(tool_calls, start=1):
+                tc_id = tc.get("id") or f"tc_{idx}"
                 cached_result = _tool_result_cache_get(tc_id)
                 if cached_result is not None:
                     logger.info("[VAPI_WEBHOOK_TOOL_DEDUP_HIT] toolCallId=%s", tc_id[:24])
