@@ -25,24 +25,29 @@ export default function NextAppointmentCard({
         </p>
       ) : (
       <div className="uwi-dashboard-rdv" style={S.rdv}>
-        <div style={S.dateBlock}>
-          <b>{nextLabels.day}</b>
+        <div className="uwi-dashboard-rdv-date" style={S.dateBlock}>
+          <b className="uwi-dashboard-rdv-date-day">{nextLabels.day}</b>
           <span>{nextLabels.monthYear}</span>
           <strong>{nextLabels.dow}</strong>
         </div>
-        <div style={{ flex: 1 }}>
-          <div style={S.rdvTop}>
-            <b>{nextHour}</b><span>(20 min)</span><strong>{nextPatient || "Patient"}</strong><Pill tone="green">Confirme</Pill>
+        <div className="uwi-dashboard-rdv-body">
+          <div className="uwi-dashboard-rdv-top" style={S.rdvTop}>
+            <div className="uwi-dashboard-rdv-headline">
+              <b className="uwi-dashboard-rdv-hour">{nextHour}</b>
+              <span className="uwi-dashboard-rdv-duration">(20 min)</span>
+              <strong className="uwi-dashboard-rdv-patient">{nextPatient || "Patient"}</strong>
+            </div>
+            <Pill tone="green">Confirme</Pill>
           </div>
           <div className="uwi-dashboard-rdv-details" style={S.rdvDetails}>
-            {[["Motif", nextReason || "—"], ["Source", nextSource || "—"], ["Preference", "—"], ["Canal", "Telephone"]].map(([k, v]) => (
+            {[["Motif", nextReason || "—"], ["Source", nextSource || "—"], ["Préférence", "—"], ["Canal", "Téléphone"]].map(([k, v]) => (
               <p key={k} className="uwi-dashboard-rdv-detail">
                 <span>{k}</span>
                 <b>{v}</b>
               </p>
             ))}
           </div>
-          <div style={S.rowBtns}>
+          <div className="uwi-dashboard-rdv-actions" style={S.rowBtns}>
             {typeof onMove === "function" ? <Btn variant="green" icon="calendar" onClick={onMove}>Deplacer</Btn> : null}
             {typeof onCancel === "function" ? <Btn variant="orange" icon="warn" onClick={onCancel}>Annuler</Btn> : null}
             <Btn icon="calendar" onClick={onOpenAgenda}>Agenda</Btn>

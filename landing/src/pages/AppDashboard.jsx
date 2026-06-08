@@ -840,7 +840,7 @@ export default function AppDashboard() {
         IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
       />
 
-      {isMobile ? <div style={S.mobileNextRdv}>{nextAppointmentCard}</div> : null}
+      {isMobile ? <div className="uwi-dashboard-mobile-rdv" style={S.mobileNextRdv}>{nextAppointmentCard}</div> : null}
 
       <div className="uwi-dashboard-grid" style={S.grid}>
         {isMobile ? (
@@ -1129,6 +1129,32 @@ const CSS = `
     color: ${C.navy};
     line-height: 1.3;
   }
+  .uwi-dashboard-rdv-body {
+    flex: 1;
+    min-width: 0;
+  }
+  .uwi-dashboard-rdv-headline {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+  }
+  .uwi-dashboard-rdv-hour {
+    font-size: 30px;
+    line-height: 1;
+  }
+  .uwi-dashboard-rdv-duration {
+    font-size: 14px;
+    color: ${C.muted};
+    font-weight: 600;
+  }
+  .uwi-dashboard-rdv-patient {
+    font-size: 16px;
+    font-weight: 800;
+    color: ${C.navy};
+    min-width: 0;
+  }
   @media (max-width: 1180px) {
     .uwi-dashboard-grid { grid-template-columns: 1fr !important; }
     .uwi-dashboard-stats-grid { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
@@ -1145,8 +1171,81 @@ const CSS = `
     .uwi-dashboard-hero-left { flex-direction: column !important; align-items: flex-start !important; gap: 14px !important; }
     .uwi-dashboard-hero-buttons { align-items: stretch !important; width: 100% !important; }
     .uwi-dashboard-stats-grid { grid-template-columns: 1fr !important; }
-    .uwi-dashboard-rdv { flex-direction: column !important; gap: 14px !important; }
-    .uwi-dashboard-rdv-details { grid-template-columns: 1fr !important; }
+    .uwi-dashboard-mobile-rdv section { padding: 14px !important; }
+    .uwi-dashboard-mobile-rdv h3 { font-size: 17px !important; margin-bottom: 8px !important; }
+    .uwi-dashboard-rdv {
+      flex-direction: row !important;
+      align-items: flex-start !important;
+      gap: 10px !important;
+    }
+    .uwi-dashboard-rdv-date {
+      width: 72px !important;
+      min-width: 72px !important;
+      padding: 8px 4px !important;
+      border-radius: 14px !important;
+    }
+    .uwi-dashboard-rdv-date-day {
+      font-size: 24px !important;
+      line-height: 1 !important;
+    }
+    .uwi-dashboard-rdv-date span,
+    .uwi-dashboard-rdv-date strong {
+      font-size: 11px !important;
+      margin-top: 2px !important;
+    }
+    .uwi-dashboard-rdv-top {
+      display: flex !important;
+      flex-direction: column !important;
+      align-items: flex-start !important;
+      gap: 6px !important;
+      margin-bottom: 8px !important;
+    }
+    .uwi-dashboard-rdv-hour { font-size: 22px !important; }
+    .uwi-dashboard-rdv-duration { font-size: 12px !important; }
+    .uwi-dashboard-rdv-patient {
+      flex: 1 1 100%;
+      font-size: 14px !important;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .uwi-dashboard-rdv-details {
+      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+      gap: 6px 8px !important;
+      margin-bottom: 10px !important;
+    }
+    .uwi-dashboard-rdv-detail {
+      flex-direction: row !important;
+      align-items: baseline !important;
+      justify-content: space-between !important;
+      gap: 6px !important;
+      padding: 3px 0;
+    }
+    .uwi-dashboard-rdv-detail span {
+      font-size: 10px !important;
+      letter-spacing: 0.01em;
+    }
+    .uwi-dashboard-rdv-detail b {
+      font-size: 12px !important;
+      text-align: right;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .uwi-dashboard-rdv-actions {
+      display: grid !important;
+      grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+      gap: 6px !important;
+    }
+    .uwi-dashboard-rdv-actions button {
+      width: 100% !important;
+      min-width: 0 !important;
+      height: 36px !important;
+      padding: 0 6px !important;
+      font-size: 11px !important;
+      gap: 4px !important;
+    }
     .uwi-dashboard-tabs { overflow-x: auto !important; }
     .uwi-dashboard-tabs button { flex: 0 0 auto !important; padding: 0 18px !important; }
   }

@@ -450,8 +450,8 @@ function MobileNextAppointment({
   renderApptActions: (slot: Record<string, unknown>, start: Date) => React.ReactNode;
 }) {
   return (
-    <section className="mb-3 rounded-[24px] border border-[#E3EAF2] bg-white p-3.5 shadow-[0_10px_24px_rgba(15,23,42,0.07)]">
-      <h2 className="mb-4 text-[21px] font-black text-[#0B1628]">Prochain rendez-vous</h2>
+    <section className="mb-3 rounded-[20px] border border-[#E3EAF2] bg-white p-3 shadow-[0_10px_24px_rgba(15,23,42,0.07)]">
+      <h2 className="mb-3 text-lg font-black text-[#0B1628]">Prochain rendez-vous</h2>
       {loading ? (
         <p className="text-sm font-semibold text-[#61708B]">Chargement de l&apos;agenda…</p>
       ) : upcoming.length === 0 ? (
@@ -469,27 +469,31 @@ function MobileNextAppointment({
                 : "bg-[#EAF8EF] text-[#16A34A]";
           return (
             <>
-              <div className="flex items-start gap-3.5">
-                <div className="flex h-[116px] w-[86px] shrink-0 flex-col items-center justify-center rounded-[20px] bg-gradient-to-br from-[#009CA4] to-[#003B63] text-white shadow-[10px_10px_0_rgba(0,156,164,0.08)]">
-                  <strong className="text-[34px] leading-none">{parts.day}</strong>
-                  <span className="mt-1 text-sm capitalize">{parts.monthYear}</span>
-                  <b className="mt-1 text-sm">{parts.dow}</b>
+              <div className="flex items-start gap-2.5">
+                <div className="flex h-[84px] w-[68px] shrink-0 flex-col items-center justify-center rounded-[16px] bg-gradient-to-br from-[#009CA4] to-[#003B63] px-1 text-white shadow-[6px_6px_0_rgba(0,156,164,0.08)]">
+                  <strong className="text-[26px] leading-none">{parts.day}</strong>
+                  <span className="mt-0.5 text-[10px] capitalize leading-tight">{parts.monthYear}</span>
+                  <b className="mt-0.5 text-[10px] leading-none">{parts.dow}</b>
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <strong className="text-[34px] leading-none tracking-[-0.03em]">{formatAgendaSlotHour(start)}</strong>
-                    <span className="text-[15px] text-[#465365]">({agendaSlotDurationMinutes(slot)} min)</span>
-                    <span className={cx("rounded-xl px-3 py-1.5 text-sm font-black", statusClass)}>{status}</span>
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                    <strong className="text-[26px] leading-none tracking-[-0.03em]">{formatAgendaSlotHour(start)}</strong>
+                    <span className="text-xs text-[#465365]">({agendaSlotDurationMinutes(slot)} min)</span>
+                    <span className={cx("rounded-lg px-2 py-1 text-[11px] font-black", statusClass)}>{status}</span>
                   </div>
-                  <div className="mt-2 grid gap-1 text-sm">
-                    <span className="text-[#8190A6]">Motif</span>
-                    <strong className="text-[#0B1628]">{agendaSlotMotif(slot) || "Consultation"}</strong>
-                    <span className="mt-1 text-[#8190A6]">Origine</span>
-                    <strong className="text-[#0B1628]">{agendaOriginLabel(slot)}</strong>
+                  <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
+                    <div className="min-w-0">
+                      <span className="block text-[10px] font-bold uppercase tracking-wide text-[#8190A6]">Motif</span>
+                      <strong className="block truncate text-[#0B1628]">{agendaSlotMotif(slot) || "Consultation"}</strong>
+                    </div>
+                    <div className="min-w-0">
+                      <span className="block text-[10px] font-bold uppercase tracking-wide text-[#8190A6]">Origine</span>
+                      <strong className="block truncate text-[#0B1628]">{agendaOriginLabel(slot)}</strong>
+                    </div>
                   </div>
                 </div>
               </div>
-              <div className="mt-4 [&_.flex-wrap]:grid [&_.flex-wrap]:grid-cols-2 [&_.flex-wrap]:gap-2.5 [&_.flex-wrap]:mt-0 [&_button]:min-h-12 [&_button]:w-full [&_button]:rounded-[14px] [&_button]:text-sm [&_button]:font-black [&_button:nth-child(3)]:col-span-2">
+              <div className="mt-3 [&>div]:grid [&>div]:grid-cols-3 [&>div]:gap-1.5 [&>div]:mt-0 [&_button]:min-h-9 [&_button]:w-full [&_button]:rounded-xl [&_button]:px-1.5 [&_button]:py-2 [&_button]:text-[11px] [&_button]:font-black [&_button]:leading-tight">
                 {renderApptActions(slot, start)}
               </div>
             </>
