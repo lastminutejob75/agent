@@ -6427,6 +6427,7 @@ def tenant_agenda_create_booking(
         except Exception as exc:
             logger.warning("mirror after tenant booking failed tenant_id=%s: %s", tenant_id, exc)
 
+        _invalidate_google_agenda_events_cache(cal_id)
         _invalidate_tenant_agenda_detail_cache(tenant_id)
         return {"ok": True, "provider": "google", "event_id": ev}
 

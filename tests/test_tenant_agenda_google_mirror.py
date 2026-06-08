@@ -192,6 +192,39 @@ def test_tenant_agenda_bulk_groups_multiple_days_with_single_google_fetch(client
     mock_google_service.return_value.service.events.return_value.list.assert_called_once()
 
 
+def test_tenant_agenda_create_booking_invalidates_google_events_cache(client):
+    from backend.main import app
+    from backend.routes import tenant
+
+    app.dependency_overrides[tenant.require_tenant_auth] = _auth_override
+    with patch("backend.routes.tenant._get_tenant_detail", return_value=_google_detail()), patch(
+        "backend.routes.tenant._google_mirror_enabled",
+        return_value=False,
+    ), patch("backend.routes.tenant.GoogleCalendarService") as mock_google_service, patch(
+        "backend.routes.tenant._invalidate_google_agenda_events_cache"
+    ) as invalidate_gcal_cache, patch(
+        "backend.routes.tenant._invalidate_tenant_agenda_detail_cache"
+    ) as invalidate_detail_cache:
+        mock_google_service.return_value.book_appointment.return_value = "evt_new"
+        try:
+            response = client.post(
+                "/api/tenant/agenda/bookings",
+                json={
+                    "patient_name": "Jean Dupont",
+                    "patient_phone": "0612345678",
+                    "start_iso": "2026-06-26T14:45:00",
+                    "motif": "Consultation",
+                },
+            )
+        finally:
+            app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "provider": "google", "event_id": "evt_new"}
+    invalidate_gcal_cache.assert_called_once_with("cabinet@test.calendar.google.com")
+    invalidate_detail_cache.assert_called_once_with(12)
+
+
 def test_tenant_agenda_cancel_google_mirror_cancels_both(client):
     from backend.main import app
     from backend.routes import tenant
