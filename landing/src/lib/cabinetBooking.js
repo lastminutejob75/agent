@@ -13,6 +13,20 @@ export function formatTimeChoiceFR(value) {
   return `${hh}h${String(mm).padStart(2, "0")}`;
 }
 
+/** Date longue en français (ex. « lundi 8 juin 2026 »). */
+export function formatLongDateFR(dateStr) {
+  const raw = String(dateStr || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const d = new Date(`${raw}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return raw;
+  return d.toLocaleDateString("fr-FR", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+}
+
 /** Créneaux entre deux heures d’ouverture (cabinet). */
 export function buildCabinetTimeChoices(loH, hiH, stepMinutes = 15) {
   let step = Math.round(Number(stepMinutes));

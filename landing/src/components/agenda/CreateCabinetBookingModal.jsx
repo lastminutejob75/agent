@@ -31,7 +31,7 @@ const EMPTY_FORM = {
 
 /**
  * Modal création RDV cabinet (agenda ou fiche patient).
- * @param {{ open: boolean, onClose: () => void, onSuccess?: () => void, lockedPatient?: { patient_name?: string, patient_phone?: string, patient_email?: string } | null, excludePhoneForDuplicate?: string, introVariant?: 'agenda' | 'patient' }} props
+ * @param {{ open: boolean, onClose: () => void, onSuccess?: (payload: { patientName: string, bookingDate: string, bookingTime: string, motif: string }) => void, lockedPatient?: { patient_name?: string, patient_phone?: string, patient_email?: string } | null, excludePhoneForDuplicate?: string, introVariant?: 'agenda' | 'patient' }} props
  */
 export default function CreateCabinetBookingModal({
   open,
@@ -254,7 +254,12 @@ export default function CreateCabinetBookingModal({
         motif: (form.motif || "Consultation").trim(),
         start_iso: startIso,
       });
-      onSuccess?.();
+      onSuccess?.({
+        patientName: name,
+        bookingDate: form.booking_date.trim(),
+        bookingTime: form.booking_time.trim(),
+        motif: (form.motif || "Consultation").trim(),
+      });
       onClose();
     } catch (e) {
       setError(e?.message || "Impossible de créer le rendez-vous.");

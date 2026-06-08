@@ -23,6 +23,7 @@ import {
 } from "../lib/agendaAppointmentActions.js";
 import AgendaReschedulePanel from "../components/agenda/AgendaReschedulePanel.jsx";
 import CreateCabinetBookingModal from "../components/agenda/CreateCabinetBookingModal.jsx";
+import { formatLongDateFR, formatTimeChoiceFR } from "../lib/cabinetBooking.js";
 import PatientDashboardMobile from "./PatientDashboardMobile";
 import { normalizePhoneBusinessKey } from "../lib/phoneNormalize";
 import { validatePatientPhone, validateContactEmail, isValidContactEmail } from "../lib/contactValidation.js";
@@ -122,6 +123,12 @@ type ModalType =
   | "sendBulkMessage"
   | null;
 type ApptActionTarget = { slot: Record<string, unknown>; start: Date };
+type PatientBookingConfirm = {
+  patientName: string;
+  bookingDate: string;
+  bookingTime: string;
+  motif: string;
+};
 type ViewType = "overview" | "appointments" | "history" | "documents";
 type MessageChannel = "sms" | "email";
 type RequestContext = {
@@ -991,6 +998,7 @@ export default function PatientDashboardPage() {
   const [agendaDaysLoaded, setAgendaDaysLoaded] = useState(0);
   const [agendaRefreshNonce, setAgendaRefreshNonce] = useState(0);
   const [createPatientBookingOpen, setCreatePatientBookingOpen] = useState(false);
+  const [patientBookingConfirm, setPatientBookingConfirm] = useState<PatientBookingConfirm | null>(null);
   const [apptActionTarget, setApptActionTarget] = useState<ApptActionTarget | null>(null);
   const [apptActionLoading, setApptActionLoading] = useState(false);
   /** Recherche serveur GET /patients?q= ; null si la recherche API n’est pas utilisée (< 2 caractères). */
@@ -4663,12 +4671,51 @@ export default function PatientDashboardPage() {
         }}
         excludePhoneForDuplicate={tenantPatientPhone}
         introVariant="patient"
-        onSuccess={() => {
+        onSuccess={(payload) => {
           setAgendaDaysLoaded(0);
           setAgendaRefreshNonce((n) => n + 1);
-          notify("Rendez-vous enregistré pour ce patient.");
+          setPatientBookingConfirm(payload);
         }}
       />
+
+      {patientBookingConfirm ? (
+        <div
+          className="fixed inset-0 z-[130] flex items-end justify-center bg-[#0A1628]/45 p-4 sm:items-center"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="patient-booking-confirm-title"
+        >
+          <div className="w-full max-w-md rounded-[24px] border border-[#E2EAF4] bg-white p-6 text-center shadow-[0_24px_60px_rgba(10,22,40,0.18)]">
+            <div
+              className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-full bg-[#EAF8EF] text-2xl font-black text-[#16A34A]"
+              aria-hidden
+            >
+              ✓
+            </div>
+            <h2 id="patient-booking-confirm-title" className="text-xl font-black text-[#0A1628]">
+              Rendez-vous confirmé
+            </h2>
+            <p className="mt-3 text-sm leading-relaxed text-[#53647F]">
+              Le rendez-vous du{" "}
+              <strong className="text-[#0A1628]">{formatLongDateFR(patientBookingConfirm.bookingDate)}</strong> à{" "}
+              <strong className="text-[#0A1628]">{formatTimeChoiceFR(patientBookingConfirm.bookingTime)}</strong> est bien
+              confirmé pour <strong className="text-[#0A1628]">{patientBookingConfirm.patientName}</strong>.
+            </p>
+            {patientBookingConfirm.motif ? (
+              <p className="mt-2 text-xs font-semibold text-[#7D8CA5]">
+                Motif : {patientBookingConfirm.motif}
+              </p>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setPatientBookingConfirm(null)}
+              className="mt-6 w-full rounded-xl bg-[#009CA4] px-4 py-3 text-sm font-black text-white hover:bg-[#00838A]"
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
