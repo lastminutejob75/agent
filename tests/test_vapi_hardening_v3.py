@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from backend import tools_booking
+from backend import prompts, tools_booking
 from backend.session import Session, QualifData
 from backend.vapi_tool_handlers import (
     _chosen_slot_iso,
@@ -232,6 +232,93 @@ def test_get_slots_for_display_cache_hit_skips_tenant_params_lookup():
             slots = get_slots_for_display(limit=3, pref="matin", session=Session())
 
     assert slots == cached_slots
+
+
+def test_get_slots_for_display_cache_respects_weekday_request():
+    """Un cache hit ne doit pas ignorer une demande explicite de jour (ex: mardi)."""
+    from backend.tools_booking import get_slots_for_display
+
+    class Session:
+        tenant_id = 9
+        rejected_slot_starts = []
+        rejected_slot_ids = []
+        channel = "vocal"
+        qualif_data = None
+
+    cached_slots = [
+        prompts.SlotDisplay(
+            idx=1,
+            label="Lundi 9 juin à 14h00",
+            slot_id=1,
+            start="2026-06-08T14:00:00",
+            day="lundi",
+            hour=14,
+            label_vocal="lundi à 14h",
+            source="google",
+        ),
+        prompts.SlotDisplay(
+            idx=2,
+            label="Mardi 10 juin à 15h00",
+            slot_id=2,
+            start="2026-06-10T15:00:00",
+            day="mardi",
+            hour=15,
+            label_vocal="mardi à 15h",
+            source="google",
+        ),
+    ]
+
+    with patch.object(tools_booking, "_get_cached_slots", return_value=cached_slots):
+        with patch("backend.tenant_config.get_params", side_effect=AssertionError("get_params should not be called on cache hit")):
+            slots = get_slots_for_display(limit=3, pref="mardi après-midi", session=Session())
+
+    assert len(slots) == 1
+    assert slots[0].day == "mardi"
+
+
+def test_get_slots_for_display_vocal_cache_filters_too_soon_slots():
+    """En vocal, un cache hit ne doit pas proposer un créneau immédiat."""
+    from backend.tools_booking import get_slots_for_display
+
+    class Session:
+        tenant_id = 9
+        rejected_slot_starts = []
+        rejected_slot_ids = []
+        channel = "vocal"
+        qualif_data = None
+
+    now = datetime.now()
+    too_soon = (now + timedelta(minutes=5)).replace(second=0, microsecond=0)
+    valid_later = (now + timedelta(minutes=90)).replace(second=0, microsecond=0)
+    cached_slots = [
+        prompts.SlotDisplay(
+            idx=1,
+            label="Slot proche",
+            slot_id=1,
+            start=too_soon.isoformat(),
+            day="lundi",
+            hour=too_soon.hour,
+            label_vocal="proche",
+            source="google",
+        ),
+        prompts.SlotDisplay(
+            idx=2,
+            label="Slot valide",
+            slot_id=2,
+            start=valid_later.isoformat(),
+            day="lundi",
+            hour=valid_later.hour,
+            label_vocal="valide",
+            source="google",
+        ),
+    ]
+
+    with patch.object(tools_booking, "_get_cached_slots", return_value=cached_slots):
+        with patch("backend.tenant_config.get_params", side_effect=AssertionError("get_params should not be called on cache hit")):
+            slots = get_slots_for_display(limit=3, pref="après-midi", session=Session())
+
+    assert len(slots) == 1
+    assert slots[0].slot_id == 2
 
 
 def test_handle_get_slots_uses_short_sync_fetch_on_cold_cache():

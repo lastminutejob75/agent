@@ -351,6 +351,10 @@ MIN_SLOT_GAP_MINUTES = 120  # 2h ou jour différent
 # Fenêtre d'exclusion autour d'un créneau refusé (ne pas reproposer un "voisin")
 REJECTED_SLOT_WINDOW_MINUTES = 90  # ±90 min
 
+# Garde-fou vocal: ne jamais proposer un créneau trop proche.
+# Exemple: à 13:55, on ne propose pas 14:00.
+MIN_VOCAL_LEAD_MINUTES = 60
+
 # Nombre de créneaux à récupérer avant étalement (pool pour diversifier).
 # Réduit pour accélérer la réponse Vapi sur get_slots (moins d'appels Google).
 SLOTS_POOL_SIZE = 9
@@ -723,6 +727,18 @@ def _filter_slots_by_weekday(pool: List[Any], weekday: int) -> List[Any]:
     return out
 
 
+def _filter_slots_by_min_start(pool: List[Any], min_start: Optional[datetime]) -> List[Any]:
+    """Ne garde que les créneaux dont le début est >= min_start."""
+    if min_start is None:
+        return pool
+    out = []
+    for s in pool or []:
+        dt = _slot_start_dt(s)
+        if dt is None or dt >= min_start:
+            out.append(s)
+    return out
+
+
 def _resolve_booking_pref(session: Optional[Any]) -> Optional[str]:
     """Préférence horaire (matin/après-midi/soir) depuis la session."""
     from backend.entity_extraction import time_pref_from_pref
@@ -839,6 +855,10 @@ def get_slots_for_display(
     time_pref = time_pref_from_pref(pref) or (pref if pref in ("matin", "après-midi", "soir") else None)
     weekday_pref = weekday_from_pref(pref) if not target_date_obj else None
     fetch_pref = time_pref
+    channel = (getattr(session, "channel", "") or "").strip().lower() if session else ""
+    min_start_dt: Optional[datetime] = None
+    if channel == "vocal":
+        min_start_dt = datetime.now() + timedelta(minutes=MIN_VOCAL_LEAD_MINUTES)
 
     appt_prefs_early = getattr(session, "appointment_preferences", None) if session else None
     if appt_prefs_early:
@@ -862,8 +882,12 @@ def get_slots_for_display(
     if not has_rejected and not target_date_obj:
         cached = _get_cached_slots(limit, tenant_id, pref=fetch_pref)
         if cached:
+            cached = _filter_slots_by_min_start(cached, min_start_dt)
+            if weekday_pref is not None:
+                cached = _filter_slots_by_weekday(cached, weekday_pref)
             logger.info(f"⚡ get_slots_for_display: cache hit pref={fetch_pref} ({(time.time() - t_start) * 1000:.0f}ms)")
-            return cached
+            if cached:
+                return cached
 
     if target_date_obj:
         pool_limit = max(limit, SLOTS_POOL_SIZE_MORE if has_rejected else SLOTS_POOL_SIZE)
@@ -961,6 +985,10 @@ def get_slots_for_display(
                 pool = local_pool
         except Exception as e:
             logger.debug("get_slots_for_display: fallback local failed: %s", e)
+
+    # Garde-fou vocal: éviter les créneaux trop proches.
+    if pool and min_start_dt is not None:
+        pool = _filter_slots_by_min_start(pool, min_start_dt)
 
     # Filtre date / jour de semaine demandé explicitement
     if target_date_obj and pool:
@@ -1118,8 +1146,9 @@ def get_slots_for_display(
         if ex_start or ex_end:
             logger.info("get_slots_for_display: excluded slot %s..%s → %s slots", ex_start[:19], ex_end[:19], len(slots))
 
-    if not has_rejected:
-        _set_cached_slots(slots, tenant_id, pref=pref)
+    # Ne jamais polluer le cache générique avec un filtre "jour précis".
+    if not has_rejected and not target_date_obj and weekday_pref is None:
+        _set_cached_slots(slots, tenant_id, pref=fetch_pref)
 
     log_extra = ""
     if filtered_by_time_constraint:
