@@ -1,6 +1,7 @@
 # tests/test_vapi_tool_payload.py
 """Test extraction des paramètres du tool Vapi (message.toolCallList / toolCalls)."""
 import pytest
+from backend import prompts
 from backend.routes.voice import _tool_extract_parameters, _tool_extract_tool_call_id
 from backend.vapi_tool_handlers import build_book_tool_result
 
@@ -75,4 +76,4 @@ def test_build_book_tool_result_returns_spoken_confirmation_for_confirmed():
         customer_phone = "+33612345678"
 
     result = build_book_tool_result(SessionStub(), {"status": "confirmed", "event_id": "evt_1"})
-    assert result == "Votre rendez-vous est confirmé. Merci pour votre appel. Bonne journée."
+    assert result == prompts.get_invariant_vocal_phrase("booking_confirmed_closing")

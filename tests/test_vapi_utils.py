@@ -1,5 +1,6 @@
 import pytest
 
+from backend import prompts
 from backend.vapi_utils import _build_function_tool_messages, get_public_backend_base_url
 
 
@@ -32,6 +33,12 @@ def test_get_public_backend_base_url_accepts_railway_fallback(monkeypatch):
 def test_build_function_tool_messages_uses_short_generic_holding():
     messages = _build_function_tool_messages()
     assert messages[0]["type"] == "request-start"
-    assert messages[0]["content"] == "Un instant."
+    assert messages[0]["content"] == prompts.get_invariant_vocal_phrase("tool_hold_start")
     assert messages[0]["blocking"] is True
-    assert messages[1]["content"] == "Encore une seconde."
+    assert messages[1]["content"] == prompts.get_invariant_vocal_phrase("tool_hold_delay")
+    assert messages[2]["content"] == prompts.get_invariant_vocal_phrase("agenda_unavailable")
+
+
+def test_invariant_vocal_phrase_unknown_key_raises():
+    with pytest.raises(KeyError):
+        prompts.get_invariant_vocal_phrase("unknown_key")

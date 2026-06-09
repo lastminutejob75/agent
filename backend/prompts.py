@@ -43,6 +43,31 @@ def pick_close(index: int) -> str:
     return CLOSE_VARIANTS[index % len(CLOSE_VARIANTS)]
 
 
+# ---------------------------------------------------------------------------
+# Matrice des phrases vocales invariables (à privilégier côté backend/tooling)
+# ---------------------------------------------------------------------------
+# Ces formulations sont volontairement figées pour réduire les dérives LLM/TTS.
+INVARIANT_VOCAL_PHRASES: Dict[str, str] = {
+    "tool_hold_start": "Un instant.",
+    "tool_hold_delay": "Encore une seconde.",
+    "agenda_unavailable": "Je n'arrive pas à consulter l'agenda pour le moment. Souhaitez-vous qu'on vous rappelle ?",
+    "booking_failed": "Je n'ai pas pu valider la réservation. Souhaitez-vous réessayer ?",
+    "booking_confirmed_closing": "Votre rendez-vous est confirmé. Bonne journée.",
+    "transfer_now": "Je vous transfère maintenant.",
+    "repeat_generic": "Pouvez-vous répéter, s'il vous plaît ?",
+}
+
+
+def get_invariant_vocal_phrase(key: str) -> str:
+    """
+    Retourne une phrase vocale invariable par clé.
+    Lève KeyError si la clé est inconnue pour éviter les fautes silencieuses.
+    """
+    if key not in INVARIANT_VOCAL_PHRASES:
+        raise KeyError(f"Unknown invariant vocal phrase key: {key}")
+    return INVARIANT_VOCAL_PHRASES[key]
+
+
 # --- Silence vocal (RÈGLE 3) — ton bienveillant, phrases courtes TTS ---
 MSG_SILENCE_1 = (
     "Excusez-moi. Je ne vous ai pas entendu. "

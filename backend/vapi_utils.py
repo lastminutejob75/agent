@@ -10,6 +10,7 @@ from typing import Any, Dict
 from urllib.parse import urlparse
 
 import httpx
+from backend import prompts
 
 logger = logging.getLogger(__name__)
 
@@ -142,13 +143,8 @@ Si "confirmed" → passer à la clôture.
 ⚠️ IMPORTANT — AUCUNE HÉSITATION POSSIBLE
 
 Après confirmation "confirmed" :
-Dire :
-"Votre rendez-vous est confirmé."
-
-Confirmer les 2 derniers chiffres du numéro si disponible.
-
 Dire exactement :
-"Merci pour votre appel. Bonne journée."
+"Votre rendez-vous est confirmé. Bonne journée."
 
 IMMÉDIATEMENT appeler le tool endCall.
 
@@ -269,11 +265,11 @@ def _vapi_tool_url() -> str:
 def _build_function_tool_messages() -> list[Dict[str, Any]]:
     """Messages Vapi du function tool: courts et neutres pour éviter une répétition lourde."""
     return [
-        {"type": "request-start", "content": "Un instant.", "blocking": True},
-        {"type": "request-response-delayed", "content": "Encore une seconde."},
+        {"type": "request-start", "content": prompts.get_invariant_vocal_phrase("tool_hold_start"), "blocking": True},
+        {"type": "request-response-delayed", "content": prompts.get_invariant_vocal_phrase("tool_hold_delay")},
         {
             "type": "request-failed",
-            "content": "Je n'arrive pas à consulter l'agenda pour le moment. Souhaitez-vous qu'on vous rappelle ?",
+            "content": prompts.get_invariant_vocal_phrase("agenda_unavailable"),
             "endCallAfterSpokenEnabled": False,
         },
     ]
@@ -402,6 +398,7 @@ async def create_vapi_assistant(
         "voice": voice,
         "model": model_config,
         "firstMessage": f"Cabinet {tenant_name}, bonjour ! Je suis {assistant_id.capitalize()}, comment puis-je vous aider ?",
+        "endCallMessage": prompts.get_invariant_vocal_phrase("booking_confirmed_closing"),
         "endCallFunctionEnabled": True,
         "recordingEnabled": True,
         "server": server_config,

@@ -38,7 +38,8 @@ def build_book_tool_result(session: Any, payload: Optional[Dict[str, Any]]) -> s
     status = str((payload or {}).get("status") or "").strip().lower()
     if status != "confirmed":
         return _vapi_result_string(payload or {})
-    return "Votre rendez-vous est confirmé. Merci pour votre appel. Bonne journée."
+    # Phrase de clôture figée pour éviter les variations LLM/TTS.
+    return prompts.get_invariant_vocal_phrase("booking_confirmed_closing")
 
 
 def handle_get_slots(
@@ -158,7 +159,7 @@ def handle_get_slots(
                 call_id[:24] if call_id else "",
                 raw_pref or "any",
             )
-            return (None, None, "Impossible de consulter l'agenda pour le moment.")
+            return (None, None, prompts.get_invariant_vocal_phrase("agenda_unavailable"))
 
         # Voice path: do not re-fetch Google full slot objects synchronously.
         # pending_slots already contains enough canonical data to book.
@@ -173,7 +174,7 @@ def handle_get_slots(
         return (labels, source, "")
     except Exception as e:
         logger.exception("CALENDAR_FETCH failed: %s", e)
-        return (None, None, "Impossible de consulter l'agenda pour le moment.")
+        return (None, None, prompts.get_invariant_vocal_phrase("agenda_unavailable"))
 
 
 def _chosen_slot_iso(session: Any, choice: int) -> Tuple[Optional[str], Optional[str]]:
