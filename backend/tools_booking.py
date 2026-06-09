@@ -959,6 +959,14 @@ def get_slots_for_display(
     fetch_pref = time_pref
     channel = (getattr(session, "channel", "") or "").strip().lower() if session else ""
     public_booking_context = _is_public_page_booking_context(session)
+    now_date = datetime.now().date()
+    explicit_today_request = _has_explicit_today_request(
+        pref=pref,
+        target_date_obj=target_date_obj,
+        weekday_pref=weekday_pref,
+        session=session,
+        today=now_date,
+    )
     min_start_dt = _context_min_start_datetime(
         pref=pref,
         target_date_obj=target_date_obj,
@@ -986,7 +994,8 @@ def get_slots_for_display(
     rejected_ids = getattr(session, "rejected_slot_ids", None) if session else None
     more_round = bool(getattr(session, "requesting_more_slots", False)) if session else False
     has_rejected = bool(rejected) or bool(rejected_ids) or more_round
-    if not has_rejected and not target_date_obj and not public_booking_context:
+    skip_fast_cache = bool(public_booking_context and explicit_today_request)
+    if not has_rejected and not target_date_obj and not skip_fast_cache:
         cached = _get_cached_slots(limit, tenant_id, pref=fetch_pref)
         if cached:
             cached = _filter_slots_by_min_start(cached, min_start_dt)
@@ -1264,7 +1273,7 @@ def get_slots_for_display(
             logger.info("get_slots_for_display: excluded slot %s..%s → %s slots", ex_start[:19], ex_end[:19], len(slots))
 
     # Ne jamais polluer le cache générique avec un filtre "jour précis".
-    if not has_rejected and not target_date_obj and weekday_pref is None and not public_booking_context:
+    if not has_rejected and not target_date_obj and weekday_pref is None and not explicit_today_request:
         _set_cached_slots(slots, tenant_id, pref=fetch_pref)
 
     log_extra = ""
