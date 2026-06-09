@@ -289,7 +289,7 @@ def test_get_slots_for_display_vocal_cache_filters_too_soon_slots():
 
     now = datetime.now()
     too_soon = (now + timedelta(minutes=5)).replace(second=0, microsecond=0)
-    valid_later = (now + timedelta(minutes=90)).replace(second=0, microsecond=0)
+    valid_later = (now + timedelta(days=1, minutes=90)).replace(second=0, microsecond=0)
     cached_slots = [
         prompts.SlotDisplay(
             idx=1,
@@ -319,6 +319,110 @@ def test_get_slots_for_display_vocal_cache_filters_too_soon_slots():
 
     assert len(slots) == 1
     assert slots[0].slot_id == 2
+
+
+def test_get_slots_for_display_vocal_default_starts_from_tomorrow():
+    """En vocal, sans demande explicite, on ne propose pas de créneau aujourd'hui."""
+    from backend.tools_booking import get_slots_for_display
+
+    class Session:
+        tenant_id = 9
+        rejected_slot_starts = []
+        rejected_slot_ids = []
+        channel = "vocal"
+        qualif_data = None
+
+    now = datetime.now().replace(second=0, microsecond=0)
+    today_late = (now + timedelta(hours=2)).isoformat()
+    tomorrow = (now + timedelta(days=1, hours=2)).isoformat()
+    cached_slots = [
+        prompts.SlotDisplay(
+            idx=1,
+            label="Aujourd'hui",
+            slot_id=1,
+            start=today_late,
+            day="lundi",
+            hour=14,
+            label_vocal="aujourd'hui",
+            source="google",
+        ),
+        prompts.SlotDisplay(
+            idx=2,
+            label="Demain",
+            slot_id=2,
+            start=tomorrow,
+            day="mardi",
+            hour=14,
+            label_vocal="demain",
+            source="google",
+        ),
+    ]
+
+    with patch.object(tools_booking, "_get_cached_slots", return_value=cached_slots):
+        with patch("backend.tenant_config.get_params", side_effect=AssertionError("get_params should not be called on cache hit")):
+            slots = get_slots_for_display(limit=3, pref="après-midi", session=Session())
+
+    assert len(slots) == 1
+    assert slots[0].slot_id == 2
+
+
+def test_get_slots_for_display_vocal_allows_today_when_explicit():
+    """En vocal, une demande explicite d'aujourd'hui doit autoriser les créneaux du jour."""
+    from backend.tools_booking import get_slots_for_display
+
+    class Session:
+        tenant_id = 9
+        rejected_slot_starts = []
+        rejected_slot_ids = []
+        channel = "vocal"
+        qualif_data = None
+
+    now = datetime.now().replace(second=0, microsecond=0)
+    today_valid = (now + timedelta(minutes=90)).isoformat()
+    tomorrow = (now + timedelta(days=1, hours=2)).isoformat()
+    cached_slots = [
+        prompts.SlotDisplay(
+            idx=1,
+            label="Aujourd'hui plus tard",
+            slot_id=1,
+            start=today_valid,
+            day="lundi",
+            hour=14,
+            label_vocal="aujourd'hui",
+            source="google",
+        ),
+        prompts.SlotDisplay(
+            idx=2,
+            label="Demain",
+            slot_id=2,
+            start=tomorrow,
+            day="mardi",
+            hour=14,
+            label_vocal="demain",
+            source="google",
+        ),
+    ]
+
+    with patch.object(tools_booking, "_get_cached_slots", return_value=cached_slots):
+        with patch("backend.tenant_config.get_params", side_effect=AssertionError("get_params should not be called on cache hit")):
+            slots = get_slots_for_display(limit=3, pref="aujourd'hui après-midi", session=Session())
+
+    assert any(s.slot_id == 1 for s in slots)
+
+
+def test_spread_slots_prefers_distinct_days_for_vocal():
+    """Le spread vocal doit prioriser des jours distincts (J+1, J+2, J+3) quand possible."""
+    slots = [
+        prompts.SlotDisplay(1, "Lun 10h", 1, "2026-06-08T10:00:00", "lundi", 10, "lundi 10h", "google"),
+        prompts.SlotDisplay(2, "Lun 14h", 2, "2026-06-08T14:00:00", "lundi", 14, "lundi 14h", "google"),
+        prompts.SlotDisplay(3, "Mar 10h", 3, "2026-06-09T10:00:00", "mardi", 10, "mardi 10h", "google"),
+        prompts.SlotDisplay(4, "Mer 10h", 4, "2026-06-10T10:00:00", "mercredi", 10, "mercredi 10h", "google"),
+    ]
+
+    out = tools_booking._spread_slots(slots, limit=3, prefer_distinct_days=True)
+
+    assert len(out) == 3
+    assert [s.day for s in out] == ["lundi", "mardi", "mercredi"]
 
 
 def test_handle_get_slots_uses_short_sync_fetch_on_cold_cache():

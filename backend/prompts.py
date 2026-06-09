@@ -52,7 +52,7 @@ INVARIANT_VOCAL_PHRASES: Dict[str, str] = {
     "tool_hold_delay": "Encore une seconde.",
     "agenda_unavailable": "Je n'arrive pas à consulter l'agenda pour le moment. Souhaitez-vous qu'on vous rappelle ?",
     "booking_failed": "Je n'ai pas pu valider la réservation. Souhaitez-vous réessayer ?",
-    "booking_confirmed_closing": "Votre rendez-vous est confirmé. Bonne journée.",
+    "booking_confirmed_closing": "Rendez-vous confirmé. Bonne journée.",
     "transfer_now": "Je vous transfère maintenant.",
     "repeat_generic": "Pouvez-vous répéter, s'il vous plaît ?",
 }

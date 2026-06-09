@@ -144,7 +144,7 @@ Si "confirmed" → passer à la clôture.
 
 Après confirmation "confirmed" :
 Dire exactement :
-"Votre rendez-vous est confirmé. Bonne journée."
+"Rendez-vous confirmé. Bonne journée."
 
 IMMÉDIATEMENT appeler le tool endCall.
 

@@ -407,6 +407,7 @@ def _spread_slots(
     min_gap_minutes: int = MIN_SLOT_GAP_MINUTES,
     *,
     same_day_focus: bool = False,
+    prefer_distinct_days: bool = False,
 ) -> List[prompts.SlotDisplay]:
     """
     Étale les créneaux pour une UX naturelle :
@@ -436,17 +437,32 @@ def _spread_slots(
         return picked
 
     def day_count(picked_list: List[Any], day: str) -> int:
-        return sum(1 for x in picked_list if (getattr(x, "day", "") or "") == day)
+        return sum(1 for x in picked_list if (_slot_get(x, "day", "") or "") == day)
+
+    def slot_day(slot: Any) -> str:
+        return (_slot_get(slot, "day", "") or "")
 
     used_day_period: set = set()  # (day, period)
     picked: List[prompts.SlotDisplay] = []
+
+    # Phase 0 (vocal par défaut) : prioriser 1 créneau par jour.
+    if prefer_distinct_days:
+        seen_days: set = set()
+        for s in ordered:
+            if len(picked) >= limit:
+                break
+            day = slot_day(s)
+            if day in seen_days:
+                continue
+            picked.append(s)
+            seen_days.add(day)
 
     # Phase 1 : au plus 1 par (day, period), max 2 par jour
     for s in ordered:
         if len(picked) >= limit:
             break
         dt = _slot_start_dt(s)
-        day = getattr(s, "day", "") or ""
+        day = slot_day(s)
         period = _slot_period(s)
         key = (day, period)
         if key in used_day_period:
@@ -459,12 +475,12 @@ def _spread_slots(
     # Phase 2 : fallback 2h si pas assez (respecter écart par rapport au dernier déjà pické)
     remaining = [s for s in ordered if s not in picked]
     last_dt = _slot_start_dt(picked[-1]) if picked else None
-    last_day = (getattr(picked[-1], "day", "") or "") if picked else None
+    last_day = slot_day(picked[-1]) if picked else None
     for s in remaining:
         if len(picked) >= limit:
             break
         dt = _slot_start_dt(s)
-        day = getattr(s, "day", "") or ""
+        day = slot_day(s)
         if day_count(picked, day) >= 2:
             continue
         if last_dt is None:
@@ -739,6 +755,37 @@ def _filter_slots_by_min_start(pool: List[Any], min_start: Optional[datetime]) -
     return out
 
 
+def _vocal_min_start_datetime(
+    *,
+    pref: Optional[str],
+    target_date_obj: Optional[date],
+    weekday_pref: Optional[int],
+) -> datetime:
+    """
+    En vocal :
+    - par défaut, ne pas proposer aujourd'hui (minimum = demain),
+    - sauf demande explicite d'aujourd'hui, auquel cas on garde seulement le lead-time.
+    """
+    now = datetime.now()
+    lead_floor = now + timedelta(minutes=MIN_VOCAL_LEAD_MINUTES)
+    today = now.date()
+
+    pref_l = (pref or "").strip().lower()
+    explicit_today = False
+    if target_date_obj == today:
+        explicit_today = True
+    elif weekday_pref is not None and weekday_pref == today.weekday():
+        explicit_today = True
+    elif any(tok in pref_l for tok in ("aujourd", "today", "ce jour")):
+        explicit_today = True
+
+    if explicit_today:
+        return lead_floor
+
+    tomorrow_floor = datetime.combine(today + timedelta(days=1), datetime.min.time())
+    return max(lead_floor, tomorrow_floor)
+
+
 def _resolve_booking_pref(session: Optional[Any]) -> Optional[str]:
     """Préférence horaire (matin/après-midi/soir) depuis la session."""
     from backend.entity_extraction import time_pref_from_pref
@@ -858,7 +905,11 @@ def get_slots_for_display(
     channel = (getattr(session, "channel", "") or "").strip().lower() if session else ""
     min_start_dt: Optional[datetime] = None
     if channel == "vocal":
-        min_start_dt = datetime.now() + timedelta(minutes=MIN_VOCAL_LEAD_MINUTES)
+        min_start_dt = _vocal_min_start_datetime(
+            pref=pref,
+            target_date_obj=target_date_obj,
+            weekday_pref=weekday_pref,
+        )
 
     appt_prefs_early = getattr(session, "appointment_preferences", None) if session else None
     if appt_prefs_early:
@@ -1128,6 +1179,7 @@ def get_slots_for_display(
         limit=limit,
         min_gap_minutes=MIN_SLOT_GAP_MINUTES,
         same_day_focus=bool(target_date_obj),
+        prefer_distinct_days=bool(channel == "vocal" and not target_date_obj and weekday_pref is None),
     )
 
     # V3: exclure le créneau (start_iso, end_iso) si fourni (retry après slot_taken)
