@@ -425,6 +425,56 @@ def test_spread_slots_prefers_distinct_days_for_vocal():
     assert [s.day for s in out] == ["lundi", "mardi", "mercredi"]
 
 
+def test_get_slots_for_display_vocal_reapplies_min_start_after_pref_fallback():
+    """
+    En vocal, le fallback sans pref (quand pref demandée est vide) ne doit pas
+    réintroduire des créneaux du jour.
+    """
+    from backend.tools_booking import get_slots_for_display
+
+    class Session:
+        tenant_id = 9
+        rejected_slot_starts = []
+        rejected_slot_ids = []
+        channel = "vocal"
+        qualif_data = None
+
+    now = datetime.now().replace(second=0, microsecond=0)
+    today_late = (now + timedelta(hours=2)).isoformat()
+    tomorrow = (now + timedelta(days=1, hours=2)).isoformat()
+    fallback_slots = [
+        prompts.SlotDisplay(
+            idx=1,
+            label="Aujourd'hui",
+            slot_id=1,
+            start=today_late,
+            day="lundi",
+            hour=14,
+            label_vocal="aujourd'hui",
+            source="sqlite",
+        ),
+        prompts.SlotDisplay(
+            idx=2,
+            label="Demain",
+            slot_id=2,
+            start=tomorrow,
+            day="mardi",
+            hour=14,
+            label_vocal="demain",
+            source="sqlite",
+        ),
+    ]
+
+    with patch.object(tools_booking, "_get_cached_slots", return_value=None):
+        with patch.object(tools_booking, "_get_slots_from_local", return_value=[]):
+            with patch.object(tools_booking, "_get_slots_from_sqlite", return_value=fallback_slots):
+                with patch("backend.tenant_config.get_params", return_value={}):
+                    slots = get_slots_for_display(limit=3, pref="après-midi", session=Session())
+
+    assert len(slots) == 1
+    assert slots[0].slot_id == 2
+
+
 def test_handle_get_slots_uses_short_sync_fetch_on_cold_cache():
     """Sur cache froid, le tool vocal doit tenter une lecture courte et rendre des slots dès le premier essai."""
     session = _make_session()

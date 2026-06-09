@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from backend.booking_origin import PUBLIC_PAGE
 from backend.cabinet_profile_pg import (
     get_assistant_settings as pg_get_assistant_settings,
     get_booking_rules as pg_get_booking_rules,
@@ -201,6 +202,7 @@ async def public_praticien_chat(slug: str, body: PublicChatBody) -> Dict[str, An
         message=body.message.strip(),
         conversation_id=body.conversation_id,
         channel="web",
+        booking_origin=PUBLIC_PAGE,
     )
 
 
@@ -221,6 +223,7 @@ async def public_praticien_chat_stream(slug: str, conv_id: str):
     session = ENGINE.session_store.get_or_create(cid)
     session.tenant_id = tenant_id
     session.channel = "web"
+    session.booking_origin = PUBLIC_PAGE
     _register_web_conv_tenant(tenant_id, cid)
     ensure_stream(cid)
     return await web_chat_stream(cid, expected_tenant_id=tenant_id)

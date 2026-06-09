@@ -16,7 +16,7 @@ import logging
 
 from backend import prompts
 from backend import config
-from backend.booking_origin import UNKNOWN, normalize_for_agenda
+from backend.booking_origin import PUBLIC_PAGE, UNKNOWN, normalize_for_agenda
 from backend.google_calendar import (
     GoogleCalendarError,
     GoogleCalendarNotFoundError,
@@ -461,6 +461,8 @@ def _spread_slots(
     for s in ordered:
         if len(picked) >= limit:
             break
+        if s in picked:
+            continue
         dt = _slot_start_dt(s)
         day = slot_day(s)
         period = _slot_period(s)
@@ -755,29 +757,82 @@ def _filter_slots_by_min_start(pool: List[Any], min_start: Optional[datetime]) -
     return out
 
 
-def _vocal_min_start_datetime(
+def _is_public_page_booking_context(session: Optional[Any]) -> bool:
+    """Vrai si la recherche de créneaux vient de la page publique."""
+    if session is None:
+        return False
+    origin = normalize_for_agenda(getattr(session, "booking_origin", None))
+    if origin == PUBLIC_PAGE:
+        return True
+    conv_id = str(getattr(session, "conv_id", "") or "")
+    return conv_id.startswith("public-web-")
+
+
+def _has_explicit_today_request(
     *,
     pref: Optional[str],
     target_date_obj: Optional[date],
     weekday_pref: Optional[int],
-) -> datetime:
+    session: Optional[Any],
+    today: date,
+) -> bool:
+    """Détecte une demande explicite du jour courant (aujourd'hui)."""
+    if target_date_obj == today:
+        return True
+    if weekday_pref is not None and weekday_pref == today.weekday():
+        return True
+
+    pref_l = (pref or "").strip().lower()
+    if any(
+        tok in pref_l
+        for tok in ("aujourd", "aujourdhui", "today", "ce jour", "date du jour", "jour courant")
+    ):
+        return True
+
+    appt_prefs = getattr(session, "appointment_preferences", None) if session is not None else None
+    if isinstance(appt_prefs, dict):
+        earliest = str(appt_prefs.get("earliest_date") or "")[:10]
+        latest = str(appt_prefs.get("latest_date") or "")[:10]
+        today_iso = today.isoformat()
+        if earliest == today_iso and (not latest or latest == today_iso):
+            return True
+        raw_text = str(appt_prefs.get("raw_user_text") or "").strip().lower()
+        if any(
+            tok in raw_text
+            for tok in ("aujourd", "aujourdhui", "today", "ce jour", "date du jour", "jour courant")
+        ):
+            return True
+    return False
+
+
+def _context_min_start_datetime(
+    *,
+    pref: Optional[str],
+    target_date_obj: Optional[date],
+    weekday_pref: Optional[int],
+    session: Optional[Any],
+    channel: str,
+) -> Optional[datetime]:
     """
-    En vocal :
+    En vocal et page publique :
     - par défaut, ne pas proposer aujourd'hui (minimum = demain),
     - sauf demande explicite d'aujourd'hui, auquel cas on garde seulement le lead-time.
     """
+    channel_l = (channel or "").strip().lower()
+    enforce_tomorrow_floor = channel_l == "vocal" or _is_public_page_booking_context(session)
+    if not enforce_tomorrow_floor:
+        return None
+
     now = datetime.now()
     lead_floor = now + timedelta(minutes=MIN_VOCAL_LEAD_MINUTES)
     today = now.date()
-
-    pref_l = (pref or "").strip().lower()
-    explicit_today = False
-    if target_date_obj == today:
-        explicit_today = True
-    elif weekday_pref is not None and weekday_pref == today.weekday():
-        explicit_today = True
-    elif any(tok in pref_l for tok in ("aujourd", "today", "ce jour")):
-        explicit_today = True
+    explicit_today = _has_explicit_today_request(
+        pref=pref,
+        target_date_obj=target_date_obj,
+        weekday_pref=weekday_pref,
+        session=session,
+        today=today,
+    )
 
     if explicit_today:
         return lead_floor
@@ -903,13 +958,14 @@ def get_slots_for_display(
     weekday_pref = weekday_from_pref(pref) if not target_date_obj else None
     fetch_pref = time_pref
     channel = (getattr(session, "channel", "") or "").strip().lower() if session else ""
-    min_start_dt: Optional[datetime] = None
-    if channel == "vocal":
-        min_start_dt = _vocal_min_start_datetime(
-            pref=pref,
-            target_date_obj=target_date_obj,
-            weekday_pref=weekday_pref,
-        )
+    public_booking_context = _is_public_page_booking_context(session)
+    min_start_dt = _context_min_start_datetime(
+        pref=pref,
+        target_date_obj=target_date_obj,
+        weekday_pref=weekday_pref,
+        session=session,
+        channel=channel,
+    )
 
     appt_prefs_early = getattr(session, "appointment_preferences", None) if session else None
     if appt_prefs_early:
@@ -930,7 +986,7 @@ def get_slots_for_display(
     rejected_ids = getattr(session, "rejected_slot_ids", None) if session else None
     more_round = bool(getattr(session, "requesting_more_slots", False)) if session else False
     has_rejected = bool(rejected) or bool(rejected_ids) or more_round
-    if not has_rejected and not target_date_obj:
+    if not has_rejected and not target_date_obj and not public_booking_context:
         cached = _get_cached_slots(limit, tenant_id, pref=fetch_pref)
         if cached:
             cached = _filter_slots_by_min_start(cached, min_start_dt)
@@ -1100,6 +1156,11 @@ def get_slots_for_display(
                 return []
             pool = _get_slots_from_sqlite(limit, pref=None, tenant_id=tenant_id)
 
+    # Garde-fou final vocal: réappliquer le filtre minimum après tous les fallbacks.
+    # Evite qu'un fallback "sans pref" repropose des créneaux du jour.
+    if pool and min_start_dt is not None:
+        pool = _filter_slots_by_min_start(pool, min_start_dt)
+
     # Exclure créneaux déjà proposés (exact + id). Web : aussi voisins proches (évite « les mêmes » à 15–30 min).
     if has_rejected:
         before = len(pool)
@@ -1179,7 +1240,11 @@ def get_slots_for_display(
         limit=limit,
         min_gap_minutes=MIN_SLOT_GAP_MINUTES,
         same_day_focus=bool(target_date_obj),
-        prefer_distinct_days=bool(channel == "vocal" and not target_date_obj and weekday_pref is None),
+        prefer_distinct_days=bool(
+            (channel == "vocal" or public_booking_context)
+            and not target_date_obj
+            and weekday_pref is None
+        ),
     )
 
     # V3: exclure le créneau (start_iso, end_iso) si fourni (retry après slot_taken)
@@ -1199,7 +1264,7 @@ def get_slots_for_display(
             logger.info("get_slots_for_display: excluded slot %s..%s → %s slots", ex_start[:19], ex_end[:19], len(slots))
 
     # Ne jamais polluer le cache générique avec un filtre "jour précis".
-    if not has_rejected and not target_date_obj and weekday_pref is None:
+    if not has_rejected and not target_date_obj and weekday_pref is None and not public_booking_context:
         _set_cached_slots(slots, tenant_id, pref=fetch_pref)
 
     log_extra = ""

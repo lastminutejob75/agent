@@ -290,7 +290,13 @@ def _session_from_memory(conv_id: str):
     return store.get(conv_id)
 
 
-def _touch_web_session(conv_id: str, tenant_id: int, *, state: Optional[str] = None) -> None:
+def _touch_web_session(
+    conv_id: str,
+    tenant_id: int,
+    *,
+    state: Optional[str] = None,
+    booking_origin: Optional[str] = None,
+) -> None:
     """Met à jour la session web en mémoire (sans sauvegarde PG synchrone)."""
     from backend.session import Session
 
@@ -304,6 +310,8 @@ def _touch_web_session(conv_id: str, tenant_id: int, *, state: Optional[str] = N
             session = store.get_or_create(conv_id)
     session.tenant_id = int(tenant_id)
     session.channel = "web"
+    if booking_origin:
+        session.booking_origin = booking_origin
     if state:
         session.state = state
 
@@ -345,12 +353,14 @@ async def start_web_chat(
     message: str,
     conversation_id: Optional[str] = None,
     channel: str = "web",
+    booking_origin: Optional[str] = None,
 ) -> dict:
     """Démarre ou continue une conversation web pour un tenant donné."""
     conv_id = (conversation_id or "").strip() or str(uuid.uuid4())
     tid = int(tenant_id)
     current_tenant_id.set(str(tid))
     _register_web_conv_tenant(tid, conv_id)
+    _touch_web_session(conv_id, tid, booking_origin=booking_origin)
     # Ne reset pas en routine (évite de perdre un message en vol), mais purge
     # explicitement les anciennes files déjà terminées (marqueur None résiduel).
     ensure_stream(conv_id, reset=(conv_id not in STREAMS) or _stream_has_terminal_marker(conv_id))
@@ -376,19 +386,21 @@ async def start_web_chat(
     is_more_slots = is_more_slots_request_message(msg)
 
     if is_booking_start:
-        cached_slots = await asyncio.to_thread(_peek_cached_chat_slots, tid)
+        cached_slots = []
+        if not booking_origin:
+            cached_slots = await asyncio.to_thread(_peek_cached_chat_slots, tid)
         if cached_slots:
             out["slots"] = cached_slots
             out["slots_source"] = "cache"
-        asyncio.create_task(_warm_slots_cache(tid))
+        asyncio.create_task(_warm_slots_cache(tid, booking_origin=booking_origin))
     elif is_more_slots:
         # "Voir d'autres créneaux" doit forcer une nouvelle proposition, pas rejouer le cache instantané.
-        asyncio.create_task(_warm_slots_cache(tid))
+        asyncio.create_task(_warm_slots_cache(tid, booking_origin=booking_origin))
     asyncio.create_task(run_engine(conv_id, msg, channel))
     return out
 
 
-async def _warm_slots_cache(tenant_id: int) -> None:
+async def _warm_slots_cache(tenant_id: int, *, booking_origin: Optional[str] = None) -> None:
     """Précharge le cache créneaux pendant le traitement chat (barre + moteur)."""
     try:
         from types import SimpleNamespace
@@ -399,6 +411,8 @@ async def _warm_slots_cache(tenant_id: int) -> None:
             tenant_id=int(tenant_id),
             rejected_slot_starts=[],
             rejected_slot_ids=[],
+            channel="web",
+            booking_origin=booking_origin,
         )
 
         def _run() -> None:

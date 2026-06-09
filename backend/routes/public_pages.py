@@ -880,10 +880,19 @@ def _filter_future_public_slots(
     *,
     now: Optional[datetime] = None,
     min_lead_minutes: int = _PUBLIC_SLOTS_MIN_LEAD_MINUTES,
+    allow_today_explicit: bool = False,
 ) -> List[Dict[str, Any]]:
-    """Exclut créneaux passés ou trop proches (cache HTTP inclus)."""
+    """
+    Exclut créneaux passés ou trop proches.
+    Par défaut, la page publique ne propose pas "aujourd'hui" (minimum = demain).
+    """
     ref = now or _public_slots_now()
-    cutoff = ref + timedelta(minutes=max(0, int(min_lead_minutes or 0)))
+    lead_cutoff = ref + timedelta(minutes=max(0, int(min_lead_minutes or 0)))
+    if allow_today_explicit:
+        cutoff = lead_cutoff
+    else:
+        tomorrow_floor = datetime.combine(ref.date() + timedelta(days=1), datetime.min.time())
+        cutoff = max(lead_cutoff, tomorrow_floor)
     kept: List[Dict[str, Any]] = []
     for item in slots or []:
         if not isinstance(item, dict):
@@ -1367,8 +1376,15 @@ def _format_display_slots_payload(
 def _fetch_public_slots_payload(tenant_id: int, slug: str, safe_count: int) -> Dict[str, Any]:
     """Récupère et formate les créneaux (Google/local) — exécuté dans un thread."""
     from backend import tools_booking
+    from backend.booking_origin import PUBLIC_PAGE
 
-    session = SimpleNamespace(tenant_id=tenant_id, rejected_slot_starts=[])
+    session = SimpleNamespace(
+        tenant_id=tenant_id,
+        rejected_slot_starts=[],
+        rejected_slot_ids=[],
+        channel="web",
+        booking_origin=PUBLIC_PAGE,
+    )
     display_slots = tools_booking.get_slots_for_display(
         limit=safe_count,
         pref=None,
