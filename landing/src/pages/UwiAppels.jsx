@@ -9,7 +9,6 @@ import {
   FileText,
   Filter,
   Headphones,
-  Home,
   Info,
   LayoutList,
   Mic2,
@@ -19,13 +18,11 @@ import {
   PhoneOff,
   Play,
   Search,
-  Settings,
   User,
   UserPlus,
-  Users,
   X,
 } from "lucide-react";
-import { useNavigate, useOutletContext, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import CreatePatientFromCallModal from "../components/calls/CreatePatientFromCallModal.jsx";
 import PatientDuplicateBanner from "../components/patients/PatientDuplicateBanner.jsx";
 import { api } from "../lib/api.js";
@@ -119,32 +116,6 @@ function Hoverable({ style, hoverStyle, as: Tag = "div", children, ...rest }) {
     >
       {children}
     </Tag>
-  );
-}
-
-function NavItem({ icon: Icon, label, active }) {
-  const base = {
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-    width: "100%",
-    border: "none",
-    cursor: "pointer",
-    padding: "11px 20px",
-    borderRadius: "0 16px 16px 0",
-    fontSize: 13.5,
-    fontWeight: 600,
-    transition: "all 0.15s ease",
-    background: active ? C.tealSoft : "transparent",
-    color: active ? C.teal : "rgba(10,22,40,0.7)",
-    boxShadow: active ? `inset 3px 0 0 ${C.teal}` : "none",
-  };
-
-  return (
-    <Hoverable as="button" style={base} hoverStyle={active ? {} : { background: C.bg, color: C.navy }}>
-      <Icon size={18} strokeWidth={active ? 2.4 : 2} />
-      {label}
-    </Hoverable>
   );
 }
 
@@ -881,8 +852,6 @@ function DetailPanel({ call, onClose, onCreatePatient, onOpenPatient, onMarkHand
 export default function UwiAppels() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { me } = useOutletContext() || {};
-  const tenantLabel = String(me?.tenant_name || "Mon cabinet").trim() || "Mon cabinet";
   const { calls, loading, error, selectCall, markAsHandled, createPatientFromCall, addCallNote } = useCalls({ days: 30 });
   const [activeTab, setActiveTab] = useState("tous");
   const [selectedCall, setSelectedCall] = useState(null);
@@ -1202,8 +1171,6 @@ export default function UwiAppels() {
             height: 0;
           }
           @media (max-width: 1024px) {
-            .uwi-appels-shell { display: block !important; min-height: auto !important; }
-            .uwi-appels-inner-sidebar { display: none !important; }
             .uwi-appels-main { padding: 14px 12px 24px !important; }
           }
           @media (max-width: 760px) {
@@ -1220,82 +1187,7 @@ export default function UwiAppels() {
           }
         `}
       </style>
-      <div className="uwi-appels-shell" style={{ display: "flex", minHeight: "100%" }}>
-        <aside
-          className="uwi-appels-inner-sidebar"
-          style={{
-            position: "sticky",
-            top: 0,
-            width: 220,
-            minWidth: 220,
-            height: "100vh",
-            display: "flex",
-            flexDirection: "column",
-            borderRight: `1px solid ${C.line}`,
-            background: C.white,
-            padding: "24px 0",
-          }}
-        >
-          <div
-            style={{
-              padding: "0 20px 40px",
-              fontSize: 28,
-              fontWeight: 800,
-              letterSpacing: "-0.02em",
-              color: C.navy,
-            }}
-          >
-            UWi<span style={{ color: C.teal }}>.</span>
-          </div>
-
-          <nav style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
-            <NavItem icon={Home} label="Accueil" />
-            <NavItem icon={Calendar} label="Agenda" />
-            <NavItem icon={FileText} label="Demandes" />
-            <NavItem icon={Phone} label="Appels" active />
-            <NavItem icon={Users} label="Patients" />
-            <NavItem icon={Settings} label="Paramètres" />
-          </nav>
-
-          <div style={{ borderTop: `1px solid ${C.line}`, padding: "16px 16px 0" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 8px" }}>
-              <div
-                style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: "50%",
-                  background: C.teal,
-                  color: C.white,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: 12,
-                  fontWeight: 800,
-                  flexShrink: 0,
-                }}
-              >
-                DM
-              </div>
-              <div style={{ minWidth: 0 }}>
-                <div
-                  style={{
-                    fontSize: 13,
-                    fontWeight: 700,
-                    color: C.navy,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {tenantLabel}
-                </div>
-                <div style={{ fontSize: 11, color: C.muted }}>Médecine générale</div>
-              </div>
-              <ChevronDown size={14} color={C.subtle} style={{ marginLeft: "auto", flexShrink: 0 }} />
-            </div>
-          </div>
-        </aside>
-
+      <div style={{ minHeight: "100%" }}>
         <main className="uwi-appels-main" style={{ flex: 1, minWidth: 0, padding: "28px 32px" }}>
           <header
             className="uwi-appels-page-header"
