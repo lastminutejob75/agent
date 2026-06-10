@@ -379,6 +379,42 @@ def _slot_start_dt(slot: Any) -> Optional[datetime]:
         return None
 
 
+def _tenant_timezone_name(tenant_id: int) -> str:
+    """Timezone IANA du tenant (fallback Europe/Paris)."""
+    tz_name = "Europe/Paris"
+    try:
+        from backend.tenant_config import get_params
+
+        params = get_params(tenant_id) or {}
+        tz_candidate = str(params.get("timezone") or "").strip()
+        if tz_candidate:
+            tz_name = tz_candidate
+    except Exception:
+        pass
+    return tz_name
+
+
+def _tenant_zoneinfo(tenant_id: int) -> ZoneInfo:
+    try:
+        return ZoneInfo(_tenant_timezone_name(tenant_id))
+    except Exception:
+        return ZoneInfo("Europe/Paris")
+
+
+def _slot_start_local_dt(slot: Any, tz: ZoneInfo) -> Optional[datetime]:
+    """Datetime local tenant (naive) pour comparaisons robustes."""
+    start = _slot_get(slot, "start_iso") or _slot_get(slot, "start")
+    if not start:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+        if dt.tzinfo:
+            dt = dt.astimezone(tz).replace(tzinfo=None)
+        return dt
+    except Exception:
+        return None
+
+
 def _slot_minute_of_day_for_period(slot: Any) -> int:
     """Minute du jour (0-1439) pour déterminer la période."""
     dt = _slot_start_dt(slot)
@@ -711,7 +747,7 @@ def _normalize_iso(s: Optional[str]) -> str:
     return s
 
 
-def _slot_start_date(slot: Any) -> Optional[date]:
+def _slot_start_date(slot: Any, tz: Optional[ZoneInfo] = None) -> Optional[date]:
     """Date civile d'un créneau (SlotDisplay ou dict)."""
     start = _slot_get(slot, "start_iso") or _slot_get(slot, "start")
     if not start:
@@ -719,19 +755,19 @@ def _slot_start_date(slot: Any) -> Optional[date]:
     try:
         dt = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
         if dt.tzinfo:
-            dt = dt.astimezone()
+            dt = dt.astimezone(tz or ZoneInfo("Europe/Paris"))
         return dt.date()
     except Exception:
         return None
 
 
-def _filter_slots_by_target_date(pool: List[Any], target: date) -> List[Any]:
+def _filter_slots_by_target_date(pool: List[Any], target: date, tz: Optional[ZoneInfo] = None) -> List[Any]:
     """Ne garde que les créneaux du jour demandé."""
-    out = [s for s in pool if _slot_start_date(s) == target]
+    out = [s for s in pool if _slot_start_date(s, tz=tz) == target]
     return out
 
 
-def _filter_slots_by_weekday(pool: List[Any], weekday: int) -> List[Any]:
+def _filter_slots_by_weekday(pool: List[Any], weekday: int, tz: Optional[ZoneInfo] = None) -> List[Any]:
     """Ne garde que les créneaux dont le jour de semaine correspond (0=lundi)."""
     out = []
     for s in pool:
@@ -740,19 +776,19 @@ def _filter_slots_by_weekday(pool: List[Any], weekday: int) -> List[Any]:
         if d and days_fr[weekday] == str(d).lower():
             out.append(s)
             continue
-        sd = _slot_start_date(s)
+        sd = _slot_start_date(s, tz=tz)
         if sd is not None and sd.weekday() == weekday:
             out.append(s)
     return out
 
 
-def _filter_slots_by_min_start(pool: List[Any], min_start: Optional[datetime]) -> List[Any]:
+def _filter_slots_by_min_start(pool: List[Any], min_start: Optional[datetime], tz: Optional[ZoneInfo] = None) -> List[Any]:
     """Ne garde que les créneaux dont le début est >= min_start."""
     if min_start is None:
         return pool
     out = []
     for s in pool or []:
-        dt = _slot_start_dt(s)
+        dt = _slot_start_local_dt(s, tz) if tz is not None else _slot_start_dt(s)
         if dt is None or dt >= min_start:
             out.append(s)
     return out
@@ -847,18 +883,8 @@ def _tenant_local_now(tenant_id: int) -> datetime:
     """
     Horloge locale cabinet (naive) pour éviter les décalages serveur (ex: US) vs France.
     """
-    tz_name = "Europe/Paris"
     try:
-        from backend.tenant_config import get_params
-
-        params = get_params(tenant_id) or {}
-        tz_candidate = str(params.get("timezone") or "").strip()
-        if tz_candidate:
-            tz_name = tz_candidate
-    except Exception:
-        pass
-    try:
-        return datetime.now(ZoneInfo(tz_name)).replace(tzinfo=None)
+        return datetime.now(_tenant_zoneinfo(tenant_id)).replace(tzinfo=None)
     except Exception:
         return datetime.now()
 
@@ -980,6 +1006,7 @@ def get_slots_for_display(
     weekday_pref = weekday_from_pref(pref) if not target_date_obj else None
     fetch_pref = time_pref
     channel = (getattr(session, "channel", "") or "").strip().lower() if session else ""
+    tenant_tz = _tenant_zoneinfo(tenant_id)
     public_booking_context = _is_public_page_booking_context(session)
     now_date = _tenant_local_now(tenant_id).date()
     explicit_today_request = _has_explicit_today_request(
@@ -1021,9 +1048,9 @@ def get_slots_for_display(
     if not has_rejected and not target_date_obj and not skip_fast_cache:
         cached = _get_cached_slots(limit, tenant_id, pref=fetch_pref)
         if cached:
-            cached = _filter_slots_by_min_start(cached, min_start_dt)
+            cached = _filter_slots_by_min_start(cached, min_start_dt, tz=tenant_tz)
             if weekday_pref is not None:
-                cached = _filter_slots_by_weekday(cached, weekday_pref)
+                cached = _filter_slots_by_weekday(cached, weekday_pref, tz=tenant_tz)
             logger.info(f"⚡ get_slots_for_display: cache hit pref={fetch_pref} ({(time.time() - t_start) * 1000:.0f}ms)")
             if cached:
                 return cached
@@ -1127,18 +1154,18 @@ def get_slots_for_display(
 
     # Garde-fou vocal: éviter les créneaux trop proches.
     if pool and min_start_dt is not None:
-        pool = _filter_slots_by_min_start(pool, min_start_dt)
+        pool = _filter_slots_by_min_start(pool, min_start_dt, tz=tenant_tz)
 
     # Filtre date / jour de semaine demandé explicitement
     if target_date_obj and pool:
-        filtered = _filter_slots_by_target_date(pool, target_date_obj)
+        filtered = _filter_slots_by_target_date(pool, target_date_obj, tz=tenant_tz)
         if filtered:
             pool = filtered
         else:
             logger.info("get_slots_for_display: aucun créneau le %s dans le pool", target_date_obj)
             pool = []
     elif weekday_pref is not None and pool:
-        filtered = _filter_slots_by_weekday(pool, weekday_pref)
+        filtered = _filter_slots_by_weekday(pool, weekday_pref, tz=tenant_tz)
         if filtered:
             pool = filtered
 
@@ -1191,7 +1218,7 @@ def get_slots_for_display(
     # Garde-fou final vocal: réappliquer le filtre minimum après tous les fallbacks.
     # Evite qu'un fallback "sans pref" repropose des créneaux du jour.
     if pool and min_start_dt is not None:
-        pool = _filter_slots_by_min_start(pool, min_start_dt)
+        pool = _filter_slots_by_min_start(pool, min_start_dt, tz=tenant_tz)
 
     # Exclure créneaux déjà proposés (exact + id). Web : aussi voisins proches (évite « les mêmes » à 15–30 min).
     if has_rejected:
@@ -1319,6 +1346,7 @@ def _get_slots_from_google_calendar(
     from backend.tenant_config import get_booking_rules
 
     rules = get_booking_rules(tenant_id)
+    tenant_tz = _tenant_zoneinfo(tenant_id)
     duration_minutes = rules["duration_minutes"]
     base_start = rules["start_hour"]
     base_end = rules["end_hour"]
@@ -1366,7 +1394,7 @@ def _get_slots_from_google_calendar(
                 try:
                     dt = datetime.fromisoformat(start_iso.replace('Z', '+00:00'))
                     if dt.tzinfo:
-                        dt = dt.replace(tzinfo=None)
+                        dt = dt.astimezone(tenant_tz).replace(tzinfo=None)
                     day_fr = days_fr[dt.weekday()]
                     hour = dt.hour
                     label_vocal = f"{day_fr} à {hour}h"
@@ -1409,7 +1437,7 @@ def _get_slots_from_google_calendar(
             try:
                 dt = datetime.fromisoformat(start_iso.replace('Z', '+00:00'))
                 if dt.tzinfo:
-                    dt = dt.replace(tzinfo=None)
+                    dt = dt.astimezone(tenant_tz).replace(tzinfo=None)
                 day_fr = days_fr[dt.weekday()]
                 hour = dt.hour
                 label_vocal = f"{day_fr} à {hour}h"
