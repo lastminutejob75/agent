@@ -3470,9 +3470,9 @@ export default function PatientDashboardPage() {
             <div className="min-h-[420px] rounded-[28px] border border-[#E2EAF4] bg-white p-10 shadow-[0_12px_32px_rgba(10,22,40,0.05)]">
               <div className="mx-auto max-w-3xl text-center">
                 <div className="mb-4 text-5xl">👤</div>
-                <h2 className="text-2xl font-black text-[#0A1628]">Aucun patient ouvert</h2>
+                <h2 className="text-2xl font-black text-[#0A1628]">Choisir ou créer un patient</h2>
                 <p className="mt-3 text-sm leading-7 text-[#61708B]">
-                  Ouvrez une fiche depuis la liste de gauche ou retrouvez-la rapidement via la recherche.
+                  Utilisez la recherche ou lancez une action rapide ci-dessous.
                 </p>
               </div>
 
@@ -3498,6 +3498,37 @@ export default function PatientDashboardPage() {
                     ) : null}
                   </div>
                 </label>
+              </div>
+
+              <div className="mx-auto mt-6 grid max-w-2xl grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={openManualPatientCreateModal}
+                  className="rounded-2xl border border-[#BFEAF0] bg-[#E9FAFC] px-4 py-4 text-left transition hover:bg-[#DDF6FA]"
+                >
+                  <div className="text-sm font-black text-[#007E8C]">+ Créer une fiche patient</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={openBulkMessageModal}
+                  className="rounded-2xl border border-[#DDE7F1] bg-white px-4 py-4 text-left transition hover:bg-[#F8FBFD]"
+                >
+                  <div className="text-sm font-black text-[#0A1628]">✉ Envoyer un message groupé</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => notify("Sélectionnez d'abord un patient dans la liste pour ajouter une note.", { sticky: true })}
+                  className="rounded-2xl border border-[#DDE7F1] bg-white px-4 py-4 text-left transition hover:bg-[#F8FBFD]"
+                >
+                  <div className="text-sm font-black text-[#0A1628]">✎ Ajouter une note</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => notify("Sélectionnez d'abord un patient dans la liste pour ajouter un document.", { sticky: true })}
+                  className="rounded-2xl border border-[#DDE7F1] bg-white px-4 py-4 text-left transition hover:bg-[#F8FBFD]"
+                >
+                  <div className="text-sm font-black text-[#0A1628]">▤ Ajouter un document</div>
+                </button>
               </div>
             </div>
           ) : (
