@@ -3472,43 +3472,32 @@ export default function PatientDashboardPage() {
                 <div className="mb-4 text-5xl">👤</div>
                 <h2 className="text-2xl font-black text-[#0A1628]">Aucun patient ouvert</h2>
                 <p className="mt-3 text-sm leading-7 text-[#61708B]">
-                  Ouvrez une fiche depuis la liste de gauche, ou lancez une action rapide ci-dessous.
+                  Ouvrez une fiche depuis la liste de gauche ou retrouvez-la rapidement via la recherche.
                 </p>
               </div>
 
-              <div className="mx-auto mt-8 grid max-w-3xl grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={openManualPatientCreateModal}
-                  className="rounded-2xl border border-[#BFEAF0] bg-[#E9FAFC] px-4 py-4 text-left transition hover:bg-[#DDF6FA]"
-                >
-                  <div className="text-sm font-black text-[#007E8C]">+ Créer une fiche patient</div>
-                  <div className="mt-1 text-xs font-semibold text-[#4B647D]">Création complète sans rendez-vous</div>
-                </button>
-                <button
-                  type="button"
-                  onClick={openBulkMessageModal}
-                  className="rounded-2xl border border-[#DDE7F1] bg-white px-4 py-4 text-left transition hover:bg-[#F8FBFD]"
-                >
-                  <div className="text-sm font-black text-[#0A1628]">✉ Envoyer un message groupé</div>
-                  <div className="mt-1 text-xs font-semibold text-[#61708B]">SMS ou email à une sélection</div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => notify("Sélectionnez d'abord un patient dans la liste pour ajouter une note.", { sticky: true })}
-                  className="rounded-2xl border border-[#DDE7F1] bg-white px-4 py-4 text-left transition hover:bg-[#F8FBFD]"
-                >
-                  <div className="text-sm font-black text-[#0A1628]">✎ Ajouter une note</div>
-                  <div className="mt-1 text-xs font-semibold text-[#61708B]">Disponible après sélection d&apos;un patient</div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => notify("Sélectionnez d'abord un patient dans la liste pour ajouter un document.", { sticky: true })}
-                  className="rounded-2xl border border-[#DDE7F1] bg-white px-4 py-4 text-left transition hover:bg-[#F8FBFD]"
-                >
-                  <div className="text-sm font-black text-[#0A1628]">▤ Ajouter un document</div>
-                  <div className="mt-1 text-xs font-semibold text-[#61708B]">Disponible après sélection d&apos;un patient</div>
-                </button>
+              <div className="mx-auto mt-8 max-w-2xl">
+                <label className="block text-left text-sm font-black text-[#0A1628]">
+                  Rechercher un patient
+                  <div className="relative mt-2">
+                    <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-lg text-[#8D9AAF]">⌕</span>
+                    <input
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                      placeholder="Nom, prénom ou téléphone..."
+                      className="h-12 w-full rounded-xl border border-[#DDE7F1] bg-white pl-11 pr-20 text-sm font-semibold text-[#0A1628] outline-none transition placeholder:text-[#9AA8BB] focus:border-[#009CA4] focus:ring-4 focus:ring-[#009CA4]/10"
+                    />
+                    {query ? (
+                      <button
+                        type="button"
+                        onClick={() => setQuery("")}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg border border-[#DDE7F1] bg-white px-2.5 py-1 text-xs font-black text-[#475569] hover:bg-[#F8FAFC]"
+                      >
+                        Effacer
+                      </button>
+                    ) : null}
+                  </div>
+                </label>
               </div>
             </div>
           ) : (
