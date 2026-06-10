@@ -13,6 +13,7 @@ import time
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 import logging
+from zoneinfo import ZoneInfo
 
 from backend import prompts
 from backend import config
@@ -812,6 +813,7 @@ def _context_min_start_datetime(
     weekday_pref: Optional[int],
     session: Optional[Any],
     channel: str,
+    tenant_id: int = 1,
 ) -> Optional[datetime]:
     """
     En vocal et page publique :
@@ -823,7 +825,7 @@ def _context_min_start_datetime(
     if not enforce_tomorrow_floor:
         return None
 
-    now = datetime.now()
+    now = _tenant_local_now(tenant_id)
     lead_floor = now + timedelta(minutes=MIN_VOCAL_LEAD_MINUTES)
     today = now.date()
     explicit_today = _has_explicit_today_request(
@@ -839,6 +841,26 @@ def _context_min_start_datetime(
 
     tomorrow_floor = datetime.combine(today + timedelta(days=1), datetime.min.time())
     return max(lead_floor, tomorrow_floor)
+
+
+def _tenant_local_now(tenant_id: int) -> datetime:
+    """
+    Horloge locale cabinet (naive) pour éviter les décalages serveur (ex: US) vs France.
+    """
+    tz_name = "Europe/Paris"
+    try:
+        from backend.tenant_config import get_params
+
+        params = get_params(tenant_id) or {}
+        tz_candidate = str(params.get("timezone") or "").strip()
+        if tz_candidate:
+            tz_name = tz_candidate
+    except Exception:
+        pass
+    try:
+        return datetime.now(ZoneInfo(tz_name)).replace(tzinfo=None)
+    except Exception:
+        return datetime.now()
 
 
 def _resolve_booking_pref(session: Optional[Any]) -> Optional[str]:
@@ -959,7 +981,7 @@ def get_slots_for_display(
     fetch_pref = time_pref
     channel = (getattr(session, "channel", "") or "").strip().lower() if session else ""
     public_booking_context = _is_public_page_booking_context(session)
-    now_date = datetime.now().date()
+    now_date = _tenant_local_now(tenant_id).date()
     explicit_today_request = _has_explicit_today_request(
         pref=pref,
         target_date_obj=target_date_obj,
@@ -973,6 +995,7 @@ def get_slots_for_display(
         weekday_pref=weekday_pref,
         session=session,
         channel=channel,
+        tenant_id=tenant_id,
     )
 
     appt_prefs_early = getattr(session, "appointment_preferences", None) if session else None
