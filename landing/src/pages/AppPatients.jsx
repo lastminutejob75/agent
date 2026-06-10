@@ -1,13 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import CreatePatientFromCallModal from "../components/calls/CreatePatientFromCallModal.jsx";
 import { api } from "../lib/api.js";
 import { patientDashboardFileHasValidatedIdentity } from "../lib/callsService.js";
+import { validateContactEmail, validatePatientPhone } from "../lib/contactValidation.js";
+import { parsePatientDuplicateError } from "../lib/patientDuplicateCheck.js";
 
 const NAVY = "#111827";
 const TEAL = "#0DC991";
 const TEAL_DARK = "#0AAF7A";
 const BORDER = "#e5e7eb";
 const BLUE = "#2563EB";
+const CREATE_PATIENT_FORM_EMPTY = {
+  firstName: "",
+  lastName: "",
+  phone: "",
+  email: "",
+  initialNote: "",
+};
 
 function formatPhone(phone) {
   const raw = String(phone || "").trim();
@@ -44,6 +54,13 @@ function deriveStatus(patient) {
   return "active";
 }
 
+function composePatientName(form) {
+  return [String(form?.firstName || "").trim(), String(form?.lastName || "").trim()]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+}
+
 const STATUS_CONFIG = {
   active: { label: "Actif", color: "#22c55e", bg: "#dcfce7" },
   new: { label: "Nouveau", color: "#f59e0b", bg: "#fef3c7" },
@@ -66,6 +83,11 @@ export default function AppPatients() {
   const [editDraft, setEditDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [createSaving, setCreateSaving] = useState(false);
+  const [createForm, setCreateForm] = useState(CREATE_PATIENT_FORM_EMPTY);
+  const [createPhoneError, setCreatePhoneError] = useState("");
+  const [createEmailError, setCreateEmailError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -105,7 +127,7 @@ export default function AppPatients() {
       if (filter === "active") matchFilter = p._status === "active";
       else if (filter === "new") matchFilter = p._status === "new";
       else if (filter === "inactive") matchFilter = p._status === "inactive";
-      else if (filter === "unconfirmed") matchFilter = !patientIdentityValidated(p);
+      else if (filter === "unconfirmed") matchFilter = !patientDashboardFileHasValidatedIdentity(p);
       return matchSearch && matchFilter;
     });
   }, [enriched, search, filter]);
@@ -144,6 +166,75 @@ export default function AppPatients() {
     }
   }
 
+  function openCreatePatientModal() {
+    setCreateForm(CREATE_PATIENT_FORM_EMPTY);
+    setCreatePhoneError("");
+    setCreateEmailError("");
+    setCreateModalOpen(true);
+  }
+
+  function closeCreatePatientModal() {
+    if (createSaving) return;
+    setCreateModalOpen(false);
+  }
+
+  function handleCreatePatientField(field, value) {
+    setCreateForm((prev) => ({ ...prev, [field]: value }));
+    if (field === "phone" && createPhoneError) setCreatePhoneError("");
+    if (field === "email" && createEmailError) setCreateEmailError("");
+  }
+
+  async function handleCreatePatientSubmit() {
+    if (createSaving) return;
+    const phoneRaw = String(createForm.phone || "").trim();
+    const emailRaw = String(createForm.email || "").trim();
+    const fullName = composePatientName(createForm);
+    const phoneCheck = validatePatientPhone(phoneRaw, { required: true });
+    const emailCheck = validateContactEmail(emailRaw, { required: false });
+    const phoneErr = phoneCheck.ok ? "" : (phoneCheck.message || "Numéro invalide.");
+    const emailErr = emailCheck.ok ? "" : (emailCheck.message || "Email invalide.");
+    setCreatePhoneError(phoneErr);
+    setCreateEmailError(emailErr);
+    if (phoneErr || emailErr) {
+      setToast(phoneErr || emailErr);
+      return;
+    }
+    if (fullName.length < 2) {
+      setToast("Indiquez au moins un nom ou un prénom (2 caractères minimum).");
+      return;
+    }
+
+    setCreateSaving(true);
+    try {
+      const res = await api.tenantRegisterPatient({
+        patient_phone: phoneRaw,
+        validated_name: fullName,
+        raw_name: fullName,
+        patient_email: emailRaw || undefined,
+        initial_note: String(createForm.initialNote || "").trim() || undefined,
+      });
+      const mode = res?.register_mode;
+      const okText =
+        mode === "created"
+          ? "Fiche patient créée."
+          : mode === "completed"
+            ? "Fiche patient complétée (numéro déjà connu, nom ajouté)."
+            : mode === "updated"
+              ? "Fiche patient mise à jour."
+              : "Fiche patient enregistrée.";
+      const refreshed = await api.tenantGetPatients("?limit=500");
+      setPatients(refreshed?.items || []);
+      setCreateModalOpen(false);
+      setCreateForm(CREATE_PATIENT_FORM_EMPTY);
+      setToast(okText);
+    } catch (e) {
+      const dup = parsePatientDuplicateError(e);
+      setToast(dup.message || e?.message || "Impossible de créer la fiche patient.");
+    } finally {
+      setCreateSaving(false);
+    }
+  }
+
   const FILTERS = [
     ["all", `Tous`, stats.total],
     ["active", `Actifs`, stats.active],
@@ -162,6 +253,9 @@ export default function AppPatients() {
           <h1 style={S.title}>Patients</h1>
           <p style={S.subtitle}>{stats.total} patient{stats.total > 1 ? "s" : ""} enregistré{stats.total > 1 ? "s" : ""}</p>
         </div>
+        <button type="button" style={S.createPatientBtn} onClick={openCreatePatientModal}>
+          + Créer une fiche patient
+        </button>
       </div>
 
       {toast ? <div style={S.toast}>{toast}</div> : null}
@@ -208,7 +302,7 @@ export default function AppPatients() {
           <div style={S.empty}>
             <div style={{ fontSize: 28, marginBottom: 8 }}>👤</div>
             <div style={{ fontSize: 14, fontWeight: 700, color: NAVY }}>Aucun patient trouvé</div>
-            <div style={{ fontSize: 13, color: "#6b7280", marginTop: 4 }}>Les patients apparaîtront ici après leur premier appel.</div>
+            <div style={{ fontSize: 13, color: "#6b7280", marginTop: 4 }}>Les patients apparaîtront ici après un appel ou une création manuelle.</div>
           </div>
         ) : (
           filtered.map((patient) => {
@@ -288,6 +382,20 @@ export default function AppPatients() {
           })
         )}
       </div>
+
+      <CreatePatientFromCallModal
+        open={createModalOpen}
+        loading={createSaving}
+        form={createForm}
+        onChange={handleCreatePatientField}
+        onClose={closeCreatePatientModal}
+        onSubmit={handleCreatePatientSubmit}
+        subtitleLine="Créez une fiche patient sans rendez-vous préalable."
+        phoneError={createPhoneError}
+        emailError={createEmailError}
+        showEmail
+        submitDisabled={createSaving}
+      />
     </div>
   );
 }
@@ -298,6 +406,17 @@ const S = {
   header: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 },
   title: { margin: 0, fontSize: 20, fontWeight: 800, color: NAVY },
   subtitle: { margin: "4px 0 0", fontSize: 13, color: "#6b7280" },
+  createPatientBtn: {
+    border: "none",
+    borderRadius: 10,
+    background: `linear-gradient(135deg, ${TEAL}, ${TEAL_DARK})`,
+    color: "#fff",
+    fontWeight: 800,
+    fontSize: 13,
+    padding: "10px 14px",
+    cursor: "pointer",
+    boxShadow: "0 8px 18px rgba(13, 201, 145, .25)",
+  },
 
   toast: { marginBottom: 14, borderRadius: 10, border: "1px solid #a7f3d0", background: "#ecfdf5", color: "#047857", padding: "10px 14px", fontSize: 13, fontWeight: 700 },
   errorBox: { marginBottom: 14, borderRadius: 12, border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", padding: "12px 14px", fontSize: 14, fontWeight: 600 },
