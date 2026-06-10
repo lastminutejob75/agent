@@ -352,10 +352,18 @@ function isCabinetBookingEmailValid(raw) {
   return isValidContactEmail(raw);
 }
 
-/** Aligné backend / agenda (`patient_has_file`) : identité validée ↔ `validated_name` ≥ 2 caractères. */
+/** Une fiche est considérée "créée" pour l'agenda quand l'identité est validée (`validated_name` >= 2). */
 function dashboardPatientHasValidatedIdentity(profile) {
   if (!profile || typeof profile !== "object") return false;
   return String(profile.validated_name || "").trim().length >= 2;
+}
+
+function agendaAppointmentHasValidatedIdentity(appt) {
+  if (!appt || typeof appt !== "object") return false;
+  if (typeof appt.patient_identity_validated === "boolean") {
+    return appt.patient_identity_validated;
+  }
+  return dashboardPatientHasValidatedIdentity(appt.patient || appt);
 }
 
 function formatPhone(raw) {
@@ -532,7 +540,7 @@ function InlineDetail({
 }) {
   const aPhone = normalizePhone(a.patient_phone || a.phone || "");
   const aPhoneFmt = formatPhone(aPhone);
-  const hasPatientFile = Boolean(a.patient_has_file);
+  const hasPatientFile = agendaAppointmentHasValidatedIdentity(a);
   const shellStyle = variant === "modal" ? S.inlineDetailModal : S.inlineDetail;
   return (
     <div style={shellStyle}>
@@ -1911,6 +1919,7 @@ export default function AppAgenda() {
       patient_phone: confirmPayload.patientPhone,
       patient_email: confirmPayload.patientEmail || "",
       patient_has_file: false,
+      patient_identity_validated: false,
       type: confirmPayload.motif || "Consultation",
       typeIcon: "📋",
       isUWI: false,
@@ -1922,7 +1931,7 @@ export default function AppAgenda() {
   }
 
   function openPatientCreateFromAppointment(appt) {
-    if (Boolean(appt?.patient_has_file)) {
+    if (agendaAppointmentHasValidatedIdentity(appt)) {
       const phone = normalizePhone(appt?.patient_phone || "");
       if (phone) {
         closeAppointmentDetail();
