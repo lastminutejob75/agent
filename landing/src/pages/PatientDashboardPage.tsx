@@ -3467,13 +3467,48 @@ export default function PatientDashboardPage() {
 
           <div className="hidden xl:block">
           {!tenantPatientPhone ? (
-            <div className="flex min-h-[420px] items-center justify-center rounded-[28px] border border-[#E2EAF4] bg-white p-10 text-center shadow-[0_12px_32px_rgba(10,22,40,0.05)]">
-              <div className="max-w-md">
+            <div className="min-h-[420px] rounded-[28px] border border-[#E2EAF4] bg-white p-10 shadow-[0_12px_32px_rgba(10,22,40,0.05)]">
+              <div className="mx-auto max-w-3xl text-center">
                 <div className="mb-4 text-5xl">👤</div>
-                <h2 className="text-2xl font-black text-[#0A1628]">Sélectionnez un patient</h2>
+                <h2 className="text-2xl font-black text-[#0A1628]">Aucun patient ouvert</h2>
                 <p className="mt-3 text-sm leading-7 text-[#61708B]">
-                  Choisissez un patient dans la liste pour afficher sa fiche, son historique et ses rendez-vous.
+                  Ouvrez une fiche depuis la liste de gauche, ou lancez une action rapide ci-dessous.
                 </p>
+              </div>
+
+              <div className="mx-auto mt-8 grid max-w-3xl grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={openManualPatientCreateModal}
+                  className="rounded-2xl border border-[#BFEAF0] bg-[#E9FAFC] px-4 py-4 text-left transition hover:bg-[#DDF6FA]"
+                >
+                  <div className="text-sm font-black text-[#007E8C]">+ Créer une fiche patient</div>
+                  <div className="mt-1 text-xs font-semibold text-[#4B647D]">Création complète sans rendez-vous</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={openBulkMessageModal}
+                  className="rounded-2xl border border-[#DDE7F1] bg-white px-4 py-4 text-left transition hover:bg-[#F8FBFD]"
+                >
+                  <div className="text-sm font-black text-[#0A1628]">✉ Envoyer un message groupé</div>
+                  <div className="mt-1 text-xs font-semibold text-[#61708B]">SMS ou email à une sélection</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => notify("Sélectionnez d'abord un patient dans la liste pour ajouter une note.", { sticky: true })}
+                  className="rounded-2xl border border-[#DDE7F1] bg-white px-4 py-4 text-left transition hover:bg-[#F8FBFD]"
+                >
+                  <div className="text-sm font-black text-[#0A1628]">✎ Ajouter une note</div>
+                  <div className="mt-1 text-xs font-semibold text-[#61708B]">Disponible après sélection d&apos;un patient</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => notify("Sélectionnez d'abord un patient dans la liste pour ajouter un document.", { sticky: true })}
+                  className="rounded-2xl border border-[#DDE7F1] bg-white px-4 py-4 text-left transition hover:bg-[#F8FBFD]"
+                >
+                  <div className="text-sm font-black text-[#0A1628]">▤ Ajouter un document</div>
+                  <div className="mt-1 text-xs font-semibold text-[#61708B]">Disponible après sélection d&apos;un patient</div>
+                </button>
               </div>
             </div>
           ) : (
