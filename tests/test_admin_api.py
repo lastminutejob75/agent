@@ -235,6 +235,69 @@ def test_get_calls_list_merges_ivr_events_when_vapi_calls_exist(monkeypatch):
     assert call_ids[0] == "call_new"
 
 
+def test_get_calls_list_tenant_detail_includes_ivr_only_calls(monkeypatch):
+    """Espace client : compléter vapi_calls avec ivr_events (appels sans ligne vapi)."""
+    from contextlib import contextmanager
+
+    from backend.routes import admin as admin_routes
+
+    now = datetime.utcnow()
+    ivr_rows = [
+        {
+            "client_id": 1,
+            "call_id": "ivr_only",
+            "started_at": now - timedelta(minutes=8),
+            "last_event_at": now - timedelta(minutes=5),
+            "last_event": "booking_confirmed",
+            "cs_started": now - timedelta(minutes=8),
+            "cs_updated": now - timedelta(minutes=5),
+        }
+    ]
+
+    class FakeCursor:
+        def execute(self, sql, params):
+            return None
+
+        def fetchall(self):
+            return ivr_rows
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeConn:
+        def cursor(self):
+            return FakeCursor()
+
+    @contextmanager
+    def fake_pg_connection():
+        yield FakeConn()
+
+    monkeypatch.setenv("DATABASE_URL", "postgres://fake")
+    monkeypatch.setattr(
+        admin_routes,
+        "_fetch_vapi_call_items_pg",
+        lambda **kwargs: ([], None),
+    )
+    monkeypatch.setattr("backend.pg_pool.pg_connection", fake_pg_connection)
+    monkeypatch.setattr(
+        "backend.pg_tenant_context.set_tenant_id_on_connection",
+        lambda conn, tenant_id: None,
+    )
+
+    data = admin_routes._get_calls_list(
+        tenant_id=1,
+        days=7,
+        limit=10,
+        tenant_detail={"name": "Cabinet Test"},
+    )
+
+    call_ids = [item["call_id"] for item in data["items"]]
+    assert call_ids == ["ivr_only"]
+
+
 def test_get_call_detail_falls_back_to_vapi_calls_without_ivr_events(monkeypatch):
     import psycopg
     from backend.routes import admin as admin_routes

@@ -3936,6 +3936,111 @@ def _vapi_call_result_from_status(status: Optional[str], ended_reason: Optional[
     return "other"
 
 
+def _append_ivr_events_call_items(
+    *,
+    tenant_id: int,
+    start: str,
+    end: str,
+    limit: int,
+    items: List[dict],
+    seen_call_ids: set,
+    tenant_name: str,
+    result_filter: Optional[str] = None,
+) -> None:
+    """Complète la liste client avec les appels ivr_events absents de vapi_calls."""
+    if len(items) >= limit:
+        return
+    try:
+        from backend.pg_pool import pg_connection
+        from backend.pg_tenant_context import set_tenant_id_on_connection
+    except Exception:
+        return
+
+    result_filter_sql = ""
+    if result_filter == "rdv":
+        result_filter_sql = " AND a.last_event = 'booking_confirmed'"
+    elif result_filter == "transfer":
+        result_filter_sql = " AND a.last_event IN ('transferred_human', 'transferred', 'transfer_human', 'transfer')"
+    elif result_filter == "abandoned":
+        result_filter_sql = " AND a.last_event IN ('user_abandon', 'abandon', 'hangup', 'user_hangup')"
+    elif result_filter == "error":
+        result_filter_sql = " AND a.last_event = 'anti_loop_trigger'"
+
+    try:
+        with pg_connection() as conn:
+            set_tenant_id_on_connection(conn, tenant_id)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    WITH agg AS (
+                        SELECT client_id, call_id,
+                               MIN(created_at) AS started_at,
+                               MAX(created_at) AS last_event_at,
+                               (array_agg(event ORDER BY created_at DESC))[1] AS last_event
+                        FROM ivr_events
+                        WHERE created_at >= %s AND created_at <= %s
+                          AND call_id IS NOT NULL AND TRIM(call_id) != ''
+                          AND client_id = %s
+                        GROUP BY client_id, call_id
+                    )
+                    SELECT a.client_id, a.call_id, a.started_at, a.last_event_at, a.last_event,
+                           cs.started_at AS cs_started, cs.updated_at AS cs_updated
+                    FROM agg a
+                    LEFT JOIN call_sessions cs ON cs.tenant_id = a.client_id AND cs.call_id = a.call_id
+                    WHERE 1=1
+                    """
+                    + result_filter_sql
+                    + """
+                    ORDER BY a.last_event_at DESC, a.call_id DESC
+                    LIMIT %s
+                    """,
+                    (start, end, _ivr_client_id(tenant_id), max(limit * 2, limit - len(items) + 10)),
+                )
+                rows = [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        logger.warning("_append_ivr_events_call_items failed tenant_id=%s: %s", tenant_id, exc)
+        return
+
+    for r in rows:
+        if len(items) >= limit:
+            break
+        call_id = str(r.get("call_id") or "").strip()
+        if not call_id or call_id in seen_call_ids:
+            continue
+        started_at = r.get("started_at")
+        last_event_at = r.get("last_event_at")
+        last_event = r.get("last_event")
+        cs_started = r.get("cs_started")
+        cs_updated = r.get("cs_updated")
+        duration_min: Optional[int] = None
+        duration_sec: Optional[int] = None
+        if cs_started and cs_updated:
+            delta_secs = (cs_updated - cs_started).total_seconds()
+            delta_secs = max(0, min(MAX_SESSION_MINUTES * 60, delta_secs))
+            duration_sec = int(delta_secs)
+            duration_min = duration_sec // 60
+        elif started_at and last_event_at:
+            delta_secs = (last_event_at - started_at).total_seconds()
+            delta_secs = max(0, min(MAX_SESSION_MINUTES * 60, delta_secs))
+            duration_sec = int(delta_secs)
+            duration_min = duration_sec // 60
+        items.append(
+            {
+                "call_id": call_id,
+                "tenant_id": tenant_id,
+                "tenant_name": tenant_name,
+                "customer_number": "",
+                "started_at": _iso_utc(started_at),
+                "last_event_at": _iso_utc(last_event_at),
+                "last_event": last_event or "",
+                "result": _call_result_from_event(last_event),
+                "duration_min": duration_min,
+                "duration_sec": duration_sec,
+            }
+        )
+        seen_call_ids.add(call_id)
+
+
 def _get_calls_list(
     tenant_id: Optional[int],
     days: int,
@@ -3985,8 +4090,18 @@ def _get_calls_list(
                     result_filter=result_filter,
                 )
                 items.extend(canonical_items or [])
-                # Espace client : vapi_calls suffit — évite le double scan PG + agrégat ivr_events.
                 if tenant_detail is not None:
+                    seen_call_ids = {str(it.get("call_id") or "") for it in items if it.get("call_id")}
+                    _append_ivr_events_call_items(
+                        tenant_id=int(tenant_id),
+                        start=start,
+                        end=end,
+                        limit=limit,
+                        items=items,
+                        seen_call_ids=seen_call_ids,
+                        tenant_name=fixed_tenant_name or f"Client #{tenant_id}",
+                        result_filter=result_filter,
+                    )
                     items.sort(
                         key=lambda x: ((x.get("last_event_at") or ""), (x.get("call_id") or "")),
                         reverse=True,
