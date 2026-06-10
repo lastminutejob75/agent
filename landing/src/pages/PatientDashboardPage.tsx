@@ -112,6 +112,7 @@ type SidebarPatientRow = {
 };
 
 type ModalType =
+  | "createPatientManual"
   | "profile"
   | "addNote"
   | "addDocument"
@@ -403,6 +404,29 @@ function requestStatusBadge(status: string) {
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
+}
+
+type ManualPatientCreateForm = {
+  firstName: string;
+  lastName: string;
+  phone: string;
+  email: string;
+  initialNote: string;
+};
+
+const MANUAL_PATIENT_CREATE_EMPTY: ManualPatientCreateForm = {
+  firstName: "",
+  lastName: "",
+  phone: "",
+  email: "",
+  initialNote: "",
+};
+
+function composeManualPatientName(form: ManualPatientCreateForm) {
+  return [String(form.firstName || "").trim(), String(form.lastName || "").trim()]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
 }
 
 /** Si le patient ouvert (?phone=) n’est pas dans les résultats API, on injecte une ligne pour le garder cliquable. */
@@ -1014,6 +1038,12 @@ export default function PatientDashboardPage() {
   const [patientPastAppointments, setPatientPastAppointments] = useState<Array<{ start: Date; key: string }>>([]);
   const [patientHistory, setPatientHistory] = useState<PatientHistoryItem[]>([]);
   const [patientHistoryLoading, setPatientHistoryLoading] = useState(false);
+  const [manualPatientCreateForm, setManualPatientCreateForm] = useState<ManualPatientCreateForm>(
+    MANUAL_PATIENT_CREATE_EMPTY,
+  );
+  const [manualPatientCreateSaving, setManualPatientCreateSaving] = useState(false);
+  const [manualPatientCreatePhoneError, setManualPatientCreatePhoneError] = useState("");
+  const [manualPatientCreateEmailError, setManualPatientCreateEmailError] = useState("");
   const [createFicheName, setCreateFicheName] = useState("");
   const [createFicheSaving, setCreateFicheSaving] = useState(false);
   const [profileNameDraft, setProfileNameDraft] = useState("");
@@ -1082,6 +1112,7 @@ export default function PatientDashboardPage() {
   }, []);
 
   const globalLoadingLabel = useMemo(() => {
+    if (manualPatientCreateSaving) return "Création de la fiche patient…";
     if (singleMessageSending) return "Envoi du message individuel…";
     if (bulkMessageSending) return "Envoi groupé en cours…";
     if (profileSaveSaving) return "Enregistrement du profil patient…";
@@ -1105,6 +1136,7 @@ export default function PatientDashboardPage() {
     if (requestActionLoading) return "Mise à jour de la demande…";
     return "";
   }, [
+    manualPatientCreateSaving,
     singleMessageSending,
     bulkMessageSending,
     profileSaveSaving,
@@ -2201,6 +2233,81 @@ export default function PatientDashboardPage() {
     }
   };
 
+  const openManualPatientCreateModal = () => {
+    setManualPatientCreateForm(MANUAL_PATIENT_CREATE_EMPTY);
+    setManualPatientCreatePhoneError("");
+    setManualPatientCreateEmailError("");
+    setModal("createPatientManual");
+  };
+
+  const submitManualPatientCreate = async () => {
+    if (manualPatientCreateSaving) return;
+    const phoneRaw = String(manualPatientCreateForm.phone || "").trim();
+    const emailRaw = String(manualPatientCreateForm.email || "").trim();
+    const fullName = composeManualPatientName(manualPatientCreateForm);
+    const phoneCheck = validatePatientPhone(phoneRaw, { required: true });
+    const emailCheck = validateContactEmail(emailRaw, { required: false });
+    const phoneErr = phoneCheck.ok ? "" : (phoneCheck.message || "Numéro invalide.");
+    const emailErr = emailCheck.ok ? "" : (emailCheck.message || "Email invalide.");
+    setManualPatientCreatePhoneError(phoneErr);
+    setManualPatientCreateEmailError(emailErr);
+    if (phoneErr || emailErr) {
+      notify(phoneErr || emailErr, { sticky: true });
+      return;
+    }
+    if (fullName.length < 2) {
+      notify("Indiquez au moins un nom ou un prénom (2 caractères minimum).", { sticky: true });
+      return;
+    }
+
+    try {
+      const dupRes = await checkPatientDuplicates({ phone: phoneRaw, email: emailRaw });
+      const conflicts = Array.isArray(dupRes?.conflicts) ? dupRes.conflicts : [];
+      if (hasBlockingPatientDuplicate(conflicts)) {
+        notify(formatPatientDuplicateConflict(conflicts[0]) || "Ce numéro ou cet email existe déjà.", {
+          sticky: true,
+        });
+        return;
+      }
+    } catch {
+      // best effort; le backend reste la source de vérité
+    }
+
+    setManualPatientCreateSaving(true);
+    try {
+      const res = await api.tenantRegisterPatient({
+        patient_phone: normalizePhone(phoneRaw) || phoneRaw,
+        validated_name: fullName,
+        raw_name: fullName,
+        patient_email: emailRaw || undefined,
+        initial_note: String(manualPatientCreateForm.initialNote || "").trim() || undefined,
+      });
+      const createdPhone = normalizePhone(
+        String((res?.patient as Record<string, unknown> | undefined)?.phone || phoneRaw),
+      );
+      await loadTenantSidebarPatients({ force: true });
+      setModal(null);
+      setManualPatientCreateForm(MANUAL_PATIENT_CREATE_EMPTY);
+      notify(
+        res?.register_mode === "updated"
+          ? "Fiche patient mise à jour."
+          : res?.register_mode === "completed"
+            ? "Fiche patient complétée."
+            : "Fiche patient créée.",
+      );
+      if (createdPhone) {
+        const next = new URLSearchParams(searchParams);
+        next.set("phone", createdPhone);
+        setSearchParams(next, { replace: true });
+      }
+    } catch (e) {
+      const dup = parsePatientDuplicateError(e as Error & { data?: { detail?: unknown } });
+      notify(dup.message || (e as Error)?.message || "Impossible de créer la fiche patient.", { sticky: true });
+    } finally {
+      setManualPatientCreateSaving(false);
+    }
+  };
+
   const saveProfileFromModal = async () => {
     if (!tenantPatientPhone) return;
     const name = profileNameDraft.trim();
@@ -3018,6 +3125,13 @@ export default function PatientDashboardPage() {
           <div className="mb-5 flex items-center justify-between">
             <h2 className="text-2xl font-black">Patients</h2>
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={openManualPatientCreateModal}
+                className="rounded-xl border border-[#BFEAF0] bg-[#E9FAFC] px-3 py-1.5 text-xs font-black text-[#007E8C] hover:bg-[#DDF6FA]"
+              >
+                + Créer une fiche
+              </button>
               {tenantPatientPhone && patientListOpen ? (
                 <button
                   type="button"
@@ -4277,6 +4391,98 @@ export default function PatientDashboardPage() {
             </button>
             .
           </p>
+        </Modal>
+      )}
+
+      {modal === "createPatientManual" && (
+        <Modal
+          title="Créer une fiche patient"
+          onClose={() => {
+            if (!manualPatientCreateSaving) setModal(null);
+          }}
+          width="max-w-xl"
+        >
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label className="text-sm font-semibold text-[#334155]">
+                Nom
+                <input
+                  value={manualPatientCreateForm.lastName}
+                  onChange={(event) => setManualPatientCreateForm((prev) => ({ ...prev, lastName: event.target.value }))}
+                  className="mt-2 w-full rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 text-sm font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
+                />
+              </label>
+              <label className="text-sm font-semibold text-[#334155]">
+                Prénom
+                <input
+                  value={manualPatientCreateForm.firstName}
+                  onChange={(event) => setManualPatientCreateForm((prev) => ({ ...prev, firstName: event.target.value }))}
+                  className="mt-2 w-full rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 text-sm font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
+                />
+              </label>
+            </div>
+
+            <label className="text-sm font-semibold text-[#334155]">
+              Téléphone
+              <input
+                type="tel"
+                value={manualPatientCreateForm.phone}
+                onChange={(event) => {
+                  setManualPatientCreateForm((prev) => ({ ...prev, phone: event.target.value }));
+                  if (manualPatientCreatePhoneError) setManualPatientCreatePhoneError("");
+                }}
+                placeholder="06 12 34 56 78"
+                className={cx(
+                  "mt-2 w-full rounded-xl border bg-white px-3 py-2 text-sm font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]",
+                  manualPatientCreatePhoneError ? "border-red-300" : "border-[#DDE7F1]",
+                )}
+              />
+              {manualPatientCreatePhoneError ? (
+                <p className="mt-1 text-xs font-semibold text-red-600">{manualPatientCreatePhoneError}</p>
+              ) : (
+                <p className="mt-1 text-xs font-semibold text-[#7D8CA5]">Format : 06 12 34 56 78 ou +33 6 12 34 56 78</p>
+              )}
+            </label>
+
+            <label className="text-sm font-semibold text-[#334155]">
+              E-mail (facultatif)
+              <input
+                type="email"
+                value={manualPatientCreateForm.email}
+                onChange={(event) => {
+                  setManualPatientCreateForm((prev) => ({ ...prev, email: event.target.value }));
+                  if (manualPatientCreateEmailError) setManualPatientCreateEmailError("");
+                }}
+                placeholder="prenom@domaine.fr"
+                className={cx(
+                  "mt-2 w-full rounded-xl border bg-white px-3 py-2 text-sm font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]",
+                  manualPatientCreateEmailError ? "border-red-300" : "border-[#DDE7F1]",
+                )}
+              />
+              {manualPatientCreateEmailError ? (
+                <p className="mt-1 text-xs font-semibold text-red-600">{manualPatientCreateEmailError}</p>
+              ) : null}
+            </label>
+
+            <label className="text-sm font-semibold text-[#334155]">
+              Note initiale (facultatif)
+              <textarea
+                value={manualPatientCreateForm.initialNote}
+                onChange={(event) => setManualPatientCreateForm((prev) => ({ ...prev, initialNote: event.target.value }))}
+                rows={4}
+                className="mt-2 w-full resize-none rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 text-sm font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
+              />
+            </label>
+
+            <button
+              type="button"
+              disabled={manualPatientCreateSaving}
+              onClick={() => void submitManualPatientCreate()}
+              className="w-full rounded-xl bg-[#009CA4] px-4 py-3 font-black text-white hover:bg-[#00838A] disabled:opacity-60"
+            >
+              {manualPatientCreateSaving ? "Création…" : "Créer la fiche patient"}
+            </button>
+          </div>
         </Modal>
       )}
 
