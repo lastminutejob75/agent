@@ -585,12 +585,38 @@ async def patch_vapi_assistant_add_tool(vapi_assistant_id: str) -> Dict[str, Any
 
 async def patch_vapi_function_tool(tool_id: str | None = None) -> Dict[str, Any]:
     """Synchronise le tool persistant Vapi avec des messages de maintien courts."""
-    target_tool_id = (tool_id or "").strip() or _vapi_function_tool_id()
     headers = {
         "Authorization": f"Bearer {_vapi_api_key()}",
         "Content-Type": "application/json",
     }
     async with httpx.AsyncClient() as client:
+        target_tool_id = (tool_id or "").strip()
+        if not target_tool_id:
+            env_tool_id = (os.environ.get("VAPI_FUNCTION_TOOL_ID") or "").strip()
+            if env_tool_id:
+                target_tool_id = env_tool_id
+            else:
+                # Fallback robuste: retrouver automatiquement le tool persistant
+                # quand l'env n'est pas renseigné.
+                list_res = await client.get(
+                    f"{VAPI_API_URL}/tool",
+                    headers=headers,
+                    timeout=15,
+                )
+                list_res.raise_for_status()
+                raw_tools = list_res.json()
+                tools = raw_tools if isinstance(raw_tools, list) else (raw_tools.get("tools") if isinstance(raw_tools, dict) else [])
+                for t in tools or []:
+                    if not isinstance(t, dict):
+                        continue
+                    fn = t.get("function") or {}
+                    if t.get("type") == "function" and str(fn.get("name") or "").strip() == "function_tool":
+                        target_tool_id = str(t.get("id") or "").strip()
+                        if target_tool_id:
+                            break
+                if not target_tool_id:
+                    raise ValueError("Impossible de résoudre le tool Vapi 'function_tool' (id manquant)")
+
         current_res = await client.get(
             f"{VAPI_API_URL}/tool/{target_tool_id}",
             headers=headers,
@@ -598,9 +624,18 @@ async def patch_vapi_function_tool(tool_id: str | None = None) -> Dict[str, Any]
         )
         current_res.raise_for_status()
         current = current_res.json() or {}
+        current_server = (current.get("server") or {}) if isinstance(current, dict) else {}
+        try:
+            desired_tool_url = _vapi_tool_url()
+        except Exception:
+            desired_tool_url = str(current_server.get("url") or "").strip()
         patch_payload = {
             "messages": _build_function_tool_messages(),
             "async": False,
+            "server": {
+                "url": desired_tool_url,
+                "timeoutSeconds": int(current_server.get("timeoutSeconds") or 20),
+            },
         }
         patch_res = await client.patch(
             f"{VAPI_API_URL}/tool/{target_tool_id}",
