@@ -95,6 +95,16 @@ def handle_get_slots(
         cache_pref = pref if pref in ("matin", "après-midi", "soir", "") else None
         tenant_id = getattr(session, "tenant_id", None) or 1
 
+        target_date_obj = None
+        td_raw = getattr(session.qualif_data, "target_date", None)
+        if td_raw:
+            try:
+                from datetime import date as _date
+
+                target_date_obj = _date.fromisoformat(str(td_raw)[:10])
+            except ValueError:
+                target_date_obj = None
+
         # Fast path vocal: répondre depuis le cache chaud pour rester sous les timeouts Vapi.
         # On tente pref demandée, puis fallback pref=None avant d'appeler Google.
         slots = tools_booking._get_cached_slots(limit=3, tenant_id=tenant_id, pref=cache_pref or None)
@@ -104,6 +114,36 @@ def handle_get_slots(
                 logger.info(
                     "CALENDAR_FETCH_CACHE_FALLBACK",
                     extra={"call_id": call_id[:24] if call_id else "", "from_pref": cache_pref, "to_pref": "none"},
+                )
+
+        # Garde-fous identiques à get_slots_for_display sur les slots cachés :
+        # le cache peut avoir été rempli par le canal web (sans plancher "demain").
+        if slots:
+            from backend.entity_extraction import weekday_from_pref
+
+            tz = tools_booking._tenant_zoneinfo(tenant_id)
+            weekday_pref = weekday_from_pref(raw_pref) if not target_date_obj else None
+            min_start = tools_booking._context_min_start_datetime(
+                pref=raw_pref or None,
+                target_date_obj=target_date_obj,
+                weekday_pref=weekday_pref,
+                session=session,
+                channel=(getattr(session, "channel", "") or "vocal"),
+                tenant_id=tenant_id,
+            )
+            before_guard = len(slots)
+            slots = tools_booking._filter_slots_by_min_start(slots, min_start, tz=tz)
+            if target_date_obj and slots:
+                slots = tools_booking._filter_slots_by_target_date(slots, target_date_obj, tz=tz)
+            elif weekday_pref is not None and slots:
+                slots = tools_booking._filter_slots_by_weekday(slots, weekday_pref, tz=tz)
+            if len(slots) != before_guard:
+                logger.info(
+                    "CALENDAR_FETCH_CACHE_GUARDRAIL call_id=%s kept=%d/%d min_start=%s",
+                    call_id[:24] if call_id else "",
+                    len(slots),
+                    before_guard,
+                    min_start.isoformat() if min_start else "none",
                 )
 
         if not slots:

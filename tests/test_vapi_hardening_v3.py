@@ -158,7 +158,7 @@ def test_get_slots_for_display_excludes_slot():
                             exclude_start_iso="2025-02-05T14:00:00",
                             exclude_end_iso="2025-02-05T14:30:00",
                         )
-    starts = [s.get("start_iso") or getattr(s, "start_iso", None) or (s.start if hasattr(s, "start") else None) for s in slots]
+    starts = [s.get("start_iso") if isinstance(s, dict) else getattr(s, "start", None) for s in slots]
     assert "2025-02-05T14:00:00" not in starts
     assert len(slots) == 2
 
@@ -473,6 +473,40 @@ def test_get_slots_for_display_vocal_reapplies_min_start_after_pref_fallback():
 
     assert len(slots) == 1
     assert slots[0].slot_id == 2
+
+
+def test_handle_get_slots_cache_hit_filters_same_day_slots():
+    """Le fast-path cache vocal ne doit jamais renvoyer un créneau du jour même (plancher demain)."""
+    from zoneinfo import ZoneInfo
+
+    session = _make_session()
+    session.channel = "vocal"
+
+    fixed_now = datetime(2025, 2, 4, 18, 30)  # mardi soir
+    today_slot = {
+        "start_iso": "2025-02-04T19:00:00",
+        "end_iso": "2025-02-04T19:15:00",
+        "label": "Mardi 4 février à 19h00",
+        "source": "google",
+    }
+    tomorrow_slot = {
+        "start_iso": "2025-02-05T10:00:00",
+        "end_iso": "2025-02-05T10:15:00",
+        "label": "Mercredi 5 février à 10h00",
+        "source": "google",
+    }
+
+    with patch.object(tools_booking, "_get_cached_slots", return_value=[today_slot, tomorrow_slot]):
+        with patch.object(tools_booking, "_tenant_local_now", return_value=fixed_now):
+            with patch.object(tools_booking, "_tenant_zoneinfo", return_value=ZoneInfo("Europe/Paris")):
+                with patch.object(tools_booking, "store_pending_slots") as mock_store:
+                    labels, source, err = handle_get_slots(session, None, "call-cache-guard")
+
+    assert err == ""
+    assert labels is not None
+    assert len(labels) == 1
+    stored = mock_store.call_args.args[1]
+    assert stored == [tomorrow_slot]
 
 
 def test_handle_get_slots_uses_short_sync_fetch_on_cold_cache():
