@@ -567,6 +567,48 @@ def test_handle_get_slots_uses_short_sync_fetch_on_cold_cache():
     mock_store.assert_called_once_with(session, fresh_slots, enrich_google=False)
 
 
+def test_handle_get_slots_sync_timeout_returns_empty_without_error():
+    """En timeout fetch sync, le tool vocal doit rester non-bloquant (pas d'erreur agenda)."""
+    import concurrent.futures as _f
+
+    session = _make_session()
+    session.channel = "vocal"
+
+    class _TimeoutFuture:
+        def result(self, timeout=None):
+            raise _f.TimeoutError()
+
+    shutdown_args = {}
+
+    class _TimeoutExecutor:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def submit(self, *args, **kwargs):
+            return _TimeoutFuture()
+
+        def shutdown(self, wait=True, cancel_futures=False):
+            shutdown_args["wait"] = wait
+            shutdown_args["cancel_futures"] = cancel_futures
+
+    with patch.object(tools_booking, "_get_cached_slots", return_value=None):
+        with patch("backend.vapi_tool_handlers.concurrent.futures.ThreadPoolExecutor", _TimeoutExecutor):
+            with patch.object(tools_booking, "store_pending_slots") as mock_store:
+                labels, source, err = handle_get_slots(session, "après-midi", "call-timeout-fallback")
+
+    assert err == ""
+    assert labels == []
+    assert source is None
+    mock_store.assert_not_called()
+    assert shutdown_args.get("wait") is False
+
+
 def test_handle_get_slots_applies_target_date_from_user_message():
     """Le tool doit conserver "demain" (target_date) au lieu de reproposer aujourd'hui."""
     session = _make_session()
@@ -755,3 +797,48 @@ def test_vapi_tool_resolves_tenant_from_assistant_when_did_missing():
                     )
     assert resp.status_code == 200
     mock_resolve.assert_called_once()
+
+
+def test_vapi_tool_get_slots_falls_back_to_session_tenant_when_resolver_unresolved():
+    """Si le resolver retourne 422 (payload incomplet), réutiliser tenant_id déjà présent en session."""
+    from fastapi import HTTPException
+    from fastapi.testclient import TestClient
+
+    from backend.main import app
+
+    client = TestClient(app)
+    session = _make_session("call-session-fallback")
+    session.tenant_id = 2
+
+    with patch(
+        "backend.tenant_routing.resolve_tenant_id_from_vapi_payload",
+        side_effect=HTTPException(status_code=422, detail="Impossible d'associer cet appel à un cabinet (numéro / assistant)."),
+    ):
+        with patch("backend.vapi_tool_handlers.handle_get_slots", return_value=(["Demain 10h"], "google", None)) as mock_get_slots:
+            with patch("backend.routes.voice.ENGINE") as mock_engine:
+                mock_engine.session_store = MagicMock()
+                mock_engine.session_store.get.return_value = session
+                mock_engine.session_store.get_or_create.return_value = session
+                resp = client.post(
+                    "/api/vapi/tool",
+                    json={
+                        "message": {
+                            "call": {"id": "call-session-fallback"},
+                            "toolCallList": [
+                                {
+                                    "id": "tool_1",
+                                    "function": {
+                                        "name": "function_tool",
+                                        "arguments": {"action": "get_slots"},
+                                    },
+                                }
+                            ],
+                        }
+                    },
+                )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "results" in body and body["results"]
+    assert "Créneaux disponibles" in body["results"][0].get("result", "")
+    assert mock_get_slots.call_args.args[0].tenant_id == 2

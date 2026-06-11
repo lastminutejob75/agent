@@ -86,3 +86,16 @@ def test_get_slots_from_google_calendar_converts_utc_to_tenant_local_day():
     assert len(out) == 1
     # 22:30 UTC = 00:30 Europe/Paris (lendemain)
     assert out[0].start.startswith("2026-06-11T00:30:00")
+
+
+def test_tenant_timezone_name_uses_short_cache():
+    tools_booking._tenant_tz_name_cache.clear()
+    tools_booking._tenant_zoneinfo_cache.clear()
+
+    with patch("backend.tenant_config.get_params", return_value={"timezone": "Europe/Paris"}) as mock_get_params:
+        tz1 = tools_booking._tenant_timezone_name(2)
+        tz2 = tools_booking._tenant_timezone_name(2)
+
+    assert tz1 == "Europe/Paris"
+    assert tz2 == "Europe/Paris"
+    assert mock_get_params.call_count == 1

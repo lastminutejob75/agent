@@ -272,6 +272,11 @@ _slots_cache: Dict[str, Any] = {
     "ttl_seconds": 240,
 }
 
+_tenant_tz_cache_lock = threading.Lock()
+_tenant_tz_name_cache: Dict[int, Dict[str, Any]] = {}
+_tenant_zoneinfo_cache: Dict[str, ZoneInfo] = {}
+_TENANT_TZ_CACHE_TTL_SECONDS = 300.0
+
 
 def _cache_key(tenant_id: int, pref: Optional[str] = None) -> tuple:
     return (tenant_id, pref or "__none__")
@@ -381,6 +386,16 @@ def _slot_start_dt(slot: Any) -> Optional[datetime]:
 
 def _tenant_timezone_name(tenant_id: int) -> str:
     """Timezone IANA du tenant (fallback Europe/Paris)."""
+    import time
+
+    now = time.time()
+    with _tenant_tz_cache_lock:
+        entry = _tenant_tz_name_cache.get(int(tenant_id))
+        if entry and (now - float(entry.get("ts", 0.0))) < _TENANT_TZ_CACHE_TTL_SECONDS:
+            cached_name = str(entry.get("tz_name") or "").strip()
+            if cached_name:
+                return cached_name
+
     tz_name = "Europe/Paris"
     try:
         from backend.tenant_config import get_params
@@ -391,14 +406,29 @@ def _tenant_timezone_name(tenant_id: int) -> str:
             tz_name = tz_candidate
     except Exception:
         pass
+
+    with _tenant_tz_cache_lock:
+        _tenant_tz_name_cache[int(tenant_id)] = {"tz_name": tz_name, "ts": now}
+
     return tz_name
 
 
 def _tenant_zoneinfo(tenant_id: int) -> ZoneInfo:
+    tz_name = _tenant_timezone_name(tenant_id)
+    with _tenant_tz_cache_lock:
+        z = _tenant_zoneinfo_cache.get(tz_name)
+        if z is not None:
+            return z
     try:
-        return ZoneInfo(_tenant_timezone_name(tenant_id))
+        z = ZoneInfo(tz_name)
+        with _tenant_tz_cache_lock:
+            _tenant_zoneinfo_cache[tz_name] = z
+        return z
     except Exception:
-        return ZoneInfo("Europe/Paris")
+        fallback = ZoneInfo("Europe/Paris")
+        with _tenant_tz_cache_lock:
+            _tenant_zoneinfo_cache["Europe/Paris"] = fallback
+        return fallback
 
 
 def _slot_start_local_dt(slot: Any, tz: ZoneInfo) -> Optional[datetime]:

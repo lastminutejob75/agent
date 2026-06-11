@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from backend import prompts, tools_booking
 
 logger = logging.getLogger(__name__)
-_VOICE_SYNC_FETCH_TIMEOUT_S = 6.5
+_VOICE_SYNC_FETCH_TIMEOUT_S = 4.0
 
 
 def _slot_to_vocal_label(slot: Any) -> str:
@@ -149,6 +149,7 @@ def handle_get_slots(
             # Réponse tool bornée à 3 créneaux, mais seulement après filtrage.
             slots = (slots or [])[:3]
 
+        sync_timed_out = False
         if not slots:
             # Cache froid : tenter une lecture synchrone courte avant d'échouer.
             # Cela évite le faux négatif "agenda indisponible" au premier essai.
@@ -161,13 +162,18 @@ def handle_get_slots(
                     exclude_end_iso=exclude_end_iso or None,
                 )
 
+            ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            future = None
             try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                    # En prod, une lecture Google multi-jours peut prendre ~6s.
-                    # On laisse plus de marge ici tout en restant sous le hard cap global du webhook.
-                    slots = ex.submit(_load_slots_sync).result(timeout=_VOICE_SYNC_FETCH_TIMEOUT_S)
+                # En prod, une lecture Google multi-jours peut prendre ~6s.
+                # On laisse plus de marge ici tout en restant sous le hard cap global du webhook.
+                future = ex.submit(_load_slots_sync)
+                slots = future.result(timeout=_VOICE_SYNC_FETCH_TIMEOUT_S)
             except concurrent.futures.TimeoutError:
                 slots = None
+                sync_timed_out = True
+                if future is not None and hasattr(future, "cancel"):
+                    future.cancel()
                 logger.warning(
                     "CALENDAR_FETCH_SYNC_TIMEOUT call_id=%s pref=%s",
                     call_id[:24] if call_id else "",
@@ -181,6 +187,11 @@ def handle_get_slots(
                     raw_pref or "any",
                     str(e)[:120],
                 )
+            finally:
+                try:
+                    ex.shutdown(wait=False, cancel_futures=True)
+                except TypeError:
+                    ex.shutdown(wait=False)
 
         if not slots:
             # On garde un refresh asynchrone pour les tours suivants si la tentative courte a échoué.
@@ -202,6 +213,10 @@ def handle_get_slots(
                 call_id[:24] if call_id else "",
                 raw_pref or "any",
             )
+            if sync_timed_out:
+                # Dégradation non bloquante : laisser la voix répondre "Aucun créneau..."
+                # plutôt qu'un faux "agenda indisponible" quand c'est juste trop lent.
+                return ([], None, "")
             return (None, None, prompts.get_invariant_vocal_phrase("agenda_unavailable"))
 
         # Voice path: do not re-fetch Google full slot objects synchronously.

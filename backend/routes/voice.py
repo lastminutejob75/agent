@@ -1799,17 +1799,35 @@ async def vapi_tool(request: Request):
                 seg = {}
                 _s0 = _time.monotonic()
 
-                # 1. Tenant resolution
-                tid, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
-                seg["tenant"] = "resolved"
-                seg["t_tenant_ms"] = int((_time.monotonic() - _s0) * 1000)
-
-                # 2. Session (mémoire seule, pas de PG)
+                # 1. Session (mémoire seule, pas de PG)
                 _s1 = _time.monotonic()
                 session = ENGINE.session_store.get(call_id)
                 if session is None:
                     session = ENGINE.session_store.get_or_create(call_id)
                 session.channel = "vocal"
+                session_tid = getattr(session, "tenant_id", None)
+                seg["t_session_ms"] = int((_time.monotonic() - _s1) * 1000)
+
+                # 2. Tenant resolution.
+                # Si le resolver échoue (payload partiel sans DID/assistant) mais que la session
+                # est déjà routée, on réutilise ce tenant pour éviter un faux "agenda indisponible".
+                try:
+                    tid, _ = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
+                    seg["tenant"] = "resolved"
+                except HTTPException as e:
+                    if int(getattr(e, "status_code", 0) or 0) == 422 and session_tid:
+                        tid = int(session_tid)
+                        seg["tenant"] = "session_fallback"
+                        logger.warning(
+                            "[VAPI_TOOL_TENANT_FALLBACK_SESSION] call_id=%s tenant_id=%s reason=%s",
+                            (call_id or "")[:24],
+                            tid,
+                            str(getattr(e, "detail", "") or "")[:120],
+                        )
+                    else:
+                        raise
+                seg["t_tenant_ms"] = int((_time.monotonic() - _s0) * 1000)
+
                 session.tenant_id = tid
                 if patient_name:
                     session.qualif_data.name = patient_name
@@ -1817,7 +1835,6 @@ async def vapi_tool(request: Request):
                     session.qualif_data.motif = motif
                 if preference:
                     session.qualif_data.pref = preference
-                seg["t_session_ms"] = int((_time.monotonic() - _s1) * 1000)
 
                 # 3. Google Calendar
                 _s2 = _time.monotonic()
