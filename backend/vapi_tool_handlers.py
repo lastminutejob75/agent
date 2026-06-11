@@ -105,11 +105,12 @@ def handle_get_slots(
             except ValueError:
                 target_date_obj = None
 
-        # Fast path vocal: répondre depuis le cache chaud pour rester sous les timeouts Vapi.
-        # On tente pref demandée, puis fallback pref=None avant d'appeler Google.
-        slots = tools_booking._get_cached_slots(limit=3, tenant_id=tenant_id, pref=cache_pref or None)
+        # Fast path vocal: lire une fenêtre cache plus large, puis limiter à 3 après garde-fous.
+        # Sinon, si les 3 premiers sont "aujourd'hui", on peut tomber à 0 alors que demain existe.
+        cache_window = max(3, int(getattr(tools_booking, "SLOTS_POOL_SIZE", 9) or 9))
+        slots = tools_booking._get_cached_slots(limit=cache_window, tenant_id=tenant_id, pref=cache_pref or None)
         if not slots and cache_pref:
-            slots = tools_booking._get_cached_slots(limit=3, tenant_id=tenant_id, pref=None)
+            slots = tools_booking._get_cached_slots(limit=cache_window, tenant_id=tenant_id, pref=None)
             if slots:
                 logger.info(
                     "CALENDAR_FETCH_CACHE_FALLBACK",
@@ -145,6 +146,8 @@ def handle_get_slots(
                     before_guard,
                     min_start.isoformat() if min_start else "none",
                 )
+            # Réponse tool bornée à 3 créneaux, mais seulement après filtrage.
+            slots = (slots or [])[:3]
 
         if not slots:
             # Cache froid : tenter une lecture synchrone courte avant d'échouer.

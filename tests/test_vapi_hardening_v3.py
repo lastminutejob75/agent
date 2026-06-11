@@ -509,6 +509,38 @@ def test_handle_get_slots_cache_hit_filters_same_day_slots():
     assert stored == [tomorrow_slot]
 
 
+def test_handle_get_slots_cache_window_avoids_empty_after_today_filter():
+    """Si les 3 premiers slots cache sont aujourd'hui, on doit quand même proposer demain."""
+    from zoneinfo import ZoneInfo
+
+    session = _make_session()
+    session.channel = "vocal"
+
+    fixed_now = datetime(2025, 2, 4, 18, 30)
+    cached_slots = [
+        {"start_iso": "2025-02-04T19:00:00", "end_iso": "2025-02-04T19:15:00", "label": "S1", "source": "google"},
+        {"start_iso": "2025-02-04T19:30:00", "end_iso": "2025-02-04T19:45:00", "label": "S2", "source": "google"},
+        {"start_iso": "2025-02-04T20:00:00", "end_iso": "2025-02-04T20:15:00", "label": "S3", "source": "google"},
+        {"start_iso": "2025-02-05T10:00:00", "end_iso": "2025-02-05T10:15:00", "label": "D1", "source": "google"},
+        {"start_iso": "2025-02-06T10:00:00", "end_iso": "2025-02-06T10:15:00", "label": "D2", "source": "google"},
+    ]
+
+    def _cached(limit, tenant_id=1, pref=None):
+        return cached_slots[:limit]
+
+    with patch.object(tools_booking, "_get_cached_slots", side_effect=_cached):
+        with patch.object(tools_booking, "_tenant_local_now", return_value=fixed_now):
+            with patch.object(tools_booking, "_tenant_zoneinfo", return_value=ZoneInfo("Europe/Paris")):
+                with patch.object(tools_booking, "store_pending_slots") as mock_store:
+                    labels, source, err = handle_get_slots(session, None, "call-cache-window")
+
+    assert err == ""
+    assert labels is not None
+    assert len(labels) == 2
+    stored = mock_store.call_args.args[1]
+    assert [s["label"] for s in stored] == ["D1", "D2"]
+
+
 def test_handle_get_slots_uses_short_sync_fetch_on_cold_cache():
     """Sur cache froid, le tool vocal doit tenter une lecture courte et rendre des slots dès le premier essai."""
     session = _make_session()
