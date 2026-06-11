@@ -1,6 +1,7 @@
 from datetime import date, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 from backend import tools_booking
 
@@ -52,3 +53,36 @@ def test_has_explicit_today_request_with_current_date_in_preferences():
         session=session,
         today=today,
     )
+
+
+def test_get_slots_from_google_calendar_converts_utc_to_tenant_local_day():
+    class FakeCalendar:
+        def get_free_slots_range(self, **kwargs):
+            return [
+                {
+                    "start": "2026-06-10T22:30:00+00:00",
+                    "end": "2026-06-10T22:45:00+00:00",
+                    "label": "slot-utc",
+                }
+            ]
+
+    rules = {
+        "duration_minutes": 15,
+        "start_hour": 9,
+        "end_hour": 18,
+        "booking_days": [0, 1, 2, 3, 4],
+        "buffer_minutes": 0,
+    }
+    with patch("backend.tenant_config.get_booking_rules", return_value=rules):
+        with patch("backend.tools_booking._tenant_zoneinfo", return_value=ZoneInfo("Europe/Paris")):
+            out = tools_booking._get_slots_from_google_calendar(
+                FakeCalendar(),
+                limit=1,
+                pref=None,
+                tenant_id=1,
+                target_date=date(2026, 6, 11),
+            )
+
+    assert len(out) == 1
+    # 22:30 UTC = 00:30 Europe/Paris (lendemain)
+    assert out[0].start.startswith("2026-06-11T00:30:00")

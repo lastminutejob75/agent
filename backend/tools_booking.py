@@ -1389,12 +1389,14 @@ def _get_slots_from_google_calendar(
         if batch_slots:
             days_fr = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
             for slot in batch_slots:
-                start_iso = slot.get('start', '')
+                raw_start = slot.get('start', '')
+                start_iso = raw_start
                 day_fr, hour, label_vocal = '', 0, ''
                 try:
-                    dt = datetime.fromisoformat(start_iso.replace('Z', '+00:00'))
+                    dt = datetime.fromisoformat(str(raw_start).replace('Z', '+00:00'))
                     if dt.tzinfo:
                         dt = dt.astimezone(tenant_tz).replace(tzinfo=None)
+                    start_iso = dt.isoformat()
                     day_fr = days_fr[dt.weekday()]
                     hour = dt.hour
                     label_vocal = f"{day_fr} à {hour}h"
@@ -1432,12 +1434,14 @@ def _get_slots_from_google_calendar(
         for slot in day_slots:
             if len(pool) >= target_pool_size:
                 break
-            start_iso = slot.get('start', '')
+            raw_start = slot.get('start', '')
+            start_iso = raw_start
             day_fr, hour, label_vocal = '', 0, ''
             try:
-                dt = datetime.fromisoformat(start_iso.replace('Z', '+00:00'))
+                dt = datetime.fromisoformat(str(raw_start).replace('Z', '+00:00'))
                 if dt.tzinfo:
                     dt = dt.astimezone(tenant_tz).replace(tzinfo=None)
+                start_iso = dt.isoformat()
                 day_fr = days_fr[dt.weekday()]
                 hour = dt.hour
                 label_vocal = f"{day_fr} à {hour}h"
