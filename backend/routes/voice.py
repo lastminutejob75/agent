@@ -1277,8 +1277,6 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
                             session.qualif_data.name = params["patient_name"]
                         if params.get("motif"):
                             session.qualif_data.motif = params["motif"]
-                        if params.get("preference"):
-                            session.qualif_data.pref = params["preference"]
                         t_session = int((_wt.monotonic() - _s1) * 1000)
 
                         _s2 = _wt.monotonic()
@@ -1833,9 +1831,6 @@ async def vapi_tool(request: Request):
                     session.qualif_data.name = patient_name
                 if motif:
                     session.qualif_data.motif = motif
-                if preference:
-                    session.qualif_data.pref = preference
-
                 # 3. Google Calendar
                 _s2 = _time.monotonic()
                 slots_list, source, err = th.handle_get_slots(

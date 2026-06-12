@@ -732,6 +732,32 @@ def test_handle_get_slots_preserves_weekday_preference_for_booking_search():
     assert mock_fetch.call_args.kwargs["pref"] == session.qualif_data.pref
 
 
+def test_handle_get_slots_merges_existing_weekday_with_time_only_preference():
+    """Si le tool renvoie seulement une tranche horaire, conserver le jour déjà connu en session."""
+    session = _make_session()
+    session.channel = "vocal"
+    session.qualif_data.pref = "mardi"
+    fresh_slots = [
+        {"start_iso": "2025-02-11T14:00:00", "end_iso": "2025-02-11T14:15:00", "label": "Mardi 11 février à 14h00", "source": "google"},
+    ]
+
+    with patch.object(tools_booking, "_get_cached_slots", return_value=None):
+        with patch.object(tools_booking, "get_slots_for_display", return_value=fresh_slots) as mock_fetch:
+            with patch.object(tools_booking, "store_pending_slots"):
+                labels, source, err = handle_get_slots(
+                    session,
+                    "après-midi",
+                    "call-merge-weekday",
+                    user_message=None,
+                )
+
+    assert err == ""
+    assert labels
+    assert source in ("google_calendar", "sqlite")
+    assert (session.qualif_data.pref or "").lower() == "mardi après-midi"
+    assert mock_fetch.call_args.kwargs["pref"] == "mardi après-midi"
+
+
 def test_get_slots_from_google_calendar_prefers_batched_range_call():
     """Le fetch Google multi-jours doit utiliser la lecture groupée pour éviter 1 appel API par jour."""
 

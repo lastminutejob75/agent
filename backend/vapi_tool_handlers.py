@@ -64,11 +64,38 @@ def handle_get_slots(
         },
     )
     try:
+        def _merge_pref_with_existing(existing_pref: Optional[str], incoming_pref: Optional[str]) -> Optional[str]:
+            """
+            Préserve un jour déjà connu (ex: "mardi") quand le tool renvoie seulement
+            une tranche horaire (ex: "après-midi").
+            """
+            from backend.entity_extraction import time_pref_from_pref, weekday_from_pref
+
+            days_fr = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+            base = (existing_pref or "").strip()
+            inc = (incoming_pref or "").strip()
+            if not inc:
+                return base or None
+
+            base_day = weekday_from_pref(base)
+            base_time = time_pref_from_pref(base)
+            inc_day = weekday_from_pref(inc)
+            inc_time = time_pref_from_pref(inc)
+
+            if inc_day is not None and inc_time:
+                return f"{days_fr[inc_day]} {inc_time}"
+            if inc_day is not None:
+                return f"{days_fr[inc_day]} {base_time}" if base_time else inc
+            if inc_time and base_day is not None:
+                return f"{days_fr[base_day]} {inc_time}"
+            return inc
+
         # Conserver la contrainte explicite de jour/date (ex: "demain", "mardi")
         # même si le modèle ne passe que "après-midi" dans `preference`.
         parse_source = " ".join(
             p for p in ((user_message or "").strip(), (preference or "").strip()) if p
         ).strip()
+        existing_pref = (getattr(session.qualif_data, "pref", None) or "").strip()
         if parse_source:
             try:
                 from backend.entity_extraction import extract_pref, extract_target_date
@@ -76,17 +103,17 @@ def handle_get_slots(
                 extracted_pref = extract_pref(parse_source)
                 extracted_date = extract_target_date(parse_source)
                 if extracted_pref:
-                    session.qualif_data.pref = extracted_pref
+                    session.qualif_data.pref = _merge_pref_with_existing(existing_pref, extracted_pref) or extracted_pref
                 elif preference:
-                    session.qualif_data.pref = preference.strip()
+                    session.qualif_data.pref = _merge_pref_with_existing(existing_pref, preference.strip()) or preference.strip()
                 if extracted_date:
                     session.qualif_data.target_date = extracted_date.isoformat()
             except Exception:
                 # Ne jamais bloquer le tool pour un souci de parsing.
                 if preference:
-                    session.qualif_data.pref = preference.strip()
+                    session.qualif_data.pref = _merge_pref_with_existing(existing_pref, preference.strip()) or preference.strip()
         elif preference:
-            session.qualif_data.pref = preference.strip()
+            session.qualif_data.pref = _merge_pref_with_existing(existing_pref, preference.strip()) or preference.strip()
 
         raw_pref = (getattr(session.qualif_data, "pref", None) or preference or "").strip()
         pref = raw_pref.lower()
