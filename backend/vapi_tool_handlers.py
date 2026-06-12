@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from backend import prompts, tools_booking
 
 logger = logging.getLogger(__name__)
-_VOICE_SYNC_FETCH_TIMEOUT_S = 4.0
+_VOICE_SYNC_FETCH_TIMEOUT_S = 6.5
 
 
 def _slot_to_vocal_label(slot: Any) -> str:
