@@ -158,7 +158,9 @@ def pg_resolve_tenant_id(channel: str, did_key: str) -> Optional[Tuple[int, str]
 
 def pg_find_tenant_id_by_vapi_assistant_id(assistant_id: str) -> Optional[int]:
     """
-    Retrouve un tenant_id à partir du vapi_assistant_id stocké dans tenant_config.params_json.
+    Retrouve un tenant_id à partir du vapi_assistant_id.
+    Source prioritaire: tenant_config.params_json.vapi_assistant_id.
+    Fallback: tenant_assistants.vapi_assistant_id (historique de provisioning).
     Utilisé en fallback de routage quand Vapi ne renvoie pas le DID mais inclut encore l'assistant.
     """
     url = _pg_url()
@@ -170,11 +172,28 @@ def pg_find_tenant_id_by_vapi_assistant_id(assistant_id: str) -> Optional[int]:
         from backend.pg_pool import pg_connection
         with pg_connection() as conn:
             with conn.cursor() as cur:
+                # 1) Mapping canonique dans tenant_config.params_json
                 cur.execute(
                     """
                     SELECT tenant_id
                     FROM tenant_config
                     WHERE COALESCE(params_json->>'vapi_assistant_id', '') = %s
+                    LIMIT 1
+                    """,
+                    (assistant_id,),
+                )
+                row = cur.fetchone()
+                if row:
+                    tenant_id = row.get("tenant_id") if isinstance(row, dict) else row[0]
+                    return int(tenant_id)
+
+                # 2) Fallback robuste: table tenant_assistants
+                # (utile quand params_json n'a pas encore été synchronisé)
+                cur.execute(
+                    """
+                    SELECT tenant_id
+                    FROM tenant_assistants
+                    WHERE vapi_assistant_id = %s
                     LIMIT 1
                     """,
                     (assistant_id,),

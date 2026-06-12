@@ -183,3 +183,42 @@ def test_resolve_vapi_payload_allows_default_with_env_opt_in(monkeypatch):
 
     assert tid == config.DEFAULT_TENANT_ID
     assert source == "default"
+
+
+def test_pg_find_tenant_id_by_vapi_assistant_id_falls_back_to_tenant_assistants(monkeypatch):
+    from contextlib import contextmanager
+    from backend import tenants_pg
+
+    monkeypatch.setenv("DATABASE_URL", "postgres://dummy")
+    queries = []
+
+    class _FakeCursor:
+        def __init__(self):
+            self._rows = [None, {"tenant_id": 9}]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, sql, params):
+            queries.append(sql)
+
+        def fetchone(self):
+            return self._rows.pop(0) if self._rows else None
+
+    class _FakeConn:
+        def cursor(self):
+            return _FakeCursor()
+
+    @contextmanager
+    def _fake_pg_connection():
+        yield _FakeConn()
+
+    monkeypatch.setattr("backend.pg_pool.pg_connection", _fake_pg_connection)
+
+    tid = tenants_pg.pg_find_tenant_id_by_vapi_assistant_id("asst_fallback_123")
+    assert tid == 9
+    assert any("tenant_config" in q.lower() for q in queries)
+    assert any("tenant_assistants" in q.lower() for q in queries)
