@@ -1,6 +1,7 @@
 # tests/test_tenant_config.py
 """Tests feature flags et config affichage par tenant."""
 import pytest
+import backend.tenant_config as tenant_config
 from backend import config
 from backend.tenant_config import (
     FLAG_KEYS,
@@ -175,3 +176,28 @@ def test_set_params_allows_dashboard_team_notes_json(monkeypatch, tmp_path):
     params = get_params(1)
     assert isinstance(params["dashboard_team_notes_json"], list)
     assert params["dashboard_team_notes_json"][0]["text"] == "Note A"
+
+
+def test_get_params_pg_short_cache_avoids_repeated_reads(monkeypatch):
+    """get_params doit éviter plusieurs lectures PG successives pour le même tenant."""
+    monkeypatch.setattr(config, "USE_PG_TENANTS", True)
+
+    calls = {"count": 0}
+
+    def _fake_pg_get_tenant_params(tid):
+        calls["count"] += 1
+        return ({"calendar_provider": "google", "calendar_id": f"cal-{tid}"}, None)
+
+    with tenant_config._params_cache_lock:
+        tenant_config._params_cache.clear()
+
+    monkeypatch.setattr("backend.tenants_pg.pg_get_tenant_params", _fake_pg_get_tenant_params)
+
+    p1 = get_params(2)
+    p2 = get_params(2)
+    p1["calendar_provider"] = "none"
+    p3 = get_params(2)
+
+    assert calls["count"] == 1
+    assert p2["calendar_provider"] == "google"
+    assert p3["calendar_provider"] == "google"
