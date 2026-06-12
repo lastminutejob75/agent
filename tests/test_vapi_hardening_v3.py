@@ -609,6 +609,36 @@ def test_handle_get_slots_sync_timeout_returns_empty_without_error():
     assert shutdown_args.get("wait") is False
 
 
+def test_handle_get_slots_sync_empty_result_returns_empty_without_error():
+    """Si le fetch sync se termine avec 0 slot, ne pas renvoyer une erreur agenda."""
+    session = _make_session()
+    session.channel = "vocal"
+
+    class _EmptyFuture:
+        def result(self, timeout=None):
+            return []
+
+    class _EmptyExecutor:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def submit(self, *args, **kwargs):
+            return _EmptyFuture()
+
+        def shutdown(self, wait=True, cancel_futures=False):
+            return None
+
+    with patch.object(tools_booking, "_get_cached_slots", return_value=None):
+        with patch("backend.vapi_tool_handlers.concurrent.futures.ThreadPoolExecutor", _EmptyExecutor):
+            with patch.object(tools_booking, "store_pending_slots") as mock_store:
+                labels, source, err = handle_get_slots(session, "après-midi", "call-empty-agenda")
+
+    assert err == ""
+    assert labels == []
+    assert source is None
+    mock_store.assert_not_called()
+
+
 def test_handle_get_slots_applies_target_date_from_user_message():
     """Le tool doit conserver "demain" (target_date) au lieu de reproposer aujourd'hui."""
     session = _make_session()

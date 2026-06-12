@@ -150,6 +150,7 @@ def handle_get_slots(
             slots = (slots or [])[:3]
 
         sync_timed_out = False
+        sync_fetch_completed = False
         if not slots:
             # Cache froid : tenter une lecture synchrone courte avant d'échouer.
             # Cela évite le faux négatif "agenda indisponible" au premier essai.
@@ -169,6 +170,7 @@ def handle_get_slots(
                 # On laisse plus de marge ici tout en restant sous le hard cap global du webhook.
                 future = ex.submit(_load_slots_sync)
                 slots = future.result(timeout=_VOICE_SYNC_FETCH_TIMEOUT_S)
+                sync_fetch_completed = True
             except concurrent.futures.TimeoutError:
                 slots = None
                 sync_timed_out = True
@@ -216,6 +218,9 @@ def handle_get_slots(
             if sync_timed_out:
                 # Dégradation non bloquante : laisser la voix répondre "Aucun créneau..."
                 # plutôt qu'un faux "agenda indisponible" quand c'est juste trop lent.
+                return ([], None, "")
+            if sync_fetch_completed:
+                # Aucune disponibilité retournée par l'agenda: ce n'est pas une erreur technique.
                 return ([], None, "")
             return (None, None, prompts.get_invariant_vocal_phrase("agenda_unavailable"))
 
