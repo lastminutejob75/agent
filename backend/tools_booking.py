@@ -1090,6 +1090,18 @@ def get_slots_for_display(
     else:
         pool_limit = max(limit, SLOTS_POOL_SIZE_MORE) if has_rejected else limit
 
+    # En vocal/page publique, quand le plancher est "demain", un pool trop court peut être
+    # rempli uniquement par des créneaux du jour (ensuite filtrés), donnant un faux 0 slot.
+    # On élargit le pool amont pour laisser entrer les jours suivants.
+    tomorrow_floor_active = bool(
+        min_start_dt is not None
+        and not target_date_obj
+        and weekday_pref is None
+        and min_start_dt.date() > now_date
+    )
+    if tomorrow_floor_active:
+        pool_limit = max(pool_limit, SLOTS_POOL_SIZE_MORE)
+
     strict_google_mode = False
     try:
         from backend.tenant_config import get_params
@@ -1205,7 +1217,11 @@ def get_slots_for_display(
         if calendar_or_adapter:
             try:
                 pool = _get_slots_from_google_calendar(
-                    calendar_or_adapter, limit, pref=None, tenant_id=tenant_id, target_date=target_date_obj
+                    calendar_or_adapter,
+                    max(limit, pool_limit),
+                    pref=None,
+                    tenant_id=tenant_id,
+                    target_date=target_date_obj,
                 )
             except GoogleCalendarPermissionError as e:
                 if strict_google_mode:

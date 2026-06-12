@@ -475,6 +475,51 @@ def test_get_slots_for_display_vocal_reapplies_min_start_after_pref_fallback():
     assert slots[0].slot_id == 2
 
 
+def test_get_slots_for_display_vocal_tomorrow_floor_uses_wider_google_pool():
+    """Quand le plancher est demain, la lecture Google doit élargir le pool pour éviter un faux 0 slot."""
+    from backend.tools_booking import get_slots_for_display
+    from zoneinfo import ZoneInfo
+
+    class Session:
+        tenant_id = 9
+        rejected_slot_starts = []
+        rejected_slot_ids = []
+        channel = "vocal"
+        qualif_data = None
+        appointment_preferences = None
+        requesting_more_slots = False
+
+    fixed_now = datetime(2026, 6, 12, 18, 30)
+    captured_limits = []
+    tomorrow_slot = prompts.SlotDisplay(
+        idx=1,
+        label="Demain 10h",
+        slot_id=1,
+        start="2026-06-13T10:00:00",
+        day="samedi",
+        hour=10,
+        label_vocal="samedi à 10h",
+        source="google",
+    )
+
+    def _fake_google(_calendar, limit, pref=None, tenant_id=1, target_date=None):
+        captured_limits.append(limit)
+        return [tomorrow_slot]
+
+    with patch.object(tools_booking, "_get_cached_slots", return_value=None):
+        with patch.object(tools_booking, "_tenant_local_now", return_value=fixed_now):
+            with patch.object(tools_booking, "_tenant_zoneinfo", return_value=ZoneInfo("Europe/Paris")):
+                with patch("backend.tenant_config.get_params", return_value={"calendar_provider": "google"}):
+                    with patch("backend.calendar_adapter.get_calendar_adapter", return_value=object()):
+                        with patch.object(tools_booking, "_get_slots_from_google_calendar", side_effect=_fake_google):
+                            with patch.object(tools_booking, "_set_cached_slots"):
+                                slots = get_slots_for_display(limit=3, pref="matin", session=Session())
+
+    assert slots
+    assert captured_limits
+    assert captured_limits[0] >= tools_booking.SLOTS_POOL_SIZE_MORE
+
+
 def test_handle_get_slots_cache_hit_filters_same_day_slots():
     """Le fast-path cache vocal ne doit jamais renvoyer un créneau du jour même (plancher demain)."""
     from zoneinfo import ZoneInfo
