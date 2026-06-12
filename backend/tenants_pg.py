@@ -11,7 +11,7 @@ import os
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Tuple
 
-from backend.pg_tenant_context import set_tenant_id_on_connection
+from backend.pg_tenant_context import set_bypass_tenant_rls_on_connection, set_tenant_id_on_connection
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +171,9 @@ def pg_find_tenant_id_by_vapi_assistant_id(assistant_id: str) -> Optional[int]:
     def _query() -> Optional[int]:
         from backend.pg_pool import pg_connection
         with pg_connection() as conn:
+            # Lookup cross-tenant: nécessite bypass RLS pour retrouver
+            # le tenant à partir de l'assistant Vapi sans contexte tenant préalable.
+            set_bypass_tenant_rls_on_connection(conn, enabled=True)
             with conn.cursor() as cur:
                 # 1) Mapping canonique dans tenant_config.params_json
                 cur.execute(
