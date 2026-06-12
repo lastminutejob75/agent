@@ -52,13 +52,16 @@ from backend.db import (
     is_valid_patient_phone,
     is_valid_contact_email,
     insert_patient_document,
+    create_patient_consultation,
     list_cabinet_clients,
     list_cabinet_clients_compact,
+    list_patient_consultations,
     search_cabinet_clients,
     search_cabinet_clients_with_fallback,
     list_free_slots,
     list_call_followups,
     list_patient_notes,
+    get_patient_consultation_context_pack,
     list_patient_documents,
     normalize_phone_number,
     attach_appointment_google_event_id,
@@ -4055,6 +4058,85 @@ class PatientsBulkMessageBody(PatientMessageBody):
         return clean
 
 
+class ConsultationVitalsBody(BaseModel):
+    fc_bpm: Optional[int] = Field(default=None, ge=20, le=300)
+    pa_systolique: Optional[int] = Field(default=None, ge=50, le=300)
+    pa_diastolique: Optional[int] = Field(default=None, ge=20, le=200)
+    temperature_c: Optional[float] = Field(default=None, ge=30, le=45)
+    spo2_pct: Optional[int] = Field(default=None, ge=50, le=100)
+    fr_min: Optional[int] = Field(default=None, ge=4, le=80)
+    poids_kg: Optional[float] = Field(default=None, ge=1, le=400)
+    taille_cm: Optional[int] = Field(default=None, ge=30, le=250)
+    imc: Optional[float] = Field(default=None, ge=5, le=120)
+
+
+class ConsultationExamenCliniqueBody(BaseModel):
+    etat_general: str = Field(default="", max_length=3000)
+    examen_physique: str = Field(default="", max_length=6000)
+    constantes: ConsultationVitalsBody = Field(default_factory=ConsultationVitalsBody)
+
+
+class ConsultationSuiviBody(BaseModel):
+    prochain_rdv: Optional[str] = Field(default=None, max_length=10)
+    consignes: str = Field(default="", max_length=4000)
+
+    @validator("prochain_rdv")
+    def _validate_prochain_rdv(cls, value):
+        if value is None:
+            return None
+        raw = str(value).strip()
+        if not raw:
+            return None
+        if len(raw) != 10 or raw[4] != "-" or raw[7] != "-":
+            raise ValueError("Date de suivi invalide (format attendu: AAAA-MM-JJ)")
+        return raw
+
+
+class ConsultationConduiteBody(BaseModel):
+    examens_complementaires: List[str] = Field(default_factory=list)
+    prescription: str = Field(default="", max_length=6000)
+    orientation: str = Field(default="", max_length=4000)
+    suivi: ConsultationSuiviBody = Field(default_factory=ConsultationSuiviBody)
+
+    @validator("examens_complementaires", each_item=True)
+    def _normalize_examens(cls, value):
+        clean = str(value or "").strip()[:120]
+        if not clean:
+            raise ValueError("Examen complémentaire vide")
+        return clean
+
+
+class ConsultationIaBody(BaseModel):
+    resume_consultation: str = Field(default="", max_length=12000)
+    contexte_patient: str = Field(default="", max_length=12000)
+    validated_by_practitioner: bool = False
+
+
+class PatientConsultationCreateBody(BaseModel):
+    appointment_id: Optional[str] = Field(default=None, max_length=120)
+    date: Optional[str] = Field(default=None, max_length=10)
+    mode_consultation: Literal["rapide", "complete"] = "rapide"
+    motif: str = Field(..., min_length=1, max_length=240)
+    anamnese: str = Field(default="", max_length=12000)
+    examen_clinique: ConsultationExamenCliniqueBody = Field(default_factory=ConsultationExamenCliniqueBody)
+    impression_clinique: str = Field(..., min_length=1, max_length=6000)
+    cim10: Optional[str] = Field(default=None, max_length=40)
+    conduite_a_tenir: ConsultationConduiteBody = Field(default_factory=ConsultationConduiteBody)
+    ia_uwi: Optional[ConsultationIaBody] = None
+    note_praticien: Optional[str] = Field(default=None, max_length=12000)
+
+    @validator("date")
+    def _validate_consultation_date(cls, value):
+        if value is None:
+            return None
+        raw = str(value).strip()
+        if not raw:
+            return None
+        if len(raw) != 10 or raw[4] != "-" or raw[7] != "-":
+            raise ValueError("Date de consultation invalide (format attendu: AAAA-MM-JJ)")
+        return raw
+
+
 class PatientNoteCreateBody(BaseModel):
     text: str = Field(..., min_length=1, max_length=4000)
     author: Optional[str] = Field(default="Praticien", max_length=120)
@@ -4670,6 +4752,53 @@ def tenant_patient_appointments(
         skip_google=skip_google,
     )
     return {"slots": slots, "upcoming_days": upcoming_days}
+
+
+@router.get("/patients/{phone}/consultations")
+def tenant_list_patient_consultations_route(
+    phone: str,
+    auth: dict = Depends(require_tenant_auth),
+    limit: int = Query(60, ge=1, le=240),
+):
+    tenant_id = auth["tenant_id"]
+    profile = get_cabinet_client_by_phone(tenant_id, phone)
+    if not profile:
+        raise HTTPException(404, "Patient not found")
+    items = list_patient_consultations(tenant_id, phone, limit=limit)
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/patients/{phone}/consultations")
+def tenant_create_patient_consultation_route(
+    phone: str,
+    body: PatientConsultationCreateBody,
+    auth: dict = Depends(require_tenant_auth),
+):
+    tenant_id = auth["tenant_id"]
+    profile = get_cabinet_client_by_phone(tenant_id, phone)
+    if not profile:
+        raise HTTPException(404, "Patient not found")
+    payload = body.model_dump(exclude_none=True)
+    try:
+        created = create_patient_consultation(tenant_id, phone, body=payload)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not created:
+        raise HTTPException(500, "Impossible d'enregistrer la fiche de consultation")
+    return {"ok": True, "consultation": created}
+
+
+@router.get("/patients/{phone}/context-pack")
+def tenant_patient_context_pack_route(
+    phone: str,
+    auth: dict = Depends(require_tenant_auth),
+):
+    tenant_id = auth["tenant_id"]
+    profile = get_cabinet_client_by_phone(tenant_id, phone)
+    if not profile:
+        raise HTTPException(404, "Patient not found")
+    context_pack = get_patient_consultation_context_pack(tenant_id, phone)
+    return {"context_pack": context_pack}
 
 
 @router.get("/patients/{phone}/notes")

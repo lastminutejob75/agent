@@ -382,6 +382,16 @@ export const api = {
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/history${params}`, { tenant: true }),
   tenantGetPatientAppointments: (phone, params = "") =>
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/appointments${params}`, { tenant: true }),
+  tenantListPatientConsultations: (phone, params = "") =>
+    request(`/api/tenant/patients/${encodeURIComponent(phone)}/consultations${params}`, { tenant: true }),
+  tenantCreatePatientConsultation: (phone, body) =>
+    request(`/api/tenant/patients/${encodeURIComponent(phone)}/consultations`, {
+      method: "POST",
+      body,
+      tenant: true,
+    }),
+  tenantGetPatientContextPack: (phone) =>
+    request(`/api/tenant/patients/${encodeURIComponent(phone)}/context-pack`, { tenant: true }),
   tenantGetPatientQuestionnaire: (phone) =>
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/questionnaire`, { tenant: true }),
   tenantSavePatientQuestionnaire: (phone, body) =>

@@ -536,6 +536,7 @@ function InlineDetail({
   onReschedule,
   onViewPatientFile,
   onCreatePatientFile,
+  onCreateConsultation,
   variant = "inline",
 }) {
   const aPhone = normalizePhone(a.patient_phone || a.phone || "");
@@ -569,6 +570,15 @@ function InlineDetail({
             style={S.inlineSecBtn}
           >
             👤 Créer la fiche patient
+          </button>
+        ) : null}
+        {aPhone ? (
+          <button
+            type="button"
+            onClick={() => onCreateConsultation?.()}
+            style={S.inlineSecBtn}
+          >
+            🩺 Créer fiche consultation
           </button>
         ) : null}
         {!aPhone ? (
@@ -1739,6 +1749,30 @@ export default function AppAgenda() {
     resetReschedule();
   }
 
+  function openConsultationSheetFromSelectedAppt(appt) {
+    const phone = normalizePhone(appt?.patient_phone || appt?.phone || "");
+    if (!phone) {
+      setActionMsg({
+        type: "error",
+        text: "Numéro patient requis pour créer une fiche de consultation.",
+      });
+      return;
+    }
+    const params = new URLSearchParams();
+    params.set("phone", phone);
+    params.set("consultation", "1");
+    const dateIso = String(appt?.date || "").trim();
+    if (dateIso) params.set("consultationDate", dateIso);
+    const motif = String(appt?.type || "").trim();
+    if (motif) params.set("consultationMotif", motif);
+    const apptId = appointmentLocalId(appt)
+      ? String(appointmentLocalId(appt))
+      : (appointmentGoogleEventId(appt) || String(appt?.event_id || "").trim());
+    if (apptId) params.set("consultationAppointmentId", apptId);
+    closeAppointmentDetail();
+    navigate(`/app/patient-dashboard?${params.toString()}`);
+  }
+
   useEffect(() => {
     if (!selectedAppt) return undefined;
     const onKey = (e) => {
@@ -2861,6 +2895,7 @@ export default function AppAgenda() {
                   onReschedule={handleReschedule}
                   onViewPatientFile={viewPatientFileFromSelectedAppt}
                   onCreatePatientFile={() => openCreatePatientFormFromAppt(selectedAppt)}
+                  onCreateConsultation={() => openConsultationSheetFromSelectedAppt(selectedAppt)}
                 />
               </>
             )}

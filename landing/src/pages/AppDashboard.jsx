@@ -805,6 +805,7 @@ export default function AppDashboard() {
         setTab={setTab}
         onPriority={() => navigate("/app/demandes?status=%C3%80%20traiter&priority=Urgence")}
         onDayAgenda={() => navigate(`/app/agenda?view=day&date=${encodeURIComponent(todayISO())}`)}
+        onCreateConsultation={() => navigate("/app/patient-dashboard?consultation=1")}
         onMessages={() => navigate("/app/demandes?status=Toutes&type=Question")}
         onClaraSettings={() => navigate("/app/clara")}
         styles={S}

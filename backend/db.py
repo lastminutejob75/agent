@@ -1,12 +1,13 @@
 # backend/db.py
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
 import sqlite3
 import unicodedata
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 DB_PATH = "agent.db"
@@ -605,6 +606,7 @@ def _ensure_cabinet_clients_table(conn: sqlite3.Connection) -> None:
 
     _ensure_patient_documents_table(conn)
     _ensure_patient_notes_table(conn)
+    _ensure_patient_consultations_table(conn)
 
 
 def _migrate_cabinet_clients_columns_pg(conn: Any) -> None:
@@ -781,6 +783,7 @@ def _ensure_cabinet_clients_table_pg(conn: Any) -> None:
     _migrate_cabinet_clients_columns_pg(conn)
     _ensure_patient_documents_table_pg(conn)
     _ensure_patient_notes_table_pg(conn)
+    _ensure_patient_consultations_table_pg(conn)
 
 
 def _cabinet_client_row_to_dict(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -875,6 +878,156 @@ def _ensure_patient_notes_table_pg(conn: Any) -> None:
             )
             """
         )
+
+
+def _ensure_patient_consultations_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS patient_consultations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id INTEGER NOT NULL,
+            patient_phone TEXT NOT NULL,
+            appointment_id TEXT,
+            consultation_date TEXT NOT NULL,
+            mode_consultation TEXT NOT NULL DEFAULT 'rapide',
+            motif TEXT NOT NULL,
+            anamnese TEXT,
+            etat_general TEXT,
+            examen_physique TEXT,
+            impression_clinique TEXT NOT NULL,
+            cim10 TEXT,
+            examens_demandes TEXT,
+            prescription TEXT,
+            orientation TEXT,
+            suivi_prochain_rdv TEXT,
+            suivi_consignes TEXT,
+            note_praticien TEXT,
+            ia_resume TEXT,
+            ia_contexte_patient TEXT,
+            ia_status TEXT NOT NULL DEFAULT 'pending',
+            ia_validated_at TEXT,
+            raw_payload TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_patient_consultations_tenant_phone_date
+        ON patient_consultations (tenant_id, patient_phone, consultation_date DESC, created_at DESC)
+        """
+    )
+    _ensure_patient_consultation_vitals_table(conn)
+
+
+def _ensure_patient_consultation_vitals_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS patient_consultation_vitals (
+            consultation_id INTEGER PRIMARY KEY,
+            tenant_id INTEGER NOT NULL,
+            patient_phone TEXT NOT NULL,
+            measured_at TEXT NOT NULL,
+            fc_bpm INTEGER,
+            pa_systolique INTEGER,
+            pa_diastolique INTEGER,
+            temperature_c REAL,
+            spo2_pct INTEGER,
+            fr_min INTEGER,
+            poids_kg REAL,
+            taille_cm INTEGER,
+            imc REAL,
+            source TEXT NOT NULL DEFAULT 'praticien',
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (consultation_id) REFERENCES patient_consultations(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_patient_consultation_vitals_tenant_phone_date
+        ON patient_consultation_vitals (tenant_id, patient_phone, measured_at DESC)
+        """
+    )
+
+
+def _ensure_patient_consultations_table_pg(conn: Any) -> None:
+    if not _pg_table_exists(conn, "patient_consultations"):
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS patient_consultations (
+                    id BIGSERIAL PRIMARY KEY,
+                    tenant_id INTEGER NOT NULL,
+                    patient_phone TEXT NOT NULL,
+                    appointment_id TEXT,
+                    consultation_date DATE NOT NULL DEFAULT CURRENT_DATE,
+                    mode_consultation TEXT NOT NULL DEFAULT 'rapide',
+                    motif TEXT NOT NULL,
+                    anamnese TEXT,
+                    etat_general TEXT,
+                    examen_physique TEXT,
+                    impression_clinique TEXT NOT NULL,
+                    cim10 TEXT,
+                    examens_demandes TEXT[] NOT NULL DEFAULT '{}',
+                    prescription TEXT,
+                    orientation TEXT,
+                    suivi_prochain_rdv DATE,
+                    suivi_consignes TEXT,
+                    note_praticien TEXT,
+                    ia_resume TEXT,
+                    ia_contexte_patient TEXT,
+                    ia_status TEXT NOT NULL DEFAULT 'pending',
+                    ia_validated_at TIMESTAMPTZ,
+                    raw_payload JSONB,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_patient_consultations_tenant_phone_date
+                ON patient_consultations (tenant_id, patient_phone, consultation_date DESC, created_at DESC)
+                """
+            )
+        conn.commit()
+    _ensure_patient_consultation_vitals_table_pg(conn)
+
+
+def _ensure_patient_consultation_vitals_table_pg(conn: Any) -> None:
+    if _pg_table_exists(conn, "patient_consultation_vitals"):
+        return
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS patient_consultation_vitals (
+                consultation_id BIGINT PRIMARY KEY REFERENCES patient_consultations(id) ON DELETE CASCADE,
+                tenant_id INTEGER NOT NULL,
+                patient_phone TEXT NOT NULL,
+                measured_at DATE NOT NULL,
+                fc_bpm SMALLINT CHECK (fc_bpm BETWEEN 20 AND 300),
+                pa_systolique SMALLINT CHECK (pa_systolique BETWEEN 50 AND 300),
+                pa_diastolique SMALLINT CHECK (pa_diastolique BETWEEN 20 AND 200),
+                temperature_c NUMERIC(4,1) CHECK (temperature_c BETWEEN 30 AND 45),
+                spo2_pct SMALLINT CHECK (spo2_pct BETWEEN 50 AND 100),
+                fr_min SMALLINT CHECK (fr_min BETWEEN 4 AND 80),
+                poids_kg NUMERIC(5,1) CHECK (poids_kg BETWEEN 1 AND 400),
+                taille_cm SMALLINT CHECK (taille_cm BETWEEN 30 AND 250),
+                imc NUMERIC(5,1),
+                source TEXT NOT NULL DEFAULT 'praticien',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_patient_consultation_vitals_tenant_phone_date
+            ON patient_consultation_vitals (tenant_id, patient_phone, measured_at DESC)
+            """
+        )
+    conn.commit()
 
 
 def update_patient_fields(
@@ -1333,6 +1486,662 @@ def update_patient_note(
     out = dict(row)
     out["note_text"] = text
     return out
+
+
+_CONSULTATION_VITAL_FIELDS = (
+    "fc_bpm",
+    "pa_systolique",
+    "pa_diastolique",
+    "temperature_c",
+    "spo2_pct",
+    "fr_min",
+    "poids_kg",
+    "taille_cm",
+    "imc",
+)
+_CONSULTATION_VITAL_INT_FIELDS = {
+    "fc_bpm",
+    "pa_systolique",
+    "pa_diastolique",
+    "spo2_pct",
+    "fr_min",
+    "taille_cm",
+}
+
+
+def _coerce_iso_date(value: Any, *, fallback_today: bool = False) -> Optional[str]:
+    if isinstance(value, date):
+        return value.isoformat()
+    raw = str(value or "").strip()[:10]
+    if not raw:
+        return date.today().isoformat() if fallback_today else None
+    try:
+        datetime.strptime(raw, "%Y-%m-%d")
+        return raw
+    except Exception:
+        return date.today().isoformat() if fallback_today else None
+
+
+def _consultation_parse_examens(raw: Any) -> List[str]:
+    source: List[str] = []
+    if isinstance(raw, list):
+        source = [str(x or "").strip() for x in raw]
+    elif isinstance(raw, str):
+        text = raw.strip()
+        if text:
+            if text.startswith("[") and text.endswith("]"):
+                try:
+                    parsed = json.loads(text)
+                    if isinstance(parsed, list):
+                        source = [str(x or "").strip() for x in parsed]
+                except Exception:
+                    source = []
+            if not source:
+                source = [chunk.strip() for chunk in text.split(",")]
+    out: List[str] = []
+    seen = set()
+    for item in source:
+        if not item:
+            continue
+        key = item.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item[:120])
+    return out
+
+
+def _consultation_vitals_to_dict(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not row:
+        return {}
+    out: Dict[str, Any] = {
+        "measured_at": str(row.get("measured_at") or "")[:10],
+        "source": str(row.get("source") or "praticien"),
+    }
+    for field in _CONSULTATION_VITAL_FIELDS:
+        raw = row.get(field)
+        if raw in (None, ""):
+            continue
+        try:
+            if field in _CONSULTATION_VITAL_INT_FIELDS:
+                out[field] = int(raw)
+            else:
+                out[field] = float(raw)
+        except Exception:
+            continue
+    return out
+
+
+def _consultation_row_to_dict(row: Dict[str, Any], vitals: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    return {
+        "id": int(row.get("id") or 0),
+        "tenant_id": int(row.get("tenant_id") or 0),
+        "patient_phone": str(row.get("patient_phone") or ""),
+        "appointment_id": str(row.get("appointment_id") or ""),
+        "date_consultation": str(row.get("consultation_date") or "")[:10],
+        "mode_consultation": str(row.get("mode_consultation") or "rapide"),
+        "motif": str(row.get("motif") or ""),
+        "anamnese": str(row.get("anamnese") or ""),
+        "etat_general": str(row.get("etat_general") or ""),
+        "examen_physique": str(row.get("examen_physique") or ""),
+        "impression_clinique": str(row.get("impression_clinique") or ""),
+        "cim10": str(row.get("cim10") or ""),
+        "examens_demandes": _consultation_parse_examens(row.get("examens_demandes")),
+        "prescription": str(row.get("prescription") or ""),
+        "orientation": str(row.get("orientation") or ""),
+        "suivi_prochain_rdv": str(row.get("suivi_prochain_rdv") or "")[:10],
+        "suivi_consignes": str(row.get("suivi_consignes") or ""),
+        "note_praticien": str(row.get("note_praticien") or ""),
+        "ia_resume": str(row.get("ia_resume") or ""),
+        "ia_contexte_patient": str(row.get("ia_contexte_patient") or ""),
+        "ia_status": str(row.get("ia_status") or "pending"),
+        "ia_validated_at": str(row.get("ia_validated_at") or ""),
+        "created_at": str(row.get("created_at") or ""),
+        "updated_at": str(row.get("updated_at") or ""),
+        "vitals": vitals or {},
+    }
+
+
+def get_patient_consultation_by_id(
+    tenant_id: int,
+    phone: str,
+    consultation_id: int,
+) -> Optional[Dict[str, Any]]:
+    phone_norm = normalize_phone_number(phone) or phone.strip()
+    if not phone_norm:
+        return None
+    cid = int(consultation_id or 0)
+    if cid <= 0:
+        return None
+
+    url = _pg_events_url()
+    if url:
+        try:
+            from backend.pg_pool import pg_connection_for
+            with pg_connection_for(url) as conn:
+                _ensure_patient_consultations_table_pg(conn)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT *
+                        FROM patient_consultations
+                        WHERE id = %s AND tenant_id = %s AND patient_phone = %s
+                        LIMIT 1
+                        """,
+                        (cid, tenant_id, phone_norm),
+                    )
+                    row = cur.fetchone()
+                    if not row:
+                        return None
+                    cur.execute(
+                        """
+                        SELECT *
+                        FROM patient_consultation_vitals
+                        WHERE consultation_id = %s AND tenant_id = %s AND patient_phone = %s
+                        LIMIT 1
+                        """,
+                        (cid, tenant_id, phone_norm),
+                    )
+                    vitals_row = cur.fetchone()
+                    return _consultation_row_to_dict(
+                        dict(row),
+                        _consultation_vitals_to_dict(dict(vitals_row)) if vitals_row else {},
+                    )
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "get_patient_consultation_by_id pg failed tenant_id=%s phone=%s id=%s err=%s",
+                tenant_id,
+                phone_norm,
+                cid,
+                exc,
+            )
+
+    conn = get_conn()
+    try:
+        _ensure_patient_consultations_table(conn)
+        row = conn.execute(
+            """
+            SELECT *
+            FROM patient_consultations
+            WHERE id = ? AND tenant_id = ? AND patient_phone = ?
+            LIMIT 1
+            """,
+            (cid, tenant_id, phone_norm),
+        ).fetchone()
+        if not row:
+            return None
+        vitals_row = conn.execute(
+            """
+            SELECT *
+            FROM patient_consultation_vitals
+            WHERE consultation_id = ? AND tenant_id = ? AND patient_phone = ?
+            LIMIT 1
+            """,
+            (cid, tenant_id, phone_norm),
+        ).fetchone()
+        return _consultation_row_to_dict(
+            dict(row),
+            _consultation_vitals_to_dict(dict(vitals_row)) if vitals_row else {},
+        )
+    finally:
+        conn.close()
+
+
+def list_patient_consultations(
+    tenant_id: int,
+    phone: str,
+    *,
+    limit: int = 100,
+) -> List[Dict[str, Any]]:
+    phone_norm = normalize_phone_number(phone) or phone.strip()
+    if not phone_norm:
+        return []
+    cap = max(1, min(int(limit or 100), 300))
+
+    url = _pg_events_url()
+    if url:
+        try:
+            from backend.pg_pool import pg_connection_for
+            with pg_connection_for(url) as conn:
+                _ensure_patient_consultations_table_pg(conn)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT *
+                        FROM patient_consultations
+                        WHERE tenant_id = %s AND patient_phone = %s
+                        ORDER BY consultation_date DESC, created_at DESC
+                        LIMIT %s
+                        """,
+                        (tenant_id, phone_norm, cap),
+                    )
+                    rows = [dict(r) for r in cur.fetchall()]
+                    if not rows:
+                        return []
+                    ids = [int(r.get("id") or 0) for r in rows if int(r.get("id") or 0) > 0]
+                    vitals_by_id: Dict[int, Dict[str, Any]] = {}
+                    if ids:
+                        cur.execute(
+                            """
+                            SELECT *
+                            FROM patient_consultation_vitals
+                            WHERE tenant_id = %s
+                              AND patient_phone = %s
+                              AND consultation_id = ANY(%s)
+                            """,
+                            (tenant_id, phone_norm, ids),
+                        )
+                        for vr in cur.fetchall():
+                            vdict = dict(vr)
+                            vitals_by_id[int(vdict.get("consultation_id") or 0)] = _consultation_vitals_to_dict(vdict)
+                    return [
+                        _consultation_row_to_dict(
+                            row,
+                            vitals_by_id.get(int(row.get("id") or 0), {}),
+                        )
+                        for row in rows
+                    ]
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "list_patient_consultations pg failed tenant_id=%s phone=%s err=%s",
+                tenant_id,
+                phone_norm,
+                exc,
+            )
+
+    conn = get_conn()
+    try:
+        _ensure_patient_consultations_table(conn)
+        rows = [
+            dict(r)
+            for r in conn.execute(
+                """
+                SELECT *
+                FROM patient_consultations
+                WHERE tenant_id = ? AND patient_phone = ?
+                ORDER BY consultation_date DESC, created_at DESC
+                LIMIT ?
+                """,
+                (tenant_id, phone_norm, cap),
+            ).fetchall()
+        ]
+        if not rows:
+            return []
+        ids = [int(r.get("id") or 0) for r in rows if int(r.get("id") or 0) > 0]
+        vitals_by_id: Dict[int, Dict[str, Any]] = {}
+        if ids:
+            placeholders = ",".join("?" for _ in ids)
+            sql = (
+                "SELECT * FROM patient_consultation_vitals "
+                f"WHERE tenant_id = ? AND patient_phone = ? AND consultation_id IN ({placeholders})"
+            )
+            params = [tenant_id, phone_norm, *ids]
+            for vr in conn.execute(sql, params).fetchall():
+                vdict = dict(vr)
+                vitals_by_id[int(vdict.get("consultation_id") or 0)] = _consultation_vitals_to_dict(vdict)
+        return [
+            _consultation_row_to_dict(
+                row,
+                vitals_by_id.get(int(row.get("id") or 0), {}),
+            )
+            for row in rows
+        ]
+    finally:
+        conn.close()
+
+
+def create_patient_consultation(
+    tenant_id: int,
+    phone: str,
+    *,
+    body: Dict[str, Any],
+) -> Dict[str, Any]:
+    phone_norm = normalize_phone_number(phone) or phone.strip()
+    if not phone_norm:
+        raise ValueError("patient_phone requis")
+
+    mode = str(body.get("mode_consultation") or "rapide").strip().lower()
+    if mode not in ("rapide", "complete"):
+        mode = "rapide"
+
+    consultation_date = _coerce_iso_date(body.get("date"), fallback_today=True) or date.today().isoformat()
+    motif = str(body.get("motif") or "").strip()[:240]
+    impression = str(body.get("impression_clinique") or "").strip()[:6000]
+    if len(motif) < 1:
+        raise ValueError("motif requis")
+    if len(impression) < 1:
+        raise ValueError("impression_clinique requis")
+
+    examen = body.get("examen_clinique") if isinstance(body.get("examen_clinique"), dict) else {}
+    conduite = body.get("conduite_a_tenir") if isinstance(body.get("conduite_a_tenir"), dict) else {}
+    suivi = conduite.get("suivi") if isinstance(conduite.get("suivi"), dict) else {}
+    ia = body.get("ia_uwi") if isinstance(body.get("ia_uwi"), dict) else {}
+    constantes = examen.get("constantes") if isinstance(examen.get("constantes"), dict) else {}
+
+    examens = _consultation_parse_examens(conduite.get("examens_complementaires"))
+    ia_validated = bool(ia.get("validated_by_practitioner"))
+    ia_status = "validated" if ia_validated else "pending"
+    ia_validated_at = datetime.utcnow().isoformat() if ia_validated else None
+    payload_json = json.dumps(body or {}, ensure_ascii=False)
+
+    vitals_payload: Dict[str, Any] = {}
+    for field in _CONSULTATION_VITAL_FIELDS:
+        raw = constantes.get(field)
+        if raw in (None, ""):
+            continue
+        try:
+            if field in _CONSULTATION_VITAL_INT_FIELDS:
+                vitals_payload[field] = int(float(raw))
+            else:
+                vitals_payload[field] = float(raw)
+        except Exception:
+            continue
+
+    insert_payload = {
+        "tenant_id": tenant_id,
+        "patient_phone": phone_norm,
+        "appointment_id": str(body.get("appointment_id") or "").strip()[:120] or None,
+        "consultation_date": consultation_date,
+        "mode_consultation": mode,
+        "motif": motif,
+        "anamnese": str(body.get("anamnese") or "").strip()[:12000] or None,
+        "etat_general": str(examen.get("etat_general") or "").strip()[:3000] or None,
+        "examen_physique": str(examen.get("examen_physique") or "").strip()[:6000] or None,
+        "impression_clinique": impression,
+        "cim10": str(body.get("cim10") or "").strip()[:40] or None,
+        "examens_demandes": examens,
+        "prescription": str(conduite.get("prescription") or "").strip()[:6000] or None,
+        "orientation": str(conduite.get("orientation") or "").strip()[:4000] or None,
+        "suivi_prochain_rdv": _coerce_iso_date(suivi.get("prochain_rdv"), fallback_today=False),
+        "suivi_consignes": str(suivi.get("consignes") or "").strip()[:4000] or None,
+        "note_praticien": str(body.get("note_praticien") or "").strip()[:12000] or None,
+        "ia_resume": str(ia.get("resume_consultation") or "").strip()[:12000] or None,
+        "ia_contexte_patient": str(ia.get("contexte_patient") or "").strip()[:12000] or None,
+        "ia_status": ia_status,
+        "ia_validated_at": ia_validated_at,
+        "raw_payload": payload_json,
+    }
+
+    url = _pg_events_url()
+    if url:
+        try:
+            from backend.pg_pool import pg_connection_for
+            with pg_connection_for(url) as conn:
+                _ensure_patient_consultations_table_pg(conn)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO patient_consultations (
+                            tenant_id, patient_phone, appointment_id, consultation_date, mode_consultation,
+                            motif, anamnese, etat_general, examen_physique, impression_clinique, cim10,
+                            examens_demandes, prescription, orientation, suivi_prochain_rdv, suivi_consignes,
+                            note_praticien, ia_resume, ia_contexte_patient, ia_status, ia_validated_at, raw_payload
+                        ) VALUES (
+                            %(tenant_id)s, %(patient_phone)s, %(appointment_id)s, %(consultation_date)s, %(mode_consultation)s,
+                            %(motif)s, %(anamnese)s, %(etat_general)s, %(examen_physique)s, %(impression_clinique)s, %(cim10)s,
+                            %(examens_demandes)s, %(prescription)s, %(orientation)s, %(suivi_prochain_rdv)s, %(suivi_consignes)s,
+                            %(note_praticien)s, %(ia_resume)s, %(ia_contexte_patient)s, %(ia_status)s, %(ia_validated_at)s, %(raw_payload)s
+                        )
+                        RETURNING id
+                        """,
+                        insert_payload,
+                    )
+                    row = cur.fetchone()
+                    if not row:
+                        raise RuntimeError("create_patient_consultation pg insert failed")
+                    consultation_id = int(row.get("id") or 0)
+                    if consultation_id <= 0:
+                        raise RuntimeError("create_patient_consultation pg invalid id")
+                    if vitals_payload:
+                        cur.execute(
+                            """
+                            INSERT INTO patient_consultation_vitals (
+                                consultation_id, tenant_id, patient_phone, measured_at,
+                                fc_bpm, pa_systolique, pa_diastolique, temperature_c, spo2_pct, fr_min,
+                                poids_kg, taille_cm, imc, source
+                            ) VALUES (
+                                %(consultation_id)s, %(tenant_id)s, %(patient_phone)s, %(measured_at)s,
+                                %(fc_bpm)s, %(pa_systolique)s, %(pa_diastolique)s, %(temperature_c)s, %(spo2_pct)s, %(fr_min)s,
+                                %(poids_kg)s, %(taille_cm)s, %(imc)s, 'praticien'
+                            )
+                            """,
+                            {
+                                "consultation_id": consultation_id,
+                                "tenant_id": tenant_id,
+                                "patient_phone": phone_norm,
+                                "measured_at": consultation_date,
+                                "fc_bpm": vitals_payload.get("fc_bpm"),
+                                "pa_systolique": vitals_payload.get("pa_systolique"),
+                                "pa_diastolique": vitals_payload.get("pa_diastolique"),
+                                "temperature_c": vitals_payload.get("temperature_c"),
+                                "spo2_pct": vitals_payload.get("spo2_pct"),
+                                "fr_min": vitals_payload.get("fr_min"),
+                                "poids_kg": vitals_payload.get("poids_kg"),
+                                "taille_cm": vitals_payload.get("taille_cm"),
+                                "imc": vitals_payload.get("imc"),
+                            },
+                        )
+                conn.commit()
+            created = get_patient_consultation_by_id(tenant_id, phone_norm, consultation_id)
+            if created:
+                return created
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "create_patient_consultation pg failed tenant_id=%s phone=%s err=%s",
+                tenant_id,
+                phone_norm,
+                exc,
+            )
+
+    conn = get_conn()
+    try:
+        _ensure_patient_consultations_table(conn)
+        cur = conn.execute(
+            """
+            INSERT INTO patient_consultations (
+                tenant_id, patient_phone, appointment_id, consultation_date, mode_consultation,
+                motif, anamnese, etat_general, examen_physique, impression_clinique, cim10,
+                examens_demandes, prescription, orientation, suivi_prochain_rdv, suivi_consignes,
+                note_praticien, ia_resume, ia_contexte_patient, ia_status, ia_validated_at, raw_payload
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                tenant_id,
+                phone_norm,
+                insert_payload["appointment_id"],
+                consultation_date,
+                mode,
+                motif,
+                insert_payload["anamnese"],
+                insert_payload["etat_general"],
+                insert_payload["examen_physique"],
+                impression,
+                insert_payload["cim10"],
+                json.dumps(examens, ensure_ascii=False),
+                insert_payload["prescription"],
+                insert_payload["orientation"],
+                insert_payload["suivi_prochain_rdv"],
+                insert_payload["suivi_consignes"],
+                insert_payload["note_praticien"],
+                insert_payload["ia_resume"],
+                insert_payload["ia_contexte_patient"],
+                ia_status,
+                ia_validated_at,
+                payload_json,
+            ),
+        )
+        consultation_id = int(cur.lastrowid or 0)
+        if consultation_id <= 0:
+            raise RuntimeError("create_patient_consultation sqlite insert failed")
+        if vitals_payload:
+            conn.execute(
+                """
+                INSERT INTO patient_consultation_vitals (
+                    consultation_id, tenant_id, patient_phone, measured_at,
+                    fc_bpm, pa_systolique, pa_diastolique, temperature_c, spo2_pct, fr_min,
+                    poids_kg, taille_cm, imc, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    consultation_id,
+                    tenant_id,
+                    phone_norm,
+                    consultation_date,
+                    vitals_payload.get("fc_bpm"),
+                    vitals_payload.get("pa_systolique"),
+                    vitals_payload.get("pa_diastolique"),
+                    vitals_payload.get("temperature_c"),
+                    vitals_payload.get("spo2_pct"),
+                    vitals_payload.get("fr_min"),
+                    vitals_payload.get("poids_kg"),
+                    vitals_payload.get("taille_cm"),
+                    vitals_payload.get("imc"),
+                    "praticien",
+                ),
+            )
+        conn.commit()
+        created = get_patient_consultation_by_id(tenant_id, phone_norm, consultation_id)
+        if created:
+            return created
+        raise RuntimeError("create_patient_consultation sqlite fetch failed")
+    finally:
+        conn.close()
+
+
+def get_patient_consultation_context_pack(tenant_id: int, phone: str) -> Dict[str, Any]:
+    consultations = list_patient_consultations(tenant_id, phone, limit=240)
+    if not consultations:
+        return {
+            "dernieres_constantes": {},
+            "poids_tendance_6m": {"debut_kg": None, "fin_kg": None, "delta_kg": None, "nb_pesees": 0},
+            "pa_moyenne_3_dernieres": {"pas": None, "pad": None, "nb": 0},
+            "frequentation": {"nb_12_mois": 0, "derniere_visite": None, "jours_depuis": None},
+            "dernieres_consultations": [],
+            "examens_recents": [],
+        }
+
+    def to_date(value: Any) -> Optional[date]:
+        raw = _coerce_iso_date(value, fallback_today=False)
+        if not raw:
+            return None
+        try:
+            return datetime.strptime(raw, "%Y-%m-%d").date()
+        except Exception:
+            return None
+
+    sorted_consultations = sorted(
+        consultations,
+        key=lambda c: (
+            str(c.get("date_consultation") or ""),
+            str(c.get("created_at") or ""),
+        ),
+        reverse=True,
+    )
+
+    vital_points: List[Dict[str, Any]] = []
+    for consultation in sorted_consultations:
+        measured = to_date(consultation.get("vitals", {}).get("measured_at") or consultation.get("date_consultation"))
+        if not measured:
+            continue
+        vital_points.append(
+            {
+                "measured_at": measured,
+                "vitals": dict(consultation.get("vitals") or {}),
+            }
+        )
+    vital_points.sort(key=lambda item: item["measured_at"], reverse=True)
+
+    latest_vitals: Dict[str, Dict[str, Any]] = {}
+    for field in _CONSULTATION_VITAL_FIELDS:
+        for point in vital_points:
+            value = point["vitals"].get(field)
+            if value in (None, ""):
+                continue
+            latest_vitals[field] = {
+                "valeur": value,
+                "date": point["measured_at"].isoformat(),
+            }
+            break
+
+    six_months_ago = date.today() - timedelta(days=183)
+    weight_points = [
+        point for point in vital_points
+        if point["measured_at"] >= six_months_ago and point["vitals"].get("poids_kg") not in (None, "")
+    ]
+    weight_points_sorted = sorted(weight_points, key=lambda item: item["measured_at"])
+    if weight_points_sorted:
+        start_weight = float(weight_points_sorted[0]["vitals"]["poids_kg"])
+        end_weight = float(weight_points_sorted[-1]["vitals"]["poids_kg"])
+        weight_trend = {
+            "debut_kg": round(start_weight, 1),
+            "fin_kg": round(end_weight, 1),
+            "delta_kg": round(end_weight - start_weight, 1),
+            "nb_pesees": len(weight_points_sorted),
+        }
+    else:
+        weight_trend = {"debut_kg": None, "fin_kg": None, "delta_kg": None, "nb_pesees": 0}
+
+    pa_points = [
+        point for point in vital_points
+        if point["vitals"].get("pa_systolique") not in (None, "")
+        and point["vitals"].get("pa_diastolique") not in (None, "")
+    ][:3]
+    if pa_points:
+        pas_vals = [float(point["vitals"]["pa_systolique"]) for point in pa_points]
+        pad_vals = [float(point["vitals"]["pa_diastolique"]) for point in pa_points]
+        pa_avg = {
+            "pas": round(sum(pas_vals) / len(pas_vals)),
+            "pad": round(sum(pad_vals) / len(pad_vals)),
+            "nb": len(pa_points),
+        }
+    else:
+        pa_avg = {"pas": None, "pad": None, "nb": 0}
+
+    one_year_ago = date.today() - timedelta(days=365)
+    consultations_12m = [
+        c for c in sorted_consultations
+        if (to_date(c.get("date_consultation")) or date.min) >= one_year_ago
+    ]
+    last_visit_date = max((to_date(c.get("date_consultation")) for c in consultations_12m), default=None)
+    frequentation = {
+        "nb_12_mois": len(consultations_12m),
+        "derniere_visite": last_visit_date.isoformat() if last_visit_date else None,
+        "jours_depuis": (date.today() - last_visit_date).days if last_visit_date else None,
+    }
+
+    latest_consults = []
+    for item in sorted_consultations[:5]:
+        latest_consults.append(
+            {
+                "date": str(item.get("date_consultation") or ""),
+                "motif": str(item.get("motif") or ""),
+                "impression": str(item.get("impression_clinique") or ""),
+                "resume_ia": str(item.get("ia_resume") or ""),
+            }
+        )
+
+    three_months_ago = date.today() - timedelta(days=90)
+    exams_recent: List[str] = []
+    seen_exams = set()
+    for item in sorted_consultations:
+        c_date = to_date(item.get("date_consultation"))
+        if not c_date or c_date < three_months_ago:
+            continue
+        for exam in _consultation_parse_examens(item.get("examens_demandes")):
+            key = exam.lower()
+            if key in seen_exams:
+                continue
+            seen_exams.add(key)
+            exams_recent.append(exam)
+
+    return {
+        "dernieres_constantes": latest_vitals,
+        "poids_tendance_6m": weight_trend,
+        "pa_moyenne_3_dernieres": pa_avg,
+        "frequentation": frequentation,
+        "dernieres_consultations": latest_consults,
+        "examens_recents": exams_recent,
+    }
 
 
 def _normalize_patient_email(email: str) -> str:

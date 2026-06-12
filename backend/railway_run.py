@@ -48,6 +48,7 @@ def main() -> int:
         "python -m backend.run_migration 029 || true; "
         "python -m backend.run_migration 030 || true; "
         "python -m backend.run_migration 038 || true; "
+        "python -m backend.run_migration 049 || true; "
         "echo 'Migrations done'"
     )
     subprocess.Popen(

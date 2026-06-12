@@ -4,6 +4,7 @@ export default function HomeTabsActionsPanel({
   onPriority,
   onDayAgenda,
   onMessages,
+  onCreateConsultation,
   onClaraSettings,
   styles,
   BtnComponent,
@@ -20,6 +21,7 @@ export default function HomeTabsActionsPanel({
       <div className="uwi-dashboard-quick-actions" style={S.quickActions}>
         <Btn variant="dark" icon="warn" onClick={onPriority}>Traiter les demandes prioritaires</Btn>
         <Btn icon="calendar" onClick={onDayAgenda}>RDV d&apos;aujourd&apos;hui (agenda)</Btn>
+        <Btn variant="teal" icon="doc" onClick={onCreateConsultation}>Créer fiche consultation</Btn>
         <Btn variant="green" icon="message" onClick={onMessages}>Consulter les messages patients</Btn>
       </div>
       <div style={S.panelFooter}>
