@@ -392,6 +392,39 @@ export const api = {
     }),
   tenantGetPatientContextPack: (phone) =>
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/context-pack`, { tenant: true }),
+  tenantGetPatientConsultationPrefill: (phone) =>
+    request("/api/tenant/consultations/prefill", {
+      method: "POST",
+      body: { phone: String(phone || "") },
+      tenant: true,
+    }),
+  tenantGenerateConsultationSummary: (body) =>
+    request("/api/tenant/consultations/summary", {
+      method: "POST",
+      body,
+      tenant: true,
+    }),
+  tenantTranscribeConsultation: async (audioBlob, phone = "") => {
+    const formData = new FormData();
+    formData.append("audio", audioBlob, "consultation.webm");
+    if (phone) formData.append("phone", String(phone));
+    const base = getApiUrl();
+    const url = `${base}/api/tenant/consultations/transcribe`;
+    const headers = {};
+    const tenantToken = getTenantToken();
+    if (tenantToken) headers.Authorization = `Bearer ${tenantToken}`;
+    const res = await fetch(url, {
+      method: "POST",
+      body: formData,
+      headers,
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.detail || res.statusText);
+    }
+    return res.json();
+  },
   tenantGetPatientQuestionnaire: (phone) =>
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/questionnaire`, { tenant: true }),
   tenantSavePatientQuestionnaire: (phone, body) =>

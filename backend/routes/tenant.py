@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import httpx
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
@@ -23,7 +24,7 @@ from typing import Any, Dict, Iterable, List, Literal, Optional
 
 import bcrypt
 import jwt
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, UploadFile, File
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, UploadFile, File, Form
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field, validator
 
@@ -120,6 +121,11 @@ from backend.services.email_service import (
     send_patient_message_email,
 )
 from backend.services.sms_service import send_sms_message
+from backend.services.voice_extraction import (
+    EXTRACTION_SYSTEM_PROMPT,
+    build_user_prompt as build_consultation_extraction_prompt,
+    parse_extraction as parse_consultation_extraction,
+)
 from backend.services.patient_document_storage import (
     content_disposition_attachment,
     delete_patient_dossier,
@@ -4799,6 +4805,337 @@ def tenant_patient_context_pack_route(
         raise HTTPException(404, "Patient not found")
     context_pack = get_patient_consultation_context_pack(tenant_id, phone)
     return {"context_pack": context_pack}
+
+
+def _consultation_clean_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _consultation_compose_summary_payload(draft: Dict[str, Any]) -> Dict[str, str]:
+    motif = _consultation_clean_text(draft.get("motif"))
+    anamnese = _consultation_clean_text(draft.get("anamnese"))
+    impression = _consultation_clean_text(draft.get("impression_clinique"))
+    examen = draft.get("examen_clinique") if isinstance(draft.get("examen_clinique"), dict) else {}
+    conduite = draft.get("conduite_a_tenir") if isinstance(draft.get("conduite_a_tenir"), dict) else {}
+    suivi = conduite.get("suivi") if isinstance(conduite.get("suivi"), dict) else {}
+    prescription = _consultation_clean_text(conduite.get("prescription"))
+    consignes = _consultation_clean_text(suivi.get("consignes"))
+
+    resume_parts: List[str] = []
+    if motif:
+        resume_parts.append(f"Motif: {motif}.")
+    if anamnese:
+        resume_parts.append(f"Anamnese: {anamnese}.")
+    if impression:
+        resume_parts.append(f"Impression clinique: {impression}.")
+    if prescription:
+        resume_parts.append(f"Prescription: {prescription}.")
+    if consignes:
+        resume_parts.append(f"Suivi: {consignes}.")
+    resume = " ".join(part.strip() for part in resume_parts).strip()
+
+    etat_general = _consultation_clean_text(examen.get("etat_general"))
+    constantes = examen.get("constantes") if isinstance(examen.get("constantes"), dict) else {}
+    constantes_bits: List[str] = []
+    for label, key in (
+        ("FC", "fc_bpm"),
+        ("PA", "pa_systolique"),
+        ("PAD", "pa_diastolique"),
+        ("Temp", "temperature_c"),
+        ("SpO2", "spo2_pct"),
+    ):
+        value = constantes.get(key)
+        if value in (None, ""):
+            continue
+        constantes_bits.append(f"{label} {value}")
+    contexte_parts: List[str] = []
+    if etat_general:
+        contexte_parts.append(f"Etat general: {etat_general}.")
+    if constantes_bits:
+        contexte_parts.append(f"Constantes: {', '.join(constantes_bits)}.")
+    contexte = " ".join(part.strip() for part in contexte_parts).strip()
+    return {"resume": resume, "contexte": contexte}
+
+
+def _consultation_parse_json_payload(text: str) -> Dict[str, Any]:
+    raw = str(text or "").strip()
+    if not raw:
+        return {}
+    raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.IGNORECASE)
+    raw = re.sub(r"\s*```$", "", raw, flags=re.IGNORECASE)
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                data = json.loads(raw[start:end + 1])
+                return data if isinstance(data, dict) else {}
+            except Exception:
+                return {}
+        return {}
+
+
+def _consultation_profile_antecedents(profile: Optional[Dict[str, Any]]) -> str:
+    if not isinstance(profile, dict):
+        return ""
+
+    def first_non_empty(keys: List[str]) -> str:
+        for key in keys:
+            value = str(profile.get(key) or "").strip()
+            if value:
+                return value
+        return ""
+
+    parts: List[str] = []
+    med = first_non_empty(["antecedents_medicaux", "medical_history", "medical_antecedents"])
+    chir = first_non_empty(["antecedents_chirurgicaux", "surgical_history", "surgical_antecedents"])
+    allergy = first_non_empty(["allergies", "allergy_history"])
+    tx = first_non_empty(["traitements", "traitements_en_cours", "current_treatments"])
+    if med:
+        parts.append(f"Antecedents medicaux: {med}")
+    if chir:
+        parts.append(f"Antecedents chirurgicaux: {chir}")
+    if allergy:
+        parts.append(f"Allergies: {allergy}")
+    if tx:
+        parts.append(f"Traitements en cours: {tx}")
+    return " | ".join(parts)[:1800]
+
+
+def _consultation_generate_summary_with_anthropic(draft: Dict[str, Any]) -> Dict[str, str]:
+    api_key = str(os.getenv("ANTHROPIC_API_KEY") or "").strip()
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY manquant")
+    from anthropic import Anthropic
+
+    model = (
+        str(os.getenv("CONSULTATION_SUMMARY_MODEL") or "").strip()
+        or str(os.getenv("LLM_ASSIST_MODEL") or "").strip()
+        or "claude-haiku-4-5-20251001"
+    )
+    system = (
+        "Tu rediges une synthese de consultation en francais pour un praticien. "
+        "N'invente rien. Ne fais aucune recommendation clinique. "
+        "Reponds en JSON strict uniquement: "
+        '{"resume":"<4-7 phrases max, factuel>","contexte":"<1-3 phrases pour suivi patient>"}'
+    )
+    user_payload = json.dumps(draft or {}, ensure_ascii=False, default=str)
+    client = Anthropic(api_key=api_key)
+    message = client.messages.create(
+        model=model,
+        max_tokens=700,
+        system=system,
+        messages=[{"role": "user", "content": f"Draft consultation:\n{user_payload}"}],
+    )
+    raw = "".join(
+        getattr(block, "text", "")
+        for block in getattr(message, "content", [])
+        if getattr(block, "type", None) == "text"
+    ).strip()
+    parsed = _consultation_parse_json_payload(raw)
+    resume = _consultation_clean_text(parsed.get("resume"))
+    contexte = _consultation_clean_text(parsed.get("contexte"))
+    if not resume:
+        raise RuntimeError("resume vide")
+    return {
+        "resume": resume,
+        "contexte": contexte,
+        "is_fallback": False,
+        "source": "anthropic",
+    }
+
+
+@router.post("/consultations/summary")
+def tenant_consultation_summary_route(
+    body: Dict[str, Any] = Body(default={}),
+    auth: dict = Depends(require_tenant_auth),
+):
+    _tenant_id = auth["tenant_id"]
+    fallback = _consultation_compose_summary_payload(body or {})
+    if not fallback["resume"]:
+        raise HTTPException(400, "Impossible de générer une synthèse: motif/impression absents.")
+    try:
+        return _consultation_generate_summary_with_anthropic(body or {})
+    except Exception as exc:
+        logger.warning("consultation summary anthropic fallback: %s", exc)
+        return {
+            "resume": fallback["resume"],
+            "contexte": fallback["contexte"],
+            "is_fallback": True,
+            "source": "fallback_deterministic",
+        }
+
+def _build_consultation_prefill_payload(
+    tenant_id: int,
+    phone: str,
+) -> Dict[str, Any]:
+    profile = get_cabinet_client_by_phone(tenant_id, phone)
+    if not profile:
+        raise HTTPException(404, "Patient not found")
+
+    context_pack = get_patient_consultation_context_pack(tenant_id, phone)
+    recent = context_pack.get("dernieres_consultations") if isinstance(context_pack, dict) else []
+    latest = recent[0] if isinstance(recent, list) and recent else {}
+    latest_motif = _consultation_clean_text((latest or {}).get("motif"))
+    latest_impression = _consultation_clean_text((latest or {}).get("impression"))
+    latest_resume_ia = _consultation_clean_text((latest or {}).get("resume_ia"))
+
+    examens_recents = context_pack.get("examens_recents") if isinstance(context_pack, dict) else []
+    examens_list = [str(item).strip() for item in (examens_recents or []) if str(item).strip()]
+    documents = (
+        f"{len(examens_list)} examen(s) récent(s): {', '.join(examens_list)}."
+        if examens_list
+        else "Aucun examen recent en attente de resultat."
+    )
+    extraction: Dict[str, Any] = {}
+    champs_confiance: List[Dict[str, Any]] = []
+    if latest_motif:
+        extraction["motif"] = latest_motif
+        champs_confiance.append({"champ": "motif", "niveau": 0.45})
+    if latest_impression:
+        extraction["anamnese"] = f"Contexte de la derniere consultation: {latest_impression}"
+        champs_confiance.append({"champ": "anamnese", "niveau": 0.4})
+
+    if latest_motif or latest_impression:
+        derniere_consultation = "Prefill base sur la derniere consultation du dossier."
+    else:
+        derniere_consultation = "Aucune consultation recente dans le dossier."
+
+    return {
+        "source": "context",
+        "resume_appel": latest_resume_ia or None,
+        "derniere_consultation": derniere_consultation,
+        "documents": documents,
+        "extraction": extraction,
+        "champs_confiance": champs_confiance,
+        "avertissements": [
+            "Prefill dossier uniquement: a valider pendant la consultation.",
+        ],
+    }
+
+
+@router.post("/consultations/prefill")
+def tenant_consultation_prefill_route(
+    body: Dict[str, Any] = Body(default={}),
+    auth: dict = Depends(require_tenant_auth),
+):
+    tenant_id = auth["tenant_id"]
+    phone = normalize_phone_number(str((body or {}).get("phone") or ""))
+    if not phone:
+        raise HTTPException(400, "phone requis.")
+    return _build_consultation_prefill_payload(tenant_id, phone)
+
+
+@router.post("/consultations/transcribe")
+async def tenant_consultation_transcribe_route(
+    audio: UploadFile = File(...),
+    phone: str = Form(default=""),
+    auth: dict = Depends(require_tenant_auth),
+):
+    tenant_id = auth["tenant_id"]
+    phone_norm = normalize_phone_number(phone or "")
+    profile: Optional[Dict[str, Any]] = None
+    if phone_norm:
+        profile = get_cabinet_client_by_phone(tenant_id, phone_norm)
+        if not profile:
+            raise HTTPException(404, "Patient not found")
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(400, "Fichier audio vide.")
+
+    deepgram_api_key = str(os.getenv("DEEPGRAM_API_KEY") or "").strip()
+    if not deepgram_api_key:
+        raise HTTPException(503, "Deepgram non configuré (DEEPGRAM_API_KEY manquant).")
+    content_type = str(audio.content_type or "").strip() or "audio/webm"
+    dg_model = str(os.getenv("DEEPGRAM_CONSULTATION_MODEL") or "").strip() or "nova-2-medical"
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(55.0, connect=10.0)) as client:
+            dg_res = await client.post(
+                "https://api.deepgram.com/v1/listen",
+                params={
+                    "model": dg_model,
+                    "language": "fr",
+                    "punctuate": "true",
+                    "smart_format": "true",
+                },
+                headers={
+                    "Authorization": f"Token {deepgram_api_key}",
+                    "Content-Type": content_type,
+                },
+                content=audio_bytes,
+            )
+        if dg_res.status_code >= 400:
+            detail = dg_res.text[:240]
+            raise HTTPException(502, f"Deepgram error ({dg_res.status_code}): {detail}")
+        dg_data = dg_res.json() if dg_res.content else {}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"Échec transcription Deepgram: {exc}") from exc
+
+    transcription = (
+        ((dg_data.get("results") or {}).get("channels") or [{}])[0]
+        .get("alternatives", [{}])[0]
+        .get("transcript", "")
+    )
+    transcription = str(transcription or "").strip()
+    if not transcription:
+        return {
+            "transcription": "",
+            "extraction": {},
+            "champs_confiance": [],
+            "avertissements": ["Aucune parole détectée."],
+        }
+
+    anthropic_key = str(os.getenv("ANTHROPIC_API_KEY") or "").strip()
+    if not anthropic_key:
+        return {
+            "transcription": transcription,
+            "extraction": {},
+            "champs_confiance": [],
+            "avertissements": ["Anthropic non configuré: extraction structurée indisponible."],
+        }
+
+    antecedents = _consultation_profile_antecedents(profile if isinstance(profile, dict) else None)
+    extraction_model = (
+        str(os.getenv("CONSULTATION_EXTRACTION_MODEL") or "").strip()
+        or str(os.getenv("LLM_ASSIST_MODEL") or "").strip()
+        or "claude-haiku-4-5-20251001"
+    )
+    try:
+        from anthropic import Anthropic
+
+        client = Anthropic(api_key=anthropic_key)
+        message = client.messages.create(
+            model=extraction_model,
+            max_tokens=1800,
+            system=EXTRACTION_SYSTEM_PROMPT,
+            messages=[{
+                "role": "user",
+                "content": build_consultation_extraction_prompt(transcription, antecedents=antecedents or None),
+            }],
+        )
+        raw = "".join(
+            getattr(block, "text", "")
+            for block in getattr(message, "content", [])
+            if getattr(block, "type", None) == "text"
+        )
+        parsed = parse_consultation_extraction(raw, transcription)
+        if hasattr(parsed, "model_dump"):
+            return parsed.model_dump()
+        return parsed.dict()  # pragma: no cover
+    except Exception as exc:
+        logger.warning("consultation transcribe extraction fallback: %s", exc)
+        return {
+            "transcription": transcription,
+            "extraction": {},
+            "champs_confiance": [],
+            "avertissements": ["Extraction structurée indisponible, transcription brute fournie."],
+        }
 
 
 @router.get("/patients/{phone}/notes")

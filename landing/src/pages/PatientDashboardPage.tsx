@@ -2320,9 +2320,37 @@ export default function PatientDashboardPage() {
     }
   }, [consultationInitialDraft.appointmentId, tenantPatientPhone, notify]);
 
-  const generateConsultationSummary = useCallback(async () => {
-    throw new Error("La génération IA n'est pas encore disponible.");
-  }, []);
+  const generateConsultationSummary = useCallback(async (draft: Record<string, unknown>) => {
+    const payload = {
+      ...(draft || {}),
+      patient_phone: tenantPatientPhone || undefined,
+    };
+    const res = await api.tenantGenerateConsultationSummary(payload) as {
+      resume?: unknown;
+      contexte?: unknown;
+      is_fallback?: unknown;
+      source?: unknown;
+    };
+    if (Boolean(res?.is_fallback)) {
+      notify("Synthèse IA indisponible: version de secours générée.", { sticky: true });
+    }
+    return {
+      resume: String(res?.resume || ""),
+      contexte: String(res?.contexte || ""),
+    };
+  }, [tenantPatientPhone, notify]);
+
+  const loadConsultationPrefill = useCallback(async () => {
+    if (!tenantPatientPhone) return null;
+    return api.tenantGetPatientConsultationPrefill(tenantPatientPhone);
+  }, [tenantPatientPhone]);
+
+  const transcribeConsultationAudio = useCallback(async (audioBlob: Blob) => {
+    if (!(audioBlob instanceof Blob)) {
+      throw new Error("Audio de dictée invalide.");
+    }
+    return api.tenantTranscribeConsultation(audioBlob, tenantPatientPhone || "");
+  }, [tenantPatientPhone]);
 
   useEffect(() => {
     const wantsConsultation = (searchParams.get("consultation") || "").trim() === "1";
@@ -4777,6 +4805,8 @@ export default function PatientDashboardPage() {
               motif: consultationInitialDraft.motif,
               appointment_id: consultationInitialDraft.appointmentId,
             }}
+            onLoadPrefill={loadConsultationPrefill}
+            onTranscribe={transcribeConsultationAudio}
             onGenerateSummary={generateConsultationSummary}
             onSave={(payload) => void submitConsultationForm((payload || {}) as Record<string, unknown>)}
           />
