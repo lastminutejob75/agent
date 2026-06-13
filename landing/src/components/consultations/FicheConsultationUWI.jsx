@@ -57,6 +57,48 @@ const EMPTY = {
   notePraticien: "", resumeIa: "", contexteIa: "",
 };
 
+function buildDictationAccessError(err) {
+  const name = String(err?.name || "");
+  const message = String(err?.message || "");
+  const hasMediaApi = typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia);
+  const secureContext = typeof window === "undefined" ? true : Boolean(window.isSecureContext);
+  const protocol = typeof window === "undefined" ? "" : String(window.location?.protocol || "");
+  let inIframe = false;
+  if (typeof window !== "undefined") {
+    try {
+      inIframe = window.self !== window.top;
+    } catch {
+      inIframe = true;
+    }
+  }
+
+  if (!hasMediaApi) {
+    return "Micro indisponible dans ce navigateur/contexte. Ouvrez la fiche sur un navigateur récent en HTTPS.";
+  }
+  if (!secureContext || protocol === "http:") {
+    return "Le micro est bloqué car la page n'est pas en HTTPS. Ouvrez l'application en https:// (ou localhost en dev).";
+  }
+  if (name === "NotAllowedError" || name === "SecurityError") {
+    if (inIframe) {
+      return "Le micro est bloqué dans cette iframe/preview. Ouvrez la page dans un onglet direct puis autorisez le micro.";
+    }
+    return "Permission micro refusée. Autorisez le micro dans la barre d'adresse puis rechargez la page.";
+  }
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+    return "Aucun micro détecté. Branchez/activez un micro puis réessayez.";
+  }
+  if (name === "NotReadableError" || name === "TrackStartError") {
+    return "Le micro est déjà utilisé par une autre application. Fermez les apps audio/visioconf puis réessayez.";
+  }
+  if (name === "OverconstrainedError") {
+    return "Le périphérique micro sélectionné n'est pas disponible. Choisissez un autre micro.";
+  }
+  if (message) {
+    return `Accès micro impossible (${name || "erreur navigateur"}). Vérifiez HTTPS et permissions micro.`;
+  }
+  return "Accès micro impossible. Vérifiez HTTPS, permissions micro et périphérique audio.";
+}
+
 // Métadonnées d'affichage des champs proposés par la dictée (clés plates = state)
 const FIELD_LABELS = {
   motif:          { label: "Motif", section: "Motif & anamnèse" },
@@ -318,6 +360,7 @@ export default function FicheConsultationUWI({
   // ---------------- Dictée : enregistrement ----------------
   const startRecording = async () => {
     setDictError(null);
+    setDemoMode(false);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
@@ -334,8 +377,9 @@ export default function FicheConsultationUWI({
       setRecording(true);
       setRecSeconds(0);
       timerRef.current = setInterval(() => setRecSeconds((s) => s + 1), 1000);
-    } catch {
-      // Pas de micro (sandbox, permission refusée) -> mode démo
+    } catch (err) {
+      const reason = buildDictationAccessError(err);
+      setDictError(`${reason} Bascule temporaire en mode démonstration.`);
       setDemoMode(true);
       processAudio(null);
     }
@@ -360,14 +404,20 @@ export default function FicheConsultationUWI({
       let result;
       if (onTranscribe && blob) {
         result = await onTranscribe(blob);
+        setDemoMode(false);
       } else {
         await new Promise((r) => setTimeout(r, 1400)); // simule la latence STT+LLM
         result = DEMO_EXTRACTION;
         setDemoMode(true);
       }
       ingestExtraction(result);
-    } catch {
-      setDictError("La dictée n'a pas pu être traitée. Réessaie ou saisis manuellement.");
+    } catch (err) {
+      const detail = String(err?.message || "").trim();
+      setDictError(
+        detail
+          ? `La dictée n'a pas pu être traitée (${detail}). Réessaie ou saisis manuellement.`
+          : "La dictée n'a pas pu être traitée. Réessaie ou saisis manuellement.",
+      );
     } finally {
       setProcessing(false);
     }
