@@ -379,9 +379,10 @@ export default function FicheConsultationUWI({
       timerRef.current = setInterval(() => setRecSeconds((s) => s + 1), 1000);
     } catch (err) {
       const reason = buildDictationAccessError(err);
-      setDictError(`${reason} Bascule temporaire en mode démonstration.`);
-      setDemoMode(true);
-      processAudio(null);
+      // Pas de repli démo automatique si le micro est bloqué:
+      // on garde un message actionnable (permissions/https/appareil).
+      setDictError(reason);
+      setDemoMode(false);
     }
   };
 
@@ -916,11 +917,18 @@ function DictationBar({ recording, processing, recSeconds, onStart, onStop, demo
           </button>
         )}
       </div>
-      {(demoMode || error) && (
+      {error && (
+        <div className="mx-4 mb-4 flex items-start gap-2 rounded-xl px-3 py-2.5"
+          style={{ background: C.redSoft, border: "1px solid #FDA29B" }}>
+          <AlertTriangle size={14} color={C.red} className="mt-0.5 shrink-0" />
+          <p className="text-[12px] font-semibold leading-snug" style={{ color: C.red }}>{error}</p>
+        </div>
+      )}
+      {demoMode && !error && (
         <div className="px-5 pb-3 -mt-1">
-          {error
-            ? <p className="text-[11px] font-medium" style={{ color: recording ? C.red : "#FCA5A5" }}>{error}</p>
-            : <p className="text-[11px] font-medium" style={{ color: recording ? C.muted : "#8FA3B8" }}>Mode démonstration · extraction simulée (pas de micro/backend)</p>}
+          <p className="text-[11px] font-medium" style={{ color: recording ? C.muted : "#8FA3B8" }}>
+            Mode démonstration · extraction simulée (aucun backend connecté)
+          </p>
         </div>
       )}
     </div>
