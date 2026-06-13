@@ -25,7 +25,7 @@ const baseProps = {
   onOpenProfile: vi.fn(),
   onCall: vi.fn(),
   onWhatsApp: vi.fn(),
-  onSms: vi.fn(),
+  onCreateConsultation: vi.fn(),
   onAddNote: vi.fn(),
   onAddDocument: vi.fn(),
   onOpenHistoryModal: vi.fn(),

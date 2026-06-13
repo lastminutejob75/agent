@@ -107,7 +107,7 @@ export type PatientDashboardMobileProps = {
   onOpenProfile: () => void;
   onCall: () => void;
   onWhatsApp: () => void;
-  onSms: () => void;
+  onCreateConsultation: () => void;
   onSendProfessionalSms: () => void;
   onSendProfessionalEmail: () => void;
   canSendProfessionalEmail: boolean;
@@ -277,12 +277,12 @@ function HeaderInfoRow({
 function MobileQuickActions({
   onCall,
   onWhatsApp,
-  onSms,
+  onCreateConsultation,
   onMore,
 }: {
   onCall: () => void;
   onWhatsApp: () => void;
-  onSms: () => void;
+  onCreateConsultation: () => void;
   onMore: () => void;
 }) {
   return (
@@ -305,11 +305,13 @@ function MobileQuickActions({
       </button>
       <button
         type="button"
-        onClick={onSms}
+        onClick={onCreateConsultation}
         className="flex h-[54px] items-center justify-center gap-2 rounded-2xl border border-[#E3EAF2] bg-white text-base font-black text-[#0B1628] shadow-[0_8px_18px_rgba(15,23,42,0.05)]"
       >
-        <HeroSvgIcon name="sms" className="h-4 w-4" />
-        SMS
+        <span aria-hidden="true" className="text-sm leading-none">
+          🩺
+        </span>
+        Créer fiche consultation
       </button>
       <button
         type="button"
@@ -866,7 +868,7 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
     onOpenProfile,
     onCall,
     onWhatsApp,
-    onSms,
+    onCreateConsultation,
     onSendProfessionalSms,
     onSendProfessionalEmail,
     canSendProfessionalEmail,
@@ -915,7 +917,12 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
         onOpenProfile={onOpenProfile}
         onBackToList={onBackToList}
       />
-      <MobileQuickActions onCall={onCall} onWhatsApp={onWhatsApp} onSms={onSms} onMore={onOpenProfile} />
+      <MobileQuickActions
+        onCall={onCall}
+        onWhatsApp={onWhatsApp}
+        onCreateConsultation={onCreateConsultation}
+        onMore={onOpenProfile}
+      />
       <MobileMessageActions
         onSendProfessionalSms={onSendProfessionalSms}
         onSendProfessionalEmail={onSendProfessionalEmail}

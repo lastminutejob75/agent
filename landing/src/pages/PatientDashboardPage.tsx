@@ -3724,14 +3724,7 @@ export default function PatientDashboardPage() {
                 }
                 window.open(`https://wa.me/${t.replace(/^\+/, "")}`, "_blank", "noopener,noreferrer");
               }}
-              onSms={() => {
-                const t = normalizePhone(displayHero.phone);
-                if (!t) {
-                  notify("Numéro absent pour envoyer un SMS.");
-                  return;
-                }
-                openSingleMessageModal("sms");
-              }}
+              onCreateConsultation={() => openConsultationModal()}
               onSendProfessionalSms={() => openSingleMessageModal("sms")}
               onSendProfessionalEmail={() => openSingleMessageModal("email")}
               canSendProfessionalEmail={Boolean(patientEmail && !tenantPatientNotFound)}
