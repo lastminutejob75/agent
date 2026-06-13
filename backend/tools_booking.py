@@ -374,7 +374,12 @@ _PERIOD_AFTERNOON_END = 18 * 60  # 18h00
 
 def _slot_start_dt(slot: Any) -> Optional[datetime]:
     """Retourne le datetime de début du slot (pour comparaison / écart)."""
-    s = getattr(slot, "start", None) or (slot.get("start") if isinstance(slot, dict) else None)
+    s = (
+        getattr(slot, "start", None)
+        or getattr(slot, "start_iso", None)
+        or (slot.get("start") if isinstance(slot, dict) else None)
+        or (slot.get("start_iso") if isinstance(slot, dict) else None)
+    )
     if not s:
         return None
     try:
@@ -507,7 +512,13 @@ def _spread_slots(
         return sum(1 for x in picked_list if (_slot_get(x, "day", "") or "") == day)
 
     def slot_day(slot: Any) -> str:
-        return (_slot_get(slot, "day", "") or "")
+        d = (_slot_get(slot, "day", "") or "")
+        if d:
+            return str(d)
+        dt = _slot_start_dt(slot)
+        if dt is not None:
+            return dt.date().isoformat()
+        return ""
 
     used_day_period: set = set()  # (day, period)
     picked: List[prompts.SlotDisplay] = []
@@ -579,17 +590,31 @@ def _spread_slots(
             picked.append(s)
 
     # Ré-indexer idx 1..limit — P0: préserver source (évite sqlite par défaut sur slots Google)
+    # Supporte SlotDisplay ET dicts canoniques (cache fast-path vocal).
     out = []
     for i, s in enumerate(picked, start=1):
+        label = _slot_get(s, "label", "") or ""
+        start_iso = _slot_get(s, "start", None) or _slot_get(s, "start_iso", "") or ""
+        day = _slot_get(s, "day", "") or ""
+        hour = _slot_get(s, "hour", 0) or 0
+        if not hour:
+            dt = _slot_start_dt(s)
+            if dt is not None:
+                hour = dt.hour
+        slot_id = _slot_get(s, "slot_id", None)
+        if slot_id in (None, ""):
+            slot_id = _slot_get(s, "id", i - 1)
+        label_vocal = _slot_get(s, "label_vocal", "") or label
+        source = _slot_get(s, "source", "sqlite") or "sqlite"
         out.append(prompts.SlotDisplay(
             idx=i,
-            label=s.label,
-            slot_id=getattr(s, "slot_id", i - 1),
-            start=getattr(s, "start", ""),
-            day=getattr(s, "day", ""),
-            hour=getattr(s, "hour", 0),
-            label_vocal=getattr(s, "label_vocal", "") or s.label,
-            source=getattr(s, "source", "sqlite"),
+            label=label,
+            slot_id=slot_id,
+            start=start_iso,
+            day=day,
+            hour=hour,
+            label_vocal=label_vocal,
+            source=source,
         ))
     return out
 

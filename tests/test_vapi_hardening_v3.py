@@ -551,7 +551,8 @@ def test_handle_get_slots_cache_hit_filters_same_day_slots():
     assert labels is not None
     assert len(labels) == 1
     stored = mock_store.call_args.args[1]
-    assert stored == [tomorrow_slot]
+    starts = [s.get("start_iso") if isinstance(s, dict) else getattr(s, "start", None) for s in stored]
+    assert starts == ["2025-02-05T10:00:00"]
 
 
 def test_handle_get_slots_cache_window_avoids_empty_after_today_filter():
@@ -583,7 +584,44 @@ def test_handle_get_slots_cache_window_avoids_empty_after_today_filter():
     assert labels is not None
     assert len(labels) == 2
     stored = mock_store.call_args.args[1]
-    assert [s["label"] for s in stored] == ["D1", "D2"]
+    labels_stored = [s.get("label") if isinstance(s, dict) else getattr(s, "label", "") for s in stored]
+    assert labels_stored == ["D1", "D2"]
+
+
+def test_handle_get_slots_cache_hit_spreads_slots_to_avoid_15min_clustering():
+    """Le fast-path cache vocal doit éviter 3 créneaux collés à 15 minutes."""
+    from zoneinfo import ZoneInfo
+
+    session = _make_session()
+    session.channel = "vocal"
+
+    fixed_now = datetime(2025, 2, 4, 18, 30)
+    cached_slots = [
+        {"start_iso": "2025-02-05T09:00:00", "end_iso": "2025-02-05T09:15:00", "label": "J1-09:00", "source": "google"},
+        {"start_iso": "2025-02-05T09:15:00", "end_iso": "2025-02-05T09:30:00", "label": "J1-09:15", "source": "google"},
+        {"start_iso": "2025-02-05T09:30:00", "end_iso": "2025-02-05T09:45:00", "label": "J1-09:30", "source": "google"},
+        {"start_iso": "2025-02-06T09:00:00", "end_iso": "2025-02-06T09:15:00", "label": "J2-09:00", "source": "google"},
+        {"start_iso": "2025-02-07T09:00:00", "end_iso": "2025-02-07T09:15:00", "label": "J3-09:00", "source": "google"},
+    ]
+
+    def _cached(limit, tenant_id=1, pref=None):
+        return cached_slots[:limit]
+
+    with patch.object(tools_booking, "_get_cached_slots", side_effect=_cached):
+        with patch.object(tools_booking, "_tenant_local_now", return_value=fixed_now):
+            with patch.object(tools_booking, "_tenant_zoneinfo", return_value=ZoneInfo("Europe/Paris")):
+                with patch.object(tools_booking, "store_pending_slots") as mock_store:
+                    labels, source, err = handle_get_slots(session, None, "call-cache-spread")
+
+    assert err == ""
+    assert labels is not None
+    assert len(labels) == 3
+    stored = mock_store.call_args.args[1]
+    assert [s.get("label") if isinstance(s, dict) else getattr(s, "label", "") for s in stored] == [
+        "J1-09:00",
+        "J2-09:00",
+        "J3-09:00",
+    ]
 
 
 def test_handle_get_slots_uses_short_sync_fetch_on_cold_cache():

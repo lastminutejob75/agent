@@ -173,8 +173,21 @@ def handle_get_slots(
                     before_guard,
                     min_start.isoformat() if min_start else "none",
                 )
-            # Réponse tool bornée à 3 créneaux, mais seulement après filtrage.
-            slots = (slots or [])[:3]
+            # Appliquer le même étalement UX que get_slots_for_display pour éviter
+            # des propositions trop proches (ex: +15 min) sur le fast-path cache.
+            same_day_focus = bool(target_date_obj or weekday_pref is not None)
+            prefer_distinct_days = bool(
+                ((getattr(session, "channel", "") or "vocal").strip().lower() == "vocal")
+                and not target_date_obj
+                and weekday_pref is None
+            )
+            slots = tools_booking._spread_slots(
+                slots or [],
+                limit=3,
+                min_gap_minutes=int(getattr(tools_booking, "MIN_SLOT_GAP_MINUTES", 120) or 120),
+                same_day_focus=same_day_focus,
+                prefer_distinct_days=prefer_distinct_days,
+            )
 
         sync_timed_out = False
         sync_fetch_completed = False
