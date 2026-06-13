@@ -38,6 +38,7 @@ import PatientQuestionnaireCard from "../components/patients/PatientQuestionnair
 import PatientAdminQuestionnaireCard from "../components/patients/PatientAdminQuestionnaireCard.jsx";
 import PatientMedicalQuestionnaireCard from "../components/patients/PatientMedicalQuestionnaireCard.jsx";
 import PatientContextSummary from "../components/patients/PatientContextSummary.jsx";
+import FicheConsultationUWI from "../components/consultations/FicheConsultationUWI.jsx";
 import {
   checkPatientDuplicates,
   formatPatientDuplicateConflict,
@@ -106,6 +107,18 @@ function formatBirthDateDisplay(value: unknown) {
   return d.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
 }
 
+function computeAgeFromBirthDate(value: unknown): number | null {
+  const raw = String(value || "").trim().slice(0, 10);
+  if (!raw) return null;
+  const birth = new Date(`${raw}T12:00:00`);
+  if (Number.isNaN(birth.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - birth.getFullYear();
+  const monthDelta = now.getMonth() - birth.getMonth();
+  if (monthDelta < 0 || (monthDelta === 0 && now.getDate() < birth.getDate())) age -= 1;
+  return age >= 0 ? age : null;
+}
+
 function parseOptionalIntInput(value: string): number | undefined {
   const raw = String(value || "").trim().replace(",", ".");
   if (!raw) return undefined;
@@ -120,20 +133,6 @@ function parseOptionalFloatInput(value: string): number | undefined {
   const num = Number(raw);
   if (!Number.isFinite(num)) return undefined;
   return num;
-}
-
-function splitConsultationExamens(value: string): string[] {
-  const seen = new Set<string>();
-  return String(value || "")
-    .split(",")
-    .map((item) => item.trim())
-    .filter((item) => {
-      if (!item) return false;
-      const key = item.toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
 }
 
 type SidebarPatientRow = {
@@ -196,34 +195,10 @@ type PatientDocument = {
   created_at: string;
 };
 
-type ConsultationForm = {
+type ConsultationOpenDraft = {
   appointmentId: string;
   date: string;
-  modeConsultation: "rapide" | "complete";
   motif: string;
-  anamnese: string;
-  etatGeneral: string;
-  examenPhysique: string;
-  impressionClinique: string;
-  cim10: string;
-  examensComplementairesText: string;
-  prescription: string;
-  orientation: string;
-  suiviProchainRdv: string;
-  suiviConsignes: string;
-  notePraticien: string;
-  iaResume: string;
-  iaContextePatient: string;
-  iaValidatedByPractitioner: boolean;
-  fcBpm: string;
-  paSystolique: string;
-  paDiastolique: string;
-  temperatureC: string;
-  spo2Pct: string;
-  frMin: string;
-  poidsKg: string;
-  tailleCm: string;
-  imc: string;
 };
 
 type PatientInsightTag = { key: string; label: string; tone: "blue" | "red" };
@@ -268,34 +243,10 @@ const SIDEBAR_GRADIENTS = [
   "from-[#8068E8] to-[#5942C9]",
 ];
 
-const CONSULTATION_FORM_EMPTY: ConsultationForm = {
+const CONSULTATION_DRAFT_EMPTY: ConsultationOpenDraft = {
   appointmentId: "",
   date: new Date().toISOString().slice(0, 10),
-  modeConsultation: "rapide",
   motif: "Consultation",
-  anamnese: "",
-  etatGeneral: "",
-  examenPhysique: "",
-  impressionClinique: "",
-  cim10: "",
-  examensComplementairesText: "",
-  prescription: "",
-  orientation: "",
-  suiviProchainRdv: "",
-  suiviConsignes: "",
-  notePraticien: "",
-  iaResume: "",
-  iaContextePatient: "",
-  iaValidatedByPractitioner: false,
-  fcBpm: "",
-  paSystolique: "",
-  paDiastolique: "",
-  temperatureC: "",
-  spo2Pct: "",
-  frMin: "",
-  poidsKg: "",
-  tailleCm: "",
-  imc: "",
 };
 
 function sidebarGradient(seed: string) {
@@ -1161,9 +1112,8 @@ export default function PatientDashboardPage() {
   );
   const [manualPatientCreateSaving, setManualPatientCreateSaving] = useState(false);
   const [manualPatientCreateConflicts, setManualPatientCreateConflicts] = useState<Array<Record<string, unknown>>>([]);
-  const [consultationForm, setConsultationForm] = useState<ConsultationForm>(CONSULTATION_FORM_EMPTY);
+  const [consultationInitialDraft, setConsultationInitialDraft] = useState<ConsultationOpenDraft>(CONSULTATION_DRAFT_EMPTY);
   const [consultationSaving, setConsultationSaving] = useState(false);
-  const [consultationError, setConsultationError] = useState("");
   const [createFicheName, setCreateFicheName] = useState("");
   const [createFicheSaving, setCreateFicheSaving] = useState(false);
   const [profileNameDraft, setProfileNameDraft] = useState("");
@@ -2187,15 +2137,56 @@ export default function PatientDashboardPage() {
     setSearchParams(np, { replace: true });
   }, [searchParams, setSearchParams]);
 
-  const openConsultationModal = useCallback((preset?: Partial<ConsultationForm>) => {
+  const consultationPatient = useMemo(() => {
+    const row = patientCabinetRow || {};
+    const rawAge = Number((row as { age?: unknown }).age);
+    const ageFromBirth = computeAgeFromBirthDate((row as { birth_date?: unknown }).birth_date);
+    const age = Number.isFinite(rawAge) && rawAge > 0 ? rawAge : ageFromBirth ?? 32;
+    const sex = String(
+      (row as { sexe?: unknown; sex?: unknown; gender?: unknown }).sexe
+      || (row as { sex?: unknown }).sex
+      || (row as { gender?: unknown }).gender
+      || "",
+    ).trim();
+    const readProfileField = (keys: string[]) => {
+      for (const key of keys) {
+        const value = String((row as Record<string, unknown>)[key] || "").trim();
+        if (value) return value;
+      }
+      return "";
+    };
+    return {
+      id: tenantPatientPhone || "patient",
+      nom: displayHero?.name || "Patient",
+      age,
+      sexe: sex,
+      antecedents_medicaux: readProfileField([
+        "antecedents_medicaux",
+        "medical_history",
+        "medical_antecedents",
+      ]),
+      antecedents_chirurgicaux: readProfileField([
+        "antecedents_chirurgicaux",
+        "surgical_history",
+        "surgical_antecedents",
+      ]),
+      allergies: readProfileField(["allergies", "allergy_history"]),
+      traitements: readProfileField([
+        "traitements",
+        "traitements_en_cours",
+        "current_treatments",
+      ]),
+    };
+  }, [patientCabinetRow, tenantPatientPhone, displayHero?.name]);
+
+  const openConsultationModal = useCallback((preset?: Partial<ConsultationOpenDraft>) => {
     if (!tenantPatientPhone) {
       notify("Sélectionnez d'abord un patient pour créer une fiche consultation.", { sticky: true });
       return;
     }
     const todayIso = new Date().toISOString().slice(0, 10);
-    setConsultationError("");
-    setConsultationForm({
-      ...CONSULTATION_FORM_EMPTY,
+    setConsultationInitialDraft({
+      ...CONSULTATION_DRAFT_EMPTY,
       date: todayIso,
       motif: "Consultation",
       ...(preset || {}),
@@ -2203,96 +2194,135 @@ export default function PatientDashboardPage() {
     setModal("createConsultation");
   }, [tenantPatientPhone, notify]);
 
-  const submitConsultationForm = useCallback(async () => {
+  const submitConsultationForm = useCallback(async (draft: Record<string, unknown>) => {
     if (!tenantPatientPhone) {
       notify("Sélectionnez d'abord un patient.", { sticky: true });
       return;
     }
-    const dateValue = String(consultationForm.date || "").trim();
+    const dateValue = String(draft?.date || "").trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
-      setConsultationError("Date de consultation invalide.");
+      notify("Date de consultation invalide.", { sticky: true });
       return;
     }
-    const motif = String(consultationForm.motif || "").trim();
+    const motif = String(draft?.motif || "").trim();
     if (!motif) {
-      setConsultationError("Le motif est requis.");
+      notify("Le motif est requis.", { sticky: true });
       return;
     }
-    const impression = String(consultationForm.impressionClinique || "").trim();
+    const impression = String(draft?.impression_clinique || "").trim();
     if (!impression) {
-      setConsultationError("L'impression clinique est requise.");
+      notify("L'impression clinique est requise.", { sticky: true });
       return;
     }
+    const examenClinique =
+      draft?.examen_clinique && typeof draft.examen_clinique === "object"
+        ? (draft.examen_clinique as Record<string, unknown>)
+        : {};
+    const constantesRaw =
+      examenClinique.constantes && typeof examenClinique.constantes === "object"
+        ? (examenClinique.constantes as Record<string, unknown>)
+        : {};
+    const conduiteRaw =
+      draft?.conduite_a_tenir && typeof draft.conduite_a_tenir === "object"
+        ? (draft.conduite_a_tenir as Record<string, unknown>)
+        : {};
+    const suiviRaw =
+      conduiteRaw.suivi && typeof conduiteRaw.suivi === "object"
+        ? (conduiteRaw.suivi as Record<string, unknown>)
+        : {};
+    const iaRaw =
+      draft?.ia_uwi && typeof draft.ia_uwi === "object"
+        ? (draft.ia_uwi as Record<string, unknown>)
+        : {};
+    const examensSeen = new Set<string>();
+    const examensComplementaires = Array.isArray(conduiteRaw.examens_complementaires)
+      ? conduiteRaw.examens_complementaires
+          .map((item) => String(item || "").trim())
+          .filter((item) => {
+            if (!item) return false;
+            const k = item.toLowerCase();
+            if (examensSeen.has(k)) return false;
+            examensSeen.add(k);
+            return true;
+          })
+      : [];
+    const prochainRdvRaw = String(suiviRaw.prochain_rdv || "").trim();
+    const prochainRdv = /^\d{4}-\d{2}-\d{2}$/.test(prochainRdvRaw) ? prochainRdvRaw : undefined;
 
     const constantes = {
-      fc_bpm: parseOptionalIntInput(consultationForm.fcBpm),
-      pa_systolique: parseOptionalIntInput(consultationForm.paSystolique),
-      pa_diastolique: parseOptionalIntInput(consultationForm.paDiastolique),
-      temperature_c: parseOptionalFloatInput(consultationForm.temperatureC),
-      spo2_pct: parseOptionalIntInput(consultationForm.spo2Pct),
-      fr_min: parseOptionalIntInput(consultationForm.frMin),
-      poids_kg: parseOptionalFloatInput(consultationForm.poidsKg),
-      taille_cm: parseOptionalIntInput(consultationForm.tailleCm),
-      imc: parseOptionalFloatInput(consultationForm.imc),
+      fc_bpm: parseOptionalIntInput(String(constantesRaw.fc_bpm ?? "")),
+      pa_systolique: parseOptionalIntInput(String(constantesRaw.pa_systolique ?? "")),
+      pa_diastolique: parseOptionalIntInput(String(constantesRaw.pa_diastolique ?? "")),
+      temperature_c: parseOptionalFloatInput(String(constantesRaw.temperature_c ?? "")),
+      spo2_pct: parseOptionalIntInput(String(constantesRaw.spo2_pct ?? "")),
+      fr_min: parseOptionalIntInput(String(constantesRaw.fr_min ?? "")),
+      poids_kg: parseOptionalFloatInput(String(constantesRaw.poids_kg ?? "")),
+      taille_cm: parseOptionalIntInput(String(constantesRaw.taille_cm ?? "")),
+      imc: parseOptionalFloatInput(String(constantesRaw.imc ?? "")),
     };
-    const iaResume = String(consultationForm.iaResume || "").trim();
-    const iaContexte = String(consultationForm.iaContextePatient || "").trim();
+    const iaResume = String(iaRaw.resume_consultation || "").trim();
+    const iaContexte = String(iaRaw.contexte_patient || "").trim();
+    const iaValidated = Boolean(iaRaw.validated_by_practitioner);
     const includeIa = Boolean(
-      iaResume || iaContexte || consultationForm.iaValidatedByPractitioner,
+      iaResume || iaContexte || iaValidated,
     );
 
     const payload = {
-      appointment_id: String(consultationForm.appointmentId || "").trim() || undefined,
+      appointment_id:
+        String(draft?.appointment_id || consultationInitialDraft.appointmentId || "").trim() || undefined,
       date: dateValue,
-      mode_consultation: consultationForm.modeConsultation,
+      mode_consultation: draft?.mode_consultation === "complete" ? "complete" : "rapide",
       motif,
-      anamnese: String(consultationForm.anamnese || "").trim(),
+      anamnese: String(draft?.anamnese || "").trim(),
       examen_clinique: {
-        etat_general: String(consultationForm.etatGeneral || "").trim(),
-        examen_physique: String(consultationForm.examenPhysique || "").trim(),
+        etat_general: String(examenClinique.etat_general || "").trim(),
+        examen_physique: String(examenClinique.examen_physique || "").trim(),
         constantes,
       },
       impression_clinique: impression,
-      cim10: String(consultationForm.cim10 || "").trim() || undefined,
+      cim10: String(draft?.cim10 || "").trim() || undefined,
       conduite_a_tenir: {
-        examens_complementaires: splitConsultationExamens(consultationForm.examensComplementairesText),
-        prescription: String(consultationForm.prescription || "").trim(),
-        orientation: String(consultationForm.orientation || "").trim(),
+        examens_complementaires: examensComplementaires,
+        prescription: String(conduiteRaw.prescription || "").trim(),
+        orientation: String(conduiteRaw.orientation || "").trim(),
         suivi: {
-          prochain_rdv: String(consultationForm.suiviProchainRdv || "").trim() || undefined,
-          consignes: String(consultationForm.suiviConsignes || "").trim(),
+          prochain_rdv: prochainRdv,
+          consignes: String(suiviRaw.consignes || "").trim(),
         },
       },
       ia_uwi: includeIa
         ? {
             resume_consultation: iaResume,
             contexte_patient: iaContexte,
-            validated_by_practitioner: consultationForm.iaValidatedByPractitioner,
+            validated_by_practitioner: iaValidated,
           }
         : undefined,
-      note_praticien: String(consultationForm.notePraticien || "").trim() || undefined,
+      note_praticien: String(draft?.note_praticien || "").trim() || undefined,
     };
 
     setConsultationSaving(true);
-    setConsultationError("");
     try {
       await api.tenantCreatePatientConsultation(tenantPatientPhone, payload);
       notify("Fiche consultation enregistrée.");
       setModal(null);
       setSummaryRefreshNonce((value) => value + 1);
-      setConsultationForm((prev) => ({
-        ...CONSULTATION_FORM_EMPTY,
+      setConsultationInitialDraft((prev) => ({
+        ...CONSULTATION_DRAFT_EMPTY,
         date: prev.date || new Date().toISOString().slice(0, 10),
         motif: prev.motif || "Consultation",
+        appointmentId: prev.appointmentId || "",
       }));
     } catch (e) {
       const message = (e as Error)?.message || "Impossible d'enregistrer la fiche consultation.";
-      setConsultationError(message);
       notify(message, { sticky: true });
     } finally {
       setConsultationSaving(false);
     }
-  }, [consultationForm, tenantPatientPhone, notify]);
+  }, [consultationInitialDraft.appointmentId, tenantPatientPhone, notify]);
+
+  const generateConsultationSummary = useCallback(async () => {
+    throw new Error("La génération IA n'est pas encore disponible.");
+  }, []);
 
   useEffect(() => {
     const wantsConsultation = (searchParams.get("consultation") || "").trim() === "1";
@@ -4728,252 +4758,29 @@ export default function PatientDashboardPage() {
       )}
 
       {modal === "createConsultation" && (
-        <Modal
-          title="Créer une fiche consultation"
-          onClose={() => {
-            if (!consultationSaving) setModal(null);
-          }}
-          width="max-w-4xl"
-        >
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-[#E2EAF4] bg-[#F8FBFD] p-3 text-sm font-semibold text-[#334155]">
-              Patient : <span className="font-black">{displayHero?.name || "Patient"}</span> ({displayHero?.phone || "—"})
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <label className="text-sm font-semibold text-[#334155]">
-                Date
-                <input
-                  type="date"
-                  value={consultationForm.date}
-                  onChange={(e) => setConsultationForm((prev) => ({ ...prev, date: e.target.value }))}
-                  className="mt-1 w-full rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
-                />
-              </label>
-              <label className="text-sm font-semibold text-[#334155]">
-                Mode
-                <select
-                  value={consultationForm.modeConsultation}
-                  onChange={(e) => setConsultationForm((prev) => ({ ...prev, modeConsultation: e.target.value as "rapide" | "complete" }))}
-                  className="mt-1 w-full rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
-                >
-                  <option value="rapide">Rapide</option>
-                  <option value="complete">Complète</option>
-                </select>
-              </label>
-              <label className="text-sm font-semibold text-[#334155] sm:col-span-2">
-                Motif
-                <input
-                  value={consultationForm.motif}
-                  onChange={(e) => setConsultationForm((prev) => ({ ...prev, motif: e.target.value }))}
-                  placeholder="Motif de consultation"
-                  className="mt-1 w-full rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
-                />
-              </label>
-              <label className="text-sm font-semibold text-[#334155] sm:col-span-2">
-                ID rendez-vous (optionnel)
-                <input
-                  value={consultationForm.appointmentId}
-                  onChange={(e) => setConsultationForm((prev) => ({ ...prev, appointmentId: e.target.value }))}
-                  placeholder="appointment_id / event_id"
-                  className="mt-1 w-full rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
-                />
-              </label>
-              <label className="text-sm font-semibold text-[#334155] sm:col-span-2">
-                CIM-10 (optionnel)
-                <input
-                  value={consultationForm.cim10}
-                  onChange={(e) => setConsultationForm((prev) => ({ ...prev, cim10: e.target.value }))}
-                  placeholder="Ex: J06.9"
-                  className="mt-1 w-full rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
-                />
-              </label>
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <label className="text-sm font-semibold text-[#334155]">
-                Anamnèse
-                <textarea
-                  value={consultationForm.anamnese}
-                  onChange={(e) => setConsultationForm((prev) => ({ ...prev, anamnese: e.target.value }))}
-                  rows={4}
-                  className="mt-1 w-full resize-none rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
-                />
-              </label>
-              <label className="text-sm font-semibold text-[#334155]">
-                Impression clinique
-                <textarea
-                  value={consultationForm.impressionClinique}
-                  onChange={(e) => setConsultationForm((prev) => ({ ...prev, impressionClinique: e.target.value }))}
-                  rows={4}
-                  className="mt-1 w-full resize-none rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
-                />
-              </label>
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <label className="text-sm font-semibold text-[#334155]">
-                État général
-                <textarea
-                  value={consultationForm.etatGeneral}
-                  onChange={(e) => setConsultationForm((prev) => ({ ...prev, etatGeneral: e.target.value }))}
-                  rows={3}
-                  className="mt-1 w-full resize-none rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
-                />
-              </label>
-              <label className="text-sm font-semibold text-[#334155]">
-                Examen physique
-                <textarea
-                  value={consultationForm.examenPhysique}
-                  onChange={(e) => setConsultationForm((prev) => ({ ...prev, examenPhysique: e.target.value }))}
-                  rows={3}
-                  className="mt-1 w-full resize-none rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
-                />
-              </label>
-            </div>
-
-            <div className="rounded-2xl border border-[#E2EAF4] bg-white p-4">
-              <div className="mb-3 text-sm font-black text-[#0A1628]">Constantes</div>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-                <label className="text-xs font-semibold text-[#334155]">FC bpm
-                  <input value={consultationForm.fcBpm} onChange={(e) => setConsultationForm((p) => ({ ...p, fcBpm: e.target.value }))} className="mt-1 w-full rounded-lg border border-[#DDE7F1] px-2.5 py-1.5 text-sm outline-none focus:border-[#009CA4]" />
-                </label>
-                <label className="text-xs font-semibold text-[#334155]">PA systolique
-                  <input value={consultationForm.paSystolique} onChange={(e) => setConsultationForm((p) => ({ ...p, paSystolique: e.target.value }))} className="mt-1 w-full rounded-lg border border-[#DDE7F1] px-2.5 py-1.5 text-sm outline-none focus:border-[#009CA4]" />
-                </label>
-                <label className="text-xs font-semibold text-[#334155]">PA diastolique
-                  <input value={consultationForm.paDiastolique} onChange={(e) => setConsultationForm((p) => ({ ...p, paDiastolique: e.target.value }))} className="mt-1 w-full rounded-lg border border-[#DDE7F1] px-2.5 py-1.5 text-sm outline-none focus:border-[#009CA4]" />
-                </label>
-                <label className="text-xs font-semibold text-[#334155]">Température °C
-                  <input value={consultationForm.temperatureC} onChange={(e) => setConsultationForm((p) => ({ ...p, temperatureC: e.target.value }))} className="mt-1 w-full rounded-lg border border-[#DDE7F1] px-2.5 py-1.5 text-sm outline-none focus:border-[#009CA4]" />
-                </label>
-                <label className="text-xs font-semibold text-[#334155]">SpO2 %
-                  <input value={consultationForm.spo2Pct} onChange={(e) => setConsultationForm((p) => ({ ...p, spo2Pct: e.target.value }))} className="mt-1 w-full rounded-lg border border-[#DDE7F1] px-2.5 py-1.5 text-sm outline-none focus:border-[#009CA4]" />
-                </label>
-                <label className="text-xs font-semibold text-[#334155]">FR / min
-                  <input value={consultationForm.frMin} onChange={(e) => setConsultationForm((p) => ({ ...p, frMin: e.target.value }))} className="mt-1 w-full rounded-lg border border-[#DDE7F1] px-2.5 py-1.5 text-sm outline-none focus:border-[#009CA4]" />
-                </label>
-                <label className="text-xs font-semibold text-[#334155]">Poids kg
-                  <input value={consultationForm.poidsKg} onChange={(e) => setConsultationForm((p) => ({ ...p, poidsKg: e.target.value }))} className="mt-1 w-full rounded-lg border border-[#DDE7F1] px-2.5 py-1.5 text-sm outline-none focus:border-[#009CA4]" />
-                </label>
-                <label className="text-xs font-semibold text-[#334155]">Taille cm
-                  <input value={consultationForm.tailleCm} onChange={(e) => setConsultationForm((p) => ({ ...p, tailleCm: e.target.value }))} className="mt-1 w-full rounded-lg border border-[#DDE7F1] px-2.5 py-1.5 text-sm outline-none focus:border-[#009CA4]" />
-                </label>
-                <label className="text-xs font-semibold text-[#334155]">IMC
-                  <input value={consultationForm.imc} onChange={(e) => setConsultationForm((p) => ({ ...p, imc: e.target.value }))} className="mt-1 w-full rounded-lg border border-[#DDE7F1] px-2.5 py-1.5 text-sm outline-none focus:border-[#009CA4]" />
-                </label>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <label className="text-sm font-semibold text-[#334155]">
-                Examens complémentaires (séparés par virgule)
-                <input
-                  value={consultationForm.examensComplementairesText}
-                  onChange={(e) => setConsultationForm((prev) => ({ ...prev, examensComplementairesText: e.target.value }))}
-                  placeholder="NFS, CRP, Radio thorax…"
-                  className="mt-1 w-full rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
-                />
-              </label>
-              <label className="text-sm font-semibold text-[#334155]">
-                Prescription
-                <textarea
-                  value={consultationForm.prescription}
-                  onChange={(e) => setConsultationForm((prev) => ({ ...prev, prescription: e.target.value }))}
-                  rows={3}
-                  className="mt-1 w-full resize-none rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
-                />
-              </label>
-              <label className="text-sm font-semibold text-[#334155]">
-                Orientation
-                <textarea
-                  value={consultationForm.orientation}
-                  onChange={(e) => setConsultationForm((prev) => ({ ...prev, orientation: e.target.value }))}
-                  rows={3}
-                  className="mt-1 w-full resize-none rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
-                />
-              </label>
-              <label className="text-sm font-semibold text-[#334155]">
-                Consignes de suivi
-                <textarea
-                  value={consultationForm.suiviConsignes}
-                  onChange={(e) => setConsultationForm((prev) => ({ ...prev, suiviConsignes: e.target.value }))}
-                  rows={3}
-                  className="mt-1 w-full resize-none rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
-                />
-              </label>
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <label className="text-sm font-semibold text-[#334155]">
-                Prochain RDV (optionnel)
-                <input
-                  type="date"
-                  value={consultationForm.suiviProchainRdv}
-                  onChange={(e) => setConsultationForm((prev) => ({ ...prev, suiviProchainRdv: e.target.value }))}
-                  className="mt-1 w-full rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
-                />
-              </label>
-              <label className="text-sm font-semibold text-[#334155]">
-                Note praticien (privée)
-                <textarea
-                  value={consultationForm.notePraticien}
-                  onChange={(e) => setConsultationForm((prev) => ({ ...prev, notePraticien: e.target.value }))}
-                  rows={3}
-                  className="mt-1 w-full resize-none rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
-                />
-              </label>
-            </div>
-
-            <div className="rounded-2xl border border-[#E2EAF4] bg-[#F8FBFD] p-4">
-              <div className="mb-3 text-sm font-black text-[#0A1628]">Bloc IA UWI (optionnel)</div>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <label className="text-sm font-semibold text-[#334155]">
-                  Résumé consultation
-                  <textarea
-                    value={consultationForm.iaResume}
-                    onChange={(e) => setConsultationForm((prev) => ({ ...prev, iaResume: e.target.value }))}
-                    rows={3}
-                    className="mt-1 w-full resize-none rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
-                  />
-                </label>
-                <label className="text-sm font-semibold text-[#334155]">
-                  Contexte patient
-                  <textarea
-                    value={consultationForm.iaContextePatient}
-                    onChange={(e) => setConsultationForm((prev) => ({ ...prev, iaContextePatient: e.target.value }))}
-                    rows={3}
-                    className="mt-1 w-full resize-none rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-semibold text-[#0A1628] outline-none focus:border-[#009CA4]"
-                  />
-                </label>
-              </div>
-              <label className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-[#334155]">
-                <input
-                  type="checkbox"
-                  checked={consultationForm.iaValidatedByPractitioner}
-                  onChange={(e) => setConsultationForm((prev) => ({ ...prev, iaValidatedByPractitioner: e.target.checked }))}
-                  className="h-4 w-4 accent-[#009CA4]"
-                />
-                Valider la synthèse IA dans cette fiche
-              </label>
-            </div>
-
-            {consultationError ? (
-              <div className="rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-3 py-2 text-sm font-semibold text-[#B91C1C]">
-                {consultationError}
-              </div>
-            ) : null}
-
-            <button
-              type="button"
-              disabled={consultationSaving}
-              onClick={() => void submitConsultationForm()}
-              className="w-full rounded-xl bg-[#009CA4] px-4 py-3 font-black text-white hover:bg-[#00838A] disabled:opacity-60"
-            >
-              {consultationSaving ? "Enregistrement…" : "Enregistrer la fiche consultation"}
-            </button>
-          </div>
-        </Modal>
+        <div className="fixed inset-0 z-[100] overflow-auto bg-[#0A1628]/35 backdrop-blur-sm">
+          <button
+            type="button"
+            disabled={consultationSaving}
+            onClick={() => {
+              if (!consultationSaving) setModal(null);
+            }}
+            className="fixed right-4 top-4 z-[110] grid h-11 w-11 place-items-center rounded-xl border border-[#DDE7F1] bg-white/95 text-2xl font-black text-[#0A1628] shadow-sm hover:bg-white disabled:opacity-40"
+            aria-label="Fermer la fiche consultation"
+          >
+            ×
+          </button>
+          <FicheConsultationUWI
+            patient={consultationPatient}
+            initialDraft={{
+              date: consultationInitialDraft.date,
+              motif: consultationInitialDraft.motif,
+              appointment_id: consultationInitialDraft.appointmentId,
+            }}
+            onGenerateSummary={generateConsultationSummary}
+            onSave={(payload) => void submitConsultationForm((payload || {}) as Record<string, unknown>)}
+          />
+        </div>
       )}
 
       {modal === "createPatientManual" && (
