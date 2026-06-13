@@ -82,7 +82,7 @@ function buildDictationAccessError(err) {
     if (inIframe) {
       return "Le micro est bloqué dans cette iframe/preview. Ouvrez la page dans un onglet direct puis autorisez le micro.";
     }
-    return "Permission micro refusée. Autorisez le micro dans la barre d'adresse puis rechargez la page.";
+    return "Accès micro refusé.";
   }
   if (name === "NotFoundError" || name === "DevicesNotFoundError") {
     return "Aucun micro détecté. Branchez/activez un micro puis réessayez.";
@@ -97,6 +97,16 @@ function buildDictationAccessError(err) {
     return `Accès micro impossible (${name || "erreur navigateur"}). Vérifiez HTTPS et permissions micro.`;
   }
   return "Accès micro impossible. Vérifiez HTTPS, permissions micro et périphérique audio.";
+}
+
+async function getMicrophonePermissionState() {
+  if (typeof navigator === "undefined" || !navigator.permissions?.query) return null;
+  try {
+    const status = await navigator.permissions.query({ name: "microphone" });
+    return String(status?.state || "");
+  } catch {
+    return null;
+  }
 }
 
 // Métadonnées d'affichage des champs proposés par la dictée (clés plates = state)
@@ -362,6 +372,11 @@ export default function FicheConsultationUWI({
     setDictError(null);
     setDemoMode(false);
     try {
+      const micPermissionState = await getMicrophonePermissionState();
+      if (micPermissionState === "denied") {
+        setDictError("Accès micro refusé.");
+        return;
+      }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       const rec = new MediaRecorder(stream);
