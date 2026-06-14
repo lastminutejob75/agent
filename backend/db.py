@@ -798,9 +798,6 @@ def _cabinet_client_select_columns_pg(conn: Any) -> str:
 def _ensure_cabinet_clients_table_pg(conn: Any) -> None:
     if _pg_table_exists(conn, "cabinet_clients"):
         _migrate_cabinet_clients_columns_pg(conn)
-        _ensure_patient_documents_table_pg(conn)
-        _ensure_patient_notes_table_pg(conn)
-        _ensure_patient_consultations_table_pg(conn)
         return
     with conn.cursor() as cur:
         cur.execute(
