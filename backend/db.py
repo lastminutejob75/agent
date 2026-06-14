@@ -603,20 +603,6 @@ def _ensure_cabinet_clients_table(conn: sqlite3.Connection) -> None:
         conn.execute("SELECT treating_physician_city FROM cabinet_clients LIMIT 0")
     except Exception:
         conn.execute("ALTER TABLE cabinet_clients ADD COLUMN treating_physician_city TEXT")
-    for col in (
-        "antecedents_medicaux",
-        "antecedents_chirurgicaux",
-        "allergies",
-        "traitements",
-        "facteurs_risque",
-        "points_attention",
-        "synthese_medicale",
-        "dernier_contexte_consultation",
-    ):
-        try:
-            conn.execute(f"SELECT {col} FROM cabinet_clients LIMIT 0")
-        except Exception:
-            conn.execute(f"ALTER TABLE cabinet_clients ADD COLUMN {col} TEXT")
 
     _ensure_patient_documents_table(conn)
     _ensure_patient_notes_table(conn)
@@ -659,24 +645,6 @@ def _migrate_cabinet_clients_columns_pg(conn: Any) -> None:
                 END $$;
                 """
             )
-            for col in (
-                "antecedents_medicaux",
-                "antecedents_chirurgicaux",
-                "allergies",
-                "traitements",
-                "facteurs_risque",
-                "points_attention",
-                "synthese_medicale",
-                "dernier_contexte_consultation",
-            ):
-                cur.execute(
-                    f"""
-                    DO $$ BEGIN
-                        ALTER TABLE cabinet_clients ADD COLUMN {col} TEXT;
-                    EXCEPTION WHEN duplicate_column THEN NULL;
-                    END $$;
-                    """
-                )
     except Exception as exc:
         logging.getLogger(__name__).debug("cabinet_clients pg column migrate skipped: %s", exc)
 
@@ -687,9 +655,7 @@ _CABINET_CLIENT_COLS_BASE = (
     "last_booking_motif, created_at, updated_at"
 )
 _CABINET_CLIENT_COLS_EXTENDED = (
-    f"{_CABINET_CLIENT_COLS_BASE}, birth_date, treating_physician_name, treating_physician_city, "
-    "antecedents_medicaux, antecedents_chirurgicaux, allergies, traitements, facteurs_risque, "
-    "points_attention, synthese_medicale, dernier_contexte_consultation"
+    f"{_CABINET_CLIENT_COLS_BASE}, birth_date, treating_physician_name, treating_physician_city"
 )
 _CABINET_CLIENT_COLS_COMPACT = (
     "phone, display_name, validated_name, raw_name, validation_status, updated_at, created_at"
@@ -712,10 +678,7 @@ def _cabinet_clients_profile_column_names_pg(conn: Any) -> set[str]:
                 WHERE table_schema = 'public'
                   AND table_name = 'cabinet_clients'
                   AND column_name IN (
-                    'birth_date', 'treating_physician_name', 'treating_physician_city',
-                    'antecedents_medicaux', 'antecedents_chirurgicaux', 'allergies', 'traitements',
-                    'facteurs_risque', 'points_attention', 'synthese_medicale',
-                    'dernier_contexte_consultation'
+                    'birth_date', 'treating_physician_name', 'treating_physician_city'
                   )
                 """
             )
@@ -742,18 +705,6 @@ def _cabinet_client_select_columns_for_pg(conn: Any) -> str:
         suffix = "birth_date, treating_physician_name"
         if "treating_physician_city" in profile_cols:
             suffix += ", treating_physician_city"
-        for col in (
-            "antecedents_medicaux",
-            "antecedents_chirurgicaux",
-            "allergies",
-            "traitements",
-            "facteurs_risque",
-            "points_attention",
-            "synthese_medicale",
-            "dernier_contexte_consultation",
-        ):
-            if col in profile_cols:
-                suffix += f", {col}"
         return f"{_CABINET_CLIENT_COLS_BASE}, {suffix}"
     return _CABINET_CLIENT_COLS_BASE
 
@@ -797,10 +748,6 @@ def _cabinet_client_select_columns_pg(conn: Any) -> str:
 
 def _ensure_cabinet_clients_table_pg(conn: Any) -> None:
     if _pg_table_exists(conn, "cabinet_clients"):
-        _migrate_cabinet_clients_columns_pg(conn)
-        _ensure_patient_documents_table_pg(conn)
-        _ensure_patient_notes_table_pg(conn)
-        _ensure_patient_consultations_table_pg(conn)
         return
     with conn.cursor() as cur:
         cur.execute(
@@ -816,14 +763,6 @@ def _ensure_cabinet_clients_table_pg(conn: Any) -> None:
                 birth_date DATE,
                 treating_physician_name TEXT,
                 treating_physician_city TEXT,
-                antecedents_medicaux TEXT,
-                antecedents_chirurgicaux TEXT,
-                allergies TEXT,
-                traitements TEXT,
-                facteurs_risque TEXT,
-                points_attention TEXT,
-                synthese_medicale TEXT,
-                dernier_contexte_consultation TEXT,
                 source_call_id TEXT,
                 last_call_id TEXT,
                 last_booking_start TIMESTAMPTZ,
@@ -858,14 +797,6 @@ def _cabinet_client_row_to_dict(row: Dict[str, Any]) -> Dict[str, Any]:
         "birth_date": str(row.get("birth_date") or "")[:10] if row.get("birth_date") else "",
         "treating_physician_name": row.get("treating_physician_name") or "",
         "treating_physician_city": row.get("treating_physician_city") or "",
-        "antecedents_medicaux": row.get("antecedents_medicaux") or "",
-        "antecedents_chirurgicaux": row.get("antecedents_chirurgicaux") or "",
-        "allergies": row.get("allergies") or "",
-        "traitements": row.get("traitements") or "",
-        "facteurs_risque": row.get("facteurs_risque") or "",
-        "points_attention": row.get("points_attention") or "",
-        "synthese_medicale": row.get("synthese_medicale") or "",
-        "dernier_contexte_consultation": row.get("dernier_contexte_consultation") or "",
         "source_call_id": row.get("source_call_id") or "",
         "last_call_id": row.get("last_call_id") or "",
         "last_booking_start": str(row.get("last_booking_start") or ""),
@@ -1107,14 +1038,6 @@ def update_patient_fields(
     birth_date: Optional[str] = None,
     treating_physician_name: Optional[str] = None,
     treating_physician_city: Optional[str] = None,
-    antecedents_medicaux: Optional[str] = None,
-    antecedents_chirurgicaux: Optional[str] = None,
-    allergies: Optional[str] = None,
-    traitements: Optional[str] = None,
-    facteurs_risque: Optional[str] = None,
-    points_attention: Optional[str] = None,
-    synthese_medicale: Optional[str] = None,
-    dernier_contexte_consultation: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Update specific fields on an existing cabinet_client row."""
     phone_norm = normalize_phone_number(phone)
@@ -1139,19 +1062,6 @@ def update_patient_fields(
         clean_city = treating_physician_city.strip()[:120]
         sets.append("treating_physician_city = ?")
         params.append(clean_city or None)
-    for col, value, max_len in (
-        ("antecedents_medicaux", antecedents_medicaux, 4000),
-        ("antecedents_chirurgicaux", antecedents_chirurgicaux, 4000),
-        ("allergies", allergies, 3000),
-        ("traitements", traitements, 4000),
-        ("facteurs_risque", facteurs_risque, 3000),
-        ("points_attention", points_attention, 4000),
-        ("synthese_medicale", synthese_medicale, 6000),
-        ("dernier_contexte_consultation", dernier_contexte_consultation, 6000),
-    ):
-        if value is not None:
-            sets.append(f"{col} = ?")
-            params.append(str(value).strip()[:max_len] or None)
     if not sets:
         return get_cabinet_client_by_phone(tenant_id, phone)
 
@@ -1162,14 +1072,6 @@ def update_patient_fields(
         birth_date is not None
         or treating_physician_name is not None
         or treating_physician_city is not None
-        or antecedents_medicaux is not None
-        or antecedents_chirurgicaux is not None
-        or allergies is not None
-        or traitements is not None
-        or facteurs_risque is not None
-        or points_attention is not None
-        or synthese_medicale is not None
-        or dernier_contexte_consultation is not None
     )
     url = _pg_events_url()
     if url:

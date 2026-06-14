@@ -671,14 +671,6 @@ export default function FicheConsultationUWI({
               <ReadField label="Antécédents chirurgicaux" value={patient.antecedents_chirurgicaux || "—"} />
               <ReadField label="Allergies" value={patient.allergies || "—"} />
               <ReadField label="Traitements en cours" value={patient.traitements || "—"} />
-              <ReadField label="Facteurs de risque" value={patient.facteurs_risque || "—"} />
-              <ReadField label="Points d'attention" value={patient.points_attention || "—"} />
-              <ReadField label="Synthèse médicale" value={patient.synthese_medicale || "—"} wide />
-              <ReadField
-                label="Dernier contexte de consultation"
-                value={patient.dernier_contexte_consultation || "—"}
-                wide
-              />
             </div>
           )}
         </Card>
@@ -1259,12 +1251,9 @@ function Input({ value, onChange, type = "text", pending, ...rest }) {
   );
 }
 
-function ReadField({ label, value, wide = false }) {
+function ReadField({ label, value }) {
   return (
-    <div
-      className={`rounded-xl px-3.5 py-2.5 ${wide ? "sm:col-span-2" : ""}`}
-      style={{ background: "#FFFFFF", border: `1px solid ${C.line}` }}
-    >
+    <div className="rounded-xl px-3.5 py-2.5" style={{ background: "#FFFFFF", border: `1px solid ${C.line}` }}>
       <p className="text-[10px] font-bold uppercase tracking-[0.14em]" style={{ color: C.faint }}>{label}</p>
       <p className="mt-1 text-[13px] font-medium leading-snug" style={{ color: C.ink }}>{value}</p>
     </div>
