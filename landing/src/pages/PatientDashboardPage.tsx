@@ -827,6 +827,36 @@ function PatientProfileHeaderMeta({
   );
 }
 
+function PatientProfileTextArea({
+  label,
+  value,
+  onChange,
+  placeholder,
+  rows = 3,
+  className = "",
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  rows?: number;
+  className?: string;
+}) {
+  return (
+    <label className={cx("block rounded-2xl bg-white p-4", className)}>
+      <div className="mb-1 text-xs font-bold text-[#7D8CA5]">{label}</div>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        rows={rows}
+        maxLength={6000}
+        placeholder={placeholder}
+        className="mt-1 w-full resize-y rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 text-sm font-semibold leading-6 text-[#0A1628] outline-none focus:border-[#009CA4] focus:ring-4 focus:ring-[#009CA4]/10"
+      />
+    </label>
+  );
+}
+
 function HeaderAction({
   children,
   icon,
@@ -1120,6 +1150,14 @@ export default function PatientDashboardPage() {
   const [profileBirthDateDraft, setProfileBirthDateDraft] = useState("");
   const [profilePhysicianDraft, setProfilePhysicianDraft] = useState("");
   const [profilePhysicianCityDraft, setProfilePhysicianCityDraft] = useState("");
+  const [profileMedicalAntecedentsDraft, setProfileMedicalAntecedentsDraft] = useState("");
+  const [profileSurgicalAntecedentsDraft, setProfileSurgicalAntecedentsDraft] = useState("");
+  const [profileAllergiesDraft, setProfileAllergiesDraft] = useState("");
+  const [profileTreatmentsDraft, setProfileTreatmentsDraft] = useState("");
+  const [profileRiskFactorsDraft, setProfileRiskFactorsDraft] = useState("");
+  const [profileAttentionPointsDraft, setProfileAttentionPointsDraft] = useState("");
+  const [profileMedicalSummaryDraft, setProfileMedicalSummaryDraft] = useState("");
+  const [profileLastConsultationContextDraft, setProfileLastConsultationContextDraft] = useState("");
   const [profileSaveSaving, setProfileSaveSaving] = useState(false);
   const [deletePreviewLoading, setDeletePreviewLoading] = useState(false);
   const [deletePreview, setDeletePreview] = useState<null | {
@@ -2176,6 +2214,13 @@ export default function PatientDashboardPage() {
         "traitements_en_cours",
         "current_treatments",
       ]),
+      facteurs_risque: readProfileField(["facteurs_risque", "risk_factors"]),
+      points_attention: readProfileField(["points_attention", "attention_points"]),
+      synthese_medicale: readProfileField(["synthese_medicale", "medical_summary"]),
+      dernier_contexte_consultation: readProfileField([
+        "dernier_contexte_consultation",
+        "last_consultation_context",
+      ]),
     };
   }, [patientCabinetRow, tenantPatientPhone, displayHero?.name]);
 
@@ -2303,6 +2348,15 @@ export default function PatientDashboardPage() {
     setConsultationSaving(true);
     try {
       await api.tenantCreatePatientConsultation(tenantPatientPhone, payload);
+      try {
+        const refreshed = await api.tenantGetPatient(tenantPatientPhone, { lightweight: true });
+        const refreshedPatient = refreshed?.patient as Record<string, unknown> | undefined;
+        if (refreshedPatient) {
+          setPatientCabinetRow((prev) => ({ ...(prev || {}), ...refreshedPatient }));
+        }
+      } catch {
+        // La consultation est enregistrée ; le prochain chargement récupérera le contexte patient enrichi.
+      }
       notify("Fiche consultation enregistrée.");
       setModal(null);
       setSummaryRefreshNonce((value) => value + 1);
@@ -2515,6 +2569,14 @@ export default function PatientDashboardPage() {
     setProfileBirthDateDraft(String(patientCabinetRow?.birth_date || "").trim().slice(0, 10));
     setProfilePhysicianDraft(String(patientCabinetRow?.treating_physician_name || "").trim());
     setProfilePhysicianCityDraft(String(patientCabinetRow?.treating_physician_city || "").trim());
+    setProfileMedicalAntecedentsDraft(String(patientCabinetRow?.antecedents_medicaux || "").trim());
+    setProfileSurgicalAntecedentsDraft(String(patientCabinetRow?.antecedents_chirurgicaux || "").trim());
+    setProfileAllergiesDraft(String(patientCabinetRow?.allergies || "").trim());
+    setProfileTreatmentsDraft(String(patientCabinetRow?.traitements || "").trim());
+    setProfileRiskFactorsDraft(String(patientCabinetRow?.facteurs_risque || "").trim());
+    setProfileAttentionPointsDraft(String(patientCabinetRow?.points_attention || "").trim());
+    setProfileMedicalSummaryDraft(String(patientCabinetRow?.synthese_medicale || "").trim());
+    setProfileLastConsultationContextDraft(String(patientCabinetRow?.dernier_contexte_consultation || "").trim());
   }, [modal, urlPatientHero?.name, patientCabinetRow]);
 
   const createPatientFichePractice = useCallback(
@@ -2662,12 +2724,28 @@ export default function PatientDashboardPage() {
       const birthDate = profileBirthDateDraft.trim();
       const physician = profilePhysicianDraft.trim();
       const physicianCity = profilePhysicianCityDraft.trim();
+      const medicalAntecedents = profileMedicalAntecedentsDraft.trim();
+      const surgicalAntecedents = profileSurgicalAntecedentsDraft.trim();
+      const allergies = profileAllergiesDraft.trim();
+      const treatments = profileTreatmentsDraft.trim();
+      const riskFactors = profileRiskFactorsDraft.trim();
+      const attentionPoints = profileAttentionPointsDraft.trim();
+      const medicalSummary = profileMedicalSummaryDraft.trim();
+      const lastConsultationContext = profileLastConsultationContextDraft.trim();
       const res = await api.tenantUpdatePatient(tenantPatientPhone, {
         validated_name: name,
         raw_name: name,
         birth_date: birthDate,
         treating_physician_name: physician,
         treating_physician_city: physicianCity,
+        antecedents_medicaux: medicalAntecedents,
+        antecedents_chirurgicaux: surgicalAntecedents,
+        allergies,
+        traitements: treatments,
+        facteurs_risque: riskFactors,
+        points_attention: attentionPoints,
+        synthese_medicale: medicalSummary,
+        dernier_contexte_consultation: lastConsultationContext,
       });
       const savedDisplayName =
         String((res?.patient as Record<string, unknown> | undefined)?.display_name || name).trim() || name;
@@ -2683,6 +2761,24 @@ export default function PatientDashboardPage() {
         ),
         treating_physician_city: String(
           (res?.patient as Record<string, unknown> | undefined)?.treating_physician_city || physicianCity,
+        ),
+        antecedents_medicaux: String(
+          (res?.patient as Record<string, unknown> | undefined)?.antecedents_medicaux || medicalAntecedents,
+        ),
+        antecedents_chirurgicaux: String(
+          (res?.patient as Record<string, unknown> | undefined)?.antecedents_chirurgicaux || surgicalAntecedents,
+        ),
+        allergies: String((res?.patient as Record<string, unknown> | undefined)?.allergies || allergies),
+        traitements: String((res?.patient as Record<string, unknown> | undefined)?.traitements || treatments),
+        facteurs_risque: String((res?.patient as Record<string, unknown> | undefined)?.facteurs_risque || riskFactors),
+        points_attention: String(
+          (res?.patient as Record<string, unknown> | undefined)?.points_attention || attentionPoints,
+        ),
+        synthese_medicale: String(
+          (res?.patient as Record<string, unknown> | undefined)?.synthese_medicale || medicalSummary,
+        ),
+        dernier_contexte_consultation: String(
+          (res?.patient as Record<string, unknown> | undefined)?.dernier_contexte_consultation || lastConsultationContext,
         ),
       };
       setPatientCabinetRow(savedPatient);
@@ -4643,7 +4739,7 @@ export default function PatientDashboardPage() {
       </div>
 
       {modal === "profile" && (
-        <Modal title="Profil patient" onClose={() => setModal(null)} width="max-w-2xl">
+        <Modal title="Profil patient" onClose={() => setModal(null)} width="max-w-4xl">
           {tenantPatientNotFound ? (
             <p className="m-0 text-sm leading-7 text-[#475569]">
               Créez d&apos;abord la fiche avec le formulaire en haut de page (nom puis « Créer la fiche »), puis vous pourrez modifier les détails ici.
@@ -4697,6 +4793,69 @@ export default function PatientDashboardPage() {
                 <div className="rounded-2xl bg-[#F8FBFD] p-4">
                   <div className="mb-1 text-xs font-bold text-[#7D8CA5]">Dernière mise à jour</div>
                   <div className="font-black">{formatCabinetMetaDate(patientCabinetRow?.updated_at)}</div>
+                </div>
+              </div>
+              <div className="mt-5 rounded-[22px] border border-[#DDE7F1] bg-[#F8FBFD] p-4">
+                <div className="mb-4">
+                  <div className="text-sm font-black text-[#0A1628]">Contexte médical utile en consultation</div>
+                  <p className="mt-1 text-xs font-semibold leading-5 text-[#64748B]">
+                    Ces informations alimentent le dossier patient affiché dans la fiche consultation.
+                    La dernière consultation enregistrée enrichit automatiquement ce contexte.
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <PatientProfileTextArea
+                    label="Antécédents médicaux"
+                    value={profileMedicalAntecedentsDraft}
+                    onChange={setProfileMedicalAntecedentsDraft}
+                    placeholder="Ex. HTA, diabète, asthme..."
+                  />
+                  <PatientProfileTextArea
+                    label="Antécédents chirurgicaux"
+                    value={profileSurgicalAntecedentsDraft}
+                    onChange={setProfileSurgicalAntecedentsDraft}
+                    placeholder="Ex. Appendicectomie, césarienne..."
+                  />
+                  <PatientProfileTextArea
+                    label="Allergies"
+                    value={profileAllergiesDraft}
+                    onChange={setProfileAllergiesDraft}
+                    placeholder="Ex. Pénicilline, AINS..."
+                  />
+                  <PatientProfileTextArea
+                    label="Traitements en cours"
+                    value={profileTreatmentsDraft}
+                    onChange={setProfileTreatmentsDraft}
+                    placeholder="Ex. Metformine 500 mg, ramipril..."
+                  />
+                  <PatientProfileTextArea
+                    label="Facteurs de risque"
+                    value={profileRiskFactorsDraft}
+                    onChange={setProfileRiskFactorsDraft}
+                    placeholder="Ex. Tabac, alcool, grossesse, exposition professionnelle..."
+                  />
+                  <PatientProfileTextArea
+                    label="Points d'attention"
+                    value={profileAttentionPointsDraft}
+                    onChange={setProfileAttentionPointsDraft}
+                    placeholder="Ex. Surveiller observance, risque de chute, barrière linguistique..."
+                  />
+                  <PatientProfileTextArea
+                    label="Synthèse médicale"
+                    value={profileMedicalSummaryDraft}
+                    onChange={setProfileMedicalSummaryDraft}
+                    placeholder="Résumé stable du contexte patient."
+                    className="sm:col-span-2"
+                    rows={4}
+                  />
+                  <PatientProfileTextArea
+                    label="Dernier contexte de consultation"
+                    value={profileLastConsultationContextDraft}
+                    onChange={setProfileLastConsultationContextDraft}
+                    placeholder="Mis à jour automatiquement après une fiche consultation."
+                    className="sm:col-span-2"
+                    rows={4}
+                  />
                 </div>
               </div>
               <div className="mt-6">

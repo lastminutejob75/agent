@@ -2143,6 +2143,14 @@ class TenantCallPatientBody(BaseModel):
     birth_date: Optional[str] = Field(default=None, max_length=10)
     treating_physician_name: Optional[str] = Field(default=None, max_length=200)
     treating_physician_city: Optional[str] = Field(default=None, max_length=120)
+    antecedents_medicaux: Optional[str] = Field(default=None, max_length=4000)
+    antecedents_chirurgicaux: Optional[str] = Field(default=None, max_length=4000)
+    allergies: Optional[str] = Field(default=None, max_length=3000)
+    traitements: Optional[str] = Field(default=None, max_length=4000)
+    facteurs_risque: Optional[str] = Field(default=None, max_length=3000)
+    points_attention: Optional[str] = Field(default=None, max_length=4000)
+    synthese_medicale: Optional[str] = Field(default=None, max_length=6000)
+    dernier_contexte_consultation: Optional[str] = Field(default=None, max_length=6000)
 
     @validator("patient_email")
     def _validate_call_patient_email(cls, v):
@@ -3633,6 +3641,19 @@ def tenant_call_patient_update(
         profile_field_kwargs["treating_physician_name"] = body.treating_physician_name
     if body.treating_physician_city is not None:
         profile_field_kwargs["treating_physician_city"] = body.treating_physician_city
+    for key in (
+        "antecedents_medicaux",
+        "antecedents_chirurgicaux",
+        "allergies",
+        "traitements",
+        "facteurs_risque",
+        "points_attention",
+        "synthese_medicale",
+        "dernier_contexte_consultation",
+    ):
+        value = getattr(body, key, None)
+        if value is not None:
+            profile_field_kwargs[key] = value
     if profile_field_kwargs:
         profile = update_patient_fields(tenant_id, phone, **profile_field_kwargs) or profile
 
@@ -4032,6 +4053,21 @@ class PatientUpdateBody(BaseModel):
             return None
         return v.strip()[:120]
 
+    @validator(
+        "antecedents_medicaux",
+        "antecedents_chirurgicaux",
+        "allergies",
+        "traitements",
+        "facteurs_risque",
+        "points_attention",
+        "synthese_medicale",
+        "dernier_contexte_consultation",
+    )
+    def _validate_medical_profile_text(cls, v):
+        if v is None:
+            return None
+        return str(v).strip()
+
 
 class PatientMessageBody(BaseModel):
     channel: Literal["sms", "email"] = Field(..., description="Canal d'envoi")
@@ -4308,6 +4344,14 @@ def tenant_update_patient(
             birth_date=payload.get("birth_date"),
             treating_physician_name=payload.get("treating_physician_name"),
             treating_physician_city=payload.get("treating_physician_city"),
+            antecedents_medicaux=payload.get("antecedents_medicaux"),
+            antecedents_chirurgicaux=payload.get("antecedents_chirurgicaux"),
+            allergies=payload.get("allergies"),
+            traitements=payload.get("traitements"),
+            facteurs_risque=payload.get("facteurs_risque"),
+            points_attention=payload.get("points_attention"),
+            synthese_medicale=payload.get("synthese_medicale"),
+            dernier_contexte_consultation=payload.get("dernier_contexte_consultation"),
         )
         if field_updated:
             updated = field_updated
@@ -4774,6 +4818,41 @@ def tenant_list_patient_consultations_route(
     return {"items": items, "total": len(items)}
 
 
+def _patient_consultation_context_summary(consultation: Dict[str, Any], payload: Dict[str, Any]) -> str:
+    date_label = str(consultation.get("date_consultation") or payload.get("date") or "").strip()
+    motif = str(consultation.get("motif") or payload.get("motif") or "").strip()
+    impression = str(consultation.get("impression_clinique") or payload.get("impression_clinique") or "").strip()
+    ia = payload.get("ia_uwi") if isinstance(payload.get("ia_uwi"), dict) else {}
+    resume_ia = str(consultation.get("ia_resume") or ia.get("resume_consultation") or "").strip()
+    conduite = payload.get("conduite_a_tenir") if isinstance(payload.get("conduite_a_tenir"), dict) else {}
+    prescription = str(consultation.get("prescription") or conduite.get("prescription") or "").strip()
+    bits: List[str] = []
+    if date_label:
+        bits.append(date_label[:10])
+    if motif:
+        bits.append(f"Motif: {motif[:180]}")
+    if impression:
+        bits.append(f"Impression: {impression[:280]}")
+    if prescription:
+        bits.append(f"Traitement/conduite: {prescription[:240]}")
+    if resume_ia:
+        bits.append(f"Synthese: {resume_ia[:420]}")
+    return " | ".join(bits)[:1200]
+
+
+def _merge_patient_medical_summary(current: str, latest_context: str) -> str:
+    current_clean = str(current or "").strip()
+    context_clean = str(latest_context or "").strip()
+    if not context_clean:
+        return current_clean[:6000]
+    marker = f"Derniere consultation: {context_clean}"
+    if marker in current_clean:
+        return current_clean[:6000]
+    if not current_clean:
+        return marker[:6000]
+    return f"{marker}\n\n{current_clean}"[:6000]
+
+
 @router.post("/patients/{phone}/consultations")
 def tenant_create_patient_consultation_route(
     phone: str,
@@ -4791,6 +4870,25 @@ def tenant_create_patient_consultation_route(
         raise HTTPException(400, str(exc)) from exc
     if not created:
         raise HTTPException(500, "Impossible d'enregistrer la fiche de consultation")
+    latest_context = _patient_consultation_context_summary(created, payload)
+    if latest_context:
+        try:
+            update_patient_fields(
+                tenant_id,
+                phone,
+                dernier_contexte_consultation=latest_context,
+                synthese_medicale=_merge_patient_medical_summary(
+                    str(profile.get("synthese_medicale") or ""),
+                    latest_context,
+                ),
+            )
+        except Exception as exc:
+            logger.warning(
+                "consultation patient context update skipped tenant=%s phone=%s: %s",
+                tenant_id,
+                normalize_phone_number(phone) or phone,
+                exc,
+            )
     return {"ok": True, "consultation": created}
 
 
@@ -4894,6 +4992,10 @@ def _consultation_profile_antecedents(profile: Optional[Dict[str, Any]]) -> str:
     chir = first_non_empty(["antecedents_chirurgicaux", "surgical_history", "surgical_antecedents"])
     allergy = first_non_empty(["allergies", "allergy_history"])
     tx = first_non_empty(["traitements", "traitements_en_cours", "current_treatments"])
+    risks = first_non_empty(["facteurs_risque", "risk_factors"])
+    attention = first_non_empty(["points_attention", "attention_points"])
+    summary = first_non_empty(["synthese_medicale", "medical_summary"])
+    last_context = first_non_empty(["dernier_contexte_consultation", "last_consultation_context"])
     if med:
         parts.append(f"Antecedents medicaux: {med}")
     if chir:
@@ -4902,7 +5004,15 @@ def _consultation_profile_antecedents(profile: Optional[Dict[str, Any]]) -> str:
         parts.append(f"Allergies: {allergy}")
     if tx:
         parts.append(f"Traitements en cours: {tx}")
-    return " | ".join(parts)[:1800]
+    if risks:
+        parts.append(f"Facteurs de risque: {risks}")
+    if attention:
+        parts.append(f"Points d'attention: {attention}")
+    if summary:
+        parts.append(f"Synthese medicale: {summary}")
+    if last_context:
+        parts.append(f"Dernier contexte de consultation: {last_context}")
+    return " | ".join(parts)[:3000]
 
 
 def _consultation_generate_summary_with_anthropic(draft: Dict[str, Any]) -> Dict[str, str]:
