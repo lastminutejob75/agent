@@ -3969,6 +3969,14 @@ class PatientUpdateBody(BaseModel):
     birth_date: Optional[str] = Field(default=None, max_length=10)
     treating_physician_name: Optional[str] = Field(default=None, max_length=200)
     treating_physician_city: Optional[str] = Field(default=None, max_length=120)
+    antecedents_medicaux: Optional[str] = Field(default=None, max_length=4000)
+    antecedents_chirurgicaux: Optional[str] = Field(default=None, max_length=4000)
+    allergies: Optional[str] = Field(default=None, max_length=3000)
+    traitements: Optional[str] = Field(default=None, max_length=4000)
+    facteurs_risque: Optional[str] = Field(default=None, max_length=3000)
+    points_attention: Optional[str] = Field(default=None, max_length=4000)
+    synthese_medicale: Optional[str] = Field(default=None, max_length=6000)
+    dernier_contexte_consultation: Optional[str] = Field(default=None, max_length=6000)
 
     @validator("phone")
     def _validate_phone(cls, v):
@@ -4031,6 +4039,21 @@ class PatientUpdateBody(BaseModel):
         if v is None:
             return None
         return v.strip()[:120]
+
+    @validator(
+        "antecedents_medicaux",
+        "antecedents_chirurgicaux",
+        "allergies",
+        "traitements",
+        "facteurs_risque",
+        "points_attention",
+        "synthese_medicale",
+        "dernier_contexte_consultation",
+    )
+    def _validate_patient_medical_text(cls, v):
+        if v is None:
+            return None
+        return str(v).strip()
 
 
 class PatientMessageBody(BaseModel):
@@ -4308,6 +4331,14 @@ def tenant_update_patient(
             birth_date=payload.get("birth_date"),
             treating_physician_name=payload.get("treating_physician_name"),
             treating_physician_city=payload.get("treating_physician_city"),
+            antecedents_medicaux=payload.get("antecedents_medicaux"),
+            antecedents_chirurgicaux=payload.get("antecedents_chirurgicaux"),
+            allergies=payload.get("allergies"),
+            traitements=payload.get("traitements"),
+            facteurs_risque=payload.get("facteurs_risque"),
+            points_attention=payload.get("points_attention"),
+            synthese_medicale=payload.get("synthese_medicale"),
+            dernier_contexte_consultation=payload.get("dernier_contexte_consultation"),
         )
         if field_updated:
             updated = field_updated
@@ -4774,6 +4805,45 @@ def tenant_list_patient_consultations_route(
     return {"items": items, "total": len(items)}
 
 
+def _patient_consultation_context_summary(created: Dict[str, Any]) -> str:
+    date_value = str(created.get("date_consultation") or "").strip()
+    motif = str(created.get("motif") or "").strip()
+    impression = str(created.get("impression_clinique") or "").strip()
+    prescription = str(created.get("prescription") or "").strip()
+    consignes = str(created.get("suivi_consignes") or "").strip()
+    examens = created.get("examens_demandes") or []
+    if not isinstance(examens, list):
+        examens = []
+
+    parts: List[str] = []
+    header = f"Consultation du {date_value}" if date_value else "Derniere consultation"
+    if motif:
+        header += f" - {motif}"
+    parts.append(header)
+    if impression:
+        parts.append(f"Impression: {impression}")
+    if examens:
+        parts.append(f"Examens demandes: {', '.join(str(x).strip() for x in examens if str(x).strip())}")
+    if prescription:
+        parts.append(f"Prescription: {prescription}")
+    if consignes:
+        parts.append(f"Suivi/consignes: {consignes}")
+    return "\n".join(part for part in parts if part).strip()[:6000]
+
+
+def _merge_patient_medical_summary(profile: Dict[str, Any], consultation_summary: str) -> str:
+    existing = str(profile.get("synthese_medicale") or "").strip()
+    if not consultation_summary:
+        return existing[:6000]
+    if existing and consultation_summary in existing:
+        return existing[:6000]
+    if existing:
+        merged = f"{existing}\n\nDernier element clinique valide:\n{consultation_summary}"
+    else:
+        merged = f"Dernier element clinique valide:\n{consultation_summary}"
+    return merged[-6000:].strip()
+
+
 @router.post("/patients/{phone}/consultations")
 def tenant_create_patient_consultation_route(
     phone: str,
@@ -4791,6 +4861,22 @@ def tenant_create_patient_consultation_route(
         raise HTTPException(400, str(exc)) from exc
     if not created:
         raise HTTPException(500, "Impossible d'enregistrer la fiche de consultation")
+    consultation_summary = _patient_consultation_context_summary(created)
+    if consultation_summary:
+        try:
+            update_patient_fields(
+                tenant_id,
+                phone,
+                dernier_contexte_consultation=consultation_summary,
+                synthese_medicale=_merge_patient_medical_summary(profile, consultation_summary),
+            )
+        except Exception as exc:
+            logger.warning(
+                "patient consultation context enrichment failed tenant=%s phone=%s err=%s",
+                tenant_id,
+                normalize_phone_number(phone) or phone,
+                exc,
+            )
     return {"ok": True, "consultation": created}
 
 
@@ -4894,6 +4980,10 @@ def _consultation_profile_antecedents(profile: Optional[Dict[str, Any]]) -> str:
     chir = first_non_empty(["antecedents_chirurgicaux", "surgical_history", "surgical_antecedents"])
     allergy = first_non_empty(["allergies", "allergy_history"])
     tx = first_non_empty(["traitements", "traitements_en_cours", "current_treatments"])
+    risk = first_non_empty(["facteurs_risque", "risk_factors"])
+    attention = first_non_empty(["points_attention", "warning_points"])
+    summary = first_non_empty(["synthese_medicale", "medical_summary"])
+    last_context = first_non_empty(["dernier_contexte_consultation", "last_consultation_context"])
     if med:
         parts.append(f"Antecedents medicaux: {med}")
     if chir:
@@ -4902,7 +4992,15 @@ def _consultation_profile_antecedents(profile: Optional[Dict[str, Any]]) -> str:
         parts.append(f"Allergies: {allergy}")
     if tx:
         parts.append(f"Traitements en cours: {tx}")
-    return " | ".join(parts)[:1800]
+    if risk:
+        parts.append(f"Facteurs de risque: {risk}")
+    if attention:
+        parts.append(f"Points d'attention: {attention}")
+    if summary:
+        parts.append(f"Synthese medicale: {summary}")
+    if last_context:
+        parts.append(f"Dernier contexte valide: {last_context}")
+    return " | ".join(parts)[:3000]
 
 
 def _consultation_generate_summary_with_anthropic(draft: Dict[str, Any]) -> Dict[str, str]:
