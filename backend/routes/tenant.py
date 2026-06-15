@@ -4182,7 +4182,7 @@ class PatientConsultationCreateBody(BaseModel):
     motif: str = Field(..., min_length=1, max_length=240)
     anamnese: str = Field(default="", max_length=12000)
     examen_clinique: ConsultationExamenCliniqueBody = Field(default_factory=ConsultationExamenCliniqueBody)
-    impression_clinique: str = Field(..., min_length=1, max_length=6000)
+    impression_clinique: str = Field(default="", max_length=6000)
     cim10: Optional[str] = Field(default=None, max_length=40)
     conduite_a_tenir: ConsultationConduiteBody = Field(default_factory=ConsultationConduiteBody)
     ia_uwi: Optional[ConsultationIaBody] = None

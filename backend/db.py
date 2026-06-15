@@ -1904,11 +1904,9 @@ def create_patient_consultation(
 
     consultation_date = _coerce_iso_date(body.get("date"), fallback_today=True) or date.today().isoformat()
     motif = str(body.get("motif") or "").strip()[:240]
-    impression = str(body.get("impression_clinique") or "").strip()[:6000]
+    impression = (str(body.get("impression_clinique") or "").strip() or "À compléter")[:6000]
     if len(motif) < 1:
         raise ValueError("motif requis")
-    if len(impression) < 1:
-        raise ValueError("impression_clinique requis")
 
     examen = body.get("examen_clinique") if isinstance(body.get("examen_clinique"), dict) else {}
     conduite = body.get("conduite_a_tenir") if isinstance(body.get("conduite_a_tenir"), dict) else {}
@@ -2126,11 +2124,9 @@ def update_patient_consultation(
 
     consultation_date = _coerce_iso_date(body.get("date"), fallback_today=True) or date.today().isoformat()
     motif = str(body.get("motif") or "").strip()[:240]
-    impression = str(body.get("impression_clinique") or "").strip()[:6000]
+    impression = (str(body.get("impression_clinique") or "").strip() or "À compléter")[:6000]
     if len(motif) < 1:
         raise ValueError("motif requis")
-    if len(impression) < 1:
-        raise ValueError("impression_clinique requis")
 
     examen = body.get("examen_clinique") if isinstance(body.get("examen_clinique"), dict) else {}
     conduite = body.get("conduite_a_tenir") if isinstance(body.get("conduite_a_tenir"), dict) else {}

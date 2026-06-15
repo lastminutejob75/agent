@@ -279,12 +279,10 @@ function runChecks(c) {
   const checks = [];
   const has = (v) => (v ?? "").toString().trim().length > 0;
 
-  if (has(c.motif) && has(c.impression)) {
-    checks.push({ type: "ok", title: "Motif et impression renseignés", text: "La fiche peut être enregistrée." });
+  if (has(c.motif)) {
+    checks.push({ type: "ok", title: "Motif renseigné", text: "La fiche peut être enregistrée." });
   } else {
-    const manquants = [!has(c.motif) && "motif", !has(c.impression) && "impression clinique"].filter(Boolean);
-    checks.push({ type: "warn", title: `Champ${manquants.length > 1 ? "s" : ""} requis manquant${manquants.length > 1 ? "s" : ""}`,
-      text: `À compléter : ${manquants.join(" et ")}.` });
+    checks.push({ type: "warn", title: "Champ requis manquant", text: "À compléter : motif." });
   }
   if ((c.examens?.length ?? 0) > 0 && !has(c.suiviRdv)) {
     checks.push({ type: "warn", title: "Examens demandés sans rendez-vous de suivi",
@@ -400,7 +398,7 @@ export default function FicheConsultationUWI({
     return (p / (t * t)).toFixed(1);
   }, [c.poids, c.taille]);
 
-  const canSave = c.motif.trim().length > 0 && c.impression.trim().length > 0;
+  const canSave = c.motif.trim().length > 0;
   const saveBusy = savePending || saving;
   const hasExistingNextAppointment = Boolean(
     existingNextAppointment && String(existingNextAppointment?.dateLabel || "").trim(),
@@ -426,8 +424,8 @@ export default function FicheConsultationUWI({
 
   const completion = useMemo(() => {
     const required = mode === "rapide"
-      ? [c.motif, c.impression, c.suiviConsignes]
-      : [c.motif, c.anamnese, c.etatGeneral, c.impression, c.suiviConsignes];
+      ? [c.motif, c.suiviConsignes]
+      : [c.motif, c.anamnese, c.etatGeneral, c.suiviConsignes];
     return Math.round((required.filter((x) => x.trim().length > 0).length / required.length) * 100);
   }, [c, mode]);
 
@@ -656,7 +654,7 @@ export default function FicheConsultationUWI({
   const handleSave = async () => {
     if (saveBusy) return;
     if (!canSave) {
-      setSaveError("Veuillez renseigner le motif et l'impression clinique avant d'enregistrer.");
+      setSaveError("Veuillez renseigner le motif avant d'enregistrer.");
       setSaveNotice("");
       revealSaveFeedback();
       return;
@@ -773,7 +771,7 @@ export default function FicheConsultationUWI({
             </span>
           ) : (
             <span className="text-xs font-medium" style={{ color: C.faint }}>
-              Motif et impression requis · {completion}%
+              Motif requis · {completion}%
             </span>
           )}
         </section>
@@ -899,7 +897,7 @@ export default function FicheConsultationUWI({
 
         {/* ================= Impression clinique ================= */}
         <Card icon={<Search size={15} />} title="Impression clinique">
-          <Label required pending={pendingKeys.has("impression")}>Hypothèse / conclusion</Label>
+          <Label pending={pendingKeys.has("impression")}>Hypothèse / conclusion</Label>
           <TextArea rows={2} value={c.impression} onChange={set("impression")} pending={pendingKeys.has("impression")}
             placeholder="Ex. Syndrome anémique à explorer." />
           {isComplete && (

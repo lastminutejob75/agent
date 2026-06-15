@@ -2541,12 +2541,7 @@ export default function PatientDashboardPage() {
       notify(message, { sticky: true });
       throw new Error(message);
     }
-    const impression = String(draft?.impression_clinique || "").trim();
-    if (!impression) {
-      const message = "L'impression clinique est requise.";
-      notify(message, { sticky: true });
-      throw new Error(message);
-    }
+    const impression = String(draft?.impression_clinique || "").trim() || "À compléter";
     const examenClinique =
       draft?.examen_clinique && typeof draft.examen_clinique === "object"
         ? (draft.examen_clinique as Record<string, unknown>)
