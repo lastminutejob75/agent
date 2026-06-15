@@ -1733,8 +1733,8 @@ export default function PagePubliquePraticienUWI() {
       try {
         const slotData = await fetchJson(`/api/public/slots/${encodeURIComponent(slug)}?${query}`);
         if (cancelled) return;
-        const freshSlots = filterFuturePublicSlots(slotData.slots);
-        const pending = Boolean(slotData?.pending || slotData?.asyncLoading);
+        let freshSlots = filterFuturePublicSlots(slotData.slots);
+        let pending = Boolean(slotData?.pending || slotData?.asyncLoading);
         if (freshSlots.length) {
           setSlots(freshSlots);
           setSlotsMeta({ source: slotData.source || null, calendar: slotData.calendar || null });
@@ -1742,7 +1742,31 @@ export default function PagePubliquePraticienUWI() {
           retryAttempt = 0;
         } else if (safeArray(slotData.slots).length) {
           setSlotsMeta({ source: slotData.source || null, calendar: slotData.calendar || null });
-        } else if (pending && retryAttempt < PUBLIC_SLOTS_ASYNC_RETRY_DELAYS_MS.length) {
+        }
+
+        // Au premier chargement, ne pas attendre plusieurs retries "fast":
+        // si le backend répond "pending", on force immédiatement une lecture complète.
+        if (!freshSlots.length && pending && fast) {
+          try {
+            const fullData = await fetchJson(`/api/public/slots/${encodeURIComponent(slug)}?count=8`);
+            if (cancelled) return;
+            const fullFresh = filterFuturePublicSlots(fullData?.slots);
+            pending = Boolean(fullData?.pending || fullData?.asyncLoading);
+            if (fullFresh.length) {
+              freshSlots = fullFresh;
+              setSlots(fullFresh);
+              setSlotsMeta({ source: fullData?.source || null, calendar: fullData?.calendar || null });
+              writeSessionSlots(slug, { ...fullData, slots: fullFresh });
+              retryAttempt = 0;
+            } else if (safeArray(fullData?.slots).length) {
+              setSlotsMeta({ source: fullData?.source || null, calendar: fullData?.calendar || null });
+            }
+          } catch {
+            // on conserve le fallback retry asynchrone ci-dessous
+          }
+        }
+
+        if (!freshSlots.length && pending && retryAttempt < PUBLIC_SLOTS_ASYNC_RETRY_DELAYS_MS.length) {
           keepLoading = true;
           setSlotsRefreshing(true);
           const delay = PUBLIC_SLOTS_ASYNC_RETRY_DELAYS_MS[retryAttempt++];
@@ -1908,7 +1932,6 @@ export default function PagePubliquePraticienUWI() {
   }, [hideChatComposer]);
 
   const chooseSlot = useCallback((slot) => {
-    if (slotsRefreshing) return;
     if (slotsMeta.source === "agenda" && !slot?.startIso) {
       push([{ from: "clara", text: "Les creneaux se mettent a jour. Patientez une seconde puis reessayez." }]);
       return;
@@ -1939,7 +1962,7 @@ export default function PagePubliquePraticienUWI() {
       slotLabel: slot.label,
       motif: defaultMotif(slot),
     });
-  }, [inlineSlot, push, slug, slotsMeta.source, slotsRefreshing]);
+  }, [inlineSlot, push, slug, slotsMeta.source]);
 
   const handleStreamPayload = useCallback((payload) => {
     const type = String(payload?.type || "");
@@ -2111,8 +2134,7 @@ export default function PagePubliquePraticienUWI() {
 
     const applyBarSlotsFallback = ({ provisional = true } = {}) => {
       const currentSlots = slotsRef.current;
-      const currentMeta = slotsMetaRef.current;
-      if (!hasBookableAgendaSlots(currentSlots, currentMeta)) return false;
+      if (!hasBookableAgendaSlots(currentSlots)) return false;
       const offers = barSlotsToChatOffers(currentSlots, 3);
       const msg = formatBarSlotsProposalMessage(currentSlots);
       return pushSlotProposal(offers, msg, { provisional });
@@ -2259,7 +2281,13 @@ export default function PagePubliquePraticienUWI() {
     }
 
     if (BOOKING_START.test(clean)) {
-      const lookupMsg = BOOKING_DATE_HINT.test(clean) ? INSTANT_SLOTS_DATE_LOOKUP : INSTANT_SLOTS_LOOKUP;
+      const asksSpecificDate = BOOKING_DATE_HINT.test(clean);
+      // Si des créneaux sont déjà visibles, on les propose immédiatement sans attente.
+      if (!asksSpecificDate && applyBarSlotsFallback({ provisional: false })) {
+        void refreshAgendaSlotsForChat();
+        return;
+      }
+      const lookupMsg = asksSpecificDate ? INSTANT_SLOTS_DATE_LOOKUP : INSTANT_SLOTS_LOOKUP;
       void syncChatInBackground(lookupMsg);
       return;
     }
@@ -2694,7 +2722,7 @@ export default function PagePubliquePraticienUWI() {
                         <button
                           key={slot.id}
                           className="slotChip"
-                          disabled={slotsRefreshing || (slotsMeta.source === "agenda" && !slot.startIso)}
+                          disabled={slotsMeta.source === "agenda" && !slot.startIso}
                           onClick={() => chooseSlot(slot)}
                           type="button"
                         >
