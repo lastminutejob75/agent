@@ -3990,6 +3990,14 @@ class PatientUpdateBody(BaseModel):
     birth_date: Optional[str] = Field(default=None, max_length=10)
     treating_physician_name: Optional[str] = Field(default=None, max_length=200)
     treating_physician_city: Optional[str] = Field(default=None, max_length=120)
+    antecedents_medicaux: Optional[str] = Field(default=None, max_length=4000)
+    antecedents_chirurgicaux: Optional[str] = Field(default=None, max_length=4000)
+    allergies: Optional[str] = Field(default=None, max_length=4000)
+    traitements: Optional[str] = Field(default=None, max_length=4000)
+    facteurs_risque: Optional[str] = Field(default=None, max_length=4000)
+    points_attention: Optional[str] = Field(default=None, max_length=4000)
+    synthese_medicale: Optional[str] = Field(default=None, max_length=4000)
+    dernier_contexte_consultation: Optional[str] = Field(default=None, max_length=4000)
 
     @validator("phone")
     def _validate_phone(cls, v):
