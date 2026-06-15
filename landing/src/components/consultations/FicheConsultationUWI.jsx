@@ -928,17 +928,28 @@ export default function FicheConsultationUWI({
                   <Label pending={pendingKeys.has("suiviConsignes")}>Consignes de suivi</Label>
                   <Input value={c.suiviConsignes} onChange={set("suiviConsignes")} pending={pendingKeys.has("suiviConsignes")}
                     placeholder="Ex. Reconsulter si aggravation" />
-                  <label className="mt-3 flex items-start gap-2 rounded-xl px-3 py-2 text-[12px] font-semibold"
-                    style={{ background: C.tealGhost, border: "1px solid #D6EEEF", color: C.tealDark }}>
-                    <input
-                      type="checkbox"
-                      checked={createFollowupBooking}
-                      disabled={!c.suiviRdv}
-                      onChange={(e) => setCreateFollowupBooking(e.target.checked)}
-                      className="mt-0.5"
-                    />
-                    Créer ce rendez-vous directement dans l'agenda si aucun rendez-vous n'est déjà lié à cette consultation.
-                  </label>
+                  <button
+                    type="button"
+                    disabled={!c.suiviRdv}
+                    onClick={() => setCreateFollowupBooking((v) => !v)}
+                    className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border px-4 py-2 text-sm font-black transition disabled:cursor-not-allowed disabled:opacity-50"
+                    style={
+                      createFollowupBooking
+                        ? {
+                            borderColor: "#009CA4",
+                            background: "#E9FAFC",
+                            color: "#007E8C",
+                          }
+                        : {
+                            borderColor: "#DDE7F1",
+                            background: "#FFFFFF",
+                            color: "#0A1628",
+                          }
+                    }
+                  >
+                    <Calendar size={14} />
+                    {createFollowupBooking ? "Prochain rendez-vous activé" : "Créer le prochain rendez-vous"}
+                  </button>
                   <p className="mt-1 text-[11px] font-medium" style={{ color: C.faint }}>
                     Si la création échoue, la fiche consultation reste enregistrée.
                   </p>
