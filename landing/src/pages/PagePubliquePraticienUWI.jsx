@@ -1651,6 +1651,23 @@ export default function PagePubliquePraticienUWI() {
     return true;
   }, []);
 
+  const pushMoreSlotsPreferencesPrompt = useCallback(() => {
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      const lastText = last?.from === "clara" ? String(last?.text || "").trim() : "";
+      if (last?.from === "clara" && lastText === CHAT_MORE_SLOTS_PREFERENCES_PROMPT) return prev;
+      const nextMsg = {
+        id: msgId.current++,
+        from: "clara",
+        text: CHAT_MORE_SLOTS_PREFERENCES_PROMPT,
+      };
+      if (last?.from === "clara" && (isSlotsLookupPlaceholder(lastText) || last?.provisional)) {
+        return prev.slice(0, -1).concat([nextMsg]);
+      }
+      return prev.concat([nextMsg]);
+    });
+  }, []);
+
   useEffect(() => {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
@@ -1975,6 +1992,15 @@ export default function PagePubliquePraticienUWI() {
     if (type === "partial") return;
     if (type === "final") {
       const slotsPayload = Array.isArray(payload?.slots) ? payload.slots : [];
+      if (moreSlotsNeedsPreferencesRef.current && slotsPayload.length) {
+        if (pendingTurnRef.current) {
+          const resolve = pendingTurnRef.current;
+          pendingTurnRef.current = null;
+          resolve(true);
+        }
+        pushMoreSlotsPreferencesPrompt();
+        return;
+      }
       const text = String(payload?.text || "").trim();
       const convState = String(payload?.conv_state || "");
       if (convState === "CONFIRMED" && text) {
@@ -2025,6 +2051,15 @@ export default function PagePubliquePraticienUWI() {
     }
     if (type === "transfer") {
       const slotsPayload = Array.isArray(payload?.slots) ? payload.slots : [];
+      if (moreSlotsNeedsPreferencesRef.current && slotsPayload.length) {
+        if (pendingTurnRef.current) {
+          const resolve = pendingTurnRef.current;
+          pendingTurnRef.current = null;
+          resolve(true);
+        }
+        pushMoreSlotsPreferencesPrompt();
+        return;
+      }
       if (payload?.text) {
         push([{ from: "clara", text: String(payload.text), slots: slotsPayload.length ? slotsPayload : undefined }]);
       }
@@ -2320,14 +2355,14 @@ export default function PagePubliquePraticienUWI() {
       // UX: éviter de garder quelques secondes les anciens créneaux affichés.
       removeLastSlotsMessage();
       if (moreSlotsNeedsPreferencesRef.current) {
-        push([{ from: "clara", text: CHAT_MORE_SLOTS_PREFERENCES_PROMPT }]);
+        pushMoreSlotsPreferencesPrompt();
         return;
       }
       const attempt = moreSlotsLoopCountRef.current + 1;
       moreSlotsLoopCountRef.current = attempt;
       if (attempt >= 2) {
         moreSlotsNeedsPreferencesRef.current = true;
-        push([{ from: "clara", text: CHAT_MORE_SLOTS_PREFERENCES_PROMPT }]);
+        pushMoreSlotsPreferencesPrompt();
         return;
       }
       // Ne pas réafficher le cache barre ici: on veut de nouveaux créneaux côté moteur.
@@ -2348,7 +2383,7 @@ export default function PagePubliquePraticienUWI() {
     }
 
     void syncChatInBackground(CHAT_PROCESSING_REPLY);
-  }, [chooseSlot, ensureConversationId, ensureStream, lastSlotOffers, push, pushSlotProposal, removeLastSlotsMessage, slug, waitForAgentTurn]);
+  }, [chooseSlot, ensureConversationId, ensureStream, lastSlotOffers, push, pushMoreSlotsPreferencesPrompt, pushSlotProposal, removeLastSlotsMessage, slug, waitForAgentTurn]);
 
   const pickChatSlot = useCallback(
     (offer) => {
