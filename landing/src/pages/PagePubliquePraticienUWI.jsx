@@ -171,7 +171,7 @@ const PLAUSIBLE_PATIENT_NAME = /^[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ' 
 const safeArray = (value) => (Array.isArray(value) ? value : []);
 
 const SLOTS_SESSION_PREFIX = "uwi-public-slots:";
-const SLOTS_SESSION_TTL_MS = 10 * 60 * 1000;
+const SLOTS_SESSION_TTL_MS = 45 * 60 * 1000;
 const PUBLIC_SLOTS_ASYNC_RETRY_DELAYS_MS = [1200, 2200, 4000];
 
 function readSessionSlots(slug) {
@@ -2116,8 +2116,7 @@ export default function PagePubliquePraticienUWI() {
     };
 
     const refreshAgendaSlotsForChat = async () => {
-      try {
-        const data = await fetchJson(`/api/public/slots/${encodeURIComponent(slug)}?count=8&fast=1`);
+      const applySlotPayload = (data) => {
         const fresh = filterFuturePublicSlots(safeArray(data?.slots));
         if (!fresh.length || data?.source !== "agenda") return false;
         setSlots(fresh);
@@ -2126,6 +2125,17 @@ export default function PagePubliquePraticienUWI() {
         slotsRef.current = fresh;
         slotsMetaRef.current = { source: data.source || "agenda", calendar: data.calendar || null };
         return true;
+      };
+
+      try {
+        const data = await fetchJson(`/api/public/slots/${encodeURIComponent(slug)}?count=8&fast=1`);
+        if (applySlotPayload(data)) return true;
+        if (!data?.pending && !data?.asyncLoading) return false;
+
+        // Si le cache agenda n'est pas prêt, forcer une lecture non-fast (max timeout backend)
+        // pour éviter un "trou" de 30-45s côté utilisateur lors d'une recherche de créneaux.
+        const fullData = await fetchJson(`/api/public/slots/${encodeURIComponent(slug)}?count=8`);
+        return applySlotPayload(fullData);
       } catch {
         return false;
       }
