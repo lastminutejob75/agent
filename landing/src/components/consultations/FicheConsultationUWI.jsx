@@ -312,6 +312,7 @@ export default function FicheConsultationUWI({
   patient = PATIENT_MOCK,
   onSave,
   saving = false,
+  existingNextAppointment = null, // { dateLabel?: string, timeLabel?: string, motif?: string }
   onGenerateSummary,
   onTranscribe,
   onLoadPrefill,   // (patientId) => { source, extraction, champs_confiance, avertissements, resume_appel, ... }
@@ -395,10 +396,20 @@ export default function FicheConsultationUWI({
 
   const canSave = c.motif.trim().length > 0 && c.impression.trim().length > 0;
   const saveBusy = savePending || saving;
+  const hasExistingNextAppointment = Boolean(
+    existingNextAppointment && String(existingNextAppointment?.dateLabel || "").trim(),
+  );
 
   useEffect(() => {
     if (!c.suiviRdv) setCreateFollowupBooking(false);
   }, [c.suiviRdv]);
+
+  useEffect(() => {
+    if (hasExistingNextAppointment) {
+      setCreateFollowupBooking(false);
+      setC((prev) => ({ ...prev, suiviRdv: "" }));
+    }
+  }, [hasExistingNextAppointment]);
 
   const completion = useMemo(() => {
     const required = mode === "rapide"
@@ -609,7 +620,7 @@ export default function FicheConsultationUWI({
       suivi: { prochain_rdv: c.suiviRdv || null, consignes: c.suiviConsignes },
     },
     rdv_suivi_booking:
-      createFollowupBooking && c.suiviRdv
+      !hasExistingNextAppointment && createFollowupBooking && c.suiviRdv
         ? {
             create: true,
             date: c.suiviRdv,
@@ -630,7 +641,11 @@ export default function FicheConsultationUWI({
   };
 
   const handleSave = async () => {
-    if (!canSave || saveBusy) return;
+    if (saveBusy) return;
+    if (!canSave) {
+      setSaveError("Veuillez renseigner le motif et l'impression clinique avant d'enregistrer.");
+      return;
+    }
     if (!onSave) {
       setSaveError("Enregistrement indisponible (action non branchée).");
       return;
@@ -708,7 +723,7 @@ export default function FicheConsultationUWI({
                 <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
                   className="w-full bg-transparent text-sm font-medium text-white outline-none [color-scheme:dark]" />
               </label>
-              <button onClick={() => void handleSave()} disabled={!canSave || saveBusy}
+              <button onClick={() => void handleSave()} disabled={saveBusy}
                 className="flex w-full items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold text-white transition hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto"
                 style={{ background: C.teal, boxShadow: "0 2px 10px rgba(0,156,164,0.35)" }}>
                 {saveBusy ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
@@ -918,40 +933,57 @@ export default function FicheConsultationUWI({
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <Label>Prochain rendez-vous</Label>
-                  <Input type="date" value={c.suiviRdv} onChange={set("suiviRdv")} />
-                  <div className="mt-2">
-                    <Label>Heure du prochain rendez-vous</Label>
-                    <Input type="time" value={followupBookingTime} onChange={setFollowupBookingTime} />
-                  </div>
+                  {hasExistingNextAppointment ? (
+                    <div className="rounded-xl px-3 py-3 text-sm font-semibold"
+                      style={{ background: "#ECFDF3", border: "1px solid #A6E4BE", color: "#166534" }}>
+                      Prochain RDV déjà planifié : {existingNextAppointment?.dateLabel}{existingNextAppointment?.timeLabel ? ` à ${existingNextAppointment.timeLabel}` : ""}
+                    </div>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setCreateFollowupBooking((v) => !v)}
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-xl border px-4 py-2 text-sm font-black transition"
+                        style={
+                          createFollowupBooking
+                            ? {
+                                borderColor: "#009CA4",
+                                background: "#E9FAFC",
+                                color: "#007E8C",
+                              }
+                            : {
+                                borderColor: "#DDE7F1",
+                                background: "#FFFFFF",
+                                color: "#0A1628",
+                              }
+                        }
+                      >
+                        <Calendar size={14} />
+                        {createFollowupBooking ? "Création du rendez-vous activée" : "Créer le prochain rendez-vous"}
+                      </button>
+                      {createFollowupBooking ? (
+                        <>
+                          <div className="mt-3">
+                            <Label>Date du rendez-vous</Label>
+                            <Input type="date" value={c.suiviRdv} onChange={set("suiviRdv")} />
+                          </div>
+                          <div className="mt-2">
+                            <Label>Heure du rendez-vous</Label>
+                            <Input type="time" value={followupBookingTime} onChange={setFollowupBookingTime} />
+                          </div>
+                        </>
+                      ) : null}
+                    </>
+                  )}
                 </div>
                 <div>
                   <Label pending={pendingKeys.has("suiviConsignes")}>Consignes de suivi</Label>
                   <Input value={c.suiviConsignes} onChange={set("suiviConsignes")} pending={pendingKeys.has("suiviConsignes")}
                     placeholder="Ex. Reconsulter si aggravation" />
-                  <button
-                    type="button"
-                    disabled={!c.suiviRdv}
-                    onClick={() => setCreateFollowupBooking((v) => !v)}
-                    className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border px-4 py-2 text-sm font-black transition disabled:cursor-not-allowed disabled:opacity-50"
-                    style={
-                      createFollowupBooking
-                        ? {
-                            borderColor: "#009CA4",
-                            background: "#E9FAFC",
-                            color: "#007E8C",
-                          }
-                        : {
-                            borderColor: "#DDE7F1",
-                            background: "#FFFFFF",
-                            color: "#0A1628",
-                          }
-                    }
-                  >
-                    <Calendar size={14} />
-                    {createFollowupBooking ? "Prochain rendez-vous activé" : "Créer le prochain rendez-vous"}
-                  </button>
                   <p className="mt-1 text-[11px] font-medium" style={{ color: C.faint }}>
-                    Si la création échoue, la fiche consultation reste enregistrée.
+                    {hasExistingNextAppointment
+                      ? "Un rendez-vous de suivi existe déjà. La fiche peut être enregistrée sans en créer un autre."
+                      : "Si la création échoue, la fiche consultation reste enregistrée."}
                   </p>
                 </div>
               </div>

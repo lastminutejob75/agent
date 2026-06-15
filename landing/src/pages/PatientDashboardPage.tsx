@@ -2857,6 +2857,16 @@ export default function PatientDashboardPage() {
     const now = Date.now();
     return patientAgendaParsed.filter((x) => x.start.getTime() >= now);
   }, [patientAgendaParsed]);
+  const consultationExistingNextAppointment = useMemo(() => {
+    if (!upcomingPatientAppointments.length) return null;
+    const next = upcomingPatientAppointments[0];
+    const start = next.start;
+    return {
+      dateLabel: start.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" }),
+      timeLabel: formatAgendaSlotHour(start),
+      motif: agendaSlotMotif(next.slot) || "Consultation",
+    };
+  }, [upcomingPatientAppointments]);
 
   const pastPatientAppointments = patientPastAppointments;
 
@@ -5356,6 +5366,7 @@ export default function PatientDashboardPage() {
           <FicheConsultationUWI
             patient={consultationPatient}
             saving={consultationSaving}
+            existingNextAppointment={consultationExistingNextAppointment}
             initialDraft={{
               date: consultationInitialDraft.date,
               motif: consultationInitialDraft.motif,
