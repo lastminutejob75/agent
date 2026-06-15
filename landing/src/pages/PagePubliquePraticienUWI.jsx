@@ -1614,6 +1614,7 @@ export default function PagePubliquePraticienUWI() {
   const slotsRef = useRef(defaultSlots);
   const slotsMetaRef = useRef({ source: null, calendar: null });
   const moreSlotsLoopCountRef = useRef(0);
+  const moreSlotsNeedsPreferencesRef = useRef(false);
   const openActionFlowRef = useRef(null);
   const openingHours = safeArray(practitioner.openingHours).length ? practitioner.openingHours : defaultOpeningHours;
   const faqs = useMemo(() => makeFaqs(practitioner, openingHours), [practitioner, openingHours]);
@@ -1632,7 +1633,6 @@ export default function PagePubliquePraticienUWI() {
 
   const pushSlotProposal = useCallback((offers, messageText, { provisional = false } = {}) => {
     if (!offers.length || !messageText) return false;
-    moreSlotsLoopCountRef.current = 0;
     setMessages((prev) => {
       const last = prev[prev.length - 1];
       const lastText = last?.from === "clara" ? String(last?.text || "").trim() : "";
@@ -1670,6 +1670,7 @@ export default function PagePubliquePraticienUWI() {
     streamConversationIdRef.current = null;
     pendingTurnRef.current = null;
     moreSlotsLoopCountRef.current = 0;
+    moreSlotsNeedsPreferencesRef.current = false;
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
@@ -2103,6 +2104,7 @@ export default function PagePubliquePraticienUWI() {
     const isMoreSlotsIntent = MORE_SLOTS_REQUEST.test(clean) || clean === MORE_SLOTS_MSG;
     if (!isMoreSlotsIntent) {
       moreSlotsLoopCountRef.current = 0;
+      moreSlotsNeedsPreferencesRef.current = false;
     }
     const convId = ensureConversationId();
     ensureStream(convId);
@@ -2186,12 +2188,14 @@ export default function PagePubliquePraticienUWI() {
       ensureStream(convId);
       const turnWait = waitForAgentTurn();
       const isSlotsLookup = Boolean(instantText && isSlotsLookupPlaceholder(instantText));
+      const isMoreSlotsLookup = instantText === INSTANT_MORE_SLOTS_LOOKUP;
       const allowSlotsReuse = opts?.allowSlotsReuse !== false;
       const timers = [];
 
       if (instantText) showInstantReply(instantText);
 
       const tryShowCachedSlots = async ({ refresh = false } = {}) => {
+        if (isMoreSlotsLookup && moreSlotsNeedsPreferencesRef.current) return false;
         if (refresh) await refreshAgendaSlotsForChat();
         return applyBarSlotsFallback({ provisional: true });
       };
@@ -2221,6 +2225,14 @@ export default function PagePubliquePraticienUWI() {
         if (conversationId) {
           conversationIdRef.current = conversationId;
           ensureStream(conversationId);
+        }
+        if (isMoreSlotsLookup && moreSlotsNeedsPreferencesRef.current) {
+          if (pendingTurnRef.current) {
+            const resolve = pendingTurnRef.current;
+            pendingTurnRef.current = null;
+            resolve(true);
+          }
+          return;
         }
         if (isSlotsLookup && allowSlotsReuse && safeArray(response?.slots).length) {
           applyResponseSlots(response, { provisional: true });
@@ -2257,6 +2269,9 @@ export default function PagePubliquePraticienUWI() {
       } catch {
         if (pendingTurnRef.current) {
           pendingTurnRef.current = null;
+        }
+        if (isMoreSlotsLookup && moreSlotsNeedsPreferencesRef.current) {
+          return;
         }
         if (!gotFinalReply) {
           push([{ from: "clara", text: "Impossible de contacter l'agent pour le moment. Merci de reessayer." }]);
@@ -2304,9 +2319,14 @@ export default function PagePubliquePraticienUWI() {
     if (isMoreSlotsIntent) {
       // UX: éviter de garder quelques secondes les anciens créneaux affichés.
       removeLastSlotsMessage();
+      if (moreSlotsNeedsPreferencesRef.current) {
+        push([{ from: "clara", text: CHAT_MORE_SLOTS_PREFERENCES_PROMPT }]);
+        return;
+      }
       const attempt = moreSlotsLoopCountRef.current + 1;
       moreSlotsLoopCountRef.current = attempt;
       if (attempt >= 2) {
+        moreSlotsNeedsPreferencesRef.current = true;
         push([{ from: "clara", text: CHAT_MORE_SLOTS_PREFERENCES_PROMPT }]);
         return;
       }
