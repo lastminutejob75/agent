@@ -358,6 +358,10 @@ export default function FicheConsultationUWI({
   const timerRef = useRef(null);
   const streamRef = useRef(null);
   const saveFeedbackRef = useRef(null);
+  const revealSaveFeedback = () => {
+    if (!saveFeedbackRef.current) return;
+    saveFeedbackRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
 
   useEffect(() => {
     setDate(String(initialDraft?.date || today));
@@ -653,10 +657,14 @@ export default function FicheConsultationUWI({
     if (saveBusy) return;
     if (!canSave) {
       setSaveError("Veuillez renseigner le motif et l'impression clinique avant d'enregistrer.");
+      setSaveNotice("");
+      revealSaveFeedback();
       return;
     }
     if (!onSave) {
       setSaveError("Enregistrement indisponible (action non branchée).");
+      setSaveNotice("");
+      revealSaveFeedback();
       return;
     }
     setSavePending(true);
@@ -683,6 +691,7 @@ export default function FicheConsultationUWI({
     } catch (err) {
       const msg = String(err?.message || "").trim() || "Impossible d'enregistrer la fiche consultation.";
       setSaveError(msg);
+      revealSaveFeedback();
     } finally {
       setSavePending(false);
     }
@@ -738,6 +747,12 @@ export default function FicheConsultationUWI({
                 {saveBusy ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
                 {saveBusy ? "Enregistrement..." : "Enregistrer la fiche"}
               </button>
+              {saveError ? (
+                <p className="m-0 rounded-lg px-2 py-1 text-xs font-semibold sm:max-w-[360px]"
+                  style={{ background: "rgba(180,35,24,0.14)", color: "#FFD6D3", border: "1px solid rgba(253,162,155,0.5)" }}>
+                  {saveError}
+                </p>
+              ) : null}
             </div>
           </div>
           <div className="relative h-1 w-full" style={{ background: "rgba(255,255,255,0.08)" }}>

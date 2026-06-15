@@ -196,6 +196,7 @@ type PatientDocument = {
 };
 
 type ConsultationOpenDraft = {
+  consultationId?: string;
   appointmentId: string;
   date: string;
   motif: string;
@@ -261,6 +262,33 @@ function mapPatientConsultationRow(row: unknown): PatientConsultationRow | null 
   };
 }
 
+function buildConsultationPrefillFromSource(source: Record<string, unknown>) {
+  const vitals = source.vitals && typeof source.vitals === "object"
+    ? (source.vitals as Record<string, unknown>)
+    : {};
+  const examens = Array.isArray(source.examens_demandes)
+    ? source.examens_demandes
+        .map((item) => String(item || "").trim())
+        .filter(Boolean)
+    : [];
+  return {
+    mode_consultation: source.mode_consultation === "complete" ? "complete" : "rapide",
+    anamnese: String(source.anamnese || ""),
+    etat_general: String(source.etat_general || ""),
+    examen_physique: String(source.examen_physique || ""),
+    constantes: vitals,
+    impression_clinique: String(source.impression_clinique || ""),
+    cim10: String(source.cim10 || ""),
+    examens_complementaires: examens,
+    prescription: String(source.prescription || ""),
+    orientation: String(source.orientation || ""),
+    suivi_consignes: String(source.suivi_consignes || ""),
+    ia_resume: String(source.ia_resume || ""),
+    ia_contexte_patient: String(source.ia_contexte_patient || ""),
+    note_praticien: String(source.note_praticien || ""),
+  };
+}
+
 function mapPatientHistoryItems(raw: unknown): PatientHistoryItem[] {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -292,6 +320,7 @@ const SIDEBAR_GRADIENTS = [
 ];
 
 const CONSULTATION_DRAFT_EMPTY: ConsultationOpenDraft = {
+  consultationId: "",
   appointmentId: "",
   date: new Date().toISOString().slice(0, 10),
   motif: "Consultation",
@@ -1271,6 +1300,7 @@ export default function PatientDashboardPage() {
   const [manualPatientCreateConflicts, setManualPatientCreateConflicts] = useState<Array<Record<string, unknown>>>([]);
   const [consultationInitialDraft, setConsultationInitialDraft] = useState<ConsultationOpenDraft>(CONSULTATION_DRAFT_EMPTY);
   const [consultationSaving, setConsultationSaving] = useState(false);
+  const [consultationDeletingId, setConsultationDeletingId] = useState<number | null>(null);
   const [createFicheName, setCreateFicheName] = useState("");
   const [createFicheSaving, setCreateFicheSaving] = useState(false);
   const [profileNameDraft, setProfileNameDraft] = useState("");
@@ -2431,38 +2461,67 @@ export default function PatientDashboardPage() {
     }
     const latest = patientConsultations[0];
     const source = latest.source || {};
-    const vitals = source.vitals && typeof source.vitals === "object"
-      ? (source.vitals as Record<string, unknown>)
-      : {};
-    const examens = Array.isArray(source.examens_demandes)
-      ? source.examens_demandes
-          .map((item) => String(item || "").trim())
-          .filter(Boolean)
-      : [];
     openConsultationModal({
       date: new Date().toISOString().slice(0, 10),
       motif: String(source.motif || latest.motif || "Consultation").trim() || "Consultation",
       appointmentId: "",
       sourceConsultationId: String(latest.consultationId || ""),
-      prefill: {
-        mode_consultation: source.mode_consultation === "complete" ? "complete" : "rapide",
-        anamnese: String(source.anamnese || ""),
-        etat_general: String(source.etat_general || ""),
-        examen_physique: String(source.examen_physique || ""),
-        constantes: vitals,
-        impression_clinique: String(source.impression_clinique || ""),
-        cim10: String(source.cim10 || ""),
-        examens_complementaires: examens,
-        prescription: String(source.prescription || ""),
-        orientation: String(source.orientation || ""),
-        suivi_consignes: String(source.suivi_consignes || ""),
-        ia_resume: String(source.ia_resume || ""),
-        ia_contexte_patient: String(source.ia_contexte_patient || ""),
-        note_praticien: String(source.note_praticien || ""),
-      },
+      prefill: buildConsultationPrefillFromSource(source),
     });
     notify("Nouvelle fiche préremplie depuis la dernière consultation.");
   }, [patientConsultations, notify, openConsultationModal]);
+
+  const editConsultation = useCallback((item: PatientConsultationRow) => {
+    const source = item.source || {};
+    const dateRaw = String(source.date_consultation || "").trim().slice(0, 10);
+    const appointmentId = String(source.appointment_id || "").trim();
+    openConsultationModal({
+      consultationId: String(item.consultationId || ""),
+      date: /^\d{4}-\d{2}-\d{2}$/.test(dateRaw) ? dateRaw : new Date().toISOString().slice(0, 10),
+      motif: String(source.motif || item.motif || "Consultation").trim() || "Consultation",
+      appointmentId,
+      sourceConsultationId: String(item.consultationId || ""),
+      prefill: buildConsultationPrefillFromSource(source),
+    });
+    notify("Mode modification activé pour cette fiche consultation.");
+  }, [notify, openConsultationModal]);
+
+  const deleteConsultation = useCallback(async (item: PatientConsultationRow) => {
+    if (!tenantPatientPhone) {
+      notify("Sélectionnez d'abord un patient.", { sticky: true });
+      return;
+    }
+    if (consultationSaving) {
+      notify("Une sauvegarde est déjà en cours.", { sticky: true });
+      return;
+    }
+    if (!item?.consultationId) {
+      notify("Consultation introuvable.", { sticky: true });
+      return;
+    }
+    if (!confirmImportantAction("Confirmer la suppression définitive de cette fiche consultation ?")) {
+      return;
+    }
+    setConsultationDeletingId(item.consultationId);
+    try {
+      await api.tenantDeletePatientConsultation(tenantPatientPhone, item.consultationId);
+      setPatientConsultations((prev) => prev.filter((row) => row.consultationId !== item.consultationId));
+      if (lastSavedConsultationId === item.consultationId) setLastSavedConsultationId(null);
+      setSummaryRefreshNonce((value) => value + 1);
+      notify("Fiche consultation supprimée.");
+    } catch (e) {
+      const message = (e as Error)?.message || "Impossible de supprimer la fiche consultation.";
+      notify(message, { sticky: true });
+    } finally {
+      setConsultationDeletingId(null);
+    }
+  }, [
+    tenantPatientPhone,
+    consultationSaving,
+    confirmImportantAction,
+    notify,
+    lastSavedConsultationId,
+  ]);
 
   const submitConsultationForm = useCallback(async (draft: Record<string, unknown>) => {
     if (!tenantPatientPhone) {
@@ -2580,6 +2639,8 @@ export default function PatientDashboardPage() {
         : undefined,
       note_praticien: String(draft?.note_praticien || "").trim() || undefined,
     };
+    const editingConsultationId = Number(String(consultationInitialDraft.consultationId || "").trim());
+    const isEditingConsultation = Number.isFinite(editingConsultationId) && editingConsultationId > 0;
     const consultationAppointmentId = String(payload.appointment_id || "").trim();
     const canCreateFollowupBooking = wantsFollowupBooking && !consultationAppointmentId;
     if (canCreateFollowupBooking) {
@@ -2597,16 +2658,19 @@ export default function PatientDashboardPage() {
 
     setConsultationSaving(true);
     try {
-      const createResponse = await api.tenantCreatePatientConsultation(tenantPatientPhone, payload) as {
+      const saveResponse = (isEditingConsultation
+        ? await api.tenantUpdatePatientConsultation(tenantPatientPhone, editingConsultationId, payload)
+        : await api.tenantCreatePatientConsultation(tenantPatientPhone, payload)
+      ) as {
         consultation?: unknown;
       };
-      const createdConsultationRow = mapPatientConsultationRow(createResponse?.consultation);
-      if (createdConsultationRow) {
+      const savedConsultationRow = mapPatientConsultationRow(saveResponse?.consultation);
+      if (savedConsultationRow) {
         setPatientConsultations((prev) => [
-          createdConsultationRow,
-          ...prev.filter((item) => item.consultationId !== createdConsultationRow.consultationId),
+          savedConsultationRow,
+          ...prev.filter((item) => item.consultationId !== savedConsultationRow.consultationId),
         ]);
-        setLastSavedConsultationId(createdConsultationRow.consultationId);
+        setLastSavedConsultationId(savedConsultationRow.consultationId);
       }
       let followupBookingCreated = false;
       let followupBookingSkippedReason = "";
@@ -2649,12 +2713,12 @@ export default function PatientDashboardPage() {
       }
       if (followupBookingCreated) {
         notify(
-          `Fiche consultation enregistrée (bloc "Dossier consultations"). Prochain rendez-vous créé le ${formatLongDateFR(followupBookingDate)} à ${formatTimeChoiceFR(followupBookingTime)}.`,
+          `${isEditingConsultation ? "Fiche consultation mise à jour" : "Fiche consultation enregistrée"} (bloc "Dossier consultations"). Prochain rendez-vous créé le ${formatLongDateFR(followupBookingDate)} à ${formatTimeChoiceFR(followupBookingTime)}.`,
         );
       } else if (followupBookingSkippedReason) {
-        notify(`Fiche consultation enregistrée (bloc "Dossier consultations"). Prochain rendez-vous: ${followupBookingSkippedReason}`);
+        notify(`${isEditingConsultation ? "Fiche consultation mise à jour" : "Fiche consultation enregistrée"} (bloc "Dossier consultations"). Prochain rendez-vous: ${followupBookingSkippedReason}`);
       } else {
-        notify('Fiche consultation enregistrée. Retrouvez-la dans "Dossier consultations".');
+        notify(`${isEditingConsultation ? "Fiche consultation mise à jour" : "Fiche consultation enregistrée"}. Retrouvez-la dans "Dossier consultations".`);
       }
       setModal(null);
       setSummaryRefreshNonce((value) => value + 1);
@@ -2663,6 +2727,7 @@ export default function PatientDashboardPage() {
       }, 120);
       setConsultationInitialDraft((prev) => ({
         ...CONSULTATION_DRAFT_EMPTY,
+        consultationId: "",
         date: prev.date || new Date().toISOString().slice(0, 10),
         motif: prev.motif || "Consultation",
         appointmentId: prev.appointmentId || "",
@@ -2681,6 +2746,7 @@ export default function PatientDashboardPage() {
     }
   }, [
     consultationInitialDraft.appointmentId,
+    consultationInitialDraft.consultationId,
     tenantPatientPhone,
     notify,
     displayHero?.name,
@@ -4844,10 +4910,26 @@ export default function PatientDashboardPage() {
                             <div className="mt-3 flex flex-wrap gap-2">
                               <button
                                 type="button"
+                                onClick={() => editConsultation(item)}
+                                disabled={consultationSaving || consultationDeletingId === item.consultationId}
+                                className="rounded-lg border border-[#91D9E3] bg-[#E9FAFC] px-3 py-1.5 text-xs font-black text-[#007E8C] hover:bg-[#DCF4F7] disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                Modifier
+                              </button>
+                              <button
+                                type="button"
                                 onClick={() => void downloadConsultationPdf(item)}
                                 className="rounded-lg border border-[#C9D8E8] bg-[#F8FBFF] px-3 py-1.5 text-xs font-black text-[#355D87] hover:bg-[#EEF5FD]"
                               >
                                 Télécharger PDF
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void deleteConsultation(item)}
+                                disabled={consultationSaving || consultationDeletingId === item.consultationId}
+                                className="rounded-lg border border-[#F6C2C2] bg-[#FFF5F5] px-3 py-1.5 text-xs font-black text-[#C62828] hover:bg-[#FFEAEA] disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {consultationDeletingId === item.consultationId ? "Suppression..." : "Supprimer"}
                               </button>
                             </div>
                           </li>
@@ -5393,6 +5475,7 @@ export default function PatientDashboardPage() {
             existingNextAppointment={consultationExistingNextAppointment}
             onOpenCreateBooking={() => setCreatePatientBookingOpen(true)}
             initialDraft={{
+              consultation_id: consultationInitialDraft.consultationId,
               date: consultationInitialDraft.date,
               motif: consultationInitialDraft.motif,
               appointment_id: consultationInitialDraft.appointmentId,

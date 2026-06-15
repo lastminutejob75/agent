@@ -2106,6 +2106,355 @@ def create_patient_consultation(
         conn.close()
 
 
+def update_patient_consultation(
+    tenant_id: int,
+    phone: str,
+    consultation_id: int,
+    *,
+    body: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    phone_norm = normalize_phone_number(phone) or phone.strip()
+    if not phone_norm:
+        raise ValueError("patient_phone requis")
+    cid = int(consultation_id or 0)
+    if cid <= 0:
+        raise ValueError("consultation_id invalide")
+
+    mode = str(body.get("mode_consultation") or "rapide").strip().lower()
+    if mode not in ("rapide", "complete"):
+        mode = "rapide"
+
+    consultation_date = _coerce_iso_date(body.get("date"), fallback_today=True) or date.today().isoformat()
+    motif = str(body.get("motif") or "").strip()[:240]
+    impression = str(body.get("impression_clinique") or "").strip()[:6000]
+    if len(motif) < 1:
+        raise ValueError("motif requis")
+    if len(impression) < 1:
+        raise ValueError("impression_clinique requis")
+
+    examen = body.get("examen_clinique") if isinstance(body.get("examen_clinique"), dict) else {}
+    conduite = body.get("conduite_a_tenir") if isinstance(body.get("conduite_a_tenir"), dict) else {}
+    suivi = conduite.get("suivi") if isinstance(conduite.get("suivi"), dict) else {}
+    ia = body.get("ia_uwi") if isinstance(body.get("ia_uwi"), dict) else {}
+    constantes = examen.get("constantes") if isinstance(examen.get("constantes"), dict) else {}
+
+    examens = _consultation_parse_examens(conduite.get("examens_complementaires"))
+    ia_validated = bool(ia.get("validated_by_practitioner"))
+    ia_status = "validated" if ia_validated else "pending"
+    ia_validated_at = datetime.utcnow().isoformat() if ia_validated else None
+    payload_json = json.dumps(body or {}, ensure_ascii=False)
+
+    vitals_payload: Dict[str, Any] = {}
+    for field in _CONSULTATION_VITAL_FIELDS:
+        raw = constantes.get(field)
+        if raw in (None, ""):
+            continue
+        try:
+            if field in _CONSULTATION_VITAL_INT_FIELDS:
+                vitals_payload[field] = int(float(raw))
+            else:
+                vitals_payload[field] = float(raw)
+        except Exception:
+            continue
+
+    update_payload = {
+        "id": cid,
+        "tenant_id": tenant_id,
+        "patient_phone": phone_norm,
+        "appointment_id": str(body.get("appointment_id") or "").strip()[:120] or None,
+        "consultation_date": consultation_date,
+        "mode_consultation": mode,
+        "motif": motif,
+        "anamnese": str(body.get("anamnese") or "").strip()[:12000] or None,
+        "etat_general": str(examen.get("etat_general") or "").strip()[:3000] or None,
+        "examen_physique": str(examen.get("examen_physique") or "").strip()[:6000] or None,
+        "impression_clinique": impression,
+        "cim10": str(body.get("cim10") or "").strip()[:40] or None,
+        "examens_demandes": examens,
+        "prescription": str(conduite.get("prescription") or "").strip()[:6000] or None,
+        "orientation": str(conduite.get("orientation") or "").strip()[:4000] or None,
+        "suivi_prochain_rdv": _coerce_iso_date(suivi.get("prochain_rdv"), fallback_today=False),
+        "suivi_consignes": str(suivi.get("consignes") or "").strip()[:4000] or None,
+        "note_praticien": str(body.get("note_praticien") or "").strip()[:12000] or None,
+        "ia_resume": str(ia.get("resume_consultation") or "").strip()[:12000] or None,
+        "ia_contexte_patient": str(ia.get("contexte_patient") or "").strip()[:12000] or None,
+        "ia_status": ia_status,
+        "ia_validated_at": ia_validated_at,
+        "raw_payload": payload_json,
+    }
+
+    url = _pg_events_url()
+    if url:
+        try:
+            from backend.pg_pool import pg_connection_for
+            with pg_connection_for(url) as conn:
+                _ensure_patient_consultations_table_pg(conn)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE patient_consultations
+                        SET
+                            appointment_id = %(appointment_id)s,
+                            consultation_date = %(consultation_date)s,
+                            mode_consultation = %(mode_consultation)s,
+                            motif = %(motif)s,
+                            anamnese = %(anamnese)s,
+                            etat_general = %(etat_general)s,
+                            examen_physique = %(examen_physique)s,
+                            impression_clinique = %(impression_clinique)s,
+                            cim10 = %(cim10)s,
+                            examens_demandes = %(examens_demandes)s,
+                            prescription = %(prescription)s,
+                            orientation = %(orientation)s,
+                            suivi_prochain_rdv = %(suivi_prochain_rdv)s,
+                            suivi_consignes = %(suivi_consignes)s,
+                            note_praticien = %(note_praticien)s,
+                            ia_resume = %(ia_resume)s,
+                            ia_contexte_patient = %(ia_contexte_patient)s,
+                            ia_status = %(ia_status)s,
+                            ia_validated_at = %(ia_validated_at)s,
+                            raw_payload = %(raw_payload)s,
+                            updated_at = now()
+                        WHERE id = %(id)s AND tenant_id = %(tenant_id)s AND patient_phone = %(patient_phone)s
+                        RETURNING id
+                        """,
+                        update_payload,
+                    )
+                    row = cur.fetchone()
+                    if not row:
+                        return None
+                    if vitals_payload:
+                        cur.execute(
+                            """
+                            INSERT INTO patient_consultation_vitals (
+                                consultation_id, tenant_id, patient_phone, measured_at,
+                                fc_bpm, pa_systolique, pa_diastolique, temperature_c, spo2_pct, fr_min,
+                                poids_kg, taille_cm, imc, source
+                            ) VALUES (
+                                %(consultation_id)s, %(tenant_id)s, %(patient_phone)s, %(measured_at)s,
+                                %(fc_bpm)s, %(pa_systolique)s, %(pa_diastolique)s, %(temperature_c)s, %(spo2_pct)s, %(fr_min)s,
+                                %(poids_kg)s, %(taille_cm)s, %(imc)s, 'praticien'
+                            )
+                            ON CONFLICT (consultation_id) DO UPDATE SET
+                                tenant_id = EXCLUDED.tenant_id,
+                                patient_phone = EXCLUDED.patient_phone,
+                                measured_at = EXCLUDED.measured_at,
+                                fc_bpm = EXCLUDED.fc_bpm,
+                                pa_systolique = EXCLUDED.pa_systolique,
+                                pa_diastolique = EXCLUDED.pa_diastolique,
+                                temperature_c = EXCLUDED.temperature_c,
+                                spo2_pct = EXCLUDED.spo2_pct,
+                                fr_min = EXCLUDED.fr_min,
+                                poids_kg = EXCLUDED.poids_kg,
+                                taille_cm = EXCLUDED.taille_cm,
+                                imc = EXCLUDED.imc,
+                                source = EXCLUDED.source
+                            """,
+                            {
+                                "consultation_id": cid,
+                                "tenant_id": tenant_id,
+                                "patient_phone": phone_norm,
+                                "measured_at": consultation_date,
+                                "fc_bpm": vitals_payload.get("fc_bpm"),
+                                "pa_systolique": vitals_payload.get("pa_systolique"),
+                                "pa_diastolique": vitals_payload.get("pa_diastolique"),
+                                "temperature_c": vitals_payload.get("temperature_c"),
+                                "spo2_pct": vitals_payload.get("spo2_pct"),
+                                "fr_min": vitals_payload.get("fr_min"),
+                                "poids_kg": vitals_payload.get("poids_kg"),
+                                "taille_cm": vitals_payload.get("taille_cm"),
+                                "imc": vitals_payload.get("imc"),
+                            },
+                        )
+                    else:
+                        cur.execute(
+                            """
+                            DELETE FROM patient_consultation_vitals
+                            WHERE consultation_id = %s AND tenant_id = %s AND patient_phone = %s
+                            """,
+                            (cid, tenant_id, phone_norm),
+                        )
+                conn.commit()
+            updated = get_patient_consultation_by_id(tenant_id, phone_norm, cid)
+            if updated:
+                return updated
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "update_patient_consultation pg failed tenant_id=%s phone=%s id=%s err=%s",
+                tenant_id,
+                phone_norm,
+                cid,
+                exc,
+            )
+
+    conn = get_conn()
+    try:
+        _ensure_patient_consultations_table(conn)
+        cur = conn.execute(
+            """
+            UPDATE patient_consultations
+            SET
+                appointment_id = ?,
+                consultation_date = ?,
+                mode_consultation = ?,
+                motif = ?,
+                anamnese = ?,
+                etat_general = ?,
+                examen_physique = ?,
+                impression_clinique = ?,
+                cim10 = ?,
+                examens_demandes = ?,
+                prescription = ?,
+                orientation = ?,
+                suivi_prochain_rdv = ?,
+                suivi_consignes = ?,
+                note_praticien = ?,
+                ia_resume = ?,
+                ia_contexte_patient = ?,
+                ia_status = ?,
+                ia_validated_at = ?,
+                raw_payload = ?,
+                updated_at = datetime('now')
+            WHERE id = ? AND tenant_id = ? AND patient_phone = ?
+            """,
+            (
+                update_payload["appointment_id"],
+                consultation_date,
+                mode,
+                motif,
+                update_payload["anamnese"],
+                update_payload["etat_general"],
+                update_payload["examen_physique"],
+                impression,
+                update_payload["cim10"],
+                json.dumps(examens, ensure_ascii=False),
+                update_payload["prescription"],
+                update_payload["orientation"],
+                update_payload["suivi_prochain_rdv"],
+                update_payload["suivi_consignes"],
+                update_payload["note_praticien"],
+                update_payload["ia_resume"],
+                update_payload["ia_contexte_patient"],
+                ia_status,
+                ia_validated_at,
+                payload_json,
+                cid,
+                tenant_id,
+                phone_norm,
+            ),
+        )
+        if int(cur.rowcount or 0) <= 0:
+            return None
+        if vitals_payload:
+            conn.execute(
+                """
+                INSERT INTO patient_consultation_vitals (
+                    consultation_id, tenant_id, patient_phone, measured_at,
+                    fc_bpm, pa_systolique, pa_diastolique, temperature_c, spo2_pct, fr_min,
+                    poids_kg, taille_cm, imc, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(consultation_id) DO UPDATE SET
+                    tenant_id = excluded.tenant_id,
+                    patient_phone = excluded.patient_phone,
+                    measured_at = excluded.measured_at,
+                    fc_bpm = excluded.fc_bpm,
+                    pa_systolique = excluded.pa_systolique,
+                    pa_diastolique = excluded.pa_diastolique,
+                    temperature_c = excluded.temperature_c,
+                    spo2_pct = excluded.spo2_pct,
+                    fr_min = excluded.fr_min,
+                    poids_kg = excluded.poids_kg,
+                    taille_cm = excluded.taille_cm,
+                    imc = excluded.imc,
+                    source = excluded.source
+                """,
+                (
+                    cid,
+                    tenant_id,
+                    phone_norm,
+                    consultation_date,
+                    vitals_payload.get("fc_bpm"),
+                    vitals_payload.get("pa_systolique"),
+                    vitals_payload.get("pa_diastolique"),
+                    vitals_payload.get("temperature_c"),
+                    vitals_payload.get("spo2_pct"),
+                    vitals_payload.get("fr_min"),
+                    vitals_payload.get("poids_kg"),
+                    vitals_payload.get("taille_cm"),
+                    vitals_payload.get("imc"),
+                    "praticien",
+                ),
+            )
+        else:
+            conn.execute(
+                """
+                DELETE FROM patient_consultation_vitals
+                WHERE consultation_id = ? AND tenant_id = ? AND patient_phone = ?
+                """,
+                (cid, tenant_id, phone_norm),
+            )
+        conn.commit()
+        return get_patient_consultation_by_id(tenant_id, phone_norm, cid)
+    finally:
+        conn.close()
+
+
+def delete_patient_consultation(
+    tenant_id: int,
+    phone: str,
+    consultation_id: int,
+) -> bool:
+    phone_norm = normalize_phone_number(phone) or phone.strip()
+    if not phone_norm:
+        return False
+    cid = int(consultation_id or 0)
+    if cid <= 0:
+        return False
+
+    url = _pg_events_url()
+    if url:
+        try:
+            from backend.pg_pool import pg_connection_for
+            with pg_connection_for(url) as conn:
+                _ensure_patient_consultations_table_pg(conn)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        DELETE FROM patient_consultations
+                        WHERE id = %s AND tenant_id = %s AND patient_phone = %s
+                        RETURNING id
+                        """,
+                        (cid, tenant_id, phone_norm),
+                    )
+                    row = cur.fetchone()
+                conn.commit()
+            return bool(row)
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "delete_patient_consultation pg failed tenant_id=%s phone=%s id=%s err=%s",
+                tenant_id,
+                phone_norm,
+                cid,
+                exc,
+            )
+
+    conn = get_conn()
+    try:
+        _ensure_patient_consultations_table(conn)
+        cur = conn.execute(
+            """
+            DELETE FROM patient_consultations
+            WHERE id = ? AND tenant_id = ? AND patient_phone = ?
+            """,
+            (cid, tenant_id, phone_norm),
+        )
+        deleted = int(cur.rowcount or 0) > 0
+        conn.commit()
+        return deleted
+    finally:
+        conn.close()
+
+
 def get_patient_consultation_context_pack(tenant_id: int, phone: str) -> Dict[str, Any]:
     consultations = list_patient_consultations(tenant_id, phone, limit=240)
     if not consultations:

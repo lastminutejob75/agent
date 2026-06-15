@@ -56,6 +56,8 @@ from backend.db import (
     is_valid_contact_email,
     insert_patient_document,
     create_patient_consultation,
+    update_patient_consultation,
+    delete_patient_consultation,
     list_cabinet_clients,
     list_cabinet_clients_compact,
     list_patient_consultations,
@@ -5026,6 +5028,68 @@ def tenant_create_patient_consultation_route(
                 exc,
             )
     return {"ok": True, "consultation": created}
+
+
+@router.patch("/patients/{phone}/consultations/{consultation_id}")
+def tenant_update_patient_consultation_route(
+    phone: str,
+    consultation_id: int,
+    body: PatientConsultationCreateBody,
+    auth: dict = Depends(require_tenant_auth),
+):
+    tenant_id = auth["tenant_id"]
+    profile = get_cabinet_client_by_phone(tenant_id, phone)
+    if not profile:
+        raise HTTPException(404, "Patient not found")
+    payload = body.model_dump(exclude_none=True)
+    try:
+        updated = update_patient_consultation(
+            tenant_id,
+            phone,
+            consultation_id,
+            body=payload,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not updated:
+        raise HTTPException(404, "Consultation introuvable")
+    latest_context = _patient_consultation_context_summary(updated, payload)
+    if latest_context:
+        try:
+            update_patient_fields(
+                tenant_id,
+                phone,
+                dernier_contexte_consultation=latest_context,
+                synthese_medicale=_merge_patient_medical_summary(
+                    str(profile.get("synthese_medicale") or ""),
+                    latest_context,
+                ),
+            )
+        except Exception as exc:
+            logger.warning(
+                "consultation context refresh skipped tenant=%s phone=%s consultation=%s: %s",
+                tenant_id,
+                normalize_phone_number(phone) or phone,
+                consultation_id,
+                exc,
+            )
+    return {"ok": True, "consultation": updated}
+
+
+@router.delete("/patients/{phone}/consultations/{consultation_id}")
+def tenant_delete_patient_consultation_route(
+    phone: str,
+    consultation_id: int,
+    auth: dict = Depends(require_tenant_auth),
+):
+    tenant_id = auth["tenant_id"]
+    profile = get_cabinet_client_by_phone(tenant_id, phone)
+    if not profile:
+        raise HTTPException(404, "Patient not found")
+    deleted = delete_patient_consultation(tenant_id, phone, consultation_id)
+    if not deleted:
+        raise HTTPException(404, "Consultation introuvable")
+    return {"ok": True}
 
 
 @router.get("/patients/{phone}/consultations/{consultation_id}/pdf")

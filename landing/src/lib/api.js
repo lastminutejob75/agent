@@ -401,6 +401,25 @@ export const api = {
       tenant: true,
       timeoutMs: 20000,
     }),
+  tenantUpdatePatientConsultation: (phone, consultationId, body) =>
+    request(
+      `/api/tenant/patients/${encodeURIComponent(phone)}/consultations/${encodeURIComponent(String(consultationId || ""))}`,
+      {
+        method: "PATCH",
+        body,
+        tenant: true,
+        timeoutMs: 20000,
+      },
+    ),
+  tenantDeletePatientConsultation: (phone, consultationId) =>
+    request(
+      `/api/tenant/patients/${encodeURIComponent(phone)}/consultations/${encodeURIComponent(String(consultationId || ""))}`,
+      {
+        method: "DELETE",
+        tenant: true,
+        timeoutMs: 15000,
+      },
+    ),
   tenantDownloadPatientConsultationPdf: (phone, consultationId) =>
     `${BASE_URL}/api/tenant/patients/${encodeURIComponent(phone)}/consultations/${encodeURIComponent(String(consultationId || ""))}/pdf`,
   tenantFetchPatientConsultationPdf: async (phone, consultationId) => {
