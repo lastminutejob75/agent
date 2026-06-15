@@ -156,6 +156,8 @@ const CHAT_SLOTS_BAR_INSTANT_MS = 280;
 const CHAT_SLOTS_EARLY_FALLBACK_MS = 1800;
 const CHAT_UNCLEAR_FALLBACK =
   "Je peux vous aider à prendre un rendez-vous, répondre à une question, annuler ou modifier un rendez-vous. Que souhaitez-vous ?";
+const CHAT_MORE_SLOTS_PREFERENCES_PROMPT =
+  "Pour vous proposer de meilleurs créneaux, indiquez-moi vos préférences (ex. mardi matin, jeudi après 17h, cette semaine).";
 const CHAT_PROCESSING_REPLY = "Un instant, je traite votre demande…";
 const CHAT_PROCESSING_PLACEHOLDERS = new Set([
   INSTANT_SLOTS_LOOKUP,
@@ -1611,6 +1613,7 @@ export default function PagePubliquePraticienUWI() {
   const pendingTurnRef = useRef(null);
   const slotsRef = useRef(defaultSlots);
   const slotsMetaRef = useRef({ source: null, calendar: null });
+  const moreSlotsLoopCountRef = useRef(0);
   const openActionFlowRef = useRef(null);
   const openingHours = safeArray(practitioner.openingHours).length ? practitioner.openingHours : defaultOpeningHours;
   const faqs = useMemo(() => makeFaqs(practitioner, openingHours), [practitioner, openingHours]);
@@ -1629,6 +1632,7 @@ export default function PagePubliquePraticienUWI() {
 
   const pushSlotProposal = useCallback((offers, messageText, { provisional = false } = {}) => {
     if (!offers.length || !messageText) return false;
+    moreSlotsLoopCountRef.current = 0;
     setMessages((prev) => {
       const last = prev[prev.length - 1];
       const lastText = last?.from === "clara" ? String(last?.text || "").trim() : "";
@@ -1665,6 +1669,7 @@ export default function PagePubliquePraticienUWI() {
     conversationIdRef.current = null;
     streamConversationIdRef.current = null;
     pendingTurnRef.current = null;
+    moreSlotsLoopCountRef.current = 0;
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
@@ -2095,6 +2100,10 @@ export default function PagePubliquePraticienUWI() {
   const sendChatMessage = useCallback(async (text) => {
     const clean = String(text || "").trim();
     if (!clean) return;
+    const isMoreSlotsIntent = MORE_SLOTS_REQUEST.test(clean) || clean === MORE_SLOTS_MSG;
+    if (!isMoreSlotsIntent) {
+      moreSlotsLoopCountRef.current = 0;
+    }
     const convId = ensureConversationId();
     ensureStream(convId);
     push([{ from: "patient", text: clean }]);
@@ -2292,9 +2301,15 @@ export default function PagePubliquePraticienUWI() {
       return;
     }
 
-    if (MORE_SLOTS_REQUEST.test(clean) || clean === MORE_SLOTS_MSG) {
+    if (isMoreSlotsIntent) {
       // UX: éviter de garder quelques secondes les anciens créneaux affichés.
       removeLastSlotsMessage();
+      const attempt = moreSlotsLoopCountRef.current + 1;
+      moreSlotsLoopCountRef.current = attempt;
+      if (attempt >= 2) {
+        push([{ from: "clara", text: CHAT_MORE_SLOTS_PREFERENCES_PROMPT }]);
+        return;
+      }
       // Ne pas réafficher le cache barre ici: on veut de nouveaux créneaux côté moteur.
       void syncChatInBackground(INSTANT_MORE_SLOTS_LOOKUP, { allowSlotsReuse: false });
       return;
