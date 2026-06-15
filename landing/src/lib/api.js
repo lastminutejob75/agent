@@ -184,66 +184,68 @@ async function request(path, { method = "GET", body, admin: _admin = false, tena
     headers.Authorization = `Bearer ${tenantToken}`;
   }
 
-  let timeoutId;
-  let timeoutController;
-  let fetchSignal = signal;
   const effectiveTimeoutMs = normalizeTimeoutMs(timeoutMs);
-  if (effectiveTimeoutMs > 0 && !signal) {
-    timeoutController = new AbortController();
-    fetchSignal = timeoutController.signal;
-    if (typeof window !== "undefined") {
-      timeoutId = window.setTimeout(() => timeoutController.abort(), effectiveTimeoutMs);
-    }
-  }
-
-  try {
-    let res;
-    let lastNetworkError = null;
-    for (const base of baseCandidates) {
-      const url = `${base}${pathPart}`;
-      try {
-        res = await fetch(url, {
-          method,
-          headers,
-          body: body ? JSON.stringify(body) : undefined,
-          credentials: "include", // cookie uwi_session (login email+mdp ou Google)
-          signal: fetchSignal,
-        });
-        break;
-      } catch (e) {
-        if (e?.name === "AbortError") {
-          throw new Error("Délai dépassé. Le serveur met trop de temps à répondre.");
-        }
-        if (isLikelyNetworkError(e)) {
-          lastNetworkError = e;
-          continue;
-        }
-        throw e;
+  let res;
+  let lastNetworkError = null;
+  let timeoutHit = false;
+  for (const base of baseCandidates) {
+    const url = `${base}${pathPart}`;
+    let timeoutId;
+    let timeoutController;
+    let fetchSignal = signal;
+    if (effectiveTimeoutMs > 0 && !signal) {
+      timeoutController = new AbortController();
+      fetchSignal = timeoutController.signal;
+      if (typeof window !== "undefined") {
+        timeoutId = window.setTimeout(() => timeoutController.abort(), effectiveTimeoutMs);
       }
     }
-    if (!res) {
-      if (lastNetworkError) throw new Error(MSG_BACKEND_UNREACHABLE);
-      throw new Error(MSG_BACKEND_UNREACHABLE);
-    }
-
-    const text = await res.text();
-    let data = null;
     try {
-      data = text ? JSON.parse(text) : null;
-    } catch {
-      data = { raw: text };
+      res = await fetch(url, {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+        credentials: "include", // cookie uwi_session (login email+mdp ou Google)
+        signal: fetchSignal,
+      });
+      break;
+    } catch (e) {
+      if (e?.name === "AbortError") {
+        timeoutHit = true;
+        continue;
+      }
+      if (isLikelyNetworkError(e)) {
+        lastNetworkError = e;
+        continue;
+      }
+      throw e;
+    } finally {
+      if (timeoutId && typeof window !== "undefined") window.clearTimeout(timeoutId);
     }
-
-    if (!res.ok) {
-      const err = new Error(parseApiError(data, `HTTP ${res.status}`));
-      err.status = res.status;
-      err.data = data;
-      throw err;
-    }
-    return data;
-  } finally {
-    if (timeoutId && typeof window !== "undefined") window.clearTimeout(timeoutId);
   }
+  if (!res) {
+    if (timeoutHit) {
+      throw new Error("Délai dépassé. Le serveur met trop de temps à répondre.");
+    }
+    if (lastNetworkError) throw new Error(MSG_BACKEND_UNREACHABLE);
+    throw new Error(MSG_BACKEND_UNREACHABLE);
+  }
+
+  const text = await res.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = { raw: text };
+  }
+
+  if (!res.ok) {
+    const err = new Error(parseApiError(data, `HTTP ${res.status}`));
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
 }
 
 export const api = {
