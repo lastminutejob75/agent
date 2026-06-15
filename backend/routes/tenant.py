@@ -9,6 +9,7 @@ import copy
 import base64
 import hashlib
 import hmac
+import io
 import json
 import logging
 import os
@@ -46,6 +47,7 @@ from backend.db import (
     get_cabinet_clients_by_phones,
     find_slot_id_by_datetime,
     get_cabinet_client_by_phone,
+    get_patient_consultation_by_id,
     get_call_followup,
     get_conn,
     insert_patient_note,
@@ -152,6 +154,15 @@ from backend.tenants_pg import (
     pg_update_tenant_name as _raw_pg_update_tenant_name,
     pg_update_tenant_params as _raw_pg_update_tenant_params,
 )
+
+try:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.utils import simpleSplit
+    from reportlab.pdfgen import canvas as reportlab_canvas
+except Exception:  # pragma: no cover - dépendance optionnelle en environnement minimal
+    A4 = None
+    simpleSplit = None
+    reportlab_canvas = None
 
 
 def pg_update_tenant_params(tenant_id, params):
@@ -4861,6 +4872,123 @@ def _merge_patient_medical_summary(current: str, latest_context: str) -> str:
     return f"{marker}\n\n{current_clean}"[:6000]
 
 
+def _consultation_pdf_wrap_lines(text: str, *, font_name: str, font_size: int, width: float) -> List[str]:
+    raw = str(text or "").strip()
+    if not raw:
+        return []
+    if simpleSplit:
+        return list(simpleSplit(raw, font_name, font_size, width))
+    return [raw]
+
+
+def _consultation_render_pdf_bytes(
+    consultation: Dict[str, Any],
+    *,
+    patient_name: str,
+    phone_label: str,
+) -> bytes:
+    if reportlab_canvas is None or A4 is None:
+        raise RuntimeError(
+            "Export PDF indisponible (module reportlab manquant sur le serveur)."
+        )
+    buffer = io.BytesIO()
+    pdf = reportlab_canvas.Canvas(buffer, pagesize=A4)
+    page_w, page_h = A4
+    left = 46
+    top = page_h - 48
+    body_w = page_w - (left * 2)
+    y = top
+
+    date_consult = str(consultation.get("date_consultation") or "").strip() or "Date non renseignée"
+    mode_label = str(consultation.get("mode_consultation") or "rapide").strip() or "rapide"
+
+    pdf.setFont("Helvetica-Bold", 16)
+    pdf.drawString(left, y, "Fiche de consultation")
+    y -= 20
+    pdf.setFont("Helvetica", 10)
+    pdf.drawString(left, y, f"Patient : {patient_name}")
+    y -= 14
+    pdf.drawString(left, y, f"Telephone : {phone_label}")
+    y -= 14
+    pdf.drawString(left, y, f"Date : {date_consult}  |  Mode : {mode_label}")
+    y -= 22
+
+    vitals = consultation.get("vitals") if isinstance(consultation.get("vitals"), dict) else {}
+    vital_labels = (
+        ("FC", "fc_bpm", "bpm"),
+        ("PA systolique", "pa_systolique", "mmHg"),
+        ("PA diastolique", "pa_diastolique", "mmHg"),
+        ("Temperature", "temperature_c", "deg C"),
+        ("SpO2", "spo2_pct", "%"),
+        ("FR", "fr_min", "/min"),
+        ("Poids", "poids_kg", "kg"),
+        ("Taille", "taille_cm", "cm"),
+        ("IMC", "imc", ""),
+    )
+    vital_bits: List[str] = []
+    for label, key, unit in vital_labels:
+        value = vitals.get(key)
+        if value in (None, ""):
+            continue
+        suffix = f" {unit}" if unit else ""
+        vital_bits.append(f"{label}: {value}{suffix}")
+
+    examens = consultation.get("examens_demandes")
+    examens_text = ", ".join(examens) if isinstance(examens, list) else ""
+    sections = [
+        ("Motif", str(consultation.get("motif") or "").strip()),
+        ("Anamnese", str(consultation.get("anamnese") or "").strip()),
+        ("Etat general", str(consultation.get("etat_general") or "").strip()),
+        ("Examen physique", str(consultation.get("examen_physique") or "").strip()),
+        ("Constantes", " | ".join(vital_bits)),
+        ("Impression clinique", str(consultation.get("impression_clinique") or "").strip()),
+        ("CIM-10", str(consultation.get("cim10") or "").strip()),
+        ("Examens complementaires", examens_text),
+        ("Prescription", str(consultation.get("prescription") or "").strip()),
+        ("Orientation", str(consultation.get("orientation") or "").strip()),
+        ("Suivi - prochain rendez-vous", str(consultation.get("suivi_prochain_rdv") or "").strip()),
+        ("Suivi - consignes", str(consultation.get("suivi_consignes") or "").strip()),
+        ("Synthese IA", str(consultation.get("ia_resume") or "").strip()),
+        ("Contexte patient IA", str(consultation.get("ia_contexte_patient") or "").strip()),
+        ("Note interne praticien", str(consultation.get("note_praticien") or "").strip()),
+    ]
+
+    for title, text in sections:
+        clean = str(text or "").strip()
+        if not clean:
+            continue
+        needed = 18
+        if y < 70 + needed:
+            pdf.showPage()
+            y = top
+        pdf.setFont("Helvetica-Bold", 11)
+        pdf.drawString(left, y, title)
+        y -= 14
+        pdf.setFont("Helvetica", 10)
+        lines = _consultation_pdf_wrap_lines(
+            clean,
+            font_name="Helvetica",
+            font_size=10,
+            width=body_w,
+        )
+        for line in lines:
+            if y < 70:
+                pdf.showPage()
+                y = top
+                pdf.setFont("Helvetica", 10)
+            pdf.drawString(left, y, line)
+            y -= 12
+        y -= 6
+
+    pdf.setFont("Helvetica-Oblique", 8)
+    if y < 32:
+        pdf.showPage()
+        y = top
+    pdf.drawString(left, 24, "Document genere automatiquement depuis UWI.")
+    pdf.save()
+    return buffer.getvalue()
+
+
 @router.post("/patients/{phone}/consultations")
 def tenant_create_patient_consultation_route(
     phone: str,
@@ -4898,6 +5026,43 @@ def tenant_create_patient_consultation_route(
                 exc,
             )
     return {"ok": True, "consultation": created}
+
+
+@router.get("/patients/{phone}/consultations/{consultation_id}/pdf")
+def tenant_download_patient_consultation_pdf_route(
+    phone: str,
+    consultation_id: int,
+    auth: dict = Depends(require_tenant_auth),
+):
+    tenant_id = auth["tenant_id"]
+    profile = get_cabinet_client_by_phone(tenant_id, phone)
+    if not profile:
+        raise HTTPException(404, "Patient not found")
+    consultation = get_patient_consultation_by_id(tenant_id, phone, consultation_id)
+    if not consultation:
+        raise HTTPException(404, "Consultation introuvable")
+    patient_name = str(
+        profile.get("display_name")
+        or profile.get("validated_name")
+        or profile.get("raw_name")
+        or "Patient"
+    ).strip() or "Patient"
+    phone_label = normalize_phone_number(phone) or str(phone or "").strip()
+    try:
+        content = _consultation_render_pdf_bytes(
+            consultation,
+            patient_name=patient_name,
+            phone_label=phone_label,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    date_label = str(consultation.get("date_consultation") or "date").strip() or "date"
+    filename = f"consultation-{date_label}-{int(consultation.get('id') or consultation_id)}.pdf"
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={"Content-Disposition": content_disposition_attachment(filename)},
+    )
 
 
 @router.get("/patients/{phone}/context-pack")

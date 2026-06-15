@@ -24,7 +24,7 @@ import {
 import AgendaReschedulePanel from "../components/agenda/AgendaReschedulePanel.jsx";
 import CreateCabinetBookingModal from "../components/agenda/CreateCabinetBookingModal.jsx";
 import CreatePatientFromCallModal from "../components/calls/CreatePatientFromCallModal.jsx";
-import { formatLongDateFR, formatTimeChoiceFR } from "../lib/cabinetBooking.js";
+import { buildCabinetBookingStartIso, formatLongDateFR, formatTimeChoiceFR } from "../lib/cabinetBooking.js";
 import PatientDashboardMobile from "./PatientDashboardMobile";
 import { normalizePhoneBusinessKey } from "../lib/phoneNormalize";
 import { validatePatientPhone, validateContactEmail, isValidContactEmail } from "../lib/contactValidation.js";
@@ -199,6 +199,23 @@ type ConsultationOpenDraft = {
   appointmentId: string;
   date: string;
   motif: string;
+  sourceConsultationId?: string;
+  prefill?: {
+    mode_consultation?: "rapide" | "complete";
+    anamnese?: string;
+    etat_general?: string;
+    examen_physique?: string;
+    constantes?: Record<string, unknown>;
+    impression_clinique?: string;
+    cim10?: string;
+    examens_complementaires?: string[];
+    prescription?: string;
+    orientation?: string;
+    suivi_consignes?: string;
+    ia_resume?: string;
+    ia_contexte_patient?: string;
+    note_praticien?: string;
+  };
 };
 
 type PatientInsightTag = { key: string; label: string; tone: "blue" | "red" };
@@ -211,6 +228,16 @@ type PatientHistoryItem = {
   summary: string;
   status_label: string;
   tone: "green" | "orange" | "red";
+};
+
+type PatientConsultationRow = {
+  id: string;
+  consultationId: number;
+  dateLabel: string;
+  motif: string;
+  impression: string;
+  prochainRdv: string;
+  source: Record<string, unknown>;
 };
 
 function mapPatientHistoryItems(raw: unknown): PatientHistoryItem[] {
@@ -247,6 +274,8 @@ const CONSULTATION_DRAFT_EMPTY: ConsultationOpenDraft = {
   appointmentId: "",
   date: new Date().toISOString().slice(0, 10),
   motif: "Consultation",
+  sourceConsultationId: "",
+  prefill: undefined,
 };
 
 function sidebarGradient(seed: string) {
@@ -1211,6 +1240,8 @@ export default function PatientDashboardPage() {
   const [patientPastAppointments, setPatientPastAppointments] = useState<Array<{ start: Date; key: string }>>([]);
   const [patientHistory, setPatientHistory] = useState<PatientHistoryItem[]>([]);
   const [patientHistoryLoading, setPatientHistoryLoading] = useState(false);
+  const [patientConsultations, setPatientConsultations] = useState<PatientConsultationRow[]>([]);
+  const [patientConsultationsLoading, setPatientConsultationsLoading] = useState(false);
   const [manualPatientCreateForm, setManualPatientCreateForm] = useState<ManualPatientCreateForm>(
     MANUAL_PATIENT_CREATE_EMPTY,
   );
@@ -2227,10 +2258,126 @@ export default function PatientDashboardPage() {
     };
   }, [tenantPatientPhone, activeView, modal, patientFetchNonce]);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!tenantPatientPhone) {
+      setPatientConsultations([]);
+      setPatientConsultationsLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+    setPatientConsultationsLoading(true);
+    api
+      .tenantListPatientConsultations(tenantPatientPhone, "?limit=20")
+      .then((res) => {
+        if (cancelled) return;
+        const rows = Array.isArray(res?.items) ? res.items : [];
+        const mapped = rows
+          .map((row): PatientConsultationRow | null => {
+            const consultationId = Number((row as { id?: unknown })?.id);
+            if (!Number.isFinite(consultationId) || consultationId <= 0) return null;
+            const id = String(consultationId);
+            const dateRaw = String((row as { date_consultation?: unknown })?.date_consultation || "").trim().slice(0, 10);
+            const dateLabel = formatCabinetMetaDate(dateRaw);
+            const motifRaw = String((row as { motif?: unknown })?.motif || "").trim();
+            const impressionRaw = String((row as { impression_clinique?: unknown })?.impression_clinique || "").trim();
+            const suiviRaw = String((row as { suivi_prochain_rdv?: unknown })?.suivi_prochain_rdv || "").trim().slice(0, 10);
+            return {
+              id,
+              consultationId,
+              dateLabel,
+              motif: motifRaw || "Consultation",
+              impression: impressionRaw,
+              prochainRdv: suiviRaw ? formatCabinetMetaDate(suiviRaw) : "",
+              source: (row && typeof row === "object" ? row : {}) as Record<string, unknown>,
+            };
+          })
+          .filter((row): row is PatientConsultationRow => Boolean(row));
+        setPatientConsultations(mapped);
+      })
+      .catch(() => {
+        if (!cancelled) setPatientConsultations([]);
+      })
+      .finally(() => {
+        if (!cancelled) setPatientConsultationsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantPatientPhone, patientFetchNonce, summaryRefreshNonce]);
+
   const refreshPatientAgenda = useCallback(() => {
     setAgendaDaysLoaded(0);
     setAgendaRefreshNonce((n) => n + 1);
   }, []);
+
+  const duplicateLatestConsultation = useCallback(() => {
+    if (!patientConsultations.length) {
+      notify("Aucune consultation précédente à dupliquer.");
+      return;
+    }
+    const latest = patientConsultations[0];
+    const source = latest.source || {};
+    const vitals = source.vitals && typeof source.vitals === "object"
+      ? (source.vitals as Record<string, unknown>)
+      : {};
+    const examens = Array.isArray(source.examens_demandes)
+      ? source.examens_demandes
+          .map((item) => String(item || "").trim())
+          .filter(Boolean)
+      : [];
+    openConsultationModal({
+      date: new Date().toISOString().slice(0, 10),
+      motif: String(source.motif || latest.motif || "Consultation").trim() || "Consultation",
+      appointmentId: "",
+      sourceConsultationId: String(latest.consultationId || ""),
+      prefill: {
+        mode_consultation: source.mode_consultation === "complete" ? "complete" : "rapide",
+        anamnese: String(source.anamnese || ""),
+        etat_general: String(source.etat_general || ""),
+        examen_physique: String(source.examen_physique || ""),
+        constantes: vitals,
+        impression_clinique: String(source.impression_clinique || ""),
+        cim10: String(source.cim10 || ""),
+        examens_complementaires: examens,
+        prescription: String(source.prescription || ""),
+        orientation: String(source.orientation || ""),
+        suivi_consignes: String(source.suivi_consignes || ""),
+        ia_resume: String(source.ia_resume || ""),
+        ia_contexte_patient: String(source.ia_contexte_patient || ""),
+        note_praticien: String(source.note_praticien || ""),
+      },
+    });
+    notify("Nouvelle fiche préremplie depuis la dernière consultation.");
+  }, [patientConsultations, notify, openConsultationModal]);
+
+  const downloadConsultationPdf = useCallback(async (item: PatientConsultationRow) => {
+    if (!tenantPatientPhone) {
+      notify("Sélectionnez d'abord un patient.", { sticky: true });
+      return;
+    }
+    if (!item?.consultationId) {
+      notify("Consultation introuvable.", { sticky: true });
+      return;
+    }
+    try {
+      const blob = await api.tenantFetchPatientConsultationPdf(tenantPatientPhone, item.consultationId);
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      const isoDate = String((item.source?.date_consultation as string) || "").trim().slice(0, 10) || new Date().toISOString().slice(0, 10);
+      anchor.href = objectUrl;
+      anchor.download = `consultation-${isoDate}-${item.consultationId}.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1200);
+      notify("PDF de consultation téléchargé.");
+    } catch (e) {
+      const message = (e as Error)?.message || "Impossible de télécharger le PDF de la consultation.";
+      notify(message, { sticky: true });
+    }
+  }, [tenantPatientPhone, notify]);
 
   const viewApptInAgenda = useCallback((
     slot: Record<string, unknown>,
@@ -2315,23 +2462,27 @@ export default function PatientDashboardPage() {
 
   const submitConsultationForm = useCallback(async (draft: Record<string, unknown>) => {
     if (!tenantPatientPhone) {
-      notify("Sélectionnez d'abord un patient.", { sticky: true });
-      return;
+      const message = "Sélectionnez d'abord un patient.";
+      notify(message, { sticky: true });
+      throw new Error(message);
     }
     const dateValue = String(draft?.date || "").trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
-      notify("Date de consultation invalide.", { sticky: true });
-      return;
+      const message = "Date de consultation invalide.";
+      notify(message, { sticky: true });
+      throw new Error(message);
     }
     const motif = String(draft?.motif || "").trim();
     if (!motif) {
-      notify("Le motif est requis.", { sticky: true });
-      return;
+      const message = "Le motif est requis.";
+      notify(message, { sticky: true });
+      throw new Error(message);
     }
     const impression = String(draft?.impression_clinique || "").trim();
     if (!impression) {
-      notify("L'impression clinique est requise.", { sticky: true });
-      return;
+      const message = "L'impression clinique est requise.";
+      notify(message, { sticky: true });
+      throw new Error(message);
     }
     const examenClinique =
       draft?.examen_clinique && typeof draft.examen_clinique === "object"
@@ -2367,6 +2518,14 @@ export default function PatientDashboardPage() {
       : [];
     const prochainRdvRaw = String(suiviRaw.prochain_rdv || "").trim();
     const prochainRdv = /^\d{4}-\d{2}-\d{2}$/.test(prochainRdvRaw) ? prochainRdvRaw : undefined;
+    const followupBookingRaw =
+      draft?.rdv_suivi_booking && typeof draft.rdv_suivi_booking === "object"
+        ? (draft.rdv_suivi_booking as Record<string, unknown>)
+        : {};
+    const wantsFollowupBooking = Boolean(followupBookingRaw.create);
+    const followupBookingDate = String(followupBookingRaw.date || prochainRdv || "").trim();
+    const followupBookingTime = String(followupBookingRaw.time || "").trim();
+    const followupBookingMotif = String(followupBookingRaw.motif || motif || "Consultation de suivi").trim() || "Consultation de suivi";
 
     const constantes = {
       fc_bpm: parseOptionalIntInput(String(constantesRaw.fc_bpm ?? "")),
@@ -2387,8 +2546,7 @@ export default function PatientDashboardPage() {
     );
 
     const payload = {
-      appointment_id:
-        String(draft?.appointment_id || consultationInitialDraft.appointmentId || "").trim() || undefined,
+      appointment_id: String(draft?.appointment_id || consultationInitialDraft.appointmentId || "").trim() || undefined,
       date: dateValue,
       mode_consultation: draft?.mode_consultation === "complete" ? "complete" : "rapide",
       motif,
@@ -2418,10 +2576,54 @@ export default function PatientDashboardPage() {
         : undefined,
       note_praticien: String(draft?.note_praticien || "").trim() || undefined,
     };
+    const consultationAppointmentId = String(payload.appointment_id || "").trim();
+    const canCreateFollowupBooking = wantsFollowupBooking && !consultationAppointmentId;
+    if (canCreateFollowupBooking) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(followupBookingDate)) {
+        const message = "Date invalide pour créer le prochain rendez-vous.";
+        notify(message, { sticky: true });
+        throw new Error(message);
+      }
+      if (!/^\d{2}:\d{2}$/.test(followupBookingTime)) {
+        const message = "Heure invalide pour créer le prochain rendez-vous.";
+        notify(message, { sticky: true });
+        throw new Error(message);
+      }
+    }
 
     setConsultationSaving(true);
     try {
       await api.tenantCreatePatientConsultation(tenantPatientPhone, payload);
+      let followupBookingCreated = false;
+      let followupBookingSkippedReason = "";
+      if (wantsFollowupBooking) {
+        if (consultationAppointmentId) {
+          followupBookingSkippedReason = "un rendez-vous est déjà rattaché à cette consultation.";
+        } else {
+          const startIso = buildCabinetBookingStartIso(followupBookingDate, followupBookingTime);
+          if (!startIso) {
+            throw new Error("Date/heure du prochain rendez-vous invalide.");
+          }
+          try {
+            await api.tenantCreateAgendaBooking({
+              patient_name: String(displayHero?.name || "Patient").trim() || "Patient",
+              patient_phone: tenantPatientPhone,
+              patient_email: String(patientEmail || "").trim(),
+              motif: followupBookingMotif,
+              start_iso: startIso,
+            });
+            followupBookingCreated = true;
+            refreshPatientAgenda();
+          } catch (bookingErr) {
+            const detail = String((bookingErr as Error)?.message || "").trim();
+            followupBookingSkippedReason = detail || "impossible de créer le rendez-vous dans l'agenda.";
+            notify(
+              `Fiche enregistrée, mais le prochain rendez-vous n'a pas été créé (${followupBookingSkippedReason}).`,
+              { sticky: true },
+            );
+          }
+        }
+      }
       try {
         const refreshed = await api.tenantGetPatient(tenantPatientPhone, { lightweight: true });
         const refreshedPatient = refreshed?.patient as Record<string, unknown> | undefined;
@@ -2431,7 +2633,15 @@ export default function PatientDashboardPage() {
       } catch {
         // La consultation est enregistrée ; le prochain chargement récupérera le contexte patient enrichi.
       }
-      notify("Fiche consultation enregistrée.");
+      if (followupBookingCreated) {
+        notify(
+          `Fiche consultation enregistrée. Prochain rendez-vous créé le ${formatLongDateFR(followupBookingDate)} à ${formatTimeChoiceFR(followupBookingTime)}.`,
+        );
+      } else if (followupBookingSkippedReason) {
+        notify(`Fiche consultation enregistrée. Prochain rendez-vous: ${followupBookingSkippedReason}`);
+      } else {
+        notify("Fiche consultation enregistrée.");
+      }
       setModal(null);
       setSummaryRefreshNonce((value) => value + 1);
       setConsultationInitialDraft((prev) => ({
@@ -2440,13 +2650,26 @@ export default function PatientDashboardPage() {
         motif: prev.motif || "Consultation",
         appointmentId: prev.appointmentId || "",
       }));
+      return {
+        ok: true,
+        followupBookingCreated,
+        followupBookingSkippedReason,
+      };
     } catch (e) {
       const message = (e as Error)?.message || "Impossible d'enregistrer la fiche consultation.";
       notify(message, { sticky: true });
+      throw new Error(message);
     } finally {
       setConsultationSaving(false);
     }
-  }, [consultationInitialDraft.appointmentId, tenantPatientPhone, notify]);
+  }, [
+    consultationInitialDraft.appointmentId,
+    tenantPatientPhone,
+    notify,
+    displayHero?.name,
+    patientEmail,
+    refreshPatientAgenda,
+  ]);
 
   const generateConsultationSummary = useCallback(async (draft: Record<string, unknown>) => {
     const payload = {
@@ -4511,6 +4734,95 @@ export default function PatientDashboardPage() {
 
                 <PatientMedicalContextPreview patient={patientCabinetRow} />
 
+                <section className="overflow-hidden rounded-[28px] border border-[#DCE9F5] bg-gradient-to-b from-white to-[#F7FBFF] shadow-[0_12px_28px_rgba(10,22,40,0.06)]">
+                  <div className="border-b border-[#E8F0F8] bg-[#F3FAFF] px-6 py-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h2 className="flex flex-wrap items-center gap-3 text-xl font-black text-[#0A1628]">
+                          ▣ Dossier consultations
+                          {!patientConsultationsLoading && patientConsultations.length > 0 ? (
+                            <span className="rounded-full bg-[#E8F7F7] px-2.5 py-1 text-xs font-black text-[#008EA1]">
+                              {patientConsultations.length}
+                            </span>
+                          ) : null}
+                        </h2>
+                        <p className="mt-1 text-sm font-semibold text-[#61708B]">
+                          Classement de la plus récente à la plus ancienne.
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={duplicateLatestConsultation}
+                          disabled={patientConsultationsLoading || patientConsultations.length === 0}
+                          className="rounded-xl border border-[#BFD5EC] bg-white px-4 py-2 text-sm font-black text-[#355D87] shadow-sm transition hover:bg-[#EFF6FC] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Dupliquer la dernière fiche
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openConsultationModal()}
+                          className="rounded-xl border border-[#79CDDB] bg-white px-4 py-2 text-sm font-black text-[#008EA1] shadow-sm transition hover:bg-[#E9FAFC]"
+                        >
+                          + Nouvelle fiche
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="px-6 py-5">
+                    {patientConsultationsLoading ? (
+                      <div className="rounded-2xl border border-[#E7EEF6] bg-white px-4 py-3 text-sm font-semibold text-[#61708B]">
+                        Chargement des consultations…
+                      </div>
+                    ) : patientConsultations.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-[#CFE1F1] bg-white px-4 py-5 text-sm font-semibold text-[#61708B]">
+                        Aucune consultation enregistrée pour ce patient.
+                      </div>
+                    ) : (
+                      <ul className="m-0 list-none space-y-3 p-0">
+                        {patientConsultations.map((item) => (
+                          <li
+                            key={item.id}
+                            className="rounded-2xl border border-[#E7EEF6] bg-white px-4 py-3 shadow-[0_3px_10px_rgba(15,23,42,0.04)]"
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div className="rounded-lg bg-[#F1F7FF] px-2.5 py-1 text-xs font-black uppercase tracking-wide text-[#2B5B8A]">
+                                {item.dateLabel}
+                              </div>
+                              {item.prochainRdv ? (
+                                <span className="rounded-full bg-[#E8F7F7] px-2.5 py-1 text-xs font-black text-[#007E8C]">
+                                  Suivi prévu : {item.prochainRdv}
+                                </span>
+                              ) : (
+                                <span className="rounded-full bg-[#F4F7FB] px-2.5 py-1 text-xs font-bold text-[#71839A]">
+                                  Aucun suivi planifié
+                                </span>
+                              )}
+                            </div>
+                            <div className="mt-2 text-sm font-semibold text-[#1E293B]">Motif : {item.motif}</div>
+                            {item.impression ? (
+                              <div className="mt-1 text-sm text-[#64748B]">
+                                Impression : {item.impression.slice(0, 220)}
+                                {item.impression.length > 220 ? "…" : ""}
+                              </div>
+                            ) : null}
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void downloadConsultationPdf(item)}
+                                className="rounded-lg border border-[#C9D8E8] bg-[#F8FBFF] px-3 py-1.5 text-xs font-black text-[#355D87] hover:bg-[#EEF5FD]"
+                              >
+                                Télécharger PDF
+                              </button>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </section>
+
                 <section className="rounded-[28px] bg-gradient-to-br from-[#062E53] via-[#023E63] to-[#007B88] p-6 text-white shadow-[0_20px_45px_rgba(0,66,90,0.22)]">
                   <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
                     <div>
@@ -5043,15 +5355,18 @@ export default function PatientDashboardPage() {
           </button>
           <FicheConsultationUWI
             patient={consultationPatient}
+            saving={consultationSaving}
             initialDraft={{
               date: consultationInitialDraft.date,
               motif: consultationInitialDraft.motif,
               appointment_id: consultationInitialDraft.appointmentId,
+              source_consultation_id: consultationInitialDraft.sourceConsultationId,
+              prefill: consultationInitialDraft.prefill,
             }}
             onLoadPrefill={loadConsultationPrefill}
             onTranscribe={transcribeConsultationAudio}
             onGenerateSummary={generateConsultationSummary}
-            onSave={(payload) => void submitConsultationForm((payload || {}) as Record<string, unknown>)}
+            onSave={(payload) => submitConsultationForm((payload || {}) as Record<string, unknown>)}
           />
         </div>
       )}

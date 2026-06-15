@@ -390,6 +390,25 @@ export const api = {
       body,
       tenant: true,
     }),
+  tenantDownloadPatientConsultationPdf: (phone, consultationId) =>
+    `${BASE_URL}/api/tenant/patients/${encodeURIComponent(phone)}/consultations/${encodeURIComponent(String(consultationId || ""))}/pdf`,
+  tenantFetchPatientConsultationPdf: async (phone, consultationId) => {
+    const url = `${BASE_URL}/api/tenant/patients/${encodeURIComponent(phone)}/consultations/${encodeURIComponent(String(consultationId || ""))}/pdf`;
+    let res;
+    try {
+      res = await fetch(url, { credentials: "include", headers: tenantAuthHeaders() });
+    } catch (e) {
+      if (e?.message === "Failed to fetch" || (e?.name === "TypeError" && /fetch|network/i.test(e?.message || ""))) {
+        throw new Error(MSG_BACKEND_UNREACHABLE);
+      }
+      throw e;
+    }
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(parseApiError(e, res.statusText));
+    }
+    return res.blob();
+  },
   tenantGetPatientContextPack: (phone) =>
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/context-pack`, { tenant: true }),
   tenantGetPatientConsultationPrefill: (phone) =>

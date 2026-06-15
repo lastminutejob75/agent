@@ -57,6 +57,59 @@ const EMPTY = {
   notePraticien: "", resumeIa: "", contexteIa: "",
 };
 
+function toInputString(value) {
+  if (value === null || value === undefined) return "";
+  return String(value);
+}
+
+function normalizeInitialExamens(items) {
+  if (!Array.isArray(items)) return [];
+  const seen = new Set();
+  return items
+    .map((item) => String(item || "").trim())
+    .filter((item) => {
+      if (!item) return false;
+      const key = item.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function buildInitialConsultationState(initialDraft = {}) {
+  const prefill = initialDraft?.prefill && typeof initialDraft.prefill === "object"
+    ? initialDraft.prefill
+    : {};
+  const constantes = prefill?.constantes && typeof prefill.constantes === "object"
+    ? prefill.constantes
+    : {};
+  return {
+    ...EMPTY,
+    motif: toInputString(initialDraft?.motif || prefill?.motif).trim(),
+    anamnese: toInputString(prefill?.anamnese),
+    etatGeneral: toInputString(prefill?.etat_general),
+    examenPhysique: toInputString(prefill?.examen_physique),
+    fc: toInputString(constantes?.fc_bpm),
+    pas: toInputString(constantes?.pa_systolique),
+    pad: toInputString(constantes?.pa_diastolique),
+    temp: toInputString(constantes?.temperature_c),
+    spo2: toInputString(constantes?.spo2_pct),
+    fr: toInputString(constantes?.fr_min),
+    poids: toInputString(constantes?.poids_kg),
+    taille: toInputString(constantes?.taille_cm),
+    impression: toInputString(prefill?.impression_clinique),
+    cim10: toInputString(prefill?.cim10),
+    examens: normalizeInitialExamens(prefill?.examens_complementaires),
+    prescription: toInputString(prefill?.prescription),
+    orientation: toInputString(prefill?.orientation),
+    suiviRdv: "",
+    suiviConsignes: toInputString(prefill?.suivi_consignes),
+    notePraticien: toInputString(prefill?.note_praticien),
+    resumeIa: toInputString(prefill?.ia_resume),
+    contexteIa: toInputString(prefill?.ia_contexte_patient),
+  };
+}
+
 function buildDictationAccessError(err) {
   const name = String(err?.name || "");
   const message = String(err?.message || "");
@@ -258,25 +311,28 @@ function runChecks(c) {
 export default function FicheConsultationUWI({
   patient = PATIENT_MOCK,
   onSave,
+  saving = false,
   onGenerateSummary,
   onTranscribe,
   onLoadPrefill,   // (patientId) => { source, extraction, champs_confiance, avertissements, resume_appel, ... }
-  initialDraft = {}, // { date?: string, motif?: string, appointment_id?: string }
+  initialDraft = {}, // { date?: string, motif?: string, appointment_id?: string, source_consultation_id?: string, prefill?: {...} }
 }) {
   const today = new Date().toISOString().slice(0, 10);
 
-  const [mode, setMode] = useState("rapide");
+  const [mode, setMode] = useState(
+    initialDraft?.prefill?.mode_consultation === "complete" ? "complete" : "rapide",
+  );
   const [date, setDate] = useState(initialDraft?.date || today);
-  const [c, setC] = useState(() => ({
-    ...EMPTY,
-    motif: String(initialDraft?.motif || ""),
-  }));
+  const [c, setC] = useState(() => buildInitialConsultationState(initialDraft));
   const set = (k) => (v) => setC((s) => ({ ...s, [k]: v }));
 
   const [examenInput, setExamenInput] = useState("");
   const [showDossier, setShowDossier] = useState(true);
-  const [saved, setSaved] = useState(null);
-  const [showJson, setShowJson] = useState(false);
+  const [savePending, setSavePending] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [saveNotice, setSaveNotice] = useState("");
+  const [createFollowupBooking, setCreateFollowupBooking] = useState(false);
+  const [followupBookingTime, setFollowupBookingTime] = useState("09:00");
   const [iaLoading, setIaLoading] = useState(false);
   const [iaError, setIaError] = useState(null);
 
@@ -301,12 +357,14 @@ export default function FicheConsultationUWI({
   const streamRef = useRef(null);
 
   useEffect(() => {
-    if (initialDraft?.date) setDate(String(initialDraft.date));
-    const motif = String(initialDraft?.motif || "").trim();
-    if (motif) {
-      setC((prev) => ({ ...prev, motif }));
-    }
-  }, [initialDraft?.date, initialDraft?.motif]);
+    setDate(String(initialDraft?.date || today));
+    setMode(initialDraft?.prefill?.mode_consultation === "complete" ? "complete" : "rapide");
+    setC(buildInitialConsultationState(initialDraft));
+    setCreateFollowupBooking(false);
+    setFollowupBookingTime("09:00");
+    setSaveError("");
+    setSaveNotice("");
+  }, [initialDraft?.date, initialDraft?.motif, initialDraft?.source_consultation_id, today]);
 
   // Chargement de la préparation à l'ouverture de la fiche
   useEffect(() => {
@@ -336,6 +394,11 @@ export default function FicheConsultationUWI({
   }, [c.poids, c.taille]);
 
   const canSave = c.motif.trim().length > 0 && c.impression.trim().length > 0;
+  const saveBusy = savePending || saving;
+
+  useEffect(() => {
+    if (!c.suiviRdv) setCreateFollowupBooking(false);
+  }, [c.suiviRdv]);
 
   const completion = useMemo(() => {
     const required = mode === "rapide"
@@ -545,6 +608,15 @@ export default function FicheConsultationUWI({
       orientation: c.orientation,
       suivi: { prochain_rdv: c.suiviRdv || null, consignes: c.suiviConsignes },
     },
+    rdv_suivi_booking:
+      createFollowupBooking && c.suiviRdv
+        ? {
+            create: true,
+            date: c.suiviRdv,
+            time: followupBookingTime,
+            motif: c.motif?.trim() || "Consultation de suivi",
+          }
+        : undefined,
   });
 
   const handleGenerateSummary = async () => {
@@ -557,8 +629,15 @@ export default function FicheConsultationUWI({
     finally { setIaLoading(false); }
   };
 
-  const handleSave = () => {
-    if (!canSave) return;
+  const handleSave = async () => {
+    if (!canSave || saveBusy) return;
+    if (!onSave) {
+      setSaveError("Enregistrement indisponible (action non branchée).");
+      return;
+    }
+    setSavePending(true);
+    setSaveError("");
+    setSaveNotice("");
     const payload = {
       ...buildDraft(),
       ia_uwi: c.resumeIa || c.contexteIa
@@ -566,7 +645,23 @@ export default function FicheConsultationUWI({
         : null,
       note_praticien: c.notePraticien || null,
     };
-    setSaved(payload); setShowJson(true); onSave?.(payload);
+    try {
+      const result = await onSave(payload);
+      const bookingCreated = Boolean(result?.followupBookingCreated);
+      const bookingSkipped = String(result?.followupBookingSkippedReason || "").trim();
+      if (bookingCreated) {
+        setSaveNotice("Fiche enregistrée et prochain rendez-vous créé.");
+      } else if (bookingSkipped) {
+        setSaveNotice(`Fiche enregistrée. Prochain rendez-vous: ${bookingSkipped}`);
+      } else {
+        setSaveNotice("Fiche consultation enregistrée.");
+      }
+    } catch (err) {
+      const msg = String(err?.message || "").trim() || "Impossible d'enregistrer la fiche consultation.";
+      setSaveError(msg);
+    } finally {
+      setSavePending(false);
+    }
   };
 
   const isComplete = mode === "complete";
@@ -576,11 +671,11 @@ export default function FicheConsultationUWI({
   );
 
   return (
-    <div className="min-h-screen w-full px-4 py-6" style={{ background: "linear-gradient(180deg, #F4F8FA 0%, #EEF4F6 100%)", color: C.ink }}>
+    <div className="min-h-screen w-full px-3 py-4 sm:px-4 sm:py-6" style={{ background: "linear-gradient(180deg, #F4F8FA 0%, #EEF4F6 100%)", color: C.ink }}>
       <div className="mx-auto max-w-5xl">
 
         {/* ================= En-tête ================= */}
-        <header className="sticky top-3 z-20 mb-6 overflow-hidden rounded-3xl"
+        <header className="sticky top-2 z-20 mb-4 overflow-hidden rounded-3xl sm:top-3 sm:mb-6"
           style={{ background: C.headerGrad, boxShadow: C.shadowHeader }}>
           <div className="pointer-events-none absolute -right-14 -top-20 h-52 w-52 rounded-full"
             style={{ background: "radial-gradient(circle, rgba(0,156,164,0.35) 0%, transparent 70%)" }} />
@@ -591,26 +686,33 @@ export default function FicheConsultationUWI({
                 <Stethoscope size={21} color="#4FD1D9" />
               </div>
               <div className="min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-[0.22em]" style={{ color: "#5FAEB3" }}>Consultation</p>
-                <h1 className="mt-0.5 truncate text-xl font-extrabold tracking-tight text-white">
+                <p className="text-[9px] font-bold uppercase tracking-[0.22em] sm:text-[10px]" style={{ color: "#5FAEB3" }}>Consultation</p>
+                <h1 className="mt-0.5 truncate text-lg font-extrabold tracking-tight text-white sm:text-xl">
                   {patient.nom}
-                  <span className="ml-2 text-sm font-medium" style={{ color: "#8FA3B8" }}>
+                  <span className="ml-2 text-xs font-medium sm:text-sm" style={{ color: "#8FA3B8" }}>
                     {patient.age} ans{patient.sexe ? ` · ${patient.sexe}` : ""}
                   </span>
                 </h1>
               </div>
             </div>
-            <div className="flex items-center gap-2.5">
+            <div className="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:items-center">
               <label className="hidden items-center gap-2 rounded-xl px-3 py-2 sm:flex"
                 style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.10)" }}>
                 <Calendar size={14} color="#5FAEB3" />
                 <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
                   className="bg-transparent text-sm font-medium text-white outline-none [color-scheme:dark]" />
               </label>
-              <button onClick={handleSave} disabled={!canSave}
-                className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold text-white transition hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+              <label className="flex items-center gap-2 rounded-xl px-3 py-2 sm:hidden"
+                style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.10)" }}>
+                <Calendar size={14} color="#5FAEB3" />
+                <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
+                  className="w-full bg-transparent text-sm font-medium text-white outline-none [color-scheme:dark]" />
+              </label>
+              <button onClick={() => void handleSave()} disabled={!canSave || saveBusy}
+                className="flex w-full items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold text-white transition hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto"
                 style={{ background: C.teal, boxShadow: "0 2px 10px rgba(0,156,164,0.35)" }}>
-                <Save size={15} /> Enregistrer
+                {saveBusy ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+                {saveBusy ? "Enregistrement..." : "Enregistrer la fiche"}
               </button>
             </div>
           </div>
@@ -806,15 +908,41 @@ export default function FicheConsultationUWI({
                   placeholder="Ex. Avis hématologie si anémie confirmée" />
               </div>
             )}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div>
-                <Label>Prochain RDV</Label>
-                <Input type="date" value={c.suiviRdv} onChange={set("suiviRdv")} />
+            <div className="rounded-2xl px-4 py-4" style={{ background: "#F5FAFE", border: "1px solid #DCEAF6" }}>
+              <div className="mb-3 flex items-center gap-2">
+                <span className="rounded-lg px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em]"
+                  style={{ background: "#E6F4FF", color: "#1E5A92" }}>
+                  Suivi post-consultation
+                </span>
               </div>
-              <div>
-                <Label pending={pendingKeys.has("suiviConsignes")}>Consignes de suivi</Label>
-                <Input value={c.suiviConsignes} onChange={set("suiviConsignes")} pending={pendingKeys.has("suiviConsignes")}
-                  placeholder="Ex. Reconsulter si aggravation" />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <Label>Prochain rendez-vous</Label>
+                  <Input type="date" value={c.suiviRdv} onChange={set("suiviRdv")} />
+                  <div className="mt-2">
+                    <Label>Heure du prochain rendez-vous</Label>
+                    <Input type="time" value={followupBookingTime} onChange={setFollowupBookingTime} />
+                  </div>
+                </div>
+                <div>
+                  <Label pending={pendingKeys.has("suiviConsignes")}>Consignes de suivi</Label>
+                  <Input value={c.suiviConsignes} onChange={set("suiviConsignes")} pending={pendingKeys.has("suiviConsignes")}
+                    placeholder="Ex. Reconsulter si aggravation" />
+                  <label className="mt-3 flex items-start gap-2 rounded-xl px-3 py-2 text-[12px] font-semibold"
+                    style={{ background: C.tealGhost, border: "1px solid #D6EEEF", color: C.tealDark }}>
+                    <input
+                      type="checkbox"
+                      checked={createFollowupBooking}
+                      disabled={!c.suiviRdv}
+                      onChange={(e) => setCreateFollowupBooking(e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    Créer ce rendez-vous directement dans l'agenda si aucun rendez-vous n'est déjà lié à cette consultation.
+                  </label>
+                  <p className="mt-1 text-[11px] font-medium" style={{ color: C.faint }}>
+                    Si la création échoue, la fiche consultation reste enregistrée.
+                  </p>
+                </div>
               </div>
             </div>
           </div>
@@ -860,22 +988,20 @@ export default function FicheConsultationUWI({
           </div>
         </section>
 
-        {/* ================= Aperçu API ================= */}
-        {saved && (
-          <div className="mt-5 overflow-hidden rounded-2xl" style={{ background: C.card, border: `1px solid ${C.line}` }}>
-            <button onClick={() => setShowJson((s) => !s)}
-              className="flex w-full items-center justify-between px-5 py-3.5 text-sm font-bold" style={{ color: C.navy }}>
-              Données enregistrées · aperçu API
-              {showJson ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-            </button>
-            {showJson && (
-              <pre className="overflow-x-auto px-5 py-4 text-xs leading-relaxed"
-                style={{ borderTop: `1px solid ${C.line}`, color: C.muted, background: "#FBFCFC" }}>
-                {JSON.stringify(saved, null, 2)}
-              </pre>
-            )}
+        {saveError ? (
+          <div className="mt-5 flex items-start gap-2 rounded-2xl px-4 py-3 text-[13px] font-semibold leading-relaxed sm:text-sm"
+            style={{ background: C.redSoft, border: "1px solid #FDA29B", color: C.red }}>
+            <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+            <span>{saveError}</span>
           </div>
-        )}
+        ) : null}
+        {saveNotice ? (
+          <div className="mt-5 flex items-start gap-2 rounded-2xl px-4 py-3 text-[13px] font-semibold leading-relaxed sm:text-sm"
+            style={{ background: C.tealSoft, border: "1px solid #BFE9EC", color: C.tealDark }}>
+            <Check size={15} className="mt-0.5 shrink-0" />
+            <span>{saveNotice}</span>
+          </div>
+        ) : null}
 
         <p className="mt-6 pb-4 text-center text-[11px]" style={{ color: C.faint }}>
           UWI · les données de consultation restent dans le dossier du cabinet
@@ -1280,7 +1406,7 @@ function ModeBtn({ active, onClick, children }) {
 
 function Card({ icon, title, subtitle, right, tinted, children }) {
   return (
-    <section className="mb-4 rounded-3xl px-6 py-5" style={{ background: tinted ? "#FBFDFD" : C.card, border: `1px solid ${C.line}`, boxShadow: C.shadow }}>
+    <section className="mb-3 rounded-3xl px-4 py-4 sm:mb-4 sm:px-6 sm:py-5" style={{ background: tinted ? "#FBFDFD" : C.card, border: `1px solid ${C.line}`, boxShadow: C.shadow }}>
       <div className="mb-4 flex items-start justify-between gap-3">
         <div className="flex items-center gap-2.5">
           <span className="flex h-8 w-8 items-center justify-center rounded-xl" style={{ background: C.tealSoft, color: C.tealDark }}>{icon}</span>
@@ -1298,7 +1424,7 @@ function Card({ icon, title, subtitle, right, tinted, children }) {
 
 function Label({ children, required, noMargin, icon, pending }) {
   return (
-    <p className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-[0.14em] ${noMargin ? "" : "mb-1.5"}`} style={{ color: C.muted }}>
+    <p className={`flex items-center gap-1 text-[11px] font-bold uppercase tracking-[0.14em] sm:text-[10.5px] ${noMargin ? "" : "mb-1.5"}`} style={{ color: C.muted }}>
       {icon}
       {children}
       {required && <span style={{ color: C.teal }}>*</span>}
@@ -1318,7 +1444,7 @@ function pendingStyle(pending) {
 function TextArea({ value, onChange, pending, ...rest }) {
   return (
     <textarea value={value} onChange={(e) => onChange(e.target.value)}
-      className="w-full resize-y rounded-xl border px-3.5 py-2.5 text-sm leading-relaxed outline-none transition placeholder:text-slate-300"
+      className="w-full resize-y rounded-xl border px-3.5 py-2.5 text-[16px] leading-relaxed outline-none transition placeholder:text-slate-300 sm:text-sm"
       style={pendingStyle(pending)}
       onFocus={(e) => { e.currentTarget.style.borderColor = C.teal; e.currentTarget.style.boxShadow = C.focusRing; e.currentTarget.style.background = "#FFFFFF"; }}
       onBlur={(e) => { const s = pendingStyle(pending); e.currentTarget.style.borderColor = s.borderColor; e.currentTarget.style.boxShadow = s.boxShadow || "none"; e.currentTarget.style.background = s.background; }}
@@ -1329,7 +1455,7 @@ function TextArea({ value, onChange, pending, ...rest }) {
 function Input({ value, onChange, type = "text", pending, ...rest }) {
   return (
     <input type={type} value={value} onChange={(e) => onChange(e.target.value)}
-      className="w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition placeholder:text-slate-300"
+      className="w-full rounded-xl border px-3.5 py-2.5 text-[16px] outline-none transition placeholder:text-slate-300 sm:text-sm"
       style={pendingStyle(pending)}
       onFocus={(e) => { e.currentTarget.style.borderColor = C.teal; e.currentTarget.style.boxShadow = C.focusRing; e.currentTarget.style.background = "#FFFFFF"; }}
       onBlur={(e) => { const s = pendingStyle(pending); e.currentTarget.style.borderColor = s.borderColor; e.currentTarget.style.boxShadow = s.boxShadow || "none"; e.currentTarget.style.background = s.background; }}
