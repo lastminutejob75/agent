@@ -96,6 +96,7 @@ export function isTenantUnauthorized(err) {
 const MSG_BACKEND_UNREACHABLE = import.meta.env.DEV
   ? "Impossible de joindre le serveur. Vérifiez VITE_UWI_API_BASE_URL, CORS et que le backend est démarré."
   : "Impossible de joindre le serveur pour le moment. Vérifiez votre connexion puis réessayez.";
+const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
 
 function tenantAuthHeaders(extra = {}) {
   const headers = { ...extra };
@@ -161,6 +162,14 @@ function buildCandidateApiBases() {
   return out;
 }
 
+function normalizeTimeoutMs(timeoutMs) {
+  // Timeout global par défaut pour éviter les requêtes bloquées sans fin.
+  if (timeoutMs == null) return DEFAULT_REQUEST_TIMEOUT_MS;
+  const parsed = Number(timeoutMs);
+  if (!Number.isFinite(parsed)) return DEFAULT_REQUEST_TIMEOUT_MS;
+  return Math.max(0, Math.trunc(parsed));
+}
+
 async function request(path, { method = "GET", body, admin: _admin = false, tenant: _tenant = false, leadToken = "", signal, timeoutMs } = {}) {
   const pathPart = path.startsWith("/") ? path : `/${path}`;
   const baseCandidates = buildCandidateApiBases();
@@ -178,11 +187,12 @@ async function request(path, { method = "GET", body, admin: _admin = false, tena
   let timeoutId;
   let timeoutController;
   let fetchSignal = signal;
-  if (timeoutMs && timeoutMs > 0 && !signal) {
+  const effectiveTimeoutMs = normalizeTimeoutMs(timeoutMs);
+  if (effectiveTimeoutMs > 0 && !signal) {
     timeoutController = new AbortController();
     fetchSignal = timeoutController.signal;
     if (typeof window !== "undefined") {
-      timeoutId = window.setTimeout(() => timeoutController.abort(), timeoutMs);
+      timeoutId = window.setTimeout(() => timeoutController.abort(), effectiveTimeoutMs);
     }
   }
 
@@ -389,6 +399,7 @@ export const api = {
       method: "POST",
       body,
       tenant: true,
+      timeoutMs: 20000,
     }),
   tenantDownloadPatientConsultationPdf: (phone, consultationId) =>
     `${BASE_URL}/api/tenant/patients/${encodeURIComponent(phone)}/consultations/${encodeURIComponent(String(consultationId || ""))}/pdf`,
@@ -634,7 +645,7 @@ export const api = {
       tenant: true,
     }),
   tenantCreateAgendaBooking: (body) =>
-    request("/api/tenant/agenda/bookings", { method: "POST", body, tenant: true }),
+    request("/api/tenant/agenda/bookings", { method: "POST", body, tenant: true, timeoutMs: 15000 }),
   tenantGetFaq: () => request("/api/tenant/faq", { tenant: true }),
   tenantUpdateFaq: (faq) =>
     request("/api/tenant/faq", { method: "PUT", body: faq, tenant: true }),
