@@ -2312,46 +2312,6 @@ export default function PatientDashboardPage() {
     setAgendaRefreshNonce((n) => n + 1);
   }, []);
 
-  const duplicateLatestConsultation = useCallback(() => {
-    if (!patientConsultations.length) {
-      notify("Aucune consultation précédente à dupliquer.");
-      return;
-    }
-    const latest = patientConsultations[0];
-    const source = latest.source || {};
-    const vitals = source.vitals && typeof source.vitals === "object"
-      ? (source.vitals as Record<string, unknown>)
-      : {};
-    const examens = Array.isArray(source.examens_demandes)
-      ? source.examens_demandes
-          .map((item) => String(item || "").trim())
-          .filter(Boolean)
-      : [];
-    openConsultationModal({
-      date: new Date().toISOString().slice(0, 10),
-      motif: String(source.motif || latest.motif || "Consultation").trim() || "Consultation",
-      appointmentId: "",
-      sourceConsultationId: String(latest.consultationId || ""),
-      prefill: {
-        mode_consultation: source.mode_consultation === "complete" ? "complete" : "rapide",
-        anamnese: String(source.anamnese || ""),
-        etat_general: String(source.etat_general || ""),
-        examen_physique: String(source.examen_physique || ""),
-        constantes: vitals,
-        impression_clinique: String(source.impression_clinique || ""),
-        cim10: String(source.cim10 || ""),
-        examens_complementaires: examens,
-        prescription: String(source.prescription || ""),
-        orientation: String(source.orientation || ""),
-        suivi_consignes: String(source.suivi_consignes || ""),
-        ia_resume: String(source.ia_resume || ""),
-        ia_contexte_patient: String(source.ia_contexte_patient || ""),
-        note_praticien: String(source.note_praticien || ""),
-      },
-    });
-    notify("Nouvelle fiche préremplie depuis la dernière consultation.");
-  }, [patientConsultations, notify, openConsultationModal]);
-
   const downloadConsultationPdf = useCallback(async (item: PatientConsultationRow) => {
     if (!tenantPatientPhone) {
       notify("Sélectionnez d'abord un patient.", { sticky: true });
@@ -2459,6 +2419,46 @@ export default function PatientDashboardPage() {
     });
     setModal("createConsultation");
   }, [tenantPatientPhone, notify]);
+
+  const duplicateLatestConsultation = useCallback(() => {
+    if (!patientConsultations.length) {
+      notify("Aucune consultation précédente à dupliquer.");
+      return;
+    }
+    const latest = patientConsultations[0];
+    const source = latest.source || {};
+    const vitals = source.vitals && typeof source.vitals === "object"
+      ? (source.vitals as Record<string, unknown>)
+      : {};
+    const examens = Array.isArray(source.examens_demandes)
+      ? source.examens_demandes
+          .map((item) => String(item || "").trim())
+          .filter(Boolean)
+      : [];
+    openConsultationModal({
+      date: new Date().toISOString().slice(0, 10),
+      motif: String(source.motif || latest.motif || "Consultation").trim() || "Consultation",
+      appointmentId: "",
+      sourceConsultationId: String(latest.consultationId || ""),
+      prefill: {
+        mode_consultation: source.mode_consultation === "complete" ? "complete" : "rapide",
+        anamnese: String(source.anamnese || ""),
+        etat_general: String(source.etat_general || ""),
+        examen_physique: String(source.examen_physique || ""),
+        constantes: vitals,
+        impression_clinique: String(source.impression_clinique || ""),
+        cim10: String(source.cim10 || ""),
+        examens_complementaires: examens,
+        prescription: String(source.prescription || ""),
+        orientation: String(source.orientation || ""),
+        suivi_consignes: String(source.suivi_consignes || ""),
+        ia_resume: String(source.ia_resume || ""),
+        ia_contexte_patient: String(source.ia_contexte_patient || ""),
+        note_praticien: String(source.note_praticien || ""),
+      },
+    });
+    notify("Nouvelle fiche préremplie depuis la dernière consultation.");
+  }, [patientConsultations, notify, openConsultationModal]);
 
   const submitConsultationForm = useCallback(async (draft: Record<string, unknown>) => {
     if (!tenantPatientPhone) {
