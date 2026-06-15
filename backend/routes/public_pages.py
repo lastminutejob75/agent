@@ -775,9 +775,14 @@ def _load_public_slugs() -> List[str]:
 
 
 @router.get("/practitioner/{slug}")
-async def get_public_practitioner(slug: str, requireExists: bool = Query(False)) -> Dict[str, Any]:
+async def get_public_practitioner(
+    slug: str,
+    background_tasks: BackgroundTasks,
+    requireExists: bool = Query(False),
+) -> Dict[str, Any]:
     practitioner = _try_fetch_practitioner(slug)
     if practitioner:
+        background_tasks.add_task(prewarm_slots_for_slug, slug, 12)
         return {**practitioner, "source": "tenant"}
     if slug == DEMO_PRACTITIONER["slug"]:
         return {**_demo_practitioner(slug), "source": "demo"}
@@ -1411,8 +1416,24 @@ def _peek_public_slots_payload(tenant_id: int, slug: str, safe_count: int) -> Op
     return None
 
 
+def _pending_public_slots_payload(slug: str) -> Dict[str, Any]:
+    return {
+        "slug": slug,
+        "slots": [],
+        "source": "agenda",
+        "calendar": "pending",
+        "pending": True,
+        "asyncLoading": True,
+    }
+
+
 @router.get("/slots/{slug}")
-async def get_public_slots(slug: str, count: int = 6) -> Dict[str, Any]:
+async def get_public_slots(
+    slug: str,
+    background_tasks: BackgroundTasks,
+    count: int = 6,
+    fast: bool = Query(False, description="Répond depuis le cache et préchauffe l'agenda en arrière-plan"),
+) -> Dict[str, Any]:
     import asyncio
 
     safe_count = max(1, min(int(count or 6), 24))
@@ -1428,6 +1449,10 @@ async def get_public_slots(slug: str, count: int = 6) -> Dict[str, Any]:
         )
         if cached_out and cached_out.get("slots"):
             return _slots_response(cached_out)
+
+        if fast:
+            background_tasks.add_task(prewarm_slots_for_slug, slug, safe_count)
+            return _slots_response(_pending_public_slots_payload(slug))
 
         out = await asyncio.wait_for(
             asyncio.to_thread(_fetch_public_slots_payload, int(tenant_id), slug, safe_count),

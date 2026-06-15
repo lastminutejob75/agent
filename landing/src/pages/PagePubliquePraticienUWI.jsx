@@ -172,6 +172,7 @@ const safeArray = (value) => (Array.isArray(value) ? value : []);
 
 const SLOTS_SESSION_PREFIX = "uwi-public-slots:";
 const SLOTS_SESSION_TTL_MS = 10 * 60 * 1000;
+const PUBLIC_SLOTS_ASYNC_RETRY_DELAYS_MS = [1200, 2200, 4000];
 
 function readSessionSlots(slug) {
   if (typeof window === "undefined" || !slug) return null;
@@ -1670,10 +1671,12 @@ export default function PagePubliquePraticienUWI() {
 
   useEffect(() => {
     let cancelled = false;
+    let retryTimer = null;
+    let retryAttempt = 0;
     const sessionCached = readSessionSlots(slug);
     const hasSessionCache = Boolean(sessionCached?.slots?.length);
 
-    setSlots(hasSessionCache ? filterFuturePublicSlots(sessionCached.slots) : filterFuturePublicSlots(buildDefaultDemoSlots()));
+    setSlots(hasSessionCache ? filterFuturePublicSlots(sessionCached.slots) : []);
     setSlotsMeta({
       source: sessionCached?.source || null,
       calendar: sessionCached?.calendar || null,
@@ -1714,24 +1717,36 @@ export default function PagePubliquePraticienUWI() {
       }
     }
 
-    async function loadSlots() {
+    async function loadSlots({ fast = true } = {}) {
+      const query = fast ? "count=8&fast=1" : "count=8";
+      let keepLoading = false;
       try {
-        const slotData = await fetchJson(`/api/public/slots/${encodeURIComponent(slug)}?count=8`);
+        const slotData = await fetchJson(`/api/public/slots/${encodeURIComponent(slug)}?${query}`);
         if (cancelled) return;
         const freshSlots = filterFuturePublicSlots(slotData.slots);
+        const pending = Boolean(slotData?.pending || slotData?.asyncLoading);
         if (freshSlots.length) {
           setSlots(freshSlots);
           setSlotsMeta({ source: slotData.source || null, calendar: slotData.calendar || null });
           writeSessionSlots(slug, { ...slotData, slots: freshSlots });
+          retryAttempt = 0;
         } else if (safeArray(slotData.slots).length) {
           setSlotsMeta({ source: slotData.source || null, calendar: slotData.calendar || null });
+        } else if (pending && retryAttempt < PUBLIC_SLOTS_ASYNC_RETRY_DELAYS_MS.length) {
+          keepLoading = true;
+          setSlotsRefreshing(true);
+          const delay = PUBLIC_SLOTS_ASYNC_RETRY_DELAYS_MS[retryAttempt++];
+          retryTimer = window.setTimeout(() => {
+            void loadSlots({ fast: true });
+          }, delay);
+          return;
         }
       } catch {
         // Conserve les créneaux affichés (cache session ou démo).
       } finally {
         if (!cancelled) {
-          setSlotsLoading(false);
-          setSlotsRefreshing(false);
+          setSlotsLoading(keepLoading);
+          if (!keepLoading) setSlotsRefreshing(false);
         }
       }
     }
@@ -1752,6 +1767,7 @@ export default function PagePubliquePraticienUWI() {
 
     return () => {
       cancelled = true;
+      if (retryTimer) window.clearTimeout(retryTimer);
     };
   }, [slug]);
 
@@ -2101,7 +2117,7 @@ export default function PagePubliquePraticienUWI() {
 
     const refreshAgendaSlotsForChat = async () => {
       try {
-        const data = await fetchJson(`/api/public/slots/${encodeURIComponent(slug)}?count=8`);
+        const data = await fetchJson(`/api/public/slots/${encodeURIComponent(slug)}?count=8&fast=1`);
         const fresh = filterFuturePublicSlots(safeArray(data?.slots));
         if (!fresh.length || data?.source !== "agenda") return false;
         setSlots(fresh);

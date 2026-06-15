@@ -38,6 +38,9 @@ logger = logging.getLogger(__name__)
 _TOOL_RESULT_CACHE = {}
 _TOOL_RESULT_CACHE_LOCK = threading.Lock()
 _TOOL_RESULT_CACHE_TTL_S = 120
+_VOICE_SLOTS_PREWARM_LOCK = threading.Lock()
+_VOICE_SLOTS_PREWARM_LAST_AT = {}
+_VOICE_SLOTS_PREWARM_TTL_S = 90
 
 
 def _tool_result_cache_get(tool_call_id: str):
@@ -150,7 +153,33 @@ def _get_or_resume_voice_session(tenant_id: int, call_id: str):
             logger.warning("[CALL_RESUME_WARN] pg_down/err=%s", e, exc_info=True)
     if session is None:
         session = ENGINE.session_store.get_or_create(call_id)
+    _prewarm_voice_slots_cache(int(tenant_id))
     return session
+
+
+def _prewarm_voice_slots_cache(tenant_id: int) -> None:
+    """Précharge les créneaux vocaux en arrière-plan, sans ralentir le webhook Vapi."""
+    now = time.time()
+    with _VOICE_SLOTS_PREWARM_LOCK:
+        last_at = float(_VOICE_SLOTS_PREWARM_LAST_AT.get(int(tenant_id), 0) or 0)
+        if now - last_at < _VOICE_SLOTS_PREWARM_TTL_S:
+            return
+        _VOICE_SLOTS_PREWARM_LAST_AT[int(tenant_id)] = now
+
+    def _run() -> None:
+        try:
+            from backend import tools_booking
+            from backend.session import Session
+
+            for pref in (None, "matin", "après-midi"):
+                s = Session(conv_id=f"__voice_prewarm_{tenant_id}_{pref or 'any'}__")
+                s.tenant_id = int(tenant_id)
+                s.channel = "vocal"
+                tools_booking.get_slots_for_display(limit=12, pref=pref, session=s)
+        except Exception as exc:
+            logger.debug("voice slots prewarm failed tenant_id=%s: %s", tenant_id, exc, exc_info=True)
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def _looks_like_booking_request(text: str) -> bool:
@@ -1827,6 +1856,7 @@ async def vapi_tool(request: Request):
                 seg["t_tenant_ms"] = int((_time.monotonic() - _s0) * 1000)
 
                 session.tenant_id = tid
+                _prewarm_voice_slots_cache(int(tid))
                 if patient_name:
                     session.qualif_data.name = patient_name
                 if motif:

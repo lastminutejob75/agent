@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from backend.booking_origin import PUBLIC_PAGE
@@ -65,7 +65,7 @@ def _public_reasons(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 @router.get("/{slug}")
-def public_get_praticien(slug: str) -> Dict[str, Any]:
+def public_get_praticien(slug: str, background_tasks: BackgroundTasks) -> Dict[str, Any]:
     """
     Retourne la fiche publique du cabinet/praticien.
     Pas d'auth, pas d'infos sensibles (pas de billing, pas de Vapi, etc.).
@@ -79,6 +79,12 @@ def public_get_praticien(slug: str) -> Dict[str, Any]:
         raise HTTPException(404, "Praticien introuvable")
 
     remember_slug_tenant(safe, int(tenant_id))
+    try:
+        from backend.routes.public_pages import prewarm_slots_for_slug
+
+        background_tasks.add_task(prewarm_slots_for_slug, safe, 12)
+    except Exception:
+        logger.debug("public praticien slots prewarm skipped slug=%s", safe, exc_info=True)
     bundle = get_public_profile_bundle(tenant_id)
     profile = bundle.get("profile") or {}
     params = bundle.get("params") or {}

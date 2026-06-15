@@ -278,37 +278,16 @@ export default function AppDashboard() {
       });
 
     const todayKey = todayISO();
-    api.tenantGetAgenda("?upcoming_days=30&lightweight=1", { timeoutMs: 18000 })
-      .then(async (value) => {
+    api.tenantGetAgenda("?upcoming_days=14", { lightweight: true, skipGoogle: true, timeoutMs: 10000 })
+      .then((value) => {
         if (cancelledRef?.cancelled) return;
-        const primarySlots = Array.isArray(value?.slots) ? value.slots : [];
-        if (primarySlots.length > 0) {
-          setAgenda(primarySlots);
-          return;
-        }
-        try {
-          const fallback = await api.tenantGetAgenda("?upcoming_days=30", { timeoutMs: 25000 });
-          if (cancelledRef?.cancelled) return;
-          const fallbackSlots = Array.isArray(fallback?.slots) ? fallback.slots : [];
-          setAgenda(fallbackSlots);
-        } catch {
-          if (cancelledRef?.cancelled) return;
-          setAgenda(primarySlots);
-        }
+        setAgenda(Array.isArray(value?.slots) ? value.slots : []);
       })
-      .catch(async () => {
-        if (cancelledRef?.cancelled) return;
-        try {
-          const fallback = await api.tenantGetAgenda("?upcoming_days=30", { timeoutMs: 25000 });
-          if (cancelledRef?.cancelled) return;
-          setAgenda(Array.isArray(fallback?.slots) ? fallback.slots : []);
-        } catch {
-          if (cancelledRef?.cancelled) return;
-          setAgenda([]);
-        }
+      .catch(() => {
+        if (!cancelledRef?.cancelled) setAgenda([]);
       });
 
-    api.tenantGetAgenda(`?date=${encodeURIComponent(todayKey)}&lightweight=1`)
+    api.tenantGetAgenda(`?date=${encodeURIComponent(todayKey)}`, { lightweight: true, skipGoogle: true })
       .then((value) => {
         if (cancelledRef?.cancelled) return;
         setTodayAgenda(Array.isArray(value?.slots) ? value.slots : []);
