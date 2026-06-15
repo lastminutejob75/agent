@@ -608,10 +608,20 @@ function formatChatSlotsProposalMessage(offers) {
   return `Créneaux disponibles :\n${lines}\n\nRépondez par le numéro (1, 2 ou 3), ou cliquez sur un créneau ci-dessous.`;
 }
 
-function hasBookableAgendaSlots(apiSlots, meta) {
-  if (meta?.source !== "agenda") return false;
+function isBookablePublicSlot(slot) {
+  if (!slot) return false;
+  const startIso = String(slot?.startIso || "").trim();
+  if (startIso) return true;
+  const rawId = String(slot?.id || "").trim();
+  return /^\d+$/.test(rawId);
+}
+
+function hasBookableAgendaSlots(apiSlots) {
   const list = filterFuturePublicSlots(apiSlots);
-  return list.some((slot) => String(slot?.startIso || "").trim());
+  if (!list.length) return false;
+  // Ne pas bloquer la proposition uniquement sur `meta.source`:
+  // certaines réponses utiles arrivent avec une source transitoire/cache.
+  return list.some((slot) => isBookablePublicSlot(slot));
 }
 
 function isSlotsLookupPlaceholder(text) {
