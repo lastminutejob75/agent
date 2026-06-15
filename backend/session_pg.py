@@ -390,8 +390,42 @@ _WEB_CONV_TENANT_CACHE: Dict[str, int] = {}
 _WEB_CACHE_MAX = 10000
 
 
+# Évite de retenter CREATE TABLE à chaque requête web : une fois la table
+# vérifiée comme existante (ou inexistante mais le user PG n'a pas les droits
+# CREATE), on cache le résultat pour la durée de vie du process.
+_WEB_SESSIONS_TABLE_CHECKED = False
+
+
 def _pg_ensure_web_sessions_table(conn) -> None:
-    """Crée la table web_sessions si absente (idempotent). Rollback sur erreur pour éviter InFailedSqlTransaction."""
+    """Vérifie/crée la table web_sessions (idempotent, caché au niveau process).
+
+    Optimisation : on consulte d'abord information_schema pour savoir si la
+    table existe déjà. Si oui, on cache le flag et on n'essaie jamais le
+    CREATE TABLE — ça évite la stack trace InsufficientPrivilege quand le
+    user PG n'a pas le droit CREATE sur le schema public.
+    """
+    global _WEB_SESSIONS_TABLE_CHECKED
+    if _WEB_SESSIONS_TABLE_CHECKED:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name = 'web_sessions'
+                LIMIT 1
+                """
+            )
+            exists = cur.fetchone() is not None
+        if exists:
+            _WEB_SESSIONS_TABLE_CHECKED = True
+            return
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
     try:
         cur = conn.cursor()
         cur.execute("""
@@ -404,11 +438,13 @@ def _pg_ensure_web_sessions_table(conn) -> None:
             )
         """)
         conn.commit()
+        _WEB_SESSIONS_TABLE_CHECKED = True
     except Exception:
         try:
             conn.rollback()
         except Exception:
             pass
+        _WEB_SESSIONS_TABLE_CHECKED = True
         raise
 
 

@@ -450,8 +450,18 @@ async def web_chat_stream(conv_id: str, *, expected_tenant_id: Optional[int] = N
 
     async def gen():
         q = STREAMS[conv_id]
+        # Sans keepalive, les proxys (Railway edge, CDN, navigateur) ferment la
+        # connexion SSE après ~30-60s d'inactivité. L'EventSource client se
+        # reconnecte alors automatiquement et martèle le backend en boucle.
+        # On envoie une ligne de commentaire SSE (préfixe ":") toutes les 15s :
+        # ignorée silencieusement par EventSource, mais maintient le canal vivant.
+        keepalive_interval = 15.0
         while True:
-            item = await q.get()
+            try:
+                item = await asyncio.wait_for(q.get(), timeout=keepalive_interval)
+            except asyncio.TimeoutError:
+                yield ": keepalive\n\n"
+                continue
             if item is None:
                 break
             yield f"data: {item}\n\n"
