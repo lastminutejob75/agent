@@ -857,6 +857,80 @@ function PatientProfileTextArea({
   );
 }
 
+function PatientMedicalContextPreview({
+  patient,
+  compact = false,
+}: {
+  patient: Record<string, unknown> | null;
+  compact?: boolean;
+}) {
+  const read = (key: string) => String(patient?.[key] || "").trim();
+  const allergy = read("allergies");
+  const treatment = read("traitements");
+  const attention = read("points_attention");
+  const risks = read("facteurs_risque");
+  const summary = read("synthese_medicale");
+  const last = read("dernier_contexte_consultation");
+  const hasContext = Boolean(allergy || treatment || attention || risks || summary || last);
+  const rows = [
+    { label: "Allergies", value: allergy || "Non renseignées", tone: allergy ? "red" : "muted" },
+    { label: "Traitements", value: treatment || "Aucun traitement renseigné", tone: treatment ? "teal" : "muted" },
+    { label: "Points d'attention", value: attention || risks || "Aucun point d'attention renseigné", tone: attention || risks ? "amber" : "muted" },
+  ];
+  const toneClass = {
+    red: "border-red-200 bg-red-50 text-red-950",
+    amber: "border-amber-200 bg-amber-50 text-amber-950",
+    teal: "border-[#BFE9EC] bg-[#F0FAFB] text-[#0A4F55]",
+    muted: "border-[#E2EAF4] bg-white text-[#334155]",
+  };
+  return (
+    <section className={cx(
+      "overflow-hidden rounded-[28px] border border-[#DDE7F1] bg-white shadow-[0_16px_40px_rgba(15,23,42,0.08)]",
+      compact ? "p-4" : "p-5",
+    )}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#009CA4]">Contexte médical</p>
+          <h2 className={cx("font-black tracking-[-0.02em] text-[#0A1628]", compact ? "text-xl" : "text-2xl")}>
+            Ce qu'il faut savoir avant la consultation
+          </h2>
+          <p className="mt-1 max-w-2xl text-sm font-semibold leading-6 text-[#64748B]">
+            Résumé stable, alertes et derniers éléments récupérés depuis les fiches de consultation.
+          </p>
+        </div>
+        <span className={cx(
+          "rounded-full px-3 py-1.5 text-xs font-black",
+          hasContext ? "bg-[#E9FAFC] text-[#007E8C]" : "bg-[#F1F5F9] text-[#64748B]",
+        )}>
+          {hasContext ? "Contexte renseigné" : "À compléter"}
+        </span>
+      </div>
+      <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
+        {rows.map((row) => (
+          <div key={row.label} className={cx("rounded-2xl border px-4 py-3", toneClass[row.tone as keyof typeof toneClass])}>
+            <div className="text-[10px] font-black uppercase tracking-[0.14em] opacity-70">{row.label}</div>
+            <div className="mt-1.5 text-sm font-black leading-6">{row.value}</div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <div className="rounded-2xl border border-[#E2EAF4] bg-[#F8FBFD] px-4 py-3">
+          <div className="text-[10px] font-black uppercase tracking-[0.14em] text-[#64748B]">Synthèse médicale</div>
+          <p className="mt-2 text-sm font-semibold leading-7 text-[#0A1628]">
+            {summary || "Aucune synthèse médicale stable pour l'instant."}
+          </p>
+        </div>
+        <div className="rounded-2xl border border-[#E2EAF4] bg-[#F8FBFD] px-4 py-3">
+          <div className="text-[10px] font-black uppercase tracking-[0.14em] text-[#64748B]">Dernier contexte</div>
+          <p className="mt-2 text-sm font-semibold leading-7 text-[#0A1628]">
+            {last || "Aucune consultation enregistrée n'a encore enrichi ce contexte."}
+          </p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function HeaderAction({
   children,
   icon,
@@ -4435,8 +4509,22 @@ export default function PatientDashboardPage() {
                   )}
                 </section>
 
+                <PatientMedicalContextPreview patient={patientCabinetRow} />
+
                 <section className="rounded-[28px] bg-gradient-to-br from-[#062E53] via-[#023E63] to-[#007B88] p-6 text-white shadow-[0_20px_45px_rgba(0,66,90,0.22)]">
-                  <h2 className="mb-5 text-2xl font-black">☆ Contexte patient</h2>
+                  <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-[0.18em] text-[#66DDE2]">Résumé & suivi</p>
+                      <h2 className="mt-1 text-2xl font-black">Contexte patient</h2>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setModal("profile")}
+                      className="rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs font-black text-white transition hover:bg-white/15"
+                    >
+                      Compléter le contexte
+                    </button>
+                  </div>
                   <div className="grid grid-cols-2 gap-6">
                     <div>
                       <PatientContextSummary
@@ -4746,6 +4834,9 @@ export default function PatientDashboardPage() {
             </p>
           ) : urlPatientHero ? (
             <>
+              <div className="mb-5">
+                <PatientMedicalContextPreview patient={patientCabinetRow} compact />
+              </div>
               <div className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
                 <label className="sm:col-span-2 rounded-2xl bg-[#F8FBFD] p-4">
                   <div className="mb-1 text-xs font-bold text-[#7D8CA5]">Nom affiché</div>

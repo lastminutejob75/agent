@@ -508,6 +508,7 @@ function MobileNextAppointment({
 
 function MobileContextPatient({
   phone,
+  patient,
   summaryRefreshNonce,
   notes,
   notesLoading,
@@ -524,6 +525,7 @@ function MobileContextPatient({
   onToggleNoteExpanded,
 }: {
   phone: string;
+  patient: Record<string, unknown> | null;
   summaryRefreshNonce: number;
   notes: PatientNote[];
   notesLoading: boolean;
@@ -539,9 +541,27 @@ function MobileContextPatient({
   onSaveNoteEdit: (id: number) => void;
   onToggleNoteExpanded: (id: number) => void;
 }) {
+  const allergy = String(patient?.allergies || "").trim();
+  const treatment = String(patient?.traitements || "").trim();
+  const attention = String(patient?.points_attention || patient?.facteurs_risque || "").trim();
+  const summary = String(patient?.synthese_medicale || "").trim();
   return (
     <section className="mb-3 rounded-[24px] bg-gradient-to-br from-[#06213E] via-[#003B63] to-[#007B88] p-[18px] text-white shadow-[0_12px_28px_rgba(0,59,99,0.22)]">
-      <h2 className="mb-4 text-[22px] font-black">☆ Contexte patient</h2>
+      <div className="mb-4">
+        <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#66DDE2]">À retenir</p>
+        <h2 className="mt-1 text-[22px] font-black">Contexte patient</h2>
+      </div>
+      <div className="mb-4 grid grid-cols-1 gap-2">
+        <MobileMedicalChip label="Allergies" value={allergy || "Non renseignées"} tone={allergy ? "red" : "muted"} />
+        <MobileMedicalChip label="Traitements" value={treatment || "Aucun traitement renseigné"} tone={treatment ? "teal" : "muted"} />
+        <MobileMedicalChip label="Attention" value={attention || "Aucun point d'attention"} tone={attention ? "amber" : "muted"} />
+      </div>
+      {summary ? (
+        <div className="mb-4 rounded-2xl border border-white/15 bg-white/10 p-3">
+          <div className="text-[10px] font-black uppercase tracking-[0.14em] text-white/60">Synthèse médicale</div>
+          <p className="mt-1.5 text-sm font-semibold leading-6 text-white/92">{summary}</p>
+        </div>
+      ) : null}
       <PatientContextSummary
         key={phone || "no-patient"}
         phone={phone}
@@ -634,6 +654,21 @@ function MobileContextPatient({
         </div>
       )}
     </section>
+  );
+}
+
+function MobileMedicalChip({ label, value, tone }: { label: string; value: string; tone: "red" | "teal" | "amber" | "muted" }) {
+  const classes = {
+    red: "border-red-300/40 bg-red-400/15 text-red-50",
+    teal: "border-cyan-200/30 bg-cyan-300/15 text-cyan-50",
+    amber: "border-amber-200/40 bg-amber-300/15 text-amber-50",
+    muted: "border-white/15 bg-white/10 text-white/80",
+  };
+  return (
+    <div className={cx("rounded-2xl border px-3 py-2.5", classes[tone])}>
+      <div className="text-[10px] font-black uppercase tracking-[0.14em] opacity-70">{label}</div>
+      <div className="mt-1 text-sm font-black leading-5">{value}</div>
+    </div>
   );
 }
 
@@ -949,6 +984,7 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
           />
           <MobileContextPatient
             phone={tenantPatientPhone}
+            patient={patientCabinetRow}
             summaryRefreshNonce={summaryRefreshNonce}
             notes={patientNotes}
             notesLoading={notesLoading}

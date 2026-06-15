@@ -571,10 +571,13 @@ export default function FicheConsultationUWI({
 
   const isComplete = mode === "complete";
   const draftCount = Object.keys(draft).length;
+  const hasCriticalContext = Boolean(
+    patient.allergies || patient.traitements || patient.points_attention || patient.facteurs_risque,
+  );
 
   return (
-    <div className="min-h-screen w-full px-4 py-6" style={{ background: C.bg, color: C.ink }}>
-      <div className="mx-auto max-w-3xl">
+    <div className="min-h-screen w-full px-4 py-6" style={{ background: "linear-gradient(180deg, #F4F8FA 0%, #EEF4F6 100%)", color: C.ink }}>
+      <div className="mx-auto max-w-5xl">
 
         {/* ================= En-tête ================= */}
         <header className="sticky top-3 z-20 mb-6 overflow-hidden rounded-3xl"
@@ -634,6 +637,14 @@ export default function FicheConsultationUWI({
           )}
         </section>
 
+        <PatientClinicalSnapshot
+          patient={patient}
+          hasCriticalContext={hasCriticalContext}
+          completion={completion}
+          isComplete={isComplete}
+          onCompleteMode={() => setMode("complete")}
+        />
+
         {/* ================= Barre de dictée ================= */}
         <DictationBar
           recording={recording} processing={processing} recSeconds={recSeconds}
@@ -657,7 +668,7 @@ export default function FicheConsultationUWI({
 
         {/* ================= Dossier patient ================= */}
         <Card icon={<User size={15} />} title="Dossier patient"
-          subtitle="Persistant — édité depuis la fiche patient" tinted
+          subtitle="Contexte stable — à relire avant de conclure" tinted
           right={
             <button onClick={() => setShowDossier((s) => !s)}
               className="rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide transition hover:opacity-80"
@@ -666,14 +677,14 @@ export default function FicheConsultationUWI({
             </button>
           }>
           {showDossier && (
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <ReadField label="Allergies" value={patient.allergies || "—"} tone={patient.allergies ? "alert" : "neutral"} />
+              <ReadField label="Traitements en cours" value={patient.traitements || "—"} tone={patient.traitements ? "teal" : "neutral"} />
+              <ReadField label="Points d'attention" value={patient.points_attention || "—"} tone={patient.points_attention ? "amber" : "neutral"} />
+              <ReadField label="Facteurs de risque" value={patient.facteurs_risque || "—"} tone={patient.facteurs_risque ? "amber" : "neutral"} />
               <ReadField label="Antécédents médicaux" value={patient.antecedents_medicaux || "—"} />
               <ReadField label="Antécédents chirurgicaux" value={patient.antecedents_chirurgicaux || "—"} />
-              <ReadField label="Allergies" value={patient.allergies || "—"} />
-              <ReadField label="Traitements en cours" value={patient.traitements || "—"} />
-              <ReadField label="Facteurs de risque" value={patient.facteurs_risque || "—"} />
-              <ReadField label="Points d'attention" value={patient.points_attention || "—"} />
-              <ReadField label="Synthèse médicale" value={patient.synthese_medicale || "—"} wide />
+              <ReadField label="Synthèse médicale" value={patient.synthese_medicale || "—"} wide tone={patient.synthese_medicale ? "teal" : "neutral"} />
               <ReadField label="Dernier contexte de consultation" value={patient.dernier_contexte_consultation || "—"} wide />
             </div>
           )}
@@ -1179,6 +1190,77 @@ function ChecksCard({ checks }) {
   );
 }
 
+function PatientClinicalSnapshot({ patient, hasCriticalContext, completion, isComplete, onCompleteMode }) {
+  const highlights = [
+    {
+      label: "Allergies",
+      value: patient.allergies || "Non renseignées",
+      tone: patient.allergies ? "alert" : "muted",
+    },
+    {
+      label: "Traitements",
+      value: patient.traitements || "Aucun traitement renseigné",
+      tone: patient.traitements ? "teal" : "muted",
+    },
+    {
+      label: "Attention",
+      value: patient.points_attention || patient.facteurs_risque || "Aucun point d'attention renseigné",
+      tone: patient.points_attention || patient.facteurs_risque ? "amber" : "muted",
+    },
+  ];
+  return (
+    <section className="mb-4 overflow-hidden rounded-3xl border bg-white shadow-[0_16px_40px_rgba(10,22,40,0.08)]" style={{ borderColor: hasCriticalContext ? "#BFE9EC" : C.line }}>
+      <div className="grid gap-0 lg:grid-cols-[1.05fr_1.6fr]">
+        <div className="relative overflow-hidden p-5 text-white" style={{ background: "linear-gradient(135deg, #08213E 0%, #073A55 55%, #007A80 100%)" }}>
+          <div className="pointer-events-none absolute -right-12 -top-14 h-40 w-40 rounded-full bg-white/10" />
+          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#72D7DC]">À relire avant examen</p>
+          <h2 className="mt-2 text-2xl font-black tracking-tight">{patient.nom}</h2>
+          <p className="mt-1 text-sm font-semibold text-white/72">
+            {patient.age} ans{patient.sexe ? ` · ${patient.sexe}` : ""} · consultation {isComplete ? "complète" : "rapide"}
+          </p>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <span className="rounded-full bg-white/12 px-3 py-1.5 text-xs font-black text-white">{completion}% complété</span>
+            {hasCriticalContext ? (
+              <span className="rounded-full bg-[#FFF7ED] px-3 py-1.5 text-xs font-black text-[#B45309]">Contexte à surveiller</span>
+            ) : (
+              <span className="rounded-full bg-white/12 px-3 py-1.5 text-xs font-black text-white/80">Contexte minimal</span>
+            )}
+          </div>
+        </div>
+        <div className="grid gap-3 p-4 sm:grid-cols-3">
+          {highlights.map((item) => (
+            <ClinicalHighlight key={item.label} {...item} />
+          ))}
+          {!isComplete ? (
+            <button
+              type="button"
+              onClick={onCompleteMode}
+              className="sm:col-span-3 rounded-2xl border border-[#BFE9EC] bg-[#F0FAFB] px-4 py-3 text-left text-sm font-bold text-[#007A80] transition hover:bg-[#E6F7F8]"
+            >
+              Suggestion UWI : passer en mode complet si la consultation implique constantes, examen physique ou suivi structuré.
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ClinicalHighlight({ label, value, tone }) {
+  const styles = {
+    alert: { bg: "#FEF3F2", border: "#FDA29B", title: "#B42318", text: "#7A271A" },
+    amber: { bg: "#FFFBEB", border: "#FCD34D", title: "#B45309", text: "#78350F" },
+    teal: { bg: "#ECFDFB", border: "#99F6E4", title: "#007A80", text: "#134E4A" },
+    muted: { bg: "#F8FAFC", border: "#E2E8F0", title: "#64748B", text: "#334155" },
+  }[tone] || {};
+  return (
+    <div className="rounded-2xl border px-3.5 py-3" style={{ background: styles.bg, borderColor: styles.border }}>
+      <p className="text-[10px] font-black uppercase tracking-[0.16em]" style={{ color: styles.title }}>{label}</p>
+      <p className="mt-1.5 line-clamp-4 text-[13px] font-semibold leading-snug" style={{ color: styles.text }}>{value}</p>
+    </div>
+  );
+}
+
 /* ============================ sous-composants ============================ */
 
 function num(v) {
@@ -1255,10 +1337,16 @@ function Input({ value, onChange, type = "text", pending, ...rest }) {
   );
 }
 
-function ReadField({ label, value, wide = false }) {
+function ReadField({ label, value, wide = false, tone = "neutral" }) {
+  const styles = {
+    alert: { bg: "#FFF7F7", border: "#FECACA", label: "#B42318" },
+    amber: { bg: "#FFFBEB", border: "#FDE68A", label: "#B45309" },
+    teal: { bg: "#F0FAFB", border: "#BFE9EC", label: C.tealDark },
+    neutral: { bg: "#FFFFFF", border: C.line, label: C.faint },
+  }[tone] || {};
   return (
-    <div className={`rounded-xl px-3.5 py-2.5 ${wide ? "sm:col-span-2" : ""}`} style={{ background: "#FFFFFF", border: `1px solid ${C.line}` }}>
-      <p className="text-[10px] font-bold uppercase tracking-[0.14em]" style={{ color: C.faint }}>{label}</p>
+    <div className={`rounded-2xl px-3.5 py-3 ${wide ? "sm:col-span-2" : ""}`} style={{ background: styles.bg, border: `1px solid ${styles.border}` }}>
+      <p className="text-[10px] font-black uppercase tracking-[0.14em]" style={{ color: styles.label }}>{label}</p>
       <p className="mt-1 text-[13px] font-medium leading-snug" style={{ color: C.ink }}>{value}</p>
     </div>
   );
