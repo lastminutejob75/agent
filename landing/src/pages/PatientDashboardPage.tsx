@@ -5367,6 +5367,7 @@ export default function PatientDashboardPage() {
             patient={consultationPatient}
             saving={consultationSaving}
             existingNextAppointment={consultationExistingNextAppointment}
+            onOpenCreateBooking={() => setCreatePatientBookingOpen(true)}
             initialDraft={{
               date: consultationInitialDraft.date,
               motif: consultationInitialDraft.motif,
