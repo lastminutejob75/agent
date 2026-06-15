@@ -357,6 +357,7 @@ export default function FicheConsultationUWI({
   const chunksRef = useRef([]);
   const timerRef = useRef(null);
   const streamRef = useRef(null);
+  const saveFeedbackRef = useRef(null);
 
   useEffect(() => {
     setDate(String(initialDraft?.date || today));
@@ -412,6 +413,12 @@ export default function FicheConsultationUWI({
       setC((prev) => ({ ...prev, suiviRdv: "" }));
     }
   }, [hasExistingNextAppointment]);
+
+  useEffect(() => {
+    if (!saveError && !saveNotice) return;
+    if (!saveFeedbackRef.current) return;
+    saveFeedbackRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [saveError, saveNotice]);
 
   const completion = useMemo(() => {
     const required = mode === "rapide"
@@ -756,6 +763,19 @@ export default function FicheConsultationUWI({
           )}
         </section>
 
+        <div ref={saveFeedbackRef} className="mb-4 rounded-2xl border border-[#D5E8F8] bg-[#F3FAFF] px-4 py-3 text-sm font-semibold text-[#355D87]">
+          Après enregistrement, la fiche est ajoutée dans le bloc <strong>"Dossier consultations"</strong> de la fiche patient
+          (avec téléchargement PDF possible).
+        </div>
+
+        {saveError ? (
+          <div className="mb-4 flex items-start gap-2 rounded-2xl px-4 py-3 text-[13px] font-semibold leading-relaxed sm:text-sm"
+            style={{ background: C.redSoft, border: "1px solid #FDA29B", color: C.red }}>
+            <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+            <span>{saveError}</span>
+          </div>
+        ) : null}
+
         <PatientClinicalSnapshot
           patient={patient}
           hasCriticalContext={hasCriticalContext}
@@ -1053,13 +1073,6 @@ export default function FicheConsultationUWI({
           </div>
         </section>
 
-        {saveError ? (
-          <div className="mt-5 flex items-start gap-2 rounded-2xl px-4 py-3 text-[13px] font-semibold leading-relaxed sm:text-sm"
-            style={{ background: C.redSoft, border: "1px solid #FDA29B", color: C.red }}>
-            <AlertTriangle size={15} className="mt-0.5 shrink-0" />
-            <span>{saveError}</span>
-          </div>
-        ) : null}
         {saveNotice ? (
           <div className="mt-5 flex items-start gap-2 rounded-2xl px-4 py-3 text-[13px] font-semibold leading-relaxed sm:text-sm"
             style={{ background: C.tealSoft, border: "1px solid #BFE9EC", color: C.tealDark }}>

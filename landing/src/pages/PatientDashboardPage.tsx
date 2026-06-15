@@ -240,6 +240,27 @@ type PatientConsultationRow = {
   source: Record<string, unknown>;
 };
 
+function mapPatientConsultationRow(row: unknown): PatientConsultationRow | null {
+  if (!row || typeof row !== "object") return null;
+  const consultationId = Number((row as { id?: unknown })?.id);
+  if (!Number.isFinite(consultationId) || consultationId <= 0) return null;
+  const id = String(consultationId);
+  const dateRaw = String((row as { date_consultation?: unknown })?.date_consultation || "").trim().slice(0, 10);
+  const dateLabel = formatCabinetMetaDate(dateRaw);
+  const motifRaw = String((row as { motif?: unknown })?.motif || "").trim();
+  const impressionRaw = String((row as { impression_clinique?: unknown })?.impression_clinique || "").trim();
+  const suiviRaw = String((row as { suivi_prochain_rdv?: unknown })?.suivi_prochain_rdv || "").trim().slice(0, 10);
+  return {
+    id,
+    consultationId,
+    dateLabel,
+    motif: motifRaw || "Consultation",
+    impression: impressionRaw,
+    prochainRdv: suiviRaw ? formatCabinetMetaDate(suiviRaw) : "",
+    source: row as Record<string, unknown>,
+  };
+}
+
 function mapPatientHistoryItems(raw: unknown): PatientHistoryItem[] {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -1242,6 +1263,7 @@ export default function PatientDashboardPage() {
   const [patientHistoryLoading, setPatientHistoryLoading] = useState(false);
   const [patientConsultations, setPatientConsultations] = useState<PatientConsultationRow[]>([]);
   const [patientConsultationsLoading, setPatientConsultationsLoading] = useState(false);
+  const [lastSavedConsultationId, setLastSavedConsultationId] = useState<number | null>(null);
   const [manualPatientCreateForm, setManualPatientCreateForm] = useState<ManualPatientCreateForm>(
     MANUAL_PATIENT_CREATE_EMPTY,
   );
@@ -1297,6 +1319,7 @@ export default function PatientDashboardPage() {
   const [bulkMessageSending, setBulkMessageSending] = useState(false);
   const [bulkModalQuery, setBulkModalQuery] = useState("");
   const consultationAutoOpenRef = useRef(false);
+  const consultationDossierRef = useRef<HTMLElement | null>(null);
 
   const manualPatientCreateFieldErrors = useMemo(
     () => computePatientCreateFieldErrors(manualPatientCreateForm),
@@ -2273,31 +2296,12 @@ export default function PatientDashboardPage() {
       .then((res) => {
         if (cancelled) return;
         const rows = Array.isArray(res?.items) ? res.items : [];
-        const mapped = rows
-          .map((row): PatientConsultationRow | null => {
-            const consultationId = Number((row as { id?: unknown })?.id);
-            if (!Number.isFinite(consultationId) || consultationId <= 0) return null;
-            const id = String(consultationId);
-            const dateRaw = String((row as { date_consultation?: unknown })?.date_consultation || "").trim().slice(0, 10);
-            const dateLabel = formatCabinetMetaDate(dateRaw);
-            const motifRaw = String((row as { motif?: unknown })?.motif || "").trim();
-            const impressionRaw = String((row as { impression_clinique?: unknown })?.impression_clinique || "").trim();
-            const suiviRaw = String((row as { suivi_prochain_rdv?: unknown })?.suivi_prochain_rdv || "").trim().slice(0, 10);
-            return {
-              id,
-              consultationId,
-              dateLabel,
-              motif: motifRaw || "Consultation",
-              impression: impressionRaw,
-              prochainRdv: suiviRaw ? formatCabinetMetaDate(suiviRaw) : "",
-              source: (row && typeof row === "object" ? row : {}) as Record<string, unknown>,
-            };
-          })
-          .filter((row): row is PatientConsultationRow => Boolean(row));
+        const mapped = rows.map(mapPatientConsultationRow).filter((row): row is PatientConsultationRow => Boolean(row));
         setPatientConsultations(mapped);
       })
       .catch(() => {
-        if (!cancelled) setPatientConsultations([]);
+        // Conserver la dernière liste connue évite l'effet "plus aucune fiche"
+        // quand un refresh réseau échoue juste après un enregistrement réussi.
       })
       .finally(() => {
         if (!cancelled) setPatientConsultationsLoading(false);
@@ -2593,7 +2597,17 @@ export default function PatientDashboardPage() {
 
     setConsultationSaving(true);
     try {
-      await api.tenantCreatePatientConsultation(tenantPatientPhone, payload);
+      const createResponse = await api.tenantCreatePatientConsultation(tenantPatientPhone, payload) as {
+        consultation?: unknown;
+      };
+      const createdConsultationRow = mapPatientConsultationRow(createResponse?.consultation);
+      if (createdConsultationRow) {
+        setPatientConsultations((prev) => [
+          createdConsultationRow,
+          ...prev.filter((item) => item.consultationId !== createdConsultationRow.consultationId),
+        ]);
+        setLastSavedConsultationId(createdConsultationRow.consultationId);
+      }
       let followupBookingCreated = false;
       let followupBookingSkippedReason = "";
       if (wantsFollowupBooking) {
@@ -2635,15 +2649,18 @@ export default function PatientDashboardPage() {
       }
       if (followupBookingCreated) {
         notify(
-          `Fiche consultation enregistrée. Prochain rendez-vous créé le ${formatLongDateFR(followupBookingDate)} à ${formatTimeChoiceFR(followupBookingTime)}.`,
+          `Fiche consultation enregistrée (bloc "Dossier consultations"). Prochain rendez-vous créé le ${formatLongDateFR(followupBookingDate)} à ${formatTimeChoiceFR(followupBookingTime)}.`,
         );
       } else if (followupBookingSkippedReason) {
-        notify(`Fiche consultation enregistrée. Prochain rendez-vous: ${followupBookingSkippedReason}`);
+        notify(`Fiche consultation enregistrée (bloc "Dossier consultations"). Prochain rendez-vous: ${followupBookingSkippedReason}`);
       } else {
-        notify("Fiche consultation enregistrée.");
+        notify('Fiche consultation enregistrée. Retrouvez-la dans "Dossier consultations".');
       }
       setModal(null);
       setSummaryRefreshNonce((value) => value + 1);
+      window.setTimeout(() => {
+        consultationDossierRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 120);
       setConsultationInitialDraft((prev) => ({
         ...CONSULTATION_DRAFT_EMPTY,
         date: prev.date || new Date().toISOString().slice(0, 10),
@@ -2669,6 +2686,7 @@ export default function PatientDashboardPage() {
     displayHero?.name,
     patientEmail,
     refreshPatientAgenda,
+    consultationDossierRef,
   ]);
 
   const generateConsultationSummary = useCallback(async (draft: Record<string, unknown>) => {
@@ -4744,7 +4762,10 @@ export default function PatientDashboardPage() {
 
                 <PatientMedicalContextPreview patient={patientCabinetRow} />
 
-                <section className="overflow-hidden rounded-[28px] border border-[#DCE9F5] bg-gradient-to-b from-white to-[#F7FBFF] shadow-[0_12px_28px_rgba(10,22,40,0.06)]">
+                <section
+                  ref={consultationDossierRef}
+                  className="overflow-hidden rounded-[28px] border border-[#DCE9F5] bg-gradient-to-b from-white to-[#F7FBFF] shadow-[0_12px_28px_rgba(10,22,40,0.06)]"
+                >
                   <div className="border-b border-[#E8F0F8] bg-[#F3FAFF] px-6 py-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
@@ -4757,7 +4778,7 @@ export default function PatientDashboardPage() {
                           ) : null}
                         </h2>
                         <p className="mt-1 text-sm font-semibold text-[#61708B]">
-                          Classement de la plus récente à la plus ancienne.
+                          Chaque enregistrement de fiche consultation apparaît ici (plus récente en premier).
                         </p>
                       </div>
                       <div className="flex flex-wrap gap-2">
@@ -4794,7 +4815,10 @@ export default function PatientDashboardPage() {
                         {patientConsultations.map((item) => (
                           <li
                             key={item.id}
-                            className="rounded-2xl border border-[#E7EEF6] bg-white px-4 py-3 shadow-[0_3px_10px_rgba(15,23,42,0.04)]"
+                            className={cx(
+                              "rounded-2xl border border-[#E7EEF6] bg-white px-4 py-3 shadow-[0_3px_10px_rgba(15,23,42,0.04)]",
+                              lastSavedConsultationId === item.consultationId ? "ring-2 ring-[#7BD7E2]" : "",
+                            )}
                           >
                             <div className="flex flex-wrap items-start justify-between gap-2">
                               <div className="rounded-lg bg-[#F1F7FF] px-2.5 py-1 text-xs font-black uppercase tracking-wide text-[#2B5B8A]">
