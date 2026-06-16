@@ -1021,7 +1021,15 @@ def _ensure_patient_consultation_vitals_table(conn: sqlite3.Connection) -> None:
     )
 
 
+_PG_CONSULTATION_TABLES_READY = False
+
+
 def _ensure_patient_consultations_table_pg(conn: Any) -> None:
+    global _PG_CONSULTATION_TABLES_READY
+    # Évite de relancer 2 round-trips `to_regclass` (~0.3s chacun sur Railway)
+    # à chaque insert/lecture une fois que les tables sont confirmées présentes.
+    if _PG_CONSULTATION_TABLES_READY:
+        return
     if not _pg_table_exists(conn, "patient_consultations"):
         with conn.cursor() as cur:
             cur.execute(
@@ -1063,6 +1071,7 @@ def _ensure_patient_consultations_table_pg(conn: Any) -> None:
             )
         conn.commit()
     _ensure_patient_consultation_vitals_table_pg(conn)
+    _PG_CONSULTATION_TABLES_READY = True
 
 
 def _ensure_patient_consultation_vitals_table_pg(conn: Any) -> None:
@@ -1978,16 +1987,17 @@ def create_patient_consultation(
                             %(examens_demandes)s, %(prescription)s, %(orientation)s, %(suivi_prochain_rdv)s, %(suivi_consignes)s,
                             %(note_praticien)s, %(ia_resume)s, %(ia_contexte_patient)s, %(ia_status)s, %(ia_validated_at)s, %(raw_payload)s
                         )
-                        RETURNING id
+                        RETURNING *
                         """,
                         insert_payload,
                     )
-                    row = cur.fetchone()
-                    if not row:
+                    consult_row = cur.fetchone()
+                    if not consult_row:
                         raise RuntimeError("create_patient_consultation pg insert failed")
-                    consultation_id = int(row.get("id") or 0)
+                    consultation_id = int(consult_row.get("id") or 0)
                     if consultation_id <= 0:
                         raise RuntimeError("create_patient_consultation pg invalid id")
+                    vitals_row = None
                     if vitals_payload:
                         cur.execute(
                             """
@@ -2000,6 +2010,7 @@ def create_patient_consultation(
                                 %(fc_bpm)s, %(pa_systolique)s, %(pa_diastolique)s, %(temperature_c)s, %(spo2_pct)s, %(fr_min)s,
                                 %(poids_kg)s, %(taille_cm)s, %(imc)s, 'praticien'
                             )
+                            RETURNING *
                             """,
                             {
                                 "consultation_id": consultation_id,
@@ -2017,8 +2028,14 @@ def create_patient_consultation(
                                 "imc": vitals_payload.get("imc"),
                             },
                         )
+                        vitals_row = cur.fetchone()
                 conn.commit()
-            created = get_patient_consultation_by_id(tenant_id, phone_norm, consultation_id)
+            # On construit la réponse à partir des lignes déjà renvoyées par les
+            # INSERT (RETURNING *) : plus aucune 2ᵉ connexion PG pour relire.
+            created = _consultation_row_to_dict(
+                dict(consult_row),
+                _consultation_vitals_to_dict(dict(vitals_row)) if vitals_row else {},
+            )
             if created:
                 return created
         except Exception as exc:
@@ -2212,13 +2229,14 @@ def update_patient_consultation(
                             raw_payload = %(raw_payload)s,
                             updated_at = now()
                         WHERE id = %(id)s AND tenant_id = %(tenant_id)s AND patient_phone = %(patient_phone)s
-                        RETURNING id
+                        RETURNING *
                         """,
                         update_payload,
                     )
-                    row = cur.fetchone()
-                    if not row:
+                    consult_row = cur.fetchone()
+                    if not consult_row:
                         return None
+                    vitals_row = None
                     if vitals_payload:
                         cur.execute(
                             """
@@ -2245,6 +2263,7 @@ def update_patient_consultation(
                                 taille_cm = EXCLUDED.taille_cm,
                                 imc = EXCLUDED.imc,
                                 source = EXCLUDED.source
+                            RETURNING *
                             """,
                             {
                                 "consultation_id": cid,
@@ -2262,6 +2281,7 @@ def update_patient_consultation(
                                 "imc": vitals_payload.get("imc"),
                             },
                         )
+                        vitals_row = cur.fetchone()
                     else:
                         cur.execute(
                             """
@@ -2271,7 +2291,11 @@ def update_patient_consultation(
                             (cid, tenant_id, phone_norm),
                         )
                 conn.commit()
-            updated = get_patient_consultation_by_id(tenant_id, phone_norm, cid)
+            # Réponse construite depuis les RETURNING *, sans 2ᵉ connexion de relecture.
+            updated = _consultation_row_to_dict(
+                dict(consult_row),
+                _consultation_vitals_to_dict(dict(vitals_row)) if vitals_row else {},
+            )
             if updated:
                 return updated
         except Exception as exc:
