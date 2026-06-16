@@ -2877,12 +2877,23 @@ def _apply_patient_phone_related_updates_pg(
         return
 
     def _safe_update(sql: str, params: tuple) -> None:
+        # Propagation best-effort : chaque mise à jour liée est isolée par un
+        # SAVEPOINT afin qu'une erreur (table absente, RLS, permission refusée)
+        # n'avorte pas la transaction et ne bloque pas le renommage principal
+        # de la fiche patient (cabinet_clients).
         try:
+            cur.execute("SAVEPOINT phone_rel_update")
             cur.execute(sql, params)
+            cur.execute("RELEASE SAVEPOINT phone_rel_update")
         except Exception as exc:
-            if "does not exist" in str(exc).lower():
-                return
-            raise
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT phone_rel_update")
+                cur.execute("RELEASE SAVEPOINT phone_rel_update")
+            except Exception:
+                pass
+            logging.getLogger(__name__).warning(
+                "change_cabinet_client_phone: propagation ignorée (%s)", exc
+            )
 
     _safe_update(
         "UPDATE patient_notes SET patient_phone = %s WHERE tenant_id = %s AND patient_phone = ANY(%s)",
@@ -3005,11 +3016,15 @@ def change_cabinet_client_phone(tenant_id: int, old_phone: str, new_phone: str) 
     if url:
         try:
             from backend.pg_pool import pg_connection_for
+            from backend.pg_tenant_context import set_tenant_id_on_connection
 
             with pg_connection_for(url) as conn:
+                set_tenant_id_on_connection(conn, tenant_id)
                 _ensure_cabinet_clients_table_pg(conn)
                 with conn.cursor() as cur:
-                    _apply_patient_phone_related_updates_pg(cur, tenant_id, old_keys, new_norm)
+                    # Renommage principal d'abord : c'est l'opération critique. La
+                    # propagation aux tables liées est best-effort et ne doit jamais
+                    # empêcher la mise à jour du numéro de la fiche patient.
                     cur.execute(
                         """
                         UPDATE cabinet_clients
@@ -3021,6 +3036,7 @@ def change_cabinet_client_phone(tenant_id: int, old_phone: str, new_phone: str) 
                     if cur.rowcount == 0:
                         conn.rollback()
                         raise PatientPhoneChangeError("not_found")
+                    _apply_patient_phone_related_updates_pg(cur, tenant_id, old_keys, new_norm)
                 conn.commit()
             _reset_cabinet_client_cols_cache()
             try:
