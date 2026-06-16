@@ -4341,11 +4341,11 @@ export default function PatientDashboardPage() {
                 <div className="flex min-w-0 items-start gap-3 sm:gap-5">
                   <div
                     className={cx(
-                      "grid h-14 w-14 shrink-0 place-items-center rounded-[18px] bg-gradient-to-br text-center text-lg font-black uppercase leading-none tracking-[0.02em] text-white shadow-[0_10px_24px_rgba(0,156,164,0.16)] sm:h-20 sm:w-20 sm:rounded-[22px] sm:text-2xl lg:h-24 lg:w-24 lg:rounded-[26px] lg:text-3xl",
+                      "flex h-14 w-14 shrink-0 items-center justify-center rounded-[18px] bg-gradient-to-br text-lg font-black uppercase leading-none text-white shadow-[0_10px_24px_rgba(0,156,164,0.16)] sm:h-20 sm:w-20 sm:rounded-[22px] sm:text-2xl lg:h-24 lg:w-24 lg:rounded-[26px] lg:text-3xl",
                       displayHero.gradient,
                     )}
                   >
-                    <span className="translate-y-[1px]">{displayHero.initials}</span>
+                    {displayHero.initials}
                   </div>
 
                   <div className="min-w-0 flex-1">

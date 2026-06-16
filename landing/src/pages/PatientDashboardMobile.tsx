@@ -239,11 +239,11 @@ function MobilePatientHeader({
       <div className="flex items-center gap-3.5">
         <div
           className={cx(
-            "grid h-[82px] w-[82px] shrink-0 place-items-center rounded-[22px] bg-gradient-to-br text-center text-[32px] font-black uppercase leading-none tracking-[0.02em] text-white",
+            "flex h-[82px] w-[82px] shrink-0 items-center justify-center rounded-[22px] bg-gradient-to-br text-[30px] font-black uppercase leading-none text-white",
             displayHero.gradient,
           )}
         >
-          <span className="translate-y-[1px]">{displayHero.initials}</span>
+          {displayHero.initials}
         </div>
         <div className="min-w-0 flex-1">
           <h1 className="m-0 break-words text-[28px] font-black leading-[1.05] tracking-[-0.02em] text-[#0B1628]">
@@ -256,94 +256,93 @@ function MobilePatientHeader({
             <span className="h-2 w-2 rounded-full" style={{ backgroundColor: status.dot }} />
             {status.label}
           </span>
-          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
-            {editingPhone ? (
-              <div className="flex w-full flex-col gap-1.5">
-                <div className="flex items-center gap-1.5">
-                  <HeroSvgIcon name="phone" className="h-4 w-4 shrink-0 text-[#009CA4]" />
-                  <input
-                    type="tel"
-                    value={phoneDraft}
-                    onChange={(event) => onChangePhoneDraft(event.target.value)}
-                    placeholder="06 12 34 56 78"
-                    className="h-9 min-w-0 flex-1 rounded-lg border border-[#DDE7F1] px-2.5 text-sm font-semibold text-[#0B1628] outline-none focus:border-[#009CA4]"
-                  />
-                  <button
-                    type="button"
-                    onClick={onSavePhone}
-                    disabled={phoneSaveDisabled}
-                    className="rounded-lg bg-[#009CA4] px-2.5 py-1.5 text-xs font-black text-white disabled:opacity-60"
-                  >
-                    {phoneSaving ? "…" : "OK"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onCancelEditPhone}
-                    className="rounded-lg border border-[#DDE7F1] px-2.5 py-1.5 text-xs font-black text-[#475569]"
-                  >
-                    Annuler
-                  </button>
-                </div>
-                {phoneConflictMessage ? (
-                  <p className="m-0 text-[12px] font-bold text-[#C62828]">{phoneConflictMessage}</p>
-                ) : null}
-              </div>
-            ) : (
-              <div className="flex min-w-0 items-center gap-2 text-[15px] font-bold text-[#0B1628] sm:text-lg">
-                <HeroSvgIcon name="phone" className="h-4 w-4 shrink-0 text-[#009CA4]" />
-                <span className="truncate">{displayHero.phone}</span>
-                {!tenantPatientNotFound ? (
-                  <button
-                    type="button"
-                    onClick={onStartEditPhone}
-                    aria-label="Modifier le numéro de téléphone"
-                    className="shrink-0 rounded-md border border-[#DDE7F1] px-1.5 py-0.5 text-[11px] font-black text-[#475569] hover:bg-[#F8FAFC]"
-                  >
-                    Modifier
-                  </button>
-                ) : null}
-              </div>
-            )}
-            {!editingPhone ? (
-              <div className="flex min-w-0 items-center gap-2 text-[14px] font-bold text-[#0B1628] sm:text-[15px]">
-                <HeroSvgIcon name="mail" className="h-4 w-4 shrink-0 text-[#009CA4]" />
-                <span className="truncate">
-                  {tenantPatientNotFound
-                    ? "Email — créez la fiche"
-                    : patientEmail || "Aucun email"}
-                </span>
-              </div>
-            ) : null}
-          </div>
         </div>
       </div>
 
-      <div className="mt-3.5 grid grid-cols-3 gap-2">
-        <button
-          type="button"
-          onClick={onCall}
-          className="flex h-[46px] items-center justify-center gap-1.5 rounded-2xl border border-[#009CA4] bg-[#009CA4] text-[14px] font-black text-white shadow-[0_6px_14px_rgba(0,156,164,0.18)] transition active:scale-[0.98]"
-        >
-          <HeroSvgIcon name="phone" className="h-4 w-4" />
-          Appeler
-        </button>
-        <button
-          type="button"
-          onClick={onSendSms}
-          className="flex h-[46px] items-center justify-center gap-1.5 rounded-2xl border border-[#75D3DF] bg-[#E9FAFC] text-[14px] font-black text-[#007F88] transition active:scale-[0.98]"
-        >
-          <HeroSvgIcon name="sms" className="h-4 w-4" />
-          SMS
-        </button>
-        <button
-          type="button"
-          onClick={onSendEmail}
-          disabled={!canSendEmail}
-          className="flex h-[46px] items-center justify-center gap-1.5 rounded-2xl border border-[#86EFAC] bg-[#F0FFF5] text-[14px] font-black text-[#0EA348] transition active:scale-[0.98] disabled:opacity-50"
-        >
-          <HeroSvgIcon name="mail" className="h-4 w-4" />
-          Email
-        </button>
+      <div className="mt-3.5 rounded-2xl border border-[#E3EAF2] bg-[#F8FBFD] p-2.5">
+        {editingPhone ? (
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center gap-1.5">
+              <HeroSvgIcon name="phone" className="h-4 w-4 shrink-0 text-[#009CA4]" />
+              <input
+                type="tel"
+                value={phoneDraft}
+                onChange={(event) => onChangePhoneDraft(event.target.value)}
+                placeholder="06 12 34 56 78"
+                className="h-9 min-w-0 flex-1 rounded-lg border border-[#DDE7F1] px-2.5 text-sm font-semibold text-[#0B1628] outline-none focus:border-[#009CA4]"
+              />
+              <button
+                type="button"
+                onClick={onSavePhone}
+                disabled={phoneSaveDisabled}
+                className="rounded-lg bg-[#009CA4] px-2.5 py-1.5 text-xs font-black text-white disabled:opacity-60"
+              >
+                {phoneSaving ? "…" : "OK"}
+              </button>
+              <button
+                type="button"
+                onClick={onCancelEditPhone}
+                className="rounded-lg border border-[#DDE7F1] px-2.5 py-1.5 text-xs font-black text-[#475569]"
+              >
+                Annuler
+              </button>
+            </div>
+            {phoneConflictMessage ? (
+              <p className="m-0 text-[12px] font-bold text-[#C62828]">{phoneConflictMessage}</p>
+            ) : null}
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <HeroSvgIcon name="phone" className="h-4 w-4 shrink-0 text-[#009CA4]" />
+            <span className="min-w-0 flex-1 truncate text-[15px] font-bold text-[#0B1628]">
+              {displayHero.phone}
+            </span>
+            {!tenantPatientNotFound ? (
+              <button
+                type="button"
+                onClick={onStartEditPhone}
+                aria-label="Modifier le numéro de téléphone"
+                className="shrink-0 rounded-md border border-[#DDE7F1] px-1.5 py-0.5 text-[11px] font-black text-[#475569] hover:bg-white"
+              >
+                Modifier
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={onCall}
+              aria-label="Appeler"
+              className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-[#009CA4] bg-[#009CA4] text-white shadow-[0_4px_10px_rgba(0,156,164,0.18)] transition active:scale-[0.96]"
+            >
+              <HeroSvgIcon name="phone" className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={onSendSms}
+              aria-label="Envoyer un SMS"
+              className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-[#75D3DF] bg-[#E9FAFC] text-[#007F88] transition active:scale-[0.96]"
+            >
+              <HeroSvgIcon name="sms" className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
+        <div className="my-2 h-px bg-[#E3EAF2]" />
+
+        <div className="flex items-center gap-2">
+          <HeroSvgIcon name="mail" className="h-4 w-4 shrink-0 text-[#009CA4]" />
+          <span className="min-w-0 flex-1 truncate text-[14px] font-bold text-[#0B1628]">
+            {tenantPatientNotFound ? "Email — créez la fiche" : patientEmail || "Aucun email"}
+          </span>
+          <button
+            type="button"
+            onClick={onSendEmail}
+            disabled={!canSendEmail}
+            aria-label="Envoyer un email"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-[#86EFAC] bg-[#F0FFF5] text-[#0EA348] transition active:scale-[0.96] disabled:opacity-50"
+          >
+            <HeroSvgIcon name="mail" className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
       <div className="my-4 h-px bg-[#E3EAF2]" />
