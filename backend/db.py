@@ -2923,6 +2923,23 @@ def _apply_patient_phone_related_updates_pg(
         "UPDATE patient_questionnaires SET phone = %s WHERE tenant_id = %s AND phone = ANY(%s)",
         (new_norm, tenant_id, key_list),
     )
+    # Tables soumises à la RLS / contexte patient V2 + dossier consultations.
+    # On les migre ici, dans la connexion qui porte le contexte tenant, car le
+    # chemin exec_pg() de migrate_patient_phone_v2_data ne pose pas ce contexte
+    # et serait filtré par la RLS (lignes invisibles → non migrées).
+    for _tbl in (
+        "patient_consultations",
+        "patient_summaries",
+        "patient_metrics",
+        "patient_events",
+        "patient_documents_v2",
+        "questionnaire_requests",
+        "questionnaire_responses",
+    ):
+        _safe_update(
+            f"UPDATE {_tbl} SET patient_phone = %s WHERE tenant_id = %s AND patient_phone = ANY(%s)",
+            (new_norm, tenant_id, key_list),
+        )
 
 
 def _apply_patient_phone_related_updates_sqlite(
@@ -2974,6 +2991,13 @@ def _apply_patient_phone_related_updates_sqlite(
     try:
         conn.execute(
             f"UPDATE appointments SET contact = ? WHERE tenant_id = ? AND contact IN ({placeholders})",
+            (new_norm, tenant_id, *key_list),
+        )
+    except Exception:
+        pass
+    try:
+        conn.execute(
+            f"UPDATE patient_consultations SET patient_phone = ? WHERE tenant_id = ? AND patient_phone IN ({placeholders})",
             (new_norm, tenant_id, *key_list),
         )
     except Exception:

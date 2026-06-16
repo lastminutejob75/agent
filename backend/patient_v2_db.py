@@ -313,13 +313,23 @@ def migrate_patient_phone_v2_data(
     old_keys: Optional[List[str]] = None,
 ) -> None:
     """Propage un changement de numéro dans les tables patient V2."""
-    old = normalize_patient_phone(old_phone)
     new = normalize_patient_phone(new_phone)
-    if not old or not new or old == new:
+    if not new:
         return
-    keys = list(dict.fromkeys(old_keys or [old]))
+    # Ne pas dépendre de la normalisation de l'ancien numéro : s'il est malformé
+    # (ex. concaténation accidentelle), normalize renverrait None et la migration
+    # serait abandonnée, laissant les données orphelines. On s'appuie sur old_keys
+    # (qui contient la valeur brute stockée) et on ajoute l'ancien normalisé si dispo.
+    old = normalize_patient_phone(old_phone)
+    keys = [k for k in (old_keys or []) if k]
+    if old:
+        keys.append(old)
+    raw_old = str(old_phone or "").strip()
+    if raw_old:
+        keys.append(raw_old)
+    keys = [k for k in dict.fromkeys(keys) if k and k != new]
     if not keys:
-        keys = [old]
+        return
 
     tables = (
         "patient_documents_v2",
