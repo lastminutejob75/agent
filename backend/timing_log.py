@@ -29,8 +29,12 @@ _sqlite_installed = False
 def _enabled() -> bool:
     import os
 
-    value = (os.environ.get("TIMING_LOG") or "1").strip().lower()
-    return value not in ("0", "false", "no", "off")
+    # Désactivé par défaut : ce traçage émet 2 lignes (logger + print flush) par
+    # appel de fonction et par requête SQL, ce qui sature les logs Railway
+    # (rate limit 500 logs/s, messages perdus) et masque les vraies erreurs.
+    # Opt-in explicite via TIMING_LOG=1 pour du debug ponctuel.
+    value = (os.environ.get("TIMING_LOG") or "0").strip().lower()
+    return value in ("1", "true", "yes", "on")
 
 
 def time_start(label: str) -> None:
