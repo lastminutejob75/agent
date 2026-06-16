@@ -29,8 +29,12 @@ def main() -> int:
     p.add_argument("migration", help="Migration number (ex: 007) or filename")
     p.add_argument(
         "--pg-url",
-        default=os.environ.get("DATABASE_URL") or os.environ.get("PG_TENANTS_URL"),
-        help="Postgres URL (default: DATABASE_URL or PG_TENANTS_URL)",
+        default=(
+            os.environ.get("DATABASE_URL_MIGRATE")
+            or os.environ.get("DATABASE_URL")
+            or os.environ.get("PG_TENANTS_URL")
+        ),
+        help="Postgres URL (default: DATABASE_URL_MIGRATE or DATABASE_URL or PG_TENANTS_URL)",
     )
     p.add_argument("--dry-run", action="store_true", help="Print SQL only, do not run")
     args = p.parse_args()

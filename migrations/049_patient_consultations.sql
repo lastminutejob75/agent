@@ -109,4 +109,21 @@ CREATE TRIGGER trg_patient_consultations_updated_at
   BEFORE UPDATE ON patient_consultations
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+-- Le rôle applicatif (non superuser) qui se connecte via DATABASE_URL doit pouvoir
+-- lire/écrire ces tables. Comme cette migration tourne avec le rôle privilégié
+-- (DATABASE_URL_MIGRATE), on accorde explicitement le DML à tous les rôles de
+-- login non superuser (idempotent), plus l'usage des séquences (BIGSERIAL).
+DO $grant$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN SELECT rolname FROM pg_roles WHERE rolcanlogin AND NOT rolsuper LOOP
+    EXECUTE format('GRANT USAGE ON SCHEMA public TO %I', r.rolname);
+    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON patient_consultations TO %I', r.rolname);
+    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON patient_consultation_vitals TO %I', r.rolname);
+    EXECUTE format('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO %I', r.rolname);
+  END LOOP;
+END
+$grant$;
+
 COMMIT;
