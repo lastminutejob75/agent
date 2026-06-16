@@ -4212,6 +4212,43 @@ export default function PatientDashboardPage() {
               documentsLoading={documentsLoading}
               onPreviewDocument={(doc) => void openPreview(doc)}
               formatDocDate={(value) => formatCabinetMetaDate(value)}
+              patientConsultations={patientConsultations}
+              patientConsultationsLoading={patientConsultationsLoading}
+              consultationSaving={consultationSaving}
+              consultationDeletingId={consultationDeletingId}
+              lastSavedConsultationId={lastSavedConsultationId}
+              onEditConsultation={(item) => {
+                const full = patientConsultations.find((c) => c.consultationId === item.consultationId);
+                if (full) editConsultation(full);
+              }}
+              onDownloadConsultationPdf={(item) => {
+                const full = patientConsultations.find((c) => c.consultationId === item.consultationId);
+                if (full) void downloadConsultationPdf(full);
+              }}
+              onDeleteConsultation={(item) => {
+                const full = patientConsultations.find((c) => c.consultationId === item.consultationId);
+                if (full) void deleteConsultation(full);
+              }}
+              onDuplicateLatestConsultation={duplicateLatestConsultation}
+              editingPhone={editingPhone}
+              phoneDraft={phoneDraft}
+              phoneSaving={phoneSaving}
+              phoneSaveDisabled={phoneSaving || phoneDuplicateConflicts.some((c) => c?.field === "phone")}
+              phoneConflictMessage={
+                phoneDuplicateConflicts.length
+                  ? formatPatientDuplicateConflict(phoneDuplicateConflicts[0]) || "Ce numéro est déjà utilisé"
+                  : ""
+              }
+              onStartEditPhone={() => {
+                setEditingPhone(true);
+                setPhoneDraft(tenantPatientPhone || normalizePhone(displayHero.phone) || "");
+              }}
+              onCancelEditPhone={() => {
+                setEditingPhone(false);
+                setPhoneDuplicateConflicts([]);
+              }}
+              onChangePhoneDraft={(value) => setPhoneDraft(value)}
+              onSavePhone={() => void savePhone()}
             />
           ) : null}
 

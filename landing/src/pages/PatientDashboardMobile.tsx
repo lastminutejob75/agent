@@ -61,6 +61,15 @@ type HistoryItem = {
   status_label: string;
 };
 
+type ConsultationRow = {
+  id: string;
+  consultationId: number;
+  dateLabel: string;
+  motif: string;
+  impression: string;
+  prochainRdv: string;
+};
+
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
@@ -145,6 +154,24 @@ export type PatientDashboardMobileProps = {
   documentsLoading: boolean;
   onPreviewDocument: (doc: PatientDocument) => void;
   formatDocDate: (value: string) => string;
+  patientConsultations: ConsultationRow[];
+  patientConsultationsLoading: boolean;
+  consultationSaving: boolean;
+  consultationDeletingId: number | null;
+  lastSavedConsultationId: number | null;
+  onEditConsultation: (item: ConsultationRow) => void;
+  onDownloadConsultationPdf: (item: ConsultationRow) => void;
+  onDeleteConsultation: (item: ConsultationRow) => void;
+  onDuplicateLatestConsultation: () => void;
+  editingPhone: boolean;
+  phoneDraft: string;
+  phoneSaving: boolean;
+  phoneSaveDisabled: boolean;
+  phoneConflictMessage: string;
+  onStartEditPhone: () => void;
+  onCancelEditPhone: () => void;
+  onChangePhoneDraft: (value: string) => void;
+  onSavePhone: () => void;
 };
 
 function MobilePatientHeader({
@@ -158,6 +185,15 @@ function MobilePatientHeader({
   onSendSms,
   onSendEmail,
   canSendEmail,
+  editingPhone,
+  phoneDraft,
+  phoneSaving,
+  phoneSaveDisabled,
+  phoneConflictMessage,
+  onStartEditPhone,
+  onCancelEditPhone,
+  onChangePhoneDraft,
+  onSavePhone,
 }: {
   displayHero: DisplayHero;
   patientEmail: string;
@@ -169,6 +205,15 @@ function MobilePatientHeader({
   onSendSms: () => void;
   onSendEmail: () => void;
   canSendEmail: boolean;
+  editingPhone: boolean;
+  phoneDraft: string;
+  phoneSaving: boolean;
+  phoneSaveDisabled: boolean;
+  phoneConflictMessage: string;
+  onStartEditPhone: () => void;
+  onCancelEditPhone: () => void;
+  onChangePhoneDraft: (value: string) => void;
+  onSavePhone: () => void;
 }) {
   const status = statusMeta(displayHero.statusBucket);
   const physician = formatPhysicianWithCity(
@@ -212,18 +257,63 @@ function MobilePatientHeader({
             {status.label}
           </span>
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
-            <div className="flex min-w-0 items-center gap-2 text-[15px] font-bold text-[#0B1628] sm:text-lg">
-              <HeroSvgIcon name="phone" className="h-4 w-4 shrink-0 text-[#009CA4]" />
-              <span className="truncate">{displayHero.phone}</span>
-            </div>
-            <div className="flex min-w-0 items-center gap-2 text-[14px] font-bold text-[#0B1628] sm:text-[15px]">
-              <HeroSvgIcon name="mail" className="h-4 w-4 shrink-0 text-[#009CA4]" />
-              <span className="truncate">
-                {tenantPatientNotFound
-                  ? "Email — créez la fiche"
-                  : patientEmail || "Aucun email"}
-              </span>
-            </div>
+            {editingPhone ? (
+              <div className="flex w-full flex-col gap-1.5">
+                <div className="flex items-center gap-1.5">
+                  <HeroSvgIcon name="phone" className="h-4 w-4 shrink-0 text-[#009CA4]" />
+                  <input
+                    type="tel"
+                    value={phoneDraft}
+                    onChange={(event) => onChangePhoneDraft(event.target.value)}
+                    placeholder="06 12 34 56 78"
+                    className="h-9 min-w-0 flex-1 rounded-lg border border-[#DDE7F1] px-2.5 text-sm font-semibold text-[#0B1628] outline-none focus:border-[#009CA4]"
+                  />
+                  <button
+                    type="button"
+                    onClick={onSavePhone}
+                    disabled={phoneSaveDisabled}
+                    className="rounded-lg bg-[#009CA4] px-2.5 py-1.5 text-xs font-black text-white disabled:opacity-60"
+                  >
+                    {phoneSaving ? "…" : "OK"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onCancelEditPhone}
+                    className="rounded-lg border border-[#DDE7F1] px-2.5 py-1.5 text-xs font-black text-[#475569]"
+                  >
+                    Annuler
+                  </button>
+                </div>
+                {phoneConflictMessage ? (
+                  <p className="m-0 text-[12px] font-bold text-[#C62828]">{phoneConflictMessage}</p>
+                ) : null}
+              </div>
+            ) : (
+              <div className="flex min-w-0 items-center gap-2 text-[15px] font-bold text-[#0B1628] sm:text-lg">
+                <HeroSvgIcon name="phone" className="h-4 w-4 shrink-0 text-[#009CA4]" />
+                <span className="truncate">{displayHero.phone}</span>
+                {!tenantPatientNotFound ? (
+                  <button
+                    type="button"
+                    onClick={onStartEditPhone}
+                    aria-label="Modifier le numéro de téléphone"
+                    className="shrink-0 rounded-md border border-[#DDE7F1] px-1.5 py-0.5 text-[11px] font-black text-[#475569] hover:bg-[#F8FAFC]"
+                  >
+                    Modifier
+                  </button>
+                ) : null}
+              </div>
+            )}
+            {!editingPhone ? (
+              <div className="flex min-w-0 items-center gap-2 text-[14px] font-bold text-[#0B1628] sm:text-[15px]">
+                <HeroSvgIcon name="mail" className="h-4 w-4 shrink-0 text-[#009CA4]" />
+                <span className="truncate">
+                  {tenantPatientNotFound
+                    ? "Email — créez la fiche"
+                    : patientEmail || "Aucun email"}
+                </span>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
@@ -368,6 +458,138 @@ function MobileContentActions({
       >
         ▤ Consulter les documents{!documentsLoading && documentsCount > 0 ? ` (${documentsCount})` : ""}
       </button>
+    </section>
+  );
+}
+
+function MobileConsultationsDossier({
+  consultations,
+  loading,
+  saving,
+  deletingId,
+  lastSavedId,
+  onCreate,
+  onDuplicate,
+  onEdit,
+  onDownloadPdf,
+  onDelete,
+}: {
+  consultations: ConsultationRow[];
+  loading: boolean;
+  saving: boolean;
+  deletingId: number | null;
+  lastSavedId: number | null;
+  onCreate: () => void;
+  onDuplicate: () => void;
+  onEdit: (item: ConsultationRow) => void;
+  onDownloadPdf: (item: ConsultationRow) => void;
+  onDelete: (item: ConsultationRow) => void;
+}) {
+  return (
+    <section className="mb-3 overflow-hidden rounded-[20px] border border-[#DCE9F5] bg-white shadow-[0_10px_24px_rgba(15,23,42,0.07)]">
+      <div className="border-b border-[#E8F0F8] bg-[#F3FAFF] px-3.5 py-3">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="flex items-center gap-2 text-base font-black text-[#0A1628]">
+            ▣ Dossier consultations
+            {!loading && consultations.length > 0 ? (
+              <span className="rounded-full bg-[#E8F7F7] px-2 py-0.5 text-xs font-black text-[#008EA1]">
+                {consultations.length}
+              </span>
+            ) : null}
+          </h2>
+        </div>
+        <p className="mt-1 text-[12px] font-semibold leading-snug text-[#61708B]">
+          Chaque fiche enregistrée apparaît ici (la plus récente en premier).
+        </p>
+        <div className="mt-2.5 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={onCreate}
+            className="min-h-[42px] rounded-xl border border-[#79CDDB] bg-[#E9FAFC] text-[13px] font-black text-[#008EA1]"
+          >
+            + Nouvelle fiche
+          </button>
+          <button
+            type="button"
+            onClick={onDuplicate}
+            disabled={loading || consultations.length === 0}
+            className="min-h-[42px] rounded-xl border border-[#BFD5EC] bg-white text-[13px] font-black text-[#355D87] disabled:opacity-50"
+          >
+            Dupliquer la dernière
+          </button>
+        </div>
+      </div>
+
+      <div className="px-3.5 py-3.5">
+        {loading ? (
+          <div className="rounded-xl border border-[#E7EEF6] bg-white px-3 py-2.5 text-sm font-semibold text-[#61708B]">
+            Chargement des consultations…
+          </div>
+        ) : consultations.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-[#CFE1F1] bg-white px-3 py-4 text-sm font-semibold text-[#61708B]">
+            Aucune consultation enregistrée pour ce patient.
+          </div>
+        ) : (
+          <ul className="m-0 list-none space-y-2.5 p-0">
+            {consultations.map((item) => (
+              <li
+                key={item.id}
+                className={cx(
+                  "rounded-xl border border-[#E7EEF6] bg-white px-3 py-2.5 shadow-[0_3px_10px_rgba(15,23,42,0.04)]",
+                  lastSavedId === item.consultationId ? "ring-2 ring-[#7BD7E2]" : "",
+                )}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-1.5">
+                  <span className="rounded-md bg-[#F1F7FF] px-2 py-0.5 text-[11px] font-black uppercase tracking-wide text-[#2B5B8A]">
+                    {item.dateLabel}
+                  </span>
+                  {item.prochainRdv ? (
+                    <span className="rounded-full bg-[#E8F7F7] px-2 py-0.5 text-[11px] font-black text-[#007E8C]">
+                      Suivi : {item.prochainRdv}
+                    </span>
+                  ) : (
+                    <span className="rounded-full bg-[#F4F7FB] px-2 py-0.5 text-[11px] font-bold text-[#71839A]">
+                      Aucun suivi
+                    </span>
+                  )}
+                </div>
+                <div className="mt-2 text-sm font-semibold text-[#1E293B]">Motif : {item.motif}</div>
+                {item.impression ? (
+                  <div className="mt-1 text-[13px] leading-snug text-[#64748B]">
+                    Impression : {item.impression.slice(0, 160)}
+                    {item.impression.length > 160 ? "…" : ""}
+                  </div>
+                ) : null}
+                <div className="mt-2.5 grid grid-cols-3 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => onEdit(item)}
+                    disabled={saving || deletingId === item.consultationId}
+                    className="min-h-[38px] rounded-lg border border-[#91D9E3] bg-[#E9FAFC] text-[12px] font-black text-[#007E8C] disabled:opacity-50"
+                  >
+                    Modifier
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDownloadPdf(item)}
+                    className="min-h-[38px] rounded-lg border border-[#C9D8E8] bg-[#F8FBFF] text-[12px] font-black text-[#355D87]"
+                  >
+                    PDF
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDelete(item)}
+                    disabled={saving || deletingId === item.consultationId}
+                    className="min-h-[38px] rounded-lg border border-[#F6C2C2] bg-[#FFF5F5] text-[12px] font-black text-[#C62828] disabled:opacity-50"
+                  >
+                    {deletingId === item.consultationId ? "…" : "Suppr."}
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </section>
   );
 }
@@ -901,6 +1123,24 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
     documentsLoading,
     onPreviewDocument,
     formatDocDate,
+    patientConsultations,
+    patientConsultationsLoading,
+    consultationSaving,
+    consultationDeletingId,
+    lastSavedConsultationId,
+    onEditConsultation,
+    onDownloadConsultationPdf,
+    onDeleteConsultation,
+    onDuplicateLatestConsultation,
+    editingPhone,
+    phoneDraft,
+    phoneSaving,
+    phoneSaveDisabled,
+    phoneConflictMessage,
+    onStartEditPhone,
+    onCancelEditPhone,
+    onChangePhoneDraft,
+    onSavePhone,
   } = props;
 
   return (
@@ -916,6 +1156,15 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
         onSendSms={onSendProfessionalSms}
         onSendEmail={onSendProfessionalEmail}
         canSendEmail={canSendProfessionalEmail}
+        editingPhone={editingPhone}
+        phoneDraft={phoneDraft}
+        phoneSaving={phoneSaving}
+        phoneSaveDisabled={phoneSaveDisabled}
+        phoneConflictMessage={phoneConflictMessage}
+        onStartEditPhone={onStartEditPhone}
+        onCancelEditPhone={onCancelEditPhone}
+        onChangePhoneDraft={onChangePhoneDraft}
+        onSavePhone={onSavePhone}
       />
       <MobileContentActions
         onCreateConsultation={onCreateConsultation}
@@ -936,6 +1185,18 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
             loading={patientAgendaLoading}
             apptStatusLabel={apptStatusLabel}
             renderApptActions={renderApptActions}
+          />
+          <MobileConsultationsDossier
+            consultations={patientConsultations}
+            loading={patientConsultationsLoading}
+            saving={consultationSaving}
+            deletingId={consultationDeletingId}
+            lastSavedId={lastSavedConsultationId}
+            onCreate={onCreateConsultation}
+            onDuplicate={onDuplicateLatestConsultation}
+            onEdit={onEditConsultation}
+            onDownloadPdf={onDownloadConsultationPdf}
+            onDelete={onDeleteConsultation}
           />
           <MobileContextPatient
             phone={tenantPatientPhone}
