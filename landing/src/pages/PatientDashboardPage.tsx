@@ -2697,15 +2697,8 @@ export default function PatientDashboardPage() {
           }
         }
       }
-      try {
-        const refreshed = await api.tenantGetPatient(tenantPatientPhone, { lightweight: true });
-        const refreshedPatient = refreshed?.patient as Record<string, unknown> | undefined;
-        if (refreshedPatient) {
-          setPatientCabinetRow((prev) => ({ ...(prev || {}), ...refreshedPatient }));
-        }
-      } catch {
-        // La consultation est enregistrée ; le prochain chargement récupérera le contexte patient enrichi.
-      }
+      // Pas de re-fetch bloquant ici: l'objectif est de confirmer l'enregistrement
+      // le plus vite possible pour éviter l'effet "spinner infini".
       if (followupBookingCreated) {
         notify(
           `${isEditingConsultation ? "Fiche consultation mise à jour" : "Fiche consultation enregistrée"} (bloc "Dossier consultations"). Prochain rendez-vous créé le ${formatLongDateFR(followupBookingDate)} à ${formatTimeChoiceFR(followupBookingTime)}.`,

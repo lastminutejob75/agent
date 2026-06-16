@@ -5008,25 +5008,9 @@ def tenant_create_patient_consultation_route(
         raise HTTPException(400, str(exc)) from exc
     if not created:
         raise HTTPException(500, "Impossible d'enregistrer la fiche de consultation")
-    latest_context = _patient_consultation_context_summary(created, payload)
-    if latest_context:
-        try:
-            update_patient_fields(
-                tenant_id,
-                phone,
-                dernier_contexte_consultation=latest_context,
-                synthese_medicale=_merge_patient_medical_summary(
-                    str(profile.get("synthese_medicale") or ""),
-                    latest_context,
-                ),
-            )
-        except Exception as exc:
-            logger.warning(
-                "consultation patient context update skipped tenant=%s phone=%s: %s",
-                tenant_id,
-                normalize_phone_number(phone) or phone,
-                exc,
-            )
+    # IMPORTANT: on priorise la persistance de la consultation.
+    # Les enrichissements de contexte patient sont volontairement omis ici
+    # pour éviter qu'un traitement secondaire bloque la réponse de sauvegarde.
     return {"ok": True, "consultation": created}
 
 
@@ -5053,26 +5037,7 @@ def tenant_update_patient_consultation_route(
         raise HTTPException(400, str(exc)) from exc
     if not updated:
         raise HTTPException(404, "Consultation introuvable")
-    latest_context = _patient_consultation_context_summary(updated, payload)
-    if latest_context:
-        try:
-            update_patient_fields(
-                tenant_id,
-                phone,
-                dernier_contexte_consultation=latest_context,
-                synthese_medicale=_merge_patient_medical_summary(
-                    str(profile.get("synthese_medicale") or ""),
-                    latest_context,
-                ),
-            )
-        except Exception as exc:
-            logger.warning(
-                "consultation context refresh skipped tenant=%s phone=%s consultation=%s: %s",
-                tenant_id,
-                normalize_phone_number(phone) or phone,
-                consultation_id,
-                exc,
-            )
+    # Même logique qu'à la création: réponse rapide centrée sur la persistance.
     return {"ok": True, "consultation": updated}
 
 

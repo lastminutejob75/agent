@@ -173,6 +173,10 @@ function normalizeTimeoutMs(timeoutMs) {
 async function request(path, { method = "GET", body, admin: _admin = false, tenant: _tenant = false, leadToken = "", signal, timeoutMs } = {}) {
   const pathPart = path.startsWith("/") ? path : `/${path}`;
   const baseCandidates = buildCandidateApiBases();
+  const methodUpper = String(method || "GET").toUpperCase();
+  // Pour les écritures, on évite le fallback multi-base pour ne pas
+  // rallonger indéfiniment l'attente et limiter les risques de doublons.
+  const allowMultiBaseRetry = methodUpper === "GET" || methodUpper === "HEAD";
 
   /* Session : cookie HttpOnly via `credentials: include`. Plus de Bearer JWT en JS. */
   const headers = { "Content-Type": "application/json" };
@@ -212,10 +216,12 @@ async function request(path, { method = "GET", body, admin: _admin = false, tena
     } catch (e) {
       if (e?.name === "AbortError") {
         timeoutHit = true;
+        if (!allowMultiBaseRetry) break;
         continue;
       }
       if (isLikelyNetworkError(e)) {
         lastNetworkError = e;
+        if (!allowMultiBaseRetry) break;
         continue;
       }
       throw e;
@@ -401,7 +407,7 @@ export const api = {
       method: "POST",
       body,
       tenant: true,
-      timeoutMs: 120000,
+      timeoutMs: 45000,
     }),
   tenantUpdatePatientConsultation: (phone, consultationId, body) =>
     request(
@@ -410,7 +416,7 @@ export const api = {
         method: "PATCH",
         body,
         tenant: true,
-        timeoutMs: 120000,
+        timeoutMs: 45000,
       },
     ),
   tenantDeletePatientConsultation: (phone, consultationId) =>
