@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from contextlib import contextmanager
 from typing import Optional
 
@@ -92,14 +93,30 @@ def pg_connection_for(url: Optional[str]):
 
     pool_url = _get_pg_url()
     pool = get_pool()
+
+    # On tente d'ACQUÉRIR une connexion du pool. Le fallback « direct » ne doit
+    # se déclencher QUE si l'acquisition échoue — surtout pas si le corps appelant
+    # lève une exception (sinon le générateur ferait un 2ᵉ yield et masquerait
+    # l'erreur réelle via « generator didn't stop after throw() »).
+    cm = None
     if pool is not None and _urls_equivalent(target, pool_url):
         try:
             with time_block("PG.connect[events:pool]"):
-                with pool.connection() as conn:
-                    yield wrap_connection(conn, "pg:events")
-                    return
+                cm = pool.connection()
+                conn = cm.__enter__()
         except Exception as e:
-            logger.debug("Pool connection failed, falling back to direct: %s", e)
+            logger.debug("Pool connection acquisition failed, falling back to direct: %s", e)
+            cm = None
+
+    if cm is not None:
+        try:
+            yield wrap_connection(conn, "pg:events")
+        except BaseException:
+            if not cm.__exit__(*sys.exc_info()):
+                raise
+        else:
+            cm.__exit__(None, None, None)
+        return
 
     import psycopg
     from psycopg.rows import dict_row
