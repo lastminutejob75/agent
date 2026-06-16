@@ -791,46 +791,28 @@ function ContactMetaCard({
 }
 
 function PatientQuickActions({
-  displayHero,
   notify,
   onOpenProfile,
   onCreateBooking,
   onCreateConsultation,
-  onOpenSmsPro,
   createBookingDisabled,
 }: {
-  displayHero: { phone: string };
   notify: (message: string, opts?: { sticky?: boolean }) => void;
   onOpenProfile: () => void;
   onCreateBooking: () => void;
   onCreateConsultation: () => void;
-  onOpenSmsPro: () => void;
   createBookingDisabled?: boolean;
 }) {
-  const dial = () => {
-    const t = normalizePhone(displayHero.phone);
-    if (t) window.location.href = `tel:${t}`;
-    else notify("Numéro absent pour passer un appel.");
-  };
-  const whatsapp = () => {
-    const t = normalizePhone(displayHero.phone);
-    if (!t) {
-      notify("Numéro absent pour WhatsApp.");
-      return;
-    }
-    window.open(`https://wa.me/${t.replace(/^\+/, "")}`, "_blank", "noopener,noreferrer");
-  };
-  const sms = () => {
-    const t = normalizePhone(displayHero.phone);
-    if (!t) {
-      notify("Numéro absent pour envoyer un SMS.");
-      return;
-    }
-    onOpenSmsPro();
-  };
-
   return (
     <div className="flex flex-wrap gap-2">
+      <HeaderAction
+        variant="primary"
+        compact
+        icon={<HeroSvgIcon name="consult" />}
+        onClick={onCreateConsultation}
+      >
+        Créer une consultation
+      </HeaderAction>
       <HeaderAction
         variant="secondary"
         compact
@@ -844,18 +826,6 @@ function PatientQuickActions({
         }}
       >
         Créer un RDV
-      </HeaderAction>
-      <HeaderAction variant="secondary" compact icon={<HeroSvgIcon name="consult" />} onClick={onCreateConsultation}>
-        Consultation
-      </HeaderAction>
-      <HeaderAction variant="primary" compact icon={<HeroSvgIcon name="phone" />} onClick={dial}>
-        Appeler
-      </HeaderAction>
-      <HeaderAction variant="secondary" compact icon={<HeroSvgIcon name="whatsapp" />} onClick={whatsapp}>
-        WhatsApp
-      </HeaderAction>
-      <HeaderAction variant="secondary" compact icon={<HeroSvgIcon name="sms" />} onClick={sms}>
-        SMS
       </HeaderAction>
       <HeaderAction variant="ghost" compact icon={<HeroSvgIcon name="more" />} onClick={onOpenProfile}>
         Profil
@@ -4332,11 +4302,11 @@ export default function PatientDashboardPage() {
                 <div className="flex min-w-0 items-start gap-3 sm:gap-5">
                   <div
                     className={cx(
-                      "grid h-14 w-14 shrink-0 place-items-center rounded-[18px] bg-gradient-to-br text-lg font-black text-white shadow-[0_10px_24px_rgba(0,156,164,0.16)] sm:h-20 sm:w-20 sm:rounded-[22px] sm:text-2xl lg:h-24 lg:w-24 lg:rounded-[26px] lg:text-3xl",
+                      "grid h-14 w-14 shrink-0 place-items-center rounded-[18px] bg-gradient-to-br text-center text-lg font-black uppercase leading-none tracking-[0.02em] text-white shadow-[0_10px_24px_rgba(0,156,164,0.16)] sm:h-20 sm:w-20 sm:rounded-[22px] sm:text-2xl lg:h-24 lg:w-24 lg:rounded-[26px] lg:text-3xl",
                       displayHero.gradient,
                     )}
                   >
-                    {displayHero.initials}
+                    <span className="translate-y-[1px]">{displayHero.initials}</span>
                   </div>
 
                   <div className="min-w-0 flex-1">
@@ -4350,12 +4320,10 @@ export default function PatientDashboardPage() {
                 </div>
 
                 <PatientQuickActions
-                  displayHero={displayHero}
                   notify={notify}
                   onOpenProfile={() => setModal("profile")}
                   onCreateBooking={() => setCreatePatientBookingOpen(true)}
                   onCreateConsultation={() => openConsultationModal()}
-                  onOpenSmsPro={() => openSingleMessageModal("sms")}
                   createBookingDisabled={!tenantPatientPhone}
                 />
 
@@ -4429,6 +4397,19 @@ export default function PatientDashboardPage() {
                           {normalizePhone(displayHero.phone) ? (
                             <button
                               type="button"
+                              className="rounded-lg border border-[#009CA4] bg-[#009CA4] px-2.5 py-1.5 text-[11px] font-black text-white hover:brightness-110"
+                              onClick={() => {
+                                const tel = normalizePhone(displayHero.phone);
+                                if (tel) window.location.href = `tel:${tel}`;
+                                else notify("Numéro absent pour passer un appel.");
+                              }}
+                            >
+                              Appeler
+                            </button>
+                          ) : null}
+                          {normalizePhone(displayHero.phone) ? (
+                            <button
+                              type="button"
                               className="rounded-lg border border-[#DDE7F1] bg-white px-2.5 py-1.5 text-[11px] font-black text-[#475569] hover:bg-[#F8FAFC]"
                               onClick={() => {
                                 const tel = normalizePhone(displayHero.phone);
@@ -4446,7 +4427,7 @@ export default function PatientDashboardPage() {
                             onClick={() => openSingleMessageModal("sms")}
                             className="rounded-lg border border-[#75D3DF] bg-[#E9FAFC] px-2.5 py-1.5 text-[11px] font-black text-[#007E8C] hover:bg-[#DDF6FA]"
                           >
-                            SMS pro
+                            SMS
                           </button>
                         </span>
                       ) : null
@@ -4511,9 +4492,9 @@ export default function PatientDashboardPage() {
                             type="button"
                             disabled={!patientEmail}
                             onClick={() => openSingleMessageModal("email")}
-                            className="rounded-lg border border-[#6AD58B] bg-white px-2.5 py-1.5 text-[11px] font-black text-[#0EA348] hover:bg-[#F0FFF5] disabled:opacity-50"
+                            className="rounded-lg border border-[#6AD58B] bg-[#F0FFF5] px-2.5 py-1.5 text-[11px] font-black text-[#0EA348] hover:brightness-105 disabled:opacity-50"
                           >
-                            Envoyer
+                            Email
                           </button>
                         </span>
                       ) : null

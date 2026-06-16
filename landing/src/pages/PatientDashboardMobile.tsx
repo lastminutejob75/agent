@@ -154,6 +154,10 @@ function MobilePatientHeader({
   tenantPatientNotFound,
   onOpenProfile,
   onBackToList,
+  onCall,
+  onSendSms,
+  onSendEmail,
+  canSendEmail,
 }: {
   displayHero: DisplayHero;
   patientEmail: string;
@@ -161,6 +165,10 @@ function MobilePatientHeader({
   tenantPatientNotFound: boolean;
   onOpenProfile: () => void;
   onBackToList: () => void;
+  onCall: () => void;
+  onSendSms: () => void;
+  onSendEmail: () => void;
+  canSendEmail: boolean;
 }) {
   const status = statusMeta(displayHero.statusBucket);
   const physician = formatPhysicianWithCity(
@@ -186,11 +194,11 @@ function MobilePatientHeader({
       <div className="flex items-center gap-3.5">
         <div
           className={cx(
-            "grid h-[82px] w-[82px] shrink-0 place-items-center rounded-[22px] bg-gradient-to-br text-[32px] font-black text-white",
+            "grid h-[82px] w-[82px] shrink-0 place-items-center rounded-[22px] bg-gradient-to-br text-center text-[32px] font-black uppercase leading-none tracking-[0.02em] text-white",
             displayHero.gradient,
           )}
         >
-          {displayHero.initials}
+          <span className="translate-y-[1px]">{displayHero.initials}</span>
         </div>
         <div className="min-w-0 flex-1">
           <h1 className="m-0 break-words text-[28px] font-black leading-[1.05] tracking-[-0.02em] text-[#0B1628]">
@@ -218,6 +226,34 @@ function MobilePatientHeader({
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="mt-3.5 grid grid-cols-3 gap-2">
+        <button
+          type="button"
+          onClick={onCall}
+          className="flex h-[46px] items-center justify-center gap-1.5 rounded-2xl border border-[#009CA4] bg-[#009CA4] text-[14px] font-black text-white shadow-[0_6px_14px_rgba(0,156,164,0.18)] transition active:scale-[0.98]"
+        >
+          <HeroSvgIcon name="phone" className="h-4 w-4" />
+          Appeler
+        </button>
+        <button
+          type="button"
+          onClick={onSendSms}
+          className="flex h-[46px] items-center justify-center gap-1.5 rounded-2xl border border-[#75D3DF] bg-[#E9FAFC] text-[14px] font-black text-[#007F88] transition active:scale-[0.98]"
+        >
+          <HeroSvgIcon name="sms" className="h-4 w-4" />
+          SMS
+        </button>
+        <button
+          type="button"
+          onClick={onSendEmail}
+          disabled={!canSendEmail}
+          className="flex h-[46px] items-center justify-center gap-1.5 rounded-2xl border border-[#86EFAC] bg-[#F0FFF5] text-[14px] font-black text-[#0EA348] transition active:scale-[0.98] disabled:opacity-50"
+        >
+          <HeroSvgIcon name="mail" className="h-4 w-4" />
+          Email
+        </button>
       </div>
 
       <div className="my-4 h-px bg-[#E3EAF2]" />
@@ -274,58 +310,8 @@ function HeaderInfoRow({
   );
 }
 
-function MobileQuickActions({
-  onCall,
-  onWhatsApp,
-  onCreateConsultation,
-  onMore,
-}: {
-  onCall: () => void;
-  onWhatsApp: () => void;
-  onCreateConsultation: () => void;
-  onMore: () => void;
-}) {
-  return (
-    <section className="mb-3 grid grid-cols-2 gap-2.5">
-      <button
-        type="button"
-        onClick={onCall}
-        className="flex h-[54px] items-center justify-center gap-2 rounded-2xl border border-[#009CA4] bg-[#009CA4] text-base font-black text-white shadow-[0_8px_18px_rgba(15,23,42,0.05)]"
-      >
-        <HeroSvgIcon name="phone" className="h-4 w-4" />
-        Appeler
-      </button>
-      <button
-        type="button"
-        onClick={onWhatsApp}
-        className="flex h-[54px] items-center justify-center gap-2 rounded-2xl border border-[#E3EAF2] bg-white text-base font-black text-[#0B1628] shadow-[0_8px_18px_rgba(15,23,42,0.05)]"
-      >
-        <HeroSvgIcon name="whatsapp" className="h-4 w-4" />
-        WhatsApp
-      </button>
-      <button
-        type="button"
-        onClick={onCreateConsultation}
-        className="flex h-[54px] items-center justify-center gap-2 rounded-2xl border border-[#E3EAF2] bg-white text-base font-black text-[#0B1628] shadow-[0_8px_18px_rgba(15,23,42,0.05)]"
-      >
-        <span aria-hidden="true" className="text-sm leading-none">
-          🩺
-        </span>
-        Créer fiche consultation
-      </button>
-      <button
-        type="button"
-        onClick={onMore}
-        className="flex h-[54px] items-center justify-center gap-2 rounded-2xl border border-[#E3EAF2] bg-white text-base font-black text-[#0B1628] shadow-[0_8px_18px_rgba(15,23,42,0.05)]"
-      >
-        <HeroSvgIcon name="more" className="h-4 w-4" />
-        Plus
-      </button>
-    </section>
-  );
-}
-
 function MobileContentActions({
+  onCreateConsultation,
   onCreateBooking,
   createBookingDisabled,
   onAddNote,
@@ -334,6 +320,7 @@ function MobileContentActions({
   documentsCount,
   documentsLoading,
 }: {
+  onCreateConsultation: () => void;
   onCreateBooking: () => void;
   createBookingDisabled?: boolean;
   onAddNote: () => void;
@@ -346,9 +333,17 @@ function MobileContentActions({
     <section className="mb-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
       <button
         type="button"
+        onClick={onCreateConsultation}
+        className="flex min-h-[54px] items-center justify-center gap-2 rounded-[15px] border border-[#009CA4] bg-[#009CA4] text-[15px] font-black text-white shadow-[0_8px_18px_rgba(0,156,164,0.18)] sm:col-span-2"
+      >
+        <span aria-hidden="true" className="text-base leading-none">🩺</span>
+        Créer une fiche de consultation
+      </button>
+      <button
+        type="button"
         onClick={onCreateBooking}
         disabled={createBookingDisabled}
-        className="min-h-[50px] rounded-[15px] border border-[#009CA4] bg-[#009CA4] text-sm font-black text-white shadow-[0_8px_18px_rgba(15,23,42,0.05)] disabled:opacity-50 sm:col-span-2"
+        className="min-h-[50px] rounded-[15px] border border-[#009CA4] bg-white text-sm font-black text-[#007F88] shadow-[0_8px_18px_rgba(15,23,42,0.05)] disabled:opacity-50 sm:col-span-2"
       >
         + Créer un rendez-vous
       </button>
@@ -373,39 +368,6 @@ function MobileContentActions({
       >
         ▤ Consulter les documents{!documentsLoading && documentsCount > 0 ? ` (${documentsCount})` : ""}
       </button>
-    </section>
-  );
-}
-
-function MobileMessageActions({
-  onSendProfessionalSms,
-  onSendProfessionalEmail,
-  canSendProfessionalEmail,
-}: {
-  onSendProfessionalSms: () => void;
-  onSendProfessionalEmail: () => void;
-  canSendProfessionalEmail: boolean;
-}) {
-  return (
-    <section className="mb-3 rounded-[20px] border border-[#E3EAF2] bg-white p-3.5 shadow-[0_10px_24px_rgba(15,23,42,0.07)]">
-      <h3 className="text-sm font-black uppercase tracking-[0.08em] text-[#64748B]">Messages pro</h3>
-      <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-        <button
-          type="button"
-          onClick={onSendProfessionalSms}
-          className="min-h-[50px] rounded-[15px] border border-[#75D3DF] bg-[#E9FAFC] text-sm font-black text-[#007F88]"
-        >
-          SMS pro
-        </button>
-        <button
-          type="button"
-          onClick={onSendProfessionalEmail}
-          disabled={!canSendProfessionalEmail}
-          className="min-h-[50px] rounded-[15px] border border-[#86EFAC] bg-[#F0FFF5] text-sm font-black text-[#0EA348] disabled:opacity-50"
-        >
-          Email pro
-        </button>
-      </div>
     </section>
   );
 }
@@ -902,7 +864,6 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
     onBackToList,
     onOpenProfile,
     onCall,
-    onWhatsApp,
     onCreateConsultation,
     onSendProfessionalSms,
     onSendProfessionalEmail,
@@ -951,19 +912,13 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
         tenantPatientNotFound={tenantPatientNotFound}
         onOpenProfile={onOpenProfile}
         onBackToList={onBackToList}
-      />
-      <MobileQuickActions
         onCall={onCall}
-        onWhatsApp={onWhatsApp}
-        onCreateConsultation={onCreateConsultation}
-        onMore={onOpenProfile}
-      />
-      <MobileMessageActions
-        onSendProfessionalSms={onSendProfessionalSms}
-        onSendProfessionalEmail={onSendProfessionalEmail}
-        canSendProfessionalEmail={canSendProfessionalEmail}
+        onSendSms={onSendProfessionalSms}
+        onSendEmail={onSendProfessionalEmail}
+        canSendEmail={canSendProfessionalEmail}
       />
       <MobileContentActions
+        onCreateConsultation={onCreateConsultation}
         onCreateBooking={onCreateBooking}
         createBookingDisabled={createBookingDisabled}
         onAddNote={onAddNote}
