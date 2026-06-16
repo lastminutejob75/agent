@@ -401,7 +401,7 @@ export const api = {
       method: "POST",
       body,
       tenant: true,
-      timeoutMs: 20000,
+      timeoutMs: 120000,
     }),
   tenantUpdatePatientConsultation: (phone, consultationId, body) =>
     request(
@@ -410,7 +410,7 @@ export const api = {
         method: "PATCH",
         body,
         tenant: true,
-        timeoutMs: 20000,
+        timeoutMs: 120000,
       },
     ),
   tenantDeletePatientConsultation: (phone, consultationId) =>
