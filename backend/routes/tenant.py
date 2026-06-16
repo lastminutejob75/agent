@@ -2151,6 +2151,8 @@ class TenantCallFollowupBody(BaseModel):
 class TenantCallPatientBody(BaseModel):
     validated_name: str
     raw_name: str = ""
+    first_name: Optional[str] = Field(default=None, max_length=80)
+    last_name: Optional[str] = Field(default=None, max_length=80)
     patient_phone: str = ""
     patient_email: Optional[str] = Field(default=None, max_length=254)
     birth_date: Optional[str] = Field(default=None, max_length=10)
@@ -2164,6 +2166,12 @@ class TenantCallPatientBody(BaseModel):
     points_attention: Optional[str] = Field(default=None, max_length=4000)
     synthese_medicale: Optional[str] = Field(default=None, max_length=6000)
     dernier_contexte_consultation: Optional[str] = Field(default=None, max_length=6000)
+
+    @validator("first_name", "last_name")
+    def _validate_call_patient_name_parts(cls, v):
+        if v is None:
+            return None
+        return v.strip()[:80] or None
 
     @validator("patient_email")
     def _validate_call_patient_email(cls, v):
@@ -3624,9 +3632,16 @@ def tenant_call_patient_update(
     if len(validated_name) < 2:
         raise HTTPException(400, "validated_name too short")
 
-    patient_email = (body.patient_email or "").strip()[:254] or None
+    patient_email = (body.patient_email or "").strip().lower()[:254] or None
     if patient_email and not is_valid_contact_email(patient_email):
         raise HTTPException(400, "Email invalide (format attendu: prenom@domaine.fr).")
+
+    first_name = (body.first_name or "").strip()[:80] or None
+    last_name = (body.last_name or "").strip()[:80] or None
+    if not (first_name or last_name):
+        derived_first, derived_last = _split_patient_full_name(validated_name)
+        first_name = derived_first or None
+        last_name = derived_last or None
 
     _raise_on_blocking_patient_duplicate(tenant_id, phone=phone, email=patient_email)
 
@@ -3648,6 +3663,10 @@ def tenant_call_patient_update(
     profile_field_kwargs: dict = {}
     if patient_email:
         profile_field_kwargs["email"] = patient_email
+    if first_name is not None:
+        profile_field_kwargs["first_name"] = first_name
+    if last_name is not None:
+        profile_field_kwargs["last_name"] = last_name
     if body.birth_date is not None:
         profile_field_kwargs["birth_date"] = body.birth_date
     if body.treating_physician_name is not None:
@@ -3876,18 +3895,50 @@ def tenant_get_patient(
     }
 
 
+def _split_patient_full_name(value: Optional[str]) -> tuple[str, str]:
+    """Découpe une chaîne « Prénom Nom » en (first_name, last_name).
+
+    Convention alignée sur le front (splitPatientFullName) : le dernier mot est le
+    nom de famille, le reste forme le prénom. Sert de repli quand l'UI n'envoie
+    pas explicitement prénom/nom.
+    """
+    full = " ".join(str(value or "").split()).strip()
+    if not full:
+        return "", ""
+    parts = full.split(" ")
+    if len(parts) == 1:
+        return "", parts[0]
+    return " ".join(parts[:-1]), parts[-1]
+
+
 class TenantPatientPracticeCreateBody(BaseModel):
     """Création ou complément d'une fiche patient sur le dashboard client (sans passer par un appel vocal)."""
 
     patient_phone: str = Field(..., max_length=40)
     validated_name: str = Field(..., min_length=2, max_length=160)
     raw_name: Optional[str] = Field(default=None, max_length=160)
+    first_name: Optional[str] = Field(default=None, max_length=80)
+    last_name: Optional[str] = Field(default=None, max_length=80)
     initial_note: Optional[str] = Field(default=None, max_length=4000)
     agenda_motif: Optional[str] = Field(default=None, max_length=240)
     patient_email: Optional[str] = Field(default=None, max_length=254)
     birth_date: Optional[str] = Field(default=None, max_length=10)
     treating_physician_name: Optional[str] = Field(default=None, max_length=200)
     treating_physician_city: Optional[str] = Field(default=None, max_length=120)
+
+    @validator("patient_phone")
+    def _validate_register_phone(cls, v):
+        if not is_valid_patient_phone(v):
+            raise ValueError(
+                "Numéro de téléphone invalide (format attendu : 06 12 34 56 78 ou +33 6 12 34 56 78)."
+            )
+        return v
+
+    @validator("first_name", "last_name")
+    def _validate_register_name_parts(cls, v):
+        if v is None:
+            return None
+        return v.strip()[:80] or None
 
     @validator("patient_email")
     def _validate_register_email(cls, v):
@@ -3942,9 +3993,16 @@ def tenant_register_patient_practice(
         raise HTTPException(400, "Nom valide trop court")
     motif = (body.agenda_motif or "").strip()[:240] or None
     rn = (body.raw_name or "").strip()[:160] or None
-    patient_email = (body.patient_email or "").strip()[:254] or None
+    patient_email = (body.patient_email or "").strip().lower()[:254] or None
     if patient_email and not is_valid_contact_email(patient_email):
         raise HTTPException(400, "Email invalide (format attendu: prenom@domaine.fr).")
+
+    first_name = (body.first_name or "").strip()[:80] or None
+    last_name = (body.last_name or "").strip()[:80] or None
+    if not (first_name or last_name):
+        derived_first, derived_last = _split_patient_full_name(vn)
+        first_name = derived_first or None
+        last_name = derived_last or None
 
     _raise_on_blocking_patient_duplicate(tenant_id, phone=phone, email=patient_email)
 
@@ -3965,6 +4023,10 @@ def tenant_register_patient_practice(
     profile_field_kwargs: dict = {}
     if patient_email:
         profile_field_kwargs["email"] = patient_email
+    if first_name is not None:
+        profile_field_kwargs["first_name"] = first_name
+    if last_name is not None:
+        profile_field_kwargs["last_name"] = last_name
     if body.birth_date is not None:
         profile_field_kwargs["birth_date"] = body.birth_date
     if body.treating_physician_name is not None:
@@ -4000,6 +4062,8 @@ class PatientUpdateBody(BaseModel):
     email: Optional[str] = Field(default=None, max_length=254)
     validated_name: Optional[str] = Field(default=None, max_length=160)
     raw_name: Optional[str] = Field(default=None, max_length=160)
+    first_name: Optional[str] = Field(default=None, max_length=80)
+    last_name: Optional[str] = Field(default=None, max_length=80)
     birth_date: Optional[str] = Field(default=None, max_length=10)
     treating_physician_name: Optional[str] = Field(default=None, max_length=200)
     treating_physician_city: Optional[str] = Field(default=None, max_length=120)
@@ -4050,6 +4114,12 @@ class PatientUpdateBody(BaseModel):
         if v is None:
             return None
         return str(v).strip()[:160]
+
+    @validator("first_name", "last_name")
+    def _validate_update_name_parts(cls, v):
+        if v is None:
+            return None
+        return str(v).strip()[:80] or None
 
     @validator("birth_date")
     def _validate_birth_date(cls, v):
@@ -4346,6 +4416,8 @@ def tenant_update_patient(
 
     validated_name = payload.pop("validated_name", None)
     raw_name = payload.pop("raw_name", None)
+    first_name = payload.pop("first_name", None)
+    last_name = payload.pop("last_name", None)
     if validated_name is not None:
         name_updated = upsert_cabinet_client(
             tenant_id,
@@ -4356,6 +4428,21 @@ def tenant_update_patient(
         if not name_updated:
             raise HTTPException(500, "Impossible de mettre à jour le nom du patient.")
         updated = name_updated
+        # Resynchronise prénom/nom structurés si le nom complet change sans détail explicite.
+        if first_name is None and last_name is None:
+            derived_first, derived_last = _split_patient_full_name(str(validated_name).strip())
+            first_name = derived_first
+            last_name = derived_last
+
+    if first_name is not None or last_name is not None:
+        name_parts_updated = update_patient_fields(
+            tenant_id,
+            current_phone,
+            first_name=first_name if first_name is not None else None,
+            last_name=last_name if last_name is not None else None,
+        )
+        if name_parts_updated:
+            updated = name_parts_updated
 
     if payload:
         field_updated = update_patient_fields(

@@ -612,6 +612,8 @@ def _ensure_cabinet_clients_table(conn: sqlite3.Connection) -> None:
         "points_attention",
         "synthese_medicale",
         "dernier_contexte_consultation",
+        "first_name",
+        "last_name",
     ):
         try:
             conn.execute(f"SELECT {col} FROM cabinet_clients LIMIT 0")
@@ -668,6 +670,8 @@ def _migrate_cabinet_clients_columns_pg(conn: Any) -> None:
                 "points_attention",
                 "synthese_medicale",
                 "dernier_contexte_consultation",
+                "first_name",
+                "last_name",
             ):
                 cur.execute(
                     f"""
@@ -693,7 +697,7 @@ _CABINET_CLIENT_COLS_BASE = (
 _CABINET_CLIENT_COLS_EXTENDED = (
     f"{_CABINET_CLIENT_COLS_BASE}, birth_date, treating_physician_name, treating_physician_city, "
     "antecedents_medicaux, antecedents_chirurgicaux, allergies, traitements, facteurs_risque, "
-    "points_attention, synthese_medicale, dernier_contexte_consultation"
+    "points_attention, synthese_medicale, dernier_contexte_consultation, first_name, last_name"
 )
 _CABINET_CLIENT_COLS_COMPACT = (
     "phone, display_name, validated_name, raw_name, validation_status, updated_at, created_at"
@@ -719,7 +723,7 @@ def _cabinet_clients_profile_column_names_pg(conn: Any) -> set[str]:
                     'birth_date', 'treating_physician_name', 'treating_physician_city',
                     'antecedents_medicaux', 'antecedents_chirurgicaux', 'allergies', 'traitements',
                     'facteurs_risque', 'points_attention', 'synthese_medicale',
-                    'dernier_contexte_consultation'
+                    'dernier_contexte_consultation', 'first_name', 'last_name'
                   )
                 """
             )
@@ -755,6 +759,8 @@ def _cabinet_client_select_columns_for_pg(conn: Any) -> str:
             "points_attention",
             "synthese_medicale",
             "dernier_contexte_consultation",
+            "first_name",
+            "last_name",
         ):
             if col in profile_cols:
                 suffix += f", {col}"
@@ -811,6 +817,8 @@ def _ensure_cabinet_clients_table_pg(conn: Any) -> None:
                 raw_name TEXT,
                 validated_name TEXT,
                 display_name TEXT,
+                first_name TEXT,
+                last_name TEXT,
                 validation_status TEXT NOT NULL DEFAULT 'pending',
                 email TEXT,
                 birth_date DATE,
@@ -853,6 +861,8 @@ def _cabinet_client_row_to_dict(row: Dict[str, Any]) -> Dict[str, Any]:
         "raw_name": row.get("raw_name") or "",
         "validated_name": row.get("validated_name") or "",
         "display_name": row.get("display_name") or row.get("validated_name") or row.get("raw_name") or "",
+        "first_name": row.get("first_name") or "",
+        "last_name": row.get("last_name") or "",
         "validation_status": row.get("validation_status") or "pending",
         "email": row.get("email") or "",
         "birth_date": str(row.get("birth_date") or "")[:10] if row.get("birth_date") else "",
@@ -1113,6 +1123,8 @@ def update_patient_fields(
     phone: str,
     *,
     email: Optional[str] = None,
+    first_name: Optional[str] = None,
+    last_name: Optional[str] = None,
     birth_date: Optional[str] = None,
     treating_physician_name: Optional[str] = None,
     treating_physician_city: Optional[str] = None,
@@ -1133,9 +1145,17 @@ def update_patient_fields(
     sets = []
     params: list = []
     if email is not None:
-        clean_email = email.strip()[:254]
+        clean_email = email.strip().lower()[:254]
         sets.append("email = ?")
-        params.append(clean_email)
+        params.append(clean_email or None)
+    if first_name is not None:
+        clean_first = first_name.strip()[:80]
+        sets.append("first_name = ?")
+        params.append(clean_first or None)
+    if last_name is not None:
+        clean_last = last_name.strip()[:80]
+        sets.append("last_name = ?")
+        params.append(clean_last or None)
     if birth_date is not None:
         clean_birth = birth_date.strip()[:10]
         sets.append("birth_date = ?")
@@ -1168,7 +1188,9 @@ def update_patient_fields(
     params.extend([tenant_id, phone_norm])
 
     has_profile_fields = (
-        birth_date is not None
+        first_name is not None
+        or last_name is not None
+        or birth_date is not None
         or treating_physician_name is not None
         or treating_physician_city is not None
         or antecedents_medicaux is not None

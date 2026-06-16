@@ -3021,6 +3021,8 @@ export default function PatientDashboardPage() {
         patient_phone: validated.phone,
         validated_name: validated.name,
         raw_name: validated.name,
+        first_name: validated.firstName || undefined,
+        last_name: validated.lastName || undefined,
         patient_email: validated.email || undefined,
         birth_date: validated.birthDate || undefined,
         treating_physician_name: validated.treatingPhysicianName || undefined,

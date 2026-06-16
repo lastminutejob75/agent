@@ -99,8 +99,10 @@ export function validatePatientCreateFormForSubmit(form) {
   return {
     ok: true,
     name,
+    firstName: String(form.firstName || "").trim(),
+    lastName: String(form.lastName || "").trim(),
     phone: String(form.phone || "").trim(),
-    email: String(form.email || "").trim(),
+    email: String(form.email || "").trim().toLowerCase(),
     birthDate: String(form.birthDate || "").trim(),
     treatingPhysicianName: String(form.treatingPhysicianName || "").trim(),
     treatingPhysicianCity: String(form.treatingPhysicianCity || "").trim(),
@@ -115,6 +117,8 @@ export function buildCallPatientApiPayload(form, { validatedName, rawName }) {
     body: {
       validated_name: validatedName || validated.name,
       raw_name: (rawName || validated.name).trim() || validated.name,
+      first_name: validated.firstName || undefined,
+      last_name: validated.lastName || undefined,
       patient_phone: validated.phone,
       patient_email: validated.email,
       birth_date: validated.birthDate,

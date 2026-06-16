@@ -210,7 +210,9 @@ export default function AppPatients() {
         patient_phone: phoneRaw,
         validated_name: fullName,
         raw_name: fullName,
-        patient_email: emailRaw || undefined,
+        first_name: String(createForm.firstName || "").trim() || undefined,
+        last_name: String(createForm.lastName || "").trim() || undefined,
+        patient_email: emailRaw ? emailRaw.toLowerCase() : undefined,
         initial_note: String(createForm.initialNote || "").trim() || undefined,
       });
       const mode = res?.register_mode;
