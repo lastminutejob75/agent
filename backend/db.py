@@ -1725,7 +1725,9 @@ def get_patient_consultation_by_id(
     if url:
         try:
             from backend.pg_pool import pg_connection_for
+            from backend.pg_tenant_context import set_tenant_id_on_connection
             with pg_connection_for(url) as conn:
+                set_tenant_id_on_connection(conn, tenant_id)
                 _ensure_patient_consultations_table_pg(conn)
                 with conn.cursor() as cur:
                     cur.execute(
@@ -1809,7 +1811,9 @@ def list_patient_consultations(
     if url:
         try:
             from backend.pg_pool import pg_connection_for
+            from backend.pg_tenant_context import set_tenant_id_on_connection
             with pg_connection_for(url) as conn:
+                set_tenant_id_on_connection(conn, tenant_id)
                 _ensure_patient_consultations_table_pg(conn)
                 with conn.cursor() as cur:
                     cur.execute(
@@ -1971,7 +1975,9 @@ def create_patient_consultation(
     if url:
         try:
             from backend.pg_pool import pg_connection_for
+            from backend.pg_tenant_context import set_tenant_id_on_connection
             with pg_connection_for(url) as conn:
+                set_tenant_id_on_connection(conn, tenant_id)
                 _ensure_patient_consultations_table_pg(conn)
                 with conn.cursor() as cur:
                     cur.execute(
@@ -2200,7 +2206,9 @@ def update_patient_consultation(
     if url:
         try:
             from backend.pg_pool import pg_connection_for
+            from backend.pg_tenant_context import set_tenant_id_on_connection
             with pg_connection_for(url) as conn:
+                set_tenant_id_on_connection(conn, tenant_id)
                 _ensure_patient_consultations_table_pg(conn)
                 with conn.cursor() as cur:
                     cur.execute(
@@ -2435,7 +2443,9 @@ def delete_patient_consultation(
     if url:
         try:
             from backend.pg_pool import pg_connection_for
+            from backend.pg_tenant_context import set_tenant_id_on_connection
             with pg_connection_for(url) as conn:
+                set_tenant_id_on_connection(conn, tenant_id)
                 _ensure_patient_consultations_table_pg(conn)
                 with conn.cursor() as cur:
                     cur.execute(
