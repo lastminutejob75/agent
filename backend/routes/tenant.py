@@ -5434,7 +5434,9 @@ async def _deepgram_transcribe(audio_bytes: bytes, content_type: str) -> str:
     if not deepgram_api_key:
         raise HTTPException(503, "Deepgram non configuré (DEEPGRAM_API_KEY manquant).")
     ct = str(content_type or "").strip() or "audio/webm"
-    dg_model = str(os.getenv("DEEPGRAM_CONSULTATION_MODEL") or "").strip() or "nova-2-medical"
+    # nova-2-medical est anglais uniquement : pour le français on utilise le modèle
+    # général nova-2 (langue fr supportée). Surchargeable via DEEPGRAM_CONSULTATION_MODEL.
+    dg_model = str(os.getenv("DEEPGRAM_CONSULTATION_MODEL") or "").strip() or "nova-2"
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(55.0, connect=10.0)) as client:
             dg_res = await client.post(
