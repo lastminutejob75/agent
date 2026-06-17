@@ -7,7 +7,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Tuple
 
-from backend.db import get_cabinet_client_by_phone, list_patient_notes
+from backend.db import get_cabinet_client_by_phone, list_patient_consultations, list_patient_notes
 from backend.patient_v2_db import fetch_all_pg, normalize_patient_phone
 from backend.services.patient_metrics import get_patient_metrics
 from backend.tenants_pg import pg_get_tenant_params, pg_load_tenant_params_bypass
@@ -62,6 +62,33 @@ def _fetch_notes(db, tenant_id: int, patient_phone: str, *, limit: int = 5) -> L
                 "author": n.get("author") or "Cabinet",
                 "content": (n.get("note_text") or "")[:500],
                 "created_at": str(n.get("created_at") or ""),
+            }
+        )
+    return out
+
+
+def _fetch_consultations(db, tenant_id: int, patient_phone: str, *, limit: int = 3) -> List[Dict[str, Any]]:
+    try:
+        rows = list_patient_consultations(tenant_id, patient_phone, limit=limit) or []
+    except Exception:
+        logger.warning(
+            "context_providers consultations fetch failed tenant=%s phone=%s",
+            tenant_id,
+            str(patient_phone)[-4:] if patient_phone else "?",
+            exc_info=True,
+        )
+        return []
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        out.append(
+            {
+                "date": str(r.get("date_consultation") or r.get("created_at") or "")[:10],
+                "motif": (r.get("motif") or "")[:200],
+                "impression_clinique": (r.get("impression_clinique") or "")[:400],
+                "resume_ia": (r.get("ia_resume") or "")[:600],
+                "prescription": (r.get("prescription") or "")[:300],
+                "suivi": (r.get("suivi_consignes") or "")[:200],
+                "prochain_rdv": str(r.get("suivi_prochain_rdv") or "")[:10],
             }
         )
     return out
@@ -441,10 +468,22 @@ class SanteProvider(ContextProvider):
         }, True
 
 
+class ConsultationProvider(ContextProvider):
+    """Fiches de consultation récentes (données cliniques, HDS requis)."""
+
+    capability = "hds_enabled"
+    is_health_data = True
+
+    def fetch(self, db, tenant_id, patient_phone, *, hds_active):
+        consultations = _fetch_consultations(db, tenant_id, patient_phone, limit=3)
+        return {"consultations_recentes": consultations}, bool(consultations)
+
+
 PROVIDERS: List[ContextProvider] = [
     ReceptionProvider(),
     QuestionnaireProvider(),
     SanteProvider(),
+    ConsultationProvider(),
 ]
 
 
@@ -477,6 +516,8 @@ def build_context_pack(db, tenant_id: int, patient_phone: str, tenant_caps: set)
                     "notes_cliniques": [],
                     "questionnaire_mvp_status": "",
                 }
+            elif isinstance(provider, ConsultationProvider):
+                data = {"consultations_recentes": []}
             else:
                 data = {}
             exposes_health = False

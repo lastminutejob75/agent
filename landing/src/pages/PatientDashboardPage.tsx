@@ -1183,6 +1183,11 @@ export default function PatientDashboardPage() {
   const [toast, setToast] = useState("");
   const [modal, setModal] = useState<ModalType>(null);
   const [note, setNote] = useState("");
+  const [noteRecording, setNoteRecording] = useState(false);
+  const [noteTranscribing, setNoteTranscribing] = useState(false);
+  const noteRecorderRef = useRef<MediaRecorder | null>(null);
+  const noteChunksRef = useRef<BlobPart[]>([]);
+  const noteStreamRef = useRef<MediaStream | null>(null);
   const [patientNotes, setPatientNotes] = useState<PatientNote[]>([]);
   const [notesLoading, setNotesLoading] = useState(false);
   const [notesSaving, setNotesSaving] = useState(false);
@@ -3307,6 +3312,98 @@ export default function PatientDashboardPage() {
     }
   };
 
+  const releaseNoteStream = useCallback(() => {
+    const stream = noteStreamRef.current;
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+      noteStreamRef.current = null;
+    }
+  }, []);
+
+  const transcribeNoteBlob = useCallback(
+    async (blob: Blob) => {
+      if (!blob || blob.size === 0) return;
+      setNoteTranscribing(true);
+      try {
+        const res = await api.tenantTranscribeNote(blob);
+        const text = String(res?.transcription || "").trim();
+        if (text) {
+          setNote((prev) => {
+            const sep = prev && !/\s$/.test(prev) ? " " : "";
+            return prev + sep + text;
+          });
+        } else {
+          notify("Aucune parole détectée. Réessayez ou saisissez la note.");
+        }
+      } catch (e) {
+        notify((e as Error)?.message || "La dictée n'a pas pu être transcrite.", { sticky: true });
+      } finally {
+        setNoteTranscribing(false);
+      }
+    },
+    [notify],
+  );
+
+  const stopNoteDictation = useCallback(() => {
+    const rec = noteRecorderRef.current;
+    if (rec && rec.state === "recording") {
+      try {
+        rec.stop();
+      } catch {
+        releaseNoteStream();
+        setNoteRecording(false);
+      }
+    } else {
+      releaseNoteStream();
+      setNoteRecording(false);
+    }
+  }, [releaseNoteStream]);
+
+  const toggleNoteDictation = useCallback(async () => {
+    if (noteRecording) {
+      stopNoteDictation();
+      return;
+    }
+    if (noteTranscribing) return;
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      notify("La dictée vocale n'est pas disponible sur ce navigateur/appareil.", { sticky: true });
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      noteStreamRef.current = stream;
+      const rec = new MediaRecorder(stream);
+      noteChunksRef.current = [];
+      rec.ondataavailable = (event) => {
+        if (event.data && event.data.size) noteChunksRef.current.push(event.data);
+      };
+      rec.onstop = () => {
+        const blob = new Blob(noteChunksRef.current, { type: rec.mimeType || "audio/webm" });
+        releaseNoteStream();
+        setNoteRecording(false);
+        void transcribeNoteBlob(blob);
+      };
+      rec.start();
+      noteRecorderRef.current = rec;
+      setNoteRecording(true);
+    } catch (e) {
+      releaseNoteStream();
+      setNoteRecording(false);
+      const name = (e as Error)?.name || "";
+      notify(
+        name === "NotAllowedError" || name === "SecurityError"
+          ? "Micro non autorisé. Autorisez l'accès au microphone dans le navigateur."
+          : "Impossible d'accéder au microphone.",
+        { sticky: true },
+      );
+    }
+  }, [noteRecording, noteTranscribing, stopNoteDictation, releaseNoteStream, transcribeNoteBlob, notify]);
+
+  const closeNoteModal = useCallback(() => {
+    stopNoteDictation();
+    setModal(null);
+  }, [stopNoteDictation]);
+
   const reportAppointmentAbsence = async (start: Date) => {
     if (!tenantPatientPhone) {
       notify("Aucun patient sélectionné");
@@ -5062,12 +5159,32 @@ export default function PatientDashboardPage() {
                       <textarea
                         value={note}
                         onChange={(event) => setNote(event.target.value)}
-                        placeholder="Ajouter une note..."
+                        placeholder="Ajouter une note... (ou dictez-la à la voix)"
                         className="mt-4 h-16 w-full resize-none rounded-xl border border-white/20 bg-white px-4 py-3 text-[#0A1628] outline-none focus:ring-4 focus:ring-[#00C4CC]/25"
                       />
-                      <button onClick={saveNote} disabled={notesSaving} className="mt-3 rounded-xl bg-[#00A5AE] px-7 py-3 text-sm font-black text-white shadow-lg hover:bg-[#00949C] disabled:opacity-60">
-                        {notesSaving ? "Enregistrement..." : "Enregistrer"}
-                      </button>
+                      <div className="mt-3 flex flex-wrap items-center gap-3">
+                        <button onClick={saveNote} disabled={notesSaving || noteRecording || noteTranscribing} className="rounded-xl bg-[#00A5AE] px-7 py-3 text-sm font-black text-white shadow-lg hover:bg-[#00949C] disabled:opacity-60">
+                          {notesSaving ? "Enregistrement..." : "Enregistrer"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={toggleNoteDictation}
+                          disabled={noteTranscribing}
+                          aria-pressed={noteRecording}
+                          className={cx(
+                            "inline-flex items-center gap-2 rounded-xl border px-4 py-3 text-sm font-black transition disabled:opacity-60",
+                            noteRecording
+                              ? "border-[#FCA5A5] bg-[#E11D48] text-white"
+                              : "border-white/30 bg-white/10 text-white hover:bg-white/20",
+                          )}
+                        >
+                          <span className={cx("inline-block h-2.5 w-2.5 rounded-full", noteRecording ? "animate-pulse bg-white" : "bg-[#7CF3FB]")} />
+                          {noteTranscribing ? "Transcription…" : noteRecording ? "Arrêter la dictée" : "Dicter"}
+                        </button>
+                        {noteRecording ? (
+                          <span className="text-sm font-bold text-white/80">Dictée en cours… parlez.</span>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                 </section>
@@ -5412,7 +5529,34 @@ export default function PatientDashboardPage() {
       )}
 
       {modal === "addNote" && (
-        <Modal title="Ajouter une note" onClose={() => setModal(null)} width="max-w-xl">
+        <Modal title="Ajouter une note" onClose={closeNoteModal} width="max-w-xl">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <p className="m-0 text-sm font-semibold text-[#61708B]">
+              Écrivez la note ou dictez-la à la voix.
+            </p>
+            <button
+              type="button"
+              onClick={toggleNoteDictation}
+              disabled={noteTranscribing}
+              aria-pressed={noteRecording}
+              className={cx(
+                "inline-flex shrink-0 items-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-black transition disabled:opacity-60",
+                noteRecording
+                  ? "border-[#E11D48] bg-[#FFF1F3] text-[#E11D48]"
+                  : "border-[#009CA4] bg-white text-[#008EA1] hover:bg-[#F2FBFC]",
+              )}
+            >
+              <span
+                className={cx(
+                  "grid h-5 w-5 place-items-center rounded-full text-xs",
+                  noteRecording ? "animate-pulse bg-[#E11D48] text-white" : "bg-[#E9FAFC] text-[#008EA1]",
+                )}
+              >
+                ●
+              </span>
+              {noteTranscribing ? "Transcription…" : noteRecording ? "Arrêter la dictée" : "Dicter la note"}
+            </button>
+          </div>
           <textarea
             autoFocus
             value={note}
@@ -5420,12 +5564,20 @@ export default function PatientDashboardPage() {
             placeholder="Ex. Préfère les rendez-vous le matin, ne pas appeler après 18h..."
             className="h-40 w-full resize-none rounded-2xl border border-[#DDE7F1] p-4 outline-none focus:border-[#009CA4] focus:ring-4 focus:ring-[#009CA4]/10"
           />
+          {noteRecording ? (
+            <p className="mt-2 flex items-center gap-2 text-sm font-bold text-[#E11D48]">
+              <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-[#E11D48]" />
+              Dictée en cours… parlez, puis cliquez sur « Arrêter la dictée ».
+            </p>
+          ) : noteTranscribing ? (
+            <p className="mt-2 text-sm font-bold text-[#008EA1]">Transcription en cours…</p>
+          ) : null}
           <button
             onClick={async () => {
               const ok = await saveNote();
               if (ok) setModal(null);
             }}
-            disabled={notesSaving}
+            disabled={notesSaving || noteRecording || noteTranscribing}
             className="mt-4 w-full rounded-xl bg-[#009CA4] px-4 py-3 font-black text-white disabled:opacity-60"
           >
             {notesSaving ? "Enregistrement..." : "Enregistrer la note"}

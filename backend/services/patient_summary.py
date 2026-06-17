@@ -41,7 +41,8 @@ Section sans donnée -> chaîne/tableau vide. Ne remplis jamais "pour faire joli
 SANTE_RULES = """\
 DONNÉES DE SANTÉ — règles renforcées :
 7. Tu RESTITUES les éléments cliniques fournis (questionnaire médical, antécédents, traitements, \
-notes praticien). Tu ne les interprètes pas, aucun diagnostic, aucune suggestion de traitement/examen.
+notes praticien, ET les fiches de consultation récentes : motif, impression clinique, résumé, \
+prescription, suivi). Tu ne les interprètes pas, aucun diagnostic, aucune suggestion de traitement/examen.
 8. Tu ne déduis aucune info de santé non écrite explicitement.
 9. Aucun lien de causalité médicale, même évident.
 10. Section "rappel_clinique" : reformulation neutre des éléments existants, pour un praticien \
@@ -60,8 +61,11 @@ def _pack_has_signal(pack: dict) -> bool:
     reception = pack.get("ReceptionProvider") or {}
     questionnaire = pack.get("QuestionnaireProvider") or {}
     sante = pack.get("SanteProvider") or {}
+    consultations = pack.get("ConsultationProvider") or {}
     metrics = reception.get("metriques") or {}
 
+    if consultations.get("consultations_recentes"):
+        return True
     if reception.get("flags"):
         return True
     if reception.get("notes_recentes"):

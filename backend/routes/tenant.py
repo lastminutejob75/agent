@@ -5428,29 +5428,13 @@ def tenant_consultation_prefill_route(
     return _build_consultation_prefill_payload(tenant_id, phone)
 
 
-@router.post("/consultations/transcribe")
-async def tenant_consultation_transcribe_route(
-    audio: UploadFile = File(...),
-    phone: str = Form(default=""),
-    auth: dict = Depends(require_tenant_auth),
-):
-    tenant_id = auth["tenant_id"]
-    phone_norm = normalize_phone_number(phone or "")
-    profile: Optional[Dict[str, Any]] = None
-    if phone_norm:
-        profile = get_cabinet_client_by_phone(tenant_id, phone_norm)
-        if not profile:
-            raise HTTPException(404, "Patient not found")
-    audio_bytes = await audio.read()
-    if not audio_bytes:
-        raise HTTPException(400, "Fichier audio vide.")
-
+async def _deepgram_transcribe(audio_bytes: bytes, content_type: str) -> str:
+    """Transcrit un blob audio via Deepgram (modèle médical FR). Retourne le texte brut."""
     deepgram_api_key = str(os.getenv("DEEPGRAM_API_KEY") or "").strip()
     if not deepgram_api_key:
         raise HTTPException(503, "Deepgram non configuré (DEEPGRAM_API_KEY manquant).")
-    content_type = str(audio.content_type or "").strip() or "audio/webm"
+    ct = str(content_type or "").strip() or "audio/webm"
     dg_model = str(os.getenv("DEEPGRAM_CONSULTATION_MODEL") or "").strip() or "nova-2-medical"
-
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(55.0, connect=10.0)) as client:
             dg_res = await client.post(
@@ -5463,7 +5447,7 @@ async def tenant_consultation_transcribe_route(
                 },
                 headers={
                     "Authorization": f"Token {deepgram_api_key}",
-                    "Content-Type": content_type,
+                    "Content-Type": ct,
                 },
                 content=audio_bytes,
             )
@@ -5481,7 +5465,41 @@ async def tenant_consultation_transcribe_route(
         .get("alternatives", [{}])[0]
         .get("transcript", "")
     )
-    transcription = str(transcription or "").strip()
+    return str(transcription or "").strip()
+
+
+@router.post("/notes/transcribe")
+async def tenant_note_transcribe_route(
+    audio: UploadFile = File(...),
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Dictée d'une note libre : transcription audio -> texte (Deepgram), sans extraction IA."""
+    _ = auth["tenant_id"]
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(400, "Fichier audio vide.")
+    transcription = await _deepgram_transcribe(audio_bytes, audio.content_type or "audio/webm")
+    return {"transcription": transcription}
+
+
+@router.post("/consultations/transcribe")
+async def tenant_consultation_transcribe_route(
+    audio: UploadFile = File(...),
+    phone: str = Form(default=""),
+    auth: dict = Depends(require_tenant_auth),
+):
+    tenant_id = auth["tenant_id"]
+    phone_norm = normalize_phone_number(phone or "")
+    profile: Optional[Dict[str, Any]] = None
+    if phone_norm:
+        profile = get_cabinet_client_by_phone(tenant_id, phone_norm)
+        if not profile:
+            raise HTTPException(404, "Patient not found")
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(400, "Fichier audio vide.")
+
+    transcription = await _deepgram_transcribe(audio_bytes, audio.content_type or "audio/webm")
     if not transcription:
         return {
             "transcription": "",

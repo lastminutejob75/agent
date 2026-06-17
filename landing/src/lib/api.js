@@ -482,6 +482,26 @@ export const api = {
     }
     return res.json();
   },
+  tenantTranscribeNote: async (audioBlob) => {
+    const formData = new FormData();
+    formData.append("audio", audioBlob, "note.webm");
+    const base = getApiUrl();
+    const url = `${base}/api/tenant/notes/transcribe`;
+    const headers = {};
+    const tenantToken = getTenantToken();
+    if (tenantToken) headers.Authorization = `Bearer ${tenantToken}`;
+    const res = await fetch(url, {
+      method: "POST",
+      body: formData,
+      headers,
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.detail || res.statusText);
+    }
+    return res.json();
+  },
   tenantGetPatientQuestionnaire: (phone) =>
     request(`/api/tenant/patients/${encodeURIComponent(phone)}/questionnaire`, { tenant: true }),
   tenantSavePatientQuestionnaire: (phone, body) =>
