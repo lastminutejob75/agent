@@ -121,8 +121,8 @@ def pg_find_slot_id_by_datetime(
                     """
                     SELECT id FROM slots
                     WHERE tenant_id = %s AND is_booked = FALSE
-                      AND start_ts::date = %s::date
-                      AND to_char(start_ts, 'HH24:MI') = %s
+                      AND (start_ts AT TIME ZONE 'Europe/Paris')::date = %s::date
+                      AND to_char(start_ts AT TIME ZONE 'Europe/Paris', 'HH24:MI') = %s
                     LIMIT 1
                     """,
                     (tenant_id, date_str[:10], (time_str or "09:00")[:5]),
@@ -290,21 +290,30 @@ def pg_ensure_slot_id_by_datetime(
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO slots (tenant_id, start_ts)
-                    VALUES (%s, %s::timestamptz)
-                    ON CONFLICT (tenant_id, start_ts) DO NOTHING
-                    """,
-                    (tenant_id, f"{date_str[:10]}T{(time_str or '09:00')[:5]}:00"),
-                )
-                cur.execute(
-                    """
                     SELECT id FROM slots
                     WHERE tenant_id = %s
-                      AND start_ts::date = %s::date
-                      AND to_char(start_ts, 'HH24:MI') = %s
+                      AND (start_ts AT TIME ZONE 'Europe/Paris')::date = %s::date
+                      AND to_char(start_ts AT TIME ZONE 'Europe/Paris', 'HH24:MI') = %s
+                    ORDER BY id ASC
                     LIMIT 1
                     """,
                     (tenant_id, date_str[:10], (time_str or "09:00")[:5]),
+                )
+                row = cur.fetchone()
+                if row:
+                    conn.commit()
+                    return int(row[0])
+
+                # Certaines bases historiques n'ont pas la contrainte UNIQUE
+                # (tenant_id, start_ts). Eviter ON CONFLICT rend le miroir
+                # dashboard -> agenda interne robuste sur ces schémas.
+                cur.execute(
+                    """
+                    INSERT INTO slots (tenant_id, start_ts)
+                    VALUES (%s, (%s::timestamp AT TIME ZONE 'Europe/Paris'))
+                    RETURNING id
+                    """,
+                    (tenant_id, f"{date_str[:10]}T{(time_str or '09:00')[:5]}:00"),
                 )
                 row = cur.fetchone()
                 conn.commit()
