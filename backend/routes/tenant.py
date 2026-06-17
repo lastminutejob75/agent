@@ -4961,6 +4961,44 @@ def _merge_patient_medical_summary(current: str, latest_context: str) -> str:
     return f"{marker}\n\n{current_clean}"[:6000]
 
 
+def _enrich_patient_context_from_consultation(
+    tenant_id: int,
+    phone: str,
+    consultation: Optional[Dict[str, Any]],
+    payload: Optional[Dict[str, Any]],
+) -> None:
+    """Best-effort : alimente le contexte patient général depuis une consultation.
+
+    - `dernier_contexte_consultation` <- contexte IA de la consultation (ou synthèse dérivée)
+    - `synthese_medicale` <- fusion incrémentale conservant l'historique stable
+
+    N'interrompt jamais la sauvegarde de la consultation en cas d'échec.
+    """
+    try:
+        consultation = consultation or {}
+        ia_contexte = str(consultation.get("ia_contexte_patient") or "").strip()
+        context = ia_contexte or _patient_consultation_context_summary(consultation, payload or {})
+        if not context:
+            return
+        profile_row = get_cabinet_client_by_phone(tenant_id, phone) or {}
+        merged = _merge_patient_medical_summary(
+            str(profile_row.get("synthese_medicale") or ""), context
+        )
+        update_patient_fields(
+            tenant_id,
+            phone,
+            dernier_contexte_consultation=context,
+            synthese_medicale=merged,
+        )
+    except Exception:
+        logger.warning(
+            "consultation context enrichment failed tenant=%s phone=%s",
+            tenant_id,
+            str(phone)[-4:] if phone else "?",
+            exc_info=True,
+        )
+
+
 def _consultation_pdf_wrap_lines(text: str, *, font_name: str, font_size: int, width: float) -> List[str]:
     raw = str(text or "").strip()
     if not raw:
@@ -5095,9 +5133,9 @@ def tenant_create_patient_consultation_route(
         raise HTTPException(400, str(exc)) from exc
     if not created:
         raise HTTPException(500, "Impossible d'enregistrer la fiche de consultation")
-    # IMPORTANT: on priorise la persistance de la consultation.
-    # Les enrichissements de contexte patient sont volontairement omis ici
-    # pour éviter qu'un traitement secondaire bloque la réponse de sauvegarde.
+    # La consultation est persistée : on enrichit le contexte patient général
+    # (synthèse médicale + dernier contexte) en best-effort, sans bloquer la réponse.
+    _enrich_patient_context_from_consultation(tenant_id, phone, created, payload)
     return {"ok": True, "consultation": created}
 
 
@@ -5124,7 +5162,8 @@ def tenant_update_patient_consultation_route(
         raise HTTPException(400, str(exc)) from exc
     if not updated:
         raise HTTPException(404, "Consultation introuvable")
-    # Même logique qu'à la création: réponse rapide centrée sur la persistance.
+    # Réponse centrée sur la persistance + enrichissement best-effort du contexte patient.
+    _enrich_patient_context_from_consultation(tenant_id, phone, updated, payload)
     return {"ok": True, "consultation": updated}
 
 
