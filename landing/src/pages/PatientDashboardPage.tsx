@@ -2226,28 +2226,25 @@ export default function PatientDashboardPage() {
 
     setPatientAgendaLoading(true);
     const fastQuery = `?upcoming_days=${daysNeeded}&skip_google=1`;
+    const fullQuery = `?upcoming_days=${daysNeeded}`;
     api
       .tenantGetPatientAppointments(tenantPatientPhone, fastQuery)
       .then((res) => {
         if (cancelled) return;
         const slots = Array.isArray(res?.slots) ? res.slots : [];
         setTenantAgendaRawSlots(slots as Array<Record<string, unknown>>);
-        setAgendaDaysLoaded(daysNeeded);
       })
       .catch(() => {
-        if (!cancelled) {
-          setTenantAgendaRawSlots([]);
-          setAgendaDaysLoaded(daysNeeded);
-        }
+        if (!cancelled) setTenantAgendaRawSlots([]);
       })
-      .finally(() => {
-        if (!cancelled) setPatientAgendaLoading(false);
-      });
-    if (!cancelled && activeView === "overview") {
-      window.setTimeout(() => {
-        if (cancelled) return;
-        api
-          .tenantGetPatientAppointments(tenantPatientPhone, `?upcoming_days=${daysNeeded}`)
+      .then(() => {
+        // Enrichissement Google : indispensable car certains patients n'ont leurs
+        // RDV à venir que dans Google Calendar (aucun miroir local / public_booking).
+        // Chaîné ici (et plus dans un setTimeout annulé par le re-run de l'effet)
+        // pour qu'il s'exécute réellement, en overview comme dans l'onglet RDV.
+        if (cancelled) return undefined;
+        return api
+          .tenantGetPatientAppointments(tenantPatientPhone, fullQuery)
           .then((fullRes) => {
             if (cancelled) return;
             const fullSlots = Array.isArray(fullRes?.slots) ? fullRes.slots : [];
@@ -2256,8 +2253,15 @@ export default function PatientDashboardPage() {
             }
           })
           .catch(() => {});
-      }, 1200);
-    }
+      })
+      .finally(() => {
+        // On ne marque la fenêtre comme chargée qu'à la toute fin : poser
+        // agendaDaysLoaded plus tôt relançait l'effet et annulait le fetch Google.
+        if (!cancelled) {
+          setAgendaDaysLoaded(daysNeeded);
+          setPatientAgendaLoading(false);
+        }
+      });
     return () => {
       cancelled = true;
     };
