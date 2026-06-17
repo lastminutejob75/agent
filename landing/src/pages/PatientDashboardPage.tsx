@@ -1446,6 +1446,9 @@ export default function PatientDashboardPage() {
 
   useEffect(() => {
     setPatientProfileReady(false);
+    setTenantAgendaRawSlots([]);
+    setAgendaDaysLoaded(0);
+    setPatientAgendaLoading(false);
   }, [tenantPatientPhone]);
 
   useEffect(() => {

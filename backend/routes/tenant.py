@@ -6290,7 +6290,7 @@ def _collect_patient_upcoming_appointment_slots(
         phone_key_set = set(phone_keys)
         for item in public_slots:
             pn = normalize_phone_number(item.get("patient_phone") or "")
-            if pn and pn not in phone_key_set:
+            if not pn or pn not in phone_key_set:
                 continue
             event_id = str(item.get("event_id") or "")
             if event_id and event_id in seen_event_ids:
