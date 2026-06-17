@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -25,6 +26,42 @@ def _pg_url() -> Optional[str]:
 def _is_transient(e: Exception) -> bool:
     msg = str(e).lower()
     return any(x in msg for x in ("connection", "timeout", "refused", "could not connect"))
+
+
+def _apply_tenant_rls(conn, tenant_id: Optional[int]) -> None:
+    """Pose le contexte tenant RLS (``app.current_tenant_id``) sur la connexion.
+
+    Les tables ``slots`` et ``appointments`` ont RLS activé (policy
+    ``app_tenant_matches(tenant_id)`` en USING **et** WITH CHECK). Sans ce
+    contexte, les lectures renvoient 0 ligne et les écritures sont rejetées
+    ("new row violates row-level security policy"). On utilise ``set_config(..,
+    false)`` (niveau session) pour que le contexte survive aux commits internes.
+    """
+    try:
+        tid = int(tenant_id)
+    except (TypeError, ValueError):
+        return
+    if tid < 1:
+        return
+    with conn.cursor() as cur:
+        cur.execute("SELECT set_config('app.current_tenant_id', %s, false)", (str(tid),))
+
+
+@contextmanager
+def _connect_pg(url: str, tenant_id: Optional[int] = None, *, row_factory=None):
+    """Ouvre une connexion PG et applique immédiatement le contexte tenant RLS.
+
+    Remplace les ``psycopg.connect(url)`` bruts qui ne posaient pas le contexte
+    RLS et cassaient lectures/écritures sur slots/appointments.
+    """
+    import psycopg
+
+    kwargs: Dict[str, Any] = {}
+    if row_factory is not None:
+        kwargs["row_factory"] = row_factory
+    with psycopg.connect(url, **kwargs) as conn:
+        _apply_tenant_rls(conn, tenant_id)
+        yield conn
 
 
 def _start_ts_to_date_time(start_ts: Any) -> tuple[str, str]:
@@ -63,7 +100,7 @@ def pg_list_free_slots(
     def _query() -> Optional[List[Dict[str, Any]]]:
         import psycopg
         from psycopg.rows import dict_row
-        with psycopg.connect(url, row_factory=dict_row) as conn:
+        with _connect_pg(url, tenant_id, row_factory=dict_row) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
@@ -114,7 +151,7 @@ def pg_find_slot_id_by_datetime(
         return None
     try:
         import psycopg
-        with psycopg.connect(url) as conn:
+        with _connect_pg(url, tenant_id) as conn:
             with conn.cursor() as cur:
                 # start_ts format: timestamp, on compare date+time
                 cur.execute(
@@ -147,7 +184,7 @@ def pg_list_free_slots_for_date(
         import psycopg
         from psycopg.rows import dict_row
 
-        with psycopg.connect(url, row_factory=dict_row) as conn:
+        with _connect_pg(url, tenant_id, row_factory=dict_row) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -195,7 +232,7 @@ def pg_count_free_slots_by_month(tenant_id: int, month: str) -> Optional[Dict[st
     def _query() -> Optional[Dict[str, int]]:
         import psycopg
 
-        with psycopg.connect(url) as conn:
+        with _connect_pg(url, tenant_id) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -240,7 +277,7 @@ def pg_count_free_slots_horizon(
     def _query() -> Optional[Dict[str, int]]:
         import psycopg
 
-        with psycopg.connect(url) as conn:
+        with _connect_pg(url, tenant_id) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -286,7 +323,7 @@ def pg_ensure_slot_id_by_datetime(
 
     def _do() -> Optional[int]:
         import psycopg
-        with psycopg.connect(url) as conn:
+        with _connect_pg(url, tenant_id) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -327,7 +364,7 @@ def pg_ensure_slot_id_by_datetime(
                 return _do()
             except Exception:
                 pass
-        logger.debug("pg_ensure_slot_id_by_datetime failed: %s", e)
+        logger.warning("pg_ensure_slot_id_by_datetime failed tenant_id=%s: %s", tenant_id, e)
         return None
 
 
@@ -339,7 +376,7 @@ def pg_count_free_slots(tenant_id: int) -> Optional[int]:
 
     def _query() -> Optional[int]:
         import psycopg
-        with psycopg.connect(url) as conn:
+        with _connect_pg(url, tenant_id) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -381,7 +418,7 @@ def pg_attach_google_event_id(
     def _do() -> Optional[bool]:
         import psycopg
 
-        with psycopg.connect(url) as conn:
+        with _connect_pg(url, tenant_id) as conn:
             with conn.cursor() as cur:
                 if appointment_id:
                     cur.execute(
@@ -440,7 +477,7 @@ def pg_book_slot_atomic(
 
     def _do() -> Optional[bool]:
         import psycopg
-        with psycopg.connect(url) as conn:
+        with _connect_pg(url, tenant_id) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -482,6 +519,7 @@ def pg_book_slot_atomic(
                 return _do()
             except Exception:
                 pass
+        logger.warning("pg_book_slot_atomic failed tenant_id=%s slot_id=%s: %s", tenant_id, slot_id, e)
         return None
 
 
@@ -496,7 +534,7 @@ def pg_find_booking_by_name(tenant_id: int, name: str) -> Optional[Dict[str, Any
     def _query() -> Optional[Dict[str, Any]]:
         import psycopg
         from psycopg.rows import dict_row
-        with psycopg.connect(url, row_factory=dict_row) as conn:
+        with _connect_pg(url, tenant_id, row_factory=dict_row) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -548,7 +586,7 @@ def pg_cancel_booking(tenant_id: int, booking: Dict[str, Any]) -> Optional[bool]
 
     def _do() -> Optional[bool]:
         import psycopg
-        with psycopg.connect(url) as conn:
+        with _connect_pg(url, tenant_id) as conn:
             with conn.cursor() as cur:
                 sid = slot_id
                 if sid is None and appt_id is not None:
@@ -603,7 +641,7 @@ def pg_reschedule_booking_atomic(tenant_id: int, appt_id: int, new_slot_id: int)
 
     def _do() -> Optional[bool]:
         import psycopg
-        with psycopg.connect(url) as conn:
+        with _connect_pg(url, tenant_id) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -685,7 +723,7 @@ def pg_booking_code_for_slot(tenant_id: int, slot_id: int) -> Optional[str]:
         import psycopg
         from psycopg.rows import dict_row
 
-        with psycopg.connect(url, row_factory=dict_row) as conn:
+        with _connect_pg(url, tenant_id, row_factory=dict_row) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -717,7 +755,7 @@ def pg_cleanup_and_ensure_slots(tenant_id: int) -> Optional[bool]:
     def _do() -> Optional[bool]:
         import psycopg
         from datetime import timedelta
-        with psycopg.connect(url) as conn:
+        with _connect_pg(url, tenant_id) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
