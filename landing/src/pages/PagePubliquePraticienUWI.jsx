@@ -2441,7 +2441,7 @@ export default function PagePubliquePraticienUWI() {
       return;
     }
 
-    if (BOOKING_START.test(clean)) {
+    if (!isMoreSlotsIntent && BOOKING_START.test(clean)) {
       const asksSpecificDate = BOOKING_DATE_HINT.test(clean);
       // Si des créneaux sont déjà visibles, on les propose immédiatement sans attente.
       if (!asksSpecificDate && applyBarSlotsFallback({ provisional: false })) {
