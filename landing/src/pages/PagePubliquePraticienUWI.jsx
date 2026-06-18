@@ -565,8 +565,26 @@ function UwiSearchBar({ data = defaultSearchData, onSearchUsed }) {
   );
 }
 
-function barSlotsToChatOffers(apiSlots, max = 3) {
+function slotOfferIdentityKey(slot) {
+  const startIso = String(slot?.startIso || slot?.start_iso || "").trim();
+  if (startIso) return `start:${startIso}`;
+  const rawId = String(slot?.id || "").trim();
+  if (/^\d+$/.test(rawId)) return `id:${rawId}`;
+  const label = norm(String(slot?.label || "").trim());
+  if (label) return `label:${label}`;
+  const day = norm(String(slot?.day || ""));
+  const time = String(slot?.time || "").trim();
+  if (day || time) return `dt:${day}|${time}`;
+  return "";
+}
+
+function barSlotsToChatOffers(apiSlots, max = 3, { excludeKeys = null } = {}) {
   return safeArray(apiSlots)
+    .filter((slot) => {
+      if (!excludeKeys) return true;
+      const key = slotOfferIdentityKey(slot);
+      return !key || !excludeKeys.has(key);
+    })
     .slice(0, max)
     .map((slot, i) => ({
       index: i + 1,
@@ -581,18 +599,23 @@ function barSlotsToChatOffers(apiSlots, max = 3) {
     }));
 }
 
-function formatBarSlotsProposalMessage(apiSlots) {
-  const offers = barSlotsToChatOffers(apiSlots, 3);
+function formatBarSlotsProposalMessage(apiSlots, { excludeKeys = null } = {}) {
+  const offers = barSlotsToChatOffers(apiSlots, 3, { excludeKeys });
   if (!offers.length) return "";
   const lines = offers.map((o) => `${o.index}. ${o.label}`).join("\n");
   return `Créneaux disponibles :\n${lines}\n\nRépondez par le numéro (1, 2 ou 3), ou cliquez sur un créneau ci-dessous.`;
 }
 
-function chatOffersFromResponse(apiSlots) {
+function chatOffersFromResponse(apiSlots, { max = 3, excludeKeys = null } = {}) {
   return safeArray(apiSlots)
-    .slice(0, 3)
+    .filter((slot) => {
+      if (!excludeKeys) return true;
+      const key = slotOfferIdentityKey(slot);
+      return !key || !excludeKeys.has(key);
+    })
+    .slice(0, max)
     .map((slot, i) => ({
-      index: Number(slot?.index) || i + 1,
+      index: i + 1,
       label: slot?.label || `Créneau ${i + 1}`,
       id: String(slot?.id || ""),
       source: slot?.source || "sqlite",
@@ -1615,6 +1638,8 @@ export default function PagePubliquePraticienUWI() {
   const slotsMetaRef = useRef({ source: null, calendar: null });
   const moreSlotsLoopCountRef = useRef(0);
   const moreSlotsNeedsPreferencesRef = useRef(false);
+  const moreSlotsRequestActiveRef = useRef(false);
+  const excludedMoreSlotsOfferKeysRef = useRef(new Set());
   const openActionFlowRef = useRef(null);
   const openingHours = safeArray(practitioner.openingHours).length ? practitioner.openingHours : defaultOpeningHours;
   const faqs = useMemo(() => makeFaqs(practitioner, openingHours), [practitioner, openingHours]);
@@ -1688,6 +1713,8 @@ export default function PagePubliquePraticienUWI() {
     pendingTurnRef.current = null;
     moreSlotsLoopCountRef.current = 0;
     moreSlotsNeedsPreferencesRef.current = false;
+    moreSlotsRequestActiveRef.current = false;
+    excludedMoreSlotsOfferKeysRef.current.clear();
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
@@ -1991,8 +2018,17 @@ export default function PagePubliquePraticienUWI() {
     const type = String(payload?.type || "");
     if (type === "partial") return;
     if (type === "final") {
-      const slotsPayload = Array.isArray(payload?.slots) ? payload.slots : [];
-      if (moreSlotsNeedsPreferencesRef.current && slotsPayload.length) {
+      const rawSlotsPayload = Array.isArray(payload?.slots) ? payload.slots : [];
+      const isMoreSlotsActive = moreSlotsRequestActiveRef.current;
+      const hasMoreSlotsHistory = excludedMoreSlotsOfferKeysRef.current.size > 0;
+      const shouldFilterMoreSlots = isMoreSlotsActive || hasMoreSlotsHistory;
+      const slotsPayload = chatOffersFromResponse(rawSlotsPayload, {
+        max: 3,
+        excludeKeys: shouldFilterMoreSlots ? excludedMoreSlotsOfferKeysRef.current : null,
+      });
+      if (shouldFilterMoreSlots && rawSlotsPayload.length && !slotsPayload.length) {
+        moreSlotsNeedsPreferencesRef.current = true;
+        moreSlotsRequestActiveRef.current = false;
         if (pendingTurnRef.current) {
           const resolve = pendingTurnRef.current;
           pendingTurnRef.current = null;
@@ -2000,6 +2036,22 @@ export default function PagePubliquePraticienUWI() {
         }
         pushMoreSlotsPreferencesPrompt();
         return;
+      }
+      if (moreSlotsNeedsPreferencesRef.current && slotsPayload.length) {
+        moreSlotsRequestActiveRef.current = false;
+        if (pendingTurnRef.current) {
+          const resolve = pendingTurnRef.current;
+          pendingTurnRef.current = null;
+          resolve(true);
+        }
+        pushMoreSlotsPreferencesPrompt();
+        return;
+      }
+      if (shouldFilterMoreSlots && slotsPayload.length) {
+        slotsPayload.forEach((offer) => {
+          const key = slotOfferIdentityKey(offer);
+          if (key) excludedMoreSlotsOfferKeysRef.current.add(key);
+        });
       }
       const text = String(payload?.text || "").trim();
       const convState = String(payload?.conv_state || "");
@@ -2047,11 +2099,21 @@ export default function PagePubliquePraticienUWI() {
           ]);
         });
       }
+      moreSlotsRequestActiveRef.current = false;
       return;
     }
     if (type === "transfer") {
-      const slotsPayload = Array.isArray(payload?.slots) ? payload.slots : [];
-      if (moreSlotsNeedsPreferencesRef.current && slotsPayload.length) {
+      const rawSlotsPayload = Array.isArray(payload?.slots) ? payload.slots : [];
+      const isMoreSlotsActive = moreSlotsRequestActiveRef.current;
+      const hasMoreSlotsHistory = excludedMoreSlotsOfferKeysRef.current.size > 0;
+      const shouldFilterMoreSlots = isMoreSlotsActive || hasMoreSlotsHistory;
+      const slotsPayload = chatOffersFromResponse(rawSlotsPayload, {
+        max: 3,
+        excludeKeys: shouldFilterMoreSlots ? excludedMoreSlotsOfferKeysRef.current : null,
+      });
+      if (shouldFilterMoreSlots && rawSlotsPayload.length && !slotsPayload.length) {
+        moreSlotsNeedsPreferencesRef.current = true;
+        moreSlotsRequestActiveRef.current = false;
         if (pendingTurnRef.current) {
           const resolve = pendingTurnRef.current;
           pendingTurnRef.current = null;
@@ -2060,12 +2122,30 @@ export default function PagePubliquePraticienUWI() {
         pushMoreSlotsPreferencesPrompt();
         return;
       }
+      if (moreSlotsNeedsPreferencesRef.current && slotsPayload.length) {
+        moreSlotsRequestActiveRef.current = false;
+        if (pendingTurnRef.current) {
+          const resolve = pendingTurnRef.current;
+          pendingTurnRef.current = null;
+          resolve(true);
+        }
+        pushMoreSlotsPreferencesPrompt();
+        return;
+      }
+      if (shouldFilterMoreSlots && slotsPayload.length) {
+        slotsPayload.forEach((offer) => {
+          const key = slotOfferIdentityKey(offer);
+          if (key) excludedMoreSlotsOfferKeysRef.current.add(key);
+        });
+      }
       if (payload?.text) {
         push([{ from: "clara", text: String(payload.text), slots: slotsPayload.length ? slotsPayload : undefined }]);
       }
+      moreSlotsRequestActiveRef.current = false;
       return;
     }
     if (type === "error") {
+      moreSlotsRequestActiveRef.current = false;
       if (pendingTurnRef.current) {
         const resolve = pendingTurnRef.current;
         pendingTurnRef.current = null;
@@ -2073,7 +2153,7 @@ export default function PagePubliquePraticienUWI() {
       }
       push([{ from: "clara", text: String(payload?.message || "Une erreur est survenue, veuillez reessayer.") }]);
     }
-  }, [push]);
+  }, [push, pushMoreSlotsPreferencesPrompt]);
 
   const ensureConversationId = useCallback(() => {
     if (!conversationIdRef.current) {
@@ -2140,6 +2220,8 @@ export default function PagePubliquePraticienUWI() {
     if (!isMoreSlotsIntent) {
       moreSlotsLoopCountRef.current = 0;
       moreSlotsNeedsPreferencesRef.current = false;
+      moreSlotsRequestActiveRef.current = false;
+      excludedMoreSlotsOfferKeysRef.current.clear();
     }
     const convId = ensureConversationId();
     ensureStream(convId);
@@ -2181,16 +2263,35 @@ export default function PagePubliquePraticienUWI() {
     const applyBarSlotsFallback = ({ provisional = true } = {}) => {
       const currentSlots = slotsRef.current;
       if (!hasBookableAgendaSlots(currentSlots)) return false;
-      const offers = barSlotsToChatOffers(currentSlots, 3);
-      const msg = formatBarSlotsProposalMessage(currentSlots);
-      return pushSlotProposal(offers, msg, { provisional });
+      const excludeKeys = moreSlotsRequestActiveRef.current ? excludedMoreSlotsOfferKeysRef.current : null;
+      const offers = barSlotsToChatOffers(currentSlots, 3, { excludeKeys });
+      const msg = formatBarSlotsProposalMessage(currentSlots, { excludeKeys });
+      if (!offers.length || !msg) return false;
+      const pushed = pushSlotProposal(offers, msg, { provisional });
+      if (pushed && moreSlotsRequestActiveRef.current) {
+        offers.forEach((offer) => {
+          const key = slotOfferIdentityKey(offer);
+          if (key) excludedMoreSlotsOfferKeysRef.current.add(key);
+        });
+      }
+      return pushed;
     };
 
     const applyResponseSlots = (response, { provisional = true } = {}) => {
-      const offers = chatOffersFromResponse(response?.slots);
+      const offers = chatOffersFromResponse(response?.slots, {
+        max: 3,
+        excludeKeys: moreSlotsRequestActiveRef.current ? excludedMoreSlotsOfferKeysRef.current : null,
+      });
       const msg = formatChatSlotsProposalMessage(offers);
       if (!offers.length || !msg) return false;
-      return pushSlotProposal(offers, msg, { provisional });
+      const pushed = pushSlotProposal(offers, msg, { provisional });
+      if (pushed && moreSlotsRequestActiveRef.current) {
+        offers.forEach((offer) => {
+          const key = slotOfferIdentityKey(offer);
+          if (key) excludedMoreSlotsOfferKeysRef.current.add(key);
+        });
+      }
+      return pushed;
     };
 
     const refreshAgendaSlotsForChat = async () => {
@@ -2312,6 +2413,7 @@ export default function PagePubliquePraticienUWI() {
           push([{ from: "clara", text: "Impossible de contacter l'agent pour le moment. Merci de reessayer." }]);
         }
       } finally {
+        if (isMoreSlotsLookup) moreSlotsRequestActiveRef.current = false;
         timers.forEach((id) => window.clearTimeout(id));
       }
     };
@@ -2354,6 +2456,10 @@ export default function PagePubliquePraticienUWI() {
     if (isMoreSlotsIntent) {
       // UX: éviter de garder quelques secondes les anciens créneaux affichés.
       removeLastSlotsMessage();
+      lastSlotOffers().forEach((offer) => {
+        const key = slotOfferIdentityKey(offer);
+        if (key) excludedMoreSlotsOfferKeysRef.current.add(key);
+      });
       if (moreSlotsNeedsPreferencesRef.current) {
         pushMoreSlotsPreferencesPrompt();
         return;
@@ -2365,6 +2471,7 @@ export default function PagePubliquePraticienUWI() {
         pushMoreSlotsPreferencesPrompt();
         return;
       }
+      moreSlotsRequestActiveRef.current = true;
       // Ne pas réafficher le cache barre ici: on veut de nouveaux créneaux côté moteur.
       void syncChatInBackground(INSTANT_MORE_SLOTS_LOOKUP, { allowSlotsReuse: false });
       return;
