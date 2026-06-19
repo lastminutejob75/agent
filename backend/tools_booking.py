@@ -1100,7 +1100,10 @@ def get_slots_for_display(
     more_round = bool(getattr(session, "requesting_more_slots", False)) if session else False
     has_rejected = bool(rejected) or bool(rejected_ids) or more_round
     skip_fast_cache = bool(public_booking_context and explicit_today_request)
-    if not has_rejected and not target_date_obj and not skip_fast_cache:
+    # Ne pas utiliser le fast-cache quand un jour précis est demandé (ex. "vendredi matin"):
+    # le cache (souvent limité à 3) peut contenir uniquement des créneaux proches d'autres jours
+    # et produire un faux "aucun créneau" après filtrage weekday.
+    if not has_rejected and not target_date_obj and not skip_fast_cache and weekday_pref is None:
         cached = _get_cached_slots(limit, tenant_id, pref=fetch_pref)
         if cached:
             cached = _filter_slots_by_min_start(cached, min_start_dt, tz=tenant_tz)
@@ -1114,6 +1117,11 @@ def get_slots_for_display(
         pool_limit = max(limit, SLOTS_POOL_SIZE_MORE if has_rejected else SLOTS_POOL_SIZE)
     else:
         pool_limit = max(limit, SLOTS_POOL_SIZE_MORE) if has_rejected else limit
+
+    # Quand un jour de semaine est explicitement demandé (mardi/jeudi/vendredi...),
+    # élargir le pool dès le départ pour éviter les faux négatifs sur un petit échantillon proche.
+    if weekday_pref is not None:
+        pool_limit = max(pool_limit, SLOTS_POOL_SIZE_MORE)
 
     # En vocal/page publique, quand le plancher est "demain", un pool trop court peut être
     # rempli uniquement par des créneaux du jour (ensuite filtrés), donnant un faux 0 slot.
