@@ -285,6 +285,20 @@ export default function AppDashboard() {
       })
       .catch(() => {
         if (!cancelledRef?.cancelled) setAgenda([]);
+      })
+      .then(() => {
+        // Enrichissement Google : un cabinet Google n'a ses RDV que dans Google
+        // Calendar (skip_google ne renvoie ni Google ni miroir local). Sans ce
+        // second appel, "Prochain rendez-vous" reste vide pour ces cabinets.
+        if (cancelledRef?.cancelled) return undefined;
+        return api
+          .tenantGetAgenda("?upcoming_days=14", { lightweight: true, timeoutMs: 12000 })
+          .then((full) => {
+            if (cancelledRef?.cancelled) return;
+            const slots = Array.isArray(full?.slots) ? full.slots : [];
+            if (slots.length) setAgenda(slots);
+          })
+          .catch(() => {});
       });
 
     api.tenantGetAgenda(`?date=${encodeURIComponent(todayKey)}`, { lightweight: true, skipGoogle: true })
@@ -295,6 +309,17 @@ export default function AppDashboard() {
       .catch(() => {
         if (cancelledRef?.cancelled) return;
         setTodayAgenda([]);
+      })
+      .then(() => {
+        if (cancelledRef?.cancelled) return undefined;
+        return api
+          .tenantGetAgenda(`?date=${encodeURIComponent(todayKey)}`, { lightweight: true, timeoutMs: 12000 })
+          .then((full) => {
+            if (cancelledRef?.cancelled) return;
+            const slots = Array.isArray(full?.slots) ? full.slots : [];
+            if (slots.length) setTodayAgenda(slots);
+          })
+          .catch(() => {});
       });
 
     Promise.allSettled([
