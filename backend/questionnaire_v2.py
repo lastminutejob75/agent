@@ -769,7 +769,7 @@ def _questionnaire_ai_summary(
         import anthropic
 
         client = anthropic.Anthropic(api_key=api_key)
-        model = "claude-sonnet-4-20250514" if is_health else "claude-haiku-4-5-20251001"
+        model = "claude-sonnet-4-6" if is_health else "claude-haiku-4-5-20251001"
         resp = client.messages.create(
             model=model,
             max_tokens=220,

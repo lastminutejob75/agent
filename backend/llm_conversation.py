@@ -62,7 +62,7 @@ class StubLLMConvClient:
 class AnthropicConvClient:
     """Client Anthropic (Claude) pour le mode conversationnel P0. Conforme à LLMConvClient."""
 
-    def __init__(self, api_key: Optional[str] = None, model: str = "claude-sonnet-4-20250514", timeout_sec: float = 15.0):
+    def __init__(self, api_key: Optional[str] = None, model: str = "claude-sonnet-4-6", timeout_sec: float = 15.0):
         self._api_key = (api_key or os.getenv("ANTHROPIC_API_KEY", "")).strip()
         self._model = model
         self._timeout_sec = timeout_sec

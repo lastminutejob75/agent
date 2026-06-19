@@ -284,7 +284,7 @@ def _call_llm(pack: dict, *, contains_health: bool) -> Dict[str, Any]:
         return _fallback_summary(pack, contains_health=contains_health, model="fallback")
 
     system = SUMMARY_SYSTEM_PROMPT + ("\n\n" + SANTE_RULES if contains_health else "")
-    model = "claude-sonnet-4-20250514" if contains_health else "claude-haiku-4-5-20251001"
+    model = "claude-sonnet-4-6" if contains_health else "claude-haiku-4-5-20251001"
     user_content = "DONNÉES (source de vérité, ne rien inventer) :\n" + json.dumps(
         pack, ensure_ascii=False, indent=2, default=str
     )

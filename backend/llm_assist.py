@@ -140,7 +140,7 @@ class _AssistClientAdapter:
 class AnthropicLLMClient:
     """Client Anthropic (Claude) pour LLM Assist. Conforme au protocole LLMClient."""
 
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514"):
+    def __init__(self, api_key: str, model: str = "claude-sonnet-4-6"):
         self._api_key = api_key
         self._model = model
 
