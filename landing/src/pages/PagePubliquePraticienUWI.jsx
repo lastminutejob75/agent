@@ -158,6 +158,8 @@ const CHAT_UNCLEAR_FALLBACK =
   "Je peux vous aider à prendre un rendez-vous, répondre à une question, annuler ou modifier un rendez-vous. Que souhaitez-vous ?";
 const CHAT_MORE_SLOTS_PREFERENCES_PROMPT =
   "Pour vous proposer de meilleurs créneaux, indiquez-moi vos préférences (ex. mardi matin, jeudi après 17h, cette semaine).";
+const CHAT_NO_SLOTS_REFINEMENT_REPLY =
+  /\b(pas\s+de\s+cr[eé]neau\s+libre|pr[ée]cisez\s+un\s+jour|pr[ée]cisez\s+un\s+horaire|[eé]largissez\s+vos\s+disponibilit[ée]s)\b/iu;
 const CHAT_PROCESSING_REPLY = "Un instant, je traite votre demande…";
 const CHAT_PROCESSING_PLACEHOLDERS = new Set([
   INSTANT_SLOTS_LOOKUP,
@@ -2054,6 +2056,17 @@ export default function PagePubliquePraticienUWI() {
           if (key) excludedMoreSlotsOfferKeysRef.current.add(key);
         });
       }
+      if (shouldFilterMoreSlots && !slotsPayload.length && CHAT_NO_SLOTS_REFINEMENT_REPLY.test(text)) {
+        moreSlotsNeedsPreferencesRef.current = true;
+        moreSlotsRequestActiveRef.current = false;
+        if (pendingTurnRef.current) {
+          const resolve = pendingTurnRef.current;
+          pendingTurnRef.current = null;
+          resolve(true);
+        }
+        pushMoreSlotsPreferencesPrompt();
+        return;
+      }
       if (moreSlotsNeedsPreferencesRef.current && !slotsPayload.length) {
         moreSlotsRequestActiveRef.current = false;
         if (pendingTurnRef.current) {
@@ -2148,6 +2161,17 @@ export default function PagePubliquePraticienUWI() {
           const key = slotOfferIdentityKey(offer);
           if (key) excludedMoreSlotsOfferKeysRef.current.add(key);
         });
+      }
+      if (shouldFilterMoreSlots && !slotsPayload.length && CHAT_NO_SLOTS_REFINEMENT_REPLY.test(text)) {
+        moreSlotsNeedsPreferencesRef.current = true;
+        moreSlotsRequestActiveRef.current = false;
+        if (pendingTurnRef.current) {
+          const resolve = pendingTurnRef.current;
+          pendingTurnRef.current = null;
+          resolve(true);
+        }
+        pushMoreSlotsPreferencesPrompt();
+        return;
       }
       if (moreSlotsNeedsPreferencesRef.current && !slotsPayload.length) {
         moreSlotsRequestActiveRef.current = false;
