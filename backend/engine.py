@@ -7,6 +7,7 @@ Aucune créativité, aucune improvisation.
 from __future__ import annotations
 from typing import List, Optional
 from dataclasses import dataclass
+from datetime import date, timedelta
 import json
 import logging
 import re
@@ -39,6 +40,7 @@ from backend.entity_extraction import (
     extract_pref,
     infer_preference_from_context,
     time_pref_from_pref,
+    weekday_from_pref,
 )
 from backend.start_router import route_start, FAQ_BUCKET_WHITELIST
 from backend.tenant_flags_cache import get_tenant_flags
@@ -2910,6 +2912,105 @@ class Engine:
             )
             more_round = bool(getattr(session, "requesting_more_slots", False))
             session.requesting_more_slots = False
+            requested_weekdays: set[int] = set()
+            try:
+                if target_date:
+                    requested_weekdays.add(date.fromisoformat(str(target_date)[:10]).weekday())
+            except Exception:
+                pass
+            appt_prefs = getattr(session, "appointment_preferences", None) or {}
+            day_to_idx = {
+                "lundi": 0, "mardi": 1, "mercredi": 2, "jeudi": 3, "vendredi": 4, "samedi": 5, "dimanche": 6,
+            }
+            for day_name in (appt_prefs.get("preferred_days") or []):
+                idx = day_to_idx.get(str(day_name or "").strip().lower())
+                if idx is not None:
+                    requested_weekdays.add(idx)
+            pref_weekday = weekday_from_pref(pref)
+            if pref_weekday is not None:
+                requested_weekdays.add(pref_weekday)
+
+            booking_days_set: Optional[set[int]] = None
+            try:
+                from backend.tenant_config import get_booking_rules
+
+                rules = get_booking_rules(int(getattr(session, "tenant_id", None) or 1)) or {}
+                booking_days = rules.get("booking_days") or [0, 1, 2, 3, 4]
+                booking_days_set = {
+                    int(d)
+                    for d in booking_days
+                    if str(d).strip().isdigit() and 0 <= int(d) <= 6
+                }
+            except Exception:
+                booking_days_set = None
+
+            if channel == "web" and requested_weekdays and booking_days_set is not None and requested_weekdays.isdisjoint(booking_days_set):
+                day_labels = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+                requested_labels = ", ".join(day_labels[i] for i in sorted(requested_weekdays))
+                session.state = "WAIT_CONFIRM"
+                msg = (
+                    f"Le cabinet est fermé le {requested_labels}. "
+                    "Souhaitez-vous plutôt un autre jour ouvré (ex. lundi matin) ?"
+                )
+                session.pending_slots = []
+                session.add_message("agent", msg)
+                self._save_session(session)
+                return [Event("final", msg, conv_state=session.state)]
+
+            if channel == "web" and target_date:
+                def _is_fr_public_holiday(d: date) -> bool:
+                    fixed = {
+                        (1, 1),   # Jour de l'an
+                        (5, 1),   # Fête du Travail
+                        (5, 8),   # Victoire 1945
+                        (7, 14),  # Fête nationale
+                        (8, 15),  # Assomption
+                        (11, 1),  # Toussaint
+                        (11, 11), # Armistice
+                        (12, 25), # Noël
+                    }
+                    if (d.month, d.day) in fixed:
+                        return True
+
+                    # Date de Pâques (algorithme de Meeus) + jours fériés mobiles
+                    y = d.year
+                    a = y % 19
+                    b = y // 100
+                    c = y % 100
+                    d1 = b // 4
+                    e = b % 4
+                    f = (b + 8) // 25
+                    g = (b - f + 1) // 3
+                    h = (19 * a + b - d1 - g + 15) % 30
+                    i = c // 4
+                    k = c % 4
+                    l = (32 + 2 * e + 2 * i - h - k) % 7
+                    m = (a + 11 * h + 22 * l) // 451
+                    month = (h + l - 7 * m + 114) // 31
+                    day = ((h + l - 7 * m + 114) % 31) + 1
+                    easter = date(y, month, day)
+                    mobile = {
+                        easter + timedelta(days=1),   # Lundi de Pâques
+                        easter + timedelta(days=39),  # Ascension
+                        easter + timedelta(days=50),  # Lundi de Pentecôte
+                    }
+                    return d in mobile
+
+                try:
+                    td = date.fromisoformat(str(target_date)[:10])
+                    if _is_fr_public_holiday(td):
+                        session.state = "WAIT_CONFIRM"
+                        msg = (
+                            f"Le {format_date_fr(td)} est un jour férié et aucun créneau n'est disponible ce jour-là. "
+                            "Souhaitez-vous un autre jour (ex. lundi matin) ?"
+                        )
+                        session.pending_slots = []
+                        session.add_message("agent", msg)
+                        self._save_session(session)
+                        return [Event("final", msg, conv_state=session.state)]
+                except Exception:
+                    pass
+
             if channel == "web" and target_date and not has_rejected:
                 session.state = "WAIT_CONFIRM"
                 msg = (
