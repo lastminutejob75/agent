@@ -3217,8 +3217,14 @@ class Engine:
                 date_changed = True
         pref_update = entities.pref or infer_preference_from_context(user_text or "")
         if pref_update:
-            session.qualif_data.pref = pref_update
-            date_changed = True
+            current_pref = getattr(session.qualif_data, "pref", None)
+            # Ne pas écraser une préférence plus riche (jour+horaire) par une
+            # version plus pauvre (ex. "matin" seul après typo STT).
+            cur_has_weekday = weekday_from_pref(current_pref) is not None
+            new_has_weekday = weekday_from_pref(pref_update) is not None
+            if not (cur_has_weekday and not new_has_weekday):
+                session.qualif_data.pref = pref_update
+                date_changed = True
         if availability_hint:
             date_changed = True
         if date_changed:

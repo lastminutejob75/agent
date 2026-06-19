@@ -696,16 +696,34 @@ function slotFromChatOffer(offer) {
   };
 }
 
+function normalizeBookingSlotSource(slot) {
+  const src = String(slot?.source || "").trim().toLowerCase();
+  if (src === "google" || src === "gcal" || src === "pg" || src === "sqlite") return src;
+  return String(slot?.startIso || slot?.start_iso || "").trim() ? "google" : "sqlite";
+}
+
 function resolveChatSlotOffer(offer, apiSlots) {
   const base = slotFromChatOffer(offer);
-  if (base.id && /^\d+$/.test(base.id) && base.startIso) return base;
   const list = safeArray(apiSlots);
+  if (base.id && /^\d+$/.test(base.id) && base.startIso) {
+    const byStart = list.find((s) => String(s?.startIso || s?.start_iso || "") === base.startIso);
+    if (byStart) {
+      return {
+        ...byStart,
+        startIso: byStart.startIso || base.startIso,
+        id: byStart.id || base.id,
+        source: normalizeBookingSlotSource(byStart),
+      };
+    }
+    return { ...base, source: normalizeBookingSlotSource(base) };
+  }
   const idx = Number(offer?.index);
   if (idx >= 1 && list[idx - 1]) {
     const merged = { ...list[idx - 1] };
     if (!merged.startIso && base.startIso) merged.startIso = base.startIso;
     if (!merged.id && base.id) merged.id = base.id;
     if (!merged.source && base.source) merged.source = base.source;
+    merged.source = normalizeBookingSlotSource(merged);
     return merged;
   }
   const label = norm(offer?.label || "");
@@ -718,10 +736,10 @@ function resolveChatSlotOffer(offer, apiSlots) {
       ...found,
       startIso: found.startIso || base.startIso,
       id: found.id || base.id,
-      source: found.source || base.source,
+      source: normalizeBookingSlotSource({ ...found, source: found.source || base.source }),
     };
   }
-  return base;
+  return { ...base, source: normalizeBookingSlotSource(base) };
 }
 
 const EMAIL_STRICT = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
@@ -2615,19 +2633,25 @@ export default function PagePubliquePraticienUWI() {
   }, [sendChatMessage]);
 
   const confirm = useCallback(async (booking) => {
+    const slotSource = normalizeBookingSlotSource(booking.slot);
+    const startIso = String(booking.slot.startIso || booking.slot.start_iso || "").trim();
+    const endIso = String(booking.slot.endIso || booking.slot.end_iso || "").trim();
+    const rawSlotId = String(booking.slot.id || "").trim();
+    // Si startIso est présent, ne jamais forcer un faux slotId "1/2/3" (index UI).
+    const fallbackSlotId = startIso ? "" : String(booking.slot.index || "1");
     const payload = {
       slug,
       ...(tenantIdRef.current ? { tenant_id: tenantIdRef.current } : {}),
-      slotId: String(booking.slot.id || booking.slot.index || "1"),
+      slotId: rawSlotId || fallbackSlotId,
       slotLabel: booking.slot.label,
       motif: booking.motif,
       patientName: booking.name,
       patientPhone: booking.phone,
       ...(booking.email ? { patientEmail: booking.email } : {}),
       source: modalSlot ? "google_slot" : "page_publique",
-      slotSource: booking.slot.source || (booking.slot.startIso ? "google" : "sqlite"),
-      startIso: booking.slot.startIso || "",
-      endIso: booking.slot.endIso || "",
+      slotSource,
+      startIso,
+      endIso,
     };
     let responseData = null;
     let confirmed = false;

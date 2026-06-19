@@ -837,6 +837,12 @@ def _filter_slots_by_weekday(pool: List[Any], weekday: int, tz: Optional[ZoneInf
     return out
 
 
+def _next_weekday_on_or_after(anchor: date, weekday: int) -> date:
+    """Retourne la prochaine date (incluse) pour un jour de semaine donné."""
+    delta = (int(weekday) - anchor.weekday()) % 7
+    return anchor + timedelta(days=delta)
+
+
 def _filter_slots_by_min_start(pool: List[Any], min_start: Optional[datetime], tz: Optional[ZoneInfo] = None) -> List[Any]:
     """Ne garde que les créneaux dont le début est >= min_start."""
     if min_start is None:
@@ -870,8 +876,6 @@ def _has_explicit_today_request(
 ) -> bool:
     """Détecte une demande explicite du jour courant (aujourd'hui)."""
     if target_date_obj == today:
-        return True
-    if weekday_pref is not None and weekday_pref == today.weekday():
         return True
 
     pref_l = (pref or "").strip().lower()
@@ -1080,6 +1084,22 @@ def get_slots_for_display(
         tenant_id=tenant_id,
     )
 
+    weekday_target_search = False
+    # Pour les demandes "jour de semaine + horaire" (ex. "vendredi matin"),
+    # la recherche sur un pool global peut être biaisée vers les prochains jours
+    # et masquer le bon jour. En contexte vocal/public, on focalise d'abord sur
+    # la prochaine occurrence de ce jour.
+    if target_date_obj is None and weekday_pref is not None and (channel == "vocal" or public_booking_context):
+        anchor_date = (min_start_dt.date() if min_start_dt is not None else now_date)
+        target_date_obj = _next_weekday_on_or_after(anchor_date, weekday_pref)
+        weekday_target_search = True
+        logger.info(
+            "get_slots_for_display: weekday_pref=%s -> target_date=%s (anchor=%s)",
+            weekday_pref,
+            target_date_obj,
+            anchor_date,
+        )
+
     appt_prefs_early = getattr(session, "appointment_preferences", None) if session else None
     if appt_prefs_early:
         hard_labels = {
@@ -1158,59 +1178,86 @@ def get_slots_for_display(
         logger.warning("GOOGLE_CALENDAR_STRICT_NO_SERVICE tenant_id=%s pref=%s", tenant_id, pref)
         return []
 
-    # Récupérer le pool brut (pas encore étalé) pour pouvoir filtrer refus puis étaler
-    if calendar_or_adapter:
-        try:
-            pool = _get_slots_from_google_calendar(
-                calendar_or_adapter,
-                pool_limit,
-                pref=fetch_pref,
-                tenant_id=tenant_id,
-                target_date=target_date_obj,
-            )
-        except GoogleCalendarPermissionError as e:
-            if strict_google_mode:
+    def _fetch_pool_for_target(target: Optional[date]) -> List[prompts.SlotDisplay]:
+        if calendar_or_adapter:
+            try:
+                return _get_slots_from_google_calendar(
+                    calendar_or_adapter,
+                    pool_limit,
+                    pref=fetch_pref,
+                    tenant_id=tenant_id,
+                    target_date=target,
+                )
+            except GoogleCalendarPermissionError as e:
+                if strict_google_mode:
+                    logger.warning(
+                        "GOOGLE_CALENDAR_PERMISSION_STRICT tenant_id=%s pref=%s error=%s",
+                        tenant_id,
+                        pref,
+                        e,
+                    )
+                    return []
                 logger.warning(
-                    "GOOGLE_CALENDAR_PERMISSION_STRICT tenant_id=%s pref=%s error=%s",
+                    "GOOGLE_CALENDAR_PERMISSION_FALLBACK tenant_id=%s pref=%s error=%s",
                     tenant_id,
                     pref,
                     e,
                 )
-                return []
-            logger.warning(
-                "GOOGLE_CALENDAR_PERMISSION_FALLBACK tenant_id=%s pref=%s error=%s",
-                tenant_id,
-                pref,
-                e,
-            )
-            pool = _get_slots_from_local(
-                pool_limit, pref=fetch_pref, tenant_id=tenant_id, target_date=target_date_obj
-            )
-        except (GoogleCalendarNotFoundError, GoogleCalendarError) as e:
-            if strict_google_mode:
+                return _get_slots_from_local(
+                    pool_limit, pref=fetch_pref, tenant_id=tenant_id, target_date=target
+                )
+            except (GoogleCalendarNotFoundError, GoogleCalendarError) as e:
+                if strict_google_mode:
+                    logger.warning(
+                        "GOOGLE_CALENDAR_READ_STRICT tenant_id=%s pref=%s error=%s",
+                        tenant_id,
+                        fetch_pref,
+                        e,
+                    )
+                    return []
                 logger.warning(
-                    "GOOGLE_CALENDAR_READ_STRICT tenant_id=%s pref=%s error=%s",
+                    "GOOGLE_CALENDAR_READ_FALLBACK tenant_id=%s pref=%s error=%s",
                     tenant_id,
                     fetch_pref,
                     e,
                 )
-                return []
-            logger.warning(
-                "GOOGLE_CALENDAR_READ_FALLBACK tenant_id=%s pref=%s error=%s",
-                tenant_id,
-                fetch_pref,
-                e,
-            )
-            pool = _get_slots_from_local(
-                pool_limit, pref=fetch_pref, tenant_id=tenant_id, target_date=target_date_obj
-            )
-    else:
+                return _get_slots_from_local(
+                    pool_limit, pref=fetch_pref, tenant_id=tenant_id, target_date=target
+                )
+
         if strict_google_mode and not use_local_fallback:
             logger.warning("GOOGLE_CALENDAR_STRICT_NO_FALLBACK tenant_id=%s pref=%s", tenant_id, fetch_pref)
             return []
-        pool = _get_slots_from_local(
-            pool_limit, pref=fetch_pref, tenant_id=tenant_id, target_date=target_date_obj
+        return _get_slots_from_local(
+            pool_limit, pref=fetch_pref, tenant_id=tenant_id, target_date=target
         )
+
+    # Récupérer le pool brut (pas encore étalé) pour pouvoir filtrer refus puis étaler
+    pool = _fetch_pool_for_target(target_date_obj)
+
+    # Si un jour de semaine est demandé (ex. vendredi matin) et qu'aucun créneau
+    # n'est trouvé sur la première occurrence, tester les occurrences suivantes
+    # (même jour) avant de conclure à tort "aucun créneau".
+    if (
+        weekday_target_search
+        and weekday_pref is not None
+        and target_date_obj is not None
+        and (not pool or len(pool) == 0)
+    ):
+        for week_offset in (1, 2, 3):
+            candidate_target = target_date_obj + timedelta(days=7 * week_offset)
+            candidate_pool = _fetch_pool_for_target(candidate_target)
+            if candidate_pool:
+                logger.info(
+                    "get_slots_for_display: weekday_pref=%s fallback week+%s target=%s found=%s",
+                    weekday_pref,
+                    week_offset,
+                    candidate_target,
+                    len(candidate_pool),
+                )
+                target_date_obj = candidate_target
+                pool = candidate_pool
+                break
 
     # « Autres créneaux » : si Google/strict renvoie vide, tenter le pool local élargi
     if has_rejected and (not pool or len(pool) == 0):
