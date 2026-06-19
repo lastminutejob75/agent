@@ -2022,6 +2022,7 @@ export default function PagePubliquePraticienUWI() {
       const isMoreSlotsActive = moreSlotsRequestActiveRef.current;
       const hasMoreSlotsHistory = excludedMoreSlotsOfferKeysRef.current.size > 0;
       const shouldFilterMoreSlots = isMoreSlotsActive || hasMoreSlotsHistory;
+      const text = String(payload?.text || "").trim();
       const slotsPayload = chatOffersFromResponse(rawSlotsPayload, {
         max: 3,
         excludeKeys: shouldFilterMoreSlots ? excludedMoreSlotsOfferKeysRef.current : null,
@@ -2053,7 +2054,16 @@ export default function PagePubliquePraticienUWI() {
           if (key) excludedMoreSlotsOfferKeysRef.current.add(key);
         });
       }
-      const text = String(payload?.text || "").trim();
+      if (moreSlotsNeedsPreferencesRef.current && !slotsPayload.length) {
+        moreSlotsRequestActiveRef.current = false;
+        if (pendingTurnRef.current) {
+          const resolve = pendingTurnRef.current;
+          pendingTurnRef.current = null;
+          resolve(true);
+        }
+        pushMoreSlotsPreferencesPrompt();
+        return;
+      }
       const convState = String(payload?.conv_state || "");
       if (convState === "CONFIRMED" && text) {
         setBookingSuccess({ label: "", message: text, confirmed: true });
@@ -2107,6 +2117,7 @@ export default function PagePubliquePraticienUWI() {
       const isMoreSlotsActive = moreSlotsRequestActiveRef.current;
       const hasMoreSlotsHistory = excludedMoreSlotsOfferKeysRef.current.size > 0;
       const shouldFilterMoreSlots = isMoreSlotsActive || hasMoreSlotsHistory;
+      const text = String(payload?.text || "").trim();
       const slotsPayload = chatOffersFromResponse(rawSlotsPayload, {
         max: 3,
         excludeKeys: shouldFilterMoreSlots ? excludedMoreSlotsOfferKeysRef.current : null,
@@ -2138,8 +2149,18 @@ export default function PagePubliquePraticienUWI() {
           if (key) excludedMoreSlotsOfferKeysRef.current.add(key);
         });
       }
-      if (payload?.text) {
-        push([{ from: "clara", text: String(payload.text), slots: slotsPayload.length ? slotsPayload : undefined }]);
+      if (moreSlotsNeedsPreferencesRef.current && !slotsPayload.length) {
+        moreSlotsRequestActiveRef.current = false;
+        if (pendingTurnRef.current) {
+          const resolve = pendingTurnRef.current;
+          pendingTurnRef.current = null;
+          resolve(true);
+        }
+        pushMoreSlotsPreferencesPrompt();
+        return;
+      }
+      if (text) {
+        push([{ from: "clara", text, slots: slotsPayload.length ? slotsPayload : undefined }]);
       }
       moreSlotsRequestActiveRef.current = false;
       return;
