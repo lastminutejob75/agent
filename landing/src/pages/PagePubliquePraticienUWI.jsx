@@ -656,6 +656,18 @@ function isSlotsLookupPlaceholder(text) {
   return CHAT_PROCESSING_PLACEHOLDERS.has(t);
 }
 
+function isMoreSlotsIntentMessage(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return false;
+  if (raw === MORE_SLOTS_MSG) return true;
+  if (MORE_SLOTS_REQUEST.test(raw)) return true;
+  const n = norm(raw).replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  if (!n) return false;
+  const asksMore = /\b(plus|autre|autres|encore)\b/.test(n);
+  const slotLike = /\b(cren|crene|creneau|creneaux|crenaux|crenenaux|dispo|disponibilit|horaire|horaires)\b/.test(n);
+  return asksMore && slotLike;
+}
+
 function slotFromChatOffer(offer) {
   const idx = Number(offer?.index) || 1;
   return {
@@ -2261,7 +2273,7 @@ export default function PagePubliquePraticienUWI() {
   const sendChatMessage = useCallback(async (text) => {
     const clean = String(text || "").trim();
     if (!clean) return;
-    const isMoreSlotsIntent = MORE_SLOTS_REQUEST.test(clean) || clean === MORE_SLOTS_MSG;
+    const isMoreSlotsIntent = isMoreSlotsIntentMessage(clean);
     if (!isMoreSlotsIntent) {
       moreSlotsLoopCountRef.current = 0;
       moreSlotsNeedsPreferencesRef.current = false;
@@ -2375,6 +2387,28 @@ export default function PagePubliquePraticienUWI() {
 
       if (instantText) showInstantReply(instantText);
 
+      const resolvePendingTurn = () => {
+        if (pendingTurnRef.current) {
+          const resolve = pendingTurnRef.current;
+          pendingTurnRef.current = null;
+          resolve(true);
+        }
+      };
+
+      const forceMoreSlotsPreferences = async ({ tryRefresh = false } = {}) => {
+        if (tryRefresh) {
+          await refreshAgendaSlotsForChat();
+          if (applyBarSlotsFallback({ provisional: true })) {
+            resolvePendingTurn();
+            return true;
+          }
+        }
+        moreSlotsNeedsPreferencesRef.current = true;
+        pushMoreSlotsPreferencesPrompt();
+        resolvePendingTurn();
+        return true;
+      };
+
       const tryShowCachedSlots = async ({ refresh = false } = {}) => {
         if (isMoreSlotsLookup && moreSlotsNeedsPreferencesRef.current) return false;
         if (refresh) await refreshAgendaSlotsForChat();
@@ -2408,30 +2442,33 @@ export default function PagePubliquePraticienUWI() {
           ensureStream(conversationId);
         }
         if (isMoreSlotsLookup && moreSlotsNeedsPreferencesRef.current) {
-          if (pendingTurnRef.current) {
-            const resolve = pendingTurnRef.current;
-            pendingTurnRef.current = null;
-            resolve(true);
-          }
+          pushMoreSlotsPreferencesPrompt();
+          resolvePendingTurn();
           return;
         }
-        if (isSlotsLookup && allowSlotsReuse && safeArray(response?.slots).length) {
-          applyResponseSlots(response, { provisional: true });
+        if (isSlotsLookup && safeArray(response?.slots).length) {
+          const pushedFromResponse = applyResponseSlots(response, { provisional: true });
+          if (pushedFromResponse) {
+            gotFinalReply = true;
+            resolvePendingTurn();
+          } else if (isMoreSlotsLookup) {
+            await forceMoreSlotsPreferences();
+            gotFinalReply = true;
+          }
         }
         if (!instantText && response?.reply) {
           applyChatResponse(response);
           gotFinalReply = true;
-          if (pendingTurnRef.current) {
-            const resolve = pendingTurnRef.current;
-            pendingTurnRef.current = null;
-            resolve(true);
-          }
-        } else {
+          resolvePendingTurn();
+        } else if (!gotFinalReply) {
           const sseOk = await turnWait;
           gotFinalReply = Boolean(sseOk);
         }
         if (!gotFinalReply) {
-          if (
+          if (isMoreSlotsLookup) {
+            await forceMoreSlotsPreferences({ tryRefresh: true });
+            gotFinalReply = true;
+          } else if (
             isSlotsLookup
             && allowSlotsReuse
             && (await tryShowCachedSlots({ refresh: true }) || applyBarSlotsFallback({ provisional: true }))
@@ -2448,10 +2485,13 @@ export default function PagePubliquePraticienUWI() {
           }
         }
       } catch {
-        if (pendingTurnRef.current) {
-          pendingTurnRef.current = null;
-        }
+        pendingTurnRef.current = null;
         if (isMoreSlotsLookup && moreSlotsNeedsPreferencesRef.current) {
+          pushMoreSlotsPreferencesPrompt();
+          return;
+        }
+        if (isMoreSlotsLookup) {
+          await forceMoreSlotsPreferences({ tryRefresh: true });
           return;
         }
         if (!gotFinalReply) {
