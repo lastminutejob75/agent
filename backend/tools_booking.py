@@ -1235,8 +1235,16 @@ def get_slots_for_display(
         filtered = _filter_slots_by_weekday(pool, weekday_pref, tz=tenant_tz)
         if filtered:
             pool = filtered
+        else:
+            logger.info(
+                "get_slots_for_display: aucun créneau pour weekday=%s dans le pool",
+                weekday_pref,
+            )
+            pool = []
 
-    # Si préférence horaire demandée mais aucun créneau, fallback sans filtre (sauf date ciblée)
+    # Si préférence horaire demandée mais aucun créneau, fallback sans filtre horaire.
+    # IMPORTANT: si un jour de semaine est explicitement demandé (weekday_pref),
+    # on conserve ce filtre de jour pour éviter de proposer un autre jour.
     if fetch_pref and not target_date_obj and (not pool or len(pool) == 0):
         logger.info(f"⚠️ Aucun créneau pour pref={fetch_pref}, fallback sans filtre")
         if calendar_or_adapter:
@@ -1285,6 +1293,18 @@ def get_slots_for_display(
                 logger.warning("GOOGLE_CALENDAR_STRICT_NO_FALLBACK tenant_id=%s pref=%s", tenant_id, pref)
                 return []
             pool = _get_slots_from_sqlite(limit, pref=None, tenant_id=tenant_id)
+
+        # Réappliquer le filtre de jour explicite après fallback sans filtre horaire.
+        if weekday_pref is not None and pool:
+            filtered_weekday = _filter_slots_by_weekday(pool, weekday_pref, tz=tenant_tz)
+            if filtered_weekday:
+                pool = filtered_weekday
+            else:
+                logger.info(
+                    "get_slots_for_display: fallback sans pref mais aucun créneau pour weekday=%s",
+                    weekday_pref,
+                )
+                pool = []
 
     # Garde-fou final vocal: réappliquer le filtre minimum après tous les fallbacks.
     # Evite qu'un fallback "sans pref" repropose des créneaux du jour.

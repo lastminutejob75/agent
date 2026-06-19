@@ -39,6 +39,18 @@ TIME_WINDOW_CATALOG: Dict[str, Tuple[str, str]] = {
 }
 
 _DAYS_FR = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+_WEEKDAY_TYPO_MAP: Dict[str, str] = {
+    "lundii": "lundi",
+    "mardii": "mardi",
+    "mercredii": "mercredi",
+    "mercreid": "mercredi",
+    "jeudii": "jeudi",
+    "vendrdi": "vendredi",
+    "vendredii": "vendredi",
+    "samdedi": "samedi",
+    "samdii": "samedi",
+    "dimnache": "dimanche",
+}
 
 # Phrases → (label catalogue, strength) — les plus longues d'abord à l'exécution
 _POSITIVE_PHRASES: List[Tuple[str, str, str]] = [
@@ -147,6 +159,13 @@ def _normalize(text: str) -> str:
         c for c in unicodedata.normalize("NFD", lowered)
         if unicodedata.category(c) != "Mn"
     )
+
+
+def _normalize_weekday_typos(text_norm: str) -> str:
+    out = text_norm or ""
+    for bad, good in _WEEKDAY_TYPO_MAP.items():
+        out = re.sub(rf"\b{re.escape(bad)}\b", good, out)
+    return out
 
 
 def empty_preferences(raw: str = "") -> Dict[str, Any]:
@@ -327,6 +346,15 @@ def _parse_days(norm: str, raw: str, result: Dict[str, Any]) -> None:
         if "matin" in t1:
             _append_window(result["preferred_time_windows"], "matin", "soft")
 
+    # Jour explicite seul ("vendredi"), même sans "plutôt" / créneau.
+    # On l'interprète comme préférence de jour (sauf si déjà exclu).
+    for day in _DAYS_FR:
+        if re.search(rf"\b{day}\b", norm):
+            if day in result["excluded_days"]:
+                continue
+            if day not in result["preferred_days"]:
+                result["preferred_days"].append(day)
+
 
 def _parse_flexibility_urgency(norm: str, result: Dict[str, Any]) -> None:
     if any(p in norm for p in _FLEXIBILITY_HIGH):
@@ -370,6 +398,7 @@ def parse_appointment_preferences(
         return result
 
     norm = _normalize(raw)
+    norm = _normalize_weekday_typos(norm)
     safety, msg = _check_safety(raw, norm)
     result["safety_required"] = safety
     result["safety_message"] = msg
