@@ -668,6 +668,20 @@ function isMoreSlotsIntentMessage(text) {
   return asksMore && slotLike;
 }
 
+function isAvailabilityRefinementMessage(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return false;
+  if (BOOKING_DATE_HINT.test(raw)) return true;
+  const n = norm(raw).replace(/[^a-z0-9\s/.\-]/g, " ").replace(/\s+/g, " ").trim();
+  if (!n) return false;
+  const hasDay =
+    /\b(lundi|mardi|mercredi|mercrdi|jeudi|jeudii|vendredi|vendrdi|samedi|dimanche)\b/.test(n);
+  const hasTimeBucket =
+    /\b(matin|matinee|apres midi|apres-midi|aprem|soir|soiree|fin de journee|debut de journee)\b/.test(n);
+  const hasDateLike = /\b\d{1,2}[\/\-.]\d{1,2}(?:[\/\-.]\d{2,4})?\b/.test(raw);
+  return hasDay || hasTimeBucket || hasDateLike;
+}
+
 function slotFromChatOffer(offer) {
   const idx = Number(offer?.index) || 1;
   return {
@@ -2274,6 +2288,7 @@ export default function PagePubliquePraticienUWI() {
     const clean = String(text || "").trim();
     if (!clean) return;
     const isMoreSlotsIntent = isMoreSlotsIntentMessage(clean);
+    const isAvailabilityRefinement = isAvailabilityRefinementMessage(clean);
     if (!isMoreSlotsIntent) {
       moreSlotsLoopCountRef.current = 0;
       moreSlotsNeedsPreferencesRef.current = false;
@@ -2527,14 +2542,20 @@ export default function PagePubliquePraticienUWI() {
     }
 
     if (!isMoreSlotsIntent && BOOKING_START.test(clean)) {
-      const asksSpecificDate = BOOKING_DATE_HINT.test(clean);
+      const asksSpecificDate = BOOKING_DATE_HINT.test(clean) || isAvailabilityRefinement;
       // Si des créneaux sont déjà visibles, on les propose immédiatement sans attente.
       if (!asksSpecificDate && applyBarSlotsFallback({ provisional: false })) {
         void refreshAgendaSlotsForChat();
         return;
       }
       const lookupMsg = asksSpecificDate ? INSTANT_SLOTS_DATE_LOOKUP : INSTANT_SLOTS_LOOKUP;
-      void syncChatInBackground(lookupMsg);
+      void syncChatInBackground(lookupMsg, { allowSlotsReuse: !asksSpecificDate });
+      return;
+    }
+
+    if (!isMoreSlotsIntent && isAvailabilityRefinement) {
+      removeLastSlotsMessage();
+      void syncChatInBackground(INSTANT_SLOTS_DATE_LOOKUP, { allowSlotsReuse: false });
       return;
     }
 
