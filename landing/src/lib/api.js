@@ -514,7 +514,10 @@ export const api = {
     const qs = params.toString();
     return request(
       `/api/tenant/patients/${encodeURIComponent(phone)}/summary${qs ? `?${qs}` : ""}`,
-      { tenant: true },
+      // La synthèse santé régénère le contexte + appel LLM (claude-sonnet) :
+      // largement > 15s par défaut. On laisse jusqu'à 60s pour qu'elle aboutisse
+      // et soit mise en cache (chargements suivants instantanés).
+      { tenant: true, timeoutMs: 60000 },
     );
   },
   tenantCreatePatientQuestionnaireV2: (phone, body = {}) =>

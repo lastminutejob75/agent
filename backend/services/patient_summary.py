@@ -451,9 +451,20 @@ def get_or_generate_summary(
             cached = None
         if cached and cached.get("inputs_hash") == h:
             cached_sections = cached.get("sections_json") or {}
-            if _is_placeholder_sections(cached_sections) and _pack_has_signal(pack):
+            stale_placeholder = _is_placeholder_sections(cached_sections) and _pack_has_signal(pack)
+            # Cache "fallback" (généré quand le LLM échouait, ex. modèle obsolète) :
+            # on régénère dès qu'une clé Anthropic est dispo et que le contexte a du signal,
+            # sinon l'ancien fallback resterait affiché indéfiniment.
+            cached_model = str(cached.get("model") or "").strip().lower()
+            stale_fallback = (
+                cached_model in ("fallback", "fallback_error")
+                and _pack_has_signal(pack)
+                and bool((os.environ.get("ANTHROPIC_API_KEY") or "").strip())
+            )
+            if stale_placeholder or stale_fallback:
                 logger.info(
-                    "patient_summary bypass stale placeholder cache tenant=%s phone=%s",
+                    "patient_summary bypass stale cache (%s) tenant=%s phone=%s",
+                    "placeholder" if stale_placeholder else "fallback",
                     tenant_id,
                     str(patient_phone)[-4:] if patient_phone else "?",
                 )
