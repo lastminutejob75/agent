@@ -31,13 +31,17 @@ from backend.routes import voice, whatsapp, bland, reports, admin, auth, tenant,
 from backend.routes import public_appointment_actions, patient_context, public_questionnaire_v2
 from backend.timing_log import install_api_timing
 
-install_api_timing(
-    extra_modules=(
-        public_appointment_actions,
-        patient_context,
-        public_questionnaire_v2,
+# DISABLE_TIMING_INSTRUMENT=1 : ne pas envelopper sqlite3.connect / les modules.
+# Utile en dev local sur SQLite, où le proxy de connexion empêche la prise en
+# compte de `row_factory` (auth en fallback SQLite). Comportement prod inchangé par défaut.
+if (os.environ.get("DISABLE_TIMING_INSTRUMENT") or "").strip().lower() not in ("1", "true", "yes", "on"):
+    install_api_timing(
+        extra_modules=(
+            public_appointment_actions,
+            patient_context,
+            public_questionnaire_v2,
+        )
     )
-)
 
 app = FastAPI()
 _logger = logging.getLogger(__name__)
