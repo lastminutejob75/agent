@@ -665,7 +665,7 @@ function Toast({ message }: { message: string }) {
   );
 }
 
-function HeroSvgIcon({ name }: { name: "phone" | "mail" | "whatsapp" | "sms" | "more" | "overview" | "calendar" | "history" | "documents" | "consult" }) {
+function HeroSvgIcon({ name }: { name: "phone" | "mail" | "whatsapp" | "sms" | "more" | "overview" | "calendar" | "history" | "documents" | "consult" | "mic" }) {
   const common = "h-[18px] w-[18px] shrink-0";
   if (name === "phone") {
     return (
@@ -742,6 +742,15 @@ function HeroSvgIcon({ name }: { name: "phone" | "mail" | "whatsapp" | "sms" | "
       </svg>
     );
   }
+  if (name === "mic") {
+    return (
+      <svg className={common} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="9" y="3" width="6" height="11" rx="3" stroke="currentColor" strokeWidth="1.8" />
+        <path d="M5 11a7 7 0 0 0 14 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        <path d="M12 18v3M9 21h6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    );
+  }
   return (
     <svg className={common} viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <circle cx="12" cy="12" r="8.5" stroke="currentColor" strokeWidth="1.8" />
@@ -806,12 +815,12 @@ function PatientQuickActions({
   return (
     <div className="flex flex-wrap gap-2">
       <HeaderAction
-        variant="primary"
+        variant="voice"
         compact
-        icon={<HeroSvgIcon name="consult" />}
+        icon={<HeroSvgIcon name="mic" />}
         onClick={onCreateConsultation}
       >
-        Créer une consultation
+        Dicter la consultation
       </HeaderAction>
       <HeaderAction
         variant="secondary"
@@ -989,7 +998,7 @@ function HeaderAction({
 }: {
   children: React.ReactNode;
   icon?: React.ReactNode;
-  variant?: "primary" | "secondary" | "ghost";
+  variant?: "primary" | "secondary" | "ghost" | "voice";
   compact?: boolean;
   onClick: () => void;
 }) {
@@ -997,6 +1006,7 @@ function HeaderAction({
     primary: "border-[#009CA4] bg-[#009CA4] text-white shadow-[0_8px_20px_rgba(0,156,164,0.22)] hover:bg-[#008891]",
     secondary: "border-[#DDE7F1] bg-white text-[#0A1628] hover:bg-[#F8FBFD]",
     ghost: "border-[#E2EAF4] bg-[#F8FBFD] text-[#52637C] hover:bg-white",
+    voice: "border-[#6941C6] bg-[#6941C6] text-white shadow-[0_8px_20px_rgba(105,65,198,0.22)] hover:bg-[#5B34B0]",
   };
 
   return (
@@ -2750,12 +2760,17 @@ export default function PatientDashboardPage() {
     return api.tenantGetPatientConsultationPrefill(tenantPatientPhone);
   }, [tenantPatientPhone]);
 
-  const transcribeConsultationAudio = useCallback(async (audioBlob: Blob) => {
-    if (!(audioBlob instanceof Blob)) {
-      throw new Error("Audio de dictée invalide.");
-    }
-    return api.tenantTranscribeConsultation(audioBlob, tenantPatientPhone || "");
-  }, [tenantPatientPhone]);
+  const transcribeConsultationAudio = useCallback(
+    async (audioBlob: Blob, opts?: { transcriptionOnly?: boolean }) => {
+      if (!(audioBlob instanceof Blob)) {
+        throw new Error("Audio de dictée invalide.");
+      }
+      return api.tenantTranscribeConsultation(audioBlob, tenantPatientPhone || "", {
+        transcriptionOnly: Boolean(opts?.transcriptionOnly),
+      });
+    },
+    [tenantPatientPhone],
+  );
 
   useEffect(() => {
     const wantsConsultation = (searchParams.get("consultation") || "").trim() === "1";
@@ -5185,7 +5200,7 @@ export default function PatientDashboardPage() {
                               : "border-white/30 bg-white/10 text-white hover:bg-white/20",
                           )}
                         >
-                          <span className={cx("inline-block h-2.5 w-2.5 rounded-full", noteRecording ? "animate-pulse bg-white" : "bg-[#7CF3FB]")} />
+                          <span className={cx("inline-block h-2.5 w-2.5 rounded-full", noteRecording ? "animate-pulse bg-white" : "bg-[#B9AEEA]")} />
                           {noteTranscribing ? "Transcription…" : noteRecording ? "Arrêter la dictée" : "Dicter"}
                         </button>
                         {noteRecording ? (
@@ -5548,20 +5563,20 @@ export default function PatientDashboardPage() {
               aria-pressed={noteRecording}
               className={cx(
                 "inline-flex shrink-0 items-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-black transition disabled:opacity-60",
-                noteRecording
-                  ? "border-[#E11D48] bg-[#FFF1F3] text-[#E11D48]"
-                  : "border-[#009CA4] bg-white text-[#008EA1] hover:bg-[#F2FBFC]",
+              noteRecording
+                ? "border-[#E11D48] bg-[#FFF1F3] text-[#E11D48]"
+                : "border-[#6941C6] bg-white text-[#5B34B0] hover:bg-[#F4F3FF]",
+            )}
+          >
+            <span
+              className={cx(
+                "grid h-5 w-5 place-items-center rounded-full text-xs",
+                noteRecording ? "animate-pulse bg-[#E11D48] text-white" : "bg-[#F4F3FF] text-[#5B34B0]",
               )}
             >
-              <span
-                className={cx(
-                  "grid h-5 w-5 place-items-center rounded-full text-xs",
-                  noteRecording ? "animate-pulse bg-[#E11D48] text-white" : "bg-[#E9FAFC] text-[#008EA1]",
-                )}
-              >
-                ●
-              </span>
-              {noteTranscribing ? "Transcription…" : noteRecording ? "Arrêter la dictée" : "Dicter la note"}
+              ●
+            </span>
+            {noteTranscribing ? "Transcription…" : noteRecording ? "Arrêter la dictée" : "Dicter la note"}
             </button>
           </div>
           <textarea

@@ -461,10 +461,11 @@ export const api = {
       body,
       tenant: true,
     }),
-  tenantTranscribeConsultation: async (audioBlob, phone = "") => {
+  tenantTranscribeConsultation: async (audioBlob, phone = "", opts = {}) => {
     const formData = new FormData();
     formData.append("audio", audioBlob, "consultation.webm");
     if (phone) formData.append("phone", String(phone));
+    if (opts?.transcriptionOnly) formData.append("transcription_only", "true");
     const base = getApiUrl();
     const url = `${base}/api/tenant/consultations/transcribe`;
     const headers = {};

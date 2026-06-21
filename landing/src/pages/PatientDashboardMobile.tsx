@@ -423,10 +423,10 @@ function MobileContentActions({
       <button
         type="button"
         onClick={onCreateConsultation}
-        className="flex min-h-[54px] items-center justify-center gap-2 rounded-[15px] border border-[#009CA4] bg-[#009CA4] text-[15px] font-black text-white shadow-[0_8px_18px_rgba(0,156,164,0.18)] sm:col-span-2"
+        className="flex min-h-[54px] items-center justify-center gap-2 rounded-[15px] border border-[#6941C6] bg-[#6941C6] text-[15px] font-black text-white shadow-[0_8px_18px_rgba(105,65,198,0.18)] sm:col-span-2"
       >
-        <span aria-hidden="true" className="text-base leading-none">🩺</span>
-        Créer une fiche de consultation
+        <span aria-hidden="true" className="text-base leading-none">🎙️</span>
+        Dicter la consultation
       </button>
       <button
         type="button"

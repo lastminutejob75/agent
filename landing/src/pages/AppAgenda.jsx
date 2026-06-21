@@ -576,9 +576,9 @@ function InlineDetail({
           <button
             type="button"
             onClick={() => onCreateConsultation?.()}
-            style={S.inlineSecBtn}
+            style={S.inlineVoiceBtn}
           >
-            🩺 Créer fiche consultation
+            🎙️ Dicter la consultation
           </button>
         ) : null}
         {!aPhone ? (
@@ -3926,6 +3926,20 @@ const S = {
     color: NAVY,
     fontSize: 13,
     fontWeight: 600,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  inlineVoiceBtn: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "8px 14px",
+    borderRadius: 8,
+    border: "1px solid #D9D6FE",
+    background: "#F4F3FF",
+    color: "#5B34B0",
+    fontSize: 13,
+    fontWeight: 700,
     cursor: "pointer",
     fontFamily: "inherit",
   },

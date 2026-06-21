@@ -29,6 +29,7 @@ const C = {
   line: "#E8ECEF", bg: "#F5F7F8", card: "#FFFFFF",
   amber: "#B45309", amberSoft: "#FEF4E4", amberLine: "#F3C98B",
   red: "#B42318", redSoft: "#FEF3F2",
+  voice: "#6941C6", voiceDark: "#5B34B0", voiceSoft: "#F4F3FF", voiceLine: "#D9D6FE",
   headerGrad: "linear-gradient(135deg, #0A1628 0%, #102240 55%, #0E3A44 100%)",
   shadow: "0 1px 2px rgba(10,22,40,0.04), 0 4px 16px rgba(10,22,40,0.05)",
   shadowHeader: "0 8px 28px rgba(10,22,40,0.22)",
@@ -345,6 +346,8 @@ export default function FicheConsultationUWI({
   const [dictWarnings, setDictWarnings] = useState([]);
   const [dictError, setDictError] = useState(null);
   const [demoMode, setDemoMode] = useState(false);
+  const [dictIntent, setDictIntent] = useState("consultation"); // "consultation" | "note_libre"
+  const [memoNotice, setMemoNotice] = useState("");
 
   // ---- Préparation UWi (Clara + dossier), chargée à l'ouverture ----
   const [prefill, setPrefill] = useState(null);     // { source, resume_appel, ... } pour la carte
@@ -446,6 +449,7 @@ export default function FicheConsultationUWI({
   const startRecording = async () => {
     setDictError(null);
     setDemoMode(false);
+    setMemoNotice("");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
@@ -489,14 +493,18 @@ export default function FicheConsultationUWI({
     try {
       let result;
       if (onTranscribe && blob) {
-        result = await onTranscribe(blob);
+        result = await onTranscribe(blob, { transcriptionOnly: dictIntent === "note_libre" });
         setDemoMode(false);
       } else {
         await new Promise((r) => setTimeout(r, 1400)); // simule la latence STT+LLM
         result = DEMO_EXTRACTION;
         setDemoMode(true);
       }
-      ingestExtraction(result);
+      if (dictIntent === "note_libre") {
+        ingestFreeMemo(result);
+      } else {
+        ingestExtraction(result);
+      }
     } catch (err) {
       const detail = String(err?.message || "").trim();
       setDictError(
@@ -555,6 +563,24 @@ export default function FicheConsultationUWI({
 
     // merge avec les propositions déjà en attente (ex. dictée après prépa)
     setDraft((prev) => ({ ...prev, ...additions }));
+  };
+
+  // Mémo vocal libre : transcription fidèle rangée dans la note praticien.
+  // On ne structure rien et on n'écrase rien — c'est la parole du médecin,
+  // éditable avant enregistrement (jamais injectée dans les champs cliniques).
+  const ingestFreeMemo = (result) => {
+    const text = String(result?.transcription || "").trim();
+    if (!text) {
+      setDictError("Aucune parole détectée.");
+      return;
+    }
+    setC((s) => ({
+      ...s,
+      notePraticien: s.notePraticien.trim()
+        ? `${s.notePraticien.trim()}\n\n${text}`
+        : text,
+    }));
+    setMemoNotice("Mémo vocal ajouté à la note praticien (en bas de la fiche).");
   };
 
   // ---------------- Préparation UWi : pousser en draft ----------------
@@ -701,6 +727,18 @@ export default function FicheConsultationUWI({
     patient.allergies || patient.traitements || patient.points_attention || patient.facteurs_risque,
   );
 
+  // Garde-fou : tant que des propositions de dictée ne sont ni acceptées ni
+  // refusées, on évite qu'une fermeture/rafraîchissement accidentel les perde.
+  useEffect(() => {
+    if (draftCount === 0 || typeof window === "undefined") return undefined;
+    const handler = (e) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [draftCount]);
+
   return (
     <div className="min-h-screen w-full px-3 py-4 sm:px-4 sm:py-6" style={{ background: "linear-gradient(180deg, #F4F8FA 0%, #EEF4F6 100%)", color: C.ink }}>
       <div className="mx-auto max-w-5xl">
@@ -727,6 +765,13 @@ export default function FicheConsultationUWI({
               </div>
             </div>
             <div className="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:items-center">
+              {draftCount > 0 ? (
+                <span className="flex items-center gap-1.5 self-start rounded-full px-3 py-1.5 text-[11px] font-bold sm:self-auto"
+                  style={{ background: "rgba(105,65,198,0.20)", color: "#D9D6FE", border: "1px solid rgba(105,65,198,0.55)" }}
+                  title="Propositions de dictée à valider avant enregistrement">
+                  <Wand2 size={12} /> {draftCount} à relire
+                </span>
+              ) : null}
               <label className="hidden items-center gap-2 rounded-xl px-3 py-2 sm:flex"
                 style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.10)" }}>
                 <Calendar size={14} color="#5FAEB3" />
@@ -802,6 +847,7 @@ export default function FicheConsultationUWI({
           recording={recording} processing={processing} recSeconds={recSeconds}
           onStart={startRecording} onStop={stopRecording}
           demoMode={demoMode} error={dictError}
+          intent={dictIntent} onIntentChange={setDictIntent} memoNotice={memoNotice}
         />
 
         {/* ================= Préparation UWi (Clara + dossier) ================= */}
@@ -1104,11 +1150,57 @@ export default function FicheConsultationUWI({
 
 /* ============================ Dictée : composants ============================ */
 
-function DictationBar({ recording, processing, recSeconds, onStart, onStop, demoMode, error }) {
+const WAVE_BARS = [8, 16, 12, 22, 14, 26, 10, 20, 14, 24, 12, 18, 8, 22, 14];
+
+function IntentBtn({ active, disabled, light, onClick, children }) {
+  const bg = active ? (light ? "#FFFFFF" : C.voice) : "transparent";
+  const color = active
+    ? (light ? C.voiceDark : "#FFFFFF")
+    : (light ? "rgba(255,255,255,0.72)" : C.muted);
+  return (
+    <button type="button" onClick={onClick} disabled={disabled}
+      className="rounded-full px-3 py-1 text-[11px] font-bold transition disabled:cursor-not-allowed"
+      style={{ background: bg, color, boxShadow: active && light ? "0 1px 4px rgba(10,22,40,0.18)" : "none" }}>
+      {children}
+    </button>
+  );
+}
+
+function DictationBar({ recording, processing, recSeconds, onStart, onStop, demoMode, error, intent, onIntentChange, memoNotice }) {
   const mmss = `${String(Math.floor(recSeconds / 60)).padStart(2, "0")}:${String(recSeconds % 60).padStart(2, "0")}`;
+  const isMemo = intent === "note_libre";
+  const busy = recording || processing;
+  const title = recording
+    ? (isMemo ? "Note vocale en cours…" : "Dictée en cours…")
+    : processing
+      ? (isMemo ? "UWI transcrit votre note…" : "UWI structure votre dictée…")
+      : (isMemo ? "Dicter une note libre" : "Dicter la consultation");
+  const sub = recording
+    ? `${mmss} · ${isMemo ? "parlez, UWI transcrit fidèlement" : "parlez naturellement, UWI range dans les champs"}`
+    : processing
+      ? (isMemo ? "Transcription fidèle de votre note" : "Transcription puis répartition dans la fiche")
+      : (isMemo ? "Transcrite telle quelle dans la note praticien — vous relisez" : "Parlez, UWI remplit la fiche — vous validez ensuite");
   return (
     <div className="mb-4 overflow-hidden rounded-3xl"
-      style={{ background: recording ? "#FFFFFF" : C.navy, border: `1px solid ${recording ? C.amberLine : "transparent"}`, boxShadow: C.shadow }}>
+      style={{ background: recording ? "#FFFFFF" : C.navy, border: `1px solid ${recording ? C.voiceLine : "transparent"}`, boxShadow: C.shadow }}>
+
+      {/* Identité "votre voix" + sélecteur d'intention */}
+      <div className="flex flex-wrap items-center gap-2 px-5 pt-4">
+        <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.18em]"
+          style={{ color: recording ? C.voiceDark : "#B9AEEA" }}>
+          <Mic size={11} /> Votre voix
+        </span>
+        <div className="ml-auto flex rounded-full p-0.5"
+          style={{ background: recording ? C.voiceSoft : "rgba(255,255,255,0.08)" }}>
+          <IntentBtn active={!isMemo} disabled={busy} light={!recording} onClick={() => onIntentChange("consultation")}>
+            Consultation
+          </IntentBtn>
+          <IntentBtn active={isMemo} disabled={busy} light={!recording} onClick={() => onIntentChange("note_libre")}>
+            Note libre
+          </IntentBtn>
+        </div>
+      </div>
+
       <div className="flex items-center justify-between gap-4 px-5 py-4">
         <div className="flex min-w-0 items-center gap-3">
           {recording ? (
@@ -1120,19 +1212,13 @@ function DictationBar({ recording, processing, recSeconds, onStart, onStop, demo
             </span>
           ) : (
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl"
-              style={{ background: processing ? "rgba(0,156,164,0.18)" : "rgba(0,156,164,0.2)", border: "1px solid rgba(0,156,164,0.4)" }}>
-              {processing ? <Loader2 size={18} color="#4FD1D9" className="animate-spin" /> : <Wand2 size={18} color="#4FD1D9" />}
+              style={{ background: "rgba(105,65,198,0.20)", border: "1px solid rgba(105,65,198,0.45)" }}>
+              {processing ? <Loader2 size={18} color="#B9AEEA" className="animate-spin" /> : <Wand2 size={18} color="#B9AEEA" />}
             </span>
           )}
           <div className="min-w-0">
-            <p className="text-sm font-bold" style={{ color: recording ? C.navy : "#fff" }}>
-              {recording ? "Dictée en cours…" : processing ? "UWI structure votre dictée…" : "Dicter la consultation"}
-            </p>
-            <p className="truncate text-[11px]" style={{ color: recording ? C.muted : "#8FA3B8" }}>
-              {recording ? `${mmss} · parlez naturellement, UWI range dans les champs`
-                : processing ? "Transcription puis répartition dans la fiche"
-                : "Parlez, UWI remplit la fiche — vous validez ensuite"}
-            </p>
+            <p className="text-sm font-bold" style={{ color: recording ? C.navy : "#fff" }}>{title}</p>
+            <p className="truncate text-[11px]" style={{ color: recording ? C.muted : "#8FA3B8" }}>{sub}</p>
           </div>
         </div>
 
@@ -1144,11 +1230,21 @@ function DictationBar({ recording, processing, recSeconds, onStart, onStop, demo
         ) : (
           <button onClick={onStart} disabled={processing}
             className="flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
-            style={{ background: C.teal, color: "#fff" }}>
+            style={{ background: C.voice, color: "#fff" }}>
             <Mic size={15} /> {processing ? "…" : "Dicter"}
           </button>
         )}
       </div>
+
+      {recording && (
+        <div className="flex items-end gap-1 px-5 pb-4" style={{ height: 30 }}>
+          {WAVE_BARS.map((h, i) => (
+            <span key={i} className="w-1 rounded-full animate-pulse"
+              style={{ background: C.voice, height: h, animationDelay: `${(i % 5) * 110}ms` }} />
+          ))}
+        </div>
+      )}
+
       {error && (
         <div className="mx-4 mb-4 flex items-start gap-2 rounded-xl px-3 py-2.5"
           style={{ background: C.redSoft, border: "1px solid #FDA29B" }}>
@@ -1156,10 +1252,19 @@ function DictationBar({ recording, processing, recSeconds, onStart, onStop, demo
           <p className="text-[12px] font-semibold leading-snug" style={{ color: C.red }}>{error}</p>
         </div>
       )}
+
+      {memoNotice && !error && (
+        <div className="mx-4 mb-4 flex items-start gap-2 rounded-xl px-3 py-2.5"
+          style={{ background: C.voiceSoft, border: `1px solid ${C.voiceLine}` }}>
+          <Check size={14} color={C.voiceDark} className="mt-0.5 shrink-0" />
+          <p className="text-[12px] font-semibold leading-snug" style={{ color: C.voiceDark }}>{memoNotice}</p>
+        </div>
+      )}
+
       {demoMode && !error && (
         <div className="px-5 pb-3 -mt-1">
           <p className="text-[11px] font-medium" style={{ color: recording ? C.muted : "#8FA3B8" }}>
-            Mode démonstration · extraction simulée (aucun backend connecté)
+            Mode démonstration · {isMemo ? "transcription simulée" : "extraction simulée"} (aucun backend connecté)
           </p>
         </div>
       )}

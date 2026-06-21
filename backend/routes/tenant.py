@@ -5527,6 +5527,7 @@ async def tenant_note_transcribe_route(
 async def tenant_consultation_transcribe_route(
     audio: UploadFile = File(...),
     phone: str = Form(default=""),
+    transcription_only: bool = Form(default=False),
     auth: dict = Depends(require_tenant_auth),
 ):
     tenant_id = auth["tenant_id"]
@@ -5547,6 +5548,16 @@ async def tenant_consultation_transcribe_route(
             "extraction": {},
             "champs_confiance": [],
             "avertissements": ["Aucune parole détectée."],
+        }
+
+    # Mode mémo libre : on ne veut que la transcription fidèle, pas l'extraction
+    # structurée -> on évite un appel LLM (Claude) inutile.
+    if transcription_only:
+        return {
+            "transcription": transcription,
+            "extraction": {},
+            "champs_confiance": [],
+            "avertissements": [],
         }
 
     anthropic_key = str(os.getenv("ANTHROPIC_API_KEY") or "").strip()
