@@ -5,6 +5,7 @@ Protégé par cookie uwi_session uniquement (require_tenant_auth).
 """
 from __future__ import annotations
 
+import asyncio
 import copy
 import base64
 import hashlib
@@ -5578,16 +5579,24 @@ async def tenant_consultation_transcribe_route(
     try:
         from anthropic import Anthropic
 
-        client = Anthropic(api_key=anthropic_key)
-        message = client.messages.create(
-            model=extraction_model,
-            max_tokens=1800,
-            system=EXTRACTION_SYSTEM_PROMPT,
-            messages=[{
-                "role": "user",
-                "content": build_consultation_extraction_prompt(transcription, antecedents=antecedents or None),
-            }],
-        )
+        # Client synchrone + timeout court : sans cela un appel lent/bloqué fige
+        # tout le worker uvicorn (boucle asyncio gelée -> 499 sur /health, agenda…).
+        client = Anthropic(api_key=anthropic_key, timeout=45.0, max_retries=1)
+
+        def _run_extraction():
+            return client.messages.create(
+                model=extraction_model,
+                max_tokens=1800,
+                system=EXTRACTION_SYSTEM_PROMPT,
+                messages=[{
+                    "role": "user",
+                    "content": build_consultation_extraction_prompt(transcription, antecedents=antecedents or None),
+                }],
+            )
+
+        # On exécute l'appel bloquant hors de la boucle d'événements (thread dédié)
+        # avec un plafond dur, pour ne jamais bloquer les autres requêtes.
+        message = await asyncio.wait_for(asyncio.to_thread(_run_extraction), timeout=55.0)
         raw = "".join(
             getattr(block, "text", "")
             for block in getattr(message, "content", [])
