@@ -125,17 +125,17 @@ class SMSChannel(NotificationChannel):
     """Envoi par SMS via Twilio."""
     
     def __init__(self):
-        self.account_sid = os.getenv("TWILIO_ACCOUNT_SID")
-        self.auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+        from backend.services.sms_service import sms_is_configured
         self.from_number = os.getenv("TWILIO_PHONE_NUMBER")
         self.to_number = os.getenv("OWNER_PHONE_NUMBER")
+        self._auth_ready = sms_is_configured()
     
     @property
     def name(self) -> str:
         return "sms"
     
     def is_configured(self) -> bool:
-        return bool(self.account_sid and self.auth_token and self.from_number and self.to_number)
+        return bool(self._auth_ready and self.to_number)
     
     def send(self, message: str, subject: Optional[str] = None) -> bool:
         if not self.is_configured():
@@ -143,9 +143,12 @@ class SMSChannel(NotificationChannel):
             return False
         
         try:
-            from twilio.rest import Client
-            
-            client = Client(self.account_sid, self.auth_token)
+            from backend.services.sms_service import get_twilio_client
+
+            client = get_twilio_client()
+            if client is None:
+                logger.warning("SMS not configured (missing Twilio credentials)")
+                return False
             
             # Tronquer si trop long pour SMS (160 chars)
             if len(message) > 1600:
@@ -173,17 +176,17 @@ class WhatsAppChannel(NotificationChannel):
     """Envoi par WhatsApp via Twilio."""
     
     def __init__(self):
-        self.account_sid = os.getenv("TWILIO_ACCOUNT_SID")
-        self.auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+        from backend.services.sms_service import twilio_auth_configured
         self.from_number = os.getenv("TWILIO_WHATSAPP_NUMBER", "+14155238886")  # Sandbox par défaut
         self.to_number = os.getenv("OWNER_PHONE_NUMBER")
+        self._auth_ready = twilio_auth_configured()
     
     @property
     def name(self) -> str:
         return "whatsapp"
     
     def is_configured(self) -> bool:
-        return bool(self.account_sid and self.auth_token and self.to_number)
+        return bool(self._auth_ready and self.to_number)
     
     def send(self, message: str, subject: Optional[str] = None) -> bool:
         if not self.is_configured():
@@ -191,9 +194,12 @@ class WhatsAppChannel(NotificationChannel):
             return False
         
         try:
-            from twilio.rest import Client
-            
-            client = Client(self.account_sid, self.auth_token)
+            from backend.services.sms_service import get_twilio_client
+
+            client = get_twilio_client()
+            if client is None:
+                logger.warning("WhatsApp not configured (missing Twilio credentials)")
+                return False
             
             msg = client.messages.create(
                 body=message,

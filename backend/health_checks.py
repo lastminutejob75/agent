@@ -156,11 +156,18 @@ def check_twilio(timeout: float = DEFAULT_TIMEOUT_S) -> Dict[str, Any]:
     def _do():
         sid = (os.environ.get("TWILIO_ACCOUNT_SID") or "").strip()
         token = (os.environ.get("TWILIO_AUTH_TOKEN") or "").strip()
-        if not sid or not token:
+        api_key_sid = (os.environ.get("TWILIO_API_KEY_SID") or "").strip()
+        api_key_secret = (os.environ.get("TWILIO_API_KEY_SECRET") or "").strip()
+        # Basic auth : clés d'API (SK/secret) en priorité, sinon Account SID + Auth Token.
+        if sid and api_key_sid and api_key_secret:
+            auth_user, auth_pass = api_key_sid, api_key_secret
+        elif sid and token:
+            auth_user, auth_pass = sid, token
+        else:
             return {"status": STATUS_NOT_CONFIGURED, "detail": "TWILIO_* not set"}
         t0 = time.monotonic()
         try:
-            with httpx.Client(timeout=timeout, auth=(sid, token)) as client:
+            with httpx.Client(timeout=timeout, auth=(auth_user, auth_pass)) as client:
                 r = client.get(f"https://api.twilio.com/2010-04-01/Accounts/{sid}.json")
             latency = int((time.monotonic() - t0) * 1000)
             if r.status_code == 200:

@@ -536,19 +536,13 @@ def _dispatch_booking_notifications_for_slug(
 
 
 def _send_sms(to_number: str, body: str) -> bool:
-    sid = (os.environ.get("TWILIO_ACCOUNT_SID") or "").strip()
-    token = (os.environ.get("TWILIO_AUTH_TOKEN") or "").strip()
-    from_number = (os.environ.get("TWILIO_PHONE_NUMBER") or "").strip()
-    if not (sid and token and from_number and to_number):
-        return False
-    try:
-        from twilio.rest import Client
+    """Envoi SMS booking — délègue au service central (logs + config unifiés)."""
+    from backend.services.sms_service import send_sms_message
 
-        Client(sid, token).messages.create(body=body[:1500], from_=from_number, to=to_number)
-        return True
-    except Exception as exc:
-        logger.warning("public booking sms failed: %s", exc)
-        return False
+    ok, err = send_sms_message(to_number, body)
+    if not ok and err and "non configuré" not in err:
+        logger.warning("public booking sms failed: %s", err)
+    return ok
 
 
 def _insert_booking(

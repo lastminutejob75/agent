@@ -6664,13 +6664,11 @@ def _get_assigned_voice_numbers() -> set:
 def admin_list_twilio_numbers(_: None = Depends(_verify_admin)):
     """Retourne les numéros Twilio (disponibles = non assignés)."""
     try:
-        from twilio.rest import Client
+        from backend.services.sms_service import get_twilio_client
 
-        sid = (os.environ.get("TWILIO_ACCOUNT_SID") or "").strip()
-        token = (os.environ.get("TWILIO_AUTH_TOKEN") or "").strip()
-        if not sid or not token:
+        client = get_twilio_client()
+        if client is None:
             return []
-        client = Client(sid, token)
         numbers = client.incoming_phone_numbers.list()
         assigned = _get_assigned_voice_numbers()
         out = []
