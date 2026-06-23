@@ -586,6 +586,18 @@ def _init_heavy_sync():
                 print("⚠️ ivr_events table skip (no DATABASE_URL)")
         except Exception as e:
             _logger.warning("ivr_events ensure table failed: %s", e)
+    # Colonne tenant_users.must_change_password : migration idempotente au démarrage.
+    # Sans elle, /me logue en boucle `column "must_change_password" does not exist`
+    # (l'auto-migration paresseuse côté auth_pg ne se déclenche pas car le context
+    # manager d'auth avale l'exception). ADD COLUMN IF NOT EXISTS = no-op si présente.
+    try:
+        from backend.auth_pg import _ensure_must_change_password_column_pg
+        if _ensure_must_change_password_column_pg():
+            print("✅ tenant_users.must_change_password column ready")
+        else:
+            print("⚠️ must_change_password column ensure skipped (no DB / no privilege)")
+    except Exception as e:
+        _logger.warning("must_change_password ensure failed: %s", e)
     # Route démo test → TEST_TENANT_ID (idempotent), juste après PG check pour éviter pool/transaction divergent.
     try:
         from backend.tenant_routing import ensure_test_number_route
