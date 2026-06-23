@@ -298,10 +298,27 @@ function apiUrl(path) {
 }
 
 async function fetchJson(path, options = {}) {
-  const response = await fetch(apiUrl(path), {
-    ...options,
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-  });
+  const { timeoutMs = 0, ...fetchOptions } = options || {};
+  const useTimeout = Number(timeoutMs) > 0;
+  const controller = useTimeout ? new AbortController() : null;
+  const timeoutId = useTimeout
+    ? window.setTimeout(() => controller?.abort(), Number(timeoutMs))
+    : null;
+  let response;
+  try {
+    response = await fetch(apiUrl(path), {
+      ...fetchOptions,
+      signal: fetchOptions.signal || controller?.signal,
+      headers: { "Content-Type": "application/json", ...(fetchOptions.headers || {}) },
+    });
+  } catch (err) {
+    if (useTimeout && String(err?.name || "").toLowerCase() === "aborterror") {
+      throw new Error(`Delai depasse (${timeoutMs} ms)`);
+    }
+    throw err;
+  } finally {
+    if (timeoutId) window.clearTimeout(timeoutId);
+  }
   if (!response.ok) {
     let detail = `HTTP ${response.status}`;
     try {
@@ -2657,12 +2674,21 @@ export default function PagePubliquePraticienUWI() {
     let confirmed = false;
     setBookingSubmitting(true);
     try {
-      responseData = await fetchJson("/api/public/book", { method: "POST", body: JSON.stringify(payload) });
+      responseData = await fetchJson("/api/public/book", {
+        method: "POST",
+        body: JSON.stringify(payload),
+        timeoutMs: 25000,
+      });
       confirmed = Boolean(responseData?.confirmed || responseData?.status === "confirmed");
     } catch (err) {
       setBookingSubmitting(false);
       setBookingSuccess(null);
       const msg = String(err?.message || "");
+      const lower = msg.toLowerCase();
+      if (lower.includes("delai depasse") || lower.includes("timeout")) {
+        push([{ from: "clara", text: "La confirmation prend trop de temps. Reessayez dans quelques secondes." }]);
+        return;
+      }
       if (msg.includes("409") || msg.toLowerCase().includes("plus disponible")) {
         push([{ from: "clara", text: "Ce creneau vient d'etre pris. Choisissez un autre horaire, je vous en propose d'autres." }]);
         setInlineSlot(null);
