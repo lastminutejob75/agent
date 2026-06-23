@@ -166,7 +166,12 @@ def _already_reminded(conn, tenant_id: int, source: str, ref_id: str) -> bool:
         return True  # en cas de doute, ne pas renvoyer
 
 
-def _mark_reminded(conn, tenant_id: int, source: str, ref_id: str) -> None:
+def _claim_reminder(conn, tenant_id: int, source: str, ref_id: str) -> bool:
+    """Réserve atomiquement l'envoi : True si on l'a réservé (à envoyer maintenant).
+
+    Sûr avec plusieurs workers/replicas : la contrainte UNIQUE garantit qu'un seul
+    process réussit l'INSERT. Si l'envoi échoue ensuite, on libère via _release_reminder.
+    """
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -174,12 +179,36 @@ def _mark_reminded(conn, tenant_id: int, source: str, ref_id: str) -> None:
                 INSERT INTO appointment_reminders (tenant_id, source, ref_id, kind)
                 VALUES (%s, %s, %s, %s)
                 ON CONFLICT (tenant_id, source, ref_id, kind) DO NOTHING
+                RETURNING id
+                """,
+                (tenant_id, source, ref_id, REMINDER_KIND),
+            )
+            claimed = cur.fetchone() is not None
+        conn.commit()
+        return claimed
+    except Exception as e:
+        logger.warning("appointment_reminders _claim_reminder failed: %s", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+
+
+def _release_reminder(conn, tenant_id: int, source: str, ref_id: str) -> None:
+    """Libère une réservation (envoi échoué) pour réessai au prochain run."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM appointment_reminders
+                WHERE tenant_id = %s AND source = %s AND ref_id = %s AND kind = %s
                 """,
                 (tenant_id, source, ref_id, REMINDER_KIND),
             )
         conn.commit()
     except Exception as e:
-        logger.warning("appointment_reminders _mark_reminded failed: %s", e)
+        logger.warning("appointment_reminders _release_reminder failed: %s", e)
 
 
 def _tenant_display_name(tenant_id: int) -> str:
@@ -254,7 +283,8 @@ def run_appointment_reminders_job(dry_run: bool = False, only_tenant_id: Optiona
     from backend.services.sms_service import sms_is_configured, send_sms_message
     from backend.db import normalize_phone_number
 
-    if not dry_run and not sms_is_configured():
+    sms_ok = sms_is_configured()
+    if not dry_run and not sms_ok:
         logger.info("appointment_reminders: SMS non configuré, job ignoré")
         return {"skipped": "sms_not_configured"}
 
@@ -294,26 +324,30 @@ def run_appointment_reminders_job(dry_run: bool = False, only_tenant_id: Optiona
                     dedup_key = (phone, str(item.get("start_ts")))
                     if dedup_key in seen:
                         continue
-                    if _already_reminded(conn, tenant_id, item["source"], item["ref_id"]):
-                        skipped += 1
-                        seen.add(dedup_key)
-                        continue
                     when_str = _format_when(item.get("start_ts"), tz)
                     body = _compose_message(item.get("name") or "", when_str, cabinet, item.get("motif") or "")
                     if dry_run:
+                        already = _already_reminded(conn, tenant_id, item["source"], item["ref_id"])
                         masked = f"***{phone[-4:]}" if len(phone) > 4 else "***"
                         preview.append({
                             "tenant_id": tenant_id, "source": item["source"], "ref_id": item["ref_id"],
                             "phone": masked, "when": when_str, "body": body,
+                            "already_reminded": already,
                         })
+                        seen.add(dedup_key)
+                        continue
+                    # Réservation atomique : un seul worker/replica enverra ce rappel.
+                    if not _claim_reminder(conn, tenant_id, item["source"], item["ref_id"]):
+                        skipped += 1
                         seen.add(dedup_key)
                         continue
                     ok, err = send_sms_message(phone, body)
                     if ok:
-                        _mark_reminded(conn, tenant_id, item["source"], item["ref_id"])
                         seen.add(dedup_key)
                         sent += 1
                     else:
+                        # Envoi échoué : on libère pour réessayer au prochain run
+                        _release_reminder(conn, tenant_id, item["source"], item["ref_id"])
                         failed += 1
                         logger.warning(
                             "appointment_reminders send failed tenant=%s source=%s ref=%s: %s",
@@ -324,6 +358,7 @@ def run_appointment_reminders_job(dry_run: bool = False, only_tenant_id: Optiona
 
     summary: Dict[str, Any] = {
         "sent": sent, "failed": failed, "skipped": skipped, "tenants": len(tenants),
+        "sms_configured": sms_ok,
         "window": [ws.isoformat(), we.isoformat()],
     }
     if dry_run:
