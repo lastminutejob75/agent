@@ -3302,7 +3302,7 @@ const S = {
     boxSizing: "border-box",
   },
 
-  modalOverlay: { position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", display: "grid", placeItems: "center", zIndex: 60, padding: 16 },
+  modalOverlay: { position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", display: "flex", justifyContent: "center", alignItems: "flex-start", overflowY: "auto", WebkitOverflowScrolling: "touch", zIndex: 200, padding: 16 },
   apptDetailOverlay: {
     position: "fixed",
     inset: 0,
@@ -3337,7 +3337,7 @@ const S = {
     borderBottom: `1px solid ${BORDER}`,
   },
   modalCard: { width: "min(420px, 100%)", background: "#fff", borderRadius: 16, padding: "20px 22px", boxShadow: "0 24px 60px rgba(15,23,42,.18)", border: `1px solid ${BORDER}` },
-  modalCardWide: { width: "min(480px, 100%)", background: "#fff", borderRadius: 16, padding: "20px 22px", boxShadow: "0 24px 60px rgba(15,23,42,.18)", border: `1px solid ${BORDER}` },
+  modalCardWide: { width: "min(480px, 100%)", margin: "auto", background: "#fff", borderRadius: 16, padding: "20px 22px", paddingBottom: "calc(20px + env(safe-area-inset-bottom, 0px))", boxShadow: "0 24px 60px rgba(15,23,42,.18)", border: `1px solid ${BORDER}` },
   modalTitleRow: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
   modalClose: { border: "none", background: "transparent", cursor: "pointer", fontSize: 18, lineHeight: 1, padding: 4, color: MUTED },
   modalLabel: { display: "block", fontSize: 12, fontWeight: 700, color: NAVY, marginBottom: 10 },
