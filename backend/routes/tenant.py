@@ -7332,6 +7332,59 @@ def _send_agenda_confirmation_sms(
     threading.Thread(target=_worker, daemon=True).start()
 
 
+def _cabinet_name(detail: dict) -> str:
+    params = (detail or {}).get("params") or {}
+    return (
+        (params.get("business_name") or (detail or {}).get("name") or "votre praticien").strip()
+        or "votre praticien"
+    )
+
+
+def _extract_phone_from_contact(contact: str) -> str:
+    """Extrait le 1er numéro d'un champ contact éventuellement combiné ('Tél. +33… · Email …')."""
+    m = re.search(r"\+?\d[\d ().\-]{7,}", str(contact or ""))
+    return normalize_phone_number(m.group(0)) if m else ""
+
+
+def _hello_prefix(pname: str) -> str:
+    prenom = (pname or "").strip().split(" ")[0] if pname else ""
+    return f"Bonjour {prenom}, " if prenom else "Bonjour, "
+
+
+def _slot_dt_local(tenant_id: int, slot_id, detail: dict):
+    """Datetime local (tz tenant) du créneau, ou None."""
+    try:
+        if not slot_id:
+            return None
+        tz_name = _tenant_timezone(detail)
+        rules = get_booking_rules(tenant_id)
+        dur = int(rules.get("duration_minutes") or 15)
+        win = _get_slot_window(tenant_id, int(slot_id), tz_name, dur)
+        return win[0] if win else None
+    except Exception:
+        return None
+
+
+def _agenda_notify_patient(tenant_id: int, phone: str, body: str) -> None:
+    """SMS best-effort au patient (thread, non bloquant) pour annulation/déplacement."""
+    if not (phone or "").strip() or not (body or "").strip():
+        return
+
+    def _worker() -> None:
+        try:
+            from backend.services.sms_service import sms_is_configured, send_sms_message
+
+            if not sms_is_configured():
+                return
+            ok, err = send_sms_message(phone, body)
+            if not ok:
+                logger.warning("agenda patient sms failed tenant=%s: %s", tenant_id, err)
+        except Exception as exc:
+            logger.warning("agenda patient sms error tenant=%s: %s", tenant_id, exc)
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 @router.post("/agenda/bookings")
 def tenant_agenda_create_booking(
     body: TenantAgendaCreateBookingBody,
@@ -7492,11 +7545,33 @@ def tenant_agenda_cancel_appointment(
                         e,
                     )
                     raise HTTPException(502, "Impossible d'annuler ce rendez-vous Google pour le moment")
-        from backend.public_bookings_pg import cancel_public_booking_by_id
+        from backend.public_bookings_pg import cancel_public_booking_by_id, get_public_booking_by_id
 
+        pub_booking = None
+        try:
+            pub_booking = get_public_booking_by_id(tenant_id, raw_booking_id)
+        except Exception:
+            pub_booking = None
         cancelled_public = cancel_public_booking_by_id(tenant_id, raw_booking_id)
         if not cancelled_public:
             raise HTTPException(404, "Rendez-vous public introuvable ou déjà annulé")
+        if pub_booking:
+            _dt = None
+            try:
+                _si = pub_booking.get("start_iso")
+                if _si:
+                    _d = datetime.fromisoformat(str(_si).replace("Z", "+00:00"))
+                    from zoneinfo import ZoneInfo
+
+                    _dt = _d.astimezone(ZoneInfo(_tenant_timezone(detail)))
+            except Exception:
+                _dt = None
+            _when = f" le {_format_rdv_label_fr(_dt)}" if _dt else ""
+            _msg = (
+                f"{_hello_prefix(pub_booking.get('patient_name') or '')}votre rendez-vous avec "
+                f"{_cabinet_name(detail)}{_when} a été annulé. UWI"
+            )
+            _agenda_notify_patient(tenant_id, _extract_phone_from_contact(pub_booking.get("patient_phone") or ""), _msg)
         _invalidate_google_agenda_events_cache(params.get("calendar_id"))
         _invalidate_tenant_agenda_detail_cache(tenant_id)
         return {
@@ -7591,6 +7666,14 @@ def tenant_agenda_cancel_appointment(
         )
         _invalidate_google_agenda_events_cache(params.get("calendar_id"))
         _invalidate_tenant_agenda_detail_cache(tenant_id)
+        if local_booking:
+            _dt = _slot_dt_local(tenant_id, local_booking.get("slot_id"), detail)
+            _when = f" le {_format_rdv_label_fr(_dt)}" if _dt else ""
+            _msg = (
+                f"{_hello_prefix(local_booking.get('name') or '')}votre rendez-vous avec "
+                f"{_cabinet_name(detail)}{_when} a été annulé. UWI"
+            )
+            _agenda_notify_patient(tenant_id, _extract_phone_from_contact(local_booking.get("contact") or ""), _msg)
         provider = "google+local" if google_cancelled and local_appt_id is not None else ("google" if google_cancelled else "local")
         return {
             "ok": True,
@@ -7612,6 +7695,13 @@ def tenant_agenda_cancel_appointment(
         raise HTTPException(400, "Annulation impossible")
     logger.info("tenant agenda cancel local ok tenant_id=%s appointment_id=%s", tenant_id, appt_id)
     _invalidate_tenant_agenda_detail_cache(tenant_id)
+    _dt = _slot_dt_local(tenant_id, booking.get("slot_id"), detail)
+    _when = f" le {_format_rdv_label_fr(_dt)}" if _dt else ""
+    _msg = (
+        f"{_hello_prefix(booking.get('name') or '')}votre rendez-vous avec "
+        f"{_cabinet_name(detail)}{_when} a été annulé. UWI"
+    )
+    _agenda_notify_patient(tenant_id, _extract_phone_from_contact(booking.get("contact") or ""), _msg)
     return {"ok": True, "cancelled": True, "provider": "local"}
 
 
@@ -7743,6 +7833,11 @@ def tenant_agenda_reschedule_appointment(
             )
             _mark_pending_handoffs_processed(tenant_id, booking)
             _invalidate_tenant_agenda_detail_cache(tenant_id)
+            _msg = (
+                f"{_hello_prefix(booking.get('name') or '')}votre rendez-vous avec "
+                f"{_cabinet_name(detail)} est reporté au {_format_rdv_label_fr(new_start)}. UWI"
+            )
+            _agenda_notify_patient(tenant_id, _extract_phone_from_contact(booking.get("contact") or ""), _msg)
             return {"ok": True, "rescheduled": True, "provider": "google+local", "google_synced": True}
 
         try:
@@ -7784,6 +7879,13 @@ def tenant_agenda_reschedule_appointment(
     )
     _mark_pending_handoffs_processed(tenant_id, booking)
     _invalidate_tenant_agenda_detail_cache(tenant_id)
+    _ndt = _slot_dt_local(tenant_id, int(body.new_slot_id), detail)
+    _when = f" au {_format_rdv_label_fr(_ndt)}" if _ndt else ""
+    _msg = (
+        f"{_hello_prefix(booking.get('name') or '')}votre rendez-vous avec "
+        f"{_cabinet_name(detail)} est reporté{_when}. UWI"
+    )
+    _agenda_notify_patient(tenant_id, _extract_phone_from_contact(booking.get("contact") or ""), _msg)
     return {"ok": True, "rescheduled": True, "provider": "local"}
 
 

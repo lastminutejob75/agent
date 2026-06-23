@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -283,6 +284,12 @@ def run_appointment_reminders_job(dry_run: bool = False, only_tenant_id: Optiona
     from backend.services.sms_service import sms_is_configured, send_sms_message
     from backend.db import normalize_phone_number
 
+    def _extract_phone(raw: str) -> str:
+        # Le champ contact local peut être combiné ('Tél. +33… · Email …') :
+        # on extrait le 1er motif téléphone pour éviter de coller les chiffres d'un email.
+        m = re.search(r"\+?\d[\d ().\-]{7,}", str(raw or ""))
+        return normalize_phone_number(m.group(0)) if m else ""
+
     sms_ok = sms_is_configured()
     if not dry_run and not sms_ok:
         logger.info("appointment_reminders: SMS non configuré, job ignoré")
@@ -316,7 +323,7 @@ def run_appointment_reminders_job(dry_run: bool = False, only_tenant_id: Optiona
                 tz = _tenant_tz(tenant_id)
                 seen: set = set()
                 for item in due:
-                    phone = normalize_phone_number(item.get("phone") or "") or (item.get("phone") or "").strip()
+                    phone = _extract_phone(item.get("phone") or "")
                     if not phone:
                         skipped += 1
                         continue
