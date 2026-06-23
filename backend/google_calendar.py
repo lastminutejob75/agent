@@ -95,17 +95,43 @@ class GoogleCalendarService:
             try:
                 import google_auth_httplib2
                 import httplib2
+                from googleapiclient.http import HttpRequest
+
+                # IMPORTANT (thread-safety) : ce service est un singleton partagé
+                # (cache _instances_by_calendar) et est appelé simultanément par
+                # plusieurs threads (handlers FastAPI via asyncio.to_thread, threads
+                # daemon "miroir", scheduler APScheduler). Or httplib2.Http n'est PAS
+                # thread-safe : partager un seul socket SSL entre threads provoque
+                # "[SSL] record layer failure" puis une corruption du tas
+                # ("free(): corrupted unsorted chunks") qui gèle le process.
+                #
+                # Solution recommandée par googleapiclient : fournir un requestBuilder
+                # qui crée un Http NEUF à chaque requête. Les credentials restent
+                # partagés (le refresh de jeton est porté par chaque AuthorizedHttp),
+                # mais chaque appel .execute() utilise sa propre connexion → aucun
+                # socket partagé entre threads.
+                def _build_request(_http, *args, **kwargs):
+                    fresh_http = google_auth_httplib2.AuthorizedHttp(
+                        credentials, http=httplib2.Http(timeout=api_timeout)
+                    )
+                    return HttpRequest(fresh_http, *args, **kwargs)
 
                 authed_http = google_auth_httplib2.AuthorizedHttp(
                     credentials, http=httplib2.Http(timeout=api_timeout)
                 )
-                service = build('calendar', 'v3', http=authed_http, cache_discovery=False)
+                service = build(
+                    'calendar',
+                    'v3',
+                    http=authed_http,
+                    cache_discovery=False,
+                    requestBuilder=_build_request,
+                )
             except ImportError:
                 logger.warning(
                     "google_auth_httplib2 not available — falling back to default Http (no timeout)"
                 )
                 service = build('calendar', 'v3', credentials=credentials, cache_discovery=False)
-            logger.info("Google Calendar service initialized (http_timeout=%ss)", api_timeout)
+            logger.info("Google Calendar service initialized (http_timeout=%ss, per-request http=on)", api_timeout)
             return service
         except Exception as e:
             logger.error(f"Failed to initialize Google Calendar: {e}")
