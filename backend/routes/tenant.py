@@ -7277,6 +7277,61 @@ def _tenant_agenda_compute_end_iso(start_iso: str, tenant_id: int, end_iso_in: s
     return end_local.replace(tzinfo=None).isoformat(timespec="seconds")
 
 
+_FR_JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+_FR_MOIS = [
+    "janvier", "février", "mars", "avril", "mai", "juin",
+    "juillet", "août", "septembre", "octobre", "novembre", "décembre",
+]
+
+
+def _format_rdv_label_fr(dt) -> str:
+    """Ex: 'mardi 24 juin à 14h30'. Renvoie '' si non formatable."""
+    try:
+        jour = _FR_JOURS[dt.weekday()]
+        mois = _FR_MOIS[dt.month - 1]
+        heure = f"{dt.hour}h{dt.minute:02d}" if dt.minute else f"{dt.hour}h"
+        return f"{jour} {dt.day} {mois} à {heure}"
+    except Exception:
+        return ""
+
+
+def _send_agenda_confirmation_sms(
+    tenant_id: int, detail: dict, pname: str, phone_norm: str, motif: str, dt_local
+) -> None:
+    """SMS de confirmation au patient pour un RDV créé depuis l'agenda cabinet.
+
+    Best-effort et non bloquant (thread) : n'impacte pas la réponse HTTP de l'agenda.
+    """
+    if not (phone_norm or "").strip():
+        return
+
+    def _worker() -> None:
+        try:
+            from backend.services.sms_service import sms_is_configured, send_sms_message
+
+            if not sms_is_configured():
+                logger.info("agenda confirmation sms skip (non configuré) tenant=%s", tenant_id)
+                return
+            params = (detail or {}).get("params") or {}
+            cabinet = (
+                (params.get("business_name") or (detail or {}).get("name") or "votre praticien").strip()
+                or "votre praticien"
+            )
+            label = _format_rdv_label_fr(dt_local)
+            when = f" le {label}" if label else ""
+            prenom = (pname or "").strip().split(" ")[0] if pname else ""
+            hello = f"Bonjour {prenom}, " if prenom else "Bonjour, "
+            motif_part = f" pour {motif.strip()}" if motif and motif.strip() else ""
+            body = f"{hello}votre rendez-vous avec {cabinet}{when}{motif_part} est confirmé. UWI"
+            ok, err = send_sms_message(phone_norm, body)
+            if not ok:
+                logger.warning("agenda confirmation sms failed tenant=%s: %s", tenant_id, err)
+        except Exception as exc:
+            logger.warning("agenda confirmation sms error tenant=%s: %s", tenant_id, exc)
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 @router.post("/agenda/bookings")
 def tenant_agenda_create_booking(
     body: TenantAgendaCreateBookingBody,
@@ -7313,9 +7368,9 @@ def tenant_agenda_create_booking(
     qualif_contact_type = "phone" if phone_norm else ("email" if email_part else "phone")
     tz_name = _tenant_timezone(detail)
     try:
-        start_local_iso = _tenant_agenda_parse_start_local(start_iso, tz_name)[2].replace(tzinfo=None).isoformat(
-            timespec="seconds"
-        )
+        _parsed_start = _tenant_agenda_parse_start_local(start_iso, tz_name)
+        start_dt_local = _parsed_start[2]
+        start_local_iso = start_dt_local.replace(tzinfo=None).isoformat(timespec="seconds")
     except ValueError:
         raise HTTPException(400, "Date ou heure de début invalide.") from None
     end_iso = _tenant_agenda_compute_end_iso(start_iso, tenant_id, body.end_iso, tz_name)
@@ -7373,6 +7428,7 @@ def tenant_agenda_create_booking(
 
         _invalidate_google_agenda_events_cache(cal_id)
         _invalidate_tenant_agenda_detail_cache(tenant_id)
+        _send_agenda_confirmation_sms(tenant_id, detail, pname, phone_norm, motif, start_dt_local)
         return {"ok": True, "provider": "google", "event_id": ev}
 
     try:
@@ -7397,6 +7453,7 @@ def tenant_agenda_create_booking(
         raise HTTPException(409, "Ce créneau est déjà pris.")
 
     _invalidate_tenant_agenda_detail_cache(tenant_id)
+    _send_agenda_confirmation_sms(tenant_id, detail, pname, phone_norm, motif, start_dt_local)
     return {"ok": True, "provider": "local", "slot_id": int(sid)}
 
 
