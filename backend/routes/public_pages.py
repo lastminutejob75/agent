@@ -1164,6 +1164,52 @@ def _book_real_slot(
     return False, "technical", None
 
 
+def _confirm_public_booking_in_background(
+    tenant_id: int,
+    payload: PublicBookingRequest,
+    confirmation_id: str,
+    booking_code: Optional[str],
+) -> None:
+    """Réservation agenda réelle (Google/PG/SQLite) hors du chemin de réponse.
+
+    La demande est déjà persistée dans public_bookings (source de vérité pour
+    l'agenda interne + les notifications). On confirme ici l'agenda externe sans
+    rallonger la réponse côté patient. En cas de succès on rattache l'event
+    Google; en cas d'échec on logge et le cabinet traite la demande manuellement.
+    """
+    try:
+        ok, reason, google_event_id = _book_real_slot(int(tenant_id), payload, booking_code)
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "public_book background reservation crashed slug=%s id=%s: %s",
+            payload.slug,
+            confirmation_id,
+            exc,
+            exc_info=True,
+        )
+        return
+    if not ok:
+        logger.warning(
+            "public_book background reservation failed slug=%s id=%s reason=%s",
+            payload.slug,
+            confirmation_id,
+            reason,
+        )
+        return
+    if google_event_id and confirmation_id:
+        try:
+            from backend.public_bookings_pg import attach_public_booking_google_event
+
+            attach_public_booking_google_event(int(tenant_id), confirmation_id, google_event_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "public_book attach google event failed slug=%s id=%s: %s",
+                payload.slug,
+                confirmation_id,
+                exc,
+            )
+
+
 def _format_public_slot(raw: Dict[str, Any], today: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
     """Transforme un slot DB (id/date/time) au format attendu par la page publique."""
     date_str = str(raw.get("date") or "")[:10]
@@ -1564,58 +1610,33 @@ async def public_book(
         tenant_id_raw = tenant_id
     payload = _align_public_booking_patient_name(tenant_id, payload)
 
-    booking_status = "pending"
+    # La demande est enregistrée immédiatement (un seul insert PG, le code de
+    # réservation est généré dans la même transaction). La réservation agenda
+    # externe (Google/PG/SQLite) est faite en tâche de fond pour NE PAS rallonger
+    # la confirmation côté patient : public_bookings est la source de vérité pour
+    # l'agenda interne + les notifications.
+    booking_status = "confirmed"
     booking_reason: Optional[str] = None
     booking_code: Optional[str] = None
-    google_event_id: Optional[str] = None
-
-    if tenant_id is not None:
-        try:
-            from backend.booking_code import create_unique_booking_code_for_tenant
-
-            booking_code = create_unique_booking_code_for_tenant(int(tenant_id))
-        except Exception as exc:
-            logger.warning("public_book booking code generation failed tenant=%s: %s", tenant_id, exc)
-            booking_code = None
-
-        ok, reason, google_event_id = await asyncio.to_thread(
-            _book_real_slot,
-            int(tenant_id),
-            payload,
-            booking_code,
-        )
-        if not ok:
-            booking_reason = reason or "technical"
-            if booking_reason == "slot_taken":
-                raise HTTPException(409, "Le créneau sélectionné n'est plus disponible")
-            if booking_reason == "permission":
-                raise HTTPException(503, "Impossible de confirmer ce créneau pour le moment")
-            raise HTTPException(503, "Impossible de confirmer ce créneau pour le moment")
-        booking_status = "confirmed"
 
     booking_record = _insert_booking(
         payload,
         str(tenant_id) if tenant_id else tenant_id_raw,
         status=booking_status,
         booking_code=booking_code,
-        google_event_id=google_event_id,
+        google_event_id=None,
     )
     confirmation_id = booking_record.get("id") or ""
-    if not booking_code:
-        booking_code = booking_record.get("booking_code") or ""
+    booking_code = booking_record.get("booking_code") or booking_code or ""
 
-    if tenant_id is not None:
-        from backend.public_bookings_pg import get_public_booking_by_id
-
-        persisted = await asyncio.to_thread(get_public_booking_by_id, int(tenant_id), confirmation_id)
-        if not persisted:
-            logger.error(
-                "public_book persistence check failed slug=%s tenant=%s booking=%s",
-                payload.slug,
-                tenant_id,
-                confirmation_id,
-            )
-            raise HTTPException(503, "Impossible d'enregistrer votre réservation pour le moment")
+    if tenant_id is not None and confirmation_id:
+        background_tasks.add_task(
+            _confirm_public_booking_in_background,
+            int(tenant_id),
+            payload,
+            confirmation_id,
+            booking_code,
+        )
 
     # Décision produit stricte: aucune création / mise à jour automatique de fiche
     # patient depuis la prise de RDV publique. La reconnaissance "patient connu"
