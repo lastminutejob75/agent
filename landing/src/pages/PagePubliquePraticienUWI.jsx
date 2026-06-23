@@ -2637,8 +2637,8 @@ export default function PagePubliquePraticienUWI() {
     const startIso = String(booking.slot.startIso || booking.slot.start_iso || "").trim();
     const endIso = String(booking.slot.endIso || booking.slot.end_iso || "").trim();
     const rawSlotId = String(booking.slot.id || "").trim();
-    // Si startIso est présent, ne jamais forcer un faux slotId "1/2/3" (index UI).
-    const fallbackSlotId = startIso ? "" : String(booking.slot.index || "1");
+    // Ne jamais envoyer un slotId vide: fallback sur startIso (ou index UI en dernier recours).
+    const fallbackSlotId = startIso || String(booking.slot.index || "1");
     const payload = {
       slug,
       ...(tenantIdRef.current ? { tenant_id: tenantIdRef.current } : {}),
@@ -2671,7 +2671,16 @@ export default function PagePubliquePraticienUWI() {
         return;
       }
       if (msg.includes("422") || msg.toLowerCase().includes("invalide")) {
-        push([{ from: "clara", text: "Telephone ou email invalide. Corrigez le formulaire puis reessayez." }]);
+        const lower = msg.toLowerCase();
+        const slotInvalid = lower.includes("slot") || lower.includes("creneau");
+        push([
+          {
+            from: "clara",
+            text: slotInvalid
+              ? "Le creneau selectionne est invalide ou a expire. Choisissez un autre horaire."
+              : "Telephone ou email invalide. Corrigez le formulaire puis reessayez.",
+          },
+        ]);
         return;
       }
       if (msg.includes("503") || msg.includes("502") || msg.toLowerCase().includes("confirmer ce creneau") || msg.toLowerCase().includes("enregistrement")) {

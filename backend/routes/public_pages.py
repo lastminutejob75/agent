@@ -1164,39 +1164,6 @@ def _book_real_slot(
     return False, "technical", None
 
 
-def _confirm_public_booking_in_background(
-    tenant_id: Optional[int],
-    payload: PublicBookingRequest,
-    confirmation_id: str,
-    booking_code: Optional[str],
-) -> None:
-    if not tenant_id:
-        return
-    try:
-        ok, reason, google_event_id = _book_real_slot(int(tenant_id), payload, booking_code=booking_code)
-        if not ok:
-            logger.warning(
-                "public_book background calendar failed slug=%s tenant=%s booking=%s reason=%s",
-                payload.slug,
-                tenant_id,
-                confirmation_id,
-                reason,
-            )
-            return
-        if google_event_id:
-            from backend.public_bookings_pg import attach_public_booking_google_event
-
-            attach_public_booking_google_event(int(tenant_id), confirmation_id, google_event_id)
-    except Exception as exc:
-        logger.warning(
-            "public_book background calendar exception slug=%s tenant=%s booking=%s: %s",
-            payload.slug,
-            tenant_id,
-            confirmation_id,
-            exc,
-        )
-
-
 def _format_public_slot(raw: Dict[str, Any], today: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
     """Transforme un slot DB (id/date/time) au format attendu par la page publique."""
     date_str = str(raw.get("date") or "")[:10]
@@ -1588,7 +1555,7 @@ async def public_book(
     payload: PublicBookingRequest,
     background_tasks: BackgroundTasks,
 ) -> Dict[str, Any]:
-    """Demande RDV publique rapide: validation + insert DB, sans appel agenda synchrone."""
+    """Réservation publique: validation + réservation réelle + persistance."""
     payload = _sanitize_public_booking_payload(payload)
     tenant_id = _tenant_id_from_booking_payload(payload)
     tenant_id_raw: Optional[Any] = tenant_id
@@ -1597,10 +1564,34 @@ async def public_book(
         tenant_id_raw = tenant_id
     payload = _align_public_booking_patient_name(tenant_id, payload)
 
-    booking_status = "confirmed"
+    booking_status = "pending"
     booking_reason: Optional[str] = None
     booking_code: Optional[str] = None
     google_event_id: Optional[str] = None
+
+    if tenant_id is not None:
+        try:
+            from backend.booking_code import create_unique_booking_code_for_tenant
+
+            booking_code = create_unique_booking_code_for_tenant(int(tenant_id))
+        except Exception as exc:
+            logger.warning("public_book booking code generation failed tenant=%s: %s", tenant_id, exc)
+            booking_code = None
+
+        ok, reason, google_event_id = await asyncio.to_thread(
+            _book_real_slot,
+            int(tenant_id),
+            payload,
+            booking_code,
+        )
+        if not ok:
+            booking_reason = reason or "technical"
+            if booking_reason == "slot_taken":
+                raise HTTPException(409, "Le créneau sélectionné n'est plus disponible")
+            if booking_reason == "permission":
+                raise HTTPException(503, "Impossible de confirmer ce créneau pour le moment")
+            raise HTTPException(503, "Impossible de confirmer ce créneau pour le moment")
+        booking_status = "confirmed"
 
     booking_record = _insert_booking(
         payload,
@@ -1613,17 +1604,23 @@ async def public_book(
     if not booking_code:
         booking_code = booking_record.get("booking_code") or ""
 
+    if tenant_id is not None:
+        from backend.public_bookings_pg import get_public_booking_by_id
+
+        persisted = await asyncio.to_thread(get_public_booking_by_id, int(tenant_id), confirmation_id)
+        if not persisted:
+            logger.error(
+                "public_book persistence check failed slug=%s tenant=%s booking=%s",
+                payload.slug,
+                tenant_id,
+                confirmation_id,
+            )
+            raise HTTPException(503, "Impossible d'enregistrer votre réservation pour le moment")
+
     # Décision produit stricte: aucune création / mise à jour automatique de fiche
     # patient depuis la prise de RDV publique. La reconnaissance "patient connu"
     # reste en lecture seule via /api/public/praticiens/{slug}/patient-hint.
 
-    background_tasks.add_task(
-        _confirm_public_booking_in_background,
-        tenant_id,
-        payload,
-        confirmation_id,
-        booking_code,
-    )
     background_tasks.add_task(
         _dispatch_booking_notifications_for_slug,
         payload,
