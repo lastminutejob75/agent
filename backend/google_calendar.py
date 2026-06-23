@@ -324,15 +324,29 @@ class GoogleCalendarService:
 
             free_slots: List[Dict] = []
             buffer_td = timedelta(minutes=int(buffer_minutes or 0))
+            now_tz = datetime.now(tz)
+            # Répartir le pool sur plusieurs jours : sans cap par jour, une journée
+            # bien libre (souvent aujourd'hui) sature `limit` et masque les jours
+            # suivants. Or la page publique et le vocal refusent aujourd'hui (plancher
+            # "demain"), donc un pool 100% aujourd'hui devient 0 créneau après filtrage.
+            num_days = max(1, len(normalized_dates))
+            per_day_cap = limit if num_days == 1 else max(2, (limit + num_days - 1) // num_days)
             for current_date in normalized_dates:
                 day_start = current_date.replace(hour=start_hour, minute=0, second=0, microsecond=0)
                 day_end = current_date.replace(hour=end_hour, minute=0, second=0, microsecond=0)
                 current = day_start
+                day_count = 0
                 while current < day_end:
                     slot_end = current + timedelta(minutes=duration_minutes)
                     effective_end = slot_end + buffer_td
                     if effective_end > day_end:
                         break
+                    # Ne jamais proposer un créneau déjà passé (ex. ce matin alors
+                    # qu'il est 20h) : sinon ces créneaux saturent le pool puis sont
+                    # filtrés en aval, produisant un faux "aucun créneau".
+                    if current <= now_tz:
+                        current += timedelta(minutes=duration_minutes)
+                        continue
                     is_free = True
                     for event_start, event_end in parsed_events:
                         if current < event_end and effective_end > event_start:
@@ -344,7 +358,8 @@ class GoogleCalendarService:
                             'end': slot_end.isoformat(),
                             'label': self._format_slot_label(current),
                         })
-                        if len(free_slots) >= limit:
+                        day_count += 1
+                        if len(free_slots) >= limit or day_count >= per_day_cap:
                             break
                     current += timedelta(minutes=duration_minutes)
                 if len(free_slots) >= limit:
