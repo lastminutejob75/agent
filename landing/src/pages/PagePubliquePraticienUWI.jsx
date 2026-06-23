@@ -301,18 +301,29 @@ async function fetchJson(path, options = {}) {
   const { timeoutMs = 0, ...fetchOptions } = options || {};
   const useTimeout = Number(timeoutMs) > 0;
   const controller = useTimeout ? new AbortController() : null;
-  const timeoutId = useTimeout
-    ? window.setTimeout(() => controller?.abort(), Number(timeoutMs))
+  let timeoutId = null;
+  let timedOut = false;
+  const timeoutPromise = useTimeout
+    ? new Promise((_, reject) => {
+      timeoutId = window.setTimeout(() => {
+        timedOut = true;
+        controller?.abort();
+        reject(new Error(`Delai depasse (${timeoutMs} ms)`));
+      }, Number(timeoutMs));
+    })
     : null;
+  const fetchPromise = fetch(apiUrl(path), {
+    ...fetchOptions,
+    signal: fetchOptions.signal || controller?.signal,
+    headers: { "Content-Type": "application/json", ...(fetchOptions.headers || {}) },
+  });
   let response;
   try {
-    response = await fetch(apiUrl(path), {
-      ...fetchOptions,
-      signal: fetchOptions.signal || controller?.signal,
-      headers: { "Content-Type": "application/json", ...(fetchOptions.headers || {}) },
-    });
+    response = useTimeout
+      ? await Promise.race([fetchPromise, timeoutPromise])
+      : await fetchPromise;
   } catch (err) {
-    if (useTimeout && String(err?.name || "").toLowerCase() === "aborterror") {
+    if (timedOut || (useTimeout && String(err?.name || "").toLowerCase() === "aborterror")) {
       throw new Error(`Delai depasse (${timeoutMs} ms)`);
     }
     throw err;
