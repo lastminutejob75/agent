@@ -924,6 +924,16 @@ def setup_scheduler():
         except Exception as e:
             logger.warning("expire_questionnaire_requests_job failed: %s", e)
 
+    # Rappels de RDV par SMS (~24h avant) : toutes les heures, fenêtre [now+24h, now+25h)
+    @scheduler.scheduled_job(CronTrigger(minute=5), id="appointment_reminders")
+    def appointment_reminders_job():
+        try:
+            from backend.appointment_reminders import run_appointment_reminders_job
+
+            run_appointment_reminders_job()
+        except Exception as e:
+            logger.warning("appointment_reminders_job failed: %s", e)
+
     # Pré-chauffage créneaux page publique (Google Calendar) — défaut toutes les 2 min
     try:
         from apscheduler.triggers.interval import IntervalTrigger
@@ -944,6 +954,42 @@ def setup_scheduler():
     channel_type = os.getenv("REPORT_CHANNEL", "telegram")
     logger.info(f"Report scheduler started (daily at 18h, weekly on Sunday 20h) via {channel_type}")
     
+    return scheduler
+
+
+def setup_reminders_scheduler():
+    """Scheduler minimal dédié aux rappels SMS de RDV.
+
+    Utilisé quand le scheduler global est désactivé (DISABLE_SCHEDULER=true) afin
+    de faire tourner UNIQUEMENT les rappels, sans réactiver les autres jobs
+    (rapports, prewarm, auto-suspension facturation).
+    """
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from apscheduler.triggers.cron import CronTrigger
+    except ImportError:
+        logger.warning("APScheduler not installed - appointment reminders disabled")
+        return None
+
+    from backend.appointment_reminders import reminders_enabled
+
+    if not reminders_enabled():
+        logger.info("Appointment reminders disabled (APPOINTMENT_REMINDERS_ENABLED)")
+        return None
+
+    scheduler = BackgroundScheduler()
+
+    @scheduler.scheduled_job(CronTrigger(minute=5), id="appointment_reminders")
+    def _appointment_reminders_job():
+        try:
+            from backend.appointment_reminders import run_appointment_reminders_job
+
+            run_appointment_reminders_job()
+        except Exception as e:
+            logger.warning("appointment_reminders_job failed: %s", e)
+
+    scheduler.start()
+    logger.info("Appointment reminders scheduler started (standalone, hourly at :05)")
     return scheduler
 
 

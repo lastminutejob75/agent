@@ -476,6 +476,14 @@ if os.getenv("DISABLE_SCHEDULER", "").lower() not in ("1", "true", "yes"):
         logging.warning("Scheduler setup failed (reports/suspension): %s", e)
 else:
     print("⏸️  Scheduler disabled (DISABLE_SCHEDULER=true)")
+    # Rappels RDV : scheduler minimal dédié, même quand le scheduler global est off
+    # (ne réactive PAS rapports/prewarm/auto-suspension facturation).
+    try:
+        from backend.reports import setup_reminders_scheduler
+        setup_reminders_scheduler()
+    except Exception as e:
+        import logging
+        logging.warning("Appointment reminders scheduler setup failed: %s", e)
 
 @app.on_event("startup")
 async def startup():

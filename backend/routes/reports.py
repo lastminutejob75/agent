@@ -158,6 +158,20 @@ def _run_report_background(tenant_id: Optional[int] = None) -> None:
         logger.exception("report_daily background failed: %s", e)
 
 
+@router.post("/reports/appointment-reminders/run")
+def post_run_appointment_reminders(
+    x_report_secret: Optional[str] = Header(None, alias="X-Report-Secret"),
+    dry_run: bool = Query(True, description="True (défaut) = ne fait qu'afficher ce qui serait envoyé"),
+    tenant_id: Optional[int] = Query(None, description="Restreindre à un tenant (test)"),
+):
+    """Déclenche manuellement le job de rappels SMS (~24h). dry_run=true par défaut (sans envoi)."""
+    _check_report_secret(x_report_secret)
+    from backend.appointment_reminders import run_appointment_reminders_job
+
+    result = run_appointment_reminders_job(dry_run=dry_run, only_tenant_id=tenant_id)
+    return JSONResponse(status_code=200, content=result)
+
+
 @router.post("/reports/daily")
 def post_daily_report(
     x_report_secret: Optional[str] = Header(None, alias="X-Report-Secret"),
