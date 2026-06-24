@@ -11,6 +11,7 @@ const SYNC_BADGE_WINDOW_MS = 2 * 60 * 1000;
 const TONE_BY_TYPE = {
   transfer: { border: "#8B5CF6", badgeBg: "#F5F3FF", badgeText: "#6D28D9" },
   callback: { border: "#F59E0B", badgeBg: "#FFF7ED", badgeText: "#B45309" },
+  message: { border: "#0EA5E9", badgeBg: "#F0F9FF", badgeText: "#0369A1" },
   renewal: { border: "#3B82F6", badgeBg: "#EFF6FF", badgeText: "#1D4ED8" },
   document: { border: "#10B981", badgeBg: "#ECFDF5", badgeText: "#047857" },
   question: { border: "#94A3B8", badgeBg: "#F8FAFC", badgeText: "#475569" },
@@ -116,7 +117,7 @@ export default function AppRequests() {
     const urlSort = String(searchParams.get("sort") || "").trim().toLowerCase();
 
     if (["À traiter", "En cours", "Traitées", "Toutes"].includes(urlStatus)) setStatus(urlStatus);
-    if (["Tous types", "Transfert humain", "Rappel", "Renouvellement", "Document", "Question"].includes(urlType)) setTypeFilter(urlType);
+    if (["Tous types", "Transfert humain", "Rappel", "Message", "Renouvellement", "Document", "Question"].includes(urlType)) setTypeFilter(urlType);
     if (["Toutes priorités", "Urgence", "Standard", "Faible"].includes(urlPriority)) setPriorityFilter(urlPriority);
     if (urlQuery) setQuery(urlQuery);
     if (urlSort === "asc" || urlSort === "desc") setSortOrder(urlSort);
@@ -215,13 +216,14 @@ export default function AppRequests() {
 
     const fromCallbacks = callbacks.map((c) => {
       const statusRaw = callbackRequestStatusRaw(c);
+      const isMessage = String(c?.reason || "").toLowerCase() === "message";
       return {
         id: `callback-${c.id}`,
         patientId: `patient-${String(c.name || "patient").toLowerCase().replace(/\s+/g, "-")}`,
         patientName: c.name || "Patient",
         initials: (String(c.name || "PT").split(" ").slice(0, 2).map((x) => x[0] || "").join("").toUpperCase() || "PT"),
-        type: "Rappel",
-        typeKey: "callback",
+        type: isMessage ? "Message" : "Rappel",
+        typeKey: isMessage ? "message" : "callback",
         priority: callbackRequestPriority(c),
         status: toUiStatus(statusRaw),
         status_raw: statusRaw,
@@ -515,7 +517,7 @@ export default function AppRequests() {
               placeholder="Rechercher un patient, un motif, un téléphone..."
             />
             <Segment value={status} onChange={setStatus} options={["À traiter", "En cours", "Traitées", "Toutes"]} />
-            <SelectLike value={typeFilter} onChange={setTypeFilter} options={["Tous types", "Transfert humain", "Rappel", "Renouvellement", "Document", "Question"]} />
+            <SelectLike value={typeFilter} onChange={setTypeFilter} options={["Tous types", "Transfert humain", "Rappel", "Message", "Renouvellement", "Document", "Question"]} />
             <SelectLike value={priorityFilter} onChange={setPriorityFilter} options={["Toutes priorités", "Urgence", "Standard", "Faible"]} />
             <button
               type="button"

@@ -6,6 +6,18 @@ from typing import Tuple
 from backend.intent_parser import normalize_stt_text
 
 _VOCAL_REASON_PATTERNS = {
+    "message": [
+        "laisser un message",
+        "laisser un mot",
+        "transmettre un message",
+        "faire passer un message",
+        "passer un message",
+        "un message au",
+        "un message pour",
+        "message au praticien",
+        "message au docteur",
+        "message au medecin",
+    ],
     "question_rdv": [
         "rendez vous",
         "rdv",

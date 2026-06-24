@@ -483,6 +483,7 @@ CALLBACK_REASON_LABELS = {
     "annuler": "Annuler un rendez-vous",
     "admin": "Question administrative",
     "ordonnance": "Ordonnance / document",
+    "message": "Message au praticien",
     "other": "Autre demande",
 }
 

@@ -148,6 +148,7 @@ const BOOKING_START = /\b(je\s+voudrais?|je\s+veux|je\s+souhaite|je\s+v\s+(?:in|
 const CANCEL_INTENT = /\b(annuler|annulation|supprimer)\b.*\b(rdv|rendez[- ]?vous)\b|\b(rdv|rendez[- ]?vous)\b.*\b(annuler|annulation)\b/iu;
 const RESCHEDULE_INTENT = /\b(modifier|decaler|deplacer|changer|reporter)\b.*\b(rdv|rendez[- ]?vous)\b|\b(rdv|rendez[- ]?vous)\b.*\b(modifier|decaler|deplacer|changer|reporter)\b/iu;
 const CALLBACK_INTENT = /\b(etre\s+rappele|demande\s+de\s+rappel|rappelez[- ]?moi|me\s+rappele)\b/iu;
+const MESSAGE_INTENT = /\b(laisser?\s+un\s+message|laisser?\s+un\s+mot|message\s+(?:au|pour)\s+(?:le\s+|la\s+)?(?:praticien|docteur|medecin|dentiste|cabinet))\b/iu;
 const MORE_SLOTS_REQUEST = /\b(voir\s+d['\u2019]?autres?\s+cr[eé]neaux|voir\s+plus\s+de\s+cr[eé]neaux|autres?\s+cr[eé]neaux|plus\s+de\s+cr[eé]neaux|aucun\s+ne\s+convient|autre\s+horaire)\b/iu;
 const CHAT_REPLY_TIMEOUT_MS = 45000;
 /** Délai avant d'afficher les créneaux déjà chargés dans la barre (sans attendre le moteur). */
@@ -1145,6 +1146,7 @@ const CALLBACK_REASONS = [
   { id: "annuler", label: "Annuler un rendez-vous" },
   { id: "admin", label: "Question administrative" },
   { id: "ordonnance", label: "Ordonnance / document" },
+  { id: "message", label: "Laisser un message au praticien" },
   { id: "other", label: "Autre demande" },
 ];
 
@@ -1152,10 +1154,12 @@ const ACTION_TITLES = {
   cancel: "Annuler un rendez-vous",
   reschedule: "Modifier un rendez-vous",
   callback: "Etre rappele par le cabinet",
+  message: "Laisser un message au praticien",
 };
 
 function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefreshSlots, initialBookingCode = "" }) {
-  const [step, setStep] = useState(mode === "callback" ? "callback_identify" : "identify");
+  const isMessageMode = mode === "message";
+  const [step, setStep] = useState(mode === "callback" || mode === "message" ? "callback_identify" : "identify");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [lookupPhone, setLookupPhone] = useState("");
@@ -1171,7 +1175,7 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
   const [callbackName, setCallbackName] = useState("");
   const [callbackPhone, setCallbackPhone] = useState("");
   const [callbackEmail, setCallbackEmail] = useState("");
-  const [callbackReason, setCallbackReason] = useState("other");
+  const [callbackReason, setCallbackReason] = useState(mode === "message" ? "message" : "other");
   const [callbackMessage, setCallbackMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [actionRules, setActionRules] = useState(null);
@@ -1392,6 +1396,10 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
       setError("Renseignez votre nom et un numero de telephone valide.");
       return;
     }
+    if (isMessageMode && !callbackMessage.trim()) {
+      setError("Saisissez le message a transmettre au praticien.");
+      return;
+    }
     setLoading(true);
     setError("");
     try {
@@ -1401,15 +1409,19 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
           name: callbackName.trim(),
           phone: normalizeFrenchPhone(callbackPhone),
           email: callbackEmail.trim() || undefined,
-          reason: callbackReason,
+          reason: isMessageMode ? "message" : callbackReason,
           message: callbackMessage.trim() || undefined,
           actionToken: selected?.actionToken || undefined,
         }),
       });
-      setSuccessMessage("Votre demande a ete transmise au cabinet. Vous serez recontacte dans les meilleurs delais.");
+      setSuccessMessage(
+        isMessageMode
+          ? "Votre message a bien ete transmis au praticien."
+          : "Votre demande a ete transmise au cabinet. Vous serez recontacte dans les meilleurs delais.",
+      );
       setStep("success");
-      push([{ from: "clara", text: "Votre demande de rappel a bien ete enregistree." }]);
-      trackPublicEvent({ slug, event: "callback_requested", source: "public_action" });
+      push([{ from: "clara", text: isMessageMode ? "Votre message a bien ete transmis au praticien." : "Votre demande de rappel a bien ete enregistree." }]);
+      trackPublicEvent({ slug, event: isMessageMode ? "message_left" : "callback_requested", source: "public_action" });
     } catch (err) {
       const detail = String(err?.message || err?.detail || "").trim();
       if (err?.status === 403 || /enregistr/i.test(detail)) {
@@ -1590,7 +1602,9 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
           {step === "callback_identify" ? (
             <>
               <p className="actionModalHint">
-                Pour etre rappele, identifiez-vous avec le telephone ou l&apos;email de votre fiche patient au cabinet.
+                {isMessageMode
+                  ? "Laisser un message est reserve aux patients du cabinet. Identifiez-vous avec le telephone ou l'email de votre fiche patient."
+                  : "Pour etre rappele, identifiez-vous avec le telephone ou l'email de votre fiche patient au cabinet."}
               </p>
               <input value={lookupPhone} onChange={(e) => setLookupPhone(e.target.value)} placeholder="Telephone" type="tel" />
               <input value={lookupEmail} onChange={(e) => setLookupEmail(e.target.value)} placeholder="Email (facultatif)" type="email" />
@@ -1603,17 +1617,27 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
 
           {step === "callback" ? (
             <>
-              <p className="actionModalHint">Patient reconnu. Precisez votre demande de rappel.</p>
+              <p className="actionModalHint">
+                {isMessageMode ? "Patient reconnu. Ecrivez votre message au praticien." : "Patient reconnu. Precisez votre demande de rappel."}
+              </p>
               <input value={callbackName} onChange={(e) => setCallbackName(e.target.value)} placeholder="Nom et prenom" readOnly />
               <input value={callbackPhone} onChange={(e) => setCallbackPhone(e.target.value)} placeholder="Telephone" type="tel" readOnly />
               <input value={callbackEmail} onChange={(e) => setCallbackEmail(e.target.value)} placeholder="Email (facultatif)" type="email" />
-              <select className="actionReasonSelect" value={callbackReason} onChange={(e) => setCallbackReason(e.target.value)}>
-                {CALLBACK_REASONS.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
-              </select>
-              <textarea className="actionMessageArea" value={callbackMessage} onChange={(e) => setCallbackMessage(e.target.value)} placeholder="Message (facultatif)" rows={3} />
+              {!isMessageMode ? (
+                <select className="actionReasonSelect" value={callbackReason} onChange={(e) => setCallbackReason(e.target.value)}>
+                  {CALLBACK_REASONS.filter((r) => r.id !== "message").map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+                </select>
+              ) : null}
+              <textarea
+                className="actionMessageArea"
+                value={callbackMessage}
+                onChange={(e) => setCallbackMessage(e.target.value)}
+                placeholder={isMessageMode ? "Votre message au praticien" : "Message (facultatif)"}
+                rows={isMessageMode ? 4 : 3}
+              />
               {error ? <p className="fieldError">{error}</p> : null}
               <button className="primary" type="button" disabled={loading} onClick={() => void submitCallback()}>
-                {loading ? "Envoi…" : "Envoyer ma demande"}
+                {loading ? "Envoi…" : (isMessageMode ? "Envoyer mon message" : "Envoyer ma demande")}
               </button>
             </>
           ) : null}
@@ -2601,6 +2625,12 @@ export default function PagePubliquePraticienUWI() {
       return;
     }
 
+    if (MESSAGE_INTENT.test(clean)) {
+      push([{ from: "clara", text: "Laisser un message est reserve aux patients du cabinet. Je vous propose de vous identifier." }]);
+      openActionFlowRef.current?.("message");
+      return;
+    }
+
     if (CALLBACK_INTENT.test(clean)) {
       push([{ from: "clara", text: "Pour etre rappele, vous devez etre deja enregistre comme patient du cabinet. Je vous propose de vous identifier." }]);
       openActionFlowRef.current?.("callback");
@@ -2890,6 +2920,7 @@ export default function PagePubliquePraticienUWI() {
     { label: "Modifier", action: "reschedule" },
     { label: "Annuler", action: "cancel" },
     { label: "Etre rappele", action: "callback" },
+    { label: "Laisser un message", action: "message" },
   ];
   const visibleSlots = showAllSlots ? slots : slots.slice(0, 6);
 

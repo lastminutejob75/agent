@@ -6,6 +6,7 @@ export const CALLBACK_REASON_LABELS = {
   annuler: "Annuler un rendez-vous",
   admin: "Question administrative",
   ordonnance: "Ordonnance / document",
+  message: "Message au praticien",
   other: "Autre demande",
 };
 
@@ -134,11 +135,12 @@ function requestPriority(callOrHandoff) {
 
 function mapCallbackRequestRow(callback) {
   const statusRaw = callbackRequestStatusRaw(callback);
+  const isMessage = String(callback?.reason || "").toLowerCase() === "message";
   return {
     id: `callback-${callback.id}`,
     patientName: callback.name || "Patient",
-    type: "Rappel",
-    typeKey: "callback",
+    type: isMessage ? "Message" : "Rappel",
+    typeKey: isMessage ? "message" : "callback",
     priority: callbackRequestPriority(callback),
     status_raw: statusRaw,
     summary: callbackRequestSummary(callback),
