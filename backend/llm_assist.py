@@ -148,7 +148,7 @@ class AnthropicLLMClient:
         try:
             from anthropic import Anthropic
 
-            client = Anthropic(api_key=self._api_key)
+            client = Anthropic(api_key=self._api_key, max_retries=0)
             timeout_sec = timeout_ms / 1000.0 if timeout_ms else 30.0
             msg = client.messages.create(
                 model=self._model,

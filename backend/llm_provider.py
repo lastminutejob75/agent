@@ -36,7 +36,11 @@ class OpenAIChatClient:
     def complete(self, system: str, user: str, timeout_ms: int) -> str:
         from openai import OpenAI
 
-        client = OpenAI(api_key=self._api_key, timeout=max(timeout_ms / 1000.0, 1.0))
+        # max_retries=0 : pas de retry/backoff SDK. Les retries applicatifs
+        # (llm_preference_extractor, llm_assist) gèrent déjà les nouvelles tentatives.
+        # Sans ça, un provider lent multiplie timeout × retries SDK × retries app
+        # et bloque le tour de conversation ~20s (faux "timeout" côté chat public).
+        client = OpenAI(api_key=self._api_key, timeout=max(timeout_ms / 1000.0, 1.0), max_retries=0)
         resp = client.chat.completions.create(
             model=self._model,
             max_tokens=512,
@@ -60,7 +64,8 @@ class AnthropicChatClient:
     def complete(self, system: str, user: str, timeout_ms: int) -> str:
         from anthropic import Anthropic
 
-        client = Anthropic(api_key=self._api_key)
+        # max_retries=0 : pas de retry/backoff SDK (cf. OpenAIChatClient).
+        client = Anthropic(api_key=self._api_key, max_retries=0)
         timeout_sec = max(timeout_ms / 1000.0, 1.0)
         msg = client.messages.create(
             model=self._model,

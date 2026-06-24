@@ -402,6 +402,12 @@ def extract_preferences_with_llm(
             max_attempts,
             last_error,
         )
+        # Échec de transport (timeout / réseau / SDK) : ne pas réessayer.
+        # Le provider est dégradé, les tentatives suivantes ré-échoueront en
+        # ajoutant ~2,5s chacune et bloqueront le tour de conversation. La regex
+        # prend le relais immédiatement.
+        if last_error == "timeout" or last_error.startswith("llm_error:"):
+            break
 
     meta.source = "regex"
     return None, meta
